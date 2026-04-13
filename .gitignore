@@ -23,3 +23,6 @@ target
 # Added by cargo
 
 /target
+
+# Private documentation (not tracked)
+private_doc/
