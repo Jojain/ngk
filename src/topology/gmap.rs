@@ -1,9 +1,10 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
+use super::attributes::{SEdgeAttr, SVertexAttr};
 use super::face::{Face, FaceId};
 use super::solid::{Solid, SolidId};
-use crate::geometry::curve::Curve;
-use crate::geometry::point::Point;
+use crate::geometry::curves::Curve;
+use crate::geometry::utils::Point3;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct Dart {
@@ -22,9 +23,9 @@ impl Dart {
     }
 }
 
-struct IsolatedDart(Dart);
+pub struct IsolatedDart(Dart);
 
-struct SewableDarts {
+pub struct SewableDarts {
     mapping: HashMap<Dart, Dart>,
 }
 
@@ -32,8 +33,8 @@ struct SewableDarts {
 pub struct GMap<'a> {
     alphas: Vec<Vec<Dart>>,
     free_slots: VecDeque<usize>,
-    vertices: HashMap<Dart, Point>,
-    edges: HashMap<Dart, Curve>,
+    vertices: HashMap<Dart, SVertexAttr>,
+    edges: HashMap<Dart, SEdgeAttr>,
     faces: HashMap<FaceId, Face<'a>>,
     solids: HashMap<SolidId, Solid<'a>>,
 }
@@ -68,7 +69,7 @@ impl<'a> GMap<'a> {
         self.alphas[dim][dart.id]
     }
 
-    fn add_dart(&mut self) -> Dart {
+    pub fn add_dart(&mut self) -> Dart {
         let dart = if let Some(slot) = self.free_slots.pop_front() {
             Dart::new(slot)
         } else {
@@ -80,7 +81,7 @@ impl<'a> GMap<'a> {
         dart
     }
 
-    fn remove_dart(&mut self, dart: IsolatedDart) {
+    pub fn remove_dart(&mut self, dart: IsolatedDart) {
         for alphas in self.alphas.iter_mut() {
             alphas.remove(dart.0.id);
         }
@@ -92,7 +93,7 @@ impl<'a> GMap<'a> {
     }
 
     fn is_free(&self, dart: Dart, i: usize) -> bool {
-        self.alphas[dart.0][i] == dart
+        self.alphas[i][dart.id] == dart
     }
 
     /// Involutions generating the orbit ⟨α₀,…,α_{i−2}, α_{i+2},…,α_n⟩ used in the i-sew test.
@@ -128,8 +129,8 @@ impl<'a> GMap<'a> {
                 (Some(a), Some(b)) => {
                     mapping.insert(a, b);
                     if inv.iter().any(|j| {
-                        let a_aj = self.alphas[*j][a.0];
-                        let b_aj = self.alphas[*j][b.0];
+                        let a_aj = self.alphas[*j][a.id];
+                        let b_aj = self.alphas[*j][b.id];
                         mapping.get(&a_aj).is_some_and(|&mapped| mapped != b_aj)
                     }) {
                         return None;
@@ -185,6 +186,20 @@ impl<'a> GMap<'a> {
         new_gmap.alphas.pop();
         new_gmap
     }
+
+    pub fn get_vertex_point(&self, dart: Dart) -> &Point3 {
+        &self.vertices[&dart].point
+    }
+    pub fn set_vertex_point(&mut self, dart: Dart, point: Point3) {
+        self.vertices.get_mut(&dart).map(|v| v.point = point);
+    }
+
+    fn get_edge_curve(&self, dart: Dart) -> &Curve {
+        &self.edges[&dart].curve
+    }
+    pub fn set_edge_curve(&mut self, dart: Dart, curve: Curve) {
+        self.edges.get_mut(&dart).map(|e| e.curve = curve);
+    }
 }
 
 pub struct OrbitIterator<'a> {
@@ -194,7 +209,7 @@ pub struct OrbitIterator<'a> {
     queue: VecDeque<Dart>,   // BFS queue
 }
 
-fn face_darts(gmap: &'a GMap<'a>, dart: Dart) -> Vec<Dart> {
+fn face_darts<'a>(gmap: &'a GMap<'a>, dart: Dart) -> Vec<Dart> {
     if let Some(face_id) = dart.face_id {
         gmap.get_face(face_id)
             .loops
@@ -207,7 +222,7 @@ fn face_darts(gmap: &'a GMap<'a>, dart: Dart) -> Vec<Dart> {
     }
 }
 
-fn solid_darts(gmap: &'a GMap<'a>, dart: Dart) -> Vec<Dart> {
+fn solid_darts<'a>(gmap: &'a GMap<'a>, dart: Dart) -> Vec<Dart> {
     if let Some(solid_id) = dart.solid_id {
         gmap.get_solid(solid_id)
             .shells()

@@ -1,5 +1,6 @@
 use super::gmap::{Dart, GMap};
 use super::loop_::LoopRef;
+use super::shell::ShellRef;
 use super::vertex::VertexRef;
 
 pub struct EdgeRef<'a> {

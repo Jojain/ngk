@@ -4,8 +4,9 @@ use super::gmap::{Dart, GMap};
 use super::loop_::LoopRef;
 use super::vertex::VertexRef;
 
+#[derive(Clone)]
 pub struct ShellRef<'a> {
-    gmap: &'a GMap,
+    gmap: &'a GMap<'a>,
     pub dart: Dart,
 }
 

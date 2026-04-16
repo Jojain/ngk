@@ -1,8 +1,9 @@
+use crate::geometry::utils::Point3;
+
 use super::edge::EdgeRef;
 use super::gmap::{Dart, GMap};
 use super::loop_::LoopRef;
 use super::shell::ShellRef;
-use crate::geometry::point::Point;
 
 pub struct VertexRef<'a> {
     gmap: &'a GMap<'a>,
@@ -35,7 +36,7 @@ impl<'a> VertexRef<'a> {
             .collect()
     }
 
-    pub fn point(&self) -> Point {
-        self.gmap.get_point(self.dart)
+    pub fn point(&self) -> &Point3 {
+        self.gmap.get_vertex_point(self.dart)
     }
 }

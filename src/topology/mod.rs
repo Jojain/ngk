@@ -7,3 +7,4 @@ pub mod sheet;
 pub mod shell;
 pub mod solid;
 pub mod vertex;
+pub mod attributes;

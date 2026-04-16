@@ -1,7 +1,7 @@
 use super::gmap::{Dart, GMap};
 
 pub struct SheetRef<'a> {
-    gmap: &'a GMap,
+    gmap: &'a GMap<'a>,
     dart: Dart,
 }
 
