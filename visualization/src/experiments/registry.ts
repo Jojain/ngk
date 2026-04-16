@@ -16,6 +16,12 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./NurbsCurveEditor")),
   },
   {
+    id: "nurbs-surface-editor",
+    title: "NURBS surface editor",
+    group: "NURBS",
+    component: lazy(() => import("./NurbsSurfaceEditor")),
+  },
+  {
     id: "template",
     title: "_template",
     group: "Other",
