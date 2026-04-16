@@ -1,3 +1,4 @@
+use super::nurbs::NurbsCurve;
 use super::surfaces::Plane;
 use super::utils::{IntoUnit3, Point3};
 use nalgebra::Rotation3;
@@ -6,6 +7,17 @@ use nalgebra::Rotation3;
 pub enum Curve {
     Line(Line),
     Circle(Circle),
+    Nurbs(NurbsCurve),
+}
+
+impl Curve {
+    pub fn point_at(&self, t: f64) -> Point3 {
+        match self {
+            Curve::Line(l) => l.point_at(t),
+            Curve::Circle(c) => c.point_at(t),
+            Curve::Nurbs(n) => n.point_at(t),
+        }
+    }
 }
 
 #[derive(Clone)]

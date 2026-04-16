@@ -1,9 +1,20 @@
+use super::nurbs::NurbsSurface;
 use super::utils::{IntoUnit3, Point3};
 use nalgebra::UnitVector3;
 
 #[derive(Clone)]
 pub enum Surface {
     Plane(Plane),
+    Nurbs(NurbsSurface),
+}
+
+impl Surface {
+    pub fn point_at(&self, u: f64, v: f64) -> Point3 {
+        match self {
+            Surface::Plane(p) => p.origin + u * *p.x_dir + v * *UnitVector3::new_normalize(p.normal.cross(&p.x_dir)),
+            Surface::Nurbs(s) => s.point_at(u, v),
+        }
+    }
 }
 
 #[derive(Clone)]

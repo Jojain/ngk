@@ -26,3 +26,9 @@ target
 
 # Private documentation (not tracked)
 private_doc/
+
+# Visualization frontend
+visualization/node_modules/
+visualization/dist/
+visualization/src/wasm/
+

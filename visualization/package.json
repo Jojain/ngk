@@ -1,0 +1,32 @@
+{
+  "name": "ngk-visualization",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "wasm": "wasm-pack build --target web --out-dir visualization/src/wasm --features wasm ..",
+    "wasm:build": "cd .. && wasm-pack build --target web --out-dir visualization/src/wasm --features wasm",
+    "dev": "npm run wasm:build && vite",
+    "build": "npm run wasm:build && tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit"
+  },
+  "dependencies": {
+    "@react-three/drei": "^9.112.0",
+    "@react-three/fiber": "^8.17.10",
+    "leva": "^0.9.35",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.168.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@types/three": "^0.168.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "vite-plugin-top-level-await": "^1.4.4",
+    "vite-plugin-wasm": "^3.3.0"
+  }
+}

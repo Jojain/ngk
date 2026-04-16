@@ -3,5 +3,26 @@ name = "ngk"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "ngk"
+path = "src/main.rs"
+
+[features]
+default = []
+wasm = ["dep:wasm-bindgen", "dep:js-sys", "dep:serde", "dep:serde-wasm-bindgen", "dep:console_error_panic_hook"]
+
 [dependencies]
 nalgebra = "0.34.2"
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
