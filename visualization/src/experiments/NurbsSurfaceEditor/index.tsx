@@ -34,7 +34,7 @@ function buildSurfaceFrom(
   const pu = Math.min(degU, NU - 1);
   const pv = Math.min(degV, NV - 1);
   if (pu < 1 || pv < 1) return null;
-  return k.WasmNurbsSurface.uniform(pu, pv, NU, NV, vec3ArrayToFlat(pts), new Float64Array(ws));
+  return k.NurbsSurface.uniform(pu, pv, NU, NV, vec3ArrayToFlat(pts), new Float64Array(ws));
 }
 
 function isCorner(iu: number, iv: number) {

@@ -42,7 +42,7 @@ fn flat_from_f64(values: &[f64]) -> Float64Array {
     out
 }
 
-#[wasm_bindgen]
+#[wasm_bindgen(js_name = NurbsCurve)]
 pub struct WasmNurbsCurve {
     inner: NurbsCurve,
 }
@@ -149,7 +149,7 @@ struct SurfaceMesh {
     indices: Vec<u32>,
 }
 
-#[wasm_bindgen]
+#[wasm_bindgen(js_name = NurbsSurface)]
 pub struct WasmNurbsSurface {
     inner: NurbsSurface,
 }

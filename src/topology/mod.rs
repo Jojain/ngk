@@ -1,10 +1,13 @@
+pub mod attributes;
+pub mod closed;
 pub mod edge;
 pub mod face;
+pub mod facet;
 pub mod gmap;
-pub mod loop_;
+pub mod payload;
 pub mod profile;
 pub mod sheet;
-pub mod shell;
 pub mod solid;
 pub mod vertex;
-pub mod attributes;
+
+pub use payload::{Payload, StandardPayload};

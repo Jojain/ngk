@@ -22,6 +22,12 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./NurbsSurfaceEditor")),
   },
   {
+    id: "two-faces-alpha2",
+    title: "Two faces α2-sewn",
+    group: "GMap",
+    component: lazy(() => import("./TwoFacesAlpha2")),
+  },
+  {
     id: "template",
     title: "_template",
     group: "Other",

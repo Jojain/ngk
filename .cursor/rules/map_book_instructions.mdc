@@ -1,0 +1,24 @@
+---
+description: Canonical combinatorial / generalized map (gmap) theory lives in private_doc book; consult it in chunks, not whole-file reads
+alwaysApply: true
+---
+
+# Combinatorial maps & GMap — reference source
+
+**Authoritative domain knowledge** for combinatorial maps, generalized maps (GMap / gmap), darts, involutions, and related constructions in this codebase is written in the **combinatorial maps book** stored under the project’s private documentation:
+
+- **Location:** `private_doc/Combinatorial_Maps_Book/Combinatorial_Maps_Book.md`
+
+Treat that material as the **source of truth** when reasoning about theory, definitions, or algorithms for maps and gmaps in this repo.
+
+## How to use the book (LLM context limits)
+
+The book is **too large to load entirely** into a single context window. **Do not** read or paste the full file in one shot.
+
+Instead:
+
+1. **Search and slice:** Use workspace search, grep, or partial reads (`read_file` with `offset` / `limit`) to open **only the sections** relevant to the current question (chapter headings, keywords: e.g. “generalized map”, “involution”, “sew”, “alpha”, “dimension”).
+2. **Iterate:** If the first excerpt is insufficient, refine keywords or read the **next adjacent chunk** — still in small portions.
+3. **Prefer targeted questions:** Formulate what definition or construction you need, then locate that passage rather than skimming from the start.
+
+This keeps answers aligned with the book while staying within practical context size.

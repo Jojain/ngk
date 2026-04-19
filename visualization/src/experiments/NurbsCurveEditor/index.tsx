@@ -41,14 +41,14 @@ export default function NurbsCurveEditor() {
     const p = Math.min(deg, pts.length - 1);
     if (p < 1) return null;
     if (ks) {
-      return new k.WasmNurbsCurve(
+      return new k.NurbsCurve(
         p,
         vec3ArrayToFlat(pts),
         new Float64Array(ws),
         new Float64Array(ks),
       );
     }
-    return k.WasmNurbsCurve.uniform(p, vec3ArrayToFlat(pts), new Float64Array(ws));
+    return k.NurbsCurve.uniform(p, vec3ArrayToFlat(pts), new Float64Array(ws));
   }
 
   const { degree, samples, dragPlane, showWeights } = useControls("Curve (left-drag points · middle-drag to rotate)", {

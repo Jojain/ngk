@@ -27,7 +27,7 @@ export function makeUniformCurve(
   controlPoints: Vec3[],
   weights: number[],
 ) {
-  return kernel.WasmNurbsCurve.uniform(
+  return kernel.NurbsCurve.uniform(
     degree,
     vec3ArrayToFlat(controlPoints),
     new Float64Array(weights),
