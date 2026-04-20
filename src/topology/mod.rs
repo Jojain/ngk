@@ -1,4 +1,5 @@
 pub mod attributes;
+pub mod builders;
 pub mod closed;
 pub mod edge;
 pub mod face;

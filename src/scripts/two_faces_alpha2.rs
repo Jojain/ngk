@@ -21,7 +21,7 @@ use crate::topology::gmap::GMap;
 use crate::viz::ScriptResult;
 
 pub fn run() -> Result<ScriptResult, String> {
-    let mut g = GMap::<StandardPayload>::new(3);
+    let mut g = GMap::<StandardPayload>::new();
 
     let da = add_polygon(
         &mut g,

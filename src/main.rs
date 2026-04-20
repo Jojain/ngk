@@ -38,7 +38,7 @@ fn script_handling(name: &str, result: &ScriptResult) {
 }
 
 fn main() {
-    let mut map = GMap::<StandardPayload>::new(3);
+    let mut map = GMap::<StandardPayload>::new();
     let d = add_polygon(
         &mut map,
         &[

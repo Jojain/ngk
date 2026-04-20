@@ -9,6 +9,9 @@ use super::solid::{Solid, SolidId};
 
 type Dim = usize;
 
+/// Number of involutions α₀…α₃ in a 3-gmap (four involutions).
+pub const GMAP_INVOLUTION_COUNT: usize = 4;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct Dart(usize);
 
@@ -120,7 +123,7 @@ impl<'a, P: Payload> AttributeStore<Cell2> for GMap<'a, P> {
 }
 
 pub struct GMap<'a, P: Payload = StandardPayload> {
-    alphas: Vec<Vec<Dart>>,
+    alphas: [Vec<Dart>; GMAP_INVOLUTION_COUNT],
     free_slots: VecDeque<usize>,
     vertices: HashMap<Dart, VertexAttr<P::V>>,
     edges: HashMap<Dart, EdgeAttr<P::E>>,
@@ -144,8 +147,8 @@ impl<'a, P: Payload> Clone for GMap<'a, P> {
 }
 
 impl<'a, P: Payload> GMap<'a, P> {
-    pub fn new(dim: usize) -> Self {
-        let alphas = (0..dim).map(|_| Vec::new()).collect();
+    pub fn new() -> Self {
+        let alphas = std::array::from_fn(|_| Vec::new());
         let free_slots = VecDeque::new();
         let vertices = HashMap::new();
         let edges = HashMap::new();
@@ -163,8 +166,9 @@ impl<'a, P: Payload> GMap<'a, P> {
         }
     }
 
+    /// Number of involutions (α₀…α₃), always [`GMAP_INVOLUTION_COUNT`].
     pub fn dimension(&self) -> usize {
-        self.alphas.len()
+        GMAP_INVOLUTION_COUNT
     }
 
     pub fn dart_count(&self) -> usize {
@@ -379,19 +383,6 @@ impl<'a, P: Payload> GMap<'a, P> {
         let a_i = self.alphas[i][dart.id()];
         self.alphas[i][a_i.id()] = a_i;
         self.alphas[i][dart.id()] = dart;
-    }
-
-    fn increased_dimension(&self) -> Self {
-        let mut new_gmap = self.clone();
-        let new_dim = (0..self.dart_count()).map(|i| Dart::new(i)).collect();
-        new_gmap.alphas.push(new_dim);
-        new_gmap
-    }
-
-    fn decreased_dimension(&self) -> Self {
-        let mut new_gmap = self.clone();
-        new_gmap.alphas.pop();
-        new_gmap
     }
 
     pub fn attribute<D: CellDim>(&self, dart: Dart) -> Option<&<Self as AttributeStore<D>>::Attr>

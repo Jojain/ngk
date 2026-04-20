@@ -20,12 +20,6 @@ pub fn add_polygon<'a, P: Payload>(g: &mut GMap<'a, P>, corners: &[Point3]) -> D
         "add_polygon requires at least 3 corners, got {}",
         corners.len()
     );
-    assert!(
-        g.dimension() >= 2,
-        "add_polygon needs a gmap of dimension >= 2, got {}",
-        g.dimension()
-    );
-
     let n = corners.len();
     let darts: Vec<Dart> = (0..2 * n).map(|_| g.add_dart()).collect();
 
