@@ -62,7 +62,7 @@ fn explo1() {
 }
 fn explo2() {
     let mut map = GMap::<StandardPayload>::new();
-    let po = Point3::new(0.0, 0.0, 0.0);
+    let po = Point3::new(3.0, 1.0, 0.0);
     let p1 = Point3::new(5.0, 0.0, 0.0);
     let curve = Curve::Line(Line::new(po, p1));
     let e = add_edge(&mut map, po, p1, curve);
@@ -70,6 +70,7 @@ fn explo2() {
 
     println!("v1: {:?}", e.start().point());
     println!("v2: {:?}", e.end().point());
+    println!("length: {:?}", e.length());
 }
 fn main() {
     explo2();

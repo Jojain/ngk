@@ -1,4 +1,5 @@
-use crate::topology::gmap::Dim;
+use crate::geometry::curves::Curve;
+use crate::topology::gmap::{Cell1, Dim};
 
 use super::facet::Facet;
 use super::gmap::{Dart, GMap};
@@ -17,7 +18,8 @@ impl<'a, P: Payload> Edge<'a, P> {
     }
 
     pub fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
-        self.gmap.orbit(self.dart, self.gmap.orbit_indices(Dim::One))
+        self.gmap
+            .orbit(self.dart, self.gmap.orbit_indices(Dim::One))
     }
 
     pub fn start(&self) -> Vertex<'a, P> {
@@ -50,5 +52,27 @@ impl<'a, P: Payload> Edge<'a, P> {
             .incident_cells(self.dart, Dim::One, Dim::Three)
             .map(|d| Sheet::new(self.gmap, d))
             .collect()
+    }
+
+    pub fn curve(&self) -> Option<&Curve> {
+        self.gmap
+            .attribute::<Cell1>(self.dart)
+            .map(|attr| &attr.curve)
+    }
+
+    pub fn length(&self) -> Option<f64> {
+        let t0 = self
+            .start()
+            .point()
+            .map(|p| self.curve().map(|c| c.param_at(*p)))
+            .unwrap()
+            .unwrap();
+        let t1 = self
+            .end()
+            .point()
+            .map(|p| self.curve().map(|c| c.param_at(*p)))
+            .unwrap()
+            .unwrap();
+        self.curve().map(|c| c.length(t0, t1))
     }
 }
