@@ -33,7 +33,8 @@ impl<'a, P: Payload> Facet<'a, P> {
 
     /// Every dart of this facet, traversed via the gmap 2-cell orbit.
     pub fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
-        self.gmap.orbit(self.dart, self.gmap.orbit_indices(Dim::Two))
+        self.gmap
+            .orbit(self.dart, self.gmap.orbit_indices(Dim::Two))
     }
 
     pub fn vertices(&self) -> Vec<Vertex<'a, P>> {
@@ -51,8 +52,11 @@ impl<'a, P: Payload> Facet<'a, P> {
     }
 
     pub fn face(&self) -> Option<Face<'a, P>> {
-        self.gmap
-            .attribute::<Cell2>(self.dart)
-            .and_then(|id| self.gmap.face(*id))
+        self.gmap.attribute::<Cell2>(self.dart).and_then(|key| {
+            self.gmap
+                .faces
+                .get(*key)
+                .map(|attr| attr.face(self.gmap))
+        })
     }
 }

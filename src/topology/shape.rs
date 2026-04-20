@@ -27,6 +27,7 @@ impl<P: Payload> Shape<VertexKey, P> {
     pub fn vertex(&self) -> Vertex<'_, P> {
         self.map
             .vertex(self.key)
+            .map(|v| v.vertex(&self.map))
             .expect("Vertex must be in the map")
     }
 }

@@ -10,6 +10,4 @@ pub enum ShapeKey {
     Vertex(VertexKey),
     Edge(EdgeKey),
     Face(FaceKey),
-    Shell(ShellKey),
-    Solid(SolidKey),
 }

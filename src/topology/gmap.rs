@@ -3,13 +3,13 @@ use std::collections::{HashMap, VecDeque};
 use slotmap::SlotMap;
 
 use crate::topology::edge::Edge;
-use crate::topology::shape_keys::{EdgeKey, VertexKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 use crate::topology::vertex::Vertex;
 
 use super::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
-use super::face::{Face, FaceId};
+use super::face::Face;
 use super::payload::{Payload, StandardPayload};
-use super::solid::{Solid, SolidId};
+use super::solid::Solid;
 
 pub use super::dart::{Dart, IsolatedDart};
 
@@ -89,11 +89,11 @@ impl<P: Payload> AttributeStore<Cell1> for GMap<P> {
     }
 }
 impl<P: Payload> AttributeStore<Cell2> for GMap<P> {
-    type Attr = FaceId;
-    fn get(&self, repr: Dart) -> Option<&FaceId> {
+    type Attr = FaceKey;
+    fn get(&self, repr: Dart) -> Option<&FaceKey> {
         self.facets.get(&repr)
     }
-    fn get_mut(&mut self, repr: Dart) -> Option<&mut FaceId> {
+    fn get_mut(&mut self, repr: Dart) -> Option<&mut FaceKey> {
         self.facets.get_mut(&repr)
     }
 }
@@ -105,9 +105,9 @@ pub struct GMap<P: Payload = StandardPayload> {
     pub(crate) dart_to_vertex: HashMap<Dart, VertexKey>,
     edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
     pub(crate) dart_to_edge: HashMap<Dart, EdgeKey>,
-    facets: HashMap<Dart, FaceId>,
-    faces: SlotMap<FaceId, FaceAttr<P::F>>,
-    solids: SlotMap<SolidId, SolidAttr<P::S>>,
+    facets: HashMap<Dart, FaceKey>,
+    pub(crate) faces: SlotMap<FaceKey, FaceAttr<P::F>>,
+    pub(crate) solids: SlotMap<SolidKey, SolidAttr<P::S>>,
 }
 
 impl<P: Payload> Clone for GMap<P> {
@@ -209,10 +209,8 @@ impl<P: Payload> GMap<P> {
         self.dart_to_vertex.insert(dart, key);
         key
     }
-    pub fn vertex(&self, key: VertexKey) -> Option<Vertex<'_, P>> {
-        self.vertices
-            .get(key)
-            .map(|attr| Vertex::new(self, attr.dart))
+    pub fn vertex(&self, key: VertexKey) -> Option<&VertexAttr<P::V>> {
+        self.vertices.get(key)
     }
 
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
@@ -222,36 +220,24 @@ impl<P: Payload> GMap<P> {
         key
     }
 
-    pub fn edge(&self, key: EdgeKey) -> Option<Edge<'_, P>> {
-        self.edges
-            .get(key)
-            .map(|attr| Edge::new(self, attr.dart))
+    pub fn edge(&self, key: EdgeKey) -> Option<&EdgeAttr<P::E>> {
+        self.edges.get(key)
     }
 
-    pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceId {
+    pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
         self.faces.insert(face)
     }
 
-    /// Borrow stored domain face payload (surface, data, loop darts).
-    pub fn face_attr(&self, face_id: FaceId) -> Option<&FaceAttr<P::F>> {
-        self.faces.get(face_id)
+    pub fn face(&self, key: FaceKey) -> Option<&FaceAttr<P::F>> {
+        self.faces.get(key)
     }
 
-    /// View over a domain face in this map.
-    pub fn face(&self, face_id: FaceId) -> Option<Face<'_, P>> {
-        Face::view(self, face_id)
-    }
-
-    pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidId {
+    pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidKey {
         self.solids.insert(solid)
     }
 
-    pub fn solid_attr(&self, solid_id: SolidId) -> Option<&SolidAttr<P::S>> {
-        self.solids.get(solid_id)
-    }
-
-    pub fn solid(&self, solid_id: SolidId) -> Option<Solid<'_, P>> {
-        Solid::view(self, solid_id)
+    pub fn solid(&self, key: SolidKey) -> Option<&SolidAttr<P::S>> {
+        self.solids.get(key)
     }
 
     /// Algorithm 19 of the book

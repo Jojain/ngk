@@ -1,4 +1,5 @@
-use ngk::builders::add_polygon;
+use ngk::builders::{add_edge, add_polygon};
+use ngk::geometry::curves::{Curve, Line};
 use ngk::geometry::utils::Point3;
 use ngk::scripts;
 use ngk::topology::StandardPayload;
@@ -37,7 +38,7 @@ fn script_handling(name: &str, result: &ScriptResult) {
     }
 }
 
-fn main() {
+fn explo1() {
     let mut map = GMap::<StandardPayload>::new();
     let d = add_polygon(
         &mut map,
@@ -58,4 +59,18 @@ fn main() {
     }
     println!("loop start: {:?}", l.start().point());
     println!("loop end: {:?}", l.end().point());
+}
+fn explo2() {
+    let mut map = GMap::<StandardPayload>::new();
+    let po = Point3::new(0.0, 0.0, 0.0);
+    let p1 = Point3::new(5.0, 0.0, 0.0);
+    let curve = Curve::Line(Line::new(po, p1));
+    let e = add_edge(&mut map, po, p1, curve);
+    let e = map.edge(e).expect("edge not found").edge(&map);
+
+    println!("v1: {:?}", e.start().point());
+    println!("v2: {:?}", e.end().point());
+}
+fn main() {
+    explo2();
 }
