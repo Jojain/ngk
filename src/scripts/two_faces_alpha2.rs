@@ -17,7 +17,7 @@
 use crate::builders::add_polygon;
 use crate::geometry::utils::Point3;
 use crate::topology::StandardPayload;
-use crate::topology::gmap::GMap;
+use crate::topology::gmap::{Dim, GMap};
 use crate::viz::ScriptResult;
 
 pub fn run() -> Result<ScriptResult, String> {
@@ -42,7 +42,7 @@ pub fn run() -> Result<ScriptResult, String> {
         ],
     );
 
-    g.sew(2, da, db)
+    g.sew(Dim::Two, da, db)
         .map_err(|e| format!("a2 sew failed: {e}"))?;
 
     Ok(ScriptResult::from_gmap(&g))

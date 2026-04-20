@@ -18,7 +18,7 @@ use nalgebra::Vector3;
 
 use super::{GMapSnapshot, VertexPointEntry, VizArrow, VizLink, VizPoint, VizScene};
 use crate::geometry::utils::Point3;
-use crate::topology::gmap::{Cell0, Dart, GMap};
+use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 
 /// How far to push a dart perpendicular to its edge, relative to edge length.
@@ -38,40 +38,11 @@ pub fn scene_from_gmap<P: Payload>(g: &GMap<P>) -> VizScene {
     scene
 }
 
-pub fn snapshot_from_gmap<P: Payload>(g: &GMap<P>) -> GMapSnapshot {
-    let dim = g.dimension();
-    let n = g.dart_count();
-
-    let alphas: Vec<Vec<u32>> = (0..dim)
-        .map(|i| {
-            (0..n)
-                .map(|d| g.alpha(i, Dart::new(d)).id() as u32)
-                .collect()
-        })
-        .collect();
-
-    let vertex_points: Vec<VertexPointEntry> = (0..n)
-        .filter_map(|d| {
-            let dart = Dart::new(d);
-            g.attribute::<Cell0>(dart).map(|v| VertexPointEntry {
-                dart: d as u32,
-                position: [v.point.x, v.point.y, v.point.z],
-            })
-        })
-        .collect();
-
-    GMapSnapshot {
-        dimension: dim as u32,
-        dart_count: n as u32,
-        alphas,
-        vertex_points,
-    }
-}
 
 // ---------- internals ----------
 
 fn emit_vertices<P: Payload>(g: &GMap<P>, scene: &mut VizScene) {
-    for dart in representative_darts(g, 0) {
+    for dart in representative_darts(g, Dim::Zero) {
         if let Some(p) = g.attribute::<Cell0>(dart).map(|v| v.point) {
             scene.points.push(VizPoint {
                 position: [p.x, p.y, p.z],
@@ -98,7 +69,7 @@ fn compute_arrows<P: Payload>(g: &GMap<P>) -> Vec<(usize, VizArrow)> {
 
 fn dart_arrow<P: Payload>(g: &GMap<P>, d: Dart) -> Option<VizArrow> {
     let v0 = g.attribute::<Cell0>(d).map(|v| v.point)?;
-    let other = g.alpha(0, d);
+    let other = g.alpha(Dim::Zero, d);
     let v1 = g.attribute::<Cell0>(other).map(|v| v.point)?;
     let edge = v1 - v0;
     let edge_len = edge.norm();
@@ -157,7 +128,7 @@ fn face_centroid<P: Payload>(g: &GMap<P>, d: Dart) -> Option<Point3> {
     let mut sum = Vector3::zeros();
     let mut count = 0usize;
     for dd in g.orbit(d, face_orbit_indices) {
-        let rep = g.cell_representative(dd, 0).id();
+        let rep = g.cell_representative(dd, Dim::Zero).id();
         if seen.insert(rep) {
             if let Some(p) = g.attribute::<Cell0>(dd).map(|v| v.point) {
                 sum += p.coords;
@@ -183,7 +154,7 @@ fn emit_alpha_links<P: Payload>(
     for i in 0..g.dimension() {
         for &(id, _) in arrows {
             let d = Dart::new(id);
-            let j = g.alpha(i, d).id();
+            let j = g.alpha(Dim::Zero, d).id();
             if j == id || j < id {
                 continue; // skip fixed points and the mirror direction
             }
@@ -208,7 +179,7 @@ fn shaft_midpoint(a: &VizArrow) -> [f64; 3] {
     ]
 }
 
-fn representative_darts<P: Payload>(g: &GMap<P>, cell_dim: usize) -> Vec<Dart> {
+fn representative_darts<P: Payload>(g: &GMap<P>, cell_dim: Dim) -> Vec<Dart> {
     (0..g.dart_count())
         .map(Dart::new)
         .filter(|&d| g.cell_representative(d, cell_dim) == d)

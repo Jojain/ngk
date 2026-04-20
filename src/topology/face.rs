@@ -3,7 +3,7 @@ use slotmap::new_key_type;
 use super::closed::Closed;
 use super::gmap::GMap;
 use super::payload::{Payload, StandardPayload};
-use super::profile::{LoopRef, ProfileRef};
+use super::profile::{Loop, Profile};
 use crate::geometry::surfaces::Surface;
 use crate::topology::attributes::FaceAttr;
 
@@ -42,17 +42,17 @@ impl<'g, P: Payload> Face<'g, P> {
         self.id
     }
 
-    pub fn outer_loop(&self) -> LoopRef<'g, P> {
+    pub fn outer_loop(&self) -> Loop<'g, P> {
         let d = self.attr().outer_loop;
-        Closed::new_unchecked(ProfileRef::new(self.gmap, d))
+        Closed::new_unchecked(Profile::new(self.gmap, d))
     }
 
-    pub fn inner_loops(&self) -> Vec<LoopRef<'g, P>> {
+    pub fn inner_loops(&self) -> Vec<Loop<'g, P>> {
         self.attr()
             .inner_loops
             .iter()
             .copied()
-            .map(|d| Closed::new_unchecked(ProfileRef::new(self.gmap, d)))
+            .map(|d| Closed::new_unchecked(Profile::new(self.gmap, d)))
             .collect()
     }
 

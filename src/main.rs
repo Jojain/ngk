@@ -3,7 +3,7 @@ use ngk::geometry::utils::Point3;
 use ngk::scripts;
 use ngk::topology::StandardPayload;
 use ngk::topology::gmap::GMap;
-use ngk::topology::profile::{LoopRef, ProfileRef};
+use ngk::topology::profile::{Loop, Profile};
 use ngk::viz::ScriptResult;
 
 fn script_handling(name: &str, result: &ScriptResult) {
@@ -48,7 +48,7 @@ fn main() {
             Point3::new(0.0, 1.0, 0.0),
         ],
     );
-    let l = LoopRef::new(ProfileRef::new(&map, d)).expect("failed to create loop");
+    let l = Loop::new(Profile::new(&map, d)).expect("failed to create loop");
     for e in l.edges() {
         println!("edge dart: {}", e.dart.id());
     }

@@ -3,7 +3,7 @@ use slotmap::new_key_type;
 use super::closed::Closed;
 use super::gmap::GMap;
 use super::payload::{Payload, StandardPayload};
-use super::sheet::{ShellRef, SheetRef};
+use super::sheet::{ShellRef, Sheet};
 use crate::topology::attributes::SolidAttr;
 
 new_key_type! {pub struct SolidId;}
@@ -43,7 +43,7 @@ impl<'g, P: Payload> Solid<'g, P> {
 
     pub fn outer_shell(&self) -> ShellRef<'g, P> {
         let d = self.attr().outer_shell;
-        Closed::new_unchecked(SheetRef::new(self.gmap, d))
+        Closed::new_unchecked(Sheet::new(self.gmap, d))
     }
 
     pub fn inner_shells(&self) -> Option<Vec<ShellRef<'g, P>>> {
@@ -51,7 +51,7 @@ impl<'g, P: Payload> Solid<'g, P> {
             inner
                 .iter()
                 .copied()
-                .map(|d| Closed::new_unchecked(SheetRef::new(self.gmap, d)))
+                .map(|d| Closed::new_unchecked(Sheet::new(self.gmap, d)))
                 .collect()
         })
     }

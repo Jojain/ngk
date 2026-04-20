@@ -9,7 +9,7 @@ use serde::Serialize;
 
 pub mod gmap;
 
-pub use gmap::{scene_from_gmap, snapshot_from_gmap};
+pub use gmap::{scene_from_gmap};
 
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -128,7 +128,7 @@ impl ScriptResult {
     ) -> Self {
         Self {
             scene: scene_from_gmap(g),
-            gmap: Some(snapshot_from_gmap(g)),
+            gmap: None,
         }
     }
 }

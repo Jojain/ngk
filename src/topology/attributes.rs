@@ -6,22 +6,32 @@ use crate::topology::dart::Dart;
 #[derive(Clone)]
 
 pub struct VertexAttr<T> {
+    pub dart: Dart,
     pub point: Point3,
     pub data: T,
 }
-pub type SVertexAttr = VertexAttr<()>;
+
+impl<T> VertexAttr<T> {
+    pub fn new(dart: Dart, point: Point3, data: T) -> Self {
+        Self { dart, point, data }
+    }
+}
 
 #[derive(Clone)]
 
 pub struct EdgeAttr<T> {
+    pub dart: Dart,
     pub curve: Curve,
     pub data: T,
 }
 
-pub type SEdgeAttr = EdgeAttr<()>;
+impl<T> EdgeAttr<T> {
+    pub fn new(dart: Dart, curve: Curve, data: T) -> Self {
+        Self { dart, curve, data }
+    }
+}
 
-/// Domain face payload: surface, user data, and representative darts for the
-/// outer boundary loop and inner hole loops (same as stored in [`crate::topology::gmap::GMap`]).
+
 #[derive(Clone)]
 pub struct FaceAttr<T> {
     pub surface: Surface,
@@ -41,10 +51,6 @@ impl<T> FaceAttr<T> {
     }
 }
 
-pub type SFaceAttr = FaceAttr<()>;
-
-/// Domain solid payload: user data and representative darts for outer and
-/// optional inner closed shells.
 #[derive(Clone)]
 pub struct SolidAttr<T> {
     pub data: T,

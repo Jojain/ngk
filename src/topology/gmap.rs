@@ -2,6 +2,10 @@ use std::collections::{HashMap, VecDeque};
 
 use slotmap::SlotMap;
 
+use crate::topology::edge::Edge;
+use crate::topology::shape_keys::{EdgeKey, VertexKey};
+use crate::topology::vertex::Vertex;
+
 use super::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
 use super::face::{Face, FaceId};
 use super::payload::{Payload, StandardPayload};
@@ -9,7 +13,24 @@ use super::solid::{Solid, SolidId};
 
 pub use super::dart::{Dart, IsolatedDart};
 
-type Dim = usize;
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Dim {
+    Zero,
+    One,
+    Two,
+    Three,
+}
+
+impl Dim {
+    pub fn index(&self) -> usize {
+        match self {
+            Dim::Zero => 0,
+            Dim::One => 1,
+            Dim::Two => 2,
+            Dim::Three => 3,
+        }
+    }
+}
 
 /// Number of involutions α₀…α₃ in a 3-gmap (four involutions).
 pub const GMAP_INVOLUTION_COUNT: usize = 4;
@@ -23,65 +44,48 @@ pub struct Cell2;
 pub struct Cell3;
 
 pub trait CellDim {
-    const DIM: usize;
+    const DIM: Dim;
 }
 
 impl CellDim for Cell0 {
-    const DIM: usize = 0;
+    const DIM: Dim = Dim::Zero;
 }
 impl CellDim for Cell1 {
-    const DIM: usize = 1;
+    const DIM: Dim = Dim::One;
 }
 impl CellDim for Cell2 {
-    const DIM: usize = 2;
+    const DIM: Dim = Dim::Two;
 }
 impl CellDim for Cell3 {
-    const DIM: usize = 3;
+    const DIM: Dim = Dim::Three;
 }
 
 pub trait AttributeStore<D: CellDim> {
     type Attr;
     fn get(&self, repr: Dart) -> Option<&Self::Attr>;
     fn get_mut(&mut self, repr: Dart) -> Option<&mut Self::Attr>;
-
-    /// Ensures `repr` has a stored attribute, then returns `&mut` to it.
-    fn get_mut_or_insert_with<F: FnOnce() -> Self::Attr>(
-        &mut self,
-        repr: Dart,
-        create: F,
-    ) -> &mut Self::Attr;
 }
 
 impl<P: Payload> AttributeStore<Cell0> for GMap<P> {
     type Attr = VertexAttr<P::V>;
     fn get(&self, repr: Dart) -> Option<&VertexAttr<P::V>> {
-        self.vertices.get(&repr)
+        let vid = self.dart_to_vertex.get(&repr)?;
+        self.vertices.get(*vid)
     }
     fn get_mut(&mut self, repr: Dart) -> Option<&mut VertexAttr<P::V>> {
-        self.vertices.get_mut(&repr)
-    }
-    fn get_mut_or_insert_with<F: FnOnce() -> VertexAttr<P::V>>(
-        &mut self,
-        repr: Dart,
-        create: F,
-    ) -> &mut VertexAttr<P::V> {
-        self.vertices.entry(repr).or_insert_with(create)
+        let vid = self.dart_to_vertex.get(&repr)?;
+        self.vertices.get_mut(*vid)
     }
 }
 impl<P: Payload> AttributeStore<Cell1> for GMap<P> {
     type Attr = EdgeAttr<P::E>;
     fn get(&self, repr: Dart) -> Option<&EdgeAttr<P::E>> {
-        self.edges.get(&repr)
+        let eid = self.dart_to_edge.get(&repr)?;
+        self.edges.get(*eid)
     }
     fn get_mut(&mut self, repr: Dart) -> Option<&mut EdgeAttr<P::E>> {
-        self.edges.get_mut(&repr)
-    }
-    fn get_mut_or_insert_with<F: FnOnce() -> EdgeAttr<P::E>>(
-        &mut self,
-        repr: Dart,
-        create: F,
-    ) -> &mut EdgeAttr<P::E> {
-        self.edges.entry(repr).or_insert_with(create)
+        let eid = self.dart_to_edge.get(&repr)?;
+        self.edges.get_mut(*eid)
     }
 }
 impl<P: Payload> AttributeStore<Cell2> for GMap<P> {
@@ -92,20 +96,15 @@ impl<P: Payload> AttributeStore<Cell2> for GMap<P> {
     fn get_mut(&mut self, repr: Dart) -> Option<&mut FaceId> {
         self.facets.get_mut(&repr)
     }
-    fn get_mut_or_insert_with<F: FnOnce() -> FaceId>(
-        &mut self,
-        repr: Dart,
-        create: F,
-    ) -> &mut FaceId {
-        self.facets.entry(repr).or_insert_with(create)
-    }
 }
 
 pub struct GMap<P: Payload = StandardPayload> {
     alphas: [Vec<Dart>; GMAP_INVOLUTION_COUNT],
     free_slots: VecDeque<usize>,
-    vertices: HashMap<Dart, VertexAttr<P::V>>,
-    edges: HashMap<Dart, EdgeAttr<P::E>>,
+    vertices: SlotMap<VertexKey, VertexAttr<P::V>>,
+    pub(crate) dart_to_vertex: HashMap<Dart, VertexKey>,
+    edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
+    pub(crate) dart_to_edge: HashMap<Dart, EdgeKey>,
     facets: HashMap<Dart, FaceId>,
     faces: SlotMap<FaceId, FaceAttr<P::F>>,
     solids: SlotMap<SolidId, SolidAttr<P::S>>,
@@ -117,7 +116,9 @@ impl<P: Payload> Clone for GMap<P> {
             alphas: self.alphas.clone(),
             free_slots: self.free_slots.clone(),
             vertices: self.vertices.clone(),
+            dart_to_vertex: self.dart_to_vertex.clone(),
             edges: self.edges.clone(),
+            dart_to_edge: self.dart_to_edge.clone(),
             facets: self.facets.clone(),
             faces: self.faces.clone(),
             solids: self.solids.clone(),
@@ -129,8 +130,10 @@ impl<P: Payload> GMap<P> {
     pub fn new() -> Self {
         let alphas = std::array::from_fn(|_| Vec::new());
         let free_slots = VecDeque::new();
-        let vertices = HashMap::new();
-        let edges = HashMap::new();
+        let vertices = SlotMap::with_key();
+        let dart_to_vertex = HashMap::new();
+        let edges = SlotMap::with_key();
+        let dart_to_edge = HashMap::new();
         let facets = HashMap::new();
         let faces = SlotMap::with_key();
         let solids = SlotMap::with_key();
@@ -138,7 +141,9 @@ impl<P: Payload> GMap<P> {
             alphas,
             free_slots,
             vertices,
+            dart_to_vertex,
             edges,
+            dart_to_edge,
             facets,
             faces,
             solids,
@@ -154,8 +159,9 @@ impl<P: Payload> GMap<P> {
         self.alphas[0].len()
     }
 
-    pub fn alpha(&self, dim: usize, dart: Dart) -> Dart {
-        self.alphas[dim][dart.id()]
+    pub fn alpha(&self, d: Dim, dart: Dart) -> Dart {
+        let i = d.index();
+        self.alphas[i][dart.id()]
     }
 
     pub fn add_dart(&mut self) -> Dart {
@@ -182,17 +188,44 @@ impl<P: Payload> GMap<P> {
     }
 
     /// A dart is `i`-free when `αᵢ(d) = d`, i.e. not sewn along dimension `i`.
-    pub fn is_free(&self, dart: Dart, i: Dim) -> bool {
-        self.alphas[i][dart.id()] == dart
+    pub fn is_free(&self, dart: Dart, d: Dim) -> bool {
+        self.alphas[d.index()][dart.id()] == dart
     }
 
     /// Involutions generating the orbit ⟨α₀,…,α_{i−2}, α_{i+2},…,α_n⟩ used in the i-sew test.
-    fn sewing_orbit_indices(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
+    fn sewing_orbit_indices(&self, d: Dim) -> impl Iterator<Item = usize> + '_ {
+        let i = d.index();
         (0..self.dimension()).filter(move |&j| j + 2 <= i || j >= i + 2)
     }
 
-    pub fn orbit_indices(&self, i: usize) -> Vec<usize> {
+    pub fn orbit_indices(&self, d: Dim) -> Vec<usize> {
+        let i = d.index();
         (0..self.dimension()).filter(|&idx| idx != i).collect()
+    }
+
+    pub fn add_vertex(&mut self, vertex: VertexAttr<P::V>) -> VertexKey {
+        let dart = vertex.dart;
+        let key = self.vertices.insert(vertex);
+        self.dart_to_vertex.insert(dart, key);
+        key
+    }
+    pub fn vertex(&self, key: VertexKey) -> Option<Vertex<'_, P>> {
+        self.vertices
+            .get(key)
+            .map(|attr| Vertex::new(self, attr.dart))
+    }
+
+    pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
+        let dart = edge.dart;
+        let key = self.edges.insert(edge);
+        self.dart_to_edge.insert(dart, key);
+        key
+    }
+
+    pub fn edge(&self, key: EdgeKey) -> Option<Edge<'_, P>> {
+        self.edges
+            .get(key)
+            .map(|attr| Edge::new(self, attr.dart))
     }
 
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceId {
@@ -222,12 +255,13 @@ impl<P: Payload> GMap<P> {
     }
 
     /// Algorithm 19 of the book
-    fn is_sewable(&self, d0: Dart, d1: Dart, i: usize) -> Option<SewableDarts> {
-        if i >= self.dimension() || d0 == d1 || !self.is_free(d0, i) || !self.is_free(d1, i) {
+    fn is_sewable(&self, d0: Dart, d1: Dart, d: Dim) -> Option<SewableDarts> {
+        let i = d.index();
+        if i >= self.dimension() || d0 == d1 || !self.is_free(d0, d) || !self.is_free(d1, d) {
             return None;
         }
 
-        let inv: Vec<usize> = self.sewing_orbit_indices(i).collect();
+        let inv: Vec<usize> = self.sewing_orbit_indices(d).collect();
         let mut d0_iterator = self.orbit(d0, inv.clone());
         let mut d1_iterator = self.orbit(d1, inv.clone());
         let mut mapping: HashMap<Dart, Dart> = HashMap::new();
@@ -332,13 +366,13 @@ impl<P: Payload> GMap<P> {
     }
 
     /// Algorithm 10: iterate one dart per `i`-cell adjacent to the `i`-cell of `dart`.
-    pub fn adjacent_cells(&self, dart: Dart, i: usize) -> impl Iterator<Item = Dart> + '_ {
-        let orbit_indices = self.orbit_indices(i);
+    pub fn adjacent_cells(&self, dart: Dart, d: Dim) -> impl Iterator<Item = Dart> + '_ {
+        let orbit_indices = self.orbit_indices(d);
         let mut marked = vec![false; self.dart_count()];
         let mut i_orbit = self.orbit(dart, orbit_indices.clone());
         std::iter::from_fn(move || {
             for e in i_orbit.by_ref() {
-                let neighbor = self.alpha(i, e);
+                let neighbor = self.alpha(d, e);
                 if marked[neighbor.id()] {
                     continue;
                 }
@@ -349,26 +383,32 @@ impl<P: Payload> GMap<P> {
         })
     }
 
-    fn apply_sew(&mut self, darts: SewableDarts, i: usize) {
+    fn apply_sew(&mut self, darts: SewableDarts, d: Dim) {
+        let i = d.index();
         for (d0, d1) in darts.mapping {
-            self.alphas[i][d0.id()] = d1;
-            self.alphas[i][d1.id()] = d0;
+            self.sew_unchecked(d, d0, d1);
         }
     }
 
     /// i-sew `d0` and `d1`. Fails if the configuration is not sewable
     /// (same dart, already i-sewn, or orbits not compatible).
-    pub fn sew(&mut self, i: usize, d0: Dart, d1: Dart) -> Result<(), &'static str> {
-        match self.is_sewable(d0, d1, i) {
+    pub fn sew(&mut self, d: Dim, d0: Dart, d1: Dart) -> Result<(), &'static str> {
+        match self.is_sewable(d0, d1, d) {
             Some(sd) => {
-                self.apply_sew(sd, i);
+                self.apply_sew(sd, d);
                 Ok(())
             }
             None => Err("darts are not i-sewable"),
         }
     }
+    pub(crate) fn sew_unchecked(&mut self, d: Dim, d0: Dart, d1: Dart) {
+        let i = d.index();
+        self.alphas[i][d0.id()] = d1;
+        self.alphas[i][d1.id()] = d0;
+    }
 
-    fn unsew(&mut self, dart: Dart, i: usize) {
+    fn unsew(&mut self, dart: Dart, d: Dim) {
+        let i = d.index();
         let a_i = self.alphas[i][dart.id()];
         self.alphas[i][a_i.id()] = a_i;
         self.alphas[i][dart.id()] = dart;
@@ -391,26 +431,6 @@ impl<P: Payload> GMap<P> {
     {
         let repr = self.cell_representative(dart, D::DIM);
         self.get_mut(repr)
-    }
-
-    /// Like [`Self::attribute_mut`], but when the `D`-cell has no attribute row
-    /// yet (typical right after [`Self::add_dart`]), inserts `create()` at the
-    /// cell representative and returns `&mut` to the stored value.
-    ///
-    /// Works for [`Cell0`] / [`Cell1`] / [`Cell2`]: the closure builds
-    /// [`VertexAttr`](super::attributes::VertexAttr),
-    /// [`EdgeAttr`](super::attributes::EdgeAttr), or a [`FaceId`](super::face::FaceId).
-    pub fn attribute_mut_or_insert_with<D: CellDim, F>(
-        &mut self,
-        dart: Dart,
-        create: F,
-    ) -> &mut <Self as AttributeStore<D>>::Attr
-    where
-        Self: AttributeStore<D>,
-        F: FnOnce() -> <Self as AttributeStore<D>>::Attr,
-    {
-        let repr = self.cell_representative(dart, D::DIM);
-        <Self as AttributeStore<D>>::get_mut_or_insert_with(self, repr, create)
     }
 }
 

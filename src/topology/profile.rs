@@ -1,8 +1,8 @@
 use super::closed::{Closeable, Closed};
-use super::edge::EdgeRef;
-use super::gmap::{Dart, GMap};
+use super::edge::Edge;
+use super::gmap::{Dart, Dim, GMap};
 use super::payload::{Payload, StandardPayload};
-use super::vertex::VertexRef;
+use super::vertex::Vertex;
 
 /// A profile is the 1-dimensional connected sub-structure traced by α₀ and α₁
 /// — a "wire" of alternating vertex/edge involutions. Equivalent to the
@@ -12,12 +12,12 @@ use super::vertex::VertexRef;
 /// Open profiles have at least one endpoint (a dart is 0- or 1-free).
 /// A closed profile is a cycle and is expressed at the type level as
 /// [`LoopRef`] (= `Closed<ProfileRef>`).
-pub struct ProfileRef<'a, P: Payload = StandardPayload> {
+pub struct Profile<'a, P: Payload = StandardPayload> {
     gmap: &'a GMap<P>,
     pub dart: Dart,
 }
 
-impl<'a, P: Payload> Clone for ProfileRef<'a, P> {
+impl<'a, P: Payload> Clone for Profile<'a, P> {
     fn clone(&self) -> Self {
         Self {
             gmap: self.gmap,
@@ -26,7 +26,7 @@ impl<'a, P: Payload> Clone for ProfileRef<'a, P> {
     }
 }
 
-impl<'a, P: Payload> ProfileRef<'a, P> {
+impl<'a, P: Payload> Profile<'a, P> {
     pub fn new(gmap: &'a GMap<P>, dart: Dart) -> Self {
         Self { gmap, dart }
     }
@@ -35,11 +35,11 @@ impl<'a, P: Payload> ProfileRef<'a, P> {
         LoopIterator::new(self.gmap, self.dart)
     }
 
-    pub fn start(&self) -> VertexRef<'a, P> {
+    pub fn start(&self) -> Vertex<'a, P> {
         self.vertices()[0].clone()
     }
 
-    pub fn end(&self) -> VertexRef<'a, P> {
+    pub fn end(&self) -> Vertex<'a, P> {
         if self.is_closed() {
             self.vertices()[0].clone()
         } else {
@@ -47,31 +47,31 @@ impl<'a, P: Payload> ProfileRef<'a, P> {
         }
     }
 
-    pub fn edges(&self) -> Vec<EdgeRef<'a, P>> {
+    pub fn edges(&self) -> Vec<Edge<'a, P>> {
         self.darts()
             .step_by(2)
-            .map(|d| EdgeRef::new(self.gmap, self.gmap.cell_representative(d, 1)))
+            .map(|d| Edge::new(self.gmap, self.gmap.cell_representative(d, Dim::One)))
             .collect()
     }
-    pub fn vertices(&self) -> Vec<VertexRef<'a, P>> {
+    pub fn vertices(&self) -> Vec<Vertex<'a, P>> {
         self.darts()
             .step_by(2)
-            .map(|d| VertexRef::new(self.gmap, self.gmap.cell_representative(d, 0)))
+            .map(|d| Vertex::new(self.gmap, self.gmap.cell_representative(d, Dim::Zero)))
             .collect()
     }
 }
 
-impl<'a, P: Payload> Closeable for ProfileRef<'a, P> {
+impl<'a, P: Payload> Closeable for Profile<'a, P> {
     /// A profile is closed when no dart in it is 0-free or 1-free.
     fn is_closed(&self) -> bool {
         self.darts()
-            .all(|d| !self.gmap.is_free(d, 0) && !self.gmap.is_free(d, 1))
+            .all(|d| !self.gmap.is_free(d, Dim::Zero) && !self.gmap.is_free(d, Dim::One))
     }
 }
 
 /// A closed profile — a wire with no endpoints. The closedness invariant is
 /// checked at construction via [`Closed::new`].
-pub type LoopRef<'a, P = StandardPayload> = Closed<ProfileRef<'a, P>>;
+pub type Loop<'a, P = StandardPayload> = Closed<Profile<'a, P>>;
 
 enum LoopInvolution {
     A0,
@@ -111,17 +111,17 @@ impl<'a, P: Payload> Iterator for LoopIterator<'a, P> {
         let current = match self.previous {
             None => self.start, // first call: start without moving
             Some(d) => {
-                let inv = match self.inv {
-                    LoopInvolution::A0 => 0,
-                    LoopInvolution::A1 => 1,
+                let dim = match self.inv {
+                    LoopInvolution::A0 => Dim::Zero,
+                    LoopInvolution::A1 => Dim::One,
                 };
                 self.inv = self.inv.next();
-                self.gmap.alpha(inv, d)
+                self.gmap.alpha(dim, d)
             }
         };
 
-        if self.gmap.is_free(current, 0)
-            || self.gmap.is_free(current, 1)
+        if self.gmap.is_free(current, Dim::Zero)
+            || self.gmap.is_free(current, Dim::One)
             || (self.previous.is_some() && current == self.start)
         {
             None
