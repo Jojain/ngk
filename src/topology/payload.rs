@@ -4,7 +4,8 @@
 ///
 /// `V` / `E` are carried in [`VertexAttr`](super::attributes::VertexAttr) /
 /// [`EdgeAttr`](super::attributes::EdgeAttr). `F` / `S` are carried in
-/// [`FaceAttr`](super::attributes::FaceAttr) and on [`Solid`](super::solid::Solid).
+/// [`FaceAttr`](super::attributes::FaceAttr) / [`SolidAttr`](super::attributes::SolidAttr)
+/// (stored in the map; [`Solid`](super::solid::Solid) is the view).
 pub trait Payload: Clone + 'static {
     type V: Clone + Default + 'static;
     type E: Clone + Default + 'static;

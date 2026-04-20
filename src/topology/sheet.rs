@@ -10,7 +10,7 @@ use super::payload::{Payload, StandardPayload};
 /// α₀, α₁, α₂). A closed sheet has no such free dart and is expressed at the
 /// type level as [`ShellRef`] (= `Closed<SheetRef>`).
 pub struct SheetRef<'a, P: Payload = StandardPayload> {
-    gmap: &'a GMap<'a, P>,
+    gmap: &'a GMap<P>,
     pub dart: Dart,
 }
 
@@ -24,7 +24,7 @@ impl<'a, P: Payload> Clone for SheetRef<'a, P> {
 }
 
 impl<'a, P: Payload> SheetRef<'a, P> {
-    pub fn new(gmap: &'a GMap<'a, P>, dart: Dart) -> Self {
+    pub fn new(gmap: &'a GMap<P>, dart: Dart) -> Self {
         Self { gmap, dart }
     }
 

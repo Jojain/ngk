@@ -5,12 +5,12 @@ use super::sheet::SheetRef;
 use super::vertex::VertexRef;
 
 pub struct EdgeRef<'a, P: Payload = StandardPayload> {
-    gmap: &'a GMap<'a, P>,
+    gmap: &'a GMap<P>,
     pub dart: Dart,
 }
 
 impl<'a, P: Payload> EdgeRef<'a, P> {
-    pub fn new(gmap: &'a GMap<'a, P>, dart: Dart) -> Self {
+    pub fn new(gmap: &'a GMap<P>, dart: Dart) -> Self {
         Self { gmap, dart }
     }
 

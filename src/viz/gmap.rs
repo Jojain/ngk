@@ -25,7 +25,7 @@ use crate::topology::payload::Payload;
 /// Kept small — just enough to separate α2-sibling darts in the neighbor face.
 const DART_OFFSET_RATIO: f64 = 0.05;
 
-pub fn scene_from_gmap<P: Payload>(g: &GMap<'_, P>) -> VizScene {
+pub fn scene_from_gmap<P: Payload>(g: &GMap<P>) -> VizScene {
     let mut scene = VizScene::new();
     emit_vertices(g, &mut scene);
 
@@ -38,7 +38,7 @@ pub fn scene_from_gmap<P: Payload>(g: &GMap<'_, P>) -> VizScene {
     scene
 }
 
-pub fn snapshot_from_gmap<P: Payload>(g: &GMap<'_, P>) -> GMapSnapshot {
+pub fn snapshot_from_gmap<P: Payload>(g: &GMap<P>) -> GMapSnapshot {
     let dim = g.dimension();
     let n = g.dart_count();
 
@@ -70,7 +70,7 @@ pub fn snapshot_from_gmap<P: Payload>(g: &GMap<'_, P>) -> GMapSnapshot {
 
 // ---------- internals ----------
 
-fn emit_vertices<P: Payload>(g: &GMap<'_, P>, scene: &mut VizScene) {
+fn emit_vertices<P: Payload>(g: &GMap<P>, scene: &mut VizScene) {
     for dart in representative_darts(g, 0) {
         if let Some(p) = g.attribute::<Cell0>(dart).map(|v| v.point) {
             scene.points.push(VizPoint {
@@ -85,7 +85,7 @@ fn emit_vertices<P: Payload>(g: &GMap<'_, P>, scene: &mut VizScene) {
 
 /// Computes an arrow per drawable dart. Returns them keyed by dart id so we
 /// can later resolve α-link endpoints without recomputing geometry.
-fn compute_arrows<P: Payload>(g: &GMap<'_, P>) -> Vec<(usize, VizArrow)> {
+fn compute_arrows<P: Payload>(g: &GMap<P>) -> Vec<(usize, VizArrow)> {
     let mut out = Vec::new();
     for id in 0..g.dart_count() {
         let d = Dart::new(id);
@@ -96,7 +96,7 @@ fn compute_arrows<P: Payload>(g: &GMap<'_, P>) -> Vec<(usize, VizArrow)> {
     out
 }
 
-fn dart_arrow<P: Payload>(g: &GMap<'_, P>, d: Dart) -> Option<VizArrow> {
+fn dart_arrow<P: Payload>(g: &GMap<P>, d: Dart) -> Option<VizArrow> {
     let v0 = g.attribute::<Cell0>(d).map(|v| v.point)?;
     let other = g.alpha(0, d);
     let v1 = g.attribute::<Cell0>(other).map(|v| v.point)?;
@@ -125,7 +125,7 @@ fn dart_arrow<P: Payload>(g: &GMap<'_, P>, d: Dart) -> Option<VizArrow> {
 /// pointing toward the face's centroid. For a boundary (α2-free) dart this
 /// still returns a sensible side so pairs of sewn darts separate cleanly.
 fn face_interior_direction<P: Payload>(
-    g: &GMap<'_, P>,
+    g: &GMap<P>,
     d: Dart,
     edge_hat: Vector3<f64>,
 ) -> Option<Vector3<f64>> {
@@ -148,7 +148,7 @@ fn face_interior_direction<P: Payload>(
 
 /// Centroid of the face 2-cell containing `d`: average of unique vertex
 /// positions in the ⟨α₀,α₁⟩ orbit.
-fn face_centroid<P: Payload>(g: &GMap<'_, P>, d: Dart) -> Option<Point3> {
+fn face_centroid<P: Payload>(g: &GMap<P>, d: Dart) -> Option<Point3> {
     if g.dimension() < 2 {
         return None;
     }
@@ -173,7 +173,7 @@ fn face_centroid<P: Payload>(g: &GMap<'_, P>, d: Dart) -> Option<Point3> {
 }
 
 fn emit_alpha_links<P: Payload>(
-    g: &GMap<'_, P>,
+    g: &GMap<P>,
     arrows: &[(usize, VizArrow)],
     scene: &mut VizScene,
 ) {
@@ -208,7 +208,7 @@ fn shaft_midpoint(a: &VizArrow) -> [f64; 3] {
     ]
 }
 
-fn representative_darts<P: Payload>(g: &GMap<'_, P>, cell_dim: usize) -> Vec<Dart> {
+fn representative_darts<P: Payload>(g: &GMap<P>, cell_dim: usize) -> Vec<Dart> {
     (0..g.dart_count())
         .map(Dart::new)
         .filter(|&d| g.cell_representative(d, cell_dim) == d)

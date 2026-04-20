@@ -13,7 +13,7 @@ use super::vertex::VertexRef;
 /// A closed profile is a cycle and is expressed at the type level as
 /// [`LoopRef`] (= `Closed<ProfileRef>`).
 pub struct ProfileRef<'a, P: Payload = StandardPayload> {
-    gmap: &'a GMap<'a, P>,
+    gmap: &'a GMap<P>,
     pub dart: Dart,
 }
 
@@ -27,7 +27,7 @@ impl<'a, P: Payload> Clone for ProfileRef<'a, P> {
 }
 
 impl<'a, P: Payload> ProfileRef<'a, P> {
-    pub fn new(gmap: &'a GMap<'a, P>, dart: Dart) -> Self {
+    pub fn new(gmap: &'a GMap<P>, dart: Dart) -> Self {
         Self { gmap, dart }
     }
 
@@ -90,11 +90,11 @@ struct LoopIterator<'a, P: Payload = StandardPayload> {
     start: Dart,
     previous: Option<Dart>,
     inv: LoopInvolution,
-    gmap: &'a GMap<'a, P>,
+    gmap: &'a GMap<P>,
 }
 
 impl<'a, P: Payload> LoopIterator<'a, P> {
-    pub fn new(gmap: &'a GMap<'a, P>, start: Dart) -> Self {
+    pub fn new(gmap: &'a GMap<P>, start: Dart) -> Self {
         Self {
             start,
             previous: None,

@@ -11,7 +11,7 @@ use super::vertex::VertexRef;
 /// Domain-level [`Face`]s are built on top of facets: a face is (one side of)
 /// a facet plus its boundary loops.
 pub struct FacetRef<'a, P: Payload = StandardPayload> {
-    gmap: &'a GMap<'a, P>,
+    gmap: &'a GMap<P>,
     pub dart: Dart,
 }
 
@@ -25,7 +25,7 @@ impl<'a, P: Payload> Clone for FacetRef<'a, P> {
 }
 
 impl<'a, P: Payload> FacetRef<'a, P> {
-    pub fn new(gmap: &'a GMap<'a, P>, dart: Dart) -> Self {
+    pub fn new(gmap: &'a GMap<P>, dart: Dart) -> Self {
         Self { gmap, dart }
     }
 
@@ -48,11 +48,9 @@ impl<'a, P: Payload> FacetRef<'a, P> {
             .collect()
     }
 
-    pub fn face(&self) -> Option<&Face<'a, P>> {
-        if let Some(id) = self.gmap.attribute::<Cell2>(self.dart) {
-            self.gmap.face(*id)
-        } else {
-            None
-        }
+    pub fn face(&self) -> Option<Face<'a, P>> {
+        self.gmap
+            .attribute::<Cell2>(self.dart)
+            .and_then(|id| self.gmap.face(*id))
     }
 }

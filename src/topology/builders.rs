@@ -5,7 +5,7 @@
 use crate::StandardPayload;
 use crate::topology::gmap::{Dart, GMap};
 
-pub fn make_polygon(sides_count: usize) -> GMap<'static, StandardPayload> {
+pub fn make_polygon(sides_count: usize) -> GMap<StandardPayload> {
     let n = sides_count;
     let mut g = GMap::<StandardPayload>::new();
     let darts: Vec<Dart> = (0..2 * n).map(|_| g.add_dart()).collect();
@@ -23,7 +23,7 @@ pub fn make_polygon(sides_count: usize) -> GMap<'static, StandardPayload> {
     g
 }
 
-pub fn make_cube() -> GMap<'static, StandardPayload> {
+pub fn make_cube() -> GMap<StandardPayload> {
     let mut cube = GMap::<StandardPayload>::new();
     let f1 = make_polygon(4);
     let f2 = make_polygon(4);

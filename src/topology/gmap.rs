@@ -2,38 +2,17 @@ use std::collections::{HashMap, VecDeque};
 
 use slotmap::SlotMap;
 
-use super::attributes::{EdgeAttr, VertexAttr};
+use super::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
 use super::face::{Face, FaceId};
 use super::payload::{Payload, StandardPayload};
 use super::solid::{Solid, SolidId};
+
+pub use super::dart::{Dart, IsolatedDart};
 
 type Dim = usize;
 
 /// Number of involutions α₀…α₃ in a 3-gmap (four involutions).
 pub const GMAP_INVOLUTION_COUNT: usize = 4;
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct Dart(usize);
-
-impl Dart {
-    pub fn new(id: usize) -> Self {
-        Self(id)
-    }
-    pub fn id(&self) -> usize {
-        self.0
-    }
-}
-
-pub struct IsolatedDart(Dart);
-
-impl IsolatedDart {
-    pub fn new(dart: Dart) -> Self {
-        Self(dart)
-    }
-    pub fn id(&self) -> usize {
-        self.0.id()
-    }
-}
 pub struct SewableDarts {
     mapping: HashMap<Dart, Dart>,
 }
@@ -73,7 +52,7 @@ pub trait AttributeStore<D: CellDim> {
     ) -> &mut Self::Attr;
 }
 
-impl<'a, P: Payload> AttributeStore<Cell0> for GMap<'a, P> {
+impl<P: Payload> AttributeStore<Cell0> for GMap<P> {
     type Attr = VertexAttr<P::V>;
     fn get(&self, repr: Dart) -> Option<&VertexAttr<P::V>> {
         self.vertices.get(&repr)
@@ -89,7 +68,7 @@ impl<'a, P: Payload> AttributeStore<Cell0> for GMap<'a, P> {
         self.vertices.entry(repr).or_insert_with(create)
     }
 }
-impl<'a, P: Payload> AttributeStore<Cell1> for GMap<'a, P> {
+impl<P: Payload> AttributeStore<Cell1> for GMap<P> {
     type Attr = EdgeAttr<P::E>;
     fn get(&self, repr: Dart) -> Option<&EdgeAttr<P::E>> {
         self.edges.get(&repr)
@@ -105,7 +84,7 @@ impl<'a, P: Payload> AttributeStore<Cell1> for GMap<'a, P> {
         self.edges.entry(repr).or_insert_with(create)
     }
 }
-impl<'a, P: Payload> AttributeStore<Cell2> for GMap<'a, P> {
+impl<P: Payload> AttributeStore<Cell2> for GMap<P> {
     type Attr = FaceId;
     fn get(&self, repr: Dart) -> Option<&FaceId> {
         self.facets.get(&repr)
@@ -122,17 +101,17 @@ impl<'a, P: Payload> AttributeStore<Cell2> for GMap<'a, P> {
     }
 }
 
-pub struct GMap<'a, P: Payload = StandardPayload> {
+pub struct GMap<P: Payload = StandardPayload> {
     alphas: [Vec<Dart>; GMAP_INVOLUTION_COUNT],
     free_slots: VecDeque<usize>,
     vertices: HashMap<Dart, VertexAttr<P::V>>,
     edges: HashMap<Dart, EdgeAttr<P::E>>,
     facets: HashMap<Dart, FaceId>,
-    faces: SlotMap<FaceId, Face<'a, P>>,
-    solids: SlotMap<SolidId, Solid<'a, P>>,
+    faces: SlotMap<FaceId, FaceAttr<P::F>>,
+    solids: SlotMap<SolidId, SolidAttr<P::S>>,
 }
 
-impl<'a, P: Payload> Clone for GMap<'a, P> {
+impl<P: Payload> Clone for GMap<P> {
     fn clone(&self) -> Self {
         Self {
             alphas: self.alphas.clone(),
@@ -146,7 +125,7 @@ impl<'a, P: Payload> Clone for GMap<'a, P> {
     }
 }
 
-impl<'a, P: Payload> GMap<'a, P> {
+impl<P: Payload> GMap<P> {
     pub fn new() -> Self {
         let alphas = std::array::from_fn(|_| Vec::new());
         let free_slots = VecDeque::new();
@@ -216,20 +195,30 @@ impl<'a, P: Payload> GMap<'a, P> {
         (0..self.dimension()).filter(|&idx| idx != i).collect()
     }
 
-    pub fn add_face(&mut self, face: Face<'a, P>) -> FaceId {
+    pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceId {
         self.faces.insert(face)
     }
 
-    pub fn face(&self, face_id: FaceId) -> Option<&Face<'a, P>> {
+    /// Borrow stored domain face payload (surface, data, loop darts).
+    pub fn face_attr(&self, face_id: FaceId) -> Option<&FaceAttr<P::F>> {
         self.faces.get(face_id)
     }
 
-    pub fn add_solid(&mut self, solid: Solid<'a, P>) -> SolidId {
+    /// View over a domain face in this map.
+    pub fn face(&self, face_id: FaceId) -> Option<Face<'_, P>> {
+        Face::view(self, face_id)
+    }
+
+    pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidId {
         self.solids.insert(solid)
     }
 
-    pub fn solid(&self, solid_id: SolidId) -> Option<&Solid<'a, P>> {
+    pub fn solid_attr(&self, solid_id: SolidId) -> Option<&SolidAttr<P::S>> {
         self.solids.get(solid_id)
+    }
+
+    pub fn solid(&self, solid_id: SolidId) -> Option<Solid<'_, P>> {
+        Solid::view(self, solid_id)
     }
 
     /// Algorithm 19 of the book
@@ -426,14 +415,14 @@ impl<'a, P: Payload> GMap<'a, P> {
 }
 
 pub struct OrbitIterator<'a, P: Payload> {
-    gmap: &'a GMap<'a, P>,
+    gmap: &'a GMap<P>,
     involutions: Vec<usize>,
     visited: Vec<bool>,
     queue: VecDeque<Dart>,
 }
 
 impl<'a, P: Payload> OrbitIterator<'a, P> {
-    pub fn new(gmap: &'a GMap<'a, P>, start: Dart, involutions: Vec<usize>) -> Self {
+    pub fn new(gmap: &'a GMap<P>, start: Dart, involutions: Vec<usize>) -> Self {
         let dart_count = gmap.dart_count();
         let mut visited = vec![false; dart_count];
         let mut queue = VecDeque::new();

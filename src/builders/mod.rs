@@ -14,7 +14,7 @@ use crate::topology::payload::Payload;
 /// returned with free boundary, ready to be stitched to neighbors.
 ///
 /// Returns a dart on the outer ⟨α₀, α₁⟩ loop (same as the first corner dart).
-pub fn add_polygon<'a, P: Payload>(g: &mut GMap<'a, P>, corners: &[Point3]) -> Dart {
+pub fn add_polygon<P: Payload>(g: &mut GMap<P>, corners: &[Point3]) -> Dart {
     assert!(
         corners.len() >= 3,
         "add_polygon requires at least 3 corners, got {}",

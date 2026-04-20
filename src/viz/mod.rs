@@ -124,7 +124,7 @@ pub struct ScriptResult {
 
 impl ScriptResult {
     pub fn from_gmap<P: crate::topology::payload::Payload>(
-        g: &crate::topology::gmap::GMap<'_, P>,
+        g: &crate::topology::gmap::GMap<P>,
     ) -> Self {
         Self {
             scene: scene_from_gmap(g),
