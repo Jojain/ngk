@@ -40,7 +40,9 @@ impl<'a, P: Payload> Closeable for Sheet<'a, P> {
     /// A sheet is closed when no dart in it is 0-, 1-, or 2-free.
     fn is_closed(&self) -> bool {
         self.darts().all(|d| {
-            !self.gmap.is_free(d, Dim::Zero) && !self.gmap.is_free(d, Dim::One) && !self.gmap.is_free(d, Dim::Two)
+            !self.gmap.is_free(d, Dim::Zero)
+                && !self.gmap.is_free(d, Dim::One)
+                && !self.gmap.is_free(d, Dim::Two)
         })
     }
 }

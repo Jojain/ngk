@@ -52,11 +52,8 @@ impl<'a, P: Payload> Facet<'a, P> {
     }
 
     pub fn face(&self) -> Option<Face<'a, P>> {
-        self.gmap.attribute::<Cell2>(self.dart).and_then(|key| {
-            self.gmap
-                .faces
-                .get(*key)
-                .map(|attr| attr.face(self.gmap))
-        })
+        self.gmap
+            .attribute::<Cell2>(self.dart)
+            .and_then(|key| self.gmap.faces.get(*key).map(|attr| attr.face(self.gmap)))
     }
 }

@@ -49,12 +49,9 @@ fn insert_knot_preserves_shape() {
         Point3::new(2.0, 0.0, 0.0),
     ];
     let cp = ControlPolygon::from_cartesian(pts, &[1.0, 1.0, 1.0, 1.0]).unwrap();
-    let mut curve =
-        NurbsCurve::with_uniform_knots(Degree::new(3).unwrap(), cp).unwrap();
+    let mut curve = NurbsCurve::with_uniform_knots(Degree::new(3).unwrap(), cp).unwrap();
 
-    let orig_samples: Vec<_> = (0..=20)
-        .map(|i| curve.point_at(i as f64 / 20.0))
-        .collect();
+    let orig_samples: Vec<_> = (0..=20).map(|i| curve.point_at(i as f64 / 20.0)).collect();
     let orig_cp_count = curve.control_points().len();
     let orig_knot_count = curve.knots().len();
 
@@ -81,15 +78,12 @@ fn insert_knot_quadratic_s1() {
         Point3::new(3.0, 0.0, 0.0),
     ];
     let cp = ControlPolygon::from_cartesian(pts, &[1.0, 1.0, 1.0, 1.0]).unwrap();
-    let mut curve =
-        NurbsCurve::with_uniform_knots(Degree::new(2).unwrap(), cp).unwrap();
+    let mut curve = NurbsCurve::with_uniform_knots(Degree::new(2).unwrap(), cp).unwrap();
 
     assert_eq!(curve.knots().len(), 7);
     assert_eq!(curve.control_points().len(), 4);
 
-    let orig_samples: Vec<_> = (0..=20)
-        .map(|i| curve.point_at(i as f64 / 20.0))
-        .collect();
+    let orig_samples: Vec<_> = (0..=20).map(|i| curve.point_at(i as f64 / 20.0)).collect();
 
     curve.insert_knot(0.5);
 

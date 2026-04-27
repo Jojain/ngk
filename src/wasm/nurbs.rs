@@ -2,11 +2,11 @@ use js_sys::Float64Array;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use crate::geometry::nurbs::{
-    ControlNet, ControlPolygon, Degree, KnotVector, NurbsCurve, NurbsSurface,
-};
 use crate::geometry::nurbs::tessellate::{
     sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
+};
+use crate::geometry::nurbs::{
+    ControlNet, ControlPolygon, Degree, KnotVector, NurbsCurve, NurbsSurface,
 };
 use crate::geometry::utils::Point3;
 
@@ -16,7 +16,9 @@ fn js_err(e: impl ToString) -> JsValue {
 
 fn points_from_flat(xyz: &[f64]) -> Result<Vec<Point3>, JsValue> {
     if xyz.len() % 3 != 0 {
-        return Err(JsValue::from_str("xyz array length must be a multiple of 3"));
+        return Err(JsValue::from_str(
+            "xyz array length must be a multiple of 3",
+        ));
     }
     Ok(xyz
         .chunks_exact(3)
@@ -95,7 +97,11 @@ impl WasmNurbsCurve {
     /// Adaptive tessellation controlled by chord-midpoint `tolerance`.
     #[wasm_bindgen(js_name = tessellateAdaptive)]
     pub fn tessellate_adaptive(&self, tolerance: f64, max_depth: usize) -> Float64Array {
-        flat_from_points(&tessellate_curve_adaptive(&self.inner, tolerance, max_depth))
+        flat_from_points(&tessellate_curve_adaptive(
+            &self.inner,
+            tolerance,
+            max_depth,
+        ))
     }
 
     #[wasm_bindgen(js_name = insertKnot)]

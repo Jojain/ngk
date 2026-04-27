@@ -75,11 +75,7 @@ pub fn basis_function_derivatives(
                 d += a[s2][0] * ndu[rk as usize][pk as usize];
             }
             let j1 = if rk >= -1 { 1 } else { (-rk) as usize };
-            let j2 = if (r as isize) - 1 <= pk {
-                k - 1
-            } else {
-                p - r
-            };
+            let j2 = if (r as isize) - 1 <= pk { k - 1 } else { p - r };
             for j in j1..=j2 {
                 let idx = (rk + j as isize) as usize;
                 a[s2][j] = (a[s1][j] - a[s1][j - 1]) / ndu[(pk + 1) as usize][idx];

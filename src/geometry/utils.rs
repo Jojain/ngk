@@ -1,6 +1,6 @@
-use nalgebra::{UnitVector2, UnitVector3, Vector2, Vector3};
 use nalgebra::Point2 as NPoint2;
 use nalgebra::Point3 as NPoint3;
+use nalgebra::{UnitVector2, UnitVector3, Vector2, Vector3};
 
 pub type Point2 = NPoint2<f64>;
 pub type Point3 = NPoint3<f64>;

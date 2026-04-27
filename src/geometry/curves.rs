@@ -5,7 +5,7 @@ use super::surfaces::Plane;
 use super::utils::{IntoUnit3, Point3};
 use nalgebra::{Rotation3, UnitVector3};
 
-pub enum Periodicity{
+pub enum Periodicity {
     None,
     Periodic(f64),
 }
@@ -93,13 +93,13 @@ impl Circle {
     }
 
     pub fn point_at(&self, t: f64) -> Point3 {
-        let rot = Rotation3::from_axis_angle(&self.plane.normal, t);
-        let vec = rot * self.plane.x_dir;
-        self.plane.origin + self.radius * *vec
+        let rot = Rotation3::from_axis_angle(&self.plane.normal(), t);
+        let vec = rot * self.plane.x_dir();
+        self.plane.origin() + self.radius * *vec
     }
     pub fn param_at(&self, point: Point3) -> f64 {
-        let t =
-            (point - self.plane.origin).dot(&self.plane.normal) / self.plane.normal.norm_squared();
+        let normal = self.plane.normal();
+        let t = (point - self.plane.origin()).dot(&normal) / normal.norm_squared();
         t.clamp(0.0, 1.0)
     }
     pub fn length(&self, t0: f64, t1: f64) -> f64 {

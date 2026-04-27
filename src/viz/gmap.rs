@@ -38,7 +38,6 @@ pub fn scene_from_gmap<P: Payload>(g: &GMap<P>) -> VizScene {
     scene
 }
 
-
 // ---------- internals ----------
 
 fn emit_vertices<P: Payload>(g: &GMap<P>, scene: &mut VizScene) {
@@ -143,11 +142,7 @@ fn face_centroid<P: Payload>(g: &GMap<P>, d: Dart) -> Option<Point3> {
     }
 }
 
-fn emit_alpha_links<P: Payload>(
-    g: &GMap<P>,
-    arrows: &[(usize, VizArrow)],
-    scene: &mut VizScene,
-) {
+fn emit_alpha_links<P: Payload>(g: &GMap<P>, arrows: &[(usize, VizArrow)], scene: &mut VizScene) {
     use std::collections::HashMap;
     let by_id: HashMap<usize, &VizArrow> = arrows.iter().map(|(i, a)| (*i, a)).collect();
 
