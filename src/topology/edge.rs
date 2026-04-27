@@ -1,4 +1,4 @@
-use crate::geometry::curves::Curve;
+use crate::geometry::Curve;
 use crate::topology::gmap::{Cell1, Dim};
 
 use super::facet::Facet;

@@ -1,6 +1,6 @@
 use super::curve::NurbsCurve;
 use super::surface::NurbsSurface;
-use crate::geometry::utils::Point3;
+use crate::geometry::Point3;
 
 /// A triangle mesh suitable for direct rendering. Indices reference `positions`
 /// (and, index-aligned, `normals`).

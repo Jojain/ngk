@@ -1,6 +1,5 @@
 use ngk::builders::{add_edge, add_polygon};
-use ngk::geometry::curves::{Curve, Line};
-use ngk::geometry::utils::Point3;
+use ngk::geometry::{Curve, Line, Point3};
 use ngk::scripts;
 use ngk::topology::StandardPayload;
 use ngk::topology::gmap::GMap;

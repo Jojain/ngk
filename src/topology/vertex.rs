@@ -1,4 +1,4 @@
-use crate::geometry::utils::Point3;
+use crate::geometry::Point3;
 use crate::topology::gmap::{Cell0, Dim};
 use crate::topology::shape_keys::VertexKey;
 

@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use nalgebra::Vector3;
 
 use super::{GMapSnapshot, VertexPointEntry, VizArrow, VizLink, VizPoint, VizScene};
-use crate::geometry::utils::Point3;
+use crate::geometry::Point3;
 use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 

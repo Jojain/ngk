@@ -2,8 +2,7 @@
 //! itself so the combinatorial core stays small; anything opinionated (how to
 //! build a polygon, how to stitch cells, etc.) lives here.
 
-use crate::geometry::curves::Curve;
-use crate::geometry::utils::Point3;
+use crate::geometry::{Curve, Point3};
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
 use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
 use crate::topology::payload::Payload;

@@ -1,6 +1,5 @@
 use nalgebra::Vector3;
-use ngk::geometry::nurbs::{ControlPolygon, Degree, HPoint, KnotVector, NurbsCurve};
-use ngk::geometry::utils::Point3;
+use ngk::geometry::{ControlPolygon, Degree, HPoint, KnotVector, NurbsCurve, Point3};
 
 fn approx_eq(a: f64, b: f64, tol: f64) -> bool {
     (a - b).abs() <= tol

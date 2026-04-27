@@ -2,13 +2,10 @@ use js_sys::Float64Array;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use crate::geometry::nurbs::tessellate::{
+use crate::geometry::{
+    ControlNet, ControlPolygon, Degree, KnotVector, NurbsCurve, NurbsSurface, Point3,
     sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
 };
-use crate::geometry::nurbs::{
-    ControlNet, ControlPolygon, Degree, KnotVector, NurbsCurve, NurbsSurface,
-};
-use crate::geometry::utils::Point3;
 
 fn js_err(e: impl ToString) -> JsValue {
     JsValue::from_str(&e.to_string())

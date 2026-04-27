@@ -1,6 +1,7 @@
-use crate::geometry::curves::Curve;
-use crate::geometry::surfaces::Surface;
-use crate::geometry::utils::Point3;
+use std::collections::HashMap;
+
+use crate::geometry::dim2::curves::Curve2;
+use crate::geometry::{Curve, Point3, Surface};
 use crate::topology::dart::Dart;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -50,6 +51,7 @@ pub struct FaceAttr<T> {
     pub data: T,
     pub outer_loop: Dart,
     pub inner_loops: Vec<Dart>,
+    pub pcurves: HashMap<Dart, Curve2>,
 }
 
 impl<T> FaceAttr<T> {
@@ -59,8 +61,26 @@ impl<T> FaceAttr<T> {
             data,
             outer_loop,
             inner_loops,
+            pcurves: HashMap::new(),
         }
     }
+
+    pub fn with_pcurves(
+        surface: Surface,
+        data: T,
+        outer_loop: Dart,
+        inner_loops: Vec<Dart>,
+        pcurves: HashMap<Dart, Curve2>,
+    ) -> Self {
+        Self {
+            surface,
+            data,
+            outer_loop,
+            inner_loops,
+            pcurves,
+        }
+    }
+
     pub fn face<'a, P: Payload<F = T>>(&'a self, gmap: &'a GMap<P>) -> Face<'a, P> {
         Face::new(gmap, self)
     }

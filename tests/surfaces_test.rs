@@ -1,6 +1,5 @@
 use nalgebra::Vector3;
-use ngk::geometry::surfaces::{Cylinder, Plane, Surface};
-use ngk::geometry::utils::Point3;
+use ngk::geometry::{Cylinder, Plane, Point3, Surface};
 
 fn assert_point_near(actual: Point3, expected: Point3) {
     let err = (actual - expected).norm();

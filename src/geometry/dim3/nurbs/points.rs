@@ -1,4 +1,4 @@
-use crate::geometry::utils::Point3;
+use crate::geometry::Point3;
 use nalgebra::Point4;
 
 use super::error::NurbsError;

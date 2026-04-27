@@ -5,7 +5,7 @@ use super::degree::Degree;
 use super::error::NurbsError;
 use super::knots::KnotVector;
 use super::points::{ControlPolygon, HPoint};
-use crate::geometry::utils::Point3;
+use crate::geometry::Point3;
 
 #[derive(Debug, Clone)]
 pub struct NurbsCurve {

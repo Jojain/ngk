@@ -1,8 +1,10 @@
 use super::closed::Closed;
+use super::gmap::Dart;
 use super::gmap::GMap;
 use super::payload::{Payload, StandardPayload};
 use super::profile::{Loop, Profile};
-use crate::geometry::surfaces::Surface;
+use crate::geometry::dim2::curves::Curve2;
+use crate::geometry::Surface;
 use crate::topology::attributes::FaceAttr;
 
 pub struct Face<'g, P: Payload = StandardPayload> {
@@ -43,5 +45,9 @@ impl<'g, P: Payload> Face<'g, P> {
 
     pub fn data(&self) -> &P::F {
         &self.attr.data
+    }
+
+    pub fn pcurve(&self, dart: Dart) -> Option<&Curve2> {
+        self.attr.pcurves.get(&dart)
     }
 }

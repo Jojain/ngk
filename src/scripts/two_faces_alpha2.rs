@@ -15,7 +15,7 @@
 //! - α2-sew Square A's edge 1 with Square B's edge 3.
 
 use crate::builders::add_polygon;
-use crate::geometry::utils::Point3;
+use crate::geometry::Point3;
 use crate::topology::StandardPayload;
 use crate::topology::gmap::{Dim, GMap};
 use crate::viz::ScriptResult;
