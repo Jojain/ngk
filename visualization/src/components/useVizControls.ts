@@ -5,7 +5,8 @@ import { useControls, folder } from "leva";
  * Shared leva controls for any experiment that renders a `VizScene`.
  *
  * Returns the props you can spread onto `<VizSceneView />`. Two folders:
- * - **BRep**: per-entity-type toggles (vertices, edges, faces).
+ * - **BRep**: toggles, sizes, colors, and whether the face color picker
+ *   overrides per-face colors from the scene.
  * - **GMap**: dart visibility, dart labels, per-involution α-link toggles.
  *
  * Override defaults via `initial` for experiment-specific tuning.
@@ -14,6 +15,20 @@ export type VizControlsProps = {
   showVertices: boolean;
   showEdges: boolean;
   showFaces: boolean;
+  /** Sphere radius for vertex markers (world units). */
+  vertexSize: number;
+  /** Line width for BRep edge polylines (`@react-three/drei` Line). */
+  edgeWidth: number;
+  /** Default BRep colors when the scene entity omits `color`. */
+  vertexColor: string;
+  edgeColor: string;
+  faceColor: string;
+  /**
+   * When true (default), every face uses the panel `faceColor`. Turn off to
+   * use per-face `color` from the scene when set (`VizHints`), with `faceColor`
+   * as fallback only.
+   */
+  viewerFaceColorOverridesScene: boolean;
   showDarts: boolean;
   showDartLabels: boolean;
   visibleAlphas: Set<number>;
@@ -24,6 +39,12 @@ export type VizControlsInitial = Partial<{
   showVertices: boolean;
   showEdges: boolean;
   showFaces: boolean;
+  vertexSize: number;
+  edgeWidth: number;
+  vertexColor: string;
+  edgeColor: string;
+  faceColor: string;
+  viewerFaceColorOverridesScene: boolean;
   showDarts: boolean;
   showDartLabels: boolean;
   showAlpha0: boolean;
@@ -42,6 +63,36 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
       showVertices: { value: initial.showVertices ?? true, label: "vertices" },
       showEdges: { value: initial.showEdges ?? true, label: "edges" },
       showFaces: { value: initial.showFaces ?? true, label: "faces" },
+      vertexSize: {
+        value: initial.vertexSize ?? 0.06,
+        min: 0.01,
+        max: 0.3,
+        step: 0.005,
+        label: "vertex size",
+      },
+      edgeWidth: {
+        value: initial.edgeWidth ?? 4,
+        min: 0.5,
+        max: 16,
+        step: 0.25,
+        label: "edge width",
+      },
+      vertexColor: {
+        value: initial.vertexColor ?? "#ffc857",
+        label: "vertex color",
+      },
+      edgeColor: {
+        value: initial.edgeColor ?? "#9aa0a6",
+        label: "edge color",
+      },
+      faceColor: {
+        value: initial.faceColor ?? "#4a7bc8",
+        label: "face color",
+      },
+      viewerFaceColorOverridesScene: {
+        value: initial.viewerFaceColorOverridesScene ?? true,
+        label: "face color overrides scene",
+      },
     }),
     GMap: folder({
       showDarts: { value: initial.showDarts ?? true, label: "darts" },
@@ -93,6 +144,12 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
     showVertices: values.showVertices,
     showEdges: values.showEdges,
     showFaces: values.showFaces,
+    vertexSize: values.vertexSize,
+    edgeWidth: values.edgeWidth,
+    vertexColor: values.vertexColor,
+    edgeColor: values.edgeColor,
+    faceColor: values.faceColor,
+    viewerFaceColorOverridesScene: values.viewerFaceColorOverridesScene,
     showDarts: values.showDarts,
     showDartLabels: values.showDartLabels,
     visibleAlphas,

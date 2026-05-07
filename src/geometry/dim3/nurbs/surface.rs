@@ -1,4 +1,4 @@
-use nalgebra::{Point4, Vector3, Vector4};
+use nalgebra::{Point4, UnitVector3, Vector3, Vector4};
 
 use super::basis::{basis_function_derivatives, basis_functions};
 use super::degree::Degree;
@@ -111,9 +111,9 @@ impl NurbsSurface {
 
     /// Unit surface normal at `(u, v)` using first partial derivatives in
     /// homogeneous space, then the quotient rule for the w-divide.
-    pub fn normal_at(&self, u: f64, v: f64) -> Vector3<f64> {
+    pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         let (du, dv) = self.derivatives_uv(u, v);
-        du.cross(&dv).normalize()
+        UnitVector3::new_normalize(du.cross(&dv))
     }
 
     /// Returns `(dS/du, dS/dv)` in cartesian space.

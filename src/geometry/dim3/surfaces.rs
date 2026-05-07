@@ -18,6 +18,13 @@ impl Surface {
             Surface::Nurbs(s) => s.point_at(u, v),
         }
     }
+    pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
+        match self {
+            Surface::Plane(p) => p.normal(),
+            Surface::Cylinder(c) => c.normal_at(u, v),
+            Surface::Nurbs(s) => s.normal_at(u, v),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -77,6 +84,12 @@ impl Cylinder {
         let radial_dir = rot * self.x_dir();
 
         self.origin() + self.radius * *radial_dir + v * *self.axis()
+    }
+
+    pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
+        let origin = self.origin();
+        let projected = self.point_at(u, 0.0);
+        (projected - origin).normalized()
     }
 
     pub fn origin(&self) -> Point3 {

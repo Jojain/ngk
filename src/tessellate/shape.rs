@@ -41,12 +41,13 @@ pub fn tessellate_edge<P: Payload>(
     opts: TessellateOpts,
 ) -> Option<Polyline3> {
     let attr = g.edge(key)?;
-    let dart = attr.dart;
-    let other = g.alpha(Dim::Zero, dart);
-    let p0 = g.attribute::<Cell0>(dart).map(|v| v.point)?;
-    let p1 = g.attribute::<Cell0>(other).map(|v| v.point)?;
-    let curve = &g.attribute::<Cell1>(dart)?.curve;
-    let t0 = curve.param_at(p0);
-    let t1 = curve.param_at(p1);
+    let edge = attr.edge(g);
+    let v1 = edge.start();
+    let v2 = edge.end();
+    let p1 = v1.point()?;
+    let p2 = v2.point()?;
+    let curve = &edge.curve()?;
+    let t0 = curve.param_at(*p1);
+    let t1 = curve.param_at(*p2);
     Some(tessellate_curve(curve, t0, t1, opts.curve))
 }

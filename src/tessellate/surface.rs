@@ -6,10 +6,8 @@
 //! for cylinder shortcuts and indirectly by anything that needs a quick patch
 //! preview.
 
-use nalgebra::{Rotation3, Vector3};
-
 use super::{IndexedMesh, SurfaceOpts};
-use crate::geometry::{Surface, dim3::surfaces::Cylinder};
+use crate::geometry::Surface;
 
 /// Uniformly sample `surface` over `(u_range, v_range)` into a
 /// `nu x nv` quad grid (= 2·nu·nv triangles). Triangles are wound CCW
@@ -33,7 +31,7 @@ pub fn tessellate_surface_patch(
             let tu = i as f64 / nu as f64;
             let u = lerp(u_range.0, u_range.1, tu);
             positions.push(surface.point_at(u, v));
-            normals.push(surface_normal_at(surface, u, v));
+            normals.push(surface.normal_at(u, v));
         }
     }
 
@@ -56,19 +54,6 @@ pub fn tessellate_surface_patch(
     }
 }
 
-/// Natural (unflipped) outward unit normal for `surface` at `(u, v)`.
-pub fn surface_normal_at(surface: &Surface, u: f64, v: f64) -> Vector3<f64> {
-    match surface {
-        Surface::Plane(p) => *p.normal(),
-        Surface::Cylinder(c) => cylinder_radial_dir(c, u),
-        Surface::Nurbs(n) => n.normal_at(u, v),
-    }
-}
-
-fn cylinder_radial_dir(c: &Cylinder, u: f64) -> Vector3<f64> {
-    let rot = Rotation3::from_axis_angle(&c.axis(), u);
-    *(rot * c.x_dir())
-}
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
