@@ -3,8 +3,8 @@ use super::gmap::Dart;
 use super::gmap::GMap;
 use super::payload::{Payload, StandardPayload};
 use super::profile::{Loop, Profile};
-use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::Surface;
+use crate::geometry::dim2::curves::Curve2;
 use crate::topology::attributes::FaceAttr;
 
 pub struct Face<'g, P: Payload = StandardPayload> {

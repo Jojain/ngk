@@ -30,6 +30,18 @@ impl Dim {
             Dim::Three => 3,
         }
     }
+
+    /// Convert an involution index `i ∈ {0,1,2,3}` back to a [`Dim`]. Panics
+    /// for values outside the `n-Gmap` involution range.
+    pub fn from_index(i: usize) -> Self {
+        match i {
+            0 => Dim::Zero,
+            1 => Dim::One,
+            2 => Dim::Two,
+            3 => Dim::Three,
+            _ => panic!("Dim::from_index: invalid index {i}"),
+        }
+    }
 }
 
 /// Number of involutions α₀…α₃ in a 3-gmap (four involutions).
@@ -213,6 +225,11 @@ impl<P: Payload> GMap<P> {
         self.vertices.get(key)
     }
 
+    /// Iterate every stored 0-cell attribute paired with its slotmap key.
+    pub fn iter_vertices(&self) -> impl Iterator<Item = (VertexKey, &VertexAttr<P::V>)> {
+        self.vertices.iter()
+    }
+
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
         let dart = edge.dart;
         let key = self.edges.insert(edge);
@@ -224,12 +241,22 @@ impl<P: Payload> GMap<P> {
         self.edges.get(key)
     }
 
+    /// Iterate every stored 1-cell attribute paired with its slotmap key.
+    pub fn iter_edges(&self) -> impl Iterator<Item = (EdgeKey, &EdgeAttr<P::E>)> {
+        self.edges.iter()
+    }
+
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
         self.faces.insert(face)
     }
 
     pub fn face(&self, key: FaceKey) -> Option<&FaceAttr<P::F>> {
         self.faces.get(key)
+    }
+
+    /// Iterate every stored 2-cell attribute paired with its slotmap key.
+    pub fn iter_faces(&self) -> impl Iterator<Item = (FaceKey, &FaceAttr<P::F>)> {
+        self.faces.iter()
     }
 
     pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidKey {

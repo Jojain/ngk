@@ -18,7 +18,7 @@ use crate::builders::add_polygon;
 use crate::geometry::Point3;
 use crate::topology::StandardPayload;
 use crate::topology::gmap::{Dim, GMap};
-use crate::viz::ScriptResult;
+use crate::viz::{ScriptResult, VizHints};
 
 pub fn run() -> Result<ScriptResult, String> {
     let mut g = GMap::<StandardPayload>::new();
@@ -45,5 +45,5 @@ pub fn run() -> Result<ScriptResult, String> {
     g.sew(Dim::Two, da, db)
         .map_err(|e| format!("a2 sew failed: {e}"))?;
 
-    Ok(ScriptResult::from_gmap(&g))
+    Ok(ScriptResult::from_gmap_with_hints(&g, &VizHints::new()))
 }

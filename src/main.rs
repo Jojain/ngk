@@ -17,10 +17,11 @@ fn script_handling(name: &str, result: &ScriptResult) {
         Ok(result) => {
             let s = &result.scene;
             println!(
-                "\n[{name}] scene: {} points, {} segments, {} arrows, {} α-links, {} labels",
-                s.points.len(),
-                s.segments.len(),
-                s.arrows.len(),
+                "\n[{name}] scene: {} vertices, {} edges, {} faces, {} darts, {} α-links, {} labels",
+                s.vertices.len(),
+                s.edges.len(),
+                s.faces.len(),
+                s.darts.len(),
                 s.alpha_links.len(),
                 s.labels.len(),
             );

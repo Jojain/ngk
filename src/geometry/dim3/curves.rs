@@ -73,11 +73,19 @@ impl Line {
     pub fn point_at(&self, t: f64) -> Point3 {
         self.start + (self.end - self.start) * t
     }
+    /// Inverse of [`Self::point_at`] — returns the `t ∈ [0, 1]` parameter
+    /// such that `point_at(t)` is the closest point on the line.
     pub fn param_at(&self, point: Point3) -> f64 {
-        (point - self.start).dot(&self.direction()) / self.direction().norm_squared()
+        let dir = self.end - self.start;
+        let len_sq = dir.norm_squared();
+        if len_sq < f64::EPSILON {
+            return 0.0;
+        }
+        (point - self.start).dot(&dir) / len_sq
     }
+    /// Arc length between `t0` and `t1` (in distance units).
     pub fn length(&self, t0: f64, t1: f64) -> f64 {
-        (t1 - t0).abs()
+        (t1 - t0).abs() * (self.end - self.start).norm()
     }
 }
 
@@ -97,16 +105,17 @@ impl Circle {
         let vec = rot * self.plane.x_dir();
         self.plane.origin() + self.radius * *vec
     }
+    /// Inverse of [`Self::point_at`]: returns the angle (in radians) of the
+    /// projection of `point` onto the circle's plane, measured from `x_dir`
+    /// counter-clockwise around `normal`. Range is `(-π, π]`.
     pub fn param_at(&self, point: Point3) -> f64 {
-        let normal = self.plane.normal();
-        let t = (point - self.plane.origin()).dot(&normal) / normal.norm_squared();
-        t.clamp(0.0, 1.0)
+        let v = point - self.plane.origin();
+        let x = v.dot(&self.plane.x_dir());
+        let y = v.dot(&self.plane.y_dir());
+        y.atan2(x)
     }
+    /// Arc length between `t0` and `t1` (in distance units).
     pub fn length(&self, t0: f64, t1: f64) -> f64 {
-        if t0 == t1 {
-            return TAU;
-        } else {
-            (t1 - t0).abs()
-        }
+        (t1 - t0).abs() * self.radius
     }
 }

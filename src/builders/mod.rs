@@ -2,11 +2,10 @@
 //! itself so the combinatorial core stays small; anything opinionated (how to
 //! build a polygon, how to stitch cells, etc.) lives here.
 
-use crate::geometry::{Curve, Point3};
+use crate::geometry::{Curve, Line, Point3};
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
-use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
+use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::payload::Payload;
-use crate::topology::shape::Shape;
 use crate::topology::shape_keys::EdgeKey;
 
 pub fn add_edge<P: Payload>(g: &mut GMap<P>, start: Point3, end: Point3, curve: Curve) -> EdgeKey {
@@ -21,8 +20,10 @@ pub fn add_edge<P: Payload>(g: &mut GMap<P>, start: Point3, end: Point3, curve: 
 
 /// Adds a single polygon face to `g` with the given corner points (in order).
 ///
-/// Sews α0 and α1 to form a closed `n`-gon and stamps the vertex positions on
-/// every dart of each corner's vertex orbit. Does not touch α2 — the face is
+/// Sews α0 and α1 to form a closed `n`-gon, stamps the vertex positions on
+/// every dart of each corner's vertex orbit, and attaches a straight
+/// [`Curve::Line`] on every 1-cell so downstream consumers (edge tessellation,
+/// dart geometry) have a curve to follow. Does not touch α2 — the face is
 /// returned with free boundary, ready to be stitched to neighbors.
 ///
 /// Returns a dart on the outer ⟨α₀, α₁⟩ loop (same as the first corner dart).
@@ -47,8 +48,14 @@ pub fn add_polygon<P: Payload>(g: &mut GMap<P>, corners: &[Point3]) -> Dart {
     }
 
     for i in 0..n {
-        let dart = g.cell_representative(Dart::new(i), Dim::Zero);
+        let dart = g.cell_representative(darts[2 * i], Dim::Zero);
         g.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
+    }
+
+    for i in 0..n {
+        let edge_dart = g.cell_representative(darts[2 * i], Dim::One);
+        let curve = Curve::Line(Line::new(corners[i], corners[(i + 1) % n]));
+        g.add_edge(EdgeAttr::new(edge_dart, curve, P::E::default()));
     }
     darts[0]
 }

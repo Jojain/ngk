@@ -4,11 +4,11 @@ import { useVizControls } from "../../components/useVizControls";
 import { useKernel } from "../../kernel/useKernel";
 import { gmapConsoleApi, runScript, type ScriptResult } from "../../kernel/viz";
 
-const SCRIPT_ID = "two_faces_alpha2";
+const SCRIPT_ID = "hollow_cylinder";
 
-export default function TwoFacesAlpha2() {
+export default function HollowCylinder() {
   const kernel = useKernel();
-  const controls = useVizControls({ showDartLabels: true });
+  const controls = useVizControls();
 
   const result = useMemo<ScriptResult | null>(
     () => (kernel ? runScript(kernel, SCRIPT_ID) : null),
@@ -19,11 +19,6 @@ export default function TwoFacesAlpha2() {
     if (!result?.gmap) return;
     const api = gmapConsoleApi(result.gmap);
     (window as unknown as { $gmap?: unknown }).$gmap = api;
-    console.info(
-      "[ngk] $gmap ready —",
-      `${result.gmap.dartCount} darts, dim ${result.gmap.dimension}.`,
-      "Try: $gmap.orbit(0, [1,2]) / $gmap.alpha(2, 2) / $gmap.cellDarts(0, 2)",
-    );
     return () => {
       if ((window as unknown as { $gmap?: unknown }).$gmap === api) {
         delete (window as unknown as { $gmap?: unknown }).$gmap;

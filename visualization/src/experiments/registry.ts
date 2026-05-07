@@ -28,6 +28,18 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./TwoFacesAlpha2")),
   },
   {
+    id: "hollow-cylinder",
+    title: "Hollow cylinder",
+    group: "Display",
+    component: lazy(() => import("./HollowCylinder")),
+  },
+  {
+    id: "cylinder",
+    title: "Quarter cylinder (curved darts)",
+    group: "Display",
+    component: lazy(() => import("./Cylinder")),
+  },
+  {
     id: "template",
     title: "_template",
     group: "Other",

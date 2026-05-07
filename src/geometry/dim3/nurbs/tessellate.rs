@@ -1,15 +1,7 @@
 use super::curve::NurbsCurve;
 use super::surface::NurbsSurface;
 use crate::geometry::Point3;
-
-/// A triangle mesh suitable for direct rendering. Indices reference `positions`
-/// (and, index-aligned, `normals`).
-#[derive(Debug, Clone)]
-pub struct IndexedMesh {
-    pub positions: Vec<Point3>,
-    pub normals: Vec<nalgebra::Vector3<f64>>,
-    pub indices: Vec<u32>,
-}
+use crate::tessellate::IndexedMesh;
 
 /// Uniform sample of a curve into `n + 1` points across its domain.
 pub fn sample_curve_uniform(curve: &NurbsCurve, n: usize) -> Vec<Point3> {

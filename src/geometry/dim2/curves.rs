@@ -101,4 +101,3 @@ impl Polyline2 {
         Self { points }
     }
 }
-

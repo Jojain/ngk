@@ -4,6 +4,8 @@
 
 use crate::viz::ScriptResult;
 
+pub mod hollow_cylinder;
+pub mod cylinder;
 pub mod two_faces_alpha2;
 
 pub type ScriptFn = fn() -> Result<ScriptResult, String>;
@@ -14,11 +16,23 @@ pub struct Script {
     pub run: ScriptFn,
 }
 
-pub const SCRIPTS: &[Script] = &[Script {
-    id: "two_faces_alpha2",
-    title: "Two faces α2-sewn on a shared edge",
-    run: two_faces_alpha2::run,
-}];
+pub const SCRIPTS: &[Script] = &[
+    Script {
+        id: "two_faces_alpha2",
+        title: "Two faces α2-sewn on a shared edge",
+        run: two_faces_alpha2::run,
+    },
+    Script {
+        id: "hollow_cylinder",
+        title: "Hollow cylinder (closed shell)",
+        run: hollow_cylinder::run,
+    },
+    Script {
+        id: "cylinder",
+        title: "Cylinder (closed shell)",
+        run: cylinder::run,
+    },
+];
 
 pub fn list() -> Vec<&'static str> {
     SCRIPTS.iter().map(|s| s.id).collect()

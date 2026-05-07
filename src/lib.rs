@@ -2,6 +2,7 @@ pub mod builders;
 pub mod geometry;
 pub mod model;
 pub mod scripts;
+pub mod tessellate;
 pub mod topology;
 pub mod viz;
 pub use topology::{Payload, StandardPayload};

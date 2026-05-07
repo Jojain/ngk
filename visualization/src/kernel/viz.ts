@@ -2,35 +2,50 @@ import type { Kernel } from "./useKernel";
 
 export type Vec3 = [number, number, number];
 
-export type VizPoint = {
+// ---------- BRep-typed scene ----------
+
+export type VizVertex = {
+  vertexId: number;
   position: Vec3;
   color?: string;
   size?: number;
   label?: string;
 };
 
-export type VizSegment = {
-  start: Vec3;
-  end: Vec3;
+export type VizEdge = {
+  edgeId: number;
+  polyline: Vec3[];
   color?: string;
   width?: number;
   label?: string;
 };
 
-export type VizArrow = {
-  origin: Vec3;
-  tip: Vec3;
-  dart?: number;
+export type VizFace = {
+  faceId: number;
+  positions: Vec3[];
+  normals: Vec3[];
+  indices: number[];
+  color?: string;
+  opacity?: number;
+  doubleSided?: boolean;
+  label?: string;
+};
+
+export type VizDart = {
+  dartId: number;
+  edgeId: number;
+  shaft: Vec3[];
+  tipDir: Vec3;
   color?: string;
   label?: string;
 };
 
-export type VizLink = {
+export type VizAlphaLink = {
   involution: number;
+  dartA: number;
+  dartB: number;
   a: Vec3;
   b: Vec3;
-  dartA?: number;
-  dartB?: number;
 };
 
 export type VizLabel = {
@@ -40,12 +55,15 @@ export type VizLabel = {
 };
 
 export type VizScene = {
-  points: VizPoint[];
-  segments: VizSegment[];
-  arrows: VizArrow[];
-  alphaLinks: VizLink[];
+  vertices: VizVertex[];
+  edges: VizEdge[];
+  faces: VizFace[];
+  darts: VizDart[];
+  alphaLinks: VizAlphaLink[];
   labels: VizLabel[];
 };
+
+// ---------- GMap snapshot ----------
 
 export type VertexPointEntry = {
   dart: number;
@@ -72,9 +90,10 @@ export function runScript(kernel: Kernel, name: string): ScriptResult {
   const raw = kernel.runScript(name) as ScriptResult;
   return {
     scene: {
-      points: raw.scene?.points ?? [],
-      segments: raw.scene?.segments ?? [],
-      arrows: raw.scene?.arrows ?? [],
+      vertices: raw.scene?.vertices ?? [],
+      edges: raw.scene?.edges ?? [],
+      faces: raw.scene?.faces ?? [],
+      darts: raw.scene?.darts ?? [],
       alphaLinks: raw.scene?.alphaLinks ?? [],
       labels: raw.scene?.labels ?? [],
     },
