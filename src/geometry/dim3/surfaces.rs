@@ -1,12 +1,14 @@
+use super::curves::Curve;
 use super::frame::Frame;
 use super::nurbs::NurbsSurface;
 use super::utils::{IntoUnit3, Point3};
-use nalgebra::{Rotation3, UnitVector3};
+use nalgebra::{Rotation3, UnitVector3, Vector3};
 
 #[derive(Clone)]
 pub enum Surface {
     Plane(Plane),
     Cylinder(Cylinder),
+    Ruled(RuledSurface),
     Nurbs(NurbsSurface),
 }
 
@@ -15,6 +17,7 @@ impl Surface {
         match self {
             Surface::Plane(p) => p.point_at(u, v),
             Surface::Cylinder(c) => c.point_at(u, v),
+            Surface::Ruled(s) => s.point_at(u, v),
             Surface::Nurbs(s) => s.point_at(u, v),
         }
     }
@@ -22,6 +25,7 @@ impl Surface {
         match self {
             Surface::Plane(p) => p.normal(),
             Surface::Cylinder(c) => c.normal_at(u, v),
+            Surface::Ruled(s) => s.normal_at(u, v),
             Surface::Nurbs(s) => s.normal_at(u, v),
         }
     }
@@ -103,4 +107,36 @@ impl Cylinder {
     pub fn axis(&self) -> UnitVector3<f64> {
         self.frame.z_dir
     }
+}
+
+#[derive(Clone)]
+pub struct RuledSurface {
+    curve: Curve,
+    direction: Vector3<f64>,
+}
+
+impl RuledSurface {
+    pub fn new(curve: Curve, direction: Vector3<f64>) -> Self {
+        Self { curve, direction }
+    }
+
+    pub fn point_at(&self, u: f64, v: f64) -> Point3 {
+        self.curve.point_at(u) + self.direction * v
+    }
+
+    pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
+        let du = finite_difference_curve_tangent(&self.curve, u);
+        let n = du.cross(&self.direction);
+        match UnitVector3::try_new(n, f64::EPSILON) {
+            Some(n) => n,
+            None => Vector3::z_axis(),
+        }
+    }
+}
+
+fn finite_difference_curve_tangent(curve: &Curve, u: f64) -> Vector3<f64> {
+    let h = 1.0e-6;
+    let before = curve.point_at(u - h);
+    let after = curve.point_at(u + h);
+    after - before
 }

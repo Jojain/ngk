@@ -1,6 +1,7 @@
 pub mod builders;
 pub mod geometry;
 pub mod model;
+pub mod modeling;
 pub mod scripts;
 pub mod tessellate;
 pub mod topology;

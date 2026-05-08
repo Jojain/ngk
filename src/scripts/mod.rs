@@ -4,9 +4,10 @@
 
 use crate::viz::ScriptResult;
 
-pub mod hollow_cylinder;
 pub mod cylinder;
+pub mod hollow_cylinder;
 pub mod two_faces_alpha2;
+pub mod extruded_square;
 
 pub type ScriptFn = fn() -> Result<ScriptResult, String>;
 
@@ -29,8 +30,13 @@ pub const SCRIPTS: &[Script] = &[
     },
     Script {
         id: "cylinder",
-        title: "Cylinder (closed shell)",
+        title: "Extruded circular arc",
         run: cylinder::run,
+    },
+    Script {
+        id: "extruded_square",
+        title: "Extruded square",
+        run: extruded_square::run,
     },
 ];
 

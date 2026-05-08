@@ -1,37 +1,24 @@
-//! GMap debugging overlay: dart arrows + α-involution links.
+//! GMap debugging overlay: dart arrows + alpha-involution links.
 //!
 //! Every dart that has both endpoints on a stored 1-cell becomes one
-//! [`VizDart`]. The arrow's shaft follows the edge's `Curve` from the dart's
-//! own vertex parameter to the *midpoint* parameter — so on a straight edge
-//! the dart is a chord A → mid, on a circular arc it's a curved arc, on a
-//! NURBS edge it's a sampled polyline. The arrow tip points toward the dart's
-//! `α0` vertex, exactly as in the user's spec ("if an edge goes A → B then
-//! the two darts go A → halfB pointing at B and B → halfA pointing at A").
-//!
-//! A small perpendicular offset toward the face centroid separates the dart
-//! from its α2-paired sibling so the two darts of a sewn edge don't overlap.
-//!
-//! For each non-trivial αᵢ pair we emit one [`VizAlphaLink`] connecting the
-//! two darts' shaft midpoints.
+//! [`VizDart`]. The arrow's shaft follows the edge's [`Curve`] from the dart's
+//! own vertex parameter to the midpoint parameter. Darts are emitted directly
+//! on their underlying edge geometry; no display offset is applied here.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use nalgebra::Vector3;
 
 use super::brep::BrepIndex;
 use super::hints::VizHints;
 use super::scene::{VizAlphaLink, VizDart, VizScene};
-use crate::geometry::{Curve, Point3};
+use crate::geometry::Curve;
 use crate::tessellate::{TessellateOpts, tessellate_curve};
 use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 
-/// How far to push a dart perpendicular to its edge, relative to edge length.
-/// Just enough to separate α2-sibling darts in the neighbor face.
-const DART_OFFSET_RATIO: f64 = 0.05;
-
 /// Emit [`VizDart`] entries for every dart that has a recoverable shaft, plus
-/// one [`VizAlphaLink`] per non-trivial αᵢ pair.
+/// one [`VizAlphaLink`] per non-trivial alpha pair.
 pub fn emit_gmap_overlay<P: Payload>(
     g: &GMap<P>,
     hints: &VizHints,
@@ -69,9 +56,6 @@ struct DartArrow {
     tip_dir: [f64; 3],
 }
 
-/// Build the arrow for a single dart by sampling the edge's curve from the
-/// dart's vertex parameter to the edge midpoint, with a face-interior offset
-/// applied uniformly along the shaft.
 fn build_dart<P: Payload>(
     g: &GMap<P>,
     d: Dart,
@@ -88,43 +72,22 @@ fn build_dart<P: Payload>(
 
     let curve = &edge_attr.curve;
     if matches!(curve, Curve::Nurbs(_)) {
-        // TODO: NURBS curves don't yet expose `param_at`. Fall back to a
-        // simple chord polyline so we at least see something.
-        return chord_arrow(g, d, edge_id, v0, v1);
+        return chord_arrow(edge_id, v0, v1);
     }
 
     let t0 = curve.param_at(v0);
     let t1 = curve.param_at(v1);
     if !(t0.is_finite() && t1.is_finite()) {
-        return chord_arrow(g, d, edge_id, v0, v1);
+        return chord_arrow(edge_id, v0, v1);
     }
+
     let t_mid = 0.5 * (t0 + t1);
     let polyline = tessellate_curve(curve, t0, t_mid, opts.curve);
     if polyline.points.len() < 2 {
-        return chord_arrow(g, d, edge_id, v0, v1);
+        return chord_arrow(edge_id, v0, v1);
     }
 
-    // Edge length used to scale the offset is the (Euclidean) distance
-    // between the two endpoint vertices; this is simple and stable on
-    // non-degenerate curves.
-    let edge_len = (v1 - v0).norm();
-    if edge_len < 1e-12 {
-        return None;
-    }
-
-    let edge_hat = (v1 - v0) / edge_len;
-    let offset = face_interior_direction(g, d, edge_hat).unwrap_or_else(Vector3::zeros);
-    let offset_vec = offset * (DART_OFFSET_RATIO * edge_len);
-
-    let shaft: Vec<[f64; 3]> = polyline
-        .points
-        .iter()
-        .map(|p| {
-            let q = p + offset_vec;
-            [q.x, q.y, q.z]
-        })
-        .collect();
-
+    let shaft: Vec<[f64; 3]> = polyline.points.iter().map(|p| [p.x, p.y, p.z]).collect();
     let tip_dir = tip_tangent(&shaft);
     Some(DartArrow {
         edge_id,
@@ -133,28 +96,17 @@ fn build_dart<P: Payload>(
     })
 }
 
-/// Fallback chord shaft for darts whose curve doesn't support inverse
-/// parameterization. Same offset rules as the curved path.
-fn chord_arrow<P: Payload>(
-    g: &GMap<P>,
-    d: Dart,
+fn chord_arrow(
     edge_id: u32,
-    v0: Point3,
-    v1: Point3,
+    v0: crate::geometry::Point3,
+    v1: crate::geometry::Point3,
 ) -> Option<DartArrow> {
     let edge_len = (v1 - v0).norm();
     if edge_len < 1e-12 {
         return None;
     }
-    let edge_hat = (v1 - v0) / edge_len;
-    let offset = face_interior_direction(g, d, edge_hat).unwrap_or_else(Vector3::zeros);
-    let offset_vec = offset * (DART_OFFSET_RATIO * edge_len);
-    let origin = v0 + offset_vec;
-    let tip = v0 + (v1 - v0) * 0.5 + offset_vec;
-    let shaft = vec![
-        [origin.x, origin.y, origin.z],
-        [tip.x, tip.y, tip.z],
-    ];
+    let tip = v0 + (v1 - v0) * 0.5;
+    let shaft = vec![[v0.x, v0.y, v0.z], [tip.x, tip.y, tip.z]];
     let tip_dir = tip_tangent(&shaft);
     Some(DartArrow {
         edge_id,
@@ -180,56 +132,6 @@ fn tip_tangent(shaft: &[[f64; 3]]) -> [f64; 3] {
     }
 }
 
-/// Offset direction: perpendicular to the edge, in the plane of the face
-/// containing `d`, pointing toward the face's centroid. Falls back to a
-/// sensible fixed perpendicular when the face is degenerate.
-fn face_interior_direction<P: Payload>(
-    g: &GMap<P>,
-    d: Dart,
-    edge_hat: Vector3<f64>,
-) -> Option<Vector3<f64>> {
-    let v0 = g.attribute::<Cell0>(d).map(|v| v.point)?;
-    let face_center = face_centroid(g, d)?;
-    let toward: Vector3<f64> = face_center - v0;
-    let perp = toward - edge_hat * toward.dot(&edge_hat);
-    if perp.norm() > 1e-9 {
-        return Some(perp.normalize());
-    }
-    let up = Vector3::new(0.0, 0.0, 1.0);
-    let fallback = edge_hat.cross(&up);
-    if fallback.norm() > 1e-9 {
-        Some(fallback.normalize())
-    } else {
-        None
-    }
-}
-
-/// Centroid of the face 2-cell containing `d`: average of unique vertex
-/// positions in the ⟨α₀, α₁⟩ orbit.
-fn face_centroid<P: Payload>(g: &GMap<P>, d: Dart) -> Option<Point3> {
-    if g.dimension() < 2 {
-        return None;
-    }
-    let face_orbit_indices = vec![0usize, 1];
-    let mut seen: HashSet<usize> = HashSet::new();
-    let mut sum = Vector3::zeros();
-    let mut count = 0usize;
-    for dd in g.orbit(d, face_orbit_indices) {
-        let rep = g.cell_representative(dd, Dim::Zero).id();
-        if seen.insert(rep) {
-            if let Some(p) = g.attribute::<Cell0>(dd).map(|v| v.point) {
-                sum += p.coords;
-                count += 1;
-            }
-        }
-    }
-    if count == 0 {
-        None
-    } else {
-        Some(Point3::from(sum / count as f64))
-    }
-}
-
 fn emit_alpha_links<P: Payload>(
     g: &GMap<P>,
     shafts: &HashMap<u32, Vec<[f64; 3]>>,
@@ -239,15 +141,15 @@ fn emit_alpha_links<P: Payload>(
         for &dart_id in shafts.keys() {
             let d = Dart::new(dart_id as usize);
             let pair = g.alpha(Dim::from_index(i), d).id() as u32;
-            // Skip fixed points (αᵢ(d) = d) and the mirror direction
-            // (only emit each pair once; lower-id dart owns the link).
             if pair == dart_id || pair < dart_id {
                 continue;
             }
             let Some(a) = shafts.get(&dart_id) else {
                 continue;
             };
-            let Some(b) = shafts.get(&pair) else { continue };
+            let Some(b) = shafts.get(&pair) else {
+                continue;
+            };
             scene.alpha_links.push(VizAlphaLink {
                 involution: i as u32,
                 dart_a: dart_id,
@@ -281,22 +183,19 @@ fn shaft_midpoint(shaft: &[[f64; 3]]) -> [f64; 3] {
 mod tests {
     use std::f64::consts::FRAC_PI_2;
 
+    use nalgebra::Vector3;
+
     use crate::builders::add_edge;
     use crate::geometry::{Circle, Curve, Plane, Point3};
     use crate::topology::StandardPayload;
     use crate::topology::gmap::GMap;
     use crate::viz::{VizHints, scene_from_gmap};
-    use nalgebra::Vector3;
 
-    /// A single quarter-arc circular edge produces darts whose shafts are
-    /// sampled polylines (not chords) and whose tip tangent is roughly
-    /// perpendicular to the radial direction at the shaft's tip.
     #[test]
     fn dart_on_circle_edge_has_curved_shaft() {
         let mut g = GMap::<StandardPayload>::new();
         let plane = Plane::new(Point3::origin(), Vector3::x(), Vector3::z());
-        let circle = Circle::new(plane, 1.0);
-        let curve = Curve::Circle(circle);
+        let curve = Curve::Circle(Circle::new(plane, 1.0));
         let start = curve.point_at(0.0);
         let end = curve.point_at(FRAC_PI_2);
         let _ = add_edge(&mut g, start, end, curve);
@@ -310,7 +209,6 @@ mod tests {
                 d.shaft.len()
             );
             let tip = d.shaft[d.shaft.len() - 1];
-            // Radial direction at the (offset) tip, projected to xy plane.
             let radial = Vector3::new(tip[0], tip[1], 0.0);
             if radial.norm() < 1e-9 {
                 continue;
@@ -326,5 +224,23 @@ mod tests {
             );
         }
     }
-}
 
+    #[test]
+    fn dart_shaft_is_not_offset_from_edge_start() {
+        let mut g = GMap::<StandardPayload>::new();
+        let start = Point3::new(1.0, 2.0, 3.0);
+        let end = Point3::new(4.0, 2.0, 3.0);
+        let _ = add_edge(
+            &mut g,
+            start,
+            end,
+            Curve::Line(crate::geometry::Line::new(start, end)),
+        );
+
+        let scene = scene_from_gmap(&g, &VizHints::new());
+        assert_eq!(scene.darts.len(), 2);
+        let starts: Vec<[f64; 3]> = scene.darts.iter().map(|d| d.shaft[0]).collect();
+        assert!(starts.contains(&[start.x, start.y, start.z]));
+        assert!(starts.contains(&[end.x, end.y, end.z]));
+    }
+}

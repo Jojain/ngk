@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct Dart(usize);
 
 impl Dart {

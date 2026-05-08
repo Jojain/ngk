@@ -13,7 +13,7 @@ use super::solid::Solid;
 
 pub use super::dart::{Dart, IsolatedDart};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Dim {
     Zero,
     One,

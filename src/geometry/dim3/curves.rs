@@ -1,9 +1,11 @@
 use std::f64::consts::TAU;
 
 use super::nurbs::NurbsCurve;
+use super::nurbs::error::NurbsError;
+use super::nurbs::points::{ControlPolygon, HPoint};
 use super::surfaces::Plane;
 use super::utils::{IntoUnit3, Point3};
-use nalgebra::{Rotation3, UnitVector3};
+use nalgebra::{Rotation3, UnitVector3, Vector3};
 
 pub enum Periodicity {
     None,
@@ -20,9 +22,9 @@ pub enum Curve {
 impl Curve {
     pub fn periodicity(&self) -> Periodicity {
         match self {
-            Curve::Line(l) => Periodicity::None,
-            Curve::Circle(c) => Periodicity::Periodic(TAU),
-            Curve::Nurbs(n) => unimplemented!(),
+            Curve::Line(_) => Periodicity::None,
+            Curve::Circle(_) => Periodicity::Periodic(TAU),
+            Curve::Nurbs(_) => Periodicity::None,
         }
     }
     pub fn point_at(&self, t: f64) -> Point3 {
@@ -36,16 +38,81 @@ impl Curve {
         match self {
             Curve::Line(l) => l.param_at(point),
             Curve::Circle(c) => c.param_at(point),
-            Curve::Nurbs(n) => unimplemented!(),
+            Curve::Nurbs(n) => closest_sample_parameter(n, point),
         }
     }
     pub fn length(&self, t0: f64, t1: f64) -> f64 {
         match self {
             Curve::Line(l) => l.length(t0, t1),
             Curve::Circle(c) => c.length(t0, t1),
-            Curve::Nurbs(n) => unimplemented!(),
+            Curve::Nurbs(n) => sampled_length(n, t0, t1),
         }
     }
+
+    pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
+        match self {
+            Curve::Line(line) => Ok(Curve::Line(Line::new(
+                line.start + direction,
+                line.end + direction,
+            ))),
+            Curve::Circle(circle) => Ok(Curve::Circle(Circle::new(
+                Plane::new(
+                    circle.plane.origin() + direction,
+                    circle.plane.x_dir(),
+                    circle.plane.normal(),
+                ),
+                circle.radius,
+            ))),
+            Curve::Nurbs(nurbs) => {
+                let points = nurbs
+                    .control_points()
+                    .iter()
+                    .map(|point| {
+                        HPoint::from_cartesian(point.to_cartesian() + direction, point.weight())
+                    })
+                    .collect();
+                let control_points = ControlPolygon::new(points)?;
+                Ok(Curve::Nurbs(NurbsCurve::new(
+                    nurbs.degree(),
+                    control_points,
+                    nurbs.knots().clone(),
+                )?))
+            }
+        }
+    }
+}
+
+fn closest_sample_parameter(curve: &NurbsCurve, point: Point3) -> f64 {
+    let (u0, u1) = curve.domain();
+    let segments = 128usize;
+    let mut best_u = u0;
+    let mut best_distance = f64::INFINITY;
+
+    for i in 0..=segments {
+        let u = u0 + (u1 - u0) * (i as f64 / segments as f64);
+        let distance = (curve.point_at(u) - point).norm_squared();
+        if distance < best_distance {
+            best_distance = distance;
+            best_u = u;
+        }
+    }
+
+    best_u
+}
+
+fn sampled_length(curve: &NurbsCurve, t0: f64, t1: f64) -> f64 {
+    let segments = 64usize;
+    let mut length = 0.0;
+    let mut previous = curve.point_at(t0);
+
+    for i in 1..=segments {
+        let t = t0 + (t1 - t0) * (i as f64 / segments as f64);
+        let current = curve.point_at(t);
+        length += (current - previous).norm();
+        previous = current;
+    }
+
+    length
 }
 
 #[derive(Clone)]

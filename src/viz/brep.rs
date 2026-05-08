@@ -85,11 +85,9 @@ fn emit_edges<P: Payload>(
         }
 
         let polyline = match tessellate_edge(g, key, opts) {
-            Some(p) if !p.is_empty() => p
-                .points
-                .iter()
-                .map(|p| [p.x, p.y, p.z])
-                .collect::<Vec<_>>(),
+            Some(p) if !p.is_empty() => {
+                p.points.iter().map(|p| [p.x, p.y, p.z]).collect::<Vec<_>>()
+            }
             _ => fallback_chord(g, attr),
         };
         let style = hints.edge_styles.get(&key);

@@ -15,10 +15,9 @@
 //! - Anything else falls back to a single quad over the pcurve UV bbox and is
 //!   tagged `// TODO: real CDT`.
 
-use nalgebra::Vector3;
+use nalgebra::UnitVector3;
 
-use super::surface::{surface_normal_at, tessellate_surface_patch};
-use super::{IndexedMesh, TessellateOpts};
+use super::{IndexedMesh, TessellateOpts, surface::tessellate_surface_patch};
 use crate::geometry::Point2;
 use crate::geometry::Surface;
 use crate::topology::attributes::FaceAttr;
@@ -49,7 +48,9 @@ pub fn tessellate_face<P: Payload>(
     let ccw = signed_area(&outer_uv) > 0.0;
 
     Some(match &attr.surface {
-        Surface::Cylinder(_) => cylinder_grid(&attr.surface, &outer_uv, ccw, opts),
+        Surface::Cylinder(_) | Surface::Ruled(_) => {
+            surface_grid(&attr.surface, &outer_uv, ccw, opts)
+        }
         Surface::Plane(_) => {
             if inner_uv.is_empty() {
                 plane_fan(&attr.surface, &outer_uv, ccw)
@@ -93,7 +94,11 @@ fn sample_loop_pcurve<P: Payload>(
             points.push(s);
         }
     }
-    if points.is_empty() { None } else { Some(points) }
+    if points.is_empty() {
+        None
+    } else {
+        Some(points)
+    }
 }
 
 /// Shoelace signed area in UV. Positive ⇒ CCW.
@@ -113,7 +118,7 @@ fn signed_area(poly: &[Point2]) -> f64 {
 
 // ---------- shortcuts ----------
 
-fn cylinder_grid(
+fn surface_grid(
     surface: &Surface,
     outer_uv: &[Point2],
     ccw: bool,
@@ -245,8 +250,8 @@ fn uv_bbox(points: &[Point2]) -> (f64, f64, f64, f64) {
     (u_min, u_max, v_min, v_max)
 }
 
-fn face_normal(surface: &Surface, u: f64, v: f64, ccw: bool) -> Vector3<f64> {
-    let n = surface_normal_at(surface, u, v);
+fn face_normal(surface: &Surface, u: f64, v: f64, ccw: bool) -> UnitVector3<f64> {
+    let n = surface.normal_at(u, v);
     if ccw { n } else { -n }
 }
 

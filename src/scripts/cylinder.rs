@@ -1,78 +1,80 @@
-//! A single cylindrical face strip (one quarter of a cylinder) — the smallest
-//! possible scene that exercises the curved-surface tessellation path
-//! (`Surface::Cylinder` + pcurves) and the curved-edge dart geometry.
+//! Extrudes a circular arc profile.
+//!
+//! The profile is a two-edge loop: a quarter-circle arc plus its chord. This
+//! keeps the `Profile` closed while still exercising the sweep path for a
+//! genuinely curved edge (`Curve::Circle` -> `Surface::Ruled`).
 
-use std::collections::HashMap;
-use std::f64::consts::FRAC_PI_2;
+use nalgebra::Vector3;
 
-use crate::builders::add_polygon;
-use crate::geometry::{Curve2, Cylinder, Line2, Point2, Point3, Surface};
+use crate::geometry::{Circle, Curve, Line, Plane, Point3};
+use crate::modeling::profiles::add_polyline;
+use crate::modeling::sweep::extrude;
 use crate::topology::StandardPayload;
-use crate::topology::attributes::FaceAttr;
 use crate::topology::gmap::{Dart, GMap};
 use crate::topology::profile::Profile;
 use crate::viz::{ScriptResult, Style, VizHints};
 
-const RADIUS: f64 = 1.0;
+const RADIUS: f64 = 2.0;
 const HEIGHT: f64 = 1.5;
 
 pub fn run() -> Result<ScriptResult, String> {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut profile_map = GMap::<StandardPayload>::new();
+    let arc_dart = add_arc_profile(&mut profile_map)?;
+
+    let shape = extrude(
+        Profile::new(&profile_map, arc_dart),
+        Vector3::new(0.0, 0.0, HEIGHT),
+    )
+    .map_err(|err| format!("arc extrusion failed: {err:?}"))?;
+    let (g, arc_face) = shape.into_map();
+
     let mut hints = VizHints::new();
-
-    let surface = Surface::Cylinder(Cylinder::new(
-        Point3::origin(),
-        nalgebra::Vector3::x(),
-        nalgebra::Vector3::z(),
-        RADIUS,
-    ));
-
-    let u0 = 0.0;
-    let u1 = FRAC_PI_2;
-    let v0 = -HEIGHT * 0.5;
-    let v1 = HEIGHT * 0.5;
-    let uv = vec![
-        Point2::new(u0, v0),
-        Point2::new(u1, v0),
-        Point2::new(u1, v1),
-        Point2::new(u0, v1),
-    ];
-    let corners: Vec<Point3> = uv.iter().map(|p| surface.point_at(p.x, p.y)).collect();
-
-    let loop_dart = add_polygon(&mut g, &corners);
-    let pcurves = loop_line_pcurves(&g, loop_dart, &uv);
-    let face_key = g.add_face(FaceAttr::with_pcurves(
-        surface,
-        (),
-        loop_dart,
-        Vec::new(),
-        pcurves,
-    ));
-
-    hints.face(
-        face_key,
-        Style::default()
-            .color("#7bd0ff")
-            .label("quarter cylinder")
-            .double_sided(true),
-    );
+    for (key, _) in g.iter_faces() {
+        let style = if key == arc_face {
+            Style::default()
+                .color("#7bd0ff")
+                .label("extruded arc")
+                .double_sided(true)
+        } else {
+            Style::default()
+                .color("red")
+                .label("arc chord side")
+                .double_sided(true)
+        };
+        hints.face(key, style);
+    }
 
     Ok(ScriptResult::from_gmap_with_hints(&g, &hints))
 }
 
-fn loop_line_pcurves(
-    g: &GMap<StandardPayload>,
-    loop_dart: Dart,
-    uv: &[Point2],
-) -> HashMap<Dart, Curve2> {
-    let darts: Vec<Dart> = Profile::new(g, loop_dart).darts().step_by(2).collect();
-    assert_eq!(darts.len(), uv.len());
-    let mut pcurves = HashMap::with_capacity(darts.len());
-    for i in 0..darts.len() {
-        pcurves.insert(
-            darts[i],
-            Curve2::Line(Line2::new(uv[i], uv[(i + 1) % uv.len()])),
+fn add_arc_profile(g: &mut GMap<StandardPayload>) -> Result<Dart, String> {
+    let start = Point3::new(RADIUS, 0.0, 0.0);
+    let end = Point3::new(0.0, RADIUS, 0.0);
+    let arc = Curve::Circle(Circle::new(
+        Plane::new(Point3::origin(), Vector3::x(), Vector3::z()),
+        RADIUS,
+    ));
+    let chord = Curve::Line(Line::new(end, start));
+
+    add_polyline(g, &[(start, end, arc), (end, start, chord)])
+        .map_err(|err| format!("failed to build arc contour: {err:?}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run;
+
+    #[test]
+    fn cylinder_script_extrudes_arc_profile() {
+        let result = run().expect("arc extrusion script should run");
+        assert!(!result.scene.faces.is_empty());
+        assert!(!result.scene.edges.is_empty());
+        assert!(
+            result
+                .scene
+                .faces
+                .iter()
+                .all(|face| !face.positions.is_empty())
         );
     }
-    pcurves
 }
