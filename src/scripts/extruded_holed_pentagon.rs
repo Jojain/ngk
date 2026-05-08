@@ -97,6 +97,7 @@ fn loop_line_pcurves(
 mod tests {
     use super::{build_source_face, run};
     use crate::modeling::sweep::extrude_face;
+    use crate::tessellate::{TessellateOpts, tessellate_face};
     use crate::topology::closed::Closed;
     use crate::topology::sheet::Sheet;
     use nalgebra::Vector3;
@@ -124,5 +125,24 @@ mod tests {
             Closed::new(Sheet::new(solid.map(), shell_dart)).is_some(),
             "extruded holed pentagon should produce a closed shell"
         );
+    }
+
+    #[test]
+    fn source_face_tessellation_keeps_square_hole_empty() {
+        let face = build_source_face();
+        let mesh = tessellate_face(face.map(), face.key(), TessellateOpts::default())
+            .expect("source face should tessellate");
+
+        for triangle in mesh.indices.chunks_exact(3) {
+            let a = mesh.positions[triangle[0] as usize];
+            let b = mesh.positions[triangle[1] as usize];
+            let c = mesh.positions[triangle[2] as usize];
+            let centroid = (a.coords + b.coords + c.coords) / 3.0;
+
+            assert!(
+                centroid.x.abs() >= 0.38 || centroid.y.abs() >= 0.38,
+                "triangle centroid should not be inside the square hole: {centroid:?}"
+            );
+        }
     }
 }

@@ -26,6 +26,8 @@ use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::FaceKey;
 
+const EPS: f64 = 1.0e-9;
+
 /// Tessellate the face stored at `key` in `g`. Returns `None` if the face is
 /// missing or has no pcurves to delineate it.
 pub fn tessellate_face<P: Payload>(
@@ -51,16 +53,7 @@ pub fn tessellate_face<P: Payload>(
         Surface::Cylinder(_) | Surface::Ruled(_) => {
             surface_grid(&attr.surface, &outer_uv, ccw, opts)
         }
-        Surface::Plane(_) => {
-            if inner_uv.is_empty() {
-                plane_fan(&attr.surface, &outer_uv, ccw)
-            } else if inner_uv.len() == 1 {
-                plane_strip(&attr.surface, &outer_uv, &inner_uv[0], ccw)
-            } else {
-                // TODO: real CDT (constrained Delaunay with holes).
-                uv_bbox_quad(&attr.surface, &outer_uv, ccw)
-            }
-        }
+        Surface::Plane(_) => plane_polygon_with_holes(&attr.surface, &outer_uv, &inner_uv, ccw),
         // TODO: real CDT for NURBS surfaces.
         _ => uv_bbox_quad(&attr.surface, &outer_uv, ccw),
     })
@@ -135,81 +128,32 @@ fn surface_grid(
     mesh
 }
 
-fn plane_fan(surface: &Surface, outer_uv: &[Point2], ccw: bool) -> IndexedMesh {
-    let n = outer_uv.len();
-    let cx: f64 = outer_uv.iter().map(|p| p.x).sum::<f64>() / n as f64;
-    let cy: f64 = outer_uv.iter().map(|p| p.y).sum::<f64>() / n as f64;
-
-    let normal = face_normal(surface, cx, cy, ccw);
-
-    let mut positions = Vec::with_capacity(n + 1);
-    let mut normals = Vec::with_capacity(n + 1);
-    positions.push(surface.point_at(cx, cy));
-    normals.push(normal);
-    for p in outer_uv {
-        positions.push(surface.point_at(p.x, p.y));
-        normals.push(normal);
-    }
-
-    let mut indices = Vec::with_capacity(n * 3);
-    for i in 0..n {
-        let a = 0u32;
-        let b = (1 + i) as u32;
-        let c = (1 + (i + 1) % n) as u32;
-        if ccw {
-            indices.extend_from_slice(&[a, b, c]);
-        } else {
-            indices.extend_from_slice(&[a, c, b]);
-        }
-    }
-
-    IndexedMesh {
-        positions,
-        normals,
-        indices,
-    }
-}
-
-fn plane_strip(
+fn plane_polygon_with_holes(
     surface: &Surface,
     outer_uv: &[Point2],
-    inner_uv: &[Point2],
+    inner_uv: &[Vec<Point2>],
     ccw: bool,
 ) -> IndexedMesh {
-    let outer_resampled;
-    let inner_resampled;
-    let (outer_uv, inner_uv) = if outer_uv.len() == inner_uv.len() {
-        (outer_uv, inner_uv)
-    } else {
-        let n = outer_uv.len().max(inner_uv.len()).max(3);
-        outer_resampled = resample_closed_polyline(outer_uv, n);
-        inner_resampled = resample_closed_polyline(inner_uv, n);
-        (outer_resampled.as_slice(), inner_resampled.as_slice())
+    let Some(mut polygon) = build_simple_polygon(outer_uv, inner_uv) else {
+        return uv_bbox_quad(surface, outer_uv, ccw);
     };
-    let n = outer_uv.len();
-    let normal = face_normal(surface, outer_uv[0].x, outer_uv[0].y, ccw);
 
-    let mut positions = Vec::with_capacity(n * 2);
-    let mut normals = Vec::with_capacity(n * 2);
-    for (o, i) in outer_uv.iter().zip(inner_uv.iter()) {
-        positions.push(surface.point_at(o.x, o.y));
-        normals.push(normal);
-        positions.push(surface.point_at(i.x, i.y));
-        normals.push(normal);
+    if signed_area(&polygon) < 0.0 {
+        polygon.reverse();
     }
 
-    let mut indices = Vec::with_capacity(n * 6);
-    for i in 0..n {
-        let next = (i + 1) % n;
-        let outer0 = (2 * i) as u32;
-        let inner0 = outer0 + 1;
-        let outer1 = (2 * next) as u32;
-        let inner1 = outer1 + 1;
-        if ccw {
-            indices.extend_from_slice(&[outer0, outer1, inner1, outer0, inner1, inner0]);
-        } else {
-            indices.extend_from_slice(&[outer0, inner1, outer1, outer0, inner0, inner1]);
-        }
+    let normal = face_normal(surface, polygon[0].x, polygon[0].y, ccw);
+    let positions = polygon
+        .iter()
+        .map(|p| surface.point_at(p.x, p.y))
+        .collect::<Vec<_>>();
+    let normals = vec![normal; positions.len()];
+    let mut indices = ear_clip(&polygon).unwrap_or_default();
+    if !ccw {
+        flip_winding(&mut indices);
+    }
+    if indices.is_empty() {
+        return uv_bbox_quad(surface, outer_uv, ccw);
     }
 
     IndexedMesh {
@@ -219,36 +163,237 @@ fn plane_strip(
     }
 }
 
-fn resample_closed_polyline(points: &[Point2], count: usize) -> Vec<Point2> {
-    let mut lengths = Vec::with_capacity(points.len());
-    let mut perimeter = 0.0;
-    for i in 0..points.len() {
-        let edge = points[(i + 1) % points.len()] - points[i];
-        perimeter += edge.norm();
-        lengths.push(perimeter);
+fn build_simple_polygon(outer_uv: &[Point2], inner_uv: &[Vec<Point2>]) -> Option<Vec<Point2>> {
+    let mut polygon = clean_loop(outer_uv);
+    if polygon.len() < 3 {
+        return None;
+    }
+    if signed_area(&polygon) < 0.0 {
+        polygon.reverse();
     }
 
-    (0..count)
-        .map(|sample| {
-            let target = perimeter * sample as f64 / count as f64;
-            let edge_idx = lengths
-                .iter()
-                .position(|length| *length >= target)
-                .unwrap_or(0);
-            let prev_length = if edge_idx == 0 {
-                0.0
+    for hole in inner_uv {
+        let mut hole = clean_loop(hole);
+        if hole.len() < 3 {
+            continue;
+        }
+        if signed_area(&hole) > 0.0 {
+            hole.reverse();
+        }
+        polygon = bridge_hole(&polygon, &hole)?;
+    }
+
+    Some(polygon)
+}
+
+fn clean_loop(points: &[Point2]) -> Vec<Point2> {
+    let mut cleaned = Vec::new();
+    for point in points {
+        if cleaned
+            .last()
+            .is_none_or(|previous: &Point2| !same_point(previous, point))
+        {
+            cleaned.push(*point);
+        }
+    }
+    if cleaned.len() > 1 && same_point(&cleaned[0], cleaned.last().expect("non-empty")) {
+        cleaned.pop();
+    }
+
+    let mut changed = true;
+    while changed && cleaned.len() >= 3 {
+        changed = false;
+        let n = cleaned.len();
+        let mut next = Vec::with_capacity(n);
+        for i in 0..n {
+            let prev = cleaned[(i + n - 1) % n];
+            let curr = cleaned[i];
+            let after = cleaned[(i + 1) % n];
+            let collinear = orient(prev, curr, after).abs() <= EPS;
+            let between = (curr - prev).dot(&(after - curr)) >= -EPS;
+            if collinear && between {
+                changed = true;
             } else {
-                lengths[edge_idx - 1]
-            };
-            let edge_length = lengths[edge_idx] - prev_length;
-            let t = if edge_length <= f64::EPSILON {
-                0.0
-            } else {
-                (target - prev_length) / edge_length
-            };
-            points[edge_idx] + (points[(edge_idx + 1) % points.len()] - points[edge_idx]) * t
+                next.push(curr);
+            }
+        }
+        cleaned = next;
+    }
+
+    cleaned
+}
+
+fn bridge_hole(polygon: &[Point2], hole: &[Point2]) -> Option<Vec<Point2>> {
+    let hole_idx = rightmost_vertex(hole);
+    let hole_point = hole[hole_idx];
+    let polygon_idx = (0..polygon.len())
+        .filter(|idx| bridge_is_visible(hole_point, hole_idx, polygon[*idx], *idx, polygon, hole))
+        .min_by(|a, b| {
+            let da = (polygon[*a] - hole_point).norm_squared();
+            let db = (polygon[*b] - hole_point).norm_squared();
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        })?;
+
+    let mut bridged = Vec::with_capacity(polygon.len() + hole.len() + 2);
+    bridged.extend_from_slice(&polygon[..=polygon_idx]);
+    for offset in 0..hole.len() {
+        bridged.push(hole[(hole_idx + offset) % hole.len()]);
+    }
+    bridged.push(hole_point);
+    bridged.push(polygon[polygon_idx]);
+    bridged.extend_from_slice(&polygon[polygon_idx + 1..]);
+    Some(bridged)
+}
+
+fn rightmost_vertex(points: &[Point2]) -> usize {
+    (0..points.len())
+        .max_by(|a, b| {
+            points[*a]
+                .x
+                .partial_cmp(&points[*b].x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    points[*b]
+                        .y
+                        .partial_cmp(&points[*a].y)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
         })
-        .collect()
+        .unwrap_or(0)
+}
+
+fn bridge_is_visible(
+    a: Point2,
+    hole_idx: usize,
+    b: Point2,
+    polygon_idx: usize,
+    polygon: &[Point2],
+    hole: &[Point2],
+) -> bool {
+    if same_point(&a, &b) {
+        return false;
+    }
+
+    for i in 0..polygon.len() {
+        let j = (i + 1) % polygon.len();
+        if i == polygon_idx || j == polygon_idx {
+            continue;
+        }
+        if segments_intersect_strict(a, b, polygon[i], polygon[j]) {
+            return false;
+        }
+    }
+
+    for i in 0..hole.len() {
+        let j = (i + 1) % hole.len();
+        if i == hole_idx || j == hole_idx {
+            continue;
+        }
+        if segments_intersect_strict(a, b, hole[i], hole[j]) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn ear_clip(polygon: &[Point2]) -> Option<Vec<u32>> {
+    if polygon.len() < 3 {
+        return None;
+    }
+
+    let mut vertices = (0..polygon.len()).collect::<Vec<_>>();
+    let mut indices = Vec::with_capacity((polygon.len() - 2) * 3);
+    let mut guard = 0;
+
+    while vertices.len() > 3 {
+        let mut clipped = false;
+        let len = vertices.len();
+        for i in 0..len {
+            let prev = vertices[(i + len - 1) % len];
+            let curr = vertices[i];
+            let next = vertices[(i + 1) % len];
+            let a = polygon[prev];
+            let b = polygon[curr];
+            let c = polygon[next];
+
+            if orient(a, b, c) <= EPS {
+                continue;
+            }
+            if vertices.iter().any(|idx| {
+                *idx != prev
+                    && *idx != curr
+                    && *idx != next
+                    && !same_point(&polygon[*idx], &a)
+                    && !same_point(&polygon[*idx], &b)
+                    && !same_point(&polygon[*idx], &c)
+                    && point_in_triangle(polygon[*idx], a, b, c)
+            }) {
+                continue;
+            }
+
+            indices.extend_from_slice(&[prev as u32, curr as u32, next as u32]);
+            vertices.remove(i);
+            clipped = true;
+            break;
+        }
+
+        if !clipped {
+            return None;
+        }
+        guard += 1;
+        if guard > polygon.len() * polygon.len() {
+            return None;
+        }
+    }
+
+    indices.extend_from_slice(&[vertices[0] as u32, vertices[1] as u32, vertices[2] as u32]);
+    Some(indices)
+}
+
+fn point_in_triangle(p: Point2, a: Point2, b: Point2, c: Point2) -> bool {
+    orient(a, b, p) >= -EPS && orient(b, c, p) >= -EPS && orient(c, a, p) >= -EPS
+}
+
+fn segments_intersect_strict(a: Point2, b: Point2, c: Point2, d: Point2) -> bool {
+    if same_point(&a, &c) || same_point(&a, &d) || same_point(&b, &c) || same_point(&b, &d) {
+        return false;
+    }
+
+    let o1 = orient(a, b, c);
+    let o2 = orient(a, b, d);
+    let o3 = orient(c, d, a);
+    let o4 = orient(c, d, b);
+
+    if o1.abs() <= EPS && on_segment(a, c, b) {
+        return true;
+    }
+    if o2.abs() <= EPS && on_segment(a, d, b) {
+        return true;
+    }
+    if o3.abs() <= EPS && on_segment(c, a, d) {
+        return true;
+    }
+    if o4.abs() <= EPS && on_segment(c, b, d) {
+        return true;
+    }
+
+    (o1 > EPS) != (o2 > EPS) && (o3 > EPS) != (o4 > EPS)
+}
+
+fn on_segment(a: Point2, p: Point2, b: Point2) -> bool {
+    p.x >= a.x.min(b.x) - EPS
+        && p.x <= a.x.max(b.x) + EPS
+        && p.y >= a.y.min(b.y) - EPS
+        && p.y <= a.y.max(b.y) + EPS
+}
+
+fn orient(a: Point2, b: Point2, c: Point2) -> f64 {
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+}
+
+fn same_point(a: &Point2, b: &Point2) -> bool {
+    (a - b).norm_squared() <= EPS * EPS
 }
 
 /// TODO: real CDT. Until then, faces we can't trim collapse to a single quad
