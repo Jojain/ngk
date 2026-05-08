@@ -18,8 +18,8 @@
 use nalgebra::UnitVector3;
 
 use super::{IndexedMesh, TessellateOpts, surface::tessellate_surface_patch};
-use crate::geometry::Point2;
 use crate::geometry::Surface;
+use crate::geometry::{Point2, PointCoincidence};
 use crate::topology::attributes::FaceAttr;
 use crate::topology::gmap::{Dart, GMap};
 use crate::topology::payload::Payload;
@@ -191,12 +191,12 @@ fn clean_loop(points: &[Point2]) -> Vec<Point2> {
     for point in points {
         if cleaned
             .last()
-            .is_none_or(|previous: &Point2| !same_point(previous, point))
+            .is_none_or(|previous: &Point2| !previous.coincides(point, EPS))
         {
             cleaned.push(*point);
         }
     }
-    if cleaned.len() > 1 && same_point(&cleaned[0], cleaned.last().expect("non-empty")) {
+    if cleaned.len() > 1 && cleaned[0].coincides(cleaned.last().expect("non-empty"), EPS) {
         cleaned.pop();
     }
 
@@ -270,7 +270,7 @@ fn bridge_is_visible(
     polygon: &[Point2],
     hole: &[Point2],
 ) -> bool {
-    if same_point(&a, &b) {
+    if a.coincides(b, EPS) {
         return false;
     }
 
@@ -324,9 +324,9 @@ fn ear_clip(polygon: &[Point2]) -> Option<Vec<u32>> {
                 *idx != prev
                     && *idx != curr
                     && *idx != next
-                    && !same_point(&polygon[*idx], &a)
-                    && !same_point(&polygon[*idx], &b)
-                    && !same_point(&polygon[*idx], &c)
+                    && !polygon[*idx].coincides(a, EPS)
+                    && !polygon[*idx].coincides(b, EPS)
+                    && !polygon[*idx].coincides(c, EPS)
                     && point_in_triangle(polygon[*idx], a, b, c)
             }) {
                 continue;
@@ -356,7 +356,7 @@ fn point_in_triangle(p: Point2, a: Point2, b: Point2, c: Point2) -> bool {
 }
 
 fn segments_intersect_strict(a: Point2, b: Point2, c: Point2, d: Point2) -> bool {
-    if same_point(&a, &c) || same_point(&a, &d) || same_point(&b, &c) || same_point(&b, &d) {
+    if a.coincides(c, EPS) || a.coincides(d, EPS) || b.coincides(c, EPS) || b.coincides(d, EPS) {
         return false;
     }
 
@@ -390,10 +390,6 @@ fn on_segment(a: Point2, p: Point2, b: Point2) -> bool {
 
 fn orient(a: Point2, b: Point2, c: Point2) -> f64 {
     (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
-}
-
-fn same_point(a: &Point2, b: &Point2) -> bool {
-    (a - b).norm_squared() <= EPS * EPS
 }
 
 /// TODO: real CDT. Until then, faces we can't trim collapse to a single quad

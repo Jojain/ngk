@@ -12,4 +12,4 @@ pub use dim3::nurbs::{
     ControlNet, ControlPolygon, Degree, HPoint, KnotVector, NurbsCurve, NurbsError, NurbsSurface,
 };
 pub use dim3::surfaces::{Cylinder, Plane, RuledSurface, Surface};
-pub use dim3::utils::{IntoUnit3, Point3};
+pub use dim3::utils::{IntoUnit3, Point3, PointCoincidence};

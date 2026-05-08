@@ -102,7 +102,7 @@ fn sew_extruded_faces<P: Payload>(
         sew_adjacent_sweep_edges(g, faces[i].end_side, faces[i + 1].start_side)?;
     }
 
-    if close_ring && faces.len() > 1 {
+    if close_ring && !faces.is_empty() {
         sew_adjacent_sweep_edges(g, faces[faces.len() - 1].end_side, faces[0].start_side)?;
     }
 
@@ -154,7 +154,7 @@ fn extruded_edge_surface(
             })
         }
         Curve::Circle(_) | Curve::Nurbs(_) => {
-            let (u0, u1) = curve_parameters(curve, start, end);
+            let (u0, u1) = curve.parameters_between(start, end);
             let translated_curve = curve
                 .translated(direction)
                 .map_err(|source| ExtrudeError::CurveTranslationFailed { dart, source })?;
@@ -261,13 +261,6 @@ fn lateral_plane(
     Ok(Plane::from_xy(start, edge, direction))
 }
 
-fn curve_parameters(curve: &Curve, start: Point3, end: Point3) -> (f64, f64) {
-    match curve {
-        Curve::Line(_) | Curve::Circle(_) => (curve.param_at(start), curve.param_at(end)),
-        Curve::Nurbs(nurbs) => nurbs.domain(),
-    }
-}
-
 fn quad_pcurves(uv: &[Point2; 4], darts: &[Dart]) -> HashMap<Dart, Curve2> {
     let mut pcurves = HashMap::with_capacity(4);
     for i in 0..4 {
@@ -292,7 +285,7 @@ mod tests {
 
     use crate::builders::profiles::add_polygon;
     use crate::builders::sheets::add_extruded_profile;
-    use crate::geometry::Point3;
+    use crate::geometry::{Point3, PointCoincidence};
     use crate::modeling::sweep::extrude_profile;
     use crate::tessellate::{TessellateOpts, face::tessellate_face};
     use crate::topology::StandardPayload;
@@ -513,7 +506,7 @@ mod tests {
             let p0 = vertex_point(g, dart);
             let p1 = vertex_point(g, linked);
             assert!(
-                same_point(p0, p1),
+                p0.coincides(p1, 1.0e-9),
                 "alpha1 should connect darts with the same corner point: {dart:?} at {p0:?}, {linked:?} at {p1:?}"
             );
         }
@@ -549,11 +542,7 @@ mod tests {
     }
 
     fn same_undirected_edge(a: (Point3, Point3), b: (Point3, Point3)) -> bool {
-        (same_point(a.0, b.0) && same_point(a.1, b.1))
-            || (same_point(a.0, b.1) && same_point(a.1, b.0))
-    }
-
-    fn same_point(a: Point3, b: Point3) -> bool {
-        (a - b).norm_squared() <= 1e-18
+        (a.0.coincides(b.0, 1.0e-9) && a.1.coincides(b.1, 1.0e-9))
+            || (a.0.coincides(b.1, 1.0e-9) && a.1.coincides(b.0, 1.0e-9))
     }
 }

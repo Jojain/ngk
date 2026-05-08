@@ -4,7 +4,7 @@ use super::nurbs::NurbsCurve;
 use super::nurbs::error::NurbsError;
 use super::nurbs::points::{ControlPolygon, HPoint};
 use super::surfaces::Plane;
-use super::utils::{IntoUnit3, Point3};
+use super::utils::{IntoUnit3, Point3, PointCoincidence};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 
 pub enum Periodicity {
@@ -41,6 +41,23 @@ impl Curve {
             Curve::Nurbs(n) => closest_sample_parameter(n, point),
         }
     }
+
+    pub fn parameters_between(&self, start: Point3, end: Point3) -> (f64, f64) {
+        match self {
+            Curve::Line(_) | Curve::Circle(_) => {
+                let t0 = self.param_at(start);
+                let mut t1 = self.param_at(end);
+                if start.coincides(end, 1.0e-9) {
+                    if let Periodicity::Periodic(period) = self.periodicity() {
+                        t1 = t0 + period;
+                    }
+                }
+                (t0, t1)
+            }
+            Curve::Nurbs(nurbs) => nurbs.domain(),
+        }
+    }
+
     pub fn length(&self, t0: f64, t1: f64) -> f64 {
         match self {
             Curve::Line(l) => l.length(t0, t1),
@@ -113,6 +130,30 @@ fn sampled_length(curve: &NurbsCurve, t0: f64, t1: f64) -> f64 {
     }
 
     length
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f64::consts::TAU;
+
+    use nalgebra::Vector3;
+
+    use super::{Circle, Curve};
+    use crate::geometry::{Plane, Point3};
+
+    #[test]
+    fn parameters_between_closed_circle_span_full_period() {
+        let start = Point3::new(1.0, 0.0, 0.0);
+        let curve = Curve::Circle(Circle::new(
+            Plane::new(Point3::origin(), Vector3::x(), Vector3::z()),
+            1.0,
+        ));
+
+        let (t0, t1) = curve.parameters_between(start, start);
+
+        assert!((t0 - 0.0).abs() <= f64::EPSILON);
+        assert!((t1 - TAU).abs() <= f64::EPSILON);
+    }
 }
 
 #[derive(Clone)]

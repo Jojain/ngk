@@ -111,7 +111,7 @@ fn curve_pcurve(curve: &Curve, start: Point3, end: Point3, plane: &Plane) -> Cur
     match curve {
         Curve::Line(_) => Curve2::Line(Line2::new(plane_uv(plane, start), plane_uv(plane, end))),
         Curve::Circle(_) | Curve::Nurbs(_) => {
-            let (t0, t1) = curve_parameters(curve, start, end);
+            let (t0, t1) = curve.parameters_between(start, end);
             let segments = 32usize;
             let points = (0..=segments)
                 .map(|i| {
@@ -121,13 +121,6 @@ fn curve_pcurve(curve: &Curve, start: Point3, end: Point3, plane: &Plane) -> Cur
                 .collect();
             Curve2::Polyline(Polyline2::new(points))
         }
-    }
-}
-
-fn curve_parameters(curve: &Curve, start: Point3, end: Point3) -> (f64, f64) {
-    match curve {
-        Curve::Line(_) | Curve::Circle(_) => (curve.param_at(start), curve.param_at(end)),
-        Curve::Nurbs(nurbs) => nurbs.domain(),
     }
 }
 
