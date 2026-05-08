@@ -6,9 +6,9 @@
 
 use nalgebra::Vector3;
 
+use crate::builders::profiles::add_polyline;
 use crate::geometry::{Circle, Curve, Line, Plane, Point3};
-use crate::modeling::profiles::add_polyline;
-use crate::modeling::sweep::extrude;
+use crate::modeling::sweep::extrude_profile;
 use crate::topology::StandardPayload;
 use crate::topology::gmap::{Dart, GMap};
 use crate::topology::profile::Profile;
@@ -21,16 +21,16 @@ pub fn run() -> Result<ScriptResult, String> {
     let mut profile_map = GMap::<StandardPayload>::new();
     let arc_dart = add_arc_profile(&mut profile_map)?;
 
-    let shape = extrude(
+    let shape = extrude_profile(
         Profile::new(&profile_map, arc_dart),
         Vector3::new(0.0, 0.0, HEIGHT),
     )
     .map_err(|err| format!("arc extrusion failed: {err:?}"))?;
-    let (g, arc_face) = shape.into_map();
+    let (g, arc_dart) = shape.into_map();
 
     let mut hints = VizHints::new();
-    for (key, _) in g.iter_faces() {
-        let style = if key == arc_face {
+    for (key, attr) in g.iter_faces() {
+        let style = if attr.outer_loop == arc_dart {
             Style::default()
                 .color("#7bd0ff")
                 .label("extruded arc")

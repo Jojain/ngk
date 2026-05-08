@@ -1,5 +1,5 @@
 use crate::geometry::Curve;
-use crate::topology::gmap::{Cell1, Dim};
+use crate::topology::gmap::{Cell1, Dim, MergeTopology};
 
 use super::facet::Facet;
 use super::gmap::{Dart, GMap};
@@ -74,5 +74,19 @@ impl<'a, P: Payload> Edge<'a, P> {
             .unwrap()
             .unwrap();
         self.curve().map(|c| c.length(t0, t1))
+    }
+}
+
+impl<P: Payload> MergeTopology<P> for Edge<'_, P> {
+    fn source_map(&self) -> &GMap<P> {
+        self.gmap
+    }
+
+    fn merge_darts(&self) -> Vec<Dart> {
+        self.darts().collect()
+    }
+
+    fn handle_dart(&self) -> Dart {
+        self.dart
     }
 }

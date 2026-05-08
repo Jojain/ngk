@@ -1,10 +1,9 @@
 use nalgebra::Vector3;
 
-use crate::modeling::sweep::extrude;
+use crate::modeling::sweep::extrude_profile;
 use crate::topology::profile::Profile;
-use crate::viz::VizHints;
 use crate::{
-    geometry::Point3, modeling::profiles::add_square, topology::gmap::GMap, viz::ScriptResult,
+    builders::profiles::add_square, geometry::Point3, topology::gmap::GMap, viz::ScriptResult,
 };
 
 pub fn run() -> Result<ScriptResult, String> {
@@ -21,8 +20,7 @@ pub fn run() -> Result<ScriptResult, String> {
     .map_err(|err| format!("failed to add square profile: {err:?}"))?;
 
     let profile = Profile::new(&profile_map, square_dart);
-    let shape = extrude(profile, Vector3::new(0.0, 0.0, 1.0))
+    let shape = extrude_profile(profile, Vector3::new(0.0, 0.0, 1.0))
         .map_err(|err| format!("failed to extrude square: {err:?}"))?;
-    let mut hints = VizHints::new();
-    Ok(ScriptResult::from_gmap_with_hints(&shape.map(), &VizHints::new()))
+    Ok(ScriptResult::from_gmap(shape.map()))
 }

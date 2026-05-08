@@ -1,38 +1,20 @@
-use crate::builders::add_edge;
-use crate::geometry::{Curve, Line, Point3};
-use crate::topology::gmap::{Dart, Dim, GMap};
+use std::collections::HashMap;
+
+use nalgebra::Vector3;
+
+use crate::builders::profiles::{PolylineError, add_polyline};
+use crate::geometry::{Curve, Line, Plane, Point3, Surface};
+use crate::topology::FaceAttr;
+use crate::topology::gmap::GMap;
 use crate::topology::payload::StandardPayload;
+use crate::topology::shape::{FaceShape, ProfileShape, Shape};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PolylineError {
-    EmptyPolyline,
-    CreatedEdgeMissing,
-    SewFailed { dim: Dim, first: Dart, second: Dart },
-}
-
-pub fn add_polyline(
-    g: &mut GMap<StandardPayload>,
+pub fn polyline(
     segments: &[(Point3, Point3, Curve)],
-) -> Result<Dart, PolylineError> {
-    let (first_segment, remaining_segments) = segments
-        .split_first()
-        .ok_or(PolylineError::EmptyPolyline)?;
-    let last_segment = segments.last().ok_or(PolylineError::EmptyPolyline)?;
-    let closed = first_segment.0 == last_segment.1;
-
-    let (first_start, mut previous_end) = add_polyline_segment(g, first_segment)?;
-
-    for segment in remaining_segments {
-        let (start_dart, end_dart) = add_polyline_segment(g, segment)?;
-        sew(g, Dim::One, previous_end, start_dart)?;
-        previous_end = end_dart;
-    }
-
-    if closed {
-        sew(g, Dim::One, previous_end, first_start)?;
-    }
-
-    Ok(first_start)
+) -> Result<Shape<ProfileShape, StandardPayload>, PolylineError> {
+    let mut g = GMap::new();
+    let profile_dart = add_polyline(&mut g, segments)?;
+    Ok(Shape::new(g, profile_dart))
 }
 
 /// Adds a square profile to the given GMap.
@@ -44,35 +26,44 @@ pub fn add_polyline(
 /// 3-----2
 ///
 /// Returns the dart of the first corner.
-pub fn add_square(g: &mut GMap<StandardPayload>, corners: &[Point3; 4]) -> Result<Dart, PolylineError> {
+pub fn square_loop(corners: &[Point3; 4]) -> Result<Shape<ProfileShape>, PolylineError> {
     let segments = [
-        (corners[0], corners[1], Curve::Line(Line::new(corners[0], corners[1]))),
-        (corners[1], corners[2], Curve::Line(Line::new(corners[1], corners[2]))),
-        (corners[2], corners[3], Curve::Line(Line::new(corners[2], corners[3]))),
-        (corners[3], corners[0], Curve::Line(Line::new(corners[3], corners[0]))),
+        (
+            corners[0],
+            corners[1],
+            Curve::Line(Line::new(corners[0], corners[1])),
+        ),
+        (
+            corners[1],
+            corners[2],
+            Curve::Line(Line::new(corners[1], corners[2])),
+        ),
+        (
+            corners[2],
+            corners[3],
+            Curve::Line(Line::new(corners[2], corners[3])),
+        ),
+        (
+            corners[3],
+            corners[0],
+            Curve::Line(Line::new(corners[3], corners[0])),
+        ),
     ];
-    add_polyline(g, &segments)
+    polyline(&segments)
 }
 
-fn add_polyline_segment(
-    g: &mut GMap<StandardPayload>,
-    (start, end, curve): &(Point3, Point3, Curve),
-) -> Result<(Dart, Dart), PolylineError> {
-    let edge_key = add_edge(g, *start, *end, curve.clone());
-    let edge = g
-        .edge(edge_key)
-        .ok_or(PolylineError::CreatedEdgeMissing)?;
-    let start_dart = edge.dart;
-    let end_dart = g.alpha(Dim::Zero, start_dart);
-    Ok((start_dart, end_dart))
-}
+pub fn square(corners: &[Point3; 4]) -> Result<Shape<FaceShape>, PolylineError> {
+    let loop_shape = square_loop(corners)?;
+    let (mut gmap, loop_dart) = loop_shape.into_map();
+    let face = FaceAttr::with_pcurves(
+        Surface::Plane(Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::y())),
+        (),
+        loop_dart,
+        Vec::new(),
+        HashMap::new(),
+    );
+    let face_key = gmap.add_face(face);
 
-fn sew(
-    g: &mut GMap<StandardPayload>,
-    dim: Dim,
-    first: Dart,
-    second: Dart,
-) -> Result<(), PolylineError> {
-    g.sew(dim, first, second)
-        .map_err(|_| PolylineError::SewFailed { dim, first, second })
+    let shape = Shape::new(gmap, face_key);
+    Ok(shape)
 }

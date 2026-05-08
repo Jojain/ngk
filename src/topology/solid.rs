@@ -1,5 +1,5 @@
 use super::closed::Closed;
-use super::gmap::GMap;
+use super::gmap::{Dart, GMap, MergeTopology};
 use super::payload::{Payload, StandardPayload};
 use super::sheet::{Sheet, ShellRef};
 use crate::topology::attributes::SolidAttr;
@@ -49,5 +49,23 @@ impl<'g, P: Payload> Solid<'g, P> {
             shells.extend(inners);
         }
         shells
+    }
+}
+
+impl<P: Payload> MergeTopology<P> for Solid<'_, P> {
+    fn source_map(&self) -> &GMap<P> {
+        self.gmap
+    }
+
+    fn merge_darts(&self) -> Vec<Dart> {
+        let mut darts = Vec::new();
+        for shell in self.shells() {
+            darts.extend(shell.darts());
+        }
+        darts
+    }
+
+    fn handle_dart(&self) -> Dart {
+        self.attr.outer_shell
     }
 }

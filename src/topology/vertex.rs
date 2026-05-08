@@ -1,5 +1,5 @@
 use crate::geometry::Point3;
-use crate::topology::gmap::{Cell0, Dim};
+use crate::topology::gmap::{Cell0, Dim, MergeTopology};
 use crate::topology::shape_keys::VertexKey;
 
 use super::edge::Edge;
@@ -49,5 +49,21 @@ impl<'a, P: Payload> Vertex<'a, P> {
 
     pub fn point(&self) -> Option<&Point3> {
         self.gmap.attribute::<Cell0>(self.dart).map(|v| &v.point)
+    }
+}
+
+impl<P: Payload> MergeTopology<P> for Vertex<'_, P> {
+    fn source_map(&self) -> &GMap<P> {
+        self.gmap
+    }
+
+    fn merge_darts(&self) -> Vec<Dart> {
+        self.gmap
+            .orbit(self.dart, self.gmap.orbit_indices(Dim::Zero))
+            .collect()
+    }
+
+    fn handle_dart(&self) -> Dart {
+        self.dart
     }
 }

@@ -28,6 +28,7 @@ export type VizSceneViewProps = {
   showVertices?: boolean;
   showEdges?: boolean;
   showFaces?: boolean;
+  /** When false, hides dart arrows only; α-links follow `visibleAlphas`. */
   showDarts?: boolean;
   showDartLabels?: boolean;
   showLabels?: boolean;
@@ -43,6 +44,15 @@ const DEFAULT_ALPHA_COLORS: Record<number, string> = {
   2: "#00b0ff",
   3: "#ffea00",
 };
+
+function hasVisibleAlphaLinks(
+  links: VizAlphaLink[],
+  visibleAlphas?: Set<number>,
+): boolean {
+  if (links.length === 0) return false;
+  if (!visibleAlphas) return true;
+  return links.some((l) => visibleAlphas.has(l.involution));
+}
 
 /**
  * BRep-typed renderer for a [`VizScene`]. Splits into two logical layers:
@@ -75,6 +85,9 @@ export default function VizSceneView({
 }: VizSceneViewProps) {
   const alphaColor = (i: number) =>
     alphaColors[i] ?? DEFAULT_ALPHA_COLORS[i] ?? "#bbbbbb";
+
+  const showGMapOverlay =
+    showDarts || hasVisibleAlphaLinks(scene.alphaLinks, visibleAlphas);
 
   return (
     <group>
@@ -118,8 +131,9 @@ export default function VizSceneView({
         />
       )}
 
-      {showDarts && (
+      {showGMapOverlay && (
         <GMapLayer
+          showDarts={showDarts}
           darts={scene.darts}
           alphaLinks={scene.alphaLinks}
           dartColor={dartColor}
@@ -304,6 +318,7 @@ function FaceMesh({
 // ---------- GMap overlay ----------
 
 function GMapLayer({
+  showDarts,
   darts,
   alphaLinks,
   dartColor,
@@ -312,6 +327,7 @@ function GMapLayer({
   alphaColor,
   visibleAlphas,
 }: {
+  showDarts: boolean;
   darts: VizDart[];
   alphaLinks: VizAlphaLink[];
   dartColor: string;
@@ -327,16 +343,17 @@ function GMapLayer({
 
   return (
     <group>
-      {darts.map((d) => (
-        <Dart
-          key={`d-${d.dartId}`}
-          dart={d}
-          shaft={display.shaftsByDartId.get(d.dartId) ?? d.shaft}
-          color={d.color ?? dartColor}
-          headRatio={arrowHeadRatio}
-          showLabel={showDartLabels}
-        />
-      ))}
+      {showDarts &&
+        darts.map((d) => (
+          <Dart
+            key={`d-${d.dartId}`}
+            dart={d}
+            shaft={display.shaftsByDartId.get(d.dartId) ?? d.shaft}
+            color={d.color ?? dartColor}
+            headRatio={arrowHeadRatio}
+            showLabel={showDartLabels}
+          />
+        ))}
       {alphaLinks.map((l, i) =>
         visibleAlphas && !visibleAlphas.has(l.involution) ? null : (
           <AlphaLink

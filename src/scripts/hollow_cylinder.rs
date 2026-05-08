@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
-use crate::builders::add_polygon;
+use crate::builders::profiles::add_polygon;
 use crate::geometry::{Curve2, Cylinder, Line2, Plane, Point2, Point3, Surface};
 use crate::topology::StandardPayload;
 use crate::topology::attributes::{FaceAttr, SolidAttr};

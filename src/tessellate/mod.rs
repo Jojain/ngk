@@ -22,7 +22,7 @@ pub mod shape;
 pub mod surface;
 
 use crate::geometry::Point3;
-use nalgebra::{UnitVector3, Vector3};
+use nalgebra::UnitVector3;
 
 /// A polyline in 3D. Edges and dart shafts share this type.
 #[derive(Debug, Clone, Default)]

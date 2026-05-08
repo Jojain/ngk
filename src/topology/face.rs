@@ -1,6 +1,7 @@
 use super::closed::Closed;
 use super::gmap::Dart;
 use super::gmap::GMap;
+use super::gmap::MergeTopology;
 use super::payload::{Payload, StandardPayload};
 use super::profile::{Loop, Profile};
 use crate::geometry::Surface;
@@ -49,5 +50,23 @@ impl<'g, P: Payload> Face<'g, P> {
 
     pub fn pcurve(&self, dart: Dart) -> Option<&Curve2> {
         self.attr.pcurves.get(&dart)
+    }
+}
+
+impl<P: Payload> MergeTopology<P> for Face<'_, P> {
+    fn source_map(&self) -> &GMap<P> {
+        self.gmap
+    }
+
+    fn merge_darts(&self) -> Vec<Dart> {
+        let mut darts = self.outer_loop().darts().collect::<Vec<_>>();
+        for loop_ in self.inner_loops() {
+            darts.extend(loop_.darts());
+        }
+        darts
+    }
+
+    fn handle_dart(&self) -> Dart {
+        self.attr.outer_loop
     }
 }

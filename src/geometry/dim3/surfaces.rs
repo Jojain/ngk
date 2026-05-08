@@ -90,7 +90,7 @@ impl Cylinder {
         self.origin() + self.radius * *radial_dir + v * *self.axis()
     }
 
-    pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
+    pub fn normal_at(&self, u: f64, _v: f64) -> UnitVector3<f64> {
         let origin = self.origin();
         let projected = self.point_at(u, 0.0);
         (projected - origin).normalized()
@@ -124,7 +124,7 @@ impl RuledSurface {
         self.curve.point_at(u) + self.direction * v
     }
 
-    pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
+    pub fn normal_at(&self, u: f64, _v: f64) -> UnitVector3<f64> {
         let du = finite_difference_curve_tangent(&self.curve, u);
         let n = du.cross(&self.direction);
         match UnitVector3::try_new(n, f64::EPSILON) {

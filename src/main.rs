@@ -1,12 +1,7 @@
-use ngk::builders::{add_edge, add_polygon};
-use ngk::geometry::{Curve, Line, Point3};
 use ngk::scripts;
-use ngk::topology::StandardPayload;
-use ngk::topology::gmap::GMap;
-use ngk::topology::profile::{Loop, Profile};
 use ngk::viz::ScriptResult;
 
-fn script_handling(name: &str, result: &ScriptResult) {
+fn script_handling(_name: &str, _result: &ScriptResult) {
     println!("available scripts:");
     for id in scripts::list() {
         println!("  - {id}");
@@ -38,40 +33,4 @@ fn script_handling(name: &str, result: &ScriptResult) {
     }
 }
 
-fn explo1() {
-    let mut map = GMap::<StandardPayload>::new();
-    let d = add_polygon(
-        &mut map,
-        &[
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(1.0, 1.0, 0.0),
-            Point3::new(0.0, 1.0, 0.0),
-        ],
-    );
-    let l = Loop::new(Profile::new(&map, d)).expect("failed to create loop");
-    for e in l.edges() {
-        println!("edge dart: {}", e.dart.id());
-    }
-    for v in l.vertices() {
-        println!("vertex dart: {}", v.dart.id());
-        println!("vertex point: {:?}", v.point());
-    }
-    println!("loop start: {:?}", l.start().point());
-    println!("loop end: {:?}", l.end().point());
-}
-fn explo2() {
-    let mut map = GMap::<StandardPayload>::new();
-    let po = Point3::new(3.0, 1.0, 0.0);
-    let p1 = Point3::new(5.0, 0.0, 0.0);
-    let curve = Curve::Line(Line::new(po, p1));
-    let e = add_edge(&mut map, po, p1, curve);
-    let e = map.edge(e).expect("edge not found").edge(&map);
-
-    println!("v1: {:?}", e.start().point());
-    println!("v2: {:?}", e.end().point());
-    println!("length: {:?}", e.length());
-}
-fn main() {
-    explo2();
-}
+fn main() {}

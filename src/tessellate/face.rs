@@ -54,7 +54,7 @@ pub fn tessellate_face<P: Payload>(
         Surface::Plane(_) => {
             if inner_uv.is_empty() {
                 plane_fan(&attr.surface, &outer_uv, ccw)
-            } else if inner_uv.len() == 1 && inner_uv[0].len() == outer_uv.len() {
+            } else if inner_uv.len() == 1 {
                 plane_strip(&attr.surface, &outer_uv, &inner_uv[0], ccw)
             } else {
                 // TODO: real CDT (constrained Delaunay with holes).
@@ -176,7 +176,16 @@ fn plane_strip(
     inner_uv: &[Point2],
     ccw: bool,
 ) -> IndexedMesh {
-    debug_assert_eq!(outer_uv.len(), inner_uv.len());
+    let outer_resampled;
+    let inner_resampled;
+    let (outer_uv, inner_uv) = if outer_uv.len() == inner_uv.len() {
+        (outer_uv, inner_uv)
+    } else {
+        let n = outer_uv.len().max(inner_uv.len()).max(3);
+        outer_resampled = resample_closed_polyline(outer_uv, n);
+        inner_resampled = resample_closed_polyline(inner_uv, n);
+        (outer_resampled.as_slice(), inner_resampled.as_slice())
+    };
     let n = outer_uv.len();
     let normal = face_normal(surface, outer_uv[0].x, outer_uv[0].y, ccw);
 
@@ -208,6 +217,38 @@ fn plane_strip(
         normals,
         indices,
     }
+}
+
+fn resample_closed_polyline(points: &[Point2], count: usize) -> Vec<Point2> {
+    let mut lengths = Vec::with_capacity(points.len());
+    let mut perimeter = 0.0;
+    for i in 0..points.len() {
+        let edge = points[(i + 1) % points.len()] - points[i];
+        perimeter += edge.norm();
+        lengths.push(perimeter);
+    }
+
+    (0..count)
+        .map(|sample| {
+            let target = perimeter * sample as f64 / count as f64;
+            let edge_idx = lengths
+                .iter()
+                .position(|length| *length >= target)
+                .unwrap_or(0);
+            let prev_length = if edge_idx == 0 {
+                0.0
+            } else {
+                lengths[edge_idx - 1]
+            };
+            let edge_length = lengths[edge_idx] - prev_length;
+            let t = if edge_length <= f64::EPSILON {
+                0.0
+            } else {
+                (target - prev_length) / edge_length
+            };
+            points[edge_idx] + (points[(edge_idx + 1) % points.len()] - points[edge_idx]) * t
+        })
+        .collect()
 }
 
 /// TODO: real CDT. Until then, faces we can't trim collapse to a single quad

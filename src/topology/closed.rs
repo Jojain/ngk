@@ -1,5 +1,8 @@
 use std::ops::Deref;
 
+use super::gmap::{Dart, GMap, MergeTopology};
+use super::payload::Payload;
+
 /// Types that have a notion of being "closed" — e.g. a profile with no dangling
 /// endpoints, or a sheet with no free edge. Each implementor decides what
 /// "closed" means for itself.
@@ -53,5 +56,23 @@ impl<T> Deref for Closed<T> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.0
+    }
+}
+
+impl<P, T> MergeTopology<P> for Closed<T>
+where
+    P: Payload,
+    T: MergeTopology<P>,
+{
+    fn source_map(&self) -> &GMap<P> {
+        self.0.source_map()
+    }
+
+    fn merge_darts(&self) -> Vec<Dart> {
+        self.0.merge_darts()
+    }
+
+    fn handle_dart(&self) -> Dart {
+        self.0.handle_dart()
     }
 }

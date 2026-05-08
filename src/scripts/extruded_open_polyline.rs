@@ -1,8 +1,8 @@
 use nalgebra::Vector3;
 
+use crate::builders::profiles::add_polyline;
 use crate::geometry::{Curve, Line, Point3};
-use crate::modeling::profiles::add_polyline;
-use crate::modeling::sweep::extrude;
+use crate::modeling::sweep::extrude_profile;
 use crate::topology::StandardPayload;
 use crate::topology::gmap::GMap;
 use crate::topology::profile::Profile;
@@ -37,7 +37,7 @@ pub fn run() -> Result<ScriptResult, String> {
         .map_err(|err| format!("failed to add open polyline profile: {err:?}"))?;
 
     let profile = Profile::new(&profile_map, polyline_dart);
-    let shape = extrude(profile, Vector3::new(0.0, 0.0, 1.0))
+    let shape = extrude_profile(profile, Vector3::new(0.0, 0.0, 1.0))
         .map_err(|err| format!("failed to extrude open polyline: {err:?}"))?;
 
     Ok(ScriptResult::from_gmap_with_hints(

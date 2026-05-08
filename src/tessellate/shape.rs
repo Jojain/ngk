@@ -2,7 +2,7 @@
 
 use super::{IndexedMesh, Polyline3, TessellateOpts, tessellate_curve, tessellate_face};
 use crate::geometry::Point3;
-use crate::topology::gmap::{Cell0, Cell1, Dim, GMap};
+use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, ShapeKey, VertexKey};
 

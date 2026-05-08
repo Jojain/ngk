@@ -2,7 +2,7 @@ use crate::topology::gmap::Dim;
 
 use super::edge::Edge;
 use super::face::Face;
-use super::gmap::{Cell2, Dart, GMap};
+use super::gmap::{Cell2, Dart, GMap, MergeTopology};
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 
@@ -55,5 +55,19 @@ impl<'a, P: Payload> Facet<'a, P> {
         self.gmap
             .attribute::<Cell2>(self.dart)
             .and_then(|key| self.gmap.faces.get(*key).map(|attr| attr.face(self.gmap)))
+    }
+}
+
+impl<P: Payload> MergeTopology<P> for Facet<'_, P> {
+    fn source_map(&self) -> &GMap<P> {
+        self.gmap
+    }
+
+    fn merge_darts(&self) -> Vec<Dart> {
+        self.darts().collect()
+    }
+
+    fn handle_dart(&self) -> Dart {
+        self.dart
     }
 }

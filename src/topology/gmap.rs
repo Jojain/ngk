@@ -1,15 +1,11 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use slotmap::SlotMap;
 
-use crate::topology::edge::Edge;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
-use crate::topology::vertex::Vertex;
 
 use super::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
-use super::face::Face;
 use super::payload::{Payload, StandardPayload};
-use super::solid::Solid;
 
 pub use super::dart::{Dart, IsolatedDart};
 
@@ -76,6 +72,37 @@ pub trait AttributeStore<D: CellDim> {
     type Attr;
     fn get(&self, repr: Dart) -> Option<&Self::Attr>;
     fn get_mut(&mut self, repr: Dart) -> Option<&mut Self::Attr>;
+}
+
+fn remap_dart(dart_map: &HashMap<Dart, Dart>, dart: Dart) -> Dart {
+    *dart_map
+        .get(&dart)
+        .expect("merged dart reference must have a remapped dart")
+}
+
+/// Topological views that can be copied into another [`GMap`].
+pub trait MergeTopology<P: Payload> {
+    fn source_map(&self) -> &GMap<P>;
+    fn merge_darts(&self) -> Vec<Dart>;
+    fn handle_dart(&self) -> Dart;
+}
+
+impl<P, T> MergeTopology<P> for &T
+where
+    P: Payload,
+    T: MergeTopology<P>,
+{
+    fn source_map(&self) -> &GMap<P> {
+        (*self).source_map()
+    }
+
+    fn merge_darts(&self) -> Vec<Dart> {
+        (*self).merge_darts()
+    }
+
+    fn handle_dart(&self) -> Dart {
+        (*self).handle_dart()
+    }
 }
 
 impl<P: Payload> AttributeStore<Cell0> for GMap<P> {
@@ -271,6 +298,129 @@ impl<P: Payload> GMap<P> {
         self.solids.get(key)
     }
 
+    /// Iterate every stored 3-cell attribute paired with its slotmap key.
+    pub fn iter_solids(&self) -> impl Iterator<Item = (SolidKey, &SolidAttr<P::S>)> {
+        self.solids.iter()
+    }
+
+    /// Merge a topological view into this map, returning the view's representative
+    /// dart rewritten to the destination map.
+    ///
+    /// All darts in the view are copied. Alpha links within those darts are
+    /// preserved; links leaving the view become free. Stored vertex, edge, face,
+    /// and solid attributes whose representative darts are part of the view are
+    /// cloned with embedded dart references remapped to the new dart ids.
+    pub fn merge<T>(&mut self, topology: T) -> Dart
+    where
+        T: MergeTopology<P>,
+    {
+        let source = topology.source_map();
+        let mut seen_darts = HashSet::new();
+        let source_darts = topology
+            .merge_darts()
+            .into_iter()
+            .filter(|dart| seen_darts.insert(*dart))
+            .collect::<Vec<_>>();
+        let source_dart_set = source_darts.iter().copied().collect::<HashSet<_>>();
+        let mut dart_map = HashMap::with_capacity(source_darts.len());
+        let mut vertex_map = HashMap::with_capacity(source.vertices.len());
+        let mut edge_map = HashMap::with_capacity(source.edges.len());
+        let mut face_map = HashMap::with_capacity(source.faces.len());
+
+        for old in source_darts.iter().copied() {
+            let new = self.add_dart();
+            dart_map.insert(old, new);
+        }
+
+        for old in source_darts.iter().copied() {
+            let new = remap_dart(&dart_map, old);
+            for i in 0..self.dimension() {
+                let old_link = source.alphas[i][old.id()];
+                self.alphas[i][new.id()] = dart_map.get(&old_link).copied().unwrap_or(new);
+            }
+        }
+
+        for (old_key, attr) in source.vertices.iter() {
+            if !source_dart_set.contains(&attr.dart) {
+                continue;
+            }
+            let mut attr = attr.clone();
+            attr.dart = remap_dart(&dart_map, attr.dart);
+            let new_key = self.vertices.insert(attr);
+            vertex_map.insert(old_key, new_key);
+        }
+        for (old_dart, old_key) in source.dart_to_vertex.iter() {
+            if let (Some(&new_dart), Some(&new_key)) =
+                (dart_map.get(old_dart), vertex_map.get(old_key))
+            {
+                self.dart_to_vertex.insert(new_dart, new_key);
+            }
+        }
+
+        for (old_key, attr) in source.edges.iter() {
+            if !source_dart_set.contains(&attr.dart) {
+                continue;
+            }
+            let mut attr = attr.clone();
+            attr.dart = remap_dart(&dart_map, attr.dart);
+            let new_key = self.edges.insert(attr);
+            edge_map.insert(old_key, new_key);
+        }
+        for (old_dart, old_key) in source.dart_to_edge.iter() {
+            if let (Some(&new_dart), Some(&new_key)) =
+                (dart_map.get(old_dart), edge_map.get(old_key))
+            {
+                self.dart_to_edge.insert(new_dart, new_key);
+            }
+        }
+
+        for (old_key, attr) in source.faces.iter() {
+            if !source_dart_set.contains(&attr.outer_loop) {
+                continue;
+            }
+            let mut attr = attr.clone();
+            attr.outer_loop = remap_dart(&dart_map, attr.outer_loop);
+            attr.inner_loops = attr
+                .inner_loops
+                .into_iter()
+                .filter_map(|dart| dart_map.get(&dart).copied())
+                .collect();
+            attr.pcurves = attr
+                .pcurves
+                .into_iter()
+                .filter_map(|(dart, curve)| dart_map.get(&dart).copied().map(|d| (d, curve)))
+                .collect();
+            let outer_loop = attr.outer_loop;
+            let new_key = self.faces.insert(attr);
+            self.facets.insert(outer_loop, new_key);
+            face_map.insert(old_key, new_key);
+        }
+        for (old_dart, old_key) in source.facets.iter() {
+            if let (Some(&new_dart), Some(&new_key)) =
+                (dart_map.get(old_dart), face_map.get(old_key))
+            {
+                self.facets.insert(new_dart, new_key);
+            }
+        }
+
+        for (_, attr) in source.solids.iter() {
+            if !source_dart_set.contains(&attr.outer_shell) {
+                continue;
+            }
+            let mut attr = attr.clone();
+            attr.outer_shell = remap_dart(&dart_map, attr.outer_shell);
+            attr.inner_shells = attr.inner_shells.map(|shells| {
+                shells
+                    .into_iter()
+                    .filter_map(|dart| dart_map.get(&dart).copied())
+                    .collect()
+            });
+            self.solids.insert(attr);
+        }
+
+        remap_dart(&dart_map, topology.handle_dart())
+    }
+
     /// Algorithm 19 of the book
     fn is_sewable(&self, d0: Dart, d1: Dart, d: Dim) -> Option<SewableDarts> {
         let i = d.index();
@@ -401,7 +551,7 @@ impl<P: Payload> GMap<P> {
     }
 
     fn apply_sew(&mut self, darts: SewableDarts, d: Dim) {
-        let i = d.index();
+        let _i = d.index();
         for (d0, d1) in darts.mapping {
             self.sew_unchecked(d, d0, d1);
         }
@@ -492,5 +642,152 @@ impl<'a, P: Payload> Iterator for OrbitIterator<'a, P> {
         }
 
         Some(dart)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use nalgebra::Vector3;
+
+    use super::{Cell0, Cell1, Cell2, Dart, Dim, GMap};
+    use crate::builders::profiles::{add_edge, add_polygon};
+    use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, Surface};
+    use crate::topology::attributes::{FaceAttr, SolidAttr};
+    use crate::topology::edge::Edge;
+    use crate::topology::face::Face;
+    use crate::topology::payload::StandardPayload;
+    use crate::topology::profile::Profile;
+    use crate::topology::sheet::Sheet;
+    use crate::topology::solid::Solid;
+
+    #[test]
+    fn merge_edge_copies_topology_and_geometry() {
+        let mut target = GMap::<StandardPayload>::new();
+        let mut source = GMap::<StandardPayload>::new();
+        let (_, edge_key) = add_edge(
+            &mut source,
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(2.0, 0.0, 0.0),
+            Curve::Line(Line::new(
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(2.0, 0.0, 0.0),
+            )),
+        );
+
+        let edge = source
+            .edge(edge_key)
+            .map(|attr| Edge::new(&source, attr.dart))
+            .expect("source edge should exist");
+        let merged_dart = target.merge(edge);
+        let merged_edge = target
+            .attribute::<Cell1>(merged_dart)
+            .expect("merged edge geometry should exist");
+
+        assert_eq!(target.dart_count(), 2);
+        assert_eq!(merged_edge.dart, Dart::new(0));
+        assert_eq!(target.alpha(Dim::Zero, Dart::new(0)), Dart::new(1));
+        assert!(target.attribute::<Cell0>(Dart::new(0)).is_some());
+        assert!(target.attribute::<Cell0>(Dart::new(1)).is_some());
+    }
+
+    #[test]
+    fn merge_face_remaps_stored_darts_and_pcurves() {
+        let mut target = GMap::<StandardPayload>::new();
+        add_edge(
+            &mut target,
+            Point3::new(-1.0, 0.0, 0.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Curve::Line(Line::new(
+                Point3::new(-1.0, 0.0, 0.0),
+                Point3::new(0.0, 0.0, 0.0),
+            )),
+        );
+
+        let mut source = GMap::<StandardPayload>::new();
+        let loop_dart = add_polygon(
+            &mut source,
+            &[
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(1.0, 1.0, 0.0),
+                Point3::new(0.0, 1.0, 0.0),
+            ],
+        );
+        let mut pcurves = HashMap::new();
+        pcurves.insert(
+            loop_dart,
+            Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(1.0, 0.0))),
+        );
+        let face_key = source.add_face(FaceAttr::with_pcurves(
+            Surface::Plane(Plane::from_xy(
+                Point3::new(0.0, 0.0, 0.0),
+                Vector3::x(),
+                Vector3::y(),
+            )),
+            (),
+            loop_dart,
+            Vec::new(),
+            pcurves,
+        ));
+
+        let face = source
+            .face(face_key)
+            .map(|attr| Face::new(&source, attr))
+            .expect("source face should exist");
+        let merged_dart = target.merge(face);
+        let merged_key = *target
+            .attribute::<Cell2>(merged_dart)
+            .expect("merged face lookup should exist");
+        let merged_face = target.face(merged_key).expect("merged face should exist");
+
+        assert_eq!(target.dart_count(), 10);
+        assert_eq!(merged_face.outer_loop, Dart::new(2));
+        assert!(merged_face.pcurves.contains_key(&merged_face.outer_loop));
+        assert!(!merged_face.pcurves.contains_key(&loop_dart));
+        assert_eq!(target.alpha(Dim::Zero, Dart::new(2)), Dart::new(3));
+        assert_eq!(target.alpha(Dim::One, Dart::new(3)), Dart::new(4));
+    }
+
+    #[test]
+    fn merge_profile_sheet_and_solid_return_remapped_darts() {
+        let mut source = GMap::<StandardPayload>::new();
+        let profile_dart = add_polygon(
+            &mut source,
+            &[
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(0.0, 1.0, 0.0),
+            ],
+        );
+
+        let mut target = GMap::<StandardPayload>::new();
+        let merged_profile = target.merge(Profile::new(&source, profile_dart));
+        assert_eq!(merged_profile, Dart::new(0));
+        assert_eq!(target.dart_count(), 6);
+
+        let mut sheet_target = GMap::<StandardPayload>::new();
+        let merged_sheet = sheet_target.merge(Sheet::new(&source, profile_dart));
+        assert_eq!(merged_sheet, Dart::new(0));
+        assert_eq!(sheet_target.dart_count(), 6);
+
+        let solid_key = source.add_solid(SolidAttr::new((), profile_dart, None));
+        let mut second_target = GMap::<StandardPayload>::new();
+        let solid = source
+            .solid(solid_key)
+            .map(|attr| Solid::new(&source, attr))
+            .expect("source solid should exist");
+        let merged_solid = second_target.merge(solid);
+        assert_eq!(merged_solid, Dart::new(0));
+        assert_eq!(
+            second_target
+                .iter_solids()
+                .next()
+                .expect("merged solid should exist")
+                .1
+                .outer_shell,
+            Dart::new(0)
+        );
     }
 }

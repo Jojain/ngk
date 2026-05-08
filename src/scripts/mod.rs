@@ -5,10 +5,11 @@
 use crate::viz::ScriptResult;
 
 pub mod cylinder;
+pub mod extruded_holed_pentagon;
 pub mod extruded_open_polyline;
+pub mod extruded_square;
 pub mod hollow_cylinder;
 pub mod two_faces_alpha2;
-pub mod extruded_square;
 
 pub type ScriptFn = fn() -> Result<ScriptResult, String>;
 
@@ -38,6 +39,11 @@ pub const SCRIPTS: &[Script] = &[
         id: "extruded_square",
         title: "Extruded square",
         run: extruded_square::run,
+    },
+    Script {
+        id: "extruded_holed_pentagon",
+        title: "Extruded pentagon with square hole",
+        run: extruded_holed_pentagon::run,
     },
     Script {
         id: "extruded_open_polyline",

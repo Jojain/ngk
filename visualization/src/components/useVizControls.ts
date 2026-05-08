@@ -7,7 +7,8 @@ import { useControls, folder } from "leva";
  * Returns the props you can spread onto `<VizSceneView />`. Two folders:
  * - **BRep**: toggles, sizes, colors, and whether the face color picker
  *   overrides per-face colors from the scene.
- * - **GMap**: dart visibility, dart labels, per-involution α-link toggles.
+ * - **GMap**: dart-arrow visibility (α-links stay on their own toggles), dart
+ *   labels, per-involution α-link toggles.
  *
  * Override defaults via `initial` for experiment-specific tuning.
  */

@@ -1,6 +1,6 @@
 use super::closed::{Closeable, Closed};
 use super::edge::Edge;
-use super::gmap::{Dart, Dim, GMap};
+use super::gmap::{Dart, Dim, GMap, MergeTopology};
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 
@@ -50,7 +50,7 @@ impl<'a, P: Payload> Profile<'a, P> {
     pub fn edges(&self) -> Vec<Edge<'a, P>> {
         self.darts()
             .step_by(2)
-            .map(|d| Edge::new(self.gmap, self.gmap.cell_representative(d, Dim::One)))
+            .map(|d| Edge::new(self.gmap, d))
             .collect()
     }
     pub fn vertices(&self) -> Vec<Vertex<'a, P>> {
@@ -58,6 +58,20 @@ impl<'a, P: Payload> Profile<'a, P> {
             .step_by(2)
             .map(|d| Vertex::new(self.gmap, self.gmap.cell_representative(d, Dim::Zero)))
             .collect()
+    }
+}
+
+impl<P: Payload> MergeTopology<P> for Profile<'_, P> {
+    fn source_map(&self) -> &GMap<P> {
+        self.gmap
+    }
+
+    fn merge_darts(&self) -> Vec<Dart> {
+        self.darts().collect()
+    }
+
+    fn handle_dart(&self) -> Dart {
+        self.dart
     }
 }
 
@@ -135,7 +149,7 @@ impl<'a, P: Payload> Iterator for LoopIterator<'a, P> {
 #[cfg(test)]
 mod tests {
     use super::{Closeable, Profile};
-    use crate::builders::add_edge;
+    use crate::builders::profiles::add_edge;
     use crate::geometry::{Curve, Line, Point3};
     use crate::topology::gmap::{Dim, GMap};
     use crate::topology::payload::StandardPayload;
@@ -162,9 +176,9 @@ mod tests {
             Curve::Line(Line::new(points[1], points[2])),
         );
 
-        let first_start = g.edge(first_edge).expect("edge should exist").dart;
+        let first_start = g.edge(first_edge.1).expect("edge should exist").dart;
         let first_end = g.alpha(Dim::Zero, first_start);
-        let second_start = g.edge(second_edge).expect("edge should exist").dart;
+        let second_start = g.edge(second_edge.1).expect("edge should exist").dart;
         g.sew(Dim::One, first_end, second_start)
             .expect("adjacent open profile edges should be alpha1-sewable");
 

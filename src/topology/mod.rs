@@ -6,6 +6,7 @@ pub mod face;
 pub mod facet;
 pub mod gmap;
 pub mod payload;
+pub mod planar;
 pub mod profile;
 pub mod shape;
 pub mod shape_keys;

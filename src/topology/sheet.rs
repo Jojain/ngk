@@ -1,7 +1,7 @@
 use crate::topology::gmap::Dim;
 
 use super::closed::{Closeable, Closed};
-use super::gmap::{Dart, GMap};
+use super::gmap::{Dart, GMap, MergeTopology};
 use super::payload::{Payload, StandardPayload};
 
 /// A sheet is the 2-dimensional connected sub-structure traced by α₀, α₁ and
@@ -33,6 +33,20 @@ impl<'a, P: Payload> Sheet<'a, P> {
     /// Every dart of this sheet, traversed via ⟨α₀, α₁, α₂⟩.
     pub fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
         self.gmap.orbit(self.dart, vec![0, 1, 2])
+    }
+}
+
+impl<P: Payload> MergeTopology<P> for Sheet<'_, P> {
+    fn source_map(&self) -> &GMap<P> {
+        self.gmap
+    }
+
+    fn merge_darts(&self) -> Vec<Dart> {
+        self.darts().collect()
+    }
+
+    fn handle_dart(&self) -> Dart {
+        self.dart
     }
 }
 
