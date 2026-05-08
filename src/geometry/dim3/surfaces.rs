@@ -1,6 +1,6 @@
 use super::curves::Curve;
 use super::frame::Frame;
-use super::nurbs::NurbsSurface;
+use super::nurbs::{ControlNet, HPoint, NurbsError, NurbsSurface};
 use super::utils::{IntoUnit3, Point3};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 
@@ -27,6 +27,48 @@ impl Surface {
             Surface::Cylinder(c) => c.normal_at(u, v),
             Surface::Ruled(s) => s.normal_at(u, v),
             Surface::Nurbs(s) => s.normal_at(u, v),
+        }
+    }
+
+    pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
+        match self {
+            Surface::Plane(plane) => Ok(Surface::Plane(Plane::from_xy(
+                plane.origin() + direction,
+                plane.x_dir(),
+                plane.y_dir(),
+            ))),
+            Surface::Cylinder(cylinder) => Ok(Surface::Cylinder(Cylinder::new(
+                cylinder.origin() + direction,
+                cylinder.x_dir(),
+                cylinder.axis(),
+                cylinder.radius,
+            ))),
+            Surface::Ruled(surface) => Ok(Surface::Ruled(RuledSurface::new(
+                surface.curve.translated(direction)?,
+                surface.direction,
+            ))),
+            Surface::Nurbs(surface) => {
+                let control_points = surface
+                    .control_points()
+                    .as_slice()
+                    .iter()
+                    .map(|point| {
+                        HPoint::from_cartesian(point.to_cartesian() + direction, point.weight())
+                    })
+                    .collect();
+                let control_points = ControlNet::new(
+                    control_points,
+                    surface.control_points().nu(),
+                    surface.control_points().nv(),
+                )?;
+                Ok(Surface::Nurbs(NurbsSurface::new(
+                    surface.degree_u(),
+                    surface.degree_v(),
+                    control_points,
+                    surface.knots_u().clone(),
+                    surface.knots_v().clone(),
+                )?))
+            }
         }
     }
 }

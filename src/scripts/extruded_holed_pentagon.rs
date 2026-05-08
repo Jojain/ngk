@@ -9,18 +9,14 @@ use crate::topology::StandardPayload;
 use crate::topology::attributes::FaceAttr;
 use crate::topology::gmap::{Dart, GMap};
 use crate::topology::profile::Profile;
+use crate::topology::shape::{FaceShape, Shape};
 use crate::topology::shape_keys::FaceKey;
 use crate::viz::{ScriptResult, Style, VizHints};
 
 const HEIGHT: f64 = 1.2;
 
 pub fn run() -> Result<ScriptResult, String> {
-    let (source, face_key) = build_source_face();
-    let face = source
-        .face(face_key)
-        .map(|attr| attr.face(&source))
-        .ok_or_else(|| "source face should exist".to_string())?;
-
+    let face = build_source_face();
     let solid = extrude_face(face, Vector3::new(0.0, 0.0, HEIGHT))
         .map_err(|err| format!("failed to extrude holed pentagon face: {err:?}"))?;
 
@@ -38,7 +34,7 @@ pub fn run() -> Result<ScriptResult, String> {
     Ok(ScriptResult::from_gmap_with_hints(solid.map(), &hints))
 }
 
-fn build_source_face() -> (GMap<StandardPayload>, FaceKey) {
+fn build_source_face() -> Shape<FaceShape, StandardPayload> {
     let mut g = GMap::<StandardPayload>::new();
     let surface = Surface::Plane(Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::y()));
 
@@ -70,7 +66,7 @@ fn build_source_face() -> (GMap<StandardPayload>, FaceKey) {
         pcurves,
     ));
 
-    (g, face_key)
+    Shape::new(g, face_key)
 }
 
 fn loop_line_pcurves(
@@ -120,11 +116,7 @@ mod tests {
 
     #[test]
     fn extruded_holed_pentagon_is_closed_solid_shell() {
-        let (source, face_key) = build_source_face();
-        let face = source
-            .face(face_key)
-            .map(|attr| attr.face(&source))
-            .expect("source face should exist");
+        let face = build_source_face();
         let solid = extrude_face(face, Vector3::new(0.0, 0.0, super::HEIGHT)).expect("extrude");
         let shell_dart = solid.solid().outer_shell().dart;
 

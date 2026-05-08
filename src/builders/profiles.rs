@@ -237,3 +237,21 @@ pub fn add_polygon<P: Payload>(g: &mut GMap<P>, corners: &[Point3]) -> Dart {
     }
     darts[0]
 }
+
+/// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
+pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool) -> Dart {
+    let darts: Vec<Dart> = (0..count).map(|_| g.add_dart()).collect();
+    for i in 0..count {
+        g.sew(Dim::Zero, darts[i], darts[(i + 1) % count])
+            .expect("fresh dart pair should be alpha0-sewable");
+    }
+    for i in 0..count {
+        g.sew(Dim::One, darts[i], darts[(i + 1) % count])
+            .expect("fresh dart pair should be alpha1-sewable");
+    }
+    if closed {
+        g.sew(Dim::Zero, darts[count - 1], darts[0])
+            .expect("fresh dart pair should be alpha0-sewable");
+    }
+    darts[0]
+}

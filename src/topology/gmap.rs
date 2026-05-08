@@ -85,6 +85,20 @@ pub trait MergeTopology<P: Payload> {
     fn source_map(&self) -> &GMap<P>;
     fn merge_darts(&self) -> Vec<Dart>;
     fn handle_dart(&self) -> Dart;
+
+    /// Copy this topology into a fresh [`GMap`], returning the copied map and
+    /// this topology's representative dart rewritten to the new map.
+    ///
+    /// Alpha links within the copied topology are preserved. Links leaving the
+    /// copied dart set become free in the isolated map.
+    fn isolate(self) -> (GMap<P>, Dart)
+    where
+        Self: Sized,
+    {
+        let mut isolated = GMap::new();
+        let dart = isolated.merge(self);
+        (isolated, dart)
+    }
 }
 
 impl<P, T> MergeTopology<P> for &T
@@ -256,6 +270,10 @@ impl<P: Payload> GMap<P> {
         self.vertices.get(key)
     }
 
+    pub fn vertex_mut(&mut self, key: VertexKey) -> Option<&mut VertexAttr<P::V>> {
+        self.vertices.get_mut(key)
+    }
+
     /// Iterate every stored 0-cell attribute paired with its slotmap key.
     pub fn iter_vertices(&self) -> impl Iterator<Item = (VertexKey, &VertexAttr<P::V>)> {
         self.vertices.iter()
@@ -272,6 +290,10 @@ impl<P: Payload> GMap<P> {
         self.edges.get(key)
     }
 
+    pub fn edge_mut(&mut self, key: EdgeKey) -> Option<&mut EdgeAttr<P::E>> {
+        self.edges.get_mut(key)
+    }
+
     /// Iterate every stored 1-cell attribute paired with its slotmap key.
     pub fn iter_edges(&self) -> impl Iterator<Item = (EdgeKey, &EdgeAttr<P::E>)> {
         self.edges.iter()
@@ -283,6 +305,10 @@ impl<P: Payload> GMap<P> {
 
     pub fn face(&self, key: FaceKey) -> Option<&FaceAttr<P::F>> {
         self.faces.get(key)
+    }
+
+    pub fn face_mut(&mut self, key: FaceKey) -> Option<&mut FaceAttr<P::F>> {
+        self.faces.get_mut(key)
     }
 
     /// Iterate every stored 2-cell attribute paired with its slotmap key.
@@ -301,6 +327,16 @@ impl<P: Payload> GMap<P> {
     /// Iterate every stored 3-cell attribute paired with its slotmap key.
     pub fn iter_solids(&self) -> impl Iterator<Item = (SolidKey, &SolidAttr<P::S>)> {
         self.solids.iter()
+    }
+
+    /// Copy a topological view into a fresh [`GMap`].
+    ///
+    /// This is the associated-function form of [`MergeTopology::isolate`].
+    pub fn isolate<T>(topology: T) -> (Self, Dart)
+    where
+        T: MergeTopology<P>,
+    {
+        topology.isolate()
     }
 
     /// Merge a topological view into this map, returning the view's representative
@@ -651,13 +687,14 @@ mod tests {
 
     use nalgebra::Vector3;
 
-    use super::{Cell0, Cell1, Cell2, Dart, Dim, GMap};
+    use super::{Cell0, Cell1, Cell2, Dart, Dim, GMap, MergeTopology};
     use crate::builders::profiles::{add_edge, add_polygon};
     use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, Surface};
     use crate::topology::attributes::{FaceAttr, SolidAttr};
     use crate::topology::edge::Edge;
     use crate::topology::face::Face;
     use crate::topology::payload::StandardPayload;
+    use crate::topology::planar::Planar;
     use crate::topology::profile::Profile;
     use crate::topology::sheet::Sheet;
     use crate::topology::solid::Solid;
@@ -789,5 +826,82 @@ mod tests {
                 .outer_shell,
             Dart::new(0)
         );
+    }
+
+    #[test]
+    fn isolate_face_copies_it_into_a_fresh_map() {
+        let mut source = GMap::<StandardPayload>::new();
+        let loop_dart = add_polygon(
+            &mut source,
+            &[
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(1.0, 1.0, 0.0),
+                Point3::new(0.0, 1.0, 0.0),
+            ],
+        );
+        let face_key = source.add_face(FaceAttr::new(
+            Surface::Plane(Plane::from_xy(
+                Point3::new(0.0, 0.0, 0.0),
+                Vector3::x(),
+                Vector3::y(),
+            )),
+            (),
+            loop_dart,
+            Vec::new(),
+        ));
+        let face = source
+            .face(face_key)
+            .map(|attr| Face::new(&source, attr))
+            .expect("source face should exist");
+
+        let (isolated, isolated_dart) = face.isolate();
+
+        assert_eq!(isolated_dart, Dart::new(0));
+        assert_eq!(isolated.dart_count(), 8);
+        assert_eq!(isolated.iter_faces().count(), 1);
+        assert!(isolated.attribute::<Cell2>(isolated_dart).is_some());
+        assert_eq!(isolated.alpha(Dim::Zero, Dart::new(0)), Dart::new(1));
+        assert_eq!(isolated.alpha(Dim::One, Dart::new(1)), Dart::new(2));
+    }
+
+    #[test]
+    fn isolate_associated_function_accepts_any_merge_topology() {
+        let mut source = GMap::<StandardPayload>::new();
+        let profile_dart = add_polygon(
+            &mut source,
+            &[
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(0.0, 1.0, 0.0),
+            ],
+        );
+
+        let (isolated, isolated_dart) = GMap::isolate(Profile::new(&source, profile_dart));
+
+        assert_eq!(isolated_dart, Dart::new(0));
+        assert_eq!(isolated.dart_count(), 6);
+    }
+
+    #[test]
+    fn isolate_planar_topology_forwards_to_inner_topology() {
+        let mut source = GMap::<StandardPayload>::new();
+        let profile_dart = add_polygon(
+            &mut source,
+            &[
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(0.0, 1.0, 0.0),
+            ],
+        );
+        let planar = Planar::new_unchecked(
+            Profile::new(&source, profile_dart),
+            Plane::from_xy(Point3::new(0.0, 0.0, 0.0), Vector3::x(), Vector3::y()),
+        );
+
+        let (isolated, isolated_dart) = planar.isolate();
+
+        assert_eq!(isolated_dart, Dart::new(0));
+        assert_eq!(isolated.dart_count(), 6);
     }
 }

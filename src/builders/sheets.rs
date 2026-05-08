@@ -2,9 +2,8 @@ use std::collections::HashMap;
 
 use nalgebra::Vector3;
 
-use crate::geometry::{
-    Curve, Curve2, Line, Line2, NurbsError, Plane, Point2, Point3, RuledSurface, Surface,
-};
+use crate::builders::errors::ExtrudeError;
+use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, RuledSurface, Surface};
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
@@ -12,26 +11,28 @@ use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum ExtrudeError {
-    EmptyProfile,
-    MissingVertexPoint { dart: Dart },
-    MissingEdgeCurve { dart: Dart },
-    ZeroDirection,
-    ZeroLengthEdge { dart: Dart },
-    DegenerateSweep { dart: Dart },
-    SewFailed { dim: Dim, first: Dart, second: Dart },
-    CurveTranslationFailed { dart: Dart, source: NurbsError },
-}
-
 /// Adds an extruded profile to the given GMap.
 ///
-/// Returns the input profile dart
+/// Return the equivalent dart belonging to the extruded edge of which the provided dart belongs to.
 pub fn add_extruded_profile<P: Payload>(
     g: &mut GMap<P>,
     profile_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<Dart, ExtrudeError> {
+    Ok(add_extruded_profile_boundaries(g, profile_dart, direction)?.translated_dart)
+}
+
+pub(crate) struct ExtrudedProfile {
+    pub translated_dart: Dart,
+    pub bottom_edges: Vec<Dart>,
+    pub top_edges: Vec<Dart>,
+}
+
+pub(crate) fn add_extruded_profile_boundaries<P: Payload>(
+    g: &mut GMap<P>,
+    profile_dart: Dart,
+    direction: Vector3<f64>,
+) -> Result<ExtrudedProfile, ExtrudeError> {
     if direction.norm_squared() <= f64::EPSILON {
         return Err(ExtrudeError::ZeroDirection);
     }
@@ -39,18 +40,34 @@ pub fn add_extruded_profile<P: Payload>(
     let profile = Profile::new(g, profile_dart);
     let is_closed = profile.is_closed();
     let mut faces = Vec::new();
+    let mut extruded_profile_dart = None;
+    let mut bottom_edges = Vec::new();
+    let mut top_edges = Vec::new();
     let edges_darts = profile
         .edges()
         .into_iter()
         .map(|edge| edge.dart)
         .collect::<Vec<_>>();
     for edge_dart in edges_darts {
-        faces.push(extrude_edge(g, edge_dart, direction)?);
+        let extruded_face = extrude_edge(g, edge_dart, direction)?;
+        if edge_dart == profile_dart {
+            extruded_profile_dart = Some(extruded_face.translated_start);
+        } else if g.alpha(Dim::Zero, edge_dart) == profile_dart {
+            extruded_profile_dart = Some(extruded_face.translated_end);
+        }
+        bottom_edges.push(extruded_face.bottom_start);
+        top_edges.push(extruded_face.translated_start);
+        faces.push(extruded_face);
     }
 
     sew_extruded_faces(g, &faces, is_closed)?;
 
-    Ok(profile_dart)
+    Ok(ExtrudedProfile {
+        translated_dart: extruded_profile_dart
+            .expect("profile dart must belong to one of its profile edges"),
+        bottom_edges,
+        top_edges,
+    })
 }
 
 fn extrude_edge<P: Payload>(
@@ -95,6 +112,9 @@ fn sew_extruded_faces<P: Payload>(
 struct ExtrudedFace {
     start_side: Dart,
     end_side: Dart,
+    bottom_start: Dart,
+    translated_start: Dart,
+    translated_end: Dart,
 }
 
 struct ExtrudedSurface {
@@ -201,6 +221,9 @@ fn add_extruded_edge_face<P: Payload>(
     Ok(ExtrudedFace {
         start_side: darts[7],
         end_side: darts[2],
+        bottom_start: darts[0],
+        translated_start: darts[5],
+        translated_end: darts[4],
     })
 }
 
@@ -268,10 +291,12 @@ mod tests {
     use nalgebra::Vector3;
 
     use crate::builders::profiles::add_polygon;
+    use crate::builders::sheets::add_extruded_profile;
     use crate::geometry::Point3;
     use crate::modeling::sweep::extrude_profile;
     use crate::tessellate::{TessellateOpts, face::tessellate_face};
     use crate::topology::StandardPayload;
+    use crate::topology::edge::Edge;
     use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
     use crate::topology::profile::Profile;
 
@@ -307,6 +332,40 @@ mod tests {
             assert!(!mesh.positions.is_empty());
             assert!(!mesh.indices.is_empty());
         }
+    }
+
+    #[test]
+    fn add_extruded_profile_returns_equivalent_translated_edge_dart() {
+        let mut source = GMap::<StandardPayload>::new();
+        let loop_dart = add_polygon(
+            &mut source,
+            &[
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(1.0, 1.0, 0.0),
+            ],
+        );
+        let source_dart_count = source.dart_count();
+        let direction = Vector3::new(0.0, 0.0, 2.0);
+
+        let translated_dart = add_extruded_profile(&mut source, loop_dart, direction).unwrap();
+
+        assert!(
+            translated_dart.id() >= source_dart_count,
+            "returned dart should belong to generated extrusion topology"
+        );
+        let translated_edge = Edge::new(&source, translated_dart);
+        let start = *translated_edge
+            .start()
+            .point()
+            .expect("translated edge start should have geometry");
+        let end = *translated_edge
+            .end()
+            .point()
+            .expect("translated edge end should have geometry");
+
+        assert!((start.z - 2.0).abs() <= f64::EPSILON);
+        assert!((end.z - 2.0).abs() <= f64::EPSILON);
     }
 
     #[test]
