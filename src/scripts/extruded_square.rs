@@ -19,6 +19,7 @@ pub fn run() -> Result<ScriptResult, String> {
         ],
     )
     .map_err(|err| format!("failed to add square profile: {err:?}"))?;
+
     let profile = Profile::new(&profile_map, square_dart);
     let shape = extrude(profile, Vector3::new(0.0, 0.0, 1.0))
         .map_err(|err| format!("failed to extrude square: {err:?}"))?;

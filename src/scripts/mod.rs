@@ -5,6 +5,7 @@
 use crate::viz::ScriptResult;
 
 pub mod cylinder;
+pub mod extruded_open_polyline;
 pub mod hollow_cylinder;
 pub mod two_faces_alpha2;
 pub mod extruded_square;
@@ -37,6 +38,11 @@ pub const SCRIPTS: &[Script] = &[
         id: "extruded_square",
         title: "Extruded square",
         run: extruded_square::run,
+    },
+    Script {
+        id: "extruded_open_polyline",
+        title: "Extruded open polyline",
+        run: extruded_open_polyline::run,
     },
 ];
 

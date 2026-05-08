@@ -115,19 +115,64 @@ impl<'a, P: Payload> Iterator for LoopIterator<'a, P> {
                     LoopInvolution::A0 => Dim::Zero,
                     LoopInvolution::A1 => Dim::One,
                 };
+                if self.gmap.is_free(d, dim) {
+                    return None;
+                }
                 self.inv = self.inv.next();
                 self.gmap.alpha(dim, d)
             }
         };
 
-        if self.gmap.is_free(current, Dim::Zero)
-            || self.gmap.is_free(current, Dim::One)
-            || (self.previous.is_some() && current == self.start)
-        {
+        if self.previous.is_some() && current == self.start {
             None
         } else {
             self.previous = Some(current);
             Some(current)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Closeable, Profile};
+    use crate::builders::add_edge;
+    use crate::geometry::{Curve, Line, Point3};
+    use crate::topology::gmap::{Dim, GMap};
+    use crate::topology::payload::StandardPayload;
+
+    #[test]
+    fn open_profile_darts_include_free_endpoints() {
+        let mut g = GMap::<StandardPayload>::new();
+        let points = [
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+        ];
+
+        let first_edge = add_edge(
+            &mut g,
+            points[0],
+            points[1],
+            Curve::Line(Line::new(points[0], points[1])),
+        );
+        let second_edge = add_edge(
+            &mut g,
+            points[1],
+            points[2],
+            Curve::Line(Line::new(points[1], points[2])),
+        );
+
+        let first_start = g.edge(first_edge).expect("edge should exist").dart;
+        let first_end = g.alpha(Dim::Zero, first_start);
+        let second_start = g.edge(second_edge).expect("edge should exist").dart;
+        g.sew(Dim::One, first_end, second_start)
+            .expect("adjacent open profile edges should be alpha1-sewable");
+
+        let profile = Profile::new(&g, first_start);
+        let darts = profile.darts().collect::<Vec<_>>();
+
+        assert_eq!(darts.len(), 4);
+        assert_eq!(profile.edges().len(), 2);
+        assert!(!profile.is_closed());
     }
 }

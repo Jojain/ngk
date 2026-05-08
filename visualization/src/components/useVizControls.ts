@@ -104,10 +104,10 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
       showAlpha1: { value: initial.showAlpha1 ?? true, label: "α1 links" },
       showAlpha2: { value: initial.showAlpha2 ?? true, label: "α2 links" },
       showAlpha3: { value: initial.showAlpha3 ?? false, label: "α3 links" },
-      alpha0Color: { value: initial.alpha0Color ?? "#ff6b6b", label: "α0 color" },
-      alpha1Color: { value: initial.alpha1Color ?? "#4dd0a3", label: "α1 color" },
-      alpha2Color: { value: initial.alpha2Color ?? "#6ea8ff", label: "α2 color" },
-      alpha3Color: { value: initial.alpha3Color ?? "#e4c56e", label: "α3 color" },
+      alpha0Color: { value: initial.alpha0Color ?? "#ff1744", label: "α0 color" },
+      alpha1Color: { value: initial.alpha1Color ?? "#00e676", label: "α1 color" },
+      alpha2Color: { value: initial.alpha2Color ?? "#00b0ff", label: "α2 color" },
+      alpha3Color: { value: initial.alpha3Color ?? "#ffea00", label: "α3 color" },
     }),
   });
 

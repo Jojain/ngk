@@ -17,6 +17,8 @@ use crate::tessellate::{TessellateOpts, tessellate_curve};
 use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 
+const DART_SHAFT_FRACTION: f64 = 0.4;
+
 /// Emit [`VizDart`] entries for every dart that has a recoverable shaft, plus
 /// one [`VizAlphaLink`] per non-trivial alpha pair.
 pub fn emit_gmap_overlay<P: Payload>(
@@ -81,8 +83,8 @@ fn build_dart<P: Payload>(
         return chord_arrow(edge_id, v0, v1);
     }
 
-    let t_mid = 0.5 * (t0 + t1);
-    let polyline = tessellate_curve(curve, t0, t_mid, opts.curve);
+    let t_tip = t0 + (t1 - t0) * DART_SHAFT_FRACTION;
+    let polyline = tessellate_curve(curve, t0, t_tip, opts.curve);
     if polyline.points.len() < 2 {
         return chord_arrow(edge_id, v0, v1);
     }
@@ -105,7 +107,7 @@ fn chord_arrow(
     if edge_len < 1e-12 {
         return None;
     }
-    let tip = v0 + (v1 - v0) * 0.5;
+    let tip = v0 + (v1 - v0) * DART_SHAFT_FRACTION;
     let shaft = vec![[v0.x, v0.y, v0.z], [tip.x, tip.y, tip.z]];
     let tip_dir = tip_tangent(&shaft);
     Some(DartArrow {

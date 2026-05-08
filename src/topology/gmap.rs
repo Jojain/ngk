@@ -171,6 +171,10 @@ impl<P: Payload> GMap<P> {
         self.alphas[0].len()
     }
 
+    pub fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
+        (0..self.dart_count()).map(|id| Dart::new(id))
+    }
+
     pub fn alpha(&self, d: Dim, dart: Dart) -> Dart {
         let i = d.index();
         self.alphas[i][dart.id()]

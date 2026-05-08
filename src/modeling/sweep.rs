@@ -199,7 +199,7 @@ fn add_extruded_edge_face<P: Payload>(
 
     Ok(ExtrudedFace {
         key,
-        start_side: darts[6],
+        start_side: darts[7],
         end_side: darts[2],
     })
 }
@@ -263,6 +263,8 @@ fn plane_uv(surface: &Plane, point: Point3) -> Point2 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use nalgebra::Vector3;
 
     use super::extrude;
@@ -270,7 +272,7 @@ mod tests {
     use crate::geometry::Point3;
     use crate::tessellate::{TessellateOpts, face::tessellate_face};
     use crate::topology::StandardPayload;
-    use crate::topology::gmap::GMap;
+    use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
     use crate::topology::profile::Profile;
 
     #[test]
@@ -305,5 +307,191 @@ mod tests {
             assert!(!mesh.positions.is_empty());
             assert!(!mesh.indices.is_empty());
         }
+    }
+
+    #[test]
+    fn extrude_closed_square_preserves_gmap_and_corner_connectivity() {
+        let mut source = GMap::<StandardPayload>::new();
+        let loop_dart = add_polygon(
+            &mut source,
+            &[
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(1.0, 1.0, 0.0),
+                Point3::new(0.0, 1.0, 0.0),
+            ],
+        );
+
+        let shape = extrude(
+            Profile::new(&source, loop_dart),
+            Vector3::new(0.0, 0.0, 2.0),
+        )
+        .unwrap();
+        let g= shape.map();
+
+        assert_valid_gmap(&g);
+        assert_orientable_gmap(&g);
+        assert_square_sweep_alpha2_seams_are_not_twisted(&g);
+        assert_alpha1_links_shared_corners(&g);
+        assert_alpha2_links_matching_edges(&g);
+
+        for (_, face) in g.iter_faces() {
+            let loop_darts = g
+                .orbit(face.outer_loop, vec![Dim::Zero.index(), Dim::One.index()])
+                .collect::<Vec<_>>();
+            assert_eq!(
+                loop_darts.len(),
+                8,
+                "each extruded square side should be a quad face with 8 darts"
+            );
+        }
+    }
+
+    fn assert_square_sweep_alpha2_seams_are_not_twisted(g: &GMap<StandardPayload>) {
+        let expected_pairs = [
+            (2, 15),
+            (3, 14),
+            (10, 23),
+            (11, 22),
+            (18, 31),
+            (19, 30),
+            (26, 7),
+            (27, 6),
+        ];
+
+        for (first, second) in expected_pairs {
+            let first = Dart::new(first);
+            let second = Dart::new(second);
+            assert_eq!(
+                g.alpha(Dim::Two, first),
+                second,
+                "sweep alpha2 seam should preserve vertex side for {first:?}"
+            );
+            assert_eq!(
+                g.alpha(Dim::Two, second),
+                first,
+                "sweep alpha2 seam should be symmetric for {second:?}"
+            );
+        }
+    }
+
+    fn assert_orientable_gmap(g: &GMap<StandardPayload>) {
+        let mut colors = vec![None; g.dart_count()];
+
+        for start in g.darts() {
+            if colors[start.id()].is_some() {
+                continue;
+            }
+
+            colors[start.id()] = Some(false);
+            let mut queue = VecDeque::from([start]);
+
+            while let Some(dart) = queue.pop_front() {
+                let color = colors[dart.id()].expect("queued darts should be colored");
+                for i in 0..g.dimension() {
+                    let dim = Dim::from_index(i);
+                    let linked = g.alpha(dim, dart);
+                    if linked == dart {
+                        continue;
+                    }
+
+                    let expected = !color;
+                    match colors[linked.id()] {
+                        Some(actual) => assert_eq!(
+                            actual, expected,
+                            "orientability violation: alpha{i} links same-orientation darts {dart:?} and {linked:?}"
+                        ),
+                        None => {
+                            colors[linked.id()] = Some(expected);
+                            queue.push_back(linked);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn assert_valid_gmap(g: &GMap<StandardPayload>) {
+        for dart in g.darts() {
+            for i in 0..g.dimension() {
+                let dim = Dim::from_index(i);
+                let linked = g.alpha(dim, dart);
+                assert!(
+                    linked.id() < g.dart_count(),
+                    "alpha{i}({dart:?}) points outside the dart set: {linked:?}"
+                );
+                assert_eq!(
+                    g.alpha(dim, linked),
+                    dart,
+                    "alpha{i} must be an involution at dart {dart:?}"
+                );
+            }
+
+            for i in 0..g.dimension() {
+                for j in i + 2..g.dimension() {
+                    let dim_i = Dim::from_index(i);
+                    let dim_j = Dim::from_index(j);
+                    let twice = g.alpha(
+                        dim_i,
+                        g.alpha(dim_j, g.alpha(dim_i, g.alpha(dim_j, dart))),
+                    );
+                    assert_eq!(
+                        twice, dart,
+                        "alpha{i} o alpha{j} must be an involution at dart {dart:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn assert_alpha1_links_shared_corners(g: &GMap<StandardPayload>) {
+        for id in 0..g.dart_count() {
+            let dart = Dart::new(id);
+            let linked = g.alpha(Dim::One, dart);
+            if linked == dart {
+                continue;
+            }
+            let p0 = vertex_point(g, dart);
+            let p1 = vertex_point(g, linked);
+            assert!(
+                same_point(p0, p1),
+                "alpha1 should connect darts with the same corner point: {dart:?} at {p0:?}, {linked:?} at {p1:?}"
+            );
+        }
+    }
+
+    fn assert_alpha2_links_matching_edges(g: &GMap<StandardPayload>) {
+        for id in 0..g.dart_count() {
+            let dart = Dart::new(id);
+            let linked = g.alpha(Dim::Two, dart);
+            if linked == dart {
+                continue;
+            }
+            let edge = edge_points(g, dart);
+            let linked_edge = edge_points(g, linked);
+            assert!(
+                same_undirected_edge(edge, linked_edge),
+                "alpha2 should sew matching geometric edges: {dart:?} {edge:?}, {linked:?} {linked_edge:?}"
+            );
+        }
+    }
+
+    fn edge_points(g: &GMap<StandardPayload>, dart: Dart) -> (Point3, Point3) {
+        (vertex_point(g, dart), vertex_point(g, g.alpha(Dim::Zero, dart)))
+    }
+
+    fn vertex_point(g: &GMap<StandardPayload>, dart: Dart) -> Point3 {
+        g.attribute::<Cell0>(dart)
+            .expect("test map should have vertex attributes on every dart")
+            .point
+    }
+
+    fn same_undirected_edge(a: (Point3, Point3), b: (Point3, Point3)) -> bool {
+        (same_point(a.0, b.0) && same_point(a.1, b.1))
+            || (same_point(a.0, b.1) && same_point(a.1, b.0))
+    }
+
+    fn same_point(a: Point3, b: Point3) -> bool {
+        (a - b).norm_squared() <= 1e-18
     }
 }

@@ -40,6 +40,12 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./ExtrudedSquare")),
   },
   {
+    id: "extruded-open-polyline",
+    title: "Extruded open polyline",
+    group: "Display",
+    component: lazy(() => import("./ExtrudedOpenPolyline")),
+  },
+  {
     id: "cylinder",
     title: "Quarter cylinder (curved darts)",
     group: "Display",
