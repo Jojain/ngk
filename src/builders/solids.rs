@@ -77,20 +77,50 @@ pub fn add_extruded_face<P: Payload>(
         .map(|attr| attr.face(g))
         .ok_or(ExtrudeError::MissingFace { dart: face_key })?;
     let top_face = translate_face(&bot_face, direction)?;
-    let outer_loop_dart = bot_face.outer_loop().dart;
-    let bottom_edges = Profile::new(g, outer_loop_dart)
-        .edges()
-        .into_iter()
-        .map(|edge| edge.dart)
-        .collect::<Vec<_>>();
+    let mut bottom_loop_darts = Vec::with_capacity(1 + bot_face.inner_loops().len());
+    bottom_loop_darts.push(bot_face.outer_loop().dart);
+    bottom_loop_darts.extend(bot_face.inner_loops().into_iter().map(|loop_| loop_.dart));
 
     let top_face_dart = g.merge(top_face.face());
-    let top_edges = Profile::new(g, top_face_dart)
+    let top_face_key = *g
+        .attribute::<Cell2>(top_face_dart)
+        .expect("merged top face should preserve its face attribute");
+    let top_face_attr = g
+        .face(top_face_key)
+        .expect("merged top face key should remain valid");
+    let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
+    top_loop_darts.push(top_face_attr.outer_loop);
+    top_loop_darts.extend(top_face_attr.inner_loops.iter().copied());
+
+    let mut shell_representative = None;
+    for (bottom_loop_dart, top_loop_dart) in bottom_loop_darts.into_iter().zip(top_loop_darts) {
+        let extruded = sew_extruded_loop(g, bottom_loop_dart, top_loop_dart, direction)?;
+        shell_representative.get_or_insert(extruded);
+    }
+
+    let shell_representative =
+        shell_representative.expect("a face should have at least one outer loop");
+    let solid = g.add_solid(SolidAttr::new(P::S::default(), shell_representative, None));
+    Ok(solid)
+}
+
+fn sew_extruded_loop<P: Payload>(
+    g: &mut GMap<P>,
+    bottom_loop_dart: crate::topology::Dart,
+    top_loop_dart: crate::topology::Dart,
+    direction: Vector3<f64>,
+) -> Result<crate::topology::Dart, ExtrudeError> {
+    let bottom_edges = Profile::new(g, bottom_loop_dart)
         .edges()
         .into_iter()
         .map(|edge| edge.dart)
         .collect::<Vec<_>>();
-    let extruded = add_extruded_profile_boundaries(g, outer_loop_dart, direction)?;
+    let top_edges = Profile::new(g, top_loop_dart)
+        .edges()
+        .into_iter()
+        .map(|edge| edge.dart)
+        .collect::<Vec<_>>();
+    let extruded = add_extruded_profile_boundaries(g, bottom_loop_dart, direction)?;
 
     for (&cap_edge, &side_edge) in bottom_edges.iter().zip(extruded.bottom_edges.iter()) {
         sew(g, Dim::Two, side_edge, cap_edge)?;
@@ -99,9 +129,7 @@ pub fn add_extruded_face<P: Payload>(
         sew(g, Dim::Two, side_edge, cap_edge)?;
     }
 
-    let shell_representative = g.cell_representative(extruded.bottom_edges[0], Dim::Three);
-    let solid = g.add_solid(SolidAttr::new(P::S::default(), shell_representative, None));
-    Ok(solid)
+    Ok(g.cell_representative(extruded.bottom_edges[0], Dim::Three))
 }
 
 fn sew<P: Payload>(
