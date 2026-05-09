@@ -23,6 +23,18 @@ npm run dev
 `npm run dev` first rebuilds the wasm bundle into `visualization/src/wasm/` and
 then starts Vite.
 
+## GitHub Pages
+
+The repository deploys this app with GitHub Actions on every push to `master`.
+The workflow builds the wasm package, bundles the Vite app with the `/ngk/`
+base path, and publishes `visualization/dist/` to GitHub Pages.
+
+The published app will be available at:
+
+```text
+https://jojain.github.io/ngk/
+```
+
 ## Adding a new experiment
 
 1. Copy `src/experiments/_template/` to `src/experiments/<YourName>/`.
