@@ -1,3 +1,4 @@
+pub mod modeling;
 pub mod nurbs;
 
 use wasm_bindgen::prelude::*;

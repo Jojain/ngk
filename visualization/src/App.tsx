@@ -1,5 +1,6 @@
 import { Suspense, useEffect, useState } from "react";
 import { Leva } from "leva";
+import ExperimentErrorBoundary from "./components/ExperimentErrorBoundary";
 import ExperimentSidebar from "./components/ExperimentSidebar";
 import SceneShell from "./components/SceneShell";
 import { experiments } from "./experiments/registry";
@@ -39,13 +40,17 @@ export default function App() {
       <div className="viewport">
         {!kernel && <div className="loading">loading kernel…</div>}
         <Leva collapsed={false} />
-        <SceneShell>
-          {Active && kernel ? (
-            <Suspense fallback={null}>
-              <Active />
-            </Suspense>
-          ) : null}
-        </SceneShell>
+        {Active && kernel ? (
+          <ExperimentErrorBoundary resetKey={activeId}>
+            <SceneShell>
+              <Suspense fallback={null}>
+                <Active />
+              </Suspense>
+            </SceneShell>
+          </ExperimentErrorBoundary>
+        ) : (
+          <SceneShell />
+        )}
         {!Active && (
           <div className="empty-state">
             <span>select an experiment</span>

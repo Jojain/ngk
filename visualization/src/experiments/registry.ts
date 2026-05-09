@@ -40,6 +40,12 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./ExtrudedSquare")),
   },
   {
+    id: "block-primitive",
+    title: "Block primitive",
+    group: "Display",
+    component: lazy(() => import("./BlockPrimitive")),
+  },
+  {
     id: "interactive-extrusion",
     title: "Interactive extrusion",
     group: "Display",

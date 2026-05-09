@@ -1,12 +1,9 @@
-use std::collections::HashMap;
-
-use nalgebra::Vector3;
-
-use crate::builders::profiles::{PolylineError, add_polyline};
+use crate::builders::profiles::{PolylineError, add_polyline, profile_pcurves};
 use crate::geometry::{Curve, Line, Plane, Point3, Surface};
 use crate::topology::FaceAttr;
 use crate::topology::gmap::GMap;
 use crate::topology::payload::StandardPayload;
+use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceShape, ProfileShape, Shape};
 
 pub fn polyline(
@@ -55,14 +52,17 @@ pub fn square_loop(corners: &[Point3; 4]) -> Result<Shape<ProfileShape>, Polylin
 pub fn square(corners: &[Point3; 4]) -> Result<Shape<FaceShape>, PolylineError> {
     let loop_shape = square_loop(corners)?;
     let (mut gmap, loop_dart) = loop_shape.into_map();
-    let face = FaceAttr::with_pcurves(
-        Surface::Plane(Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::y())),
+
+    let plane = Plane::from_xy(corners[0], corners[1] - corners[0], corners[3] - corners[0]);
+    let profile = Profile::new(&gmap, loop_dart);
+    let pcurves = profile_pcurves(&gmap, &profile, &plane)?;
+    let face_key = gmap.add_face(FaceAttr::with_pcurves(
+        Surface::Plane(plane),
         (),
         loop_dart,
         Vec::new(),
-        HashMap::new(),
-    );
-    let face_key = gmap.add_face(face);
+        pcurves,
+    ));
 
     let shape = Shape::new(gmap, face_key);
     Ok(shape)

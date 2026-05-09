@@ -65,14 +65,14 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
       showEdges: { value: initial.showEdges ?? true, label: "edges" },
       showFaces: { value: initial.showFaces ?? true, label: "faces" },
       vertexSize: {
-        value: initial.vertexSize ?? 0.06,
+        value: initial.vertexSize ?? 0.04,
         min: 0.01,
         max: 0.3,
         step: 0.005,
         label: "vertex size",
       },
       edgeWidth: {
-        value: initial.edgeWidth ?? 4,
+        value: initial.edgeWidth ?? 6,
         min: 0.5,
         max: 16,
         step: 0.25,
@@ -96,7 +96,7 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
       },
     }),
     GMap: folder({
-      showDarts: { value: initial.showDarts ?? true, label: "darts" },
+      showDarts: { value: initial.showDarts ?? false, label: "darts" },
       showDartLabels: {
         value: initial.showDartLabels ?? false,
         label: "dart labels",
