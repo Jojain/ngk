@@ -90,6 +90,16 @@ impl Plane {
         }
     }
 
+    pub fn xy() -> Self {
+        Self::from_xy(Point3::origin(), Vector3::x(), Vector3::y())
+    }
+    pub fn xz() -> Self {
+        Self::from_xy(Point3::origin(), Vector3::x(), Vector3::z())
+    }
+    pub fn yz() -> Self {
+        Self::from_xy(Point3::origin(), Vector3::y(), Vector3::z())
+    }
+
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
         self.frame.origin + u * *self.frame.x_dir + v * *self.frame.y_dir
     }
