@@ -7,7 +7,7 @@
     "allowSyntheticDefaultImports": true,
     "strict": true,
     "noEmit": false,
-    "outDir": "./dist/node"
+    "outDir": "./.vite/node"
   },
   "include": ["vite.config.ts"]
 }
