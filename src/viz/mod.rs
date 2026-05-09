@@ -29,7 +29,7 @@ pub use hints::{Style, VizHints};
 pub use scene::{VizAlphaLink, VizDart, VizEdge, VizFace, VizLabel, VizScene, VizVertex};
 
 use crate::tessellate::TessellateOpts;
-use crate::topology::gmap::{Cell0, Dart, GMap};
+use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 
 /// Build a fully-tessellated scene from a `GMap`. `hints` carries
@@ -81,7 +81,7 @@ pub fn gmap_snapshot<P: Payload>(g: &GMap<P>) -> GMapSnapshot {
     for i in 0..dim {
         for id in 0..n {
             let d = Dart::new(id);
-            alphas[i].push(g.alpha(crate::topology::gmap::Dim::from_index(i), d).id() as u32);
+            alphas[i].push(g.alpha(Dim::from_index(i), d).id() as u32);
         }
     }
     let mut vertex_points = Vec::new();

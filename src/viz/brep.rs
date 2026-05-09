@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use super::hints::{Style, VizHints};
 use super::scene::{VizEdge, VizFace, VizScene, VizVertex};
 use crate::tessellate::{TessellateOpts, tessellate_edge, tessellate_face};
+use crate::topology::attributes::EdgeAttr;
 use crate::topology::gmap::{Cell0, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
@@ -137,10 +138,7 @@ fn emit_faces<P: Payload>(
 /// vertex's stored point lies off the curve and `param_at` is broken). We
 /// still want to draw *something*, so fall back to the chord between the
 /// dart's two endpoints.
-fn fallback_chord<P: Payload>(
-    g: &GMap<P>,
-    attr: &crate::topology::attributes::EdgeAttr<P::E>,
-) -> Vec<[f64; 3]> {
+fn fallback_chord<P: Payload>(g: &GMap<P>, attr: &EdgeAttr<P::E>) -> Vec<[f64; 3]> {
     let dart = attr.dart;
     let other = g.alpha(Dim::Zero, dart);
     let p0 = g

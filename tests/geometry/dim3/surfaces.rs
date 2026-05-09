@@ -1,3 +1,5 @@
+use std::f64::consts::FRAC_PI_2;
+
 use nalgebra::Vector3;
 use ngk::geometry::{Cylinder, Plane, Point3, Surface};
 
@@ -36,7 +38,7 @@ fn cylinder_point_at_wraps_around_axis() {
     assert!(cylinder.x_dir().dot(&cylinder.axis()).abs() < 1e-10);
     assert_point_near(cylinder.point_at(0.0, 0.0), Point3::new(2.0, 0.0, 0.0));
     assert_point_near(
-        cylinder.point_at(std::f64::consts::FRAC_PI_2, 0.0),
+        cylinder.point_at(FRAC_PI_2, 0.0),
         Point3::new(0.0, 2.0, 0.0),
     );
 }

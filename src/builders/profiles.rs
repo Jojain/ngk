@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, Polyline2, Surface};
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
-use crate::topology::closed::Closeable;
 use crate::topology::gmap::{Cell1, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::planar::PlanarLoop;

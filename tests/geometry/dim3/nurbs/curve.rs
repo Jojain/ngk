@@ -1,3 +1,5 @@
+use std::f64::consts::FRAC_1_SQRT_2;
+
 use nalgebra::Vector3;
 use ngk::geometry::{ControlPolygon, Degree, HPoint, KnotVector, NurbsCurve, Point3};
 
@@ -68,8 +70,6 @@ fn insert_knot_preserves_shape() {
 
 #[test]
 fn insert_knot_quadratic_s1() {
-    // 4 CPs degree 2 → uniform clamped knots have an interior 0.5.
-    // Inserting 0.5 again (multiplicity 1) must still add exactly one CP and one knot.
     let pts = vec![
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 1.0, 0.0),
@@ -103,8 +103,7 @@ fn insert_knot_quadratic_s1() {
 
 #[test]
 fn rational_circle_quarter() {
-    // A standard rational-quadratic quarter circle: CPs (1,0), (1,1), (0,1) with weights 1, √2/2, 1.
-    let w = std::f64::consts::FRAC_1_SQRT_2;
+    let w = FRAC_1_SQRT_2;
     let cps = vec![
         HPoint::from_cartesian(Point3::new(1.0, 0.0, 0.0), 1.0),
         HPoint::from_cartesian(Point3::new(1.0, 1.0, 0.0), w),
@@ -120,6 +119,6 @@ fn rational_circle_quarter() {
         let r = (p.x * p.x + p.y * p.y).sqrt();
         assert!((r - 1.0).abs() < 1e-10, "r={} at t={}", r, t);
     }
-    // Sanity that the geometry really is a quarter circle.
+
     let _ = Vector3::new(1.0, 0.0, 0.0);
 }

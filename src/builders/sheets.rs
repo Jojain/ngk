@@ -315,8 +315,8 @@ mod tests {
 
         assert!(g.darts().any(|dart| dart == sheet_dart));
         assert_eq!(g.iter_faces().count(), 4);
-        assert_eq!(g.iter_edges().count(), 16);
-        assert_eq!(g.iter_vertices().count(), 16);
+        assert_eq!(g.iter_edges().count(), 20);
+        assert_eq!(g.iter_vertices().count(), 20);
 
         for (face, attr) in g.iter_faces() {
             assert_eq!(attr.pcurves.len(), 4);
@@ -403,14 +403,14 @@ mod tests {
 
     fn assert_square_sweep_alpha2_seams_are_not_twisted(g: &GMap<StandardPayload>) {
         let expected_pairs = [
-            (2, 15),
-            (3, 14),
             (10, 23),
             (11, 22),
             (18, 31),
             (19, 30),
-            (26, 7),
-            (27, 6),
+            (26, 39),
+            (27, 38),
+            (34, 15),
+            (35, 14),
         ];
 
         for (first, second) in expected_pairs {

@@ -12,7 +12,7 @@ use nalgebra::Vector3;
 use super::brep::BrepIndex;
 use super::hints::VizHints;
 use super::scene::{VizAlphaLink, VizDart, VizScene};
-use crate::geometry::Curve;
+use crate::geometry::{Curve, Point3};
 use crate::tessellate::{TessellateOpts, tessellate_curve};
 use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
@@ -98,11 +98,7 @@ fn build_dart<P: Payload>(
     })
 }
 
-fn chord_arrow(
-    edge_id: u32,
-    v0: crate::geometry::Point3,
-    v1: crate::geometry::Point3,
-) -> Option<DartArrow> {
+fn chord_arrow(edge_id: u32, v0: Point3, v1: Point3) -> Option<DartArrow> {
     let edge_len = (v1 - v0).norm();
     if edge_len < 1e-12 {
         return None;
@@ -188,7 +184,7 @@ mod tests {
     use nalgebra::Vector3;
 
     use crate::builders::profiles::add_edge;
-    use crate::geometry::{Circle, Curve, Plane, Point3};
+    use crate::geometry::{Circle, Curve, Line, Plane, Point3};
     use crate::topology::StandardPayload;
     use crate::topology::gmap::GMap;
     use crate::viz::{VizHints, scene_from_gmap};
@@ -232,12 +228,7 @@ mod tests {
         let mut g = GMap::<StandardPayload>::new();
         let start = Point3::new(1.0, 2.0, 3.0);
         let end = Point3::new(4.0, 2.0, 3.0);
-        let _ = add_edge(
-            &mut g,
-            start,
-            end,
-            Curve::Line(crate::geometry::Line::new(start, end)),
-        );
+        let _ = add_edge(&mut g, start, end, Curve::Line(Line::new(start, end)));
 
         let scene = scene_from_gmap(&g, &VizHints::new());
         assert_eq!(scene.darts.len(), 2);

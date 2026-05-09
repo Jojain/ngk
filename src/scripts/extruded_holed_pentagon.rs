@@ -10,7 +10,6 @@ use crate::topology::attributes::FaceAttr;
 use crate::topology::gmap::{Dart, GMap};
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceShape, Shape};
-use crate::topology::shape_keys::FaceKey;
 use crate::viz::{ScriptResult, Style, VizHints};
 
 const HEIGHT: f64 = 1.2;

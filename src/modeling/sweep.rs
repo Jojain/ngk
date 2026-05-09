@@ -1,17 +1,8 @@
-use std::collections::HashMap;
-
 use nalgebra::Vector3;
 
 use crate::builders::solids::add_extruded_face;
 use crate::builders::{errors::ExtrudeError, sheets::add_extruded_profile};
-use crate::geometry::{
-    Curve, Curve2, Line, Line2, NurbsError, Plane, Point2, Point3, RuledSurface, Surface,
-};
-use crate::topology::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
-use crate::topology::closed::Closeable;
-use crate::topology::edge::Edge;
-use crate::topology::face::Face;
-use crate::topology::gmap::{Dart, Dim, GMap};
+use crate::topology::gmap::MergeTopology;
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceShape, Shape, SheetShape, SolidShape};
@@ -20,9 +11,8 @@ pub fn extrude_profile<P: Payload>(
     profile: Profile<'_, P>,
     direction: Vector3<f64>,
 ) -> Result<Shape<SheetShape, P>, ExtrudeError> {
-    let mut g = GMap::<P>::new();
-    add_extruded_profile(&mut g, profile.dart, direction)?;
-    let sheet_dart = add_extruded_profile(&mut g, profile.dart, direction)?;
+    let (mut g, profile_dart) = profile.isolate();
+    let sheet_dart = add_extruded_profile(&mut g, profile_dart, direction)?;
     Ok(Shape::new(g, sheet_dart))
 }
 
