@@ -18,15 +18,14 @@
 use nalgebra::UnitVector3;
 
 use super::{IndexedMesh, TessellateOpts, surface::tessellate_surface_patch};
-use crate::geometry::Surface;
-use crate::geometry::{Point2, PointCoincidence};
+use crate::geometry::{LINEAR_TOLERANCE, Point2, PointCoincidence, Surface};
 use crate::topology::attributes::FaceAttr;
 use crate::topology::gmap::{Dart, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::FaceKey;
 
-const EPS: f64 = 1.0e-9;
+const EPS: f64 = LINEAR_TOLERANCE;
 
 /// Tessellate the face stored at `key` in `g`. Returns `None` if the face is
 /// missing or has no pcurves to delineate it.
@@ -50,7 +49,7 @@ pub fn tessellate_face<P: Payload>(
     let ccw = signed_area(&outer_uv) > 0.0;
 
     Some(match &attr.surface {
-        Surface::Cylinder(_) | Surface::Ruled(_) => {
+        Surface::Cylinder(_) | Surface::Ruled(_) | Surface::Revolution(_) => {
             surface_grid(&attr.surface, &outer_uv, ccw, opts)
         }
         Surface::Plane(_) => plane_polygon_with_holes(&attr.surface, &outer_uv, &inner_uv, ccw),

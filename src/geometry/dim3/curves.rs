@@ -5,6 +5,9 @@ use super::nurbs::error::NurbsError;
 use super::nurbs::points::{ControlPolygon, HPoint};
 use super::surfaces::Plane;
 use super::utils::{IntoUnit3, Point3, PointCoincidence};
+use crate::geometry::LINEAR_TOLERANCE;
+use crate::geometry::axis::Axis3;
+use crate::geometry::tolerance::LINEAR_TOLERANCE_SQUARED;
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 
 pub enum Periodicity {
@@ -47,7 +50,7 @@ impl Curve {
             Curve::Line(_) | Curve::Circle(_) => {
                 let t0 = self.param_at(start);
                 let mut t1 = self.param_at(end);
-                if start.coincides(end, 1.0e-9) {
+                if start.coincides(end, LINEAR_TOLERANCE) {
                     if let Periodicity::Periodic(period) = self.periodicity() {
                         t1 = t0 + period;
                     }
@@ -63,6 +66,14 @@ impl Curve {
             Curve::Line(l) => l.length(t0, t1),
             Curve::Circle(c) => c.length(t0, t1),
             Curve::Nurbs(n) => sampled_length(n, t0, t1),
+        }
+    }
+
+    pub fn project(&self, point: Point3) -> Point3 {
+        match self {
+            Curve::Line(l) => l.project(point),
+            Curve::Circle(_c) => todo!(),
+            Curve::Nurbs(_n) => todo!(),
         }
     }
 
@@ -139,7 +150,7 @@ mod tests {
     use nalgebra::Vector3;
 
     use super::{Circle, Curve};
-    use crate::geometry::{Plane, Point3};
+    use crate::geometry::{ANGULAR_TOLERANCE, Plane, Point3};
 
     #[test]
     fn parameters_between_closed_circle_span_full_period() {
@@ -151,8 +162,8 @@ mod tests {
 
         let (t0, t1) = curve.parameters_between(start, start);
 
-        assert!((t0 - 0.0).abs() <= f64::EPSILON);
-        assert!((t1 - TAU).abs() <= f64::EPSILON);
+        assert!((t0 - 0.0).abs() <= ANGULAR_TOLERANCE);
+        assert!((t1 - TAU).abs() <= ANGULAR_TOLERANCE);
     }
 }
 
@@ -178,6 +189,10 @@ impl Line {
         (self.end - self.start).normalized()
     }
 
+    pub fn axis(&self) -> Axis3 {
+        Axis3::new(self.start, self.direction())
+    }
+
     pub fn point_at(&self, t: f64) -> Point3 {
         self.start + (self.end - self.start) * t
     }
@@ -186,7 +201,7 @@ impl Line {
     pub fn param_at(&self, point: Point3) -> f64 {
         let dir = self.end - self.start;
         let len_sq = dir.norm_squared();
-        if len_sq < f64::EPSILON {
+        if len_sq < LINEAR_TOLERANCE_SQUARED {
             return 0.0;
         }
         (point - self.start).dot(&dir) / len_sq
@@ -194,6 +209,10 @@ impl Line {
     /// Arc length between `t0` and `t1` (in distance units).
     pub fn length(&self, t0: f64, t1: f64) -> f64 {
         (t1 - t0).abs() * (self.end - self.start).norm()
+    }
+
+    pub fn project(&self, point: Point3) -> Point3 {
+        self.axis().project(point)
     }
 }
 
@@ -206,6 +225,18 @@ pub struct Circle {
 impl Circle {
     pub fn new(plane: Plane, radius: f64) -> Self {
         Self { plane, radius }
+    }
+    /// Create a circle from an axis and radius. The normal of the circle is the axis direction, the X dir is chosen to be orthogonal to the axis.
+    pub fn from_axis(axis: Axis3, radius: f64) -> Self {
+        let normal = axis.direction;
+        let reference = if normal.cross(&Vector3::z()).norm_squared() > LINEAR_TOLERANCE_SQUARED {
+            Vector3::z()
+        } else {
+            Vector3::y()
+        };
+        let x_dir = normal.cross(&reference).normalized();
+        let plane = Plane::new(axis.origin, x_dir, normal);
+        Self::new(plane, radius)
     }
 
     pub fn point_at(&self, t: f64) -> Point3 {

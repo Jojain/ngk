@@ -40,3 +40,11 @@ pub fn extrude_polygon(
     .map_err(|e| JsValue::from_str(&e))?;
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
+
+/// Builds a revolved triangle profile scene from a live angle in radians.
+#[wasm_bindgen(js_name = revolveTriangle)]
+pub fn revolve_triangle(angle_radians: f64) -> Result<JsValue, JsValue> {
+    let result = scripts::revolved_triangle::build(radians::Rad64::new(angle_radians))
+        .map_err(|e| JsValue::from_str(&e))?;
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}

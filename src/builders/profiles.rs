@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, Polyline2, Surface};
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
+use crate::topology::closed::Closed;
 use crate::topology::gmap::{Cell1, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
-use crate::topology::planar::PlanarLoop;
+use crate::topology::planar::{Planar, PlanarityError};
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 
@@ -25,14 +26,22 @@ pub fn add_edge<P: Payload>(
 
 use crate::topology::payload::StandardPayload;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PolylineError {
     EmptyPolyline,
 
     CreatedEdgeMissing,
+    OpenProfile { dart: Dart },
+    NonPlanarProfile(PlanarityError),
     MissingVertexPoint { dart: Dart },
     MissingEdgeCurve { dart: Dart },
     SewFailed { dim: Dim, first: Dart, second: Dart },
+}
+
+impl From<PlanarityError> for PolylineError {
+    fn from(err: PlanarityError) -> Self {
+        Self::NonPlanarProfile(err)
+    }
 }
 
 pub fn add_polyline(
@@ -59,13 +68,15 @@ pub fn add_polyline(
     Ok(first_start)
 }
 
-pub fn add_face<P: Payload>(
-    g: &mut GMap<P>,
-    loop_: PlanarLoop<'_, P>,
-) -> Result<FaceKey, PolylineError> {
-    let (loop_, plane) = loop_.into_parts();
-    let loop_dart = loop_.dart;
-    let pcurves = profile_pcurves(g, &loop_, &plane)?;
+pub fn add_face<P: Payload>(g: &mut GMap<P>, loop_dart: Dart) -> Result<FaceKey, PolylineError> {
+    let (plane, pcurves) = {
+        let profile = Profile::new(g, loop_dart);
+        let closed = Closed::new(profile).ok_or(PolylineError::OpenProfile { dart: loop_dart })?;
+        let planar = Planar::new(closed)?;
+        let (closed, plane) = planar.into_parts();
+        let pcurves = profile_pcurves(g, closed.inner(), &plane)?;
+        (plane, pcurves)
+    };
 
     let face_key = g.add_face(FaceAttr::with_pcurves(
         Surface::Plane(plane),

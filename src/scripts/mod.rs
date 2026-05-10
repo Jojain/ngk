@@ -10,6 +10,7 @@ pub mod extruded_open_polyline;
 pub mod extruded_square;
 pub mod hollow_cylinder;
 pub mod interactive_extrusion;
+pub mod revolved_triangle;
 pub mod two_faces_alpha2;
 
 pub type ScriptFn = fn() -> Result<ScriptResult, String>;
@@ -55,6 +56,11 @@ pub const SCRIPTS: &[Script] = &[
         id: "interactive_extrusion",
         title: "Interactive polygon extrusion",
         run: interactive_extrusion::run,
+    },
+    Script {
+        id: "revolved_triangle",
+        title: "Interactive triangle revolution",
+        run: revolved_triangle::run,
     },
 ];
 

@@ -208,7 +208,7 @@ mod tests {
             );
             let tip = d.shaft[d.shaft.len() - 1];
             let radial = Vector3::new(tip[0], tip[1], 0.0);
-            if radial.norm() < 1e-9 {
+            if radial.norm() < crate::geometry::LINEAR_TOLERANCE {
                 continue;
             }
             let radial = radial.normalize();

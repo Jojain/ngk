@@ -1,7 +1,7 @@
 use nalgebra::Vector3;
 use ngk::builders::profiles::add_polygon;
 use ngk::builders::solids::translate_face;
-use ngk::geometry::{Plane, Point3, Surface};
+use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, Surface};
 use ngk::topology::attributes::FaceAttr;
 use ngk::topology::face::Face;
 use ngk::topology::gmap::GMap;
@@ -42,17 +42,17 @@ fn translate_face_copies_face_into_translated_map() {
         translated
             .map()
             .iter_vertices()
-            .all(|(_, attr)| (attr.point.z - 2.0).abs() <= f64::EPSILON)
+            .all(|(_, attr)| (attr.point.z - 2.0).abs() <= LINEAR_TOLERANCE)
     );
     assert!(
         source
             .iter_vertices()
-            .all(|(_, attr)| attr.point.z.abs() <= f64::EPSILON)
+            .all(|(_, attr)| attr.point.z.abs() <= LINEAR_TOLERANCE)
     );
 
     match translated.face().surface() {
         Surface::Plane(plane) => {
-            assert!((plane.origin().z - 2.0).abs() <= f64::EPSILON);
+            assert!((plane.origin().z - 2.0).abs() <= LINEAR_TOLERANCE);
         }
         _ => panic!("test face should remain planar"),
     }

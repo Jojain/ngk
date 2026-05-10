@@ -23,6 +23,8 @@ js-sys = { version = "0.3", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 slotmap = "1.1.1"
+radians = "0.3.1"
+thiserror = "2.0.18"
 
 [profile.release]
 opt-level = 3

@@ -1,7 +1,9 @@
 use std::f64::consts::FRAC_1_SQRT_2;
 
 use nalgebra::Vector3;
-use ngk::geometry::{ControlPolygon, Degree, HPoint, KnotVector, NurbsCurve, Point3};
+use ngk::geometry::{
+    ControlPolygon, Degree, HPoint, KnotVector, LINEAR_TOLERANCE, NurbsCurve, Point3,
+};
 
 fn approx_eq(a: f64, b: f64, tol: f64) -> bool {
     (a - b).abs() <= tol
@@ -64,7 +66,7 @@ fn insert_knot_preserves_shape() {
     for (i, orig) in orig_samples.iter().enumerate() {
         let p = curve.point_at(i as f64 / 20.0);
         let err = (p - orig).norm();
-        assert!(err < 1e-9, "sample {} deviates by {}", i, err);
+        assert!(err < LINEAR_TOLERANCE, "sample {} deviates by {}", i, err);
     }
 }
 
@@ -97,7 +99,7 @@ fn insert_knot_quadratic_s1() {
     for (i, orig) in orig_samples.iter().enumerate() {
         let p = curve.point_at(i as f64 / 20.0);
         let err = (p - orig).norm();
-        assert!(err < 1e-9, "sample {} deviates by {}", i, err);
+        assert!(err < LINEAR_TOLERANCE, "sample {} deviates by {}", i, err);
     }
 }
 

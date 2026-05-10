@@ -1,4 +1,5 @@
-use crate::geometry::Curve;
+use crate::geometry::{Curve, LINEAR_TOLERANCE, PointCoincidence};
+use crate::topology::closed::Closeable;
 use crate::topology::gmap::{Cell1, Dim, MergeTopology};
 
 use super::facet::Facet;
@@ -88,5 +89,14 @@ impl<P: Payload> MergeTopology<P> for Edge<'_, P> {
 
     fn handle_dart(&self) -> Dart {
         self.dart
+    }
+}
+
+impl<P: Payload> Closeable for Edge<'_, P> {
+    fn is_closed(&self) -> bool {
+        match (self.start().point(), self.end().point()) {
+            (Some(start), Some(end)) => start.coincides(*end, LINEAR_TOLERANCE),
+            _ => false,
+        }
     }
 }

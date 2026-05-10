@@ -1,7 +1,7 @@
 use nalgebra::Vector3;
 
 use crate::builders::profiles::add_polygon;
-use crate::geometry::Point3;
+use crate::geometry::{LINEAR_TOLERANCE, Point3};
 use crate::modeling::sweep::extrude_profile;
 use crate::topology::StandardPayload;
 use crate::topology::gmap::GMap;
@@ -16,7 +16,7 @@ pub fn build(point_count: usize, extrusion: Vector3<f64>) -> Result<ScriptResult
             "interactive extrusion needs at least 3 polygon points, got {point_count}"
         ));
     }
-    if extrusion.norm_squared() <= f64::EPSILON {
+    if extrusion.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
         return Err("interactive extrusion direction must be non-zero".to_string());
     }
 

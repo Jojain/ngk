@@ -3,6 +3,7 @@ use nalgebra::Vector3;
 use crate::{
     Payload,
     builders::{errors::ExtrudeError, sheets::add_extruded_profile_boundaries},
+    geometry::LINEAR_TOLERANCE,
     topology::{
         Dart, SolidAttr,
         face::Face,
@@ -17,7 +18,7 @@ pub fn translate_face<P: Payload>(
     face: &Face<'_, P>,
     direction: Vector3<f64>,
 ) -> Result<Shape<FaceShape, P>, ExtrudeError> {
-    if direction.norm_squared() <= f64::EPSILON {
+    if direction.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
         return Err(ExtrudeError::ZeroDirection);
     }
 

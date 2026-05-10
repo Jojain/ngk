@@ -52,6 +52,12 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./InteractiveExtrusion")),
   },
   {
+    id: "revolved-triangle",
+    title: "Triangle revolution",
+    group: "Display",
+    component: lazy(() => import("./RevolvedTriangle")),
+  },
+  {
     id: "extruded-holed-pentagon",
     title: "Extruded pentagon with square hole",
     group: "Display",

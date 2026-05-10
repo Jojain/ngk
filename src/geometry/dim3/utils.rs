@@ -68,13 +68,14 @@ impl IntoUnit3 for UnitVector3<f64> {
 #[cfg(test)]
 mod tests {
     use super::{Point3, PointCoincidence};
+    use crate::geometry::LINEAR_TOLERANCE;
 
     #[test]
     fn point_coincides_uses_tolerance() {
         let a = Point3::new(1.0, 2.0, 3.0);
         let b = Point3::new(1.0 + 1.0e-10, 2.0, 3.0);
 
-        assert!(a.coincides(b, 1.0e-9));
+        assert!(a.coincides(b, LINEAR_TOLERANCE));
         assert!(!a.coincides(b, 1.0e-12));
     }
 }

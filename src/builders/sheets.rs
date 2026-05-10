@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use nalgebra::Vector3;
 
 use crate::builders::errors::ExtrudeError;
-use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, RuledSurface, Surface};
+use crate::geometry::{
+    Curve, Curve2, LINEAR_TOLERANCE, Line, Line2, Plane, Point2, Point3, RuledSurface, Surface,
+};
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
@@ -33,7 +35,7 @@ pub(crate) fn add_extruded_profile_boundaries<P: Payload>(
     profile_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<ExtrudedProfile, ExtrudeError> {
-    if direction.norm_squared() <= f64::EPSILON {
+    if direction.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
         return Err(ExtrudeError::ZeroDirection);
     }
 
@@ -252,10 +254,10 @@ fn lateral_plane(
     direction: Vector3<f64>,
 ) -> Result<Plane, ExtrudeError> {
     let edge = end - start;
-    if edge.norm_squared() <= f64::EPSILON {
+    if edge.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
         return Err(ExtrudeError::ZeroLengthEdge { dart });
     }
-    if edge.cross(&direction).norm_squared() <= f64::EPSILON {
+    if edge.cross(&direction).norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
         return Err(ExtrudeError::DegenerateSweep { dart });
     }
     Ok(Plane::from_xy(start, edge, direction))
@@ -285,7 +287,7 @@ mod tests {
 
     use crate::builders::profiles::add_polygon;
     use crate::builders::sheets::add_extruded_profile;
-    use crate::geometry::{Point3, PointCoincidence};
+    use crate::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
     use crate::modeling::sweep::extrude_profile;
     use crate::tessellate::{TessellateOpts, face::tessellate_face};
     use crate::topology::StandardPayload;
@@ -357,8 +359,8 @@ mod tests {
             .point()
             .expect("translated edge end should have geometry");
 
-        assert!((start.z - 2.0).abs() <= f64::EPSILON);
-        assert!((end.z - 2.0).abs() <= f64::EPSILON);
+        assert!((start.z - 2.0).abs() <= LINEAR_TOLERANCE);
+        assert!((end.z - 2.0).abs() <= LINEAR_TOLERANCE);
     }
 
     #[test]
@@ -506,7 +508,7 @@ mod tests {
             let p0 = vertex_point(g, dart);
             let p1 = vertex_point(g, linked);
             assert!(
-                p0.coincides(p1, 1.0e-9),
+                p0.coincides(p1, LINEAR_TOLERANCE),
                 "alpha1 should connect darts with the same corner point: {dart:?} at {p0:?}, {linked:?} at {p1:?}"
             );
         }
@@ -542,7 +544,7 @@ mod tests {
     }
 
     fn same_undirected_edge(a: (Point3, Point3), b: (Point3, Point3)) -> bool {
-        (a.0.coincides(b.0, 1.0e-9) && a.1.coincides(b.1, 1.0e-9))
-            || (a.0.coincides(b.1, 1.0e-9) && a.1.coincides(b.0, 1.0e-9))
+        (a.0.coincides(b.0, LINEAR_TOLERANCE) && a.1.coincides(b.1, LINEAR_TOLERANCE))
+            || (a.0.coincides(b.1, LINEAR_TOLERANCE) && a.1.coincides(b.0, LINEAR_TOLERANCE))
     }
 }

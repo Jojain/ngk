@@ -5,7 +5,7 @@ use super::degree::Degree;
 use super::error::NurbsError;
 use super::knots::KnotVector;
 use super::points::{ControlPolygon, HPoint};
-use crate::geometry::Point3;
+use crate::geometry::{LINEAR_TOLERANCE, Point3};
 
 #[derive(Debug, Clone)]
 pub struct NurbsCurve {
@@ -66,7 +66,7 @@ impl NurbsCurve {
     pub fn is_rational(&self) -> bool {
         let first = self.control_points.get(0).map(|hp| hp.weight());
         self.control_points.iter().any(|hp| match first {
-            Some(w0) => (hp.weight() - w0).abs() > f64::EPSILON,
+            Some(w0) => (hp.weight() - w0).abs() > LINEAR_TOLERANCE,
             None => false,
         })
     }

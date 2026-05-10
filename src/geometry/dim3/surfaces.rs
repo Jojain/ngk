@@ -2,6 +2,7 @@ use super::curves::Curve;
 use super::frame::Frame;
 use super::nurbs::{ControlNet, HPoint, NurbsError, NurbsSurface};
 use super::utils::{IntoUnit3, Point3};
+use crate::geometry::LINEAR_TOLERANCE;
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 
 #[derive(Clone)]
@@ -9,6 +10,7 @@ pub enum Surface {
     Plane(Plane),
     Cylinder(Cylinder),
     Ruled(RuledSurface),
+    Revolution(SurfaceOfRevolution),
     Nurbs(NurbsSurface),
 }
 
@@ -18,6 +20,7 @@ impl Surface {
             Surface::Plane(p) => p.point_at(u, v),
             Surface::Cylinder(c) => c.point_at(u, v),
             Surface::Ruled(s) => s.point_at(u, v),
+            Surface::Revolution(s) => s.point_at(u, v),
             Surface::Nurbs(s) => s.point_at(u, v),
         }
     }
@@ -26,6 +29,7 @@ impl Surface {
             Surface::Plane(p) => p.normal(),
             Surface::Cylinder(c) => c.normal_at(u, v),
             Surface::Ruled(s) => s.normal_at(u, v),
+            Surface::Revolution(s) => s.normal_at(u, v),
             Surface::Nurbs(s) => s.normal_at(u, v),
         }
     }
@@ -46,6 +50,11 @@ impl Surface {
             Surface::Ruled(surface) => Ok(Surface::Ruled(RuledSurface::new(
                 surface.curve.translated(direction)?,
                 surface.direction,
+            ))),
+            Surface::Revolution(surface) => Ok(Surface::Revolution(SurfaceOfRevolution::new(
+                surface.curve.translated(direction)?,
+                surface.origin + direction,
+                surface.axis,
             ))),
             Surface::Nurbs(surface) => {
                 let control_points = surface
@@ -179,10 +188,60 @@ impl RuledSurface {
     pub fn normal_at(&self, u: f64, _v: f64) -> UnitVector3<f64> {
         let du = finite_difference_curve_tangent(&self.curve, u);
         let n = du.cross(&self.direction);
-        match UnitVector3::try_new(n, f64::EPSILON) {
+        match UnitVector3::try_new(n, LINEAR_TOLERANCE) {
             Some(n) => n,
             None => Vector3::z_axis(),
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct SurfaceOfRevolution {
+    curve: Curve,
+    origin: Point3,
+    axis: UnitVector3<f64>,
+}
+
+impl SurfaceOfRevolution {
+    pub fn new(curve: Curve, origin: Point3, axis: impl IntoUnit3) -> Self {
+        Self {
+            curve,
+            origin,
+            axis: axis.normalized(),
+        }
+    }
+
+    pub fn point_at(&self, u: f64, v: f64) -> Point3 {
+        // u walks the profile curve, v is the angle [0, 2π]
+        let p = self.curve.point_at(u);
+
+        // Project p onto the axis, then get the radial component
+        let op = p - self.origin;
+        let axial = op.dot(&self.axis) * *self.axis;
+        let radial = op - axial;
+
+        // Rotate the radial part by angle v around the axis
+        let rot = Rotation3::from_axis_angle(&self.axis, v);
+        self.origin + axial + rot * radial
+    }
+
+    pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
+        let du = self.partial_u(u, v);
+        let dv = self.partial_v(u, v);
+        let n = du.cross(&dv);
+        UnitVector3::try_new(n, LINEAR_TOLERANCE).unwrap_or(Vector3::z_axis())
+    }
+
+    fn partial_u(&self, u: f64, v: f64) -> Vector3<f64> {
+        let h = 1e-6;
+        self.point_at(u + h, v) - self.point_at(u - h, v)
+    }
+
+    fn partial_v(&self, u: f64, v: f64) -> Vector3<f64> {
+        // Analytical: dS/dv = rot(v) * radial_perp
+        // But finite difference is consistent with your existing style
+        let h = 1e-6;
+        self.point_at(u, v + h) - self.point_at(u, v - h)
     }
 }
 
