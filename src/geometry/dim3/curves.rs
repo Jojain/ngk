@@ -185,6 +185,14 @@ impl Line {
         }
     }
 
+    pub fn start(&self) -> Point3 {
+        self.start
+    }
+
+    pub fn end(&self) -> Point3 {
+        self.end
+    }
+
     pub fn direction(&self) -> UnitVector3<f64> {
         (self.end - self.start).normalized()
     }
@@ -226,6 +234,15 @@ impl Circle {
     pub fn new(plane: Plane, radius: f64) -> Self {
         Self { plane, radius }
     }
+
+    pub fn plane(&self) -> &Plane {
+        &self.plane
+    }
+
+    pub fn radius(&self) -> f64 {
+        self.radius
+    }
+
     /// Create a circle from an axis and radius. The normal of the circle is the axis direction, the X dir is chosen to be orthogonal to the axis.
     pub fn from_axis(axis: Axis3, radius: f64) -> Self {
         let normal = axis.direction;

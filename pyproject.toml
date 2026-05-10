@@ -1,0 +1,15 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ngk"
+version = "0.1.0"
+description = "Python bindings for the NGK geometry kernel"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+[tool.maturin]
+features = ["python"]
+module-name = "ngk._ngk"
+python-source = "python"

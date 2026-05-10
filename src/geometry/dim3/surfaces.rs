@@ -181,6 +181,14 @@ impl RuledSurface {
         Self { curve, direction }
     }
 
+    pub fn curve(&self) -> &Curve {
+        &self.curve
+    }
+
+    pub fn direction(&self) -> Vector3<f64> {
+        self.direction
+    }
+
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
         self.curve.point_at(u) + self.direction * v
     }
@@ -209,6 +217,18 @@ impl SurfaceOfRevolution {
             origin,
             axis: axis.normalized(),
         }
+    }
+
+    pub fn curve(&self) -> &Curve {
+        &self.curve
+    }
+
+    pub fn origin(&self) -> Point3 {
+        self.origin
+    }
+
+    pub fn axis(&self) -> UnitVector3<f64> {
+        self.axis
     }
 
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {

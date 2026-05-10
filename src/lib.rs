@@ -8,5 +8,8 @@ pub mod topology;
 pub mod viz;
 pub use topology::{Payload, StandardPayload};
 
+#[cfg(feature = "python")]
+pub mod python;
+
 #[cfg(feature = "wasm")]
 pub mod wasm;

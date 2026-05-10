@@ -13,11 +13,13 @@ path = "src/main.rs"
 
 [features]
 default = []
+python = ["dep:pyo3"]
 wasm = ["dep:wasm-bindgen", "dep:js-sys", "dep:serde-wasm-bindgen", "dep:console_error_panic_hook"]
 
 [dependencies]
 nalgebra = "0.34.2"
 serde = { version = "1", features = ["derive"] }
+pyo3 = { version = "0.22.6", optional = true, features = ["extension-module", "abi3", "abi3-py39", "generate-import-lib"] }
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }

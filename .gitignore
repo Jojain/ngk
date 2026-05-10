@@ -32,3 +32,11 @@ visualization/node_modules/
 visualization/dist/
 visualization/src/wasm/
 
+# Python local builds
+.venv/
+.uv-cache/
+.uv-python/
+__pycache__/
+**/__pycache__/
+*.pyd
+
