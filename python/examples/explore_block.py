@@ -2,11 +2,9 @@
 #%%
 import ngk
 
-#%%
-
 
 solid = ngk.block(1.0, 2.0, 3.0)
-
+#%%
 print(solid)
 for face_index, face in enumerate(solid.faces()):
     print(f"face {face_index}: {face} surface={face.surface.kind}")
