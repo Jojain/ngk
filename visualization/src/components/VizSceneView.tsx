@@ -369,7 +369,8 @@ function GMapLayer({
   );
 }
 
-const DART_LANE_RADIUS = 0.045;
+const DART_FACE_LANE_RADIUS = 0.045;
+const DART_EDGE_LANE_RADIUS = 0.028;
 const WORLD_UP: Vec3 = [0, 0, 1];
 const WORLD_UP_FALLBACK: Vec3 = [0, 1, 0];
 
@@ -384,12 +385,16 @@ function layoutDartLanes(
 ): DartLaneLayout {
   const shaftsByDartId = new Map<number, Vec3[]>();
   const midpointsByDartId = new Map<number, Vec3>();
-  const faceOffsets = faceInwardOffsets(darts, alphaLinks);
-  const edgeFallback = edgeLaneFallbacks(darts);
+  const faceCenters = faceLaneCenters(darts, alphaLinks);
+  const edgeOffsets = edgeLaneOffsets(darts);
 
   for (const dart of darts) {
-    const offset = faceOffsets.get(dart.dartId) ?? edgeFallback.get(dart.dartId);
-    const shaft = offset ? offsetShaft(dart.shaft, offset) : dart.shaft;
+    const faceCenter = faceCenters.get(dart.dartId);
+    const edgeOffset = edgeOffsets.get(dart.dartId);
+    let shaft = faceCenter
+      ? offsetShaftTowardCenter(dart.shaft, faceCenter, DART_FACE_LANE_RADIUS)
+      : dart.shaft;
+    if (edgeOffset) shaft = offsetShaft(shaft, edgeOffset);
     shaftsByDartId.set(dart.dartId, shaft);
     midpointsByDartId.set(dart.dartId, shaftMidpoint(shaft));
   }
@@ -397,7 +402,7 @@ function layoutDartLanes(
   return { shaftsByDartId, midpointsByDartId };
 }
 
-function faceInwardOffsets(
+function faceLaneCenters(
   darts: VizDart[],
   alphaLinks: VizAlphaLink[],
 ): Map<number, Vec3> {
@@ -411,7 +416,7 @@ function faceInwardOffsets(
     adjacency.get(link.dartB)?.push(link.dartA);
   }
 
-  const offsets = new Map<number, Vec3>();
+  const centers = new Map<number, Vec3>();
   const seen = new Set<number>();
   for (const dart of darts) {
     if (seen.has(dart.dartId)) continue;
@@ -422,17 +427,10 @@ function faceInwardOffsets(
 
     const center = averagePoints(component.flatMap((d) => d.shaft));
     for (const d of component) {
-      const midpoint = shaftMidpoint(d.shaft);
-      const tangent = shaftTangent(d.shaft);
-      if (!tangent) continue;
-      const inward = sub(center, midpoint);
-      const projected = subtractProjection(inward, tangent);
-      const direction = normalize(projected);
-      if (!direction) continue;
-      offsets.set(d.dartId, scale(direction, DART_LANE_RADIUS));
+      centers.set(d.dartId, center);
     }
   }
-  return offsets;
+  return centers;
 }
 
 function connectedDarts(
@@ -455,7 +453,7 @@ function connectedDarts(
   return out;
 }
 
-function edgeLaneFallbacks(darts: VizDart[]): Map<number, Vec3> {
+function edgeLaneOffsets(darts: VizDart[]): Map<number, Vec3> {
   const offsets = new Map<number, Vec3>();
   const groups = new Map<number, VizDart[]>();
   for (const dart of darts) {
@@ -470,7 +468,10 @@ function edgeLaneFallbacks(darts: VizDart[]): Map<number, Vec3> {
     const frame = dartLaneFrame(group);
     if (!frame) continue;
     for (let i = 0; i < group.length; i++) {
-      offsets.set(group[i].dartId, laneOffset(frame, i, group.length));
+      offsets.set(
+        group[i].dartId,
+        laneOffset(frame, i, group.length, DART_EDGE_LANE_RADIUS),
+      );
     }
   }
   return offsets;
@@ -504,10 +505,15 @@ function shaftTangent(shaft: Vec3[]): Vec3 | null {
   return null;
 }
 
-function laneOffset(frame: DartLaneFrame, index: number, count: number): Vec3 {
+function laneOffset(
+  frame: DartLaneFrame,
+  index: number,
+  count: number,
+  radius: number,
+): Vec3 {
   const angle = (Math.PI * 2 * index) / count;
-  const cu = Math.cos(angle) * DART_LANE_RADIUS;
-  const sv = Math.sin(angle) * DART_LANE_RADIUS;
+  const cu = Math.cos(angle) * radius;
+  const sv = Math.sin(angle) * radius;
   return [
     frame.u[0] * cu + frame.v[0] * sv,
     frame.u[1] * cu + frame.v[1] * sv,
@@ -517,6 +523,30 @@ function laneOffset(frame: DartLaneFrame, index: number, count: number): Vec3 {
 
 function offsetShaft(shaft: Vec3[], offset: Vec3): Vec3[] {
   return shaft.map((point) => add(point, offset));
+}
+
+function offsetShaftTowardCenter(
+  shaft: Vec3[],
+  center: Vec3,
+  radius: number,
+): Vec3[] {
+  let lastDirection: Vec3 | null = null;
+  return shaft.map((point, index) => {
+    const tangent = shaftSampleTangent(shaft, index);
+    const inward = sub(center, point);
+    const projected = tangent ? subtractProjection(inward, tangent) : inward;
+    const direction = normalize(projected) ?? lastDirection;
+    if (!direction) return point;
+    lastDirection = direction;
+    return add(point, scale(direction, radius));
+  });
+}
+
+function shaftSampleTangent(shaft: Vec3[], index: number): Vec3 | null {
+  if (shaft.length < 2) return null;
+  const prev = shaft[Math.max(0, index - 1)];
+  const next = shaft[Math.min(shaft.length - 1, index + 1)];
+  return normalize(sub(next, prev));
 }
 
 function shaftMidpoint(shaft: Vec3[]): Vec3 {

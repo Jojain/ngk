@@ -12,6 +12,7 @@ pub mod shape;
 pub mod shape_keys;
 pub mod sheet;
 pub mod solid;
+pub mod validation;
 pub mod vertex;
 pub use attributes::{FaceAttr, SolidAttr};
 pub use dart::{Dart, IsolatedDart};

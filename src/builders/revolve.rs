@@ -13,10 +13,12 @@ use crate::geometry::{
 use crate::topology::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
-use crate::topology::gmap::{Cell2, Dart, Dim, GMap};
+use crate::topology::face::Face;
+use crate::topology::gmap::{Cell2, Dart, Dim, GMap, MergeTopology};
 use crate::topology::payload::Payload;
 use crate::topology::planar::{Planar, PlanarityError};
 use crate::topology::profile::Profile;
+use crate::topology::shape::{FaceShape, Shape};
 use crate::topology::shape_keys::{FaceKey, SolidKey};
 
 #[derive(Debug, Error)]
@@ -35,6 +37,9 @@ pub enum RevolveError {
 
     #[error("Only line edges can be partially revolved for now: {dart:?}")]
     UnsupportedPartialRevolveCurve { dart: Dart },
+
+    #[error("Only planar cap faces can be partially revolved for now: {dart:?}")]
+    UnsupportedPartialRevolveSurface { dart: Dart },
 
     #[error("Darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
     SewFailed { dim: Dim, first: Dart, second: Dart },
@@ -238,9 +243,13 @@ pub fn add_revolved_profile<P: Payload>(
 
 struct RevolvedProfile {
     swept_dart: Dart,
+    bottom_edges: Vec<Dart>,
+    top_edges: Vec<Dart>,
 }
 
 struct RevolvedFace {
+    bottom_edge: Dart,
+    top_edge: Dart,
     start_side: Dart,
     end_side: Dart,
     outer_loop: Dart,
@@ -268,7 +277,11 @@ fn add_revolved_profile_faces<P: Payload>(
 
     sew_revolved_faces(g, &faces, close_ring)?;
     let swept_dart = faces.first().map_or(profile_dart, |face| face.outer_loop);
-    Ok(RevolvedProfile { swept_dart })
+    Ok(RevolvedProfile {
+        swept_dart,
+        bottom_edges: faces.iter().map(|face| face.bottom_edge).collect(),
+        top_edges: faces.iter().map(|face| face.top_edge).collect(),
+    })
 }
 
 fn add_revolved_edge_face<P: Payload>(
@@ -349,6 +362,8 @@ fn add_revolved_quad_face<P: Payload>(
     ));
 
     Ok(RevolvedFace {
+        bottom_edge: darts[0],
+        top_edge: darts[4],
         start_side: darts[7],
         end_side: darts[2],
         outer_loop: darts[0],
@@ -406,6 +421,7 @@ pub fn add_revolved_face<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<SolidKey, RevolveError> {
+    let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
     let face = g
         .face(face_key)
         .map(|attr| attr.face(g))
@@ -414,6 +430,38 @@ pub fn add_revolved_face<P: Payload>(
     loops.push(face.outer_loop().dart);
     loops.extend(face.inner_loops().into_iter().map(|loop_| loop_.dart));
 
+    if is_full_turn(angle) {
+        return add_full_revolved_face(g, loops, axis, angle);
+    }
+
+    let rotated_face = rotate_face(&face, axis, angle)?;
+    let top_face_dart = g.merge(rotated_face.face());
+    let top_face_key = *g
+        .attribute::<Cell2>(top_face_dart)
+        .expect("merged rotated face should preserve its face attribute");
+    let top_face_attr = g
+        .face(top_face_key)
+        .expect("merged rotated face key should remain valid");
+    let mut top_loops = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
+    top_loops.push(top_face_attr.outer_loop);
+    top_loops.extend(top_face_attr.inner_loops.iter().copied());
+
+    let mut shell = None;
+    for (bottom_loop, top_loop) in loops.into_iter().zip(top_loops) {
+        let revolved = sew_revolved_loop_to_caps(g, bottom_loop, top_loop, axis, angle)?;
+        shell.get_or_insert(revolved);
+    }
+
+    let shell = shell.expect("a face should have at least one boundary loop");
+    Ok(g.add_solid(SolidAttr::new(P::S::default(), shell, None)))
+}
+
+fn add_full_revolved_face<P: Payload>(
+    g: &mut GMap<P>,
+    loops: Vec<Dart>,
+    axis: Axis3,
+    angle: Rad64,
+) -> Result<SolidKey, RevolveError> {
     let mut shell = None;
     for loop_dart in loops {
         let revolved = add_revolved_profile(g, loop_dart, axis, angle)?;
@@ -422,6 +470,94 @@ pub fn add_revolved_face<P: Payload>(
 
     let shell = shell.expect("a face should have at least one boundary loop");
     Ok(g.add_solid(SolidAttr::new(P::S::default(), shell, None)))
+}
+
+fn sew_revolved_loop_to_caps<P: Payload>(
+    g: &mut GMap<P>,
+    bottom_loop: Dart,
+    top_loop: Dart,
+    axis: Axis3,
+    angle: Rad64,
+) -> Result<Dart, RevolveError> {
+    let bottom_edges = Profile::new(g, bottom_loop)
+        .edges()
+        .into_iter()
+        .map(|edge| edge.dart)
+        .collect::<Vec<_>>();
+    let top_edges = Profile::new(g, top_loop)
+        .edges()
+        .into_iter()
+        .map(|edge| edge.dart)
+        .collect::<Vec<_>>();
+    let revolved = add_revolved_profile_faces(g, bottom_loop, axis, angle, true)?;
+
+    for (&cap_edge, &side_edge) in bottom_edges.iter().zip(revolved.bottom_edges.iter()) {
+        sew(g, Dim::Two, side_edge, cap_edge)?;
+    }
+    for (&cap_edge, &side_edge) in top_edges.iter().zip(revolved.top_edges.iter()) {
+        sew(g, Dim::Two, side_edge, cap_edge)?;
+    }
+
+    Ok(g.cell_representative(revolved.swept_dart, Dim::Three))
+}
+
+fn rotate_face<P: Payload>(
+    face: &Face<'_, P>,
+    axis: Axis3,
+    angle: Rad64,
+) -> Result<Shape<FaceShape, P>, RevolveError> {
+    let (mut rotated, rotated_dart) = face.isolate();
+
+    let vertex_keys = rotated
+        .iter_vertices()
+        .map(|(key, _)| key)
+        .collect::<Vec<_>>();
+    for key in vertex_keys {
+        let vertex = rotated
+            .vertex_mut(key)
+            .expect("collected vertex key must remain valid");
+        vertex.point = rotate_point(axis, vertex.point, angle);
+    }
+
+    let edge_keys = rotated.iter_edges().map(|(key, _)| key).collect::<Vec<_>>();
+    for key in edge_keys {
+        let edge = rotated
+            .edge_mut(key)
+            .expect("collected edge key must remain valid");
+        edge.curve = rotate_curve(edge.dart, &edge.curve, axis, angle)?;
+    }
+
+    let rotated_face_key = *rotated
+        .attribute::<Cell2>(rotated_dart)
+        .expect("isolating a face must preserve its face attribute");
+    let rotated_face = rotated
+        .face_mut(rotated_face_key)
+        .expect("isolated face key must remain valid");
+    rotated_face.surface =
+        rotate_surface(rotated_face.outer_loop, &rotated_face.surface, axis, angle)?;
+
+    Ok(Shape::new(rotated, rotated_face_key))
+}
+
+fn rotate_surface(
+    dart: Dart,
+    surface: &Surface,
+    axis: Axis3,
+    angle: Rad64,
+) -> Result<Surface, RevolveError> {
+    match surface {
+        Surface::Plane(plane) => {
+            let rotation = Rotation3::from_axis_angle(&axis.direction, angle.val());
+            Ok(Surface::Plane(Plane::from_xy(
+                rotate_point(axis, plane.origin(), angle),
+                rotation * *plane.x_dir(),
+                rotation * *plane.y_dir(),
+            )))
+        }
+        Surface::Cylinder(_) | Surface::Ruled(_) | Surface::Revolution(_) | Surface::Nurbs(_) => {
+            Err(RevolveError::UnsupportedPartialRevolveSurface { dart })
+        }
+    }
 }
 
 pub fn face_key_for_dart<P: Payload>(g: &GMap<P>, dart: Dart) -> Option<FaceKey> {
