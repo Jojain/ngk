@@ -3,9 +3,10 @@ use nalgebra::Vector3;
 use crate::{
     Payload,
     builders::{errors::ExtrudeError, sheets::add_extruded_profile_boundaries},
-    geometry::LINEAR_TOLERANCE,
+    geometry::{LINEAR_TOLERANCE, Plane, Surface},
     topology::{
         Dart, SolidAttr,
+        attributes::FaceAttr,
         face::Face,
         gmap::{Cell2, Dim, GMap, MergeTopology},
         profile::Profile,
@@ -93,6 +94,8 @@ pub fn add_extruded_face<P: Payload>(
     top_loop_darts.push(top_face_attr.outer_loop);
     top_loop_darts.extend(top_face_attr.inner_loops.iter().copied());
 
+    orient_extruded_caps(g, face_key, top_face_key, direction);
+
     let mut shell_representative = None;
     for (bottom_loop_dart, top_loop_dart) in bottom_loop_darts.into_iter().zip(top_loop_darts) {
         let extruded = sew_extruded_loop(g, bottom_loop_dart, top_loop_dart, direction)?;
@@ -103,6 +106,41 @@ pub fn add_extruded_face<P: Payload>(
         shell_representative.expect("a face should have at least one outer loop");
     let solid = g.add_solid(SolidAttr::new(P::S::default(), shell_representative, None));
     Ok(solid)
+}
+
+fn orient_extruded_caps<P: Payload>(
+    g: &mut GMap<P>,
+    bottom_face: FaceKey,
+    top_face: FaceKey,
+    direction: Vector3<f64>,
+) {
+    let Some(bottom_normal_dot_direction) = g
+        .face(bottom_face)
+        .map(|attr| face_normal_dot_direction(attr, direction))
+    else {
+        return;
+    };
+
+    if bottom_normal_dot_direction > LINEAR_TOLERANCE {
+        flip_planar_face_surface(g, bottom_face);
+    } else if bottom_normal_dot_direction < -LINEAR_TOLERANCE {
+        flip_planar_face_surface(g, top_face);
+    }
+}
+
+fn face_normal_dot_direction<T>(face: &FaceAttr<T>, direction: Vector3<f64>) -> f64 {
+    face.surface.normal_at(0.0, 0.0).dot(&direction)
+}
+
+fn flip_planar_face_surface<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
+    let Some(face) = g.face_mut(face) else {
+        return;
+    };
+    let Surface::Plane(plane) = &face.surface else {
+        return;
+    };
+
+    face.surface = Surface::Plane(Plane::new(plane.origin(), plane.x_dir(), -plane.normal()));
 }
 
 fn sew_extruded_loop<P: Payload>(

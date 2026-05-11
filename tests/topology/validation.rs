@@ -7,13 +7,17 @@ use ngk::geometry::axis::Axis3;
 use ngk::modeling::primitives::block;
 use ngk::topology::gmap::GMap;
 use ngk::topology::payload::StandardPayload;
-use ngk::topology::validation::{validate_all_solid_manifolds, validate_solid_manifold};
+use ngk::topology::validation::{
+    validate_all_solid_manifolds, validate_solid_manifold, validate_solid_orientation,
+};
 
 #[test]
-fn block_solid_validates_as_closed_manifold_shell() {
+fn block_solid_orientation_validation_requires_outward_face_normals() {
     let block = block(1.0, 2.0, 3.0).expect("block should build");
 
     validate_all_solid_manifolds(block.map()).expect("block shell should be closed");
+    validate_solid_orientation(block.map(), block.key())
+        .expect("block face normals should point outside the solid");
 }
 
 #[test]
