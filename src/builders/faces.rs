@@ -1,5 +1,7 @@
+use crate::StandardPayload;
+use crate::builders::errors::FaceCreationError;
 use crate::builders::profiles::{
-    PolylineError, add_rectangle as add_rectangle_profile, profile_pcurves,
+    add_rectangle as add_rectangle_profile, add_square as add_square_profile, profile_pcurves,
 };
 use crate::geometry::{Curve, Line, Plane, Point3, Surface};
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
@@ -10,10 +12,14 @@ use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::FaceKey;
 
-pub fn add_face<P: Payload>(g: &mut GMap<P>, loop_dart: Dart) -> Result<FaceKey, PolylineError> {
+pub fn add_face<P: Payload>(
+    g: &mut GMap<P>,
+    loop_dart: Dart,
+) -> Result<FaceKey, FaceCreationError> {
     let (plane, pcurves) = {
         let profile = Profile::new(g, loop_dart);
-        let closed = Closed::new(profile).ok_or(PolylineError::OpenProfile { dart: loop_dart })?;
+        let closed =
+            Closed::new(profile).ok_or(FaceCreationError::OpenProfile { dart: loop_dart })?;
         let planar = Planar::new(closed)?;
         let (closed, plane) = planar.into_parts();
         let pcurves = profile_pcurves(g, closed.inner(), &plane)?;
@@ -31,12 +37,21 @@ pub fn add_face<P: Payload>(g: &mut GMap<P>, loop_dart: Dart) -> Result<FaceKey,
 }
 
 pub fn add_rectangle(
-    g: &mut GMap<crate::topology::payload::StandardPayload>,
+    g: &mut GMap<StandardPayload>,
     plane: Plane,
     x_size: f64,
     y_size: f64,
-) -> Result<FaceKey, PolylineError> {
+) -> Result<FaceKey, FaceCreationError> {
     let loop_dart = add_rectangle_profile(g, plane, x_size, y_size)?;
+    add_face(g, loop_dart)
+}
+
+pub fn add_square(
+    g: &mut GMap<StandardPayload>,
+    plane: Plane,
+    size: f64,
+) -> Result<FaceKey, FaceCreationError> {
+    let loop_dart = add_square_profile(g, plane, size)?;
     add_face(g, loop_dart)
 }
 

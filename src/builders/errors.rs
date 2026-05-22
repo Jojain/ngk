@@ -1,6 +1,6 @@
 use crate::{
     geometry::{NurbsError, Point3},
-    topology::{Dart, gmap::Dim, shape_keys::FaceKey},
+    topology::{Dart, gmap::Dim, planar::PlanarityError, shape_keys::FaceKey},
 };
 use thiserror::Error;
 
@@ -35,4 +35,34 @@ pub enum ExtrudeError {
     SurfaceTranslationFailed { dart: Dart, source: NurbsError },
     #[error("missing face for key {dart:?}")]
     MissingFace { dart: FaceKey },
+}
+
+#[derive(Debug, Clone, Error, PartialEq)]
+pub enum PolylineError {
+    #[error("polyline is empty")]
+    EmptyPolyline,
+    #[error("profile starting at dart {dart:?} is open")]
+    OpenProfile { dart: Dart },
+    #[error("profile is not planar: {0}")]
+    NonPlanarProfile(#[from] PlanarityError),
+    #[error("missing vertex point for dart {dart:?}")]
+    MissingVertexPoint { dart: Dart },
+    #[error("missing edge curve for dart {dart:?}")]
+    MissingEdgeCurve { dart: Dart },
+    #[error("rectangle {axis} size must be greater than 0, got {value}")]
+    InvalidRectangleSize { axis: &'static str, value: f64 },
+    #[error("darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
+    SewFailed { dim: Dim, first: Dart, second: Dart },
+    #[error("failed to create polyline edge")]
+    EdgeCreationFailed(#[from] EdgeCreationError),
+}
+
+#[derive(Debug, Clone, Error, PartialEq)]
+pub enum FaceCreationError {
+    #[error("profile bounding face is open at dart {dart:?}")]
+    OpenProfile { dart: Dart },
+    #[error("profile bounding face is not planar: {0}")]
+    NonPlanarProfile(#[from] PlanarityError),
+    #[error("failed to create face profile")]
+    ProfileCreationFailed(#[from] PolylineError),
 }

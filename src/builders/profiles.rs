@@ -1,56 +1,42 @@
 use std::collections::HashMap;
 
 use crate::builders::edges::add_edge;
-use crate::builders::errors::EdgeCreationError;
-use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, Polyline2};
+use crate::geometry::{
+    Curve, Curve2, LINEAR_TOLERANCE, Line, Line2, Plane, Point2, Point3, PointCoincidence,
+    Polyline2,
+};
 use crate::topology::gmap::{Cell1, Dart, Dim, GMap};
 use crate::topology::payload::{Payload, StandardPayload};
-use crate::topology::planar::PlanarityError;
 use crate::topology::profile::Profile;
-use thiserror::Error;
 
-#[derive(Debug, Clone, Error, PartialEq)]
-pub enum PolylineError {
-    #[error("polyline is empty")]
-    EmptyPolyline,
-
-    #[error("created edge is missing")]
-    CreatedEdgeMissing,
-    #[error("profile starting at dart {dart:?} is open")]
-    OpenProfile { dart: Dart },
-    #[error("profile is not planar: {0}")]
-    NonPlanarProfile(#[from] PlanarityError),
-    #[error("missing vertex point for dart {dart:?}")]
-    MissingVertexPoint { dart: Dart },
-    #[error("missing edge curve for dart {dart:?}")]
-    MissingEdgeCurve { dart: Dart },
-    #[error("rectangle {axis} size must be greater than 0, got {value}")]
-    InvalidRectangleSize { axis: &'static str, value: f64 },
-    #[error("darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
-    SewFailed { dim: Dim, first: Dart, second: Dart },
-    #[error("failed to create polyline edge")]
-    EdgeCreationFailed(#[from] EdgeCreationError),
-}
+pub use crate::builders::errors::PolylineError;
 
 pub fn add_polyline(
     g: &mut GMap<StandardPayload>,
     segments: &[(Point3, Point3, Curve)],
 ) -> Result<Dart, PolylineError> {
-    let (first_segment, remaining_segments) =
-        segments.split_first().ok_or(PolylineError::EmptyPolyline)?;
+    let first_segment = segments.first().ok_or(PolylineError::EmptyPolyline)?;
     let last_segment = segments.last().ok_or(PolylineError::EmptyPolyline)?;
-    let closed = first_segment.0 == last_segment.1;
+    let closed = first_segment.0.coincides(&last_segment.1, LINEAR_TOLERANCE);
 
-    let (first_start, mut previous_end) = add_polyline_segment(g, first_segment)?;
+    let segment_darts = segments
+        .iter()
+        .map(|segment| add_polyline_segment(g, segment))
+        .collect::<Result<Vec<_>, _>>()?;
+    let first_start = segment_darts[0].0;
 
-    for segment in remaining_segments {
-        let (start_dart, end_dart) = add_polyline_segment(g, segment)?;
-        sew(g, Dim::One, previous_end, start_dart)?;
-        previous_end = end_dart;
-    }
+    segment_darts.windows(2).try_for_each(|pair| {
+        let previous_end = pair[0].1;
+        let next_start = pair[1].0;
+        sew(g, Dim::One, previous_end, next_start)
+    })?;
 
     if closed {
-        sew(g, Dim::One, previous_end, first_start)?;
+        let last_end = segment_darts
+            .last()
+            .expect("non-empty polyline has a last segment")
+            .1;
+        sew(g, Dim::One, last_end, first_start)?;
     }
 
     Ok(first_start)
@@ -156,6 +142,14 @@ pub fn add_rectangle(
     add_polyline(g, &segments)
 }
 
+pub fn add_square(
+    g: &mut GMap<StandardPayload>,
+    plane: Plane,
+    size: f64,
+) -> Result<Dart, PolylineError> {
+    add_rectangle(g, plane, size, size)
+}
+
 fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), PolylineError> {
     if value.is_finite() && value > 0.0 {
         Ok(())
@@ -168,9 +162,7 @@ fn add_polyline_segment(
     g: &mut GMap<StandardPayload>,
     (start, end, curve): &(Point3, Point3, Curve),
 ) -> Result<(Dart, Dart), PolylineError> {
-    let (_, edge_key) = add_edge(g, *start, *end, curve.clone())?;
-    let edge = g.edge(edge_key).ok_or(PolylineError::CreatedEdgeMissing)?;
-    let start_dart = edge.dart;
+    let (start_dart, _) = add_edge(g, *start, *end, curve.clone())?;
     let end_dart = g.alpha(Dim::Zero, start_dart);
     Ok((start_dart, end_dart))
 }
