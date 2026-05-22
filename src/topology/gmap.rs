@@ -712,7 +712,8 @@ mod tests {
                 Point3::new(1.0, 0.0, 0.0),
                 Point3::new(2.0, 0.0, 0.0),
             )),
-        );
+        )
+        .expect("source edge should build");
 
         let edge = source
             .edge(edge_key)
@@ -741,7 +742,8 @@ mod tests {
                 Point3::new(-1.0, 0.0, 0.0),
                 Point3::new(0.0, 0.0, 0.0),
             )),
-        );
+        )
+        .expect("target edge should build");
 
         let mut source = GMap::<StandardPayload>::new();
         let loop_dart = add_polygon(

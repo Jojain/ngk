@@ -1,8 +1,17 @@
 use crate::{
-    geometry::NurbsError,
+    geometry::{NurbsError, Point3},
     topology::{Dart, gmap::Dim, shape_keys::FaceKey},
 };
 use thiserror::Error;
+
+#[derive(Debug, Clone, Error, PartialEq)]
+pub enum EdgeCreationError {
+    #[error("start and end points are coincident: {start:?} and {end:?}")]
+    CoincidentPoints { start: Point3, end: Point3 },
+
+    #[error("Invalid radius: {radius}")]
+    InvalidRadius { radius: f64 },
+}
 
 #[derive(Debug, Clone, Error, PartialEq)]
 pub enum ExtrudeError {

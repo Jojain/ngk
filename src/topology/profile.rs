@@ -163,22 +163,24 @@ mod tests {
             Point3::new(1.0, 1.0, 0.0),
         ];
 
-        let first_edge = add_edge(
+        let (_, first_edge) = add_edge(
             &mut g,
             points[0],
             points[1],
             Curve::Line(Line::new(points[0], points[1])),
-        );
-        let second_edge = add_edge(
+        )
+        .expect("first edge should build");
+        let (_, second_edge) = add_edge(
             &mut g,
             points[1],
             points[2],
             Curve::Line(Line::new(points[1], points[2])),
-        );
+        )
+        .expect("second edge should build");
 
-        let first_start = g.edge(first_edge.1).expect("edge should exist").dart;
+        let first_start = g.edge(first_edge).expect("edge should exist").dart;
         let first_end = g.alpha(Dim::Zero, first_start);
-        let second_start = g.edge(second_edge.1).expect("edge should exist").dart;
+        let second_start = g.edge(second_edge).expect("edge should exist").dart;
         g.sew(Dim::One, first_end, second_start)
             .expect("adjacent open profile edges should be alpha1-sewable");
 

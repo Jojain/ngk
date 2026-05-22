@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::builders::edges::add_edge;
+use crate::builders::errors::EdgeCreationError;
 use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, Polyline2};
 use crate::topology::gmap::{Cell1, Dart, Dim, GMap};
 use crate::topology::payload::{Payload, StandardPayload};
@@ -8,7 +9,7 @@ use crate::topology::planar::PlanarityError;
 use crate::topology::profile::Profile;
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, Error, PartialEq)]
+#[derive(Debug, Clone, Error, PartialEq)]
 pub enum PolylineError {
     #[error("polyline is empty")]
     EmptyPolyline,
@@ -27,6 +28,8 @@ pub enum PolylineError {
     InvalidRectangleSize { axis: &'static str, value: f64 },
     #[error("darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
     SewFailed { dim: Dim, first: Dart, second: Dart },
+    #[error("failed to create polyline edge")]
+    EdgeCreationFailed(#[from] EdgeCreationError),
 }
 
 pub fn add_polyline(
@@ -165,10 +168,8 @@ fn add_polyline_segment(
     g: &mut GMap<StandardPayload>,
     (start, end, curve): &(Point3, Point3, Curve),
 ) -> Result<(Dart, Dart), PolylineError> {
-    let edge_key = add_edge(g, *start, *end, curve.clone());
-    let edge = g
-        .edge(edge_key.1)
-        .ok_or(PolylineError::CreatedEdgeMissing)?;
+    let (_, edge_key) = add_edge(g, *start, *end, curve.clone())?;
+    let edge = g.edge(edge_key).ok_or(PolylineError::CreatedEdgeMissing)?;
     let start_dart = edge.dart;
     let end_dart = g.alpha(Dim::Zero, start_dart);
     Ok((start_dart, end_dart))

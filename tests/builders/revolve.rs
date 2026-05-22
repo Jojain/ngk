@@ -23,7 +23,8 @@ fn partial_revolved_edge_creates_rotated_endpoint_geometry() {
             Point3::new(1.0, 0.0, 0.0),
             Point3::new(2.0, 0.0, 0.0),
         )),
-    );
+    )
+    .expect("edge should build");
 
     let rotated = add_revolved_edge(
         &mut g,
@@ -60,7 +61,8 @@ fn partial_revolved_edge_circle_side_uses_short_positive_sweep() {
             Point3::new(1.0, 0.0, 0.0),
             Point3::new(2.0, 0.0, 0.0),
         )),
-    );
+    )
+    .expect("edge should build");
 
     add_revolved_edge(
         &mut g,
@@ -112,7 +114,8 @@ fn full_revolved_edge_uses_closed_circle_special_case() {
             Point3::new(1.0, 0.0, 0.0),
             Point3::new(2.0, 0.0, 0.0),
         )),
-    );
+    )
+    .expect("edge should build");
 
     let circle = add_revolved_edge(
         &mut g,

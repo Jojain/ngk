@@ -8,8 +8,9 @@ use std::collections::HashMap;
 
 use nalgebra::Vector3;
 
-use crate::builders::profiles::{add_polyline, profile_pcurves};
-use crate::geometry::{Circle, Curve, Curve2, Plane, Point3, Surface};
+use crate::builders::edges::add_circle;
+use crate::builders::profiles::profile_pcurves;
+use crate::geometry::{Curve2, Plane, Point3, Surface};
 use crate::modeling::sweep::extrude_face;
 use crate::topology::StandardPayload;
 use crate::topology::attributes::FaceAttr;
@@ -95,16 +96,16 @@ fn add_circle_loop(
     radius: f64,
     counter_clockwise: bool,
 ) -> Result<Dart, String> {
-    let start = Point3::new(radius, 0.0, 0.0);
     let normal = if counter_clockwise {
         Vector3::z()
     } else {
         -Vector3::z()
     };
-    let circle = Circle::new(Plane::new(Point3::origin(), Vector3::x(), normal), radius);
-    let segments = [(start, start, Curve::Circle(circle))];
+    let plane = Plane::new(Point3::origin(), Vector3::x(), normal);
 
-    add_polyline(g, &segments).map_err(|err| format!("failed to build circular loop: {err:?}"))
+    add_circle(g, plane, radius)
+        .map(|(dart, _)| dart)
+        .map_err(|err| format!("failed to build circular loop: {err:?}"))
 }
 
 fn loop_pcurves(
