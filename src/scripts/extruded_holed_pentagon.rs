@@ -2,14 +2,14 @@ use std::collections::HashMap;
 
 use nalgebra::Vector3;
 
-use crate::builders::profiles::add_polygon;
+use crate::builders::faces::add_polygon;
 use crate::geometry::{Curve2, Line2, Plane, Point2, Point3, Surface};
 use crate::modeling::sweep::extrude_face;
 use crate::topology::StandardPayload;
 use crate::topology::attributes::FaceAttr;
 use crate::topology::gmap::{Dart, GMap};
 use crate::topology::profile::Profile;
-use crate::topology::shape::{FaceShape, Shape};
+use crate::topology::shape::{FaceTag, Shape};
 use crate::viz::{ScriptResult, Style, VizHints};
 
 const HEIGHT: f64 = 1.2;
@@ -33,7 +33,7 @@ pub fn run() -> Result<ScriptResult, String> {
     Ok(ScriptResult::from_gmap_with_hints(solid.map(), &hints))
 }
 
-fn build_source_face() -> Shape<FaceShape, StandardPayload> {
+fn build_source_face() -> Shape<FaceTag, StandardPayload> {
     let mut g = GMap::<StandardPayload>::new();
     let surface = Surface::Plane(Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::y()));
 

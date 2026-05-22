@@ -15,7 +15,7 @@ use crate::topology::StandardPayload;
 use crate::topology::attributes::FaceAttr;
 use crate::topology::gmap::{Dart, GMap};
 use crate::topology::profile::Profile;
-use crate::topology::shape::{FaceShape, Shape};
+use crate::topology::shape::{FaceTag, Shape};
 use crate::topology::shape_keys::FaceKey;
 use crate::viz::{ScriptResult, Style, VizHints};
 
@@ -69,7 +69,7 @@ pub fn build_hollow_cylinder_gmap() -> Result<HollowCylinderBuild, String> {
     Ok((g, styles, shell_dart))
 }
 
-fn build_source_face() -> Result<Shape<FaceShape, StandardPayload>, String> {
+fn build_source_face() -> Result<Shape<FaceTag, StandardPayload>, String> {
     let mut g = GMap::<StandardPayload>::new();
     let plane = Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::y());
 

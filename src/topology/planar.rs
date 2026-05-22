@@ -1,6 +1,7 @@
 use std::ops::Deref;
 
 use nalgebra::Vector3;
+use thiserror::Error;
 
 use crate::geometry::{Curve, LINEAR_TOLERANCE, Plane, Point3, Surface};
 use crate::topology::face::Face;
@@ -21,24 +22,29 @@ impl<'a, P: Payload> PlanarGeometry for Face<'a, P> {}
 
 pub const DEFAULT_PLANAR_TOLERANCE: f64 = LINEAR_TOLERANCE;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Error, PartialEq)]
 pub enum PlanarityError {
-    MissingVertexPoint {
-        dart: Dart,
-    },
-    TooFewDistinctPoints {
-        count: usize,
-    },
+    #[error("missing vertex point for dart {dart:?}")]
+    MissingVertexPoint { dart: Dart },
+    #[error("too few distinct points to infer a plane: {count}")]
+    TooFewDistinctPoints { count: usize },
+    #[error(
+        "point at dart {dart:?} is not planar: distance {distance} exceeds tolerance {tolerance}"
+    )]
     NonPlanarPoint {
         dart: Dart,
         distance: f64,
         tolerance: f64,
     },
+    #[error(
+        "curve at dart {dart:?} is not planar: distance {distance} exceeds tolerance {tolerance}"
+    )]
     NonPlanarCurve {
         dart: Dart,
         distance: f64,
         tolerance: f64,
     },
+    #[error("surface is not planar")]
     NonPlanarSurface,
 }
 

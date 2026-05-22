@@ -1,7 +1,8 @@
 use nalgebra::Vector3;
 use radians::Rad64;
 
-use ngk::builders::profiles::{add_edge, add_face, add_polygon};
+use ngk::builders::edges::add_edge;
+use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::revolve::{add_revolved_edge, add_revolved_face};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{Curve, LINEAR_TOLERANCE, Line, Point3, PointCoincidence, Surface};

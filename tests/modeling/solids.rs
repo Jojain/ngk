@@ -1,4 +1,4 @@
-use ngk::modeling::primitives::{PrimitiveError, block};
+use ngk::modeling::solids::{PrimitiveError, block};
 use ngk::tessellate::{TessellateOpts, face::tessellate_face};
 use ngk::topology::closed::Closed;
 use ngk::topology::gmap::Dim;

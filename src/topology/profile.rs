@@ -149,7 +149,7 @@ impl<'a, P: Payload> Iterator for LoopIterator<'a, P> {
 #[cfg(test)]
 mod tests {
     use super::{Closeable, Profile};
-    use crate::builders::profiles::add_edge;
+    use crate::builders::edges::add_edge;
     use crate::geometry::{Curve, Line, Point3};
     use crate::topology::gmap::{Dim, GMap};
     use crate::topology::payload::StandardPayload;

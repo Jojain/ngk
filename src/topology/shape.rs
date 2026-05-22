@@ -11,47 +11,47 @@ use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
 use crate::topology::vertex::Vertex;
 
-pub struct VertexShape;
-pub struct EdgeShape;
-pub struct FaceShape;
-pub struct FacetShape;
-pub struct ProfileShape;
-pub struct SheetShape;
-pub struct SolidShape;
+pub struct VertexTag;
+pub struct EdgeTag;
+pub struct FaceTag;
+pub struct FacetTag;
+pub struct ProfileTag;
+pub struct SheetTag;
+pub struct SolidTag;
 
 pub trait ShapeKind {
     type Handle: Copy;
 }
 
-impl ShapeKind for VertexShape {
+impl ShapeKind for VertexTag {
     type Handle = VertexKey;
 }
 
-impl ShapeKind for EdgeShape {
+impl ShapeKind for EdgeTag {
     type Handle = EdgeKey;
 }
 
-impl ShapeKind for FaceShape {
+impl ShapeKind for FaceTag {
     type Handle = FaceKey;
 }
 
-impl ShapeKind for FacetShape {
+impl ShapeKind for FacetTag {
     type Handle = Dart;
 }
 
-impl ShapeKind for ProfileShape {
+impl ShapeKind for ProfileTag {
     type Handle = Dart;
 }
 
-impl ShapeKind for SheetShape {
+impl ShapeKind for SheetTag {
     type Handle = Dart;
 }
 
-impl ShapeKind for SolidShape {
+impl ShapeKind for SolidTag {
     type Handle = SolidKey;
 }
 
-pub struct Shape<K: ShapeKind = SheetShape, P: Payload = StandardPayload> {
+pub struct Shape<K: ShapeKind = SheetTag, P: Payload = StandardPayload> {
     map: GMap<P>,
     handle: K::Handle,
     kind: PhantomData<K>,
@@ -83,7 +83,7 @@ impl<K: ShapeKind, P: Payload> Shape<K, P> {
     }
 }
 
-impl<P: Payload> Shape<VertexShape, P> {
+impl<P: Payload> Shape<VertexTag, P> {
     pub fn vertex(&self) -> Vertex<'_, P> {
         self.map
             .vertex(self.handle)
@@ -96,7 +96,7 @@ impl<P: Payload> Shape<VertexShape, P> {
     }
 }
 
-impl<P: Payload> Shape<EdgeShape, P> {
+impl<P: Payload> Shape<EdgeTag, P> {
     pub fn edge(&self) -> Edge<'_, P> {
         self.map
             .edge(self.handle)
@@ -109,7 +109,7 @@ impl<P: Payload> Shape<EdgeShape, P> {
     }
 }
 
-impl<P: Payload> Shape<FaceShape, P> {
+impl<P: Payload> Shape<FaceTag, P> {
     pub fn face(&self) -> Face<'_, P> {
         self.map
             .face(self.handle)
@@ -122,7 +122,7 @@ impl<P: Payload> Shape<FaceShape, P> {
     }
 }
 
-impl<P: Payload> Shape<ProfileShape, P> {
+impl<P: Payload> Shape<ProfileTag, P> {
     pub fn profile(&self) -> Profile<'_, P> {
         Profile::new(&self.map, self.handle)
     }
@@ -132,7 +132,7 @@ impl<P: Payload> Shape<ProfileShape, P> {
     }
 }
 
-impl<P: Payload> Shape<FacetShape, P> {
+impl<P: Payload> Shape<FacetTag, P> {
     pub fn facet(&self) -> Facet<'_, P> {
         Facet::new(&self.map, self.handle)
     }
@@ -142,7 +142,7 @@ impl<P: Payload> Shape<FacetShape, P> {
     }
 }
 
-impl<P: Payload> Shape<SheetShape, P> {
+impl<P: Payload> Shape<SheetTag, P> {
     pub fn sheet(&self) -> Sheet<'_, P> {
         Sheet::new(&self.map, self.handle)
     }
@@ -152,7 +152,7 @@ impl<P: Payload> Shape<SheetShape, P> {
     }
 }
 
-impl<P: Payload> Shape<SolidShape, P> {
+impl<P: Payload> Shape<SolidTag, P> {
     pub fn solid(&self) -> Solid<'_, P> {
         self.map
             .solid(self.handle)

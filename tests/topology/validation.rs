@@ -1,10 +1,10 @@
 use radians::Rad64;
 
-use ngk::builders::profiles::{add_face, add_polygon};
+use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::revolve::add_revolved_face;
 use ngk::geometry::Point3;
 use ngk::geometry::axis::Axis3;
-use ngk::modeling::primitives::block;
+use ngk::modeling::solids::block;
 use ngk::topology::gmap::GMap;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::validation::{

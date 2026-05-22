@@ -1,47 +1,32 @@
 use std::collections::HashMap;
 
-use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, Polyline2, Surface};
-use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
-use crate::topology::closed::Closed;
+use crate::builders::edges::add_edge;
+use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, Polyline2};
 use crate::topology::gmap::{Cell1, Dart, Dim, GMap};
-use crate::topology::payload::Payload;
-use crate::topology::planar::{Planar, PlanarityError};
+use crate::topology::payload::{Payload, StandardPayload};
+use crate::topology::planar::PlanarityError;
 use crate::topology::profile::Profile;
-use crate::topology::shape_keys::{EdgeKey, FaceKey};
+use thiserror::Error;
 
-pub fn add_edge<P: Payload>(
-    g: &mut GMap<P>,
-    start: Point3,
-    end: Point3,
-    curve: Curve,
-) -> (Dart, EdgeKey) {
-    let d1 = g.add_dart();
-    let d2 = g.add_dart();
-    g.sew_unchecked(Dim::Zero, d1, d2);
-    g.add_vertex(VertexAttr::new(d1, start, P::V::default()));
-    g.add_vertex(VertexAttr::new(d2, end, P::V::default()));
-    let e = g.add_edge(EdgeAttr::new(d1, curve, P::E::default()));
-    (d1, e)
-}
-
-use crate::topology::payload::StandardPayload;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Error, PartialEq)]
 pub enum PolylineError {
+    #[error("polyline is empty")]
     EmptyPolyline,
 
+    #[error("created edge is missing")]
     CreatedEdgeMissing,
+    #[error("profile starting at dart {dart:?} is open")]
     OpenProfile { dart: Dart },
-    NonPlanarProfile(PlanarityError),
+    #[error("profile is not planar: {0}")]
+    NonPlanarProfile(#[from] PlanarityError),
+    #[error("missing vertex point for dart {dart:?}")]
     MissingVertexPoint { dart: Dart },
+    #[error("missing edge curve for dart {dart:?}")]
     MissingEdgeCurve { dart: Dart },
+    #[error("rectangle {axis} size must be greater than 0, got {value}")]
+    InvalidRectangleSize { axis: &'static str, value: f64 },
+    #[error("darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
     SewFailed { dim: Dim, first: Dart, second: Dart },
-}
-
-impl From<PlanarityError> for PolylineError {
-    fn from(err: PlanarityError) -> Self {
-        Self::NonPlanarProfile(err)
-    }
 }
 
 pub fn add_polyline(
@@ -66,26 +51,6 @@ pub fn add_polyline(
     }
 
     Ok(first_start)
-}
-
-pub fn add_face<P: Payload>(g: &mut GMap<P>, loop_dart: Dart) -> Result<FaceKey, PolylineError> {
-    let (plane, pcurves) = {
-        let profile = Profile::new(g, loop_dart);
-        let closed = Closed::new(profile).ok_or(PolylineError::OpenProfile { dart: loop_dart })?;
-        let planar = Planar::new(closed)?;
-        let (closed, plane) = planar.into_parts();
-        let pcurves = profile_pcurves(g, closed.inner(), &plane)?;
-        (plane, pcurves)
-    };
-
-    let face_key = g.add_face(FaceAttr::with_pcurves(
-        Surface::Plane(plane),
-        P::F::default(),
-        loop_dart,
-        Vec::new(),
-        pcurves,
-    ));
-    Ok(face_key)
 }
 
 pub fn profile_pcurves<P: Payload>(
@@ -138,19 +103,31 @@ pub fn plane_uv(plane: &Plane, point: Point3) -> Point2 {
     let v = point - plane.origin();
     Point2::new(v.dot(&plane.x_dir()), v.dot(&plane.y_dir()))
 }
-/// Adds a square profile to the given GMap.
+
+/// Adds a rectangular profile to the given GMap.
 ///
-/// The corners are expected to be in the following order:
+/// The corners are built on `plane` in the following order:
 /// 0-----1
 /// |     |
 /// |     |
 /// 3-----2
 ///
 /// Returns the dart of the first corner.
-pub fn add_square(
+pub fn add_rectangle(
     g: &mut GMap<StandardPayload>,
-    corners: &[Point3; 4],
+    plane: Plane,
+    x_size: f64,
+    y_size: f64,
 ) -> Result<Dart, PolylineError> {
+    validate_rectangle_size("x", x_size)?;
+    validate_rectangle_size("y", y_size)?;
+
+    let corners = [
+        plane.point_at(0.0, 0.0),
+        plane.point_at(x_size, 0.0),
+        plane.point_at(x_size, y_size),
+        plane.point_at(0.0, y_size),
+    ];
     let segments = [
         (
             corners[0],
@@ -176,6 +153,14 @@ pub fn add_square(
     add_polyline(g, &segments)
 }
 
+fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), PolylineError> {
+    if value.is_finite() && value > 0.0 {
+        Ok(())
+    } else {
+        Err(PolylineError::InvalidRectangleSize { axis, value })
+    }
+}
+
 fn add_polyline_segment(
     g: &mut GMap<StandardPayload>,
     (start, end, curve): &(Point3, Point3, Curve),
@@ -197,48 +182,6 @@ fn sew(
 ) -> Result<(), PolylineError> {
     g.sew(dim, first, second)
         .map_err(|_| PolylineError::SewFailed { dim, first, second })
-}
-
-/// Adds a single polygon face to `g` with the given corner points (in order).
-///
-/// Sews α0 and α1 to form a closed `n`-gon, stamps the vertex positions on
-/// every dart of each corner's vertex orbit, and attaches a straight
-/// [`Curve::Line`] on every 1-cell so downstream consumers (edge tessellation,
-/// dart geometry) have a curve to follow. Does not touch α2 — the face is
-/// returned with free boundary, ready to be stitched to neighbors.
-///
-/// Returns a dart on the outer ⟨α₀, α₁⟩ loop (same as the first corner dart).
-pub fn add_polygon<P: Payload>(g: &mut GMap<P>, corners: &[Point3]) -> Dart {
-    assert!(
-        corners.len() >= 3,
-        "add_polygon requires at least 3 corners, got {}",
-        corners.len()
-    );
-    let n = corners.len();
-    let darts: Vec<Dart> = (0..2 * n).map(|_| g.add_dart()).collect();
-
-    for i in 0..n {
-        g.sew(Dim::Zero, darts[2 * i], darts[2 * i + 1])
-            .expect("fresh dart pair should be alpha0-sewable");
-    }
-    for i in 0..n {
-        let a = darts[2 * i + 1];
-        let b = darts[(2 * i + 2) % (2 * n)];
-        g.sew(Dim::One, a, b)
-            .expect("fresh dart pair should be alpha1-sewable");
-    }
-
-    for i in 0..n {
-        let dart = g.cell_representative(darts[2 * i], Dim::Zero);
-        g.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
-    }
-
-    for i in 0..n {
-        let edge_dart = g.cell_representative(darts[2 * i], Dim::One);
-        let curve = Curve::Line(Line::new(corners[i], corners[(i + 1) % n]));
-        g.add_edge(EdgeAttr::new(edge_dart, curve, P::E::default()));
-    }
-    darts[0]
 }
 
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.

@@ -688,7 +688,8 @@ mod tests {
     use nalgebra::Vector3;
 
     use super::{Cell0, Cell1, Cell2, Dart, Dim, GMap, MergeTopology};
-    use crate::builders::profiles::{add_edge, add_polygon};
+    use crate::builders::edges::add_edge;
+    use crate::builders::faces::add_polygon;
     use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, Surface};
     use crate::topology::attributes::{FaceAttr, SolidAttr};
     use crate::topology::edge::Edge;

@@ -1,13 +1,13 @@
 use nalgebra::Vector3;
 use radians::Rad64;
 
-use crate::builders::profiles::{add_face, add_polygon};
+use crate::builders::faces::{add_face, add_polygon};
 use crate::geometry::axis::Axis3;
 use crate::geometry::{Curve, Point3};
 use crate::modeling::revolve::revolve_face;
 use crate::topology::StandardPayload;
 use crate::topology::gmap::GMap;
-use crate::topology::shape::{FaceShape, Shape};
+use crate::topology::shape::{FaceTag, Shape};
 use crate::viz::{ScriptResult, Style, VizHints};
 
 pub fn build(angle: Rad64) -> Result<ScriptResult, String> {
@@ -48,7 +48,7 @@ fn triangle_profile() -> [Point3; 3] {
     ]
 }
 
-fn triangle_face() -> Result<Shape<FaceShape>, String> {
+fn triangle_face() -> Result<Shape<FaceTag>, String> {
     let mut g = GMap::<StandardPayload>::new();
     let points = triangle_profile();
 

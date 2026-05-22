@@ -17,7 +17,7 @@ use crate::geometry::{
     Circle, Curve, NurbsCurve, NurbsSurface, Plane, Point3, Surface, SurfaceOfRevolution,
 };
 use crate::geometry::{Cylinder, Line, RuledSurface};
-use crate::modeling::primitives;
+use crate::modeling::solids;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::facet::Facet;
@@ -55,7 +55,7 @@ pub fn _ngk(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[pyfunction]
 fn block(x: f64, y: f64, z: f64) -> PyResult<PySolid> {
-    let shape = primitives::block(x, y, z).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let shape = solids::block(x, y, z).map_err(|err| PyValueError::new_err(err.to_string()))?;
     let (map, key) = shape.into_map();
     Ok(PySolid::new(Arc::new(map), key))
 }

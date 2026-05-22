@@ -1,69 +1,23 @@
-use crate::builders::profiles::{PolylineError, add_polyline, profile_pcurves};
-use crate::geometry::{Curve, Line, Plane, Point3, Surface};
-use crate::topology::FaceAttr;
+use crate::builders::profiles::{PolylineError, add_polyline, add_rectangle};
+use crate::geometry::{Curve, Plane, Point3};
 use crate::topology::gmap::GMap;
 use crate::topology::payload::StandardPayload;
-use crate::topology::profile::Profile;
-use crate::topology::shape::{FaceShape, ProfileShape, Shape};
+use crate::topology::shape::{ProfileTag, Shape};
 
 pub fn polyline(
     segments: &[(Point3, Point3, Curve)],
-) -> Result<Shape<ProfileShape, StandardPayload>, PolylineError> {
+) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {
     let mut g = GMap::new();
     let profile_dart = add_polyline(&mut g, segments)?;
     Ok(Shape::new(g, profile_dart))
 }
 
-/// Adds a square profile to the given GMap.
-///
-/// The corners are expected to be in the following order:
-/// 0-----1
-/// |     |
-/// |     |
-/// 3-----2
-///
-/// Returns the dart of the first corner.
-pub fn square_loop(corners: &[Point3; 4]) -> Result<Shape<ProfileShape>, PolylineError> {
-    let segments = [
-        (
-            corners[0],
-            corners[1],
-            Curve::Line(Line::new(corners[0], corners[1])),
-        ),
-        (
-            corners[1],
-            corners[2],
-            Curve::Line(Line::new(corners[1], corners[2])),
-        ),
-        (
-            corners[2],
-            corners[3],
-            Curve::Line(Line::new(corners[2], corners[3])),
-        ),
-        (
-            corners[3],
-            corners[0],
-            Curve::Line(Line::new(corners[3], corners[0])),
-        ),
-    ];
-    polyline(&segments)
-}
-
-pub fn square(corners: &[Point3; 4]) -> Result<Shape<FaceShape>, PolylineError> {
-    let loop_shape = square_loop(corners)?;
-    let (mut gmap, loop_dart) = loop_shape.into_map();
-
-    let plane = Plane::from_xy(corners[0], corners[1] - corners[0], corners[3] - corners[0]);
-    let profile = Profile::new(&gmap, loop_dart);
-    let pcurves = profile_pcurves(&gmap, &profile, &plane)?;
-    let face_key = gmap.add_face(FaceAttr::with_pcurves(
-        Surface::Plane(plane),
-        (),
-        loop_dart,
-        Vec::new(),
-        pcurves,
-    ));
-
-    let shape = Shape::new(gmap, face_key);
-    Ok(shape)
+pub fn rectangle(
+    plane: Plane,
+    x_size: f64,
+    y_size: f64,
+) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {
+    let mut g = GMap::new();
+    let profile_dart = add_rectangle(&mut g, plane, x_size, y_size)?;
+    Ok(Shape::new(g, profile_dart))
 }

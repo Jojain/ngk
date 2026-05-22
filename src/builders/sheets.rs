@@ -285,7 +285,7 @@ mod tests {
 
     use nalgebra::Vector3;
 
-    use crate::builders::profiles::add_polygon;
+    use crate::builders::faces::add_polygon;
     use crate::builders::sheets::add_extruded_profile;
     use crate::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
     use crate::modeling::sweep::extrude_profile;

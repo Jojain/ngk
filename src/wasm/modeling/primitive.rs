@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 
 use crate::{
-    modeling::primitives,
+    modeling::solids,
     viz::{ScriptResult, Style, VizHints},
 };
 
@@ -9,10 +9,10 @@ fn js_err(e: impl ToString) -> JsValue {
     JsValue::from_str(&e.to_string())
 }
 
-/// Builds an axis-aligned block from the modeling primitives API.
+/// Builds an axis-aligned block from the modeling solids API.
 #[wasm_bindgen(js_name = createBlock)]
 pub fn create_block(x_size: f64, y_size: f64, z_size: f64) -> Result<JsValue, JsValue> {
-    let shape = primitives::block(x_size, y_size, z_size).map_err(js_err)?;
+    let shape = solids::block(x_size, y_size, z_size).map_err(js_err)?;
 
     let mut hints = VizHints::new();
     for (key, _) in shape.map().iter_faces() {

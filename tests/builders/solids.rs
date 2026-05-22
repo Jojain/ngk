@@ -1,5 +1,5 @@
 use nalgebra::Vector3;
-use ngk::builders::profiles::add_polygon;
+use ngk::builders::faces::add_polygon;
 use ngk::builders::solids::translate_face;
 use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, Surface};
 use ngk::topology::attributes::FaceAttr;

@@ -1,5 +1,6 @@
 use nalgebra::Vector3;
-use ngk::builders::profiles::{add_polygon, add_polyline};
+use ngk::builders::faces::add_polygon;
+use ngk::builders::profiles::add_polyline;
 use ngk::geometry::{Curve, LINEAR_TOLERANCE, Line, Point3};
 use ngk::topology::gmap::GMap;
 use ngk::topology::payload::StandardPayload;

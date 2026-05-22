@@ -183,7 +183,7 @@ mod tests {
 
     use nalgebra::Vector3;
 
-    use crate::builders::profiles::add_edge;
+    use crate::builders::edges::add_edge;
     use crate::geometry::{Circle, Curve, Line, Plane, Point3};
     use crate::topology::StandardPayload;
     use crate::topology::gmap::GMap;

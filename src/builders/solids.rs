@@ -10,7 +10,7 @@ use crate::{
         face::Face,
         gmap::{Cell2, Dim, GMap, MergeTopology},
         profile::Profile,
-        shape::{FaceShape, Shape},
+        shape::{FaceTag, Shape},
         shape_keys::{FaceKey, SolidKey},
     },
 };
@@ -18,7 +18,7 @@ use crate::{
 pub fn translate_face<P: Payload>(
     face: &Face<'_, P>,
     direction: Vector3<f64>,
-) -> Result<Shape<FaceShape, P>, ExtrudeError> {
+) -> Result<Shape<FaceTag, P>, ExtrudeError> {
     if direction.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
         return Err(ExtrudeError::ZeroDirection);
     }

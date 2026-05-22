@@ -4,7 +4,7 @@ use nalgebra::{Rotation3, distance};
 use radians::{Angle, Rad64};
 use thiserror::Error;
 
-use crate::builders::profiles::add_edge;
+use crate::builders::edges::add_edge;
 use crate::geometry::axis::Axis3;
 use crate::geometry::{
     ANGULAR_TOLERANCE, Circle, Curve, Curve2, LINEAR_TOLERANCE, Line, Line2, Plane, Point2, Point3,
@@ -18,7 +18,7 @@ use crate::topology::gmap::{Cell2, Dart, Dim, GMap, MergeTopology};
 use crate::topology::payload::Payload;
 use crate::topology::planar::{Planar, PlanarityError};
 use crate::topology::profile::Profile;
-use crate::topology::shape::{FaceShape, Shape};
+use crate::topology::shape::{FaceTag, Shape};
 use crate::topology::shape_keys::{FaceKey, SolidKey};
 
 #[derive(Debug, Error)]
@@ -505,7 +505,7 @@ fn rotate_face<P: Payload>(
     face: &Face<'_, P>,
     axis: Axis3,
     angle: Rad64,
-) -> Result<Shape<FaceShape, P>, RevolveError> {
+) -> Result<Shape<FaceTag, P>, RevolveError> {
     let (mut rotated, rotated_dart) = face.isolate();
 
     let vertex_keys = rotated

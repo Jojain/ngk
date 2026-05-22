@@ -1,20 +1,6 @@
-//! Two coplanar squares sharing one edge, α2-sewn along that edge.
-//!
-//! Layout (XY plane):
-//!
-//! ```text
-//!   (0,1) ───────── (1,1) ───────── (2,1)
-//!     │                │                │
-//!     │      A         │       B        │
-//!     │                │                │
-//!   (0,0) ───────── (1,0) ───────── (2,0)
-//! ```
-//!
-//! - Square A: corners (0,0), (1,0), (1,1), (0,1). Edge 1 is x=1.
-//! - Square B: corners (1,0), (2,0), (2,1), (1,1). Edge 3 is x=1.
-//! - α2-sew Square A's edge 1 with Square B's edge 3.
+//! Two coplanar rectangles sharing one edge.
 
-use crate::builders::profiles::add_square;
+use crate::builders::faces::add_polygon;
 use crate::geometry::Point3;
 use crate::topology::StandardPayload;
 use crate::topology::gmap::{Dim, GMap};
@@ -30,9 +16,8 @@ pub fn run() -> Result<ScriptResult, String> {
     let p5 = Point3::new(2.0, 0.0, 0.0);
     let p6 = Point3::new(2.0, 1.0, 0.0);
 
-    let da = add_square(&mut g, &[p1, p2, p3, p4]).map_err(|e| format!("square A: {e:?}"))?;
-
-    let db = add_square(&mut g, &[p2, p5, p6, p3]).map_err(|e| format!("square B: {e:?}"))?;
+    let da = add_polygon(&mut g, &[p1, p2, p3, p4]);
+    let db = add_polygon(&mut g, &[p2, p5, p6, p3]);
 
     let edge_a = &Profile::new(&g, da).edges()[1];
     let edge_b = &Profile::new(&g, db).edges()[3];
