@@ -23,6 +23,10 @@ pub enum Curve {
 }
 
 impl Curve {
+    pub fn line(start: Point3, end: Point3) -> Self{
+        Curve::Line(Line::new(start, end))
+    }
+
     pub fn periodicity(&self) -> Periodicity {
         match self {
             Curve::Line(_) => Periodicity::None,

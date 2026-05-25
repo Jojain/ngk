@@ -47,22 +47,21 @@ pub fn profile_pcurves<P: Payload>(
     profile: &Profile<'_, P>,
     plane: &Plane,
 ) -> Result<HashMap<Dart, Curve2>, PolylineError> {
-    let darts = profile.darts().step_by(2).collect::<Vec<_>>();
-    let vertices = profile.vertices();
     let edges = profile.edges();
-    let mut pcurves = HashMap::with_capacity(darts.len());
+    let mut pcurves = HashMap::with_capacity(edges.len());
 
-    for (i, dart) in darts.into_iter().enumerate() {
-        let start = *vertices[i]
+    for edge in edges.iter() {
+        let dart = edge.dart;
+        let start = *edge
+            .start()
             .point()
             .ok_or(PolylineError::MissingVertexPoint { dart })?;
-        let end = *vertices[(i + 1) % vertices.len()]
+        let end = *edge
+            .end()
             .point()
             .ok_or(PolylineError::MissingVertexPoint { dart })?;
-        let curve = g
-            .attribute::<Cell1>(dart)
-            .map(|attr| &attr.curve)
-            .or_else(|| edges[i].curve())
+        let curve = edge
+            .curve()
             .ok_or(PolylineError::MissingEdgeCurve { dart })?;
 
         pcurves.insert(dart, curve_pcurve(curve, start, end, plane));
@@ -118,26 +117,10 @@ pub fn add_rectangle(
         plane.point_at(0.0, y_size),
     ];
     let segments = [
-        (
-            corners[0],
-            corners[1],
-            Curve::Line(Line::new(corners[0], corners[1])),
-        ),
-        (
-            corners[1],
-            corners[2],
-            Curve::Line(Line::new(corners[1], corners[2])),
-        ),
-        (
-            corners[2],
-            corners[3],
-            Curve::Line(Line::new(corners[2], corners[3])),
-        ),
-        (
-            corners[3],
-            corners[0],
-            Curve::Line(Line::new(corners[3], corners[0])),
-        ),
+        (corners[0], corners[1], Curve::line(corners[0], corners[1])),
+        (corners[1], corners[2], Curve::line(corners[1], corners[2])),
+        (corners[2], corners[3], Curve::line(corners[2], corners[3])),
+        (corners[3], corners[0], Curve::line(corners[3], corners[0])),
     ];
     add_polyline(g, &segments)
 }

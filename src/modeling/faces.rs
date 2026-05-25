@@ -18,8 +18,8 @@ pub fn rectangle(
 pub fn square(
     plane: Plane,
     size: f64,
-) -> Result<Shape<ProfileTag, StandardPayload>, FaceCreationError> {
+) -> Result<Shape<FaceTag, StandardPayload>, FaceCreationError> {
     let mut g = GMap::new();
-    let handle = add_square(g, plane, size)?;
-    Ok(Shape::new(g, handle);
+    let handle = add_square(&mut g, plane, size)?;
+    Ok(Shape::new(g, handle))
 }

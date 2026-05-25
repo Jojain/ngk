@@ -6,3 +6,4 @@ pub mod sheets;
 pub mod solids;
 pub mod sweep;
 pub mod vertices;
+pub mod errors;

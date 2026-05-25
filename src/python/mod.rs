@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use nalgebra::{UnitVector3, Vector3};
 use pyo3::basic::CompareOp;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
@@ -17,7 +17,8 @@ use crate::geometry::{
     Circle, Curve, NurbsCurve, NurbsSurface, Plane, Point3, Surface, SurfaceOfRevolution,
 };
 use crate::geometry::{Cylinder, Line, RuledSurface};
-use crate::modeling::solids;
+use crate::modeling::{edges, faces, profiles, solids};
+use crate::tcv::{TcvOptions, to_tcv};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::facet::Facet;
@@ -33,8 +34,13 @@ type SharedMap = Arc<GMap<StandardPayload>>;
 #[pymodule]
 pub fn _ngk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(block, m)?)?;
+    m.add_function(wrap_pyfunction!(line, m)?)?;
+    m.add_function(wrap_pyfunction!(rectangle_profile, m)?)?;
+    m.add_function(wrap_pyfunction!(rectangle_face, m)?)?;
+    m.add_function(wrap_pyfunction!(_to_tcv_json, m)?)?;
     m.add_class::<PySolid>()?;
     m.add_class::<PyShell>()?;
+    m.add_class::<PyProfile>()?;
     m.add_class::<PyFace>()?;
     m.add_class::<PyFacet>()?;
     m.add_class::<PyLoop>()?;
@@ -58,6 +64,85 @@ fn block(x: f64, y: f64, z: f64) -> PyResult<PySolid> {
     let shape = solids::block(x, y, z).map_err(|err| PyValueError::new_err(err.to_string()))?;
     let (map, key) = shape.into_map();
     Ok(PySolid::new(Arc::new(map), key))
+}
+
+#[pyfunction]
+fn line(start: (f64, f64, f64), end: (f64, f64, f64)) -> PyResult<PyEdge> {
+    let start = Point3::new(start.0, start.1, start.2);
+    let end = Point3::new(end.0, end.1, end.2);
+    let shape = edges::line(start, end).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let (map, key) = shape.into_map();
+    Ok(PyEdge::from_key(Arc::new(map), key))
+}
+
+#[pyfunction]
+fn rectangle_profile(x_size: f64, y_size: f64) -> PyResult<PyProfile> {
+    let shape = profiles::rectangle(Plane::xy(), x_size, y_size)
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let (map, dart) = shape.into_map();
+    Ok(PyProfile::new(Arc::new(map), dart))
+}
+
+#[pyfunction]
+fn rectangle_face(x_size: f64, y_size: f64) -> PyResult<PyFace> {
+    let shape = faces::rectangle(Plane::xy(), x_size, y_size)
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let (map, key) = shape.into_map();
+    Ok(PyFace::new(Arc::new(map), key))
+}
+
+#[pyfunction]
+#[pyo3(signature = (obj, name=None, color="#e8b024", alpha=1.0))]
+fn _to_tcv_json(
+    obj: &Bound<'_, PyAny>,
+    name: Option<String>,
+    color: &str,
+    alpha: f64,
+) -> PyResult<String> {
+    let opts = TcvOptions {
+        name: name.unwrap_or_else(|| "shape".to_string()),
+        color: color.to_string(),
+        alpha,
+        ..TcvOptions::default()
+    };
+
+    if let Ok(edge) = obj.extract::<PyRef<'_, PyEdge>>() {
+        let shape = crate::topology::shape::Shape::<crate::topology::shape::EdgeTag, _>::new(
+            edge.map.as_ref().clone(),
+            edge.key,
+        );
+        return tcv_json(&shape, opts);
+    }
+    if let Ok(profile) = obj.extract::<PyRef<'_, PyProfile>>() {
+        let shape = crate::topology::shape::Shape::<crate::topology::shape::ProfileTag, _>::new(
+            profile.map.as_ref().clone(),
+            profile.dart,
+        );
+        return tcv_json(&shape, opts);
+    }
+    if let Ok(face) = obj.extract::<PyRef<'_, PyFace>>() {
+        let shape = crate::topology::shape::Shape::<crate::topology::shape::FaceTag, _>::new(
+            face.map.as_ref().clone(),
+            face.key,
+        );
+        return tcv_json(&shape, opts);
+    }
+    if let Ok(solid) = obj.extract::<PyRef<'_, PySolid>>() {
+        let shape = crate::topology::shape::Shape::<crate::topology::shape::SolidTag, _>::new(
+            solid.map.as_ref().clone(),
+            solid.key,
+        );
+        return tcv_json(&shape, opts);
+    }
+
+    Err(PyTypeError::new_err(
+        "ngk.to_tcv supports Edge, Profile, Face, and Solid objects",
+    ))
+}
+
+fn tcv_json<T: crate::tcv::ToTcv>(shape: &T, opts: TcvOptions) -> PyResult<String> {
+    let tcv = to_tcv(shape, opts).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    serde_json::to_string(&tcv).map_err(|err| PyValueError::new_err(err.to_string()))
 }
 
 fn missing_topology(message: impl Into<String>) -> PyErr {
@@ -442,6 +527,62 @@ impl PyLoop {
     }
 }
 
+#[pyclass(name = "Profile", module = "ngk")]
+#[derive(Clone)]
+pub struct PyProfile {
+    map: SharedMap,
+    dart: Dart,
+}
+
+impl PyProfile {
+    fn new(map: SharedMap, dart: Dart) -> Self {
+        let dart = map.cell_representative(dart, Dim::One);
+        Self { map, dart }
+    }
+}
+
+#[pymethods]
+impl PyProfile {
+    #[getter]
+    fn dart_id(&self) -> usize {
+        self.dart.id()
+    }
+
+    fn edges(&self) -> Vec<PyEdge> {
+        Profile::new(self.map.as_ref(), self.dart)
+            .edges()
+            .into_iter()
+            .map(|edge| PyEdge::new(Arc::clone(&self.map), edge))
+            .collect()
+    }
+
+    fn vertices(&self) -> Vec<PyVertex> {
+        Profile::new(self.map.as_ref(), self.dart)
+            .vertices()
+            .into_iter()
+            .map(|vertex| PyVertex::new(Arc::clone(&self.map), vertex))
+            .collect()
+    }
+
+    fn __richcmp__(&self, other: PyRef<'_, PyProfile>, op: CompareOp) -> PyResult<bool> {
+        match op {
+            CompareOp::Eq => Ok(Arc::ptr_eq(&self.map, &other.map) && self.dart == other.dart),
+            CompareOp::Ne => Ok(!Arc::ptr_eq(&self.map, &other.map) || self.dart != other.dart),
+            _ => Err(PyValueError::new_err(
+                "profile ordering is not defined; use == or !=",
+            )),
+        }
+    }
+
+    fn __hash__(&self) -> isize {
+        hash_topology_identity(&self.map, self.dart)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Profile(dart_id={})", self.dart.id())
+    }
+}
+
 #[pyclass(name = "Facet", module = "ngk")]
 #[derive(Clone)]
 pub struct PyFacet {
@@ -520,6 +661,10 @@ pub struct PyEdge {
 }
 
 impl PyEdge {
+    fn from_key(map: SharedMap, key: EdgeKey) -> Self {
+        Self { map, key }
+    }
+
     fn new(map: SharedMap, edge: Edge<'_, StandardPayload>) -> Self {
         let key = edge_key(map.as_ref(), &edge).expect("edge view must have an edge attribute key");
         Self { map, key }

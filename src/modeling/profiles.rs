@@ -19,11 +19,11 @@ pub fn square(
     size: f64,
 ) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {
     let mut g = GMap::new();
-    let handle = add_square(g, plane, size);
-    Ok(Shape::new(g, handle);
+    let handle = add_square(&mut g, plane, size)?;
+    Ok(Shape::new(g, handle))
 }
 
-fn polyline(
+pub fn polyline(
     segments: &[(Point3, Point3, Curve)],
 ) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {
     let mut g = GMap::new();
