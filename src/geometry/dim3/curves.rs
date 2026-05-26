@@ -1,8 +1,8 @@
-use std::f64::consts::TAU;
+use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, TAU};
 
-use super::nurbs::NurbsCurve;
 use super::nurbs::error::NurbsError;
 use super::nurbs::points::{ControlPolygon, HPoint};
+use super::nurbs::{Degree, KnotVector, NurbsCurve};
 use super::surfaces::Plane;
 use super::utils::{IntoUnit3, Point3, PointCoincidence};
 use crate::geometry::LINEAR_TOLERANCE;
@@ -23,8 +23,16 @@ pub enum Curve {
 }
 
 impl Curve {
-    pub fn line(start: Point3, end: Point3) -> Self{
+    pub fn line(start: Point3, end: Point3) -> Self {
         Curve::Line(Line::new(start, end))
+    }
+
+    pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        match self {
+            Curve::Line(line) => line.to_nurbs(),
+            Curve::Circle(circle) => circle.to_nurbs(),
+            Curve::Nurbs(nurbs) => Ok(nurbs.clone()),
+        }
     }
 
     pub fn periodicity(&self) -> Periodicity {
@@ -112,6 +120,47 @@ impl Curve {
             }
         }
     }
+}
+
+pub(crate) fn circle_nurbs_control_points(plane: &Plane, radius: f64) -> (Vec<HPoint>, Vec<f64>) {
+    let mut points = Vec::with_capacity(9);
+    let mut weights = Vec::with_capacity(9);
+
+    for i in 0..=8 {
+        let angle = i as f64 * FRAC_PI_2 / 2.0;
+        let is_midpoint = i % 2 == 1;
+        let weight = if is_midpoint { FRAC_1_SQRT_2 } else { 1.0 };
+        let radial_scale = if is_midpoint {
+            radius / FRAC_1_SQRT_2
+        } else {
+            radius
+        };
+        let radial = angle.cos() * *plane.x_dir() + angle.sin() * *plane.y_dir();
+        points.push(HPoint::from_cartesian(
+            plane.origin() + radial * radial_scale,
+            weight,
+        ));
+        weights.push(weight);
+    }
+
+    (points, weights)
+}
+
+pub(crate) fn circle_nurbs_knots() -> Result<KnotVector, NurbsError> {
+    KnotVector::new(vec![
+        0.0,
+        0.0,
+        0.0,
+        FRAC_PI_2,
+        FRAC_PI_2,
+        std::f64::consts::PI,
+        std::f64::consts::PI,
+        3.0 * FRAC_PI_2,
+        3.0 * FRAC_PI_2,
+        TAU,
+        TAU,
+        TAU,
+    ])
 }
 
 fn closest_sample_parameter(curve: &NurbsCurve, point: Point3) -> f64 {
@@ -226,6 +275,17 @@ impl Line {
     pub fn project(&self, point: Point3) -> Point3 {
         self.axis().project(point)
     }
+
+    pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        NurbsCurve::new(
+            Degree::new(1)?,
+            ControlPolygon::new(vec![
+                HPoint::from_cartesian(self.start, 1.0),
+                HPoint::from_cartesian(self.end, 1.0),
+            ])?,
+            KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -277,5 +337,14 @@ impl Circle {
     /// Arc length between `t0` and `t1` (in distance units).
     pub fn length(&self, t0: f64, t1: f64) -> f64 {
         (t1 - t0).abs() * self.radius
+    }
+
+    pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        let (points, _) = circle_nurbs_control_points(&self.plane, self.radius);
+        NurbsCurve::new(
+            Degree::new(2)?,
+            ControlPolygon::new(points)?,
+            circle_nurbs_knots()?,
+        )
     }
 }
