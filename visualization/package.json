@@ -9,7 +9,8 @@
     "dev": "npm run wasm:build && vite",
     "build": "npm run wasm:build && tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit --incremental false",
+    "test:layout": "node --experimental-strip-types tests/VizSceneView.layout.test.ts"
   },
   "dependencies": {
     "@react-three/drei": "^9.112.0",
