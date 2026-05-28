@@ -1,3 +1,4 @@
+pub mod bbox;
 pub mod curves;
 pub mod frame;
 pub mod nurbs;

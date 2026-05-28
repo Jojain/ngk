@@ -5,6 +5,7 @@ pub mod tolerance;
 
 pub use dim2::curves::{Curve2, Line2, Polyline2};
 pub use dim2::utils::{Point2, Vector2};
+pub use dim3::bbox::BBox;
 pub use dim3::curves::{Circle, Curve, Line, Periodicity};
 pub use dim3::frame::Frame;
 pub use dim3::nurbs::tessellate::{

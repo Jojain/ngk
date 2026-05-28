@@ -1,5 +1,5 @@
 use super::utils::{IntoUnit3, Point3};
-use nalgebra::UnitVector3;
+use nalgebra::{UnitVector3, Vector3};
 
 #[derive(Clone)]
 pub struct Frame {
@@ -10,6 +10,14 @@ pub struct Frame {
 }
 
 impl Frame {
+    pub fn xyz() -> Self {
+        Self {
+            origin: Point3::new(0.0, 0.0, 0.0),
+            x_dir: Vector3::x_axis(),
+            y_dir: Vector3::y_axis(),
+            z_dir: Vector3::z_axis(),
+        }
+    }
     pub fn from_xy(origin: Point3, x_dir: impl IntoUnit3, y_dir: impl IntoUnit3) -> Self {
         let x_dir = x_dir.normalized();
         let y_dir = y_dir.normalized();
@@ -36,5 +44,27 @@ impl Frame {
             y_dir,
             z_dir,
         }
+    }
+
+    pub fn coordinates_of(&self, point: Point3) -> Vector3<f64> {
+        let offset = point - self.origin;
+        Vector3::new(
+            offset.dot(self.x_dir.as_ref()),
+            offset.dot(self.y_dir.as_ref()),
+            offset.dot(self.z_dir.as_ref()),
+        )
+    }
+
+    pub fn point_at(&self, coordinates: Vector3<f64>) -> Point3 {
+        let offset = self.x_dir.as_ref() * coordinates.x
+            + self.y_dir.as_ref() * coordinates.y
+            + self.z_dir.as_ref() * coordinates.z;
+        self.origin + offset
+    }
+}
+
+impl Default for Frame {
+    fn default() -> Self {
+        Self::xyz()
     }
 }

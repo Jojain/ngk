@@ -3,7 +3,7 @@ use nalgebra::Vector3;
 use crate::{
     Payload,
     builders::{errors::ExtrudeError, sheets::add_extruded_profile_boundaries},
-    geometry::{LINEAR_TOLERANCE, Plane, Surface},
+    geometry::{Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Polyline2, Surface},
     topology::{
         Dart, SolidAttr,
         attributes::FaceAttr,
@@ -141,6 +141,22 @@ fn flip_planar_face_surface<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
     };
 
     face.surface = Surface::Plane(Plane::new(plane.origin(), plane.x_dir(), -plane.normal()));
+    for pcurve in face.pcurves.values_mut() {
+        *pcurve = flip_planar_pcurve_v(pcurve);
+    }
+}
+
+fn flip_planar_pcurve_v(pcurve: &Curve2) -> Curve2 {
+    match pcurve {
+        Curve2::Line(line) => Curve2::Line(Line2::new(flip_uv_v(line.start), flip_uv_v(line.end))),
+        Curve2::Polyline(polyline) => Curve2::Polyline(Polyline2::new(
+            polyline.points.iter().copied().map(flip_uv_v).collect(),
+        )),
+    }
+}
+
+fn flip_uv_v(point: Point2) -> Point2 {
+    Point2::new(point.x, -point.y)
 }
 
 fn sew_extruded_loop<P: Payload>(
