@@ -1,31 +1,32 @@
 //! Extrudes a circular arc profile.
 //!
-//! The profile is a two-edge loop: a quarter-circle arc plus its chord. This
+//! The profile is a two-edge loop: a quarter-circle arc plus a closing line. This
 //! keeps the `Profile` closed while still exercising the sweep path for a
 //! genuinely curved edge (`Curve::Circle` -> `Surface::Ruled`).
 
 use nalgebra::Vector3;
 
-use crate::builders::profiles::add_polyline;
-use crate::geometry::{Circle, Curve, Line, Plane, Point3};
+use crate::geometry::Plane;
+use crate::modeling::edges;
 use crate::modeling::sweep::extrude_profile;
-use crate::topology::StandardPayload;
-use crate::topology::gmap::{Dart, GMap};
-use crate::topology::profile::Profile;
 use crate::viz::{ScriptResult, Style, VizHints};
 
 const RADIUS: f64 = 2.0;
 const HEIGHT: f64 = 1.5;
 
 pub fn run() -> Result<ScriptResult, String> {
-    let mut profile_map = GMap::<StandardPayload>::new();
-    let arc_dart = add_arc_profile(&mut profile_map)?;
-
-    let shape = extrude_profile(
-        Profile::new(&profile_map, arc_dart),
-        Vector3::new(0.0, 0.0, HEIGHT),
-    )
-    .map_err(|err| format!("arc extrusion failed: {err:?}"))?;
+    let arc = edges::arc(Plane::xy(), RADIUS, 0.0, std::f64::consts::FRAC_PI_2)
+        .map_err(|err| format!("failed to build arc edge: {err:?}"))?;
+    let start = *arc.edge().start().point().ok_or("arc start is missing")?;
+    let end = *arc.edge().end().point().ok_or("arc end is missing")?;
+    let closing_edge =
+        edges::line(end, start).map_err(|err| format!("failed to build closing edge: {err:?}"))?;
+    let mut profile = arc.into_profile();
+    profile
+        .add(&closing_edge)
+        .map_err(|err| format!("failed to close arc profile with line: {err:?}"))?;
+    let shape = extrude_profile(profile.profile(), Vector3::new(0.0, 0.0, HEIGHT))
+        .map_err(|err| format!("arc extrusion failed: {err:?}"))?;
     let (g, arc_dart) = shape.into_map();
 
     let mut hints = VizHints::new();
@@ -38,26 +39,13 @@ pub fn run() -> Result<ScriptResult, String> {
         } else {
             Style::default()
                 .color("red")
-                .label("arc chord side")
+                .label("arc closing side")
                 .double_sided(true)
         };
         hints.face(key, style);
     }
 
     Ok(ScriptResult::from_gmap_with_hints(&g, &hints))
-}
-
-fn add_arc_profile(g: &mut GMap<StandardPayload>) -> Result<Dart, String> {
-    let start = Point3::new(RADIUS, 0.0, 0.0);
-    let end = Point3::new(0.0, RADIUS, 0.0);
-    let arc = Curve::Circle(Circle::new(
-        Plane::new(Point3::origin(), Vector3::x(), Vector3::z()),
-        RADIUS,
-    ));
-    let chord = Curve::Line(Line::new(end, start));
-
-    add_polyline(g, &[(start, end, arc), (end, start, chord)])
-        .map_err(|err| format!("failed to build arc contour: {err:?}"))
 }
 
 #[cfg(test)]

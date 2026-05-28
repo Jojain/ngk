@@ -1,12 +1,10 @@
 use nalgebra::Vector3;
 use radians::Rad64;
 
-use crate::builders::faces::{add_face, add_polygon};
 use crate::geometry::axis::Axis3;
 use crate::geometry::{Curve, Point3};
+use crate::modeling::faces;
 use crate::modeling::revolve::revolve_face;
-use crate::topology::StandardPayload;
-use crate::topology::gmap::GMap;
 use crate::topology::shape::{FaceTag, Shape};
 use crate::viz::{ScriptResult, Style, VizHints};
 
@@ -49,13 +47,8 @@ fn triangle_profile() -> [Point3; 3] {
 }
 
 fn triangle_face() -> Result<Shape<FaceTag>, String> {
-    let mut g = GMap::<StandardPayload>::new();
     let points = triangle_profile();
-
-    let loop_dart = add_polygon(&mut g, &points);
-    let face_key = add_face(&mut g, loop_dart)
-        .map_err(|err| format!("failed to add triangle face: {err:?}"))?;
-    Ok(Shape::new(g, face_key))
+    faces::polygon(&points).map_err(|err| format!("failed to build triangle face: {err:?}"))
 }
 
 #[cfg(test)]

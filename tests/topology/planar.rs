@@ -1,7 +1,7 @@
 use nalgebra::Vector3;
 use ngk::builders::faces::add_polygon;
 use ngk::builders::profiles::add_polyline;
-use ngk::geometry::{Curve, LINEAR_TOLERANCE, Line, Point3};
+use ngk::geometry::{LINEAR_TOLERANCE, Point3};
 use ngk::topology::gmap::GMap;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::planar::{Planar, PlanarityError};
@@ -51,25 +51,12 @@ fn planar_new_rejects_profile_with_off_plane_vertex() {
 #[test]
 fn planar_new_accepts_collinear_profiles_with_fallback_plane() {
     let mut g = GMap::<StandardPayload>::new();
-    let segments = [
-        (
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-            Curve::Line(Line::new(
-                Point3::new(0.0, 0.0, 0.0),
-                Point3::new(1.0, 0.0, 0.0),
-            )),
-        ),
-        (
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(2.0, 0.0, 0.0),
-            Curve::Line(Line::new(
-                Point3::new(1.0, 0.0, 0.0),
-                Point3::new(2.0, 0.0, 0.0),
-            )),
-        ),
+    let points = [
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(2.0, 0.0, 0.0),
     ];
-    let dart = add_polyline(&mut g, &segments).expect("test profile should build");
+    let dart = add_polyline(&mut g, &points).expect("test profile should build");
 
     let planar = Planar::new(Profile::new(&g, dart)).expect("a line profile is planar");
 

@@ -30,6 +30,20 @@ fn circle_returns_owned_closed_edge_shape() {
 }
 
 #[test]
+fn arc_returns_owned_open_circle_edge_shape() {
+    let shape =
+        edges::arc(Plane::xy(), 2.0, 0.0, std::f64::consts::FRAC_PI_2).expect("arc should build");
+    let edge = shape.edge();
+
+    assert_eq!(shape.map().iter_edges().count(), 1);
+    assert!(!edge.is_closed());
+    assert!(matches!(
+        edge.curve(),
+        Some(Curve::Circle(circle)) if (circle.radius() - 2.0).abs() <= f64::EPSILON
+    ));
+}
+
+#[test]
 fn circle_rejects_invalid_radius() {
     let zero_radius = edges::circle(Plane::xy(), 0.0);
     assert!(matches!(

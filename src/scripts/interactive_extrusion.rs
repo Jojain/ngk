@@ -1,11 +1,8 @@
 use nalgebra::Vector3;
 
-use crate::builders::faces::add_polygon;
 use crate::geometry::{LINEAR_TOLERANCE, Point3};
+use crate::modeling::profiles;
 use crate::modeling::sweep::extrude_profile;
-use crate::topology::StandardPayload;
-use crate::topology::gmap::GMap;
-use crate::topology::profile::Profile;
 use crate::viz::{ScriptResult, Style, VizHints};
 
 const POLYGON_RADIUS: f64 = 1.6;
@@ -20,11 +17,10 @@ pub fn build(point_count: usize, extrusion: Vector3<f64>) -> Result<ScriptResult
         return Err("interactive extrusion direction must be non-zero".to_string());
     }
 
-    let mut profile_map = GMap::<StandardPayload>::new();
     let points = regular_polygon(point_count);
-    let profile_dart = add_polygon(&mut profile_map, &points);
-    let profile = Profile::new(&profile_map, profile_dart);
-    let shape = extrude_profile(profile, extrusion)
+    let profile = profiles::polygon(&points)
+        .map_err(|err| format!("failed to build interactive polygon profile: {err:?}"))?;
+    let shape = extrude_profile(profile.profile(), extrusion)
         .map_err(|err| format!("failed to extrude interactive polygon: {err:?}"))?;
 
     let mut hints = VizHints::new();

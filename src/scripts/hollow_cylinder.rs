@@ -1,35 +1,24 @@
 //! Hollow cylinder built by extruding one annular face.
 //!
-//! The source face is a planar circle with a concentric circular hole.  The
+//! The source face is a planar circle with a concentric circular hole. The
 //! sweep code then creates the top cap, bottom cap, outer wall, and inner wall
 //! as one closed solid shell.
 
-use std::collections::HashMap;
-
 use nalgebra::Vector3;
 
-use crate::builders::edges::add_circle;
-use crate::builders::profiles::profile_pcurves;
-use crate::geometry::{Curve2, Plane, Point3, Surface};
+use crate::geometry::Plane;
+use crate::modeling::faces;
 use crate::modeling::sweep::extrude_face;
 use crate::topology::StandardPayload;
-use crate::topology::attributes::FaceAttr;
-use crate::topology::gmap::{Dart, GMap};
-use crate::topology::profile::Profile;
-use crate::topology::shape::{FaceTag, Shape};
-use crate::topology::shape_keys::FaceKey;
+use crate::topology::shape::{FaceTag, Shape, SolidTag};
 use crate::viz::{ScriptResult, Style, VizHints};
 
 const OUTER_RADIUS: f64 = 1.0;
 const INNER_RADIUS: f64 = 0.55;
 const HEIGHT: f64 = 1.8;
 
-type HollowCylinderBuild = (GMap<StandardPayload>, Vec<(FaceKey, Style)>, Dart);
-
 pub fn run() -> Result<ScriptResult, String> {
-    let source = build_source_face()?;
-    let solid = extrude_face(source, Vector3::new(0.0, 0.0, HEIGHT))
-        .map_err(|err| format!("failed to extrude annular circle face: {err:?}"))?;
+    let solid = build_hollow_cylinder_solid()?;
 
     let mut hints = VizHints::new();
     for (key, _) in solid.map().iter_faces() {
@@ -45,81 +34,20 @@ pub fn run() -> Result<ScriptResult, String> {
     Ok(ScriptResult::from_gmap_with_hints(solid.map(), &hints))
 }
 
-/// Returns a solid boundary map built through the same face-extrusion path used
-/// by the holed pentagon example, plus one dart on the resulting closed shell.
-pub fn build_hollow_cylinder_gmap() -> Result<HollowCylinderBuild, String> {
+pub fn build_hollow_cylinder_solid() -> Result<Shape<SolidTag, StandardPayload>, String> {
     let source = build_source_face()?;
-    let solid = extrude_face(source, Vector3::new(0.0, 0.0, HEIGHT))
-        .map_err(|err| format!("failed to extrude annular circle face: {err:?}"))?;
-    let shell_dart = solid.solid().outer_shell().dart;
-    let (g, _) = solid.into_map();
-
-    let styles = g
-        .iter_faces()
-        .map(|(key, _)| {
-            (
-                key,
-                Style::default()
-                    .color("#62a7ff")
-                    .label("extruded circular annulus")
-                    .double_sided(true),
-            )
-        })
-        .collect();
-
-    Ok((g, styles, shell_dart))
+    extrude_face(source, Vector3::new(0.0, 0.0, HEIGHT))
+        .map_err(|err| format!("failed to extrude annular circle face: {err:?}"))
 }
 
 fn build_source_face() -> Result<Shape<FaceTag, StandardPayload>, String> {
-    let mut g = GMap::<StandardPayload>::new();
-    let plane = Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::y());
-
-    let outer_loop = add_circle_loop(&mut g, OUTER_RADIUS, true)?;
-    let inner_loop = add_circle_loop(&mut g, INNER_RADIUS, false)?;
-
-    let mut pcurves = loop_pcurves(&g, outer_loop, &plane)?;
-    pcurves.extend(loop_pcurves(&g, inner_loop, &plane)?);
-
-    let face_key = g.add_face(FaceAttr::with_pcurves(
-        Surface::Plane(plane),
-        (),
-        outer_loop,
-        vec![inner_loop],
-        pcurves,
-    ));
-
-    Ok(Shape::new(g, face_key))
-}
-
-fn add_circle_loop(
-    g: &mut GMap<StandardPayload>,
-    radius: f64,
-    counter_clockwise: bool,
-) -> Result<Dart, String> {
-    let normal = if counter_clockwise {
-        Vector3::z()
-    } else {
-        -Vector3::z()
-    };
-    let plane = Plane::new(Point3::origin(), Vector3::x(), normal);
-
-    add_circle(g, plane, radius)
-        .map(|(dart, _)| dart)
-        .map_err(|err| format!("failed to build circular loop: {err:?}"))
-}
-
-fn loop_pcurves(
-    g: &GMap<StandardPayload>,
-    loop_dart: Dart,
-    plane: &Plane,
-) -> Result<HashMap<Dart, Curve2>, String> {
-    profile_pcurves(g, &Profile::new(g, loop_dart), plane)
-        .map_err(|err| format!("failed to project circle loop pcurves: {err:?}"))
+    faces::annulus(Plane::xy(), OUTER_RADIUS, INNER_RADIUS)
+        .map_err(|err| format!("failed to build annular circle face: {err:?}"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_hollow_cylinder_gmap, build_source_face, run};
+    use super::{build_hollow_cylinder_solid, build_source_face, run};
     use crate::modeling::sweep::extrude_face;
     use crate::tessellate::{TessellateOpts, tessellate_face};
     use crate::topology::closed::Closed;
@@ -146,9 +74,10 @@ mod tests {
 
     #[test]
     fn hollow_cylinder_boundary_is_closed_shell() {
-        let (g, _, shell_dart) = build_hollow_cylinder_gmap().expect("build");
+        let solid = build_hollow_cylinder_solid().expect("build");
+        let shell_dart = solid.solid().outer_shell().dart;
         assert!(
-            Closed::new(Sheet::new(&g, shell_dart)).is_some(),
+            Closed::new(Sheet::new(solid.map(), shell_dart)).is_some(),
             "hollow cylinder boundary should be a closed 2-shell"
         );
     }

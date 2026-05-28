@@ -4,9 +4,11 @@ use crate::{
     StandardPayload,
     builders::solids::add_extruded_face,
     geometry::Plane,
-    modeling::{errors::PrimitiveError, faces},
+    modeling::faces,
     topology::shape::{Shape, SolidTag},
 };
+
+pub use crate::modeling::errors::PrimitiveError;
 
 fn validate_size(axis: &'static str, value: f64) -> Result<(), PrimitiveError> {
     if value.is_finite() && value > 0.0 {

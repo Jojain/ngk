@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use crate::builders::edges::add_edge;
 use crate::geometry::{
-    Curve, Curve2, LINEAR_TOLERANCE, Line, Line2, Plane, Point2, Point3, PointCoincidence,
-    Polyline2,
+    Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, PointCoincidence, Polyline2,
 };
-use crate::topology::gmap::{Cell1, Dart, Dim, GMap};
+use crate::topology::closed::Closeable;
+use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
 
@@ -13,37 +13,56 @@ pub use crate::builders::errors::PolylineError;
 
 pub fn add_polyline(
     g: &mut GMap<StandardPayload>,
-    segments: &[(Point3, Point3, Curve)],
+    points: &[Point3],
 ) -> Result<Dart, PolylineError> {
-    let first_segment = segments.first().ok_or(PolylineError::EmptyPolyline)?;
-    let last_segment = segments.last().ok_or(PolylineError::EmptyPolyline)?;
-    let closed = first_segment.0.coincides(&last_segment.1, LINEAR_TOLERANCE);
-
-    let segment_darts = segments
-        .iter()
-        .map(|segment| add_polyline_segment(g, segment))
-        .collect::<Result<Vec<_>, _>>()?;
-    let first_start = segment_darts[0].0;
-
-    segment_darts.windows(2).try_for_each(|pair| {
-        let previous_end = pair[0].1;
-        let next_start = pair[1].0;
-        sew(g, Dim::One, previous_end, next_start)
-    })?;
-
-    if closed {
-        let last_end = segment_darts
-            .last()
-            .expect("non-empty polyline has a last segment")
-            .1;
-        sew(g, Dim::One, last_end, first_start)?;
+    if points.len() < 2 {
+        return Err(PolylineError::EmptyPolyline);
     }
 
-    Ok(first_start)
+    let segments = points
+        .windows(2)
+        .map(|pair| (pair[0], pair[1], Curve::line(pair[0], pair[1])))
+        .collect::<Vec<_>>();
+    add_segments(g, &segments)
+}
+
+pub fn add_edge_to_profile<P: Payload>(
+    g: &mut GMap<P>,
+    profile_dart: Dart,
+    edge_dart: Dart,
+) -> Result<(), PolylineError> {
+    let profile = Profile::new(g, profile_dart);
+    if profile.is_closed() {
+        return Err(PolylineError::ClosedProfile { dart: profile_dart });
+    }
+
+    let profile_start = profile_dart;
+    let profile_end = profile
+        .darts()
+        .last()
+        .expect("non-empty profile should have an end dart");
+    let profile_start_point = vertex_point(g, profile_start)?;
+    let profile_end_point = vertex_point(g, profile_end)?;
+    let edge_start_point = vertex_point(g, edge_dart)?;
+    let edge_end = g.alpha(Dim::Zero, edge_dart);
+    let edge_end_point = vertex_point(g, edge_end)?;
+
+    if !profile_end_point.coincides(edge_start_point, LINEAR_TOLERANCE) {
+        return Err(PolylineError::NonContiguousEdge {
+            profile_end: profile_end_point,
+            edge_start: edge_start_point,
+        });
+    }
+
+    sew(g, Dim::One, profile_end, edge_dart)?;
+    if edge_end_point.coincides(profile_start_point, LINEAR_TOLERANCE) {
+        sew(g, Dim::One, edge_end, profile_start)?;
+    }
+
+    Ok(())
 }
 
 pub fn profile_pcurves<P: Payload>(
-    g: &GMap<P>,
     profile: &Profile<'_, P>,
     plane: &Plane,
 ) -> Result<HashMap<Dart, Curve2>, PolylineError> {
@@ -115,14 +134,9 @@ pub fn add_rectangle(
         plane.point_at(x_size, 0.0),
         plane.point_at(x_size, y_size),
         plane.point_at(0.0, y_size),
+        plane.point_at(0.0, 0.0),
     ];
-    let segments = [
-        (corners[0], corners[1], Curve::line(corners[0], corners[1])),
-        (corners[1], corners[2], Curve::line(corners[1], corners[2])),
-        (corners[2], corners[3], Curve::line(corners[2], corners[3])),
-        (corners[3], corners[0], Curve::line(corners[3], corners[0])),
-    ];
-    add_polyline(g, &segments)
+    add_polyline(g, &corners)
 }
 
 pub fn add_square(
@@ -150,8 +164,8 @@ fn add_polyline_segment(
     Ok((start_dart, end_dart))
 }
 
-fn sew(
-    g: &mut GMap<StandardPayload>,
+fn sew<P: Payload>(
+    g: &mut GMap<P>,
     dim: Dim,
     first: Dart,
     second: Dart,
@@ -176,4 +190,41 @@ pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool
             .expect("fresh dart pair should be alpha0-sewable");
     }
     darts[0]
+}
+
+fn add_segments(
+    g: &mut GMap<StandardPayload>,
+    segments: &[(Point3, Point3, Curve)],
+) -> Result<Dart, PolylineError> {
+    let first_segment = segments.first().ok_or(PolylineError::EmptyPolyline)?;
+    let last_segment = segments.last().ok_or(PolylineError::EmptyPolyline)?;
+    let closed = first_segment.0.coincides(&last_segment.1, LINEAR_TOLERANCE);
+
+    let segment_darts = segments
+        .iter()
+        .map(|segment| add_polyline_segment(g, segment))
+        .collect::<Result<Vec<_>, _>>()?;
+    let first_start = segment_darts[0].0;
+
+    segment_darts.windows(2).try_for_each(|pair| {
+        let previous_end = pair[0].1;
+        let next_start = pair[1].0;
+        sew(g, Dim::One, previous_end, next_start)
+    })?;
+
+    if closed {
+        let last_end = segment_darts
+            .last()
+            .expect("non-empty polyline has a last segment")
+            .1;
+        sew(g, Dim::One, last_end, first_start)?;
+    }
+
+    Ok(first_start)
+}
+
+fn vertex_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Point3, PolylineError> {
+    g.attribute::<Cell0>(dart)
+        .map(|attr| attr.point)
+        .ok_or(PolylineError::MissingVertexPoint { dart })
 }

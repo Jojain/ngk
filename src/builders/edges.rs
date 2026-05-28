@@ -30,6 +30,23 @@ pub fn add_line<P: Payload>(
     add_edge(g, start, end, curve)
 }
 
+pub fn add_arc<P: Payload>(
+    g: &mut GMap<P>,
+    plane: Plane,
+    radius: f64,
+    start_angle: f64,
+    end_angle: f64,
+) -> Result<(Dart, EdgeKey), EdgeCreationError> {
+    check_valid_radius(radius)?;
+    check_valid_angle("start", start_angle)?;
+    check_valid_angle("end", end_angle)?;
+
+    let curve = Curve::Circle(Circle::new(plane, radius));
+    let start = curve.point_at(start_angle);
+    let end = curve.point_at(end_angle);
+    add_edge(g, start, end, curve)
+}
+
 pub fn add_circle<P: Payload>(
     g: &mut GMap<P>,
     plane: Plane,
@@ -61,5 +78,13 @@ fn check_valid_radius(radius: f64) -> Result<(), EdgeCreationError> {
         Ok(())
     } else {
         Err(EdgeCreationError::InvalidRadius { radius })
+    }
+}
+
+fn check_valid_angle(name: &'static str, angle: f64) -> Result<(), EdgeCreationError> {
+    if angle.is_finite() {
+        Ok(())
+    } else {
+        Err(EdgeCreationError::InvalidAngle { name, angle })
     }
 }
