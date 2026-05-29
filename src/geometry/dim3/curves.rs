@@ -91,10 +91,7 @@ impl Curve {
 
     pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
         match self {
-            Curve::Line(line) => Ok(Curve::Line(Line::new(
-                line.start + direction,
-                line.end + direction,
-            ))),
+            Curve::Line(line) => Ok(Curve::line(line.start + direction, line.end + direction)),
             Curve::Circle(circle) => Ok(Curve::Circle(Circle::new(
                 Plane::new(
                     circle.plane.origin() + direction,

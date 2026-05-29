@@ -1,6 +1,6 @@
 use nalgebra::Vector3;
 use ngk::geometry::axis::Axis3;
-use ngk::geometry::{Circle, Curve, LINEAR_TOLERANCE, Line, Point3, PointCoincidence};
+use ngk::geometry::{Circle, Curve, LINEAR_TOLERANCE, Point3, PointCoincidence};
 
 fn assert_point_near(actual: Point3, expected: Point3) {
     assert!(
@@ -18,10 +18,7 @@ fn circle_from_axis_handles_z_axis() {
 
 #[test]
 fn line_curve_converts_to_matching_nurbs_curve() {
-    let curve = Curve::Line(Line::new(
-        Point3::new(1.0, 2.0, 3.0),
-        Point3::new(4.0, 6.0, 8.0),
-    ));
+    let curve = Curve::line(Point3::new(1.0, 2.0, 3.0), Point3::new(4.0, 6.0, 8.0));
     let nurbs = curve.to_nurbs().unwrap();
 
     assert_eq!(nurbs.degree().get(), 1);

@@ -5,7 +5,7 @@ use ngk::builders::edges::add_edge;
 use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::revolve::{add_revolved_edge, add_revolved_face};
 use ngk::geometry::axis::Axis3;
-use ngk::geometry::{Curve, LINEAR_TOLERANCE, Line, Point3, PointCoincidence, Surface};
+use ngk::geometry::{Curve, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface};
 use ngk::tessellate::{TessellateOpts, tessellate_face};
 use ngk::topology::attributes::{EdgeAttr, VertexAttr};
 use ngk::topology::edge::Edge;
@@ -19,10 +19,7 @@ fn partial_revolved_edge_creates_rotated_endpoint_geometry() {
         &mut g,
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(2.0, 0.0, 0.0),
-        Curve::Line(Line::new(
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(2.0, 0.0, 0.0),
-        )),
+        Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
     )
     .expect("edge should build");
 
@@ -57,10 +54,7 @@ fn partial_revolved_edge_circle_side_uses_short_positive_sweep() {
         &mut g,
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(2.0, 0.0, 0.0),
-        Curve::Line(Line::new(
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(2.0, 0.0, 0.0),
-        )),
+        Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
     )
     .expect("edge should build");
 
@@ -110,10 +104,7 @@ fn full_revolved_edge_uses_closed_circle_special_case() {
         &mut g,
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(2.0, 0.0, 0.0),
-        Curve::Line(Line::new(
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(2.0, 0.0, 0.0),
-        )),
+        Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
     )
     .expect("edge should build");
 

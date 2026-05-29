@@ -8,7 +8,7 @@ use crate::builders::edges::add_edge;
 use crate::builders::errors::EdgeCreationError;
 use crate::geometry::axis::Axis3;
 use crate::geometry::{
-    ANGULAR_TOLERANCE, Circle, Curve, Curve2, LINEAR_TOLERANCE, Line, Line2, Plane, Point2, Point3,
+    ANGULAR_TOLERANCE, Circle, Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3,
     Surface, SurfaceOfRevolution,
 };
 use crate::topology::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
@@ -197,10 +197,10 @@ fn rotate_curve(
     angle: Rad64,
 ) -> Result<Curve, RevolveError> {
     match curve {
-        Curve::Line(_) => Ok(Curve::Line(Line::new(
+        Curve::Line(_) => Ok(Curve::line(
             rotate_point(axis, curve.point_at(0.0), angle),
             rotate_point(axis, curve.point_at(1.0), angle),
-        ))),
+        )),
         Curve::Circle(_) | Curve::Nurbs(_) => {
             Err(RevolveError::UnsupportedPartialRevolveCurve { dart })
         }

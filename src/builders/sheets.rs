@@ -4,7 +4,7 @@ use nalgebra::Vector3;
 
 use crate::builders::errors::ExtrudeError;
 use crate::geometry::{
-    Curve, Curve2, LINEAR_TOLERANCE, Line, Line2, Plane, Point2, Point3, RuledSurface, Surface,
+    Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
 };
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
 use crate::topology::closed::Closeable;
@@ -149,9 +149,9 @@ fn extruded_edge_surface(
                 uv,
                 boundary_curves: [
                     curve.clone(),
-                    Curve::Line(Line::new(end, end + direction)),
+                    Curve::line(end, end + direction),
                     translated_curve,
-                    Curve::Line(Line::new(start + direction, start)),
+                    Curve::line(start + direction, start),
                 ],
             })
         }
@@ -170,9 +170,9 @@ fn extruded_edge_surface(
                 ],
                 boundary_curves: [
                     curve.clone(),
-                    Curve::Line(Line::new(end, end + direction)),
+                    Curve::line(end, end + direction),
                     translated_curve,
-                    Curve::Line(Line::new(start + direction, start)),
+                    Curve::line(start + direction, start),
                 ],
             })
         }

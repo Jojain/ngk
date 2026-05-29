@@ -1,5 +1,5 @@
 use crate::builders::errors::EdgeCreationError;
-use crate::geometry::{Circle, Curve, LINEAR_TOLERANCE, Line, Plane, Point3, PointCoincidence};
+use crate::geometry::{Circle, Curve, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::payload::Payload;
@@ -26,7 +26,7 @@ pub fn add_line<P: Payload>(
     start: Point3,
     end: Point3,
 ) -> Result<(Dart, EdgeKey), EdgeCreationError> {
-    let curve = Curve::Line(Line::new(start, end));
+    let curve = Curve::line(start, end);
     add_edge(g, start, end, curve)
 }
 

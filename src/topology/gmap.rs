@@ -158,7 +158,7 @@ pub struct GMap<P: Payload = StandardPayload> {
     pub(crate) dart_to_vertex: HashMap<Dart, VertexKey>,
     edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
     pub(crate) dart_to_edge: HashMap<Dart, EdgeKey>,
-    facets: HashMap<Dart, FaceKey>,
+    pub(crate) facets: HashMap<Dart, FaceKey>,
     pub(crate) faces: SlotMap<FaceKey, FaceAttr<P::F>>,
     pub(crate) solids: SlotMap<SolidKey, SolidAttr<P::S>>,
 }
@@ -261,7 +261,12 @@ impl<P: Payload> GMap<P> {
     }
 
     pub fn add_vertex(&mut self, vertex: VertexAttr<P::V>) -> VertexKey {
-        let dart = vertex.dart;
+        let dart = self.cell_representative(vertex.dart, Dim::Zero);
+        if let Some(&key) = self.dart_to_vertex.get(&dart) {
+            return key;
+        }
+        let mut vertex = vertex;
+        vertex.dart = dart;
         let key = self.vertices.insert(vertex);
         self.dart_to_vertex.insert(dart, key);
         key
@@ -280,7 +285,12 @@ impl<P: Payload> GMap<P> {
     }
 
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
-        let dart = edge.dart;
+        let dart = self.cell_representative(edge.dart, Dim::One);
+        if let Some(&key) = self.dart_to_edge.get(&dart) {
+            return key;
+        }
+        let mut edge = edge;
+        edge.dart = dart;
         let key = self.edges.insert(edge);
         self.dart_to_edge.insert(dart, key);
         key
@@ -300,7 +310,21 @@ impl<P: Payload> GMap<P> {
     }
 
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
-        self.faces.insert(face)
+        let facet_darts = std::iter::once(face.outer_loop)
+            .chain(face.inner_loops.iter().copied())
+            .map(|dart| self.cell_representative(dart, Dim::Two))
+            .collect::<Vec<_>>();
+        if let Some(key) = facet_darts
+            .iter()
+            .find_map(|dart| self.facets.get(dart).copied())
+        {
+            return key;
+        }
+        let key = self.faces.insert(face);
+        for dart in facet_darts {
+            self.facets.insert(dart, key);
+        }
+        key
     }
 
     pub fn face(&self, key: FaceKey) -> Option<&FaceAttr<P::F>> {
@@ -690,7 +714,7 @@ mod tests {
     use super::{Cell0, Cell1, Cell2, Dart, Dim, GMap, MergeTopology};
     use crate::builders::edges::add_edge;
     use crate::builders::faces::add_polygon;
-    use crate::geometry::{Curve, Curve2, Line, Line2, Plane, Point2, Point3, Surface};
+    use crate::geometry::{Curve, Curve2, Line2, Plane, Point2, Point3, Surface};
     use crate::topology::attributes::{FaceAttr, SolidAttr};
     use crate::topology::edge::Edge;
     use crate::topology::face::Face;
@@ -708,10 +732,7 @@ mod tests {
             &mut source,
             Point3::new(1.0, 0.0, 0.0),
             Point3::new(2.0, 0.0, 0.0),
-            Curve::Line(Line::new(
-                Point3::new(1.0, 0.0, 0.0),
-                Point3::new(2.0, 0.0, 0.0),
-            )),
+            Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
         )
         .expect("source edge should build");
 
@@ -738,10 +759,7 @@ mod tests {
             &mut target,
             Point3::new(-1.0, 0.0, 0.0),
             Point3::new(0.0, 0.0, 0.0),
-            Curve::Line(Line::new(
-                Point3::new(-1.0, 0.0, 0.0),
-                Point3::new(0.0, 0.0, 0.0),
-            )),
+            Curve::line(Point3::new(-1.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
         )
         .expect("target edge should build");
 
