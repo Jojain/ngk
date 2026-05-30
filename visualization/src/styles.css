@@ -148,3 +148,234 @@ html, body, #root {
   max-width: 320px;
   transform: translate(-50%, -50%);
 }
+
+.knot-explorer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.knot-panel {
+  position: absolute;
+  left: 18px;
+  top: 18px;
+  width: min(440px, calc(100vw - 312px));
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  pointer-events: auto;
+  background: rgba(23, 23, 28, 0.94);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.34);
+}
+
+.knot-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.knot-header h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.knot-header span,
+.knot-readout > span,
+.knot-readout label span {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.knot-header strong {
+  flex: 0 0 auto;
+  color: #5fd6a2;
+  border: 1px solid rgba(95, 214, 162, 0.36);
+  background: rgba(95, 214, 162, 0.1);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.knot-degree {
+  display: grid;
+  grid-template-columns: 52px 1fr 24px;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.knot-select {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.knot-select select {
+  width: 100%;
+  min-width: 0;
+  color: var(--text);
+  background: #111116;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font: inherit;
+}
+
+.knot-degree input {
+  width: 100%;
+}
+
+.knot-degree b {
+  text-align: right;
+}
+
+.knot-slider {
+  position: relative;
+  height: 78px;
+  margin: 2px 6px 10px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.knot-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 36px;
+  height: 6px;
+  border-radius: 999px;
+  background: #30323a;
+}
+
+.knot-tick {
+  position: absolute;
+  bottom: 20px;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 999px;
+  background: #8ab4ff;
+}
+
+.knot-cursor {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  margin-left: -1px;
+  background: #f7e36b;
+  box-shadow: 0 0 0 5px rgba(247, 227, 107, 0.13);
+}
+
+.knot-readout {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.knot-readout > span,
+.knot-readout label {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 8px;
+  overflow-wrap: anywhere;
+}
+
+.knot-readout label {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.knot-readout input {
+  min-width: 0;
+  width: 100%;
+  color: var(--text);
+  background: #111116;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 5px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.knot-input-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.knot-input-grid label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.knot-input-grid input {
+  width: 100%;
+  min-width: 0;
+  color: var(--text);
+  background: #111116;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 6px;
+  font: inherit;
+}
+
+.knot-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.knot-actions button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-hi);
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.knot-actions button:hover {
+  border-color: var(--accent);
+}
+
+.knot-section-title {
+  margin: 14px 0 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.knot-weight-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.knot-warning {
+  margin-top: 12px;
+  border: 1px solid rgba(255, 138, 138, 0.45);
+  background: rgba(255, 138, 138, 0.1);
+  color: #ffaaaa;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
