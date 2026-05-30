@@ -49,6 +49,15 @@ impl Curve {
             Curve::Nurbs(n) => n.point_at(t),
         }
     }
+
+    pub fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
+        match self {
+            Curve::Line(l) => l.derivative_at(t, order),
+            Curve::Circle(c) => c.derivative_at(t, order),
+            Curve::Nurbs(n) => n.derivative_at(t, order),
+        }
+    }
+
     pub fn param_at(&self, point: Point3) -> f64 {
         match self {
             Curve::Line(l) => l.param_at(point),
@@ -77,7 +86,7 @@ impl Curve {
         match self {
             Curve::Line(l) => l.length(t0, t1),
             Curve::Circle(c) => c.length(t0, t1),
-            Curve::Nurbs(n) => sampled_length(n, t0, t1),
+            Curve::Nurbs(n) => n.length(t0, t1),
         }
     }
 
@@ -178,21 +187,6 @@ fn closest_sample_parameter(curve: &NurbsCurve, point: Point3) -> f64 {
     best_u
 }
 
-fn sampled_length(curve: &NurbsCurve, t0: f64, t1: f64) -> f64 {
-    let segments = 64usize;
-    let mut length = 0.0;
-    let mut previous = curve.point_at(t0);
-
-    for i in 1..=segments {
-        let t = t0 + (t1 - t0) * (i as f64 / segments as f64);
-        let current = curve.point_at(t);
-        length += (current - previous).norm();
-        previous = current;
-    }
-
-    length
-}
-
 #[cfg(test)]
 mod tests {
     use std::f64::consts::TAU;
@@ -253,6 +247,14 @@ impl Line {
 
     pub fn point_at(&self, t: f64) -> Point3 {
         self.start + (self.end - self.start) * t
+    }
+
+    pub fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
+        match order {
+            0 => self.point_at(t).coords,
+            1 => self.end - self.start,
+            _ => Vector3::zeros(),
+        }
     }
     /// Inverse of [`Self::point_at`] — returns the `t ∈ [0, 1]` parameter
     /// such that `point_at(t)` is the closest point on the line.
@@ -321,6 +323,14 @@ impl Circle {
         let rot = Rotation3::from_axis_angle(&self.plane.normal(), t);
         let vec = rot * self.plane.x_dir();
         self.plane.origin() + self.radius * *vec
+    }
+
+    pub fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
+        if order == 0 {
+            return self.point_at(t).coords;
+        }
+        let phase = t + order as f64 * FRAC_PI_2;
+        self.radius * (phase.cos() * *self.plane.x_dir() + phase.sin() * *self.plane.y_dir())
     }
     /// Inverse of [`Self::point_at`]: returns the angle (in radians) of the
     /// projection of `point` onto the circle's plane, measured from `x_dir`

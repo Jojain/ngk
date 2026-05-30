@@ -5,6 +5,14 @@ use ngk::geometry::{
     ControlPolygon, Degree, HPoint, KnotVector, LINEAR_TOLERANCE, NurbsCurve, Point3,
 };
 
+fn assert_vector_near(actual: Vector3<f64>, expected: Vector3<f64>, tol: f64) {
+    let error = (actual - expected).norm();
+    assert!(
+        error <= tol,
+        "expected {expected:?}, got {actual:?}, error {error}"
+    );
+}
+
 fn approx_eq(a: f64, b: f64, tol: f64) -> bool {
     (a - b).abs() <= tol
 }
@@ -41,6 +49,17 @@ fn cubic_bezier_endpoints() {
 
     let p1 = curve.point_at(1.0);
     assert!((p1 - pts[3]).norm() < 1e-10);
+}
+
+#[test]
+fn line_nurbs_derivative_matches_line_direction() {
+    let start = Point3::new(1.0, 2.0, 3.0);
+    let end = Point3::new(4.0, 6.0, 8.0);
+    let cp = ControlPolygon::from_cartesian(vec![start, end], &[1.0, 1.0]).unwrap();
+    let curve = NurbsCurve::with_uniform_knots(Degree::new(1).unwrap(), cp).unwrap();
+
+    assert_vector_near(curve.derivative_at(0.35, 1), end - start, 1e-12);
+    assert_vector_near(curve.derivative_at(0.35, 2), Vector3::zeros(), 1e-12);
 }
 
 #[test]
@@ -123,4 +142,19 @@ fn rational_circle_quarter() {
     }
 
     let _ = Vector3::new(1.0, 0.0, 0.0);
+}
+
+#[test]
+fn rational_quarter_circle_length_matches_arc_length() {
+    let w = FRAC_1_SQRT_2;
+    let cps = vec![
+        HPoint::from_cartesian(Point3::new(1.0, 0.0, 0.0), 1.0),
+        HPoint::from_cartesian(Point3::new(1.0, 1.0, 0.0), w),
+        HPoint::from_cartesian(Point3::new(0.0, 1.0, 0.0), 1.0),
+    ];
+    let cp = ControlPolygon::new(cps).unwrap();
+    let knots = KnotVector::new(vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]).unwrap();
+    let curve = NurbsCurve::new(Degree::new(2).unwrap(), cp, knots).unwrap();
+    let length = curve.length(0.0, 1.0);
+    assert!((length - std::f64::consts::FRAC_PI_2).abs() < 1e-8);
 }
