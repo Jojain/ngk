@@ -1,12 +1,16 @@
 mod curve_curve;
+mod curve_surface;
 mod error;
 mod options;
+mod surface_surface;
 
 use crate::geometry::{Interval, Point3};
 
 pub use curve_curve::{intersect_curves, intersect_curves_with_options};
+pub use curve_surface::{intersect_curve_surface, intersect_curve_surface_with_options};
 pub use error::IntersectionError;
 pub use options::IntersectionOptions;
+pub use surface_surface::{intersect_surfaces, intersect_surfaces_with_options};
 
 pub type CurveCurveIntersections = Vec<CurveCurveIntersection>;
 pub type CurveSurfaceIntersections = Vec<CurveSurfaceIntersection>;

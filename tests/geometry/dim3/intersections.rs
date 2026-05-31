@@ -1,7 +1,8 @@
 use nalgebra::Vector3;
 use ngk::geometry::{
-    Circle, ControlPolygon, Curve, CurveCurveIntersection, Degree, HPoint, KnotVector,
-    LINEAR_TOLERANCE, NurbsCurve, Plane, Point3, PointCoincidence,
+    Circle, ControlPolygon, Curve, CurveCurveIntersection, CurveSurfaceIntersection, Degree,
+    HPoint, KnotVector, LINEAR_TOLERANCE, NurbsCurve, Plane, Point3, PointCoincidence, Surface,
+    SurfaceSurfaceIntersection,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -161,6 +162,68 @@ fn quadratic_nurbs_curves_return_crossing_point() {
     let points = unique_points(point_results(&results));
     assert_eq!(points.len(), 1, "{results:?}");
     assert_point_near(points[0], Point3::new(1.0, 0.5, 0.0));
+}
+
+#[test]
+fn line_plane_intersection_returns_curve_surface_point() {
+    let curve = Curve::line(Point3::new(0.5, 0.5, -1.0), Point3::new(0.5, 0.5, 1.0));
+    let surface = Surface::Plane(Plane::xy());
+
+    let results = curve.intersect_surface(&surface).unwrap();
+
+    assert_eq!(results.len(), 1, "{results:?}");
+    let CurveSurfaceIntersection::Point { point, .. } = results[0] else {
+        panic!("expected point, got {results:?}");
+    };
+    assert_point_near(point, Point3::new(0.5, 0.5, 0.0));
+}
+
+#[test]
+fn line_on_plane_returns_curve_surface_overlap() {
+    let curve = Curve::line(Point3::new(0.2, 0.2, 0.0), Point3::new(0.8, 0.8, 0.0));
+    let surface = Surface::Plane(Plane::xy());
+
+    let results = curve.intersect_surface(&surface).unwrap();
+
+    assert_eq!(results.len(), 1, "{results:?}");
+    let CurveSurfaceIntersection::Overlap { curve_interval } = results[0] else {
+        panic!("expected overlap, got {results:?}");
+    };
+    assert!((curve_interval.start - 0.0).abs() <= LINEAR_TOLERANCE * 10.0);
+    assert!((curve_interval.end - 1.0).abs() <= LINEAR_TOLERANCE * 10.0);
+}
+
+#[test]
+fn perpendicular_planes_return_surface_surface_curve() {
+    let a = Surface::Plane(Plane::xy());
+    let b = Surface::Plane(Plane::xz());
+
+    let results = a.intersect_surface(&b).unwrap();
+
+    assert_eq!(results.len(), 1, "{results:?}");
+    let SurfaceSurfaceIntersection::Curve { points } = &results[0] else {
+        panic!("expected intersection curve, got {results:?}");
+    };
+    assert!(points.len() >= 2, "{results:?}");
+    assert!(
+        points
+            .iter()
+            .all(|point| point.y.abs() <= LINEAR_TOLERANCE * 10.0
+                && point.z.abs() <= LINEAR_TOLERANCE * 10.0)
+    );
+}
+
+#[test]
+fn coincident_planes_return_surface_surface_region() {
+    let a = Surface::Plane(Plane::xy());
+    let b = Surface::Plane(Plane::xy());
+
+    let results = a.intersect_surface(&b).unwrap();
+
+    assert!(matches!(
+        results.as_slice(),
+        [SurfaceSurfaceIntersection::Region]
+    ));
 }
 
 fn quadratic_curve(points: [Point3; 3]) -> NurbsCurve {

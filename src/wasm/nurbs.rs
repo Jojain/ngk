@@ -3,8 +3,9 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use crate::geometry::{
-    ControlNet, ControlPolygon, Curve, CurveCurveIntersection, Degree, KnotVector, NurbsCurve,
-    NurbsSurface, Point3, sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
+    ControlNet, ControlPolygon, Curve, CurveCurveIntersection, CurveSurfaceIntersection, Degree,
+    KnotVector, NurbsCurve, NurbsSurface, Point3, Surface, SurfaceSurfaceIntersection,
+    sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
 };
 
 fn js_err(e: impl ToString) -> JsValue {
@@ -155,6 +156,18 @@ impl WasmNurbsCurve {
             .collect();
         serde_wasm_bindgen::to_value(&out).map_err(js_err)
     }
+
+    #[wasm_bindgen(js_name = intersectSurface)]
+    pub fn intersect_surface(&self, surface: &WasmNurbsSurface) -> Result<JsValue, JsValue> {
+        let curve = Curve::Nurbs(self.inner.clone());
+        let surface = Surface::Nurbs(surface.inner.clone());
+        let intersections = curve.intersect_surface(&surface).map_err(js_err)?;
+        let out: Vec<WasmCurveSurfaceIntersection> = intersections
+            .into_iter()
+            .map(WasmCurveSurfaceIntersection::from)
+            .collect();
+        serde_wasm_bindgen::to_value(&out).map_err(js_err)
+    }
 }
 
 #[derive(Serialize)]
@@ -191,6 +204,85 @@ impl From<CurveCurveIntersection> for WasmCurveCurveIntersection {
                 interval_a: [interval_a.start, interval_a.end],
                 interval_b: [interval_b.start, interval_b.end],
             },
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind")]
+enum WasmCurveSurfaceIntersection {
+    #[serde(rename = "point")]
+    Point {
+        point: [f64; 3],
+        curve_u: f64,
+        surface_u: f64,
+        surface_v: f64,
+    },
+    #[serde(rename = "overlap")]
+    Overlap { curve_interval: [f64; 2] },
+}
+
+impl From<CurveSurfaceIntersection> for WasmCurveSurfaceIntersection {
+    fn from(value: CurveSurfaceIntersection) -> Self {
+        match value {
+            CurveSurfaceIntersection::Point {
+                point,
+                curve_u,
+                surface_u,
+                surface_v,
+            } => Self::Point {
+                point: [point.x, point.y, point.z],
+                curve_u,
+                surface_u,
+                surface_v,
+            },
+            CurveSurfaceIntersection::Overlap { curve_interval } => Self::Overlap {
+                curve_interval: [curve_interval.start, curve_interval.end],
+            },
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind")]
+enum WasmSurfaceSurfaceIntersection {
+    #[serde(rename = "point")]
+    Point {
+        point: [f64; 3],
+        surface_a_u: f64,
+        surface_a_v: f64,
+        surface_b_u: f64,
+        surface_b_v: f64,
+    },
+    #[serde(rename = "curve")]
+    Curve { points: Vec<[f64; 3]> },
+    #[serde(rename = "region")]
+    Region,
+}
+
+impl From<SurfaceSurfaceIntersection> for WasmSurfaceSurfaceIntersection {
+    fn from(value: SurfaceSurfaceIntersection) -> Self {
+        match value {
+            SurfaceSurfaceIntersection::Point {
+                point,
+                surface_a_u,
+                surface_a_v,
+                surface_b_u,
+                surface_b_v,
+            } => Self::Point {
+                point: [point.x, point.y, point.z],
+                surface_a_u,
+                surface_a_v,
+                surface_b_u,
+                surface_b_v,
+            },
+            SurfaceSurfaceIntersection::Curve { points } => Self::Curve {
+                points: points
+                    .into_iter()
+                    .map(|point| [point.x, point.y, point.z])
+                    .collect(),
+            },
+            SurfaceSurfaceIntersection::Region => Self::Region,
         }
     }
 }
@@ -268,6 +360,18 @@ impl WasmNurbsSurface {
             normals,
             indices: mesh.indices,
         };
-        serde_wasm_bindgen::to_value(&out).map_err(|e| js_err(e))
+        serde_wasm_bindgen::to_value(&out).map_err(js_err)
+    }
+
+    #[wasm_bindgen(js_name = intersectSurface)]
+    pub fn intersect_surface(&self, other: &WasmNurbsSurface) -> Result<JsValue, JsValue> {
+        let a = Surface::Nurbs(self.inner.clone());
+        let b = Surface::Nurbs(other.inner.clone());
+        let intersections = a.intersect_surface(&b).map_err(js_err)?;
+        let out: Vec<WasmSurfaceSurfaceIntersection> = intersections
+            .into_iter()
+            .map(WasmSurfaceSurfaceIntersection::from)
+            .collect();
+        serde_wasm_bindgen::to_value(&out).map_err(js_err)
     }
 }

@@ -28,6 +28,18 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./NurbsIntersectionExplorer")),
   },
   {
+    id: "curve-surface-intersection-explorer",
+    title: "Curve / surface intersections",
+    group: "NURBS",
+    component: lazy(() => import("./CurveSurfaceIntersectionExplorer")),
+  },
+  {
+    id: "surface-surface-intersection-explorer",
+    title: "Surface / surface intersections",
+    group: "NURBS",
+    component: lazy(() => import("./SurfaceSurfaceIntersectionExplorer")),
+  },
+  {
     id: "nurbs-surface-editor",
     title: "NURBS surface editor",
     group: "NURBS",
