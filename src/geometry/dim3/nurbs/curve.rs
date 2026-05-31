@@ -1,11 +1,12 @@
 use nalgebra::{Point4, Vector3};
 
 use super::basis::{basis_function_derivatives, basis_functions};
+use super::bezier::Bezier;
 use super::degree::Degree;
 use super::error::NurbsError;
 use super::knots::KnotVector;
 use super::points::{ControlPolygon, HPoint};
-use crate::geometry::{LINEAR_TOLERANCE, Point3};
+use crate::geometry::{Interval, LINEAR_TOLERANCE, Point3};
 
 const LENGTH_TOLERANCE: f64 = 1.0e-10;
 const MAX_LENGTH_RECURSION: usize = 24;
@@ -62,7 +63,7 @@ impl NurbsCurve {
         &self.knots
     }
 
-    pub fn domain(&self) -> (f64, f64) {
+    pub fn domain(&self) -> Interval {
         self.knots.domain(self.degree)
     }
 
@@ -160,8 +161,8 @@ impl NurbsCurve {
     }
 
     fn clamp_parameter(&self, u: f64) -> f64 {
-        let (min, max) = self.domain();
-        u.clamp(min, max)
+        let domain = self.domain();
+        u.clamp(domain.start, domain.end)
     }
 
     fn integrate_length_span(&self, a: f64, b: f64) -> f64 {
@@ -237,6 +238,61 @@ impl NurbsCurve {
         self.control_points = ControlPolygon::new(new_points).unwrap();
         self.knots.insert(k + 1, u);
     }
+
+    pub fn bezier_spans(&self) -> Result<Vec<Bezier>, NurbsError> {
+        let p = self.degree.get();
+        let domain = self.domain();
+        let mut refined = self.clone();
+        let interior_knots = distinct_interior_knots(self.knots.as_slice(), domain);
+
+        for knot in interior_knots {
+            while refined.knots.multiplicity(knot) < p {
+                refined.insert_knot(knot);
+            }
+        }
+
+        let breaks = distinct_domain_knots(refined.knots.as_slice(), domain);
+        let mut spans = Vec::new();
+        let mut point_start = 0usize;
+
+        for interval_values in breaks.windows(2) {
+            let start = interval_values[0];
+            let end = interval_values[1];
+            if end <= start {
+                continue;
+            }
+            let point_end = point_start + p;
+            let points = refined.control_points.as_slice()[point_start..=point_end].to_vec();
+            spans.push(Bezier::new(
+                self.degree,
+                ControlPolygon::new(points)?,
+                Interval::new(start, end),
+            )?);
+            point_start += refined.knots.multiplicity(end).min(p + 1);
+        }
+
+        Ok(spans)
+    }
+}
+
+fn distinct_interior_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
+    distinct_domain_knots(knots, domain)
+        .into_iter()
+        .filter(|knot| *knot > domain.start && *knot < domain.end)
+        .collect()
+}
+
+fn distinct_domain_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
+    let mut distinct = Vec::new();
+    for &knot in knots {
+        if knot < domain.start || knot > domain.end {
+            continue;
+        }
+        if distinct.last().is_none_or(|last| *last != knot) {
+            distinct.push(knot);
+        }
+    }
+    distinct
 }
 
 struct SimpsonState {

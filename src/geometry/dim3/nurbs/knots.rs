@@ -1,5 +1,6 @@
 use super::degree::Degree;
 use super::error::NurbsError;
+use crate::geometry::Interval;
 
 /// A non-decreasing knot vector.
 #[derive(Debug, Clone, PartialEq)]
@@ -54,10 +55,10 @@ impl KnotVector {
     }
 
     /// Parametric domain `[U[p], U[m-p]]` where `m = len - 1`.
-    pub fn domain(&self, degree: Degree) -> (f64, f64) {
+    pub fn domain(&self, degree: Degree) -> Interval {
         let p = degree.get();
         let m = self.0.len() - 1;
-        (self.0[p], self.0[m - p])
+        Interval::new(self.0[p], self.0[m - p])
     }
 
     /// Piegl & Tiller A2.1 — find the knot span index for parameter `u`.

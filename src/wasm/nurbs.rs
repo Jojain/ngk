@@ -140,8 +140,8 @@ impl WasmNurbsCurve {
 
     #[wasm_bindgen(js_name = domain)]
     pub fn domain(&self) -> Float64Array {
-        let (a, b) = self.inner.domain();
-        flat_from_f64(&[a, b])
+        let domain = self.inner.domain();
+        flat_from_f64(&[domain.start, domain.end])
     }
 }
 

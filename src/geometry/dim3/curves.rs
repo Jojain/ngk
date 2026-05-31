@@ -1,13 +1,14 @@
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, TAU};
 
+use super::intersections::{CurveCurveIntersections, CurveSurfaceIntersections};
 use super::nurbs::error::NurbsError;
 use super::nurbs::points::{ControlPolygon, HPoint};
 use super::nurbs::{Degree, KnotVector, NurbsCurve};
-use super::surfaces::Plane;
+use super::surfaces::{Plane, Surface};
 use super::utils::{IntoUnit3, Point3, PointCoincidence};
-use crate::geometry::LINEAR_TOLERANCE;
 use crate::geometry::axis::Axis3;
 use crate::geometry::tolerance::LINEAR_TOLERANCE_SQUARED;
+use crate::geometry::{Interval, LINEAR_TOLERANCE};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 
 pub enum Periodicity {
@@ -66,17 +67,17 @@ impl Curve {
         }
     }
 
-    pub fn parameters_between(&self, start: Point3, end: Point3) -> (f64, f64) {
+    pub fn parameters_between(&self, start: Point3, end: Point3) -> Interval {
         match self {
             Curve::Line(_) | Curve::Circle(_) => {
                 let t0 = self.param_at(start);
                 let mut t1 = self.param_at(end);
-                if start.coincides(end, LINEAR_TOLERANCE) {
-                    if let Periodicity::Periodic(period) = self.periodicity() {
-                        t1 = t0 + period;
-                    }
+                if start.coincides(end, LINEAR_TOLERANCE)
+                    && let Periodicity::Periodic(period) = self.periodicity()
+                {
+                    t1 = t0 + period;
                 }
-                (t0, t1)
+                Interval::new(t0, t1)
             }
             Curve::Nurbs(nurbs) => nurbs.domain(),
         }
@@ -88,6 +89,14 @@ impl Curve {
             Curve::Circle(c) => c.length(t0, t1),
             Curve::Nurbs(n) => n.length(t0, t1),
         }
+    }
+
+    pub fn intersect_curve(&self, _other: &Curve) -> CurveCurveIntersections {
+        todo!("curve/curve intersections are not implemented yet")
+    }
+
+    pub fn intersect_surface(&self, _surface: &Surface) -> CurveSurfaceIntersections {
+        todo!("curve/surface intersections are not implemented yet")
     }
 
     pub fn project(&self, point: Point3) -> Point3 {
@@ -170,13 +179,13 @@ pub(crate) fn circle_nurbs_knots() -> Result<KnotVector, NurbsError> {
 }
 
 fn closest_sample_parameter(curve: &NurbsCurve, point: Point3) -> f64 {
-    let (u0, u1) = curve.domain();
+    let domain = curve.domain();
     let segments = 128usize;
-    let mut best_u = u0;
+    let mut best_u = domain.start;
     let mut best_distance = f64::INFINITY;
 
     for i in 0..=segments {
-        let u = u0 + (u1 - u0) * (i as f64 / segments as f64);
+        let u = domain.start + (domain.end - domain.start) * (i as f64 / segments as f64);
         let distance = (curve.point_at(u) - point).norm_squared();
         if distance < best_distance {
             best_distance = distance;
@@ -204,10 +213,10 @@ mod tests {
             1.0,
         ));
 
-        let (t0, t1) = curve.parameters_between(start, start);
+        let interval = curve.parameters_between(start, start);
 
-        assert!((t0 - 0.0).abs() <= ANGULAR_TOLERANCE);
-        assert!((t1 - TAU).abs() <= ANGULAR_TOLERANCE);
+        assert!((interval.start - 0.0).abs() <= ANGULAR_TOLERANCE);
+        assert!((interval.end - TAU).abs() <= ANGULAR_TOLERANCE);
     }
 }
 

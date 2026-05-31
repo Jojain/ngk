@@ -93,11 +93,12 @@ fn curve_pcurve(curve: &Curve, start: Point3, end: Point3, plane: &Plane) -> Cur
     match curve {
         Curve::Line(_) => Curve2::Line(Line2::new(plane_uv(plane, start), plane_uv(plane, end))),
         Curve::Circle(_) | Curve::Nurbs(_) => {
-            let (t0, t1) = curve.parameters_between(start, end);
+            let interval = curve.parameters_between(start, end);
             let segments = 32usize;
             let points = (0..=segments)
                 .map(|i| {
-                    let t = t0 + (t1 - t0) * (i as f64 / segments as f64);
+                    let t = interval.start
+                        + (interval.end - interval.start) * (i as f64 / segments as f64);
                     plane_uv(plane, curve.point_at(t))
                 })
                 .collect();

@@ -18,4 +18,8 @@ pub enum NurbsError {
     WeightCountMismatch { expected: usize, got: usize },
     #[error("control net dimension mismatch: expected {expected} entries, got {got}")]
     ControlNetDimensionMismatch { expected: usize, got: usize },
+    #[error("Bezier control point count mismatch: expected {expected}, got {got}")]
+    BezierControlPointCountMismatch { expected: usize, got: usize },
+    #[error("parameter interval is degenerate: [{start}, {end}]")]
+    DegenerateInterval { start: f64, end: f64 },
 }

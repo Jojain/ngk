@@ -114,6 +114,132 @@ impl BBox {
         self.z_size() / 2.
     }
 
+    /// Returns the center of a non-empty box.
+    pub fn center(&self) -> Option<Point3> {
+        match self {
+            Self::Empty => None,
+            Self::NonEmpty { frame, .. } => Some(frame.origin),
+        }
+    }
+
+    /// Returns the length of the box diagonal.
+    pub fn diagonal_length(&self) -> f64 {
+        self.size().norm()
+    }
+
+    /// Returns a box expanded by `tolerance` in every local direction.
+    pub fn expanded(&self, tolerance: f64) -> Self {
+        match self {
+            Self::Empty => Self::Empty,
+            Self::NonEmpty { frame, size } => {
+                let delta = 2.0 * tolerance.max(0.0);
+                Self::NonEmpty {
+                    frame: frame.clone(),
+                    size: size + Vector3::repeat(delta),
+                }
+            }
+        }
+    }
+
+    /// Returns true when `point` lies inside this box within `tolerance`.
+    pub fn contains_point(&self, point: Point3, tolerance: f64) -> bool {
+        match self {
+            Self::Empty => false,
+            Self::NonEmpty { frame, size } => {
+                let tolerance = tolerance.max(0.0);
+                let half_size = *size / 2.0 + Vector3::repeat(tolerance);
+                let local = frame.coordinates_of(point);
+                local.x >= -half_size.x
+                    && local.x <= half_size.x
+                    && local.y >= -half_size.y
+                    && local.y <= half_size.y
+                    && local.z >= -half_size.z
+                    && local.z <= half_size.z
+            }
+        }
+    }
+
+    /// Returns true when two oriented boxes overlap within `tolerance`.
+    pub fn intersects(&self, other: &Self, tolerance: f64) -> bool {
+        let (
+            Self::NonEmpty {
+                frame: frame_a,
+                size: size_a,
+            },
+            Self::NonEmpty {
+                frame: frame_b,
+                size: size_b,
+            },
+        ) = (self, other)
+        else {
+            return false;
+        };
+
+        let tolerance = tolerance.max(0.0);
+        let half_a = *size_a / 2.0 + Vector3::repeat(tolerance);
+        let half_b = *size_b / 2.0 + Vector3::repeat(tolerance);
+        let axes_a = frame_axes(frame_a);
+        let axes_b = frame_axes(frame_b);
+
+        let mut rotation = [[0.0; 3]; 3];
+        let mut abs_rotation = [[0.0; 3]; 3];
+        for i in 0..3 {
+            for (j, axis_b) in axes_b.iter().enumerate() {
+                rotation[i][j] = axes_a[i].dot(axis_b);
+                abs_rotation[i][j] = rotation[i][j].abs() + f64::EPSILON;
+            }
+        }
+
+        let center_delta = frame_b.origin - frame_a.origin;
+        let translation = Vector3::new(
+            center_delta.dot(&axes_a[0]),
+            center_delta.dot(&axes_a[1]),
+            center_delta.dot(&axes_a[2]),
+        );
+
+        for i in 0..3 {
+            let radius_a = half_a[i];
+            let radius_b = half_b.x * abs_rotation[i][0]
+                + half_b.y * abs_rotation[i][1]
+                + half_b.z * abs_rotation[i][2];
+            if translation[i].abs() > radius_a + radius_b {
+                return false;
+            }
+        }
+
+        for (j, axis_b) in axes_b.iter().enumerate() {
+            let radius_a = half_a.x * abs_rotation[0][j]
+                + half_a.y * abs_rotation[1][j]
+                + half_a.z * abs_rotation[2][j];
+            let radius_b = half_b[j];
+            let distance = center_delta.dot(axis_b).abs();
+            if distance > radius_a + radius_b {
+                return false;
+            }
+        }
+
+        for i in 0..3 {
+            for j in 0..3 {
+                let next_i = (i + 1) % 3;
+                let last_i = (i + 2) % 3;
+                let next_j = (j + 1) % 3;
+                let last_j = (j + 2) % 3;
+                let radius_a = half_a[next_i] * abs_rotation[last_i][j]
+                    + half_a[last_i] * abs_rotation[next_i][j];
+                let radius_b = half_b[next_j] * abs_rotation[i][last_j]
+                    + half_b[last_j] * abs_rotation[i][next_j];
+                let distance = (translation[last_i] * rotation[next_i][j]
+                    - translation[next_i] * rotation[last_i][j])
+                    .abs();
+                if distance > radius_a + radius_b {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
     /// Expands the box to contain one more point.
     ///
     /// Extending an existing non-empty box preserves its current frame
@@ -279,4 +405,12 @@ impl Default for BBox {
     fn default() -> Self {
         Self::empty()
     }
+}
+
+fn frame_axes(frame: &Frame) -> [Vector3<f64>; 3] {
+    [
+        *frame.x_dir.as_ref(),
+        *frame.y_dir.as_ref(),
+        *frame.z_dir.as_ref(),
+    ]
 }

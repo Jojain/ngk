@@ -300,17 +300,29 @@ fn add_revolved_edge_face<P: Payload>(
     let rotated_curve = rotate_curve(edge_dart, &curve, axis, angle)?;
     let start_arc = revolve_circle_curve(axis, start);
     let end_arc = revolve_circle_curve(axis, end);
-    let (u0, u1) = curve.parameters_between(start, end);
+    let interval = curve.parameters_between(start, end);
     let surface = Surface::Revolution(SurfaceOfRevolution::new(
         curve.clone(),
         axis.origin,
         axis.direction,
     ));
     let pcurves = [
-        (Point2::new(u0, 0.0), Point2::new(u1, 0.0)),
-        (Point2::new(u1, 0.0), Point2::new(u1, angle.val())),
-        (Point2::new(u1, angle.val()), Point2::new(u0, angle.val())),
-        (Point2::new(u0, angle.val()), Point2::new(u0, 0.0)),
+        (
+            Point2::new(interval.start, 0.0),
+            Point2::new(interval.end, 0.0),
+        ),
+        (
+            Point2::new(interval.end, 0.0),
+            Point2::new(interval.end, angle.val()),
+        ),
+        (
+            Point2::new(interval.end, angle.val()),
+            Point2::new(interval.start, angle.val()),
+        ),
+        (
+            Point2::new(interval.start, angle.val()),
+            Point2::new(interval.start, 0.0),
+        ),
     ];
 
     add_revolved_quad_face(

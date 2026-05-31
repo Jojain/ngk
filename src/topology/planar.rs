@@ -222,12 +222,12 @@ fn edge_planarity_points<P: Payload>(
 ) -> Result<Vec<PointOnDart>, PlanarityError> {
     let mut points = edge_points(edge)?;
     if let Some(curve) = edge.curve() {
-        let (t0, t1) = match (edge.start().point(), edge.end().point()) {
+        let interval = match (edge.start().point(), edge.end().point()) {
             (Some(start), Some(end)) => curve.parameters_between(*start, *end),
             _ => return Ok(points),
         };
         points.extend(
-            sampled_curve_points(curve, t0, t1)
+            sampled_curve_points(curve, interval.start, interval.end)
                 .into_iter()
                 .map(|point| PointOnDart {
                     dart: edge.dart,
@@ -275,12 +275,12 @@ fn check_edge_curve<P: Payload>(
         return Ok(());
     };
 
-    let (t0, t1) = match (edge.start().point(), edge.end().point()) {
+    let interval = match (edge.start().point(), edge.end().point()) {
         (Some(start), Some(end)) => curve.parameters_between(*start, *end),
         _ => return Ok(()),
     };
 
-    for point in sampled_curve_points(curve, t0, t1) {
+    for point in sampled_curve_points(curve, interval.start, interval.end) {
         let distance = plane_distance(plane, point);
         if distance > tolerance {
             return Err(PlanarityError::NonPlanarCurve {

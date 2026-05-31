@@ -1,1 +1,2 @@
+mod bezier;
 mod curve;

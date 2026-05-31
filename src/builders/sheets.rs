@@ -156,17 +156,17 @@ fn extruded_edge_surface(
             })
         }
         Curve::Circle(_) | Curve::Nurbs(_) => {
-            let (u0, u1) = curve.parameters_between(start, end);
+            let interval = curve.parameters_between(start, end);
             let translated_curve = curve
                 .translated(direction)
                 .map_err(|source| ExtrudeError::CurveTranslationFailed { dart, source })?;
             Ok(ExtrudedSurface {
                 surface: Surface::Ruled(RuledSurface::new(curve.clone(), direction)),
                 uv: [
-                    Point2::new(u0, 0.0),
-                    Point2::new(u1, 0.0),
-                    Point2::new(u1, 1.0),
-                    Point2::new(u0, 1.0),
+                    Point2::new(interval.start, 0.0),
+                    Point2::new(interval.end, 0.0),
+                    Point2::new(interval.end, 1.0),
+                    Point2::new(interval.start, 1.0),
                 ],
                 boundary_curves: [
                     curve.clone(),

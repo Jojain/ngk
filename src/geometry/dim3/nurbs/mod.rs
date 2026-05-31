@@ -1,4 +1,5 @@
 pub mod basis;
+pub mod bezier;
 pub mod curve;
 pub mod degree;
 pub mod error;
@@ -7,6 +8,7 @@ pub mod points;
 pub mod surface;
 pub mod tessellate;
 
+pub use bezier::Bezier;
 pub use curve::NurbsCurve;
 pub use degree::Degree;
 pub use error::NurbsError;

@@ -5,7 +5,7 @@ use super::degree::Degree;
 use super::error::NurbsError;
 use super::knots::KnotVector;
 use super::points::{ControlNet, HPoint};
-use crate::geometry::Point3;
+use crate::geometry::{Interval, Point3};
 
 #[derive(Debug, Clone)]
 pub struct NurbsSurface {
@@ -73,18 +73,18 @@ impl NurbsSurface {
         &self.knots_v
     }
 
-    pub fn domain_u(&self) -> (f64, f64) {
+    pub fn domain_u(&self) -> Interval {
         self.knots_u.domain(self.degree_u)
     }
-    pub fn domain_v(&self) -> (f64, f64) {
+    pub fn domain_v(&self) -> Interval {
         self.knots_v.domain(self.degree_v)
     }
 
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
-        let (min_u, max_u) = self.domain_u();
-        let (min_v, max_v) = self.domain_v();
-        let u = u.clamp(min_u, max_u);
-        let v = v.clamp(min_v, max_v);
+        let domain_u = self.domain_u();
+        let domain_v = self.domain_v();
+        let u = u.clamp(domain_u.start, domain_u.end);
+        let v = v.clamp(domain_v.start, domain_v.end);
 
         let p = self.degree_u.get();
         let q = self.degree_v.get();
@@ -118,10 +118,10 @@ impl NurbsSurface {
 
     /// Returns `(dS/du, dS/dv)` in cartesian space.
     pub fn derivatives_uv(&self, u: f64, v: f64) -> (Vector3<f64>, Vector3<f64>) {
-        let (min_u, max_u) = self.domain_u();
-        let (min_v, max_v) = self.domain_v();
-        let u = u.clamp(min_u, max_u);
-        let v = v.clamp(min_v, max_v);
+        let domain_u = self.domain_u();
+        let domain_v = self.domain_v();
+        let u = u.clamp(domain_u.start, domain_u.end);
+        let v = v.clamp(domain_v.start, domain_v.end);
 
         let p = self.degree_u.get();
         let q = self.degree_v.get();

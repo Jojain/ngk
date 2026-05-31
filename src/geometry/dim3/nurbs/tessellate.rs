@@ -5,14 +5,14 @@ use crate::tessellate::IndexedMesh;
 
 /// Uniform sample of a curve into `n + 1` points across its domain.
 pub fn sample_curve_uniform(curve: &NurbsCurve, n: usize) -> Vec<Point3> {
-    let (a, b) = curve.domain();
+    let domain = curve.domain();
     if n == 0 {
-        return vec![curve.point_at(a)];
+        return vec![curve.point_at(domain.start)];
     }
     (0..=n)
         .map(|i| {
             let t = i as f64 / n as f64;
-            curve.point_at(a + (b - a) * t)
+            curve.point_at(domain.start + (domain.end - domain.start) * t)
         })
         .collect()
 }
@@ -24,9 +24,16 @@ pub fn tessellate_curve_adaptive(
     tolerance: f64,
     max_depth: usize,
 ) -> Vec<Point3> {
-    let (a, b) = curve.domain();
-    let mut out = vec![curve.point_at(a)];
-    subdivide(curve, a, b, tolerance, max_depth, &mut out);
+    let domain = curve.domain();
+    let mut out = vec![curve.point_at(domain.start)];
+    subdivide(
+        curve,
+        domain.start,
+        domain.end,
+        tolerance,
+        max_depth,
+        &mut out,
+    );
     out
 }
 
@@ -55,8 +62,8 @@ fn subdivide(
 /// Regular `nu × nv` grid tessellation of a surface. Outputs an indexed
 /// triangle mesh with per-vertex normals.
 pub fn tessellate_surface_grid(surface: &NurbsSurface, nu: usize, nv: usize) -> IndexedMesh {
-    let (u_min, u_max) = surface.domain_u();
-    let (v_min, v_max) = surface.domain_v();
+    let domain_u = surface.domain_u();
+    let domain_v = surface.domain_v();
     let nu = nu.max(1);
     let nv = nv.max(1);
 
@@ -64,10 +71,10 @@ pub fn tessellate_surface_grid(surface: &NurbsSurface, nu: usize, nv: usize) -> 
     let mut normals = Vec::with_capacity((nu + 1) * (nv + 1));
     for j in 0..=nv {
         let tv = j as f64 / nv as f64;
-        let v = v_min + (v_max - v_min) * tv;
+        let v = domain_v.start + (domain_v.end - domain_v.start) * tv;
         for i in 0..=nu {
             let tu = i as f64 / nu as f64;
-            let u = u_min + (u_max - u_min) * tu;
+            let u = domain_u.start + (domain_u.end - domain_u.start) * tu;
             positions.push(surface.point_at(u, v));
             normals.push(surface.normal_at(u, v));
         }
