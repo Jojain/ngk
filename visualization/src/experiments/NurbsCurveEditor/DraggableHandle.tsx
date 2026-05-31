@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { ThreeEvent, useThree } from "@react-three/fiber";
 
@@ -32,17 +32,54 @@ export default function DraggableHandle({
   const hit = useRef(new THREE.Vector3());
   const offset = useRef(new THREE.Vector3());
 
+  const updateFromClient = (clientX: number, clientY: number) => {
+    const rect = gl.domElement.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    raycaster.current.setFromCamera(pointer, camera);
+    if (raycaster.current.ray.intersectPlane(plane.current, hit.current)) {
+      const p = hit.current.clone().add(offset.current);
+      onChange([p.x, p.y, p.z]);
+    }
+  };
+
+  useEffect(() => {
+    const onWindowPointerMove = (e: PointerEvent) => {
+      if (!draggingRef.current) return;
+      e.preventDefault();
+      updateFromClient(e.clientX, e.clientY);
+    };
+
+    const onWindowPointerUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      setDragging(false);
+    };
+
+    window.addEventListener("pointermove", onWindowPointerMove);
+    window.addEventListener("pointerup", onWindowPointerUp);
+    window.addEventListener("pointercancel", onWindowPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onWindowPointerMove);
+      window.removeEventListener("pointerup", onWindowPointerUp);
+      window.removeEventListener("pointercancel", onWindowPointerUp);
+    };
+  });
+
   const onPointerDown = (e: ThreeEvent<PointerEvent>) => {
     if (e.button !== 0) return; // left button only
     e.stopPropagation();
-    (e.target as Element).setPointerCapture?.(e.pointerId);
+    gl.domElement.setPointerCapture?.(e.pointerId);
     draggingRef.current = true;
     setDragging(true);
     const n = new THREE.Vector3(...dragPlaneNormal).normalize();
     plane.current.setFromNormalAndCoplanarPoint(n, new THREE.Vector3(...position));
+    const rect = gl.domElement.getBoundingClientRect();
     const pointer = new THREE.Vector2(
-      (e.clientX / gl.domElement.clientWidth) * 2 - 1,
-      -(e.clientY / gl.domElement.clientHeight) * 2 + 1,
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
     raycaster.current.setFromCamera(pointer, camera);
     if (raycaster.current.ray.intersectPlane(plane.current, hit.current)) {
@@ -53,21 +90,13 @@ export default function DraggableHandle({
   const onPointerMove = (e: ThreeEvent<PointerEvent>) => {
     if (!draggingRef.current) return;
     e.stopPropagation();
-    const pointer = new THREE.Vector2(
-      (e.clientX / gl.domElement.clientWidth) * 2 - 1,
-      -(e.clientY / gl.domElement.clientHeight) * 2 + 1,
-    );
-    raycaster.current.setFromCamera(pointer, camera);
-    if (raycaster.current.ray.intersectPlane(plane.current, hit.current)) {
-      const p = hit.current.clone().add(offset.current);
-      onChange([p.x, p.y, p.z]);
-    }
+    updateFromClient(e.clientX, e.clientY);
   };
 
   const endDrag = (e: ThreeEvent<PointerEvent>) => {
     if (!draggingRef.current) return;
     e.stopPropagation();
-    (e.target as Element).releasePointerCapture?.(e.pointerId);
+    gl.domElement.releasePointerCapture?.(e.pointerId);
     draggingRef.current = false;
     setDragging(false);
   };

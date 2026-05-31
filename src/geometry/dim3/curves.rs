@@ -1,6 +1,9 @@
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, TAU};
 
-use super::intersections::{CurveCurveIntersections, CurveSurfaceIntersections};
+use super::intersections::{
+    CurveCurveIntersections, CurveSurfaceIntersections, IntersectionError, IntersectionOptions,
+    intersect_curves, intersect_curves_with_options,
+};
 use super::nurbs::error::NurbsError;
 use super::nurbs::points::{ControlPolygon, HPoint};
 use super::nurbs::{Degree, KnotVector, NurbsCurve};
@@ -91,11 +94,25 @@ impl Curve {
         }
     }
 
-    pub fn intersect_curve(&self, _other: &Curve) -> CurveCurveIntersections {
-        todo!("curve/curve intersections are not implemented yet")
+    pub fn intersect_curve(
+        &self,
+        other: &Curve,
+    ) -> Result<CurveCurveIntersections, IntersectionError> {
+        intersect_curves(self, other)
     }
 
-    pub fn intersect_surface(&self, _surface: &Surface) -> CurveSurfaceIntersections {
+    pub fn intersect_curve_with_options(
+        &self,
+        other: &Curve,
+        options: IntersectionOptions,
+    ) -> Result<CurveCurveIntersections, IntersectionError> {
+        intersect_curves_with_options(self, other, options)
+    }
+
+    pub fn intersect_surface(
+        &self,
+        _surface: &Surface,
+    ) -> Result<CurveSurfaceIntersections, IntersectionError> {
         todo!("curve/surface intersections are not implemented yet")
     }
 

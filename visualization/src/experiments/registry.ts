@@ -22,6 +22,12 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./NurbsKnotExplorer")),
   },
   {
+    id: "nurbs-intersection-explorer",
+    title: "NURBS intersection explorer",
+    group: "NURBS",
+    component: lazy(() => import("./NurbsIntersectionExplorer")),
+  },
+  {
     id: "nurbs-surface-editor",
     title: "NURBS surface editor",
     group: "NURBS",

@@ -11,7 +11,8 @@ pub use dim3::curves::{Circle, Curve, Line, Periodicity};
 pub use dim3::frame::Frame;
 pub use dim3::intersections::{
     CurveCurveIntersection, CurveCurveIntersections, CurveSurfaceIntersection,
-    CurveSurfaceIntersections, SurfaceSurfaceIntersection, SurfaceSurfaceIntersections,
+    CurveSurfaceIntersections, IntersectionError, IntersectionOptions, SurfaceSurfaceIntersection,
+    SurfaceSurfaceIntersections,
 };
 pub use dim3::nurbs::tessellate::{
     sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,

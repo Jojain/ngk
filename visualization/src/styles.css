@@ -379,3 +379,150 @@ html, body, #root {
   padding: 8px 10px;
   font-size: 12px;
 }
+
+.intersection-explorer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.intersection-panel {
+  position: absolute;
+  left: 18px;
+  top: 18px;
+  width: min(380px, calc(100vw - 312px));
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  pointer-events: auto;
+  background: rgba(23, 23, 28, 0.94);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.34);
+}
+
+.intersection-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.intersection-header h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.intersection-header span,
+.intersection-select span,
+.intersection-results span {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.intersection-header strong {
+  flex: 0 0 auto;
+  color: #f7e36b;
+  border: 1px solid rgba(247, 227, 107, 0.36);
+  background: rgba(247, 227, 107, 0.1);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.intersection-select {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.intersection-select select {
+  width: 100%;
+  min-width: 0;
+  color: var(--text);
+  background: #111116;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font: inherit;
+}
+
+.intersection-legend {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.intersection-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 12px;
+}
+
+.intersection-legend i {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.intersection-legend .curve-a {
+  background: #6ea8ff;
+}
+
+.intersection-legend .curve-b {
+  background: #f4a261;
+}
+
+.intersection-legend .curve-hit {
+  background: #f7e36b;
+}
+
+.intersection-results {
+  display: grid;
+  gap: 8px;
+}
+
+.intersection-result-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.intersection-result-row b {
+  font-size: 12px;
+}
+
+.intersection-result-row span {
+  overflow-wrap: anywhere;
+}
+
+.intersection-warning {
+  margin-top: 12px;
+  border: 1px solid rgba(255, 138, 138, 0.45);
+  background: rgba(255, 138, 138, 0.1);
+  color: #ffaaaa;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+}

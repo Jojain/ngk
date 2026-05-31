@@ -3,8 +3,8 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use crate::geometry::{
-    ControlNet, ControlPolygon, Degree, KnotVector, NurbsCurve, NurbsSurface, Point3,
-    sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
+    ControlNet, ControlPolygon, Curve, CurveCurveIntersection, Degree, KnotVector, NurbsCurve,
+    NurbsSurface, Point3, sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
 };
 
 fn js_err(e: impl ToString) -> JsValue {
@@ -143,6 +143,18 @@ impl WasmNurbsCurve {
         let domain = self.inner.domain();
         flat_from_f64(&[domain.start, domain.end])
     }
+
+    #[wasm_bindgen(js_name = intersectCurve)]
+    pub fn intersect_curve(&self, other: &WasmNurbsCurve) -> Result<JsValue, JsValue> {
+        let a = Curve::Nurbs(self.inner.clone());
+        let b = Curve::Nurbs(other.inner.clone());
+        let intersections = a.intersect_curve(&b).map_err(js_err)?;
+        let out: Vec<WasmCurveCurveIntersection> = intersections
+            .into_iter()
+            .map(WasmCurveCurveIntersection::from)
+            .collect();
+        serde_wasm_bindgen::to_value(&out).map_err(js_err)
+    }
 }
 
 #[derive(Serialize)]
@@ -150,6 +162,37 @@ struct SurfaceMesh {
     positions: Vec<f64>,
     normals: Vec<f64>,
     indices: Vec<u32>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind")]
+enum WasmCurveCurveIntersection {
+    #[serde(rename = "point")]
+    Point { point: [f64; 3], u_a: f64, u_b: f64 },
+    #[serde(rename = "overlap")]
+    Overlap {
+        interval_a: [f64; 2],
+        interval_b: [f64; 2],
+    },
+}
+
+impl From<CurveCurveIntersection> for WasmCurveCurveIntersection {
+    fn from(value: CurveCurveIntersection) -> Self {
+        match value {
+            CurveCurveIntersection::Point { point, u_a, u_b } => Self::Point {
+                point: [point.x, point.y, point.z],
+                u_a,
+                u_b,
+            },
+            CurveCurveIntersection::Overlap {
+                interval_a,
+                interval_b,
+            } => Self::Overlap {
+                interval_a: [interval_a.start, interval_a.end],
+                interval_b: [interval_b.start, interval_b.end],
+            },
+        }
+    }
 }
 
 #[wasm_bindgen(js_name = NurbsSurface)]

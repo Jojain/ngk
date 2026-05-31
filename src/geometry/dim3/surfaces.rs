@@ -1,6 +1,6 @@
 use super::curves::{Curve, circle_nurbs_control_points, circle_nurbs_knots};
 use super::frame::Frame;
-use super::intersections::SurfaceSurfaceIntersections;
+use super::intersections::{IntersectionError, SurfaceSurfaceIntersections};
 use super::nurbs::{ControlNet, Degree, HPoint, KnotVector, NurbsError, NurbsSurface};
 use super::utils::{IntoUnit3, Point3};
 use crate::geometry::LINEAR_TOLERANCE;
@@ -45,7 +45,10 @@ impl Surface {
         }
     }
 
-    pub fn intersect_surface(&self, _other: &Surface) -> SurfaceSurfaceIntersections {
+    pub fn intersect_surface(
+        &self,
+        _other: &Surface,
+    ) -> Result<SurfaceSurfaceIntersections, IntersectionError> {
         todo!("surface/surface intersections are not implemented yet")
     }
 
