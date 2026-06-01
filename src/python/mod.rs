@@ -223,6 +223,12 @@ fn curve_to_py(py: Python<'_>, curve: Curve) -> PyResult<PyObject> {
         Curve::Line(line) => Ok(Py::new(py, PyLine { line })?.into_py(py)),
         Curve::Circle(circle) => Ok(Py::new(py, PyCircle { circle })?.into_py(py)),
         Curve::Nurbs(curve) => Ok(Py::new(py, PyNurbsCurve { curve })?.into_py(py)),
+        Curve::Bounded(curve) => {
+            let curve = curve.to_nurbs().map_err(|err| {
+                PyValueError::new_err(format!("failed to convert bounded curve to nurbs: {err}"))
+            })?;
+            Ok(Py::new(py, PyNurbsCurve { curve })?.into_py(py))
+        }
     }
 }
 
@@ -969,12 +975,12 @@ pub struct PyLine {
 impl PyLine {
     #[getter]
     fn start(&self) -> PyPoint3 {
-        point(self.line.start())
+        point(self.line.origin())
     }
 
     #[getter]
     fn end(&self) -> PyPoint3 {
-        point(self.line.end())
+        point(self.line.point_at(1.0))
     }
 
     #[getter]
@@ -1220,7 +1226,7 @@ impl PySurfaceOfRevolution {
 
     #[getter]
     fn axis(&self) -> PyVector3 {
-        unit_vector(self.surface.axis())
+        unit_vector(self.surface.axis.direction)
     }
 
     #[getter]

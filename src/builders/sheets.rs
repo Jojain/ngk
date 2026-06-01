@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use nalgebra::Vector3;
 
 use crate::builders::errors::ExtrudeError;
-use crate::geometry::axis::Axis3;
 use crate::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
 };
@@ -150,13 +149,35 @@ fn extruded_edge_surface(
                 uv,
                 boundary_curves: [
                     curve.clone(),
-                    Curve::line(Axis3::new(end, direction)),
+                    Curve::line(end, end + direction),
                     translated_curve,
-                    Curve::line(Axis3::new(start, direction)),
+                    Curve::line(start + direction, start),
                 ],
             })
         }
-        Curve::Circle(_) | Curve::Nurbs(_) => {
+        Curve::Bounded(_) if is_linear_curve(curve) => {
+            let surface = lateral_plane(dart, start, end, direction)?;
+            let translated_curve = curve
+                .translated(direction)
+                .map_err(|source| ExtrudeError::CurveTranslationFailed { dart, source })?;
+            let uv = [
+                plane_uv(&surface, start),
+                plane_uv(&surface, end),
+                plane_uv(&surface, end + direction),
+                plane_uv(&surface, start + direction),
+            ];
+            Ok(ExtrudedSurface {
+                surface: Surface::Plane(surface),
+                uv,
+                boundary_curves: [
+                    curve.clone(),
+                    Curve::line(end, end + direction),
+                    translated_curve,
+                    Curve::line(start + direction, start),
+                ],
+            })
+        }
+        Curve::Circle(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
             let interval = curve.parameters_between(start, end);
             let translated_curve = curve
                 .translated(direction)
@@ -171,12 +192,20 @@ fn extruded_edge_surface(
                 ],
                 boundary_curves: [
                     curve.clone(),
-                    Curve::line(Axis3::new(end, direction)),
+                    Curve::line(end, end + direction),
                     translated_curve,
-                    Curve::line(Axis3::new(start, direction)),
+                    Curve::line(start + direction, start),
                 ],
             })
         }
+    }
+}
+
+fn is_linear_curve(curve: &Curve) -> bool {
+    match curve {
+        Curve::Line(_) => true,
+        Curve::Bounded(bounded) => matches!(bounded.inner(), Curve::Line(_)),
+        _ => false,
     }
 }
 

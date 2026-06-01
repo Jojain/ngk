@@ -197,10 +197,10 @@ fn rotate_curve(
     angle: Rad64,
 ) -> Result<Curve, RevolveError> {
     match curve {
-        Curve::Line(_) => Ok(Curve::line(Axis3::from_points(
+        Curve::Line(_) | Curve::Bounded(_) => Ok(Curve::line(
             rotate_point(axis, curve.point_at(0.0), angle),
             rotate_point(axis, curve.point_at(1.0), angle),
-        ))),
+        )),
         Curve::Circle(_) | Curve::Nurbs(_) => {
             Err(RevolveError::UnsupportedPartialRevolveCurve { dart })
         }

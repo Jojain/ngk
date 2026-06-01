@@ -3,9 +3,12 @@ use std::collections::HashSet;
 use ngk::builders::edges::add_line;
 use ngk::builders::errors::{FaceCreationError, PolylineError};
 use ngk::builders::faces::{
-    FaceEdgeSplitError, add_annulus, add_circle, add_rectangle, split_face_edge,
+    FaceEdgeSplitError, FaceImprint, add_annulus, add_circle, add_rectangle,
+    split_face_by_imprints, split_face_edge,
 };
-use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, PointCoincidence, Surface};
+use ngk::geometry::{
+    Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, PointCoincidence, Surface,
+};
 use ngk::modeling::solids::block;
 use ngk::topology::gmap::GMap;
 use ngk::topology::gmap::{Cell0, Cell2, Dim};
@@ -72,8 +75,9 @@ fn split_face_edge_updates_boundary_and_pcurves() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 1.0).expect("face should build");
     let edge = first_outer_edge_key(&g, face_key);
+    let parameter = edge_mid_parameter(&g, edge);
 
-    let split = split_face_edge(&mut g, face_key, edge, 0.5).expect("face edge should split");
+    let split = split_face_edge(&mut g, face_key, edge, parameter).expect("face edge should split");
     let face = g.face(face_key).expect("face should remain registered");
     let loop_edges = face.face(&g).outer_loop().edges();
 
@@ -167,6 +171,61 @@ fn split_face_edge_updates_both_faces_of_a_shared_solid_edge() {
             "each split boundary edge should keep a pcurve on face {face:?}"
         );
     }
+}
+
+#[test]
+fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
+    let mut g = GMap::<StandardPayload>::new();
+    let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
+    let imprint = FaceImprint {
+        points: vec![Point3::new(0.0, 0.0, 0.0), Point3::new(2.0, 2.0, 0.0)],
+        pcurve: Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0))),
+    };
+
+    let split = split_face_by_imprints(&mut g, face_key, &[imprint])
+        .expect("face imprint split should run")
+        .expect("diagonal imprint should split the face");
+
+    assert!(g.face(face_key).is_none());
+    assert_eq!(g.iter_faces().count(), 2);
+    assert_eq!(g.iter_edges().count(), 5);
+    assert_eq!(g.cells(Dim::Zero).count(), 4);
+    assert!(g.edge(split.section_edge).is_some());
+
+    for face in [split.first, split.second] {
+        let attr = g.face(face).expect("split face should exist");
+        let edges = attr.face(&g).outer_loop().edges();
+        assert_eq!(edges.len(), 3);
+        assert_eq!(attr.pcurves.len(), 3);
+        assert!(
+            edges
+                .iter()
+                .all(|edge| attr.pcurves.contains_key(&edge.dart)),
+            "each split face edge should have a pcurve"
+        );
+    }
+}
+
+#[test]
+fn split_face_by_imprints_deduplicates_reversed_boundary_chords() {
+    let mut g = GMap::<StandardPayload>::new();
+    let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
+    let first = FaceImprint {
+        points: vec![Point3::new(0.0, 0.0, 0.0), Point3::new(2.0, 2.0, 0.0)],
+        pcurve: Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0))),
+    };
+    let second = FaceImprint {
+        points: vec![Point3::new(2.0, 2.0, 0.0), Point3::new(0.0, 0.0, 0.0)],
+        pcurve: Curve2::Line(Line2::new(Point2::new(2.0, 2.0), Point2::new(0.0, 0.0))),
+    };
+
+    let split = split_face_by_imprints(&mut g, face_key, &[first, second])
+        .expect("face imprint split should run")
+        .expect("deduped diagonal imprint should split once");
+
+    assert!(g.edge(split.section_edge).is_some());
+    assert_eq!(g.iter_faces().count(), 2);
+    assert_eq!(g.iter_edges().count(), 5);
 }
 
 fn first_outer_edge_key(g: &GMap<StandardPayload>, face_key: FaceKey) -> EdgeKey {

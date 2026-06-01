@@ -26,10 +26,7 @@ fn circle_from_axis_handles_z_axis() {
 
 #[test]
 fn line_curve_converts_to_matching_nurbs_curve() {
-    let curve = Curve::line(Axis3::from_points(
-        Point3::new(1.0, 2.0, 3.0),
-        Point3::new(4.0, 6.0, 8.0),
-    ));
+    let curve = Curve::line(Point3::new(1.0, 2.0, 3.0), Point3::new(4.0, 6.0, 8.0));
     let nurbs = curve.to_nurbs().unwrap();
 
     assert_eq!(nurbs.degree().get(), 1);
@@ -61,10 +58,7 @@ fn circle_curve_converts_to_matching_rational_nurbs_curve() {
 
 #[test]
 fn curve_derivative_dispatches_to_analytic_and_nurbs_curves() {
-    let line = Curve::line(Axis3::from_points(
-        Point3::new(1.0, 2.0, 3.0),
-        Point3::new(4.0, 6.0, 8.0),
-    ));
+    let line = Curve::line(Point3::new(1.0, 2.0, 3.0), Point3::new(4.0, 6.0, 8.0));
     assert_vector_near(
         line.derivative_at(0.4, 1),
         Vector3::new(3.0, 4.0, 5.0),

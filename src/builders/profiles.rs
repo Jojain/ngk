@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::builders::edges::add_edge;
-use crate::geometry::axis::Axis3;
 use crate::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, PointCoincidence, Polyline2,
 };
@@ -22,13 +21,7 @@ pub fn add_polyline(
 
     let segments = points
         .windows(2)
-        .map(|pair| {
-            (
-                pair[0],
-                pair[1],
-                Curve::line(Axis3::from_points(pair[0], pair[1])),
-            )
-        })
+        .map(|pair| (pair[0], pair[1], Curve::line(pair[0], pair[1])))
         .collect::<Vec<_>>();
     add_segments(g, &segments)
 }
@@ -99,7 +92,22 @@ pub fn profile_pcurves<P: Payload>(
 fn curve_pcurve(curve: &Curve, start: Point3, end: Point3, plane: &Plane) -> Curve2 {
     match curve {
         Curve::Line(_) => Curve2::Line(Line2::new(plane_uv(plane, start), plane_uv(plane, end))),
+        Curve::Bounded(bounded) if matches!(bounded.inner(), Curve::Line(_)) => {
+            Curve2::Line(Line2::new(plane_uv(plane, start), plane_uv(plane, end)))
+        }
         Curve::Circle(_) | Curve::Nurbs(_) => {
+            let interval = curve.parameters_between(start, end);
+            let segments = 32usize;
+            let points = (0..=segments)
+                .map(|i| {
+                    let t = interval.start
+                        + (interval.end - interval.start) * (i as f64 / segments as f64);
+                    plane_uv(plane, curve.point_at(t))
+                })
+                .collect();
+            Curve2::Polyline(Polyline2::new(points))
+        }
+        Curve::Bounded(_) => {
             let interval = curve.parameters_between(start, end);
             let segments = 32usize;
             let points = (0..=segments)

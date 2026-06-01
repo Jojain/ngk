@@ -2,7 +2,7 @@ use nalgebra::Vector3;
 use ngk::geometry::{
     Circle, ControlPolygon, Curve, CurveCurveIntersection, CurveSurfaceIntersection, Degree,
     HPoint, KnotVector, LINEAR_TOLERANCE, NurbsCurve, Plane, Point3, PointCoincidence, Surface,
-    SurfaceSurfaceIntersection, axis::Axis3,
+    SurfaceSurfaceIntersection,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -43,7 +43,7 @@ fn unique_points(points: impl IntoIterator<Item = Point3>) -> Vec<Point3> {
 }
 
 fn line(a: Point3, b: Point3) -> Curve {
-    Curve::line(Axis3::from_points(a, b))
+    Curve::line(a, b)
 }
 
 #[test]

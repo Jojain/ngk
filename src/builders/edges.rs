@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::builders::errors::EdgeCreationError;
-use crate::geometry::axis::Axis3;
 use crate::geometry::{Circle, Curve, Interval, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
 use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap};
@@ -68,7 +67,7 @@ pub fn add_line<P: Payload>(
     start: Point3,
     end: Point3,
 ) -> Result<(Dart, EdgeKey), EdgeCreationError> {
-    let curve = Curve::line(Axis3::from_points(start, end));
+    let curve = Curve::line(start, end);
     add_edge(g, start, end, curve)
 }
 

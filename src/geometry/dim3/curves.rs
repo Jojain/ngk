@@ -24,11 +24,17 @@ pub enum Curve {
     Line(Line),
     Circle(Circle),
     Nurbs(NurbsCurve),
+    Bounded(Box<Bounded<Curve>>),
 }
 
 impl Curve {
-    pub fn line(axis: Axis3) -> Self {
-        Curve::Line(Line::new(axis))
+    pub fn line(start: Point3, end: Point3) -> Self {
+        let line = Line::new(Axis3::from_points(start, end));
+        let length = (end - start).norm();
+        Curve::Bounded(Box::new(Bounded::new(
+            Curve::Line(line),
+            Interval::new(0.0, length),
+        )))
     }
     pub fn circle(plane: Plane, radius: f64) -> Self {
         Curve::Circle(Circle::new(plane, radius))
@@ -39,6 +45,7 @@ impl Curve {
             Curve::Line(line) => line.to_nurbs(),
             Curve::Circle(circle) => circle.to_nurbs(),
             Curve::Nurbs(nurbs) => Ok(nurbs.clone()),
+            Curve::Bounded(curve) => curve.to_nurbs(),
         }
     }
 
@@ -47,6 +54,7 @@ impl Curve {
             Curve::Line(_) => Periodicity::None,
             Curve::Circle(_) => Periodicity::Periodic(TAU),
             Curve::Nurbs(_) => Periodicity::None,
+            Curve::Bounded(_) => Periodicity::None,
         }
     }
     pub fn point_at(&self, t: f64) -> Point3 {
@@ -54,6 +62,7 @@ impl Curve {
             Curve::Line(l) => l.point_at(t),
             Curve::Circle(c) => c.point_at(t),
             Curve::Nurbs(n) => n.point_at(t),
+            Curve::Bounded(c) => c.point_at(t),
         }
     }
 
@@ -62,6 +71,7 @@ impl Curve {
             Curve::Line(l) => l.derivative_at(t, order),
             Curve::Circle(c) => c.derivative_at(t, order),
             Curve::Nurbs(n) => n.derivative_at(t, order),
+            Curve::Bounded(c) => c.derivative_at(t, order),
         }
     }
 
@@ -70,11 +80,13 @@ impl Curve {
             Curve::Line(l) => l.param_at(point),
             Curve::Circle(c) => c.param_at(point),
             Curve::Nurbs(n) => closest_sample_parameter(n, point),
+            Curve::Bounded(c) => c.param_at(point),
         }
     }
 
     pub fn parameters_between(&self, start: Point3, end: Point3) -> Interval {
         match self {
+            Curve::Bounded(_) => Interval::new(self.param_at(start), self.param_at(end)),
             Curve::Line(_) | Curve::Circle(_) => {
                 let t0 = self.param_at(start);
                 let mut t1 = self.param_at(end);
@@ -94,6 +106,7 @@ impl Curve {
             Curve::Line(l) => l.length(t0, t1),
             Curve::Circle(c) => c.length(t0, t1),
             Curve::Nurbs(n) => n.length(t0, t1),
+            Curve::Bounded(c) => c.length(t0, t1),
         }
     }
 
@@ -122,6 +135,7 @@ impl Curve {
     pub fn project(&self, point: Point3) -> Point3 {
         match self {
             Curve::Line(l) => l.project(point),
+            Curve::Bounded(c) => c.project(point),
             Curve::Circle(_c) => todo!(),
             Curve::Nurbs(_n) => todo!(),
         }
@@ -129,10 +143,8 @@ impl Curve {
 
     pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
         match self {
-            Curve::Line(line) => Ok(Curve::line(Axis3::new(
-                line.origin() + direction,
-                line.direction(),
-            ))),
+            Curve::Line(line) => Ok(Curve::Line(line.translated(direction))),
+            Curve::Bounded(curve) => Ok(Curve::Bounded(Box::new(curve.translated(direction)?))),
             Curve::Circle(circle) => Ok(Curve::Circle(Circle::new(
                 Plane::new(
                     circle.plane.origin() + direction,
@@ -156,6 +168,86 @@ impl Curve {
                     nurbs.knots().clone(),
                 )?))
             }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Bounded<T> {
+    inner: T,
+    bounds: Interval,
+}
+
+impl<T> Bounded<T> {
+    pub fn new(inner: T, bounds: Interval) -> Self {
+        Self { inner, bounds }
+    }
+
+    pub fn inner(&self) -> &T {
+        &self.inner
+    }
+
+    pub fn bounds(&self) -> Interval {
+        self.bounds
+    }
+
+    fn global_parameter(&self, t: f64) -> f64 {
+        self.bounds.start + (self.bounds.end - self.bounds.start) * t
+    }
+
+    fn local_parameter(&self, t: f64) -> f64 {
+        let length = self.bounds.end - self.bounds.start;
+        if length.abs() <= LINEAR_TOLERANCE {
+            0.0
+        } else {
+            (t - self.bounds.start) / length
+        }
+    }
+}
+
+impl Bounded<Curve> {
+    pub fn point_at(&self, t: f64) -> Point3 {
+        self.inner.point_at(self.global_parameter(t))
+    }
+
+    pub fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
+        let derivative = self.inner.derivative_at(self.global_parameter(t), order);
+        if order == 1 {
+            derivative * (self.bounds.end - self.bounds.start)
+        } else {
+            derivative
+        }
+    }
+
+    pub fn param_at(&self, point: Point3) -> f64 {
+        self.local_parameter(self.inner.param_at(point))
+    }
+
+    pub fn length(&self, t0: f64, t1: f64) -> f64 {
+        self.inner
+            .length(self.global_parameter(t0), self.global_parameter(t1))
+    }
+
+    pub fn project(&self, point: Point3) -> Point3 {
+        self.inner.project(point)
+    }
+
+    pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
+        Ok(Self::new(self.inner.translated(direction)?, self.bounds))
+    }
+
+    pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        match self.inner() {
+            Curve::Line(_) => NurbsCurve::new(
+                Degree::new(1)?,
+                ControlPolygon::new(vec![
+                    HPoint::from_cartesian(self.point_at(0.0), 1.0),
+                    HPoint::from_cartesian(self.point_at(1.0), 1.0),
+                ])?,
+                KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
+            ),
+            Curve::Nurbs(curve) => Ok(curve.clone()),
+            _ => self.inner.to_nurbs(),
         }
     }
 }
@@ -252,12 +344,6 @@ impl Line {
     pub fn new(axis: Axis3) -> Self {
         Self { axis }
     }
-    pub fn from_direction(origin: Point3, direction: impl IntoUnit<3>) -> Self {
-        let direction = direction.normalized();
-        Self {
-            axis: Axis3::new(origin, direction),
-        }
-    }
 
     pub fn origin(&self) -> Point3 {
         self.axis.origin
@@ -268,8 +354,7 @@ impl Line {
     }
 
     pub fn point_at(&self, t: f64) -> Point3 {
-        self.axis
-            .project(self.axis.origin + *self.axis.direction * t)
+        self.axis.origin + *self.axis.direction * t
     }
 
     pub fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
@@ -291,11 +376,17 @@ impl Line {
     }
     /// Arc length between `t0` and `t1` (in distance units).
     pub fn length(&self, t0: f64, t1: f64) -> f64 {
-        (t1 - t0).abs() * self.axis.direction.norm()
+        (t1 - t0).abs()
     }
 
     pub fn project(&self, point: Point3) -> Point3 {
         self.axis.project(point)
+    }
+
+    pub fn translated(&self, direction: Vector3<f64>) -> Self {
+        Self {
+            axis: Axis3::new(self.axis.origin + direction, self.axis.direction),
+        }
     }
 
     pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {

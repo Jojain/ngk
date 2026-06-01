@@ -1,4 +1,4 @@
-use nalgebra::{Point4, UnitVector3, Vector3, Vector4};
+use nalgebra::{Point2, Point4, UnitVector3, Vector3, Vector4};
 
 use super::basis::{basis_function_derivatives, basis_functions};
 use super::degree::Degree;
@@ -114,6 +114,61 @@ impl NurbsSurface {
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         let (du, dv) = self.derivatives_uv(u, v);
         UnitVector3::new_normalize(du.cross(&dv))
+    }
+
+    pub fn closest_parameter(&self, point: Point3) -> Point2<f64> {
+        let (mut u, mut v) = self.closest_sample_parameter(point, 12);
+        let domain_u = self.domain_u();
+        let domain_v = self.domain_v();
+
+        for _ in 0..10 {
+            let surface_point = self.point_at(u, v);
+            let residual = surface_point - point;
+            let (du, dv) = self.derivatives_uv(u, v);
+            let uu = du.dot(&du);
+            let uv = du.dot(&dv);
+            let vv = dv.dot(&dv);
+            let ru = du.dot(&residual);
+            let rv = dv.dot(&residual);
+            let determinant = uu * vv - uv * uv;
+
+            if determinant.abs() <= 1.0e-14 {
+                break;
+            }
+
+            let delta_u = (vv * ru - uv * rv) / determinant;
+            let delta_v = (uu * rv - uv * ru) / determinant;
+            u = (u - delta_u).clamp(domain_u.start, domain_u.end);
+            v = (v - delta_v).clamp(domain_v.start, domain_v.end);
+
+            if delta_u.hypot(delta_v) <= 1.0e-10 {
+                break;
+            }
+        }
+
+        Point2::new(u, v)
+    }
+
+    fn closest_sample_parameter(&self, point: Point3, sample_count: usize) -> (f64, f64) {
+        let sample_count = sample_count.max(1);
+        let domain_u = self.domain_u();
+        let domain_v = self.domain_v();
+        let mut closest = (domain_u.start, domain_v.start);
+        let mut closest_distance = f64::INFINITY;
+
+        for i in 0..=sample_count {
+            let u = domain_u.start + domain_u.length() * (i as f64 / sample_count as f64);
+            for j in 0..=sample_count {
+                let v = domain_v.start + domain_v.length() * (j as f64 / sample_count as f64);
+                let distance = (self.point_at(u, v) - point).norm_squared();
+                if distance < closest_distance {
+                    closest = (u, v);
+                    closest_distance = distance;
+                }
+            }
+        }
+
+        closest
     }
 
     /// Returns `(dS/du, dS/dv)` in cartesian space.

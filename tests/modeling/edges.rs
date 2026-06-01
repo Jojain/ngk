@@ -13,7 +13,10 @@ fn line_returns_owned_line_edge_shape() {
 
     assert_eq!(edge.start().point(), Some(&start));
     assert_eq!(edge.end().point(), Some(&end));
-    assert!(matches!(edge.curve(), Some(Curve::Line(_))));
+    assert!(matches!(
+        edge.curve(),
+        Some(Curve::Bounded(curve)) if matches!(curve.inner(), Curve::Line(_))
+    ));
 }
 
 #[test]

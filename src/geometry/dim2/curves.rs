@@ -1,6 +1,6 @@
 use super::utils::Point2;
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Curve2 {
     Line(Line2),
     Polyline(Polyline2),
@@ -42,7 +42,7 @@ impl Curve2 {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Line2 {
     pub start: Point2,
     pub end: Point2,
@@ -77,7 +77,7 @@ impl Line2 {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Polyline2 {
     pub points: Vec<Point2>,
 }

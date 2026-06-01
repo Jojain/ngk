@@ -2,19 +2,25 @@ use std::collections::HashSet;
 
 use thiserror::Error;
 
+use crate::builders::faces::{
+    FaceEdgeSplitError, FaceImprint, FaceImprintSplitError, split_face_by_imprints, split_face_edge,
+};
 use crate::geometry::dim3::intersections::{
     intersect_curve_surface_with_options, intersect_curves_with_options,
     intersect_surfaces_with_options,
 };
 use crate::geometry::{
-    BBox, Curve, CurveCurveIntersection, CurveSurfaceIntersection, IntersectionError,
-    IntersectionOptions, Interval, LINEAR_TOLERANCE, NurbsCurve, NurbsError, NurbsSurface, Point3,
-    Surface, SurfaceSurfaceIntersection,
+    BBox, Curve, Curve2, CurveCurveIntersection, CurveSurfaceIntersection, IntersectionError,
+    IntersectionOptions, Interval, LINEAR_TOLERANCE, NurbsCurve, NurbsError, NurbsSurface, Point2,
+    Point3, Polyline2, Surface, SurfaceSurfaceIntersection,
 };
+use crate::topology::attributes::FaceAttr;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::Dart;
+use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
+use crate::topology::shape::{Shape, SolidTag};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 use crate::topology::solid::Solid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,6 +37,27 @@ pub enum BooleanError {
     Intersection(#[from] IntersectionError),
     #[error("edge {dart:?} has no attached curve")]
     MissingEdgeCurve { dart: Dart },
+    #[error("edge handle {edge:?} cannot be resolved in its operand map")]
+    MissingEdgeHandle { edge: EdgeHandle },
+    #[error("edge {edge:?} has no incident face in its operand map")]
+    MissingIncidentFace { edge: EdgeHandle },
+    #[error("face handle {face:?} cannot be resolved in its operand map")]
+    MissingFaceHandle { face: FaceHandle },
+    #[error("edge {edge:?} has missing endpoint geometry")]
+    MissingEndpointGeometry { edge: EdgeKey },
+    #[error("split parameter {parameter} does not belong to a current segment of edge {edge:?}")]
+    MissingSplitSegment { edge: EdgeHandle, parameter: f64 },
+    #[error("failed to apply split parameter {parameter} to edge {edge:?}")]
+    EdgeSplitApplicationFailed {
+        edge: EdgeHandle,
+        parameter: f64,
+        source: FaceEdgeSplitError,
+    },
+    #[error("failed to split face {face:?} by imprints")]
+    FaceSplitApplicationFailed {
+        face: FaceHandle,
+        source: FaceImprintSplitError,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -231,7 +258,129 @@ pub struct BooleanSplitPlan {
     face_sections: Vec<FaceSection>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BooleanSplitApplication {
+    edge_splits: Vec<AppliedEdgeSplit>,
+    face_sections: Vec<AppliedFaceSection>,
+    face_splits: Vec<AppliedFaceSplit>,
+}
+
+impl BooleanSplitApplication {
+    pub fn edge_splits(&self) -> &[AppliedEdgeSplit] {
+        &self.edge_splits
+    }
+
+    pub fn face_sections(&self) -> &[AppliedFaceSection] {
+        &self.face_sections
+    }
+
+    pub fn face_splits(&self) -> &[AppliedFaceSplit] {
+        &self.face_splits
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppliedEdgeSplit {
+    pub edge: EdgeHandle,
+    pub parameter: f64,
+    pub first: EdgeKey,
+    pub second: EdgeKey,
+    pub vertex: VertexKey,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppliedFaceSection {
+    pub face: FaceHandle,
+    pub kind: AppliedFaceSectionKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppliedFaceSectionKind {
+    Point {
+        point: Point3,
+        uv: Point2,
+    },
+    Curve {
+        points: Vec<Point3>,
+        pcurve: Curve2,
+    },
+    SameDomainRegion,
+    EdgeOverlap {
+        edge: EdgeHandle,
+        interval: Interval,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppliedFaceSplit {
+    pub face: FaceHandle,
+    pub first: FaceKey,
+    pub second: FaceKey,
+    pub section_edge: EdgeKey,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct EdgeSegment {
+    edge: EdgeKey,
+    domain: Interval,
+}
+
+#[derive(Clone)]
+pub struct BooleanSplitOperands<P: Payload> {
+    object: GMap<P>,
+    object_solid: SolidKey,
+    tool: GMap<P>,
+    tool_solid: SolidKey,
+    application: BooleanSplitApplication,
+}
+
+impl<P: Payload> BooleanSplitOperands<P> {
+    pub fn object_map(&self) -> &GMap<P> {
+        &self.object
+    }
+
+    pub fn object_map_mut(&mut self) -> &mut GMap<P> {
+        &mut self.object
+    }
+
+    pub fn object_solid(&self) -> SolidKey {
+        self.object_solid
+    }
+
+    pub fn tool_map(&self) -> &GMap<P> {
+        &self.tool
+    }
+
+    pub fn tool_map_mut(&mut self) -> &mut GMap<P> {
+        &mut self.tool
+    }
+
+    pub fn tool_solid(&self) -> SolidKey {
+        self.tool_solid
+    }
+
+    pub fn application(&self) -> &BooleanSplitApplication {
+        &self.application
+    }
+}
+
 impl BooleanSplitPlan {
+    pub fn from_edge_splits(edge_splits: impl IntoIterator<Item = EdgeSplit>) -> Self {
+        let mut plan = Self::default();
+        for split in edge_splits {
+            plan.add_edge_split(split.edge, split.parameter);
+        }
+        plan.sort();
+        plan
+    }
+
+    pub fn from_face_sections(face_sections: impl IntoIterator<Item = FaceSection>) -> Self {
+        Self {
+            face_sections: face_sections.into_iter().collect(),
+            ..Self::default()
+        }
+    }
+
     fn from_interferences(
         face_face_interferences: &[FaceFaceInterference],
         edge_face_interferences: &[EdgeFaceInterference],
@@ -263,6 +412,35 @@ impl BooleanSplitPlan {
 
     pub fn face_sections(&self) -> &[FaceSection] {
         &self.face_sections
+    }
+
+    pub fn apply_to_maps<P: Payload>(
+        &self,
+        object: &mut GMap<P>,
+        tool: &mut GMap<P>,
+    ) -> Result<BooleanSplitApplication, BooleanError> {
+        let mut application = BooleanSplitApplication::default();
+
+        for (edge, parameters) in self.edge_split_groups() {
+            let map = operand_map_mut(edge.source, object, tool);
+            apply_edge_splits_to_map(map, edge, &parameters, &mut application)?;
+        }
+        apply_face_sections_to_maps(self.face_sections(), object, tool, &mut application)?;
+
+        Ok(application)
+    }
+
+    fn edge_split_groups(&self) -> Vec<(EdgeHandle, Vec<f64>)> {
+        let mut groups = Vec::<(EdgeHandle, Vec<f64>)>::new();
+        for split in &self.edge_splits {
+            match groups.last_mut() {
+                Some((edge, parameters)) if *edge == split.edge => {
+                    parameters.push(split.parameter);
+                }
+                _ => groups.push((split.edge, vec![split.parameter])),
+            }
+        }
+        groups
     }
 
     fn add_face_face_interference(&mut self, interference: &FaceFaceInterference) {
@@ -379,6 +557,248 @@ impl BooleanSplitPlan {
     }
 }
 
+fn apply_edge_splits_to_map<P: Payload>(
+    g: &mut GMap<P>,
+    edge: EdgeHandle,
+    parameters: &[f64],
+    application: &mut BooleanSplitApplication,
+) -> Result<(), BooleanError> {
+    let original_edge = edge_key_for_handle(g, edge)?;
+    let mut segments = vec![EdgeSegment {
+        edge: original_edge,
+        domain: edge_domain(g, edge, original_edge)?,
+    }];
+
+    for &parameter in parameters {
+        let Some(segment_index) = split_segment_index(&segments, parameter) else {
+            if touches_existing_segment_boundary(&segments, parameter) {
+                continue;
+            }
+            return Err(BooleanError::MissingSplitSegment { edge, parameter });
+        };
+        let segment = segments[segment_index];
+        let face = incident_face_for_edge(g, edge, segment.edge)?;
+        let split = split_face_edge(g, face, segment.edge, parameter).map_err(|source| {
+            BooleanError::EdgeSplitApplicationFailed {
+                edge,
+                parameter,
+                source,
+            }
+        })?;
+
+        segments.remove(segment_index);
+        segments.push(EdgeSegment {
+            edge: split.first,
+            domain: edge_domain(g, edge, split.first)?,
+        });
+        segments.push(EdgeSegment {
+            edge: split.second,
+            domain: edge_domain(g, edge, split.second)?,
+        });
+        segments.sort_by(|a, b| a.domain.start.total_cmp(&b.domain.start));
+        application.edge_splits.push(AppliedEdgeSplit {
+            edge,
+            parameter,
+            first: split.first,
+            second: split.second,
+            vertex: split.vertex,
+        });
+    }
+
+    Ok(())
+}
+
+fn apply_face_sections_to_maps<P: Payload>(
+    sections: &[FaceSection],
+    object: &mut GMap<P>,
+    tool: &mut GMap<P>,
+    application: &mut BooleanSplitApplication,
+) -> Result<(), BooleanError> {
+    let applied = {
+        let object = &*object;
+        let tool = &*tool;
+        sections
+            .iter()
+            .map(|section| {
+                let map = operand_map(section.face.source, object, tool);
+                resolve_face_section(map, section)
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let imprint_groups = face_imprint_groups(&applied);
+    application.face_sections.extend(applied);
+
+    for (face, imprints) in imprint_groups {
+        let map = operand_map_mut(face.source, object, tool);
+        let face_key = face_key_for_handle(map, face)?;
+        if let Some(split) = split_face_by_imprints(map, face_key, &imprints)
+            .map_err(|source| BooleanError::FaceSplitApplicationFailed { face, source })?
+        {
+            application.face_splits.push(AppliedFaceSplit {
+                face,
+                first: split.first,
+                second: split.second,
+                section_edge: split.section_edge,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_face_section<P: Payload>(
+    g: &GMap<P>,
+    section: &FaceSection,
+) -> Result<AppliedFaceSection, BooleanError> {
+    let face_attr = face_attr_for_handle(g, section.face)?;
+    let kind = match &section.kind {
+        FaceSectionKind::Point(point) => AppliedFaceSectionKind::Point {
+            point: *point,
+            uv: face_attr.surface.closest_parameter(*point)?,
+        },
+        FaceSectionKind::Curve { points } => AppliedFaceSectionKind::Curve {
+            points: points.clone(),
+            pcurve: face_section_pcurve(&face_attr.surface, points)?,
+        },
+        FaceSectionKind::SameDomainRegion => AppliedFaceSectionKind::SameDomainRegion,
+        FaceSectionKind::EdgeOverlap { edge, interval } => AppliedFaceSectionKind::EdgeOverlap {
+            edge: *edge,
+            interval: *interval,
+        },
+    };
+
+    Ok(AppliedFaceSection {
+        face: section.face,
+        kind,
+    })
+}
+
+fn face_section_pcurve(surface: &Surface, points: &[Point3]) -> Result<Curve2, BooleanError> {
+    let uv_points = points
+        .iter()
+        .map(|point| surface.closest_parameter(*point))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Curve2::Polyline(Polyline2::new(uv_points)))
+}
+
+fn face_imprint_groups(sections: &[AppliedFaceSection]) -> Vec<(FaceHandle, Vec<FaceImprint>)> {
+    let mut groups = Vec::<(FaceHandle, Vec<FaceImprint>)>::new();
+    for section in sections {
+        let AppliedFaceSectionKind::Curve { points, pcurve } = &section.kind else {
+            continue;
+        };
+        let imprint = FaceImprint {
+            points: points.clone(),
+            pcurve: pcurve.clone(),
+        };
+
+        match groups.iter_mut().find(|(face, _)| *face == section.face) {
+            Some((_, imprints)) => imprints.push(imprint),
+            None => groups.push((section.face, vec![imprint])),
+        }
+    }
+    groups
+}
+
+fn operand_map_mut<'a, P: Payload>(
+    source: BooleanSource,
+    object: &'a mut GMap<P>,
+    tool: &'a mut GMap<P>,
+) -> &'a mut GMap<P> {
+    match source {
+        BooleanSource::Object => object,
+        BooleanSource::Tool => tool,
+    }
+}
+
+fn operand_map<'a, P: Payload>(
+    source: BooleanSource,
+    object: &'a GMap<P>,
+    tool: &'a GMap<P>,
+) -> &'a GMap<P> {
+    match source {
+        BooleanSource::Object => object,
+        BooleanSource::Tool => tool,
+    }
+}
+
+fn face_attr_for_handle<P: Payload>(
+    g: &GMap<P>,
+    face: FaceHandle,
+) -> Result<&FaceAttr<P::F>, BooleanError> {
+    let face_key = g
+        .attribute::<Cell2>(face.dart)
+        .copied()
+        .ok_or(BooleanError::MissingFaceHandle { face })?;
+    g.face(face_key)
+        .ok_or(BooleanError::MissingFaceHandle { face })
+}
+
+fn face_key_for_handle<P: Payload>(g: &GMap<P>, face: FaceHandle) -> Result<FaceKey, BooleanError> {
+    g.attribute::<Cell2>(face.dart)
+        .copied()
+        .ok_or(BooleanError::MissingFaceHandle { face })
+}
+
+fn edge_key_for_handle<P: Payload>(g: &GMap<P>, edge: EdgeHandle) -> Result<EdgeKey, BooleanError> {
+    let representative = g.cell_representative(edge.dart, Dim::One);
+    g.iter_edges()
+        .find_map(|(key, attr)| (attr.dart == representative).then_some(key))
+        .ok_or(BooleanError::MissingEdgeHandle { edge })
+}
+
+fn incident_face_for_edge<P: Payload>(
+    g: &GMap<P>,
+    handle: EdgeHandle,
+    edge: EdgeKey,
+) -> Result<FaceKey, BooleanError> {
+    let edge_attr = g
+        .edge(edge)
+        .ok_or(BooleanError::MissingEdgeHandle { edge: handle })?;
+    g.orbit(edge_attr.dart, g.orbit_indices(Dim::One))
+        .find_map(|dart| g.attribute::<Cell2>(dart).copied())
+        .ok_or(BooleanError::MissingIncidentFace { edge: handle })
+}
+
+fn edge_domain<P: Payload>(
+    g: &GMap<P>,
+    handle: EdgeHandle,
+    edge: EdgeKey,
+) -> Result<Interval, BooleanError> {
+    let attr = g
+        .edge(edge)
+        .ok_or(BooleanError::MissingEdgeHandle { edge: handle })?;
+    let start = g
+        .attribute::<Cell0>(attr.dart)
+        .map(|vertex| vertex.point)
+        .ok_or(BooleanError::MissingEndpointGeometry { edge })?;
+    let end_dart = g.alpha(Dim::Zero, attr.dart);
+    let end = g
+        .attribute::<Cell0>(end_dart)
+        .map(|vertex| vertex.point)
+        .ok_or(BooleanError::MissingEndpointGeometry { edge })?;
+    Ok(attr.curve.parameters_between(start, end).ordered())
+}
+
+fn split_segment_index(segments: &[EdgeSegment], parameter: f64) -> Option<usize> {
+    segments
+        .iter()
+        .position(|segment| contains_interior(segment.domain, parameter))
+}
+
+fn touches_existing_segment_boundary(segments: &[EdgeSegment], parameter: f64) -> bool {
+    segments.iter().any(|segment| {
+        (parameter - segment.domain.start).abs() <= LINEAR_TOLERANCE
+            || (parameter - segment.domain.end).abs() <= LINEAR_TOLERANCE
+    })
+}
+
+fn contains_interior(interval: Interval, parameter: f64) -> bool {
+    interval.contains(parameter, LINEAR_TOLERANCE)
+        && (parameter - interval.start).abs() > LINEAR_TOLERANCE
+        && (parameter - interval.end).abs() > LINEAR_TOLERANCE
+}
+
 #[derive(Clone)]
 pub struct BooleanWorkspace {
     object: BooleanOperand,
@@ -467,6 +887,26 @@ impl BooleanWorkspace {
 
     pub fn split_plan(&self) -> &BooleanSplitPlan {
         &self.split_plan
+    }
+
+    pub fn split_solid_shapes<P: Payload>(
+        &self,
+        object: &Shape<SolidTag, P>,
+        tool: &Shape<SolidTag, P>,
+    ) -> Result<BooleanSplitOperands<P>, BooleanError> {
+        let mut object_map = object.map().clone();
+        let mut tool_map = tool.map().clone();
+        let application = self
+            .split_plan
+            .apply_to_maps(&mut object_map, &mut tool_map)?;
+
+        Ok(BooleanSplitOperands {
+            object: object_map,
+            object_solid: object.handle(),
+            tool: tool_map,
+            tool_solid: tool.handle(),
+            application,
+        })
     }
 }
 

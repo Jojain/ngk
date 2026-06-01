@@ -341,6 +341,17 @@ impl<P: Payload> GMap<P> {
         self.faces.get_mut(key)
     }
 
+    pub(crate) fn remove_face(&mut self, key: FaceKey) -> Option<FaceAttr<P::F>> {
+        let face = self.faces.remove(key)?;
+        for dart in std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied()) {
+            let representative = self.cell_representative(dart, Dim::Two);
+            if self.facets.get(&representative) == Some(&key) {
+                self.facets.remove(&representative);
+            }
+        }
+        Some(face)
+    }
+
     /// Iterate every stored 2-cell attribute paired with its slotmap key.
     pub fn iter_faces(&self) -> impl Iterator<Item = (FaceKey, &FaceAttr<P::F>)> {
         self.faces.iter()
@@ -640,7 +651,7 @@ impl<P: Payload> GMap<P> {
         self.alphas[i][d1.id()] = d0;
     }
 
-    fn unsew(&mut self, dart: Dart, d: Dim) {
+    pub(crate) fn unsew(&mut self, dart: Dart, d: Dim) {
         let i = d.index();
         let a_i = self.alphas[i][dart.id()];
         self.alphas[i][a_i.id()] = a_i;
@@ -720,7 +731,6 @@ mod tests {
     use super::{Cell0, Cell1, Cell2, Dart, Dim, GMap, MergeTopology};
     use crate::builders::edges::add_edge;
     use crate::builders::faces::add_polygon;
-    use crate::geometry::axis::Axis3;
     use crate::geometry::{Curve, Curve2, Line2, Plane, Point2, Point3, Surface};
     use crate::topology::attributes::{FaceAttr, SolidAttr};
     use crate::topology::edge::Edge;
@@ -739,10 +749,7 @@ mod tests {
             &mut source,
             Point3::new(1.0, 0.0, 0.0),
             Point3::new(2.0, 0.0, 0.0),
-            Curve::line(Axis3::from_points(
-                Point3::new(1.0, 0.0, 0.0),
-                Point3::new(2.0, 0.0, 0.0),
-            )),
+            Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
         )
         .expect("source edge should build");
 
@@ -769,10 +776,7 @@ mod tests {
             &mut target,
             Point3::new(-1.0, 0.0, 0.0),
             Point3::new(0.0, 0.0, 0.0),
-            Curve::line(Axis3::from_points(
-                Point3::new(-1.0, 0.0, 0.0),
-                Point3::new(0.0, 0.0, 0.0),
-            )),
+            Curve::line(Point3::new(-1.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
         )
         .expect("target edge should build");
 

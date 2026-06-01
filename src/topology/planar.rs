@@ -296,7 +296,19 @@ fn check_edge_curve<P: Payload>(
 fn sampled_curve_points(curve: &Curve, t0: f64, t1: f64) -> Vec<Point3> {
     match curve {
         Curve::Line(_) => vec![curve.point_at(t0), curve.point_at(t1)],
+        Curve::Bounded(bounded) if matches!(bounded.inner(), Curve::Line(_)) => {
+            vec![curve.point_at(t0), curve.point_at(t1)]
+        }
         Curve::Circle(_) | Curve::Nurbs(_) => {
+            let segments = 32usize;
+            (0..=segments)
+                .map(|i| {
+                    let t = t0 + (t1 - t0) * (i as f64 / segments as f64);
+                    curve.point_at(t)
+                })
+                .collect()
+        }
+        Curve::Bounded(_) => {
             let segments = 32usize;
             (0..=segments)
                 .map(|i| {

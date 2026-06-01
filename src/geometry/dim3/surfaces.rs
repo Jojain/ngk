@@ -3,8 +3,9 @@ use super::frame::Frame;
 use super::intersections::{IntersectionError, SurfaceSurfaceIntersections, intersect_surfaces};
 use super::nurbs::{ControlNet, Degree, HPoint, KnotVector, NurbsError, NurbsSurface};
 use super::utils::{IntoUnit, Point3};
-use crate::geometry::axis::Axis3;
 use crate::geometry::LINEAR_TOLERANCE;
+use crate::geometry::Point2;
+use crate::geometry::axis::Axis3;
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 
 #[derive(Clone)]
@@ -36,6 +37,15 @@ impl Surface {
             Surface::Nurbs(s) => s.point_at(u, v),
         }
     }
+
+    pub fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError> {
+        match self {
+            Surface::Plane(plane) => Ok(plane.parameter_at(point)),
+            Surface::Nurbs(surface) => Ok(surface.closest_parameter(point)),
+            surface => Ok(surface.to_nurbs()?.closest_parameter(point)),
+        }
+    }
+
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         match self {
             Surface::Plane(p) => p.normal(),
@@ -129,6 +139,11 @@ impl Plane {
 
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
         self.frame.origin + u * *self.frame.x_dir + v * *self.frame.y_dir
+    }
+
+    pub fn parameter_at(&self, point: Point3) -> Point2 {
+        let offset = point - self.origin();
+        Point2::new(offset.dot(&self.x_dir()), offset.dot(&self.y_dir()))
     }
 
     pub fn origin(&self) -> Point3 {
@@ -364,39 +379,26 @@ impl SurfaceOfRevolution {
             1.0,
         ];
 
-        for (angle_index, _angular_weight) in angular_weights.iter().copied().enumerate() {
-            let angle = angle_index as f64 * std::f64::consts::FRAC_PI_2 / 2.0;
+        for (angle_index, angular_weight) in angular_weights.iter().copied().enumerate() {
+            let angle = angle_index as f64 * std::f64::consts::FRAC_PI_4;
             let is_midpoint = angle_index % 2 == 1;
-            let _radial_scale = if is_midpoint {
-                1.0 / std::f64::consts::FRAC_1_SQRT_2
+
+            let radial_scale = if is_midpoint {
+                std::f64::consts::SQRT_2
             } else {
                 1.0
             };
-            let _rotation = Rotation3::from_axis_angle(&self.axis.direction, angle);
+            let rotation = Rotation3::from_axis_angle(&self.axis.direction, angle);
 
-            for (angle_index, angular_weight) in angular_weights.iter().copied().enumerate() {
-                let angle = angle_index as f64 * std::f64::consts::FRAC_PI_4; // PI_2 / 2.0 is PI_4
-                let is_midpoint = angle_index % 2 == 1;
-
-                // Midpoint control points of a NURBS circular arc need to be pushed out
-                // to the intersection of the tangents.
-                let radial_scale = if is_midpoint {
-                    std::f64::consts::SQRT_2 // 1.0 / FRAC_1_SQRT_2 simplifies to SQRT_2
-                } else {
-                    1.0
-                };
-                let rotation = Rotation3::from_axis_angle(&self.axis.direction, angle);
-
-                for point in curve.control_points().iter() {
-                    let p = point.to_cartesian();
-                    let proj = self.axis.project(p);
-                    let radial = p - proj;
-                    let revolved = proj + rotation * (radial * radial_scale);
-                    points.push(HPoint::from_cartesian(
-                        revolved,
-                        point.weight() * angular_weight,
-                    ));
-                }
+            for point in curve.control_points().iter() {
+                let p = point.to_cartesian();
+                let proj = self.axis.project(p);
+                let radial = p - proj;
+                let revolved = proj + rotation * (radial * radial_scale);
+                points.push(HPoint::from_cartesian(
+                    revolved,
+                    point.weight() * angular_weight,
+                ));
             }
         }
 
