@@ -328,6 +328,47 @@ fn split_plan_applies_face_section_imprints_to_split_operand_faces() {
     assert_eq!(tool.map().iter_faces().count(), 1);
 }
 
+#[test]
+fn split_plan_applies_multiple_face_section_imprints_to_same_face() {
+    let mut object = faces::polygon(&[
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(2.0, 0.0, 0.0),
+        Point3::new(3.0, 1.0, 0.0),
+        Point3::new(1.5, 2.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+    ])
+    .expect("object face should build");
+    let mut tool = faces::rectangle(Plane::xy(), 1.0, 1.0).expect("tool face should build");
+    let face = FaceHandle {
+        source: BooleanSource::Object,
+        dart: object.face().outer_loop().dart,
+    };
+    let plan = BooleanSplitPlan::from_face_sections([
+        FaceSection {
+            face,
+            kind: FaceSectionKind::Curve {
+                points: vec![Point3::new(0.0, 0.0, 0.0), Point3::new(3.0, 1.0, 0.0)],
+            },
+        },
+        FaceSection {
+            face,
+            kind: FaceSectionKind::Curve {
+                points: vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.5, 2.0, 0.0)],
+            },
+        },
+    ]);
+
+    let applied = plan
+        .apply_to_maps(object.map_mut(), tool.map_mut())
+        .expect("face section plan should split object map repeatedly");
+
+    assert_eq!(applied.face_sections().len(), 2);
+    assert_eq!(applied.face_splits().len(), 2);
+    assert_eq!(object.map().iter_faces().count(), 3);
+    assert_eq!(object.map().iter_edges().count(), 7);
+    assert_eq!(tool.map().iter_faces().count(), 1);
+}
+
 fn incident_face_keys(g: &GMap<StandardPayload>, edge: EdgeKey) -> Vec<FaceKey> {
     let edge_dart = g.edge(edge).expect("edge should exist").dart;
     let mut seen = HashSet::new();

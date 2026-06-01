@@ -631,7 +631,7 @@ fn apply_face_sections_to_maps<P: Payload>(
     for (face, imprints) in imprint_groups {
         let map = operand_map_mut(face.source, object, tool);
         let face_key = face_key_for_handle(map, face)?;
-        if let Some(split) = split_face_by_imprints(map, face_key, &imprints)
+        for split in split_face_by_imprints(map, face_key, &imprints)
             .map_err(|source| BooleanError::FaceSplitApplicationFailed { face, source })?
         {
             application.face_splits.push(AppliedFaceSplit {

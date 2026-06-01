@@ -130,6 +130,37 @@ pub fn split_face_by_imprints<P: Payload>(
     g: &mut GMap<P>,
     face: FaceKey,
     imprints: &[FaceImprint],
+) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
+    let mut active_faces = vec![face];
+    let mut splits = Vec::new();
+
+    loop {
+        let mut next_faces = Vec::new();
+        let mut progressed = false;
+
+        for face in active_faces {
+            let Some(split) = split_one_face_by_imprints(g, face, imprints)? else {
+                next_faces.push(face);
+                continue;
+            };
+
+            next_faces.push(split.first);
+            next_faces.push(split.second);
+            splits.push(split);
+            progressed = true;
+        }
+
+        if !progressed {
+            return Ok(splits);
+        }
+        active_faces = next_faces;
+    }
+}
+
+fn split_one_face_by_imprints<P: Payload>(
+    g: &mut GMap<P>,
+    face: FaceKey,
+    imprints: &[FaceImprint],
 ) -> Result<Option<FaceImprintSplit>, FaceImprintSplitError> {
     let face_attr = g
         .face(face)

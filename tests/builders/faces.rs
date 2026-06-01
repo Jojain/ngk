@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use ngk::builders::edges::add_line;
 use ngk::builders::errors::{FaceCreationError, PolylineError};
 use ngk::builders::faces::{
-    FaceEdgeSplitError, FaceImprint, add_annulus, add_circle, add_rectangle,
+    FaceEdgeSplitError, FaceImprint, add_annulus, add_circle, add_face, add_polygon, add_rectangle,
     split_face_by_imprints, split_face_edge,
 };
 use ngk::geometry::{
@@ -182,17 +182,17 @@ fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
         pcurve: Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0))),
     };
 
-    let split = split_face_by_imprints(&mut g, face_key, &[imprint])
-        .expect("face imprint split should run")
-        .expect("diagonal imprint should split the face");
+    let splits = split_face_by_imprints(&mut g, face_key, &[imprint])
+        .expect("face imprint split should run");
 
     assert!(g.face(face_key).is_none());
+    assert_eq!(splits.len(), 1);
     assert_eq!(g.iter_faces().count(), 2);
     assert_eq!(g.iter_edges().count(), 5);
     assert_eq!(g.cells(Dim::Zero).count(), 4);
-    assert!(g.edge(split.section_edge).is_some());
+    assert!(g.edge(splits[0].section_edge).is_some());
 
-    for face in [split.first, split.second] {
+    for face in [splits[0].first, splits[0].second] {
         let attr = g.face(face).expect("split face should exist");
         let edges = attr.face(&g).outer_loop().edges();
         assert_eq!(edges.len(), 3);
@@ -219,13 +219,55 @@ fn split_face_by_imprints_deduplicates_reversed_boundary_chords() {
         pcurve: Curve2::Line(Line2::new(Point2::new(2.0, 2.0), Point2::new(0.0, 0.0))),
     };
 
-    let split = split_face_by_imprints(&mut g, face_key, &[first, second])
-        .expect("face imprint split should run")
-        .expect("deduped diagonal imprint should split once");
+    let splits = split_face_by_imprints(&mut g, face_key, &[first, second])
+        .expect("face imprint split should run");
 
-    assert!(g.edge(split.section_edge).is_some());
+    assert_eq!(splits.len(), 1);
+    assert!(g.edge(splits[0].section_edge).is_some());
     assert_eq!(g.iter_faces().count(), 2);
     assert_eq!(g.iter_edges().count(), 5);
+}
+
+#[test]
+fn split_face_by_imprints_applies_multiple_non_crossing_chords() {
+    let mut g = GMap::<StandardPayload>::new();
+    let points = [
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(2.0, 0.0, 0.0),
+        Point3::new(3.0, 1.0, 0.0),
+        Point3::new(1.5, 2.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+    ];
+    let loop_dart = add_polygon(&mut g, &points);
+    let face_key = add_face(&mut g, loop_dart).expect("polygon face should build");
+    let imprints = vec![
+        FaceImprint {
+            points: vec![points[0], points[2]],
+            pcurve: Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(3.0, 1.0))),
+        },
+        FaceImprint {
+            points: vec![points[0], points[3]],
+            pcurve: Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(1.5, 2.0))),
+        },
+    ];
+
+    let splits = split_face_by_imprints(&mut g, face_key, &imprints)
+        .expect("non-crossing fan chords should split");
+
+    assert_eq!(splits.len(), 2);
+    assert_eq!(g.iter_faces().count(), 3);
+    assert_eq!(g.iter_edges().count(), 7);
+
+    for (_, attr) in g.iter_faces() {
+        let edges = attr.face(&g).outer_loop().edges();
+        assert_eq!(edges.len(), 3);
+        assert_eq!(attr.pcurves.len(), 3);
+        assert!(
+            edges
+                .iter()
+                .all(|edge| attr.pcurves.contains_key(&edge.dart))
+        );
+    }
 }
 
 fn first_outer_edge_key(g: &GMap<StandardPayload>, face_key: FaceKey) -> EdgeKey {
