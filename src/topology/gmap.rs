@@ -179,6 +179,12 @@ impl<P: Payload> Clone for GMap<P> {
     }
 }
 
+impl<P: Payload> Default for GMap<P> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<P: Payload> GMap<P> {
     pub fn new() -> Self {
         let alphas = std::array::from_fn(|_| Vec::new());
@@ -213,7 +219,7 @@ impl<P: Payload> GMap<P> {
     }
 
     pub fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
-        (0..self.dart_count()).map(|id| Dart::new(id))
+        (0..self.dart_count()).map(Dart::new)
     }
 
     pub fn alpha(&self, d: Dim, dart: Dart) -> Dart {

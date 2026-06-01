@@ -139,7 +139,7 @@ fn emit_alpha_links<P: Payload>(
         for &dart_id in shafts.keys() {
             let d = Dart::new(dart_id as usize);
             let pair = g.alpha(Dim::from_index(i), d).id() as u32;
-            if pair == dart_id || pair < dart_id {
+            if pair <= dart_id {
                 continue;
             }
             let Some(a) = shafts.get(&dart_id) else {

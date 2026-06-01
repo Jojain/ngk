@@ -4,7 +4,7 @@ use super::intersections::{IntersectionError, SurfaceSurfaceIntersections, inter
 use super::nurbs::{ControlNet, Degree, HPoint, KnotVector, NurbsError, NurbsSurface};
 use super::utils::{IntoUnit, Point3};
 use crate::geometry::axis::Axis3;
-use crate::geometry::{LINEAR_TOLERANCE, axis};
+use crate::geometry::LINEAR_TOLERANCE;
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 
 #[derive(Clone)]
@@ -364,15 +364,15 @@ impl SurfaceOfRevolution {
             1.0,
         ];
 
-        for (angle_index, angular_weight) in angular_weights.iter().copied().enumerate() {
+        for (angle_index, _angular_weight) in angular_weights.iter().copied().enumerate() {
             let angle = angle_index as f64 * std::f64::consts::FRAC_PI_2 / 2.0;
             let is_midpoint = angle_index % 2 == 1;
-            let radial_scale = if is_midpoint {
+            let _radial_scale = if is_midpoint {
                 1.0 / std::f64::consts::FRAC_1_SQRT_2
             } else {
                 1.0
             };
-            let rotation = Rotation3::from_axis_angle(&self.axis.direction, angle);
+            let _rotation = Rotation3::from_axis_angle(&self.axis.direction, angle);
 
             for (angle_index, angular_weight) in angular_weights.iter().copied().enumerate() {
                 let angle = angle_index as f64 * std::f64::consts::FRAC_PI_4; // PI_2 / 2.0 is PI_4
