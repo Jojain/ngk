@@ -197,10 +197,10 @@ fn rotate_curve(
     angle: Rad64,
 ) -> Result<Curve, RevolveError> {
     match curve {
-        Curve::Line(_) => Ok(Curve::line(
+        Curve::Line(_) => Ok(Curve::line(Axis3::from_points(
             rotate_point(axis, curve.point_at(0.0), angle),
             rotate_point(axis, curve.point_at(1.0), angle),
-        )),
+        ))),
         Curve::Circle(_) | Curve::Nurbs(_) => {
             Err(RevolveError::UnsupportedPartialRevolveCurve { dart })
         }
@@ -301,11 +301,7 @@ fn add_revolved_edge_face<P: Payload>(
     let start_arc = revolve_circle_curve(axis, start);
     let end_arc = revolve_circle_curve(axis, end);
     let interval = curve.parameters_between(start, end);
-    let surface = Surface::Revolution(SurfaceOfRevolution::new(
-        curve.clone(),
-        axis.origin,
-        axis.direction,
-    ));
+    let surface = Surface::Revolution(SurfaceOfRevolution::new(curve.clone(), axis));
     let pcurves = [
         (
             Point2::new(interval.start, 0.0),

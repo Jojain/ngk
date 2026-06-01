@@ -2,8 +2,9 @@ use super::curves::{Curve, circle_nurbs_control_points, circle_nurbs_knots};
 use super::frame::Frame;
 use super::intersections::{IntersectionError, SurfaceSurfaceIntersections, intersect_surfaces};
 use super::nurbs::{ControlNet, Degree, HPoint, KnotVector, NurbsError, NurbsSurface};
-use super::utils::{IntoUnit3, Point3};
-use crate::geometry::LINEAR_TOLERANCE;
+use super::utils::{IntoUnit, Point3};
+use crate::geometry::axis::Axis3;
+use crate::geometry::{LINEAR_TOLERANCE, axis};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 
 #[derive(Clone)]
@@ -71,7 +72,6 @@ impl Surface {
             ))),
             Surface::Revolution(surface) => Ok(Surface::Revolution(SurfaceOfRevolution::new(
                 surface.curve.translated(direction)?,
-                surface.origin + direction,
                 surface.axis,
             ))),
             Surface::Nurbs(surface) => {
@@ -106,12 +106,12 @@ pub struct Plane {
 }
 
 impl Plane {
-    pub fn new(origin: Point3, x_dir: impl IntoUnit3, normal: impl IntoUnit3) -> Self {
+    pub fn new(origin: Point3, x_dir: impl IntoUnit<3>, normal: impl IntoUnit<3>) -> Self {
         Self {
             frame: Frame::from_xz(origin, x_dir, normal),
         }
     }
-    pub fn from_xy(origin: Point3, x_dir: impl IntoUnit3, y_dir: impl IntoUnit3) -> Self {
+    pub fn from_xy(origin: Point3, x_dir: impl IntoUnit<3>, y_dir: impl IntoUnit<3>) -> Self {
         Self {
             frame: Frame::from_xy(origin, x_dir, y_dir),
         }
@@ -177,7 +177,12 @@ pub struct Cylinder {
 }
 
 impl Cylinder {
-    pub fn new(origin: Point3, x_dir: impl IntoUnit3, axis: impl IntoUnit3, radius: f64) -> Self {
+    pub fn new(
+        origin: Point3,
+        x_dir: impl IntoUnit<3>,
+        axis: impl IntoUnit<3>,
+        radius: f64,
+    ) -> Self {
         Self {
             frame: Frame::from_xz(origin, x_dir, axis),
             radius,
@@ -296,17 +301,12 @@ impl RuledSurface {
 #[derive(Clone)]
 pub struct SurfaceOfRevolution {
     curve: Curve,
-    origin: Point3,
-    axis: UnitVector3<f64>,
+    pub axis: Axis3,
 }
 
 impl SurfaceOfRevolution {
-    pub fn new(curve: Curve, origin: Point3, axis: impl IntoUnit3) -> Self {
-        Self {
-            curve,
-            origin,
-            axis: axis.normalized(),
-        }
+    pub fn new(curve: Curve, axis: Axis3) -> Self {
+        Self { curve, axis }
     }
 
     pub fn curve(&self) -> &Curve {
@@ -314,11 +314,7 @@ impl SurfaceOfRevolution {
     }
 
     pub fn origin(&self) -> Point3 {
-        self.origin
-    }
-
-    pub fn axis(&self) -> UnitVector3<f64> {
-        self.axis
+        self.axis.origin
     }
 
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
@@ -326,13 +322,12 @@ impl SurfaceOfRevolution {
         let p = self.curve.point_at(u);
 
         // Project p onto the axis, then get the radial component
-        let op = p - self.origin;
-        let axial = op.dot(&self.axis) * *self.axis;
-        let radial = op - axial;
+        let proj = self.axis.project(p);
+        let radial = p - proj;
 
         // Rotate the radial part by angle v around the axis
-        let rot = Rotation3::from_axis_angle(&self.axis, v);
-        self.origin + axial + rot * radial
+        let rot = Rotation3::from_axis_angle(&self.axis.direction, v);
+        proj + (rot * radial)
     }
 
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
@@ -377,18 +372,31 @@ impl SurfaceOfRevolution {
             } else {
                 1.0
             };
-            let rotation = Rotation3::from_axis_angle(&self.axis, angle);
+            let rotation = Rotation3::from_axis_angle(&self.axis.direction, angle);
 
-            for point in curve.control_points().iter() {
-                let profile = point.to_cartesian();
-                let op = profile - self.origin;
-                let axial = op.dot(&self.axis) * *self.axis;
-                let radial = op - axial;
-                let revolved = self.origin + axial + rotation * (radial * radial_scale);
-                points.push(HPoint::from_cartesian(
-                    revolved,
-                    point.weight() * angular_weight,
-                ));
+            for (angle_index, angular_weight) in angular_weights.iter().copied().enumerate() {
+                let angle = angle_index as f64 * std::f64::consts::FRAC_PI_4; // PI_2 / 2.0 is PI_4
+                let is_midpoint = angle_index % 2 == 1;
+
+                // Midpoint control points of a NURBS circular arc need to be pushed out
+                // to the intersection of the tangents.
+                let radial_scale = if is_midpoint {
+                    std::f64::consts::SQRT_2 // 1.0 / FRAC_1_SQRT_2 simplifies to SQRT_2
+                } else {
+                    1.0
+                };
+                let rotation = Rotation3::from_axis_angle(&self.axis.direction, angle);
+
+                for point in curve.control_points().iter() {
+                    let p = point.to_cartesian();
+                    let proj = self.axis.project(p);
+                    let radial = p - proj;
+                    let revolved = proj + rotation * (radial * radial_scale);
+                    points.push(HPoint::from_cartesian(
+                        revolved,
+                        point.weight() * angular_weight,
+                    ));
+                }
             }
         }
 

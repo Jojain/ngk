@@ -150,6 +150,7 @@ impl<'a, P: Payload> Iterator for LoopIterator<'a, P> {
 mod tests {
     use super::{Closeable, Profile};
     use crate::builders::edges::add_edge;
+    use crate::geometry::axis::Axis3;
     use crate::geometry::{Curve, Point3};
     use crate::topology::gmap::{Dim, GMap};
     use crate::topology::payload::StandardPayload;
@@ -167,14 +168,14 @@ mod tests {
             &mut g,
             points[0],
             points[1],
-            Curve::line(points[0], points[1]),
+            Curve::line(Axis3::from_points(points[0], points[1])),
         )
         .expect("first edge should build");
         let (_, second_edge) = add_edge(
             &mut g,
             points[1],
             points[2],
-            Curve::line(points[1], points[2]),
+            Curve::line(Axis3::from_points(points[1], points[2])),
         )
         .expect("second edge should build");
 

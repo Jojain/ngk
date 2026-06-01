@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use nalgebra::Vector3;
 
 use crate::builders::errors::ExtrudeError;
+use crate::geometry::axis::Axis3;
 use crate::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
 };
@@ -149,9 +150,9 @@ fn extruded_edge_surface(
                 uv,
                 boundary_curves: [
                     curve.clone(),
-                    Curve::line(end, end + direction),
+                    Curve::line(Axis3::new(end, direction)),
                     translated_curve,
-                    Curve::line(start + direction, start),
+                    Curve::line(Axis3::new(start, direction)),
                 ],
             })
         }
@@ -170,9 +171,9 @@ fn extruded_edge_surface(
                 ],
                 boundary_curves: [
                     curve.clone(),
-                    Curve::line(end, end + direction),
+                    Curve::line(Axis3::new(end, direction)),
                     translated_curve,
-                    Curve::line(start + direction, start),
+                    Curve::line(Axis3::new(start, direction)),
                 ],
             })
         }

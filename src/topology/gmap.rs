@@ -714,6 +714,7 @@ mod tests {
     use super::{Cell0, Cell1, Cell2, Dart, Dim, GMap, MergeTopology};
     use crate::builders::edges::add_edge;
     use crate::builders::faces::add_polygon;
+    use crate::geometry::axis::Axis3;
     use crate::geometry::{Curve, Curve2, Line2, Plane, Point2, Point3, Surface};
     use crate::topology::attributes::{FaceAttr, SolidAttr};
     use crate::topology::edge::Edge;
@@ -732,7 +733,10 @@ mod tests {
             &mut source,
             Point3::new(1.0, 0.0, 0.0),
             Point3::new(2.0, 0.0, 0.0),
-            Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
+            Curve::line(Axis3::from_points(
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(2.0, 0.0, 0.0),
+            )),
         )
         .expect("source edge should build");
 
@@ -759,7 +763,10 @@ mod tests {
             &mut target,
             Point3::new(-1.0, 0.0, 0.0),
             Point3::new(0.0, 0.0, 0.0),
-            Curve::line(Point3::new(-1.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
+            Curve::line(Axis3::from_points(
+                Point3::new(-1.0, 0.0, 0.0),
+                Point3::new(0.0, 0.0, 0.0),
+            )),
         )
         .expect("target edge should build");
 

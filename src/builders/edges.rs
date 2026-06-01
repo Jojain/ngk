@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::builders::errors::EdgeCreationError;
+use crate::geometry::axis::Axis3;
 use crate::geometry::{Circle, Curve, Interval, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
 use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap};
@@ -67,7 +68,7 @@ pub fn add_line<P: Payload>(
     start: Point3,
     end: Point3,
 ) -> Result<(Dart, EdgeKey), EdgeCreationError> {
-    let curve = Curve::line(start, end);
+    let curve = Curve::line(Axis3::from_points(start, end));
     add_edge(g, start, end, curve)
 }
 
@@ -334,8 +335,7 @@ pub fn add_circle<P: Payload>(
     let d2 = g.add_dart();
     let start = plane.point_at(radius, 0.0);
     g.add_vertex(VertexAttr::new(d1, start, P::V::default()));
-    g.add_vertex(VertexAttr::new(d2, start, P::V::default()));
-    let curve = Curve::Circle(Circle::new(plane, radius));
+    let curve = Curve::circle(plane, radius);
     g.sew_unchecked(Dim::Zero, d1, d2);
     g.sew_unchecked(Dim::One, d1, d2);
     let e = g.add_edge(EdgeAttr::new(d1, curve, P::E::default()));

@@ -7,6 +7,7 @@ use crate::builders::errors::FaceCreationError;
 use crate::builders::profiles::{
     add_rectangle as add_rectangle_profile, add_square as add_square_profile, profile_pcurves,
 };
+use crate::geometry::axis::Axis3;
 use crate::geometry::{Curve, Curve2, LINEAR_TOLERANCE, Plane, Point3, Surface};
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
 use crate::topology::closed::Closed;
@@ -332,7 +333,7 @@ pub fn add_polygon<P: Payload>(g: &mut GMap<P>, corners: &[Point3]) -> Dart {
 
     for i in 0..n {
         let edge_dart = g.cell_representative(darts[2 * i], Dim::One);
-        let curve = Curve::line(corners[i], corners[(i + 1) % n]);
+        let curve = Curve::line(Axis3::from_points(corners[i], corners[(i + 1) % n]));
         g.add_edge(EdgeAttr::new(edge_dart, curve, P::E::default()));
     }
     darts[0]

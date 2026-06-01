@@ -2,7 +2,7 @@ use nalgebra::Vector3;
 use ngk::geometry::{
     Circle, ControlPolygon, Curve, CurveCurveIntersection, CurveSurfaceIntersection, Degree,
     HPoint, KnotVector, LINEAR_TOLERANCE, NurbsCurve, Plane, Point3, PointCoincidence, Surface,
-    SurfaceSurfaceIntersection,
+    SurfaceSurfaceIntersection, axis::Axis3,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -42,10 +42,14 @@ fn unique_points(points: impl IntoIterator<Item = Point3>) -> Vec<Point3> {
     unique
 }
 
+fn line(a: Point3, b: Point3) -> Curve {
+    Curve::line(Axis3::from_points(a, b))
+}
+
 #[test]
 fn line_line_intersection_returns_point() {
-    let a = Curve::line(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
-    let b = Curve::line(Point3::new(0.5, -1.0, 0.0), Point3::new(0.5, 1.0, 0.0));
+    let a = line(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+    let b = line(Point3::new(0.5, -1.0, 0.0), Point3::new(0.5, 1.0, 0.0));
 
     let results = a.intersect_curve(&b).unwrap();
 
@@ -56,8 +60,8 @@ fn line_line_intersection_returns_point() {
 
 #[test]
 fn skew_lines_do_not_intersect() {
-    let a = Curve::line(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
-    let b = Curve::line(Point3::new(0.5, -1.0, 1.0), Point3::new(0.5, 1.0, 1.0));
+    let a = line(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0));
+    let b = line(Point3::new(0.5, -1.0, 1.0), Point3::new(0.5, 1.0, 1.0));
 
     let results = a.intersect_curve(&b).unwrap();
 
@@ -66,8 +70,8 @@ fn skew_lines_do_not_intersect() {
 
 #[test]
 fn collinear_lines_return_overlap_interval() {
-    let a = Curve::line(Point3::new(0.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0));
-    let b = Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0));
+    let a = line(Point3::new(0.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0));
+    let b = line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0));
 
     let results = a.intersect_curve(&b).unwrap();
 
@@ -88,7 +92,7 @@ fn collinear_lines_return_overlap_interval() {
 #[test]
 fn tangent_line_circle_returns_single_point() {
     let circle = Curve::Circle(Circle::new(Plane::xy(), 1.0));
-    let line = Curve::line(Point3::new(-1.0, 1.0, 0.0), Point3::new(1.0, 1.0, 0.0));
+    let line = line(Point3::new(-1.0, 1.0, 0.0), Point3::new(1.0, 1.0, 0.0));
 
     let results = line.intersect_curve(&circle).unwrap();
 
@@ -100,7 +104,7 @@ fn tangent_line_circle_returns_single_point() {
 #[test]
 fn secant_line_circle_returns_two_points() {
     let circle = Curve::Circle(Circle::new(Plane::xy(), 1.0));
-    let line = Curve::line(Point3::new(-2.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0));
+    let line = line(Point3::new(-2.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0));
 
     let results = line.intersect_curve(&circle).unwrap();
 
@@ -166,7 +170,7 @@ fn quadratic_nurbs_curves_return_crossing_point() {
 
 #[test]
 fn line_plane_intersection_returns_curve_surface_point() {
-    let curve = Curve::line(Point3::new(0.5, 0.5, -1.0), Point3::new(0.5, 0.5, 1.0));
+    let curve = line(Point3::new(0.5, 0.5, -1.0), Point3::new(0.5, 0.5, 1.0));
     let surface = Surface::Plane(Plane::xy());
 
     let results = curve.intersect_surface(&surface).unwrap();
@@ -180,7 +184,7 @@ fn line_plane_intersection_returns_curve_surface_point() {
 
 #[test]
 fn line_on_plane_returns_curve_surface_overlap() {
-    let curve = Curve::line(Point3::new(0.2, 0.2, 0.0), Point3::new(0.8, 0.8, 0.0));
+    let curve = line(Point3::new(0.2, 0.2, 0.0), Point3::new(0.8, 0.8, 0.0));
     let surface = Surface::Plane(Plane::xy());
 
     let results = curve.intersect_surface(&surface).unwrap();

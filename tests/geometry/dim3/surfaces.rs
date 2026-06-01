@@ -3,7 +3,7 @@ use std::f64::consts::FRAC_PI_2;
 use nalgebra::Vector3;
 use ngk::geometry::{
     Curve, Cylinder, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence, RuledSurface, Surface,
-    SurfaceOfRevolution,
+    SurfaceOfRevolution, axis::Axis3,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -99,7 +99,10 @@ fn cylinder_surface_converts_to_matching_rational_nurbs_patch() {
 #[test]
 fn ruled_surface_converts_to_matching_nurbs_patch() {
     let surface = Surface::Ruled(RuledSurface::new(
-        Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
+        Curve::line(Axis3::from_points(
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(3.0, 0.0, 0.0),
+        )),
         Vector3::new(0.0, 0.0, 2.0),
     ));
     let nurbs = surface.to_nurbs().unwrap();
@@ -111,11 +114,8 @@ fn ruled_surface_converts_to_matching_nurbs_patch() {
 
 #[test]
 fn surface_of_revolution_converts_to_matching_nurbs_patch() {
-    let surface = Surface::Revolution(SurfaceOfRevolution::new(
-        Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(2.0, 0.0, 3.0)),
-        Point3::origin(),
-        Vector3::z(),
-    ));
+    let axis = Axis3::new(Point3::new(2.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 3.0));
+    let surface = Surface::Revolution(SurfaceOfRevolution::new(Curve::line(axis), axis));
     let nurbs = surface.to_nurbs().unwrap();
 
     assert_eq!(nurbs.degree_u().get(), 1);

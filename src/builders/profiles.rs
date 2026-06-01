@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::builders::edges::add_edge;
+use crate::geometry::axis::Axis3;
 use crate::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, PointCoincidence, Polyline2,
 };
@@ -21,7 +22,13 @@ pub fn add_polyline(
 
     let segments = points
         .windows(2)
-        .map(|pair| (pair[0], pair[1], Curve::line(pair[0], pair[1])))
+        .map(|pair| {
+            (
+                pair[0],
+                pair[1],
+                Curve::line(Axis3::from_points(pair[0], pair[1])),
+            )
+        })
         .collect::<Vec<_>>();
     add_segments(g, &segments)
 }

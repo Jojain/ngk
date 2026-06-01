@@ -19,7 +19,10 @@ fn partial_revolved_edge_creates_rotated_endpoint_geometry() {
         &mut g,
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(2.0, 0.0, 0.0),
-        Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
+        Curve::line(Axis3::from_points(
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(2.0, 0.0, 0.0),
+        )),
     )
     .expect("edge should build");
 
@@ -54,7 +57,10 @@ fn partial_revolved_edge_circle_side_uses_short_positive_sweep() {
         &mut g,
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(2.0, 0.0, 0.0),
-        Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
+        Curve::line(Axis3::from_points(
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(2.0, 0.0, 0.0),
+        )),
     )
     .expect("edge should build");
 
@@ -104,7 +110,10 @@ fn full_revolved_edge_uses_closed_circle_special_case() {
         &mut g,
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(2.0, 0.0, 0.0),
-        Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
+        Curve::line(Axis3::from_points(
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(2.0, 0.0, 0.0),
+        )),
     )
     .expect("edge should build");
 

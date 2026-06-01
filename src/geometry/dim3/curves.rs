@@ -8,9 +8,9 @@ use super::nurbs::error::NurbsError;
 use super::nurbs::points::{ControlPolygon, HPoint};
 use super::nurbs::{Degree, KnotVector, NurbsCurve};
 use super::surfaces::{Plane, Surface};
-use super::utils::{IntoUnit3, Point3, PointCoincidence};
+use super::utils::{IntoUnit, Point3, PointCoincidence};
 use crate::geometry::axis::Axis3;
-use crate::geometry::tolerance::LINEAR_TOLERANCE_SQUARED;
+use crate::geometry::tolerance::{LINEAR_TOLERANCE_SQUARED, MAX_DISTANCE};
 use crate::geometry::{Interval, LINEAR_TOLERANCE};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 
@@ -27,8 +27,11 @@ pub enum Curve {
 }
 
 impl Curve {
-    pub fn line(start: Point3, end: Point3) -> Self {
-        Curve::Line(Line::new(start, end))
+    pub fn line(axis: Axis3) -> Self {
+        Curve::Line(Line::new(axis))
+    }
+    pub fn circle(plane: Plane, radius: f64) -> Self {
+        Curve::Circle(Circle::new(plane, radius))
     }
 
     pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
@@ -126,7 +129,10 @@ impl Curve {
 
     pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
         match self {
-            Curve::Line(line) => Ok(Curve::line(line.start + direction, line.end + direction)),
+            Curve::Line(line) => Ok(Curve::line(Axis3::new(
+                line.origin() + direction,
+                line.direction(),
+            ))),
             Curve::Circle(circle) => Ok(Curve::Circle(Circle::new(
                 Plane::new(
                     circle.plane.origin() + direction,
@@ -239,74 +245,65 @@ mod tests {
 
 #[derive(Clone)]
 pub struct Line {
-    start: Point3,
-    end: Point3,
+    pub axis: Axis3,
 }
 
 impl Line {
-    pub fn new(start: Point3, end: Point3) -> Self {
-        Self { start, end }
+    pub fn new(axis: Axis3) -> Self {
+        Self { axis }
     }
-    pub fn from_direction(start: Point3, direction: impl IntoUnit3) -> Self {
+    pub fn from_direction(origin: Point3, direction: impl IntoUnit<3>) -> Self {
         let direction = direction.normalized();
         Self {
-            start,
-            end: start + *direction,
+            axis: Axis3::new(origin, direction),
         }
     }
 
-    pub fn start(&self) -> Point3 {
-        self.start
-    }
-
-    pub fn end(&self) -> Point3 {
-        self.end
+    pub fn origin(&self) -> Point3 {
+        self.axis.origin
     }
 
     pub fn direction(&self) -> UnitVector3<f64> {
-        (self.end - self.start).normalized()
-    }
-
-    pub fn axis(&self) -> Axis3 {
-        Axis3::new(self.start, self.direction())
+        self.axis.direction
     }
 
     pub fn point_at(&self, t: f64) -> Point3 {
-        self.start + (self.end - self.start) * t
+        self.axis
+            .project(self.axis.origin + *self.axis.direction * t)
     }
 
     pub fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
         match order {
             0 => self.point_at(t).coords,
-            1 => self.end - self.start,
+            1 => *self.axis.direction,
             _ => Vector3::zeros(),
         }
     }
     /// Inverse of [`Self::point_at`] — returns the `t ∈ [0, 1]` parameter
     /// such that `point_at(t)` is the closest point on the line.
     pub fn param_at(&self, point: Point3) -> f64 {
-        let dir = self.end - self.start;
+        let dir = *self.axis.direction;
         let len_sq = dir.norm_squared();
         if len_sq < LINEAR_TOLERANCE_SQUARED {
             return 0.0;
         }
-        (point - self.start).dot(&dir) / len_sq
+        (point - self.axis.origin).dot(&dir) / len_sq
     }
     /// Arc length between `t0` and `t1` (in distance units).
     pub fn length(&self, t0: f64, t1: f64) -> f64 {
-        (t1 - t0).abs() * (self.end - self.start).norm()
+        (t1 - t0).abs() * self.axis.direction.norm()
     }
 
     pub fn project(&self, point: Point3) -> Point3 {
-        self.axis().project(point)
+        self.axis.project(point)
     }
 
     pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
         NurbsCurve::new(
             Degree::new(1)?,
             ControlPolygon::new(vec![
-                HPoint::from_cartesian(self.start, 1.0),
-                HPoint::from_cartesian(self.end, 1.0),
+                HPoint::from_cartesian(self.axis.origin - *self.axis.direction * MAX_DISTANCE, 1.0),
+                HPoint::from_cartesian(self.axis.origin + *self.axis.direction * MAX_DISTANCE, 1.0),
             ])?,
             KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
         )

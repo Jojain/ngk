@@ -184,6 +184,7 @@ mod tests {
     use nalgebra::Vector3;
 
     use crate::builders::edges::add_edge;
+    use crate::geometry::axis::Axis3;
     use crate::geometry::{Circle, Curve, Plane, Point3};
     use crate::topology::StandardPayload;
     use crate::topology::gmap::GMap;
@@ -228,7 +229,12 @@ mod tests {
         let mut g = GMap::<StandardPayload>::new();
         let start = Point3::new(1.0, 2.0, 3.0);
         let end = Point3::new(4.0, 2.0, 3.0);
-        let _ = add_edge(&mut g, start, end, Curve::line(start, end));
+        let _ = add_edge(
+            &mut g,
+            start,
+            end,
+            Curve::line(Axis3::from_points(start, end)),
+        );
 
         let scene = scene_from_gmap(&g, &VizHints::new());
         assert_eq!(scene.darts.len(), 2);

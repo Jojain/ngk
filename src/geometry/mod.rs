@@ -22,6 +22,6 @@ pub use dim3::nurbs::{
     NurbsSurface,
 };
 pub use dim3::surfaces::{Cylinder, Plane, RuledSurface, Surface, SurfaceOfRevolution};
-pub use dim3::utils::{IntoUnit3, Point3, PointCoincidence};
+pub use dim3::utils::{IntoUnit, Point3, PointCoincidence};
 pub use interval::Interval;
 pub use tolerance::{ANGULAR_TOLERANCE, LINEAR_TOLERANCE};

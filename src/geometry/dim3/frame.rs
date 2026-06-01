@@ -1,4 +1,6 @@
-use super::utils::{IntoUnit3, Point3};
+use crate::geometry::axis::Axis3;
+
+use super::utils::{IntoUnit, Point3};
 use nalgebra::{UnitVector3, Vector3};
 
 #[derive(Clone)]
@@ -18,7 +20,7 @@ impl Frame {
             z_dir: Vector3::z_axis(),
         }
     }
-    pub fn from_xy(origin: Point3, x_dir: impl IntoUnit3, y_dir: impl IntoUnit3) -> Self {
+    pub fn from_xy(origin: Point3, x_dir: impl IntoUnit<3>, y_dir: impl IntoUnit<3>) -> Self {
         let x_dir = x_dir.normalized();
         let y_dir = y_dir.normalized();
         let z_dir = UnitVector3::new_normalize(x_dir.cross(&y_dir));
@@ -32,7 +34,7 @@ impl Frame {
         }
     }
 
-    pub fn from_xz(origin: Point3, x_dir: impl IntoUnit3, z_dir: impl IntoUnit3) -> Self {
+    pub fn from_xz(origin: Point3, x_dir: impl IntoUnit<3>, z_dir: impl IntoUnit<3>) -> Self {
         let x_dir = x_dir.normalized();
         let z_dir = z_dir.normalized();
         let y_dir = UnitVector3::new_normalize(z_dir.cross(&x_dir));
@@ -44,6 +46,16 @@ impl Frame {
             y_dir,
             z_dir,
         }
+    }
+
+    pub fn x_axis(&self) -> Axis3 {
+        Axis3::new(self.origin, self.x_dir)
+    }
+    pub fn y_axis(&self) -> Axis3 {
+        Axis3::new(self.origin, self.y_dir)
+    }
+    pub fn z_axis(&self) -> Axis3 {
+        Axis3::new(self.origin, self.z_dir)
     }
 
     pub fn coordinates_of(&self, point: Point3) -> Vector3<f64> {
