@@ -70,6 +70,12 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./BlockPrimitive")),
   },
   {
+    id: "boolean-operations",
+    title: "Boolean operations",
+    group: "Display",
+    component: lazy(() => import("./BooleanOperations")),
+  },
+  {
     id: "interactive-extrusion",
     title: "Interactive extrusion",
     group: "Display",

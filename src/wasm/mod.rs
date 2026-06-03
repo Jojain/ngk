@@ -25,6 +25,15 @@ pub fn run_script(name: &str) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&scene).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+/// Builds a boolean result from one of the registered visualization
+/// configurations.
+#[wasm_bindgen(js_name = booleanConfiguration)]
+pub fn boolean_configuration(config: &str) -> Result<JsValue, JsValue> {
+    let result =
+        scripts::boolean_configs::build_by_id(config).map_err(|e| JsValue::from_str(&e))?;
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 /// Builds an extruded regular polygon scene from live UI parameters.
 #[wasm_bindgen(js_name = extrudePolygon)]
 pub fn extrude_polygon(

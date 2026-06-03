@@ -3,11 +3,11 @@ use std::collections::HashSet;
 use ngk::builders::edges::add_line;
 use ngk::builders::errors::{FaceCreationError, PolylineError};
 use ngk::builders::faces::{
-    FaceEdgeSplitError, FaceImprint, add_annulus, add_circle, add_face, add_polygon, add_rectangle,
-    split_face_by_imprints, split_face_edge,
+    FaceEdgeSplitError, FaceImprint, FaceImprintGraph, add_annulus, add_circle, add_face,
+    add_polygon, add_rectangle, split_face_by_imprints, split_face_edge,
 };
 use ngk::geometry::{
-    Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, PointCoincidence, Surface,
+    Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, PointCoincidence, Polyline2, Surface,
 };
 use ngk::modeling::solids::block;
 use ngk::topology::gmap::GMap;
@@ -190,7 +190,8 @@ fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
     assert_eq!(g.iter_faces().count(), 2);
     assert_eq!(g.iter_edges().count(), 5);
     assert_eq!(g.cells(Dim::Zero).count(), 4);
-    assert!(g.edge(splits[0].section_edge).is_some());
+    assert_eq!(splits[0].section_edges.len(), 1);
+    assert!(g.edge(splits[0].section_edges[0]).is_some());
 
     for face in [splits[0].first, splits[0].second] {
         let attr = g.face(face).expect("split face should exist");
@@ -223,9 +224,38 @@ fn split_face_by_imprints_deduplicates_reversed_boundary_chords() {
         .expect("face imprint split should run");
 
     assert_eq!(splits.len(), 1);
-    assert!(g.edge(splits[0].section_edge).is_some());
+    assert_eq!(splits[0].section_edges.len(), 1);
+    assert!(g.edge(splits[0].section_edges[0]).is_some());
     assert_eq!(g.iter_faces().count(), 2);
     assert_eq!(g.iter_edges().count(), 5);
+}
+
+#[test]
+fn split_face_by_imprints_splits_boundary_edge_at_imprint_endpoint() {
+    let mut g = GMap::<StandardPayload>::new();
+    let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
+    let imprint = FaceImprint {
+        points: vec![Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 2.0, 0.0)],
+        pcurve: Curve2::Line(Line2::new(Point2::new(1.0, 0.0), Point2::new(2.0, 2.0))),
+    };
+
+    let splits = split_face_by_imprints(&mut g, face_key, &[imprint])
+        .expect("face imprint split should split boundary endpoint first");
+
+    assert_eq!(splits.len(), 1);
+    assert_eq!(g.iter_faces().count(), 2);
+    assert_eq!(g.iter_edges().count(), 6);
+    assert_eq!(g.cells(Dim::Zero).count(), 5);
+
+    for (_, attr) in g.iter_faces() {
+        let edges = attr.face(&g).outer_loop().edges();
+        assert_eq!(attr.pcurves.len(), edges.len());
+        assert!(
+            edges
+                .iter()
+                .all(|edge| attr.pcurves.contains_key(&edge.dart))
+        );
+    }
 }
 
 #[test]
@@ -268,6 +298,142 @@ fn split_face_by_imprints_applies_multiple_non_crossing_chords() {
                 .all(|edge| attr.pcurves.contains_key(&edge.dart))
         );
     }
+}
+
+#[test]
+fn split_face_by_imprints_ignores_crossing_chords_after_first_split() {
+    let mut g = GMap::<StandardPayload>::new();
+    let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
+    let imprints = [
+        FaceImprint {
+            points: vec![Point3::new(0.0, 0.0, 0.0), Point3::new(2.0, 2.0, 0.0)],
+            pcurve: Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0))),
+        },
+        FaceImprint {
+            points: vec![Point3::new(2.0, 0.0, 0.0), Point3::new(0.0, 2.0, 0.0)],
+            pcurve: Curve2::Line(Line2::new(Point2::new(2.0, 0.0), Point2::new(0.0, 2.0))),
+        },
+    ];
+
+    let splits = split_face_by_imprints(&mut g, face_key, &imprints)
+        .expect("crossing imprints should leave a valid partial split");
+
+    assert_eq!(splits.len(), 1);
+    assert_eq!(g.iter_faces().count(), 2);
+    assert_eq!(g.iter_edges().count(), 5);
+}
+
+#[test]
+fn split_face_by_imprints_adds_closed_interior_loop() {
+    let mut g = GMap::<StandardPayload>::new();
+    let face_key = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).expect("face should build");
+    let imprint = FaceImprint {
+        points: Vec::new(),
+        pcurve: Curve2::Polyline(Polyline2::new(vec![
+            Point2::new(1.0, 1.0),
+            Point2::new(3.0, 1.0),
+            Point2::new(3.0, 3.0),
+            Point2::new(1.0, 3.0),
+            Point2::new(1.0, 1.0),
+        ])),
+    };
+
+    let splits = split_face_by_imprints(&mut g, face_key, &[imprint])
+        .expect("closed interior imprint should split the face into regions");
+
+    assert_eq!(splits.len(), 1);
+    assert_eq!(splits[0].first, face_key);
+    assert_eq!(splits[0].section_edges.len(), 4);
+    assert!(
+        splits[0]
+            .section_edges
+            .iter()
+            .all(|edge| g.edge(*edge).is_some())
+    );
+    assert_eq!(g.iter_faces().count(), 2);
+    assert_eq!(g.iter_edges().count(), 8);
+    assert_eq!(g.cells(Dim::Zero).count(), 8);
+
+    let face = g.face(face_key).expect("original face should remain");
+    assert_eq!(face.inner_loops.len(), 1);
+    assert_eq!(face.pcurves.len(), 8);
+
+    let shape_face = face.face(&g);
+    let hole = shape_face.inner_loops()[0].clone();
+    assert_eq!(hole.edges().len(), 4);
+    assert!(
+        hole.edges()
+            .iter()
+            .all(|edge| face.pcurves.contains_key(&edge.dart))
+    );
+
+    let island = g
+        .face(splits[0].second)
+        .expect("interior island face should exist");
+    assert!(island.inner_loops.is_empty());
+    assert_eq!(island.face(&g).outer_loop().edges().len(), 4);
+    assert_eq!(island.pcurves.len(), 4);
+}
+
+#[test]
+fn face_imprint_graph_splits_crossing_segments_at_interior_vertex() {
+    let graph = FaceImprintGraph::from_imprints(&[
+        FaceImprint {
+            points: Vec::new(),
+            pcurve: Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0))),
+        },
+        FaceImprint {
+            points: Vec::new(),
+            pcurve: Curve2::Line(Line2::new(Point2::new(2.0, 0.0), Point2::new(0.0, 2.0))),
+        },
+    ]);
+
+    assert_eq!(graph.vertices().len(), 5);
+    assert_eq!(graph.edges().len(), 4);
+    assert_eq!(graph.branch_vertices().len(), 1);
+    let branch = graph.branch_vertices()[0];
+    assert_eq!(graph.vertex_degree(branch), 4);
+    assert!((graph.vertices()[branch].uv - Point2::new(1.0, 1.0)).norm() <= LINEAR_TOLERANCE);
+}
+
+#[test]
+fn face_imprint_graph_splits_t_junction_segments() {
+    let graph = FaceImprintGraph::from_imprints(&[
+        FaceImprint {
+            points: Vec::new(),
+            pcurve: Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 0.0))),
+        },
+        FaceImprint {
+            points: Vec::new(),
+            pcurve: Curve2::Line(Line2::new(Point2::new(1.0, 1.0), Point2::new(1.0, 0.0))),
+        },
+    ]);
+
+    assert_eq!(graph.vertices().len(), 4);
+    assert_eq!(graph.edges().len(), 3);
+    assert_eq!(graph.branch_vertices().len(), 1);
+    let branch = graph.branch_vertices()[0];
+    assert_eq!(graph.vertex_degree(branch), 3);
+    assert!((graph.vertices()[branch].uv - Point2::new(1.0, 0.0)).norm() <= LINEAR_TOLERANCE);
+}
+
+#[test]
+fn face_imprint_graph_detects_closed_loop_components() {
+    let graph = FaceImprintGraph::from_imprints(&[FaceImprint {
+        points: Vec::new(),
+        pcurve: Curve2::Polyline(Polyline2::new(vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 0.0),
+            Point2::new(1.0, 1.0),
+            Point2::new(0.0, 1.0),
+            Point2::new(0.0, 0.0),
+        ])),
+    }]);
+
+    assert_eq!(graph.vertices().len(), 4);
+    assert_eq!(graph.edges().len(), 4);
+    assert_eq!(graph.closed_component_count(), 1);
+    assert!(graph.branch_vertices().is_empty());
 }
 
 fn first_outer_edge_key(g: &GMap<StandardPayload>, face_key: FaceKey) -> EdgeKey {

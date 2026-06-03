@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use nalgebra::Vector3;
 use thiserror::Error;
 
 use crate::builders::faces::{
@@ -11,14 +12,15 @@ use crate::geometry::dim3::intersections::{
 };
 use crate::geometry::{
     BBox, Curve, Curve2, CurveCurveIntersection, CurveSurfaceIntersection, IntersectionError,
-    IntersectionOptions, Interval, LINEAR_TOLERANCE, NurbsCurve, NurbsError, NurbsSurface, Point2,
-    Point3, Polyline2, Surface, SurfaceSurfaceIntersection,
+    IntersectionOptions, Interval, LINEAR_TOLERANCE, Line2, NurbsCurve, NurbsError, NurbsSurface,
+    Plane, Point2, Point3, PointCoincidence, Polyline2, Surface, SurfaceSurfaceIntersection,
 };
-use crate::topology::attributes::FaceAttr;
+use crate::topology::attributes::{FaceAttr, SolidAttr};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap};
+use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap, MergeTopology};
 use crate::topology::payload::Payload;
+use crate::topology::profile::Loop;
 use crate::topology::shape::{Shape, SolidTag};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 use crate::topology::solid::Solid;
@@ -58,6 +60,31 @@ pub enum BooleanError {
         face: FaceHandle,
         source: FaceImprintSplitError,
     },
+    #[error("solid handle {solid:?} cannot be resolved in its operand map")]
+    MissingSolidHandle { solid: SolidKey },
+    #[error("face {face:?} has no sample point for classification")]
+    MissingFaceSample { face: FaceKey },
+    #[error("face has no usable UV loop sample for classification")]
+    MissingFaceUvSample,
+    #[error("boolean {operation:?} selected no faces for the result")]
+    EmptyResultSelection { operation: BooleanOperation },
+    #[error(
+        "boolean {operation:?} selected faces do not form a closed shell ({free_edge_count} free result edges)"
+    )]
+    OpenResultShell {
+        operation: BooleanOperation,
+        free_edge_count: usize,
+    },
+    #[error("failed to sew selected result edges {first:?} and {second:?}: {reason}")]
+    ResultEdgeSewFailed {
+        first: Dart,
+        second: Dart,
+        reason: &'static str,
+    },
+    #[error("face {face:?} has no orientation sample")]
+    MissingOrientationSample { face: FaceKey },
+    #[error("face {face:?} uses a surface that cannot be orientation-flipped yet")]
+    UnsupportedFaceOrientationFlip { face: FaceKey },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -316,7 +343,67 @@ pub struct AppliedFaceSplit {
     pub face: FaceHandle,
     pub first: FaceKey,
     pub second: FaceKey,
-    pub section_edge: EdgeKey,
+    pub section_edges: Vec<EdgeKey>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BooleanClassification {
+    Inside,
+    Outside,
+    Boundary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BooleanOperation {
+    Union,
+    Intersection,
+    Difference,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BooleanFaceClassification {
+    pub source: BooleanSource,
+    pub face: FaceKey,
+    pub classification: BooleanClassification,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BooleanFaceSelection {
+    pub source: BooleanSource,
+    pub face: FaceKey,
+    pub classification: BooleanClassification,
+    pub keep: bool,
+}
+
+pub fn boolean<P: Payload>(
+    object: &Shape<SolidTag, P>,
+    tool: &Shape<SolidTag, P>,
+    operation: BooleanOperation,
+) -> Result<Shape<SolidTag, P>, BooleanError> {
+    let workspace = BooleanWorkspace::from_solids(&object.solid(), &tool.solid())?;
+    let split = workspace.split_solid_shapes(object, tool)?;
+    split.build_result(operation)
+}
+
+pub fn boolean_union<P: Payload>(
+    object: &Shape<SolidTag, P>,
+    tool: &Shape<SolidTag, P>,
+) -> Result<Shape<SolidTag, P>, BooleanError> {
+    boolean(object, tool, BooleanOperation::Union)
+}
+
+pub fn boolean_intersection<P: Payload>(
+    object: &Shape<SolidTag, P>,
+    tool: &Shape<SolidTag, P>,
+) -> Result<Shape<SolidTag, P>, BooleanError> {
+    boolean(object, tool, BooleanOperation::Intersection)
+}
+
+pub fn boolean_difference<P: Payload>(
+    object: &Shape<SolidTag, P>,
+    tool: &Shape<SolidTag, P>,
+) -> Result<Shape<SolidTag, P>, BooleanError> {
+    boolean(object, tool, BooleanOperation::Difference)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -362,6 +449,670 @@ impl<P: Payload> BooleanSplitOperands<P> {
     pub fn application(&self) -> &BooleanSplitApplication {
         &self.application
     }
+
+    pub fn classify_faces(&self) -> Result<Vec<BooleanFaceClassification>, BooleanError> {
+        let object_solid = solid_for_key(&self.object, self.object_solid)?;
+        let tool_solid = solid_for_key(&self.tool, self.tool_solid)?;
+        let mut classifications = classify_operand_faces(
+            BooleanSource::Object,
+            &self.object,
+            &object_solid,
+            &tool_solid,
+        )?;
+        classifications.extend(classify_operand_faces(
+            BooleanSource::Tool,
+            &self.tool,
+            &tool_solid,
+            &object_solid,
+        )?);
+        Ok(classifications)
+    }
+
+    pub fn select_faces(
+        &self,
+        operation: BooleanOperation,
+    ) -> Result<Vec<BooleanFaceSelection>, BooleanError> {
+        Ok(self
+            .classify_faces()?
+            .into_iter()
+            .map(|face| BooleanFaceSelection {
+                keep: should_keep_face(operation, face.source, face.classification),
+                source: face.source,
+                face: face.face,
+                classification: face.classification,
+            })
+            .collect())
+    }
+
+    pub fn build_result(
+        &self,
+        operation: BooleanOperation,
+    ) -> Result<Shape<SolidTag, P>, BooleanError> {
+        let selections = self.select_faces(operation)?;
+        let mut result = merge_selected_faces(&self.object, &self.tool, &selections)?;
+        sew_matching_result_edges(&mut result)?;
+
+        let Some(shell_dart) = result_shell_dart(&result) else {
+            return Err(BooleanError::OpenResultShell {
+                operation,
+                free_edge_count: free_result_edge_count(&result),
+            });
+        };
+        orient_result_shell(&mut result, shell_dart)?;
+
+        let solid = result.add_solid(SolidAttr::new(
+            P::S::default(),
+            result.cell_representative(shell_dart, Dim::Three),
+            None,
+        ));
+        Ok(Shape::new(result, solid))
+    }
+}
+
+pub fn classify_point_against_solid<P: Payload>(
+    solid: &Solid<'_, P>,
+    point: Point3,
+) -> Result<BooleanClassification, BooleanError> {
+    let faces = solid
+        .shells()
+        .into_iter()
+        .flat_map(|shell| shell.faces())
+        .collect::<Vec<_>>();
+
+    if faces.is_empty() {
+        return Ok(BooleanClassification::Outside);
+    }
+
+    for face in &faces {
+        if point_lies_on_face(face, point)? {
+            return Ok(BooleanClassification::Boundary);
+        }
+    }
+
+    let ray = classification_ray(&faces);
+    let mut hits = Vec::new();
+    for face in &faces {
+        if let Some(distance) = ray_face_intersection(point, ray, face)? {
+            hits.push(distance);
+        }
+    }
+
+    hits.sort_by(|a, b| a.total_cmp(b));
+    hits.dedup_by(|a, b| (*a - *b).abs() <= LINEAR_TOLERANCE * 10.0);
+
+    if hits.len() % 2 == 1 {
+        Ok(BooleanClassification::Inside)
+    } else {
+        Ok(BooleanClassification::Outside)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClassificationRay {
+    direction: Vector3<f64>,
+    length: f64,
+}
+
+fn solid_for_key<P: Payload>(g: &GMap<P>, solid: SolidKey) -> Result<Solid<'_, P>, BooleanError> {
+    g.solid(solid)
+        .map(|attr| Solid::new(g, attr))
+        .ok_or(BooleanError::MissingSolidHandle { solid })
+}
+
+fn classify_operand_faces<P: Payload>(
+    source: BooleanSource,
+    map: &GMap<P>,
+    solid: &Solid<'_, P>,
+    against: &Solid<'_, P>,
+) -> Result<Vec<BooleanFaceClassification>, BooleanError> {
+    let mut classifications = Vec::new();
+    for face in solid.shells().into_iter().flat_map(|shell| shell.faces()) {
+        let face_key = map
+            .attribute::<Cell2>(face.outer_loop().dart)
+            .copied()
+            .ok_or(BooleanError::MissingFaceHandle {
+                face: FaceHandle {
+                    source,
+                    dart: face.outer_loop().dart,
+                },
+            })?;
+        let point = sample_face_region_point(&face)
+            .ok_or(BooleanError::MissingFaceSample { face: face_key })?;
+        let classification = classify_point_against_solid(against, point)?;
+        classifications.push(BooleanFaceClassification {
+            source,
+            face: face_key,
+            classification,
+        });
+    }
+    Ok(classifications)
+}
+
+fn should_keep_face(
+    operation: BooleanOperation,
+    source: BooleanSource,
+    classification: BooleanClassification,
+) -> bool {
+    match operation {
+        BooleanOperation::Union => match classification {
+            BooleanClassification::Outside => true,
+            BooleanClassification::Inside => false,
+            BooleanClassification::Boundary => source == BooleanSource::Object,
+        },
+        BooleanOperation::Intersection => match classification {
+            BooleanClassification::Inside => true,
+            BooleanClassification::Outside => false,
+            BooleanClassification::Boundary => source == BooleanSource::Object,
+        },
+        BooleanOperation::Difference => matches!(
+            (source, classification),
+            (
+                BooleanSource::Object,
+                BooleanClassification::Outside | BooleanClassification::Boundary
+            ) | (BooleanSource::Tool, BooleanClassification::Inside)
+        ),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ResultEdge {
+    dart: Dart,
+    reversed_dart: Dart,
+    start: Point3,
+    end: Point3,
+}
+
+fn merge_selected_faces<P: Payload>(
+    object: &GMap<P>,
+    tool: &GMap<P>,
+    selections: &[BooleanFaceSelection],
+) -> Result<GMap<P>, BooleanError> {
+    let mut result = GMap::new();
+    for source in [BooleanSource::Object, BooleanSource::Tool] {
+        let map = operand_map(source, object, tool);
+        let faces = selections
+            .iter()
+            .filter(|selection| selection.keep && selection.source == source)
+            .map(|selection| selection.face)
+            .collect::<Vec<_>>();
+        if faces.is_empty() {
+            continue;
+        }
+        result.merge(SelectedFaceSet::new(source, map, &faces)?);
+    }
+    Ok(result)
+}
+
+struct SelectedFaceSet<'a, P: Payload> {
+    map: &'a GMap<P>,
+    handle: Dart,
+    darts: Vec<Dart>,
+}
+
+impl<'a, P: Payload> SelectedFaceSet<'a, P> {
+    fn new(
+        source: BooleanSource,
+        map: &'a GMap<P>,
+        faces: &[FaceKey],
+    ) -> Result<Self, BooleanError> {
+        let mut darts = Vec::new();
+        for face in faces {
+            let attr = map.face(*face).ok_or(BooleanError::MissingFaceHandle {
+                face: FaceHandle {
+                    source,
+                    dart: Dart::new(0),
+                },
+            })?;
+            let view = attr.face(map);
+            darts.extend(view.outer_loop().darts());
+            for loop_ in view.inner_loops() {
+                darts.extend(loop_.darts());
+            }
+        }
+
+        let handle = *darts.first().ok_or(BooleanError::EmptyResultSelection {
+            operation: BooleanOperation::Union,
+        })?;
+        Ok(Self { map, handle, darts })
+    }
+}
+
+impl<P: Payload> MergeTopology<P> for SelectedFaceSet<'_, P> {
+    fn source_map(&self) -> &GMap<P> {
+        self.map
+    }
+
+    fn merge_darts(&self) -> Vec<Dart> {
+        self.darts.clone()
+    }
+
+    fn handle_dart(&self) -> Dart {
+        self.handle
+    }
+}
+
+fn sew_matching_result_edges<P: Payload>(g: &mut GMap<P>) -> Result<(), BooleanError> {
+    loop {
+        let free_edges = result_free_edges(g)?;
+        let Some((first, second)) = matching_free_edge_pair(&free_edges) else {
+            break;
+        };
+
+        g.sew(Dim::Two, first.dart, second).map_err(|reason| {
+            BooleanError::ResultEdgeSewFailed {
+                first: first.dart,
+                second,
+                reason,
+            }
+        })?;
+    }
+
+    sew_degenerate_result_edges(g)?;
+    Ok(())
+}
+
+fn matching_free_edge_pair(free_edges: &[ResultEdge]) -> Option<(ResultEdge, Dart)> {
+    free_edges.iter().enumerate().find_map(|(index, first)| {
+        free_edges[index + 1..]
+            .iter()
+            .find_map(|second| matching_result_edge_dart(*first, *second))
+            .map(|second| (*first, second))
+    })
+}
+
+fn sew_degenerate_result_edges<P: Payload>(g: &mut GMap<P>) -> Result<(), BooleanError> {
+    for edge in result_free_edges(g)? {
+        if !g.is_free(edge.dart, Dim::Two) || !edge_is_degenerate(edge) {
+            continue;
+        }
+
+        g.sew(Dim::Two, edge.dart, edge.reversed_dart)
+            .map_err(|reason| BooleanError::ResultEdgeSewFailed {
+                first: edge.dart,
+                second: edge.reversed_dart,
+                reason,
+            })?;
+    }
+    Ok(())
+}
+
+fn result_free_edges<P: Payload>(g: &GMap<P>) -> Result<Vec<ResultEdge>, BooleanError> {
+    g.iter_edges()
+        .filter(|(_, edge)| g.is_free(edge.dart, Dim::Two))
+        .map(|(key, edge)| {
+            let reversed_dart = g.alpha(Dim::Zero, edge.dart);
+            let start = vertex_orbit_point(g, edge.dart)
+                .ok_or(BooleanError::MissingEndpointGeometry { edge: key })?;
+            let end = vertex_orbit_point(g, reversed_dart)
+                .ok_or(BooleanError::MissingEndpointGeometry { edge: key })?;
+            Ok(ResultEdge {
+                dart: edge.dart,
+                reversed_dart,
+                start,
+                end,
+            })
+        })
+        .collect()
+}
+
+fn vertex_orbit_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Option<Point3> {
+    g.orbit(dart, g.orbit_indices(Dim::Zero))
+        .find_map(|candidate| g.attribute::<Cell0>(candidate).map(|vertex| vertex.point))
+}
+
+fn matching_result_edge_dart(first: ResultEdge, second: ResultEdge) -> Option<Dart> {
+    if first.start.coincides(second.end, LINEAR_TOLERANCE)
+        && first.end.coincides(second.start, LINEAR_TOLERANCE)
+    {
+        return Some(second.dart);
+    }
+
+    if first.start.coincides(second.start, LINEAR_TOLERANCE)
+        && first.end.coincides(second.end, LINEAR_TOLERANCE)
+    {
+        return Some(second.reversed_dart);
+    }
+
+    None
+}
+
+fn edge_is_degenerate(edge: ResultEdge) -> bool {
+    edge.start.coincides(edge.end, LINEAR_TOLERANCE)
+}
+
+fn result_shell_dart<P: Payload>(g: &GMap<P>) -> Option<Dart> {
+    let mut visited = HashSet::new();
+    let mut best = None;
+
+    for (_, face) in g.iter_faces() {
+        if !visited.insert(face.outer_loop) {
+            continue;
+        }
+
+        let darts = g.orbit(face.outer_loop, vec![0, 1, 2]).collect::<Vec<_>>();
+        visited.extend(darts.iter().copied());
+        if !darts.iter().all(|dart| {
+            !g.is_free(*dart, Dim::Zero)
+                && !g.is_free(*dart, Dim::One)
+                && !g.is_free(*dart, Dim::Two)
+        }) {
+            continue;
+        }
+
+        let face_count = g
+            .iter_faces()
+            .filter(|(_, candidate)| darts.contains(&candidate.outer_loop))
+            .count();
+        if best.is_none_or(|(_, best_count)| face_count > best_count) {
+            best = Some((face.outer_loop, face_count));
+        }
+    }
+
+    best.map(|(dart, _)| dart)
+}
+
+fn free_result_edge_count<P: Payload>(g: &GMap<P>) -> usize {
+    g.iter_edges()
+        .filter(|(_, edge)| g.is_free(edge.dart, Dim::Two))
+        .count()
+}
+
+fn orient_result_shell<P: Payload>(g: &mut GMap<P>, shell_dart: Dart) -> Result<(), BooleanError> {
+    let shell_darts = g.orbit(shell_dart, vec![0, 1, 2]).collect::<Vec<_>>();
+    let Some(shell_center) = shell_centroid(g, &shell_darts) else {
+        return Ok(());
+    };
+    let shell_darts = shell_darts.into_iter().collect::<HashSet<_>>();
+    let flips = g
+        .iter_faces()
+        .filter(|(_, face)| shell_darts.contains(&face.outer_loop))
+        .map(|(key, _)| {
+            let (face_center, normal) = face_orientation_sample(g, key)
+                .ok_or(BooleanError::MissingOrientationSample { face: key })?;
+            Ok((
+                key,
+                normal.dot(&(face_center - shell_center)) <= LINEAR_TOLERANCE,
+            ))
+        })
+        .collect::<Result<Vec<_>, BooleanError>>()?;
+
+    for (face, should_flip) in flips {
+        if should_flip {
+            flip_face_surface_orientation(g, face)?;
+        }
+    }
+    Ok(())
+}
+
+fn shell_centroid<P: Payload>(g: &GMap<P>, shell_darts: &[Dart]) -> Option<Vector3<f64>> {
+    let shell_darts = shell_darts.iter().copied().collect::<HashSet<_>>();
+    let mut sum = Vector3::zeros();
+    let mut count = 0;
+
+    for (face, attr) in g.iter_faces() {
+        if !shell_darts.contains(&attr.outer_loop) {
+            continue;
+        }
+        let (center, _) = face_orientation_sample(g, face)?;
+        sum += center;
+        count += 1;
+    }
+
+    (count > 0).then_some(sum / count as f64)
+}
+
+fn face_orientation_sample<P: Payload>(
+    g: &GMap<P>,
+    face: FaceKey,
+) -> Option<(Vector3<f64>, Vector3<f64>)> {
+    let face = g.face(face)?.face(g);
+    let uv = sample_face_uv(&face)?;
+    Some((
+        face.surface().point_at(uv.x, uv.y).coords,
+        *face.surface().normal_at(uv.x, uv.y),
+    ))
+}
+
+fn sample_face_uv<P: Payload>(face: &Face<'_, P>) -> Option<Point2> {
+    let mut outer_uv = Vec::new();
+    for edge in face.outer_loop().edges() {
+        let samples = face.pcurve(edge.dart)?.sample(1);
+        let count = samples.len();
+        outer_uv.extend(samples.into_iter().take(count.saturating_sub(1)));
+    }
+
+    if outer_uv.is_empty() {
+        return None;
+    }
+    Some(uv_centroid(&outer_uv))
+}
+
+fn flip_face_surface_orientation<P: Payload>(
+    g: &mut GMap<P>,
+    face: FaceKey,
+) -> Result<(), BooleanError> {
+    let attr = g
+        .face_mut(face)
+        .ok_or(BooleanError::MissingOrientationSample { face })?;
+    let Surface::Plane(plane) = &attr.surface else {
+        return Err(BooleanError::UnsupportedFaceOrientationFlip { face });
+    };
+
+    attr.surface = Surface::Plane(Plane::new(plane.origin(), plane.x_dir(), -*plane.normal()));
+    for pcurve in attr.pcurves.values_mut() {
+        *pcurve = flip_plane_pcurve_v(pcurve);
+    }
+    Ok(())
+}
+
+fn flip_plane_pcurve_v(pcurve: &Curve2) -> Curve2 {
+    match pcurve {
+        Curve2::Line(line) => Curve2::Line(Line2::new(flip_uv_v(line.start), flip_uv_v(line.end))),
+        Curve2::Polyline(polyline) => Curve2::Polyline(Polyline2::new(
+            polyline.points.iter().copied().map(flip_uv_v).collect(),
+        )),
+    }
+}
+
+fn flip_uv_v(point: Point2) -> Point2 {
+    Point2::new(point.x, -point.y)
+}
+
+fn classification_ray<P: Payload>(faces: &[Face<'_, P>]) -> ClassificationRay {
+    let bbox = BBox::from_points(faces.iter().flat_map(face_points));
+    let length = bbox.diagonal_length().max(1.0) * 4.0 + 1.0;
+    let direction = Vector3::new(1.0, 0.371, 0.217).normalize();
+    ClassificationRay { direction, length }
+}
+
+fn ray_face_intersection<P: Payload>(
+    origin: Point3,
+    ray: ClassificationRay,
+    face: &Face<'_, P>,
+) -> Result<Option<f64>, BooleanError> {
+    if let Surface::Plane(plane) = face.surface() {
+        return ray_plane_face_intersection(origin, ray, plane, face);
+    }
+
+    let curve = Curve::line(origin, origin + ray.direction * ray.length);
+    let intersections = intersect_curve_surface_with_options(
+        &curve,
+        face.surface(),
+        boolean_intersection_options(),
+    )?;
+    let mut distances = intersections.into_iter().filter_map(|intersection| {
+        let CurveSurfaceIntersection::Point {
+            curve_u,
+            surface_u,
+            surface_v,
+            ..
+        } = intersection
+        else {
+            return None;
+        };
+        if curve_u <= LINEAR_TOLERANCE || curve_u > 1.0 + LINEAR_TOLERANCE {
+            return None;
+        }
+        let uv = Point2::new(surface_u, surface_v);
+        matches!(
+            face_uv_containment(face, uv),
+            Ok(BooleanClassification::Inside | BooleanClassification::Boundary)
+        )
+        .then_some(curve_u * ray.length)
+    });
+
+    Ok(distances.next())
+}
+
+fn ray_plane_face_intersection<P: Payload>(
+    origin: Point3,
+    ray: ClassificationRay,
+    plane: &Plane,
+    face: &Face<'_, P>,
+) -> Result<Option<f64>, BooleanError> {
+    let normal = *plane.normal();
+    let denominator = normal.dot(&ray.direction);
+    if denominator.abs() <= LINEAR_TOLERANCE {
+        return Ok(None);
+    }
+
+    let distance = (plane.origin() - origin).dot(&normal) / denominator;
+    if distance <= LINEAR_TOLERANCE || distance > ray.length + LINEAR_TOLERANCE {
+        return Ok(None);
+    }
+
+    let point = origin + ray.direction * distance;
+    let classification = face_projected_point_containment(face, point)?;
+    Ok(matches!(
+        classification,
+        BooleanClassification::Inside | BooleanClassification::Boundary
+    )
+    .then_some(distance))
+}
+
+fn point_lies_on_face<P: Payload>(face: &Face<'_, P>, point: Point3) -> Result<bool, BooleanError> {
+    Ok(face_projected_point_containment(face, point)? != BooleanClassification::Outside)
+}
+
+fn face_projected_point_containment<P: Payload>(
+    face: &Face<'_, P>,
+    point: Point3,
+) -> Result<BooleanClassification, BooleanError> {
+    let uv = face.surface().closest_parameter(point)?;
+    let projected = face.surface().point_at(uv.x, uv.y);
+    if (projected - point).norm() > LINEAR_TOLERANCE * 10.0 {
+        return Ok(BooleanClassification::Outside);
+    }
+    face_uv_containment(face, uv)
+}
+
+fn sample_face_region_point<P: Payload>(face: &Face<'_, P>) -> Option<Point3> {
+    let outer_uv = sample_loop_uv(&face.outer_loop(), face)?;
+    let centroid = uv_centroid(&outer_uv);
+    let mut candidates = vec![centroid];
+
+    candidates.extend(outer_uv.iter().enumerate().map(|(index, uv)| {
+        let next = outer_uv[(index + 1) % outer_uv.len()];
+        let midpoint = Point2::from((uv.coords + next.coords) * 0.5);
+        Point2::from(midpoint.coords * 0.8 + centroid.coords * 0.2)
+    }));
+
+    candidates
+        .into_iter()
+        .find(|uv| {
+            matches!(
+                face_uv_containment(face, *uv),
+                Ok(BooleanClassification::Inside)
+            )
+        })
+        .map(|uv| face.surface().point_at(uv.x, uv.y))
+}
+
+fn face_uv_containment<P: Payload>(
+    face: &Face<'_, P>,
+    uv: Point2,
+) -> Result<BooleanClassification, BooleanError> {
+    let outer =
+        sample_loop_uv(&face.outer_loop(), face).ok_or(BooleanError::MissingFaceUvSample)?;
+    match loop_uv_containment(&outer, uv) {
+        BooleanClassification::Outside => return Ok(BooleanClassification::Outside),
+        BooleanClassification::Boundary => return Ok(BooleanClassification::Boundary),
+        BooleanClassification::Inside => {}
+    }
+
+    for inner in face.inner_loops() {
+        let Some(inner_uv) = sample_loop_uv(&inner, face) else {
+            continue;
+        };
+        match loop_uv_containment(&inner_uv, uv) {
+            BooleanClassification::Boundary => return Ok(BooleanClassification::Boundary),
+            BooleanClassification::Inside => return Ok(BooleanClassification::Outside),
+            BooleanClassification::Outside => {}
+        }
+    }
+
+    Ok(BooleanClassification::Inside)
+}
+
+fn sample_loop_uv<P: Payload>(loop_: &Loop<'_, P>, face: &Face<'_, P>) -> Option<Vec<Point2>> {
+    let mut points = Vec::new();
+    for edge in loop_.edges() {
+        let samples = face.pcurve(edge.dart)?.sample(8);
+        let count = samples.len();
+        points.extend(samples.into_iter().take(count.saturating_sub(1)));
+    }
+    (points.len() >= 3).then_some(points)
+}
+
+fn loop_uv_containment(points: &[Point2], uv: Point2) -> BooleanClassification {
+    let mut inside = false;
+    for (a, b) in points
+        .iter()
+        .zip(points.iter().cycle().skip(1))
+        .take(points.len())
+    {
+        if uv_on_segment(uv, *a, *b) {
+            return BooleanClassification::Boundary;
+        }
+
+        let crosses = (a.y > uv.y) != (b.y > uv.y);
+        if !crosses {
+            continue;
+        }
+
+        let x = a.x + (uv.y - a.y) * (b.x - a.x) / (b.y - a.y);
+        if x > uv.x + LINEAR_TOLERANCE {
+            inside = !inside;
+        }
+    }
+
+    if inside {
+        BooleanClassification::Inside
+    } else {
+        BooleanClassification::Outside
+    }
+}
+
+fn uv_on_segment(point: Point2, start: Point2, end: Point2) -> bool {
+    let direction = end - start;
+    let length_sq = direction.norm_squared();
+    if length_sq <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
+        return (point - start).norm() <= LINEAR_TOLERANCE;
+    }
+
+    let t = (point - start).dot(&direction) / length_sq;
+    if !(-LINEAR_TOLERANCE..=1.0 + LINEAR_TOLERANCE).contains(&t) {
+        return false;
+    }
+    let projected = start + direction * t.clamp(0.0, 1.0);
+    (projected - point).norm() <= LINEAR_TOLERANCE
+}
+
+fn uv_centroid(points: &[Point2]) -> Point2 {
+    let sum = points
+        .iter()
+        .fold(nalgebra::Vector2::zeros(), |sum, point| sum + point.coords);
+    Point2::from(sum / points.len() as f64)
 }
 
 impl BooleanSplitPlan {
@@ -369,6 +1120,15 @@ impl BooleanSplitPlan {
         let mut plan = Self::default();
         for split in edge_splits {
             plan.add_edge_split(split.edge, split.parameter);
+        }
+        plan.sort();
+        plan
+    }
+
+    pub fn from_edge_overlaps(edge_overlaps: impl IntoIterator<Item = EdgeOverlap>) -> Self {
+        let mut plan = Self::default();
+        for overlap in edge_overlaps {
+            plan.add_edge_overlap(overlap.edge, overlap.interval);
         }
         plan.sort();
         plan
@@ -535,6 +1295,8 @@ impl BooleanSplitPlan {
             return;
         }
 
+        self.add_edge_split(edge, interval.start);
+        self.add_edge_split(edge, interval.end);
         self.edge_overlaps.push(EdgeOverlap { edge, interval });
     }
 
@@ -572,6 +1334,9 @@ fn apply_edge_splits_to_map<P: Payload>(
     for &parameter in parameters {
         let Some(segment_index) = split_segment_index(&segments, parameter) else {
             if touches_existing_segment_boundary(&segments, parameter) {
+                continue;
+            }
+            if !touches_existing_segment(&segments, parameter) {
                 continue;
             }
             return Err(BooleanError::MissingSplitSegment { edge, parameter });
@@ -638,7 +1403,7 @@ fn apply_face_sections_to_maps<P: Payload>(
                 face,
                 first: split.first,
                 second: split.second,
-                section_edge: split.section_edge,
+                section_edges: split.section_edges,
             });
         }
     }
@@ -791,6 +1556,12 @@ fn touches_existing_segment_boundary(segments: &[EdgeSegment], parameter: f64) -
         (parameter - segment.domain.start).abs() <= LINEAR_TOLERANCE
             || (parameter - segment.domain.end).abs() <= LINEAR_TOLERANCE
     })
+}
+
+fn touches_existing_segment(segments: &[EdgeSegment], parameter: f64) -> bool {
+    segments
+        .iter()
+        .any(|segment| segment.domain.contains(parameter, LINEAR_TOLERANCE))
 }
 
 fn contains_interior(interval: Interval, parameter: f64) -> bool {

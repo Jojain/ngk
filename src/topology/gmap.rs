@@ -80,6 +80,17 @@ fn remap_dart(dart_map: &HashMap<Dart, Dart>, dart: Dart) -> Dart {
         .expect("merged dart reference must have a remapped dart")
 }
 
+fn copied_cell_dart<P: Payload>(
+    source: &GMap<P>,
+    copied_darts: &HashSet<Dart>,
+    dart: Dart,
+    dim: Dim,
+) -> Option<Dart> {
+    source
+        .orbit(dart, source.orbit_indices(dim))
+        .find(|candidate| copied_darts.contains(candidate))
+}
+
 /// Topological views that can be copied into another [`GMap`].
 pub trait MergeTopology<P: Payload> {
     fn source_map(&self) -> &GMap<P>;
@@ -418,36 +429,46 @@ impl<P: Payload> GMap<P> {
         }
 
         for (old_key, attr) in source.vertices.iter() {
-            if !source_dart_set.contains(&attr.dart) {
+            let Some(attribute_dart) =
+                copied_cell_dart(source, &source_dart_set, attr.dart, Dim::Zero)
+            else {
                 continue;
-            }
+            };
             let mut attr = attr.clone();
-            attr.dart = remap_dart(&dart_map, attr.dart);
+            attr.dart = self.cell_representative(remap_dart(&dart_map, attribute_dart), Dim::Zero);
             let new_key = self.vertices.insert(attr);
             vertex_map.insert(old_key, new_key);
         }
-        for (old_dart, old_key) in source.dart_to_vertex.iter() {
-            if let (Some(&new_dart), Some(&new_key)) =
-                (dart_map.get(old_dart), vertex_map.get(old_key))
-            {
-                self.dart_to_vertex.insert(new_dart, new_key);
+        for (old_key, attr) in source.vertices.iter() {
+            let Some(&new_key) = vertex_map.get(&old_key) else {
+                continue;
+            };
+            for old_dart in source.orbit(attr.dart, source.orbit_indices(Dim::Zero)) {
+                if let Some(&new_dart) = dart_map.get(&old_dart) {
+                    self.dart_to_vertex.insert(new_dart, new_key);
+                }
             }
         }
 
         for (old_key, attr) in source.edges.iter() {
-            if !source_dart_set.contains(&attr.dart) {
+            let Some(attribute_dart) =
+                copied_cell_dart(source, &source_dart_set, attr.dart, Dim::One)
+            else {
                 continue;
-            }
+            };
             let mut attr = attr.clone();
-            attr.dart = remap_dart(&dart_map, attr.dart);
+            attr.dart = self.cell_representative(remap_dart(&dart_map, attribute_dart), Dim::One);
             let new_key = self.edges.insert(attr);
             edge_map.insert(old_key, new_key);
         }
-        for (old_dart, old_key) in source.dart_to_edge.iter() {
-            if let (Some(&new_dart), Some(&new_key)) =
-                (dart_map.get(old_dart), edge_map.get(old_key))
-            {
-                self.dart_to_edge.insert(new_dart, new_key);
+        for (old_key, attr) in source.edges.iter() {
+            let Some(&new_key) = edge_map.get(&old_key) else {
+                continue;
+            };
+            for old_dart in source.orbit(attr.dart, source.orbit_indices(Dim::One)) {
+                if let Some(&new_dart) = dart_map.get(&old_dart) {
+                    self.dart_to_edge.insert(new_dart, new_key);
+                }
             }
         }
 
@@ -481,7 +502,10 @@ impl<P: Payload> GMap<P> {
         }
 
         for (_, attr) in source.solids.iter() {
-            if !source_dart_set.contains(&attr.outer_shell) {
+            if !source
+                .orbit(attr.outer_shell, vec![0, 1, 2])
+                .all(|dart| source_dart_set.contains(&dart))
+            {
                 continue;
             }
             let mut attr = attr.clone();

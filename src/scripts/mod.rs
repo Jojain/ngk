@@ -4,6 +4,7 @@
 
 use crate::viz::ScriptResult;
 
+pub mod boolean_configs;
 pub mod cylinder;
 pub mod extruded_holed_pentagon;
 pub mod extruded_open_polyline;
@@ -22,6 +23,11 @@ pub struct Script {
 }
 
 pub const SCRIPTS: &[Script] = &[
+    Script {
+        id: "boolean_configs",
+        title: "Boolean configurations",
+        run: boolean_configs::run,
+    },
     Script {
         id: "two_faces_alpha2",
         title: "Two faces α2-sewn on a shared edge",

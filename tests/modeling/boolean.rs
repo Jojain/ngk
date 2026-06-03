@@ -3,8 +3,10 @@ use std::collections::HashSet;
 use nalgebra::Vector3;
 use ngk::geometry::{CurveCurveIntersection, Interval, Plane, Point3, SurfaceSurfaceIntersection};
 use ngk::modeling::boolean::{
-    AppliedFaceSectionKind, BooleanSource, BooleanSplitPlan, BooleanWorkspace, EdgeHandle,
-    EdgeSplit, FaceHandle, FaceSection, FaceSectionKind,
+    AppliedFaceSectionKind, BooleanClassification, BooleanOperation, BooleanSource,
+    BooleanSplitPlan, BooleanWorkspace, EdgeHandle, EdgeOverlap, EdgeSplit, FaceHandle,
+    FaceSection, FaceSectionKind, boolean_difference, boolean_intersection, boolean_union,
+    classify_point_against_solid,
 };
 use ngk::modeling::solids::block;
 use ngk::modeling::{faces, sweep};
@@ -12,6 +14,7 @@ use ngk::topology::gmap::{Cell0, Cell2, Dim, GMap};
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::shape::{Shape, SolidTag};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
+use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
 
 #[test]
 fn boolean_workspace_collects_operands_from_solid_shells() {
@@ -170,6 +173,193 @@ fn boolean_workspace_builds_split_plan_from_interferences() {
 }
 
 #[test]
+fn point_classification_reports_inside_outside_and_boundary_for_solid() {
+    let solid = block(1.0, 1.0, 1.0).expect("solid block should build");
+
+    assert_eq!(
+        classify_point_against_solid(&solid.solid(), Point3::new(0.5, 0.5, 0.5))
+            .expect("inside point should classify"),
+        BooleanClassification::Inside
+    );
+    assert_eq!(
+        classify_point_against_solid(&solid.solid(), Point3::new(1.5, 0.5, 0.5))
+            .expect("outside point should classify"),
+        BooleanClassification::Outside
+    );
+    assert_eq!(
+        classify_point_against_solid(&solid.solid(), Point3::new(0.5, 0.5, 0.0))
+            .expect("boundary point should classify"),
+        BooleanClassification::Boundary
+    );
+}
+
+#[test]
+fn split_operands_classify_faces_against_opposite_solid() {
+    let object = block(1.0, 1.0, 1.0).expect("object block should build");
+    let tool = shifted_block(Point3::new(0.5, 0.0, 0.0), 1.0, 1.0, 1.0);
+    let workspace = BooleanWorkspace::from_solids(&object.solid(), &tool.solid())
+        .expect("workspace should evaluate shifted blocks");
+    let split = workspace
+        .split_solid_shapes(&object, &tool)
+        .expect("split operands should build");
+
+    let classifications = split
+        .classify_faces()
+        .expect("split face classifications should build");
+
+    assert!(
+        classifications
+            .iter()
+            .any(|face| face.source == BooleanSource::Object
+                && face.classification == BooleanClassification::Inside),
+        "at least one object split face should lie inside the tool"
+    );
+    assert!(
+        classifications
+            .iter()
+            .any(|face| face.source == BooleanSource::Object
+                && face.classification == BooleanClassification::Outside),
+        "at least one object split face should lie outside the tool"
+    );
+    assert!(
+        classifications
+            .iter()
+            .any(|face| face.source == BooleanSource::Tool),
+        "tool faces should also be classified"
+    );
+}
+
+#[test]
+fn split_operands_select_faces_for_boolean_operations() {
+    let object = block(1.0, 1.0, 1.0).expect("object block should build");
+    let tool = shifted_block(Point3::new(0.5, 0.0, 0.0), 1.0, 1.0, 1.0);
+    let workspace = BooleanWorkspace::from_solids(&object.solid(), &tool.solid())
+        .expect("workspace should evaluate shifted blocks");
+    let split = workspace
+        .split_solid_shapes(&object, &tool)
+        .expect("split operands should build");
+
+    let union = split
+        .select_faces(BooleanOperation::Union)
+        .expect("union selection should build");
+    let intersection = split
+        .select_faces(BooleanOperation::Intersection)
+        .expect("intersection selection should build");
+    let difference = split
+        .select_faces(BooleanOperation::Difference)
+        .expect("difference selection should build");
+
+    assert!(
+        union.iter().any(|face| {
+            face.keep
+                && face.source == BooleanSource::Object
+                && face.classification == BooleanClassification::Outside
+        }),
+        "union should keep object regions outside the tool"
+    );
+    assert!(
+        !union.iter().any(|face| {
+            face.keep
+                && face.source == BooleanSource::Object
+                && face.classification == BooleanClassification::Inside
+        }),
+        "union should discard object regions inside the tool"
+    );
+    assert!(
+        intersection.iter().any(|face| {
+            face.keep
+                && face.source == BooleanSource::Object
+                && face.classification == BooleanClassification::Inside
+        }),
+        "intersection should keep object regions inside the tool"
+    );
+    assert!(
+        !intersection.iter().any(|face| {
+            face.keep
+                && face.source == BooleanSource::Object
+                && face.classification == BooleanClassification::Outside
+        }),
+        "intersection should discard object regions outside the tool"
+    );
+    assert!(
+        difference.iter().any(|face| {
+            face.keep
+                && face.source == BooleanSource::Tool
+                && face.classification == BooleanClassification::Inside
+        }),
+        "difference should keep tool regions inside the object as cut faces"
+    );
+    assert!(
+        !difference.iter().any(|face| {
+            face.keep
+                && face.source == BooleanSource::Tool
+                && face.classification == BooleanClassification::Outside
+        }),
+        "difference should discard tool regions outside the object"
+    );
+}
+
+#[test]
+fn split_operands_build_union_result_from_selected_faces() {
+    let object = block(1.0, 1.0, 1.0).expect("object block should build");
+    let tool = shifted_block(Point3::new(0.5, 0.0, 0.0), 1.0, 1.0, 1.0);
+    let workspace = BooleanWorkspace::from_solids(&object.solid(), &tool.solid())
+        .expect("workspace should evaluate shifted blocks");
+    let split = workspace
+        .split_solid_shapes(&object, &tool)
+        .expect("split operands should build");
+
+    let result = split
+        .build_result(BooleanOperation::Union)
+        .expect("union result should build from selected faces");
+
+    assert_eq!(result.map().iter_solids().count(), 1);
+    assert!(
+        result.map().iter_faces().count() >= 6,
+        "union result should contain a shell made from selected split faces"
+    );
+    assert_closed_shell(&result);
+}
+
+#[test]
+fn public_boolean_union_builds_oriented_solid() {
+    let object = block(1.0, 1.0, 1.0).expect("object block should build");
+    let tool = shifted_block(Point3::new(0.5, 0.0, 0.0), 1.0, 1.0, 1.0);
+
+    let result = boolean_union(&object, &tool).expect("union should build");
+
+    validate_solid_manifold(result.map(), result.key()).expect("union should be a closed solid");
+    validate_solid_orientation(result.map(), result.key())
+        .expect("union face normals should point outward");
+}
+
+#[test]
+fn public_boolean_intersection_builds_oriented_solid() {
+    let object = block(1.0, 1.0, 1.0).expect("object block should build");
+    let tool = shifted_block(Point3::new(0.5, 0.0, 0.0), 1.0, 1.0, 1.0);
+
+    let result = boolean_intersection(&object, &tool).expect("intersection should build");
+
+    validate_solid_manifold(result.map(), result.key())
+        .expect("intersection should be a closed solid");
+    validate_solid_orientation(result.map(), result.key())
+        .expect("intersection face normals should point outward");
+}
+
+#[test]
+fn public_boolean_difference_builds_oriented_solid() {
+    let object = block(1.0, 1.0, 1.0).expect("object block should build");
+    let tool = shifted_block(Point3::new(0.5, 0.0, 0.0), 1.0, 1.0, 1.0);
+
+    let result = boolean_difference(&object, &tool).expect("difference should build");
+
+    validate_solid_manifold(result.map(), result.key())
+        .expect("difference should be a closed solid");
+    validate_solid_orientation(result.map(), result.key())
+        .expect("difference face normals should point outward");
+}
+
+#[test]
 fn split_plan_deduplicates_edge_split_parameters() {
     let object = block(1.0, 1.0, 1.0).expect("object block should build");
     let tool = block(1.0, 1.0, 1.0).expect("tool block should build");
@@ -247,6 +437,41 @@ fn split_plan_applies_multiple_splits_to_current_operand_edge_segments() {
                 .all(|edge| attr.pcurves.contains_key(&edge.dart))
         );
     }
+}
+
+#[test]
+fn split_plan_paves_same_domain_edge_overlap_endpoints() {
+    let mut object = block(2.0, 2.0, 2.0).expect("object block should build");
+    let mut tool = block(2.0, 2.0, 2.0).expect("tool block should build");
+    let (edge_key, edge_attr) = object
+        .map()
+        .iter_edges()
+        .next()
+        .expect("object should have edges");
+    let edge = EdgeHandle {
+        source: BooleanSource::Object,
+        dart: edge_attr.dart,
+    };
+    let domain = edge_domain(object.map(), edge_key);
+    let overlap = Interval::new(
+        domain.start + domain.length() / 3.0,
+        domain.start + 2.0 * domain.length() / 3.0,
+    );
+    let plan = BooleanSplitPlan::from_edge_overlaps([EdgeOverlap {
+        edge,
+        interval: overlap,
+    }]);
+
+    assert_eq!(plan.edge_overlaps().len(), 1);
+    assert_eq!(plan.edge_splits().len(), 2);
+
+    let applied = plan
+        .apply_to_maps(object.map_mut(), tool.map_mut())
+        .expect("same-domain overlap endpoints should pave object edge");
+
+    assert_eq!(applied.edge_splits().len(), 2);
+    assert_eq!(object.map().cells(Dim::One).count(), 14);
+    assert_eq!(object.map().cells(Dim::Zero).count(), 10);
 }
 
 #[test]
@@ -406,4 +631,14 @@ fn edge_domain(g: &GMap<StandardPayload>, edge: EdgeKey) -> Interval {
         .expect("edge end should have a vertex")
         .point;
     attr.curve.parameters_between(start, end).ordered()
+}
+
+fn assert_closed_shell(shape: &Shape<SolidTag, StandardPayload>) {
+    let g = shape.map();
+    assert!(
+        shape.solid().outer_shell().darts().all(|dart| {
+            !g.is_free(dart, Dim::Zero) && !g.is_free(dart, Dim::One) && !g.is_free(dart, Dim::Two)
+        }),
+        "result solid shell should not have free alpha0, alpha1, or alpha2 darts"
+    );
 }

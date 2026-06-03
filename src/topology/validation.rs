@@ -7,7 +7,7 @@ use crate::geometry::{Curve2, LINEAR_TOLERANCE, Point2};
 use crate::topology::closed::Closed;
 
 use super::attributes::FaceAttr;
-use super::gmap::{Cell0, Dart, Dim, GMap};
+use super::gmap::{Dart, Dim, GMap};
 use super::payload::Payload;
 use super::profile::Profile;
 use super::shape_keys::{FaceKey, SolidKey};
@@ -248,17 +248,16 @@ enum ShellSide {
 }
 
 fn shell_centroid<P: Payload>(g: &GMap<P>, shell_darts: &[Dart]) -> Option<Vector3<f64>> {
-    let mut vertex_representatives = HashSet::new();
+    let shell_darts = shell_darts.iter().copied().collect::<HashSet<_>>();
     let mut sum = Vector3::zeros();
     let mut count = 0;
 
-    for &dart in shell_darts {
-        let repr = g.cell_representative(dart, Dim::Zero);
-        if !vertex_representatives.insert(repr) {
+    for (_, attr) in g.iter_faces() {
+        if !shell_darts.contains(&attr.outer_loop) {
             continue;
         }
-        let vertex = g.attribute::<Cell0>(dart)?;
-        sum += vertex.point.coords;
+        let (face_center, _) = face_orientation_sample(g, attr)?;
+        sum += face_center;
         count += 1;
     }
 
