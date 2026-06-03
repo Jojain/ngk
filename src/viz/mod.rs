@@ -21,6 +21,7 @@
 pub mod brep;
 pub mod gmap;
 pub mod hints;
+pub mod ocp_vscode;
 pub mod scene;
 
 use serde::Serialize;
