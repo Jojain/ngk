@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use nalgebra::Vector3;
 use thiserror::Error;
@@ -60,6 +60,17 @@ pub enum GMapValidationError {
         solid: SolidKey,
         shell: Dart,
         face: FaceKey,
+    },
+
+    #[error(
+        "solid {solid:?} shell at {shell:?} is not orientable: alpha{dim} links same-orientation darts {dart:?} and {linked:?}"
+    )]
+    SolidShellNotOrientable {
+        solid: SolidKey,
+        shell: Dart,
+        dart: Dart,
+        dim: usize,
+        linked: Dart,
     },
 
     #[error("solid {solid:?} shell at {shell:?} face {face:?} normal does not point outward")]
@@ -166,10 +177,12 @@ pub fn validate_solid_orientation<P: Payload>(
         .solid(solid)
         .ok_or(GMapValidationError::MissingSolid { solid })?;
     validate_shell(g, solid, attr.outer_shell)?;
+    validate_shell_orientable(g, solid, attr.outer_shell)?;
     validate_shell_orientation(g, solid, attr.outer_shell, ShellSide::Outer)?;
     if let Some(inner_shells) = &attr.inner_shells {
         for &shell in inner_shells {
             validate_shell(g, solid, shell)?;
+            validate_shell_orientable(g, solid, shell)?;
             validate_shell_orientation(g, solid, shell, ShellSide::Inner)?;
         }
     }
@@ -201,6 +214,55 @@ fn validate_shell<P: Payload>(
         dart: shell,
         dim: 2,
     })?;
+
+    Ok(())
+}
+
+fn validate_shell_orientable<P: Payload>(
+    g: &GMap<P>,
+    solid: SolidKey,
+    shell: Dart,
+) -> Result<(), GMapValidationError> {
+    let shell_darts = Sheet::new(g, shell).darts().collect::<HashSet<_>>();
+    let mut colors = vec![None; g.dart_count()];
+
+    for &start in &shell_darts {
+        if colors[start.id()].is_some() {
+            continue;
+        }
+
+        colors[start.id()] = Some(false);
+        let mut queue = VecDeque::from([start]);
+
+        while let Some(dart) = queue.pop_front() {
+            let color = colors[dart.id()].expect("queued darts should be colored");
+            for i in 0..3 {
+                let dim = Dim::from_index(i);
+                let linked = g.alpha(dim, dart);
+                if linked == dart || !shell_darts.contains(&linked) {
+                    continue;
+                }
+
+                let expected = !color;
+                match colors[linked.id()] {
+                    Some(actual) if actual != expected => {
+                        return Err(GMapValidationError::SolidShellNotOrientable {
+                            solid,
+                            shell,
+                            dart,
+                            dim: i,
+                            linked,
+                        });
+                    }
+                    Some(_) => {}
+                    None => {
+                        colors[linked.id()] = Some(expected);
+                        queue.push_back(linked);
+                    }
+                }
+            }
+        }
+    }
 
     Ok(())
 }
@@ -303,4 +365,17 @@ fn uv_centroid(points: &[Point2]) -> Point2 {
         .iter()
         .fold(nalgebra::Vector2::zeros(), |sum, point| sum + point.coords);
     Point2::from(sum / points.len() as f64)
+}
+
+fn uv_signed_area(points: &[Point2]) -> f64 {
+    if points.len() < 3 {
+        return 0.0;
+    }
+
+    0.5 * points
+        .iter()
+        .zip(points.iter().cycle().skip(1))
+        .take(points.len())
+        .map(|(a, b)| a.x * b.y - b.x * a.y)
+        .sum::<f64>()
 }
