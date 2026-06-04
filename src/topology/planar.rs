@@ -8,7 +8,7 @@ use crate::topology::face::Face;
 
 use super::closed::Closed;
 use super::edge::Edge;
-use super::gmap::{Dart, GMap, MergeTopology};
+use super::gmap::{Dart, MergeTopology, TopologyMerge};
 use super::payload::Payload;
 use super::profile::Profile;
 
@@ -20,14 +20,19 @@ impl<'a, P: Payload> PlanarGeometry for Profile<'a, P> {}
 impl<'a, P: Payload> PlanarGeometry for Closed<Profile<'a, P>> {}
 impl<'a, P: Payload> PlanarGeometry for Face<'a, P> {}
 
+/// Default tolerance used when verifying planarity.
 pub const DEFAULT_PLANAR_TOLERANCE: f64 = LINEAR_TOLERANCE;
 
+/// Error returned when a topology view cannot be proven planar.
 #[derive(Debug, Clone, Copy, Error, PartialEq)]
 pub enum PlanarityError {
+    /// A vertex required for the planarity check has no point geometry.
     #[error("missing vertex point for dart {dart:?}")]
     MissingVertexPoint { dart: Dart },
+    /// There are not enough distinct points to infer a support plane.
     #[error("too few distinct points to infer a plane: {count}")]
     TooFewDistinctPoints { count: usize },
+    /// A point is farther from the inferred plane than the requested tolerance.
     #[error(
         "point at dart {dart:?} is not planar: distance {distance} exceeds tolerance {tolerance}"
     )]
@@ -36,6 +41,8 @@ pub enum PlanarityError {
         distance: f64,
         tolerance: f64,
     },
+    /// A sampled curve point is farther from the plane than the requested
+    /// tolerance.
     #[error(
         "curve at dart {dart:?} is not planar: distance {distance} exceeds tolerance {tolerance}"
     )]
@@ -44,11 +51,14 @@ pub enum PlanarityError {
         distance: f64,
         tolerance: f64,
     },
+    /// The checked face uses a non-planar support surface.
     #[error("surface is not planar")]
     NonPlanarSurface,
 }
 
+/// Trait for topology views whose support plane can be checked.
 pub trait PlanarityCheck: PlanarGeometry {
+    /// Infers or validates a support plane using `tolerance`.
     fn support_plane(&self, tolerance: f64) -> Result<Plane, PlanarityError>;
 }
 
@@ -71,10 +81,14 @@ impl<T: PlanarGeometry + Clone> Clone for Planar<T> {
 }
 
 impl<T: PlanarityCheck> Planar<T> {
+    /// Verifies planarity with [`DEFAULT_PLANAR_TOLERANCE`] and wraps the value.
     pub fn new(inner: T) -> Result<Self, PlanarityError> {
         Self::new_with_tolerance(inner, DEFAULT_PLANAR_TOLERANCE)
     }
 
+    /// Verifies planarity with `tolerance` and wraps the value.
+    ///
+    /// The support plane is inferred or validated by the inner topology type.
     pub fn new_with_tolerance(inner: T, tolerance: f64) -> Result<Self, PlanarityError> {
         let plane = inner.support_plane(tolerance)?;
         Ok(Self { inner, plane })
@@ -82,22 +96,30 @@ impl<T: PlanarityCheck> Planar<T> {
 }
 
 impl<T: PlanarGeometry> Planar<T> {
+    /// Wraps a value with a known support plane without checking planarity.
+    ///
+    /// Use this only when the caller has an external guarantee that `inner`
+    /// lies on `plane`.
     pub fn new_unchecked(inner: T, plane: Plane) -> Self {
         Self { inner, plane }
     }
 
+    /// Consumes the wrapper and returns the inner topology value.
     pub fn into_inner(self) -> T {
         self.inner
     }
 
+    /// Returns the wrapped topology value.
     pub fn inner(&self) -> &T {
         &self.inner
     }
 
+    /// Returns the verified support plane.
     pub fn plane(&self) -> &Plane {
         &self.plane
     }
 
+    /// Consumes the wrapper and returns the topology value plus support plane.
     pub fn into_parts(self) -> (T, Plane) {
         (self.inner, self.plane)
     }
@@ -346,18 +368,12 @@ where
     P: Payload,
     T: PlanarGeometry + MergeTopology<P>,
 {
-    fn source_map(&self) -> &GMap<P> {
-        self.inner.source_map()
-    }
-
-    fn merge_darts(&self) -> Vec<Dart> {
-        self.inner.merge_darts()
-    }
-
-    fn handle_dart(&self) -> Dart {
-        self.inner.handle_dart()
+    fn merge_topology(&self) -> TopologyMerge<'_, P> {
+        self.inner.merge_topology()
     }
 }
 
+/// A closed profile with a verified support plane.
 pub type PlanarLoop<'a, P> = Planar<Closed<Profile<'a, P>>>;
+/// A profile with a verified support plane.
 pub type PlanarProfile<'a, P> = Planar<Profile<'a, P>>;

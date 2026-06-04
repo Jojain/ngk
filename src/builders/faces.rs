@@ -563,7 +563,7 @@ fn split_face_by_closed_imprint_loop<P: Payload>(
     face_attr.pcurves.extend(outside_loop.pcurves);
 
     let representative = g.cell_representative(outside_loop.loop_dart, Dim::Two);
-    g.facets.insert(representative, face);
+    g.dart_to_face.insert(representative, face);
     let second = g.add_face(FaceAttr::with_pcurves(
         old_face.surface,
         old_face.data,

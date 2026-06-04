@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use super::hints::{Style, VizHints};
 use super::scene::{VizEdge, VizFace, VizScene, VizVertex};
-use crate::tessellate::{TessellateOpts, tessellate_edge, tessellate_face};
+use crate::tessellate::{TessellateOpts, tessellate_edge, tessellate_face_key};
 use crate::topology::attributes::EdgeAttr;
 use crate::topology::gmap::{Cell0, Dim, GMap};
 use crate::topology::payload::Payload;
@@ -112,7 +112,7 @@ fn emit_faces<P: Payload>(
     for (key, _) in g.iter_faces() {
         let id = scene.faces.len() as u32;
         index.face_id_by_key.insert(key, id);
-        let Some(mesh) = tessellate_face(g, key, opts) else {
+        let Some(mesh) = tessellate_face_key(g, key, opts) else {
             continue;
         };
         if mesh.is_empty() {

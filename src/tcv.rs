@@ -4,7 +4,9 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::geometry::Point3;
-use crate::tessellate::{IndexedMesh, Polyline3, TessellateOpts, tessellate_edge, tessellate_face};
+use crate::tessellate::{
+    IndexedMesh, Polyline3, TessellateOpts, tessellate_edge, tessellate_face_key,
+};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dim, GMap};
@@ -245,7 +247,7 @@ fn append_face_mesh<P: Payload>(
     opts: TessellateOpts,
     shape: &mut TcvShape,
 ) -> Result<(), TcvError> {
-    let mesh = tessellate_face(g, key, opts).ok_or(TcvError::MissingTopology)?;
+    let mesh = tessellate_face_key(g, key, opts).ok_or(TcvError::MissingTopology)?;
     append_mesh(&mesh, shape);
     shape.face_types.push(0);
     Ok(())

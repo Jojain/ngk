@@ -55,4 +55,3 @@ fn ocp_payload_uses_options_for_name_port_and_camera() {
     assert_eq!(payload.data.shapes.parts[0].id, "/NGK/debug_block");
     assert_eq!(payload.data.shapes.parts[0].name, "debug_block");
 }
-

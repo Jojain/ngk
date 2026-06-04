@@ -14,7 +14,9 @@ use ngk::topology::gmap::GMap;
 use ngk::topology::gmap::{Cell0, Cell2, Dim};
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::profile::Profile;
+use ngk::topology::shape::{FaceTag, FacetTag, Shape};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
+use ngk::viz::ocp_vscode::show;
 
 #[test]
 fn add_rectangle_creates_single_planar_face_with_pcurves() {

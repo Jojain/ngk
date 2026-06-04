@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn source_face_tessellation_keeps_square_hole_empty() {
         let face = build_source_face().expect("source face");
-        let mesh = tessellate_face(face.map(), face.key(), TessellateOpts::default())
+        let mesh = tessellate_face(&face.face(), TessellateOpts::default())
             .expect("source face should tessellate");
 
         for triangle in mesh.indices.chunks_exact(3) {

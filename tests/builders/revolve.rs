@@ -6,7 +6,7 @@ use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::revolve::{add_revolved_edge, add_revolved_face};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{Curve, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface};
-use ngk::tessellate::{TessellateOpts, tessellate_face};
+use ngk::tessellate::{TessellateOpts, tessellate_face_key};
 use ngk::topology::attributes::{EdgeAttr, VertexAttr};
 use ngk::topology::edge::Edge;
 use ngk::topology::gmap::{Cell0, Dim, GMap};
@@ -184,7 +184,7 @@ fn revolved_face_adds_surface_of_revolution_faces() {
     assert_eq!(revolved_faces.len(), 3);
     for (face_key, attr) in revolved_faces {
         assert_eq!(attr.pcurves.len(), 4);
-        let mesh = tessellate_face(&g, face_key, TessellateOpts::default())
+        let mesh = tessellate_face_key(&g, face_key, TessellateOpts::default())
             .expect("revolved face should tessellate from its pcurves");
         assert!(!mesh.is_empty());
     }

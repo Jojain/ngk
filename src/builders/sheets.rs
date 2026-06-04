@@ -319,7 +319,7 @@ mod tests {
     use crate::builders::sheets::add_extruded_profile;
     use crate::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
     use crate::modeling::sweep::extrude_profile;
-    use crate::tessellate::{TessellateOpts, face::tessellate_face};
+    use crate::tessellate::{TessellateOpts, face::tessellate_face_key};
     use crate::topology::StandardPayload;
     use crate::topology::edge::Edge;
     use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
@@ -352,7 +352,7 @@ mod tests {
 
         for (face, attr) in g.iter_faces() {
             assert_eq!(attr.pcurves.len(), 4);
-            let mesh = tessellate_face(&g, face, TessellateOpts::default())
+            let mesh = tessellate_face_key(&g, face, TessellateOpts::default())
                 .expect("extruded face should tessellate");
             assert!(!mesh.positions.is_empty());
             assert!(!mesh.indices.is_empty());

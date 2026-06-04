@@ -7,9 +7,13 @@
 /// [`FaceAttr`](super::attributes::FaceAttr) / [`SolidAttr`](super::attributes::SolidAttr)
 /// (stored in the map; [`Solid`](super::solid::Solid) is the view).
 pub trait Payload: Clone + 'static {
+    /// User data stored on vertex attributes.
     type V: Clone + Default + 'static;
+    /// User data stored on edge attributes.
     type E: Clone + Default + 'static;
+    /// User data stored on face attributes.
     type F: Clone + Default + 'static;
+    /// User data stored on solid attributes.
     type S: Clone + Default + 'static;
 }
 

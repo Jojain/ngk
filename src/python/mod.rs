@@ -632,6 +632,14 @@ impl PyFacet {
             .collect()
     }
 
+    fn incident_edges(&self) -> Vec<PyEdge> {
+        self.facet()
+            .incident_edges()
+            .into_iter()
+            .map(|edge| PyEdge::new(Arc::clone(&self.map), edge))
+            .collect()
+    }
+
     fn vertices(&self) -> Vec<PyVertex> {
         self.facet()
             .vertices()

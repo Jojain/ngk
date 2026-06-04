@@ -9,15 +9,24 @@ use super::payload::{Payload, StandardPayload};
 
 pub use super::dart::{Dart, IsolatedDart};
 
+/// Topological cell dimension and matching alpha involution index.
+///
+/// `Dim::Zero` corresponds to vertices and alpha0, `Dim::One` to edges and
+/// alpha1, and so on up to solids/sheets and alpha3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Dim {
+    /// Vertex dimension / alpha0.
     Zero,
+    /// Edge dimension / alpha1.
     One,
+    /// Facet or face dimension / alpha2.
     Two,
+    /// Sheet or solid dimension / alpha3.
     Three,
 }
 
 impl Dim {
+    /// Returns the alpha index associated with this dimension.
     pub fn index(&self) -> usize {
         match self {
             Dim::Zero => 0,
@@ -27,8 +36,11 @@ impl Dim {
         }
     }
 
-    /// Convert an involution index `i ∈ {0,1,2,3}` back to a [`Dim`]. Panics
-    /// for values outside the `n-Gmap` involution range.
+    /// Converts an alpha index in `0..=3` back to a [`Dim`].
+    ///
+    /// # Panics
+    ///
+    /// Panics for values outside the supported 3-gmap involution range.
     pub fn from_index(i: usize) -> Self {
         match i {
             0 => Dim::Zero,
@@ -40,18 +52,25 @@ impl Dim {
     }
 }
 
-/// Number of involutions α₀…α₃ in a 3-gmap (four involutions).
+/// Number of alpha involutions in this 3-gmap implementation.
 pub const GMAP_INVOLUTION_COUNT: usize = 4;
+/// Pairing map computed while checking whether two dart orbits can be sewn.
 pub struct SewableDarts {
     mapping: HashMap<Dart, Dart>,
 }
 
+/// Type marker for vertex attributes.
 pub struct Cell0;
+/// Type marker for edge attributes.
 pub struct Cell1;
+/// Type marker for facet/face attributes.
 pub struct Cell2;
+/// Type marker for solid attributes.
 pub struct Cell3;
 
+/// Compile-time mapping from a cell marker to its dimension.
 pub trait CellDim {
+    /// Dimension represented by this cell marker.
     const DIM: Dim;
 }
 
@@ -68,9 +87,17 @@ impl CellDim for Cell3 {
     const DIM: Dim = Dim::Three;
 }
 
+/// Attribute lookup backend for a specific cell dimension.
+///
+/// Most callers should use [`GMap::attribute`] and [`GMap::attribute_mut`]
+/// instead of calling this trait directly.
 pub trait AttributeStore<D: CellDim> {
+    /// Attribute type stored for this dimension.
     type Attr;
+    /// Returns the attribute associated with canonical representative `repr`.
     fn get(&self, repr: Dart) -> Option<&Self::Attr>;
+    /// Returns the mutable attribute associated with canonical representative
+    /// `repr`.
     fn get_mut(&mut self, repr: Dart) -> Option<&mut Self::Attr>;
 }
 
@@ -91,11 +118,31 @@ fn copied_cell_dart<P: Payload>(
         .find(|candidate| copied_darts.contains(candidate))
 }
 
+/// Source topology selected for copying into another [`GMap`].
+///
+/// Construct this from a topology view's owning map, the darts to copy, and the
+/// representative dart that should be returned after remapping.
+pub struct TopologyMerge<'a, P: Payload> {
+    source: &'a GMap<P>,
+    darts: Vec<Dart>,
+    handle: Dart,
+}
+
+impl<'a, P: Payload> TopologyMerge<'a, P> {
+    /// Creates a merge descriptor for a topology view.
+    pub fn new(source: &'a GMap<P>, darts: Vec<Dart>, handle: Dart) -> Self {
+        Self {
+            source,
+            darts,
+            handle,
+        }
+    }
+}
+
 /// Topological views that can be copied into another [`GMap`].
 pub trait MergeTopology<P: Payload> {
-    fn source_map(&self) -> &GMap<P>;
-    fn merge_darts(&self) -> Vec<Dart>;
-    fn handle_dart(&self) -> Dart;
+    /// Returns the topology subset that should be copied.
+    fn merge_topology(&self) -> TopologyMerge<'_, P>;
 
     /// Copy this topology into a fresh [`GMap`], returning the copied map and
     /// this topology's representative dart rewritten to the new map.
@@ -117,16 +164,8 @@ where
     P: Payload,
     T: MergeTopology<P>,
 {
-    fn source_map(&self) -> &GMap<P> {
-        (*self).source_map()
-    }
-
-    fn merge_darts(&self) -> Vec<Dart> {
-        (*self).merge_darts()
-    }
-
-    fn handle_dart(&self) -> Dart {
-        (*self).handle_dart()
+    fn merge_topology(&self) -> TopologyMerge<'_, P> {
+        (*self).merge_topology()
     }
 }
 
@@ -155,21 +194,37 @@ impl<P: Payload> AttributeStore<Cell1> for GMap<P> {
 impl<P: Payload> AttributeStore<Cell2> for GMap<P> {
     type Attr = FaceKey;
     fn get(&self, repr: Dart) -> Option<&FaceKey> {
-        self.facets.get(&repr)
+        self.dart_to_face.get(&repr)
     }
     fn get_mut(&mut self, repr: Dart) -> Option<&mut FaceKey> {
-        self.facets.get_mut(&repr)
+        self.dart_to_face.get_mut(&repr)
+    }
+}
+impl<P: Payload> AttributeStore<Cell3> for GMap<P> {
+    type Attr = SolidKey;
+    fn get(&self, repr: Dart) -> Option<&SolidKey> {
+        self.dart_to_solid.get(&repr)
+    }
+    fn get_mut(&mut self, repr: Dart) -> Option<&mut SolidKey> {
+        self.dart_to_solid.get_mut(&repr)
     }
 }
 
+/// A 3-dimensional generalized map with typed attribute stores.
+///
+/// The map owns all darts, alpha involutions, and domain attributes. Prefer the
+/// typed view objects (`Vertex`, `Edge`, `Face`, `Sheet`, `Solid`) for routine
+/// traversal, and use `GMap` methods when implementing lower-level topology
+/// algorithms.
 pub struct GMap<P: Payload = StandardPayload> {
     alphas: [Vec<Dart>; GMAP_INVOLUTION_COUNT],
     free_slots: VecDeque<usize>,
-    vertices: SlotMap<VertexKey, VertexAttr<P::V>>,
     pub(crate) dart_to_vertex: HashMap<Dart, VertexKey>,
-    edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
     pub(crate) dart_to_edge: HashMap<Dart, EdgeKey>,
-    pub(crate) facets: HashMap<Dart, FaceKey>,
+    pub(crate) dart_to_face: HashMap<Dart, FaceKey>,
+    pub(crate) dart_to_solid: HashMap<Dart, SolidKey>,
+    vertices: SlotMap<VertexKey, VertexAttr<P::V>>,
+    edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
     pub(crate) faces: SlotMap<FaceKey, FaceAttr<P::F>>,
     pub(crate) solids: SlotMap<SolidKey, SolidAttr<P::S>>,
 }
@@ -183,7 +238,8 @@ impl<P: Payload> Clone for GMap<P> {
             dart_to_vertex: self.dart_to_vertex.clone(),
             edges: self.edges.clone(),
             dart_to_edge: self.dart_to_edge.clone(),
-            facets: self.facets.clone(),
+            dart_to_face: self.dart_to_face.clone(),
+            dart_to_solid: self.dart_to_solid.clone(),
             faces: self.faces.clone(),
             solids: self.solids.clone(),
         }
@@ -197,6 +253,7 @@ impl<P: Payload> Default for GMap<P> {
 }
 
 impl<P: Payload> GMap<P> {
+    /// Creates an empty map with no darts or attributes.
     pub fn new() -> Self {
         let alphas = std::array::from_fn(|_| Vec::new());
         let free_slots = VecDeque::new();
@@ -204,7 +261,8 @@ impl<P: Payload> GMap<P> {
         let dart_to_vertex = HashMap::new();
         let edges = SlotMap::with_key();
         let dart_to_edge = HashMap::new();
-        let facets = HashMap::new();
+        let dart_to_face = HashMap::new();
+        let dart_to_solid = HashMap::new();
         let faces = SlotMap::with_key();
         let solids = SlotMap::with_key();
         Self {
@@ -214,30 +272,43 @@ impl<P: Payload> GMap<P> {
             dart_to_vertex,
             edges,
             dart_to_edge,
-            facets,
+            dart_to_face,
+            dart_to_solid,
             faces,
             solids,
         }
     }
 
-    /// Number of involutions (α₀…α₃), always [`GMAP_INVOLUTION_COUNT`].
+    /// Returns the number of alpha involutions.
+    ///
+    /// This is always [`GMAP_INVOLUTION_COUNT`] for the current 3-gmap.
     pub fn dimension(&self) -> usize {
         GMAP_INVOLUTION_COUNT
     }
 
+    /// Returns the number of dart slots in the map.
     pub fn dart_count(&self) -> usize {
         self.alphas[0].len()
     }
 
+    /// Iterates all dart identifiers currently addressable in the map.
     pub fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
         (0..self.dart_count()).map(Dart::new)
     }
 
+    /// Returns `alpha_d(dart)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `dart` does not address an existing dart slot.
     pub fn alpha(&self, d: Dim, dart: Dart) -> Dart {
         let i = d.index();
         self.alphas[i][dart.id()]
     }
 
+    /// Adds one isolated dart and returns its identifier.
+    ///
+    /// All alpha involutions initially map the new dart to itself.
     pub fn add_dart(&mut self) -> Dart {
         let dart = if let Some(slot) = self.free_slots.pop_front() {
             Dart::new(slot)
@@ -250,6 +321,9 @@ impl<P: Payload> GMap<P> {
         dart
     }
 
+    /// Removes a dart that the caller has proven isolated.
+    ///
+    /// The [`IsolatedDart`] wrapper records the caller's proof obligation.
     pub fn remove_dart(&mut self, dart: IsolatedDart) {
         for alphas in self.alphas.iter_mut() {
             alphas.remove(dart.id());
@@ -257,6 +331,10 @@ impl<P: Payload> GMap<P> {
         self.free_slots.push_back(dart.id());
     }
 
+    /// Iterates the orbit generated from `dart` by the given alpha indices.
+    ///
+    /// For cell traversals, prefer [`Self::orbit_indices`] and typed view
+    /// methods when possible.
     pub fn orbit(&self, dart: Dart, involutions: Vec<usize>) -> OrbitIterator<'_, P> {
         OrbitIterator::new(self, dart, involutions)
     }
@@ -266,17 +344,25 @@ impl<P: Payload> GMap<P> {
         self.alphas[d.index()][dart.id()] == dart
     }
 
-    /// Involutions generating the orbit ⟨α₀,…,α_{i−2}, α_{i+2},…,α_n⟩ used in the i-sew test.
+    /// Returns the alpha indices used to compare sewing orbits.
     fn sewing_orbit_indices(&self, d: Dim) -> impl Iterator<Item = usize> + '_ {
         let i = d.index();
         (0..self.dimension()).filter(move |&j| j + 2 <= i || j >= i + 2)
     }
 
+    /// Returns the alpha indices that generate a cell orbit of dimension `d`.
+    ///
+    /// For example, the edge orbit excludes alpha1 and includes every other
+    /// alpha index.
     pub fn orbit_indices(&self, d: Dim) -> Vec<usize> {
         let i = d.index();
         (0..self.dimension()).filter(|&idx| idx != i).collect()
     }
 
+    /// Adds a vertex attribute and returns its key.
+    ///
+    /// If a vertex attribute is already registered for the same 0-cell, the
+    /// existing key is returned and the new attribute is ignored.
     pub fn add_vertex(&mut self, vertex: VertexAttr<P::V>) -> VertexKey {
         let dart = self.cell_representative(vertex.dart, Dim::Zero);
         if let Some(&key) = self.dart_to_vertex.get(&dart) {
@@ -288,10 +374,12 @@ impl<P: Payload> GMap<P> {
         self.dart_to_vertex.insert(dart, key);
         key
     }
+    /// Returns the vertex attribute for `key`, if it exists.
     pub fn vertex(&self, key: VertexKey) -> Option<&VertexAttr<P::V>> {
         self.vertices.get(key)
     }
 
+    /// Returns the mutable vertex attribute for `key`, if it exists.
     pub fn vertex_mut(&mut self, key: VertexKey) -> Option<&mut VertexAttr<P::V>> {
         self.vertices.get_mut(key)
     }
@@ -301,6 +389,10 @@ impl<P: Payload> GMap<P> {
         self.vertices.iter()
     }
 
+    /// Adds an edge attribute and returns its key.
+    ///
+    /// If an edge attribute is already registered for the same 1-cell, the
+    /// existing key is returned and the new attribute is ignored.
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
         let dart = self.cell_representative(edge.dart, Dim::One);
         if let Some(&key) = self.dart_to_edge.get(&dart) {
@@ -313,10 +405,12 @@ impl<P: Payload> GMap<P> {
         key
     }
 
+    /// Returns the edge attribute for `key`, if it exists.
     pub fn edge(&self, key: EdgeKey) -> Option<&EdgeAttr<P::E>> {
         self.edges.get(key)
     }
 
+    /// Returns the mutable edge attribute for `key`, if it exists.
     pub fn edge_mut(&mut self, key: EdgeKey) -> Option<&mut EdgeAttr<P::E>> {
         self.edges.get_mut(key)
     }
@@ -326,6 +420,10 @@ impl<P: Payload> GMap<P> {
         self.edges.iter()
     }
 
+    /// Adds a face attribute and returns its key.
+    ///
+    /// If any boundary facet is already attached to a face, the existing face
+    /// key is returned and the new attribute is ignored.
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
         let facet_darts = std::iter::once(face.outer_loop)
             .chain(face.inner_loops.iter().copied())
@@ -333,21 +431,23 @@ impl<P: Payload> GMap<P> {
             .collect::<Vec<_>>();
         if let Some(key) = facet_darts
             .iter()
-            .find_map(|dart| self.facets.get(dart).copied())
+            .find_map(|dart| self.dart_to_face.get(dart).copied())
         {
             return key;
         }
         let key = self.faces.insert(face);
         for dart in facet_darts {
-            self.facets.insert(dart, key);
+            self.dart_to_face.insert(dart, key);
         }
         key
     }
 
+    /// Returns the face attribute for `key`, if it exists.
     pub fn face(&self, key: FaceKey) -> Option<&FaceAttr<P::F>> {
         self.faces.get(key)
     }
 
+    /// Returns the mutable face attribute for `key`, if it exists.
     pub fn face_mut(&mut self, key: FaceKey) -> Option<&mut FaceAttr<P::F>> {
         self.faces.get_mut(key)
     }
@@ -356,8 +456,8 @@ impl<P: Payload> GMap<P> {
         let face = self.faces.remove(key)?;
         for dart in std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied()) {
             let representative = self.cell_representative(dart, Dim::Two);
-            if self.facets.get(&representative) == Some(&key) {
-                self.facets.remove(&representative);
+            if self.dart_to_face.get(&representative) == Some(&key) {
+                self.dart_to_face.remove(&representative);
             }
         }
         Some(face)
@@ -368,10 +468,27 @@ impl<P: Payload> GMap<P> {
         self.faces.iter()
     }
 
+    /// Adds a solid attribute and returns its key.
+    ///
+    /// If any shell is already attached to a solid, the existing solid key is
+    /// returned and the new attribute is ignored.
     pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidKey {
-        self.solids.insert(solid)
+        let shell_darts = self.solid_shell_representatives(&solid);
+        if let Some(key) = shell_darts
+            .iter()
+            .find_map(|dart| self.dart_to_solid.get(dart).copied())
+        {
+            return key;
+        }
+
+        let key = self.solids.insert(solid);
+        for dart in shell_darts {
+            self.dart_to_solid.insert(dart, key);
+        }
+        key
     }
 
+    /// Returns the solid attribute for `key`, if it exists.
     pub fn solid(&self, key: SolidKey) -> Option<&SolidAttr<P::S>> {
         self.solids.get(key)
     }
@@ -379,6 +496,13 @@ impl<P: Payload> GMap<P> {
     /// Iterate every stored 3-cell attribute paired with its slotmap key.
     pub fn iter_solids(&self) -> impl Iterator<Item = (SolidKey, &SolidAttr<P::S>)> {
         self.solids.iter()
+    }
+
+    fn solid_shell_representatives(&self, solid: &SolidAttr<P::S>) -> Vec<Dart> {
+        std::iter::once(solid.outer_shell)
+            .chain(solid.inner_shells.iter().flatten().copied())
+            .map(|dart| self.cell_representative(dart, Dim::Three))
+            .collect()
     }
 
     /// Copy a topological view into a fresh [`GMap`].
@@ -402,10 +526,12 @@ impl<P: Payload> GMap<P> {
     where
         T: MergeTopology<P>,
     {
-        let source = topology.source_map();
+        let topology = topology.merge_topology();
+        let source = topology.source;
+        let handle = topology.handle;
         let mut seen_darts = HashSet::new();
         let source_darts = topology
-            .merge_darts()
+            .darts
             .into_iter()
             .filter(|dart| seen_darts.insert(*dart))
             .collect::<Vec<_>>();
@@ -490,14 +616,14 @@ impl<P: Payload> GMap<P> {
                 .collect();
             let outer_loop = attr.outer_loop;
             let new_key = self.faces.insert(attr);
-            self.facets.insert(outer_loop, new_key);
+            self.dart_to_face.insert(outer_loop, new_key);
             face_map.insert(old_key, new_key);
         }
-        for (old_dart, old_key) in source.facets.iter() {
+        for (old_dart, old_key) in source.dart_to_face.iter() {
             if let (Some(&new_dart), Some(&new_key)) =
                 (dart_map.get(old_dart), face_map.get(old_key))
             {
-                self.facets.insert(new_dart, new_key);
+                self.dart_to_face.insert(new_dart, new_key);
             }
         }
 
@@ -516,10 +642,14 @@ impl<P: Payload> GMap<P> {
                     .filter_map(|dart| dart_map.get(&dart).copied())
                     .collect()
             });
-            self.solids.insert(attr);
+            let shell_darts = self.solid_shell_representatives(&attr);
+            let new_key = self.solids.insert(attr);
+            for dart in shell_darts {
+                self.dart_to_solid.insert(dart, new_key);
+            }
         }
 
-        remap_dart(&dart_map, topology.handle_dart())
+        remap_dart(&dart_map, handle)
     }
 
     /// Algorithm 19 of the book
@@ -552,6 +682,15 @@ impl<P: Payload> GMap<P> {
         }
     }
 
+    /// Returns the canonical representative dart for the `dim`-cell of `dart`.
+    ///
+    /// The current canonical representative is the minimum dart id in the cell
+    /// orbit. Use this when storing or comparing cells by dart.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the cell orbit is empty, which should be impossible for a
+    /// valid dart in the map.
     pub fn cell_representative(&self, dart: Dart, dim: Dim) -> Dart {
         self.orbit(dart, self.orbit_indices(dim))
             .min()
@@ -590,7 +729,7 @@ impl<P: Payload> GMap<P> {
         })
     }
 
-    /// BFS-walk the orbit ⟨α_k : k ∈ involutions⟩ starting at `start`, using `marked`
+    /// BFS-walks an orbit generated by `involutions` starting at `start`, using `marked`
     /// as the shared visited set. Every dart visited is flagged in `marked`.
     ///
     /// The caller must guarantee that no dart of this orbit is already marked on
@@ -658,8 +797,10 @@ impl<P: Payload> GMap<P> {
         }
     }
 
-    /// i-sew `d0` and `d1`. Fails if the configuration is not sewable
-    /// (same dart, already i-sewn, or orbits not compatible).
+    /// Sews `d0` and `d1` along dimension `d`.
+    ///
+    /// Returns an error when the darts are the same, either dart is already
+    /// sewn along `d`, or the generated sewing orbits are incompatible.
     pub fn sew(&mut self, d: Dim, d0: Dart, d1: Dart) -> Result<(), &'static str> {
         match self.is_sewable(d0, d1, d) {
             Some(sd) => {
@@ -682,6 +823,9 @@ impl<P: Payload> GMap<P> {
         self.alphas[i][dart.id()] = dart;
     }
 
+    /// Returns the attribute associated with the `D`-cell containing `dart`.
+    ///
+    /// The lookup first canonicalizes `dart` to the representative of `D::DIM`.
     pub fn attribute<D: CellDim>(&self, dart: Dart) -> Option<&<Self as AttributeStore<D>>::Attr>
     where
         Self: AttributeStore<D>,
@@ -690,6 +834,10 @@ impl<P: Payload> GMap<P> {
         self.get(repr)
     }
 
+    /// Returns the mutable attribute associated with the `D`-cell containing
+    /// `dart`.
+    ///
+    /// The lookup first canonicalizes `dart` to the representative of `D::DIM`.
     pub fn attribute_mut<D: CellDim>(
         &mut self,
         dart: Dart,
@@ -702,6 +850,10 @@ impl<P: Payload> GMap<P> {
     }
 }
 
+/// Breadth-first iterator over a dart orbit.
+///
+/// The iterator starts at one dart and follows the configured alpha indices,
+/// yielding each reachable dart once.
 pub struct OrbitIterator<'a, P: Payload> {
     gmap: &'a GMap<P>,
     involutions: Vec<usize>,
@@ -710,6 +862,9 @@ pub struct OrbitIterator<'a, P: Payload> {
 }
 
 impl<'a, P: Payload> OrbitIterator<'a, P> {
+    /// Creates an orbit iterator rooted at `start`.
+    ///
+    /// `involutions` contains alpha indices, not [`Dim`] values.
     pub fn new(gmap: &'a GMap<P>, start: Dart, involutions: Vec<usize>) -> Self {
         let dart_count = gmap.dart_count();
         let mut visited = vec![false; dart_count];

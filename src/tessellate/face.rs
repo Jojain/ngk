@@ -19,61 +19,78 @@ use nalgebra::UnitVector3;
 
 use super::{IndexedMesh, TessellateOpts, surface::tessellate_surface_patch};
 use crate::geometry::{LINEAR_TOLERANCE, Point2, PointCoincidence, Surface};
-use crate::topology::attributes::FaceAttr;
-use crate::topology::gmap::{Dart, GMap};
+use crate::topology::face::Face;
+use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
-use crate::topology::profile::Profile;
+use crate::topology::profile::Loop;
 use crate::topology::shape_keys::FaceKey;
 
 const EPS: f64 = LINEAR_TOLERANCE;
 
-/// Tessellate the face stored at `key` in `g`. Returns `None` if the face is
-/// missing or has no pcurves to delineate it.
+/// Tessellates a trimmed face into an indexed triangle mesh.
+///
+/// The face boundary is read from its outer loop and inner loops. Each loop
+/// must have one pcurve per boundary edge, expressed in the face surface's
+/// parameter space. Returns `None` when the boundary cannot be sampled into a
+/// valid UV polygon.
 pub fn tessellate_face<P: Payload>(
+    face: &Face<'_, P>,
+    opts: TessellateOpts,
+) -> Option<IndexedMesh> {
+    let outer_loop = face.outer_loop();
+    let outer_uv = sample_loop_pcurve(face, &outer_loop, opts)?;
+    if outer_uv.len() < 3 {
+        return None;
+    }
+
+    let inner_uv: Vec<Vec<Point2>> = face
+        .inner_loops()
+        .iter()
+        .filter_map(|loop_| sample_loop_pcurve(face, loop_, opts))
+        .collect();
+
+    let ccw = signed_area(&outer_uv) > 0.0;
+
+    Some(match face.surface() {
+        Surface::Cylinder(_) | Surface::Ruled(_) | Surface::Revolution(_) => {
+            surface_grid(face.surface(), &outer_uv, ccw, opts)
+        }
+        Surface::Plane(_) => plane_polygon_with_holes(face.surface(), &outer_uv, &inner_uv, ccw),
+        // TODO: real CDT for NURBS surfaces.
+        _ => uv_bbox_quad(face.surface(), &outer_uv, ccw),
+    })
+}
+
+/// Tessellates the face stored at `key` in `g`.
+///
+/// This is the raw map/key bridge for traversal code that has not yet lifted a
+/// [`Face`] view. Prefer [`tessellate_face`] when a typed face view is already
+/// available.
+pub fn tessellate_face_key<P: Payload>(
     g: &GMap<P>,
     key: FaceKey,
     opts: TessellateOpts,
 ) -> Option<IndexedMesh> {
     let attr = g.face(key)?;
-    let outer_uv = sample_loop_pcurve(g, attr, attr.outer_loop, opts)?;
-    if outer_uv.len() < 3 {
-        return None;
-    }
-
-    let inner_uv: Vec<Vec<Point2>> = attr
-        .inner_loops
-        .iter()
-        .filter_map(|d| sample_loop_pcurve(g, attr, *d, opts))
-        .collect();
-
-    let ccw = signed_area(&outer_uv) > 0.0;
-
-    Some(match &attr.surface {
-        Surface::Cylinder(_) | Surface::Ruled(_) | Surface::Revolution(_) => {
-            surface_grid(&attr.surface, &outer_uv, ccw, opts)
-        }
-        Surface::Plane(_) => plane_polygon_with_holes(&attr.surface, &outer_uv, &inner_uv, ccw),
-        // TODO: real CDT for NURBS surfaces.
-        _ => uv_bbox_quad(&attr.surface, &outer_uv, ccw),
-    })
+    let face = attr.face(g);
+    tessellate_face(&face, opts)
 }
 
 // ---------- pcurve sampling ----------
 
 fn sample_loop_pcurve<P: Payload>(
-    g: &GMap<P>,
-    attr: &FaceAttr<P::F>,
-    loop_dart: Dart,
+    face: &Face<'_, P>,
+    loop_: &Loop<'_, P>,
     opts: TessellateOpts,
 ) -> Option<Vec<Point2>> {
-    let edge_darts: Vec<Dart> = Profile::new(g, loop_dart).darts().step_by(2).collect();
+    let edge_darts = loop_.darts().step_by(2).collect::<Vec<_>>();
     if edge_darts.is_empty() {
         return None;
     }
     let segments = opts.curve.segments.max(1);
     let mut points = Vec::new();
     for d in &edge_darts {
-        let curve = attr.pcurves.get(d)?;
+        let curve = face.pcurve(*d)?;
         let samples = curve.sample(segments);
         if samples.is_empty() {
             return None;

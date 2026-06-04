@@ -1,5 +1,5 @@
 use ngk::modeling::solids::{PrimitiveError, block};
-use ngk::tessellate::{TessellateOpts, face::tessellate_face};
+use ngk::tessellate::{TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
 use ngk::topology::gmap::Dim;
 use ngk::topology::sheet::Sheet;
@@ -37,7 +37,7 @@ fn block_builds_closed_box_with_expected_cell_counts() {
     );
 
     for (key, _) in g.iter_faces() {
-        let mesh = tessellate_face(g, key, TessellateOpts::default())
+        let mesh = tessellate_face_key(g, key, TessellateOpts::default())
             .expect("each block face should tessellate");
         assert!(
             !mesh.positions.is_empty(),
@@ -48,6 +48,23 @@ fn block_builds_closed_box_with_expected_cell_counts() {
             "face {key:?} should emit triangles"
         );
     }
+}
+
+#[test]
+fn solid_and_shell_expose_boundary_subtypes() {
+    let shape = block(1.0, 2.0, 3.0).expect("block primitive should build");
+    let solid = shape.solid();
+    let shell = solid.outer_shell();
+
+    assert_eq!(solid.key(), shape.key());
+    assert_eq!(solid.shells().len(), 1);
+    assert_eq!(solid.faces().len(), 6);
+    assert_eq!(solid.edges().len(), 12);
+    assert_eq!(solid.vertices().len(), 8);
+
+    assert_eq!(shell.faces().len(), 6);
+    assert_eq!(shell.edges().len(), 12);
+    assert_eq!(shell.vertices().len(), 8);
 }
 
 #[test]

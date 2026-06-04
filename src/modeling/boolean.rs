@@ -18,7 +18,7 @@ use crate::geometry::{
 use crate::topology::attributes::{FaceAttr, SolidAttr};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap, MergeTopology};
+use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap, MergeTopology, TopologyMerge};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Loop;
 use crate::topology::shape::{Shape, SolidTag};
@@ -678,16 +678,8 @@ impl<'a, P: Payload> SelectedFaceSet<'a, P> {
 }
 
 impl<P: Payload> MergeTopology<P> for SelectedFaceSet<'_, P> {
-    fn source_map(&self) -> &GMap<P> {
-        self.map
-    }
-
-    fn merge_darts(&self) -> Vec<Dart> {
-        self.darts.clone()
-    }
-
-    fn handle_dart(&self) -> Dart {
-        self.handle
+    fn merge_topology(&self) -> TopologyMerge<'_, P> {
+        TopologyMerge::new(self.map, self.darts.clone(), self.handle)
     }
 }
 

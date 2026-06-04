@@ -8,12 +8,14 @@
 //! - [`tessellate_curve`]: [`Curve`](crate::geometry::Curve) → [`Polyline3`].
 //! - [`tessellate_surface_patch`]: [`Surface`](crate::geometry::Surface) over a
 //!   `(u, v)` rectangle → [`IndexedMesh`].
-//! - [`tessellate_face`]: a face attribute (surface + outer/inner pcurve loops)
-//!   → [`IndexedMesh`]. **Real plan**: sample pcurves into a UV polygon with
-//!   holes, run constrained Delaunay triangulation, lift via
-//!   `surface.point_at`. **Today**: per-surface shortcuts (cylinder UV grid,
-//!   plane fan / annulus strip) gated on the pcurve loop layout — see
-//!   [`face`] for `// TODO: real CDT` markers.
+//! - [`tessellate_face`]: a typed [`Face`](crate::topology::face::Face) view
+//!   (surface + outer/inner pcurve loops) → [`IndexedMesh`]. **Real plan**:
+//!   sample pcurves into a UV polygon with holes, run constrained Delaunay
+//!   triangulation, lift via `surface.point_at`. **Today**: per-surface
+//!   shortcuts (cylinder UV grid, plane fan / annulus strip) gated on the
+//!   pcurve loop layout — see [`face`] for `// TODO: real CDT` markers.
+//! - [`tessellate_face_key`]: raw map/key bridge for callers that are still
+//!   iterating a [`GMap`](crate::topology::gmap::GMap) directly.
 //! - [`tessellate_shape`]: dispatch on a [`ShapeKey`](crate::topology::shape_keys::ShapeKey).
 
 pub mod curve;
@@ -87,6 +89,6 @@ pub struct TessellateOpts {
 }
 
 pub use curve::tessellate_curve;
-pub use face::tessellate_face;
+pub use face::{tessellate_face, tessellate_face_key};
 pub use shape::{ShapeMesh, tessellate_edge, tessellate_shape, tessellate_vertex};
 pub use surface::tessellate_surface_patch;

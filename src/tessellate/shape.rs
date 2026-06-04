@@ -1,6 +1,6 @@
 //! `ShapeKey` → tessellated representation. Single dispatch entry point.
 
-use super::{IndexedMesh, Polyline3, TessellateOpts, tessellate_curve, tessellate_face};
+use super::{IndexedMesh, Polyline3, TessellateOpts, tessellate_curve, tessellate_face_key};
 use crate::geometry::Point3;
 use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
@@ -18,7 +18,7 @@ pub enum ShapeMesh {
 ///
 /// - `Vertex` → its stored 3D position.
 /// - `Edge` → polyline from start vertex's curve param to end vertex's.
-/// - `Face` → indexed mesh via [`tessellate_face`].
+/// - `Face` → indexed mesh via [`tessellate_face_key`].
 pub fn tessellate_shape<P: Payload>(
     g: &GMap<P>,
     key: ShapeKey,
@@ -27,7 +27,7 @@ pub fn tessellate_shape<P: Payload>(
     match key {
         ShapeKey::Vertex(v) => tessellate_vertex(g, v).map(ShapeMesh::Vertex),
         ShapeKey::Edge(e) => tessellate_edge(g, e, opts).map(ShapeMesh::Edge),
-        ShapeKey::Face(f) => tessellate_face(g, f, opts).map(ShapeMesh::Face),
+        ShapeKey::Face(f) => tessellate_face_key(g, f, opts).map(ShapeMesh::Face),
     }
 }
 
