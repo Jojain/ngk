@@ -299,7 +299,7 @@ pub fn payload_for_scene(scene: &VizScene, options: &OcpViewerOptions) -> OcpVie
         normalize_uvs: true,
         texture: None,
         loc: identity_location(),
-        renderback: false,
+        renderback: true,
         accuracy: None,
         bb: None,
     };

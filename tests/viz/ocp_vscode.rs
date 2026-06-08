@@ -1,5 +1,4 @@
 use ngk::modeling::solids::block;
-use ngk::viz::ocp_vscode::show;
 use ngk::viz::ocp_vscode::{OcpViewerOptions, payload_for_shape};
 
 #[test]
@@ -22,6 +21,7 @@ fn ocp_payload_for_shape_contains_three_cad_viewer_geometry() {
     assert_eq!(part.subtype, "solid");
     assert_eq!(part.shape.reference, 0);
     assert_eq!(part.state, [1, 1]);
+    assert!(part.renderback);
 
     let geometry = &payload.data.instances[0];
     assert_eq!(geometry.vertices.dtype, "float32");
