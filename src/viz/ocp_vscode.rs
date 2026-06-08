@@ -16,9 +16,16 @@ use serde::Serialize;
 use thiserror::Error;
 
 use super::{VizScene, VizVertex, scene_from_gmap};
-use crate::topology::gmap::GMap;
+use crate::topology::edge::Edge;
+use crate::topology::face::Face;
+use crate::topology::facet::Facet;
+use crate::topology::gmap::{GMap, MergeTopology};
 use crate::topology::payload::Payload;
+use crate::topology::profile::Profile;
 use crate::topology::shape::{Shape, ShapeKind};
+use crate::topology::sheet::Sheet;
+use crate::topology::solid::Solid;
+use crate::topology::vertex::Vertex;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 3939;
@@ -26,6 +33,8 @@ const ROOT_NAME: &str = "NGK";
 const DEFAULT_COLOR: &str = "#4a7bc8";
 const DEFAULT_EDGE_COLOR: &str = "#707070";
 const DEFAULT_VERTEX_COLOR: &str = "MediumOrchid";
+const DEFAULT_EDGE_WIDTH: f32 = 2.0;
+const DEFAULT_VERTEX_SIZE: f32 = 6.0;
 
 #[derive(Debug, Error)]
 pub enum OcpVscodeError {
@@ -158,6 +167,10 @@ pub struct OcpPart {
     pub renderback: bool,
     pub accuracy: Option<f64>,
     pub bb: Option<OcpBoundingBox>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -234,17 +247,148 @@ impl OcpBoundingBox {
 
 pub type OcpLocation = ([f64; 3], [f64; 4]);
 
-/// Serialize and send an NGK shape to a running OCP CAD Viewer.
-pub fn show<K: ShapeKind, P: Payload>(shape: &Shape<K, P>) -> Result<(), OcpVscodeError> {
-    show_with_options(shape, &OcpViewerOptions::default())
+#[derive(Debug, Clone, Copy)]
+enum OcpDisplayRole {
+    Shape,
+    Edge,
+    Vertex,
 }
 
-/// Serialize and send an NGK shape using explicit viewer options.
-pub fn show_with_options<K: ShapeKind, P: Payload>(
-    shape: &Shape<K, P>,
+pub struct OcpDisplayItem {
+    scene: VizScene,
+    role: OcpDisplayRole,
+}
+
+impl OcpDisplayItem {
+    fn shape(scene: VizScene) -> Self {
+        Self {
+            scene,
+            role: OcpDisplayRole::Shape,
+        }
+    }
+
+    fn edge(scene: VizScene) -> Self {
+        Self {
+            scene,
+            role: OcpDisplayRole::Edge,
+        }
+    }
+
+    fn vertex(scene: VizScene) -> Self {
+        Self {
+            scene,
+            role: OcpDisplayRole::Vertex,
+        }
+    }
+}
+
+/// Values that can be displayed in the OCP CAD Viewer.
+///
+/// Implemented for owned [`Shape`] values, typed topology views such as
+/// [`Face`] and [`Edge`], and collections (`Vec<T>`, slices, arrays). This
+/// lets callers use the same entry point for `show(&solid)` and
+/// `show(&solid.solid().faces()[0..5])`.
+pub trait OcpDisplay {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>);
+}
+
+impl<T: OcpDisplay + ?Sized> OcpDisplay for &T {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        (*self).append_ocp_items(items);
+    }
+}
+
+impl<T: OcpDisplay> OcpDisplay for Vec<T> {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        self.as_slice().append_ocp_items(items);
+    }
+}
+
+impl<T: OcpDisplay> OcpDisplay for [T] {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        for item in self {
+            item.append_ocp_items(items);
+        }
+    }
+}
+
+impl<T: OcpDisplay, const N: usize> OcpDisplay for [T; N] {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        self.as_slice().append_ocp_items(items);
+    }
+}
+
+impl<K: ShapeKind, P: Payload> OcpDisplay for Shape<K, P> {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        items.push(OcpDisplayItem::shape(scene_from_gmap(
+            self.map(),
+            &super::VizHints::new(),
+        )));
+    }
+}
+
+impl<P: Payload> OcpDisplay for Vertex<'_, P> {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        items.push(OcpDisplayItem::vertex(scene_from_topology::<P, _>(self)));
+    }
+}
+
+impl<P: Payload> OcpDisplay for Edge<'_, P> {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        items.push(OcpDisplayItem::edge(scene_from_topology::<P, _>(self)));
+    }
+}
+
+impl<P: Payload> OcpDisplay for Profile<'_, P> {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        items.push(OcpDisplayItem::edge(scene_from_topology::<P, _>(self)));
+    }
+}
+
+impl<P: Payload> OcpDisplay for Face<'_, P> {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        items.push(OcpDisplayItem::shape(scene_from_topology::<P, _>(self)));
+    }
+}
+
+impl<P: Payload> OcpDisplay for Facet<'_, P> {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        items.push(OcpDisplayItem::shape(scene_from_topology::<P, _>(self)));
+    }
+}
+
+impl<P: Payload> OcpDisplay for Sheet<'_, P> {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        items.push(OcpDisplayItem::shape(scene_from_topology::<P, _>(self)));
+    }
+}
+
+impl<P: Payload> OcpDisplay for Solid<'_, P> {
+    fn append_ocp_items(&self, items: &mut Vec<OcpDisplayItem>) {
+        items.push(OcpDisplayItem::shape(scene_from_topology::<P, _>(self)));
+    }
+}
+
+fn scene_from_topology<P, T>(topology: T) -> VizScene
+where
+    P: Payload,
+    T: MergeTopology<P>,
+{
+    let (g, _) = GMap::isolate(topology);
+    scene_from_gmap(&g, &super::VizHints::new())
+}
+
+/// Serialize and send NGK display items to a running OCP CAD Viewer.
+pub fn show<T: OcpDisplay + ?Sized>(display: &T) -> Result<(), OcpVscodeError> {
+    show_with_options(display, &OcpViewerOptions::default())
+}
+
+/// Serialize and send NGK display items using explicit viewer options.
+pub fn show_with_options<T: OcpDisplay + ?Sized>(
+    display: &T,
     options: &OcpViewerOptions,
 ) -> Result<(), OcpVscodeError> {
-    let payload = payload_for_shape(shape, options)?;
+    let payload = payload_for_display(display, options)?;
     send_payload(&payload, options)
 }
 
@@ -267,7 +411,17 @@ pub fn payload_for_shape<K: ShapeKind, P: Payload>(
     shape: &Shape<K, P>,
     options: &OcpViewerOptions,
 ) -> Result<OcpViewerPayload, OcpVscodeError> {
-    payload_for_gmap(shape.map(), options)
+    payload_for_display(shape, options)
+}
+
+/// Build the OCP viewer payload for one or more NGK display items without sending it.
+pub fn payload_for_display<T: OcpDisplay + ?Sized>(
+    display: &T,
+    options: &OcpViewerOptions,
+) -> Result<OcpViewerPayload, OcpVscodeError> {
+    let mut items = Vec::new();
+    display.append_ocp_items(&mut items);
+    Ok(payload_for_items(&items, options))
 }
 
 /// Build the OCP viewer payload for a raw GMap without sending it.
@@ -283,43 +437,141 @@ pub fn payload_for_gmap<P: Payload>(
 
 /// Build the OCP viewer payload for an already-tessellated scene.
 pub fn payload_for_scene(scene: &VizScene, options: &OcpViewerOptions) -> OcpViewerPayload {
+    payload_for_scenes(std::slice::from_ref(scene), options)
+}
+
+/// Build the OCP viewer payload for already-tessellated scenes.
+pub fn payload_for_scenes(scenes: &[VizScene], options: &OcpViewerOptions) -> OcpViewerPayload {
+    let items = scenes
+        .iter()
+        .cloned()
+        .map(OcpDisplayItem::shape)
+        .collect::<Vec<_>>();
+    payload_for_items(&items, options)
+}
+
+fn payload_for_items(items: &[OcpDisplayItem], options: &OcpViewerOptions) -> OcpViewerPayload {
     let part_name = clean_part_name(&options.name);
-    let shape = ocp_shape_from_scene(scene);
-    let bb = bounding_box(scene);
-    let part = OcpPart {
-        id: format!("/{ROOT_NAME}/{part_name}"),
-        kind: "shapes".to_owned(),
-        subtype: "solid".to_owned(),
-        name: part_name,
-        shape: OcpShapeRef { reference: 0 },
-        state: [1, 1],
-        color: options.color.clone(),
-        alpha: 1.0,
-        material: None,
-        normalize_uvs: true,
-        texture: None,
-        loc: identity_location(),
-        renderback: true,
-        accuracy: None,
-        bb: None,
-    };
+    let mut instances = Vec::with_capacity(items.len());
+    let mut parts = Vec::with_capacity(items.len());
+    let mut bb: Option<OcpBoundingBox> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        let scene = &item.scene;
+        instances.push(ocp_shape_from_item(item));
+        let scene_bb = bounding_box(scene);
+        bb = Some(match bb {
+            Some(mut bb) => {
+                bb.include([scene_bb.xmin, scene_bb.ymin, scene_bb.zmin]);
+                bb.include([scene_bb.xmax, scene_bb.ymax, scene_bb.zmax]);
+                bb
+            }
+            None => scene_bb,
+        });
+
+        let name = if items.len() == 1 {
+            part_name.clone()
+        } else {
+            format!("{part_name}_{index}")
+        };
+        let part_kind = part_kind_for_role(item.role);
+        parts.push(OcpPart {
+            id: format!("/{ROOT_NAME}/{name}"),
+            kind: part_kind.kind.to_owned(),
+            subtype: part_kind.subtype.to_owned(),
+            name,
+            shape: OcpShapeRef {
+                reference: index as u32,
+            },
+            state: part_kind.state,
+            color: part_kind.color(options),
+            alpha: 1.0,
+            material: None,
+            normalize_uvs: true,
+            texture: None,
+            loc: identity_location(),
+            renderback: true,
+            accuracy: None,
+            bb: None,
+            width: part_kind.width,
+            size: part_kind.size,
+        });
+    }
 
     OcpViewerPayload {
         data: OcpViewerData {
-            instances: vec![shape],
+            instances,
             shapes: OcpShapes {
                 version: 3,
-                parts: vec![part],
+                parts,
                 loc: identity_location(),
                 name: ROOT_NAME.to_owned(),
                 id: format!("/{ROOT_NAME}"),
                 normal_len: 0.0,
-                bb,
+                bb: bb.unwrap_or_else(OcpBoundingBox::empty),
             },
         },
         message_type: "data".to_owned(),
         config: config_from_options(options),
-        count: 1,
+        count: items.len() as u32,
+    }
+}
+
+struct OcpPartKind {
+    kind: &'static str,
+    subtype: &'static str,
+    state: [u8; 2],
+    width: Option<f32>,
+    size: Option<f32>,
+}
+
+impl OcpPartKind {
+    fn color(&self, options: &OcpViewerOptions) -> String {
+        match self.kind {
+            "edges" => options.edge_color.clone(),
+            "vertices" => options.vertex_color.clone(),
+            _ => options.color.clone(),
+        }
+    }
+}
+
+fn part_kind_for_role(role: OcpDisplayRole) -> OcpPartKind {
+    match role {
+        OcpDisplayRole::Shape => OcpPartKind {
+            kind: "shapes",
+            subtype: "solid",
+            state: [1, 1],
+            width: None,
+            size: None,
+        },
+        OcpDisplayRole::Edge => OcpPartKind {
+            kind: "edges",
+            subtype: "edge",
+            state: [3, 1],
+            width: Some(DEFAULT_EDGE_WIDTH),
+            size: None,
+        },
+        OcpDisplayRole::Vertex => OcpPartKind {
+            kind: "vertices",
+            subtype: "vertex",
+            state: [3, 1],
+            width: None,
+            size: Some(DEFAULT_VERTEX_SIZE),
+        },
+    }
+}
+
+fn ocp_shape_from_item(item: &OcpDisplayItem) -> OcpShape {
+    match item.role {
+        OcpDisplayRole::Shape => ocp_shape_from_scene(&item.scene),
+        OcpDisplayRole::Edge => ocp_shape_from_scene(&VizScene {
+            edges: item.scene.edges.clone(),
+            ..VizScene::new()
+        }),
+        OcpDisplayRole::Vertex => ocp_shape_from_scene(&VizScene {
+            vertices: item.scene.vertices.clone(),
+            ..VizScene::new()
+        }),
     }
 }
 

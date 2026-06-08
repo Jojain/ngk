@@ -2,10 +2,15 @@ use nalgebra::Vector3;
 
 use crate::{
     Payload,
+<<<<<<< HEAD
     builders::errors::ExtrudeError,
     geometry::{
         Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
     },
+=======
+    builders::{errors::ExtrudeError, sheets::add_extruded_profile_boundaries},
+    geometry::LINEAR_TOLERANCE,
+>>>>>>> a68e31a (improved vscode display)
     topology::{
         Dart, SolidAttr,
         attributes::{EdgeAttr, FaceAttr},
@@ -125,9 +130,9 @@ fn orient_extruded_caps<P: Payload>(
     };
 
     if bottom_normal_dot_direction > LINEAR_TOLERANCE {
-        reverse_face_winding(g, bottom_face);
+        reverse_face_boundary_orientation(g, bottom_face);
     } else if bottom_normal_dot_direction < -LINEAR_TOLERANCE {
-        reverse_face_winding(g, top_face);
+        reverse_face_boundary_orientation(g, top_face);
     }
 }
 
@@ -139,34 +144,29 @@ fn face_normal_dot_direction<P: Payload>(
     face.face(g).normal_at(0.0, 0.0).dot(&direction)
 }
 
-fn reverse_face_winding<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
-    let Some(face_attr) = g.face(face).cloned() else {
+fn reverse_face_boundary_orientation<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
+    let Some(source) = g.face(face) else {
         return;
     };
+    let old_outer_loop = source.outer_loop;
+    let old_inner_loops = source.inner_loops.clone();
+    let old_pcurves = source.pcurves.clone();
 
-    let outer_loop = g.alpha(Dim::Zero, face_attr.outer_loop);
-    let inner_loops = face_attr
-        .inner_loops
+    let reversed_outer_loop = g.alpha(Dim::Zero, old_outer_loop);
+    let reversed_inner_loops = old_inner_loops
         .iter()
-        .map(|dart| g.alpha(Dim::Zero, *dart))
+        .copied()
+        .map(|loop_dart| g.alpha(Dim::Zero, loop_dart))
         .collect::<Vec<_>>();
-    let pcurves = face_attr
-        .face(g)
-        .edges()
-        .into_iter()
-        .filter_map(|edge| {
-            face_attr
-                .pcurves
-                .get(&edge.dart)
-                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart), pcurve.reversed()))
-        })
+    let reversed_pcurves = old_pcurves
+        .iter()
+        .map(|(&dart, pcurve)| (g.alpha(Dim::Zero, dart), pcurve.reversed()))
         .collect();
 
-    if let Some(face) = g.face_mut(face) {
-        face.outer_loop = outer_loop;
-        face.inner_loops = inner_loops;
-        face.pcurves = pcurves;
-    }
+    let face = g.face_mut(face).expect("face was present before mutation");
+    face.outer_loop = reversed_outer_loop;
+    face.inner_loops = reversed_inner_loops;
+    face.pcurves = reversed_pcurves;
 }
 
 fn sew_extruded_loop<P: Payload>(

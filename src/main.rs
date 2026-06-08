@@ -1,5 +1,7 @@
+use ngk::modeling::solids::block;
 use ngk::scripts;
 use ngk::viz::ScriptResult;
+use ngk::viz::ocp_vscode::show;
 
 fn script_handling(_name: &str, _result: &ScriptResult) {
     println!("available scripts:");
