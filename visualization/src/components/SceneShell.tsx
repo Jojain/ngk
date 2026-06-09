@@ -1,5 +1,5 @@
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { GizmoHelper, GizmoViewport, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import type { PropsWithChildren } from "react";
 
@@ -23,6 +23,12 @@ export default function SceneShell({ children }: PropsWithChildren) {
           RIGHT: THREE.MOUSE.PAN,
         }}
       />
+      <GizmoHelper alignment="bottom-left" margin={[80, 80]}>
+        <GizmoViewport
+          axisColors={["#ff5f5f", "#62d26f", "#6ea8ff"]}
+          labelColor="#f2f2f4"
+        />
+      </GizmoHelper>
       {children}
     </Canvas>
   );

@@ -3,35 +3,21 @@ import { button, useControls, folder } from "leva";
 
 /**
  * Shared leva controls for any experiment that renders a `VizScene`.
- *
- * Returns the props you can spread onto `<VizSceneView />`. Two folders:
- * - **BRep**: toggles, sizes, colors, and whether the face color picker
- *   overrides per-face colors from the scene.
- * - **GMap**: dart-arrow visibility (α-links stay on their own toggles), dart
- *   labels, per-involution α-link toggles.
- *
- * Override defaults via `initial` for experiment-specific tuning.
  */
 export type VizControlsProps = {
   showVertices: boolean;
   showEdges: boolean;
   showFaces: boolean;
-  /** Sphere radius for vertex markers (world units). */
   vertexSize: number;
-  /** Line width for BRep edge polylines (`@react-three/drei` Line). */
   edgeWidth: number;
-  /** Default BRep colors when the scene entity omits `color`. */
   vertexColor: string;
   edgeColor: string;
   faceColor: string;
-  /**
-   * When true (default), every face uses the panel `faceColor`. Turn off to
-   * use per-face `color` from the scene when set (`VizHints`), with `faceColor`
-   * as fallback only.
-   */
+  faceOpacity: number;
   viewerFaceColorOverridesScene: boolean;
   showDarts: boolean;
   showDartLabels: boolean;
+  showAlphaLinks: boolean;
   visibleAlphas: Set<number>;
   alphaColors: Record<number, string>;
 };
@@ -45,9 +31,11 @@ export type VizControlsInitial = Partial<{
   vertexColor: string;
   edgeColor: string;
   faceColor: string;
+  faceOpacity: number;
   viewerFaceColorOverridesScene: boolean;
   showDarts: boolean;
   showDartLabels: boolean;
+  showAlphaLinks: boolean;
   showAlpha0: boolean;
   showAlpha1: boolean;
   showAlpha2: boolean;
@@ -64,6 +52,8 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
       showVertices: { value: initial.showVertices ?? true, label: "vertices" },
       showEdges: { value: initial.showEdges ?? true, label: "edges" },
       showFaces: { value: initial.showFaces ?? true, label: "faces" },
+    }),
+    Options: folder({
       vertexSize: {
         value: initial.vertexSize ?? 0.04,
         min: 0.01,
@@ -90,10 +80,21 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
         value: initial.faceColor ?? "#4a7bc8",
         label: "face color",
       },
+      faceOpacity: {
+        value: initial.faceOpacity ?? 1,
+        min: 0,
+        max: 1,
+        step: 0.02,
+        label: "face opacity",
+      },
       viewerFaceColorOverridesScene: {
         value: initial.viewerFaceColorOverridesScene ?? true,
         label: "face color overrides scene",
       },
+      alpha0Color: { value: initial.alpha0Color ?? "#ff1744", label: "alpha0 color" },
+      alpha1Color: { value: initial.alpha1Color ?? "#00e676", label: "alpha1 color" },
+      alpha2Color: { value: initial.alpha2Color ?? "#00b0ff", label: "alpha2 color" },
+      alpha3Color: { value: initial.alpha3Color ?? "#ffea00", label: "alpha3 color" },
     }),
     GMap: folder({
       alphaDisplay: {
@@ -104,6 +105,7 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
             showFaces: false,
             showDarts: false,
             showDartLabels: false,
+            showAlphaLinks: true,
             showAlpha0: true,
             showAlpha1: true,
             showAlpha2: true,
@@ -112,24 +114,27 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
         }),
         label: "alpha display",
       },
-      showDarts: { value: initial.showDarts ?? false, label: "darts" },
-      showDartLabels: {
-        value: initial.showDartLabels ?? false,
-        label: "dart labels",
+      showAlphaLinks: {
+        value: initial.showAlphaLinks ?? true,
+        label: "alpha links",
       },
-      showAlpha0: { value: initial.showAlpha0 ?? true, label: "α0 links" },
-      showAlpha1: { value: initial.showAlpha1 ?? true, label: "α1 links" },
-      showAlpha2: { value: initial.showAlpha2 ?? true, label: "α2 links" },
-      showAlpha3: { value: initial.showAlpha3 ?? false, label: "α3 links" },
-      alpha0Color: { value: initial.alpha0Color ?? "#ff1744", label: "α0 color" },
-      alpha1Color: { value: initial.alpha1Color ?? "#00e676", label: "α1 color" },
-      alpha2Color: { value: initial.alpha2Color ?? "#00b0ff", label: "α2 color" },
-      alpha3Color: { value: initial.alpha3Color ?? "#ffea00", label: "α3 color" },
+      Details: folder({
+        showDarts: { value: initial.showDarts ?? false, label: "darts" },
+        showDartLabels: {
+          value: initial.showDartLabels ?? false,
+          label: "dart labels",
+        },
+        showAlpha0: { value: initial.showAlpha0 ?? true, label: "alpha0 links" },
+        showAlpha1: { value: initial.showAlpha1 ?? true, label: "alpha1 links" },
+        showAlpha2: { value: initial.showAlpha2 ?? true, label: "alpha2 links" },
+        showAlpha3: { value: initial.showAlpha3 ?? false, label: "alpha3 links" },
+      }),
     }),
   }));
 
   const visibleAlphas = useMemo(() => {
     const s = new Set<number>();
+    if (!values.showAlphaLinks) return s;
     if (values.showAlpha0) s.add(0);
     if (values.showAlpha1) s.add(1);
     if (values.showAlpha2) s.add(2);
@@ -140,6 +145,7 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
     values.showAlpha1,
     values.showAlpha2,
     values.showAlpha3,
+    values.showAlphaLinks,
   ]);
 
   const alphaColors = useMemo(
@@ -166,9 +172,11 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
     vertexColor: values.vertexColor,
     edgeColor: values.edgeColor,
     faceColor: values.faceColor,
+    faceOpacity: values.faceOpacity,
     viewerFaceColorOverridesScene: values.viewerFaceColorOverridesScene,
     showDarts: values.showDarts,
     showDartLabels: values.showDartLabels,
+    showAlphaLinks: values.showAlphaLinks,
     visibleAlphas,
     alphaColors,
   };

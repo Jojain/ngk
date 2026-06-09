@@ -25,6 +25,7 @@ export type VizSceneViewProps = {
   vertexColor?: string;
   edgeColor?: string;
   faceColor?: string;
+  faceOpacity?: number;
   /**
    * When true, mesh albedo is always `faceColor`. When false, use each face's
    * `color` from the scene when set, otherwise `faceColor`.
@@ -80,6 +81,7 @@ export default function VizSceneView({
   vertexColor = "#ffc857",
   edgeColor = "#9aa0a6",
   faceColor = "#4a7bc8",
+  faceOpacity = 1,
   viewerFaceColorOverridesScene = false,
   dartColor = "#cfd2d6",
   vertexSize = 0.04,
@@ -112,6 +114,7 @@ export default function VizSceneView({
           edgeColor={edgeColor}
           edgeWidth={edgeWidth}
           faceColor={faceColor}
+          faceOpacity={faceOpacity}
           viewerFaceColorOverridesScene={viewerFaceColorOverridesScene}
           vertexColor={vertexColor}
           vertexSize={vertexSize}
@@ -127,6 +130,7 @@ export default function VizSceneView({
           edgeColor={edgeColor}
           edgeWidth={edgeWidth}
           faceColor={faceColor}
+          faceOpacity={faceOpacity}
           viewerFaceColorOverridesScene={viewerFaceColorOverridesScene}
           vertexColor={vertexColor}
           vertexSize={vertexSize}
@@ -142,6 +146,7 @@ export default function VizSceneView({
           edgeColor={edgeColor}
           edgeWidth={edgeWidth}
           faceColor={faceColor}
+          faceOpacity={faceOpacity}
           viewerFaceColorOverridesScene={viewerFaceColorOverridesScene}
           vertexColor={vertexColor}
           vertexSize={vertexSize}
@@ -195,6 +200,7 @@ function BrepLayer({
   edgeColor,
   edgeWidth,
   faceColor,
+  faceOpacity,
   viewerFaceColorOverridesScene,
   vertexColor,
   vertexSize,
@@ -207,6 +213,7 @@ function BrepLayer({
   edgeColor: string;
   edgeWidth: number;
   faceColor: string;
+  faceOpacity: number;
   viewerFaceColorOverridesScene: boolean;
   vertexColor: string;
   vertexSize: number;
@@ -240,6 +247,7 @@ function BrepLayer({
           key={`f-${f.faceId}`}
           face={f}
           defaultColor={faceColor}
+          defaultOpacity={faceOpacity}
           viewerOverridesScene={viewerFaceColorOverridesScene}
           selected={selected?.kind === "face" && selected.id === f.faceId}
           onSelect={onSelect}
@@ -305,12 +313,14 @@ function EdgePolyline({
 function FaceMesh({
   face,
   defaultColor,
+  defaultOpacity,
   viewerOverridesScene,
   selected,
   onSelect,
 }: {
   face: VizFace;
   defaultColor: string;
+  defaultOpacity: number;
   viewerOverridesScene: boolean;
   selected: boolean;
   onSelect?: (selection: VizSelection) => void;
@@ -345,6 +355,7 @@ function FaceMesh({
   const materialColor = viewerOverridesScene
     ? defaultColor
     : (face.color ?? defaultColor);
+  const materialOpacity = (face.opacity ?? 1) * defaultOpacity;
 
   return (
     <mesh
@@ -355,11 +366,11 @@ function FaceMesh({
       <meshStandardMaterial
         color={selected ? "#f7e36b" : materialColor}
         emissive={selected ? "#3b3300" : "#000000"}
-        opacity={face.opacity ?? 1}
-        transparent={face.opacity !== undefined && face.opacity < 1}
+        opacity={materialOpacity}
+        transparent={materialOpacity < 1}
         roughness={0.55}
         metalness={0.08}
-        side={face.doubleSided ? THREE.DoubleSide : THREE.FrontSide}
+        side={face.doubleSided === false ? THREE.FrontSide : THREE.DoubleSide}
       />
     </mesh>
   );
