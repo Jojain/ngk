@@ -10,6 +10,12 @@ export type ExperimentMeta = {
 
 export const experiments: ExperimentMeta[] = [
   {
+    id: "debug-viewer",
+    title: "Debug viewer",
+    group: "Debug",
+    component: lazy(() => import("./DebugViewer")),
+  },
+  {
     id: "nurbs-curve-editor",
     title: "NURBS curve editor",
     group: "NURBS",

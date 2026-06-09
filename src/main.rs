@@ -33,4 +33,17 @@ fn script_handling(_name: &str, _result: &ScriptResult) {
     }
 }
 
-fn main() {}
+fn main() {
+    use ngk::modeling::solids::block;
+    use ngk::viz::debug_viewer::{DebugViewerOptions, show_with_options};
+
+    let b = block(10.0, 5.0, 3.0).unwrap();
+    show_with_options(
+        &b,
+        &DebugViewerOptions {
+            name: "block".to_owned(),
+            ..DebugViewerOptions::default()
+        },
+    )
+    .unwrap();
+}

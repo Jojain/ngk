@@ -19,6 +19,7 @@
 //! console (`window.$gmap`).
 
 pub mod brep;
+pub mod debug_viewer;
 pub mod gmap;
 pub mod hints;
 pub mod ocp_vscode;

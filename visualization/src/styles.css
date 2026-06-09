@@ -526,3 +526,215 @@ html, body, #root {
   padding: 8px 10px;
   font-size: 12px;
 }
+
+.debug-viewer {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  pointer-events: none;
+}
+
+.debug-side-panel {
+  position: absolute;
+  top: 10px;
+  left: 270px;
+  width: 300px;
+  max-height: calc(100vh - 20px);
+  display: grid;
+  gap: 8px;
+  overflow-y: auto;
+  pointer-events: auto;
+}
+
+.debug-section {
+  background: rgba(23, 23, 28, 0.95);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.34);
+}
+
+.debug-timeline {
+  min-height: 0;
+}
+
+.debug-inspector {
+  min-height: 0;
+}
+
+.debug-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.debug-panel-header h2,
+.debug-uv h3 {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+.debug-panel-header span {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.debug-header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.debug-section button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-hi);
+  color: var(--text);
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.debug-section button:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.debug-dump-list {
+  display: grid;
+  gap: 6px;
+}
+
+.debug-dump-list button {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 4px 8px;
+  width: 100%;
+  text-align: left;
+}
+
+.debug-dump-list button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.debug-dump-list span,
+.debug-dump-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-dump-list small {
+  grid-column: 2;
+  color: var(--text-dim);
+}
+
+.debug-empty,
+.debug-error {
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.debug-error {
+  margin-bottom: 8px;
+  color: #ffaaaa;
+  border-color: rgba(255, 138, 138, 0.45);
+  background: rgba(255, 138, 138, 0.1);
+}
+
+.debug-summary,
+.debug-alpha-grid {
+  display: grid;
+  gap: 7px;
+}
+
+.debug-kv {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.debug-kv span {
+  color: var(--text-dim);
+}
+
+.debug-kv b {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+
+.debug-pre {
+  max-height: 180px;
+  overflow: auto;
+  background: #111116;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
+.debug-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 8px;
+  margin: 8px 0;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.debug-checkbox input {
+  margin: 0;
+}
+
+.debug-uv {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.debug-uv-svg {
+  width: 100%;
+  height: 220px;
+}
+
+.debug-uv-svg rect {
+  fill: #111116;
+  stroke: var(--border);
+}
+
+.debug-uv-svg polyline {
+  fill: none;
+  stroke: #f7e36b;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.debug-uv-svg .debug-uv-arrow-segment {
+  stroke: transparent;
+}
+
+.debug-uv-svg marker path {
+  fill: none;
+  stroke: #f7e36b;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

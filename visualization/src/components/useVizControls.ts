@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useControls, folder } from "leva";
+import { button, useControls, folder } from "leva";
 
 /**
  * Shared leva controls for any experiment that renders a `VizScene`.
@@ -59,7 +59,7 @@ export type VizControlsInitial = Partial<{
 }>;
 
 export function useVizControls(initial: VizControlsInitial = {}): VizControlsProps {
-  const values = useControls("Viz", {
+  const [values, set] = useControls("Viz", () => ({
     BRep: folder({
       showVertices: { value: initial.showVertices ?? true, label: "vertices" },
       showEdges: { value: initial.showEdges ?? true, label: "edges" },
@@ -96,6 +96,22 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
       },
     }),
     GMap: folder({
+      alphaDisplay: {
+        ...button(() => {
+          set({
+            showVertices: false,
+            showEdges: false,
+            showFaces: false,
+            showDarts: false,
+            showDartLabels: false,
+            showAlpha0: true,
+            showAlpha1: true,
+            showAlpha2: true,
+            showAlpha3: true,
+          });
+        }),
+        label: "alpha display",
+      },
       showDarts: { value: initial.showDarts ?? false, label: "darts" },
       showDartLabels: {
         value: initial.showDartLabels ?? false,
@@ -110,7 +126,7 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
       alpha2Color: { value: initial.alpha2Color ?? "#00b0ff", label: "α2 color" },
       alpha3Color: { value: initial.alpha3Color ?? "#ffea00", label: "α3 color" },
     }),
-  });
+  }));
 
   const visibleAlphas = useMemo(() => {
     const s = new Set<number>();

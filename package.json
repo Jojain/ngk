@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "scripts": {
+    "debug": "npm --prefix visualization run debug"
+  }
+}
