@@ -3,7 +3,7 @@ use nalgebra::Vector3;
 use crate::{
     Payload,
     builders::{errors::ExtrudeError, sheets::add_extruded_profile_boundaries},
-    geometry::{Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Polyline2, Surface},
+    geometry::LINEAR_TOLERANCE,
     topology::{
         Dart, SolidAttr,
         attributes::FaceAttr,
@@ -116,47 +116,54 @@ fn orient_extruded_caps<P: Payload>(
 ) {
     let Some(bottom_normal_dot_direction) = g
         .face(bottom_face)
-        .map(|attr| face_normal_dot_direction(attr, direction))
+        .map(|attr| face_normal_dot_direction(g, attr, direction))
     else {
         return;
     };
 
     if bottom_normal_dot_direction > LINEAR_TOLERANCE {
-        flip_planar_face_surface(g, bottom_face);
+        reverse_face_winding(g, bottom_face);
     } else if bottom_normal_dot_direction < -LINEAR_TOLERANCE {
-        flip_planar_face_surface(g, top_face);
+        reverse_face_winding(g, top_face);
     }
 }
 
-fn face_normal_dot_direction<T>(face: &FaceAttr<T>, direction: Vector3<f64>) -> f64 {
-    face.surface.normal_at(0.0, 0.0).dot(&direction)
+fn face_normal_dot_direction<P: Payload>(
+    g: &GMap<P>,
+    face: &FaceAttr<P::F>,
+    direction: Vector3<f64>,
+) -> f64 {
+    face.face(g).normal_at(0.0, 0.0).dot(&direction)
 }
 
-fn flip_planar_face_surface<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
-    let Some(face) = g.face_mut(face) else {
+fn reverse_face_winding<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
+    let Some(face_attr) = g.face(face).cloned() else {
         return;
     };
-    let Surface::Plane(plane) = &face.surface else {
-        return;
-    };
 
-    face.surface = Surface::Plane(Plane::new(plane.origin(), plane.x_dir(), -plane.normal()));
-    for pcurve in face.pcurves.values_mut() {
-        *pcurve = flip_planar_pcurve_v(pcurve);
+    let outer_loop = g.alpha(Dim::Zero, face_attr.outer_loop);
+    let inner_loops = face_attr
+        .inner_loops
+        .iter()
+        .map(|dart| g.alpha(Dim::Zero, *dart))
+        .collect::<Vec<_>>();
+    let pcurves = face_attr
+        .face(g)
+        .edges()
+        .into_iter()
+        .filter_map(|edge| {
+            face_attr
+                .pcurves
+                .get(&edge.dart)
+                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart), pcurve.reversed()))
+        })
+        .collect();
+
+    if let Some(face) = g.face_mut(face) {
+        face.outer_loop = outer_loop;
+        face.inner_loops = inner_loops;
+        face.pcurves = pcurves;
     }
-}
-
-fn flip_planar_pcurve_v(pcurve: &Curve2) -> Curve2 {
-    match pcurve {
-        Curve2::Line(line) => Curve2::Line(Line2::new(flip_uv_v(line.start), flip_uv_v(line.end))),
-        Curve2::Polyline(polyline) => Curve2::Polyline(Polyline2::new(
-            polyline.points.iter().copied().map(flip_uv_v).collect(),
-        )),
-    }
-}
-
-fn flip_uv_v(point: Point2) -> Point2 {
-    Point2::new(point.x, -point.y)
 }
 
 fn sew_extruded_loop<P: Payload>(

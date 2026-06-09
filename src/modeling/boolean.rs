@@ -12,8 +12,8 @@ use crate::geometry::dim3::intersections::{
 };
 use crate::geometry::{
     BBox, Curve, Curve2, CurveCurveIntersection, CurveSurfaceIntersection, IntersectionError,
-    IntersectionOptions, Interval, LINEAR_TOLERANCE, Line2, NurbsCurve, NurbsError, NurbsSurface,
-    Plane, Point2, Point3, PointCoincidence, Polyline2, Surface, SurfaceSurfaceIntersection,
+    IntersectionOptions, Interval, LINEAR_TOLERANCE, NurbsCurve, NurbsError, NurbsSurface, Plane,
+    Point2, Point3, PointCoincidence, Polyline2, Surface, SurfaceSurfaceIntersection,
 };
 use crate::topology::attributes::{FaceAttr, SolidAttr};
 use crate::topology::edge::Edge;
@@ -729,22 +729,26 @@ fn sew_degenerate_result_edges<P: Payload>(g: &mut GMap<P>) -> Result<(), Boolea
 }
 
 fn result_free_edges<P: Payload>(g: &GMap<P>) -> Result<Vec<ResultEdge>, BooleanError> {
-    g.iter_edges()
-        .filter(|(_, edge)| g.is_free(edge.dart, Dim::Two))
-        .map(|(key, edge)| {
-            let reversed_dart = g.alpha(Dim::Zero, edge.dart);
-            let start = vertex_orbit_point(g, edge.dart)
+    let mut edges = Vec::new();
+    for (key, edge) in g.iter_edges() {
+        for dart in g
+            .orbit(edge.dart, g.orbit_indices(Dim::One))
+            .filter(|dart| g.is_free(*dart, Dim::Two))
+        {
+            let reversed_dart = g.alpha(Dim::Zero, dart);
+            let start = vertex_orbit_point(g, dart)
                 .ok_or(BooleanError::MissingEndpointGeometry { edge: key })?;
             let end = vertex_orbit_point(g, reversed_dart)
                 .ok_or(BooleanError::MissingEndpointGeometry { edge: key })?;
-            Ok(ResultEdge {
-                dart: edge.dart,
+            edges.push(ResultEdge {
+                dart,
                 reversed_dart,
                 start,
                 end,
-            })
-        })
-        .collect()
+            });
+        }
+    }
+    Ok(edges)
 }
 
 fn vertex_orbit_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Option<Point3> {
@@ -861,8 +865,9 @@ fn face_orientation_sample<P: Payload>(
     let uv = sample_face_uv(&face)?;
     Some((
         face.surface().point_at(uv.x, uv.y).coords,
-        *face.surface().normal_at(uv.x, uv.y),
+        *face.normal_at(uv.x, uv.y),
     ))
+    
 }
 
 fn sample_face_uv<P: Payload>(face: &Face<'_, P>) -> Option<Point2> {
@@ -884,30 +889,32 @@ fn flip_face_surface_orientation<P: Payload>(
     face: FaceKey,
 ) -> Result<(), BooleanError> {
     let attr = g
-        .face_mut(face)
+        .face(face)
+        .cloned()
         .ok_or(BooleanError::MissingOrientationSample { face })?;
-    let Surface::Plane(plane) = &attr.surface else {
-        return Err(BooleanError::UnsupportedFaceOrientationFlip { face });
-    };
+    let outer_loop = g.alpha(Dim::Zero, attr.outer_loop);
+    let inner_loops = attr
+        .inner_loops
+        .iter()
+        .map(|dart| g.alpha(Dim::Zero, *dart))
+        .collect::<Vec<_>>();
+    let pcurves = attr
+        .face(g)
+        .edges()
+        .into_iter()
+        .filter_map(|edge| {
+            attr.pcurves
+                .get(&edge.dart)
+                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart), pcurve.reversed()))
+        })
+        .collect();
 
-    attr.surface = Surface::Plane(Plane::new(plane.origin(), plane.x_dir(), -*plane.normal()));
-    for pcurve in attr.pcurves.values_mut() {
-        *pcurve = flip_plane_pcurve_v(pcurve);
+    if let Some(face) = g.face_mut(face) {
+        face.outer_loop = outer_loop;
+        face.inner_loops = inner_loops;
+        face.pcurves = pcurves;
     }
     Ok(())
-}
-
-fn flip_plane_pcurve_v(pcurve: &Curve2) -> Curve2 {
-    match pcurve {
-        Curve2::Line(line) => Curve2::Line(Line2::new(flip_uv_v(line.start), flip_uv_v(line.end))),
-        Curve2::Polyline(polyline) => Curve2::Polyline(Polyline2::new(
-            polyline.points.iter().copied().map(flip_uv_v).collect(),
-        )),
-    }
-}
-
-fn flip_uv_v(point: Point2) -> Point2 {
-    Point2::new(point.x, -point.y)
 }
 
 fn classification_ray<P: Payload>(faces: &[Face<'_, P>]) -> ClassificationRay {

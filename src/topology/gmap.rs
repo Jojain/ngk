@@ -795,6 +795,118 @@ impl<P: Payload> GMap<P> {
         for (d0, d1) in darts.mapping {
             self.sew_unchecked(d, d0, d1);
         }
+        self.reconcile_attributes_after_sew(d);
+    }
+
+    fn reconcile_attributes_after_sew(&mut self, d: Dim) {
+        if d.index() > Dim::Zero.index() {
+            self.reconcile_vertex_attributes();
+        }
+        if d.index() > Dim::One.index() {
+            self.reconcile_edge_attributes();
+        }
+        if d.index() > Dim::Two.index() {
+            self.reconcile_face_attributes();
+        }
+    }
+
+    fn reconcile_vertex_attributes(&mut self) {
+        let mut survivor_by_repr = HashMap::new();
+        let mut duplicates = Vec::new();
+        let vertex_keys = self.vertices.keys().collect::<Vec<_>>();
+
+        for key in vertex_keys {
+            let Some(attr) = self.vertices.get(key) else {
+                continue;
+            };
+            let repr = self.cell_representative(attr.dart, Dim::Zero);
+            if survivor_by_repr.insert(repr, key).is_some() {
+                duplicates.push(key);
+            } else {
+                self.vertices
+                    .get_mut(key)
+                    .expect("collected vertex key must remain valid")
+                    .dart = repr;
+            }
+        }
+
+        for key in duplicates {
+            self.vertices.remove(key);
+        }
+        self.rebuild_vertex_index();
+    }
+
+    fn rebuild_vertex_index(&mut self) {
+        self.dart_to_vertex.clear();
+        for (key, attr) in self.vertices.iter() {
+            self.dart_to_vertex.insert(attr.dart, key);
+        }
+    }
+
+    fn reconcile_edge_attributes(&mut self) {
+        let mut survivor_by_repr = HashMap::new();
+        let mut duplicates = Vec::new();
+        let edge_keys = self.edges.keys().collect::<Vec<_>>();
+
+        for key in edge_keys {
+            let Some(attr) = self.edges.get(key) else {
+                continue;
+            };
+            let repr = self.cell_representative(attr.dart, Dim::One);
+            if survivor_by_repr.insert(repr, key).is_some() {
+                duplicates.push(key);
+            } else {
+                self.edges
+                    .get_mut(key)
+                    .expect("collected edge key must remain valid")
+                    .dart = repr;
+            }
+        }
+
+        for key in duplicates {
+            self.edges.remove(key);
+        }
+        self.rebuild_edge_index();
+    }
+
+    fn rebuild_edge_index(&mut self) {
+        self.dart_to_edge.clear();
+        for (key, attr) in self.edges.iter() {
+            self.dart_to_edge.insert(attr.dart, key);
+        }
+    }
+
+    fn reconcile_face_attributes(&mut self) {
+        let mut survivor_by_repr = HashMap::new();
+        let mut duplicates = Vec::new();
+        let face_keys = self.faces.keys().collect::<Vec<_>>();
+
+        for key in face_keys {
+            let Some(attr) = self.faces.get(key) else {
+                continue;
+            };
+            let repr = self.cell_representative(attr.outer_loop, Dim::Two);
+            if survivor_by_repr.insert(repr, key).is_some() {
+                duplicates.push(key);
+            }
+        }
+
+        for key in duplicates {
+            self.faces.remove(key);
+        }
+        self.rebuild_face_index();
+    }
+
+    fn rebuild_face_index(&mut self) {
+        self.dart_to_face.clear();
+        for (key, attr) in self.faces.iter() {
+            for loop_dart in
+                std::iter::once(attr.outer_loop).chain(attr.inner_loops.iter().copied())
+            {
+                let repr = self.cell_representative(loop_dart, Dim::Two);
+                self.dart_to_face.insert(repr, key);
+            }
+        }
     }
 
     /// Sews `d0` and `d1` along dimension `d`.

@@ -7,6 +7,7 @@ use crate::geometry::{Curve2, LINEAR_TOLERANCE, Point2};
 use crate::topology::closed::Closed;
 
 use super::attributes::FaceAttr;
+use super::face::Face;
 use super::gmap::{Dart, Dim, GMap};
 use super::payload::Payload;
 use super::profile::Profile;
@@ -275,7 +276,7 @@ fn face_orientation_sample<P: Payload>(
 
     let uv_center = uv_centroid(&outer_uv);
     let face_center = attr.surface.point_at(uv_center.x, uv_center.y).coords;
-    let normal = *attr.surface.normal_at(uv_center.x, uv_center.y);
+    let normal = *Face::new(g, attr).normal_at(uv_center.x, uv_center.y);
 
     Some((face_center, normal))
 }

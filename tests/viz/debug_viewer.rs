@@ -40,8 +40,8 @@ fn debug_payload_contains_scene_gmap_and_inspection_metadata() {
     assert_eq!(payload.gmap.alphas[2][15], 2);
 
     assert_eq!(payload.metadata.faces.len(), 2);
-    assert_eq!(payload.metadata.edges.len(), 8);
-    assert_eq!(payload.metadata.vertices.len(), 8);
+    assert_eq!(payload.metadata.edges.len(), 7);
+    assert_eq!(payload.metadata.vertices.len(), 6);
     assert!(
         payload
             .metadata

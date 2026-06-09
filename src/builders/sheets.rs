@@ -347,8 +347,8 @@ mod tests {
 
         assert!(g.darts().any(|dart| dart == sheet_dart));
         assert_eq!(g.iter_faces().count(), 4);
-        assert_eq!(g.iter_edges().count(), 20);
-        assert_eq!(g.iter_vertices().count(), 20);
+        assert_eq!(g.iter_edges().count(), 16);
+        assert_eq!(g.iter_vertices().count(), 12);
 
         for (face, attr) in g.iter_faces() {
             assert_eq!(attr.pcurves.len(), 4);
