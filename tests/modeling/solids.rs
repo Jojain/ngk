@@ -1,3 +1,5 @@
+use nalgebra::Vector3;
+use ngk::geometry::LINEAR_TOLERANCE;
 use ngk::modeling::solids::{PrimitiveError, block};
 use ngk::tessellate::{TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
@@ -19,6 +21,16 @@ fn block_builds_closed_box_with_expected_cell_counts() {
         g.iter_faces().count(),
         6,
         "block should store six face attrs"
+    );
+    assert_eq!(
+        g.iter_edges().count(),
+        12,
+        "block should store twelve edge attrs"
+    );
+    assert_eq!(
+        g.iter_vertices().count(),
+        8,
+        "block should store eight vertex attrs"
     );
     assert_eq!(
         g.cells(Dim::Two).count(),
@@ -46,6 +58,34 @@ fn block_builds_closed_box_with_expected_cell_counts() {
         assert!(
             !mesh.indices.is_empty(),
             "face {key:?} should emit triangles"
+        );
+    }
+}
+
+#[test]
+fn block_face_normals_point_outward_from_solid_center() {
+    let shape = block(1.0, 2.0, 3.0).expect("block primitive should build");
+    let solid_center = Vector3::new(0.5, 1.0, 1.5);
+
+    for face in shape.solid().faces() {
+        let vertices = face.vertices();
+        let face_center = vertices
+            .iter()
+            .map(|vertex| {
+                vertex
+                    .point()
+                    .expect("block face vertices should have geometry")
+                    .coords
+            })
+            .sum::<Vector3<f64>>()
+            / vertices.len() as f64;
+        let outward = face_center - solid_center;
+        let normal = face.normal_at(0.0, 0.0);
+
+        assert!(
+            normal.dot(&outward) > LINEAR_TOLERANCE,
+            "face {:?} normal should point outward",
+            face.key()
         );
     }
 }

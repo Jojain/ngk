@@ -15,6 +15,7 @@ fn add_rectangle_creates_closed_four_edge_profile() {
     assert_eq!(profile.edges().len(), 4);
     assert_eq!(profile.vertices().len(), 4);
     assert_eq!(g.iter_edges().count(), 4);
+    assert_eq!(g.iter_vertices().count(), 4);
     assert_eq!(g.cells(Dim::Zero).count(), 4);
 }
 

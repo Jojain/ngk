@@ -26,8 +26,6 @@ pub fn add_extruded_profile<P: Payload>(
 
 pub(crate) struct ExtrudedProfile {
     pub translated_dart: Dart,
-    pub bottom_edges: Vec<Dart>,
-    pub top_edges: Vec<Dart>,
 }
 
 pub(crate) fn add_extruded_profile_boundaries<P: Payload>(
@@ -43,8 +41,6 @@ pub(crate) fn add_extruded_profile_boundaries<P: Payload>(
     let is_closed = profile.is_closed();
     let mut faces = Vec::new();
     let mut extruded_profile_dart = None;
-    let mut bottom_edges = Vec::new();
-    let mut top_edges = Vec::new();
     let edges_darts = profile
         .edges()
         .into_iter()
@@ -57,8 +53,6 @@ pub(crate) fn add_extruded_profile_boundaries<P: Payload>(
         } else if g.alpha(Dim::Zero, edge_dart) == profile_dart {
             extruded_profile_dart = Some(extruded_face.translated_end);
         }
-        bottom_edges.push(extruded_face.bottom_start);
-        top_edges.push(extruded_face.translated_start);
         faces.push(extruded_face);
     }
 
@@ -67,8 +61,6 @@ pub(crate) fn add_extruded_profile_boundaries<P: Payload>(
     Ok(ExtrudedProfile {
         translated_dart: extruded_profile_dart
             .expect("profile dart must belong to one of its profile edges"),
-        bottom_edges,
-        top_edges,
     })
 }
 
@@ -114,7 +106,6 @@ fn sew_extruded_faces<P: Payload>(
 struct ExtrudedFace {
     start_side: Dart,
     end_side: Dart,
-    bottom_start: Dart,
     translated_start: Dart,
     translated_end: Dart,
 }
@@ -253,7 +244,6 @@ fn add_extruded_edge_face<P: Payload>(
     Ok(ExtrudedFace {
         start_side: darts[7],
         end_side: darts[2],
-        bottom_start: darts[0],
         translated_start: darts[5],
         translated_end: darts[4],
     })

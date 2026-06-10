@@ -8,9 +8,11 @@ use super::profile::{Loop, Profile};
 use super::vertex::Vertex;
 use crate::geometry::Surface;
 use crate::geometry::dim2::curves::Curve2;
+use crate::geometry::{LINEAR_TOLERANCE, Point2};
 use crate::topology::attributes::FaceAttr;
 use crate::topology::gmap::Cell2;
 use crate::topology::shape_keys::FaceKey;
+use nalgebra::UnitVector3;
 
 /// A domain-level face view.
 ///
@@ -107,6 +109,33 @@ impl<'g, P: Payload> Face<'g, P> {
         &self.attr.surface
     }
 
+    /// Returns the oriented face normal at a support-surface parameter.
+    ///
+    /// The support surface defines the base normal. The outer-loop pcurve
+    /// winding then determines whether that normal is used as-is or inverted.
+    pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
+        let normal = self.attr.surface.normal_at(u, v);
+        match self.outer_loop_signed_area() {
+            Some(area) if area < -LINEAR_TOLERANCE => -normal,
+            _ => normal,
+        }
+    }
+
+    fn outer_loop_signed_area(&self) -> Option<f64> {
+        let points = self.sample_loop_pcurves(&self.outer_loop())?;
+        Some(signed_area(&points))
+    }
+
+    fn sample_loop_pcurves(&self, loop_: &Loop<'_, P>) -> Option<Vec<Point2>> {
+        let mut points = Vec::new();
+        for edge in loop_.edges() {
+            let samples = self.pcurve(edge.dart)?.sample(8);
+            let n = samples.len();
+            points.extend(samples.into_iter().take(n.saturating_sub(1)));
+        }
+        (!points.is_empty()).then_some(points)
+    }
+
     /// Returns the user payload attached to this face.
     pub fn data(&self) -> &P::F {
         &self.attr.data
@@ -118,6 +147,19 @@ impl<'g, P: Payload> Face<'g, P> {
     pub fn pcurve(&self, dart: Dart) -> Option<&Curve2> {
         self.attr.pcurves.get(&dart)
     }
+}
+
+fn signed_area(points: &[Point2]) -> f64 {
+    if points.len() < 3 {
+        return 0.0;
+    }
+
+    0.5 * points
+        .iter()
+        .zip(points.iter().cycle().skip(1))
+        .take(points.len())
+        .map(|(a, b)| a.x * b.y - b.x * a.y)
+        .sum::<f64>()
 }
 
 impl<P: Payload> MergeTopology<P> for Face<'_, P> {
