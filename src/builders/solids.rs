@@ -2,11 +2,14 @@ use nalgebra::Vector3;
 
 use crate::{
     Payload,
-    builders::{errors::ExtrudeError, sheets::add_extruded_profile_boundaries},
-    geometry::LINEAR_TOLERANCE,
+    builders::errors::ExtrudeError,
+    geometry::{
+        Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
+    },
     topology::{
         Dart, SolidAttr,
-        attributes::FaceAttr,
+        attributes::{EdgeAttr, FaceAttr},
+        edge::Edge,
         face::Face,
         gmap::{Cell2, Dim, GMap, MergeTopology},
         profile::Profile,
@@ -182,16 +185,57 @@ fn sew_extruded_loop<P: Payload>(
         .into_iter()
         .map(|edge| edge.dart)
         .collect::<Vec<_>>();
-    let extruded = add_extruded_profile_boundaries(g, bottom_loop_dart, direction)?;
+    let laterals = bottom_edges
+        .iter()
+        .copied()
+        .zip(top_edges.iter().copied())
+        .map(|(bottom_edge, top_edge)| {
+            let prepared = prepare_lateral_face(g, bottom_edge, top_edge, direction)?;
+            let topology = add_lateral_face_topology(g)?;
+            add_lateral_face_attributes(g, &topology, &prepared);
+            Ok(ExtrudedFaceLateral {
+                topology,
+                vertical_start: prepared.end,
+                vertical_end: prepared.end + direction,
+            })
+        })
+        .collect::<Result<Vec<_>, ExtrudeError>>()?;
 
-    for (&cap_edge, &side_edge) in bottom_edges.iter().zip(extruded.bottom_edges.iter()) {
-        sew(g, Dim::Two, side_edge, cap_edge)?;
+    for pair in laterals.windows(2) {
+        sew(
+            g,
+            Dim::Two,
+            pair[0].topology.end_vertical,
+            pair[1].topology.start_vertical,
+        )?;
     }
-    for (&cap_edge, &side_edge) in top_edges.iter().zip(extruded.top_edges.iter()) {
-        sew(g, Dim::Two, side_edge, cap_edge)?;
+    if let (Some(first), Some(last)) = (laterals.first(), laterals.last()) {
+        sew(
+            g,
+            Dim::Two,
+            last.topology.end_vertical,
+            first.topology.start_vertical,
+        )?;
     }
 
-    Ok(g.cell_representative(extruded.bottom_edges[0], Dim::Three))
+    for ((bottom_edge, top_edge), lateral) in bottom_edges.iter().zip(top_edges).zip(&laterals) {
+        sew(g, Dim::Two, lateral.topology.bottom_edge, *bottom_edge)?;
+        sew(g, Dim::Two, lateral.topology.top_edge, top_edge)?;
+    }
+
+    for lateral in &laterals {
+        g.add_edge(EdgeAttr::new(
+            lateral.topology.end_vertical,
+            Curve::line(lateral.vertical_start, lateral.vertical_end),
+            P::E::default(),
+        ));
+    }
+
+    let representative = laterals
+        .first()
+        .map(|lateral| lateral.topology.bottom_edge)
+        .expect("a loop should have at least one lateral face");
+    Ok(g.cell_representative(representative, Dim::Three))
 }
 
 fn sew<P: Payload>(
@@ -202,4 +246,176 @@ fn sew<P: Payload>(
 ) -> Result<(), ExtrudeError> {
     g.sew(dim, first, second)
         .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
+}
+
+struct PreparedLateralFace {
+    end: Point3,
+    surface: Surface,
+    uv: [Point2; 4],
+}
+
+struct ExtrudedFaceLateral {
+    topology: LateralFaceTopology,
+    vertical_start: Point3,
+    vertical_end: Point3,
+}
+
+struct LateralFaceTopology {
+    loop_dart: Dart,
+    bottom_edge: Dart,
+    top_edge: Dart,
+    start_vertical: Dart,
+    end_vertical: Dart,
+    darts: [Dart; 8],
+}
+
+fn prepare_lateral_face<P: Payload>(
+    g: &GMap<P>,
+    bottom_edge: Dart,
+    _top_edge: Dart,
+    direction: Vector3<f64>,
+) -> Result<PreparedLateralFace, ExtrudeError> {
+    let bottom_edge = Edge::new(g, bottom_edge);
+    let edge_dart = bottom_edge.dart;
+    let start = *bottom_edge
+        .start()
+        .point()
+        .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
+    let end = *bottom_edge
+        .end()
+        .point()
+        .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
+    let curve = bottom_edge
+        .curve()
+        .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
+    let surface = lateral_face_surface(edge_dart, curve, start, end, direction)?;
+    let uv = lateral_face_uv(&surface, curve, start, end, direction);
+
+    Ok(PreparedLateralFace { end, uv, surface })
+}
+
+fn add_lateral_face_topology<P: Payload>(
+    g: &mut GMap<P>,
+) -> Result<LateralFaceTopology, ExtrudeError> {
+    let darts = std::array::from_fn(|_| g.add_dart());
+
+    for i in 0..4 {
+        sew(g, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
+    }
+    for i in 0..4 {
+        sew(
+            g,
+            Dim::One,
+            darts[2 * i + 1],
+            darts[(2 * i + 2) % darts.len()],
+        )?;
+    }
+
+    Ok(LateralFaceTopology {
+        loop_dart: darts[0],
+        bottom_edge: darts[0],
+        top_edge: darts[5],
+        start_vertical: darts[7],
+        end_vertical: darts[2],
+        darts,
+    })
+}
+
+fn add_lateral_face_attributes<P: Payload>(
+    g: &mut GMap<P>,
+    topology: &LateralFaceTopology,
+    prepared: &PreparedLateralFace,
+) {
+    g.add_face(FaceAttr::with_pcurves(
+        prepared.surface.clone(),
+        P::F::default(),
+        topology.loop_dart,
+        Vec::new(),
+        quad_pcurves(&prepared.uv, &topology.darts),
+    ));
+}
+
+fn lateral_face_surface(
+    dart: Dart,
+    curve: &Curve,
+    start: Point3,
+    end: Point3,
+    direction: Vector3<f64>,
+) -> Result<Surface, ExtrudeError> {
+    match curve {
+        Curve::Line(_) => Ok(Surface::Plane(lateral_plane(dart, start, end, direction)?)),
+        Curve::Bounded(_) if is_linear_curve(curve) => {
+            Ok(Surface::Plane(lateral_plane(dart, start, end, direction)?))
+        }
+        Curve::Circle(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
+            Ok(Surface::Ruled(RuledSurface::new(curve.clone(), direction)))
+        }
+    }
+}
+
+fn lateral_face_uv(
+    surface: &Surface,
+    curve: &Curve,
+    start: Point3,
+    end: Point3,
+    direction: Vector3<f64>,
+) -> [Point2; 4] {
+    match surface {
+        Surface::Plane(plane) => [
+            plane_uv(plane, start),
+            plane_uv(plane, end),
+            plane_uv(plane, end + direction),
+            plane_uv(plane, start + direction),
+        ],
+        Surface::Ruled(_) => {
+            let interval = curve.parameters_between(start, end);
+            [
+                Point2::new(interval.start, 0.0),
+                Point2::new(interval.end, 0.0),
+                Point2::new(interval.end, 1.0),
+                Point2::new(interval.start, 1.0),
+            ]
+        }
+        _ => unreachable!("lateral_face_surface only creates plane or ruled surfaces"),
+    }
+}
+
+fn is_linear_curve(curve: &Curve) -> bool {
+    match curve {
+        Curve::Line(_) => true,
+        Curve::Bounded(bounded) => matches!(bounded.inner(), Curve::Line(_)),
+        _ => false,
+    }
+}
+
+fn lateral_plane(
+    dart: Dart,
+    start: Point3,
+    end: Point3,
+    direction: Vector3<f64>,
+) -> Result<Plane, ExtrudeError> {
+    let edge = end - start;
+    if edge.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
+        return Err(ExtrudeError::ZeroLengthEdge { dart });
+    }
+    if edge.cross(&direction).norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
+        return Err(ExtrudeError::DegenerateSweep { dart });
+    }
+    Ok(Plane::from_xy(start, edge, direction))
+}
+
+fn plane_uv(surface: &Plane, point: Point3) -> Point2 {
+    let v = point - surface.origin();
+    Point2::new(v.dot(&surface.x_dir()), v.dot(&surface.y_dir()))
+}
+
+fn quad_pcurves(uv: &[Point2; 4], darts: &[Dart; 8]) -> std::collections::HashMap<Dart, Curve2> {
+    let mut pcurves = std::collections::HashMap::with_capacity(4);
+    for i in 0..4 {
+        pcurves.insert(
+            darts[2 * i],
+            Curve2::Line(Line2::new(uv[i], uv[(i + 1) % uv.len()])),
+        );
+    }
+    pcurves
 }

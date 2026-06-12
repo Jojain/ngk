@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use crate::builders::edges::add_edge;
 use crate::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, PointCoincidence, Polyline2,
 };
+use crate::topology::attributes::{EdgeAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
 use crate::topology::payload::{Payload, StandardPayload};
@@ -171,15 +171,6 @@ fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), Polylin
     }
 }
 
-fn add_polyline_segment(
-    g: &mut GMap<StandardPayload>,
-    (start, end, curve): &(Point3, Point3, Curve),
-) -> Result<(Dart, Dart), PolylineError> {
-    let (start_dart, _) = add_edge(g, *start, *end, curve.clone())?;
-    let end_dart = g.alpha(Dim::Zero, start_dart);
-    Ok((start_dart, end_dart))
-}
-
 fn sew<P: Payload>(
     g: &mut GMap<P>,
     dim: Dim,
@@ -216,15 +207,12 @@ fn add_segments(
     let last_segment = segments.last().ok_or(PolylineError::EmptyPolyline)?;
     let closed = first_segment.0.coincides(&last_segment.1, LINEAR_TOLERANCE);
 
-    let segment_darts = segments
-        .iter()
-        .map(|segment| add_polyline_segment(g, segment))
-        .collect::<Result<Vec<_>, _>>()?;
-    let first_start = segment_darts[0].0;
+    let segment_darts = add_segment_topology(g, segments.len())?;
+    let first_start = segment_darts[0].start;
 
     segment_darts.windows(2).try_for_each(|pair| {
-        let previous_end = pair[0].1;
-        let next_start = pair[1].0;
+        let previous_end = pair[0].end;
+        let next_start = pair[1].start;
         sew(g, Dim::One, previous_end, next_start)
     })?;
 
@@ -232,11 +220,58 @@ fn add_segments(
         let last_end = segment_darts
             .last()
             .expect("non-empty polyline has a last segment")
-            .1;
+            .end;
         sew(g, Dim::One, last_end, first_start)?;
     }
 
+    add_segment_attributes(g, segments, &segment_darts, closed);
     Ok(first_start)
+}
+
+#[derive(Clone, Copy)]
+struct SegmentTopology {
+    start: Dart,
+    end: Dart,
+}
+
+fn add_segment_topology(
+    g: &mut GMap<StandardPayload>,
+    count: usize,
+) -> Result<Vec<SegmentTopology>, PolylineError> {
+    let mut segments = Vec::with_capacity(count);
+    for _ in 0..count {
+        let start = g.add_dart();
+        let end = g.add_dart();
+        sew(g, Dim::Zero, start, end)?;
+        segments.push(SegmentTopology { start, end });
+    }
+    Ok(segments)
+}
+
+fn add_segment_attributes(
+    g: &mut GMap<StandardPayload>,
+    segments: &[(Point3, Point3, Curve)],
+    segment_darts: &[SegmentTopology],
+    closed: bool,
+) {
+    for (segment, darts) in segments.iter().zip(segment_darts) {
+        let edge_dart = g.cell_representative(darts.start, Dim::One);
+        g.add_edge(EdgeAttr::new(edge_dart, segment.2.clone(), ()));
+    }
+
+    for (segment, darts) in segments.iter().zip(segment_darts) {
+        let vertex_dart = g.cell_representative(darts.start, Dim::Zero);
+        g.add_vertex(VertexAttr::new(vertex_dart, segment.0, ()));
+    }
+
+    if !closed {
+        let last = segments
+            .last()
+            .zip(segment_darts.last())
+            .expect("non-empty segment list should have a last dart");
+        let vertex_dart = g.cell_representative(last.1.end, Dim::Zero);
+        g.add_vertex(VertexAttr::new(vertex_dart, last.0.1, ()));
+    }
 }
 
 fn vertex_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Point3, PolylineError> {
