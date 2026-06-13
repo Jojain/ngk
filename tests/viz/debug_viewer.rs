@@ -4,6 +4,7 @@ use std::thread;
 
 use ngk::builders::faces::add_polygon_with_holes;
 use ngk::geometry::{Plane, Point3};
+use ngk::modeling::solids::block;
 use ngk::topology::gmap::{Dart, Dim, GMap};
 use ngk::topology::payload::StandardPayload;
 use ngk::viz::debug_viewer::{DebugViewerOptions, payload_for_gmap, show_gmap_with_options};
@@ -75,6 +76,46 @@ fn debug_payload_contains_scene_gmap_and_inspection_metadata() {
     assert_eq!(
         payload.selection.vertices.len(),
         payload.scene.vertices.len()
+    );
+}
+
+#[test]
+fn block_debug_metadata_uses_oriented_normals_and_boundary_ordered_pcurves() {
+    let block = block(1.0, 2.0, 3.0).expect("block should build");
+    let payload = payload_for_gmap(block.map(), &DebugViewerOptions::default());
+
+    for face in &payload.metadata.faces {
+        let pcurve_darts = face
+            .pcurves
+            .iter()
+            .map(|pcurve| pcurve.dart)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pcurve_darts, face.outer_loop,
+            "face {} pcurves should follow outer-loop order",
+            face.key
+        );
+    }
+
+    let bottom = payload
+        .metadata
+        .faces
+        .iter()
+        .find(|face| {
+            !face.normals.is_empty()
+                && face
+                    .normals
+                    .iter()
+                    .all(|sample| sample.origin[2].abs() <= 1.0e-9)
+        })
+        .expect("block should expose its bottom face");
+
+    assert!(
+        bottom
+            .normals
+            .iter()
+            .all(|sample| sample.direction[2] < 0.0),
+        "bottom-face debug normals should point outward"
     );
 }
 

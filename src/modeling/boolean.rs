@@ -864,10 +864,9 @@ fn face_orientation_sample<P: Payload>(
     let face = g.face(face)?.face(g);
     let uv = sample_face_uv(&face)?;
     Some((
-        face.surface().point_at(uv.x, uv.y).coords,
+        face.point_at(uv.x, uv.y).coords,
         *face.normal_at(uv.x, uv.y),
     ))
-    
 }
 
 fn sample_face_uv<P: Payload>(face: &Face<'_, P>) -> Option<Point2> {
@@ -998,7 +997,7 @@ fn face_projected_point_containment<P: Payload>(
     point: Point3,
 ) -> Result<BooleanClassification, BooleanError> {
     let uv = face.surface().closest_parameter(point)?;
-    let projected = face.surface().point_at(uv.x, uv.y);
+    let projected = face.point_at(uv.x, uv.y);
     if (projected - point).norm() > LINEAR_TOLERANCE * 10.0 {
         return Ok(BooleanClassification::Outside);
     }
@@ -1024,7 +1023,7 @@ fn sample_face_region_point<P: Payload>(face: &Face<'_, P>) -> Option<Point3> {
                 Ok(BooleanClassification::Inside)
             )
         })
-        .map(|uv| face.surface().point_at(uv.x, uv.y))
+        .map(|uv| face.point_at(uv.x, uv.y))
 }
 
 fn face_uv_containment<P: Payload>(

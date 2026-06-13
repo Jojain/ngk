@@ -8,7 +8,7 @@ use super::profile::{Loop, Profile};
 use super::vertex::Vertex;
 use crate::geometry::Surface;
 use crate::geometry::dim2::curves::Curve2;
-use crate::geometry::{LINEAR_TOLERANCE, Point2};
+use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
 use crate::topology::attributes::FaceAttr;
 use crate::topology::gmap::Cell2;
 use crate::topology::shape_keys::FaceKey;
@@ -109,11 +109,21 @@ impl<'g, P: Payload> Face<'g, P> {
         &self.attr.surface
     }
 
+    /// Evaluates the face's support surface at `(u, v)`.
+    ///
+    /// This does not test the face's trimming loops. The returned point is
+    /// therefore defined even when `(u, v)` lies outside the outer loop or
+    /// inside a hole.
+    pub fn point_at(&self, u: f64, v: f64) -> Point3 {
+        self.attr.surface.point_at(u, v)
+    }
+
     /// Returns the oriented face normal at a surface parameter.
     ///
     /// Counter-clockwise outer-loop pcurves keep the support-surface normal;
     /// clockwise outer-loop pcurves flip it. If the winding cannot be sampled,
-    /// the support-surface normal is returned unchanged.
+    /// the support-surface normal is returned unchanged. Like [`Self::point_at`],
+    /// this does not test whether `(u, v)` belongs to the trimmed face region.
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         let normal = self.attr.surface.normal_at(u, v);
         match self.outer_loop_signed_area() {

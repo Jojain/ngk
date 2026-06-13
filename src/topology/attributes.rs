@@ -56,22 +56,49 @@ impl<T> EdgeAttr<T> {
 }
 
 /// Stored data for a keyed domain face.
+///
+/// # Boundary orientation
+///
+/// `outer_loop` and `inner_loops` are oriented boundary seeds, not arbitrary
+/// representatives of their loop cells. Traversing a stored seed determines
+/// the direction of the corresponding boundary. Choosing `alpha0(seed)`
+/// traverses the same loop in the opposite direction and reverses the face.
+///
+/// Each pcurve is keyed by the directed boundary dart that uses it, and its
+/// parameter direction must match that dart from start vertex to end vertex.
+/// In the support surface's UV space, the outer loop and every inner loop must
+/// have opposite winding:
+///
+/// - outer CCW and inner CW: the face follows the support-surface orientation;
+/// - outer CW and inner CCW: the face opposes the support-surface orientation.
+///
+/// Whether a loop is an outer boundary or a hole is determined structurally by
+/// `outer_loop` versus `inner_loops`, not by winding alone.
+///
+/// Reversing a face is an atomic operation: replace every loop seed `d` with
+/// `alpha0(d)`, and replace each pcurve entry `(d, curve)` with
+/// `(alpha0(d), curve.reversed())`. Copy, merge, and topology-edit operations
+/// must preserve these oriented darts rather than substitute canonical cell
+/// representatives.
 #[derive(Clone)]
 pub struct FaceAttr<T> {
     /// Geometric support surface of the face.
     pub surface: Surface,
     /// User payload attached to the face.
     pub data: T,
-    /// Representative dart of the outer boundary loop.
+    /// Oriented seed dart of the outer boundary loop.
     pub outer_loop: Dart,
-    /// Representative darts of inner boundary loops.
+    /// Oriented seed darts of inner boundary loops.
     pub inner_loops: Vec<Dart>,
-    /// Boundary pcurves keyed by boundary dart.
+    /// Directed boundary pcurves keyed by their oriented boundary darts.
     pub pcurves: HashMap<Dart, Curve2>,
 }
 
 impl<T> FaceAttr<T> {
     /// Creates a face attribute without boundary pcurves.
+    ///
+    /// The loop darts must follow the orientation contract documented on
+    /// [`FaceAttr`].
     pub fn new(surface: Surface, data: T, outer_loop: Dart, inner_loops: Vec<Dart>) -> Self {
         Self {
             surface,
@@ -83,6 +110,9 @@ impl<T> FaceAttr<T> {
     }
 
     /// Creates a face attribute with explicit boundary pcurves.
+    ///
+    /// The loop darts and pcurves must follow the orientation contract
+    /// documented on [`FaceAttr`].
     pub fn with_pcurves(
         surface: Surface,
         data: T,

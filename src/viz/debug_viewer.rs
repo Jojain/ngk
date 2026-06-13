@@ -649,13 +649,18 @@ where
     let faces = g
         .iter_faces()
         .map(|(key, attr)| {
-            let pcurves = attr
-                .pcurves
-                .iter()
-                .map(|(dart, curve)| PcurveMetadata {
-                    dart: dart.id() as u32,
-                    curve: curve2_summary(curve),
-                    samples: curve.sample(32).iter().map(|p| [p.x, p.y]).collect(),
+            let face = attr.face(g);
+            let pcurves = face
+                .loops()
+                .into_iter()
+                .flat_map(|loop_| loop_.edges())
+                .filter_map(|edge| {
+                    let curve = face.pcurve(edge.dart)?;
+                    Some(PcurveMetadata {
+                        dart: edge.dart.id() as u32,
+                        curve: curve2_summary(curve),
+                        samples: curve.sample(32).iter().map(|p| [p.x, p.y]).collect(),
+                    })
                 })
                 .collect::<Vec<_>>();
 
@@ -670,7 +675,7 @@ where
                     .map(|dart| loop_darts(g, *dart))
                     .collect(),
                 surface: surface_summary(&attr.surface),
-                normals: normal_samples_for_face(&attr.surface, &pcurves),
+                normals: normal_samples_for_face(&face, &pcurves),
                 pcurves,
                 payload: payload_summary(&attr.data),
             }
@@ -773,7 +778,10 @@ fn loop_darts<P: Payload>(g: &GMap<P>, dart: Dart) -> Vec<u32> {
     out
 }
 
-fn normal_samples_for_face(surface: &Surface, pcurves: &[PcurveMetadata]) -> Vec<NormalSample> {
+fn normal_samples_for_face<P: Payload>(
+    face: &Face<'_, P>,
+    pcurves: &[PcurveMetadata],
+) -> Vec<NormalSample> {
     let Some((min_u, max_u, min_v, max_v)) = uv_bounds(pcurves) else {
         return Vec::new();
     };
@@ -796,8 +804,8 @@ fn normal_samples_for_face(surface: &Surface, pcurves: &[PcurveMetadata]) -> Vec
         for v_index in 0..SAMPLES_V {
             let u = min_u + step_u * u_index as f64;
             let v = min_v + step_v * v_index as f64;
-            let origin = surface.point_at(u, v);
-            let direction = surface.normal_at(u, v).into_inner();
+            let origin = face.point_at(u, v);
+            let direction = face.normal_at(u, v).into_inner();
             samples.push(NormalSample {
                 origin: [origin.x, origin.y, origin.z],
                 direction: [direction.x, direction.y, direction.z],
