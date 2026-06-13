@@ -77,6 +77,31 @@ fn debug_payload_contains_scene_gmap_and_inspection_metadata() {
         payload.selection.vertices.len(),
         payload.scene.vertices.len()
     );
+    for face in &payload.metadata.faces {
+        for pcurve in &face.pcurves {
+            assert!(
+                payload
+                    .metadata
+                    .edges
+                    .iter()
+                    .any(|edge| edge.key == pcurve.edge_key)
+            );
+            assert!(
+                payload
+                    .metadata
+                    .vertices
+                    .iter()
+                    .any(|vertex| vertex.key == pcurve.start_vertex_key)
+            );
+            assert!(
+                payload
+                    .metadata
+                    .vertices
+                    .iter()
+                    .any(|vertex| vertex.key == pcurve.end_vertex_key)
+            );
+        }
+    }
 }
 
 #[test]

@@ -92,6 +92,9 @@ export type SolidMetadata = {
 
 export type PcurveMetadata = {
   dart: number;
+  edgeKey: string;
+  startVertexKey: string;
+  endVertexKey: string;
   curve: GeometrySummary;
   samples: [number, number][];
 };

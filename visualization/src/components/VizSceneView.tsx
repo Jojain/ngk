@@ -47,7 +47,9 @@ export type VizSceneViewProps = {
   /** If set, only α-links whose `involution` is in this set are drawn. */
   visibleAlphas?: Set<number>;
   selected?: VizSelection | null;
+  hovered?: VizSelection | null;
   onSelect?: (selection: VizSelection) => void;
+  onHover?: (selection: VizSelection | null) => void;
 };
 
 const DEFAULT_ALPHA_COLORS: Record<number, string> = {
@@ -96,7 +98,9 @@ export default function VizSceneView({
   alphaColors = DEFAULT_ALPHA_COLORS,
   visibleAlphas,
   selected,
+  hovered,
   onSelect,
+  onHover,
 }: VizSceneViewProps) {
   const alphaColor = (i: number) =>
     alphaColors[i] ?? DEFAULT_ALPHA_COLORS[i] ?? "#bbbbbb";
@@ -119,7 +123,9 @@ export default function VizSceneView({
           vertexColor={vertexColor}
           vertexSize={vertexSize}
           selected={selected}
+          hovered={hovered}
           onSelect={onSelect}
+          onHover={onHover}
         />
       )}
       {showEdges && (
@@ -135,7 +141,9 @@ export default function VizSceneView({
           vertexColor={vertexColor}
           vertexSize={vertexSize}
           selected={selected}
+          hovered={hovered}
           onSelect={onSelect}
+          onHover={onHover}
         />
       )}
       {showVertices && (
@@ -151,7 +159,9 @@ export default function VizSceneView({
           vertexColor={vertexColor}
           vertexSize={vertexSize}
           selected={selected}
+          hovered={hovered}
           onSelect={onSelect}
+          onHover={onHover}
         />
       )}
 
@@ -205,7 +215,9 @@ function BrepLayer({
   vertexColor,
   vertexSize,
   selected,
+  hovered,
   onSelect,
+  onHover,
 }: {
   faces: VizFace[];
   edges: VizEdge[];
@@ -218,7 +230,9 @@ function BrepLayer({
   vertexColor: string;
   vertexSize: number;
   selected?: VizSelection | null;
+  hovered?: VizSelection | null;
   onSelect?: (selection: VizSelection) => void;
+  onHover?: (selection: VizSelection | null) => void;
 }) {
   return (
     <group>
@@ -229,7 +243,9 @@ function BrepLayer({
           color={v.color ?? vertexColor}
           size={v.size ?? vertexSize}
           selected={selected?.kind === "vertex" && selected.id === v.vertexId}
+          hovered={hovered?.kind === "vertex" && hovered.id === v.vertexId}
           onSelect={onSelect}
+          onHover={onHover}
         />
       ))}
       {edges.map((e) => (
@@ -239,7 +255,9 @@ function BrepLayer({
           color={e.color ?? edgeColor}
           width={e.width ?? edgeWidth}
           selected={selected?.kind === "edge" && selected.id === e.edgeId}
+          hovered={hovered?.kind === "edge" && hovered.id === e.edgeId}
           onSelect={onSelect}
+          onHover={onHover}
         />
       ))}
       {faces.map((f) => (
@@ -250,7 +268,9 @@ function BrepLayer({
           defaultOpacity={faceOpacity}
           viewerOverridesScene={viewerFaceColorOverridesScene}
           selected={selected?.kind === "face" && selected.id === f.faceId}
+          hovered={hovered?.kind === "face" && hovered.id === f.faceId}
           onSelect={onSelect}
+          onHover={onHover}
         />
       ))}
     </group>
@@ -262,24 +282,32 @@ function VertexPoint({
   color,
   size,
   selected,
+  hovered,
   onSelect,
+  onHover,
 }: {
   vertex: VizVertex;
   color: string;
   size: number;
   selected: boolean;
+  hovered: boolean;
   onSelect?: (selection: VizSelection) => void;
+  onHover?: (selection: VizSelection | null) => void;
 }) {
+  const displaySize = selected ? size * 1.45 : hovered ? size * 1.25 : size;
+  const displayColor = selected ? "#f7e36b" : hovered ? "#69d8ff" : color;
   return (
     <mesh
       position={vertex.position}
       userData={{ kind: "vertex", vertexId: vertex.vertexId }}
       onClick={selecting(onSelect, { kind: "vertex", id: vertex.vertexId })}
+      onPointerOver={hovering(onHover, { kind: "vertex", id: vertex.vertexId })}
+      onPointerOut={leaving(onHover)}
     >
-      <sphereGeometry args={[selected ? size * 1.45 : size, 16, 12]} />
+      <sphereGeometry args={[displaySize, 16, 12]} />
       <meshStandardMaterial
-        color={selected ? "#f7e36b" : color}
-        emissive={selected ? "#3b3300" : "#000000"}
+        color={displayColor}
+        emissive={selected ? "#3b3300" : hovered ? "#003747" : "#000000"}
       />
     </mesh>
   );
@@ -290,22 +318,28 @@ function EdgePolyline({
   color,
   width,
   selected,
+  hovered,
   onSelect,
+  onHover,
 }: {
   edge: VizEdge;
   color: string;
   width: number;
   selected: boolean;
+  hovered: boolean;
   onSelect?: (selection: VizSelection) => void;
+  onHover?: (selection: VizSelection | null) => void;
 }) {
   if (edge.polyline.length < 2) return null;
   return (
     <Line
       points={edge.polyline}
-      color={selected ? "#f7e36b" : color}
-      lineWidth={selected ? width + 3 : width}
+      color={selected ? "#f7e36b" : hovered ? "#69d8ff" : color}
+      lineWidth={selected ? width + 3 : hovered ? width + 2 : width}
       userData={{ kind: "edge", edgeId: edge.edgeId }}
       onClick={selecting(onSelect, { kind: "edge", id: edge.edgeId })}
+      onPointerOver={hovering(onHover, { kind: "edge", id: edge.edgeId })}
+      onPointerOut={leaving(onHover)}
     />
   );
 }
@@ -316,14 +350,18 @@ function FaceMesh({
   defaultOpacity,
   viewerOverridesScene,
   selected,
+  hovered,
   onSelect,
+  onHover,
 }: {
   face: VizFace;
   defaultColor: string;
   defaultOpacity: number;
   viewerOverridesScene: boolean;
   selected: boolean;
+  hovered: boolean;
   onSelect?: (selection: VizSelection) => void;
+  onHover?: (selection: VizSelection | null) => void;
 }) {
   const geometry = useMemo(() => {
     const geom = new THREE.BufferGeometry();
@@ -362,10 +400,12 @@ function FaceMesh({
       geometry={geometry}
       userData={{ kind: "face", faceId: face.faceId }}
       onClick={selecting(onSelect, { kind: "face", id: face.faceId })}
+      onPointerOver={hovering(onHover, { kind: "face", id: face.faceId })}
+      onPointerOut={leaving(onHover)}
     >
       <meshStandardMaterial
-        color={selected ? "#f7e36b" : materialColor}
-        emissive={selected ? "#3b3300" : "#000000"}
+        color={selected ? "#f7e36b" : hovered ? "#69d8ff" : materialColor}
+        emissive={selected ? "#3b3300" : hovered ? "#003747" : "#000000"}
         opacity={materialOpacity}
         transparent={materialOpacity < 1}
         roughness={0.55}
@@ -585,5 +625,24 @@ function selecting(
   return (event: ThreeEvent<MouseEvent>) => {
     event.stopPropagation();
     onSelect(selection);
+  };
+}
+
+function hovering(
+  onHover: ((selection: VizSelection | null) => void) | undefined,
+  selection: VizSelection,
+) {
+  if (!onHover) return undefined;
+  return (event: ThreeEvent<PointerEvent>) => {
+    event.stopPropagation();
+    onHover(selection);
+  };
+}
+
+function leaving(onHover: ((selection: VizSelection | null) => void) | undefined) {
+  if (!onHover) return undefined;
+  return (event: ThreeEvent<PointerEvent>) => {
+    event.stopPropagation();
+    onHover(null);
   };
 }

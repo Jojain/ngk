@@ -706,8 +706,13 @@ html, body, #root {
 
 .debug-uv {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   margin-top: 12px;
+}
+
+.debug-uv-face {
+  display: grid;
+  gap: 6px;
 }
 
 .debug-uv-svg {
@@ -722,13 +727,61 @@ html, body, #root {
 
 .debug-uv-svg polyline {
   fill: none;
-  stroke: #f7e36b;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
 }
 
-.debug-uv-svg .debug-uv-arrow-segment {
+.debug-uv-svg .debug-uv-pcurve {
+  stroke: #aeb4c0;
+  transition:
+    stroke 100ms ease,
+    stroke-width 100ms ease;
+}
+
+.debug-uv-svg .debug-uv-pcurve.hovered {
+  stroke: #69d8ff;
+  stroke-width: 5;
+}
+
+.debug-uv-svg .debug-uv-pcurve.selected {
+  stroke: #f7e36b;
+  stroke-width: 6;
+}
+
+.debug-uv-svg .debug-uv-pcurve-hit {
+  cursor: pointer;
+  pointer-events: stroke;
   stroke: transparent;
+  stroke-width: 12;
+}
+
+.debug-uv-svg .debug-uv-arrow-segment {
+  pointer-events: none;
+  stroke: transparent;
+}
+
+.debug-uv-svg .debug-uv-start {
+  cursor: pointer;
+  fill: #65e6a8;
+  vector-effect: non-scaling-stroke;
+}
+
+.debug-uv-svg .debug-uv-end {
+  cursor: pointer;
+  fill: #ff9f68;
+  vector-effect: non-scaling-stroke;
+}
+
+.debug-uv-svg .debug-uv-start.hovered,
+.debug-uv-svg .debug-uv-end.hovered {
+  fill: #69d8ff;
+}
+
+.debug-uv-svg .debug-uv-start.selected,
+.debug-uv-svg .debug-uv-end.selected {
+  fill: #f7e36b;
+  stroke: #111116;
+  stroke-width: 1.5;
 }
 
 .debug-uv-svg marker path {

@@ -24,6 +24,7 @@ export default function DebugViewer() {
   const [activeSequence, setActiveSequence] = useState<number | null>(null);
   const [followLatest, setFollowLatest] = useState(true);
   const [selected, setSelected] = useState<VizSelection | null>(null);
+  const [hovered, setHovered] = useState<VizSelection | null>(null);
   const [showNormals, setShowNormals] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,6 +63,7 @@ export default function DebugViewer() {
 
   useEffect(() => {
     setSelected(null);
+    setHovered(null);
   }, [active?.sequence]);
 
   const clear = async () => {
@@ -70,6 +72,7 @@ export default function DebugViewer() {
     setActiveSequence(null);
     setFollowLatest(true);
     setSelected(null);
+    setHovered(null);
   };
 
   const selectDump = (sequence: number) => {
@@ -82,7 +85,9 @@ export default function DebugViewer() {
     setActiveSequence(dumps[dumps.length - 1]?.sequence ?? null);
   };
 
-  const selectedFace = active?.payload && selected ? selectedFaceInfo(active.payload, selected) : null;
+  const selectedFace =
+    active?.payload && selected ? selectedFaceInfo(active.payload, selected) : null;
+  const inspected = selected ?? hovered;
 
   const hud = (
     <div className="debug-viewer">
@@ -98,8 +103,12 @@ export default function DebugViewer() {
         />
         <InspectorPanel
           payload={active?.payload ?? null}
+          inspected={inspected}
           selected={selected}
+          hovered={hovered}
           showNormals={showNormals}
+          onSelect={setSelected}
+          onHover={setHovered}
           onShowNormalsChange={setShowNormals}
         />
       </aside>
@@ -113,7 +122,9 @@ export default function DebugViewer() {
           scene={active.payload.scene}
           {...controls}
           selected={selected}
+          hovered={hovered}
           onSelect={setSelected}
+          onHover={setHovered}
         />
       )}
       {showNormals && selectedFace && (
@@ -227,17 +238,27 @@ function TimelinePanel({
 
 function InspectorPanel({
   payload,
+  inspected,
   selected,
+  hovered,
   showNormals,
+  onSelect,
+  onHover,
   onShowNormalsChange,
 }: {
   payload: DebugViewerPayload | null;
+  inspected: VizSelection | null;
   selected: VizSelection | null;
+  hovered: VizSelection | null;
   showNormals: boolean;
+  onSelect: (selection: VizSelection) => void;
+  onHover: (selection: VizSelection | null) => void;
   onShowNormalsChange: (value: boolean) => void;
 }) {
-  const info = payload && selected ? selectedInfo(payload, selected) : null;
+  const info = payload && inspected ? selectedInfo(payload, inspected) : null;
   const face = info?.kind === "face" ? info.face : null;
+  const uvGroups =
+    payload && inspected ? associatedPcurveGroups(payload, selected ?? inspected) : [];
 
   return (
     <section className="debug-section debug-inspector">
@@ -246,9 +267,7 @@ function InspectorPanel({
         {payload && <span>{payload.gmap.dartCount} darts</span>}
       </div>
       {!payload && <div className="debug-empty">No dump loaded</div>}
-      {payload && !selected && (
-        <Summary payload={payload} />
-      )}
+      {payload && !inspected && <Summary payload={payload} />}
       {info && (
         <>
           <KeyValue label="kind" value={info.kind} />
@@ -274,7 +293,16 @@ function InspectorPanel({
               <span>Display normals</span>
             </label>
           )}
-          {face && <FaceUvPanel face={face} />}
+          {payload && uvGroups.length > 0 && (
+            <AssociatedUvPanels
+              payload={payload}
+              groups={uvGroups}
+              selected={selected}
+              hovered={hovered}
+              onSelect={onSelect}
+              onHover={onHover}
+            />
+          )}
         </>
       )}
     </section>
@@ -293,20 +321,61 @@ function Summary({ payload }: { payload: DebugViewerPayload }) {
   );
 }
 
-function FaceUvPanel({ face }: { face: FaceMetadata }) {
-  const curves = face.pcurves.filter((curve) => curve.samples.length > 0);
-  if (curves.length === 0) {
-    return <div className="debug-empty">No pcurves on selected face</div>;
-  }
+type FacePcurveGroup = {
+  face: FaceMetadata;
+  curves: PcurveMetadata[];
+};
+
+function AssociatedUvPanels({
+  payload,
+  groups,
+  selected,
+  hovered,
+  onSelect,
+  onHover,
+}: {
+  payload: DebugViewerPayload;
+  groups: FacePcurveGroup[];
+  selected: VizSelection | null;
+  hovered: VizSelection | null;
+  onSelect: (selection: VizSelection) => void;
+  onHover: (selection: VizSelection | null) => void;
+}) {
   return (
     <div className="debug-uv">
-      <h3>UV domain</h3>
-      <UvSvg curves={curves} />
+      {groups.map(({ face, curves }) => (
+        <div className="debug-uv-face" key={face.key}>
+          <h3>UV · {face.key}</h3>
+          <UvSvg
+            payload={payload}
+            curves={curves}
+            selected={selected}
+            hovered={hovered}
+            onSelect={onSelect}
+            onHover={onHover}
+          />
+        </div>
+      ))}
     </div>
   );
 }
 
-function UvSvg({ curves }: { curves: PcurveMetadata[] }) {
+function UvSvg({
+  payload,
+  curves,
+  selected,
+  hovered,
+  onSelect,
+  onHover,
+}: {
+  payload: DebugViewerPayload;
+  curves: PcurveMetadata[];
+  selected: VizSelection | null;
+  hovered: VizSelection | null;
+  onSelect: (selection: VizSelection) => void;
+  onHover: (selection: VizSelection | null) => void;
+}) {
+  const endMarkerRadius = 2.75;
   const points = curves.flatMap((curve) => curve.samples);
   const minU = Math.min(...points.map((point) => point[0]));
   const maxU = Math.max(...points.map((point) => point[0]));
@@ -317,8 +386,10 @@ function UvSvg({ curves }: { curves: PcurveMetadata[] }) {
   const project = ([u, v]: [number, number]) => {
     const x = 16 + ((u - minU) / width) * 208;
     const y = 16 + (1 - (v - minV) / height) * 168;
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
+    return [x, y] as const;
   };
+  const svgPoint = ([x, y]: readonly [number, number]) =>
+    `${x.toFixed(2)},${y.toFixed(2)}`;
 
   return (
     <svg className="debug-uv-svg" viewBox="0 0 240 200" role="img">
@@ -338,17 +409,136 @@ function UvSvg({ curves }: { curves: PcurveMetadata[] }) {
       <rect x="1" y="1" width="238" height="198" />
       {curves.map((curve, index) => {
         const projected = curve.samples.map(project);
+        const start = projected[0];
+        const end = projected[projected.length - 1];
+        const edgeSelection = selectionForKey(payload, "edge", curve.edgeKey);
+        const startSelection = selectionForKey(
+          payload,
+          "vertex",
+          curve.startVertexKey,
+        );
+        const endSelection = selectionForKey(payload, "vertex", curve.endVertexKey);
+        const edgeSelected = selectionMatchesKey(
+          payload,
+          selected,
+          "edge",
+          curve.edgeKey,
+        );
+        const edgeHovered = selectionMatchesKey(
+          payload,
+          hovered,
+          "edge",
+          curve.edgeKey,
+        );
+        const startSelected = selectionMatchesKey(
+          payload,
+          selected,
+          "vertex",
+          curve.startVertexKey,
+        );
+        const startHovered = selectionMatchesKey(
+          payload,
+          hovered,
+          "vertex",
+          curve.startVertexKey,
+        );
+        const endSelected = selectionMatchesKey(
+          payload,
+          selected,
+          "vertex",
+          curve.endVertexKey,
+        );
+        const endHovered = selectionMatchesKey(
+          payload,
+          hovered,
+          "vertex",
+          curve.endVertexKey,
+        );
+        const startRadius = interactionRadius(5, startSelected, startHovered);
+        const endRadius = interactionRadius(
+          endMarkerRadius,
+          endSelected,
+          endHovered,
+        );
+        const points = projected.map(svgPoint).join(" ");
         return (
           <g key={`${curve.dart}-${index}`}>
-            <polyline points={projected.join(" ")} />
-            {orientationSegments(projected).map((points, arrowIndex) => (
+            <polyline
+              className={interactionClass(
+                "debug-uv-pcurve",
+                edgeSelected,
+                edgeHovered,
+              )}
+              points={points}
+            />
+            {orientationSegments(projected, endRadius).map((points, arrowIndex) => (
               <polyline
                 key={arrowIndex}
                 className="debug-uv-arrow-segment"
-                points={points.join(" ")}
+                points={points.map(svgPoint).join(" ")}
                 markerEnd="url(#debug-uv-arrow)"
               />
             ))}
+            <polyline
+              className="debug-uv-pcurve-hit"
+              points={points}
+              onPointerEnter={() => onHover(edgeSelection)}
+              onPointerLeave={() => onHover(null)}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (edgeSelection) onSelect(edgeSelection);
+              }}
+            >
+              <title>{`edge ${curve.edgeKey} · dart ${curve.dart}`}</title>
+            </polyline>
+            <circle
+              className={interactionClass(
+                "debug-uv-start",
+                startSelected,
+                startHovered,
+              )}
+              cx={start[0]}
+              cy={start[1]}
+              r={startRadius}
+              onPointerEnter={(event) => {
+                event.stopPropagation();
+                onHover(startSelection);
+              }}
+              onPointerLeave={(event) => {
+                event.stopPropagation();
+                onHover(null);
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (startSelection) onSelect(startSelection);
+              }}
+            >
+              <title>{`vertex ${curve.startVertexKey} · dart ${curve.dart} start`}</title>
+            </circle>
+            <circle
+              className={interactionClass(
+                "debug-uv-end",
+                endSelected,
+                endHovered,
+              )}
+              cx={end[0]}
+              cy={end[1]}
+              r={endRadius}
+              onPointerEnter={(event) => {
+                event.stopPropagation();
+                onHover(endSelection);
+              }}
+              onPointerLeave={(event) => {
+                event.stopPropagation();
+                onHover(null);
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (endSelection) onSelect(endSelection);
+              }}
+            >
+              <title>{`vertex ${curve.endVertexKey} · dart ${curve.dart} end`}</title>
+            </circle>
           </g>
         );
       })}
@@ -356,10 +546,86 @@ function UvSvg({ curves }: { curves: PcurveMetadata[] }) {
   );
 }
 
-function orientationSegments(points: string[]): [string, string][] {
+function associatedPcurveGroups(
+  payload: DebugViewerPayload,
+  selection: VizSelection,
+): FacePcurveGroup[] {
+  const entity = selectionEntity(payload, selection);
+  if (!entity) return [];
+
+  return payload.metadata.faces.flatMap((face) => {
+    const associated = face.pcurves.some((curve) => {
+      if (entity.kind === "face") return face.key === entity.key;
+      if (entity.kind === "edge") return curve.edgeKey === entity.key;
+      if (entity.kind === "vertex") {
+        return (
+          curve.startVertexKey === entity.key || curve.endVertexKey === entity.key
+        );
+      }
+      return false;
+    });
+    const curves = face.pcurves.filter((curve) => curve.samples.length > 0);
+    return associated && curves.length > 0 ? [{ face, curves }] : [];
+  });
+}
+
+function selectionEntity(
+  payload: DebugViewerPayload,
+  selection: VizSelection | null,
+): { kind: "vertex" | "edge" | "face"; key: string } | null {
+  if (!selection || selection.kind === "dart" || selection.kind === "alphaLink") {
+    return null;
+  }
+  const entries = selectionEntries(payload, selection.kind);
+  const entry = entries.find((item) => item.renderId === selection.id);
+  return entry ? { kind: selection.kind, key: entry.key } : null;
+}
+
+function selectionForKey(
+  payload: DebugViewerPayload,
+  kind: "vertex" | "edge",
+  key: string,
+): VizSelection | null {
+  const entry = selectionEntries(payload, kind).find((item) => item.key === key);
+  return entry ? { kind, id: entry.renderId } : null;
+}
+
+function selectionEntries(
+  payload: DebugViewerPayload,
+  kind: "vertex" | "edge" | "face",
+) {
+  if (kind === "vertex") return payload.selection.vertices;
+  if (kind === "edge") return payload.selection.edges;
+  return payload.selection.faces;
+}
+
+function selectionMatchesKey(
+  payload: DebugViewerPayload,
+  selection: VizSelection | null,
+  kind: "vertex" | "edge",
+  key: string,
+) {
+  const entity = selectionEntity(payload, selection);
+  return entity?.kind === kind && entity.key === key;
+}
+
+function interactionClass(base: string, selected: boolean, hovered: boolean) {
+  return `${base}${selected ? " selected" : ""}${hovered ? " hovered" : ""}`;
+}
+
+function interactionRadius(base: number, selected: boolean, hovered: boolean) {
+  if (selected) return base * 1.6;
+  if (hovered) return base * 1.35;
+  return base;
+}
+
+function orientationSegments(
+  points: readonly (readonly [number, number])[],
+  endInset: number,
+): [readonly [number, number], readonly [number, number]][] {
   if (points.length < 2) return [];
   const step = Math.max(2, Math.ceil(points.length / 3));
-  const segments: [string, string][] = [];
+  const segments: [readonly [number, number], readonly [number, number]][] = [];
   for (let i = step; i < points.length; i += step) {
     segments.push([points[i - 1], points[i]]);
   }
@@ -367,7 +633,25 @@ function orientationSegments(points: string[]): [string, string][] {
   if (segments.length === 0 || segments[segments.length - 1][1] !== points[last]) {
     segments.push([points[last - 1], points[last]]);
   }
+  const final = segments.length - 1;
+  segments[final] = [
+    segments[final][0],
+    insetSegmentEnd(segments[final][0], segments[final][1], endInset),
+  ];
   return segments;
+}
+
+function insetSegmentEnd(
+  start: readonly [number, number],
+  end: readonly [number, number],
+  inset: number,
+): readonly [number, number] {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const length = Math.hypot(dx, dy);
+  if (length <= inset) return start;
+  const scale = (length - inset) / length;
+  return [start[0] + dx * scale, start[1] + dy * scale];
 }
 
 type SelectedInfo = {
