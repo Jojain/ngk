@@ -54,12 +54,6 @@ pub enum FaceImprintSplitError {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FaceImprint {
-    pub points: Vec<Point3>,
-    pub pcurve: Curve2,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct FaceImprintSplit {
     pub first: FaceKey,
     pub second: FaceKey,
@@ -68,31 +62,28 @@ pub struct FaceImprintSplit {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FaceImprintGraph {
-    vertices: Vec<FaceImprintGraphVertex>,
-    edges: Vec<FaceImprintGraphEdge>,
+    vertices: Vec<Point2>,
+    edges: Vec<(usize, usize)>,
 }
 
 impl FaceImprintGraph {
-    pub fn from_imprints(imprints: &[FaceImprint]) -> Self {
-        let segments = imprints
-            .iter()
-            .flat_map(imprint_segments)
-            .collect::<Vec<_>>();
+    pub fn from_curves(curves: &[Curve2]) -> Self {
+        let segments = curves.iter().flat_map(curve_segments).collect::<Vec<_>>();
         Self::from_segments(&segments)
     }
 
-    pub fn vertices(&self) -> &[FaceImprintGraphVertex] {
+    pub fn vertices(&self) -> &[Point2] {
         &self.vertices
     }
 
-    pub fn edges(&self) -> &[FaceImprintGraphEdge] {
+    pub fn edges(&self) -> &[(usize, usize)] {
         &self.edges
     }
 
     pub fn vertex_degree(&self, vertex: usize) -> usize {
         self.edges
             .iter()
-            .filter(|edge| edge.start == vertex || edge.end == vertex)
+            .filter(|(start, end)| *start == vertex || *end == vertex)
             .count()
     }
 
@@ -102,7 +93,7 @@ impl FaceImprintGraph {
             .collect()
     }
 
-    pub fn closed_components(&self) -> Vec<FaceImprintGraphLoop> {
+    pub fn closed_components(&self) -> Vec<Vec<usize>> {
         let mut visited = vec![false; self.vertices.len()];
         let mut loops = Vec::new();
 
@@ -121,7 +112,7 @@ impl FaceImprintGraph {
             }
 
             if let Some(vertices) = self.ordered_closed_component(&component) {
-                loops.push(FaceImprintGraphLoop { vertices });
+                loops.push(vertices);
             }
         }
 
@@ -132,10 +123,10 @@ impl FaceImprintGraph {
         self.closed_components().len()
     }
 
-    fn from_segments(segments: &[ImprintSegment]) -> Self {
+    fn from_segments(segments: &[Line2]) -> Self {
         let split_parameters = split_parameters(segments);
-        let mut vertices = Vec::<FaceImprintGraphVertex>::new();
-        let mut edges = Vec::<FaceImprintGraphEdge>::new();
+        let mut vertices = Vec::<Point2>::new();
+        let mut edges = Vec::<(usize, usize)>::new();
         let mut seen_edges = HashSet::<(usize, usize)>::new();
 
         for (segment, parameters) in segments.iter().zip(split_parameters.iter()) {
@@ -152,7 +143,7 @@ impl FaceImprintGraph {
 
                 let key = ordered_edge_key(start, end);
                 if seen_edges.insert(key) {
-                    edges.push(FaceImprintGraphEdge { start, end });
+                    edges.push((start, end));
                 }
             }
         }
@@ -179,11 +170,11 @@ impl FaceImprintGraph {
     }
 
     fn neighbors(&self, vertex: usize) -> impl Iterator<Item = usize> + '_ {
-        self.edges.iter().filter_map(move |edge| {
-            if edge.start == vertex {
-                Some(edge.end)
-            } else if edge.end == vertex {
-                Some(edge.start)
+        self.edges.iter().filter_map(move |(start, end)| {
+            if *start == vertex {
+                Some(*end)
+            } else if *end == vertex {
+                Some(*start)
             } else {
                 None
             }
@@ -216,63 +207,23 @@ impl FaceImprintGraph {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct FaceImprintGraphVertex {
-    pub uv: Point2,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct FaceImprintGraphLoop {
-    vertices: Vec<usize>,
-}
-
-impl FaceImprintGraphLoop {
-    pub fn vertex_indices(&self) -> &[usize] {
-        &self.vertices
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FaceImprintGraphEdge {
-    pub start: usize,
-    pub end: usize,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ImprintSegment {
-    start: Point2,
-    end: Point2,
-}
-
-impl ImprintSegment {
-    fn point_at(&self, t: f64) -> Point2 {
-        self.start + (self.end - self.start) * t
-    }
-}
-
-fn imprint_segments(imprint: &FaceImprint) -> Vec<ImprintSegment> {
-    match &imprint.pcurve {
-        Curve2::Line(line) => vec![ImprintSegment {
-            start: line.start,
-            end: line.end,
-        }],
+fn curve_segments(curve: &Curve2) -> Vec<Line2> {
+    match curve {
+        Curve2::Line(line) => vec![line.clone()],
         Curve2::Polyline(polyline) => polyline
             .points
             .windows(2)
-            .map(|pair| ImprintSegment {
-                start: pair[0],
-                end: pair[1],
-            })
+            .map(|pair| Line2::new(pair[0], pair[1]))
             .collect(),
     }
 }
 
-fn split_parameters(segments: &[ImprintSegment]) -> Vec<Vec<f64>> {
+fn split_parameters(segments: &[Line2]) -> Vec<Vec<f64>> {
     let mut parameters = vec![vec![0.0, 1.0]; segments.len()];
 
     for i in 0..segments.len() {
         for j in (i + 1)..segments.len() {
-            if let Some(intersection) = segment_intersection(segments[i], segments[j]) {
+            if let Some(intersection) = segment_intersection(&segments[i], &segments[j]) {
                 parameters[i].extend(intersection.first);
                 parameters[j].extend(intersection.second);
             }
@@ -293,7 +244,7 @@ struct SegmentIntersection {
     second: Vec<f64>,
 }
 
-fn segment_intersection(a: ImprintSegment, b: ImprintSegment) -> Option<SegmentIntersection> {
+fn segment_intersection(a: &Line2, b: &Line2) -> Option<SegmentIntersection> {
     let da = a.end - a.start;
     let db = b.end - b.start;
     let denominator = cross2(da, db);
@@ -315,10 +266,7 @@ fn segment_intersection(a: ImprintSegment, b: ImprintSegment) -> Option<SegmentI
     }
 }
 
-fn collinear_segment_intersection(
-    a: ImprintSegment,
-    b: ImprintSegment,
-) -> Option<SegmentIntersection> {
+fn collinear_segment_intersection(a: &Line2, b: &Line2) -> Option<SegmentIntersection> {
     let da = a.end - a.start;
     if cross2(b.start - a.start, da).abs() > LINEAR_TOLERANCE {
         return None;
@@ -352,17 +300,17 @@ fn collinear_segment_intersection(
     })
 }
 
-fn graph_vertex(vertices: &mut Vec<FaceImprintGraphVertex>, uv: Point2) -> usize {
+fn graph_vertex(vertices: &mut Vec<Point2>, uv: Point2) -> usize {
     if let Some((index, _)) = vertices
         .iter()
         .enumerate()
-        .find(|(_, vertex)| (vertex.uv - uv).norm() <= LINEAR_TOLERANCE)
+        .find(|(_, vertex)| (**vertex - uv).norm() <= LINEAR_TOLERANCE)
     {
         return index;
     }
 
     let index = vertices.len();
-    vertices.push(FaceImprintGraphVertex { uv });
+    vertices.push(uv);
     index
 }
 
@@ -460,9 +408,9 @@ pub fn split_face_edge<P: Payload>(
 pub fn split_face_by_imprints<P: Payload>(
     g: &mut GMap<P>,
     face: FaceKey,
-    imprints: &[FaceImprint],
+    imprints: &[Curve2],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
-    let graph = FaceImprintGraph::from_imprints(imprints);
+    let graph = FaceImprintGraph::from_curves(imprints);
     split_imprint_boundary_endpoints(g, face, imprints)?;
     let mut splits = add_closed_imprint_loops(g, face, &graph)?;
     let mut active_faces = vec![face];
@@ -493,11 +441,11 @@ pub fn split_face_by_imprints<P: Payload>(
 fn split_imprint_boundary_endpoints<P: Payload>(
     g: &mut GMap<P>,
     face: FaceKey,
-    imprints: &[FaceImprint],
+    imprints: &[Curve2],
 ) -> Result<(), FaceImprintSplitError> {
     let endpoints = imprints
         .iter()
-        .flat_map(|imprint| [imprint.pcurve.point_at(0.0), imprint.pcurve.point_at(1.0)])
+        .flat_map(|imprint| [imprint.point_at(0.0), imprint.point_at(1.0)])
         .collect::<Vec<_>>();
 
     for endpoint in endpoints {
@@ -521,9 +469,8 @@ fn add_closed_imprint_loops<P: Payload>(
 
     for component in graph.closed_components() {
         let mut uvs = component
-            .vertex_indices()
             .iter()
-            .map(|vertex| graph.vertices()[*vertex].uv)
+            .map(|vertex| graph.vertices()[*vertex])
             .collect::<Vec<_>>();
         if uvs.len() < 3
             || uvs
@@ -761,15 +708,17 @@ fn split_boundary_at_uv<P: Payload>(
 fn split_one_face_by_imprints<P: Payload>(
     g: &mut GMap<P>,
     face: FaceKey,
-    imprints: &[FaceImprint],
+    imprints: &[Curve2],
 ) -> Result<Option<FaceImprintSplit>, FaceImprintSplitError> {
     let face_attr = g
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
 
     let boundary = face_boundary_vertices(g, face, face_attr.outer_loop)?;
-    let network = FaceImprintNetwork::from_imprints(imprints, &boundary);
-    let Some(cut) = network.first_cut().cloned() else {
+    let Some(cut) = imprints
+        .iter()
+        .find_map(|pcurve| FaceImprintCut::from_pcurve(pcurve, &boundary))
+    else {
         return Ok(None);
     };
 
@@ -801,27 +750,6 @@ pub fn add_circle(
 }
 
 #[derive(Debug, Clone)]
-struct FaceImprintNetwork {
-    cuts: Vec<FaceImprintCut>,
-}
-
-impl FaceImprintNetwork {
-    fn from_imprints(imprints: &[FaceImprint], boundary: &[BoundaryVertex]) -> Self {
-        let mut seen = HashSet::<(usize, usize)>::new();
-        let cuts = imprints
-            .iter()
-            .filter_map(|imprint| FaceImprintCut::from_imprint(imprint, boundary))
-            .filter(|cut| seen.insert(cut.dedup_key()))
-            .collect();
-        Self { cuts }
-    }
-
-    fn first_cut(&self) -> Option<&FaceImprintCut> {
-        self.cuts.first()
-    }
-}
-
-#[derive(Debug, Clone)]
 struct FaceImprintCut {
     start: BoundaryVertex,
     end: BoundaryVertex,
@@ -829,9 +757,9 @@ struct FaceImprintCut {
 }
 
 impl FaceImprintCut {
-    fn from_imprint(imprint: &FaceImprint, boundary: &[BoundaryVertex]) -> Option<Self> {
-        let start_uv = imprint.pcurve.point_at(0.0);
-        let end_uv = imprint.pcurve.point_at(1.0);
+    fn from_pcurve(pcurve: &Curve2, boundary: &[BoundaryVertex]) -> Option<Self> {
+        let start_uv = pcurve.point_at(0.0);
+        let end_uv = pcurve.point_at(1.0);
         let start = snap_boundary_vertex(boundary, start_uv)?;
         let end = snap_boundary_vertex(boundary, end_uv)?;
         if !valid_chord(&start, &end) {
@@ -841,14 +769,8 @@ impl FaceImprintCut {
         Some(Self {
             start,
             end,
-            pcurve: imprint.pcurve.clone(),
+            pcurve: pcurve.clone(),
         })
-    }
-
-    fn dedup_key(&self) -> (usize, usize) {
-        let a = self.start.dart.id();
-        let b = self.end.dart.id();
-        if a < b { (a, b) } else { (b, a) }
     }
 }
 

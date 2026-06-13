@@ -4,7 +4,7 @@ use nalgebra::Vector3;
 use thiserror::Error;
 
 use crate::builders::faces::{
-    FaceEdgeSplitError, FaceImprint, FaceImprintSplitError, split_face_by_imprints, split_face_edge,
+    FaceEdgeSplitError, FaceImprintSplitError, split_face_by_imprints, split_face_edge,
 };
 use crate::geometry::dim3::intersections::{
     intersect_curve_surface_with_options, intersect_curves_with_options,
@@ -1444,20 +1444,16 @@ fn face_section_pcurve(surface: &Surface, points: &[Point3]) -> Result<Curve2, B
     Ok(Curve2::Polyline(Polyline2::new(uv_points)))
 }
 
-fn face_imprint_groups(sections: &[AppliedFaceSection]) -> Vec<(FaceHandle, Vec<FaceImprint>)> {
-    let mut groups = Vec::<(FaceHandle, Vec<FaceImprint>)>::new();
+fn face_imprint_groups(sections: &[AppliedFaceSection]) -> Vec<(FaceHandle, Vec<Curve2>)> {
+    let mut groups = Vec::<(FaceHandle, Vec<Curve2>)>::new();
     for section in sections {
-        let AppliedFaceSectionKind::Curve { points, pcurve } = &section.kind else {
+        let AppliedFaceSectionKind::Curve { pcurve, .. } = &section.kind else {
             continue;
-        };
-        let imprint = FaceImprint {
-            points: points.clone(),
-            pcurve: pcurve.clone(),
         };
 
         match groups.iter_mut().find(|(face, _)| *face == section.face) {
-            Some((_, imprints)) => imprints.push(imprint),
-            None => groups.push((section.face, vec![imprint])),
+            Some((_, imprints)) => imprints.push(pcurve.clone()),
+            None => groups.push((section.face, vec![pcurve.clone()])),
         }
     }
     groups
