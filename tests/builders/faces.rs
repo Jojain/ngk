@@ -1,20 +1,23 @@
 use std::collections::HashSet;
 
+use nalgebra::Vector3;
 use ngk::builders::edges::add_line;
 use ngk::builders::errors::{FaceCreationError, PolylineError};
 use ngk::builders::faces::{
     FaceEdgeSplitError, FaceImprintGraph, add_annulus, add_circle, add_face, add_polygon,
     add_rectangle, split_face_by_imprints, split_face_edge,
 };
+use ngk::builders::profiles::add_polyline;
+use ngk::builders::sheets::add_extruded_profile;
 use ngk::geometry::{
     Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, PointCoincidence, Polyline2, Surface,
 };
-use ngk::modeling::solids::block;
 use ngk::topology::gmap::GMap;
 use ngk::topology::gmap::{Cell0, Cell2, Dim};
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::profile::Profile;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
+use ngk::viz::debug_viewer::{show, show_gmap};
 
 #[test]
 fn add_rectangle_creates_single_planar_face_with_pcurves() {
@@ -136,32 +139,46 @@ fn split_face_edge_uses_existing_pcurve_for_non_planar_surface_variant() {
 }
 
 #[test]
-fn split_face_edge_updates_both_faces_of_a_shared_solid_edge() {
-    let mut solid = block(2.0, 2.0, 2.0).expect("block should build");
-    let face_key = solid
-        .map()
-        .iter_faces()
-        .next()
-        .expect("block should have faces")
-        .0;
-    let edge = first_outer_edge_key(solid.map(), face_key);
-    let adjacent_faces = incident_face_keys(solid.map(), edge);
-    let parameter = edge_mid_parameter(solid.map(), edge);
+fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
+    let mut g = GMap::<StandardPayload>::new();
+    let points = [
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(1.0, 1.0, 0.0),
+    ];
+    let profile = add_polyline(&mut g, &points).expect("two-edge profile should build");
+    add_extruded_profile(&mut g, profile, Vector3::new(0.0, 0.0, 2.0))
+        .expect("profile should extrude into two faces");
 
+    let edge = edge_between_points(&g, Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 0.0, 2.0));
+    let adjacent_faces = incident_face_keys(&g, edge);
+    let parameter = 0.75;
+    let edge_count = g.iter_edges().count();
+    let vertex_count = g.iter_vertices().count();
     assert_eq!(
         adjacent_faces.len(),
         2,
-        "block edge should be shared by exactly two faces"
+        "the middle sweep edge should be shared by both extruded faces"
     );
+    assert_eq!(g.iter_faces().count(), 2);
 
-    split_face_edge(solid.map_mut(), face_key, edge, parameter)
+    let split = split_face_edge(&mut g, adjacent_faces[0], edge, parameter)
         .expect("shared solid edge should split");
 
-    assert_eq!(solid.map().cells(Dim::One).count(), 13);
-    assert_eq!(solid.map().cells(Dim::Zero).count(), 9);
+    assert_eq!(g.iter_edges().count(), edge_count + 1);
+    assert_eq!(g.iter_vertices().count(), vertex_count + 1);
+    assert!(
+        g.vertex(split.vertex)
+            .expect("split vertex should exist")
+            .point
+            .coincides(Point3::new(1.0, 0.0, 1.5), LINEAR_TOLERANCE)
+    );
+    assert_eq!(incident_face_keys(&g, split.first), adjacent_faces);
+    assert_eq!(incident_face_keys(&g, split.second), adjacent_faces);
+
     for face in adjacent_faces {
-        let attr = solid.map().face(face).expect("adjacent face should remain");
-        let edges = attr.face(solid.map()).outer_loop().edges();
+        let attr = g.face(face).expect("adjacent face should remain");
+        let edges = attr.face(&g).outer_loop().edges();
         assert_eq!(edges.len(), 5);
         assert_eq!(attr.pcurves.len(), 5);
         assert!(
@@ -425,6 +442,19 @@ fn edge_mid_parameter(g: &GMap<StandardPayload>, edge: EdgeKey) -> f64 {
         .point;
     let interval = attr.curve.parameters_between(start, end);
     0.5 * (interval.start + interval.end)
+}
+
+fn edge_between_points(g: &GMap<StandardPayload>, first: Point3, second: Point3) -> EdgeKey {
+    g.iter_edges()
+        .find_map(|(key, edge)| {
+            let start = g.attribute::<Cell0>(edge.dart)?.point;
+            let end = g.attribute::<Cell0>(g.alpha(Dim::Zero, edge.dart))?.point;
+            ((start.coincides(first, LINEAR_TOLERANCE) && end.coincides(second, LINEAR_TOLERANCE))
+                || (start.coincides(second, LINEAR_TOLERANCE)
+                    && end.coincides(first, LINEAR_TOLERANCE)))
+            .then_some(key)
+        })
+        .expect("edge should connect the requested points")
 }
 
 fn edge_key_for_dart(g: &GMap<StandardPayload>, dart: ngk::topology::Dart) -> EdgeKey {
