@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::geometry::{
-    Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, PointCoincidence, Polyline2,
+    ControlPolygon2, Curve, Curve2, HPoint2, LINEAR_TOLERANCE, Line2, NurbsCurve2, Plane, Point2,
+    Point3, PointCoincidence,
 };
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
 use crate::topology::closed::Closeable;
@@ -83,41 +84,45 @@ pub fn profile_pcurves<P: Payload>(
             .curve()
             .ok_or(PolylineError::MissingEdgeCurve { dart })?;
 
-        pcurves.insert(dart, curve_pcurve(curve, start, end, plane));
+        pcurves.insert(dart, curve_pcurve(curve, start, end, plane)?);
     }
 
     Ok(pcurves)
 }
 
-fn curve_pcurve(curve: &Curve, start: Point3, end: Point3, plane: &Plane) -> Curve2 {
+fn curve_pcurve(
+    curve: &Curve,
+    start: Point3,
+    end: Point3,
+    plane: &Plane,
+) -> Result<Curve2, PolylineError> {
     match curve {
-        Curve::Line(_) => Curve2::Line(Line2::new(plane_uv(plane, start), plane_uv(plane, end))),
-        Curve::Bounded(bounded) if matches!(bounded.inner(), Curve::Line(_)) => {
-            Curve2::Line(Line2::new(plane_uv(plane, start), plane_uv(plane, end)))
-        }
-        Curve::Circle(_) | Curve::Nurbs(_) => {
-            let interval = curve.parameters_between(start, end);
-            let segments = 32usize;
-            let points = (0..=segments)
-                .map(|i| {
-                    let t = interval.start
-                        + (interval.end - interval.start) * (i as f64 / segments as f64);
-                    plane_uv(plane, curve.point_at(t))
-                })
-                .collect();
-            Curve2::Polyline(Polyline2::new(points))
-        }
-        Curve::Bounded(_) => {
-            let interval = curve.parameters_between(start, end);
-            let segments = 32usize;
-            let points = (0..=segments)
-                .map(|i| {
-                    let t = interval.start
-                        + (interval.end - interval.start) * (i as f64 / segments as f64);
-                    plane_uv(plane, curve.point_at(t))
-                })
-                .collect();
-            Curve2::Polyline(Polyline2::new(points))
+        Curve::Line(_) => Ok(Curve2::Line(Line2::new(
+            plane_uv(plane, start),
+            plane_uv(plane, end),
+        ))),
+        Curve::Bounded(bounded) if matches!(bounded.inner(), Curve::Line(_)) => Ok(Curve2::Line(
+            Line2::new(plane_uv(plane, start), plane_uv(plane, end)),
+        )),
+        Curve::Circle(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
+            let nurbs = curve.to_nurbs()?;
+            let control_points = ControlPolygon2::new(
+                nurbs
+                    .control_points()
+                    .iter()
+                    .map(|point| {
+                        HPoint2::from_cartesian(
+                            plane_uv(plane, point.to_cartesian()),
+                            point.weight(),
+                        )
+                    })
+                    .collect(),
+            )?;
+            Ok(Curve2::Nurbs(NurbsCurve2::new(
+                nurbs.degree(),
+                control_points,
+                nurbs.knots().clone(),
+            )?))
         }
     }
 }

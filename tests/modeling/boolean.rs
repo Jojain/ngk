@@ -508,10 +508,16 @@ fn workspace_splits_isolated_operand_maps_from_real_interferences() {
             ) || matches!(
                 &section.kind,
                 AppliedFaceSectionKind::Curve {
-                    pcurve: ngk::geometry::Curve2::Polyline(polyline),
+                    pcurve: ngk::geometry::Curve2::Nurbs(curve),
                     ..
-                } if polyline.points.len() >= 2
-                    && polyline.points.iter().all(|point| point.x.is_finite() && point.y.is_finite())
+                } if curve
+                    .control_points()
+                    .as_slice()
+                    .iter()
+                    .all(|point| {
+                        let point = point.to_cartesian();
+                        point.x.is_finite() && point.y.is_finite()
+                    })
             )
         }),
         "face sections should be projected to finite face UV imprints"

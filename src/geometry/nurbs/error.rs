@@ -22,4 +22,14 @@ pub enum NurbsError {
     BezierControlPointCountMismatch { expected: usize, got: usize },
     #[error("parameter interval is degenerate: [{start}, {end}]")]
     DegenerateInterval { start: f64, end: f64 },
+    #[error("interpolation requires at least {minimum} points, got {got}")]
+    InsufficientInterpolationPoints { minimum: usize, got: usize },
+    #[error("interpolation samples have no measurable extent")]
+    DegenerateInterpolationSamples,
+    #[error("interpolation parameter count mismatch: expected {expected}, got {got}")]
+    InterpolationParameterCountMismatch { expected: usize, got: usize },
+    #[error("interpolation parameters must be strictly increasing")]
+    InvalidInterpolationParameters,
+    #[error("interpolation system is singular")]
+    SingularInterpolationSystem,
 }

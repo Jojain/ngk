@@ -69,6 +69,8 @@ pub enum PolylineError {
     SewFailed { dim: Dim, first: Dart, second: Dart },
     #[error("failed to create polyline edge")]
     EdgeCreationFailed(#[from] EdgeCreationError),
+    #[error("failed to create profile pcurve")]
+    Nurbs(#[from] NurbsError),
 }
 
 #[derive(Debug, Clone, Error, PartialEq)]

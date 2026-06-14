@@ -852,7 +852,7 @@ fn curve2_summary(curve: &Curve2) -> GeometrySummary {
     GeometrySummary {
         kind: match curve {
             Curve2::Line(_) => "line",
-            Curve2::Polyline(_) => "polyline",
+            Curve2::Nurbs(_) => "nurbs",
         }
         .to_owned(),
         details: Some(format!("{curve:?}")),

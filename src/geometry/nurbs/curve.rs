@@ -1,4 +1,4 @@
-use nalgebra::{Point4, Vector3};
+use nalgebra::{DMatrix, DVector, Point4, Vector3};
 
 use super::basis::{basis_function_derivatives, basis_functions};
 use super::bezier::Bezier;
@@ -6,12 +6,12 @@ use super::degree::Degree;
 use super::error::NurbsError;
 use super::knots::KnotVector;
 use super::points::{ControlPolygon, HPoint};
-use crate::geometry::{Interval, LINEAR_TOLERANCE, Point3};
+use crate::geometry::{Interval, LINEAR_TOLERANCE, Point3, PointCoincidence};
 
 const LENGTH_TOLERANCE: f64 = 1.0e-10;
 const MAX_LENGTH_RECURSION: usize = 24;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NurbsCurve {
     degree: Degree,
     control_points: ControlPolygon,
@@ -45,6 +45,56 @@ impl NurbsCurve {
     ) -> Result<Self, NurbsError> {
         let knots = KnotVector::uniform_clamped(control_points.len(), degree);
         Self::new(degree, control_points, knots)
+    }
+
+    /// Interpolates 3D samples with chord-length parameters.
+    pub fn interpolate(points: &[Point3]) -> Result<Self, NurbsError> {
+        let parameters = Self::chord_length_parameters(points)?;
+        Self::interpolate_with_parameters(points, &parameters)
+    }
+
+    /// Interpolates 3D samples using caller-provided normalized parameters.
+    pub fn interpolate_with_parameters(
+        points: &[Point3],
+        parameters: &[f64],
+    ) -> Result<Self, NurbsError> {
+        validate_interpolation_input(points, parameters)?;
+        if points
+            .first()
+            .zip(points.last())
+            .is_some_and(|(first, last)| first.coincides(*last, LINEAR_TOLERANCE))
+        {
+            return interpolate_closed(points, parameters);
+        }
+        interpolate_open(points, parameters)
+    }
+
+    /// Returns chord-length parameters in `[0, 1]` for 3D samples.
+    pub fn chord_length_parameters(points: &[Point3]) -> Result<Vec<f64>, NurbsError> {
+        if points.len() < 2 {
+            return Err(NurbsError::InsufficientInterpolationPoints {
+                minimum: 2,
+                got: points.len(),
+            });
+        }
+        let lengths = points
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).norm())
+            .collect::<Vec<_>>();
+        let total = lengths.iter().sum::<f64>();
+        if total <= LINEAR_TOLERANCE {
+            return Err(NurbsError::DegenerateInterpolationSamples);
+        }
+
+        let mut parameters = Vec::with_capacity(points.len());
+        parameters.push(0.0);
+        let mut accumulated = 0.0;
+        for length in lengths {
+            accumulated += length;
+            parameters.push(accumulated / total);
+        }
+        *parameters.last_mut().unwrap() = 1.0;
+        Ok(parameters)
     }
 
     pub fn degree(&self) -> Degree {
@@ -273,6 +323,220 @@ impl NurbsCurve {
 
         Ok(spans)
     }
+
+    /// Returns the exact curve with reversed parameter direction.
+    pub fn reversed(&self) -> Self {
+        let domain = self.domain();
+        let control_points = ControlPolygon::new(
+            self.control_points
+                .as_slice()
+                .iter()
+                .copied()
+                .rev()
+                .collect(),
+        )
+        .expect("reversing a non-empty control polygon remains non-empty");
+        let knots = KnotVector::new(
+            self.knots
+                .as_slice()
+                .iter()
+                .rev()
+                .map(|knot| domain.start + domain.end - knot)
+                .collect(),
+        )
+        .expect("reversing a valid knot vector remains valid");
+        Self {
+            degree: self.degree,
+            control_points,
+            knots,
+        }
+    }
+
+    /// Splits the curve exactly at an interior native-domain parameter.
+    pub fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
+        let domain = self.domain();
+        if parameter <= domain.start + LINEAR_TOLERANCE
+            || parameter >= domain.end - LINEAR_TOLERANCE
+        {
+            return Err(NurbsError::DegenerateInterval {
+                start: domain.start,
+                end: parameter,
+            });
+        }
+
+        let mut refined = self.clone();
+        let multiplicity = refined.knots.multiplicity(parameter);
+        for _ in multiplicity..self.degree.get() {
+            refined.insert_knot(parameter);
+        }
+
+        let n = refined.control_points.len() - 1;
+        let span = refined.knots.find_span(n, refined.degree, parameter);
+        let split_index = span - refined.degree.get();
+        let left_points =
+            ControlPolygon::new(refined.control_points.as_slice()[..=split_index].to_vec())?;
+        let right_points =
+            ControlPolygon::new(refined.control_points.as_slice()[split_index..].to_vec())?;
+
+        let mut left_knots = refined.knots.as_slice()[..=span].to_vec();
+        left_knots.push(parameter);
+        let mut right_knots = vec![parameter; refined.degree.get() + 1];
+        right_knots.extend_from_slice(&refined.knots.as_slice()[span + 1..]);
+
+        Ok((
+            Self::new(refined.degree, left_points, KnotVector::new(left_knots)?)?,
+            Self::new(refined.degree, right_points, KnotVector::new(right_knots)?)?,
+        ))
+    }
+
+    /// Returns the exact subcurve over the requested native-domain interval.
+    pub fn trimmed(&self, start: f64, end: f64) -> Result<Self, NurbsError> {
+        if (end - start).abs() <= LINEAR_TOLERANCE {
+            return Err(NurbsError::DegenerateInterval { start, end });
+        }
+        if end < start {
+            return Ok(self.trimmed(end, start)?.reversed());
+        }
+
+        let domain = self.domain();
+        if start < domain.start - LINEAR_TOLERANCE || end > domain.end + LINEAR_TOLERANCE {
+            return Err(NurbsError::ParameterOutOfRange {
+                u: if start < domain.start { start } else { end },
+                min: domain.start,
+                max: domain.end,
+            });
+        }
+
+        let after_start = if start <= domain.start + LINEAR_TOLERANCE {
+            self.clone()
+        } else {
+            self.split_at(start)?.1
+        };
+        if end >= domain.end - LINEAR_TOLERANCE {
+            Ok(after_start)
+        } else {
+            Ok(after_start.split_at(end)?.0)
+        }
+    }
+}
+
+fn validate_interpolation_input(points: &[Point3], parameters: &[f64]) -> Result<(), NurbsError> {
+    if points.len() < 2 {
+        return Err(NurbsError::InsufficientInterpolationPoints {
+            minimum: 2,
+            got: points.len(),
+        });
+    }
+    if points.len() != parameters.len() {
+        return Err(NurbsError::InterpolationParameterCountMismatch {
+            expected: points.len(),
+            got: parameters.len(),
+        });
+    }
+    if parameters.windows(2).any(|pair| pair[1] <= pair[0]) {
+        return Err(NurbsError::InvalidInterpolationParameters);
+    }
+    Ok(())
+}
+
+fn interpolate_open(points: &[Point3], parameters: &[f64]) -> Result<NurbsCurve, NurbsError> {
+    let n = points.len() - 1;
+    let degree = Degree::new(3.min(n))?;
+    let p = degree.get();
+    let mut knots = vec![parameters[0]; p + 1];
+    for index in 1..=n - p {
+        knots.push(parameters[index..index + p].iter().sum::<f64>() / p as f64);
+    }
+    knots.extend(std::iter::repeat_n(parameters[n], p + 1));
+    let knots = KnotVector::new(knots)?;
+
+    let mut coefficients = DMatrix::zeros(n + 1, n + 1);
+    for (row, parameter) in parameters.iter().copied().enumerate() {
+        let span = knots.find_span(n, degree, parameter);
+        let basis = basis_functions(span, parameter, degree, &knots);
+        for (offset, value) in basis.into_iter().enumerate() {
+            coefficients[(row, span - p + offset)] = value;
+        }
+    }
+    let decomposition = coefficients.lu();
+    let solve = |coordinate: fn(&Point3) -> f64| {
+        decomposition
+            .solve(&DVector::from_iterator(
+                points.len(),
+                points.iter().map(coordinate),
+            ))
+            .ok_or(NurbsError::SingularInterpolationSystem)
+    };
+    let x = solve(|point| point.x)?;
+    let y = solve(|point| point.y)?;
+    let z = solve(|point| point.z)?;
+    let control_points = ControlPolygon::new(
+        x.iter()
+            .zip(y.iter())
+            .zip(z.iter())
+            .map(|((x, y), z)| HPoint::from_cartesian(Point3::new(*x, *y, *z), 1.0))
+            .collect(),
+    )?;
+    NurbsCurve::new(degree, control_points, knots)
+}
+
+fn interpolate_closed(points: &[Point3], parameters: &[f64]) -> Result<NurbsCurve, NurbsError> {
+    let unique = &points[..points.len() - 1];
+    if unique.len() < 3 {
+        return Err(NurbsError::InsufficientInterpolationPoints {
+            minimum: 4,
+            got: points.len(),
+        });
+    }
+
+    let count = unique.len();
+    let mut tangents = Vec::with_capacity(count);
+    for index in 0..count {
+        let previous = (index + count - 1) % count;
+        let next = (index + 1) % count;
+        let previous_parameter = if index == 0 {
+            parameters[previous] - 1.0
+        } else {
+            parameters[previous]
+        };
+        let next_parameter = if index + 1 == count {
+            1.0
+        } else {
+            parameters[next]
+        };
+        tangents.push((unique[next] - unique[previous]) / (next_parameter - previous_parameter));
+    }
+
+    let mut control_points = Vec::with_capacity(3 * count + 1);
+    for index in 0..count {
+        let next = (index + 1) % count;
+        let start_parameter = parameters[index];
+        let end_parameter = if next == 0 { 1.0 } else { parameters[next] };
+        let duration = end_parameter - start_parameter;
+        let segment = [
+            unique[index],
+            unique[index] + tangents[index] * (duration / 3.0),
+            unique[next] - tangents[next] * (duration / 3.0),
+            unique[next],
+        ];
+        if index == 0 {
+            control_points.extend(segment);
+        } else {
+            control_points.extend_from_slice(&segment[1..]);
+        }
+    }
+
+    let degree = Degree::new(3)?;
+    let mut knots = vec![0.0; 4];
+    for parameter in parameters.iter().copied().skip(1).take(count - 1) {
+        knots.extend(std::iter::repeat_n(parameter, 3));
+    }
+    knots.extend(std::iter::repeat_n(1.0, 4));
+    NurbsCurve::new(
+        degree,
+        ControlPolygon::from_cartesian(control_points, &vec![1.0; 3 * count + 1])?,
+        KnotVector::new(knots)?,
+    )
 }
 
 fn distinct_interior_knots(knots: &[f64], domain: Interval) -> Vec<f64> {

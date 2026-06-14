@@ -4,7 +4,7 @@ use nalgebra::Vector3;
 use thiserror::Error;
 
 use crate::builders::faces::{
-    FaceEdgeSplitError, FaceImprintSplitError, split_face_by_imprints, split_face_edge,
+    FaceEdgeSplitError, FaceImprint, FaceImprintSplitError, split_face_by_imprints, split_face_edge,
 };
 use crate::geometry::dim3::intersections::{
     intersect_curve_surface_with_options, intersect_curves_with_options,
@@ -12,8 +12,8 @@ use crate::geometry::dim3::intersections::{
 };
 use crate::geometry::{
     BBox, Curve, Curve2, CurveCurveIntersection, CurveSurfaceIntersection, IntersectionError,
-    IntersectionOptions, Interval, LINEAR_TOLERANCE, NurbsCurve, NurbsError, NurbsSurface, Plane,
-    Point2, Point3, PointCoincidence, Polyline2, Surface, SurfaceSurfaceIntersection,
+    IntersectionOptions, Interval, LINEAR_TOLERANCE, NurbsCurve, NurbsCurve2, NurbsError,
+    NurbsSurface, Plane, Point2, Point3, PointCoincidence, Surface, SurfaceSurfaceIntersection,
 };
 use crate::topology::attributes::{FaceAttr, SolidAttr};
 use crate::topology::edge::Edge;
@@ -329,6 +329,7 @@ pub enum AppliedFaceSectionKind {
     },
     Curve {
         points: Vec<Point3>,
+        curve: NurbsCurve,
         pcurve: Curve2,
     },
     SameDomainRegion,
@@ -1421,10 +1422,14 @@ fn resolve_face_section<P: Payload>(
             point: *point,
             uv: face_attr.surface.closest_parameter(*point)?,
         },
-        FaceSectionKind::Curve { points } => AppliedFaceSectionKind::Curve {
-            points: points.clone(),
-            pcurve: face_section_pcurve(&face_attr.surface, points)?,
-        },
+        FaceSectionKind::Curve { points } => {
+            let (curve, pcurve) = face_section_curves(&face_attr.surface, points)?;
+            AppliedFaceSectionKind::Curve {
+                points: points.clone(),
+                curve,
+                pcurve,
+            }
+        }
         FaceSectionKind::SameDomainRegion => AppliedFaceSectionKind::SameDomainRegion,
         FaceSectionKind::EdgeOverlap { edge, interval } => AppliedFaceSectionKind::EdgeOverlap {
             edge: *edge,
@@ -1438,24 +1443,34 @@ fn resolve_face_section<P: Payload>(
     })
 }
 
-fn face_section_pcurve(surface: &Surface, points: &[Point3]) -> Result<Curve2, BooleanError> {
+fn face_section_curves(
+    surface: &Surface,
+    points: &[Point3],
+) -> Result<(NurbsCurve, Curve2), BooleanError> {
+    let parameters = NurbsCurve::chord_length_parameters(points)?;
     let uv_points = points
         .iter()
         .map(|point| surface.closest_parameter(*point))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Curve2::Polyline(Polyline2::new(uv_points)))
+    let curve = NurbsCurve::interpolate_with_parameters(points, &parameters)?;
+    let pcurve = Curve2::Nurbs(NurbsCurve2::interpolate_with_parameters(
+        &uv_points,
+        &parameters,
+    )?);
+    Ok((curve, pcurve))
 }
 
-fn face_imprint_groups(sections: &[AppliedFaceSection]) -> Vec<(FaceHandle, Vec<Curve2>)> {
-    let mut groups = Vec::<(FaceHandle, Vec<Curve2>)>::new();
+fn face_imprint_groups(sections: &[AppliedFaceSection]) -> Vec<(FaceHandle, Vec<FaceImprint>)> {
+    let mut groups = Vec::<(FaceHandle, Vec<FaceImprint>)>::new();
     for section in sections {
-        let AppliedFaceSectionKind::Curve { pcurve, .. } = &section.kind else {
+        let AppliedFaceSectionKind::Curve { curve, pcurve, .. } = &section.kind else {
             continue;
         };
+        let imprint = FaceImprint::new(Curve::Nurbs(curve.clone()), pcurve.clone());
 
         match groups.iter_mut().find(|(face, _)| *face == section.face) {
-            Some((_, imprints)) => imprints.push(pcurve.clone()),
-            None => groups.push((section.face, vec![pcurve.clone()])),
+            Some((_, imprints)) => imprints.push(imprint),
+            None => groups.push((section.face, vec![imprint])),
         }
     }
     groups

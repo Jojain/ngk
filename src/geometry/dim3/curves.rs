@@ -4,12 +4,12 @@ use super::intersections::{
     CurveCurveIntersections, CurveSurfaceIntersections, IntersectionError, IntersectionOptions,
     intersect_curve_surface, intersect_curves, intersect_curves_with_options,
 };
-use super::nurbs::error::NurbsError;
-use super::nurbs::points::{ControlPolygon, HPoint};
-use super::nurbs::{Degree, KnotVector, NurbsCurve};
 use super::surfaces::{Plane, Surface};
 use super::utils::{IntoUnit, Point3, PointCoincidence};
 use crate::geometry::axis::Axis3;
+use crate::geometry::nurbs::error::NurbsError;
+use crate::geometry::nurbs::points::{ControlPolygon, HPoint};
+use crate::geometry::nurbs::{Degree, KnotVector, NurbsCurve};
 use crate::geometry::tolerance::{LINEAR_TOLERANCE_SQUARED, MAX_DISTANCE};
 use crate::geometry::{Interval, LINEAR_TOLERANCE};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
@@ -246,8 +246,11 @@ impl Bounded<Curve> {
                 ])?,
                 KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
             ),
-            Curve::Nurbs(curve) => Ok(curve.clone()),
-            _ => self.inner.to_nurbs(),
+            Curve::Circle(circle) => circle.to_nurbs_between(self.bounds.start, self.bounds.end),
+            _ => self
+                .inner
+                .to_nurbs()?
+                .trimmed(self.bounds.start, self.bounds.end),
         }
     }
 }
@@ -466,6 +469,51 @@ impl Circle {
             Degree::new(2)?,
             ControlPolygon::new(points)?,
             circle_nurbs_knots()?,
+        )
+    }
+
+    /// Converts an angular interval of the circle to an exact rational NURBS arc.
+    pub fn to_nurbs_between(&self, start: f64, end: f64) -> Result<NurbsCurve, NurbsError> {
+        if (end - start).abs() <= LINEAR_TOLERANCE {
+            return Err(NurbsError::DegenerateInterval { start, end });
+        }
+        if end < start {
+            return Ok(self.to_nurbs_between(end, start)?.reversed());
+        }
+
+        let span = end - start;
+        let segment_count = (span / FRAC_PI_2).ceil() as usize;
+        let segment_angle = span / segment_count as f64;
+        let weight = (0.5 * segment_angle).cos();
+        let mut points = Vec::with_capacity(2 * segment_count + 1);
+        let mut knots = vec![start; 3];
+
+        for segment in 0..segment_count {
+            let angle_start = start + segment as f64 * segment_angle;
+            let angle_end = angle_start + segment_angle;
+            let angle_middle = 0.5 * (angle_start + angle_end);
+            let start_point = self.point_at(angle_start);
+            let middle_direction =
+                angle_middle.cos() * *self.plane.x_dir() + angle_middle.sin() * *self.plane.y_dir();
+            let middle_point = self.plane.origin() + middle_direction * (self.radius / weight);
+            let end_point = self.point_at(angle_end);
+
+            if segment == 0 {
+                points.push(HPoint::from_cartesian(start_point, 1.0));
+            }
+            points.push(HPoint::from_cartesian(middle_point, weight));
+            points.push(HPoint::from_cartesian(end_point, 1.0));
+
+            if segment + 1 < segment_count {
+                knots.extend(std::iter::repeat_n(angle_end, 2));
+            }
+        }
+        knots.extend(std::iter::repeat_n(end, 3));
+
+        NurbsCurve::new(
+            Degree::new(2)?,
+            ControlPolygon::new(points)?,
+            KnotVector::new(knots)?,
         )
     }
 }

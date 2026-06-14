@@ -1,6 +1,6 @@
 use nalgebra::Vector3;
 use ngk::geometry::axis::Axis3;
-use ngk::geometry::{Circle, Curve, LINEAR_TOLERANCE, Point3, PointCoincidence};
+use ngk::geometry::{Bounded, Circle, Curve, Interval, LINEAR_TOLERANCE, Point3, PointCoincidence};
 
 fn assert_point_near(actual: Point3, expected: Point3) {
     assert!(
@@ -101,4 +101,22 @@ fn nurbs_circle_length_matches_analytic_circle_length() {
     let length = curve.length(0.0, std::f64::consts::TAU);
 
     assert!((length - 2.5 * std::f64::consts::TAU).abs() < 1e-7);
+}
+
+#[test]
+fn bounded_circle_converts_to_trimmed_nurbs_curve() {
+    let circle = Curve::Circle(Circle::new(
+        ngk::geometry::Plane::new(Point3::origin(), Vector3::x(), Vector3::z()),
+        2.0,
+    ));
+    let bounded = Curve::Bounded(Box::new(Bounded::new(
+        circle.clone(),
+        Interval::new(0.25, 1.75),
+    )));
+
+    let nurbs = bounded.to_nurbs().unwrap();
+
+    assert_eq!(nurbs.domain(), Interval::new(0.25, 1.75));
+    assert_point_near(nurbs.point_at(0.25), circle.point_at(0.25));
+    assert_point_near(nurbs.point_at(1.75), circle.point_at(1.75));
 }

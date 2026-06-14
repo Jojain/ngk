@@ -48,7 +48,7 @@ impl From<Point4<f64>> for HPoint {
 }
 
 /// The 1D control-point sequence of a NURBS curve.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ControlPolygon(Vec<HPoint>);
 
 impl ControlPolygon {
