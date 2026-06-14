@@ -1,8 +1,8 @@
 use super::curve::NurbsCurve;
 use super::degree::Degree;
-use super::error::NurbsError;
 use super::knots::KnotVector;
 use super::points::ControlPolygon;
+use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{BBox, Interval, LINEAR_TOLERANCE, Point3};
 use nalgebra::Vector3;
 

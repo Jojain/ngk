@@ -1,4 +1,4 @@
-use super::error::NurbsError;
+use crate::geometry::nurbs::error::NurbsError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Degree(usize);

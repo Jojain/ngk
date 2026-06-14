@@ -1,6 +1,6 @@
 use super::degree::Degree;
-use super::error::NurbsError;
 use crate::geometry::Interval;
+use crate::geometry::nurbs::error::NurbsError;
 
 /// A non-decreasing knot vector.
 #[derive(Debug, Clone, PartialEq)]

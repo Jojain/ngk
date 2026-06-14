@@ -1,11 +1,12 @@
 use super::curves::{Curve, circle_nurbs_control_points, circle_nurbs_knots};
 use super::frame::Frame;
 use super::intersections::{IntersectionError, SurfaceSurfaceIntersections, intersect_surfaces};
+use super::nurbs::{ControlNet, Degree, HPoint, KnotVector, NurbsSurface};
 use super::utils::{IntoUnit, Point3};
 use crate::geometry::LINEAR_TOLERANCE;
 use crate::geometry::Point2;
 use crate::geometry::axis::Axis3;
-use crate::geometry::nurbs::{ControlNet, Degree, HPoint, KnotVector, NurbsError, NurbsSurface};
+use crate::geometry::nurbs::error::NurbsError;
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 
 #[derive(Clone)]

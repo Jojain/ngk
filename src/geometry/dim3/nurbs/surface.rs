@@ -1,10 +1,10 @@
 use nalgebra::{Point2, Point4, UnitVector3, Vector3, Vector4};
 
-use super::basis::{basis_function_derivatives, basis_functions};
 use super::degree::Degree;
-use super::error::NurbsError;
 use super::knots::KnotVector;
 use super::points::{ControlNet, HPoint};
+use crate::geometry::nurbs::basis::{basis_function_derivatives, basis_functions};
+use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{Interval, Point3};
 
 #[derive(Debug, Clone)]

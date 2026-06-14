@@ -1,7 +1,7 @@
 use crate::geometry::Point3;
 use nalgebra::Point4;
 
-use super::error::NurbsError;
+use crate::geometry::nurbs::error::NurbsError;
 
 /// A homogeneous control point stored as `(x·w, y·w, z·w, w)`.
 ///

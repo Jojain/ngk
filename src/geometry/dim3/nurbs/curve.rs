@@ -1,11 +1,11 @@
 use nalgebra::{DMatrix, DVector, Point4, Vector3};
 
-use super::basis::{basis_function_derivatives, basis_functions};
 use super::bezier::Bezier;
 use super::degree::Degree;
-use super::error::NurbsError;
 use super::knots::KnotVector;
 use super::points::{ControlPolygon, HPoint};
+use crate::geometry::nurbs::basis::{basis_function_derivatives, basis_functions};
+use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{Interval, LINEAR_TOLERANCE, Point3, PointCoincidence};
 
 const LENGTH_TOLERANCE: f64 = 1.0e-10;

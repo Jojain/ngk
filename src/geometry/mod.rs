@@ -16,14 +16,14 @@ pub use dim3::intersections::{
     CurveSurfaceIntersections, IntersectionError, IntersectionOptions, SurfaceSurfaceIntersection,
     SurfaceSurfaceIntersections,
 };
+pub use dim3::nurbs::tessellate::{
+    sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
+};
+pub use dim3::nurbs::{
+    Bezier, ControlNet, ControlPolygon, Degree, HPoint, KnotVector, NurbsCurve, NurbsSurface,
+};
 pub use dim3::surfaces::{Cylinder, Plane, RuledSurface, Surface, SurfaceOfRevolution};
 pub use dim3::utils::{IntoUnit, Point3, PointCoincidence};
 pub use interval::Interval;
-pub use nurbs::tessellate::{
-    sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
-};
-pub use nurbs::{
-    Bezier, ControlNet, ControlPolygon, Degree, HPoint, KnotVector, NurbsCurve, NurbsError,
-    NurbsSurface,
-};
+pub use nurbs::error::NurbsError;
 pub use tolerance::{ANGULAR_TOLERANCE, LINEAR_TOLERANCE};

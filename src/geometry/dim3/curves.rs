@@ -4,12 +4,12 @@ use super::intersections::{
     CurveCurveIntersections, CurveSurfaceIntersections, IntersectionError, IntersectionOptions,
     intersect_curve_surface, intersect_curves, intersect_curves_with_options,
 };
+use super::nurbs::points::{ControlPolygon, HPoint};
+use super::nurbs::{Degree, KnotVector, NurbsCurve};
 use super::surfaces::{Plane, Surface};
 use super::utils::{IntoUnit, Point3, PointCoincidence};
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
-use crate::geometry::nurbs::points::{ControlPolygon, HPoint};
-use crate::geometry::nurbs::{Degree, KnotVector, NurbsCurve};
 use crate::geometry::tolerance::{LINEAR_TOLERANCE_SQUARED, MAX_DISTANCE};
 use crate::geometry::{Interval, LINEAR_TOLERANCE};
 use nalgebra::{Rotation3, UnitVector3, Vector3};

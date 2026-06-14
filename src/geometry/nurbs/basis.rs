@@ -1,5 +1,5 @@
-use super::degree::Degree;
-use super::knots::KnotVector;
+use crate::geometry::dim3::nurbs::degree::Degree;
+use crate::geometry::dim3::nurbs::knots::KnotVector;
 
 /// Piegl & Tiller A2.2 — compute the `p+1` non-zero B-spline basis functions
 /// at parameter `u`, where `span = knots.find_span(n, degree, u)`.
