@@ -34,7 +34,7 @@ pub fn translate_face<P: Payload>(
         .collect::<Vec<_>>();
     for key in vertex_keys {
         let vertex = translated
-            .vertex_mut(key)
+            .vertex_attr_mut(key)
             .expect("collected vertex key must remain valid");
         vertex.point += direction;
     }
@@ -45,7 +45,7 @@ pub fn translate_face<P: Payload>(
         .collect::<Vec<_>>();
     for key in edge_keys {
         let edge = translated
-            .edge_mut(key)
+            .edge_attr_mut(key)
             .expect("collected edge key must remain valid");
         edge.curve = edge.curve.translated(direction).map_err(|source| {
             ExtrudeError::CurveTranslationFailed {
@@ -59,7 +59,7 @@ pub fn translate_face<P: Payload>(
         .attribute::<Cell2>(translated_dart)
         .expect("isolating a face must preserve its face attribute");
     let translated_face = translated
-        .face_mut(translated_face_key)
+        .face_attr_mut(translated_face_key)
         .expect("isolated face key must remain valid");
     translated_face.surface = translated_face
         .surface
@@ -78,7 +78,7 @@ pub fn add_extruded_face<P: Payload>(
     direction: Vector3<f64>,
 ) -> Result<SolidKey, ExtrudeError> {
     let bot_face = g
-        .face(face_key)
+        .face_attr(face_key)
         .map(|attr| attr.face(g))
         .ok_or(ExtrudeError::MissingFace { dart: face_key })?;
     let top_face = translate_face(&bot_face, direction)?;
@@ -91,7 +91,7 @@ pub fn add_extruded_face<P: Payload>(
         .attribute::<Cell2>(top_face_dart)
         .expect("merged top face should preserve its face attribute");
     let top_face_attr = g
-        .face(top_face_key)
+        .face_attr(top_face_key)
         .expect("merged top face key should remain valid");
     let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
     top_loop_darts.push(top_face_attr.outer_loop);
@@ -118,7 +118,7 @@ fn orient_extruded_caps<P: Payload>(
     direction: Vector3<f64>,
 ) {
     let Some(bottom_normal_dot_direction) = g
-        .face(bottom_face)
+        .face_attr(bottom_face)
         .map(|attr| face_normal_dot_direction(g, attr, direction))
     else {
         return;
@@ -140,7 +140,7 @@ fn face_normal_dot_direction<P: Payload>(
 }
 
 fn reverse_face_winding<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
-    let Some(face_attr) = g.face(face).cloned() else {
+    let Some(face_attr) = g.face_attr(face).cloned() else {
         return;
     };
 
@@ -162,7 +162,7 @@ fn reverse_face_winding<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
         })
         .collect();
 
-    if let Some(face) = g.face_mut(face) {
+    if let Some(face) = g.face_attr_mut(face) {
         face.outer_loop = outer_loop;
         face.inner_loops = inner_loops;
         face.pcurves = pcurves;

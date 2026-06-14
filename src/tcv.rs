@@ -122,7 +122,7 @@ impl<P: Payload> ToTcv for Shape<EdgeTag, P> {
         append_edge(self.map(), self.handle(), opts.tessellate, &mut shape)?;
         let attr = self
             .map()
-            .edge(self.handle())
+            .edge_attr(self.handle())
             .ok_or(TcvError::MissingTopology)?;
         append_edge_vertices(&attr.edge(self.map()), &mut shape);
         Ok(root_with_leaf(edge_leaf(&opts, shape), opts.name))
@@ -145,7 +145,7 @@ impl<P: Payload> ToTcv for Shape<FaceTag, P> {
         append_face_mesh(self.map(), self.handle(), opts.tessellate, &mut shape)?;
         let attr = self
             .map()
-            .face(self.handle())
+            .face_attr(self.handle())
             .ok_or(TcvError::MissingTopology)?;
         let face = Face::new(self.map(), attr);
         append_profile(self.map(), &face.outer_loop(), opts.tessellate, &mut shape)?;
@@ -288,7 +288,7 @@ fn append_edge<P: Payload>(
     opts: TessellateOpts,
     shape: &mut TcvShape,
 ) -> Result<(), TcvError> {
-    let attr = g.edge(key).ok_or(TcvError::MissingTopology)?;
+    let attr = g.edge_attr(key).ok_or(TcvError::MissingTopology)?;
     let edge = attr.edge(g);
     let polyline = tessellate_edge(g, key, opts).filter(|line| !line.is_empty());
     let polyline = polyline.unwrap_or_else(|| fallback_chord(&edge));

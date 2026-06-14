@@ -134,7 +134,7 @@ pub fn validate_solid_manifold<P: Payload>(
     validate_gmap(g)?;
 
     let attr = g
-        .solid(solid)
+        .solid_attr(solid)
         .ok_or(GMapValidationError::MissingSolid { solid })?;
     validate_shell(g, solid, attr.outer_shell)?;
     if let Some(inner_shells) = &attr.inner_shells {
@@ -163,7 +163,7 @@ pub fn validate_solid_orientation<P: Payload>(
     validate_gmap(g)?;
 
     let attr = g
-        .solid(solid)
+        .solid_attr(solid)
         .ok_or(GMapValidationError::MissingSolid { solid })?;
     validate_shell(g, solid, attr.outer_shell)?;
     validate_shell_orientation(g, solid, attr.outer_shell, ShellSide::Outer)?;

@@ -171,7 +171,7 @@ fn prepare_profile_edge_split<P: Payload>(
         return Err(EdgeSplitError::NonFiniteParameter { parameter });
     }
 
-    let attr = g.edge(edge).ok_or(EdgeSplitError::MissingEdge { edge })?;
+    let attr = g.edge_attr(edge).ok_or(EdgeSplitError::MissingEdge { edge })?;
     let first_dart = attr.dart;
     let second_dart = g.alpha(Dim::Zero, first_dart);
     let split = PreparedFreeEdgeSplit {
@@ -194,7 +194,7 @@ fn prepare_attached_edge_split<P: Payload>(
         return Err(EdgeSplitError::NonFiniteParameter { parameter });
     }
 
-    let attr = g.edge(edge).ok_or(EdgeSplitError::MissingEdge { edge })?;
+    let attr = g.edge_attr(edge).ok_or(EdgeSplitError::MissingEdge { edge })?;
     let first_dart = attr.dart;
     let second_dart = g.alpha(Dim::Zero, first_dart);
     let edge_darts = g

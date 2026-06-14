@@ -435,7 +435,7 @@ pub fn add_revolved_face<P: Payload>(
 ) -> Result<SolidKey, RevolveError> {
     let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
     let face = g
-        .face(face_key)
+        .face_attr(face_key)
         .map(|attr| attr.face(g))
         .ok_or(RevolveError::MissingFace { key: face_key })?;
     let mut loops = Vec::with_capacity(1 + face.inner_loops().len());
@@ -452,7 +452,7 @@ pub fn add_revolved_face<P: Payload>(
         .attribute::<Cell2>(top_face_dart)
         .expect("merged rotated face should preserve its face attribute");
     let top_face_attr = g
-        .face(top_face_key)
+        .face_attr(top_face_key)
         .expect("merged rotated face key should remain valid");
     let mut top_loops = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
     top_loops.push(top_face_attr.outer_loop);
@@ -526,7 +526,7 @@ fn rotate_face<P: Payload>(
         .collect::<Vec<_>>();
     for key in vertex_keys {
         let vertex = rotated
-            .vertex_mut(key)
+            .vertex_attr_mut(key)
             .expect("collected vertex key must remain valid");
         vertex.point = rotate_point(axis, vertex.point, angle);
     }
@@ -534,7 +534,7 @@ fn rotate_face<P: Payload>(
     let edge_keys = rotated.iter_edges().map(|(key, _)| key).collect::<Vec<_>>();
     for key in edge_keys {
         let edge = rotated
-            .edge_mut(key)
+            .edge_attr_mut(key)
             .expect("collected edge key must remain valid");
         edge.curve = rotate_curve(edge.dart, &edge.curve, axis, angle)?;
     }
@@ -543,7 +543,7 @@ fn rotate_face<P: Payload>(
         .attribute::<Cell2>(rotated_dart)
         .expect("isolating a face must preserve its face attribute");
     let rotated_face = rotated
-        .face_mut(rotated_face_key)
+        .face_attr_mut(rotated_face_key)
         .expect("isolated face key must remain valid");
     rotated_face.surface =
         rotate_surface(rotated_face.outer_loop, &rotated_face.surface, axis, angle)?;

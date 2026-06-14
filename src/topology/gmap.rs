@@ -2,7 +2,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use slotmap::SlotMap;
 
+use crate::topology::edge::Edge;
+use crate::topology::face::Face;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
+use crate::topology::solid::Solid;
+use crate::topology::vertex::Vertex;
 
 use super::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
 use super::payload::{Payload, StandardPayload};
@@ -374,13 +378,19 @@ impl<P: Payload> GMap<P> {
         self.dart_to_vertex.insert(dart, key);
         key
     }
+
+    pub fn vertex(&self, key: VertexKey) -> Option<Vertex<P>> {
+        let attr = self.vertex_attr(key)?;
+        Some(Vertex::new(g, attr.dart))
+    }
+
     /// Returns the vertex attribute for `key`, if it exists.
-    pub fn vertex(&self, key: VertexKey) -> Option<&VertexAttr<P::V>> {
+    pub fn vertex_attr(&self, key: VertexKey) -> Option<&VertexAttr<P::V>> {
         self.vertices.get(key)
     }
 
     /// Returns the mutable vertex attribute for `key`, if it exists.
-    pub fn vertex_mut(&mut self, key: VertexKey) -> Option<&mut VertexAttr<P::V>> {
+    pub fn vertex_attr_mut(&mut self, key: VertexKey) -> Option<&mut VertexAttr<P::V>> {
         self.vertices.get_mut(key)
     }
 
@@ -405,13 +415,18 @@ impl<P: Payload> GMap<P> {
         key
     }
 
+    pub fn edge(&self, key: EdgeKey) -> Option<Edge<P>> {
+        let attr = self.edge_attr(key)?;
+        Some(Edge::new(g, attr.dart))
+    }
+
     /// Returns the edge attribute for `key`, if it exists.
-    pub fn edge(&self, key: EdgeKey) -> Option<&EdgeAttr<P::E>> {
+    pub fn edge_attr(&self, key: EdgeKey) -> Option<&EdgeAttr<P::E>> {
         self.edges.get(key)
     }
 
     /// Returns the mutable edge attribute for `key`, if it exists.
-    pub fn edge_mut(&mut self, key: EdgeKey) -> Option<&mut EdgeAttr<P::E>> {
+    pub fn edge_attr_mut(&mut self, key: EdgeKey) -> Option<&mut EdgeAttr<P::E>> {
         self.edges.get_mut(key)
     }
 
@@ -442,13 +457,18 @@ impl<P: Payload> GMap<P> {
         key
     }
 
+    pub fn face(&self, key: FaceKey) -> Option<Face<P>> {
+        let attr = self.face_attr(key)?;
+        Some(Face::new(g, attr))
+    }
+
     /// Returns the face attribute for `key`, if it exists.
-    pub fn face(&self, key: FaceKey) -> Option<&FaceAttr<P::F>> {
+    pub fn face_attr(&self, key: FaceKey) -> Option<&FaceAttr<P::F>> {
         self.faces.get(key)
     }
 
     /// Returns the mutable face attribute for `key`, if it exists.
-    pub fn face_mut(&mut self, key: FaceKey) -> Option<&mut FaceAttr<P::F>> {
+    pub fn face_attr_mut(&mut self, key: FaceKey) -> Option<&mut FaceAttr<P::F>> {
         self.faces.get_mut(key)
     }
 
@@ -488,8 +508,13 @@ impl<P: Payload> GMap<P> {
         key
     }
 
+    pub fn solid(&self, key: SolidKey) -> Option<Solid<P>> {
+        let attr = self.solid_attr(key)?;
+        Some(Solid::new(g, attr))
+    }
+
     /// Returns the solid attribute for `key`, if it exists.
-    pub fn solid(&self, key: SolidKey) -> Option<&SolidAttr<P::S>> {
+    pub fn solid_attr(&self, key: SolidKey) -> Option<&SolidAttr<P::S>> {
         self.solids.get(key)
     }
 
@@ -1045,7 +1070,7 @@ mod tests {
         .expect("source edge should build");
 
         let edge = source
-            .edge(edge_key)
+            .edge_attr(edge_key)
             .map(|attr| Edge::new(&source, attr.dart))
             .expect("source edge should exist");
         let merged_dart = target.merge(edge);
@@ -1099,14 +1124,16 @@ mod tests {
         ));
 
         let face = source
-            .face(face_key)
+            .face_attr(face_key)
             .map(|attr| Face::new(&source, attr))
             .expect("source face should exist");
         let merged_dart = target.merge(face);
         let merged_key = *target
             .attribute::<Cell2>(merged_dart)
             .expect("merged face lookup should exist");
-        let merged_face = target.face(merged_key).expect("merged face should exist");
+        let merged_face = target
+            .face_attr(merged_key)
+            .expect("merged face should exist");
 
         assert_eq!(target.dart_count(), 10);
         assert_eq!(merged_face.outer_loop, Dart::new(2));
@@ -1141,7 +1168,7 @@ mod tests {
         let solid_key = source.add_solid(SolidAttr::new((), profile_dart, None));
         let mut second_target = GMap::<StandardPayload>::new();
         let solid = source
-            .solid(solid_key)
+            .solid_attr(solid_key)
             .map(|attr| Solid::new(&source, attr))
             .expect("source solid should exist");
         let merged_solid = second_target.merge(solid);
@@ -1180,7 +1207,7 @@ mod tests {
             Vec::new(),
         ));
         let face = source
-            .face(face_key)
+            .face_attr(face_key)
             .map(|attr| Face::new(&source, attr))
             .expect("source face should exist");
 

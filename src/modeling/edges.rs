@@ -38,7 +38,7 @@ impl<P: Payload> Shape<EdgeTag, P> {
     pub fn into_profile(self) -> Shape<ProfileTag, P> {
         let (g, edge_key) = self.into_map();
         let dart = g
-            .edge(edge_key)
+            .edge_attr(edge_key)
             .expect("edge shape key must be in the map")
             .dart;
         Shape::new(g, dart)

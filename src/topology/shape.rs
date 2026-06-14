@@ -113,7 +113,7 @@ impl<P: Payload> Shape<VertexTag, P> {
     /// Panics if the stored vertex key is no longer present in the map.
     pub fn vertex(&self) -> Vertex<'_, P> {
         self.map
-            .vertex(self.handle)
+            .vertex_attr(self.handle)
             .map(|v| v.vertex(&self.map))
             .expect("vertex shape key must be in the map")
     }
@@ -132,7 +132,7 @@ impl<P: Payload> Shape<EdgeTag, P> {
     /// Panics if the stored edge key is no longer present in the map.
     pub fn edge(&self) -> Edge<'_, P> {
         self.map
-            .edge(self.handle)
+            .edge_attr(self.handle)
             .map(|e| e.edge(&self.map))
             .expect("edge shape key must be in the map")
     }
@@ -151,7 +151,7 @@ impl<P: Payload> Shape<FaceTag, P> {
     /// Panics if the stored face key is no longer present in the map.
     pub fn face(&self) -> Face<'_, P> {
         self.map
-            .face(self.handle)
+            .face_attr(self.handle)
             .map(|f| f.face(&self.map))
             .expect("face shape key must be in the map")
     }
@@ -206,7 +206,7 @@ impl<P: Payload> Shape<SolidTag, P> {
     /// Panics if the stored solid key is no longer present in the map.
     pub fn solid(&self) -> Solid<'_, P> {
         self.map
-            .solid(self.handle)
+            .solid_attr(self.handle)
             .map(|s| Solid::new(&self.map, s))
             .expect("solid shape key must be in the map")
     }

@@ -554,7 +554,7 @@ struct ClassificationRay {
 }
 
 fn solid_for_key<P: Payload>(g: &GMap<P>, solid: SolidKey) -> Result<Solid<'_, P>, BooleanError> {
-    g.solid(solid)
+    g.solid_attr(solid)
         .map(|attr| Solid::new(g, attr))
         .ok_or(BooleanError::MissingSolidHandle { solid })
 }
@@ -657,7 +657,7 @@ impl<'a, P: Payload> SelectedFaceSet<'a, P> {
     ) -> Result<Self, BooleanError> {
         let mut darts = Vec::new();
         for face in faces {
-            let attr = map.face(*face).ok_or(BooleanError::MissingFaceHandle {
+            let attr = map.face_attr(*face).ok_or(BooleanError::MissingFaceHandle {
                 face: FaceHandle {
                     source,
                     dart: Dart::new(0),
@@ -861,7 +861,7 @@ fn face_orientation_sample<P: Payload>(
     g: &GMap<P>,
     face: FaceKey,
 ) -> Option<(Vector3<f64>, Vector3<f64>)> {
-    let face = g.face(face)?.face(g);
+    let face = g.face_attr(face)?.face(g);
     let uv = sample_face_uv(&face)?;
     Some((
         face.point_at(uv.x, uv.y).coords,
@@ -888,7 +888,7 @@ fn flip_face_surface_orientation<P: Payload>(
     face: FaceKey,
 ) -> Result<(), BooleanError> {
     let attr = g
-        .face(face)
+        .face_attr(face)
         .cloned()
         .ok_or(BooleanError::MissingOrientationSample { face })?;
     let outer_loop = g.alpha(Dim::Zero, attr.outer_loop);
@@ -908,7 +908,7 @@ fn flip_face_surface_orientation<P: Payload>(
         })
         .collect();
 
-    if let Some(face) = g.face_mut(face) {
+    if let Some(face) = g.face_attr_mut(face) {
         face.outer_loop = outer_loop;
         face.inner_loops = inner_loops;
         face.pcurves = pcurves;
@@ -1489,7 +1489,7 @@ fn face_attr_for_handle<P: Payload>(
         .attribute::<Cell2>(face.dart)
         .copied()
         .ok_or(BooleanError::MissingFaceHandle { face })?;
-    g.face(face_key)
+    g.face_attr(face_key)
         .ok_or(BooleanError::MissingFaceHandle { face })
 }
 
@@ -1512,7 +1512,7 @@ fn incident_face_for_edge<P: Payload>(
     edge: EdgeKey,
 ) -> Result<FaceKey, BooleanError> {
     let edge_attr = g
-        .edge(edge)
+        .edge_attr(edge)
         .ok_or(BooleanError::MissingEdgeHandle { edge: handle })?;
     g.orbit(edge_attr.dart, g.orbit_indices(Dim::One))
         .find_map(|dart| g.attribute::<Cell2>(dart).copied())
@@ -1525,7 +1525,7 @@ fn edge_domain<P: Payload>(
     edge: EdgeKey,
 ) -> Result<Interval, BooleanError> {
     let attr = g
-        .edge(edge)
+        .edge_attr(edge)
         .ok_or(BooleanError::MissingEdgeHandle { edge: handle })?;
     let start = g
         .attribute::<Cell0>(attr.dart)

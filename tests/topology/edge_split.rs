@@ -22,7 +22,7 @@ fn split_profile_edge_handles_isolated_edge() {
 
     let midpoint = Point3::new(0.25, 0.0, 0.0);
     let split_vertex = g
-        .vertex(split.vertex)
+        .vertex_attr(split.vertex)
         .expect("split vertex should be stored")
         .vertex(&g);
     assert!(
@@ -33,11 +33,11 @@ fn split_profile_edge_handles_isolated_edge() {
     );
 
     let first = g
-        .edge(split.first)
+        .edge_attr(split.first)
         .expect("first edge should exist")
         .edge(&g);
     let second = g
-        .edge(split.second)
+        .edge_attr(split.second)
         .expect("second edge should exist")
         .edge(&g);
     assert!(
@@ -87,7 +87,7 @@ fn split_profile_edge_turns_isolated_edge_into_open_profile() {
     .expect("line edge should build");
 
     let split = split_edge(&mut g, edge, 0.5).expect("isolated edge should split");
-    let first_dart = g.edge(split.first).expect("first edge should exist").dart;
+    let first_dart = g.edge_attr(split.first).expect("first edge should exist").dart;
     let profile = Profile::new(&g, first_dart);
 
     assert_eq!(profile.edges().len(), 2);
@@ -147,7 +147,7 @@ fn split_profile_edge_preserves_open_profile_order() {
 
     assert_eq!(profile.edges().len(), 3);
     assert!(
-        g.vertex(split.vertex)
+        g.vertex_attr(split.vertex)
             .expect("split vertex should exist")
             .point
             .coincides(midpoint, LINEAR_TOLERANCE)

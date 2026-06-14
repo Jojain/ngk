@@ -32,7 +32,7 @@ pub fn tessellate_shape<P: Payload>(
 }
 
 pub fn tessellate_vertex<P: Payload>(g: &GMap<P>, key: VertexKey) -> Option<Point3> {
-    g.vertex(key).map(|v| v.point)
+    g.vertex_attr(key).map(|v| v.point)
 }
 
 pub fn tessellate_edge<P: Payload>(
@@ -40,7 +40,7 @@ pub fn tessellate_edge<P: Payload>(
     key: EdgeKey,
     opts: TessellateOpts,
 ) -> Option<Polyline3> {
-    let attr = g.edge(key)?;
+    let attr = g.edge_attr(key)?;
     let edge = attr.edge(g);
     let v1 = edge.start();
     let v2 = edge.end();
