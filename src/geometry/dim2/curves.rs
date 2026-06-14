@@ -1,5 +1,11 @@
-use crate::geometry::{Interval, LINEAR_TOLERANCE, NurbsError};
+use crate::geometry::{
+    ControlPolygon2, Degree, HPoint2, Interval, KnotVector, LINEAR_TOLERANCE, NurbsError,
+};
 
+use super::intersections::{
+    CurveCurveIntersections2, CurveIntersectionError, CurveIntersectionOptions, intersect_curves,
+    intersect_curves_with_options,
+};
 use super::nurbs::NurbsCurve2;
 use super::utils::Point2;
 
@@ -11,6 +17,21 @@ pub enum Curve2 {
 }
 
 impl Curve2 {
+    /// Converts the curve to an exact 2D NURBS representation.
+    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        match self {
+            Curve2::Line(line) => NurbsCurve2::new(
+                Degree::new(1)?,
+                ControlPolygon2::new(vec![
+                    HPoint2::from_cartesian(line.start, 1.0),
+                    HPoint2::from_cartesian(line.end, 1.0),
+                ])?,
+                KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
+            ),
+            Curve2::Nurbs(curve) => Ok(curve.clone()),
+        }
+    }
+
     /// Evaluates the curve using a normalized parameter in `[0, 1]`.
     pub fn point_at(&self, parameter: f64) -> Point2 {
         match self {
@@ -79,6 +100,29 @@ impl Curve2 {
                 .parameter_at(point, tolerance)
                 .map(|parameter| normalized_parameter(curve.domain(), parameter)),
         }
+    }
+
+    /// Intersects this curve with another curve using default tolerances.
+    ///
+    /// Returned parameters and intervals are normalized to each `Curve2`'s
+    /// public `[0, 1]` parameter domain.
+    pub fn intersect_curve(
+        &self,
+        other: &Curve2,
+    ) -> Result<CurveCurveIntersections2, CurveIntersectionError> {
+        intersect_curves(self, other)
+    }
+
+    /// Intersects this curve with another curve using explicit tolerances.
+    ///
+    /// Returned parameters and intervals are normalized to each `Curve2`'s
+    /// public `[0, 1]` parameter domain.
+    pub fn intersect_curve_with_options(
+        &self,
+        other: &Curve2,
+        options: CurveIntersectionOptions,
+    ) -> Result<CurveCurveIntersections2, CurveIntersectionError> {
+        intersect_curves_with_options(self, other, options)
     }
 }
 

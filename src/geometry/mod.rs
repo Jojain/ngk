@@ -6,6 +6,10 @@ pub mod nurbs;
 pub mod tolerance;
 
 pub use dim2::curves::{Curve2, Line2};
+pub use dim2::intersections::{
+    CurveCurveIntersection2, CurveCurveIntersections2, CurveIntersectionError,
+    CurveIntersectionOptions,
+};
 pub use dim2::nurbs::{ControlPolygon2, HPoint2, NurbsCurve2};
 pub use dim2::utils::{Point2, Vector2};
 pub use dim3::bbox::BBox;

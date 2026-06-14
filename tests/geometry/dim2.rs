@@ -1,6 +1,6 @@
 use ngk::geometry::{
-    ControlPolygon2, Curve2, Degree, HPoint2, KnotVector, LINEAR_TOLERANCE, Line2, NurbsCurve2,
-    Point2,
+    ControlPolygon2, Curve2, CurveCurveIntersection2, Degree, HPoint2, KnotVector,
+    LINEAR_TOLERANCE, Line2, NurbsCurve2, Point2,
 };
 
 fn assert_point2_close(actual: Point2, expected: Point2) {
@@ -139,4 +139,163 @@ fn curve2_recovers_parameter_for_point_on_nurbs() {
         .expect("point on curve should have a parameter");
 
     assert!((recovered - 0.37).abs() <= 1.0e-5);
+}
+
+#[test]
+fn curve2_line_intersection_returns_point_and_parameters() {
+    let horizontal = Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 0.0)));
+    let vertical = Curve2::Line(Line2::new(Point2::new(0.5, -1.0), Point2::new(0.5, 1.0)));
+
+    let intersections = horizontal.intersect_curve(&vertical).unwrap();
+
+    assert_eq!(intersections.len(), 1, "{intersections:?}");
+    let CurveCurveIntersection2::Point { point, u_a, u_b } = intersections[0] else {
+        panic!("expected point intersection, got {intersections:?}");
+    };
+    assert_point2_close(point, Point2::new(0.5, 0.0));
+    assert!((u_a - 0.25).abs() <= LINEAR_TOLERANCE);
+    assert!((u_b - 0.5).abs() <= LINEAR_TOLERANCE);
+}
+
+#[test]
+fn curve2_collinear_lines_return_overlap_intervals() {
+    let outer = Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(3.0, 0.0)));
+    let inner = Curve2::Line(Line2::new(Point2::new(1.0, 0.0), Point2::new(2.0, 0.0)));
+
+    let intersections = outer.intersect_curve(&inner).unwrap();
+
+    assert_eq!(intersections.len(), 1, "{intersections:?}");
+    let CurveCurveIntersection2::Overlap {
+        interval_a,
+        interval_b,
+    } = intersections[0]
+    else {
+        panic!("expected overlap, got {intersections:?}");
+    };
+    assert!((interval_a.start - 1.0 / 3.0).abs() <= LINEAR_TOLERANCE);
+    assert!((interval_a.end - 2.0 / 3.0).abs() <= LINEAR_TOLERANCE);
+    assert!(interval_b.start.abs() <= LINEAR_TOLERANCE);
+    assert!((interval_b.end - 1.0).abs() <= LINEAR_TOLERANCE);
+}
+
+#[test]
+fn curve2_tangent_quadratic_nurbs_curves_return_one_point() {
+    let rising = quadratic_curve2([
+        Point2::new(0.0, 0.0),
+        Point2::new(1.0, 1.0),
+        Point2::new(2.0, 0.0),
+    ]);
+    let falling = quadratic_curve2([
+        Point2::new(0.0, 1.0),
+        Point2::new(1.0, 0.0),
+        Point2::new(2.0, 1.0),
+    ]);
+
+    let intersections = Curve2::Nurbs(rising)
+        .intersect_curve(&Curve2::Nurbs(falling))
+        .unwrap();
+
+    assert_eq!(intersections.len(), 1, "{intersections:?}");
+    let CurveCurveIntersection2::Point { point, u_a, u_b } = intersections[0] else {
+        panic!("expected point intersection, got {intersections:?}");
+    };
+    assert_point2_close(point, Point2::new(1.0, 0.5));
+    assert!((u_a - 0.5).abs() <= LINEAR_TOLERANCE * 10.0);
+    assert!((u_b - 0.5).abs() <= LINEAR_TOLERANCE * 10.0);
+}
+
+#[test]
+fn curve2_transverse_quadratic_nurbs_curves_return_crossing_point() {
+    let rising = quadratic_curve2([
+        Point2::new(0.0, 0.0),
+        Point2::new(1.0, 1.0),
+        Point2::new(2.0, 2.0),
+    ]);
+    let falling = quadratic_curve2([
+        Point2::new(0.0, 2.0),
+        Point2::new(1.0, 1.0),
+        Point2::new(2.0, 0.0),
+    ]);
+
+    let intersections = Curve2::Nurbs(rising)
+        .intersect_curve(&Curve2::Nurbs(falling))
+        .unwrap();
+
+    assert_eq!(intersections.len(), 1, "{intersections:?}");
+    let CurveCurveIntersection2::Point { point, u_a, u_b } = intersections[0] else {
+        panic!("expected point intersection, got {intersections:?}");
+    };
+    assert_point2_close(point, Point2::new(1.0, 1.0));
+    assert!((u_a - 0.5).abs() <= LINEAR_TOLERANCE * 10.0);
+    assert!((u_b - 0.5).abs() <= LINEAR_TOLERANCE * 10.0);
+}
+
+#[test]
+fn curve2_line_and_nurbs_secant_return_two_points() {
+    let arch = Curve2::Nurbs(quadratic_curve2([
+        Point2::new(0.0, 0.0),
+        Point2::new(1.0, 1.0),
+        Point2::new(2.0, 0.0),
+    ]));
+    let line = Curve2::Line(Line2::new(Point2::new(0.0, 0.25), Point2::new(2.0, 0.25)));
+
+    let intersections = arch.intersect_curve(&line).unwrap();
+    let mut points = intersections
+        .iter()
+        .filter_map(|intersection| match intersection {
+            CurveCurveIntersection2::Point { point, .. } => Some(*point),
+            CurveCurveIntersection2::Overlap { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    points.sort_by(|left, right| left.x.total_cmp(&right.x));
+
+    assert_eq!(points.len(), 2, "{intersections:?}");
+    assert_point2_close(
+        points[0],
+        Point2::new(1.0 - std::f64::consts::FRAC_1_SQRT_2, 0.25),
+    );
+    assert_point2_close(
+        points[1],
+        Point2::new(1.0 + std::f64::consts::FRAC_1_SQRT_2, 0.25),
+    );
+}
+
+#[test]
+fn curve2_intersection_parameters_are_normalized_from_native_domains() {
+    let horizontal = Curve2::Nurbs(
+        NurbsCurve2::new(
+            Degree::new(1).unwrap(),
+            ControlPolygon2::from_cartesian(
+                vec![Point2::new(0.0, 0.0), Point2::new(4.0, 0.0)],
+                &[1.0, 1.0],
+            )
+            .unwrap(),
+            KnotVector::new(vec![2.0, 2.0, 6.0, 6.0]).unwrap(),
+        )
+        .unwrap(),
+    );
+    let vertical = Curve2::Line(Line2::new(Point2::new(1.0, -1.0), Point2::new(1.0, 1.0)));
+
+    let intersections = horizontal.intersect_curve(&vertical).unwrap();
+
+    let CurveCurveIntersection2::Point { u_a, u_b, .. } = intersections[0] else {
+        panic!("expected point intersection, got {intersections:?}");
+    };
+    assert!((u_a - 0.25).abs() <= LINEAR_TOLERANCE);
+    assert!((u_b - 0.5).abs() <= LINEAR_TOLERANCE);
+}
+
+fn quadratic_curve2(points: [Point2; 3]) -> NurbsCurve2 {
+    NurbsCurve2::new(
+        Degree::new(2).unwrap(),
+        ControlPolygon2::new(
+            points
+                .into_iter()
+                .map(|point| HPoint2::from_cartesian(point, 1.0))
+                .collect(),
+        )
+        .unwrap(),
+        KnotVector::new(vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]).unwrap(),
+    )
+    .unwrap()
 }

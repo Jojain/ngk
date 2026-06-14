@@ -3,6 +3,8 @@ use nalgebra::{DMatrix, DVector, Point3, Vector2, Vector3};
 use crate::geometry::nurbs::basis::{basis_function_derivatives, basis_functions};
 use crate::geometry::{Degree, Interval, KnotVector, LINEAR_TOLERANCE, NurbsError, Point2};
 
+use super::bezier::Bezier2;
+
 /// A homogeneous 2D control point stored as `(x*w, y*w, w)`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HPoint2(Point3<f64>);
@@ -346,6 +348,40 @@ impl NurbsCurve2 {
         ((self.point_at(parameter) - point).norm() <= tolerance).then_some(parameter)
     }
 
+    pub(crate) fn bezier_spans(&self) -> Result<Vec<Bezier2>, NurbsError> {
+        let degree = self.degree.get();
+        let domain = self.domain();
+        let mut refined = self.clone();
+
+        for knot in distinct_interior_knots(self.knots.as_slice(), domain) {
+            while refined.knots.multiplicity(knot) < degree {
+                refined.insert_knot(knot);
+            }
+        }
+
+        let breaks = distinct_domain_knots(refined.knots.as_slice(), domain);
+        let mut spans = Vec::new();
+        let mut point_start = 0usize;
+        for interval in breaks.windows(2) {
+            let start = interval[0];
+            let end = interval[1];
+            if end <= start {
+                continue;
+            }
+            let point_end = point_start + degree;
+            let points = ControlPolygon2::new(
+                refined.control_points.as_slice()[point_start..=point_end].to_vec(),
+            )?;
+            spans.push(Bezier2::new(
+                self.degree,
+                points,
+                Interval::new(start, end),
+            )?);
+            point_start += refined.knots.multiplicity(end).min(degree + 1);
+        }
+        Ok(spans)
+    }
+
     fn clamp_parameter(&self, parameter: f64) -> f64 {
         let domain = self.domain();
         parameter.clamp(domain.start, domain.end)
@@ -559,6 +595,26 @@ fn adaptive_sample(
     }
     adaptive_sample(curve, start, midpoint, tolerance, depth - 1, samples);
     adaptive_sample(curve, midpoint, end, tolerance, depth - 1, samples);
+}
+
+fn distinct_interior_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
+    distinct_domain_knots(knots, domain)
+        .into_iter()
+        .filter(|knot| *knot > domain.start && *knot < domain.end)
+        .collect()
+}
+
+fn distinct_domain_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
+    let mut distinct = Vec::new();
+    for &knot in knots {
+        if knot < domain.start || knot > domain.end {
+            continue;
+        }
+        if distinct.last().is_none_or(|last| *last != knot) {
+            distinct.push(knot);
+        }
+    }
+    distinct
 }
 
 fn binomial(n: usize, k: usize) -> f64 {
