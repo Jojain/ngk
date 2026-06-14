@@ -100,6 +100,57 @@ impl<'a, P: Payload> Closeable for Profile<'a, P> {
 /// [`Closed::new_unchecked`].
 pub type Loop<'a, P = StandardPayload> = Closed<Profile<'a, P>>;
 
+/// One vertex occurrence in an oriented closed profile.
+///
+/// A corner keeps the two loop-oriented edges incident to the occurrence.
+/// This distinguishes repeated occurrences of the same topological vertex in
+/// a non-simple loop.
+pub struct LoopCorner<'a, P: Payload = StandardPayload> {
+    gmap: &'a GMap<P>,
+    incoming: Dart,
+    outgoing: Dart,
+}
+
+impl<'a, P: Payload> LoopCorner<'a, P> {
+    /// Returns the edge arriving at this corner in loop traversal order.
+    pub fn incoming(&self) -> Edge<'a, P> {
+        Edge::new(self.gmap, self.incoming)
+    }
+
+    /// Returns the edge leaving this corner in loop traversal order.
+    pub fn outgoing(&self) -> Edge<'a, P> {
+        Edge::new(self.gmap, self.outgoing)
+    }
+
+    /// Returns the vertex at this loop occurrence.
+    pub fn vertex(&self) -> Vertex<'a, P> {
+        self.outgoing().start()
+    }
+}
+
+impl<'a, P: Payload> Closed<Profile<'a, P>> {
+    /// Returns the loop corners in traversal order.
+    ///
+    /// Each corner pairs an incoming edge with the following outgoing edge.
+    pub fn corners(&self) -> Vec<LoopCorner<'a, P>> {
+        let edges = self.edges();
+        let count = edges.len();
+        if count == 0 {
+            return Vec::new();
+        }
+
+        edges
+            .iter()
+            .enumerate()
+            .map(|(index, outgoing)| LoopCorner {
+                gmap: self.gmap,
+                incoming: edges[(index + count - 1) % count].dart,
+                outgoing: outgoing.dart,
+            })
+            .collect()
+    }
+}
+
 enum LoopInvolution {
     A0,
     A1,

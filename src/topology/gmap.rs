@@ -379,9 +379,10 @@ impl<P: Payload> GMap<P> {
         key
     }
 
-    pub fn vertex(&self, key: VertexKey) -> Option<Vertex<P>> {
+    /// Returns the typed vertex view registered under `key`.
+    pub fn vertex(&self, key: VertexKey) -> Option<Vertex<'_, P>> {
         let attr = self.vertex_attr(key)?;
-        Some(Vertex::new(g, attr.dart))
+        Some(Vertex::new(self, attr.dart))
     }
 
     /// Returns the vertex attribute for `key`, if it exists.
@@ -415,9 +416,10 @@ impl<P: Payload> GMap<P> {
         key
     }
 
-    pub fn edge(&self, key: EdgeKey) -> Option<Edge<P>> {
+    /// Returns the typed edge view registered under `key`.
+    pub fn edge(&self, key: EdgeKey) -> Option<Edge<'_, P>> {
         let attr = self.edge_attr(key)?;
-        Some(Edge::new(g, attr.dart))
+        Some(Edge::new(self, attr.dart))
     }
 
     /// Returns the edge attribute for `key`, if it exists.
@@ -457,9 +459,10 @@ impl<P: Payload> GMap<P> {
         key
     }
 
-    pub fn face(&self, key: FaceKey) -> Option<Face<P>> {
+    /// Returns the typed face view registered under `key`.
+    pub fn face(&self, key: FaceKey) -> Option<Face<'_, P>> {
         let attr = self.face_attr(key)?;
-        Some(Face::new(g, attr))
+        Some(Face::new(self, attr))
     }
 
     /// Returns the face attribute for `key`, if it exists.
@@ -508,9 +511,10 @@ impl<P: Payload> GMap<P> {
         key
     }
 
-    pub fn solid(&self, key: SolidKey) -> Option<Solid<P>> {
+    /// Returns the typed solid view registered under `key`.
+    pub fn solid(&self, key: SolidKey) -> Option<Solid<'_, P>> {
         let attr = self.solid_attr(key)?;
-        Some(Solid::new(g, attr))
+        Some(Solid::new(self, attr))
     }
 
     /// Returns the solid attribute for `key`, if it exists.

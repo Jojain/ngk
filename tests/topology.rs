@@ -6,5 +6,7 @@ mod face;
 mod facet;
 #[path = "topology/planar.rs"]
 mod planar;
+#[path = "topology/profile.rs"]
+mod profile;
 #[path = "topology/validation.rs"]
 mod validation;

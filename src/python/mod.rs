@@ -26,7 +26,6 @@ use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::profile::{Loop, Profile};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 use crate::topology::sheet::ShellRef;
-use crate::topology::solid::Solid;
 use crate::topology::vertex::Vertex;
 
 type SharedMap = Arc<GMap<StandardPayload>>;
@@ -267,20 +266,20 @@ impl PySolid {
     #[getter]
     fn outer_shell(&self) -> PyResult<PyShell> {
         let map = self.map.as_ref();
-        let attr = map
+        let solid = map
             .solid(self.key)
             .ok_or_else(|| missing_topology(format!("missing solid {:?}", self.key)))?;
-        let shell = Solid::new(map, attr).outer_shell();
+        let shell = solid.outer_shell();
         Ok(PyShell::new(Arc::clone(&self.map), shell))
     }
 
     #[getter]
     fn shells(&self) -> PyResult<Vec<PyShell>> {
         let map = self.map.as_ref();
-        let attr = map
+        let solid = map
             .solid(self.key)
             .ok_or_else(|| missing_topology(format!("missing solid {:?}", self.key)))?;
-        Ok(Solid::new(map, attr)
+        Ok(solid
             .shells()
             .into_iter()
             .map(|shell| PyShell::new(Arc::clone(&self.map), shell))
@@ -401,30 +400,29 @@ impl PyFace {
 
     #[getter]
     fn surface(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let attr = self
+        let face = self
             .map
             .face(self.key)
             .ok_or_else(|| missing_topology(format!("missing face {:?}", self.key)))?;
-        surface_to_py(py, attr.surface.clone())
+        surface_to_py(py, face.surface().clone())
     }
 
     #[getter]
     fn outer_loop(&self) -> PyResult<PyLoop> {
         let map = self.map.as_ref();
-        let attr = map
+        let face = map
             .face(self.key)
             .ok_or_else(|| missing_topology(format!("missing face {:?}", self.key)))?;
-        let face = Face::new(map, attr);
         Ok(PyLoop::new(Arc::clone(&self.map), face.outer_loop()))
     }
 
     #[getter]
     fn inner_loops(&self) -> PyResult<Vec<PyLoop>> {
         let map = self.map.as_ref();
-        let attr = map
+        let face = map
             .face(self.key)
             .ok_or_else(|| missing_topology(format!("missing face {:?}", self.key)))?;
-        Ok(Face::new(map, attr)
+        Ok(face
             .inner_loops()
             .into_iter()
             .map(|loop_| PyLoop::new(Arc::clone(&self.map), loop_))
@@ -433,10 +431,9 @@ impl PyFace {
 
     fn edges(&self) -> PyResult<Vec<PyEdge>> {
         let map = self.map.as_ref();
-        let attr = map
+        let face = map
             .face(self.key)
             .ok_or_else(|| missing_topology(format!("missing face {:?}", self.key)))?;
-        let face = Face::new(map, attr);
         Ok(face_edges(&face)
             .into_iter()
             .map(|edge| PyEdge::new(Arc::clone(&self.map), edge))
@@ -445,10 +442,9 @@ impl PyFace {
 
     fn vertices(&self) -> PyResult<Vec<PyVertex>> {
         let map = self.map.as_ref();
-        let attr = map
+        let face = map
             .face(self.key)
             .ok_or_else(|| missing_topology(format!("missing face {:?}", self.key)))?;
-        let face = Face::new(map, attr);
         Ok(face_vertices(&face)
             .into_iter()
             .map(|vertex| PyVertex::new(Arc::clone(&self.map), vertex))
@@ -685,11 +681,9 @@ impl PyEdge {
     }
 
     fn edge(&self) -> PyResult<Edge<'_, StandardPayload>> {
-        let attr = self
-            .map
+        self.map
             .edge(self.key)
-            .ok_or_else(|| missing_topology(format!("missing edge {:?}", self.key)))?;
-        Ok(attr.edge(self.map.as_ref()))
+            .ok_or_else(|| missing_topology(format!("missing edge {:?}", self.key)))
     }
 }
 
@@ -821,11 +815,9 @@ impl PyVertex {
     }
 
     fn vertex(&self) -> PyResult<Vertex<'_, StandardPayload>> {
-        let attr = self
-            .map
+        self.map
             .vertex(self.key)
-            .ok_or_else(|| missing_topology(format!("missing vertex {:?}", self.key)))?;
-        Ok(attr.vertex(self.map.as_ref()))
+            .ok_or_else(|| missing_topology(format!("missing vertex {:?}", self.key)))
     }
 }
 
