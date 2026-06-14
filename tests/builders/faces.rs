@@ -23,7 +23,9 @@ use ngk::viz::debug_viewer::{show, show_gmap};
 fn add_rectangle_creates_single_planar_face_with_pcurves() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("face should build");
-    let face = g.face_attr(face_key).expect("face key should be registered");
+    let face = g
+        .face_attr(face_key)
+        .expect("face key should be registered");
 
     assert_eq!(g.iter_faces().count(), 1);
     assert!(matches!(face.surface, Surface::Plane(_)));
@@ -51,7 +53,9 @@ fn add_rectangle_reports_profile_creation_errors() {
 fn add_circle_creates_single_planar_face_with_circular_pcurve() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_circle(&mut g, Plane::xy(), 2.0).expect("circle face should build");
-    let face = g.face_attr(face_key).expect("face key should be registered");
+    let face = g
+        .face_attr(face_key)
+        .expect("face key should be registered");
 
     assert_eq!(g.iter_faces().count(), 1);
     assert_eq!(g.iter_edges().count(), 1);
@@ -64,7 +68,9 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
 fn add_annulus_creates_planar_face_with_inner_circular_loop() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_annulus(&mut g, Plane::xy(), 2.0, 1.0).expect("annulus face should build");
-    let face = g.face_attr(face_key).expect("face key should be registered");
+    let face = g
+        .face_attr(face_key)
+        .expect("face key should be registered");
 
     assert_eq!(g.iter_faces().count(), 1);
     assert_eq!(g.iter_edges().count(), 2);
@@ -81,7 +87,9 @@ fn split_face_edge_updates_boundary_and_pcurves() {
     let parameter = edge_mid_parameter(&g, edge);
 
     let split = split_face_edge(&mut g, face_key, edge, parameter).expect("face edge should split");
-    let face = g.face_attr(face_key).expect("face should remain registered");
+    let face = g
+        .face_attr(face_key)
+        .expect("face should remain registered");
     let loop_edges = face.face(&g).outer_loop().edges();
 
     assert_eq!(g.iter_edges().count(), 5);
@@ -127,13 +135,17 @@ fn split_face_edge_uses_existing_pcurve_for_non_planar_surface_variant() {
         .surface
         .to_nurbs()
         .expect("face surface should convert to nurbs");
-    g.face_attr_mut(face_key).expect("face should exist").surface = Surface::Nurbs(surface);
+    g.face_attr_mut(face_key)
+        .expect("face should exist")
+        .surface = Surface::Nurbs(surface);
     let edge = first_outer_edge_key(&g, face_key);
 
     split_face_edge(&mut g, face_key, edge, 0.5)
         .expect("face edge split should use existing pcurve");
 
-    let face = g.face_attr(face_key).expect("face should remain registered");
+    let face = g
+        .face_attr(face_key)
+        .expect("face should remain registered");
     assert_eq!(face.face(&g).outer_loop().edges().len(), 5);
     assert_eq!(face.pcurves.len(), 5);
 }

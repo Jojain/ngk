@@ -87,7 +87,10 @@ fn split_profile_edge_turns_isolated_edge_into_open_profile() {
     .expect("line edge should build");
 
     let split = split_edge(&mut g, edge, 0.5).expect("isolated edge should split");
-    let first_dart = g.edge_attr(split.first).expect("first edge should exist").dart;
+    let first_dart = g
+        .edge_attr(split.first)
+        .expect("first edge should exist")
+        .dart;
     let profile = Profile::new(&g, first_dart);
 
     assert_eq!(profile.edges().len(), 2);

@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::StandardPayload;
 use crate::builders::edges::add_circle as add_circle_edge;
-use crate::builders::edges::{split_face_boundary_edge, EdgeSplit, EdgeSplitError};
+use crate::builders::edges::{EdgeSplit, EdgeSplitError, split_face_boundary_edge};
 use crate::builders::errors::FaceCreationError;
 use crate::builders::profiles::{
     add_rectangle as add_rectangle_profile, add_square as add_square_profile, profile_pcurves,
 };
-use crate::geometry::{Curve, Curve2, Line2, Plane, Point2, Point3, Surface, LINEAR_TOLERANCE};
+use crate::geometry::{Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, Surface};
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
 use crate::topology::closed::Closed;
 use crate::topology::edge::Edge;
@@ -16,7 +17,6 @@ use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use crate::topology::vertex::Vertex;
-use crate::StandardPayload;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Error, PartialEq)]
@@ -104,25 +104,41 @@ pub struct FaceImprintSplit {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// A normalized planar graph built from imprint curves in a face's UV space.
+///
+/// Curve segments are split at intersections, coincident vertices and duplicate
+/// edges are merged within [`LINEAR_TOLERANCE`], and the resulting undirected
+/// graph can be inspected for branches and standalone closed loops. The graph is
+/// a temporary aid for face splitting and is not part of the [`GMap`] topology.
 pub struct FaceImprintGraph {
     vertices: Vec<Point2>,
     edges: Vec<(usize, usize)>,
 }
 
 impl FaceImprintGraph {
+    /// Builds an imprint graph from 2D lines and polylines.
+    ///
+    /// Polylines are expanded into line segments, and all segments are split at
+    /// crossings, T-junctions, and collinear overlap boundaries before the graph
+    /// is assembled.
     pub fn from_curves(curves: &[Curve2]) -> Self {
         let segments = curves.iter().flat_map(curve_segments).collect::<Vec<_>>();
         Self::from_segments(&segments)
     }
 
+    /// Returns the graph vertices as points in the face's UV parameter space.
     pub fn vertices(&self) -> &[Point2] {
         &self.vertices
     }
 
+    /// Returns the undirected graph edges as pairs of vertex indices.
     pub fn edges(&self) -> &[(usize, usize)] {
         &self.edges
     }
 
+    /// Returns the number of graph edges incident to `vertex`.
+    ///
+    /// An index outside [`Self::vertices`] has degree zero.
     pub fn vertex_degree(&self, vertex: usize) -> usize {
         self.edges
             .iter()
@@ -130,12 +146,18 @@ impl FaceImprintGraph {
             .count()
     }
 
+    /// Returns the indices of vertices incident to more than two edges.
     pub fn branch_vertices(&self) -> Vec<usize> {
         (0..self.vertices.len())
             .filter(|vertex| self.vertex_degree(*vertex) > 2)
             .collect()
     }
 
+    /// Returns connected components that form standalone simple closed loops.
+    ///
+    /// Every vertex in a returned component has degree two, and the vertex
+    /// indices are ordered around the loop without repeating the first vertex.
+    /// Cycles embedded in a component containing branches are not returned.
     pub fn closed_components(&self) -> Vec<Vec<usize>> {
         let mut visited = vec![false; self.vertices.len()];
         let mut loops = Vec::new();
@@ -162,6 +184,7 @@ impl FaceImprintGraph {
         loops
     }
 
+    /// Returns the number of standalone simple closed-loop components.
     pub fn closed_component_count(&self) -> usize {
         self.closed_components().len()
     }
@@ -358,11 +381,7 @@ fn graph_vertex(vertices: &mut Vec<Point2>, uv: Point2) -> usize {
 }
 
 fn ordered_edge_key(a: usize, b: usize) -> (usize, usize) {
-    if a < b {
-        (a, b)
-    } else {
-        (b, a)
-    }
+    if a < b { (a, b) } else { (b, a) }
 }
 
 fn cross2(a: nalgebra::Vector2<f64>, b: nalgebra::Vector2<f64>) -> f64 {
@@ -374,11 +393,7 @@ fn in_segment_parameter(t: f64) -> bool {
 }
 
 fn coord(point: Point2, axis: usize) -> f64 {
-    if axis == 0 {
-        point.x
-    } else {
-        point.y
-    }
+    if axis == 0 { point.x } else { point.y }
 }
 
 fn scalar_to_segment_parameter(start: f64, end: f64, value: f64) -> f64 {

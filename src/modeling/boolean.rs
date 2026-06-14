@@ -657,12 +657,14 @@ impl<'a, P: Payload> SelectedFaceSet<'a, P> {
     ) -> Result<Self, BooleanError> {
         let mut darts = Vec::new();
         for face in faces {
-            let attr = map.face_attr(*face).ok_or(BooleanError::MissingFaceHandle {
-                face: FaceHandle {
-                    source,
-                    dart: Dart::new(0),
-                },
-            })?;
+            let attr = map
+                .face_attr(*face)
+                .ok_or(BooleanError::MissingFaceHandle {
+                    face: FaceHandle {
+                        source,
+                        dart: Dart::new(0),
+                    },
+                })?;
             let view = attr.face(map);
             darts.extend(view.outer_loop().darts());
             for loop_ in view.inner_loops() {
