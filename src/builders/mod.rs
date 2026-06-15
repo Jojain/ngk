@@ -5,4 +5,5 @@ pub mod profiles;
 pub mod revolve;
 pub mod sheets;
 pub mod solids;
+pub mod split;
 pub mod vertices;

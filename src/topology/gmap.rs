@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use slotmap::SlotMap;
+use thiserror::Error;
 
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -61,6 +62,45 @@ pub const GMAP_INVOLUTION_COUNT: usize = 4;
 /// Pairing map computed while checking whether two dart orbits can be sewn.
 pub struct SewableDarts {
     mapping: HashMap<Dart, Dart>,
+}
+
+/// New attribute keys created when an unsew separates embedded cells.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AttributeDetach {
+    /// Vertex attributes cloned for newly separated 0-cells.
+    pub new_vertices: Vec<VertexKey>,
+    /// Edge attributes cloned for newly separated 1-cells.
+    pub new_edges: Vec<EdgeKey>,
+    /// Face attributes cloned for newly separated 2-cells.
+    pub new_faces: Vec<FaceKey>,
+}
+
+/// Errors reported by attribute-aware topology detachment.
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum DetachError {
+    /// Attribute-aware detach currently supports alpha2 only.
+    #[error("attribute-aware detach only supports dimension Two, got {dim:?}")]
+    UnsupportedDimension { dim: Dim },
+    /// The supplied dart does not address the map.
+    #[error("dart {dart:?} is outside the map")]
+    MissingDart { dart: Dart },
+    /// The supplied dart is already free in the requested dimension.
+    #[error("dart {dart:?} is already free in dimension {dim:?}")]
+    AlreadyFree { dart: Dart, dim: Dim },
+}
+
+/// Errors reported while replacing or registering solid shells.
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum SolidRegistrationError {
+    /// The source solid key does not exist.
+    #[error("solid {solid:?} does not exist")]
+    MissingSolid { solid: SolidKey },
+    /// A shell representative does not address the map.
+    #[error("shell representative {shell:?} is outside the map")]
+    MissingShell { shell: Dart },
+    /// The requested shell is already registered to another solid.
+    #[error("shell {shell:?} already belongs to solid {solid:?}")]
+    ShellAlreadyRegistered { shell: Dart, solid: SolidKey },
 }
 
 /// Type marker for vertex attributes.
@@ -540,6 +580,51 @@ impl<P: Payload> GMap<P> {
         self.solids.get(key)
     }
 
+    /// Replaces a solid's registered shells while preserving its key and payload.
+    pub fn replace_solid_shell(
+        &mut self,
+        solid: SolidKey,
+        outer_shell: Dart,
+        inner_shells: Option<Vec<Dart>>,
+    ) -> Result<(), SolidRegistrationError> {
+        self.validate_shell_registration(solid, outer_shell, inner_shells.as_deref())?;
+        self.dart_to_solid.retain(|_, key| *key != solid);
+
+        let attr = self
+            .solids
+            .get_mut(solid)
+            .ok_or(SolidRegistrationError::MissingSolid { solid })?;
+        attr.outer_shell = outer_shell;
+        attr.inner_shells = inner_shells;
+
+        let shell_darts = self.solid_shell_representatives(
+            self.solids
+                .get(solid)
+                .expect("validated solid must remain registered"),
+        );
+        for shell in shell_darts {
+            self.dart_to_solid.insert(shell, solid);
+        }
+        Ok(())
+    }
+
+    /// Registers an additional solid component with a clone of `source`'s payload.
+    pub fn register_solid_component(
+        &mut self,
+        source: SolidKey,
+        outer_shell: Dart,
+        inner_shells: Option<Vec<Dart>>,
+    ) -> Result<SolidKey, SolidRegistrationError> {
+        let data = self
+            .solids
+            .get(source)
+            .ok_or(SolidRegistrationError::MissingSolid { solid: source })?
+            .data
+            .clone();
+        self.validate_new_shell_registration(outer_shell, inner_shells.as_deref())?;
+        Ok(self.add_solid(SolidAttr::new(data, outer_shell, inner_shells)))
+    }
+
     /// Iterate every stored 3-cell attribute paired with its slotmap key.
     pub fn iter_solids(&self) -> impl Iterator<Item = (SolidKey, &SolidAttr<P::S>)> {
         self.solids.iter()
@@ -550,6 +635,50 @@ impl<P: Payload> GMap<P> {
             .chain(solid.inner_shells.iter().flatten().copied())
             .map(|dart| self.cell_representative(dart, Dim::Three))
             .collect()
+    }
+
+    fn validate_shell_registration(
+        &self,
+        solid: SolidKey,
+        outer_shell: Dart,
+        inner_shells: Option<&[Dart]>,
+    ) -> Result<(), SolidRegistrationError> {
+        if !self.solids.contains_key(solid) {
+            return Err(SolidRegistrationError::MissingSolid { solid });
+        }
+        self.validate_shell_darts(outer_shell, inner_shells, Some(solid))
+    }
+
+    fn validate_new_shell_registration(
+        &self,
+        outer_shell: Dart,
+        inner_shells: Option<&[Dart]>,
+    ) -> Result<(), SolidRegistrationError> {
+        self.validate_shell_darts(outer_shell, inner_shells, None)
+    }
+
+    fn validate_shell_darts(
+        &self,
+        outer_shell: Dart,
+        inner_shells: Option<&[Dart]>,
+        replacing: Option<SolidKey>,
+    ) -> Result<(), SolidRegistrationError> {
+        for shell in std::iter::once(outer_shell).chain(inner_shells.into_iter().flatten().copied())
+        {
+            if shell.id() >= self.dart_count() {
+                return Err(SolidRegistrationError::MissingShell { shell });
+            }
+            let representative = self.cell_representative(shell, Dim::Three);
+            if let Some(existing) = self.dart_to_solid.get(&representative).copied()
+                && Some(existing) != replacing
+            {
+                return Err(SolidRegistrationError::ShellAlreadyRegistered {
+                    shell: representative,
+                    solid: existing,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Copy a topological view into a fresh [`GMap`].
@@ -980,6 +1109,136 @@ impl<P: Payload> GMap<P> {
         let a_i = self.alphas[i][dart.id()];
         self.alphas[i][a_i.id()] = a_i;
         self.alphas[i][dart.id()] = dart;
+    }
+
+    /// Detaches the complete `dim` sewing orbit containing `dart`.
+    ///
+    /// Attributes on lower-dimensional cells are retained on one resulting
+    /// orbit and cloned onto every additional orbit created by the detach.
+    pub fn detach(&mut self, dim: Dim, dart: Dart) -> Result<AttributeDetach, DetachError> {
+        if dim != Dim::Two {
+            return Err(DetachError::UnsupportedDimension { dim });
+        }
+        if dart.id() >= self.dart_count() {
+            return Err(DetachError::MissingDart { dart });
+        }
+        if self.is_free(dart, dim) {
+            return Err(DetachError::AlreadyFree { dart, dim });
+        }
+
+        let vertex_snapshots = self.vertex_attribute_snapshots();
+        let edge_snapshots = self.edge_attribute_snapshots();
+
+        let sewing_indices = self.sewing_orbit_indices(dim).collect::<Vec<_>>();
+        let sewing_darts = self.orbit(dart, sewing_indices).collect::<Vec<_>>();
+        let mut detached_pairs = HashSet::new();
+        for first in sewing_darts {
+            let second = self.alpha(dim, first);
+            let pair = if first.id() < second.id() {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            if detached_pairs.insert(pair) {
+                self.unsew(first, dim);
+            }
+        }
+
+        let new_vertices = self.restore_split_vertex_attributes(vertex_snapshots);
+        let new_edges = self.restore_split_edge_attributes(edge_snapshots);
+        Ok(AttributeDetach {
+            new_vertices,
+            new_edges,
+            new_faces: Vec::new(),
+        })
+    }
+
+    fn vertex_attribute_snapshots(&self) -> Vec<(VertexKey, VertexAttr<P::V>, Vec<Dart>)> {
+        self.vertices
+            .iter()
+            .map(|(key, attr)| {
+                (
+                    key,
+                    attr.clone(),
+                    self.orbit(attr.dart, self.orbit_indices(Dim::Zero))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    fn edge_attribute_snapshots(&self) -> Vec<(EdgeKey, EdgeAttr<P::E>, Vec<Dart>)> {
+        self.edges
+            .iter()
+            .map(|(key, attr)| {
+                (
+                    key,
+                    attr.clone(),
+                    self.orbit(attr.dart, self.orbit_indices(Dim::One))
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
+    fn restore_split_vertex_attributes(
+        &mut self,
+        snapshots: Vec<(VertexKey, VertexAttr<P::V>, Vec<Dart>)>,
+    ) -> Vec<VertexKey> {
+        let mut added = Vec::new();
+        for (key, attr, darts) in snapshots {
+            let representatives = self.split_representatives(&darts, Dim::Zero);
+            let retained = self.cell_representative(attr.dart, Dim::Zero);
+            self.vertices
+                .get_mut(key)
+                .expect("snapshotted vertex key must remain valid")
+                .dart = retained;
+            for representative in representatives {
+                if representative == retained {
+                    continue;
+                }
+                let mut clone = attr.clone();
+                clone.dart = representative;
+                added.push(self.vertices.insert(clone));
+            }
+        }
+        self.rebuild_vertex_index();
+        added
+    }
+
+    fn restore_split_edge_attributes(
+        &mut self,
+        snapshots: Vec<(EdgeKey, EdgeAttr<P::E>, Vec<Dart>)>,
+    ) -> Vec<EdgeKey> {
+        let mut added = Vec::new();
+        for (key, attr, darts) in snapshots {
+            let representatives = self.split_representatives(&darts, Dim::One);
+            let retained = self.cell_representative(attr.dart, Dim::One);
+            self.edges
+                .get_mut(key)
+                .expect("snapshotted edge key must remain valid")
+                .dart = retained;
+            for representative in representatives {
+                if representative == retained {
+                    continue;
+                }
+                let mut clone = attr.clone();
+                clone.dart = representative;
+                added.push(self.edges.insert(clone));
+            }
+        }
+        self.rebuild_edge_index();
+        added
+    }
+
+    fn split_representatives(&self, darts: &[Dart], dim: Dim) -> Vec<Dart> {
+        let mut representatives = darts
+            .iter()
+            .map(|dart| self.cell_representative(*dart, dim))
+            .collect::<Vec<_>>();
+        representatives.sort_by_key(|dart| dart.id());
+        representatives.dedup();
+        representatives
     }
 
     /// Returns the attribute associated with the `D`-cell containing `dart`.

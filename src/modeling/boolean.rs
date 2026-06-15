@@ -3,9 +3,8 @@ use std::collections::HashSet;
 use nalgebra::Vector3;
 use thiserror::Error;
 
-use crate::builders::faces::{
-    FaceEdgeSplitError, FaceImprint, FaceImprintSplitError, split_face_by_imprints, split_face_edge,
-};
+use crate::builders::faces::{FaceImprint, FaceImprintSplitError, split_face_by_imprints};
+use crate::builders::split::{SplitError, apply_edge_split_parameters};
 use crate::geometry::dim3::intersections::{
     intersect_curve_surface_with_options, intersect_curves_with_options,
     intersect_surfaces_with_options,
@@ -53,7 +52,7 @@ pub enum BooleanError {
     EdgeSplitApplicationFailed {
         edge: EdgeHandle,
         parameter: f64,
-        source: FaceEdgeSplitError,
+        source: SplitError,
     },
     #[error("failed to split face {face:?} by imprints")]
     FaceSplitApplicationFailed {
@@ -405,12 +404,6 @@ pub fn boolean_difference<P: Payload>(
     tool: &Shape<SolidTag, P>,
 ) -> Result<Shape<SolidTag, P>, BooleanError> {
     boolean(object, tool, BooleanOperation::Difference)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct EdgeSegment {
-    edge: EdgeKey,
-    domain: Interval,
 }
 
 #[derive(Clone)]
@@ -1327,44 +1320,18 @@ fn apply_edge_splits_to_map<P: Payload>(
     application: &mut BooleanSplitApplication,
 ) -> Result<(), BooleanError> {
     let original_edge = edge_key_for_handle(g, edge)?;
-    let mut segments = vec![EdgeSegment {
-        edge: original_edge,
-        domain: edge_domain(g, edge, original_edge)?,
-    }];
-
-    for &parameter in parameters {
-        let Some(segment_index) = split_segment_index(&segments, parameter) else {
-            if touches_existing_segment_boundary(&segments, parameter) {
-                continue;
-            }
-            if !touches_existing_segment(&segments, parameter) {
-                continue;
-            }
-            return Err(BooleanError::MissingSplitSegment { edge, parameter });
-        };
-        let segment = segments[segment_index];
-        let face = incident_face_for_edge(g, edge, segment.edge)?;
-        let split = split_face_edge(g, face, segment.edge, parameter).map_err(|source| {
+    let (_, splits) =
+        apply_edge_split_parameters(g, original_edge, parameters).map_err(|source| {
             BooleanError::EdgeSplitApplicationFailed {
                 edge,
-                parameter,
+                parameter: parameters.first().copied().unwrap_or_default(),
                 source,
             }
         })?;
-
-        segments.remove(segment_index);
-        segments.push(EdgeSegment {
-            edge: split.first,
-            domain: edge_domain(g, edge, split.first)?,
-        });
-        segments.push(EdgeSegment {
-            edge: split.second,
-            domain: edge_domain(g, edge, split.second)?,
-        });
-        segments.sort_by(|a, b| a.domain.start.total_cmp(&b.domain.start));
+    for split in splits {
         application.edge_splits.push(AppliedEdgeSplit {
             edge,
-            parameter,
+            parameter: split.parameter,
             first: split.first,
             second: split.second,
             vertex: split.vertex,
@@ -1521,64 +1488,6 @@ fn edge_key_for_handle<P: Payload>(g: &GMap<P>, edge: EdgeHandle) -> Result<Edge
     g.iter_edges()
         .find_map(|(key, attr)| (attr.dart == representative).then_some(key))
         .ok_or(BooleanError::MissingEdgeHandle { edge })
-}
-
-fn incident_face_for_edge<P: Payload>(
-    g: &GMap<P>,
-    handle: EdgeHandle,
-    edge: EdgeKey,
-) -> Result<FaceKey, BooleanError> {
-    let edge_attr = g
-        .edge_attr(edge)
-        .ok_or(BooleanError::MissingEdgeHandle { edge: handle })?;
-    g.orbit(edge_attr.dart, g.orbit_indices(Dim::One))
-        .find_map(|dart| g.attribute::<Cell2>(dart).copied())
-        .ok_or(BooleanError::MissingIncidentFace { edge: handle })
-}
-
-fn edge_domain<P: Payload>(
-    g: &GMap<P>,
-    handle: EdgeHandle,
-    edge: EdgeKey,
-) -> Result<Interval, BooleanError> {
-    let attr = g
-        .edge_attr(edge)
-        .ok_or(BooleanError::MissingEdgeHandle { edge: handle })?;
-    let start = g
-        .attribute::<Cell0>(attr.dart)
-        .map(|vertex| vertex.point)
-        .ok_or(BooleanError::MissingEndpointGeometry { edge })?;
-    let end_dart = g.alpha(Dim::Zero, attr.dart);
-    let end = g
-        .attribute::<Cell0>(end_dart)
-        .map(|vertex| vertex.point)
-        .ok_or(BooleanError::MissingEndpointGeometry { edge })?;
-    Ok(attr.curve.parameters_between(start, end).ordered())
-}
-
-fn split_segment_index(segments: &[EdgeSegment], parameter: f64) -> Option<usize> {
-    segments
-        .iter()
-        .position(|segment| contains_interior(segment.domain, parameter))
-}
-
-fn touches_existing_segment_boundary(segments: &[EdgeSegment], parameter: f64) -> bool {
-    segments.iter().any(|segment| {
-        (parameter - segment.domain.start).abs() <= LINEAR_TOLERANCE
-            || (parameter - segment.domain.end).abs() <= LINEAR_TOLERANCE
-    })
-}
-
-fn touches_existing_segment(segments: &[EdgeSegment], parameter: f64) -> bool {
-    segments
-        .iter()
-        .any(|segment| segment.domain.contains(parameter, LINEAR_TOLERANCE))
-}
-
-fn contains_interior(interval: Interval, parameter: f64) -> bool {
-    interval.contains(parameter, LINEAR_TOLERANCE)
-        && (parameter - interval.start).abs() > LINEAR_TOLERANCE
-        && (parameter - interval.end).abs() > LINEAR_TOLERANCE
 }
 
 #[derive(Clone)]

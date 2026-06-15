@@ -1,3 +1,5 @@
+#[path = "topology/detach.rs"]
+mod detach;
 #[path = "topology/edge_split.rs"]
 mod edge_split;
 #[path = "topology/face.rs"]

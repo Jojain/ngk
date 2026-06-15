@@ -13,15 +13,15 @@ use crate::{
         face::Face,
         gmap::{Cell2, Dim, GMap, MergeTopology},
         profile::Profile,
-        shape::{FaceTag, Shape},
         shape_keys::{FaceKey, SolidKey},
     },
 };
 
+/// Copies `face` into a new map and translates all of its geometry.
 pub fn translate_face<P: Payload>(
     face: &Face<'_, P>,
     direction: Vector3<f64>,
-) -> Result<Shape<FaceTag, P>, ExtrudeError> {
+) -> Result<(GMap<P>, FaceKey), ExtrudeError> {
     if direction.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
         return Err(ExtrudeError::ZeroDirection);
     }
@@ -69,7 +69,7 @@ pub fn translate_face<P: Payload>(
             source,
         })?;
 
-    Ok(Shape::new(translated, translated_face_key))
+    Ok((translated, translated_face_key))
 }
 
 pub fn add_extruded_face<P: Payload>(
@@ -81,12 +81,16 @@ pub fn add_extruded_face<P: Payload>(
         .face_attr(face_key)
         .map(|attr| attr.face(g))
         .ok_or(ExtrudeError::MissingFace { dart: face_key })?;
-    let top_face = translate_face(&bot_face, direction)?;
+    let (top_face_map, top_face_key) = translate_face(&bot_face, direction)?;
     let mut bottom_loop_darts = Vec::with_capacity(1 + bot_face.inner_loops().len());
     bottom_loop_darts.push(bot_face.outer_loop().dart);
     bottom_loop_darts.extend(bot_face.inner_loops().into_iter().map(|loop_| loop_.dart));
 
-    let top_face_dart = g.merge(top_face.face());
+    let top_face_dart = g.merge(
+        top_face_map
+            .face(top_face_key)
+            .expect("translated face key must remain valid"),
+    );
     let top_face_key = *g
         .attribute::<Cell2>(top_face_dart)
         .expect("merged top face should preserve its face attribute");

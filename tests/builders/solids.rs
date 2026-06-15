@@ -34,13 +34,12 @@ fn translate_face_copies_face_into_translated_map() {
         .map(|attr| Face::new(&source, attr))
         .expect("source face should exist");
 
-    let translated = translate_face(&face, Vector3::new(0.0, 0.0, 2.0)).unwrap();
+    let (translated, translated_face) = translate_face(&face, Vector3::new(0.0, 0.0, 2.0)).unwrap();
 
-    assert_eq!(translated.map().dart_count(), 8);
-    assert_eq!(translated.map().iter_faces().count(), 1);
+    assert_eq!(translated.dart_count(), 8);
+    assert_eq!(translated.iter_faces().count(), 1);
     assert!(
         translated
-            .map()
             .iter_vertices()
             .all(|(_, attr)| (attr.point.z - 2.0).abs() <= LINEAR_TOLERANCE)
     );
@@ -50,7 +49,11 @@ fn translate_face_copies_face_into_translated_map() {
             .all(|(_, attr)| attr.point.z.abs() <= LINEAR_TOLERANCE)
     );
 
-    match translated.face().surface() {
+    match translated
+        .face(translated_face)
+        .expect("translated face should exist")
+        .surface()
+    {
         Surface::Plane(plane) => {
             assert!((plane.origin().z - 2.0).abs() <= LINEAR_TOLERANCE);
         }

@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use crate::geometry::{Curve, LINEAR_TOLERANCE, PointCoincidence};
 use crate::topology::closed::Closeable;
 use crate::topology::face::Face;

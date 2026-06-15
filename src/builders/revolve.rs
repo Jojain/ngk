@@ -19,7 +19,6 @@ use crate::topology::gmap::{Cell2, Dart, Dim, GMap, MergeTopology};
 use crate::topology::payload::Payload;
 use crate::topology::planar::{Planar, PlanarityError};
 use crate::topology::profile::Profile;
-use crate::topology::shape::{FaceTag, Shape};
 use crate::topology::shape_keys::{FaceKey, SolidKey};
 
 #[derive(Debug, Error)]
@@ -446,8 +445,12 @@ pub fn add_revolved_face<P: Payload>(
         return add_full_revolved_face(g, loops, axis, angle);
     }
 
-    let rotated_face = rotate_face(&face, axis, angle)?;
-    let top_face_dart = g.merge(rotated_face.face());
+    let (rotated_face, rotated_face_key) = rotate_face(&face, axis, angle)?;
+    let top_face_dart = g.merge(
+        rotated_face
+            .face(rotated_face_key)
+            .expect("rotated face key must remain valid"),
+    );
     let top_face_key = *g
         .attribute::<Cell2>(top_face_dart)
         .expect("merged rotated face should preserve its face attribute");
@@ -517,7 +520,7 @@ fn rotate_face<P: Payload>(
     face: &Face<'_, P>,
     axis: Axis3,
     angle: Rad64,
-) -> Result<Shape<FaceTag, P>, RevolveError> {
+) -> Result<(GMap<P>, FaceKey), RevolveError> {
     let (mut rotated, rotated_dart) = face.isolate();
 
     let vertex_keys = rotated
@@ -548,7 +551,7 @@ fn rotate_face<P: Payload>(
     rotated_face.surface =
         rotate_surface(rotated_face.outer_loop, &rotated_face.surface, axis, angle)?;
 
-    Ok(Shape::new(rotated, rotated_face_key))
+    Ok((rotated, rotated_face_key))
 }
 
 fn rotate_surface(

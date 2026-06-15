@@ -6,3 +6,5 @@ mod profiles;
 mod revolve;
 #[path = "builders/solids.rs"]
 mod solids;
+#[path = "builders/split.rs"]
+mod split;
