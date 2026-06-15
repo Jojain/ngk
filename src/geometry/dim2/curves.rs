@@ -41,6 +41,11 @@ impl Curve2 {
         }
     }
 
+    /// Returns whether the curve is geometrically closed (start coincides with end).
+    pub fn is_closed(&self) -> bool {
+        (self.point_at(0.0) - self.point_at(1.0)).norm() <= LINEAR_TOLERANCE
+    }
+
     /// Returns `segments + 1` uniformly parameterized points.
     pub fn sample(&self, segments: usize) -> Vec<Point2> {
         let segments = segments.max(1);

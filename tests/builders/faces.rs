@@ -587,7 +587,7 @@ fn split_cylinder_face_at_two_generators() {
 
     let splits =
         split_face_by_imprints(&mut g, face_key, &imprints).expect("cylinder should split");
-        
+
     assert_eq!(splits.len(), 1);
     assert_eq!(splits[0].section_edges.len(), 2);
     assert_eq!(g.iter_faces().count(), 2);

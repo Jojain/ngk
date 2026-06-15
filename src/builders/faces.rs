@@ -498,18 +498,17 @@ pub fn split_face_by_imprints<P: Payload>(
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
-    let is_closed = |imprint: &FaceImprint| {
-        (imprint.pcurve.point_at(0.0) - imprint.pcurve.point_at(1.0)).norm() <= LINEAR_TOLERANCE
-    };
-    let closed_imprints = imprints
-        .iter()
-        .filter(|imprint| is_closed(imprint))
-        .collect::<Vec<_>>();
-    let open_imprints = imprints
-        .iter()
-        .filter(|imprint| !is_closed(imprint))
-        .cloned()
-        .collect::<Vec<_>>();
+    let (closed_imprints, open_imprints) = imprints.iter().fold(
+        (Vec::new(), Vec::new()),
+        |(mut closed, mut open), imprint| {
+            if imprint.pcurve.is_closed() {
+                closed.push(imprint);
+            } else {
+                open.push(imprint.clone());
+            }
+            (closed, open)
+        },
+    );
     if closed_imprints.is_empty()
         && open_imprints.len() == 2
         && let Some(period) = periodic_u_period(g, face)

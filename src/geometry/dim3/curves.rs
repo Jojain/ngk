@@ -67,6 +67,11 @@ impl Curve {
         }
     }
 
+    /// Returns whether the curve is geometrically closed (start coincides with end).
+    pub fn is_closed(&self) -> bool {
+        (self.point_at(0.0) - self.point_at(1.0)).norm() <= LINEAR_TOLERANCE
+    }
+
     pub fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
         match self {
             Curve::Line(l) => l.derivative_at(t, order),
