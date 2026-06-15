@@ -8,13 +8,14 @@ use crate::{
     },
     topology::{
         Dart, SolidAttr,
-        attributes::{EdgeAttr, FaceAttr},
+        attributes::{EdgeAttr, FacetAttr},
         edge::Edge,
         face::Face,
-        gmap::{Cell2, Dim, GMap, MergeTopology},
+        gmap::{Dim, GMap, MergeTopology},
         profile::Profile,
         shape::{FaceTag, Shape},
         shape_keys::{FaceKey, SolidKey},
+        sheet::Sheet,
     },
 };
 
@@ -55,17 +56,21 @@ pub fn translate_face<P: Payload>(
         })?;
     }
 
-    let translated_face_key = *translated
-        .attribute::<Cell2>(translated_dart)
+    let translated_face_key = translated
+        .face_key_at(translated_dart)
         .expect("isolating a face must preserve its face attribute");
+    let translated_facet_key = translated
+        .face_attr(translated_face_key)
+        .expect("isolated face key must remain valid")
+        .facet;
     let translated_face = translated
-        .face_attr_mut(translated_face_key)
-        .expect("isolated face key must remain valid");
+        .facet_attr_mut(translated_facet_key)
+        .expect("isolated facet key must remain valid");
     translated_face.surface = translated_face
         .surface
         .translated(direction)
         .map_err(|source| ExtrudeError::SurfaceTranslationFailed {
-            dart: translated_face.outer_loop,
+            dart: translated_dart,
             source,
         })?;
 
@@ -78,25 +83,18 @@ pub fn add_extruded_face<P: Payload>(
     direction: Vector3<f64>,
 ) -> Result<SolidKey, ExtrudeError> {
     let bot_face = g
-        .face_attr(face_key)
-        .map(|attr| attr.face(g))
+        .face(face_key)
         .ok_or(ExtrudeError::MissingFace { dart: face_key })?;
     let top_face = translate_face(&bot_face, direction)?;
-    let mut bottom_loop_darts = Vec::with_capacity(1 + bot_face.inner_loops().len());
-    bottom_loop_darts.push(bot_face.outer_loop().dart);
-    bottom_loop_darts.extend(bot_face.inner_loops().into_iter().map(|loop_| loop_.dart));
 
     let top_face_dart = g.merge(top_face.face());
-    let top_face_key = *g
-        .attribute::<Cell2>(top_face_dart)
+    let top_face_key = g
+        .face_key_at(top_face_dart)
         .expect("merged top face should preserve its face attribute");
-    let top_face_attr = g
-        .face_attr(top_face_key)
-        .expect("merged top face key should remain valid");
-    let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
-    top_loop_darts.push(top_face_attr.outer_loop);
-    top_loop_darts.extend(top_face_attr.inner_loops.iter().copied());
-
+    let bottom_loop_darts =
+        face_loop_darts(&g.face(face_key).expect("bottom face must remain valid"));
+    let top_loop_darts =
+        face_loop_darts(&g.face(top_face_key).expect("top face must remain valid"));
     orient_extruded_caps(g, face_key, top_face_key, direction);
 
     let mut shell_representative = None;
@@ -107,6 +105,7 @@ pub fn add_extruded_face<P: Payload>(
 
     let shell_representative =
         shell_representative.expect("a face should have at least one outer loop");
+    orient_shell_faces_outward(g, shell_representative);
     let solid = g.add_solid(SolidAttr::new(P::S::default(), shell_representative, None));
     Ok(solid)
 }
@@ -118,8 +117,8 @@ fn orient_extruded_caps<P: Payload>(
     direction: Vector3<f64>,
 ) {
     let Some(bottom_normal_dot_direction) = g
-        .face_attr(bottom_face)
-        .map(|attr| face_normal_dot_direction(g, attr, direction))
+        .face(bottom_face)
+        .map(|face| face.normal_at(0.0, 0.0).dot(&direction))
     else {
         return;
     };
@@ -131,42 +130,66 @@ fn orient_extruded_caps<P: Payload>(
     }
 }
 
-fn face_normal_dot_direction<P: Payload>(
-    g: &GMap<P>,
-    face: &FaceAttr<P::F>,
-    direction: Vector3<f64>,
-) -> f64 {
-    face.face(g).normal_at(0.0, 0.0).dot(&direction)
+fn face_loop_darts<P: Payload>(face: &Face<'_, P>) -> Vec<Dart> {
+    let mut loops = Vec::with_capacity(1 + face.inner_loops().len());
+    loops.push(face.outer_loop().dart);
+    loops.extend(face.inner_loops().into_iter().map(|loop_| loop_.dart));
+    loops
+}
+
+fn orient_shell_faces_outward<P: Payload>(g: &mut GMap<P>, shell: Dart) {
+    let face_keys = Sheet::new(g, shell)
+        .faces()
+        .into_iter()
+        .map(|face| face.key())
+        .collect::<Vec<_>>();
+    let points = face_keys
+        .iter()
+        .filter_map(|key| g.face(*key))
+        .flat_map(|face| face.vertices())
+        .filter_map(|vertex| vertex.point().copied())
+        .collect::<Vec<_>>();
+    if points.is_empty() {
+        return;
+    }
+    let center = points
+        .iter()
+        .map(|point| point.coords)
+        .sum::<Vector3<f64>>()
+        / points.len() as f64;
+    let flips = face_keys
+        .into_iter()
+        .filter(|key| {
+            let Some(face) = g.face(*key) else {
+                return false;
+            };
+            let uvs = face
+                .outer_loop()
+                .edges()
+                .into_iter()
+                .filter_map(|edge| face.pcurve(edge.dart))
+                .flat_map(|pcurve| pcurve.sample(1))
+                .collect::<Vec<_>>();
+            if uvs.is_empty() {
+                return false;
+            }
+            let uv = uvs
+                .iter()
+                .map(|point| point.coords)
+                .sum::<nalgebra::Vector2<f64>>()
+                / uvs.len() as f64;
+            let face_center = face.point_at(uv.x, uv.y).coords;
+            let dot = face.normal_at(0.0, 0.0).dot(&(face_center - center));
+            dot < 0.0
+        })
+        .collect::<Vec<_>>();
+    for face in flips {
+        g.reverse_face(face);
+    }
 }
 
 fn reverse_face_winding<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
-    let Some(face_attr) = g.face_attr(face).cloned() else {
-        return;
-    };
-
-    let outer_loop = g.alpha(Dim::Zero, face_attr.outer_loop);
-    let inner_loops = face_attr
-        .inner_loops
-        .iter()
-        .map(|dart| g.alpha(Dim::Zero, *dart))
-        .collect::<Vec<_>>();
-    let pcurves = face_attr
-        .face(g)
-        .edges()
-        .into_iter()
-        .filter_map(|edge| {
-            face_attr
-                .pcurves
-                .get(&edge.dart)
-                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart), pcurve.reversed()))
-        })
-        .collect();
-
-    if let Some(face) = g.face_attr_mut(face) {
-        face.outer_loop = outer_loop;
-        face.inner_loops = inner_loops;
-        face.pcurves = pcurves;
-    }
+    g.reverse_face(face);
 }
 
 fn sew_extruded_loop<P: Payload>(
@@ -326,13 +349,15 @@ fn add_lateral_face_attributes<P: Payload>(
     topology: &LateralFaceTopology,
     prepared: &PreparedLateralFace,
 ) {
-    g.add_face(FaceAttr::with_pcurves(
-        prepared.surface.clone(),
-        P::F::default(),
+    g.add_face(
         topology.loop_dart,
         Vec::new(),
-        quad_pcurves(&prepared.uv, &topology.darts),
-    ));
+        FacetAttr::with_pcurves(
+            prepared.surface.clone(),
+            P::F::default(),
+            quad_pcurves(&prepared.uv, &topology.darts),
+        ),
+    );
 }
 
 fn lateral_face_surface(

@@ -652,7 +652,12 @@ where
     let faces = g
         .iter_faces()
         .map(|(key, attr)| {
-            let face = attr.face(g);
+            let face = g
+                .face(key)
+                .expect("iterated face key must resolve to a face");
+            let facet = g
+                .facet_attr(face.facet_key())
+                .expect("face facet key must remain valid");
             let pcurves = face
                 .loops()
                 .into_iter()
@@ -664,7 +669,7 @@ where
                         edge_key: debug_key(&edge.key()),
                         start_vertex_key: debug_key(&edge.start().key()),
                         end_vertex_key: debug_key(&edge.end().key()),
-                        curve: curve2_summary(curve),
+                        curve: curve2_summary(&curve),
                         samples: curve.sample(32).iter().map(|p| [p.x, p.y]).collect(),
                     })
                 })
@@ -680,10 +685,10 @@ where
                     .iter()
                     .map(|dart| loop_darts(g, *dart))
                     .collect(),
-                surface: surface_summary(&attr.surface),
+                surface: surface_summary(&facet.surface),
                 normals: normal_samples_for_face(&face, &pcurves),
                 pcurves,
-                payload: payload_summary(&attr.data),
+                payload: payload_summary(&facet.data),
             }
         })
         .collect();

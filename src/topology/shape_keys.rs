@@ -13,7 +13,11 @@ new_key_type! {
     pub struct LoopKey;
 }
 new_key_type! {
-    /// Stable key for a stored face attribute.
+    /// Stable key for shared geometric data attached to a 2-cell.
+    pub struct FacetKey;
+}
+new_key_type! {
+    /// Stable key for an oriented trimmed face occurrence.
     pub struct FaceKey;
 }
 new_key_type! {

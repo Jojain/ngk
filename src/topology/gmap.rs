@@ -4,11 +4,11 @@ use slotmap::SlotMap;
 
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, FacetKey, SolidKey, VertexKey};
 use crate::topology::solid::Solid;
 use crate::topology::vertex::Vertex;
 
-use super::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
+use super::attributes::{EdgeAttr, FaceAttr, FacetAttr, SolidAttr, VertexAttr};
 use super::payload::{Payload, StandardPayload};
 
 pub use super::dart::{Dart, IsolatedDart};
@@ -196,12 +196,12 @@ impl<P: Payload> AttributeStore<Cell1> for GMap<P> {
     }
 }
 impl<P: Payload> AttributeStore<Cell2> for GMap<P> {
-    type Attr = FaceKey;
-    fn get(&self, repr: Dart) -> Option<&FaceKey> {
-        self.dart_to_face.get(&repr)
+    type Attr = FacetKey;
+    fn get(&self, repr: Dart) -> Option<&FacetKey> {
+        self.dart_to_facet.get(&repr)
     }
-    fn get_mut(&mut self, repr: Dart) -> Option<&mut FaceKey> {
-        self.dart_to_face.get_mut(&repr)
+    fn get_mut(&mut self, repr: Dart) -> Option<&mut FacetKey> {
+        self.dart_to_facet.get_mut(&repr)
     }
 }
 impl<P: Payload> AttributeStore<Cell3> for GMap<P> {
@@ -225,11 +225,12 @@ pub struct GMap<P: Payload = StandardPayload> {
     free_slots: VecDeque<usize>,
     pub(crate) dart_to_vertex: HashMap<Dart, VertexKey>,
     pub(crate) dart_to_edge: HashMap<Dart, EdgeKey>,
-    pub(crate) dart_to_face: HashMap<Dart, FaceKey>,
+    pub(crate) dart_to_facet: HashMap<Dart, FacetKey>,
     pub(crate) dart_to_solid: HashMap<Dart, SolidKey>,
     vertices: SlotMap<VertexKey, VertexAttr<P::V>>,
     edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
-    pub(crate) faces: SlotMap<FaceKey, FaceAttr<P::F>>,
+    facets: SlotMap<FacetKey, FacetAttr<P::F>>,
+    pub(crate) faces: SlotMap<FaceKey, FaceAttr>,
     pub(crate) solids: SlotMap<SolidKey, SolidAttr<P::S>>,
 }
 
@@ -242,8 +243,9 @@ impl<P: Payload> Clone for GMap<P> {
             dart_to_vertex: self.dart_to_vertex.clone(),
             edges: self.edges.clone(),
             dart_to_edge: self.dart_to_edge.clone(),
-            dart_to_face: self.dart_to_face.clone(),
+            dart_to_facet: self.dart_to_facet.clone(),
             dart_to_solid: self.dart_to_solid.clone(),
+            facets: self.facets.clone(),
             faces: self.faces.clone(),
             solids: self.solids.clone(),
         }
@@ -265,8 +267,9 @@ impl<P: Payload> GMap<P> {
         let dart_to_vertex = HashMap::new();
         let edges = SlotMap::with_key();
         let dart_to_edge = HashMap::new();
-        let dart_to_face = HashMap::new();
+        let dart_to_facet = HashMap::new();
         let dart_to_solid = HashMap::new();
+        let facets = SlotMap::with_key();
         let faces = SlotMap::with_key();
         let solids = SlotMap::with_key();
         Self {
@@ -276,8 +279,9 @@ impl<P: Payload> GMap<P> {
             dart_to_vertex,
             edges,
             dart_to_edge,
-            dart_to_face,
+            dart_to_facet,
             dart_to_solid,
+            facets,
             faces,
             solids,
         }
@@ -455,58 +459,127 @@ impl<P: Payload> GMap<P> {
         self.edges.iter()
     }
 
-    /// Adds a face attribute and returns its key.
-    ///
-    /// If any boundary facet is already attached to a face, the existing face
-    /// key is returned and the new attribute is ignored.
-    pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
-        let facet_darts = std::iter::once(face.outer_loop)
-            .chain(face.inner_loops.iter().copied())
-            .map(|dart| self.cell_representative(dart, Dim::Two))
-            .collect::<Vec<_>>();
-        if let Some(key) = facet_darts
-            .iter()
-            .find_map(|dart| self.dart_to_face.get(dart).copied())
-        {
-            return key;
-        }
-        let key = self.faces.insert(face);
-        for dart in facet_darts {
-            self.dart_to_face.insert(dart, key);
+    /// Adds shared geometric data and returns its facet key.
+    pub fn add_facet(&mut self, facet: FacetAttr<P::F>) -> FacetKey {
+        self.facets.insert(facet)
+    }
+
+    /// Adds a new shared facet and one oriented face occurrence.
+    pub fn add_face(
+        &mut self,
+        outer_loop: Dart,
+        inner_loops: Vec<Dart>,
+        facet: FacetAttr<P::F>,
+    ) -> FaceKey {
+        let facet = self.add_facet(facet);
+        self.add_face_use(FaceAttr::new(facet, outer_loop, inner_loops))
+    }
+
+    /// Adds an oriented occurrence of an existing shared facet.
+    pub fn add_face_use(&mut self, face: FaceAttr) -> FaceKey {
+        let key = self.faces.insert(face.clone());
+        for dart in std::iter::once(face.outer_loop).chain(face.inner_loops) {
+            let representative = self.cell_representative(dart, Dim::Two);
+            self.dart_to_facet.insert(representative, face.facet);
         }
         key
     }
 
-    /// Returns the typed face view registered under `key`.
+    /// Resolves an oriented face key into a typed face view.
     pub fn face(&self, key: FaceKey) -> Option<Face<'_, P>> {
         let attr = self.face_attr(key)?;
-        Some(Face::new(self, attr))
+        let facet_attr = self.facet_attr(attr.facet)?;
+        Some(Face::new(self, key, attr, facet_attr))
     }
 
-    /// Returns the face attribute for `key`, if it exists.
-    pub fn face_attr(&self, key: FaceKey) -> Option<&FaceAttr<P::F>> {
+    /// Returns the oriented face occurrence containing `dart` on the same side.
+    pub fn face_key_at(&self, dart: Dart) -> Option<FaceKey> {
+        self.faces.iter().find_map(|(key, face)| {
+            std::iter::once(face.outer_loop)
+                .chain(face.inner_loops.iter().copied())
+                .any(|loop_dart| {
+                    self.orbit(loop_dart, vec![Dim::Zero.index(), Dim::One.index()])
+                        .any(|candidate| candidate == dart)
+                })
+                .then_some(key)
+        })
+    }
+
+    /// Reverses one oriented face occurrence.
+    pub fn reverse_face(&mut self, key: FaceKey) -> bool {
+        let Some(attr) = self.face_attr(key).cloned() else {
+            return false;
+        };
+        let outer_loop = self.alpha(Dim::Zero, attr.outer_loop);
+        let inner_loops = attr
+            .inner_loops
+            .iter()
+            .map(|dart| self.alpha(Dim::Zero, *dart))
+            .collect();
+
+        let face = self
+            .face_attr_mut(key)
+            .expect("checked face key must remain valid");
+        face.outer_loop = outer_loop;
+        face.inner_loops = inner_loops;
+        true
+    }
+
+    /// Returns the topology attribute for an oriented face.
+    pub fn face_attr(&self, key: FaceKey) -> Option<&FaceAttr> {
         self.faces.get(key)
     }
 
-    /// Returns the mutable face attribute for `key`, if it exists.
-    pub fn face_attr_mut(&mut self, key: FaceKey) -> Option<&mut FaceAttr<P::F>> {
+    /// Returns the mutable topology attribute for an oriented face.
+    pub fn face_attr_mut(&mut self, key: FaceKey) -> Option<&mut FaceAttr> {
         self.faces.get_mut(key)
     }
 
-    pub(crate) fn remove_face(&mut self, key: FaceKey) -> Option<FaceAttr<P::F>> {
-        let face = self.faces.remove(key)?;
-        for dart in std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied()) {
-            let representative = self.cell_representative(dart, Dim::Two);
-            if self.dart_to_face.get(&representative) == Some(&key) {
-                self.dart_to_face.remove(&representative);
-            }
-        }
-        Some(face)
+    /// Returns the shared facet attribute for `key`.
+    pub fn facet_attr(&self, key: FacetKey) -> Option<&FacetAttr<P::F>> {
+        self.facets.get(key)
     }
 
-    /// Iterate every stored 2-cell attribute paired with its slotmap key.
-    pub fn iter_faces(&self) -> impl Iterator<Item = (FaceKey, &FaceAttr<P::F>)> {
+    /// Returns the mutable shared facet attribute for `key`.
+    pub fn facet_attr_mut(&mut self, key: FacetKey) -> Option<&mut FacetAttr<P::F>> {
+        self.facets.get_mut(key)
+    }
+
+    pub(crate) fn add_face_inner_loop(&mut self, key: FaceKey, loop_dart: Dart) {
+        let Some(facet) = self.face_attr(key).map(|face| face.facet) else {
+            return;
+        };
+        let representative = self.cell_representative(loop_dart, Dim::Two);
+        self.dart_to_facet.insert(representative, facet);
+        self.face_attr_mut(key)
+            .expect("checked face key must remain valid")
+            .inner_loops
+            .push(loop_dart);
+    }
+
+    pub(crate) fn remove_face(&mut self, key: FaceKey) -> Option<FacetAttr<P::F>> {
+        let face = self.faces.remove(key)?;
+        let facet = self.facets.get(face.facet)?.clone();
+        if !self
+            .faces
+            .values()
+            .any(|candidate| candidate.facet == face.facet)
+        {
+            self.facets.remove(face.facet);
+            self.dart_to_facet
+                .retain(|_, facet_key| *facet_key != face.facet);
+        }
+        Some(facet)
+    }
+
+    /// Iterates every stored oriented face occurrence.
+    pub fn iter_faces(&self) -> impl Iterator<Item = (FaceKey, &FaceAttr)> {
         self.faces.iter()
+    }
+
+    /// Iterates every shared facet attribute.
+    pub fn iter_facets(&self) -> impl Iterator<Item = (FacetKey, &FacetAttr<P::F>)> {
+        self.facets.iter()
     }
 
     /// Adds a solid attribute and returns its key.
@@ -586,6 +659,7 @@ impl<P: Payload> GMap<P> {
         let mut dart_map = HashMap::with_capacity(source_darts.len());
         let mut vertex_map = HashMap::with_capacity(source.vertices.len());
         let mut edge_map = HashMap::with_capacity(source.edges.len());
+        let mut facet_map = HashMap::with_capacity(source.facets.len());
         let mut face_map = HashMap::with_capacity(source.faces.len());
 
         for old in source_darts.iter().copied() {
@@ -645,32 +719,50 @@ impl<P: Payload> GMap<P> {
             }
         }
 
-        for (old_key, attr) in source.faces.iter() {
-            if !source_dart_set.contains(&attr.outer_loop) {
+        for (old_key, face) in source.faces.iter() {
+            if !source_dart_set.contains(&face.outer_loop) {
                 continue;
             }
-            let mut attr = attr.clone();
-            attr.outer_loop = remap_dart(&dart_map, attr.outer_loop);
-            attr.inner_loops = attr
+            let new_facet = if let Some(key) = facet_map.get(&face.facet).copied() {
+                key
+            } else {
+                let Some(source_facet) = source.facets.get(face.facet) else {
+                    continue;
+                };
+                let mut facet = source_facet.clone();
+                facet.pcurves = facet
+                    .pcurves
+                    .into_iter()
+                    .filter_map(|(dart, curve)| {
+                        dart_map
+                            .get(&dart)
+                            .copied()
+                            .map(|new_dart| (new_dart, curve))
+                    })
+                    .collect();
+                let key = self.facets.insert(facet);
+                facet_map.insert(face.facet, key);
+                key
+            };
+            let inner_loops = face
                 .inner_loops
-                .into_iter()
+                .iter()
+                .copied()
                 .filter_map(|dart| dart_map.get(&dart).copied())
-                .collect();
-            attr.pcurves = attr
-                .pcurves
-                .into_iter()
-                .filter_map(|(dart, curve)| dart_map.get(&dart).copied().map(|d| (d, curve)))
-                .collect();
-            let outer_loop = attr.outer_loop;
-            let new_key = self.faces.insert(attr);
-            self.dart_to_face.insert(outer_loop, new_key);
+                .collect::<Vec<_>>();
+            let new_face = FaceAttr::new(
+                new_facet,
+                remap_dart(&dart_map, face.outer_loop),
+                inner_loops,
+            );
+            let new_key = self.faces.insert(new_face);
             face_map.insert(old_key, new_key);
         }
-        for (old_dart, old_key) in source.dart_to_face.iter() {
+        for (old_dart, old_key) in source.dart_to_facet.iter() {
             if let (Some(&new_dart), Some(&new_key)) =
-                (dart_map.get(old_dart), face_map.get(old_key))
+                (dart_map.get(old_dart), facet_map.get(old_key))
             {
-                self.dart_to_face.insert(new_dart, new_key);
+                self.dart_to_facet.insert(new_dart, new_key);
             }
         }
 
@@ -924,34 +1016,41 @@ impl<P: Payload> GMap<P> {
     }
 
     fn reconcile_face_attributes(&mut self) {
-        let mut survivor_by_repr = HashMap::new();
-        let mut duplicates = Vec::new();
-        let face_keys = self.faces.keys().collect::<Vec<_>>();
-
-        for key in face_keys {
-            let Some(attr) = self.faces.get(key) else {
-                continue;
-            };
-            let repr = self.cell_representative(attr.outer_loop, Dim::Two);
-            if survivor_by_repr.insert(repr, key).is_some() {
-                duplicates.push(key);
+        let mut survivor_by_repr = HashMap::<Dart, FacetKey>::new();
+        let mut replacements = HashMap::<FacetKey, FacetKey>::new();
+        for face in self.faces.values() {
+            for dart in std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied()) {
+                let repr = self.cell_representative(dart, Dim::Two);
+                if let Some(survivor) = survivor_by_repr.insert(repr, face.facet)
+                    && survivor != face.facet
+                {
+                    replacements.insert(face.facet, survivor);
+                }
             }
         }
 
-        for key in duplicates {
-            self.faces.remove(key);
+        for face in self.faces.values_mut() {
+            while let Some(replacement) = replacements.get(&face.facet).copied() {
+                face.facet = replacement;
+            }
+        }
+        for duplicate in replacements.keys().copied().collect::<Vec<_>>() {
+            self.facets.remove(duplicate);
         }
         self.rebuild_face_index();
     }
 
     fn rebuild_face_index(&mut self) {
-        self.dart_to_face.clear();
-        for (key, attr) in self.faces.iter() {
-            for loop_dart in
-                std::iter::once(attr.outer_loop).chain(attr.inner_loops.iter().copied())
-            {
+        let face_loops = self
+            .faces
+            .values()
+            .map(|face| (face.facet, face.outer_loop, face.inner_loops.clone()))
+            .collect::<Vec<_>>();
+        self.dart_to_facet.clear();
+        for (facet, outer, inner_loops) in face_loops {
+            for loop_dart in std::iter::once(outer).chain(inner_loops) {
                 let repr = self.cell_representative(loop_dart, Dim::Two);
-                self.dart_to_face.insert(repr, key);
+                self.dart_to_facet.insert(repr, facet);
             }
         }
     }
@@ -1070,9 +1169,8 @@ mod tests {
     use crate::builders::edges::add_edge;
     use crate::builders::faces::add_polygon;
     use crate::geometry::{Curve, Curve2, Line2, Plane, Point2, Point3, Surface};
-    use crate::topology::attributes::{FaceAttr, SolidAttr};
+    use crate::topology::attributes::{FacetAttr, SolidAttr};
     use crate::topology::edge::Edge;
-    use crate::topology::face::Face;
     use crate::topology::payload::StandardPayload;
     use crate::topology::planar::Planar;
     use crate::topology::profile::Profile;
@@ -1133,34 +1231,34 @@ mod tests {
             loop_dart,
             Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(1.0, 0.0))),
         );
-        let face_key = source.add_face(FaceAttr::with_pcurves(
-            Surface::Plane(Plane::from_xy(
-                Point3::new(0.0, 0.0, 0.0),
-                Vector3::x(),
-                Vector3::y(),
-            )),
-            (),
+        let face_key = source.add_face(
             loop_dart,
             Vec::new(),
-            pcurves,
-        ));
+            FacetAttr::with_pcurves(
+                Surface::Plane(Plane::from_xy(
+                    Point3::new(0.0, 0.0, 0.0),
+                    Vector3::x(),
+                    Vector3::y(),
+                )),
+                (),
+                pcurves,
+            ),
+        );
 
-        let face = source
-            .face_attr(face_key)
-            .map(|attr| Face::new(&source, attr))
-            .expect("source face should exist");
+        let face = source.face(face_key).expect("source face should exist");
         let merged_dart = target.merge(face);
-        let merged_key = *target
-            .attribute::<Cell2>(merged_dart)
+        let merged_key = target
+            .face_key_at(merged_dart)
             .expect("merged face lookup should exist");
-        let merged_face = target
-            .face_attr(merged_key)
+        let merged_face = target.face(merged_key).expect("merged face should exist");
+        let merged_facet = target
+            .facet_attr(merged_face.facet_key())
             .expect("merged face should exist");
 
         assert_eq!(target.dart_count(), 10);
-        assert_eq!(merged_face.outer_loop, Dart::new(2));
-        assert!(merged_face.pcurves.contains_key(&merged_face.outer_loop));
-        assert!(!merged_face.pcurves.contains_key(&loop_dart));
+        assert_eq!(merged_face.outer_loop().dart, Dart::new(2));
+        assert!(merged_facet.pcurves.contains_key(&Dart::new(2)));
+        assert!(!merged_facet.pcurves.contains_key(&loop_dart));
         assert_eq!(target.alpha(Dim::Zero, Dart::new(2)), Dart::new(3));
         assert_eq!(target.alpha(Dim::One, Dart::new(3)), Dart::new(4));
     }
@@ -1218,20 +1316,19 @@ mod tests {
                 Point3::new(0.0, 1.0, 0.0),
             ],
         );
-        let face_key = source.add_face(FaceAttr::new(
-            Surface::Plane(Plane::from_xy(
-                Point3::new(0.0, 0.0, 0.0),
-                Vector3::x(),
-                Vector3::y(),
-            )),
-            (),
+        let face_key = source.add_face(
             loop_dart,
             Vec::new(),
-        ));
-        let face = source
-            .face_attr(face_key)
-            .map(|attr| Face::new(&source, attr))
-            .expect("source face should exist");
+            FacetAttr::new(
+                Surface::Plane(Plane::from_xy(
+                    Point3::new(0.0, 0.0, 0.0),
+                    Vector3::x(),
+                    Vector3::y(),
+                )),
+                (),
+            ),
+        );
+        let face = source.face(face_key).expect("source face should exist");
 
         let (isolated, isolated_dart) = face.isolate();
 

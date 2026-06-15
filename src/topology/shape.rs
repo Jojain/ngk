@@ -148,12 +148,11 @@ impl<P: Payload> Shape<FaceTag, P> {
     ///
     /// # Panics
     ///
-    /// Panics if the stored face key is no longer present in the map.
+    /// Panics if the stored face identity is no longer present in the map.
     pub fn face(&self) -> Face<'_, P> {
         self.map
-            .face_attr(self.handle)
-            .map(|f| f.face(&self.map))
-            .expect("face shape key must be in the map")
+            .face(self.handle)
+            .expect("face shape id must be in the map")
     }
 
     /// Returns the primary face key.

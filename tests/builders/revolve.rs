@@ -167,7 +167,6 @@ fn revolved_face_adds_surface_of_revolution_faces() {
         ],
     );
     let source_face = add_face(&mut g, loop_dart).unwrap();
-
     add_revolved_face(
         &mut g,
         source_face,
@@ -178,12 +177,25 @@ fn revolved_face_adds_surface_of_revolution_faces() {
 
     let revolved_faces = g
         .iter_faces()
-        .filter(|(_, attr)| matches!(attr.surface, Surface::Revolution(_)))
+        .filter(|(_, attr)| {
+            matches!(
+                g.facet_attr(attr.facet)
+                    .expect("face facet should exist")
+                    .surface,
+                Surface::Revolution(_)
+            )
+        })
         .collect::<Vec<_>>();
 
     assert_eq!(revolved_faces.len(), 3);
     for (face_key, attr) in revolved_faces {
-        assert_eq!(attr.pcurves.len(), 4);
+        assert_eq!(
+            g.facet_attr(attr.facet)
+                .expect("face facet should exist")
+                .pcurves
+                .len(),
+            4
+        );
         let mesh = tessellate_face_key(&g, face_key, TessellateOpts::default())
             .expect("revolved face should tessellate from its pcurves");
         assert!(!mesh.is_empty());

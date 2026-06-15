@@ -23,8 +23,8 @@ pub fn square(
     size: f64,
 ) -> Result<Shape<FaceTag, StandardPayload>, FaceCreationError> {
     let mut g = GMap::new();
-    let handle = add_square(&mut g, plane, size)?;
-    Ok(Shape::new(g, handle))
+    let face_key = add_square(&mut g, plane, size)?;
+    Ok(Shape::new(g, face_key))
 }
 
 pub fn circle(

@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::geometry::Point3;
 use crate::tessellate::{
-    IndexedMesh, Polyline3, TessellateOpts, tessellate_edge, tessellate_face_key,
+    IndexedMesh, Polyline3, TessellateOpts, tessellate_edge, tessellate_face, tessellate_face_key,
 };
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -142,12 +142,10 @@ impl<P: Payload> ToTcv for Shape<ProfileTag, P> {
 impl<P: Payload> ToTcv for Shape<FaceTag, P> {
     fn to_tcv(&self, opts: TcvOptions) -> Result<TcvNode, TcvError> {
         let mut shape = TcvShape::default();
-        append_face_mesh(self.map(), self.handle(), opts.tessellate, &mut shape)?;
-        let attr = self
-            .map()
-            .face_attr(self.handle())
-            .ok_or(TcvError::MissingTopology)?;
-        let face = Face::new(self.map(), attr);
+        let face = self.face();
+        let mesh = tessellate_face(&face, opts.tessellate).ok_or(TcvError::MissingTopology)?;
+        append_mesh(&mesh, &mut shape);
+        shape.face_types.push(0);
         append_profile(self.map(), &face.outer_loop(), opts.tessellate, &mut shape)?;
         for loop_ in face.inner_loops() {
             append_profile(self.map(), &loop_, opts.tessellate, &mut shape)?;

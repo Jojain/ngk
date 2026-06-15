@@ -18,19 +18,16 @@ use ngk::topology::gmap::GMap;
 use ngk::topology::gmap::{Cell0, Dim};
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
-use ngk::viz::debug_viewer::show_gmap;
 
 #[test]
 fn add_rectangle_creates_single_planar_face_with_pcurves() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("face should build");
-    let face = g
-        .face_attr(face_key)
-        .expect("face key should be registered");
+    let face = g.face(face_key).expect("face key should be registered");
 
     assert_eq!(g.iter_faces().count(), 1);
-    assert!(matches!(face.surface, Surface::Plane(_)));
-    assert_eq!(face.pcurves.len(), 4);
+    assert!(matches!(face.surface(), Surface::Plane(_)));
+    assert_eq!(face.pcurves().len(), 4);
 }
 
 #[test]
@@ -54,23 +51,21 @@ fn add_rectangle_reports_profile_creation_errors() {
 fn add_circle_creates_single_planar_face_with_circular_pcurve() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_circle(&mut g, Plane::xy(), 2.0).expect("circle face should build");
-    let face = g
-        .face_attr(face_key)
-        .expect("face key should be registered");
+    let face = g.face(face_key).expect("face key should be registered");
 
     assert_eq!(g.iter_faces().count(), 1);
     assert_eq!(g.iter_edges().count(), 1);
-    assert!(matches!(face.surface, Surface::Plane(_)));
-    assert_eq!(face.inner_loops.len(), 0);
-    assert_eq!(face.pcurves.len(), 1);
+    assert!(matches!(face.surface(), Surface::Plane(_)));
+    assert_eq!(face.inner_loops().len(), 0);
+    assert_eq!(face.pcurves().len(), 1);
 
-    let shape_face = face.face(&g);
+    let shape_face = face;
     let edges = shape_face.outer_loop().edges();
     let edge = &edges[0];
     let pcurve = shape_face
         .pcurve(edge.dart)
         .expect("circle edge should have a pcurve");
-    assert!(matches!(pcurve, Curve2::Nurbs(_)));
+    assert!(matches!(*pcurve, Curve2::Nurbs(_)));
     for fraction in [0.0, 0.125, 0.25, 0.5, 0.875, 1.0] {
         let uv = pcurve.point_at(fraction);
         let surface_point = shape_face.point_at(uv.x, uv.y);
@@ -86,15 +81,13 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
 fn add_annulus_creates_planar_face_with_inner_circular_loop() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_annulus(&mut g, Plane::xy(), 2.0, 1.0).expect("annulus face should build");
-    let face = g
-        .face_attr(face_key)
-        .expect("face key should be registered");
+    let face = g.face(face_key).expect("face key should be registered");
 
     assert_eq!(g.iter_faces().count(), 1);
     assert_eq!(g.iter_edges().count(), 2);
-    assert!(matches!(face.surface, Surface::Plane(_)));
-    assert_eq!(face.inner_loops.len(), 1);
-    assert_eq!(face.pcurves.len(), 2);
+    assert!(matches!(face.surface(), Surface::Plane(_)));
+    assert_eq!(face.inner_loops().len(), 1);
+    assert_eq!(face.pcurves().len(), 2);
 }
 
 #[test]
@@ -105,18 +98,16 @@ fn split_face_edge_updates_boundary_and_pcurves() {
     let parameter = edge_mid_parameter(&g, edge);
 
     let split = split_face_edge(&mut g, face_key, edge, parameter).expect("face edge should split");
-    let face = g
-        .face_attr(face_key)
-        .expect("face should remain registered");
-    let loop_edges = face.face(&g).outer_loop().edges();
+    let face = g.face(face_key).expect("face should remain registered");
+    let loop_edges = face.outer_loop().edges();
 
     assert_eq!(g.iter_edges().count(), 5);
     assert_eq!(loop_edges.len(), 5);
-    assert_eq!(face.pcurves.len(), 5);
+    assert_eq!(face.pcurves().len(), 5);
     assert!(
         loop_edges
             .iter()
-            .all(|edge| face.pcurves.contains_key(&edge.dart))
+            .all(|edge| face.pcurves().contains_key(&edge.dart))
     );
     assert!(
         g.vertex_attr(split.vertex)
@@ -147,25 +138,24 @@ fn split_face_edge_rejects_edges_outside_the_face() {
 fn split_face_edge_uses_existing_pcurve_for_non_planar_surface_variant() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 1.0).expect("face should build");
+    let facet_key = g.face(face_key).expect("face should exist").facet_key();
     let surface = g
-        .face_attr(face_key)
-        .expect("face should exist")
+        .facet_attr(facet_key)
+        .expect("facet should exist")
         .surface
         .to_nurbs()
         .expect("face surface should convert to nurbs");
-    g.face_attr_mut(face_key)
-        .expect("face should exist")
+    g.facet_attr_mut(facet_key)
+        .expect("facet should exist")
         .surface = Surface::Nurbs(surface);
     let edge = first_outer_edge_key(&g, face_key);
 
     split_face_edge(&mut g, face_key, edge, 0.5)
         .expect("face edge split should use existing pcurve");
 
-    let face = g
-        .face_attr(face_key)
-        .expect("face should remain registered");
-    assert_eq!(face.face(&g).outer_loop().edges().len(), 5);
-    assert_eq!(face.pcurves.len(), 5);
+    let face = g.face(face_key).expect("face should remain registered");
+    assert_eq!(face.outer_loop().edges().len(), 5);
+    assert_eq!(face.pcurves().len(), 5);
 }
 
 #[test]
@@ -207,14 +197,14 @@ fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
     assert_eq!(incident_face_keys(&g, split.second), adjacent_faces);
 
     for face in adjacent_faces {
-        let attr = g.face_attr(face).expect("adjacent face should remain");
-        let edges = attr.face(&g).outer_loop().edges();
+        let attr = g.face(face).expect("adjacent face should remain");
+        let edges = attr.outer_loop().edges();
         assert_eq!(edges.len(), 5);
-        assert_eq!(attr.pcurves.len(), 5);
+        assert_eq!(attr.pcurves().len(), 5);
         assert!(
             edges
                 .iter()
-                .all(|edge| attr.pcurves.contains_key(&edge.dart)),
+                .all(|edge| attr.pcurves().contains_key(&edge.dart)),
             "each split boundary edge should keep a pcurve on face {face:?}"
         );
     }
@@ -238,14 +228,14 @@ fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
     assert!(g.edge_attr(splits[0].section_edges[0]).is_some());
 
     for face in [splits[0].first, splits[0].second] {
-        let attr = g.face_attr(face).expect("split face should exist");
-        let edges = attr.face(&g).outer_loop().edges();
+        let attr = g.face(face).expect("split face should exist");
+        let edges = attr.outer_loop().edges();
         assert_eq!(edges.len(), 3);
-        assert_eq!(attr.pcurves.len(), 3);
+        assert_eq!(attr.pcurves().len(), 3);
         assert!(
             edges
                 .iter()
-                .all(|edge| attr.pcurves.contains_key(&edge.dart)),
+                .all(|edge| attr.pcurves().contains_key(&edge.dart)),
             "each split face edge should have a pcurve"
         );
     }
@@ -286,13 +276,14 @@ fn split_face_by_imprints_splits_boundary_edge_at_imprint_endpoint() {
     assert_eq!(g.iter_edges().count(), 6);
     assert_eq!(g.cells(Dim::Zero).count(), 5);
 
-    for (_, attr) in g.iter_faces() {
-        let edges = attr.face(&g).outer_loop().edges();
-        assert_eq!(attr.pcurves.len(), edges.len());
+    for (key, _) in g.iter_faces() {
+        let attr = g.face(key).expect("iterated face should resolve");
+        let edges = attr.outer_loop().edges();
+        assert_eq!(attr.pcurves().len(), edges.len());
         assert!(
             edges
                 .iter()
-                .all(|edge| attr.pcurves.contains_key(&edge.dart))
+                .all(|edge| attr.pcurves().contains_key(&edge.dart))
         );
     }
 }
@@ -327,14 +318,15 @@ fn split_face_by_imprints_applies_multiple_non_crossing_chords() {
     assert_eq!(g.iter_faces().count(), 3);
     assert_eq!(g.iter_edges().count(), 7);
 
-    for (_, attr) in g.iter_faces() {
-        let edges = attr.face(&g).outer_loop().edges();
+    for (key, _) in g.iter_faces() {
+        let attr = g.face(key).expect("iterated face should resolve");
+        let edges = attr.outer_loop().edges();
         assert_eq!(edges.len(), 3);
-        assert_eq!(attr.pcurves.len(), 3);
+        assert_eq!(attr.pcurves().len(), 3);
         assert!(
             edges
                 .iter()
-                .all(|edge| attr.pcurves.contains_key(&edge.dart))
+                .all(|edge| attr.pcurves().contains_key(&edge.dart))
         );
     }
 }
@@ -394,25 +386,25 @@ fn split_face_by_imprints_adds_closed_interior_loop() {
     assert_eq!(g.iter_edges().count(), 8);
     assert_eq!(g.cells(Dim::Zero).count(), 8);
 
-    let face = g.face_attr(face_key).expect("original face should remain");
-    assert_eq!(face.inner_loops.len(), 1);
-    assert_eq!(face.pcurves.len(), 8);
+    let face = g.face(face_key).expect("original face should remain");
+    assert_eq!(face.inner_loops().len(), 1);
+    assert_eq!(face.pcurves().len(), 8);
 
-    let shape_face = face.face(&g);
+    let shape_face = face;
     let hole = shape_face.inner_loops()[0].clone();
     assert_eq!(hole.edges().len(), 4);
     assert!(
         hole.edges()
             .iter()
-            .all(|edge| face.pcurves.contains_key(&edge.dart))
+            .all(|edge| shape_face.pcurves().contains_key(&edge.dart))
     );
 
     let island = g
-        .face_attr(splits[0].second)
+        .face(splits[0].second)
         .expect("interior island face should exist");
-    assert!(island.inner_loops.is_empty());
-    assert_eq!(island.face(&g).outer_loop().edges().len(), 4);
-    assert_eq!(island.pcurves.len(), 4);
+    assert!(island.inner_loops().is_empty());
+    assert_eq!(island.outer_loop().edges().len(), 4);
+    assert_eq!(island.pcurves().len(), 4);
 }
 
 #[test]
@@ -566,9 +558,9 @@ fn split_cylinder_face_at_two_generators() {
         .next()
         .expect("cylindrical face should exist");
     let surface = g
-        .face_attr(face_key)
+        .face(face_key)
         .expect("cylindrical face should exist")
-        .surface
+        .surface()
         .clone();
     let imprints = [
         3.0 * std::f64::consts::FRAC_PI_2,
@@ -645,13 +637,7 @@ fn split_cylinder_face_at_two_generators() {
         let face = g.face(face_key).expect("half-cylinder face should exist");
         let edges = face.outer_loop().edges();
         assert_eq!(edges.len(), 4);
-        assert_eq!(
-            g.face_attr(face_key)
-                .expect("half-cylinder face should exist")
-                .pcurves
-                .len(),
-            4
-        );
+        assert_eq!(face.pcurves().len(), 4);
         assert_eq!(
             edges
                 .iter()
@@ -739,9 +725,8 @@ fn split_face_by_imprints_preserves_closed_nurbs_as_single_curved_edge() {
         Curve::Nurbs(_)
     ));
     assert_eq!(
-        g.face_attr(face_key)
+        g.face(face_key)
             .expect("outside face should remain")
-            .face(&g)
             .inner_loops()[0]
             .edges()
             .len(),
@@ -766,7 +751,7 @@ fn planar_imprint(pcurve: Curve2) -> FaceImprint {
 }
 
 fn first_outer_edge_key(g: &GMap<StandardPayload>, face_key: FaceKey) -> EdgeKey {
-    let face = g.face_attr(face_key).expect("face should exist").face(g);
+    let face = g.face(face_key).expect("face should exist");
     face.outer_loop().edges()[0].key()
 }
 

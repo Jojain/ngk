@@ -4,9 +4,9 @@ use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::{Curve, Point3, Surface};
 use crate::topology::dart::Dart;
 use crate::topology::edge::Edge;
-use crate::topology::face::Face;
 use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
+use crate::topology::shape_keys::FacetKey;
 use crate::topology::vertex::Vertex;
 
 /// Stored data for a keyed vertex 0-cell.
@@ -55,83 +55,59 @@ impl<T> EdgeAttr<T> {
     }
 }
 
-/// Stored data for a keyed domain face.
-///
-/// # Boundary orientation
-///
-/// `outer_loop` and `inner_loops` are oriented boundary seeds, not arbitrary
-/// representatives of their loop cells. Traversing a stored seed determines
-/// the direction of the corresponding boundary. Choosing `alpha0(seed)`
-/// traverses the same loop in the opposite direction and reverses the face.
+/// Shared geometric data attached to one or more oriented faces.
 ///
 /// Each pcurve is keyed by the directed boundary dart that uses it, and its
 /// parameter direction must match that dart from start vertex to end vertex.
-/// In the support surface's UV space, the outer loop and every inner loop must
-/// have opposite winding:
-///
-/// - outer CCW and inner CW: the face follows the support-surface orientation;
-/// - outer CW and inner CCW: the face opposes the support-surface orientation.
-///
-/// Whether a loop is an outer boundary or a hole is determined structurally by
-/// `outer_loop` versus `inner_loops`, not by winding alone.
-///
-/// Reversing a face is an atomic operation: replace every loop seed `d` with
-/// `alpha0(d)`, and replace each pcurve entry `(d, curve)` with
-/// `(alpha0(d), curve.reversed())`. Copy, merge, and topology-edit operations
-/// must preserve these oriented darts rather than substitute canonical cell
-/// representatives.
 #[derive(Clone)]
-pub struct FaceAttr<T> {
-    /// Geometric support surface of the face.
+pub struct FacetAttr<T> {
+    /// Geometric support surface shared by the face occurrences.
     pub surface: Surface,
-    /// User payload attached to the face.
+    /// User payload attached to the shared facet.
     pub data: T,
-    /// Oriented seed dart of the outer boundary loop.
-    pub outer_loop: Dart,
-    /// Oriented seed darts of inner boundary loops.
-    pub inner_loops: Vec<Dart>,
     /// Directed boundary pcurves keyed by their oriented boundary darts.
     pub pcurves: HashMap<Dart, Curve2>,
 }
 
-impl<T> FaceAttr<T> {
-    /// Creates a face attribute without boundary pcurves.
-    ///
-    /// The loop darts must follow the orientation contract documented on
-    /// [`FaceAttr`].
-    pub fn new(surface: Surface, data: T, outer_loop: Dart, inner_loops: Vec<Dart>) -> Self {
+impl<T> FacetAttr<T> {
+    /// Creates a facet attribute without boundary pcurves.
+    pub fn new(surface: Surface, data: T) -> Self {
         Self {
             surface,
             data,
-            outer_loop,
-            inner_loops,
             pcurves: HashMap::new(),
         }
     }
 
-    /// Creates a face attribute with explicit boundary pcurves.
-    ///
-    /// The loop darts and pcurves must follow the orientation contract
-    /// documented on [`FaceAttr`].
-    pub fn with_pcurves(
-        surface: Surface,
-        data: T,
-        outer_loop: Dart,
-        inner_loops: Vec<Dart>,
-        pcurves: HashMap<Dart, Curve2>,
-    ) -> Self {
+    /// Creates a facet attribute with explicit boundary pcurves.
+    pub fn with_pcurves(surface: Surface, data: T, pcurves: HashMap<Dart, Curve2>) -> Self {
         Self {
             surface,
             data,
-            outer_loop,
-            inner_loops,
             pcurves,
         }
     }
+}
 
-    /// Returns a typed face view over this attribute in `gmap`.
-    pub fn face<'a, P: Payload<F = T>>(&'a self, gmap: &'a GMap<P>) -> Face<'a, P> {
-        Face::new(gmap, self)
+/// Stored topology of one oriented trimmed face occurrence.
+#[derive(Clone, Debug)]
+pub struct FaceAttr {
+    /// Shared geometric facet used by this face.
+    pub facet: FacetKey,
+    /// Oriented seed dart of the outer boundary loop.
+    pub outer_loop: Dart,
+    /// Oriented seed darts of the inner boundary loops.
+    pub inner_loops: Vec<Dart>,
+}
+
+impl FaceAttr {
+    /// Creates an oriented face topology attribute.
+    pub fn new(facet: FacetKey, outer_loop: Dart, inner_loops: Vec<Dart>) -> Self {
+        Self {
+            facet,
+            outer_loop,
+            inner_loops,
+        }
     }
 }
 

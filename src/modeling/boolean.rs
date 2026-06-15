@@ -15,10 +15,10 @@ use crate::geometry::{
     IntersectionOptions, Interval, LINEAR_TOLERANCE, NurbsCurve, NurbsCurve2, NurbsError,
     NurbsSurface, Plane, Point2, Point3, PointCoincidence, Surface, SurfaceSurfaceIntersection,
 };
-use crate::topology::attributes::{FaceAttr, SolidAttr};
+use crate::topology::attributes::{FacetAttr, SolidAttr};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap, MergeTopology, TopologyMerge};
+use crate::topology::gmap::{Cell0, Dart, Dim, GMap, MergeTopology, TopologyMerge};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Loop;
 use crate::topology::shape::{Shape, SolidTag};
@@ -454,15 +454,10 @@ impl<P: Payload> BooleanSplitOperands<P> {
     pub fn classify_faces(&self) -> Result<Vec<BooleanFaceClassification>, BooleanError> {
         let object_solid = solid_for_key(&self.object, self.object_solid)?;
         let tool_solid = solid_for_key(&self.tool, self.tool_solid)?;
-        let mut classifications = classify_operand_faces(
-            BooleanSource::Object,
-            &self.object,
-            &object_solid,
-            &tool_solid,
-        )?;
+        let mut classifications =
+            classify_operand_faces(BooleanSource::Object, &object_solid, &tool_solid)?;
         classifications.extend(classify_operand_faces(
             BooleanSource::Tool,
-            &self.tool,
             &tool_solid,
             &object_solid,
         )?);
@@ -562,21 +557,12 @@ fn solid_for_key<P: Payload>(g: &GMap<P>, solid: SolidKey) -> Result<Solid<'_, P
 
 fn classify_operand_faces<P: Payload>(
     source: BooleanSource,
-    map: &GMap<P>,
     solid: &Solid<'_, P>,
     against: &Solid<'_, P>,
 ) -> Result<Vec<BooleanFaceClassification>, BooleanError> {
     let mut classifications = Vec::new();
     for face in solid.shells().into_iter().flat_map(|shell| shell.faces()) {
-        let face_key = map
-            .attribute::<Cell2>(face.outer_loop().dart)
-            .copied()
-            .ok_or(BooleanError::MissingFaceHandle {
-                face: FaceHandle {
-                    source,
-                    dart: face.outer_loop().dart,
-                },
-            })?;
+        let face_key = face.key();
         let point = sample_face_region_point(&face)
             .ok_or(BooleanError::MissingFaceSample { face: face_key })?;
         let classification = classify_point_against_solid(against, point)?;
@@ -658,15 +644,12 @@ impl<'a, P: Payload> SelectedFaceSet<'a, P> {
     ) -> Result<Self, BooleanError> {
         let mut darts = Vec::new();
         for face in faces {
-            let attr = map
-                .face_attr(*face)
-                .ok_or(BooleanError::MissingFaceHandle {
-                    face: FaceHandle {
-                        source,
-                        dart: Dart::new(0),
-                    },
-                })?;
-            let view = attr.face(map);
+            let view = map.face(*face).ok_or(BooleanError::MissingFaceHandle {
+                face: FaceHandle {
+                    source,
+                    dart: Dart::new(0),
+                },
+            })?;
             darts.extend(view.outer_loop().darts());
             for loop_ in view.inner_loops() {
                 darts.extend(loop_.darts());
@@ -864,7 +847,7 @@ fn face_orientation_sample<P: Payload>(
     g: &GMap<P>,
     face: FaceKey,
 ) -> Option<(Vector3<f64>, Vector3<f64>)> {
-    let face = g.face_attr(face)?.face(g);
+    let face = g.face(face)?;
     let uv = sample_face_uv(&face)?;
     Some((
         face.point_at(uv.x, uv.y).coords,
@@ -890,31 +873,8 @@ fn flip_face_surface_orientation<P: Payload>(
     g: &mut GMap<P>,
     face: FaceKey,
 ) -> Result<(), BooleanError> {
-    let attr = g
-        .face_attr(face)
-        .cloned()
-        .ok_or(BooleanError::MissingOrientationSample { face })?;
-    let outer_loop = g.alpha(Dim::Zero, attr.outer_loop);
-    let inner_loops = attr
-        .inner_loops
-        .iter()
-        .map(|dart| g.alpha(Dim::Zero, *dart))
-        .collect::<Vec<_>>();
-    let pcurves = attr
-        .face(g)
-        .edges()
-        .into_iter()
-        .filter_map(|edge| {
-            attr.pcurves
-                .get(&edge.dart)
-                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart), pcurve.reversed()))
-        })
-        .collect();
-
-    if let Some(face) = g.face_attr_mut(face) {
-        face.outer_loop = outer_loop;
-        face.inner_loops = inner_loops;
-        face.pcurves = pcurves;
+    if !g.reverse_face(face) {
+        return Err(BooleanError::MissingOrientationSample { face });
     }
     Ok(())
 }
@@ -1501,18 +1461,20 @@ fn operand_map<'a, P: Payload>(
 fn face_attr_for_handle<P: Payload>(
     g: &GMap<P>,
     face: FaceHandle,
-) -> Result<&FaceAttr<P::F>, BooleanError> {
+) -> Result<&FacetAttr<P::F>, BooleanError> {
     let face_key = g
-        .attribute::<Cell2>(face.dart)
-        .copied()
+        .face_key_at(face.dart)
         .ok_or(BooleanError::MissingFaceHandle { face })?;
-    g.face_attr(face_key)
+    let facet_key = g
+        .face_attr(face_key)
+        .ok_or(BooleanError::MissingFaceHandle { face })?
+        .facet;
+    g.facet_attr(facet_key)
         .ok_or(BooleanError::MissingFaceHandle { face })
 }
 
 fn face_key_for_handle<P: Payload>(g: &GMap<P>, face: FaceHandle) -> Result<FaceKey, BooleanError> {
-    g.attribute::<Cell2>(face.dart)
-        .copied()
+    g.face_key_at(face.dart)
         .ok_or(BooleanError::MissingFaceHandle { face })
 }
 
@@ -1532,7 +1494,7 @@ fn incident_face_for_edge<P: Payload>(
         .edge_attr(edge)
         .ok_or(BooleanError::MissingEdgeHandle { edge: handle })?;
     g.orbit(edge_attr.dart, g.orbit_indices(Dim::One))
-        .find_map(|dart| g.attribute::<Cell2>(dart).copied())
+        .find_map(|dart| g.face_key_at(dart))
         .ok_or(BooleanError::MissingIncidentFace { edge: handle })
 }
 

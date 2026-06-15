@@ -5,7 +5,7 @@ use crate::topology::gmap::Dim;
 use super::closed::{Closeable, Closed};
 use super::edge::Edge;
 use super::face::Face;
-use super::gmap::{Cell2, Dart, GMap, MergeTopology, TopologyMerge};
+use super::gmap::{Dart, GMap, MergeTopology, TopologyMerge};
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 
@@ -45,12 +45,9 @@ impl<'a, P: Payload> Sheet<'a, P> {
     /// Facets without a registered [`Face`] are skipped.
     pub fn faces(&self) -> Vec<Face<'a, P>> {
         self.gmap
-            .incident_cells(self.dart, Dim::Three, Dim::Two)
-            .filter_map(|dart| {
-                self.gmap
-                    .attribute::<Cell2>(dart)
-                    .and_then(|key| self.gmap.faces.get(*key).map(|attr| attr.face(self.gmap)))
-            })
+            .iter_faces()
+            .filter(|(_, face)| self.darts().any(|dart| dart == face.outer_loop))
+            .filter_map(|(key, _)| self.gmap.face(key))
             .collect()
     }
 

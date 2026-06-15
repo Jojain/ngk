@@ -14,6 +14,6 @@ pub mod sheet;
 pub mod solid;
 pub mod validation;
 pub mod vertex;
-pub use attributes::{FaceAttr, SolidAttr};
+pub use attributes::{FaceAttr, FacetAttr, SolidAttr};
 pub use dart::{Dart, IsolatedDart};
 pub use payload::{Payload, StandardPayload};

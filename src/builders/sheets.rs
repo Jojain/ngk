@@ -6,7 +6,7 @@ use crate::builders::errors::ExtrudeError;
 use crate::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
 };
-use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
+use crate::topology::attributes::{EdgeAttr, FacetAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim, GMap};
@@ -233,13 +233,15 @@ fn add_extruded_edge_face<P: Payload>(
         ));
     }
 
-    g.add_face(FaceAttr::with_pcurves(
-        surface_data.surface,
-        P::F::default(),
+    g.add_face(
         darts[0],
         Vec::new(),
-        quad_pcurves(&surface_data.uv, &darts),
-    ));
+        FacetAttr::with_pcurves(
+            surface_data.surface,
+            P::F::default(),
+            quad_pcurves(&surface_data.uv, &darts),
+        ),
+    );
 
     Ok(ExtrudedFace {
         start_side: darts[7],
@@ -341,7 +343,13 @@ mod tests {
         assert_eq!(g.iter_vertices().count(), 12);
 
         for (face, attr) in g.iter_faces() {
-            assert_eq!(attr.pcurves.len(), 4);
+            assert_eq!(
+                g.facet_attr(attr.facet)
+                    .expect("face facet should exist")
+                    .pcurves
+                    .len(),
+                4
+            );
             let mesh = tessellate_face_key(&g, face, TessellateOpts::default())
                 .expect("extruded face should tessellate");
             assert!(!mesh.positions.is_empty());
@@ -405,11 +413,11 @@ mod tests {
         assert_eq!(sheet.darts().count(), 32);
         let g = shape.map();
 
-        assert_valid_gmap(&g);
-        assert_orientable_gmap(&g);
-        assert_square_sweep_alpha2_seams_are_not_twisted(&g);
-        assert_alpha1_links_shared_corners(&g);
-        assert_alpha2_links_matching_edges(&g);
+        assert_valid_gmap(g);
+        assert_orientable_gmap(g);
+        assert_square_sweep_alpha2_seams_are_not_twisted(g);
+        assert_alpha1_links_shared_corners(g);
+        assert_alpha2_links_matching_edges(g);
 
         for (_, face) in g.iter_faces() {
             let loop_darts = g

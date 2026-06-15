@@ -86,8 +86,8 @@ fn rectangle_profile(x_size: f64, y_size: f64) -> PyResult<PyProfile> {
 fn rectangle_face(x_size: f64, y_size: f64) -> PyResult<PyFace> {
     let shape = faces::rectangle(Plane::xy(), x_size, y_size)
         .map_err(|err| PyValueError::new_err(err.to_string()))?;
-    let (map, key) = shape.into_map();
-    Ok(PyFace::new(Arc::new(map), key))
+    let (map, id) = shape.into_map();
+    Ok(PyFace::new(Arc::new(map), id))
 }
 
 #[pyfunction]
@@ -287,13 +287,14 @@ impl PySolid {
     }
 
     fn faces(&self) -> PyResult<Vec<PyFace>> {
-        self.map
+        let solid = self
+            .map
             .solid(self.key)
             .ok_or_else(|| missing_topology(format!("missing solid {:?}", self.key)))?;
-        Ok(self
-            .map
-            .iter_faces()
-            .map(|(key, _)| PyFace::new(Arc::clone(&self.map), key))
+        Ok(solid
+            .faces()
+            .into_iter()
+            .map(|face| PyFace::new(Arc::clone(&self.map), face.key()))
             .collect())
     }
 
@@ -353,9 +354,10 @@ impl PyShell {
     }
 
     fn faces(&self) -> Vec<PyFace> {
-        self.map
-            .iter_faces()
-            .map(|(key, _)| PyFace::new(Arc::clone(&self.map), key))
+        crate::topology::sheet::Sheet::new(self.map.as_ref(), self.dart)
+            .faces()
+            .into_iter()
+            .map(|face| PyFace::new(Arc::clone(&self.map), face.key()))
             .collect()
     }
 
@@ -396,6 +398,14 @@ impl PyFace {
     #[getter]
     fn key(&self) -> String {
         format!("{:?}", self.key)
+    }
+
+    #[getter]
+    fn loop_dart_id(&self) -> usize {
+        self.map
+            .face(self.key)
+            .map(|face| face.outer_loop().dart.id())
+            .unwrap_or_default()
     }
 
     #[getter]
@@ -466,7 +476,11 @@ impl PyFace {
     }
 
     fn __repr__(&self) -> String {
-        format!("Face(key={:?})", self.key)
+        format!(
+            "Face(key={:?}, loop_dart_id={})",
+            self.key,
+            self.loop_dart_id()
+        )
     }
 }
 
@@ -612,12 +626,9 @@ impl PyFacet {
 
     #[getter]
     fn face(&self) -> Option<PyFace> {
-        self.facet().face().and_then(|face| {
-            self.map
-                .attribute::<crate::topology::gmap::Cell2>(face.outer_loop().dart)
-                .copied()
-                .map(|key| PyFace::new(Arc::clone(&self.map), key))
-        })
+        self.facet()
+            .face()
+            .map(|face| PyFace::new(Arc::clone(&self.map), face.key()))
     }
 
     fn edges(&self) -> Vec<PyEdge> {
@@ -756,8 +767,8 @@ impl PyEdge {
             .collect::<HashSet<_>>();
 
         let mut faces = Vec::new();
-        for (key, attr) in map.iter_faces() {
-            let face = Face::new(map, attr);
+        for (key, _) in map.iter_faces() {
+            let face = map.face(key).expect("iterated face key must resolve");
             let matched_facet = face_loop_darts(&face)
                 .into_iter()
                 .map(|dart| map.cell_representative(dart, Dim::Two))
@@ -859,8 +870,8 @@ impl PyVertex {
     fn faces(&self) -> PyResult<Vec<PyFace>> {
         let map = self.map.as_ref();
         let mut faces = Vec::new();
-        for (key, attr) in map.iter_faces() {
-            let face = Face::new(map, attr);
+        for (key, _) in map.iter_faces() {
+            let face = map.face(key).expect("iterated face key must resolve");
             if face_vertices(&face)
                 .iter()
                 .any(|vertex| vertex_key(map, vertex) == Some(self.key))

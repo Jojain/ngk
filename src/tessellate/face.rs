@@ -71,8 +71,7 @@ pub fn tessellate_face_key<P: Payload>(
     key: FaceKey,
     opts: TessellateOpts,
 ) -> Option<IndexedMesh> {
-    let attr = g.face_attr(key)?;
-    let face = attr.face(g);
+    let face = g.face(key)?;
     tessellate_face(&face, opts)
 }
 

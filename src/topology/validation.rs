@@ -6,8 +6,6 @@ use thiserror::Error;
 use crate::geometry::{Curve2, LINEAR_TOLERANCE, Point2};
 use crate::topology::closed::Closed;
 
-use super::attributes::FaceAttr;
-use super::face::Face;
 use super::gmap::{Dart, Dim, GMap};
 use super::payload::Payload;
 use super::profile::Profile;
@@ -221,7 +219,7 @@ fn validate_shell_orientation<P: Payload>(
         if !shell_darts.contains(&attr.outer_loop) {
             continue;
         }
-        let Some((face_center, normal)) = face_orientation_sample(g, attr) else {
+        let Some((face_center, normal)) = face_orientation_sample(g, face) else {
             return Err(GMapValidationError::SolidFaceOrientationUnavailable {
                 solid,
                 shell,
@@ -253,11 +251,11 @@ fn shell_centroid<P: Payload>(g: &GMap<P>, shell_darts: &[Dart]) -> Option<Vecto
     let mut sum = Vector3::zeros();
     let mut count = 0;
 
-    for (_, attr) in g.iter_faces() {
+    for (face, attr) in g.iter_faces() {
         if !shell_darts.contains(&attr.outer_loop) {
             continue;
         }
-        let (face_center, _) = face_orientation_sample(g, attr)?;
+        let (face_center, _) = face_orientation_sample(g, face)?;
         sum += face_center;
         count += 1;
     }
@@ -267,16 +265,18 @@ fn shell_centroid<P: Payload>(g: &GMap<P>, shell_darts: &[Dart]) -> Option<Vecto
 
 fn face_orientation_sample<P: Payload>(
     g: &GMap<P>,
-    attr: &FaceAttr<P::F>,
+    key: FaceKey,
 ) -> Option<(Vector3<f64>, Vector3<f64>)> {
-    let outer_uv = sample_loop_pcurve(g, attr.outer_loop, &attr.pcurves)?;
+    let face = g.face(key)?;
+    let facet = g.facet_attr(face.facet_key())?;
+    let outer_uv = sample_loop_pcurve(g, face.outer_loop().dart, &facet.pcurves)?;
     if outer_uv.is_empty() {
         return None;
     }
 
     let uv_center = uv_centroid(&outer_uv);
-    let face_center = attr.surface.point_at(uv_center.x, uv_center.y).coords;
-    let normal = *Face::new(g, attr).normal_at(uv_center.x, uv_center.y);
+    let face_center = face.surface().point_at(uv_center.x, uv_center.y).coords;
+    let normal = *face.normal_at(uv_center.x, uv_center.y);
 
     Some((face_center, normal))
 }

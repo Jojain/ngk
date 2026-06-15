@@ -11,11 +11,11 @@ use crate::geometry::{
     ANGULAR_TOLERANCE, Circle, Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3,
     Surface, SurfaceOfRevolution,
 };
-use crate::topology::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
+use crate::topology::attributes::{EdgeAttr, FacetAttr, SolidAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell2, Dart, Dim, GMap, MergeTopology};
+use crate::topology::gmap::{Dart, Dim, GMap, MergeTopology};
 use crate::topology::payload::Payload;
 use crate::topology::planar::{Planar, PlanarityError};
 use crate::topology::profile::Profile;
@@ -365,13 +365,11 @@ fn add_revolved_quad_face<P: Payload>(
         ));
     }
 
-    g.add_face(FaceAttr::with_pcurves(
-        surface,
-        P::F::default(),
+    g.add_face(
         darts[0],
         Vec::new(),
-        quad_pcurves(&pcurves, &darts),
-    ));
+        FacetAttr::with_pcurves(surface, P::F::default(), quad_pcurves(&pcurves, &darts)),
+    );
 
     Ok(RevolvedFace {
         bottom_edge: darts[0],
@@ -435,8 +433,7 @@ pub fn add_revolved_face<P: Payload>(
 ) -> Result<SolidKey, RevolveError> {
     let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
     let face = g
-        .face_attr(face_key)
-        .map(|attr| attr.face(g))
+        .face(face_key)
         .ok_or(RevolveError::MissingFace { key: face_key })?;
     let mut loops = Vec::with_capacity(1 + face.inner_loops().len());
     loops.push(face.outer_loop().dart);
@@ -448,15 +445,15 @@ pub fn add_revolved_face<P: Payload>(
 
     let rotated_face = rotate_face(&face, axis, angle)?;
     let top_face_dart = g.merge(rotated_face.face());
-    let top_face_key = *g
-        .attribute::<Cell2>(top_face_dart)
+    let top_face_key = g
+        .face_key_at(top_face_dart)
         .expect("merged rotated face should preserve its face attribute");
-    let top_face_attr = g
-        .face_attr(top_face_key)
+    let top_face = g
+        .face(top_face_key)
         .expect("merged rotated face key should remain valid");
-    let mut top_loops = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
-    top_loops.push(top_face_attr.outer_loop);
-    top_loops.extend(top_face_attr.inner_loops.iter().copied());
+    let mut top_loops = Vec::with_capacity(1 + top_face.inner_loops().len());
+    top_loops.push(top_face.outer_loop().dart);
+    top_loops.extend(top_face.inner_loops().into_iter().map(|loop_| loop_.dart));
 
     let mut shell = None;
     for (bottom_loop, top_loop) in loops.into_iter().zip(top_loops) {
@@ -539,14 +536,17 @@ fn rotate_face<P: Payload>(
         edge.curve = rotate_curve(edge.dart, &edge.curve, axis, angle)?;
     }
 
-    let rotated_face_key = *rotated
-        .attribute::<Cell2>(rotated_dart)
+    let rotated_face_key = rotated
+        .face_key_at(rotated_dart)
         .expect("isolating a face must preserve its face attribute");
+    let rotated_facet_key = rotated
+        .face_attr(rotated_face_key)
+        .expect("isolated face key must remain valid")
+        .facet;
     let rotated_face = rotated
-        .face_attr_mut(rotated_face_key)
-        .expect("isolated face key must remain valid");
-    rotated_face.surface =
-        rotate_surface(rotated_face.outer_loop, &rotated_face.surface, axis, angle)?;
+        .facet_attr_mut(rotated_facet_key)
+        .expect("isolated facet key must remain valid");
+    rotated_face.surface = rotate_surface(rotated_dart, &rotated_face.surface, axis, angle)?;
 
     Ok(Shape::new(rotated, rotated_face_key))
 }
@@ -573,5 +573,5 @@ fn rotate_surface(
 }
 
 pub fn face_key_for_dart<P: Payload>(g: &GMap<P>, dart: Dart) -> Option<FaceKey> {
-    g.attribute::<Cell2>(dart).copied()
+    g.face_key_at(dart)
 }
