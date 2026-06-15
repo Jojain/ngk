@@ -71,7 +71,7 @@ impl Default for CurveIntersectionOptions {
 }
 
 /// Failure to prepare or execute a 2D curve intersection.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error, PartialEq)]
 pub enum CurveIntersectionError {
     #[error("invalid 2D curve intersection options")]
     InvalidOptions,

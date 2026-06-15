@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::builders::errors::EdgeCreationError;
-use crate::geometry::{Circle, Curve, Interval, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
+use crate::geometry::{
+    Circle, Curve, Interval, LINEAR_TOLERANCE, NurbsError, Plane, Point3, PointCoincidence,
+};
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
 use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
@@ -31,6 +33,13 @@ pub enum EdgeSplitError {
     ParameterOutOfRange { parameter: f64, domain: Interval },
     #[error("split parameter {parameter} is too close to an edge boundary")]
     DegenerateSplit { parameter: f64 },
+    #[error("failed to trim edge {edge:?} at split parameter {parameter}")]
+    CurveTrimFailed {
+        edge: EdgeKey,
+        parameter: f64,
+        #[source]
+        source: NurbsError,
+    },
 }
 
 struct PreparedFreeEdgeSplit {
@@ -84,9 +93,10 @@ pub(crate) fn split_face_boundary_edge<P: Payload>(
     g: &mut GMap<P>,
     edge: EdgeKey,
     parameter: f64,
+    reversed: bool,
 ) -> Result<EdgeSplit, EdgeSplitError> {
     let split = prepare_attached_edge_split(g, edge, parameter)?;
-    split_attached_edge_with_profile_links(g, edge, parameter, split)
+    split_attached_edge_with_profile_links(g, edge, parameter, split, reversed)
 }
 
 fn split_edge_with_profile_links<P: Payload>(
@@ -96,6 +106,14 @@ fn split_edge_with_profile_links<P: Payload>(
     split: PreparedFreeEdgeSplit,
 ) -> Result<EdgeSplit, EdgeSplitError> {
     let midpoint = split.curve.point_at(parameter);
+    let (first_curve, second_curve) = split_curve_at_parameter(
+        g,
+        edge,
+        split.first_dart,
+        split.second_dart,
+        &split.curve,
+        parameter,
+    )?;
     let first_mid = g.add_dart();
     let second_mid = g.add_dart();
 
@@ -104,11 +122,10 @@ fn split_edge_with_profile_links<P: Payload>(
     g.sew_unchecked(Dim::One, first_mid, second_mid);
 
     let vertex = g.add_vertex(VertexAttr::new(first_mid, midpoint, P::V::default()));
-    let second = g.add_edge(EdgeAttr::new(
-        second_mid,
-        split.curve.clone(),
-        P::E::default(),
-    ));
+    g.edge_attr_mut(edge)
+        .expect("prepared edge must remain present")
+        .curve = first_curve;
+    let second = g.add_edge(EdgeAttr::new(second_mid, second_curve, P::E::default()));
 
     Ok(EdgeSplit {
         first: edge,
@@ -122,8 +139,23 @@ fn split_attached_edge_with_profile_links<P: Payload>(
     edge: EdgeKey,
     parameter: f64,
     split: PreparedAttachedEdgeSplit,
+    reversed: bool,
 ) -> Result<EdgeSplit, EdgeSplitError> {
     let midpoint = split.curve.point_at(parameter);
+    let (mut first_curve, mut second_curve) = split_curve_at_parameter(
+        g,
+        edge,
+        split.first_dart,
+        split.second_dart,
+        &split.curve,
+        parameter,
+    )?;
+    if reversed {
+        (first_curve, second_curve) = (
+            reverse_split_curve(edge, parameter, second_curve)?,
+            reverse_split_curve(edge, parameter, first_curve)?,
+        );
+    }
     let alpha0_pairs = alpha_pairs(g, &split.edge_darts, Dim::Zero);
     let alpha2_pairs = alpha_pairs(g, &split.edge_darts, Dim::Two);
     let mid_darts = split
@@ -149,9 +181,12 @@ fn split_attached_edge_with_profile_links<P: Payload>(
         midpoint,
         P::V::default(),
     ));
+    g.edge_attr_mut(edge)
+        .expect("prepared edge must remain present")
+        .curve = first_curve;
     let second = g.add_edge(EdgeAttr::new(
         mid_darts[&split.second_dart],
-        split.curve.clone(),
+        second_curve,
         P::E::default(),
     ));
 
@@ -160,6 +195,21 @@ fn split_attached_edge_with_profile_links<P: Payload>(
         second,
         vertex,
     })
+}
+
+fn reverse_split_curve(
+    edge: EdgeKey,
+    parameter: f64,
+    curve: Curve,
+) -> Result<Curve, EdgeSplitError> {
+    curve
+        .to_nurbs()
+        .map(|curve| Curve::Nurbs(curve.reversed()))
+        .map_err(|source| EdgeSplitError::CurveTrimFailed {
+            edge,
+            parameter,
+            source,
+        })
 }
 
 fn prepare_profile_edge_split<P: Payload>(
@@ -266,6 +316,39 @@ fn check_attached_edge<P: Payload>(
     }
 
     Ok(())
+}
+
+fn split_curve_at_parameter<P: Payload>(
+    g: &GMap<P>,
+    edge: EdgeKey,
+    first_dart: Dart,
+    second_dart: Dart,
+    curve: &Curve,
+    parameter: f64,
+) -> Result<(Curve, Curve), EdgeSplitError> {
+    let start = g
+        .attribute::<Cell0>(first_dart)
+        .map(|vertex| vertex.point)
+        .ok_or(EdgeSplitError::MissingEndpointGeometry { edge })?;
+    let end = g
+        .attribute::<Cell0>(second_dart)
+        .map(|vertex| vertex.point)
+        .ok_or(EdgeSplitError::MissingEndpointGeometry { edge })?;
+    let interval = curve.parameters_between(start, end);
+    let fraction = (parameter - interval.start) / (interval.end - interval.start);
+    let trim = |interval| {
+        curve
+            .trimmed(interval)
+            .map_err(|source| EdgeSplitError::CurveTrimFailed {
+                edge,
+                parameter,
+                source,
+            })
+    };
+    Ok((
+        trim(Interval::new(0.0, fraction))?,
+        trim(Interval::new(fraction, 1.0))?,
+    ))
 }
 
 fn alpha_pairs<P: Payload>(g: &GMap<P>, darts: &[Dart], dim: Dim) -> Vec<(Dart, Dart)> {

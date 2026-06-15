@@ -159,6 +159,23 @@ impl NurbsCurve2 {
         &self.control_points
     }
 
+    /// Returns an exact Cartesian translation of this curve.
+    pub fn translated(&self, offset: Vector2<f64>) -> Result<Self, NurbsError> {
+        let control_points = ControlPolygon2::new(
+            self.control_points
+                .as_slice()
+                .iter()
+                .map(|point| HPoint2::from_cartesian(point.to_cartesian() + offset, point.weight()))
+                .collect(),
+        )?;
+        Ok(Self {
+            degree: self.degree,
+            control_points,
+            knots: self.knots.clone(),
+            interpolation_parameters: self.interpolation_parameters.clone(),
+        })
+    }
+
     /// Returns the knot vector.
     pub fn knots(&self) -> &KnotVector {
         &self.knots
@@ -297,6 +314,36 @@ impl NurbsCurve2 {
             Self::new(refined.degree, left_points, KnotVector::new(left_knots)?)?,
             Self::new(refined.degree, right_points, KnotVector::new(right_knots)?)?,
         ))
+    }
+
+    /// Returns the exact subcurve over the requested native-domain interval.
+    pub fn trimmed(&self, start: f64, end: f64) -> Result<Self, NurbsError> {
+        if (end - start).abs() <= LINEAR_TOLERANCE {
+            return Err(NurbsError::DegenerateInterval { start, end });
+        }
+        if end < start {
+            return Ok(self.trimmed(end, start)?.reversed());
+        }
+
+        let domain = self.domain();
+        if start < domain.start - LINEAR_TOLERANCE || end > domain.end + LINEAR_TOLERANCE {
+            return Err(NurbsError::ParameterOutOfRange {
+                u: if start < domain.start { start } else { end },
+                min: domain.start,
+                max: domain.end,
+            });
+        }
+
+        let after_start = if start <= domain.start + LINEAR_TOLERANCE {
+            self.clone()
+        } else {
+            self.split_at(start)?.1
+        };
+        if end >= domain.end - LINEAR_TOLERANCE {
+            Ok(after_start)
+        } else {
+            Ok(after_start.split_at(end)?.0)
+        }
     }
 
     /// Samples the curve adaptively and returns native parameters with points.

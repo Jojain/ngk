@@ -14,6 +14,7 @@ use crate::geometry::tolerance::{LINEAR_TOLERANCE_SQUARED, MAX_DISTANCE};
 use crate::geometry::{Interval, LINEAR_TOLERANCE};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Periodicity {
     None,
     Periodic(f64),
@@ -99,6 +100,45 @@ impl Curve {
             }
             Curve::Nurbs(nurbs) => nurbs.domain(),
         }
+    }
+
+    /// Returns the exact subcurve over a normalized parameter interval.
+    pub fn trimmed(&self, interval: Interval) -> Result<Self, NurbsError> {
+        if (interval.end - interval.start).abs() <= LINEAR_TOLERANCE {
+            return Err(NurbsError::DegenerateInterval {
+                start: interval.start,
+                end: interval.end,
+            });
+        }
+        if interval.end < interval.start {
+            return Ok(Curve::Nurbs(
+                self.trimmed(Interval::new(interval.end, interval.start))?
+                    .to_nurbs()?
+                    .reversed(),
+            ));
+        }
+        if interval.start < -LINEAR_TOLERANCE || interval.end > 1.0 + LINEAR_TOLERANCE {
+            return Err(NurbsError::ParameterOutOfRange {
+                u: if interval.start < 0.0 {
+                    interval.start
+                } else {
+                    interval.end
+                },
+                min: 0.0,
+                max: 1.0,
+            });
+        }
+
+        let start = interval.start.clamp(0.0, 1.0);
+        let end = interval.end.clamp(0.0, 1.0);
+        if start <= LINEAR_TOLERANCE && end >= 1.0 - LINEAR_TOLERANCE {
+            return Ok(self.clone());
+        }
+
+        let nurbs = self.to_nurbs()?;
+        let domain = nurbs.domain();
+        let native = |parameter: f64| domain.start + (domain.end - domain.start) * parameter;
+        Ok(Curve::Nurbs(nurbs.trimmed(native(start), native(end))?))
     }
 
     pub fn length(&self, t0: f64, t1: f64) -> f64 {
@@ -309,6 +349,23 @@ fn closest_sample_parameter(curve: &NurbsCurve, point: Point3) -> f64 {
             best_distance = distance;
             best_u = u;
         }
+    }
+
+    for _ in 0..16 {
+        let residual = curve.point_at(best_u) - point;
+        let first = curve.derivative_at(best_u, 1);
+        let second = curve.derivative_at(best_u, 2);
+        let gradient = residual.dot(&first);
+        let curvature = first.dot(&first) + residual.dot(&second);
+        if curvature.abs() <= 1.0e-14 {
+            break;
+        }
+        let next = (best_u - gradient / curvature).clamp(domain.start, domain.end);
+        if (next - best_u).abs() <= 1.0e-12 {
+            best_u = next;
+            break;
+        }
+        best_u = next;
     }
 
     best_u

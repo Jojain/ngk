@@ -395,6 +395,15 @@ impl<P: Payload> GMap<P> {
         self.vertices.get_mut(key)
     }
 
+    pub(crate) fn remove_vertex(&mut self, key: VertexKey) -> Option<VertexAttr<P::V>> {
+        let vertex = self.vertices.remove(key)?;
+        let representative = self.cell_representative(vertex.dart, Dim::Zero);
+        if self.dart_to_vertex.get(&representative) == Some(&key) {
+            self.dart_to_vertex.remove(&representative);
+        }
+        Some(vertex)
+    }
+
     /// Iterate every stored 0-cell attribute paired with its slotmap key.
     pub fn iter_vertices(&self) -> impl Iterator<Item = (VertexKey, &VertexAttr<P::V>)> {
         self.vertices.iter()
@@ -430,6 +439,15 @@ impl<P: Payload> GMap<P> {
     /// Returns the mutable edge attribute for `key`, if it exists.
     pub fn edge_attr_mut(&mut self, key: EdgeKey) -> Option<&mut EdgeAttr<P::E>> {
         self.edges.get_mut(key)
+    }
+
+    pub(crate) fn remove_edge(&mut self, key: EdgeKey) -> Option<EdgeAttr<P::E>> {
+        let edge = self.edges.remove(key)?;
+        let representative = self.cell_representative(edge.dart, Dim::One);
+        if self.dart_to_edge.get(&representative) == Some(&key) {
+            self.dart_to_edge.remove(&representative);
+        }
+        Some(edge)
     }
 
     /// Iterate every stored 1-cell attribute paired with its slotmap key.

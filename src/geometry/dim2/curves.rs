@@ -1,6 +1,7 @@
 use crate::geometry::{
     ControlPolygon2, Degree, HPoint2, Interval, KnotVector, LINEAR_TOLERANCE, NurbsError,
 };
+use nalgebra::Vector2;
 
 use super::intersections::{
     CurveCurveIntersections2, CurveIntersectionError, CurveIntersectionOptions, intersect_curves,
@@ -71,6 +72,17 @@ impl Curve2 {
         }
     }
 
+    /// Returns an exact Cartesian translation of this curve.
+    pub fn translated(&self, offset: Vector2<f64>) -> Result<Self, NurbsError> {
+        match self {
+            Curve2::Line(line) => Ok(Curve2::Line(Line2::new(
+                line.start + offset,
+                line.end + offset,
+            ))),
+            Curve2::Nurbs(curve) => Ok(Curve2::Nurbs(curve.translated(offset)?)),
+        }
+    }
+
     /// Splits the curve at an interior normalized parameter.
     pub fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
         if parameter <= LINEAR_TOLERANCE || parameter >= 1.0 - LINEAR_TOLERANCE {
@@ -88,6 +100,52 @@ impl Curve2 {
                 let (first, second) =
                     curve.split_at(native_parameter(curve.domain(), parameter))?;
                 Ok((Curve2::Nurbs(first), Curve2::Nurbs(second)))
+            }
+        }
+    }
+
+    /// Returns the exact subcurve over a normalized parameter interval.
+    pub fn trimmed(&self, interval: Interval) -> Result<Self, NurbsError> {
+        if (interval.end - interval.start).abs() <= LINEAR_TOLERANCE {
+            return Err(NurbsError::DegenerateInterval {
+                start: interval.start,
+                end: interval.end,
+            });
+        }
+        if interval.end < interval.start {
+            return Ok(self
+                .trimmed(Interval::new(interval.end, interval.start))?
+                .reversed());
+        }
+        if interval.start < -LINEAR_TOLERANCE || interval.end > 1.0 + LINEAR_TOLERANCE {
+            return Err(NurbsError::ParameterOutOfRange {
+                u: if interval.start < 0.0 {
+                    interval.start
+                } else {
+                    interval.end
+                },
+                min: 0.0,
+                max: 1.0,
+            });
+        }
+
+        let start = interval.start.clamp(0.0, 1.0);
+        let end = interval.end.clamp(0.0, 1.0);
+        if start <= LINEAR_TOLERANCE && end >= 1.0 - LINEAR_TOLERANCE {
+            return Ok(self.clone());
+        }
+
+        match self {
+            Curve2::Line(line) => Ok(Curve2::Line(Line2::new(
+                line.point_at(start),
+                line.point_at(end),
+            ))),
+            Curve2::Nurbs(curve) => {
+                let domain = curve.domain();
+                Ok(Curve2::Nurbs(curve.trimmed(
+                    native_parameter(domain, start),
+                    native_parameter(domain, end),
+                )?))
             }
         }
     }

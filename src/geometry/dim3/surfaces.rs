@@ -1,4 +1,4 @@
-use super::curves::{Curve, circle_nurbs_control_points, circle_nurbs_knots};
+use super::curves::{Curve, Periodicity, circle_nurbs_control_points, circle_nurbs_knots};
 use super::frame::Frame;
 use super::intersections::{IntersectionError, SurfaceSurfaceIntersections, intersect_surfaces};
 use super::nurbs::{ControlNet, Degree, HPoint, KnotVector, NurbsSurface};
@@ -18,7 +18,33 @@ pub enum Surface {
     Nurbs(NurbsSurface),
 }
 
+/// Periodicity of a surface's parameter-space directions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SurfacePeriodicity {
+    /// Neither parameter direction is periodic.
+    None,
+    /// Only the `u` parameter direction is periodic.
+    UPeriodic(f64),
+    /// Only the `v` parameter direction is periodic.
+    VPeriodic(f64),
+    /// Both parameter directions are periodic.
+    UVPeriodic(f64, f64),
+}
+
 impl Surface {
+    /// Returns the periodicity of the surface's parameter-space directions.
+    pub fn periodicity(&self) -> SurfacePeriodicity {
+        match self {
+            Surface::Plane(_) | Surface::Nurbs(_) => SurfacePeriodicity::None,
+            Surface::Cylinder(_) => SurfacePeriodicity::UPeriodic(std::f64::consts::TAU),
+            Surface::Ruled(surface) => match surface.curve.periodicity() {
+                Periodicity::None => SurfacePeriodicity::None,
+                Periodicity::Periodic(period) => SurfacePeriodicity::UPeriodic(period),
+            },
+            Surface::Revolution(_) => SurfacePeriodicity::VPeriodic(std::f64::consts::TAU),
+        }
+    }
+
     pub fn to_nurbs(&self) -> Result<NurbsSurface, NurbsError> {
         match self {
             Surface::Plane(plane) => plane.to_nurbs(),
@@ -42,6 +68,7 @@ impl Surface {
     pub fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError> {
         match self {
             Surface::Plane(plane) => Ok(plane.parameter_at(point)),
+            Surface::Cylinder(cylinder) => Ok(cylinder.closest_parameter(point)),
             Surface::Nurbs(surface) => Ok(surface.closest_parameter(point)),
             surface => Ok(surface.to_nurbs()?.closest_parameter(point)),
         }
@@ -216,6 +243,18 @@ impl Cylinder {
         let origin = self.origin();
         let projected = self.point_at(u, 0.0);
         (projected - origin).normalized()
+    }
+
+    pub fn closest_parameter(&self, point: Point3) -> Point2 {
+        let offset = point - self.origin();
+        let v = offset.dot(&self.axis());
+        let radial = offset - *self.axis() * v;
+        let y_dir = self.axis().cross(&self.x_dir());
+        let mut u = radial.dot(&y_dir).atan2(radial.dot(&self.x_dir()));
+        if u < 0.0 {
+            u += std::f64::consts::TAU;
+        }
+        Point2::new(u, v)
     }
 
     pub fn origin(&self) -> Point3 {

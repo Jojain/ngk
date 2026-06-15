@@ -2,8 +2,8 @@ use std::f64::consts::FRAC_PI_2;
 
 use nalgebra::Vector3;
 use ngk::geometry::{
-    Curve, Cylinder, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence, RuledSurface, Surface,
-    SurfaceOfRevolution, axis::Axis3,
+    Circle, Curve, Cylinder, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence, RuledSurface,
+    Surface, SurfaceOfRevolution, SurfacePeriodicity, axis::Axis3,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -55,6 +55,41 @@ fn cylinder_point_at_moves_along_axis() {
     ));
 
     assert_point_near(surface.point_at(0.0, 4.0), Point3::new(1.5, 2.0, 7.0));
+}
+
+#[test]
+fn surfaces_report_parameter_periodicity() {
+    let plane = Surface::Plane(Plane::xy());
+    let cylinder = Surface::Cylinder(Cylinder::new(
+        Point3::origin(),
+        Vector3::x(),
+        Vector3::z(),
+        1.0,
+    ));
+    let ruled_circle = Surface::Ruled(RuledSurface::new(
+        Curve::Circle(Circle::new(Plane::xy(), 1.0)),
+        Vector3::z(),
+    ));
+    let revolution = Surface::Revolution(SurfaceOfRevolution::new(
+        Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
+        Axis3::new(Point3::origin(), Vector3::z()),
+    ));
+
+    assert_eq!(plane.periodicity(), SurfacePeriodicity::None);
+    assert_eq!(
+        cylinder.periodicity(),
+        SurfacePeriodicity::UPeriodic(std::f64::consts::TAU)
+    );
+    assert_eq!(ruled_circle.periodicity(), cylinder.periodicity());
+    assert_eq!(
+        revolution.periodicity(),
+        SurfacePeriodicity::VPeriodic(std::f64::consts::TAU)
+    );
+    let uv_periodicity = SurfacePeriodicity::UVPeriodic(2.0, 3.0);
+    let SurfacePeriodicity::UVPeriodic(u_period, v_period) = uv_periodicity else {
+        unreachable!();
+    };
+    assert_eq!((u_period, v_period), (2.0, 3.0));
 }
 
 #[test]

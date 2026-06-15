@@ -8,7 +8,9 @@ use crate::builders::profiles::{
     add_rectangle as add_rectangle_profile, add_square as add_square_profile, profile_pcurves,
 };
 use crate::geometry::{
-    Curve, Curve2, LINEAR_TOLERANCE, Line2, NurbsError, Plane, Point2, Point3, Surface,
+    Circle, Curve, Curve2, CurveCurveIntersection2, CurveIntersectionError, Interval,
+    LINEAR_TOLERANCE, Line2, NurbsError, Periodicity, Plane, Point2, Point3, Surface,
+    SurfacePeriodicity,
 };
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
 use crate::topology::closed::Closed;
@@ -19,6 +21,7 @@ use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use crate::topology::vertex::Vertex;
+use nalgebra::Vector2;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Error, PartialEq)]
@@ -37,6 +40,8 @@ pub enum FaceEdgeSplitError {
     MissingEdgeCurve { dart: Dart },
     #[error("split parameter {parameter} is too close to an edge boundary")]
     DegenerateSplit { parameter: f64 },
+    #[error("split point does not lie on face {face:?} pcurve at dart {dart:?}")]
+    SplitPointNotOnPcurve { face: FaceKey, dart: Dart },
     #[error("failed to split face pcurve")]
     PcurveSplitFailed(#[from] NurbsError),
 }
@@ -57,8 +62,14 @@ pub enum FaceImprintSplitError {
     BoundaryEdgeSplitFailed(#[from] FaceEdgeSplitError),
     #[error("failed to sew closed imprint loop on face {face:?}: {reason}")]
     SectionLoopSewFailed { face: FaceKey, reason: &'static str },
-    #[error("failed to reverse closed imprint geometry")]
+    #[error("failed to convert imprint curve geometry")]
     ImprintCurveConversion(#[from] NurbsError),
+    #[error("failed to intersect face imprint pcurves")]
+    ImprintIntersection(#[from] CurveIntersectionError),
+    #[error("failed to merge periodic face {face:?} across its parameter seam: {reason}")]
+    PeriodicMergeFailed { face: FaceKey, reason: &'static str },
+    #[error("periodic face {face:?} produced {count} regions instead of two")]
+    UnexpectedPeriodicRegionCount { face: FaceKey, count: usize },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -121,28 +132,76 @@ impl FaceImprint {
     pub fn new(curve: Curve, pcurve: Curve2) -> Self {
         Self { curve, pcurve }
     }
+
+    /// Returns the exact synchronized fragment over a normalized interval.
+    pub fn trimmed(&self, interval: Interval) -> Result<Self, NurbsError> {
+        Ok(Self::new(
+            self.curve.trimmed(interval)?,
+            self.pcurve.trimmed(interval)?,
+        ))
+    }
+
+    fn reversed(&self) -> Result<Self, NurbsError> {
+        Ok(Self::new(
+            Curve::Nurbs(self.curve.to_nurbs()?.reversed()),
+            self.pcurve.reversed(),
+        ))
+    }
 }
 
+/// An exact source-curve fragment stored in a face imprint graph.
 #[derive(Debug, Clone, PartialEq)]
+pub struct FaceImprintGraphEdge {
+    pub start: usize,
+    pub end: usize,
+    pub source_curve: usize,
+    pub interval: Interval,
+}
+
 /// A normalized planar graph built from imprint curves in a face's UV space.
 ///
-/// Curve segments are split at intersections, coincident vertices and duplicate
+/// Curves are split at intersections, coincident vertices and duplicate
 /// edges are merged within [`LINEAR_TOLERANCE`], and the resulting undirected
 /// graph can be inspected for branches and standalone closed loops. The graph is
 /// a temporary aid for face splitting and is not part of the [`GMap`] topology.
+#[derive(Debug, Clone, PartialEq)]
 pub struct FaceImprintGraph {
     vertices: Vec<Point2>,
-    edges: Vec<(usize, usize)>,
+    edges: Vec<FaceImprintGraphEdge>,
 }
 
 impl FaceImprintGraph {
     /// Builds an imprint graph from 2D lines and NURBS curves.
-    ///
-    /// Curves are adaptively linearized, and all segments are split at crossings,
-    /// T-junctions, and collinear overlap boundaries before graph assembly.
-    pub fn from_curves(curves: &[Curve2]) -> Self {
-        let segments = curves.iter().flat_map(curve_segments).collect::<Vec<_>>();
-        Self::from_segments(&segments)
+    pub fn from_curves(curves: &[Curve2]) -> Result<Self, CurveIntersectionError> {
+        let split_parameters = curve_split_parameters(curves)?;
+        let mut vertices = Vec::<Point2>::new();
+        let mut edges = Vec::new();
+        let mut seen_edges = HashSet::<(usize, usize)>::new();
+
+        for (source_curve, (curve, parameters)) in curves.iter().zip(split_parameters).enumerate() {
+            for pair in parameters.windows(2) {
+                if (pair[1] - pair[0]).abs() <= LINEAR_TOLERANCE {
+                    continue;
+                }
+
+                let start = graph_vertex(&mut vertices, curve.point_at(pair[0]));
+                let end = graph_vertex(&mut vertices, curve.point_at(pair[1]));
+                if start == end {
+                    continue;
+                }
+
+                if seen_edges.insert(ordered_edge_key(start, end)) {
+                    edges.push(FaceImprintGraphEdge {
+                        start,
+                        end,
+                        source_curve,
+                        interval: Interval::new(pair[0], pair[1]),
+                    });
+                }
+            }
+        }
+
+        Ok(Self { vertices, edges })
     }
 
     /// Returns the graph vertices as points in the face's UV parameter space.
@@ -150,8 +209,8 @@ impl FaceImprintGraph {
         &self.vertices
     }
 
-    /// Returns the undirected graph edges as pairs of vertex indices.
-    pub fn edges(&self) -> &[(usize, usize)] {
+    /// Returns the exact source-curve fragments forming the undirected graph.
+    pub fn edges(&self) -> &[FaceImprintGraphEdge] {
         &self.edges
     }
 
@@ -161,7 +220,7 @@ impl FaceImprintGraph {
     pub fn vertex_degree(&self, vertex: usize) -> usize {
         self.edges
             .iter()
-            .filter(|(start, end)| *start == vertex || *end == vertex)
+            .filter(|edge| edge.start == vertex || edge.end == vertex)
             .count()
     }
 
@@ -195,8 +254,13 @@ impl FaceImprintGraph {
                 continue;
             }
 
-            if let Some(vertices) = self.ordered_closed_component(&component) {
-                loops.push(vertices);
+            if let Some(edges) = self.ordered_closed_component(&component) {
+                loops.push(
+                    edges
+                        .iter()
+                        .map(|edge| edge.start(self))
+                        .collect::<Vec<_>>(),
+                );
             }
         }
 
@@ -206,34 +270,6 @@ impl FaceImprintGraph {
     /// Returns the number of standalone simple closed-loop components.
     pub fn closed_component_count(&self) -> usize {
         self.closed_components().len()
-    }
-
-    fn from_segments(segments: &[Line2]) -> Self {
-        let split_parameters = split_parameters(segments);
-        let mut vertices = Vec::<Point2>::new();
-        let mut edges = Vec::<(usize, usize)>::new();
-        let mut seen_edges = HashSet::<(usize, usize)>::new();
-
-        for (segment, parameters) in segments.iter().zip(split_parameters.iter()) {
-            for pair in parameters.windows(2) {
-                if (pair[1] - pair[0]).abs() <= LINEAR_TOLERANCE {
-                    continue;
-                }
-
-                let start = graph_vertex(&mut vertices, segment.point_at(pair[0]));
-                let end = graph_vertex(&mut vertices, segment.point_at(pair[1]));
-                if start == end {
-                    continue;
-                }
-
-                let key = ordered_edge_key(start, end);
-                if seen_edges.insert(key) {
-                    edges.push((start, end));
-                }
-            }
-        }
-
-        Self { vertices, edges }
     }
 
     fn component_vertices(&self, start: usize, visited: &mut [bool]) -> Vec<usize> {
@@ -255,59 +291,111 @@ impl FaceImprintGraph {
     }
 
     fn neighbors(&self, vertex: usize) -> impl Iterator<Item = usize> + '_ {
-        self.edges.iter().filter_map(move |(start, end)| {
-            if *start == vertex {
-                Some(*end)
-            } else if *end == vertex {
-                Some(*start)
+        self.edges.iter().filter_map(move |edge| {
+            if edge.start == vertex {
+                Some(edge.end)
+            } else if edge.end == vertex {
+                Some(edge.start)
             } else {
                 None
             }
         })
     }
 
-    fn ordered_closed_component(&self, component: &[usize]) -> Option<Vec<usize>> {
+    fn ordered_closed_component(&self, component: &[usize]) -> Option<Vec<OrientedGraphEdge>> {
         let component_set = component.iter().copied().collect::<HashSet<_>>();
         let start = component.iter().copied().min()?;
-        let mut ordered = vec![start];
-        let mut previous = start;
-        let mut current = self
-            .neighbors(start)
-            .find(|neighbor| component_set.contains(neighbor))?;
+        let mut ordered = Vec::new();
+        let mut current = start;
+        let mut previous_edge = None;
 
-        while current != start {
-            if ordered.contains(&current) {
+        loop {
+            let edge_index = self
+                .edges
+                .iter()
+                .enumerate()
+                .filter(|(_, edge)| edge.start == current || edge.end == current)
+                .filter(|(index, edge)| {
+                    Some(*index) != previous_edge
+                        && component_set.contains(&edge.start)
+                        && component_set.contains(&edge.end)
+                })
+                .map(|(index, _)| index)
+                .min()?;
+            let edge = &self.edges[edge_index];
+            let reversed = edge.end == current;
+            let next = if reversed { edge.start } else { edge.end };
+            ordered.push(OrientedGraphEdge {
+                edge: edge_index,
+                reversed,
+            });
+
+            if next == start {
+                break;
+            }
+            if ordered.len() >= component.len() {
                 return None;
             }
-            ordered.push(current);
-
-            let next = self
-                .neighbors(current)
-                .find(|neighbor| *neighbor != previous && component_set.contains(neighbor))?;
-            previous = current;
+            previous_edge = Some(edge_index);
             current = next;
         }
 
         (ordered.len() == component.len()).then_some(ordered)
     }
+
+    fn closed_edge_components(&self) -> Vec<Vec<OrientedGraphEdge>> {
+        let mut visited = vec![false; self.vertices.len()];
+        let mut loops = Vec::new();
+        for start in 0..self.vertices.len() {
+            if visited[start] {
+                continue;
+            }
+            let component = self.component_vertices(start, &mut visited);
+            if component.len() >= 3
+                && component
+                    .iter()
+                    .all(|vertex| self.vertex_degree(*vertex) == 2)
+                && let Some(edges) = self.ordered_closed_component(&component)
+            {
+                loops.push(edges);
+            }
+        }
+        loops
+    }
 }
 
-fn curve_segments(curve: &Curve2) -> Vec<Line2> {
-    curve
-        .adaptive_samples(LINEAR_TOLERANCE, 16)
-        .windows(2)
-        .map(|pair| Line2::new(pair[0].1, pair[1].1))
-        .collect()
+#[derive(Debug, Clone, Copy)]
+struct OrientedGraphEdge {
+    edge: usize,
+    reversed: bool,
 }
 
-fn split_parameters(segments: &[Line2]) -> Vec<Vec<f64>> {
-    let mut parameters = vec![vec![0.0, 1.0]; segments.len()];
+impl OrientedGraphEdge {
+    fn start(self, graph: &FaceImprintGraph) -> usize {
+        let edge = &graph.edges[self.edge];
+        if self.reversed { edge.end } else { edge.start }
+    }
+}
 
-    for i in 0..segments.len() {
-        for j in (i + 1)..segments.len() {
-            if let Some(intersection) = segment_intersection(&segments[i], &segments[j]) {
-                parameters[i].extend(intersection.first);
-                parameters[j].extend(intersection.second);
+fn curve_split_parameters(curves: &[Curve2]) -> Result<Vec<Vec<f64>>, CurveIntersectionError> {
+    let mut parameters = vec![vec![0.0, 1.0]; curves.len()];
+
+    for i in 0..curves.len() {
+        for j in (i + 1)..curves.len() {
+            for intersection in curves[i].intersect_curve(&curves[j])? {
+                match intersection {
+                    CurveCurveIntersection2::Point { u_a, u_b, .. } => {
+                        parameters[i].push(u_a);
+                        parameters[j].push(u_b);
+                    }
+                    CurveCurveIntersection2::Overlap {
+                        interval_a,
+                        interval_b,
+                    } => {
+                        parameters[i].extend([interval_a.start, interval_a.end]);
+                        parameters[j].extend([interval_b.start, interval_b.end]);
+                    }
+                }
             }
         }
     }
@@ -317,69 +405,7 @@ fn split_parameters(segments: &[Line2]) -> Vec<Vec<f64>> {
         values.dedup_by(|a, b| (*a - *b).abs() <= LINEAR_TOLERANCE);
     }
 
-    parameters
-}
-
-#[derive(Debug, Clone)]
-struct SegmentIntersection {
-    first: Vec<f64>,
-    second: Vec<f64>,
-}
-
-fn segment_intersection(a: &Line2, b: &Line2) -> Option<SegmentIntersection> {
-    let da = a.end - a.start;
-    let db = b.end - b.start;
-    let denominator = cross2(da, db);
-
-    if denominator.abs() <= LINEAR_TOLERANCE {
-        return collinear_segment_intersection(a, b);
-    }
-
-    let delta = b.start - a.start;
-    let ta = cross2(delta, db) / denominator;
-    let tb = cross2(delta, da) / denominator;
-    if in_segment_parameter(ta) && in_segment_parameter(tb) {
-        Some(SegmentIntersection {
-            first: vec![ta.clamp(0.0, 1.0)],
-            second: vec![tb.clamp(0.0, 1.0)],
-        })
-    } else {
-        None
-    }
-}
-
-fn collinear_segment_intersection(a: &Line2, b: &Line2) -> Option<SegmentIntersection> {
-    let da = a.end - a.start;
-    if cross2(b.start - a.start, da).abs() > LINEAR_TOLERANCE {
-        return None;
-    }
-
-    let axis = if da.x.abs() >= da.y.abs() { 0 } else { 1 };
-    let a0 = coord(a.start, axis);
-    let a1 = coord(a.end, axis);
-    let b0 = coord(b.start, axis);
-    let b1 = coord(b.end, axis);
-    let a_min = a0.min(a1);
-    let a_max = a0.max(a1);
-    let b_min = b0.min(b1);
-    let b_max = b0.max(b1);
-    let overlap_min = a_min.max(b_min);
-    let overlap_max = a_max.min(b_max);
-
-    if overlap_max < overlap_min - LINEAR_TOLERANCE {
-        return None;
-    }
-
-    Some(SegmentIntersection {
-        first: vec![
-            scalar_to_segment_parameter(a0, a1, overlap_min),
-            scalar_to_segment_parameter(a0, a1, overlap_max),
-        ],
-        second: vec![
-            scalar_to_segment_parameter(b0, b1, overlap_min),
-            scalar_to_segment_parameter(b0, b1, overlap_max),
-        ],
-    })
+    Ok(parameters)
 }
 
 fn graph_vertex(vertices: &mut Vec<Point2>, uv: Point2) -> usize {
@@ -398,27 +424,6 @@ fn graph_vertex(vertices: &mut Vec<Point2>, uv: Point2) -> usize {
 
 fn ordered_edge_key(a: usize, b: usize) -> (usize, usize) {
     if a < b { (a, b) } else { (b, a) }
-}
-
-fn cross2(a: nalgebra::Vector2<f64>, b: nalgebra::Vector2<f64>) -> f64 {
-    a.x * b.y - a.y * b.x
-}
-
-fn in_segment_parameter(t: f64) -> bool {
-    (-LINEAR_TOLERANCE..=1.0 + LINEAR_TOLERANCE).contains(&t)
-}
-
-fn coord(point: Point2, axis: usize) -> f64 {
-    if axis == 0 { point.x } else { point.y }
-}
-
-fn scalar_to_segment_parameter(start: f64, end: f64, value: f64) -> f64 {
-    let length = end - start;
-    if length.abs() <= LINEAR_TOLERANCE {
-        0.0
-    } else {
-        ((value - start) / length).clamp(0.0, 1.0)
-    }
 }
 
 struct IncidentFacePcurve {
@@ -477,10 +482,11 @@ pub fn split_face_edge<P: Payload>(
     edge: EdgeKey,
     parameter: f64,
 ) -> Result<EdgeSplit, FaceEdgeSplitError> {
-    face_edge_dart(g, face, edge)?;
+    let boundary_dart = face_edge_dart(g, face, edge)?;
+    let reversed = closed_boundary_curve_reversed(g, face, edge, boundary_dart)?;
     let pcurves = incident_face_pcurves(g, edge, parameter)?;
 
-    let split = split_face_boundary_edge(g, edge, parameter)?;
+    let split = split_face_boundary_edge(g, edge, parameter, reversed)?;
     for pcurve in pcurves {
         assign_split_pcurves(g, pcurve)?;
     }
@@ -504,22 +510,39 @@ pub fn split_face_by_imprints<P: Payload>(
         .filter(|imprint| !is_closed(imprint))
         .cloned()
         .collect::<Vec<_>>();
+    if closed_imprints.is_empty()
+        && open_imprints.len() == 2
+        && let Some(period) = periodic_u_period(g, face)
+        && open_imprints.iter().all(is_constant_u_imprint)
+        && let Some(seam) = periodic_seam_edge(g, face)?
+    {
+        return split_periodic_face_by_imprints(g, face, &open_imprints, seam, period);
+    }
+
     let pcurves = open_imprints
         .iter()
         .map(|imprint| imprint.pcurve.clone())
         .collect::<Vec<_>>();
-    let graph = FaceImprintGraph::from_curves(&pcurves);
+    let graph = FaceImprintGraph::from_curves(&pcurves)?;
     split_imprint_boundary_endpoints(g, face, imprints)?;
     let mut splits = add_closed_curve_imprint_loops(g, face, &closed_imprints)?;
-    splits.extend(add_closed_imprint_loops(g, face, &graph)?);
-    let mut active_faces = vec![face];
+    splits.extend(add_closed_imprint_loops(g, face, &graph, &open_imprints)?);
+    splits.extend(split_open_imprints(g, vec![face], &open_imprints)?);
+    Ok(splits)
+}
 
+fn split_open_imprints<P: Payload>(
+    g: &mut GMap<P>,
+    mut active_faces: Vec<FaceKey>,
+    imprints: &[FaceImprint],
+) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
+    let mut splits = Vec::new();
     loop {
         let mut next_faces = Vec::new();
         let mut progressed = false;
 
         for face in active_faces {
-            let Some(split) = split_one_face_by_imprints(g, face, &open_imprints)? else {
+            let Some(split) = split_one_face_by_imprints(g, face, imprints)? else {
                 next_faces.push(face);
                 continue;
             };
@@ -531,10 +554,398 @@ pub fn split_face_by_imprints<P: Payload>(
         }
 
         if !progressed {
-            return Ok(splits);
+            break;
         }
         active_faces = next_faces;
     }
+    Ok(splits)
+}
+
+fn periodic_u_period<P: Payload>(g: &GMap<P>, face: FaceKey) -> Option<f64> {
+    match g.face_attr(face)?.surface.periodicity() {
+        SurfacePeriodicity::UPeriodic(period) | SurfacePeriodicity::UVPeriodic(period, _) => {
+            Some(period)
+        }
+        SurfacePeriodicity::None | SurfacePeriodicity::VPeriodic(_) => None,
+    }
+}
+
+fn is_constant_u_imprint(imprint: &FaceImprint) -> bool {
+    let start = imprint.pcurve.point_at(0.0);
+    let end = imprint.pcurve.point_at(1.0);
+    (start.x - end.x).abs() <= LINEAR_TOLERANCE && (start.y - end.y).abs() > LINEAR_TOLERANCE
+}
+
+fn periodic_seam_edge<P: Payload>(
+    g: &GMap<P>,
+    face: FaceKey,
+) -> Result<Option<EdgeKey>, FaceImprintSplitError> {
+    let face = g
+        .face(face)
+        .ok_or(FaceImprintSplitError::MissingFace { face })?;
+    let mut counts = HashMap::<EdgeKey, usize>::new();
+    for edge in face.outer_loop().edges() {
+        *counts.entry(boundary_edge_key(g, edge.dart)?).or_default() += 1;
+    }
+    Ok(counts
+        .into_iter()
+        .find_map(|(edge, count)| (count > 1).then_some(edge)))
+}
+
+fn split_periodic_face_by_imprints<P: Payload>(
+    g: &mut GMap<P>,
+    face: FaceKey,
+    imprints: &[FaceImprint],
+    seam: EdgeKey,
+    period: f64,
+) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
+    split_imprint_boundary_endpoints(g, face, imprints)?;
+    let splits = split_open_imprints(g, vec![face], imprints)?;
+    let section_edges = splits
+        .iter()
+        .flat_map(|split| split.section_edges.iter().copied())
+        .collect::<Vec<_>>();
+    let seam_faces = g
+        .edge(seam)
+        .into_iter()
+        .flat_map(|edge| edge.faces())
+        .map(|face| face.key())
+        .collect::<Vec<_>>();
+    if splits.len() != 2 || seam_faces.len() != 2 {
+        return Err(FaceImprintSplitError::UnexpectedPeriodicRegionCount {
+            face,
+            count: g.iter_faces().count(),
+        });
+    }
+
+    let merged = merge_faces_across_edge(g, face, seam, seam_faces[0], seam_faces[1], period)?;
+    let remaining = g
+        .iter_faces()
+        .map(|(key, _)| key)
+        .find(|key| *key != merged)
+        .ok_or(FaceImprintSplitError::UnexpectedPeriodicRegionCount { face, count: 1 })?;
+    if g.iter_faces().count() != 2 {
+        return Err(FaceImprintSplitError::UnexpectedPeriodicRegionCount {
+            face,
+            count: g.iter_faces().count(),
+        });
+    }
+    unwrap_periodic_face_pcurves(g, remaining)?;
+    unwrap_periodic_face_pcurves(g, merged)?;
+    rebuild_periodic_boundary_curves(g, [remaining, merged])?;
+
+    Ok(vec![FaceImprintSplit {
+        first: remaining,
+        second: merged,
+        section_edges,
+    }])
+}
+
+fn merge_faces_across_edge<P: Payload>(
+    g: &mut GMap<P>,
+    original_face: FaceKey,
+    edge: EdgeKey,
+    first: FaceKey,
+    second: FaceKey,
+    period: f64,
+) -> Result<FaceKey, FaceImprintSplitError> {
+    let first_dart = face_edge_dart_for_imprint(g, first, edge)?;
+    let first_end = g.alpha(Dim::Zero, first_dart);
+    let second_dart = g.alpha(Dim::Two, first_end);
+    if g.attribute::<Cell2>(second_dart).copied() != Some(second) {
+        return Err(FaceImprintSplitError::PeriodicMergeFailed {
+            face: original_face,
+            reason: "parameter seam does not separate the expected faces",
+        });
+    }
+    let second_end = g.alpha(Dim::Zero, second_dart);
+    let first_previous = g.alpha(Dim::One, first_dart);
+    let first_next = g.alpha(Dim::One, first_end);
+    let second_previous = g.alpha(Dim::One, second_dart);
+    let second_next = g.alpha(Dim::One, second_end);
+
+    let first_attr = g
+        .remove_face(first)
+        .ok_or(FaceImprintSplitError::MissingFace { face: first })?;
+    let second_attr = g
+        .remove_face(second)
+        .ok_or(FaceImprintSplitError::MissingFace { face: second })?;
+    let mut pcurves = first_attr.pcurves;
+    pcurves.extend(second_attr.pcurves);
+    for dart in [first_dart, first_end, second_dart, second_end] {
+        pcurves.remove(&dart);
+    }
+    g.remove_edge(edge)
+        .ok_or(FaceImprintSplitError::MissingBoundaryEdge { dart: first_dart })?;
+
+    for dart in [first_dart, first_end, second_dart, second_end] {
+        g.unsew(dart, Dim::One);
+    }
+    g.sew(Dim::One, first_previous, second_next)
+        .map_err(|reason| FaceImprintSplitError::PeriodicMergeFailed {
+            face: original_face,
+            reason,
+        })?;
+    g.sew(Dim::One, second_previous, first_next)
+        .map_err(|reason| FaceImprintSplitError::PeriodicMergeFailed {
+            face: original_face,
+            reason,
+        })?;
+
+    g.unsew(first_dart, Dim::Zero);
+    g.unsew(second_dart, Dim::Zero);
+    g.unsew(first_dart, Dim::Two);
+    g.unsew(first_end, Dim::Two);
+
+    let mut loop_dart = first_next;
+    for _ in 0..2 {
+        loop_dart = merge_periodic_boundary_edge(
+            g,
+            original_face,
+            loop_dart,
+            &first_attr.surface,
+            &mut pcurves,
+            period,
+        )?
+        .ok_or(FaceImprintSplitError::PeriodicMergeFailed {
+            face: original_face,
+            reason: "periodic boundary was not split at the parameter seam",
+        })?;
+    }
+
+    Ok(g.add_face(FaceAttr::with_pcurves(
+        first_attr.surface,
+        first_attr.data,
+        loop_dart,
+        Vec::new(),
+        pcurves,
+    )))
+}
+
+fn merge_periodic_boundary_edge<P: Payload>(
+    g: &mut GMap<P>,
+    face: FaceKey,
+    loop_dart: Dart,
+    surface: &Surface,
+    pcurves: &mut HashMap<Dart, Curve2>,
+    period: f64,
+) -> Result<Option<Dart>, FaceImprintSplitError> {
+    let edges = Profile::new(g, loop_dart).edges();
+    let Some((first, second)) = edges
+        .iter()
+        .zip(edges.iter().cycle().skip(1))
+        .take(edges.len())
+        .find_map(|(first, second)| {
+            let first_pcurve = pcurves.get(&first.dart)?;
+            let second_pcurve = pcurves.get(&second.dart)?;
+            let first_start = first_pcurve.point_at(0.0);
+            let first_end = first_pcurve.point_at(1.0);
+            let second_start = second_pcurve.point_at(0.0);
+            let second_end = second_pcurve.point_at(1.0);
+            ((first_start.y - first_end.y).abs() <= LINEAR_TOLERANCE
+                && (second_start.y - second_end.y).abs() <= LINEAR_TOLERANCE
+                && (first_end.y - second_start.y).abs() <= LINEAR_TOLERANCE
+                && ((first_end.x - second_start.x).abs() - period).abs() <= LINEAR_TOLERANCE)
+                .then_some((first.dart, second.dart))
+        })
+    else {
+        return Ok(None);
+    };
+
+    let first_pcurve = pcurves
+        .remove(&first)
+        .ok_or(FaceImprintSplitError::MissingPcurve { face, dart: first })?;
+    let second_pcurve = pcurves
+        .remove(&second)
+        .ok_or(FaceImprintSplitError::MissingPcurve { face, dart: second })?;
+    let start_uv = first_pcurve.point_at(0.0);
+    let seam_uv = first_pcurve.point_at(1.0);
+    let mut end_uv = second_pcurve.point_at(1.0);
+    if seam_uv.x > start_uv.x {
+        while end_uv.x <= start_uv.x {
+            end_uv.x += period;
+        }
+    } else {
+        while end_uv.x >= start_uv.x {
+            end_uv.x -= period;
+        }
+    }
+
+    let first_key = boundary_edge_key(g, first)?;
+    let second_key = boundary_edge_key(g, second)?;
+    let merged_curve = periodic_boundary_curve(face, surface, start_uv, end_uv)?;
+
+    let first_end = g.alpha(Dim::Zero, first);
+    let second_end = g.alpha(Dim::Zero, second);
+    let vertex = g.cell_representative(first_end, Dim::Zero);
+    if let Some(key) = g.dart_to_vertex.get(&vertex).copied() {
+        g.remove_vertex(key);
+    }
+    g.remove_edge(first_key);
+    g.remove_edge(second_key);
+    g.unsew(first, Dim::Zero);
+    g.unsew(second, Dim::Zero);
+    g.unsew(first_end, Dim::One);
+    g.sew_unchecked(Dim::Zero, first, second_end);
+    g.add_edge(EdgeAttr::new(first, merged_curve, P::E::default()));
+    pcurves.insert(first, Curve2::Line(Line2::new(start_uv, end_uv)));
+
+    Ok(Some(if loop_dart == second {
+        first
+    } else {
+        loop_dart
+    }))
+}
+
+fn periodic_boundary_curve(
+    face: FaceKey,
+    surface: &Surface,
+    start_uv: Point2,
+    end_uv: Point2,
+) -> Result<Curve, FaceImprintSplitError> {
+    let boundary = match surface {
+        Surface::Ruled(ruled) => ruled.curve().translated(ruled.direction() * start_uv.y)?,
+        Surface::Cylinder(cylinder) => Curve::Circle(Circle::new(
+            Plane::new(
+                cylinder.origin() + *cylinder.axis() * start_uv.y,
+                cylinder.x_dir(),
+                cylinder.axis(),
+            ),
+            cylinder.radius,
+        )),
+        _ => {
+            return Err(FaceImprintSplitError::PeriodicMergeFailed {
+                face,
+                reason: "periodic boundary curve is not circular",
+            });
+        }
+    };
+    let Curve::Circle(circle) = boundary else {
+        return Err(FaceImprintSplitError::PeriodicMergeFailed {
+            face,
+            reason: "periodic boundary curve is not circular",
+        });
+    };
+    Ok(Curve::Nurbs(circle.to_nurbs_between(start_uv.x, end_uv.x)?))
+}
+
+fn rebuild_periodic_boundary_curves<P: Payload>(
+    g: &mut GMap<P>,
+    faces: [FaceKey; 2],
+) -> Result<(), FaceImprintSplitError> {
+    for face in faces {
+        let (surface, pcurves) = {
+            let attr = g
+                .face_attr(face)
+                .ok_or(FaceImprintSplitError::MissingFace { face })?;
+            (
+                attr.surface.clone(),
+                attr.pcurves
+                    .iter()
+                    .map(|(dart, pcurve)| (*dart, pcurve.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        for (dart, pcurve) in pcurves {
+            let start = pcurve.point_at(0.0);
+            let end = pcurve.point_at(1.0);
+            if (start.y - end.y).abs() > LINEAR_TOLERANCE
+                || (start.x - end.x).abs() <= LINEAR_TOLERANCE
+            {
+                continue;
+            }
+            let edge = boundary_edge_key(g, dart)?;
+            let curve = periodic_boundary_curve(face, &surface, start, end)?;
+            g.edge_attr_mut(edge)
+                .ok_or(FaceImprintSplitError::MissingBoundaryEdge { dart })?
+                .curve = curve;
+        }
+    }
+    Ok(())
+}
+
+fn unwrap_periodic_face_pcurves<P: Payload>(
+    g: &mut GMap<P>,
+    face: FaceKey,
+) -> Result<(), FaceImprintSplitError> {
+    let (periodicity, pcurves) = {
+        let face_view = g
+            .face(face)
+            .ok_or(FaceImprintSplitError::MissingFace { face })?;
+        (
+            face_view.surface().periodicity(),
+            face_view
+                .outer_loop()
+                .edges()
+                .into_iter()
+                .map(|edge| {
+                    face_view
+                        .pcurve(edge.dart)
+                        .cloned()
+                        .map(|pcurve| (edge.dart, pcurve))
+                        .ok_or(FaceImprintSplitError::MissingPcurve {
+                            face,
+                            dart: edge.dart,
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        )
+    };
+
+    let mut previous_end = None;
+    let mut unwrapped = Vec::with_capacity(pcurves.len());
+    for (dart, pcurve) in pcurves {
+        let start = pcurve.point_at(0.0);
+        let offset = previous_end
+            .map(|end| periodic_offset(periodicity, start, end))
+            .unwrap_or_default();
+        let pcurve = pcurve.translated(offset)?;
+        previous_end = Some(pcurve.point_at(1.0));
+        unwrapped.push((dart, pcurve));
+    }
+
+    let face_attr = g
+        .face_attr_mut(face)
+        .ok_or(FaceImprintSplitError::MissingFace { face })?;
+    for (dart, pcurve) in unwrapped {
+        face_attr.pcurves.insert(dart, pcurve);
+    }
+    Ok(())
+}
+
+fn periodic_offset(periodicity: SurfacePeriodicity, start: Point2, target: Point2) -> Vector2<f64> {
+    let mut offset = Vector2::zeros();
+    match periodicity {
+        SurfacePeriodicity::UPeriodic(period) => {
+            offset.x = ((target.x - start.x) / period).round() * period;
+        }
+        SurfacePeriodicity::VPeriodic(period) => {
+            offset.y = ((target.y - start.y) / period).round() * period;
+        }
+        SurfacePeriodicity::UVPeriodic(u_period, v_period) => {
+            offset.x = ((target.x - start.x) / u_period).round() * u_period;
+            offset.y = ((target.y - start.y) / v_period).round() * v_period;
+        }
+        SurfacePeriodicity::None => {}
+    }
+    offset
+}
+
+fn face_edge_dart_for_imprint<P: Payload>(
+    g: &GMap<P>,
+    face: FaceKey,
+    edge: EdgeKey,
+) -> Result<Dart, FaceImprintSplitError> {
+    let face = g
+        .face(face)
+        .ok_or(FaceImprintSplitError::MissingFace { face })?;
+    face.edges()
+        .into_iter()
+        .find(|candidate| candidate.key() == edge)
+        .map(|candidate| candidate.dart)
+        .ok_or(FaceImprintSplitError::MissingBoundaryEdge {
+            dart: face.outer_loop().dart,
+        })
 }
 
 fn split_imprint_boundary_endpoints<P: Payload>(
@@ -590,10 +1001,7 @@ fn add_closed_curve_imprint_loops<P: Payload>(
 }
 
 fn reverse_imprint(imprint: &FaceImprint) -> Result<FaceImprint, NurbsError> {
-    Ok(FaceImprint::new(
-        Curve::Nurbs(imprint.curve.to_nurbs()?.reversed()),
-        imprint.pcurve.reversed(),
-    ))
+    imprint.reversed()
 }
 
 fn split_face_by_closed_curve_imprint<P: Payload>(
@@ -614,14 +1022,27 @@ fn add_closed_imprint_loops<P: Payload>(
     g: &mut GMap<P>,
     face: FaceKey,
     graph: &FaceImprintGraph,
+    imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
     let boundary_uvs = face_boundary_uvs(g, face)?;
     let mut splits = Vec::new();
 
-    for component in graph.closed_components() {
-        let mut uvs = component
+    for component in graph.closed_edge_components() {
+        let mut loop_imprints = component
             .iter()
-            .map(|vertex| graph.vertices()[*vertex])
+            .map(|oriented| {
+                let edge = &graph.edges[oriented.edge];
+                let imprint = imprints[edge.source_curve].trimmed(edge.interval)?;
+                if oriented.reversed {
+                    imprint.reversed()
+                } else {
+                    Ok(imprint)
+                }
+            })
+            .collect::<Result<Vec<_>, NurbsError>>()?;
+        let uvs = loop_imprints
+            .iter()
+            .map(|imprint| imprint.pcurve.point_at(0.0))
             .collect::<Vec<_>>();
         if uvs.len() < 3
             || uvs
@@ -631,8 +1052,8 @@ fn add_closed_imprint_loops<P: Payload>(
             continue;
         }
 
-        orient_inner_loop_against_boundary(&boundary_uvs, &mut uvs);
-        splits.push(split_face_by_closed_imprint_loop(g, face, &uvs)?);
+        orient_imprint_loop_against_boundary(&boundary_uvs, &mut loop_imprints)?;
+        splits.push(split_face_by_closed_imprint_loop(g, face, &loop_imprints)?);
     }
 
     Ok(splits)
@@ -641,17 +1062,16 @@ fn add_closed_imprint_loops<P: Payload>(
 fn split_face_by_closed_imprint_loop<P: Payload>(
     g: &mut GMap<P>,
     face: FaceKey,
-    uvs: &[Point2],
+    imprints: &[FaceImprint],
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
     let old_face = g
         .face_attr(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?
         .clone();
-    let mut island_uvs = uvs.to_vec();
-    island_uvs.reverse();
+    let island_imprints = reversed_imprint_loop(imprints)?;
 
-    let outside_loop = add_section_loop(g, &old_face.surface, uvs);
-    let island_loop = add_section_loop(g, &old_face.surface, &island_uvs);
+    let outside_loop = add_section_loop(g, &old_face.surface, imprints);
+    let island_loop = add_section_loop(g, &old_face.surface, &island_imprints);
     finish_closed_imprint_split(g, face, old_face, outside_loop, island_loop)
 }
 
@@ -702,8 +1122,12 @@ struct SectionLoopEdge {
     pcurve: Curve2,
 }
 
-fn add_section_loop<P: Payload>(g: &mut GMap<P>, surface: &Surface, uvs: &[Point2]) -> SectionLoop {
-    let n = uvs.len();
+fn add_section_loop<P: Payload>(
+    g: &mut GMap<P>,
+    surface: &Surface,
+    imprints: &[FaceImprint],
+) -> SectionLoop {
+    let n = imprints.len();
     let darts = (0..2 * n).map(|_| g.add_dart()).collect::<Vec<_>>();
 
     for edge in 0..n {
@@ -717,7 +1141,7 @@ fn add_section_loop<P: Payload>(g: &mut GMap<P>, surface: &Surface, uvs: &[Point
 
     for vertex in 0..n {
         let dart = g.cell_representative(darts[2 * vertex], Dim::Zero);
-        let uv = uvs[vertex];
+        let uv = imprints[vertex].pcurve.point_at(0.0);
         g.add_vertex(VertexAttr::new(
             dart,
             surface.point_at(uv.x, uv.y),
@@ -727,16 +1151,13 @@ fn add_section_loop<P: Payload>(g: &mut GMap<P>, surface: &Surface, uvs: &[Point
 
     let edges = (0..n)
         .map(|edge| {
-            let next = (edge + 1) % n;
+            let imprint = &imprints[edge];
             SectionLoopEdge {
                 dart: darts[2 * edge],
-                start_uv: uvs[edge],
-                end_uv: uvs[next],
-                curve: Curve::line(
-                    surface.point_at(uvs[edge].x, uvs[edge].y),
-                    surface.point_at(uvs[next].x, uvs[next].y),
-                ),
-                pcurve: Curve2::Line(Line2::new(uvs[edge], uvs[next])),
+                start_uv: imprint.pcurve.point_at(0.0),
+                end_uv: imprint.pcurve.point_at(1.0),
+                curve: imprint.curve.clone(),
+                pcurve: imprint.pcurve.clone(),
             }
         })
         .collect::<Vec<_>>();
@@ -757,30 +1178,7 @@ fn add_imprint_section_loop<P: Payload>(
     surface: &Surface,
     imprint: &FaceImprint,
 ) -> SectionLoop {
-    let start = g.add_dart();
-    let end = g.add_dart();
-    g.sew_unchecked(Dim::Zero, start, end);
-    g.sew_unchecked(Dim::One, end, start);
-
-    let uv = imprint.pcurve.point_at(0.0);
-    let vertex = g.cell_representative(start, Dim::Zero);
-    g.add_vertex(VertexAttr::new(
-        vertex,
-        surface.point_at(uv.x, uv.y),
-        P::V::default(),
-    ));
-    let edge = SectionLoopEdge {
-        dart: start,
-        start_uv: uv,
-        end_uv: imprint.pcurve.point_at(1.0),
-        curve: imprint.curve.clone(),
-        pcurve: imprint.pcurve.clone(),
-    };
-    SectionLoop {
-        loop_dart: start,
-        edges: vec![edge],
-        pcurves: HashMap::from([(start, imprint.pcurve.clone())]),
-    }
+    add_section_loop(g, surface, std::slice::from_ref(imprint))
 }
 
 fn sew_section_loops<P: Payload>(
@@ -826,17 +1224,29 @@ fn matching_reversed_loop_edge(
         .cloned()
 }
 
-fn orient_inner_loop_against_boundary(boundary_uvs: &[Point2], uvs: &mut [Point2]) {
+fn orient_imprint_loop_against_boundary(
+    boundary_uvs: &[Point2],
+    imprints: &mut Vec<FaceImprint>,
+) -> Result<(), NurbsError> {
     let boundary_area = signed_area(boundary_uvs);
-    let loop_area = signed_area(uvs);
+    let loop_uvs = imprints
+        .iter()
+        .map(|imprint| imprint.pcurve.point_at(0.0))
+        .collect::<Vec<_>>();
+    let loop_area = signed_area(&loop_uvs);
 
     if boundary_area.abs() <= LINEAR_TOLERANCE || loop_area.abs() <= LINEAR_TOLERANCE {
-        return;
+        return Ok(());
     }
 
     if boundary_area.signum() == loop_area.signum() {
-        uvs.reverse();
+        *imprints = reversed_imprint_loop(imprints)?;
     }
+    Ok(())
+}
+
+fn reversed_imprint_loop(imprints: &[FaceImprint]) -> Result<Vec<FaceImprint>, NurbsError> {
+    imprints.iter().rev().map(FaceImprint::reversed).collect()
 }
 
 fn signed_area(uvs: &[Point2]) -> f64 {
@@ -867,11 +1277,23 @@ fn split_boundary_at_uv<P: Payload>(
     };
 
     let edge = Edge::new(g, target.dart);
-    let start_point = vertex_point(edge.start())?;
-    let end_point = vertex_point(edge.end())?;
     let curve = edge_curve(&edge)?;
-    let interval = curve.parameters_between(start_point, end_point);
-    let parameter = interval.start + (interval.end - interval.start) * target.fraction;
+    let face_view = g
+        .face(face)
+        .ok_or(FaceImprintSplitError::MissingFace { face })?;
+    let surface = face_view.surface();
+    let mut parameter = curve.param_at(surface.point_at(uv.x, uv.y));
+    if let Periodicity::Periodic(period) = curve.periodicity() {
+        let domain = curve
+            .parameters_between(vertex_point(edge.start())?, vertex_point(edge.end())?)
+            .ordered();
+        while parameter < domain.start - LINEAR_TOLERANCE {
+            parameter += period;
+        }
+        while parameter > domain.end + LINEAR_TOLERANCE {
+            parameter -= period;
+        }
+    }
     split_face_edge(g, face, target.edge, parameter)?;
     Ok(())
 }
@@ -952,7 +1374,6 @@ impl FaceImprintCut {
 struct BoundaryEdgeTarget {
     dart: Dart,
     edge: EdgeKey,
-    fraction: f64,
 }
 
 fn face_boundary_uvs<P: Payload>(
@@ -1003,7 +1424,6 @@ fn boundary_edge_at_uv<P: Payload>(
         return Ok(Some(BoundaryEdgeTarget {
             dart: edge.dart,
             edge: boundary_edge_key(g, edge.dart)?,
-            fraction,
         }));
     }
 
@@ -1211,6 +1631,41 @@ fn face_pcurve<P: Payload>(
         .ok_or(FaceEdgeSplitError::MissingPcurve { face, dart })
 }
 
+fn closed_boundary_curve_reversed<P: Payload>(
+    g: &GMap<P>,
+    face: FaceKey,
+    edge: EdgeKey,
+    dart: Dart,
+) -> Result<bool, FaceEdgeSplitError> {
+    let edge_view = Edge::new(g, dart);
+    let start = vertex_point(edge_view.start())?;
+    let end = vertex_point(edge_view.end())?;
+    if (start - end).norm() > LINEAR_TOLERANCE {
+        return Ok(false);
+    }
+
+    let face_view = g
+        .face(face)
+        .ok_or(FaceEdgeSplitError::MissingFace { face })?;
+    let pcurve = face_view
+        .pcurve(dart)
+        .ok_or(FaceEdgeSplitError::MissingPcurve { face, dart })?;
+    let curve = g
+        .edge_attr(edge)
+        .ok_or(FaceEdgeSplitError::EdgeSplitFailed(
+            EdgeSplitError::MissingEdge { edge },
+        ))?
+        .curve
+        .to_nurbs()?;
+    let domain = curve.domain();
+    let fraction = 1.0e-4;
+    let sample_uv = pcurve.point_at(fraction);
+    let sample = face_view.point_at(sample_uv.x, sample_uv.y);
+    let forward = curve.point_at(domain.start + domain.length() * fraction);
+    let reverse = curve.point_at(domain.end - domain.length() * fraction);
+    Ok((sample - reverse).norm_squared() < (sample - forward).norm_squared())
+}
+
 fn incident_face_pcurves<P: Payload>(
     g: &GMap<P>,
     edge: EdgeKey,
@@ -1221,6 +1676,7 @@ fn incident_face_pcurves<P: Payload>(
         .ok_or(FaceEdgeSplitError::EdgeSplitFailed(
             EdgeSplitError::MissingEdge { edge },
         ))?;
+    let split_point = edge_attr.curve.point_at(parameter);
     let mut seen = HashSet::new();
     g.orbit(edge_attr.dart, g.orbit_indices(Dim::One))
         .filter_map(|dart| g.attribute::<Cell2>(dart).copied())
@@ -1228,7 +1684,18 @@ fn incident_face_pcurves<P: Payload>(
         .map(|face| {
             let dart = face_edge_dart(g, face, edge)?;
             let pcurve = face_pcurve(g, face, dart)?;
-            let fraction = pcurve_split_fraction(g, dart, parameter)?;
+            let face_view = g
+                .face(face)
+                .ok_or(FaceEdgeSplitError::MissingFace { face })?;
+            let surface = face_view.surface();
+            let uv = periodic_image_near_pcurve(
+                surface,
+                &pcurve,
+                surface.closest_parameter(split_point)?,
+            );
+            let fraction = pcurve
+                .parameter_at(uv, LINEAR_TOLERANCE)
+                .ok_or(FaceEdgeSplitError::SplitPointNotOnPcurve { face, dart })?;
             Ok(IncidentFacePcurve {
                 face,
                 dart,
@@ -1239,21 +1706,24 @@ fn incident_face_pcurves<P: Payload>(
         .collect()
 }
 
-fn pcurve_split_fraction<P: Payload>(
-    g: &GMap<P>,
-    boundary_dart: Dart,
-    parameter: f64,
-) -> Result<f64, FaceEdgeSplitError> {
-    let edge = Edge::new(g, boundary_dart);
-    let start = vertex_point(edge.start())?;
-    let end = vertex_point(edge.end())?;
-    let curve = edge_curve(&edge)?;
-    let interval = curve.parameters_between(start, end);
-    let length = interval.end - interval.start;
-    if length.abs() <= LINEAR_TOLERANCE {
-        return Err(FaceEdgeSplitError::DegenerateSplit { parameter });
+fn periodic_image_near_pcurve(surface: &Surface, pcurve: &Curve2, mut uv: Point2) -> Point2 {
+    let start = pcurve.point_at(0.0);
+    let end = pcurve.point_at(1.0);
+    let center = Point2::from((start.coords + end.coords) * 0.5);
+    match surface.periodicity() {
+        SurfacePeriodicity::UPeriodic(period) => {
+            uv.x += ((center.x - uv.x) / period).round() * period;
+        }
+        SurfacePeriodicity::VPeriodic(period) => {
+            uv.y += ((center.y - uv.y) / period).round() * period;
+        }
+        SurfacePeriodicity::UVPeriodic(u_period, v_period) => {
+            uv.x += ((center.x - uv.x) / u_period).round() * u_period;
+            uv.y += ((center.y - uv.y) / v_period).round() * v_period;
+        }
+        SurfacePeriodicity::None => {}
     }
-    Ok(((parameter - interval.start) / length).clamp(0.0, 1.0))
+    uv
 }
 
 fn assign_split_pcurves<P: Payload>(

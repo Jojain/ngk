@@ -26,7 +26,9 @@ pub use dim3::nurbs::tessellate::{
 pub use dim3::nurbs::{
     Bezier, ControlNet, ControlPolygon, Degree, HPoint, KnotVector, NurbsCurve, NurbsSurface,
 };
-pub use dim3::surfaces::{Cylinder, Plane, RuledSurface, Surface, SurfaceOfRevolution};
+pub use dim3::surfaces::{
+    Cylinder, Plane, RuledSurface, Surface, SurfaceOfRevolution, SurfacePeriodicity,
+};
 pub use dim3::utils::{IntoUnit, Point3, PointCoincidence};
 pub use interval::Interval;
 pub use nurbs::error::NurbsError;

@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use nalgebra::Vector3;
+use ngk::builders::edges::add_circle as add_circle_edge;
 use ngk::builders::edges::add_line;
 use ngk::builders::errors::{FaceCreationError, PolylineError};
 use ngk::builders::faces::{
@@ -14,10 +15,10 @@ use ngk::geometry::{
     Surface,
 };
 use ngk::topology::gmap::GMap;
-use ngk::topology::gmap::{Cell0, Cell2, Dim};
+use ngk::topology::gmap::{Cell0, Dim};
 use ngk::topology::payload::StandardPayload;
-use ngk::topology::profile::Profile;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
+use ngk::viz::debug_viewer::show_gmap;
 
 #[test]
 fn add_rectangle_creates_single_planar_face_with_pcurves() {
@@ -419,11 +420,34 @@ fn face_imprint_graph_splits_crossing_segments_at_interior_vertex() {
     let graph = FaceImprintGraph::from_curves(&[
         Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0))),
         Curve2::Line(Line2::new(Point2::new(2.0, 0.0), Point2::new(0.0, 2.0))),
-    ]);
+    ])
+    .expect("imprint graph should build");
 
     assert_eq!(graph.vertices().len(), 5);
     assert_eq!(graph.edges().len(), 4);
     assert_eq!(graph.branch_vertices().len(), 1);
+    assert_eq!(
+        graph
+            .edges()
+            .iter()
+            .filter(|edge| edge.source_curve == 0)
+            .count(),
+        2
+    );
+    assert_eq!(
+        graph
+            .edges()
+            .iter()
+            .filter(|edge| edge.source_curve == 1)
+            .count(),
+        2
+    );
+    assert!(graph.edges().iter().all(|edge| {
+        (edge.interval.start - 0.0).abs() <= LINEAR_TOLERANCE
+            && (edge.interval.end - 0.5).abs() <= LINEAR_TOLERANCE
+            || (edge.interval.start - 0.5).abs() <= LINEAR_TOLERANCE
+                && (edge.interval.end - 1.0).abs() <= LINEAR_TOLERANCE
+    }));
     let branch = graph.branch_vertices()[0];
     assert_eq!(graph.vertex_degree(branch), 4);
     assert!((graph.vertices()[branch] - Point2::new(1.0, 1.0)).norm() <= LINEAR_TOLERANCE);
@@ -434,7 +458,8 @@ fn face_imprint_graph_splits_t_junction_segments() {
     let graph = FaceImprintGraph::from_curves(&[
         Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 0.0))),
         Curve2::Line(Line2::new(Point2::new(1.0, 1.0), Point2::new(1.0, 0.0))),
-    ]);
+    ])
+    .expect("imprint graph should build");
 
     assert_eq!(graph.vertices().len(), 4);
     assert_eq!(graph.edges().len(), 3);
@@ -457,7 +482,7 @@ fn face_imprint_graph_detects_closed_loop_components() {
         .windows(2)
         .map(|pair| Curve2::Line(Line2::new(pair[0], pair[1])))
         .collect::<Vec<_>>();
-    let graph = FaceImprintGraph::from_curves(&curves);
+    let graph = FaceImprintGraph::from_curves(&curves).expect("imprint graph should build");
 
     assert_eq!(graph.vertices().len(), 4);
     assert_eq!(graph.edges().len(), 4);
@@ -486,6 +511,205 @@ fn split_face_by_imprints_preserves_curved_section_edge_geometry() {
         .expect("section edge should exist");
 
     assert!(matches!(edge.curve, Curve::Nurbs(_)));
+}
+
+#[test]
+fn split_face_preserves_curved_loop() {
+    let mut g = GMap::<StandardPayload>::new();
+    let face_key = add_rectangle(&mut g, Plane::xy(), 6.0, 6.0).expect("face should build");
+    let pcurves = [
+        [
+            Point2::new(1.0, 1.0),
+            Point2::new(3.0, 1.0 - 1.0e-8),
+            Point2::new(5.0, 1.0),
+        ],
+        [
+            Point2::new(5.0, 1.0),
+            Point2::new(5.0 + 1.0e-8, 3.0),
+            Point2::new(5.0, 5.0),
+        ],
+        [
+            Point2::new(5.0, 5.0),
+            Point2::new(3.0, 5.0 + 1.0e-8),
+            Point2::new(1.0, 5.0),
+        ],
+        [
+            Point2::new(1.0, 5.0),
+            Point2::new(1.0 - 1.0e-8, 3.0),
+            Point2::new(1.0, 1.0),
+        ],
+    ]
+    .map(|points| Curve2::Nurbs(NurbsCurve2::interpolate(&points).unwrap()));
+    let imprints = pcurves.into_iter().map(planar_imprint).collect::<Vec<_>>();
+
+    let splits =
+        split_face_by_imprints(&mut g, face_key, &imprints).expect("curved loop should split");
+    assert_eq!(splits.len(), 1);
+    assert_eq!(splits[0].section_edges.len(), 4);
+    assert!(splits[0].section_edges.iter().all(|edge| {
+        matches!(
+            g.edge_attr(*edge).expect("section edge should exist").curve,
+            Curve::Nurbs(_)
+        )
+    }));
+}
+
+#[test]
+fn split_cylinder_face_at_two_generators() {
+    let mut g = GMap::<StandardPayload>::new();
+    let (circle, _) = add_circle_edge(&mut g, Plane::xy(), 1.0).expect("circle should build");
+    add_extruded_profile(&mut g, circle, Vector3::new(0.0, 0.0, 2.0))
+        .expect("circle should extrude");
+    let face_key = g
+        .iter_faces()
+        .map(|(key, _)| key)
+        .next()
+        .expect("cylindrical face should exist");
+    let surface = g
+        .face_attr(face_key)
+        .expect("cylindrical face should exist")
+        .surface
+        .clone();
+    let imprints = [
+        3.0 * std::f64::consts::FRAC_PI_2,
+        std::f64::consts::FRAC_PI_2,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, u)| {
+        let (start_v, end_v) = if index == 0 { (1.0, 0.0) } else { (0.0, 1.0) };
+        FaceImprint::new(
+            Curve::line(surface.point_at(u, start_v), surface.point_at(u, end_v)),
+            Curve2::Line(Line2::new(Point2::new(u, start_v), Point2::new(u, end_v))),
+        )
+    })
+    .collect::<Vec<_>>();
+
+    let splits =
+        split_face_by_imprints(&mut g, face_key, &imprints).expect("cylinder should split");
+        
+    assert_eq!(splits.len(), 1);
+    assert_eq!(splits[0].section_edges.len(), 2);
+    assert_eq!(g.iter_faces().count(), 2);
+    let result_faces = [splits[0].first, splits[0].second]
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let result_edges = result_faces
+        .iter()
+        .flat_map(|face| {
+            g.face(*face)
+                .expect("half-cylinder face should exist")
+                .edges()
+        })
+        .map(|edge| edge.key())
+        .collect::<HashSet<_>>();
+    assert_eq!(result_edges.len(), 6);
+    for edge in &splits[0].section_edges {
+        let edge_view = g.edge(*edge).expect("section edge should exist");
+        assert_eq!(
+            edge_view
+                .faces()
+                .into_iter()
+                .map(|face| face.key())
+                .collect::<HashSet<_>>(),
+            result_faces
+        );
+        let first_dart = g
+            .face(splits[0].first)
+            .expect("first half-cylinder should exist")
+            .edges()
+            .into_iter()
+            .find(|candidate| candidate.key() == *edge)
+            .expect("first half-cylinder should contain generator")
+            .dart;
+        let second_dart = g
+            .face(splits[0].second)
+            .expect("second half-cylinder should exist")
+            .edges()
+            .into_iter()
+            .find(|candidate| candidate.key() == *edge)
+            .expect("second half-cylinder should contain generator")
+            .dart;
+        assert_eq!(
+            g.alpha(Dim::Two, first_dart),
+            g.alpha(Dim::Zero, second_dart),
+            "shared generator starts should be alpha2-linked to opposite ends"
+        );
+        assert_eq!(
+            g.alpha(Dim::Two, g.alpha(Dim::Zero, first_dart)),
+            second_dart,
+            "shared generator ends should be alpha2-linked to opposite starts"
+        );
+    }
+    for face_key in result_faces {
+        let face = g.face(face_key).expect("half-cylinder face should exist");
+        let edges = face.outer_loop().edges();
+        assert_eq!(edges.len(), 4);
+        assert_eq!(
+            g.face_attr(face_key)
+                .expect("half-cylinder face should exist")
+                .pcurves
+                .len(),
+            4
+        );
+        assert_eq!(
+            edges
+                .iter()
+                .filter(|edge| splits[0].section_edges.contains(&edge.key()))
+                .count(),
+            2
+        );
+        for (edge, next) in edges
+            .iter()
+            .zip(edges.iter().cycle().skip(1))
+            .take(edges.len())
+        {
+            let pcurve = face
+                .pcurve(edge.dart)
+                .expect("loop edge should have an oriented pcurve");
+            let start_uv = pcurve.point_at(0.0);
+            let end_uv = pcurve.point_at(1.0);
+            let next_start_uv = face
+                .pcurve(next.dart)
+                .expect("next loop edge should have an oriented pcurve")
+                .point_at(0.0);
+            let pcurve_start = face.point_at(start_uv.x, start_uv.y);
+            let pcurve_end = face.point_at(end_uv.x, end_uv.y);
+            let edge_start = *edge
+                .start()
+                .point()
+                .expect("edge start should have geometry");
+            let edge_end = *edge.end().point().expect("edge end should have geometry");
+            assert!(
+                pcurve_start.coincides(edge_start, LINEAR_TOLERANCE),
+                "pcurve should start at its loop dart's start vertex: face={face_key:?}, dart={:?}, uv={start_uv:?}, pcurve={pcurve_start:?}, edge={edge_start:?}",
+                edge.dart
+            );
+            assert!(
+                pcurve_end.coincides(edge_end, LINEAR_TOLERANCE),
+                "pcurve should end at its loop dart's end vertex: face={face_key:?}, dart={:?}, uv={end_uv:?}, pcurve={pcurve_end:?}, edge={edge_end:?}",
+                edge.dart
+            );
+            assert!(
+                (end_uv - next_start_uv).norm() <= LINEAR_TOLERANCE,
+                "half-cylinder pcurves should form one continuous UV loop: {end_uv:?} != {next_start_uv:?}"
+            );
+        }
+        for edge in edges
+            .iter()
+            .filter(|edge| !splits[0].section_edges.contains(&edge.key()))
+        {
+            let Curve::Nurbs(curve) = edge.curve().expect("half-cylinder arc should exist") else {
+                panic!("half-cylinder boundary should remain a NURBS arc");
+            };
+            let domain = curve.domain();
+            let length = curve.length(domain.start, domain.end);
+            assert!(
+                (length - std::f64::consts::PI).abs() <= 1.0e-6,
+                "half-cylinder boundary arc has length {length}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -543,17 +767,16 @@ fn planar_imprint(pcurve: Curve2) -> FaceImprint {
 
 fn first_outer_edge_key(g: &GMap<StandardPayload>, face_key: FaceKey) -> EdgeKey {
     let face = g.face_attr(face_key).expect("face should exist").face(g);
-    let dart = Profile::new(g, face.outer_loop().dart).edges()[0].dart;
-    edge_key_for_dart(g, dart)
+    face.outer_loop().edges()[0].key()
 }
 
 fn incident_face_keys(g: &GMap<StandardPayload>, edge: EdgeKey) -> Vec<FaceKey> {
-    let edge_dart = g.edge_attr(edge).expect("edge should exist").dart;
-    let mut seen = HashSet::new();
     let mut faces = g
-        .orbit(edge_dart, g.orbit_indices(Dim::One))
-        .filter_map(|dart| g.attribute::<Cell2>(dart).copied())
-        .filter(|face| seen.insert(*face))
+        .edge(edge)
+        .expect("edge should exist")
+        .faces()
+        .into_iter()
+        .map(|face| face.key())
         .collect::<Vec<_>>();
     faces.sort_by_key(|face| format!("{face:?}"));
     faces
@@ -585,11 +808,4 @@ fn edge_between_points(g: &GMap<StandardPayload>, first: Point3, second: Point3)
             .then_some(key)
         })
         .expect("edge should connect the requested points")
-}
-
-fn edge_key_for_dart(g: &GMap<StandardPayload>, dart: ngk::topology::Dart) -> EdgeKey {
-    let representative = g.cell_representative(dart, Dim::One);
-    g.iter_edges()
-        .find_map(|(key, edge)| (edge.dart == representative).then_some(key))
-        .expect("edge key should exist for dart")
 }

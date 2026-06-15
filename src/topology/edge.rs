@@ -1,5 +1,8 @@
+use std::collections::HashSet;
+
 use crate::geometry::{Curve, LINEAR_TOLERANCE, PointCoincidence};
 use crate::topology::closed::Closeable;
+use crate::topology::face::Face;
 use crate::topology::gmap::{Cell1, Dim, MergeTopology, TopologyMerge};
 use crate::topology::shape_keys::EdgeKey;
 
@@ -74,6 +77,14 @@ impl<'a, P: Payload> Edge<'a, P> {
         self.gmap
             .incident_cells(self.dart, Dim::One, Dim::Two)
             .map(|d| Facet::new(self.gmap, d))
+            .collect()
+    }
+
+    /// Returns the distinct domain faces incident to this edge.
+    pub fn faces(&self) -> Vec<Face<'a, P>> {
+        self.facets()
+            .into_iter()
+            .map(|facet| facet.face().expect("a facet should have a face"))
             .collect()
     }
 
