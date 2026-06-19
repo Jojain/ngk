@@ -5,8 +5,7 @@ use crate::topology::gmap::Dim;
 use super::closed::{Closeable, Closed};
 use super::edge::Edge;
 use super::face::Face;
-use super::facet::Facet;
-use super::gmap::{Dart, GMap, MergeTopology, TopologyMerge};
+use super::gmap::{Cell2, Dart, GMap, MergeTopology, TopologyMerge};
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 
@@ -43,11 +42,15 @@ impl<'a, P: Payload> Sheet<'a, P> {
 
     /// Returns the domain faces attached to this sheet.
     ///
-    /// Facets without a registered [`Face`] are skipped.
+    /// Raw 2-cells without a registered [`Face`] are skipped.
     pub fn faces(&self) -> Vec<Face<'a, P>> {
+        let mut seen = HashSet::new();
         self.gmap
             .incident_cells(self.dart, Dim::Three, Dim::Two)
-            .filter_map(|dart| Face::from_facet(self.gmap, &Facet::new(self.gmap, dart)))
+            .filter_map(|dart| {
+                let key = self.gmap.cell_key::<Cell2>(dart)?;
+                seen.insert(key).then(|| Face::new(self.gmap, key))
+            })
             .collect()
     }
 

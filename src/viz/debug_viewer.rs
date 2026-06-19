@@ -16,13 +16,10 @@ use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::{Curve, Surface};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::facet::Facet;
 use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap, MergeTopology};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
-use crate::topology::shape::{
-    EdgeTag, FaceTag, FacetTag, ProfileTag, Shape, SheetTag, SolidTag, VertexTag,
-};
+use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape, SheetTag, SolidTag, VertexTag};
 use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
 use crate::topology::vertex::Vertex;
@@ -304,19 +301,6 @@ where
     }
 }
 
-impl<P> DebugDisplay for Shape<FacetTag, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::F: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        self.map().append_debug_gmaps(gmaps);
-    }
-}
-
 impl<P> DebugDisplay for Shape<SheetTag, P>
 where
     P: Payload,
@@ -383,19 +367,6 @@ where
 }
 
 impl<P> DebugDisplay for Face<'_, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::F: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        append_topology_item::<P, _>(self, gmaps);
-    }
-}
-
-impl<P> DebugDisplay for Facet<'_, P>
 where
     P: Payload,
     P::V: Debug,

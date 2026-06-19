@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::facet::Facet;
 use crate::topology::gmap::{Dart, GMap};
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
@@ -17,8 +16,6 @@ pub struct VertexTag;
 pub struct EdgeTag;
 /// Type marker for an owned face shape.
 pub struct FaceTag;
-/// Type marker for an owned facet shape.
-pub struct FacetTag;
 /// Type marker for an owned profile shape.
 pub struct ProfileTag;
 /// Type marker for an owned sheet shape.
@@ -42,10 +39,6 @@ impl ShapeKind for EdgeTag {
 
 impl ShapeKind for FaceTag {
     type Handle = FaceKey;
-}
-
-impl ShapeKind for FacetTag {
-    type Handle = Dart;
 }
 
 impl ShapeKind for ProfileTag {
@@ -168,18 +161,6 @@ impl<P: Payload> Shape<ProfileTag, P> {
     }
 
     /// Returns the primary profile dart.
-    pub fn dart(&self) -> Dart {
-        self.handle
-    }
-}
-
-impl<P: Payload> Shape<FacetTag, P> {
-    /// Returns the primary facet view.
-    pub fn facet(&self) -> Facet<'_, P> {
-        Facet::new(&self.map, self.handle)
-    }
-
-    /// Returns the primary facet dart.
     pub fn dart(&self) -> Dart {
         self.handle
     }

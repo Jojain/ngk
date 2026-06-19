@@ -1,11 +1,12 @@
+use std::collections::HashSet;
+
 use crate::geometry::{Curve, LINEAR_TOLERANCE, PointCoincidence};
 use crate::topology::closed::Closeable;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell1, Dim, MergeTopology, TopologyMerge};
+use crate::topology::gmap::{Cell1, Cell2, Dim, MergeTopology, TopologyMerge};
 use crate::topology::orientation::Orientation;
 use crate::topology::shape_keys::EdgeKey;
 
-use super::facet::Facet;
 use super::gmap::{Dart, GMap};
 use super::payload::{Payload, StandardPayload};
 use super::sheet::Sheet;
@@ -109,19 +110,15 @@ impl<'a, P: Payload> Edge<'a, P> {
             .collect()
     }
 
-    /// Returns all gmap 2-cell facets incident to this edge.
-    pub fn facets(&self) -> Vec<Facet<'a, P>> {
-        self.gmap
-            .incident_cells(self.dart(), Dim::One, Dim::Two)
-            .map(|d| Facet::new(self.gmap, d))
-            .collect()
-    }
-
     /// Returns the distinct domain faces incident to this edge.
     pub fn faces(&self) -> Vec<Face<'a, P>> {
-        self.facets()
-            .into_iter()
-            .filter_map(|facet| Face::from_facet(self.gmap, &facet))
+        let mut seen = HashSet::new();
+        self.gmap
+            .incident_cells(self.dart(), Dim::One, Dim::Two)
+            .filter_map(|dart| {
+                let key = self.gmap.cell_key::<Cell2>(dart)?;
+                seen.insert(key).then(|| Face::new(self.gmap, key))
+            })
             .collect()
     }
 

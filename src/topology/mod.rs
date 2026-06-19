@@ -3,7 +3,6 @@ pub mod closed;
 pub mod dart;
 pub mod edge;
 pub mod face;
-pub mod facet;
 pub mod gmap;
 pub mod orientation;
 pub mod payload;

@@ -1,7 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::useless_conversion)]
 
-use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -21,7 +20,6 @@ use crate::modeling::{edges, faces, profiles, solids};
 use crate::tcv::{TcvOptions, to_tcv};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::facet::Facet;
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::profile::{Loop, Profile};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
@@ -41,7 +39,6 @@ pub fn _ngk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyShell>()?;
     m.add_class::<PyProfile>()?;
     m.add_class::<PyFace>()?;
-    m.add_class::<PyFacet>()?;
     m.add_class::<PyLoop>()?;
     m.add_class::<PyEdge>()?;
     m.add_class::<PyVertex>()?;
@@ -209,12 +206,6 @@ fn face_vertices<'g>(face: &Face<'g, StandardPayload>) -> Vec<Vertex<'g, Standar
         vertices.extend(loop_.vertices());
     }
     vertices
-}
-
-fn face_loop_darts(face: &Face<'_, StandardPayload>) -> Vec<Dart> {
-    let mut darts = vec![face.outer_loop().dart];
-    darts.extend(face.inner_loops().into_iter().map(|loop_| loop_.dart));
-    darts
 }
 
 fn curve_to_py(py: Python<'_>, curve: Curve) -> PyResult<PyObject> {
@@ -585,84 +576,6 @@ impl PyProfile {
     }
 }
 
-#[pyclass(name = "Facet", module = "ngk")]
-#[derive(Clone)]
-pub struct PyFacet {
-    map: SharedMap,
-    dart: Dart,
-}
-
-impl PyFacet {
-    fn new(map: SharedMap, facet: Facet<'_, StandardPayload>) -> Self {
-        let dart = map.cell_representative(facet.dart, Dim::Two);
-        Self { map, dart }
-    }
-
-    fn facet(&self) -> Facet<'_, StandardPayload> {
-        Facet::new(self.map.as_ref(), self.dart)
-    }
-}
-
-#[pymethods]
-impl PyFacet {
-    #[getter]
-    fn dart_id(&self) -> usize {
-        self.dart.id()
-    }
-
-    #[getter]
-    fn face(&self) -> Option<PyFace> {
-        self.facet().face().and_then(|face| {
-            self.map
-                .attribute::<crate::topology::gmap::Cell2>(face.outer_loop().dart)
-                .copied()
-                .map(|key| PyFace::new(Arc::clone(&self.map), key))
-        })
-    }
-
-    fn edges(&self) -> Vec<PyEdge> {
-        self.facet()
-            .edges()
-            .into_iter()
-            .map(|edge| PyEdge::new(Arc::clone(&self.map), edge))
-            .collect()
-    }
-
-    fn incident_edges(&self) -> Vec<PyEdge> {
-        self.facet()
-            .incident_edges()
-            .into_iter()
-            .map(|edge| PyEdge::new(Arc::clone(&self.map), edge))
-            .collect()
-    }
-
-    fn vertices(&self) -> Vec<PyVertex> {
-        self.facet()
-            .vertices()
-            .into_iter()
-            .map(|vertex| PyVertex::new(Arc::clone(&self.map), vertex))
-            .collect()
-    }
-
-    fn __richcmp__(&self, other: PyRef<'_, PyFacet>, op: CompareOp) -> PyResult<bool> {
-        match op {
-            CompareOp::Eq => Ok(Arc::ptr_eq(&self.map, &other.map) && self.dart == other.dart),
-            CompareOp::Ne => Ok(!Arc::ptr_eq(&self.map, &other.map) || self.dart != other.dart),
-            _ => Err(PyValueError::new_err(
-                "facet ordering is not defined; use == or !=",
-            )),
-        }
-    }
-
-    fn __hash__(&self) -> isize {
-        hash_topology_identity(&self.map, self.dart)
-    }
-
-    fn __repr__(&self) -> String {
-        format!("Facet(dart_id={})", self.dart.id())
-    }
-}
-
 #[pyclass(name = "Edge", module = "ngk")]
 #[derive(Clone)]
 pub struct PyEdge {
@@ -747,30 +660,12 @@ impl PyEdge {
     }
 
     fn faces(&self) -> PyResult<Vec<PyFace>> {
-        let map = self.map.as_ref();
-        let incident_facets = self
+        Ok(self
             .edge()?
-            .facets()
+            .faces()
             .into_iter()
-            .map(|facet| map.cell_representative(facet.dart, Dim::Two))
-            .collect::<HashSet<_>>();
-
-        let mut faces = Vec::new();
-        for (key, _attr) in map.iter_faces() {
-            let face = Face::new(map, key);
-            let matched_facet = face_loop_darts(&face)
-                .into_iter()
-                .map(|dart| map.cell_representative(dart, Dim::Two))
-                .any(|dart| incident_facets.contains(&dart));
-            let matched_edge = face_edges(&face)
-                .iter()
-                .any(|edge| edge_key(map, edge) == Some(self.key));
-
-            if matched_facet || matched_edge {
-                faces.push(PyFace::new(Arc::clone(&self.map), key));
-            }
-        }
-        Ok(faces)
+            .map(|face| PyFace::new(Arc::clone(&self.map), face.key()))
+            .collect())
     }
 
     fn __richcmp__(&self, other: PyRef<'_, PyEdge>, op: CompareOp) -> PyResult<bool> {
@@ -847,28 +742,13 @@ impl PyVertex {
             .collect())
     }
 
-    fn facets(&self) -> PyResult<Vec<PyFacet>> {
+    fn faces(&self) -> PyResult<Vec<PyFace>> {
         Ok(self
             .vertex()?
-            .facets()
+            .faces()
             .into_iter()
-            .map(|facet| PyFacet::new(Arc::clone(&self.map), facet))
+            .map(|face| PyFace::new(Arc::clone(&self.map), face.key()))
             .collect())
-    }
-
-    fn faces(&self) -> PyResult<Vec<PyFace>> {
-        let map = self.map.as_ref();
-        let mut faces = Vec::new();
-        for (key, _attr) in map.iter_faces() {
-            let face = Face::new(map, key);
-            if face_vertices(&face)
-                .iter()
-                .any(|vertex| vertex_key(map, vertex) == Some(self.key))
-            {
-                faces.push(PyFace::new(Arc::clone(&self.map), key));
-            }
-        }
-        Ok(faces)
     }
 
     fn __richcmp__(&self, other: PyRef<'_, PyVertex>, op: CompareOp) -> PyResult<bool> {

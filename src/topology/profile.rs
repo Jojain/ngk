@@ -94,7 +94,7 @@ impl<'a, P: Payload> Closeable for Profile<'a, P> {
     }
 }
 
-/// A closed profile used as a face or facet boundary loop.
+/// A closed profile used as a face boundary loop.
 ///
 /// The closedness invariant is checked by [`Closed::new`] or trusted by
 /// [`Closed::new_unchecked`].

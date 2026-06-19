@@ -1,9 +1,11 @@
+use std::collections::HashSet;
+
 use crate::geometry::Point3;
-use crate::topology::gmap::{Cell0, Dim, MergeTopology, TopologyMerge};
+use crate::topology::face::Face;
+use crate::topology::gmap::{Cell0, Cell2, Dim, MergeTopology, TopologyMerge};
 use crate::topology::shape_keys::VertexKey;
 
 use super::edge::Edge;
-use super::facet::Facet;
 use super::gmap::{Dart, GMap};
 use super::payload::{Payload, StandardPayload};
 use super::sheet::Sheet;
@@ -54,15 +56,17 @@ impl<'a, P: Payload> Vertex<'a, P> {
             .collect()
     }
 
-    /// Returns all gmap 2-cell facets incident to this vertex.
+    /// Returns the distinct domain faces incident to this vertex.
     ///
-    /// A [`Facet`] is the topological 2-cell. Use [`Facet::face`] when you need
-    /// the optional domain-level [`Face`](crate::topology::face::Face) attached
-    /// to that facet.
-    pub fn facets(&self) -> Vec<Facet<'a, P>> {
+    /// Raw 2-cells without a registered face attribute are skipped.
+    pub fn faces(&self) -> Vec<Face<'a, P>> {
+        let mut seen = HashSet::new();
         self.gmap
             .incident_cells(self.dart, Dim::Zero, Dim::Two)
-            .map(|d| Facet::new(self.gmap, d))
+            .filter_map(|dart| {
+                let key = self.gmap.cell_key::<Cell2>(dart)?;
+                seen.insert(key).then(|| Face::new(self.gmap, key))
+            })
             .collect()
     }
 

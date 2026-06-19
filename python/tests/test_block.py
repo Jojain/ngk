@@ -98,4 +98,4 @@ def test_vertices_and_edges_traverse_to_faces():
     assert face in vertex.faces()
     assert edge in vertex.edges()
     assert len(edge.faces()) == 2
-    assert len(vertex.facets()) == 3
+    assert len(vertex.faces()) == 3

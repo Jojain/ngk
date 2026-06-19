@@ -24,7 +24,7 @@ pub enum Dim {
     Zero,
     /// Edge dimension / alpha1.
     One,
-    /// Facet or face dimension / alpha2.
+    /// Face dimension / alpha2.
     Two,
     /// Sheet or solid dimension / alpha3.
     Three,
@@ -68,7 +68,7 @@ pub struct SewableDarts {
 pub struct Cell0;
 /// Type marker for edge attributes.
 pub struct Cell1;
-/// Type marker for facet/face attributes.
+/// Type marker for face attributes.
 pub struct Cell2;
 /// Type marker for solid attributes.
 pub struct Cell3;
@@ -491,18 +491,14 @@ impl<P: Payload> GMap<P> {
     ///
     /// # Panics
     ///
-    /// Panics if `key` is not a registered edge.
+    /// Panics if `key` is not a registered edge or `dart` does not belong to
+    /// that edge.
     pub fn edge_orientation_at_dart(&self, key: EdgeKey, dart: Dart) -> Orientation {
         let attr = self
             .edge_attr(key)
             .expect("edge orientation requires valid edge key");
-        let v_dart = self.cell_representative(dart, Dim::Zero);
-        let v_attr = self.cell_representative(attr.dart, Dim::Zero);
-        if v_dart == v_attr {
-            Orientation::Same
-        } else {
-            Orientation::Reversed
-        }
+        self.cell_orientation_from_seed(attr.dart, dart, Dim::One)
+            .expect("edge orientation requires dart to belong to edge")
     }
 
     /// Returns the edge attribute for `key`, if it exists.
@@ -533,7 +529,7 @@ impl<P: Payload> GMap<P> {
     ///
     /// # Panics
     ///
-    /// Panics if any boundary facet is already attached to a face.
+    /// Panics if any boundary 2-cell is already attached to a face.
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
         let reprs = std::iter::once(face.outer_loop)
             .chain(face.inner_loops.iter().copied())
@@ -546,7 +542,7 @@ impl<P: Payload> GMap<P> {
             "A face is already attached to one of the boundary darts"
         );
         let key = self.faces.insert(face);
-        self.index_face_boundary_darts(key);
+        self.index_face_loop_darts(key);
         key
     }
 
@@ -562,26 +558,62 @@ impl<P: Payload> GMap<P> {
     ///
     /// # Panics
     ///
-    /// Panics if `key` is not a registered face.
+    /// Panics if `key` is not a registered face or `dart` does not belong to
+    /// one of that face's boundary components.
     pub fn face_orientation_at_dart(&self, key: FaceKey, dart: Dart) -> Orientation {
         let attr = self
             .face_attr(key)
             .expect("face orientation requires valid face key");
-        let outer_repr = self.cell_representative(attr.outer_loop, Dim::Two);
-        let dart_repr = self.cell_representative(dart, Dim::Two);
-        if outer_repr == dart_repr {
-            Orientation::Same
-        } else {
-            Orientation::Reversed
-        }
+        std::iter::once(attr.outer_loop)
+            .chain(attr.inner_loops.iter().copied())
+            .find_map(|seed| self.cell_orientation_from_seed(seed, dart, Dim::Two))
+            .expect("face orientation requires dart to belong to face")
     }
 
-    fn index_face_boundary_darts(&mut self, key: FaceKey) {
-        let attr = self.face[key]; // This exists because attr has just been added
+    fn index_face_loop_darts(&mut self, key: FaceKey) {
+        let attr = &self.faces[key]; // This exists because attr has just been added
         for seed in std::iter::once(attr.outer_loop).chain(attr.inner_loops.iter().copied()) {
             let repr = self.cell_representative(seed, Dim::Two);
             self.dart_to_face.insert(repr, key);
         }
+    }
+
+    fn cell_orientation_from_seed(
+        &self,
+        seed: Dart,
+        target: Dart,
+        dim: Dim,
+    ) -> Option<Orientation> {
+        let mut orientations = vec![None; self.dart_count()];
+        let mut queue = VecDeque::from([seed]);
+        orientations[seed.id()] = Some(Orientation::Same);
+        let involutions = self.orbit_indices(dim);
+
+        while let Some(dart) = queue.pop_front() {
+            let orientation =
+                orientations[dart.id()].expect("queued dart must have an orientation");
+            if dart == target {
+                return Some(orientation);
+            }
+
+            for &index in &involutions {
+                let linked = self.alphas[index][dart.id()];
+                if linked == dart || orientations[linked.id()].is_some() {
+                    continue;
+                }
+                // Lower-dimensional flag changes reverse the cell. Higher-
+                // dimensional incidence changes preserve its intrinsic orientation.
+                let linked_orientation = if index < dim.index() {
+                    orientation.flip()
+                } else {
+                    orientation
+                };
+                orientations[linked.id()] = Some(linked_orientation);
+                queue.push_back(linked);
+            }
+        }
+
+        None
     }
 
     /// Returns the face attribute for `key`, if it exists.
@@ -763,7 +795,7 @@ impl<P: Payload> GMap<P> {
                 .filter_map(|(dart, curve)| dart_map.get(&dart).copied().map(|d| (d, curve)))
                 .collect();
             let new_key = self.faces.insert(attr);
-            self.index_face_boundary_darts(new_key);
+            self.index_face_loop_darts(new_key);
             face_map.insert(old_key, new_key);
         }
 
@@ -1036,7 +1068,7 @@ impl<P: Payload> GMap<P> {
         self.dart_to_face.clear();
         let face_keys: Vec<FaceKey> = self.faces.keys().collect();
         for key in face_keys {
-            self.index_face_boundary_darts(key);
+            self.index_face_loop_darts(key);
         }
     }
 

@@ -1,6 +1,5 @@
 use super::closed::Closed;
 use super::edge::Edge;
-use super::facet::Facet;
 use super::gmap::{Cell2, Dart, Dim, GMap, MergeTopology, TopologyMerge};
 use super::orientation::Orientation;
 use super::payload::{Payload, StandardPayload};
@@ -13,12 +12,10 @@ use crate::topology::attributes::FaceAttr;
 use crate::topology::shape_keys::FaceKey;
 use nalgebra::UnitVector3;
 
-
 /// A domain-level face view with key and orientation.
 ///
 /// A face is a surface region backed by a stored [`FaceAttr`]. It has one
-/// outer boundary loop and zero or more inner loops for holes. This differs
-/// from [`Facet`](crate::topology::facet::Facet), which is the raw gmap 2-cell.
+/// outer boundary loop and zero or more inner loops for holes.
 ///
 /// The [`orientation`](Self::orientation) records whether this view's traversal
 /// direction matches the face's default orientation. The face's default
@@ -60,16 +57,17 @@ impl<'g, P: Payload> Face<'g, P> {
         }
     }
 
-    /// Creates a face view from a [`Facet`], resolving the face key and
-    /// orientation relative to the face's default direction.
+    /// Creates a face view from a dart, resolving the face key and orientation
+    /// relative to the face's stored default direction.
     ///
-    /// Returns `None` if the facet has no registered face.
-    pub fn from_facet(gmap: &'g GMap<P>, facet: &Facet<'_, P>) -> Option<Self> {
-        let key = gmap.cell_key::<Cell2>(facet.dart)?;
+    /// Returns `None` if the dart does not belong to a registered face.
+    pub fn from_dart(gmap: &'g GMap<P>, dart: Dart) -> Option<Self> {
+        let key = gmap.cell_key::<Cell2>(dart)?;
+        let orientation = gmap.face_orientation_at_dart(key, dart);
         Some(Self {
             gmap,
             key,
-            orientation: Orientation::Same,
+            orientation,
         })
     }
 

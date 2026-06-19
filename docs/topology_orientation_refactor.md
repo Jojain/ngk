@@ -111,7 +111,7 @@ Each view exposes:
 
 ## Face Semantics
 
-Do not introduce a separate `FacetKey` / `FacetAttr` layer for this refactor.
+Do not introduce a separate attribute layer for raw GMap 2-cell orbits.
 `FaceKey -> FaceAttr` is the face storage boundary.
 
 ```rust
@@ -135,7 +135,7 @@ of the same geometric interface. That is acceptable for the first design:
 - `gmap.face(face_key)` can always rebuild a stable oriented `Face`;
 - `solid.faces()` can return plain `Face` views with the correct solid-relative
   orientation;
-- there is no extra `FacetKey` that callers or builders must keep in sync.
+- there is no extra raw-2-cell key that callers or builders must keep in sync.
 
 The raw GMap 2-cell orbit may still span both sides when two volumes are sewn
 through `alpha3`. That shared orbit is a topology relation, not a stored CAD
@@ -294,8 +294,8 @@ explicitly says an entity was reversed.
 
 5. Collapse face geometry into `FaceAttr`.
 
-   Remove the need for `FacetKey` / `FacetAttr` in the first pass. Store
-   `surface`, `pcurves`, and face payload directly on `FaceAttr`.
+   Keep raw 2-cell orbits as topology only. Store `surface`, `pcurves`, and
+   face payload directly on `FaceAttr`.
 
 6. Centralize pcurve orientation lookup.
 
@@ -334,8 +334,8 @@ explicitly says an entity was reversed.
 
 - Do not add `EdgeUseKey`, `FaceUseKey`, or `ProfileUseKey` unless a use needs
   durable identity or own data.
-- Do not add `FacetKey` / `FacetAttr` unless shared support storage becomes a
-  demonstrated need.
+- Do not add a separate raw-2-cell attribute layer unless shared support
+  storage becomes a demonstrated need.
 - Do not encode face holes into artificial GMap topology just to avoid
   `FaceAttr.inner_loops`.
 - Do not use canonical dart representatives as default public orientation.
