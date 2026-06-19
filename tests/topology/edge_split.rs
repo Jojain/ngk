@@ -21,10 +21,7 @@ fn split_profile_edge_handles_isolated_edge() {
     assert_eq!(g.iter_vertices().count(), 3);
 
     let midpoint = Point3::new(0.25, 0.0, 0.0);
-    let split_vertex = g
-        .vertex_attr(split.vertex)
-        .expect("split vertex should be stored")
-        .vertex(&g);
+    let split_vertex = g.vertex_attr_unchecked(split.vertex).vertex(&g);
     assert!(
         split_vertex
             .point()
@@ -32,8 +29,8 @@ fn split_profile_edge_handles_isolated_edge() {
             .coincides(midpoint, LINEAR_TOLERANCE)
     );
 
-    let first = g.edge(split.first).expect("first edge should exist");
-    let second = g.edge(split.second).expect("second edge should exist");
+    let first = g.edge_unchecked(split.first);
+    let second = g.edge_unchecked(split.second);
     assert!(
         first
             .start()
@@ -81,10 +78,7 @@ fn split_profile_edge_turns_isolated_edge_into_open_profile() {
     .expect("line edge should build");
 
     let split = split_edge(&mut g, edge, 0.5).expect("isolated edge should split");
-    let first_dart = g
-        .edge_attr(split.first)
-        .expect("first edge should exist")
-        .dart;
+    let first_dart = g.edge_attr_unchecked(split.first).dart;
     let profile = Profile::new(&g, first_dart);
 
     assert_eq!(profile.edges().len(), 2);
@@ -135,14 +129,8 @@ fn split_profile_edge_preserves_open_profile_order() {
     let p2 = Point3::new(2.0, 0.0, 0.0);
     let first_edge = add_line(&mut g, p0, p1).expect("first edge should build");
     let second_edge = add_line(&mut g, p1, p2).expect("second edge should build");
-    let first_dart = g
-        .edge_attr(first_edge)
-        .expect("first edge should exist")
-        .dart;
-    let second_dart = g
-        .edge_attr(second_edge)
-        .expect("second edge should exist")
-        .dart;
+    let first_dart = g.edge_attr_unchecked(first_edge).dart;
+    let second_dart = g.edge_attr_unchecked(second_edge).dart;
     add_edge_to_profile(&mut g, first_dart, second_dart)
         .expect("edges should connect into a profile");
 
@@ -152,8 +140,7 @@ fn split_profile_edge_preserves_open_profile_order() {
 
     assert_eq!(profile.edges().len(), 3);
     assert!(
-        g.vertex_attr(split.vertex)
-            .expect("split vertex should exist")
+        g.vertex_attr_unchecked(split.vertex)
             .point
             .coincides(midpoint, LINEAR_TOLERANCE)
     );
@@ -164,21 +151,16 @@ fn split_profile_edge_preserves_closed_profile() {
     let mut g = GMap::<StandardPayload>::new();
     let profile_key = add_rectangle(&mut g, ngk::geometry::Plane::xy(), 1.0, 1.0)
         .expect("rectangle profile should build");
-    let first_edge_dart = g
-        .profile(profile_key)
-        .expect("profile should exist")
-        .edges()[0]
-        .dart();
+    let first_edge_dart = g.profile_unchecked(profile_key).edges()[0].dart();
     let first_edge = edge_key_for_dart(&g, first_edge_dart);
 
     split_edge(&mut g, first_edge, 0.5).expect("closed profile edge should split");
-    let profile = g.profile(profile_key).expect("profile should exist");
+    let profile = g.profile_unchecked(profile_key);
 
     assert!(profile.is_closed());
     assert_eq!(profile.edges().len(), 5);
 }
 
 fn edge_key_for_dart(g: &GMap<StandardPayload>, dart: ngk::topology::Dart) -> EdgeKey {
-    g.cell_key::<ngk::topology::gmap::Cell1>(dart)
-        .expect("edge key should exist for dart")
+    g.cell_key_unchecked::<ngk::topology::gmap::Cell1>(dart)
 }

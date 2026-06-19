@@ -37,8 +37,7 @@ pub fn chamfer_profile_vertex<P: Payload>(
     let chamfer_edge = add_line(g, incoming_offset, outgoing_offset)
         .map_err(|_| ChamferError::ZeroLengthEdge { dart: incoming_end })?;
     let chamfer_start = g
-        .edge_attr(chamfer_edge)
-        .expect("newly added chamfer edge must exist")
+        .edge_attr_unchecked(chamfer_edge)
         .dart;
     let chamfer_end = g.alpha(Dim::Zero, chamfer_start);
     sew(g, incoming_end, chamfer_start)?;

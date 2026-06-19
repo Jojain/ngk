@@ -33,9 +33,7 @@ pub fn translate_face<P: Payload>(
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
     for key in vertex_keys {
-        let vertex = translated
-            .vertex_attr_mut(key)
-            .expect("collected vertex key must remain valid");
+        let vertex = translated.vertex_attr_mut_unchecked(key);
         vertex.point += direction;
     }
 
@@ -44,9 +42,7 @@ pub fn translate_face<P: Payload>(
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
     for key in edge_keys {
-        let edge = translated
-            .edge_attr_mut(key)
-            .expect("collected edge key must remain valid");
+        let edge = translated.edge_attr_mut_unchecked(key);
         edge.curve = edge.curve.translated(direction).map_err(|source| {
             ExtrudeError::CurveTranslationFailed {
                 dart: edge.dart,
@@ -55,12 +51,8 @@ pub fn translate_face<P: Payload>(
         })?;
     }
 
-    let translated_face_key = *translated
-        .attribute::<Cell2>(translated_dart)
-        .expect("isolating a face must preserve its face attribute");
-    let translated_face = translated
-        .face_attr_mut(translated_face_key)
-        .expect("isolated face key must remain valid");
+    let translated_face_key = *translated.attribute_unchecked::<Cell2>(translated_dart);
+    let translated_face = translated.face_attr_mut_unchecked(translated_face_key);
     translated_face.surface = translated_face
         .surface
         .translated(direction)
@@ -87,12 +79,8 @@ pub fn add_extruded_face<P: Payload>(
     bottom_loop_darts.extend(bot_face.inner_loops().into_iter().map(|loop_| loop_.dart));
 
     let top_face_dart = g.merge(top_face.face());
-    let top_face_key = *g
-        .attribute::<Cell2>(top_face_dart)
-        .expect("merged top face should preserve its face attribute");
-    let top_face_attr = g
-        .face_attr(top_face_key)
-        .expect("merged top face key should remain valid");
+    let top_face_key = *g.attribute_unchecked::<Cell2>(top_face_dart);
+    let top_face_attr = g.face_attr_unchecked(top_face_key);
     let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
     top_loop_darts.push(top_face_attr.outer_loop);
     top_loop_darts.extend(top_face_attr.inner_loops.iter().copied());

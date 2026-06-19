@@ -121,10 +121,8 @@ fn split_edge_with_profile_links<P: Payload>(
     g.sew_unchecked(Dim::One, first_mid, second_mid);
 
     let vertex = g.add_vertex(VertexAttr::new(first_mid, midpoint, P::V::default()));
-    g.edge_attr_mut(edge)
-        .expect("prepared edge must remain present")
-        .curve = first_curve;
-    let second = g.add_edge(EdgeAttr::new(second_mid, second_curve, P::E::default()));
+    g.edge_attr_mut_unchecked(edge).curve = first_curve;
+    let second = g.add_edge(EdgeAttr::new(first_mid, second_curve, P::E::default()));
 
     Ok(EdgeSplit {
         first: edge,
@@ -180,9 +178,7 @@ fn split_attached_edge_with_profile_links<P: Payload>(
         midpoint,
         P::V::default(),
     ));
-    g.edge_attr_mut(edge)
-        .expect("prepared edge must remain present")
-        .curve = first_curve;
+    g.edge_attr_mut_unchecked(edge).curve = first_curve;
     let second = g.add_edge(EdgeAttr::new(
         mid_darts[&split.second_dart],
         second_curve,

@@ -19,8 +19,7 @@ fn planar_new_wraps_planar_profile_and_infers_plane() {
         ],
     );
 
-    let planar = Planar::new(g.profile(key).expect("profile should exist"))
-        .expect("xy profile should be planar");
+    let planar = Planar::new(g.profile_unchecked(key)).expect("xy profile should be planar");
 
     assert!(planar.plane().normal().dot(&Vector3::z()).abs() > 1.0 - LINEAR_TOLERANCE);
 }
@@ -38,7 +37,7 @@ fn planar_new_rejects_profile_with_off_plane_vertex() {
         ],
     );
 
-    let err = Planar::new(g.profile(key).expect("profile should exist"))
+    let err = Planar::new(g.profile_unchecked(key))
         .err()
         .expect("profile is not planar");
 
@@ -58,8 +57,7 @@ fn planar_new_accepts_collinear_profiles_with_fallback_plane() {
     ];
     let key = add_polyline(&mut g, &points).expect("test profile should build");
 
-    let planar = Planar::new(g.profile(key).expect("profile should exist"))
-        .expect("a line profile is planar");
+    let planar = Planar::new(g.profile_unchecked(key)).expect("a line profile is planar");
 
     assert!(planar.plane().normal().norm() > 1.0 - LINEAR_TOLERANCE);
 }

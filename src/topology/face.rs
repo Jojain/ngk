@@ -77,9 +77,7 @@ impl<'g, P: Payload> Face<'g, P> {
     ///
     /// Panics if the key is not present in the map.
     fn attr(&self) -> &'g FaceAttr<P::F> {
-        self.gmap
-            .face_attr(self.key)
-            .expect("face view must have a stored attribute")
+        self.gmap.face_attr_unchecked(self.key)
     }
 
     /// Returns the stable key of this face.

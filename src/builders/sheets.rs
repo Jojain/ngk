@@ -332,7 +332,7 @@ mod tests {
         );
 
         let shape = extrude_profile(
-            source.profile(profile_key).expect("profile should exist"),
+            source.profile_unchecked(profile_key),
             Vector3::new(0.0, 0.0, 2.0),
         )
         .unwrap();
@@ -366,15 +366,9 @@ mod tests {
         let source_dart_count = source.dart_count();
         let direction = Vector3::new(0.0, 0.0, 2.0);
 
-        let profile_dart = source
-            .profile_attr(profile_key)
-            .expect("profile should exist")
-            .dart;
+        let profile_dart = source.profile_attr_unchecked(profile_key).dart;
         let sheet_key = add_extruded_profile(&mut source, profile_dart, direction).unwrap();
-        let translated_dart = source
-            .sheet_attr(sheet_key)
-            .expect("extruded sheet should exist")
-            .dart;
+        let translated_dart = source.sheet_attr_unchecked(sheet_key).dart;
 
         assert!(
             translated_dart.id() >= source_dart_count,
@@ -409,7 +403,7 @@ mod tests {
         );
 
         let shape = extrude_profile(
-            source.profile(profile_key).expect("profile should exist"),
+            source.profile_unchecked(profile_key),
             Vector3::new(0.0, 0.0, 2.0),
         )
         .unwrap();
@@ -570,9 +564,7 @@ mod tests {
     }
 
     fn vertex_point(g: &GMap<StandardPayload>, dart: Dart) -> Point3 {
-        g.attribute::<Cell0>(dart)
-            .expect("test map should have vertex attributes on every dart")
-            .point
+        g.attribute_unchecked::<Cell0>(dart).point
     }
 
     fn same_undirected_edge(a: (Point3, Point3), b: (Point3, Point3)) -> bool {

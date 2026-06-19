@@ -37,10 +37,7 @@ pub fn circle(
 impl<P: Payload> Shape<EdgeTag, P> {
     pub fn into_profile(self) -> Shape<ProfileTag, P> {
         let (mut g, edge_key) = self.into_map();
-        let dart = g
-            .edge_attr(edge_key)
-            .expect("edge shape key must be in the map")
-            .dart;
+        let dart = g.edge_attr_unchecked(edge_key).dart;
         let profile_key = g.add_profile(crate::topology::attributes::ProfileAttr::new(
             dart,
             P::Profile::default(),

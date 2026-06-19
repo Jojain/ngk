@@ -464,10 +464,7 @@ pub fn add_rectangle(
     y_size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
     let profile = add_rectangle_profile(g, plane, x_size, y_size)?;
-    let loop_dart = g
-        .profile_attr(profile)
-        .expect("newly added rectangle profile must exist")
-        .dart;
+    let loop_dart = g.profile_attr_unchecked(profile).dart;
     add_face(g, loop_dart)
 }
 
@@ -477,10 +474,7 @@ pub fn add_square(
     size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
     let profile = add_square_profile(g, plane, size)?;
-    let loop_dart = g
-        .profile_attr(profile)
-        .expect("newly added square profile must exist")
-        .dart;
+    let loop_dart = g.profile_attr_unchecked(profile).dart;
     add_face(g, loop_dart)
 }
 
@@ -1339,10 +1333,7 @@ pub fn add_circle(
     radius: f64,
 ) -> Result<FaceKey, FaceCreationError> {
     let edge = add_circle_edge(g, plane.clone(), radius)?;
-    let loop_dart = g
-        .edge_attr(edge)
-        .expect("newly added circle edge must exist")
-        .dart;
+    let loop_dart = g.edge_attr_unchecked(edge).dart;
     let pcurves = profile_pcurves(&Profile::new(g, loop_dart), &plane)?;
     let face_key = g.add_face(FaceAttr::with_pcurves(
         Surface::Plane(plane),
@@ -1595,14 +1586,8 @@ pub fn add_annulus(
     let inner_plane = Plane::new(plane.origin(), plane.x_dir(), -plane.normal());
     let outer_edge = add_circle_edge(g, plane.clone(), outer_radius)?;
     let inner_edge = add_circle_edge(g, inner_plane, inner_radius)?;
-    let outer_loop = g
-        .edge_attr(outer_edge)
-        .expect("newly added outer circle must exist")
-        .dart;
-    let inner_loop = g
-        .edge_attr(inner_edge)
-        .expect("newly added inner circle must exist")
-        .dart;
+    let outer_loop = g.edge_attr_unchecked(outer_edge).dart;
+    let inner_loop = g.edge_attr_unchecked(inner_edge).dart;
 
     let mut pcurves = profile_pcurves(&Profile::new(g, outer_loop), &plane)?;
     pcurves.extend(profile_pcurves(&Profile::new(g, inner_loop), &plane)?);
@@ -1784,19 +1769,13 @@ pub fn add_polygon_with_holes(
     }
 
     let outer_profile = add_polygon(g, outer);
-    let outer_loop = g
-        .profile_attr(outer_profile)
-        .expect("newly added outer polygon must exist")
-        .dart;
+    let outer_loop = g.profile_attr_unchecked(outer_profile).dart;
     let mut inner_loops = Vec::with_capacity(holes.len());
     let mut pcurves = profile_pcurves(&Profile::new(g, outer_loop), &plane)?;
 
     for hole in holes {
         let inner_profile = add_polygon(g, hole);
-        let inner_loop = g
-            .profile_attr(inner_profile)
-            .expect("newly added inner polygon must exist")
-            .dart;
+        let inner_loop = g.profile_attr_unchecked(inner_profile).dart;
         pcurves.extend(profile_pcurves(&Profile::new(g, inner_loop), &plane)?);
         inner_loops.push(inner_loop);
     }

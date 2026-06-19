@@ -257,9 +257,9 @@ mod tests {
         )
         .expect("second edge should build");
 
-        let first_start = g.edge_attr(first_edge).expect("edge should exist").dart;
+        let first_start = g.edge_attr_unchecked(first_edge).dart;
         let first_end = g.alpha(Dim::Zero, first_start);
-        let second_start = g.edge_attr(second_edge).expect("edge should exist").dart;
+        let second_start = g.edge_attr_unchecked(second_edge).dart;
         g.sew(Dim::One, first_end, second_start)
             .expect("adjacent open profile edges should be alpha1-sewable");
 

@@ -76,10 +76,7 @@ impl<'a, P: Payload> Edge<'a, P> {
     /// the edge's default dart. When [`Reversed`](Orientation::Reversed),
     /// this is `alpha0` of the default dart.
     pub fn dart(&self) -> Dart {
-        let attr = self
-            .gmap
-            .edge_attr(self.key)
-            .expect("edge view must have a stored attribute");
+        let attr = self.gmap.edge_attr_unchecked(self.key);
         match self.orientation {
             Orientation::Same => attr.dart,
             Orientation::Reversed => self.gmap.alpha(Dim::Zero, attr.dart),

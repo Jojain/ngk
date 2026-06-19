@@ -6,6 +6,7 @@ use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::orientation::Orientation;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
+use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
 use crate::topology::vertex::Vertex;
 
@@ -436,14 +437,43 @@ impl<P: Payload> GMap<P> {
         Some(Vertex::new(self, attr.dart))
     }
 
+    /// Returns the typed vertex view registered under `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered vertex.
+    pub fn vertex_unchecked(&self, key: VertexKey) -> Vertex<'_, P> {
+        self.vertex(key).expect("vertex should be in the map")
+    }
+
     /// Returns the vertex attribute for `key`, if it exists.
     pub fn vertex_attr(&self, key: VertexKey) -> Option<&VertexAttr<P::V>> {
         self.vertices.get(key)
     }
 
+    /// Returns the vertex attribute for `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered vertex.
+    pub fn vertex_attr_unchecked(&self, key: VertexKey) -> &VertexAttr<P::V> {
+        self.vertex_attr(key)
+            .expect("vertex attribute should be in the map")
+    }
+
     /// Returns the mutable vertex attribute for `key`, if it exists.
     pub fn vertex_attr_mut(&mut self, key: VertexKey) -> Option<&mut VertexAttr<P::V>> {
         self.vertices.get_mut(key)
+    }
+
+    /// Returns the mutable vertex attribute for `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered vertex.
+    pub fn vertex_attr_mut_unchecked(&mut self, key: VertexKey) -> &mut VertexAttr<P::V> {
+        self.vertex_attr_mut(key)
+            .expect("vertex attribute should be in the map")
     }
 
     pub(crate) fn remove_vertex(&mut self, key: VertexKey) -> Option<VertexAttr<P::V>> {
@@ -485,6 +515,16 @@ impl<P: Payload> GMap<P> {
         Some(Edge::new(self, key))
     }
 
+    /// Returns the typed edge view registered under `key` with default
+    /// (`Same`) orientation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered edge.
+    pub fn edge_unchecked(&self, key: EdgeKey) -> Edge<'_, P> {
+        self.edge(key).expect("edge should be in the map")
+    }
+
     /// Returns the key of the `D`-cell containing `dart`.
     pub fn cell_key<D: CellDim>(&self, dart: Dart) -> Option<D::Key>
     where
@@ -492,6 +532,19 @@ impl<P: Payload> GMap<P> {
     {
         let repr = self.cell_representative(dart, D::DIM);
         self.get_key(repr)
+    }
+
+    /// Returns the key of the `D`-cell containing `dart`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no key is registered for the cell.
+    pub fn cell_key_unchecked<D: CellDim>(&self, dart: Dart) -> D::Key
+    where
+        Self: CellKeyLookup<D>,
+    {
+        self.cell_key::<D>(dart)
+            .expect("cell key should be in the map")
     }
 
     /// Returns the orientation of `dart` relative to the edge's default
@@ -502,9 +555,7 @@ impl<P: Payload> GMap<P> {
     /// Panics if `key` is not a registered edge or `dart` does not belong to
     /// that edge.
     pub fn edge_orientation_at_dart(&self, key: EdgeKey, dart: Dart) -> Orientation {
-        let attr = self
-            .edge_attr(key)
-            .expect("edge orientation requires valid edge key");
+        let attr = self.edge_attr_unchecked(key);
         self.cell_orientation_from_seed(attr.dart, dart, Dim::One)
             .expect("edge orientation requires dart to belong to edge")
     }
@@ -514,9 +565,29 @@ impl<P: Payload> GMap<P> {
         self.edges.get(key)
     }
 
+    /// Returns the edge attribute for `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered edge.
+    pub fn edge_attr_unchecked(&self, key: EdgeKey) -> &EdgeAttr<P::E> {
+        self.edge_attr(key)
+            .expect("edge attribute should be in the map")
+    }
+
     /// Returns the mutable edge attribute for `key`, if it exists.
     pub fn edge_attr_mut(&mut self, key: EdgeKey) -> Option<&mut EdgeAttr<P::E>> {
         self.edges.get_mut(key)
+    }
+
+    /// Returns the mutable edge attribute for `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered edge.
+    pub fn edge_attr_mut_unchecked(&mut self, key: EdgeKey) -> &mut EdgeAttr<P::E> {
+        self.edge_attr_mut(key)
+            .expect("edge attribute should be in the map")
     }
 
     pub(crate) fn remove_edge(&mut self, key: EdgeKey) -> Option<EdgeAttr<P::E>> {
@@ -555,6 +626,15 @@ impl<P: Payload> GMap<P> {
         Some(crate::topology::profile::Profile::new(self, attr.dart))
     }
 
+    /// Returns the profile view registered under `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered profile.
+    pub fn profile_unchecked(&self, key: ProfileKey) -> crate::topology::profile::Profile<'_, P> {
+        self.profile(key).expect("profile should be in the map")
+    }
+
     /// Returns the profile key for the alpha0/alpha1 component containing `dart`.
     pub fn profile_key(&self, dart: Dart) -> Option<ProfileKey> {
         self.dart_to_profile
@@ -562,14 +642,44 @@ impl<P: Payload> GMap<P> {
             .copied()
     }
 
+    /// Returns the profile key for the alpha0/alpha1 component containing `dart`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no profile key is registered for the component.
+    pub fn profile_key_unchecked(&self, dart: Dart) -> ProfileKey {
+        self.profile_key(dart)
+            .expect("profile key should be in the map")
+    }
+
     /// Returns the stored profile attribute.
     pub fn profile_attr(&self, key: ProfileKey) -> Option<&ProfileAttr<P::Profile>> {
         self.profiles.get(key)
     }
 
+    /// Returns the stored profile attribute.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered profile.
+    pub fn profile_attr_unchecked(&self, key: ProfileKey) -> &ProfileAttr<P::Profile> {
+        self.profile_attr(key)
+            .expect("profile attribute should be in the map")
+    }
+
     /// Returns the mutable profile attribute.
     pub fn profile_attr_mut(&mut self, key: ProfileKey) -> Option<&mut ProfileAttr<P::Profile>> {
         self.profiles.get_mut(key)
+    }
+
+    /// Returns the mutable profile attribute.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered profile.
+    pub fn profile_attr_mut_unchecked(&mut self, key: ProfileKey) -> &mut ProfileAttr<P::Profile> {
+        self.profile_attr_mut(key)
+            .expect("profile attribute should be in the map")
     }
 
     /// Iterates all stored profiles.
@@ -605,6 +715,16 @@ impl<P: Payload> GMap<P> {
         Some(Face::new(self, key))
     }
 
+    /// Returns the typed face view registered under `key` with default
+    /// (`Same`) orientation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered face.
+    pub fn face_unchecked(&self, key: FaceKey) -> Face<'_, P> {
+        self.face(key).expect("face should be in the map")
+    }
+
     /// Returns the orientation of the face side traversed at `dart` relative
     /// to the face's default orientation.
     ///
@@ -613,9 +733,7 @@ impl<P: Payload> GMap<P> {
     /// Panics if `key` is not a registered face or `dart` does not belong to
     /// one of that face's boundary components.
     pub fn face_orientation_at_dart(&self, key: FaceKey, dart: Dart) -> Orientation {
-        let attr = self
-            .face_attr(key)
-            .expect("face orientation requires valid face key");
+        let attr = self.face_attr_unchecked(key);
         std::iter::once(attr.outer_loop)
             .chain(attr.inner_loops.iter().copied())
             .find_map(|seed| self.cell_orientation_from_seed(seed, dart, Dim::Two))
@@ -673,9 +791,29 @@ impl<P: Payload> GMap<P> {
         self.faces.get(key)
     }
 
+    /// Returns the face attribute for `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered face.
+    pub fn face_attr_unchecked(&self, key: FaceKey) -> &FaceAttr<P::F> {
+        self.face_attr(key)
+            .expect("face attribute should be in the map")
+    }
+
     /// Returns the mutable face attribute for `key`, if it exists.
     pub fn face_attr_mut(&mut self, key: FaceKey) -> Option<&mut FaceAttr<P::F>> {
         self.faces.get_mut(key)
+    }
+
+    /// Returns the mutable face attribute for `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered face.
+    pub fn face_attr_mut_unchecked(&mut self, key: FaceKey) -> &mut FaceAttr<P::F> {
+        self.face_attr_mut(key)
+            .expect("face attribute should be in the map")
     }
 
     pub(crate) fn remove_face(&mut self, key: FaceKey) -> Option<FaceAttr<P::F>> {
@@ -709,9 +847,18 @@ impl<P: Payload> GMap<P> {
     }
 
     /// Returns the sheet view registered under `key`.
-    pub fn sheet(&self, key: SheetKey) -> Option<crate::topology::sheet::Sheet<'_, P>> {
+    pub fn sheet(&self, key: SheetKey) -> Option<Sheet<'_, P>> {
         let attr = self.sheet_attr(key)?;
         Some(crate::topology::sheet::Sheet::new(self, attr.dart))
+    }
+
+    /// Returns the sheet view registered under `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered sheet.
+    pub fn sheet_unchecked(&self, key: SheetKey) -> Sheet<'_, P> {
+        self.sheet(key).expect("sheet should be in the map")
     }
 
     /// Returns the sheet key for the 3-cell containing `dart`.
@@ -721,14 +868,44 @@ impl<P: Payload> GMap<P> {
             .copied()
     }
 
+    /// Returns the sheet key for the 3-cell containing `dart`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no sheet key is registered for the 3-cell.
+    pub fn sheet_key_unchecked(&self, dart: Dart) -> SheetKey {
+        self.sheet_key(dart)
+            .expect("sheet key should be in the map")
+    }
+
     /// Returns the stored sheet attribute.
     pub fn sheet_attr(&self, key: SheetKey) -> Option<&SheetAttr<P::Sheet>> {
         self.sheets.get(key)
     }
 
+    /// Returns the stored sheet attribute.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered sheet.
+    pub fn sheet_attr_unchecked(&self, key: SheetKey) -> &SheetAttr<P::Sheet> {
+        self.sheet_attr(key)
+            .expect("sheet attribute should be in the map")
+    }
+
     /// Returns the mutable sheet attribute.
     pub fn sheet_attr_mut(&mut self, key: SheetKey) -> Option<&mut SheetAttr<P::Sheet>> {
         self.sheets.get_mut(key)
+    }
+
+    /// Returns the mutable sheet attribute.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered sheet.
+    pub fn sheet_attr_mut_unchecked(&mut self, key: SheetKey) -> &mut SheetAttr<P::Sheet> {
+        self.sheet_attr_mut(key)
+            .expect("sheet attribute should be in the map")
     }
 
     /// Iterates all stored sheets.
@@ -764,9 +941,28 @@ impl<P: Payload> GMap<P> {
         Some(Solid::new(self, attr))
     }
 
+    /// Returns the typed solid view registered under `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered solid.
+    pub fn solid_unchecked(&self, key: SolidKey) -> Solid<'_, P> {
+        self.solid(key).expect("solid should be in the map")
+    }
+
     /// Returns the solid attribute for `key`, if it exists.
     pub fn solid_attr(&self, key: SolidKey) -> Option<&SolidAttr<P::S>> {
         self.solids.get(key)
+    }
+
+    /// Returns the solid attribute for `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered solid.
+    pub fn solid_attr_unchecked(&self, key: SolidKey) -> &SolidAttr<P::S> {
+        self.solid_attr(key)
+            .expect("solid attribute should be in the map")
     }
 
     /// Iterate every stored 3-cell attribute paired with its slotmap key.
@@ -1304,6 +1500,21 @@ impl<P: Payload> GMap<P> {
         self.get(repr)
     }
 
+    /// Returns the attribute associated with the `D`-cell containing `dart`.
+    ///
+    /// The lookup first canonicalizes `dart` to the representative of `D::DIM`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no attribute is registered for the cell.
+    pub fn attribute_unchecked<D: CellDim>(&self, dart: Dart) -> &<Self as AttributeStore<D>>::Attr
+    where
+        Self: AttributeStore<D>,
+    {
+        self.attribute::<D>(dart)
+            .expect("attribute should be in the map")
+    }
+
     /// Returns the mutable attribute associated with the `D`-cell containing
     /// `dart`.
     ///
@@ -1317,6 +1528,25 @@ impl<P: Payload> GMap<P> {
     {
         let repr = self.cell_representative(dart, D::DIM);
         self.get_mut(repr)
+    }
+
+    /// Returns the mutable attribute associated with the `D`-cell containing
+    /// `dart`.
+    ///
+    /// The lookup first canonicalizes `dart` to the representative of `D::DIM`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no attribute is registered for the cell.
+    pub fn attribute_mut_unchecked<D: CellDim>(
+        &mut self,
+        dart: Dart,
+    ) -> &mut <Self as AttributeStore<D>>::Attr
+    where
+        Self: AttributeStore<D>,
+    {
+        self.attribute_mut::<D>(dart)
+            .expect("attribute should be in the map")
     }
 }
 
@@ -1449,11 +1679,9 @@ mod tests {
         )
         .expect("source edge should build");
 
-        let edge = source.edge(edge_key).expect("source edge should exist");
+        let edge = source.edge_unchecked(edge_key);
         let merged_dart = target.merge(edge);
-        let merged_edge = target
-            .attribute::<Cell1>(merged_dart)
-            .expect("merged edge geometry should exist");
+        let merged_edge = target.attribute_unchecked::<Cell1>(merged_dart);
 
         assert_eq!(target.dart_count(), 2);
         assert_eq!(merged_edge.dart, Dart::new(0));
@@ -1504,14 +1732,10 @@ mod tests {
             pcurves,
         ));
 
-        let face = source.face(face_key).expect("source face should exist");
+        let face = source.face_unchecked(face_key);
         let merged_dart = target.merge(face);
-        let merged_key = *target
-            .attribute::<Cell2>(merged_dart)
-            .expect("merged face lookup should exist");
-        let merged_face = target
-            .face_attr(merged_key)
-            .expect("merged face should exist");
+        let merged_key = *target.attribute_unchecked::<Cell2>(merged_dart);
+        let merged_face = target.face_attr_unchecked(merged_key);
 
         assert_eq!(target.dart_count(), 10);
         assert_eq!(merged_face.outer_loop, Dart::new(2));
@@ -1533,10 +1757,7 @@ mod tests {
             ],
         );
 
-        let profile_dart = source
-            .profile_attr(profile_key)
-            .expect("polygon profile should exist")
-            .dart;
+        let profile_dart = source.profile_attr_unchecked(profile_key).dart;
         let mut target = GMap::<StandardPayload>::new();
         let merged_profile = target.merge(Profile::new(&source, profile_dart));
         assert_eq!(merged_profile, Dart::new(0));
@@ -1549,10 +1770,7 @@ mod tests {
 
         let solid_key = source.add_solid(SolidAttr::new((), profile_dart, None));
         let mut second_target = GMap::<StandardPayload>::new();
-        let solid = source
-            .solid_attr(solid_key)
-            .map(|attr| Solid::new(&source, attr))
-            .expect("source solid should exist");
+        let solid = source.solid_unchecked(solid_key);
         let merged_solid = second_target.merge(solid);
         assert_eq!(merged_solid, Dart::new(0));
         assert_eq!(
@@ -1578,10 +1796,7 @@ mod tests {
                 Point3::new(0.0, 1.0, 0.0),
             ],
         );
-        let loop_dart = source
-            .profile_attr(profile_key)
-            .expect("polygon profile should exist")
-            .dart;
+        let loop_dart = source.profile_attr_unchecked(profile_key).dart;
         let face_key = source.add_face(FaceAttr::new(
             Surface::Plane(Plane::from_xy(
                 Point3::new(0.0, 0.0, 0.0),
@@ -1592,7 +1807,7 @@ mod tests {
             loop_dart,
             Vec::new(),
         ));
-        let face = source.face(face_key).expect("source face should exist");
+        let face = source.face_unchecked(face_key);
 
         let (isolated, isolated_dart) = face.isolate();
 
@@ -1616,8 +1831,7 @@ mod tests {
             ],
         );
 
-        let (isolated, isolated_dart) =
-            GMap::isolate(source.profile(profile_key).expect("profile should exist"));
+        let (isolated, isolated_dart) = GMap::isolate(source.profile_unchecked(profile_key));
 
         assert_eq!(isolated_dart, Dart::new(0));
         assert_eq!(isolated.dart_count(), 6);
@@ -1635,7 +1849,7 @@ mod tests {
             ],
         );
         let planar = Planar::new_unchecked(
-            source.profile(profile_key).expect("profile should exist"),
+            source.profile_unchecked(profile_key),
             Plane::from_xy(Point3::new(0.0, 0.0, 0.0), Vector3::x(), Vector3::y()),
         );
 

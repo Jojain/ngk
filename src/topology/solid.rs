@@ -44,8 +44,7 @@ impl<'g, P: Payload> Solid<'g, P> {
     pub fn key(&self) -> SolidKey {
         *self
             .gmap
-            .attribute::<Cell3>(self.attr.outer_shell)
-            .expect("solid view must have a registered solid key")
+            .attribute_unchecked::<Cell3>(self.attr.outer_shell)
     }
 
     /// Returns the user payload attached to this solid.

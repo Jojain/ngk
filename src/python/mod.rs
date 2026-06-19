@@ -575,11 +575,7 @@ impl PyProfile {
     }
 
     fn __hash__(&self) -> isize {
-        let dart = self
-            .map
-            .profile_attr(self.key)
-            .expect("Python profile key must remain valid")
-            .dart;
+        let dart = self.map.profile_attr_unchecked(self.key).dart;
         hash_topology_identity(&self.map, dart)
     }
 

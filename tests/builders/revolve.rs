@@ -21,7 +21,7 @@ fn partial_revolved_edge_creates_rotated_endpoint_geometry() {
         Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
     )
     .expect("edge should build");
-    let edge_dart = g.edge_attr(edge_key).expect("edge should exist").dart;
+    let edge_dart = g.edge_attr_unchecked(edge_key).dart;
 
     let rotated = add_revolved_edge(
         &mut g,
@@ -30,7 +30,7 @@ fn partial_revolved_edge_creates_rotated_endpoint_geometry() {
         Rad64::QUARTER_TURN,
     )
     .unwrap();
-    let edge = g.edge(rotated).expect("rotated edge should exist");
+    let edge = g.edge_unchecked(rotated);
 
     assert_eq!(g.dart_count(), 8);
     assert!(
@@ -57,7 +57,7 @@ fn partial_revolved_edge_circle_side_uses_short_positive_sweep() {
         Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
     )
     .expect("edge should build");
-    let edge_dart = g.edge_attr(edge_key).expect("edge should exist").dart;
+    let edge_dart = g.edge_attr_unchecked(edge_key).dart;
 
     add_revolved_edge(
         &mut g,
@@ -108,7 +108,7 @@ fn full_revolved_edge_uses_closed_circle_special_case() {
         Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
     )
     .expect("edge should build");
-    let edge_dart = g.edge_attr(edge_key).expect("edge should exist").dart;
+    let edge_dart = g.edge_attr_unchecked(edge_key).dart;
 
     let circle = add_revolved_edge(
         &mut g,
@@ -120,7 +120,7 @@ fn full_revolved_edge_uses_closed_circle_special_case() {
 
     assert_eq!(g.dart_count(), 6);
     assert!(matches!(
-        g.edge(circle).expect("circle edge should exist").curve(),
+        g.edge_unchecked(circle).curve(),
         Some(Curve::Circle(_))
     ));
 }
@@ -152,7 +152,7 @@ fn full_revolved_closed_edge_creates_one_vertex_circle() {
 
     assert_eq!(g.dart_count(), 4);
     assert!(matches!(
-        g.edge(circle).expect("circle edge should exist").curve(),
+        g.edge_unchecked(circle).curve(),
         Some(Curve::Circle(_))
     ));
 }
@@ -168,10 +168,7 @@ fn revolved_face_adds_surface_of_revolution_faces() {
             Point3::new(0.85, 0.0, 0.9),
         ],
     );
-    let loop_dart = g
-        .profile_attr(profile_key)
-        .expect("triangle profile should exist")
-        .dart;
+    let loop_dart = g.profile_attr_unchecked(profile_key).dart;
     let source_face = add_face(&mut g, loop_dart).unwrap();
 
     add_revolved_face(

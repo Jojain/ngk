@@ -8,7 +8,7 @@ use ngk::topology::payload::StandardPayload;
 fn add_rectangle_creates_closed_four_edge_profile() {
     let mut g = GMap::<StandardPayload>::new();
     let key = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("rectangle should build");
-    let profile = g.profile(key).expect("profile should exist");
+    let profile = g.profile_unchecked(key);
 
     assert!(profile.is_closed());
     assert_eq!(profile.edges().len(), 4);

@@ -112,10 +112,7 @@ fn add_partial_revolved_edge<P: Payload>(
         add_open_revolve_circle(g, axis, end, rotated_end)?
     };
     let rotated_edge_key = add_edge(g, rotated_start, rotated_end, rotated_curve)?;
-    let rotated_edge = g
-        .edge_attr(rotated_edge_key)
-        .expect("newly added edge must exist")
-        .dart;
+    let rotated_edge = g.edge_attr_unchecked(rotated_edge_key).dart;
     let rotated_edge_end = g.alpha(Dim::Zero, rotated_edge);
     let start_arc_end = g.alpha(Dim::Zero, start_arc);
     let end_arc_end = g.alpha(Dim::Zero, end_arc);
@@ -137,7 +134,7 @@ fn add_open_revolve_circle<P: Payload>(
     end: Point3,
 ) -> Result<Dart, RevolveError> {
     let key = add_edge(g, start, end, revolve_circle_curve(axis, start))?;
-    Ok(g.edge_attr(key).expect("newly added edge must exist").dart)
+    Ok(g.edge_attr_unchecked(key).dart)
 }
 
 fn add_closed_revolve_circle<P: Payload>(
@@ -462,12 +459,8 @@ pub fn add_revolved_face<P: Payload>(
 
     let rotated_face = rotate_face(&face, axis, angle)?;
     let top_face_dart = g.merge(rotated_face.face());
-    let top_face_key = *g
-        .attribute::<Cell2>(top_face_dart)
-        .expect("merged rotated face should preserve its face attribute");
-    let top_face_attr = g
-        .face_attr(top_face_key)
-        .expect("merged rotated face key should remain valid");
+    let top_face_key = *g.attribute_unchecked::<Cell2>(top_face_dart);
+    let top_face_attr = g.face_attr_unchecked(top_face_key);
     let mut top_loops = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
     top_loops.push(top_face_attr.outer_loop);
     top_loops.extend(top_face_attr.inner_loops.iter().copied());
@@ -491,10 +484,7 @@ fn add_full_revolved_face<P: Payload>(
     let mut shell = None;
     for loop_dart in loops {
         let revolved = add_revolved_profile(g, loop_dart, axis, angle)?;
-        let revolved_dart = g
-            .sheet_attr(revolved)
-            .expect("newly revolved sheet must exist")
-            .dart;
+        let revolved_dart = g.sheet_attr_unchecked(revolved).dart;
         shell.get_or_insert(revolved_dart);
     }
 
@@ -543,26 +533,18 @@ fn rotate_face<P: Payload>(
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
     for key in vertex_keys {
-        let vertex = rotated
-            .vertex_attr_mut(key)
-            .expect("collected vertex key must remain valid");
+        let vertex = rotated.vertex_attr_mut_unchecked(key);
         vertex.point = rotate_point(axis, vertex.point, angle);
     }
 
     let edge_keys = rotated.iter_edges().map(|(key, _)| key).collect::<Vec<_>>();
     for key in edge_keys {
-        let edge = rotated
-            .edge_attr_mut(key)
-            .expect("collected edge key must remain valid");
+        let edge = rotated.edge_attr_mut_unchecked(key);
         edge.curve = rotate_curve(edge.dart, &edge.curve, axis, angle)?;
     }
 
-    let rotated_face_key = *rotated
-        .attribute::<Cell2>(rotated_dart)
-        .expect("isolating a face must preserve its face attribute");
-    let rotated_face = rotated
-        .face_attr_mut(rotated_face_key)
-        .expect("isolated face key must remain valid");
+    let rotated_face_key = *rotated.attribute_unchecked::<Cell2>(rotated_dart);
+    let rotated_face = rotated.face_attr_mut_unchecked(rotated_face_key);
     rotated_face.surface =
         rotate_surface(rotated_face.outer_loop, &rotated_face.surface, axis, angle)?;
 

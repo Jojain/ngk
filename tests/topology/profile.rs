@@ -8,8 +8,7 @@ use ngk::topology::payload::StandardPayload;
 fn closed_profile_corners_pair_each_vertex_with_ordered_incident_edges() {
     let mut g = GMap::<StandardPayload>::new();
     let key = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("rectangle should build");
-    let profile = Closed::new(g.profile(key).expect("profile should exist"))
-        .expect("rectangle should be closed");
+    let profile = Closed::new(g.profile_unchecked(key)).expect("rectangle should be closed");
     let edges = profile.edges();
     let corners = profile.corners();
 

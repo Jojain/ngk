@@ -105,10 +105,8 @@ impl<P: Payload> Shape<VertexTag, P> {
     ///
     /// Panics if the stored vertex key is no longer present in the map.
     pub fn vertex(&self) -> Vertex<'_, P> {
-        self.map
-            .vertex_attr(self.handle)
-            .map(|v| v.vertex(&self.map))
-            .expect("vertex shape key must be in the map")
+        let v = self.map.vertex_attr_unchecked(self.handle);
+        v.vertex(&self.map)
     }
 
     /// Returns the primary vertex key.
@@ -124,9 +122,7 @@ impl<P: Payload> Shape<EdgeTag, P> {
     ///
     /// Panics if the stored edge key is no longer present in the map.
     pub fn edge(&self) -> Edge<'_, P> {
-        self.map
-            .edge(self.handle)
-            .expect("edge shape key must be in the map")
+        self.map.edge_unchecked(self.handle)
     }
 
     /// Returns the primary edge key.
@@ -142,10 +138,8 @@ impl<P: Payload> Shape<FaceTag, P> {
     ///
     /// Panics if the stored face key is no longer present in the map.
     pub fn face(&self) -> Face<'_, P> {
-        self.map
-            .face_attr(self.handle)
-            .map(|f| f.face(&self.map))
-            .expect("face shape key must be in the map")
+        let f = self.map.face_attr_unchecked(self.handle);
+        f.face(&self.map)
     }
 
     /// Returns the primary face key.
@@ -157,9 +151,7 @@ impl<P: Payload> Shape<FaceTag, P> {
 impl<P: Payload> Shape<ProfileTag, P> {
     /// Returns the primary profile view.
     pub fn profile(&self) -> Profile<'_, P> {
-        self.map
-            .profile(self.handle)
-            .expect("profile shape key must be in the map")
+        self.map.profile_unchecked(self.handle)
     }
 
     /// Returns the primary profile key.
@@ -171,9 +163,7 @@ impl<P: Payload> Shape<ProfileTag, P> {
 impl<P: Payload> Shape<SheetTag, P> {
     /// Returns the primary sheet view.
     pub fn sheet(&self) -> Sheet<'_, P> {
-        self.map
-            .sheet(self.handle)
-            .expect("sheet shape key must be in the map")
+        self.map.sheet_unchecked(self.handle)
     }
 
     /// Returns the primary sheet key.
@@ -189,10 +179,8 @@ impl<P: Payload> Shape<SolidTag, P> {
     ///
     /// Panics if the stored solid key is no longer present in the map.
     pub fn solid(&self) -> Solid<'_, P> {
-        self.map
-            .solid_attr(self.handle)
-            .map(|s| Solid::new(&self.map, s))
-            .expect("solid shape key must be in the map")
+        let s = self.map.solid_attr_unchecked(self.handle);
+        Solid::new(&self.map, s)
     }
 
     /// Returns the primary solid key.

@@ -25,10 +25,7 @@ fn face_point_at_is_defined_inside_a_trimmed_hole() {
 fn face_darts_resolve_orientation_relative_to_stored_loop_seed() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_circle(&mut g, Plane::xy(), 1.0).expect("circle face should build");
-    let default_dart = g
-        .face_attr(face_key)
-        .expect("face should be registered")
-        .outer_loop;
+    let default_dart = g.face_attr_unchecked(face_key).outer_loop;
     let reversed_dart = g.alpha(Dim::Zero, default_dart);
 
     assert_eq!(
@@ -55,7 +52,7 @@ fn face_darts_resolve_orientation_relative_to_stored_loop_seed() {
 fn every_stored_face_loop_seed_has_the_default_orientation() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_annulus(&mut g, Plane::xy(), 2.0, 1.0).expect("annulus face should build");
-    let face = g.face_attr(face_key).expect("face should be registered");
+    let face = g.face_attr_unchecked(face_key);
 
     assert_eq!(
         g.face_orientation_at_dart(face_key, face.outer_loop),

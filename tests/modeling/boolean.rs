@@ -427,7 +427,7 @@ fn split_plan_applies_multiple_splits_to_current_operand_edge_segments() {
     assert_eq!(tool.map().cells(Dim::Zero).count(), 8);
 
     for face in adjacent_faces {
-        let attr = object.map().face_attr(face).expect("face should remain");
+        let attr = object.map().face_attr_unchecked(face);
         let shape_face = attr.face(object.map());
         let edges = shape_face.outer_loop().edges();
         assert_eq!(edges.len(), 6);
@@ -602,7 +602,7 @@ fn split_plan_applies_multiple_face_section_imprints_to_same_face() {
 }
 
 fn incident_face_keys(g: &GMap<StandardPayload>, edge: EdgeKey) -> Vec<FaceKey> {
-    let edge_dart = g.edge_attr(edge).expect("edge should exist").dart;
+    let edge_dart = g.edge_attr_unchecked(edge).dart;
     let mut seen = HashSet::new();
     g.orbit(edge_dart, g.orbit_indices(Dim::One))
         .filter_map(|dart| g.attribute::<Cell2>(dart).copied())
@@ -627,16 +627,10 @@ fn shifted_block(
 }
 
 fn edge_domain(g: &GMap<StandardPayload>, edge: EdgeKey) -> Interval {
-    let attr = g.edge_attr(edge).expect("edge should exist");
-    let start = g
-        .attribute::<Cell0>(attr.dart)
-        .expect("edge start should have a vertex")
-        .point;
+    let attr = g.edge_attr_unchecked(edge);
+    let start = g.attribute_unchecked::<Cell0>(attr.dart).point;
     let end_dart = g.alpha(Dim::Zero, attr.dart);
-    let end = g
-        .attribute::<Cell0>(end_dart)
-        .expect("edge end should have a vertex")
-        .point;
+    let end = g.attribute_unchecked::<Cell0>(end_dart).point;
     attr.curve.parameters_between(start, end).ordered()
 }
 
