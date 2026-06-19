@@ -463,7 +463,11 @@ pub fn add_rectangle(
     x_size: f64,
     y_size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    let loop_dart = add_rectangle_profile(g, plane, x_size, y_size)?;
+    let profile = add_rectangle_profile(g, plane, x_size, y_size)?;
+    let loop_dart = g
+        .profile_attr(profile)
+        .expect("newly added rectangle profile must exist")
+        .dart;
     add_face(g, loop_dart)
 }
 
@@ -472,7 +476,11 @@ pub fn add_square(
     plane: Plane,
     size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    let loop_dart = add_square_profile(g, plane, size)?;
+    let profile = add_square_profile(g, plane, size)?;
+    let loop_dart = g
+        .profile_attr(profile)
+        .expect("newly added square profile must exist")
+        .dart;
     add_face(g, loop_dart)
 }
 
@@ -1330,7 +1338,11 @@ pub fn add_circle(
     plane: Plane,
     radius: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    let (loop_dart, _) = add_circle_edge(g, plane.clone(), radius)?;
+    let edge = add_circle_edge(g, plane.clone(), radius)?;
+    let loop_dart = g
+        .edge_attr(edge)
+        .expect("newly added circle edge must exist")
+        .dart;
     let pcurves = profile_pcurves(&Profile::new(g, loop_dart), &plane)?;
     let face_key = g.add_face(FaceAttr::with_pcurves(
         Surface::Plane(plane),
@@ -1581,8 +1593,16 @@ pub fn add_annulus(
     }
 
     let inner_plane = Plane::new(plane.origin(), plane.x_dir(), -plane.normal());
-    let (outer_loop, _) = add_circle_edge(g, plane.clone(), outer_radius)?;
-    let (inner_loop, _) = add_circle_edge(g, inner_plane, inner_radius)?;
+    let outer_edge = add_circle_edge(g, plane.clone(), outer_radius)?;
+    let inner_edge = add_circle_edge(g, inner_plane, inner_radius)?;
+    let outer_loop = g
+        .edge_attr(outer_edge)
+        .expect("newly added outer circle must exist")
+        .dart;
+    let inner_loop = g
+        .edge_attr(inner_edge)
+        .expect("newly added inner circle must exist")
+        .dart;
 
     let mut pcurves = profile_pcurves(&Profile::new(g, outer_loop), &plane)?;
     pcurves.extend(profile_pcurves(&Profile::new(g, inner_loop), &plane)?);
@@ -1763,12 +1783,20 @@ pub fn add_polygon_with_holes(
         validate_polygon(hole)?;
     }
 
-    let outer_loop = add_polygon(g, outer);
+    let outer_profile = add_polygon(g, outer);
+    let outer_loop = g
+        .profile_attr(outer_profile)
+        .expect("newly added outer polygon must exist")
+        .dart;
     let mut inner_loops = Vec::with_capacity(holes.len());
     let mut pcurves = profile_pcurves(&Profile::new(g, outer_loop), &plane)?;
 
     for hole in holes {
-        let inner_loop = add_polygon(g, hole);
+        let inner_profile = add_polygon(g, hole);
+        let inner_loop = g
+            .profile_attr(inner_profile)
+            .expect("newly added inner polygon must exist")
+            .dart;
         pcurves.extend(profile_pcurves(&Profile::new(g, inner_loop), &plane)?);
         inner_loops.push(inner_loop);
     }
@@ -1801,8 +1829,11 @@ fn validate_polygon(points: &[Point3]) -> Result<(), FaceCreationError> {
 /// dart geometry) have a curve to follow. Does not touch alpha2; the face is
 /// returned with free boundary, ready to be stitched to neighbors.
 ///
-/// Returns a dart on the outer <alpha0, alpha1> loop (same as the first corner dart).
-pub fn add_polygon<P: Payload>(g: &mut GMap<P>, corners: &[Point3]) -> Dart {
+/// Returns the profile key whose stored dart defines the polygon's orientation.
+pub fn add_polygon<P: Payload>(
+    g: &mut GMap<P>,
+    corners: &[Point3],
+) -> crate::topology::shape_keys::ProfileKey {
     assert!(
         corners.len() >= 3,
         "add_polygon requires at least 3 corners, got {}",
@@ -1832,5 +1863,8 @@ pub fn add_polygon<P: Payload>(g: &mut GMap<P>, corners: &[Point3]) -> Dart {
         let curve = Curve::line(corners[i], corners[(i + 1) % n]);
         g.add_edge(EdgeAttr::new(edge_dart, curve, P::E::default()));
     }
-    darts[0]
+    g.add_profile(crate::topology::attributes::ProfileAttr::new(
+        darts[0],
+        P::Profile::default(),
+    ))
 }

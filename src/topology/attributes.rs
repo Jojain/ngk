@@ -53,12 +53,24 @@ impl<T> EdgeAttr<T> {
     }
 
     /// Returns a typed edge view over this attribute in `gmap`.
-    pub fn edge<'a, P: Payload>(
-        &self,
-        gmap: &'a GMap<P>,
-        key: EdgeKey,
-    ) -> Edge<'a, P> {
+    pub fn edge<'a, P: Payload>(&self, gmap: &'a GMap<P>, key: EdgeKey) -> Edge<'a, P> {
         Edge::new(gmap, key)
+    }
+}
+
+/// Stored data and default orientation for a profile.
+#[derive(Clone)]
+pub struct ProfileAttr<T> {
+    /// Oriented dart used as the profile's default traversal root.
+    pub dart: Dart,
+    /// User payload attached to the profile.
+    pub data: T,
+}
+
+impl<T> ProfileAttr<T> {
+    /// Creates a profile attribute rooted at the given oriented dart.
+    pub fn new(dart: Dart, data: T) -> Self {
+        Self { dart, data }
     }
 }
 
@@ -142,6 +154,22 @@ impl<T> FaceAttr<T> {
             .cell_key::<Cell2>(self.outer_loop)
             .expect("FaceAttr must be registered to produce a Face view");
         Face::new(gmap, key)
+    }
+}
+
+/// Stored data and default orientation for a sheet.
+#[derive(Clone)]
+pub struct SheetAttr<T> {
+    /// Oriented dart used as the sheet's default traversal root.
+    pub dart: Dart,
+    /// User payload attached to the sheet.
+    pub data: T,
+}
+
+impl<T> SheetAttr<T> {
+    /// Creates a sheet attribute rooted at the given oriented dart.
+    pub fn new(dart: Dart, data: T) -> Self {
+        Self { dart, data }
     }
 }
 

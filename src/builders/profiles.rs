@@ -4,18 +4,19 @@ use crate::geometry::{
     ControlPolygon2, Curve, Curve2, HPoint2, LINEAR_TOLERANCE, Line2, NurbsCurve2, Plane, Point2,
     Point3, PointCoincidence,
 };
-use crate::topology::attributes::{EdgeAttr, VertexAttr};
+use crate::topology::attributes::{EdgeAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
-use crate::topology::payload::{Payload, StandardPayload};
+use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
+use crate::topology::shape_keys::ProfileKey;
 
 pub use crate::builders::errors::PolylineError;
 
-pub fn add_polyline(
-    g: &mut GMap<StandardPayload>,
+pub fn add_polyline<P: Payload>(
+    g: &mut GMap<P>,
     points: &[Point3],
-) -> Result<Dart, PolylineError> {
+) -> Result<ProfileKey, PolylineError> {
     if points.len() < 2 {
         return Err(PolylineError::EmptyPolyline);
     }
@@ -24,7 +25,8 @@ pub fn add_polyline(
         .windows(2)
         .map(|pair| (pair[0], pair[1], Curve::line(pair[0], pair[1])))
         .collect::<Vec<_>>();
-    add_segments(g, &segments)
+    let dart = add_segments(g, &segments)?;
+    Ok(g.add_profile(ProfileAttr::new(dart, P::Profile::default())))
 }
 
 pub fn add_edge_to_profile<P: Payload>(
@@ -140,13 +142,13 @@ pub fn plane_uv(plane: &Plane, point: Point3) -> Point2 {
 /// |     |
 /// 3-----2
 ///
-/// Returns the dart of the first corner.
-pub fn add_rectangle(
-    g: &mut GMap<StandardPayload>,
+/// Returns the profile key whose stored dart starts at the first corner.
+pub fn add_rectangle<P: Payload>(
+    g: &mut GMap<P>,
     plane: Plane,
     x_size: f64,
     y_size: f64,
-) -> Result<Dart, PolylineError> {
+) -> Result<ProfileKey, PolylineError> {
     validate_rectangle_size("x", x_size)?;
     validate_rectangle_size("y", y_size)?;
 
@@ -160,11 +162,11 @@ pub fn add_rectangle(
     add_polyline(g, &corners)
 }
 
-pub fn add_square(
-    g: &mut GMap<StandardPayload>,
+pub fn add_square<P: Payload>(
+    g: &mut GMap<P>,
     plane: Plane,
     size: f64,
-) -> Result<Dart, PolylineError> {
+) -> Result<ProfileKey, PolylineError> {
     add_rectangle(g, plane, size, size)
 }
 
@@ -187,7 +189,7 @@ fn sew<P: Payload>(
 }
 
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
-pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool) -> Dart {
+pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool) -> ProfileKey {
     let darts: Vec<Dart> = (0..count).map(|_| g.add_dart()).collect();
     for i in 0..count {
         g.sew(Dim::Zero, darts[i], darts[(i + 1) % count])
@@ -201,11 +203,11 @@ pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool
         g.sew(Dim::Zero, darts[count - 1], darts[0])
             .expect("fresh dart pair should be alpha0-sewable");
     }
-    darts[0]
+    g.add_profile(ProfileAttr::new(darts[0], P::Profile::default()))
 }
 
-fn add_segments(
-    g: &mut GMap<StandardPayload>,
+fn add_segments<P: Payload>(
+    g: &mut GMap<P>,
     segments: &[(Point3, Point3, Curve)],
 ) -> Result<Dart, PolylineError> {
     let first_segment = segments.first().ok_or(PolylineError::EmptyPolyline)?;
@@ -239,8 +241,8 @@ struct SegmentTopology {
     end: Dart,
 }
 
-fn add_segment_topology(
-    g: &mut GMap<StandardPayload>,
+fn add_segment_topology<P: Payload>(
+    g: &mut GMap<P>,
     count: usize,
 ) -> Result<Vec<SegmentTopology>, PolylineError> {
     let mut segments = Vec::with_capacity(count);
@@ -253,19 +255,23 @@ fn add_segment_topology(
     Ok(segments)
 }
 
-fn add_segment_attributes(
-    g: &mut GMap<StandardPayload>,
+fn add_segment_attributes<P: Payload>(
+    g: &mut GMap<P>,
     segments: &[(Point3, Point3, Curve)],
     segment_darts: &[SegmentTopology],
     closed: bool,
 ) {
     for (segment, darts) in segments.iter().zip(segment_darts) {
-        g.add_edge(EdgeAttr::new(darts.start, segment.2.clone(), ()));
+        g.add_edge(EdgeAttr::new(
+            darts.start,
+            segment.2.clone(),
+            P::E::default(),
+        ));
     }
 
     for (segment, darts) in segments.iter().zip(segment_darts) {
         let vertex_dart = g.cell_representative(darts.start, Dim::Zero);
-        g.add_vertex(VertexAttr::new(vertex_dart, segment.0, ()));
+        g.add_vertex(VertexAttr::new(vertex_dart, segment.0, P::V::default()));
     }
 
     if !closed {
@@ -274,7 +280,7 @@ fn add_segment_attributes(
             .zip(segment_darts.last())
             .expect("non-empty segment list should have a last dart");
         let vertex_dart = g.cell_representative(last.1.end, Dim::Zero);
-        g.add_vertex(VertexAttr::new(vertex_dart, last.0.1, ()));
+        g.add_vertex(VertexAttr::new(vertex_dart, last.0.1, P::V::default()));
     }
 }
 

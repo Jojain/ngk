@@ -131,7 +131,7 @@ fn split_face_edge_updates_boundary_and_pcurves() {
 fn split_face_edge_rejects_edges_outside_the_face() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 1.0).expect("face should build");
-    let (_, edge) = add_line(
+    let edge = add_line(
         &mut g,
         Point3::new(10.0, 0.0, 0.0),
         Point3::new(11.0, 0.0, 0.0),
@@ -178,7 +178,8 @@ fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
         Point3::new(1.0, 1.0, 0.0),
     ];
     let profile = add_polyline(&mut g, &points).expect("two-edge profile should build");
-    add_extruded_profile(&mut g, profile, Vector3::new(0.0, 0.0, 2.0))
+    let profile_dart = g.profile_attr(profile).expect("profile should exist").dart;
+    add_extruded_profile(&mut g, profile_dart, Vector3::new(0.0, 0.0, 2.0))
         .expect("profile should extrude into two faces");
 
     let edge = edge_between_points(&g, Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 0.0, 2.0));
@@ -211,7 +212,13 @@ fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
         let face = g.face(facekey).expect("adjacent face should remain");
         let edges = face.outer_loop().edges();
         assert_eq!(edges.len(), 5);
-        assert_eq!(g.face_attr(facekey).expect("face should exist").pcurves.len(), 5);
+        assert_eq!(
+            g.face_attr(facekey)
+                .expect("face should exist")
+                .pcurves
+                .len(),
+            5
+        );
         assert!(
             edges.iter().all(|edge| face.pcurve(edge.dart()).is_some()),
             "each split boundary edge should keep a pcurve on face {facekey:?}"
@@ -308,7 +315,11 @@ fn split_face_by_imprints_applies_multiple_non_crossing_chords() {
         Point3::new(1.5, 2.0, 0.0),
         Point3::new(0.0, 1.0, 0.0),
     ];
-    let loop_dart = add_polygon(&mut g, &points);
+    let profile_key = add_polygon(&mut g, &points);
+    let loop_dart = g
+        .profile_attr(profile_key)
+        .expect("polygon profile should exist")
+        .dart;
     let face_key = add_face(&mut g, loop_dart).expect("polygon face should build");
     let imprints = vec![
         planar_imprint(Curve2::Line(Line2::new(
@@ -559,8 +570,9 @@ fn split_face_preserves_curved_loop() {
 #[test]
 fn split_cylinder_face_at_two_generators() {
     let mut g = GMap::<StandardPayload>::new();
-    let (circle, _) = add_circle_edge(&mut g, Plane::xy(), 1.0).expect("circle should build");
-    add_extruded_profile(&mut g, circle, Vector3::new(0.0, 0.0, 2.0))
+    let circle = add_circle_edge(&mut g, Plane::xy(), 1.0).expect("circle should build");
+    let circle_dart = g.edge_attr(circle).expect("circle edge should exist").dart;
+    add_extruded_profile(&mut g, circle_dart, Vector3::new(0.0, 0.0, 2.0))
         .expect("circle should extrude");
     let face_key = g
         .iter_faces()

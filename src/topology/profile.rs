@@ -3,6 +3,7 @@ use super::edge::Edge;
 use super::gmap::{Dart, Dim, GMap, MergeTopology, TopologyMerge};
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
+use crate::topology::shape_keys::ProfileKey;
 
 /// A dart-rooted 1-dimensional connected topology view.
 ///
@@ -29,6 +30,18 @@ impl<'a, P: Payload> Profile<'a, P> {
     /// Creates a profile view rooted at `dart`.
     pub fn new(gmap: &'a GMap<P>, dart: Dart) -> Self {
         Self { gmap, dart }
+    }
+
+    /// Returns this profile's stable key, if it is registered.
+    pub fn key(&self) -> Option<ProfileKey> {
+        self.gmap.profile_key(self.dart)
+    }
+
+    /// Returns the user payload attached to this registered profile.
+    pub fn data(&self) -> Option<&P::Profile> {
+        self.key()
+            .and_then(|key| self.gmap.profile_attr(key))
+            .map(|attr| &attr.data)
     }
 
     /// Iterates the darts of this profile in alternating alpha0/alpha1 order.
@@ -229,14 +242,14 @@ mod tests {
             Point3::new(1.0, 1.0, 0.0),
         ];
 
-        let (_, first_edge) = add_edge(
+        let first_edge = add_edge(
             &mut g,
             points[0],
             points[1],
             Curve::line(points[0], points[1]),
         )
         .expect("first edge should build");
-        let (_, second_edge) = add_edge(
+        let second_edge = add_edge(
             &mut g,
             points[1],
             points[2],

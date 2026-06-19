@@ -11,16 +11,16 @@ use crate::geometry::{
     ANGULAR_TOLERANCE, Circle, Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3,
     Surface, SurfaceOfRevolution,
 };
-use crate::topology::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
+use crate::topology::attributes::{EdgeAttr, FaceAttr, SheetAttr, SolidAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell2, Dart, Dim, GMap, MergeTopology};
+use crate::topology::gmap::{Cell1, Cell2, Dart, Dim, GMap, MergeTopology};
 use crate::topology::payload::Payload;
 use crate::topology::planar::{Planar, PlanarityError};
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceTag, Shape};
-use crate::topology::shape_keys::{FaceKey, SolidKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, SheetKey, SolidKey};
 
 #[derive(Debug, Error)]
 pub enum RevolveError {
@@ -60,13 +60,18 @@ pub fn add_revolved_edge<P: Payload>(
     edge_dart: Dart,
     axis: Axis3,
     angle: Rad64,
-) -> Result<Dart, RevolveError> {
+) -> Result<EdgeKey, RevolveError> {
     let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
     if is_full_turn(angle) {
-        return add_full_revolved_edge(g, edge_dart, axis);
+        let dart = add_full_revolved_edge(g, edge_dart, axis)?;
+        return g
+            .cell_key::<Cell1>(dart)
+            .ok_or(RevolveError::MissingEdgeCurve { dart });
     }
 
-    add_partial_revolved_edge(g, edge_dart, axis, angle)
+    let dart = add_partial_revolved_edge(g, edge_dart, axis, angle)?;
+    g.cell_key::<Cell1>(dart)
+        .ok_or(RevolveError::MissingEdgeCurve { dart })
 }
 
 fn add_full_revolved_edge<P: Payload>(
@@ -106,7 +111,11 @@ fn add_partial_revolved_edge<P: Payload>(
     } else {
         add_open_revolve_circle(g, axis, end, rotated_end)?
     };
-    let (rotated_edge, _) = add_edge(g, rotated_start, rotated_end, rotated_curve)?;
+    let rotated_edge_key = add_edge(g, rotated_start, rotated_end, rotated_curve)?;
+    let rotated_edge = g
+        .edge_attr(rotated_edge_key)
+        .expect("newly added edge must exist")
+        .dart;
     let rotated_edge_end = g.alpha(Dim::Zero, rotated_edge);
     let start_arc_end = g.alpha(Dim::Zero, start_arc);
     let end_arc_end = g.alpha(Dim::Zero, end_arc);
@@ -127,7 +136,8 @@ fn add_open_revolve_circle<P: Payload>(
     start: Point3,
     end: Point3,
 ) -> Result<Dart, RevolveError> {
-    Ok(add_edge(g, start, end, revolve_circle_curve(axis, start))?.0)
+    let key = add_edge(g, start, end, revolve_circle_curve(axis, start))?;
+    Ok(g.edge_attr(key).expect("newly added edge must exist").dart)
 }
 
 fn add_closed_revolve_circle<P: Payload>(
@@ -236,15 +246,17 @@ pub fn add_revolved_profile<P: Payload>(
     profile_dart: Dart,
     axis: Axis3,
     angle: Rad64,
-) -> Result<Dart, RevolveError> {
+) -> Result<SheetKey, RevolveError> {
     let profile = Profile::new(g, profile_dart);
     let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
     let profile = planar.inner();
     if profile.is_closed() {
-        return Ok(add_revolved_profile_faces(g, profile_dart, axis, angle, true)?.swept_dart);
+        let dart = add_revolved_profile_faces(g, profile_dart, axis, angle, true)?.swept_dart;
+        return Ok(g.add_sheet(SheetAttr::new(dart, P::Sheet::default())));
     }
 
-    Ok(add_revolved_profile_faces(g, profile_dart, axis, angle, false)?.swept_dart)
+    let dart = add_revolved_profile_faces(g, profile_dart, axis, angle, false)?.swept_dart;
+    Ok(g.add_sheet(SheetAttr::new(dart, P::Sheet::default())))
 }
 
 struct RevolvedProfile {
@@ -479,7 +491,11 @@ fn add_full_revolved_face<P: Payload>(
     let mut shell = None;
     for loop_dart in loops {
         let revolved = add_revolved_profile(g, loop_dart, axis, angle)?;
-        shell.get_or_insert(revolved);
+        let revolved_dart = g
+            .sheet_attr(revolved)
+            .expect("newly revolved sheet must exist")
+            .dart;
+        shell.get_or_insert(revolved_dart);
     }
 
     let shell = shell.expect("a face should have at least one boundary loop");

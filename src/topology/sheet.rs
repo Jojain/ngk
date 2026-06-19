@@ -8,6 +8,7 @@ use super::face::Face;
 use super::gmap::{Cell2, Dart, GMap, MergeTopology, TopologyMerge};
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
+use crate::topology::shape_keys::SheetKey;
 
 /// A dart-rooted 2-dimensional connected topology view.
 ///
@@ -33,6 +34,18 @@ impl<'a, P: Payload> Sheet<'a, P> {
     /// Creates a sheet view rooted at `dart`.
     pub fn new(gmap: &'a GMap<P>, dart: Dart) -> Self {
         Self { gmap, dart }
+    }
+
+    /// Returns this sheet's stable key, if it is registered.
+    pub fn key(&self) -> Option<SheetKey> {
+        self.gmap.sheet_key(self.dart)
+    }
+
+    /// Returns the user payload attached to this registered sheet.
+    pub fn data(&self) -> Option<&P::Sheet> {
+        self.key()
+            .and_then(|key| self.gmap.sheet_attr(key))
+            .map(|attr| &attr.data)
     }
 
     /// Iterates every dart in this sheet's alpha0/alpha1/alpha2 component.

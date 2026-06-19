@@ -3,13 +3,12 @@ use ngk::geometry::Plane;
 use ngk::topology::closed::Closeable;
 use ngk::topology::gmap::{Dim, GMap};
 use ngk::topology::payload::StandardPayload;
-use ngk::topology::profile::Profile;
 
 #[test]
 fn add_rectangle_creates_closed_four_edge_profile() {
     let mut g = GMap::<StandardPayload>::new();
-    let dart = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("rectangle should build");
-    let profile = Profile::new(&g, dart);
+    let key = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("rectangle should build");
+    let profile = g.profile(key).expect("profile should exist");
 
     assert!(profile.is_closed());
     assert_eq!(profile.edges().len(), 4);

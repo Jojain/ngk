@@ -3,6 +3,7 @@ use crate::builders::errors::ChamferError;
 use crate::geometry::{Curve, LINEAR_TOLERANCE, Line, Point3};
 use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
+use crate::topology::shape_keys::EdgeKey;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CornerRole {
@@ -14,7 +15,7 @@ pub fn chamfer_profile_vertex<P: Payload>(
     g: &mut GMap<P>,
     vertex_dart: Dart,
     distance: f64,
-) -> Result<Dart, ChamferError> {
+) -> Result<EdgeKey, ChamferError> {
     validate_distance(distance)?;
 
     let (incoming_end, outgoing_start) = profile_corner_darts(g, vertex_dart)?;
@@ -33,13 +34,17 @@ pub fn chamfer_profile_vertex<P: Payload>(
     reset_line_edge(g, incoming_end)?;
     reset_line_edge(g, outgoing_start)?;
 
-    let (chamfer_start, _) = add_line(g, incoming_offset, outgoing_offset)
+    let chamfer_edge = add_line(g, incoming_offset, outgoing_offset)
         .map_err(|_| ChamferError::ZeroLengthEdge { dart: incoming_end })?;
+    let chamfer_start = g
+        .edge_attr(chamfer_edge)
+        .expect("newly added chamfer edge must exist")
+        .dart;
     let chamfer_end = g.alpha(Dim::Zero, chamfer_start);
     sew(g, incoming_end, chamfer_start)?;
     sew(g, chamfer_end, outgoing_start)?;
 
-    Ok(chamfer_start)
+    Ok(chamfer_edge)
 }
 
 fn validate_distance(distance: f64) -> Result<(), ChamferError> {

@@ -2,10 +2,10 @@ use std::marker::PhantomData;
 
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Dart, GMap};
+use crate::topology::gmap::GMap;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
-use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
 use crate::topology::vertex::Vertex;
@@ -42,11 +42,11 @@ impl ShapeKind for FaceTag {
 }
 
 impl ShapeKind for ProfileTag {
-    type Handle = Dart;
+    type Handle = ProfileKey;
 }
 
 impl ShapeKind for SheetTag {
-    type Handle = Dart;
+    type Handle = SheetKey;
 }
 
 impl ShapeKind for SolidTag {
@@ -157,11 +157,13 @@ impl<P: Payload> Shape<FaceTag, P> {
 impl<P: Payload> Shape<ProfileTag, P> {
     /// Returns the primary profile view.
     pub fn profile(&self) -> Profile<'_, P> {
-        Profile::new(&self.map, self.handle)
+        self.map
+            .profile(self.handle)
+            .expect("profile shape key must be in the map")
     }
 
-    /// Returns the primary profile dart.
-    pub fn dart(&self) -> Dart {
+    /// Returns the primary profile key.
+    pub fn key(&self) -> ProfileKey {
         self.handle
     }
 }
@@ -169,11 +171,13 @@ impl<P: Payload> Shape<ProfileTag, P> {
 impl<P: Payload> Shape<SheetTag, P> {
     /// Returns the primary sheet view.
     pub fn sheet(&self) -> Sheet<'_, P> {
-        Sheet::new(&self.map, self.handle)
+        self.map
+            .sheet(self.handle)
+            .expect("sheet shape key must be in the map")
     }
 
-    /// Returns the primary sheet dart.
-    pub fn dart(&self) -> Dart {
+    /// Returns the primary sheet key.
+    pub fn key(&self) -> SheetKey {
         self.handle
     }
 }

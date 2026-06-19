@@ -60,22 +60,21 @@ pub fn add_edge<P: Payload>(
     start: Point3,
     end: Point3,
     curve: Curve,
-) -> Result<(Dart, EdgeKey), EdgeCreationError> {
+) -> Result<EdgeKey, EdgeCreationError> {
     check_non_coincident_points(start, end)?;
     let d1 = g.add_dart();
     let d2 = g.add_dart();
     g.sew_unchecked(Dim::Zero, d1, d2);
     g.add_vertex(VertexAttr::new(d1, start, P::V::default()));
     g.add_vertex(VertexAttr::new(d2, end, P::V::default()));
-    let e = g.add_edge(EdgeAttr::new(d1, curve, P::E::default()));
-    Ok((d1, e))
+    Ok(g.add_edge(EdgeAttr::new(d1, curve, P::E::default())))
 }
 
 pub fn add_line<P: Payload>(
     g: &mut GMap<P>,
     start: Point3,
     end: Point3,
-) -> Result<(Dart, EdgeKey), EdgeCreationError> {
+) -> Result<EdgeKey, EdgeCreationError> {
     let curve = Curve::line(start, end);
     add_edge(g, start, end, curve)
 }
@@ -400,7 +399,7 @@ pub fn add_arc<P: Payload>(
     radius: f64,
     start_angle: f64,
     end_angle: f64,
-) -> Result<(Dart, EdgeKey), EdgeCreationError> {
+) -> Result<EdgeKey, EdgeCreationError> {
     check_valid_radius(radius)?;
     check_valid_angle("start", start_angle)?;
     check_valid_angle("end", end_angle)?;
@@ -415,7 +414,7 @@ pub fn add_circle<P: Payload>(
     g: &mut GMap<P>,
     plane: Plane,
     radius: f64,
-) -> Result<(Dart, EdgeKey), EdgeCreationError> {
+) -> Result<EdgeKey, EdgeCreationError> {
     check_valid_radius(radius)?;
     let d1 = g.add_dart();
     let d2 = g.add_dart();
@@ -424,8 +423,7 @@ pub fn add_circle<P: Payload>(
     let curve = Curve::circle(plane, radius);
     g.sew_unchecked(Dim::Zero, d1, d2);
     g.sew_unchecked(Dim::One, d1, d2);
-    let e = g.add_edge(EdgeAttr::new(d1, curve, P::E::default()));
-    Ok((d1, e))
+    Ok(g.add_edge(EdgeAttr::new(d1, curve, P::E::default())))
 }
 
 fn check_non_coincident_points(start: Point3, end: Point3) -> Result<(), EdgeCreationError> {

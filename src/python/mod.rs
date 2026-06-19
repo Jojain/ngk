@@ -22,7 +22,7 @@ use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::profile::{Loop, Profile};
-use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SolidKey, VertexKey};
 use crate::topology::sheet::ShellRef;
 use crate::topology::vertex::Vertex;
 
@@ -75,8 +75,8 @@ fn line(start: (f64, f64, f64), end: (f64, f64, f64)) -> PyResult<PyEdge> {
 fn rectangle_profile(x_size: f64, y_size: f64) -> PyResult<PyProfile> {
     let shape = profiles::rectangle(Plane::xy(), x_size, y_size)
         .map_err(|err| PyValueError::new_err(err.to_string()))?;
-    let (map, dart) = shape.into_map();
-    Ok(PyProfile::new(Arc::new(map), dart))
+    let (map, key) = shape.into_map();
+    Ok(PyProfile::new(Arc::new(map), key))
 }
 
 #[pyfunction]
@@ -112,7 +112,7 @@ fn _to_tcv_json(
     if let Ok(profile) = obj.extract::<PyRef<'_, PyProfile>>() {
         let shape = crate::topology::shape::Shape::<crate::topology::shape::ProfileTag, _>::new(
             profile.map.as_ref().clone(),
-            profile.dart,
+            profile.key,
         );
         return tcv_json(&shape, opts);
     }
@@ -524,43 +524,50 @@ impl PyLoop {
 #[derive(Clone)]
 pub struct PyProfile {
     map: SharedMap,
-    dart: Dart,
+    key: ProfileKey,
 }
 
 impl PyProfile {
-    fn new(map: SharedMap, dart: Dart) -> Self {
-        let dart = map.cell_representative(dart, Dim::One);
-        Self { map, dart }
+    fn new(map: SharedMap, key: ProfileKey) -> Self {
+        Self { map, key }
+    }
+
+    fn profile(&self) -> PyResult<Profile<'_, StandardPayload>> {
+        self.map
+            .profile(self.key)
+            .ok_or_else(|| missing_topology(format!("missing profile {:?}", self.key)))
     }
 }
 
 #[pymethods]
 impl PyProfile {
     #[getter]
-    fn dart_id(&self) -> usize {
-        self.dart.id()
+    fn dart_id(&self) -> PyResult<usize> {
+        Ok(self.profile()?.dart.id())
     }
 
-    fn edges(&self) -> Vec<PyEdge> {
-        Profile::new(self.map.as_ref(), self.dart)
+    fn edges(&self) -> PyResult<Vec<PyEdge>> {
+        Ok(self
+            .profile()?
             .edges()
             .into_iter()
             .map(|edge| PyEdge::new(Arc::clone(&self.map), edge))
-            .collect()
+            .collect())
     }
 
-    fn vertices(&self) -> Vec<PyVertex> {
-        Profile::new(self.map.as_ref(), self.dart)
+    fn vertices(&self) -> PyResult<Vec<PyVertex>> {
+        Ok(self
+            .profile()?
             .vertices()
             .into_iter()
             .map(|vertex| PyVertex::new(Arc::clone(&self.map), vertex))
-            .collect()
+            .collect())
     }
 
     fn __richcmp__(&self, other: PyRef<'_, PyProfile>, op: CompareOp) -> PyResult<bool> {
         match op {
-            CompareOp::Eq => Ok(Arc::ptr_eq(&self.map, &other.map) && self.dart == other.dart),
-            CompareOp::Ne => Ok(!Arc::ptr_eq(&self.map, &other.map) || self.dart != other.dart),
+            CompareOp::Eq => Ok(Arc::ptr_eq(&self.map, &other.map) && self.key == other.key),
+            CompareOp::Ne => Ok(!Arc::ptr_eq(&self.map, &other.map) || self.key != other.key),
             _ => Err(PyValueError::new_err(
                 "profile ordering is not defined; use == or !=",
             )),
@@ -568,11 +575,16 @@ impl PyProfile {
     }
 
     fn __hash__(&self) -> isize {
-        hash_topology_identity(&self.map, self.dart)
+        let dart = self
+            .map
+            .profile_attr(self.key)
+            .expect("Python profile key must remain valid")
+            .dart;
+        hash_topology_identity(&self.map, dart)
     }
 
     fn __repr__(&self) -> String {
-        format!("Profile(dart_id={})", self.dart.id())
+        format!("Profile(key={:?})", self.key)
     }
 }
 

@@ -9,7 +9,7 @@ use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidK
 use crate::topology::solid::Solid;
 use crate::topology::vertex::Vertex;
 
-use super::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
+use super::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr};
 use super::payload::{Payload, StandardPayload};
 
 pub use super::dart::{Dart, IsolatedDart};
@@ -264,7 +264,9 @@ pub struct GMap<P: Payload = StandardPayload> {
     pub(crate) dart_to_solid: HashMap<Dart, SolidKey>,
     pub(crate) vertices: SlotMap<VertexKey, VertexAttr<P::V>>,
     pub(crate) edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
+    pub(crate) profiles: SlotMap<ProfileKey, ProfileAttr<P::Profile>>,
     pub(crate) faces: SlotMap<FaceKey, FaceAttr<P::F>>,
+    pub(crate) sheets: SlotMap<SheetKey, SheetAttr<P::Sheet>>,
     pub(crate) solids: SlotMap<SolidKey, SolidAttr<P::S>>,
 }
 
@@ -277,8 +279,10 @@ impl<P: Payload> Clone for GMap<P> {
             dart_to_vertex: self.dart_to_vertex.clone(),
             edges: self.edges.clone(),
             dart_to_edge: self.dart_to_edge.clone(),
+            profiles: self.profiles.clone(),
             dart_to_profile: self.dart_to_profile.clone(),
             dart_to_face: self.dart_to_face.clone(),
+            sheets: self.sheets.clone(),
             dart_to_sheet: self.dart_to_sheet.clone(),
             dart_to_solid: self.dart_to_solid.clone(),
             faces: self.faces.clone(),
@@ -302,8 +306,10 @@ impl<P: Payload> GMap<P> {
         let dart_to_vertex = HashMap::new();
         let edges = SlotMap::with_key();
         let dart_to_edge = HashMap::new();
+        let profiles = SlotMap::with_key();
         let dart_to_profile = HashMap::new();
         let dart_to_face = HashMap::new();
+        let sheets = SlotMap::with_key();
         let dart_to_sheet = HashMap::new();
         let dart_to_solid = HashMap::new();
         let faces = SlotMap::with_key();
@@ -315,8 +321,10 @@ impl<P: Payload> GMap<P> {
             dart_to_vertex,
             edges,
             dart_to_edge,
+            profiles,
             dart_to_profile,
             dart_to_face,
+            sheets,
             dart_to_sheet,
             dart_to_solid,
             faces,
@@ -525,6 +533,50 @@ impl<P: Payload> GMap<P> {
         self.edges.iter()
     }
 
+    /// Adds a profile identity while preserving the caller's oriented root.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the same alpha0/alpha1 component already has a profile key.
+    pub fn add_profile(&mut self, profile: ProfileAttr<P::Profile>) -> ProfileKey {
+        let repr = self.profile_representative(profile.dart);
+        assert!(
+            !self.dart_to_profile.contains_key(&repr),
+            "A profile is already attached to this alpha0/alpha1 component"
+        );
+        let key = self.profiles.insert(profile);
+        self.dart_to_profile.insert(repr, key);
+        key
+    }
+
+    /// Returns the profile view registered under `key`.
+    pub fn profile(&self, key: ProfileKey) -> Option<crate::topology::profile::Profile<'_, P>> {
+        let attr = self.profile_attr(key)?;
+        Some(crate::topology::profile::Profile::new(self, attr.dart))
+    }
+
+    /// Returns the profile key for the alpha0/alpha1 component containing `dart`.
+    pub fn profile_key(&self, dart: Dart) -> Option<ProfileKey> {
+        self.dart_to_profile
+            .get(&self.profile_representative(dart))
+            .copied()
+    }
+
+    /// Returns the stored profile attribute.
+    pub fn profile_attr(&self, key: ProfileKey) -> Option<&ProfileAttr<P::Profile>> {
+        self.profiles.get(key)
+    }
+
+    /// Returns the mutable profile attribute.
+    pub fn profile_attr_mut(&mut self, key: ProfileKey) -> Option<&mut ProfileAttr<P::Profile>> {
+        self.profiles.get_mut(key)
+    }
+
+    /// Iterates all stored profiles.
+    pub fn iter_profiles(&self) -> impl Iterator<Item = (ProfileKey, &ProfileAttr<P::Profile>)> {
+        self.profiles.iter()
+    }
+
     /// Adds a face attribute and returns its key.
     ///
     /// # Panics
@@ -640,6 +692,50 @@ impl<P: Payload> GMap<P> {
         self.faces.iter()
     }
 
+    /// Adds a sheet identity while preserving the caller's oriented root.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the same 3-cell already has a sheet key.
+    pub fn add_sheet(&mut self, sheet: SheetAttr<P::Sheet>) -> SheetKey {
+        let repr = self.cell_representative(sheet.dart, Dim::Three);
+        assert!(
+            !self.dart_to_sheet.contains_key(&repr),
+            "A sheet is already attached to this 3-cell"
+        );
+        let key = self.sheets.insert(sheet);
+        self.dart_to_sheet.insert(repr, key);
+        key
+    }
+
+    /// Returns the sheet view registered under `key`.
+    pub fn sheet(&self, key: SheetKey) -> Option<crate::topology::sheet::Sheet<'_, P>> {
+        let attr = self.sheet_attr(key)?;
+        Some(crate::topology::sheet::Sheet::new(self, attr.dart))
+    }
+
+    /// Returns the sheet key for the 3-cell containing `dart`.
+    pub fn sheet_key(&self, dart: Dart) -> Option<SheetKey> {
+        self.dart_to_sheet
+            .get(&self.cell_representative(dart, Dim::Three))
+            .copied()
+    }
+
+    /// Returns the stored sheet attribute.
+    pub fn sheet_attr(&self, key: SheetKey) -> Option<&SheetAttr<P::Sheet>> {
+        self.sheets.get(key)
+    }
+
+    /// Returns the mutable sheet attribute.
+    pub fn sheet_attr_mut(&mut self, key: SheetKey) -> Option<&mut SheetAttr<P::Sheet>> {
+        self.sheets.get_mut(key)
+    }
+
+    /// Iterates all stored sheets.
+    pub fn iter_sheets(&self) -> impl Iterator<Item = (SheetKey, &SheetAttr<P::Sheet>)> {
+        self.sheets.iter()
+    }
+
     /// Adds a solid attribute and returns its key.
     ///
     /// If any shell is already attached to a solid, the existing solid key is
@@ -683,6 +779,12 @@ impl<P: Payload> GMap<P> {
             .chain(solid.inner_shells.iter().flatten().copied())
             .map(|dart| self.cell_representative(dart, Dim::Three))
             .collect()
+    }
+
+    fn profile_representative(&self, dart: Dart) -> Dart {
+        self.orbit(dart, vec![Dim::Zero.index(), Dim::One.index()])
+            .min()
+            .expect("profile orbit cannot be empty")
     }
 
     /// Copy a topological view into a fresh [`GMap`].
@@ -778,6 +880,20 @@ impl<P: Payload> GMap<P> {
             }
         }
 
+        for (_, attr) in source.profiles.iter() {
+            if !source
+                .orbit(attr.dart, vec![Dim::Zero.index(), Dim::One.index()])
+                .all(|dart| source_dart_set.contains(&dart))
+            {
+                continue;
+            }
+            let mut attr = attr.clone();
+            attr.dart = remap_dart(&dart_map, attr.dart);
+            let repr = self.profile_representative(attr.dart);
+            let new_key = self.profiles.insert(attr);
+            self.dart_to_profile.insert(repr, new_key);
+        }
+
         for (old_key, attr) in source.faces.iter() {
             if !source_dart_set.contains(&attr.outer_loop) {
                 continue;
@@ -797,6 +913,20 @@ impl<P: Payload> GMap<P> {
             let new_key = self.faces.insert(attr);
             self.index_face_loop_darts(new_key);
             face_map.insert(old_key, new_key);
+        }
+
+        for (_, attr) in source.sheets.iter() {
+            if !source
+                .orbit(attr.dart, vec![0, 1, 2])
+                .all(|dart| source_dart_set.contains(&dart))
+            {
+                continue;
+            }
+            let mut attr = attr.clone();
+            attr.dart = remap_dart(&dart_map, attr.dart);
+            let repr = self.cell_representative(attr.dart, Dim::Three);
+            let new_key = self.sheets.insert(attr);
+            self.dart_to_sheet.insert(repr, new_key);
         }
 
         for (_, attr) in source.solids.iter() {
@@ -971,6 +1101,12 @@ impl<P: Payload> GMap<P> {
     }
 
     fn reconcile_attributes_after_sew(&mut self, d: Dim) {
+        if d.index() <= Dim::One.index() {
+            self.reconcile_profile_attributes();
+        }
+        if d.index() <= Dim::Two.index() {
+            self.reconcile_sheet_attributes();
+        }
         if d.index() > Dim::Zero.index() {
             self.reconcile_vertex_attributes();
         }
@@ -1039,7 +1175,37 @@ impl<P: Payload> GMap<P> {
     fn rebuild_edge_index(&mut self) {
         self.dart_to_edge.clear();
         for (key, attr) in self.edges.iter() {
-            self.dart_to_edge.insert(attr.dart, key);
+            let repr = self.cell_representative(attr.dart, Dim::One);
+            self.dart_to_edge.insert(repr, key);
+        }
+    }
+
+    fn reconcile_profile_attributes(&mut self) {
+        let mut survivor_by_repr = HashMap::new();
+        let mut duplicates = Vec::new();
+        let profile_keys = self.profiles.keys().collect::<Vec<_>>();
+
+        for key in profile_keys {
+            let Some(attr) = self.profiles.get(key) else {
+                continue;
+            };
+            let repr = self.profile_representative(attr.dart);
+            if survivor_by_repr.insert(repr, key).is_some() {
+                duplicates.push(key);
+            }
+        }
+
+        for key in duplicates {
+            self.profiles.remove(key);
+        }
+        self.rebuild_profile_index();
+    }
+
+    fn rebuild_profile_index(&mut self) {
+        self.dart_to_profile.clear();
+        for (key, attr) in self.profiles.iter() {
+            let repr = self.profile_representative(attr.dart);
+            self.dart_to_profile.insert(repr, key);
         }
     }
 
@@ -1069,6 +1235,35 @@ impl<P: Payload> GMap<P> {
         let face_keys: Vec<FaceKey> = self.faces.keys().collect();
         for key in face_keys {
             self.index_face_loop_darts(key);
+        }
+    }
+
+    fn reconcile_sheet_attributes(&mut self) {
+        let mut survivor_by_repr = HashMap::new();
+        let mut duplicates = Vec::new();
+        let sheet_keys = self.sheets.keys().collect::<Vec<_>>();
+
+        for key in sheet_keys {
+            let Some(attr) = self.sheets.get(key) else {
+                continue;
+            };
+            let repr = self.cell_representative(attr.dart, Dim::Three);
+            if survivor_by_repr.insert(repr, key).is_some() {
+                duplicates.push(key);
+            }
+        }
+
+        for key in duplicates {
+            self.sheets.remove(key);
+        }
+        self.rebuild_sheet_index();
+    }
+
+    fn rebuild_sheet_index(&mut self) {
+        self.dart_to_sheet.clear();
+        for (key, attr) in self.sheets.iter() {
+            let repr = self.cell_representative(attr.dart, Dim::Three);
+            self.dart_to_sheet.insert(repr, key);
         }
     }
 
@@ -1185,21 +1380,68 @@ mod tests {
     use super::{Cell0, Cell1, Cell2, Dart, Dim, GMap, MergeTopology};
     use crate::builders::edges::add_edge;
     use crate::builders::faces::add_polygon;
+    use crate::builders::profiles::add_rectangle;
+    use crate::builders::sheets::add_extruded_profile;
     use crate::geometry::{Curve, Curve2, Line2, Plane, Point2, Point3, Surface};
     use crate::topology::attributes::{FaceAttr, SolidAttr};
-    use crate::topology::edge::Edge;
-    use crate::topology::face::Face;
-    use crate::topology::payload::StandardPayload;
+    use crate::topology::payload::{Payload, StandardPayload};
     use crate::topology::planar::Planar;
     use crate::topology::profile::Profile;
     use crate::topology::sheet::Sheet;
     use crate::topology::solid::Solid;
 
+    #[derive(Clone)]
+    struct DataPayload;
+
+    impl Payload for DataPayload {
+        type V = ();
+        type E = ();
+        type Profile = String;
+        type F = ();
+        type Sheet = String;
+        type S = ();
+    }
+
+    #[test]
+    fn profile_and_sheet_payloads_are_exposed_and_preserved_by_merge() {
+        let mut source = GMap::<DataPayload>::new();
+        let profile_key =
+            add_rectangle(&mut source, Plane::xy(), 2.0, 1.0).expect("profile should build");
+        source.profile_attr_mut(profile_key).unwrap().data = "profile".to_owned();
+        let profile_dart = source.profile_attr(profile_key).unwrap().dart;
+        let sheet_key = add_extruded_profile(&mut source, profile_dart, Vector3::z())
+            .expect("sheet should build");
+        source.sheet_attr_mut(sheet_key).unwrap().data = "sheet".to_owned();
+
+        assert_eq!(
+            source.profile(profile_key).unwrap().data().unwrap(),
+            "profile"
+        );
+        assert_eq!(source.sheet(sheet_key).unwrap().data().unwrap(), "sheet");
+
+        source.profile_attr_mut(profile_key).unwrap().data = "updated profile".to_owned();
+        source.sheet_attr_mut(sheet_key).unwrap().data = "updated sheet".to_owned();
+
+        let mut profile_target = GMap::<DataPayload>::new();
+        profile_target.merge(source.profile(profile_key).unwrap());
+        let mut sheet_target = GMap::<DataPayload>::new();
+        sheet_target.merge(source.sheet(sheet_key).unwrap());
+
+        assert_eq!(
+            profile_target.iter_profiles().next().unwrap().1.data,
+            "updated profile"
+        );
+        assert_eq!(
+            sheet_target.iter_sheets().next().unwrap().1.data,
+            "updated sheet"
+        );
+    }
+
     #[test]
     fn merge_edge_copies_topology_and_geometry() {
         let mut target = GMap::<StandardPayload>::new();
         let mut source = GMap::<StandardPayload>::new();
-        let (_, edge_key) = add_edge(
+        let edge_key = add_edge(
             &mut source,
             Point3::new(1.0, 0.0, 0.0),
             Point3::new(2.0, 0.0, 0.0),
@@ -1232,7 +1474,7 @@ mod tests {
         .expect("target edge should build");
 
         let mut source = GMap::<StandardPayload>::new();
-        let loop_dart = add_polygon(
+        let profile_key = add_polygon(
             &mut source,
             &[
                 Point3::new(0.0, 0.0, 0.0),
@@ -1241,6 +1483,10 @@ mod tests {
                 Point3::new(0.0, 1.0, 0.0),
             ],
         );
+        let loop_dart = source
+            .profile_attr(profile_key)
+            .expect("polygon profile should exist")
+            .dart;
         let mut pcurves = HashMap::new();
         pcurves.insert(
             loop_dart,
@@ -1278,7 +1524,7 @@ mod tests {
     #[test]
     fn merge_profile_sheet_and_solid_return_remapped_darts() {
         let mut source = GMap::<StandardPayload>::new();
-        let profile_dart = add_polygon(
+        let profile_key = add_polygon(
             &mut source,
             &[
                 Point3::new(0.0, 0.0, 0.0),
@@ -1287,6 +1533,10 @@ mod tests {
             ],
         );
 
+        let profile_dart = source
+            .profile_attr(profile_key)
+            .expect("polygon profile should exist")
+            .dart;
         let mut target = GMap::<StandardPayload>::new();
         let merged_profile = target.merge(Profile::new(&source, profile_dart));
         assert_eq!(merged_profile, Dart::new(0));
@@ -1319,7 +1569,7 @@ mod tests {
     #[test]
     fn isolate_face_copies_it_into_a_fresh_map() {
         let mut source = GMap::<StandardPayload>::new();
-        let loop_dart = add_polygon(
+        let profile_key = add_polygon(
             &mut source,
             &[
                 Point3::new(0.0, 0.0, 0.0),
@@ -1328,6 +1578,10 @@ mod tests {
                 Point3::new(0.0, 1.0, 0.0),
             ],
         );
+        let loop_dart = source
+            .profile_attr(profile_key)
+            .expect("polygon profile should exist")
+            .dart;
         let face_key = source.add_face(FaceAttr::new(
             Surface::Plane(Plane::from_xy(
                 Point3::new(0.0, 0.0, 0.0),
@@ -1353,7 +1607,7 @@ mod tests {
     #[test]
     fn isolate_associated_function_accepts_any_merge_topology() {
         let mut source = GMap::<StandardPayload>::new();
-        let profile_dart = add_polygon(
+        let profile_key = add_polygon(
             &mut source,
             &[
                 Point3::new(0.0, 0.0, 0.0),
@@ -1362,7 +1616,8 @@ mod tests {
             ],
         );
 
-        let (isolated, isolated_dart) = GMap::isolate(Profile::new(&source, profile_dart));
+        let (isolated, isolated_dart) =
+            GMap::isolate(source.profile(profile_key).expect("profile should exist"));
 
         assert_eq!(isolated_dart, Dart::new(0));
         assert_eq!(isolated.dart_count(), 6);
@@ -1371,7 +1626,7 @@ mod tests {
     #[test]
     fn isolate_planar_topology_forwards_to_inner_topology() {
         let mut source = GMap::<StandardPayload>::new();
-        let profile_dart = add_polygon(
+        let profile_key = add_polygon(
             &mut source,
             &[
                 Point3::new(0.0, 0.0, 0.0),
@@ -1380,7 +1635,7 @@ mod tests {
             ],
         );
         let planar = Planar::new_unchecked(
-            Profile::new(&source, profile_dart),
+            source.profile(profile_key).expect("profile should exist"),
             Plane::from_xy(Point3::new(0.0, 0.0, 0.0), Vector3::x(), Vector3::y()),
         );
 

@@ -59,7 +59,7 @@ pub fn arc(
 
 impl<P: Payload> Shape<ProfileTag, P> {
     pub fn add(&mut self, edge: &Shape<EdgeTag, P>) -> Result<(), PolylineError> {
-        let profile_dart = self.dart();
+        let profile_dart = self.profile().dart;
         if self.profile().is_closed() {
             return Err(PolylineError::ClosedProfile { dart: profile_dart });
         }

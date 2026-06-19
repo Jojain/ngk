@@ -6,22 +6,25 @@ use crate::builders::errors::ExtrudeError;
 use crate::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
 };
-use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
+use crate::topology::attributes::{EdgeAttr, FaceAttr, SheetAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
+use crate::topology::shape_keys::SheetKey;
 
 /// Adds an extruded profile to the given GMap.
 ///
-/// Return the equivalent dart belonging to the extruded edge of which the provided dart belongs to.
+/// Returns the generated sheet key. Its stored dart belongs to the translated
+/// copy of the input edge.
 pub fn add_extruded_profile<P: Payload>(
     g: &mut GMap<P>,
     profile_dart: Dart,
     direction: Vector3<f64>,
-) -> Result<Dart, ExtrudeError> {
-    Ok(add_extruded_profile_boundaries(g, profile_dart, direction)?.translated_dart)
+) -> Result<SheetKey, ExtrudeError> {
+    let dart = add_extruded_profile_boundaries(g, profile_dart, direction)?.translated_dart;
+    Ok(g.add_sheet(SheetAttr::new(dart, P::Sheet::default())))
 }
 
 pub(crate) struct ExtrudedProfile {
@@ -314,12 +317,11 @@ mod tests {
     use crate::topology::StandardPayload;
     use crate::topology::edge::Edge;
     use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
-    use crate::topology::profile::Profile;
 
     #[test]
     fn extrude_closed_profile_builds_one_lateral_face_per_edge() {
         let mut source = GMap::<StandardPayload>::new();
-        let loop_dart = add_polygon(
+        let profile_key = add_polygon(
             &mut source,
             &[
                 Point3::new(0.0, 0.0, 0.0),
@@ -330,13 +332,13 @@ mod tests {
         );
 
         let shape = extrude_profile(
-            Profile::new(&source, loop_dart),
+            source.profile(profile_key).expect("profile should exist"),
             Vector3::new(0.0, 0.0, 2.0),
         )
         .unwrap();
-        let (g, sheet_dart) = shape.into_map();
+        let (g, sheet_key) = shape.into_map();
 
-        assert!(g.darts().any(|dart| dart == sheet_dart));
+        assert!(g.sheet(sheet_key).is_some());
         assert_eq!(g.iter_faces().count(), 4);
         assert_eq!(g.iter_edges().count(), 16);
         assert_eq!(g.iter_vertices().count(), 12);
@@ -351,9 +353,9 @@ mod tests {
     }
 
     #[test]
-    fn add_extruded_profile_returns_equivalent_translated_edge_dart() {
+    fn add_extruded_profile_key_uses_translated_edge_as_default_dart() {
         let mut source = GMap::<StandardPayload>::new();
-        let loop_dart = add_polygon(
+        let profile_key = add_polygon(
             &mut source,
             &[
                 Point3::new(0.0, 0.0, 0.0),
@@ -364,7 +366,15 @@ mod tests {
         let source_dart_count = source.dart_count();
         let direction = Vector3::new(0.0, 0.0, 2.0);
 
-        let translated_dart = add_extruded_profile(&mut source, loop_dart, direction).unwrap();
+        let profile_dart = source
+            .profile_attr(profile_key)
+            .expect("profile should exist")
+            .dart;
+        let sheet_key = add_extruded_profile(&mut source, profile_dart, direction).unwrap();
+        let translated_dart = source
+            .sheet_attr(sheet_key)
+            .expect("extruded sheet should exist")
+            .dart;
 
         assert!(
             translated_dart.id() >= source_dart_count,
@@ -388,7 +398,7 @@ mod tests {
     #[test]
     fn extrude_closed_square_preserves_gmap_and_corner_connectivity() {
         let mut source = GMap::<StandardPayload>::new();
-        let loop_dart = add_polygon(
+        let profile_key = add_polygon(
             &mut source,
             &[
                 Point3::new(0.0, 0.0, 0.0),
@@ -399,7 +409,7 @@ mod tests {
         );
 
         let shape = extrude_profile(
-            Profile::new(&source, loop_dart),
+            source.profile(profile_key).expect("profile should exist"),
             Vector3::new(0.0, 0.0, 2.0),
         )
         .unwrap();

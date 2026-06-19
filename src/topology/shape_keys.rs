@@ -9,7 +9,7 @@ new_key_type! {
     pub struct EdgeKey;
 }
 new_key_type! {
-    /// Stable key reserved for future loop attributes.
+    /// Stable key for a stored profile identity and default orientation.
     pub struct ProfileKey;
 }
 new_key_type! {
@@ -17,7 +17,7 @@ new_key_type! {
     pub struct FaceKey;
 }
 new_key_type! {
-    /// Stable key reserved for future shell attributes.
+    /// Stable key for a stored sheet identity and default orientation.
     pub struct SheetKey;
 }
 new_key_type! {
