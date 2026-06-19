@@ -1,6 +1,5 @@
 use ngk::builders::edges::add_circle;
 use ngk::geometry::Plane;
-use ngk::topology::Orientation;
 use ngk::topology::edge::Edge;
 use ngk::topology::gmap::{Dim, GMap};
 use ngk::topology::payload::StandardPayload;
@@ -18,7 +17,9 @@ fn closed_edge_darts_resolve_opposite_orientations() {
         Edge::from_dart(&g, reversed_dart).expect("reversed dart should resolve its edge");
 
     assert_eq!(default_edge.key(), edge_key);
-    assert_eq!(default_edge.orientation, Orientation::Same);
     assert_eq!(reversed_edge.key(), edge_key);
-    assert_eq!(reversed_edge.orientation, Orientation::Reversed);
+    assert_eq!(default_edge.dart(), default_dart);
+    assert_eq!(reversed_edge.dart(), reversed_dart);
+    assert_eq!(default_edge.start().key(), reversed_edge.end().key());
+    assert_eq!(default_edge.end().key(), reversed_edge.start().key());
 }

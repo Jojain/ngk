@@ -5,6 +5,7 @@ use slotmap::SlotMap;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::orientation::Orientation;
+use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
@@ -433,8 +434,8 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the typed vertex view registered under `key`.
     pub fn vertex(&self, key: VertexKey) -> Option<Vertex<'_, P>> {
-        let attr = self.vertex_attr(key)?;
-        Some(Vertex::new(self, attr.dart))
+        self.vertex_attr(key)?;
+        Some(Vertex::new(self, key))
     }
 
     /// Returns the typed vertex view registered under `key`.
@@ -498,6 +499,7 @@ impl<P: Payload> GMap<P> {
     ///
     /// Panics if an edge attribute is already registered for the same 1-cell.
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
+        self.rebuild_edge_index();
         let repr = self.cell_representative(edge.dart, Dim::One);
         assert!(
             self.dart_to_edge.get(&repr).is_none(),
@@ -610,6 +612,7 @@ impl<P: Payload> GMap<P> {
     ///
     /// Panics if the same alpha0/alpha1 component already has a profile key.
     pub fn add_profile(&mut self, profile: ProfileAttr<P::Profile>) -> ProfileKey {
+        self.rebuild_profile_index();
         let repr = self.profile_representative(profile.dart);
         assert!(
             !self.dart_to_profile.contains_key(&repr),
@@ -620,10 +623,17 @@ impl<P: Payload> GMap<P> {
         key
     }
 
+    /// Returns the profile key for `dart`, registering the component when needed.
+    pub fn ensure_profile(&mut self, dart: Dart) -> ProfileKey {
+        self.rebuild_profile_index();
+        self.profile_key(dart)
+            .unwrap_or_else(|| self.add_profile(ProfileAttr::new(dart, P::Profile::default())))
+    }
+
     /// Returns the profile view registered under `key`.
-    pub fn profile(&self, key: ProfileKey) -> Option<crate::topology::profile::Profile<'_, P>> {
-        let attr = self.profile_attr(key)?;
-        Some(crate::topology::profile::Profile::new(self, attr.dart))
+    pub fn profile(&self, key: ProfileKey) -> Option<Profile<'_, P>> {
+        self.profile_attr(key)?;
+        Some(Profile::new(self, key))
     }
 
     /// Returns the profile view registered under `key`.
@@ -631,7 +641,7 @@ impl<P: Payload> GMap<P> {
     /// # Panics
     ///
     /// Panics if `key` is not a registered profile.
-    pub fn profile_unchecked(&self, key: ProfileKey) -> crate::topology::profile::Profile<'_, P> {
+    pub fn profile_unchecked(&self, key: ProfileKey) -> Profile<'_, P> {
         self.profile(key).expect("profile should be in the map")
     }
 
@@ -693,6 +703,9 @@ impl<P: Payload> GMap<P> {
     ///
     /// Panics if any boundary 2-cell is already attached to a face.
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
+        for dart in std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied()) {
+            self.ensure_profile(dart);
+        }
         let reprs = std::iter::once(face.outer_loop)
             .chain(face.inner_loops.iter().copied())
             .find_map(|d| {
@@ -748,7 +761,7 @@ impl<P: Payload> GMap<P> {
         }
     }
 
-    fn cell_orientation_from_seed(
+    pub(crate) fn cell_orientation_from_seed(
         &self,
         seed: Dart,
         target: Dart,
@@ -836,6 +849,7 @@ impl<P: Payload> GMap<P> {
     ///
     /// Panics if the same 3-cell already has a sheet key.
     pub fn add_sheet(&mut self, sheet: SheetAttr<P::Sheet>) -> SheetKey {
+        self.rebuild_sheet_index();
         let repr = self.cell_representative(sheet.dart, Dim::Three);
         assert!(
             !self.dart_to_sheet.contains_key(&repr),
@@ -846,10 +860,17 @@ impl<P: Payload> GMap<P> {
         key
     }
 
+    /// Returns the sheet key for `dart`, registering the 3-cell when needed.
+    pub fn ensure_sheet(&mut self, dart: Dart) -> SheetKey {
+        self.rebuild_sheet_index();
+        self.sheet_key(dart)
+            .unwrap_or_else(|| self.add_sheet(SheetAttr::new(dart, P::Sheet::default())))
+    }
+
     /// Returns the sheet view registered under `key`.
     pub fn sheet(&self, key: SheetKey) -> Option<Sheet<'_, P>> {
-        let attr = self.sheet_attr(key)?;
-        Some(crate::topology::sheet::Sheet::new(self, attr.dart))
+        self.sheet_attr(key)?;
+        Some(Sheet::new(self, key))
     }
 
     /// Returns the sheet view registered under `key`.
@@ -920,6 +941,11 @@ impl<P: Payload> GMap<P> {
     ///
     /// Panics if any shell is already attached to a solid.
     pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidKey {
+        for dart in
+            std::iter::once(solid.outer_shell).chain(solid.inner_shells.iter().flatten().copied())
+        {
+            self.ensure_sheet(dart);
+        }
         let shell_darts = self.solid_shell_representatives(&solid);
         let existing = shell_darts
             .iter()
@@ -937,8 +963,8 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the typed solid view registered under `key`.
     pub fn solid(&self, key: SolidKey) -> Option<Solid<'_, P>> {
-        let attr = self.solid_attr(key)?;
-        Some(Solid::new(self, attr))
+        self.solid_attr(key)?;
+        Some(Solid::new(self, key))
     }
 
     /// Returns the typed solid view registered under `key`.
@@ -963,6 +989,13 @@ impl<P: Payload> GMap<P> {
     pub fn solid_attr_unchecked(&self, key: SolidKey) -> &SolidAttr<P::S> {
         self.solid_attr(key)
             .expect("solid attribute should be in the map")
+    }
+
+    /// Returns the solid key for the registered shell containing `dart`.
+    pub fn solid_key(&self, dart: Dart) -> Option<SolidKey> {
+        self.dart_to_solid
+            .get(&self.cell_representative(dart, Dim::Three))
+            .copied()
     }
 
     /// Iterate every stored 3-cell attribute paired with its slotmap key.
@@ -1613,12 +1646,11 @@ mod tests {
     use crate::builders::profiles::add_rectangle;
     use crate::builders::sheets::add_extruded_profile;
     use crate::geometry::{Curve, Curve2, Line2, Plane, Point2, Point3, Surface};
-    use crate::topology::attributes::{FaceAttr, SolidAttr};
+    use crate::topology::attributes::{FaceAttr, SheetAttr, SolidAttr};
     use crate::topology::payload::{Payload, StandardPayload};
     use crate::topology::planar::Planar;
     use crate::topology::profile::Profile;
     use crate::topology::sheet::Sheet;
-    use crate::topology::solid::Solid;
 
     #[derive(Clone)]
     struct DataPayload;
@@ -1643,11 +1675,8 @@ mod tests {
             .expect("sheet should build");
         source.sheet_attr_mut(sheet_key).unwrap().data = "sheet".to_owned();
 
-        assert_eq!(
-            source.profile(profile_key).unwrap().data().unwrap(),
-            "profile"
-        );
-        assert_eq!(source.sheet(sheet_key).unwrap().data().unwrap(), "sheet");
+        assert_eq!(source.profile(profile_key).unwrap().data(), "profile");
+        assert_eq!(source.sheet(sheet_key).unwrap().data(), "sheet");
 
         source.profile_attr_mut(profile_key).unwrap().data = "updated profile".to_owned();
         source.sheet_attr_mut(sheet_key).unwrap().data = "updated sheet".to_owned();
@@ -1759,12 +1788,13 @@ mod tests {
 
         let profile_dart = source.profile_attr_unchecked(profile_key).dart;
         let mut target = GMap::<StandardPayload>::new();
-        let merged_profile = target.merge(Profile::new(&source, profile_dart));
+        let merged_profile = target.merge(Profile::new(&source, profile_key));
         assert_eq!(merged_profile, Dart::new(0));
         assert_eq!(target.dart_count(), 6);
 
+        let sheet_key = source.add_sheet(SheetAttr::new(profile_dart, ()));
         let mut sheet_target = GMap::<StandardPayload>::new();
-        let merged_sheet = sheet_target.merge(Sheet::new(&source, profile_dart));
+        let merged_sheet = sheet_target.merge(Sheet::new(&source, sheet_key));
         assert_eq!(merged_sheet, Dart::new(0));
         assert_eq!(sheet_target.dart_count(), 6);
 

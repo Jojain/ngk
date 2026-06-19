@@ -34,7 +34,9 @@ pub fn add_edge_to_profile<P: Payload>(
     profile_dart: Dart,
     edge_dart: Dart,
 ) -> Result<(), PolylineError> {
-    let profile = Profile::new(g, profile_dart);
+    g.ensure_profile(profile_dart);
+    let profile = Profile::from_dart(g, profile_dart)
+        .expect("profile dart must belong to a registered profile");
     if profile.is_closed() {
         return Err(PolylineError::ClosedProfile { dart: profile_dart });
     }

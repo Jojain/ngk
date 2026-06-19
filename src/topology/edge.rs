@@ -4,7 +4,6 @@ use crate::geometry::{Curve, LINEAR_TOLERANCE, PointCoincidence};
 use crate::topology::closed::Closeable;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Cell1, Cell2, Dim, MergeTopology, TopologyMerge};
-use crate::topology::orientation::Orientation;
 use crate::topology::shape_keys::EdgeKey;
 
 use super::gmap::{Dart, GMap};
@@ -25,29 +24,15 @@ use super::vertex::Vertex;
 /// [`Orientation`] based on the traversed dart.
 pub struct Edge<'a, P: Payload = StandardPayload> {
     gmap: &'a GMap<P>,
-    /// The stable key identifying this edge's stored attribute.
-    pub key: EdgeKey,
-    /// Whether this view's direction matches the edge's default direction.
-    pub orientation: Orientation,
+    key: EdgeKey,
+    dart: Dart,
 }
 
 impl<'a, P: Payload> Edge<'a, P> {
     /// Creates an edge view with the default (`Same`) orientation.
     pub fn new(gmap: &'a GMap<P>, key: EdgeKey) -> Self {
-        Self {
-            gmap,
-            key,
-            orientation: Orientation::Same,
-        }
-    }
-
-    /// Creates an edge view with an explicit orientation.
-    pub fn new_oriented(gmap: &'a GMap<P>, key: EdgeKey, orientation: Orientation) -> Self {
-        Self {
-            gmap,
-            key,
-            orientation,
-        }
+        let dart = gmap.edge_attr_unchecked(key).dart;
+        Self { gmap, key, dart }
     }
 
     /// Creates an edge view from a dart, resolving the edge key and
@@ -56,12 +41,7 @@ impl<'a, P: Payload> Edge<'a, P> {
     /// Returns `None` if the dart does not belong to a registered edge.
     pub fn from_dart(gmap: &'a GMap<P>, dart: Dart) -> Option<Self> {
         let key = gmap.cell_key::<Cell1>(dart)?;
-        let orientation = gmap.edge_orientation_at_dart(key, dart);
-        Some(Self {
-            gmap,
-            key,
-            orientation,
-        })
+        Some(Self { gmap, key, dart })
     }
 
     /// Returns the stable key of this edge.
@@ -76,11 +56,7 @@ impl<'a, P: Payload> Edge<'a, P> {
     /// the edge's default dart. When [`Reversed`](Orientation::Reversed),
     /// this is `alpha0` of the default dart.
     pub fn dart(&self) -> Dart {
-        let attr = self.gmap.edge_attr_unchecked(self.key);
-        match self.orientation {
-            Orientation::Same => attr.dart,
-            Orientation::Reversed => self.gmap.alpha(Dim::Zero, attr.dart),
-        }
+        self.dart
     }
 
     /// Iterates every dart in this edge's 1-cell orbit.
@@ -91,19 +67,20 @@ impl<'a, P: Payload> Edge<'a, P> {
 
     /// Returns the vertex at the start of this edge view.
     pub fn start(&self) -> Vertex<'a, P> {
-        Vertex::new(self.gmap, self.dart())
+        Vertex::from_dart(self.gmap, self.dart()).expect("edge start must have a registered vertex")
     }
 
     /// Returns the vertex at the end of this edge view.
     pub fn end(&self) -> Vertex<'a, P> {
-        Vertex::new(self.gmap, self.gmap.alpha(Dim::Zero, self.dart()))
+        Vertex::from_dart(self.gmap, self.gmap.alpha(Dim::Zero, self.dart()))
+            .expect("edge end must have a registered vertex")
     }
 
     /// Returns the distinct vertices incident to this edge.
     pub fn vertices(&self) -> Vec<Vertex<'a, P>> {
         self.gmap
             .incident_cells(self.dart(), Dim::One, Dim::Zero)
-            .map(|d| Vertex::new(self.gmap, d))
+            .filter_map(|d| Vertex::from_dart(self.gmap, d))
             .collect()
     }
 
@@ -114,7 +91,9 @@ impl<'a, P: Payload> Edge<'a, P> {
             .incident_cells(self.dart(), Dim::One, Dim::Two)
             .filter_map(|dart| {
                 let key = self.gmap.cell_key::<Cell2>(dart)?;
-                seen.insert(key).then(|| Face::new(self.gmap, key))
+                seen.insert(key)
+                    .then(|| Face::from_dart(self.gmap, dart))
+                    .flatten()
             })
             .collect()
     }
@@ -126,7 +105,7 @@ impl<'a, P: Payload> Edge<'a, P> {
     pub fn sheets(&self) -> Vec<Sheet<'a, P>> {
         self.gmap
             .incident_cells(self.dart(), Dim::One, Dim::Three)
-            .map(|d| Sheet::new(self.gmap, d))
+            .filter_map(|d| Sheet::from_dart(self.gmap, d))
             .collect()
     }
 
@@ -169,7 +148,7 @@ impl<'a, P: Payload> Edge<'a, P> {
         Self {
             gmap: self.gmap,
             key: self.key,
-            orientation: self.orientation.flip(),
+            dart: self.gmap.alpha(Dim::Zero, self.dart),
         }
     }
 }

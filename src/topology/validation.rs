@@ -195,7 +195,8 @@ fn validate_shell<P: Payload>(
         return Err(GMapValidationError::SolidShellOutOfBounds { solid, shell });
     }
 
-    Closed::new(Sheet::new(g, shell)).ok_or(GMapValidationError::SolidShellOpen {
+    let sheet = Sheet::from_dart(g, shell).expect("solid shell must have a registered sheet");
+    Closed::new(sheet).ok_or(GMapValidationError::SolidShellOpen {
         solid,
         shell,
         dart: shell,
@@ -211,7 +212,10 @@ fn validate_shell_orientation<P: Payload>(
     shell: Dart,
     side: ShellSide,
 ) -> Result<(), GMapValidationError> {
-    let shell_darts = Sheet::new(g, shell).darts().collect::<Vec<_>>();
+    let shell_darts = Sheet::from_dart(g, shell)
+        .expect("solid shell must have a registered sheet")
+        .darts()
+        .collect::<Vec<_>>();
     let Some(shell_center) = shell_centroid(g, &shell_darts) else {
         return Ok(());
     };
@@ -289,7 +293,8 @@ fn sample_loop_pcurve(
     loop_dart: Dart,
     pcurves: &HashMap<Dart, Curve2>,
 ) -> Option<Vec<Point2>> {
-    let profile = Profile::new(g, loop_dart);
+    let profile =
+        Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
     let edge_darts = profile.darts().step_by(2);
     let mut points = Vec::new();
     for dart in edge_darts {

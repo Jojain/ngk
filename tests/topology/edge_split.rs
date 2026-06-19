@@ -46,24 +46,21 @@ fn split_profile_edge_handles_isolated_edge() {
             .coincides(midpoint, LINEAR_TOLERANCE)
     );
 
-    let second_vertices = second
-        .vertices()
-        .into_iter()
-        .map(|vertex| {
-            *vertex
-                .point()
-                .expect("split edge vertex should have a point")
-        })
-        .collect::<Vec<_>>();
     assert!(
-        second_vertices
-            .iter()
-            .any(|point| point.coincides(midpoint, LINEAR_TOLERANCE))
+        second
+            .start()
+            .point()
+            .expect("second split edge start should have geometry")
+            .coincides(midpoint, LINEAR_TOLERANCE),
+        "the second split edge should start at the split point"
     );
     assert!(
-        second_vertices
-            .iter()
-            .any(|point| point.coincides(end, LINEAR_TOLERANCE))
+        second
+            .end()
+            .point()
+            .expect("second split edge end should have geometry")
+            .coincides(end, LINEAR_TOLERANCE),
+        "the second split edge should preserve the original end point"
     );
 }
 
@@ -79,7 +76,8 @@ fn split_profile_edge_turns_isolated_edge_into_open_profile() {
 
     let split = split_edge(&mut g, edge, 0.5).expect("isolated edge should split");
     let first_dart = g.edge_attr_unchecked(split.first).dart;
-    let profile = Profile::new(&g, first_dart);
+    let profile =
+        Profile::from_dart(&g, first_dart).expect("split edge should belong to a profile");
 
     assert_eq!(profile.edges().len(), 2);
 }
@@ -135,7 +133,8 @@ fn split_profile_edge_preserves_open_profile_order() {
         .expect("edges should connect into a profile");
 
     let split = split_edge(&mut g, first_edge, 0.5).expect("profile edge should split");
-    let profile = Profile::new(&g, first_dart);
+    let profile =
+        Profile::from_dart(&g, first_dart).expect("split edge should belong to a profile");
     let midpoint = Point3::new(0.5, 0.0, 0.0);
 
     assert_eq!(profile.edges().len(), 3);

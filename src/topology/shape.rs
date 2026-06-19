@@ -179,8 +179,7 @@ impl<P: Payload> Shape<SolidTag, P> {
     ///
     /// Panics if the stored solid key is no longer present in the map.
     pub fn solid(&self) -> Solid<'_, P> {
-        let s = self.map.solid_attr_unchecked(self.handle);
-        Solid::new(&self.map, s)
+        self.map.solid_unchecked(self.handle)
     }
 
     /// Returns the primary solid key.

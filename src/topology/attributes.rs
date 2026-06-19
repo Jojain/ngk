@@ -5,7 +5,7 @@ use crate::geometry::{Curve, Point3, Surface};
 use crate::topology::dart::Dart;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell2, GMap};
+use crate::topology::gmap::{Cell0, Cell2, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::EdgeKey;
 use crate::topology::vertex::Vertex;
@@ -29,7 +29,10 @@ impl<T> VertexAttr<T> {
 
     /// Returns a typed vertex view over this attribute in `gmap`.
     pub fn vertex<'a, P: Payload>(&self, gmap: &'a GMap<P>) -> Vertex<'a, P> {
-        Vertex::new(gmap, self.dart)
+        let key = gmap
+            .cell_key::<Cell0>(self.dart)
+            .expect("VertexAttr must be registered to produce a Vertex view");
+        Vertex::new(gmap, key)
     }
 }
 

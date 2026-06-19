@@ -557,7 +557,7 @@ struct ClassificationRay {
 
 fn solid_for_key<P: Payload>(g: &GMap<P>, solid: SolidKey) -> Result<Solid<'_, P>, BooleanError> {
     g.solid_attr(solid)
-        .map(|attr| Solid::new(g, attr))
+        .map(|_| Solid::new(g, solid))
         .ok_or(BooleanError::MissingSolidHandle { solid })
 }
 

@@ -23,6 +23,7 @@ pub fn add_extruded_profile<P: Payload>(
     profile_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<SheetKey, ExtrudeError> {
+    g.ensure_profile(profile_dart);
     let dart = add_extruded_profile_boundaries(g, profile_dart, direction)?.translated_dart;
     Ok(g.add_sheet(SheetAttr::new(dart, P::Sheet::default())))
 }
@@ -40,7 +41,9 @@ pub(crate) fn add_extruded_profile_boundaries<P: Payload>(
         return Err(ExtrudeError::ZeroDirection);
     }
 
-    let profile = Profile::new(g, profile_dart);
+    g.ensure_profile(profile_dart);
+    let profile = Profile::from_dart(g, profile_dart)
+        .expect("profile dart must belong to a registered profile");
     let is_closed = profile.is_closed();
     let mut faces = Vec::new();
     let mut extruded_profile_dart = None;

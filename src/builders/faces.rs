@@ -438,7 +438,8 @@ pub fn add_face<P: Payload>(
     loop_dart: Dart,
 ) -> Result<FaceKey, FaceCreationError> {
     let (plane, pcurves) = {
-        let profile = Profile::new(g, loop_dart);
+        let profile =
+            Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
         let closed =
             Closed::new(profile).ok_or(FaceCreationError::OpenProfile { dart: loop_dart })?;
         let planar = Planar::new(closed)?;
@@ -733,7 +734,10 @@ fn merge_periodic_boundary_edge<P: Payload>(
     pcurves: &mut HashMap<Dart, Curve2>,
     period: f64,
 ) -> Result<Option<Dart>, FaceImprintSplitError> {
-    let edges = Profile::new(g, loop_dart).edges();
+    g.ensure_profile(loop_dart);
+    let edges = Profile::from_dart(g, loop_dart)
+        .expect("face loop must have a registered profile")
+        .edges();
     let Some((first, second)) = edges
         .iter()
         .zip(edges.iter().cycle().skip(1))
@@ -1085,6 +1089,8 @@ fn finish_closed_imprint_split<P: Payload>(
     island_loop: SectionLoop,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
     let section_edges = sew_section_loops(g, face, &outside_loop, &island_loop)?;
+    g.ensure_profile(outside_loop.loop_dart);
+    g.ensure_profile(island_loop.loop_dart);
 
     let face_attr = g
         .face_attr_mut(face)
@@ -1334,7 +1340,10 @@ pub fn add_circle(
 ) -> Result<FaceKey, FaceCreationError> {
     let edge = add_circle_edge(g, plane.clone(), radius)?;
     let loop_dart = g.edge_attr_unchecked(edge).dart;
-    let pcurves = profile_pcurves(&Profile::new(g, loop_dart), &plane)?;
+    g.ensure_profile(loop_dart);
+    let profile =
+        Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
+    let pcurves = profile_pcurves(&profile, &plane)?;
     let face_key = g.add_face(FaceAttr::with_pcurves(
         Surface::Plane(plane),
         (),
@@ -1472,7 +1481,10 @@ fn apply_outer_face_chord_split<P: Payload>(
     old_face: FaceAttr<P::F>,
     cut: &FaceImprintCut,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
-    let loop_ = Closed::new_unchecked(Profile::new(g, old_face.outer_loop));
+    let loop_ = Closed::new_unchecked(
+        Profile::from_dart(g, old_face.outer_loop)
+            .expect("face loop must have a registered profile"),
+    );
     let corners = loop_.corners();
     let start = &corners[cut.start_corner];
     let end = &corners[cut.end_corner];
@@ -1539,7 +1551,7 @@ fn apply_outer_face_chord_split<P: Payload>(
 }
 
 fn split_face_pcurves<P: Payload>(
-    g: &GMap<P>,
+    g: &mut GMap<P>,
     face: FaceKey,
     old_pcurves: &HashMap<Dart, Curve2>,
     loop_dart: Dart,
@@ -1547,7 +1559,10 @@ fn split_face_pcurves<P: Payload>(
     section_pcurve: &Curve2,
 ) -> Result<HashMap<Dart, Curve2>, FaceImprintSplitError> {
     let mut pcurves = HashMap::new();
-    for profile_dart in Profile::new(g, loop_dart).darts().step_by(2) {
+    g.ensure_profile(loop_dart);
+    let profile =
+        Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
+    for profile_dart in profile.darts().step_by(2) {
         let pcurve = if profile_dart == section_dart {
             section_pcurve.clone()
         } else {
@@ -1588,9 +1603,15 @@ pub fn add_annulus(
     let inner_edge = add_circle_edge(g, inner_plane, inner_radius)?;
     let outer_loop = g.edge_attr_unchecked(outer_edge).dart;
     let inner_loop = g.edge_attr_unchecked(inner_edge).dart;
+    g.ensure_profile(outer_loop);
+    g.ensure_profile(inner_loop);
 
-    let mut pcurves = profile_pcurves(&Profile::new(g, outer_loop), &plane)?;
-    pcurves.extend(profile_pcurves(&Profile::new(g, inner_loop), &plane)?);
+    let outer_profile =
+        Profile::from_dart(g, outer_loop).expect("outer loop must have a registered profile");
+    let inner_profile =
+        Profile::from_dart(g, inner_loop).expect("inner loop must have a registered profile");
+    let mut pcurves = profile_pcurves(&outer_profile, &plane)?;
+    pcurves.extend(profile_pcurves(&inner_profile, &plane)?);
 
     let face_key = g.add_face(FaceAttr::with_pcurves(
         Surface::Plane(plane),
@@ -1619,7 +1640,8 @@ fn face_edge_dart<P: Payload>(
     let profile_darts: Vec<Dart> = std::iter::once(face_attr.outer_loop)
         .chain(face_attr.inner_loops.iter().copied())
         .flat_map(|loop_dart| {
-            Profile::new(g, loop_dart)
+            Profile::from_dart(g, loop_dart)
+                .expect("face loop must have a registered profile")
                 .darts()
                 .step_by(2)
                 .collect::<Vec<_>>()
@@ -1771,12 +1793,16 @@ pub fn add_polygon_with_holes(
     let outer_profile = add_polygon(g, outer);
     let outer_loop = g.profile_attr_unchecked(outer_profile).dart;
     let mut inner_loops = Vec::with_capacity(holes.len());
-    let mut pcurves = profile_pcurves(&Profile::new(g, outer_loop), &plane)?;
+    let outer_profile =
+        Profile::from_dart(g, outer_loop).expect("outer loop must have a registered profile");
+    let mut pcurves = profile_pcurves(&outer_profile, &plane)?;
 
     for hole in holes {
         let inner_profile = add_polygon(g, hole);
         let inner_loop = g.profile_attr_unchecked(inner_profile).dart;
-        pcurves.extend(profile_pcurves(&Profile::new(g, inner_loop), &plane)?);
+        let inner_profile =
+            Profile::from_dart(g, inner_loop).expect("inner loop must have a registered profile");
+        pcurves.extend(profile_pcurves(&inner_profile, &plane)?);
         inner_loops.push(inner_loop);
     }
 

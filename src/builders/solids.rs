@@ -87,15 +87,14 @@ pub fn add_extruded_face<P: Payload>(
 
     orient_extruded_caps(g, face_key, top_face_key, direction);
 
-    let mut shell_representative = None;
     for (bottom_loop_dart, top_loop_dart) in bottom_loop_darts.into_iter().zip(top_loop_darts) {
-        let extruded = sew_extruded_loop(g, bottom_loop_dart, top_loop_dart, direction)?;
-        shell_representative.get_or_insert(extruded);
+        sew_extruded_loop(g, bottom_loop_dart, top_loop_dart, direction)?;
     }
 
-    let shell_representative =
-        shell_representative.expect("a face should have at least one outer loop");
-    let solid = g.add_solid(SolidAttr::new(P::S::default(), shell_representative, None));
+    // The shell dart is contextual: unlike a cell representative, it must retain
+    // the outward orientation established for the bottom cap.
+    let outer_shell = g.face_attr_unchecked(face_key).outer_loop;
+    let solid = g.add_solid(SolidAttr::new(P::S::default(), outer_shell, None));
     Ok(solid)
 }
 
@@ -163,12 +162,14 @@ fn sew_extruded_loop<P: Payload>(
     top_loop_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<Dart, ExtrudeError> {
-    let bottom_edges = Profile::new(g, bottom_loop_dart)
+    let bottom_edges = Profile::from_dart(g, bottom_loop_dart)
+        .expect("bottom loop must have a registered profile")
         .edges()
         .into_iter()
         .map(|edge| edge.dart())
         .collect::<Vec<_>>();
-    let top_edges = Profile::new(g, top_loop_dart)
+    let top_edges = Profile::from_dart(g, top_loop_dart)
+        .expect("top loop must have a registered profile")
         .edges()
         .into_iter()
         .map(|edge| edge.dart())

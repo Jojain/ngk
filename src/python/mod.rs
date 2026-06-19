@@ -486,7 +486,8 @@ impl PyLoop {
     }
 
     fn edges(&self) -> Vec<PyEdge> {
-        Profile::new(self.map.as_ref(), self.dart)
+        Profile::from_dart(self.map.as_ref(), self.dart)
+            .expect("Python profile dart must belong to a registered profile")
             .edges()
             .into_iter()
             .map(|edge| PyEdge::new(Arc::clone(&self.map), edge))
@@ -494,7 +495,8 @@ impl PyLoop {
     }
 
     fn vertices(&self) -> Vec<PyVertex> {
-        Profile::new(self.map.as_ref(), self.dart)
+        Profile::from_dart(self.map.as_ref(), self.dart)
+            .expect("Python profile dart must belong to a registered profile")
             .vertices()
             .into_iter()
             .map(|vertex| PyVertex::new(Arc::clone(&self.map), vertex))

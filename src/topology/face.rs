@@ -22,10 +22,8 @@ use nalgebra::UnitVector3;
 /// orientation is defined by its [`outer_loop`](FaceAttr::outer_loop) dart.
 pub struct Face<'g, P: Payload = StandardPayload> {
     gmap: &'g GMap<P>,
-    /// The stable key identifying this face's stored attribute.
-    pub key: FaceKey,
-    /// Whether this view's direction matches the face's default orientation.
-    pub orientation: Orientation,
+    key: FaceKey,
+    dart: Dart,
 }
 
 impl<'g, P: Payload> Clone for Face<'g, P> {
@@ -33,7 +31,7 @@ impl<'g, P: Payload> Clone for Face<'g, P> {
         Self {
             gmap: self.gmap,
             key: self.key,
-            orientation: self.orientation,
+            dart: self.dart,
         }
     }
 }
@@ -41,20 +39,8 @@ impl<'g, P: Payload> Clone for Face<'g, P> {
 impl<'g, P: Payload> Face<'g, P> {
     /// Creates a face view with the default (`Same`) orientation.
     pub fn new(gmap: &'g GMap<P>, key: FaceKey) -> Self {
-        Self {
-            gmap,
-            key,
-            orientation: Orientation::Same,
-        }
-    }
-
-    /// Creates a face view with an explicit orientation.
-    pub fn new_oriented(gmap: &'g GMap<P>, key: FaceKey, orientation: Orientation) -> Self {
-        Self {
-            gmap,
-            key,
-            orientation,
-        }
+        let dart = gmap.face_attr_unchecked(key).outer_loop;
+        Self { gmap, key, dart }
     }
 
     /// Creates a face view from a dart, resolving the face key and orientation
@@ -63,12 +49,7 @@ impl<'g, P: Payload> Face<'g, P> {
     /// Returns `None` if the dart does not belong to a registered face.
     pub fn from_dart(gmap: &'g GMap<P>, dart: Dart) -> Option<Self> {
         let key = gmap.cell_key::<Cell2>(dart)?;
-        let orientation = gmap.face_orientation_at_dart(key, dart);
-        Some(Self {
-            gmap,
-            key,
-            orientation,
-        })
+        Some(Self { gmap, key, dart })
     }
 
     /// Returns the stored face attribute.
@@ -90,7 +71,7 @@ impl<'g, P: Payload> Face<'g, P> {
         Self {
             gmap: self.gmap,
             key: self.key,
-            orientation: self.orientation.flip(),
+            dart: self.gmap.alpha(Dim::Zero, self.dart),
         }
     }
 
@@ -100,14 +81,16 @@ impl<'g, P: Payload> Face<'g, P> {
     /// closed boundary profiles.
     pub fn outer_loop(&self) -> Loop<'g, P> {
         let d = self.outer_loop_dart();
-        Closed::new_unchecked(Profile::new(self.gmap, d))
+        Closed::new_unchecked(
+            Profile::from_dart(self.gmap, d).expect("face outer loop must have a profile"),
+        )
     }
 
     fn outer_loop_dart(&self) -> Dart {
         let attr = self.attr();
-        match self.orientation {
+        match self.gmap.face_orientation_at_dart(self.key, self.dart) {
             Orientation::Same => attr.outer_loop,
-            Orientation::Reversed => self.gmap.alpha(super::gmap::Dim::Zero, attr.outer_loop),
+            Orientation::Reversed => self.gmap.alpha(Dim::Zero, attr.outer_loop),
         }
     }
 
@@ -120,11 +103,14 @@ impl<'g, P: Payload> Face<'g, P> {
         attr.inner_loops
             .iter()
             .map(|d| {
-                let dart = match self.orientation {
+                let dart = match self.gmap.face_orientation_at_dart(self.key, self.dart) {
                     Orientation::Same => *d,
-                    Orientation::Reversed => self.gmap.alpha(super::gmap::Dim::Zero, *d),
+                    Orientation::Reversed => self.gmap.alpha(Dim::Zero, *d),
                 };
-                Closed::new_unchecked(Profile::new(self.gmap, dart))
+                Closed::new_unchecked(
+                    Profile::from_dart(self.gmap, dart)
+                        .expect("face loop must have a registered profile"),
+                )
             })
             .collect()
     }
@@ -182,11 +168,10 @@ impl<'g, P: Payload> Face<'g, P> {
     /// this does not test whether `(u, v)` belongs to the trimmed face region.
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         let surface_normal = self.attr().surface.normal_at(u, v);
-        let loop_normal = match self.outer_loop_signed_area() {
+        match self.outer_loop_signed_area() {
             Some(area) if area < -LINEAR_TOLERANCE => -surface_normal,
             _ => surface_normal,
-        };
-        self.orientation.apply_vector(loop_normal)
+        }
     }
 
     fn outer_loop_signed_area(&self) -> Option<f64> {
@@ -224,10 +209,12 @@ impl<'g, P: Payload> Face<'g, P> {
         let g = self.gmap;
         let candidates = [dart, g.alpha(Dim::Zero, dart), g.alpha(Dim::Two, dart)];
         let cached = candidates.iter().find_map(|&d| attr.pcurves.get(&d));
-        cached.cloned().map(|pc| match self.orientation {
-            Orientation::Same => pc,
-            Orientation::Reversed => pc.reversed(),
-        })
+        cached.cloned().map(
+            |pc| match self.gmap.face_orientation_at_dart(self.key, self.dart) {
+                Orientation::Same => pc,
+                Orientation::Reversed => pc.reversed(),
+            },
+        )
     }
 }
 

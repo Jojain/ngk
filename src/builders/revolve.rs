@@ -244,7 +244,9 @@ pub fn add_revolved_profile<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<SheetKey, RevolveError> {
-    let profile = Profile::new(g, profile_dart);
+    g.ensure_profile(profile_dart);
+    let profile = Profile::from_dart(g, profile_dart)
+        .expect("profile dart must belong to a registered profile");
     let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
     let profile = planar.inner();
     if profile.is_closed() {
@@ -278,7 +280,9 @@ fn add_revolved_profile_faces<P: Payload>(
     close_ring: bool,
 ) -> Result<RevolvedProfile, RevolveError> {
     let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
-    let profile = Profile::new(g, profile_dart);
+    g.ensure_profile(profile_dart);
+    let profile = Profile::from_dart(g, profile_dart)
+        .expect("profile dart must belong to a registered profile");
     let edge_darts = profile
         .edges()
         .into_iter()
@@ -499,12 +503,14 @@ fn sew_revolved_loop_to_caps<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<Dart, RevolveError> {
-    let bottom_edges = Profile::new(g, bottom_loop)
+    let bottom_edges = Profile::from_dart(g, bottom_loop)
+        .expect("bottom loop must have a registered profile")
         .edges()
         .into_iter()
         .map(|edge| edge.dart())
         .collect::<Vec<_>>();
-    let top_edges = Profile::new(g, top_loop)
+    let top_edges = Profile::from_dart(g, top_loop)
+        .expect("top loop must have a registered profile")
         .edges()
         .into_iter()
         .map(|edge| edge.dart())

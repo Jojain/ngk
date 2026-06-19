@@ -76,7 +76,11 @@ mod tests {
         let shell_dart = solid.solid().outer_shell().dart;
 
         assert!(
-            Closed::new(Sheet::new(solid.map(), shell_dart)).is_some(),
+            Closed::new(
+                Sheet::from_dart(solid.map(), shell_dart)
+                    .expect("solid shell must have a registered sheet"),
+            )
+            .is_some(),
             "extruded holed pentagon should produce a closed shell"
         );
     }

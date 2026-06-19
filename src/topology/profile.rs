@@ -13,6 +13,7 @@ use crate::topology::shape_keys::ProfileKey;
 /// dart.
 pub struct Profile<'a, P: Payload = StandardPayload> {
     gmap: &'a GMap<P>,
+    key: ProfileKey,
     /// A dart belonging to this profile's alpha0/alpha1 component.
     pub dart: Dart,
 }
@@ -21,27 +22,33 @@ impl<'a, P: Payload> Clone for Profile<'a, P> {
     fn clone(&self) -> Self {
         Self {
             gmap: self.gmap,
+            key: self.key,
             dart: self.dart,
         }
     }
 }
 
 impl<'a, P: Payload> Profile<'a, P> {
-    /// Creates a profile view rooted at `dart`.
-    pub fn new(gmap: &'a GMap<P>, dart: Dart) -> Self {
-        Self { gmap, dart }
+    /// Creates a profile view from its key using the attribute's reference dart.
+    pub fn new(gmap: &'a GMap<P>, key: ProfileKey) -> Self {
+        let dart = gmap.profile_attr_unchecked(key).dart;
+        Self { gmap, key, dart }
     }
 
-    /// Returns this profile's stable key, if it is registered.
-    pub fn key(&self) -> Option<ProfileKey> {
-        self.gmap.profile_key(self.dart)
+    /// Creates a profile view from a dart in a registered profile component.
+    pub fn from_dart(gmap: &'a GMap<P>, dart: Dart) -> Option<Self> {
+        let key = gmap.profile_key(dart)?;
+        Some(Self { gmap, key, dart })
     }
 
-    /// Returns the user payload attached to this registered profile.
-    pub fn data(&self) -> Option<&P::Profile> {
-        self.key()
-            .and_then(|key| self.gmap.profile_attr(key))
-            .map(|attr| &attr.data)
+    /// Returns this profile's stable key.
+    pub fn key(&self) -> ProfileKey {
+        self.key
+    }
+
+    /// Returns the user payload attached to this profile.
+    pub fn data(&self) -> &P::Profile {
+        &self.gmap.profile_attr_unchecked(self.key).data
     }
 
     /// Iterates the darts of this profile in alternating alpha0/alpha1 order.
@@ -88,7 +95,7 @@ impl<'a, P: Payload> Profile<'a, P> {
     pub fn vertices(&self) -> Vec<Vertex<'a, P>> {
         self.darts()
             .step_by(2)
-            .map(|d| Vertex::new(self.gmap, self.gmap.cell_representative(d, Dim::Zero)))
+            .filter_map(|d| Vertex::from_dart(self.gmap, d))
             .collect()
     }
 }
@@ -263,7 +270,11 @@ mod tests {
         g.sew(Dim::One, first_end, second_start)
             .expect("adjacent open profile edges should be alpha1-sewable");
 
-        let profile = Profile::new(&g, first_start);
+        let profile_key = g.add_profile(crate::topology::attributes::ProfileAttr::new(
+            first_start,
+            (),
+        ));
+        let profile = Profile::new(&g, profile_key);
         let darts = profile.darts().collect::<Vec<_>>();
 
         assert_eq!(darts.len(), 4);

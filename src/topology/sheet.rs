@@ -6,6 +6,7 @@ use super::closed::{Closeable, Closed};
 use super::edge::Edge;
 use super::face::Face;
 use super::gmap::{Cell2, Dart, GMap, MergeTopology, TopologyMerge};
+use super::orientation::Orientation;
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 use crate::topology::shape_keys::SheetKey;
@@ -17,6 +18,7 @@ use crate::topology::shape_keys::SheetKey;
 /// [`ShellRef`].
 pub struct Sheet<'a, P: Payload = StandardPayload> {
     gmap: &'a GMap<P>,
+    key: SheetKey,
     /// A dart belonging to this sheet's alpha0/alpha1/alpha2 component.
     pub dart: Dart,
 }
@@ -25,27 +27,33 @@ impl<'a, P: Payload> Clone for Sheet<'a, P> {
     fn clone(&self) -> Self {
         Self {
             gmap: self.gmap,
+            key: self.key,
             dart: self.dart,
         }
     }
 }
 
 impl<'a, P: Payload> Sheet<'a, P> {
-    /// Creates a sheet view rooted at `dart`.
-    pub fn new(gmap: &'a GMap<P>, dart: Dart) -> Self {
-        Self { gmap, dart }
+    /// Creates a sheet view from its key using the attribute's reference dart.
+    pub fn new(gmap: &'a GMap<P>, key: SheetKey) -> Self {
+        let dart = gmap.sheet_attr_unchecked(key).dart;
+        Self { gmap, key, dart }
     }
 
-    /// Returns this sheet's stable key, if it is registered.
-    pub fn key(&self) -> Option<SheetKey> {
-        self.gmap.sheet_key(self.dart)
+    /// Creates a sheet view from a dart in a registered sheet cell.
+    pub fn from_dart(gmap: &'a GMap<P>, dart: Dart) -> Option<Self> {
+        let key = gmap.sheet_key(dart)?;
+        Some(Self { gmap, key, dart })
     }
 
-    /// Returns the user payload attached to this registered sheet.
-    pub fn data(&self) -> Option<&P::Sheet> {
-        self.key()
-            .and_then(|key| self.gmap.sheet_attr(key))
-            .map(|attr| &attr.data)
+    /// Returns this sheet's stable key.
+    pub fn key(&self) -> SheetKey {
+        self.key
+    }
+
+    /// Returns the user payload attached to this sheet.
+    pub fn data(&self) -> &P::Sheet {
+        &self.gmap.sheet_attr_unchecked(self.key).data
     }
 
     /// Iterates every dart in this sheet's alpha0/alpha1/alpha2 component.
@@ -60,9 +68,18 @@ impl<'a, P: Payload> Sheet<'a, P> {
         let mut seen = HashSet::new();
         self.gmap
             .incident_cells(self.dart, Dim::Three, Dim::Two)
-            .filter_map(|dart| {
+            .filter_map(|mut dart| {
                 let key = self.gmap.cell_key::<Cell2>(dart)?;
-                seen.insert(key).then(|| Face::new(self.gmap, key))
+                if self
+                    .gmap
+                    .cell_orientation_from_seed(self.dart, dart, Dim::Three)
+                    == Some(Orientation::Reversed)
+                {
+                    dart = self.gmap.alpha(Dim::Zero, dart);
+                }
+                seen.insert(key)
+                    .then(|| Face::from_dart(self.gmap, dart))
+                    .flatten()
             })
             .collect()
     }
