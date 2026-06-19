@@ -18,8 +18,8 @@ fn closed_profile_corners_pair_each_vertex_with_ordered_incident_edges() {
     for (index, corner) in corners.iter().enumerate() {
         let previous = (index + edges.len() - 1) % edges.len();
 
-        assert_eq!(corner.incoming().dart, edges[previous].dart);
-        assert_eq!(corner.outgoing().dart, edges[index].dart);
+        assert_eq!(corner.incoming().dart(), edges[previous].dart());
+        assert_eq!(corner.outgoing().dart(), edges[index].dart());
         assert_eq!(corner.vertex().key(), edges[index].start().key());
         assert_eq!(corner.vertex().key(), edges[previous].end().key());
     }

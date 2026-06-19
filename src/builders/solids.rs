@@ -157,8 +157,8 @@ fn reverse_face_winding<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
         .filter_map(|edge| {
             face_attr
                 .pcurves
-                .get(&edge.dart)
-                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart), pcurve.reversed()))
+                .get(&edge.dart())
+                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart()), pcurve.reversed()))
         })
         .collect();
 
@@ -178,12 +178,12 @@ fn sew_extruded_loop<P: Payload>(
     let bottom_edges = Profile::new(g, bottom_loop_dart)
         .edges()
         .into_iter()
-        .map(|edge| edge.dart)
+        .map(|edge| edge.dart())
         .collect::<Vec<_>>();
     let top_edges = Profile::new(g, top_loop_dart)
         .edges()
         .into_iter()
-        .map(|edge| edge.dart)
+        .map(|edge| edge.dart())
         .collect::<Vec<_>>();
     let laterals = bottom_edges
         .iter()
@@ -275,17 +275,18 @@ fn prepare_lateral_face<P: Payload>(
     _top_edge: Dart,
     direction: Vector3<f64>,
 ) -> Result<PreparedLateralFace, ExtrudeError> {
-    let bottom_edge = Edge::new(g, bottom_edge);
-    let edge_dart = bottom_edge.dart;
-    let start = *bottom_edge
+    let bottom_edge_view = Edge::from_dart(g, bottom_edge)
+        .ok_or(ExtrudeError::MissingEdgeCurve { dart: bottom_edge })?;
+    let edge_dart = bottom_edge_view.dart();
+    let start = *bottom_edge_view
         .start()
         .point()
         .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
-    let end = *bottom_edge
+    let end = *bottom_edge_view
         .end()
         .point()
         .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
-    let curve = bottom_edge
+    let curve = bottom_edge_view
         .curve()
         .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
     let surface = lateral_face_surface(edge_dart, curve, start, end, direction)?;

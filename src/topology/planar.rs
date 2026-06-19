@@ -252,7 +252,7 @@ fn edge_planarity_points<P: Payload>(
             sampled_curve_points(curve, interval.start, interval.end)
                 .into_iter()
                 .map(|point| PointOnDart {
-                    dart: edge.dart,
+                    dart: edge.dart(),
                     point,
                 }),
         );
@@ -306,7 +306,7 @@ fn check_edge_curve<P: Payload>(
         let distance = plane_distance(plane, point);
         if distance > tolerance {
             return Err(PlanarityError::NonPlanarCurve {
-                dart: edge.dart,
+                dart: edge.dart(),
                 distance,
                 tolerance,
             });

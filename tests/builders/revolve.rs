@@ -30,7 +30,7 @@ fn partial_revolved_edge_creates_rotated_endpoint_geometry() {
         Rad64::QUARTER_TURN,
     )
     .unwrap();
-    let edge = Edge::new(&g, rotated);
+    let edge = Edge::from_dart(&g, rotated).expect("rotated dart should belong to an edge");
 
     assert_eq!(g.dart_count(), 8);
     assert!(
@@ -118,7 +118,9 @@ fn full_revolved_edge_uses_closed_circle_special_case() {
 
     assert_eq!(g.dart_count(), 6);
     assert!(matches!(
-        Edge::new(&g, circle).curve(),
+        Edge::from_dart(&g, circle)
+            .expect("circle dart should belong to an edge")
+            .curve(),
         Some(Curve::Circle(_))
     ));
 }
@@ -150,7 +152,9 @@ fn full_revolved_closed_edge_creates_one_vertex_circle() {
 
     assert_eq!(g.dart_count(), 4);
     assert!(matches!(
-        Edge::new(&g, circle).curve(),
+        Edge::from_dart(&g, circle)
+            .expect("circle dart should belong to an edge")
+            .curve(),
         Some(Curve::Circle(_))
     ));
 }

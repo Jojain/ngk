@@ -177,10 +177,10 @@ fn hash_topology_identity<T: Hash>(map: &SharedMap, value: T) -> isize {
 }
 
 fn edge_key(map: &GMap<StandardPayload>, edge: &Edge<'_, StandardPayload>) -> Option<EdgeKey> {
-    let repr = map.cell_representative(edge.dart, Dim::One);
+    let repr = map.cell_representative(edge.dart(), Dim::One);
     map.dart_to_edge
         .get(&repr)
-        .or_else(|| map.dart_to_edge.get(&edge.dart))
+        .or_else(|| map.dart_to_edge.get(&edge.dart()))
         .copied()
 }
 
@@ -696,7 +696,7 @@ impl PyEdge {
 
     #[getter]
     fn dart_id(&self) -> PyResult<usize> {
-        Ok(self.edge()?.dart.id())
+        Ok(self.edge()?.dart().id())
     }
 
     #[getter]
@@ -756,8 +756,8 @@ impl PyEdge {
             .collect::<HashSet<_>>();
 
         let mut faces = Vec::new();
-        for (key, attr) in map.iter_faces() {
-            let face = Face::new(map, attr);
+        for (key, _attr) in map.iter_faces() {
+            let face = Face::new(map, key);
             let matched_facet = face_loop_darts(&face)
                 .into_iter()
                 .map(|dart| map.cell_representative(dart, Dim::Two))
@@ -859,8 +859,8 @@ impl PyVertex {
     fn faces(&self) -> PyResult<Vec<PyFace>> {
         let map = self.map.as_ref();
         let mut faces = Vec::new();
-        for (key, attr) in map.iter_faces() {
-            let face = Face::new(map, attr);
+        for (key, _attr) in map.iter_faces() {
+            let face = Face::new(map, key);
             if face_vertices(&face)
                 .iter()
                 .any(|vertex| vertex_key(map, vertex) == Some(self.key))

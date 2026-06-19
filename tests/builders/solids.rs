@@ -30,8 +30,7 @@ fn translate_face_copies_face_into_translated_map() {
         Vec::new(),
     ));
     let face = source
-        .face_attr(face_key)
-        .map(|attr| Face::new(&source, attr))
+        .face(face_key)
         .expect("source face should exist");
 
     let translated = translate_face(&face, Vector3::new(0.0, 0.0, 2.0)).unwrap();

@@ -15,7 +15,7 @@ use crate::geometry::{
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
 use crate::topology::closed::Closed;
 use crate::topology::edge::Edge;
-use crate::topology::gmap::{Cell2, Dart, Dim, GMap};
+use crate::topology::gmap::{Cell1, Cell2, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
@@ -110,7 +110,7 @@ fn vertex_point<P: Payload>(vertex: Vertex<'_, P>) -> Result<Point3, MissingVert
 }
 
 fn edge_curve<'a, P: Payload>(edge: &'a Edge<'_, P>) -> Result<&'a Curve, MissingEdgeCurve> {
-    edge.curve().ok_or(MissingEdgeCurve(edge.dart))
+    edge.curve().ok_or(MissingEdgeCurve(edge.dart()))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -584,7 +584,9 @@ fn periodic_seam_edge<P: Payload>(
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
     let mut counts = HashMap::<EdgeKey, usize>::new();
     for edge in face.outer_loop().edges() {
-        *counts.entry(boundary_edge_key(g, edge.dart)?).or_default() += 1;
+        *counts
+            .entry(boundary_edge_key(g, edge.dart())?)
+            .or_default() += 1;
     }
     Ok(counts
         .into_iter()
@@ -735,8 +737,8 @@ fn merge_periodic_boundary_edge<P: Payload>(
         .zip(edges.iter().cycle().skip(1))
         .take(edges.len())
         .find_map(|(first, second)| {
-            let first_pcurve = pcurves.get(&first.dart)?;
-            let second_pcurve = pcurves.get(&second.dart)?;
+            let first_pcurve = pcurves.get(&first.dart())?;
+            let second_pcurve = pcurves.get(&second.dart())?;
             let first_start = first_pcurve.point_at(0.0);
             let first_end = first_pcurve.point_at(1.0);
             let second_start = second_pcurve.point_at(0.0);
@@ -745,7 +747,7 @@ fn merge_periodic_boundary_edge<P: Payload>(
                 && (second_start.y - second_end.y).abs() <= LINEAR_TOLERANCE
                 && (first_end.y - second_start.y).abs() <= LINEAR_TOLERANCE
                 && ((first_end.x - second_start.x).abs() - period).abs() <= LINEAR_TOLERANCE)
-                .then_some((first.dart, second.dart))
+                .then_some((first.dart(), second.dart()))
         })
     else {
         return Ok(None);
@@ -879,12 +881,11 @@ fn unwrap_periodic_face_pcurves<P: Payload>(
                 .into_iter()
                 .map(|edge| {
                     face_view
-                        .pcurve(edge.dart)
-                        .cloned()
-                        .map(|pcurve| (edge.dart, pcurve))
+                        .pcurve(edge.dart())
+                        .map(|pcurve| (edge.dart(), pcurve))
                         .ok_or(FaceImprintSplitError::MissingPcurve {
                             face,
-                            dart: edge.dart,
+                            dart: edge.dart(),
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?,
@@ -935,15 +936,15 @@ fn face_edge_dart_for_imprint<P: Payload>(
     face: FaceKey,
     edge: EdgeKey,
 ) -> Result<Dart, FaceImprintSplitError> {
-    let face = g
+    let face_view = g
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
-    face.edges()
+    let profile_darts: Vec<Dart> = face_view.outer_loop().darts().step_by(2).collect();
+    profile_darts
         .into_iter()
-        .find(|candidate| candidate.key() == edge)
-        .map(|candidate| candidate.dart)
+        .find(|profile_dart| g.cell_key::<Cell1>(*profile_dart) == Some(edge))
         .ok_or(FaceImprintSplitError::MissingBoundaryEdge {
-            dart: face.outer_loop().dart,
+            dart: face_view.outer_loop().dart,
         })
 }
 
@@ -1275,7 +1276,7 @@ fn split_boundary_at_uv<P: Payload>(
         return Ok(());
     };
 
-    let edge = Edge::new(g, target.dart);
+    let edge = Edge::new(g, target.edge);
     let curve = edge_curve(&edge)?;
     let face_view = g
         .face(face)
@@ -1388,7 +1389,7 @@ fn face_boundary_uvs<P: Payload>(
         .corners()
         .iter()
         .map(|corner| {
-            let dart = corner.outgoing().dart;
+            let dart = corner.outgoing().dart();
             face_view
                 .pcurve(dart)
                 .map(|pcurve| pcurve.point_at(0.0))
@@ -1408,12 +1409,12 @@ fn boundary_edge_at_uv<P: Payload>(
 
     for edge in face_view.outer_loop().edges() {
         let pcurve = face_view
-            .pcurve(edge.dart)
+            .pcurve(edge.dart())
             .ok_or(FaceImprintSplitError::MissingPcurve {
                 face,
-                dart: edge.dart,
+                dart: edge.dart(),
             })?;
-        let Some(fraction) = pcurve_fraction_at(pcurve, uv) else {
+        let Some(fraction) = pcurve_fraction_at(&pcurve, uv) else {
             continue;
         };
         if fraction <= LINEAR_TOLERANCE || 1.0 - fraction <= LINEAR_TOLERANCE {
@@ -1421,8 +1422,8 @@ fn boundary_edge_at_uv<P: Payload>(
         }
 
         return Ok(Some(BoundaryEdgeTarget {
-            dart: edge.dart,
-            edge: boundary_edge_key(g, edge.dart)?,
+            dart: edge.dart(),
+            edge: boundary_edge_key(g, edge.dart())?,
         }));
     }
 
@@ -1437,9 +1438,7 @@ fn boundary_edge_key<P: Payload>(
     g: &GMap<P>,
     dart: Dart,
 ) -> Result<EdgeKey, FaceImprintSplitError> {
-    let representative = g.cell_representative(dart, Dim::One);
-    g.iter_edges()
-        .find_map(|(key, edge)| (edge.dart == representative).then_some(key))
+    g.cell_key::<Cell1>(dart)
         .ok_or(FaceImprintSplitError::MissingBoundaryEdge { dart })
 }
 
@@ -1474,8 +1473,8 @@ fn apply_outer_face_chord_split<P: Payload>(
     let corners = loop_.corners();
     let start = &corners[cut.start_corner];
     let end = &corners[cut.end_corner];
-    let start_dart = start.outgoing().dart;
-    let end_dart = end.outgoing().dart;
+    let start_dart = start.outgoing().dart();
+    let end_dart = end.outgoing().dart();
     let start_previous_end = start.incoming().end().dart;
     let end_previous_end = end.incoming().end().dart;
     let pcurve_ab = cut.pcurve.clone();
@@ -1545,19 +1544,25 @@ fn split_face_pcurves<P: Payload>(
     section_pcurve: &Curve2,
 ) -> Result<HashMap<Dart, Curve2>, FaceImprintSplitError> {
     let mut pcurves = HashMap::new();
-    for edge in Profile::new(g, loop_dart).edges() {
-        let pcurve = if edge.dart == section_dart {
+    for profile_dart in Profile::new(g, loop_dart).darts().step_by(2) {
+        let pcurve = if profile_dart == section_dart {
             section_pcurve.clone()
         } else {
-            old_pcurves
-                .get(&edge.dart)
+            let candidates = [
+                profile_dart,
+                g.alpha(Dim::Zero, profile_dart),
+                g.alpha(Dim::Two, profile_dart),
+            ];
+            candidates
+                .iter()
+                .find_map(|&d| old_pcurves.get(&d))
                 .cloned()
                 .ok_or(FaceImprintSplitError::MissingPcurve {
                     face,
-                    dart: edge.dart,
+                    dart: profile_dart,
                 })?
         };
-        pcurves.insert(edge.dart, pcurve);
+        pcurves.insert(profile_dart, pcurve);
     }
     Ok(pcurves)
 }
@@ -1606,12 +1611,18 @@ fn face_edge_dart<P: Payload>(
             EdgeSplitError::MissingEdge { edge },
         ))?;
     let edge_dart = g.cell_representative(edge_attr.dart, Dim::One);
-    std::iter::once(face_attr.outer_loop)
+    let profile_darts: Vec<Dart> = std::iter::once(face_attr.outer_loop)
         .chain(face_attr.inner_loops.iter().copied())
-        .flat_map(|loop_dart| Profile::new(g, loop_dart).edges())
-        .find_map(|candidate| {
-            (g.cell_representative(candidate.dart, Dim::One) == edge_dart).then_some(candidate.dart)
+        .flat_map(|loop_dart| {
+            Profile::new(g, loop_dart)
+                .darts()
+                .step_by(2)
+                .collect::<Vec<_>>()
         })
+        .collect();
+    profile_darts
+        .into_iter()
+        .find(|profile_dart| g.cell_representative(*profile_dart, Dim::One) == edge_dart)
         .ok_or(FaceEdgeSplitError::EdgeNotOnFace { face, edge })
 }
 
@@ -1636,7 +1647,8 @@ fn closed_boundary_curve_reversed<P: Payload>(
     edge: EdgeKey,
     dart: Dart,
 ) -> Result<bool, FaceEdgeSplitError> {
-    let edge_view = Edge::new(g, dart);
+    let edge_view =
+        Edge::from_dart(g, dart).ok_or(FaceEdgeSplitError::EdgeNotOnFace { face, edge })?;
     let start = vertex_point(edge_view.start())?;
     let end = vertex_point(edge_view.end())?;
     if (start - end).norm() > LINEAR_TOLERANCE {
@@ -1816,7 +1828,7 @@ pub fn add_polygon<P: Payload>(g: &mut GMap<P>, corners: &[Point3]) -> Dart {
     }
 
     for i in 0..n {
-        let edge_dart = g.cell_representative(darts[2 * i], Dim::One);
+        let edge_dart = darts[2 * i];
         let curve = Curve::line(corners[i], corners[(i + 1) % n]);
         g.add_edge(EdgeAttr::new(edge_dart, curve, P::E::default()));
     }

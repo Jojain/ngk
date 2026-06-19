@@ -67,7 +67,7 @@ impl<'a, P: Payload> Profile<'a, P> {
     pub fn edges(&self) -> Vec<Edge<'a, P>> {
         self.darts()
             .step_by(2)
-            .map(|d| Edge::new(self.gmap, d))
+            .filter_map(|d| Edge::from_dart(self.gmap, d))
             .collect()
     }
 
@@ -114,12 +114,14 @@ pub struct LoopCorner<'a, P: Payload = StandardPayload> {
 impl<'a, P: Payload> LoopCorner<'a, P> {
     /// Returns the edge arriving at this corner in loop traversal order.
     pub fn incoming(&self) -> Edge<'a, P> {
-        Edge::new(self.gmap, self.incoming)
+        Edge::from_dart(self.gmap, self.incoming)
+            .expect("LoopCorner incoming dart must have an edge")
     }
 
     /// Returns the edge leaving this corner in loop traversal order.
     pub fn outgoing(&self) -> Edge<'a, P> {
-        Edge::new(self.gmap, self.outgoing)
+        Edge::from_dart(self.gmap, self.outgoing)
+            .expect("LoopCorner outgoing dart must have an edge")
     }
 
     /// Returns the vertex at this loop occurrence.
@@ -133,19 +135,19 @@ impl<'a, P: Payload> Closed<Profile<'a, P>> {
     ///
     /// Each corner pairs an incoming edge with the following outgoing edge.
     pub fn corners(&self) -> Vec<LoopCorner<'a, P>> {
-        let edges = self.edges();
-        let count = edges.len();
+        let edge_darts: Vec<Dart> = self.darts().step_by(2).collect();
+        let count = edge_darts.len();
         if count == 0 {
             return Vec::new();
         }
 
-        edges
+        edge_darts
             .iter()
             .enumerate()
-            .map(|(index, outgoing)| LoopCorner {
+            .map(|(index, outgoing_dart)| LoopCorner {
                 gmap: self.gmap,
-                incoming: edges[(index + count - 1) % count].dart,
-                outgoing: outgoing.dart,
+                incoming: edge_darts[(index + count - 1) % count],
+                outgoing: *outgoing_dart,
             })
             .collect()
     }

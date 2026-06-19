@@ -5,8 +5,9 @@ use crate::geometry::{Curve, Point3, Surface};
 use crate::topology::dart::Dart;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::GMap;
+use crate::topology::gmap::{Cell2, GMap};
 use crate::topology::payload::Payload;
+use crate::topology::shape_keys::EdgeKey;
 use crate::topology::vertex::Vertex;
 
 /// Stored data for a keyed vertex 0-cell.
@@ -45,13 +46,19 @@ pub struct EdgeAttr<T> {
 
 impl<T> EdgeAttr<T> {
     /// Creates an edge attribute rooted at `dart`.
+    ///
+    /// The caller's `dart` defines the edge's default orientation.
     pub fn new(dart: Dart, curve: Curve, data: T) -> Self {
         Self { dart, curve, data }
     }
 
     /// Returns a typed edge view over this attribute in `gmap`.
-    pub fn edge<'a, P: Payload>(&self, gmap: &'a GMap<P>) -> Edge<'a, P> {
-        Edge::new(gmap, self.dart)
+    pub fn edge<'a, P: Payload>(
+        &self,
+        gmap: &'a GMap<P>,
+        key: EdgeKey,
+    ) -> Edge<'a, P> {
+        Edge::new(gmap, key)
     }
 }
 
@@ -131,7 +138,10 @@ impl<T> FaceAttr<T> {
 
     /// Returns a typed face view over this attribute in `gmap`.
     pub fn face<'a, P: Payload<F = T>>(&'a self, gmap: &'a GMap<P>) -> Face<'a, P> {
-        Face::new(gmap, self)
+        let key = gmap
+            .cell_key::<Cell2>(self.outer_loop)
+            .expect("FaceAttr must be registered to produce a Face view");
+        Face::new(gmap, key)
     }
 }
 

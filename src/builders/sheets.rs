@@ -44,7 +44,7 @@ pub(crate) fn add_extruded_profile_boundaries<P: Payload>(
     let edges_darts = profile
         .edges()
         .into_iter()
-        .map(|edge| edge.dart)
+        .map(|edge| edge.dart())
         .collect::<Vec<_>>();
     for edge_dart in edges_darts {
         let extruded_face = extrude_edge(g, edge_dart, direction)?;
@@ -69,7 +69,8 @@ fn extrude_edge<P: Payload>(
     edge_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<ExtrudedFace, ExtrudeError> {
-    let edge = Edge::new(g, edge_dart);
+    let edge =
+        Edge::from_dart(g, edge_dart).ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
     let start = *edge
         .start()
         .point()
@@ -83,7 +84,7 @@ fn extrude_edge<P: Payload>(
         .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
 
     let corners = [start, end, end + direction, start + direction];
-    let surface_data = extruded_edge_surface(edge.dart, curve, start, end, direction)?;
+    let surface_data = extruded_edge_surface(edge.dart(), curve, start, end, direction)?;
     add_extruded_edge_face(g, corners, surface_data)
 }
 
@@ -225,7 +226,7 @@ fn add_extruded_edge_face<P: Payload>(
     }
 
     for i in 0..4 {
-        let edge_dart = g.cell_representative(darts[2 * i], Dim::One);
+        let edge_dart = darts[2 * i];
         g.add_edge(EdgeAttr::new(
             edge_dart,
             surface_data.boundary_curves[i].clone(),
@@ -369,7 +370,8 @@ mod tests {
             translated_dart.id() >= source_dart_count,
             "returned dart should belong to generated extrusion topology"
         );
-        let translated_edge = Edge::new(&source, translated_dart);
+        let translated_edge = Edge::from_dart(&source, translated_dart)
+            .expect("translated dart should belong to an edge");
         let start = *translated_edge
             .start()
             .point()

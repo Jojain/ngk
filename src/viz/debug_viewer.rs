@@ -658,13 +658,13 @@ where
                 .into_iter()
                 .flat_map(|loop_| loop_.edges())
                 .filter_map(|edge| {
-                    let curve = face.pcurve(edge.dart)?;
+                    let curve = face.pcurve(edge.dart())?;
                     Some(PcurveMetadata {
-                        dart: edge.dart.id() as u32,
+                        dart: edge.dart().id() as u32,
                         edge_key: debug_key(&edge.key()),
                         start_vertex_key: debug_key(&edge.start().key()),
                         end_vertex_key: debug_key(&edge.end().key()),
-                        curve: curve2_summary(curve),
+                        curve: curve2_summary(&curve),
                         samples: curve.sample(32).iter().map(|p| [p.x, p.y]).collect(),
                     })
                 })

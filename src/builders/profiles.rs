@@ -71,7 +71,7 @@ pub fn profile_pcurves<P: Payload>(
     let mut pcurves = HashMap::with_capacity(edges.len());
 
     for edge in edges.iter() {
-        let dart = edge.dart;
+        let dart = edge.dart();
         let start = *edge
             .start()
             .point()
@@ -260,8 +260,7 @@ fn add_segment_attributes(
     closed: bool,
 ) {
     for (segment, darts) in segments.iter().zip(segment_darts) {
-        let edge_dart = g.cell_representative(darts.start, Dim::One);
-        g.add_edge(EdgeAttr::new(edge_dart, segment.2.clone(), ()));
+        g.add_edge(EdgeAttr::new(darts.start, segment.2.clone(), ()));
     }
 
     for (segment, darts) in segments.iter().zip(segment_darts) {

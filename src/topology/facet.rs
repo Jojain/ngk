@@ -5,7 +5,7 @@ use crate::topology::shape_keys::FaceKey;
 
 use super::edge::Edge;
 use super::face::Face;
-use super::gmap::{Cell2, Dart, GMap, MergeTopology, TopologyMerge};
+use super::gmap::{Dart, GMap, MergeTopology, TopologyMerge};
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 
@@ -72,7 +72,10 @@ impl<'a, P: Payload> Facet<'a, P> {
     /// This matches `r#loop().edges()` and therefore has the same
     /// orientation and order as the facet boundary loop.
     pub fn edges(&self) -> Vec<Edge<'a, P>> {
-        self.r#loop().edges()
+        self.darts()
+            .step_by(2)
+            .filter_map(|d| Edge::from_dart(self.gmap, d))
+            .collect()
     }
 
     /// Returns the distinct edge cells incident to this facet.
@@ -82,15 +85,13 @@ impl<'a, P: Payload> Facet<'a, P> {
     pub fn incident_edges(&self) -> Vec<Edge<'a, P>> {
         self.gmap
             .incident_cells(self.dart, Dim::Two, Dim::One)
-            .map(|d| Edge::new(self.gmap, d))
+            .filter_map(|d| Edge::from_dart(self.gmap, d))
             .collect()
     }
 
     /// Returns the domain face attached to this facet, if one is registered.
     pub fn face(&self) -> Option<Face<'a, P>> {
-        self.gmap
-            .attribute::<Cell2>(self.dart)
-            .and_then(|key| self.gmap.faces.get(*key).map(|attr| attr.face(self.gmap)))
+        Face::from_facet(self.gmap, self)
     }
 }
 

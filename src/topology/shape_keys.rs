@@ -10,7 +10,7 @@ new_key_type! {
 }
 new_key_type! {
     /// Stable key reserved for future loop attributes.
-    pub struct LoopKey;
+    pub struct ProfileKey;
 }
 new_key_type! {
     /// Stable key for a stored face attribute.
@@ -18,7 +18,7 @@ new_key_type! {
 }
 new_key_type! {
     /// Stable key reserved for future shell attributes.
-    pub struct ShellKey;
+    pub struct SheetKey;
 }
 new_key_type! {
     /// Stable key for a stored solid attribute.

@@ -4,7 +4,8 @@ use slotmap::SlotMap;
 
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
+use crate::topology::orientation::Orientation;
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::solid::Solid;
 use crate::topology::vertex::Vertex;
 
@@ -72,23 +73,29 @@ pub struct Cell2;
 /// Type marker for solid attributes.
 pub struct Cell3;
 
-/// Compile-time mapping from a cell marker to its dimension.
+/// Compile-time mapping from a cell marker to its dimension and key type.
 pub trait CellDim {
     /// Dimension represented by this cell marker.
     const DIM: Dim;
+    /// Stable key type for this cell dimension.
+    type Key: Copy;
 }
 
 impl CellDim for Cell0 {
     const DIM: Dim = Dim::Zero;
+    type Key = VertexKey;
 }
 impl CellDim for Cell1 {
     const DIM: Dim = Dim::One;
+    type Key = EdgeKey;
 }
 impl CellDim for Cell2 {
     const DIM: Dim = Dim::Two;
+    type Key = FaceKey;
 }
 impl CellDim for Cell3 {
     const DIM: Dim = Dim::Three;
+    type Key = SolidKey;
 }
 
 /// Attribute lookup backend for a specific cell dimension.
@@ -103,6 +110,32 @@ pub trait AttributeStore<D: CellDim> {
     /// Returns the mutable attribute associated with canonical representative
     /// `repr`.
     fn get_mut(&mut self, repr: Dart) -> Option<&mut Self::Attr>;
+}
+
+/// Trait for looking up a cell key from a canonical representative dart.
+pub(crate) trait CellKeyLookup<D: CellDim> {
+    fn get_key(&self, repr: Dart) -> Option<D::Key>;
+}
+
+impl<P: Payload> CellKeyLookup<Cell0> for GMap<P> {
+    fn get_key(&self, repr: Dart) -> Option<VertexKey> {
+        self.dart_to_vertex.get(&repr).copied()
+    }
+}
+impl<P: Payload> CellKeyLookup<Cell1> for GMap<P> {
+    fn get_key(&self, repr: Dart) -> Option<EdgeKey> {
+        self.dart_to_edge.get(&repr).copied()
+    }
+}
+impl<P: Payload> CellKeyLookup<Cell2> for GMap<P> {
+    fn get_key(&self, repr: Dart) -> Option<FaceKey> {
+        self.dart_to_face.get(&repr).copied()
+    }
+}
+impl<P: Payload> CellKeyLookup<Cell3> for GMap<P> {
+    fn get_key(&self, repr: Dart) -> Option<SolidKey> {
+        self.dart_to_solid.get(&repr).copied()
+    }
 }
 
 fn remap_dart(dart_map: &HashMap<Dart, Dart>, dart: Dart) -> Dart {
@@ -225,10 +258,12 @@ pub struct GMap<P: Payload = StandardPayload> {
     free_slots: VecDeque<usize>,
     pub(crate) dart_to_vertex: HashMap<Dart, VertexKey>,
     pub(crate) dart_to_edge: HashMap<Dart, EdgeKey>,
+    pub(crate) dart_to_profile: HashMap<Dart, ProfileKey>,
     pub(crate) dart_to_face: HashMap<Dart, FaceKey>,
+    pub(crate) dart_to_sheet: HashMap<Dart, SheetKey>,
     pub(crate) dart_to_solid: HashMap<Dart, SolidKey>,
-    vertices: SlotMap<VertexKey, VertexAttr<P::V>>,
-    edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
+    pub(crate) vertices: SlotMap<VertexKey, VertexAttr<P::V>>,
+    pub(crate) edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
     pub(crate) faces: SlotMap<FaceKey, FaceAttr<P::F>>,
     pub(crate) solids: SlotMap<SolidKey, SolidAttr<P::S>>,
 }
@@ -242,7 +277,9 @@ impl<P: Payload> Clone for GMap<P> {
             dart_to_vertex: self.dart_to_vertex.clone(),
             edges: self.edges.clone(),
             dart_to_edge: self.dart_to_edge.clone(),
+            dart_to_profile: self.dart_to_profile.clone(),
             dart_to_face: self.dart_to_face.clone(),
+            dart_to_sheet: self.dart_to_sheet.clone(),
             dart_to_solid: self.dart_to_solid.clone(),
             faces: self.faces.clone(),
             solids: self.solids.clone(),
@@ -265,7 +302,9 @@ impl<P: Payload> GMap<P> {
         let dart_to_vertex = HashMap::new();
         let edges = SlotMap::with_key();
         let dart_to_edge = HashMap::new();
+        let dart_to_profile = HashMap::new();
         let dart_to_face = HashMap::new();
+        let dart_to_sheet = HashMap::new();
         let dart_to_solid = HashMap::new();
         let faces = SlotMap::with_key();
         let solids = SlotMap::with_key();
@@ -276,7 +315,9 @@ impl<P: Payload> GMap<P> {
             dart_to_vertex,
             edges,
             dart_to_edge,
+            dart_to_profile,
             dart_to_face,
+            dart_to_sheet,
             dart_to_solid,
             faces,
             solids,
@@ -365,13 +406,15 @@ impl<P: Payload> GMap<P> {
 
     /// Adds a vertex attribute and returns its key.
     ///
-    /// If a vertex attribute is already registered for the same 0-cell, the
-    /// existing key is returned and the new attribute is ignored.
+    /// # Panics
+    ///
+    /// Panics if a vertex attribute is already registered for the same 0-cell.
     pub fn add_vertex(&mut self, vertex: VertexAttr<P::V>) -> VertexKey {
         let dart = self.cell_representative(vertex.dart, Dim::Zero);
-        if let Some(&key) = self.dart_to_vertex.get(&dart) {
-            return key;
-        }
+        assert!(
+            self.dart_to_vertex.get(&dart).is_none(),
+            "A vertex is already attached to this 0-cell"
+        );
         let mut vertex = vertex;
         vertex.dart = dart;
         let key = self.vertices.insert(vertex);
@@ -411,24 +454,55 @@ impl<P: Payload> GMap<P> {
 
     /// Adds an edge attribute and returns its key.
     ///
-    /// If an edge attribute is already registered for the same 1-cell, the
-    /// existing key is returned and the new attribute is ignored.
+    /// The caller's `edge.dart` is preserved as the orientation-defining locator.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an edge attribute is already registered for the same 1-cell.
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
-        let dart = self.cell_representative(edge.dart, Dim::One);
-        if let Some(&key) = self.dart_to_edge.get(&dart) {
-            return key;
-        }
-        let mut edge = edge;
-        edge.dart = dart;
+        let repr = self.cell_representative(edge.dart, Dim::One);
+        assert!(
+            self.dart_to_edge.get(&repr).is_none(),
+            "An edge is already attached to this 1-cell"
+        );
         let key = self.edges.insert(edge);
-        self.dart_to_edge.insert(dart, key);
+        self.dart_to_edge.insert(repr, key);
         key
     }
 
-    /// Returns the typed edge view registered under `key`.
+    /// Returns the typed edge view registered under `key` with default
+    /// (`Same`) orientation.
     pub fn edge(&self, key: EdgeKey) -> Option<Edge<'_, P>> {
-        let attr = self.edge_attr(key)?;
-        Some(Edge::new(self, attr.dart))
+        self.edge_attr(key)?;
+        Some(Edge::new(self, key))
+    }
+
+    /// Returns the key of the `D`-cell containing `dart`.
+    pub fn cell_key<D: CellDim>(&self, dart: Dart) -> Option<D::Key>
+    where
+        Self: CellKeyLookup<D>,
+    {
+        let repr = self.cell_representative(dart, D::DIM);
+        self.get_key(repr)
+    }
+
+    /// Returns the orientation of `dart` relative to the edge's default
+    /// direction.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered edge.
+    pub fn edge_orientation_at_dart(&self, key: EdgeKey, dart: Dart) -> Orientation {
+        let attr = self
+            .edge_attr(key)
+            .expect("edge orientation requires valid edge key");
+        let v_dart = self.cell_representative(dart, Dim::Zero);
+        let v_attr = self.cell_representative(attr.dart, Dim::Zero);
+        if v_dart == v_attr {
+            Orientation::Same
+        } else {
+            Orientation::Reversed
+        }
     }
 
     /// Returns the edge attribute for `key`, if it exists.
@@ -457,30 +531,57 @@ impl<P: Payload> GMap<P> {
 
     /// Adds a face attribute and returns its key.
     ///
-    /// If any boundary facet is already attached to a face, the existing face
-    /// key is returned and the new attribute is ignored.
+    /// # Panics
+    ///
+    /// Panics if any boundary facet is already attached to a face.
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
-        let facet_darts = std::iter::once(face.outer_loop)
+        let reprs = std::iter::once(face.outer_loop)
             .chain(face.inner_loops.iter().copied())
-            .map(|dart| self.cell_representative(dart, Dim::Two))
-            .collect::<Vec<_>>();
-        if let Some(key) = facet_darts
-            .iter()
-            .find_map(|dart| self.dart_to_face.get(dart).copied())
-        {
-            return key;
-        }
+            .find_map(|d| {
+                let repr = self.cell_representative(d, Dim::Two);
+                self.dart_to_face.get(&repr)
+            });
+        assert!(
+            reprs.is_none(),
+            "A face is already attached to one of the boundary darts"
+        );
         let key = self.faces.insert(face);
-        for dart in facet_darts {
-            self.dart_to_face.insert(dart, key);
-        }
+        self.index_face_boundary_darts(key);
         key
     }
 
-    /// Returns the typed face view registered under `key`.
+    /// Returns the typed face view registered under `key` with default
+    /// (`Same`) orientation.
     pub fn face(&self, key: FaceKey) -> Option<Face<'_, P>> {
-        let attr = self.face_attr(key)?;
-        Some(Face::new(self, attr))
+        self.face_attr(key)?;
+        Some(Face::new(self, key))
+    }
+
+    /// Returns the orientation of the face side traversed at `dart` relative
+    /// to the face's default orientation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered face.
+    pub fn face_orientation_at_dart(&self, key: FaceKey, dart: Dart) -> Orientation {
+        let attr = self
+            .face_attr(key)
+            .expect("face orientation requires valid face key");
+        let outer_repr = self.cell_representative(attr.outer_loop, Dim::Two);
+        let dart_repr = self.cell_representative(dart, Dim::Two);
+        if outer_repr == dart_repr {
+            Orientation::Same
+        } else {
+            Orientation::Reversed
+        }
+    }
+
+    fn index_face_boundary_darts(&mut self, key: FaceKey) {
+        let attr = self.face[key]; // This exists because attr has just been added
+        for seed in std::iter::once(attr.outer_loop).chain(attr.inner_loops.iter().copied()) {
+            let repr = self.cell_representative(seed, Dim::Two);
+            self.dart_to_face.insert(repr, key);
+        }
     }
 
     /// Returns the face attribute for `key`, if it exists.
@@ -495,11 +596,9 @@ impl<P: Payload> GMap<P> {
 
     pub(crate) fn remove_face(&mut self, key: FaceKey) -> Option<FaceAttr<P::F>> {
         let face = self.faces.remove(key)?;
-        for dart in std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied()) {
-            let representative = self.cell_representative(dart, Dim::Two);
-            if self.dart_to_face.get(&representative) == Some(&key) {
-                self.dart_to_face.remove(&representative);
-            }
+        for seed in std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied()) {
+            let repr = self.cell_representative(seed, Dim::Two);
+            self.dart_to_face.remove(&repr);
         }
         Some(face)
     }
@@ -512,16 +611,18 @@ impl<P: Payload> GMap<P> {
     /// Adds a solid attribute and returns its key.
     ///
     /// If any shell is already attached to a solid, the existing solid key is
-    /// returned and the new attribute is ignored.
+    /// # Panics
+    ///
+    /// Panics if any shell is already attached to a solid.
     pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidKey {
         let shell_darts = self.solid_shell_representatives(&solid);
-        if let Some(key) = shell_darts
+        let existing = shell_darts
             .iter()
-            .find_map(|dart| self.dart_to_solid.get(dart).copied())
-        {
-            return key;
-        }
-
+            .find_map(|dart| self.dart_to_solid.get(dart));
+        assert!(
+            existing.is_none(),
+            "A solid is already attached to one of the shell darts"
+        );
         let key = self.solids.insert(solid);
         for dart in shell_darts {
             self.dart_to_solid.insert(dart, key);
@@ -630,7 +731,7 @@ impl<P: Payload> GMap<P> {
                 continue;
             };
             let mut attr = attr.clone();
-            attr.dart = self.cell_representative(remap_dart(&dart_map, attribute_dart), Dim::One);
+            attr.dart = remap_dart(&dart_map, attribute_dart);
             let new_key = self.edges.insert(attr);
             edge_map.insert(old_key, new_key);
         }
@@ -661,17 +762,9 @@ impl<P: Payload> GMap<P> {
                 .into_iter()
                 .filter_map(|(dart, curve)| dart_map.get(&dart).copied().map(|d| (d, curve)))
                 .collect();
-            let outer_loop = attr.outer_loop;
             let new_key = self.faces.insert(attr);
-            self.dart_to_face.insert(outer_loop, new_key);
+            self.index_face_boundary_darts(new_key);
             face_map.insert(old_key, new_key);
-        }
-        for (old_dart, old_key) in source.dart_to_face.iter() {
-            if let (Some(&new_dart), Some(&new_key)) =
-                (dart_map.get(old_dart), face_map.get(old_key))
-            {
-                self.dart_to_face.insert(new_dart, new_key);
-            }
         }
 
         for (_, attr) in source.solids.iter() {
@@ -902,11 +995,6 @@ impl<P: Payload> GMap<P> {
             let repr = self.cell_representative(attr.dart, Dim::One);
             if survivor_by_repr.insert(repr, key).is_some() {
                 duplicates.push(key);
-            } else {
-                self.edges
-                    .get_mut(key)
-                    .expect("collected edge key must remain valid")
-                    .dart = repr;
             }
         }
 
@@ -946,13 +1034,9 @@ impl<P: Payload> GMap<P> {
 
     fn rebuild_face_index(&mut self) {
         self.dart_to_face.clear();
-        for (key, attr) in self.faces.iter() {
-            for loop_dart in
-                std::iter::once(attr.outer_loop).chain(attr.inner_loops.iter().copied())
-            {
-                let repr = self.cell_representative(loop_dart, Dim::Two);
-                self.dart_to_face.insert(repr, key);
-            }
+        let face_keys: Vec<FaceKey> = self.faces.keys().collect();
+        for key in face_keys {
+            self.index_face_boundary_darts(key);
         }
     }
 
@@ -1091,10 +1175,7 @@ mod tests {
         )
         .expect("source edge should build");
 
-        let edge = source
-            .edge_attr(edge_key)
-            .map(|attr| Edge::new(&source, attr.dart))
-            .expect("source edge should exist");
+        let edge = source.edge(edge_key).expect("source edge should exist");
         let merged_dart = target.merge(edge);
         let merged_edge = target
             .attribute::<Cell1>(merged_dart)
@@ -1145,10 +1226,7 @@ mod tests {
             pcurves,
         ));
 
-        let face = source
-            .face_attr(face_key)
-            .map(|attr| Face::new(&source, attr))
-            .expect("source face should exist");
+        let face = source.face(face_key).expect("source face should exist");
         let merged_dart = target.merge(face);
         let merged_key = *target
             .attribute::<Cell2>(merged_dart)
@@ -1228,10 +1306,7 @@ mod tests {
             loop_dart,
             Vec::new(),
         ));
-        let face = source
-            .face_attr(face_key)
-            .map(|attr| Face::new(&source, attr))
-            .expect("source face should exist");
+        let face = source.face(face_key).expect("source face should exist");
 
         let (isolated, isolated_dart) = face.isolate();
 

@@ -8,7 +8,7 @@ use crate::topology::closed::Closed;
 
 use super::attributes::FaceAttr;
 use super::face::Face;
-use super::gmap::{Dart, Dim, GMap};
+use super::gmap::{Cell2, Dart, Dim, GMap};
 use super::payload::Payload;
 use super::profile::Profile;
 use super::shape_keys::{FaceKey, SolidKey};
@@ -276,7 +276,10 @@ fn face_orientation_sample<P: Payload>(
 
     let uv_center = uv_centroid(&outer_uv);
     let face_center = attr.surface.point_at(uv_center.x, uv_center.y).coords;
-    let normal = *Face::new(g, attr).normal_at(uv_center.x, uv_center.y);
+    let face_key = g
+        .cell_key::<Cell2>(attr.outer_loop)
+        .expect("FaceAttr outer_loop must resolve to a FaceKey");
+    let normal = *Face::new(g, face_key).normal_at(uv_center.x, uv_center.y);
 
     Some((face_center, normal))
 }

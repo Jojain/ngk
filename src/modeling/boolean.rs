@@ -18,6 +18,7 @@ use crate::geometry::{
 use crate::topology::attributes::{FaceAttr, SolidAttr};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
+use crate::topology::gmap::Cell1;
 use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap, MergeTopology, TopologyMerge};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Loop;
@@ -148,7 +149,7 @@ impl BooleanEdge {
     ) -> Result<Self, BooleanError> {
         let curve = edge
             .curve()
-            .ok_or(BooleanError::MissingEdgeCurve { dart: edge.dart })?
+            .ok_or(BooleanError::MissingEdgeCurve { dart: edge.dart() })?
             .to_nurbs()?;
 
         Ok(Self {
@@ -875,7 +876,7 @@ fn face_orientation_sample<P: Payload>(
 fn sample_face_uv<P: Payload>(face: &Face<'_, P>) -> Option<Point2> {
     let mut outer_uv = Vec::new();
     for edge in face.outer_loop().edges() {
-        let samples = face.pcurve(edge.dart)?.sample(1);
+        let samples = face.pcurve(edge.dart())?.sample(1);
         let count = samples.len();
         outer_uv.extend(samples.into_iter().take(count.saturating_sub(1)));
     }
@@ -906,8 +907,8 @@ fn flip_face_surface_orientation<P: Payload>(
         .into_iter()
         .filter_map(|edge| {
             attr.pcurves
-                .get(&edge.dart)
-                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart), pcurve.reversed()))
+                .get(&edge.dart())
+                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart()), pcurve.reversed()))
         })
         .collect();
 
@@ -1058,7 +1059,7 @@ fn face_uv_containment<P: Payload>(
 fn sample_loop_uv<P: Payload>(loop_: &Loop<'_, P>, face: &Face<'_, P>) -> Option<Vec<Point2>> {
     let mut points = Vec::new();
     for edge in loop_.edges() {
-        let samples = face.pcurve(edge.dart)?.sample(8);
+        let samples = face.pcurve(edge.dart())?.sample(8);
         let count = samples.len();
         points.extend(samples.into_iter().take(count.saturating_sub(1)));
     }
@@ -1517,9 +1518,7 @@ fn face_key_for_handle<P: Payload>(g: &GMap<P>, face: FaceHandle) -> Result<Face
 }
 
 fn edge_key_for_handle<P: Payload>(g: &GMap<P>, edge: EdgeHandle) -> Result<EdgeKey, BooleanError> {
-    let representative = g.cell_representative(edge.dart, Dim::One);
-    g.iter_edges()
-        .find_map(|(key, attr)| (attr.dart == representative).then_some(key))
+    g.cell_key::<Cell1>(edge.dart)
         .ok_or(BooleanError::MissingEdgeHandle { edge })
 }
 

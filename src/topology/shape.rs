@@ -132,8 +132,7 @@ impl<P: Payload> Shape<EdgeTag, P> {
     /// Panics if the stored edge key is no longer present in the map.
     pub fn edge(&self) -> Edge<'_, P> {
         self.map
-            .edge_attr(self.handle)
-            .map(|e| e.edge(&self.map))
+            .edge(self.handle)
             .expect("edge shape key must be in the map")
     }
 

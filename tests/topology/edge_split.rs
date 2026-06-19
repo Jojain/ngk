@@ -33,13 +33,11 @@ fn split_profile_edge_handles_isolated_edge() {
     );
 
     let first = g
-        .edge_attr(split.first)
-        .expect("first edge should exist")
-        .edge(&g);
+        .edge(split.first)
+        .expect("first edge should exist");
     let second = g
-        .edge_attr(split.second)
-        .expect("second edge should exist")
-        .edge(&g);
+        .edge(split.second)
+        .expect("second edge should exist");
     assert!(
         first
             .start()
@@ -162,7 +160,7 @@ fn split_profile_edge_preserves_closed_profile() {
     let mut g = GMap::<StandardPayload>::new();
     let profile_dart = add_rectangle(&mut g, ngk::geometry::Plane::xy(), 1.0, 1.0)
         .expect("rectangle profile should build");
-    let first_edge_dart = Profile::new(&g, profile_dart).edges()[0].dart;
+    let first_edge_dart = Profile::new(&g, profile_dart).edges()[0].dart();
     let first_edge = edge_key_for_dart(&g, first_edge_dart);
 
     split_edge(&mut g, first_edge, 0.5).expect("closed profile edge should split");
@@ -173,8 +171,6 @@ fn split_profile_edge_preserves_closed_profile() {
 }
 
 fn edge_key_for_dart(g: &GMap<StandardPayload>, dart: ngk::topology::Dart) -> EdgeKey {
-    let representative = g.cell_representative(dart, Dim::One);
-    g.iter_edges()
-        .find_map(|(key, edge)| (edge.dart == representative).then_some(key))
+    g.cell_key::<ngk::topology::gmap::Cell1>(dart)
         .expect("edge key should exist for dart")
 }

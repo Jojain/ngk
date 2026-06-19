@@ -68,7 +68,7 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
     let edges = shape_face.outer_loop().edges();
     let edge = &edges[0];
     let pcurve = shape_face
-        .pcurve(edge.dart)
+        .pcurve(edge.dart())
         .expect("circle edge should have a pcurve");
     assert!(matches!(pcurve, Curve2::Nurbs(_)));
     for fraction in [0.0, 0.125, 0.25, 0.5, 0.875, 1.0] {
@@ -108,7 +108,8 @@ fn split_face_edge_updates_boundary_and_pcurves() {
     let face = g
         .face_attr(face_key)
         .expect("face should remain registered");
-    let loop_edges = face.face(&g).outer_loop().edges();
+    let shape_face = face.face(&g);
+    let loop_edges = shape_face.outer_loop().edges();
 
     assert_eq!(g.iter_edges().count(), 5);
     assert_eq!(loop_edges.len(), 5);
@@ -116,7 +117,7 @@ fn split_face_edge_updates_boundary_and_pcurves() {
     assert!(
         loop_edges
             .iter()
-            .all(|edge| face.pcurves.contains_key(&edge.dart))
+            .all(|edge| shape_face.pcurve(edge.dart()).is_some())
     );
     assert!(
         g.vertex_attr(split.vertex)
@@ -206,16 +207,14 @@ fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
     assert_eq!(incident_face_keys(&g, split.first), adjacent_faces);
     assert_eq!(incident_face_keys(&g, split.second), adjacent_faces);
 
-    for face in adjacent_faces {
-        let attr = g.face_attr(face).expect("adjacent face should remain");
-        let edges = attr.face(&g).outer_loop().edges();
+    for facekey in adjacent_faces {
+        let face = g.face(facekey).expect("adjacent face should remain");
+        let edges = face.outer_loop().edges();
         assert_eq!(edges.len(), 5);
-        assert_eq!(attr.pcurves.len(), 5);
+        assert_eq!(g.face_attr(facekey).expect("face should exist").pcurves.len(), 5);
         assert!(
-            edges
-                .iter()
-                .all(|edge| attr.pcurves.contains_key(&edge.dart)),
-            "each split boundary edge should keep a pcurve on face {face:?}"
+            edges.iter().all(|edge| face.pcurve(edge.dart()).is_some()),
+            "each split boundary edge should keep a pcurve on face {facekey:?}"
         );
     }
 }
@@ -239,13 +238,14 @@ fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
 
     for face in [splits[0].first, splits[0].second] {
         let attr = g.face_attr(face).expect("split face should exist");
-        let edges = attr.face(&g).outer_loop().edges();
+        let shape_face = attr.face(&g);
+        let edges = shape_face.outer_loop().edges();
         assert_eq!(edges.len(), 3);
         assert_eq!(attr.pcurves.len(), 3);
         assert!(
             edges
                 .iter()
-                .all(|edge| attr.pcurves.contains_key(&edge.dart)),
+                .all(|edge| shape_face.pcurve(edge.dart()).is_some()),
             "each split face edge should have a pcurve"
         );
     }
@@ -287,12 +287,13 @@ fn split_face_by_imprints_splits_boundary_edge_at_imprint_endpoint() {
     assert_eq!(g.cells(Dim::Zero).count(), 5);
 
     for (_, attr) in g.iter_faces() {
-        let edges = attr.face(&g).outer_loop().edges();
+        let shape_face = attr.face(&g);
+        let edges = shape_face.outer_loop().edges();
         assert_eq!(attr.pcurves.len(), edges.len());
         assert!(
             edges
                 .iter()
-                .all(|edge| attr.pcurves.contains_key(&edge.dart))
+                .all(|edge| shape_face.pcurve(edge.dart()).is_some())
         );
     }
 }
@@ -328,13 +329,14 @@ fn split_face_by_imprints_applies_multiple_non_crossing_chords() {
     assert_eq!(g.iter_edges().count(), 7);
 
     for (_, attr) in g.iter_faces() {
-        let edges = attr.face(&g).outer_loop().edges();
+        let shape_face = attr.face(&g);
+        let edges = shape_face.outer_loop().edges();
         assert_eq!(edges.len(), 3);
         assert_eq!(attr.pcurves.len(), 3);
         assert!(
             edges
                 .iter()
-                .all(|edge| attr.pcurves.contains_key(&edge.dart))
+                .all(|edge| shape_face.pcurve(edge.dart()).is_some())
         );
     }
 }
@@ -404,7 +406,7 @@ fn split_face_by_imprints_adds_closed_interior_loop() {
     assert!(
         hole.edges()
             .iter()
-            .all(|edge| face.pcurves.contains_key(&edge.dart))
+            .all(|edge| shape_face.pcurve(edge.dart()).is_some())
     );
 
     let island = g
@@ -621,7 +623,7 @@ fn split_cylinder_face_at_two_generators() {
             .into_iter()
             .find(|candidate| candidate.key() == *edge)
             .expect("first half-cylinder should contain generator")
-            .dart;
+            .dart();
         let second_dart = g
             .face(splits[0].second)
             .expect("second half-cylinder should exist")
@@ -629,7 +631,7 @@ fn split_cylinder_face_at_two_generators() {
             .into_iter()
             .find(|candidate| candidate.key() == *edge)
             .expect("second half-cylinder should contain generator")
-            .dart;
+            .dart();
         assert_eq!(
             g.alpha(Dim::Two, first_dart),
             g.alpha(Dim::Zero, second_dart),
@@ -665,12 +667,12 @@ fn split_cylinder_face_at_two_generators() {
             .take(edges.len())
         {
             let pcurve = face
-                .pcurve(edge.dart)
+                .pcurve(edge.dart())
                 .expect("loop edge should have an oriented pcurve");
             let start_uv = pcurve.point_at(0.0);
             let end_uv = pcurve.point_at(1.0);
             let next_start_uv = face
-                .pcurve(next.dart)
+                .pcurve(next.dart())
                 .expect("next loop edge should have an oriented pcurve")
                 .point_at(0.0);
             let pcurve_start = face.point_at(start_uv.x, start_uv.y);
@@ -683,12 +685,12 @@ fn split_cylinder_face_at_two_generators() {
             assert!(
                 pcurve_start.coincides(edge_start, LINEAR_TOLERANCE),
                 "pcurve should start at its loop dart's start vertex: face={face_key:?}, dart={:?}, uv={start_uv:?}, pcurve={pcurve_start:?}, edge={edge_start:?}",
-                edge.dart
+                edge.dart()
             );
             assert!(
                 pcurve_end.coincides(edge_end, LINEAR_TOLERANCE),
                 "pcurve should end at its loop dart's end vertex: face={face_key:?}, dart={:?}, uv={end_uv:?}, pcurve={pcurve_end:?}, edge={edge_end:?}",
-                edge.dart
+                edge.dart()
             );
             assert!(
                 (end_uv - next_start_uv).norm() <= LINEAR_TOLERANCE,

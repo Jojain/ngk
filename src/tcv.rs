@@ -124,7 +124,7 @@ impl<P: Payload> ToTcv for Shape<EdgeTag, P> {
             .map()
             .edge_attr(self.handle())
             .ok_or(TcvError::MissingTopology)?;
-        append_edge_vertices(&attr.edge(self.map()), &mut shape);
+        append_edge_vertices(&attr.edge(self.map(), self.handle()), &mut shape);
         Ok(root_with_leaf(edge_leaf(&opts, shape), opts.name))
     }
 }
@@ -147,7 +147,7 @@ impl<P: Payload> ToTcv for Shape<FaceTag, P> {
             .map()
             .face_attr(self.handle())
             .ok_or(TcvError::MissingTopology)?;
-        let face = Face::new(self.map(), attr);
+        let face = attr.face(self.map());
         append_profile(self.map(), &face.outer_loop(), opts.tessellate, &mut shape)?;
         for loop_ in face.inner_loops() {
             append_profile(self.map(), &loop_, opts.tessellate, &mut shape)?;
@@ -289,7 +289,7 @@ fn append_edge<P: Payload>(
     shape: &mut TcvShape,
 ) -> Result<(), TcvError> {
     let attr = g.edge_attr(key).ok_or(TcvError::MissingTopology)?;
-    let edge = attr.edge(g);
+    let edge = attr.edge(g, key);
     let polyline = tessellate_edge(g, key, opts).filter(|line| !line.is_empty());
     let polyline = polyline.unwrap_or_else(|| fallback_chord(&edge));
     append_polyline(&polyline, shape);
@@ -401,9 +401,9 @@ fn bounding_box(shape: &TcvShape) -> Option<TcvBoundingBox> {
 }
 
 fn edge_key_from_edge<P: Payload>(g: &GMap<P>, edge: &Edge<'_, P>) -> Option<EdgeKey> {
-    let repr = g.cell_representative(edge.dart, Dim::One);
+    let repr = g.cell_representative(edge.dart(), Dim::One);
     g.dart_to_edge
         .get(&repr)
-        .or_else(|| g.dart_to_edge.get(&edge.dart))
+        .or_else(|| g.dart_to_edge.get(&edge.dart()))
         .copied()
 }

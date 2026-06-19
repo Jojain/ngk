@@ -1,8 +1,8 @@
 use super::closed::Closed;
 use super::edge::Edge;
-use super::gmap::Dart;
-use super::gmap::GMap;
-use super::gmap::{MergeTopology, TopologyMerge};
+use super::facet::Facet;
+use super::gmap::{Cell2, Dart, Dim, GMap, MergeTopology, TopologyMerge};
+use super::orientation::Orientation;
 use super::payload::{Payload, StandardPayload};
 use super::profile::{Loop, Profile};
 use super::vertex::Vertex;
@@ -10,46 +10,92 @@ use crate::geometry::Surface;
 use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
 use crate::topology::attributes::FaceAttr;
-use crate::topology::gmap::Cell2;
 use crate::topology::shape_keys::FaceKey;
 use nalgebra::UnitVector3;
 
-/// A domain-level face view.
+
+/// A domain-level face view with key and orientation.
 ///
 /// A face is a surface region backed by a stored [`FaceAttr`]. It has one
 /// outer boundary loop and zero or more inner loops for holes. This differs
 /// from [`Facet`](crate::topology::facet::Facet), which is the raw gmap 2-cell.
+///
+/// The [`orientation`](Self::orientation) records whether this view's traversal
+/// direction matches the face's default orientation. The face's default
+/// orientation is defined by its [`outer_loop`](FaceAttr::outer_loop) dart.
 pub struct Face<'g, P: Payload = StandardPayload> {
     gmap: &'g GMap<P>,
-    attr: &'g FaceAttr<P::F>,
+    /// The stable key identifying this face's stored attribute.
+    pub key: FaceKey,
+    /// Whether this view's direction matches the face's default orientation.
+    pub orientation: Orientation,
 }
 
 impl<'g, P: Payload> Clone for Face<'g, P> {
     fn clone(&self) -> Self {
         Self {
             gmap: self.gmap,
-            attr: self.attr,
+            key: self.key,
+            orientation: self.orientation,
         }
     }
 }
 
 impl<'g, P: Payload> Face<'g, P> {
-    /// Creates a face view from a stored face attribute.
-    pub fn new(gmap: &'g GMap<P>, attr: &'g FaceAttr<P::F>) -> Self {
-        Self { gmap, attr }
+    /// Creates a face view with the default (`Same`) orientation.
+    pub fn new(gmap: &'g GMap<P>, key: FaceKey) -> Self {
+        Self {
+            gmap,
+            key,
+            orientation: Orientation::Same,
+        }
     }
 
-    /// Returns the stable key of this face in the source map.
+    /// Creates a face view with an explicit orientation.
+    pub fn new_oriented(gmap: &'g GMap<P>, key: FaceKey, orientation: Orientation) -> Self {
+        Self {
+            gmap,
+            key,
+            orientation,
+        }
+    }
+
+    /// Creates a face view from a [`Facet`], resolving the face key and
+    /// orientation relative to the face's default direction.
+    ///
+    /// Returns `None` if the facet has no registered face.
+    pub fn from_facet(gmap: &'g GMap<P>, facet: &Facet<'_, P>) -> Option<Self> {
+        let key = gmap.cell_key::<Cell2>(facet.dart)?;
+        Some(Self {
+            gmap,
+            key,
+            orientation: Orientation::Same,
+        })
+    }
+
+    /// Returns the stored face attribute.
     ///
     /// # Panics
     ///
-    /// Panics if the face's outer loop is not registered in the map's face
-    /// index.
+    /// Panics if the key is not present in the map.
+    fn attr(&self) -> &'g FaceAttr<P::F> {
+        self.gmap
+            .face_attr(self.key)
+            .expect("face view must have a stored attribute")
+    }
+
+    /// Returns the stable key of this face.
     pub fn key(&self) -> FaceKey {
-        *self
-            .gmap
-            .attribute::<Cell2>(self.attr.outer_loop)
-            .expect("face view must have a registered face key")
+        self.key
+    }
+
+    /// Returns a new face view with the opposite orientation.
+    pub fn reversed(&self) -> Self {
+        Self {
+            gmap: self.gmap,
+            key: self.key,
+            orientation: self.orientation.flip(),
+        }
     }
 
     /// Returns the outer boundary loop of the face.
@@ -57,8 +103,16 @@ impl<'g, P: Payload> Face<'g, P> {
     /// The loop is trusted as closed because face attributes are created from
     /// closed boundary profiles.
     pub fn outer_loop(&self) -> Loop<'g, P> {
-        let d = self.attr.outer_loop;
+        let d = self.outer_loop_dart();
         Closed::new_unchecked(Profile::new(self.gmap, d))
+    }
+
+    fn outer_loop_dart(&self) -> Dart {
+        let attr = self.attr();
+        match self.orientation {
+            Orientation::Same => attr.outer_loop,
+            Orientation::Reversed => self.gmap.alpha(super::gmap::Dim::Zero, attr.outer_loop),
+        }
     }
 
     /// Returns every inner boundary loop of the face.
@@ -66,10 +120,16 @@ impl<'g, P: Payload> Face<'g, P> {
     /// Inner loops represent holes in the face region. The returned order is
     /// the storage order from the face attribute.
     pub fn inner_loops(&self) -> Vec<Loop<'g, P>> {
-        self.attr
-            .inner_loops
+        let attr = self.attr();
+        attr.inner_loops
             .iter()
-            .map(|d| Closed::new_unchecked(Profile::new(self.gmap, *d)))
+            .map(|d| {
+                let dart = match self.orientation {
+                    Orientation::Same => *d,
+                    Orientation::Reversed => self.gmap.alpha(super::gmap::Dim::Zero, *d),
+                };
+                Closed::new_unchecked(Profile::new(self.gmap, dart))
+            })
             .collect()
     }
 
@@ -106,7 +166,7 @@ impl<'g, P: Payload> Face<'g, P> {
 
     /// Returns the geometric support surface of the face.
     pub fn surface(&self) -> &Surface {
-        &self.attr.surface
+        &self.attr().surface
     }
 
     /// Evaluates the face's support surface at `(u, v)`.
@@ -115,7 +175,7 @@ impl<'g, P: Payload> Face<'g, P> {
     /// therefore defined even when `(u, v)` lies outside the outer loop or
     /// inside a hole.
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
-        self.attr.surface.point_at(u, v)
+        self.attr().surface.point_at(u, v)
     }
 
     /// Returns the oriented face normal at a surface parameter.
@@ -125,11 +185,12 @@ impl<'g, P: Payload> Face<'g, P> {
     /// the support-surface normal is returned unchanged. Like [`Self::point_at`],
     /// this does not test whether `(u, v)` belongs to the trimmed face region.
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
-        let normal = self.attr.surface.normal_at(u, v);
-        match self.outer_loop_signed_area() {
-            Some(area) if area < -LINEAR_TOLERANCE => -normal,
-            _ => normal,
-        }
+        let surface_normal = self.attr().surface.normal_at(u, v);
+        let loop_normal = match self.outer_loop_signed_area() {
+            Some(area) if area < -LINEAR_TOLERANCE => -surface_normal,
+            _ => surface_normal,
+        };
+        self.orientation.apply_vector(loop_normal)
     }
 
     fn outer_loop_signed_area(&self) -> Option<f64> {
@@ -140,7 +201,7 @@ impl<'g, P: Payload> Face<'g, P> {
     fn sample_loop_pcurves(&self, loop_: &Loop<'_, P>) -> Option<Vec<Point2>> {
         let mut points = Vec::new();
         for edge in loop_.edges() {
-            let samples = self.pcurve(edge.dart)?.sample(8);
+            let samples = self.pcurve(edge.dart())?.sample(8);
             let n = samples.len();
             points.extend(samples.into_iter().take(n.saturating_sub(1)));
         }
@@ -149,14 +210,28 @@ impl<'g, P: Payload> Face<'g, P> {
 
     /// Returns the user payload attached to this face.
     pub fn data(&self) -> &P::F {
-        &self.attr.data
+        &self.attr().data
     }
 
     /// Returns the pcurve assigned to a boundary dart, if present.
     ///
     /// The pcurve is expressed in this face's support-surface parameter space.
-    pub fn pcurve(&self, dart: Dart) -> Option<&Curve2> {
-        self.attr.pcurves.get(&dart)
+    /// The lookup first tries `dart` directly, then its `alpha0` and `alpha2`
+    /// partners, so callers may pass any dart from the edge orbit. The pcurve
+    /// key is a profile boundary dart of the face, which may differ from the
+    /// edge's default orientation dart when edges are shared between faces.
+    ///
+    /// The returned pcurve respects the face's current orientation: if the
+    /// face is reversed relative to default, the pcurve is reversed.
+    pub fn pcurve(&self, dart: Dart) -> Option<Curve2> {
+        let attr = self.attr();
+        let g = self.gmap;
+        let candidates = [dart, g.alpha(Dim::Zero, dart), g.alpha(Dim::Two, dart)];
+        let cached = candidates.iter().find_map(|&d| attr.pcurves.get(&d));
+        cached.cloned().map(|pc| match self.orientation {
+            Orientation::Same => pc,
+            Orientation::Reversed => pc.reversed(),
+        })
     }
 }
 
@@ -179,6 +254,6 @@ impl<P: Payload> MergeTopology<P> for Face<'_, P> {
         for loop_ in self.inner_loops() {
             darts.extend(loop_.darts());
         }
-        TopologyMerge::new(self.gmap, darts, self.attr.outer_loop)
+        TopologyMerge::new(self.gmap, darts, self.outer_loop_dart())
     }
 }

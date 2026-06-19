@@ -158,7 +158,8 @@ fn edge_geometry<P: Payload>(
     g: &GMap<P>,
     edge_dart: Dart,
 ) -> Result<(Point3, Point3, Curve, Dart), RevolveError> {
-    let edge = Edge::new(g, edge_dart);
+    let edge =
+        Edge::from_dart(g, edge_dart).ok_or(RevolveError::MissingEdgeCurve { dart: edge_dart })?;
     let start = *edge
         .start()
         .point()
@@ -178,7 +179,8 @@ fn edge_vertices<P: Payload>(
     g: &GMap<P>,
     edge_dart: Dart,
 ) -> Result<Vec<(Dart, Point3)>, RevolveError> {
-    let edge = Edge::new(g, edge_dart);
+    let edge =
+        Edge::from_dart(g, edge_dart).ok_or(RevolveError::MissingEdgeCurve { dart: edge_dart })?;
     edge.vertices()
         .into_iter()
         .map(|vertex| {
@@ -271,7 +273,7 @@ fn add_revolved_profile_faces<P: Payload>(
     let edge_darts = profile
         .edges()
         .into_iter()
-        .map(|edge| edge.dart)
+        .map(|edge| edge.dart())
         .collect::<Vec<_>>();
 
     let mut faces = Vec::with_capacity(edge_darts.len());
@@ -357,7 +359,7 @@ fn add_revolved_quad_face<P: Payload>(
     }
 
     for i in 0..4 {
-        let edge_dart = g.cell_representative(darts[2 * i], Dim::One);
+        let edge_dart = darts[2 * i];
         g.add_edge(EdgeAttr::new(
             edge_dart,
             boundary_curves[i].clone(),
@@ -494,12 +496,12 @@ fn sew_revolved_loop_to_caps<P: Payload>(
     let bottom_edges = Profile::new(g, bottom_loop)
         .edges()
         .into_iter()
-        .map(|edge| edge.dart)
+        .map(|edge| edge.dart())
         .collect::<Vec<_>>();
     let top_edges = Profile::new(g, top_loop)
         .edges()
         .into_iter()
-        .map(|edge| edge.dart)
+        .map(|edge| edge.dart())
         .collect::<Vec<_>>();
     let revolved = add_revolved_profile_faces(g, bottom_loop, axis, angle, true)?;
 

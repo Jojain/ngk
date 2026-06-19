@@ -41,7 +41,7 @@ pub fn tessellate_edge<P: Payload>(
     opts: TessellateOpts,
 ) -> Option<Polyline3> {
     let attr = g.edge_attr(key)?;
-    let edge = attr.edge(g);
+    let edge = attr.edge(g, key);
     let v1 = edge.start();
     let v2 = edge.end();
     let p1 = v1.point()?;

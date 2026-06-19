@@ -50,7 +50,7 @@ impl<'a, P: Payload> Vertex<'a, P> {
     pub fn edges(&self) -> Vec<Edge<'a, P>> {
         self.gmap
             .incident_cells(self.dart, Dim::Zero, Dim::One)
-            .map(|d| Edge::new(self.gmap, d))
+            .filter_map(|d| Edge::from_dart(self.gmap, d))
             .collect()
     }
 

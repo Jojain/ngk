@@ -428,13 +428,14 @@ fn split_plan_applies_multiple_splits_to_current_operand_edge_segments() {
 
     for face in adjacent_faces {
         let attr = object.map().face_attr(face).expect("face should remain");
-        let edges = attr.face(object.map()).outer_loop().edges();
+        let shape_face = attr.face(object.map());
+        let edges = shape_face.outer_loop().edges();
         assert_eq!(edges.len(), 6);
         assert_eq!(attr.pcurves.len(), 6);
         assert!(
             edges
                 .iter()
-                .all(|edge| attr.pcurves.contains_key(&edge.dart))
+                .all(|edge| shape_face.pcurve(edge.dart()).is_some())
         );
     }
 }
