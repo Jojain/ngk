@@ -63,17 +63,13 @@ pub fn add_edge<P: Payload>(
 ) -> Result<EdgeKey, EdgeCreationError> {
     check_non_coincident_points(start, end)?;
     let edge = g
-        .edit_preserving(|edit| {
+        .edit(|edit| {
             let d1 = edit.add_dart();
             let d2 = edit.add_dart();
             edit.link(Dim::Zero, d1, d2)?;
             edit.add_vertex(VertexAttr::new(d1, start, P::V::default()));
             edit.add_vertex(VertexAttr::new(d2, end, P::V::default()));
-            Ok::<_, crate::topology::TopologyEditError>(edit.add_edge(EdgeAttr::new(
-                d1,
-                curve,
-                P::E::default(),
-            )))
+            Ok(edit.add_edge(EdgeAttr::new(d1, curve, P::E::default())))
         })
         .expect("fresh edge topology must commit");
     Ok(edge)
@@ -123,7 +119,7 @@ fn split_edge_with_profile_links<P: Payload>(
         parameter,
     )?;
     let (vertex, second) = g
-        .edit_preserving(|edit| {
+        .edit(|edit| {
             let first_mid = edit.add_dart();
             let second_mid = edit.add_dart();
 
@@ -137,7 +133,7 @@ fn split_edge_with_profile_links<P: Payload>(
                 .expect("split edge must remain registered")
                 .curve = first_curve;
             let second = edit.add_edge(EdgeAttr::new(second_mid, second_curve, P::E::default()));
-            Ok::<_, crate::topology::TopologyEditError>((vertex, second))
+            Ok((vertex, second))
         })
         .expect("prepared free edge split must commit");
     g.ensure_profile(split.first_dart);
@@ -174,7 +170,7 @@ fn split_attached_edge_with_profile_links<P: Payload>(
     let alpha0_pairs = alpha_pairs(g, &split.edge_darts, Dim::Zero);
     let alpha2_pairs = alpha_pairs(g, &split.edge_darts, Dim::Two);
     let (vertex, second) = g
-        .edit_preserving(|edit| {
+        .edit(|edit| {
             let mid_darts = split
                 .edge_darts
                 .iter()
@@ -207,7 +203,7 @@ fn split_attached_edge_with_profile_links<P: Payload>(
                 second_curve,
                 P::E::default(),
             ));
-            Ok::<_, crate::topology::TopologyEditError>((vertex, second))
+            Ok((vertex, second))
         })
         .expect("prepared attached edge split must commit");
     g.ensure_profile(split.first_dart);
@@ -440,7 +436,7 @@ pub fn add_circle<P: Payload>(
 ) -> Result<EdgeKey, EdgeCreationError> {
     check_valid_radius(radius)?;
     let edge = g
-        .edit_preserving(|edit| {
+        .edit(|edit| {
             let d1 = edit.add_dart();
             let d2 = edit.add_dart();
             let start = plane.point_at(radius, 0.0);
@@ -448,11 +444,7 @@ pub fn add_circle<P: Payload>(
             let curve = Curve::circle(plane, radius);
             edit.link(Dim::Zero, d1, d2)?;
             edit.link(Dim::One, d1, d2)?;
-            Ok::<_, crate::topology::TopologyEditError>(edit.add_edge(EdgeAttr::new(
-                d1,
-                curve,
-                P::E::default(),
-            )))
+            Ok(edit.add_edge(EdgeAttr::new(d1, curve, P::E::default())))
         })
         .expect("fresh circle topology must commit");
     Ok(edge)

@@ -25,9 +25,9 @@ fn build_gmap() -> Result<GMap<StandardPayload>, String> {
 
     // add_polygon allocates two darts per edge, in corner order. The shared
     // edge is first face edge 1 (p2 -> p3) against second face edge 3 (p3 -> p2).
-    g.edit_preserving(|edit| {
+    g.edit(|edit| {
         edit.sew(Dim::Two, Dart::new(2), Dart::new(15))?;
-        Ok::<_, crate::topology::TopologyEditError>(())
+        Ok(())
     })
     .map_err(|err| format!("failed to alpha2-sew shared edge: {err}"))?;
 

@@ -22,9 +22,9 @@ fn two_faces_gmap() -> GMap<StandardPayload> {
         .expect("left face should build");
     add_polygon_with_holes(&mut g, Plane::xy(), &[p2, p5, p6, p3], &[])
         .expect("right face should build");
-    g.edit_preserving(|edit| {
+    g.edit(|edit| {
         edit.sew(Dim::Two, Dart::new(2), Dart::new(15))?;
-        Ok::<_, ngk::topology::TopologyEditError>(())
+        Ok(())
     })
     .expect("shared edge should sew");
     g

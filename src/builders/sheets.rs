@@ -213,9 +213,7 @@ fn add_extruded_edge_face<P: Payload>(
     surface_data: ExtrudedSurface,
 ) -> Result<ExtrudedFace, ExtrudeError> {
     let darts: Vec<Dart> = g
-        .edit_preserving(|edit| {
-            Ok::<_, crate::topology::TopologyEditError>((0..8).map(|_| edit.add_dart()).collect())
-        })
+        .edit(|edit| Ok((0..8).map(|_| edit.add_dart()).collect()))
         .expect("fresh sweep face darts must commit");
 
     for i in 0..4 {
@@ -274,11 +272,8 @@ fn sew<P: Payload>(
     first: Dart,
     second: Dart,
 ) -> Result<(), ExtrudeError> {
-    g.edit_preserving(|edit| {
-        edit.sew(dim, first, second)
-            .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
-    })
-    .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
+    g.edit(|edit| edit.sew(dim, first, second))
+        .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
 }
 
 fn lateral_plane(

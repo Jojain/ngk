@@ -3,10 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use slotmap::SlotMap;
 
 use crate::topology::edge::Edge;
-pub use crate::topology::edit::{
-    EditPolicy, PreservePayload, TopologyCommitError, TopologyEdit, TopologyEditError,
-    TopologyTransactionError,
-};
+pub use crate::topology::edit::{EditPolicy, PreservePayload, TopologyEdit, TopologyEditError};
 use crate::topology::face::Face;
 use crate::topology::orientation::Orientation;
 use crate::topology::profile::Profile;
@@ -338,39 +335,36 @@ impl<P: Payload> GMap<P> {
         }
     }
 
-    /// Runs a clone-backed topology transaction with a caller-provided payload
-    /// policy.
+    /// Runs a clone-backed topology transaction using [`PreservePayload`].
     ///
     /// The closure's staged changes are committed only when the closure and
     /// structural validation both succeed. Any failure restores the complete
     /// pre-edit map.
-    pub fn edit<Q, T, E, F>(
+    pub fn edit<T, F>(&mut self, operation: F) -> Result<T, TopologyEditError>
+    where
+        F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, TopologyEditError>,
+    {
+        self.edit_with_policy(&mut PreservePayload, operation)
+    }
+
+    /// Runs a clone-backed topology transaction with a caller-provided payload
+    /// policy.
+    ///
+    /// Use this when the edit closure declares semantic split/merge events and
+    /// payload propagation needs custom behavior.
+    pub fn edit_with_policy<Q, T, F>(
         &mut self,
         policy: &mut Q,
         operation: F,
-    ) -> Result<T, TopologyTransactionError<E, Q::Error>>
+    ) -> Result<T, TopologyEditError>
     where
         Q: EditPolicy<P>,
-        E: std::error::Error + Send + Sync + 'static,
-        F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, E>,
+        F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, TopologyEditError>,
     {
         let mut edit = TopologyEdit::new(self);
-        let result = operation(&mut edit).map_err(TopologyTransactionError::Operation)?;
-        edit.commit(policy)
-            .map_err(TopologyTransactionError::Commit)?;
+        let result = operation(&mut edit)?;
+        edit.commit(policy)?;
         Ok(result)
-    }
-
-    /// Runs a clone-backed topology transaction using [`PreservePayload`].
-    pub fn edit_preserving<T, E, F>(
-        &mut self,
-        operation: F,
-    ) -> Result<T, TopologyTransactionError<E, std::convert::Infallible>>
-    where
-        E: std::error::Error + Send + Sync + 'static,
-        F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, E>,
-    {
-        self.edit(&mut PreservePayload, operation)
     }
 
     /// Returns the number of alpha involutions.
@@ -1013,6 +1007,21 @@ impl<P: Payload> GMap<P> {
     /// Panics if `key` is not a registered solid.
     pub fn solid_attr_unchecked(&self, key: SolidKey) -> &SolidAttr<P::S> {
         self.solid_attr(key)
+            .expect("solid attribute should be in the map")
+    }
+
+    /// Returns the mutable solid attribute for `key`, if it exists.
+    pub fn solid_attr_mut(&mut self, key: SolidKey) -> Option<&mut SolidAttr<P::S>> {
+        self.solids.get_mut(key)
+    }
+
+    /// Returns the mutable solid attribute for `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `key` is not a registered solid.
+    pub fn solid_attr_mut_unchecked(&mut self, key: SolidKey) -> &mut SolidAttr<P::S> {
+        self.solid_attr_mut(key)
             .expect("solid attribute should be in the map")
     }
 

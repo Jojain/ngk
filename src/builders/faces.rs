@@ -682,7 +682,7 @@ fn merge_faces_across_edge<P: Payload>(
     g.remove_edge(edge)
         .ok_or(FaceImprintSplitError::MissingBoundaryEdge { dart: first_dart })?;
 
-    g.edit_preserving(|edit| {
+    g.edit(|edit| {
         for dart in [first_dart, first_end, second_dart, second_end] {
             edit.unlink(Dim::One, dart)?;
         }
@@ -693,7 +693,7 @@ fn merge_faces_across_edge<P: Payload>(
         edit.unlink(Dim::Zero, second_dart)?;
         edit.unlink(Dim::Two, first_dart)?;
         edit.unlink(Dim::Two, first_end)?;
-        Ok::<_, crate::topology::TopologyEditError>(())
+        Ok(())
     })
     .map_err(|_| FaceImprintSplitError::PeriodicMergeFailed {
         face: original_face,
@@ -785,7 +785,7 @@ fn merge_periodic_boundary_edge<P: Payload>(
     let second_end = g.alpha(Dim::Zero, second);
     let vertex = g.cell_representative(first_end, Dim::Zero);
     let vertex_key = g.dart_to_vertex.get(&vertex).copied();
-    g.edit_preserving(|edit| {
+    g.edit(|edit| {
         if let Some(key) = vertex_key {
             edit.remove_vertex(key);
         }
@@ -796,7 +796,7 @@ fn merge_periodic_boundary_edge<P: Payload>(
         edit.unlink(Dim::One, first_end)?;
         edit.link(Dim::Zero, first, second_end)?;
         edit.add_edge(EdgeAttr::new(first, merged_curve, P::E::default()));
-        Ok::<_, crate::topology::TopologyEditError>(())
+        Ok(())
     })
     .expect("prepared periodic boundary merge must commit");
     pcurves.insert(first, Curve2::Line(Line2::new(start_uv, end_uv)));
@@ -1140,7 +1140,7 @@ fn add_section_loop<P: Payload>(
     imprints: &[FaceImprint],
 ) -> SectionLoop {
     let n = imprints.len();
-    g.edit_preserving(|edit| {
+    g.edit(|edit| {
         let darts = (0..2 * n).map(|_| edit.add_dart()).collect::<Vec<_>>();
 
         for edge in 0..n {
@@ -1179,7 +1179,7 @@ fn add_section_loop<P: Payload>(
             .map(|edge| (edge.dart, edge.pcurve.clone()))
             .collect();
 
-        Ok::<_, crate::topology::TopologyEditError>(SectionLoop {
+        Ok(SectionLoop {
             loop_dart: darts[0],
             edges,
             pcurves,
@@ -1215,21 +1215,17 @@ fn sew_section_loops<P: Payload>(
             Ok((outside_edge, g.alpha(Dim::Zero, island_edge.dart)))
         })
         .collect::<Result<Vec<_>, FaceImprintSplitError>>()?;
-    g.edit_preserving(|edit| {
+    g.edit(|edit| {
         let mut edges = Vec::with_capacity(pairs.len());
         for (outside_edge, island_end) in pairs {
-            edit.sew(Dim::Two, outside_edge.dart, island_end)
-                .map_err(|_| FaceImprintSplitError::SectionLoopSewFailed {
-                    face,
-                    reason: "section loop edges are not alpha2-sewable",
-                })?;
+            edit.sew(Dim::Two, outside_edge.dart, island_end)?;
             edges.push(edit.add_edge(EdgeAttr::new(
                 outside_edge.dart,
                 outside_edge.curve.clone(),
                 P::E::default(),
             )));
         }
-        Ok::<_, FaceImprintSplitError>(edges)
+        Ok(edges)
     })
     .map_err(|_| FaceImprintSplitError::SectionLoopSewFailed {
         face,
@@ -1513,7 +1509,7 @@ fn apply_outer_face_chord_split<P: Payload>(
     let pcurve_ab = cut.pcurve.clone();
     let pcurve_ba = pcurve_ab.reversed();
     let (ab_start, ba_start) = g
-        .edit_preserving(|edit| {
+        .edit(|edit| {
             let ab_start = edit.add_dart();
             let ab_end = edit.add_dart();
             let ba_start = edit.add_dart();
@@ -1540,7 +1536,7 @@ fn apply_outer_face_chord_split<P: Payload>(
                 .expect("split end must be alpha1-free after unlink");
             edit.link(Dim::One, ba_end, start_dart)
                 .expect("section endpoint must be alpha1-free");
-            Ok::<_, crate::topology::TopologyEditError>((ab_start, ba_start))
+            Ok((ab_start, ba_start))
         })
         .expect("prepared face chord split must commit");
 
@@ -1878,7 +1874,7 @@ pub fn add_polygon<P: Payload>(
         corners.len()
     );
     let n = corners.len();
-    g.edit_preserving(|edit| {
+    g.edit(|edit| {
         let darts: Vec<Dart> = (0..2 * n).map(|_| edit.add_dart()).collect();
 
         for i in 0..n {
@@ -1900,9 +1896,12 @@ pub fn add_polygon<P: Payload>(
             let curve = Curve::line(corners[i], corners[(i + 1) % n]);
             edit.add_edge(EdgeAttr::new(edge_dart, curve, P::E::default()));
         }
-        Ok::<_, crate::topology::TopologyEditError>(edit.add_profile(
-            crate::topology::attributes::ProfileAttr::new(darts[0], P::Profile::default()),
-        ))
+        Ok(
+            edit.add_profile(crate::topology::attributes::ProfileAttr::new(
+                darts[0],
+                P::Profile::default(),
+            )),
+        )
     })
     .expect("fresh polygon topology must commit")
 }

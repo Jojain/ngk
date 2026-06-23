@@ -146,7 +146,7 @@ fn add_closed_revolve_circle<P: Payload>(
     let projected = axis.project(point);
     let radius = distance(&projected, &point);
     let first = g
-        .edit_preserving(|edit| {
+        .edit(|edit| {
             let first = edit.add_dart();
             let second = edit.add_dart();
             edit.link(Dim::Zero, first, second)?;
@@ -160,7 +160,7 @@ fn add_closed_revolve_circle<P: Payload>(
                 )),
                 P::E::default(),
             ));
-            Ok::<_, crate::topology::TopologyEditError>(first)
+            Ok(first)
         })
         .expect("fresh revolve circle topology must commit");
     Ok(first)
@@ -239,11 +239,8 @@ fn sew<P: Payload>(
     first: Dart,
     second: Dart,
 ) -> Result<(), RevolveError> {
-    g.edit_preserving(|edit| {
-        edit.sew(dim, first, second)
-            .map_err(|_| RevolveError::SewFailed { dim, first, second })
-    })
-    .map_err(|_| RevolveError::SewFailed { dim, first, second })
+    g.edit(|edit| edit.sew(dim, first, second))
+        .map_err(|_| RevolveError::SewFailed { dim, first, second })
 }
 
 pub fn add_revolved_profile<P: Payload>(
@@ -361,9 +358,7 @@ fn add_revolved_quad_face<P: Payload>(
     pcurves: [(Point2, Point2); 4],
 ) -> Result<RevolvedFace, RevolveError> {
     let darts: Vec<Dart> = g
-        .edit_preserving(|edit| {
-            Ok::<_, crate::topology::TopologyEditError>((0..8).map(|_| edit.add_dart()).collect())
-        })
+        .edit(|edit| Ok((0..8).map(|_| edit.add_dart()).collect()))
         .expect("fresh revolve face darts must commit");
 
     for i in 0..4 {

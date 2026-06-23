@@ -267,9 +267,9 @@ mod tests {
         let first_start = g.edge_attr_unchecked(first_edge).dart;
         let first_end = g.alpha(Dim::Zero, first_start);
         let second_start = g.edge_attr_unchecked(second_edge).dart;
-        g.edit_preserving(|edit| {
+        g.edit(|edit| {
             edit.sew(Dim::One, first_end, second_start)?;
-            Ok::<_, crate::topology::TopologyEditError>(())
+            Ok(())
         })
         .expect("adjacent open profile edges should be alpha1-sewable");
 

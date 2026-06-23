@@ -129,7 +129,7 @@ fn full_revolved_edge_uses_closed_circle_special_case() {
 fn full_revolved_closed_edge_creates_one_vertex_circle() {
     let mut g = GMap::<StandardPayload>::new();
     let (first, _) = g
-        .edit_preserving(|edit| {
+        .edit(|edit| {
             let first = edit.add_dart();
             let second = edit.add_dart();
             edit.sew(Dim::Zero, first, second)?;
@@ -143,7 +143,7 @@ fn full_revolved_closed_edge_creates_one_vertex_circle() {
                 )),
                 (),
             ));
-            Ok::<_, ngk::topology::TopologyEditError>((first, second))
+            Ok((first, second))
         })
         .unwrap();
 

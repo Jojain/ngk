@@ -186,16 +186,13 @@ fn sew<P: Payload>(
     first: Dart,
     second: Dart,
 ) -> Result<(), PolylineError> {
-    g.edit_preserving(|edit| {
-        edit.sew(dim, first, second)
-            .map_err(|_| PolylineError::SewFailed { dim, first, second })
-    })
-    .map_err(|_| PolylineError::SewFailed { dim, first, second })
+    g.edit(|edit| edit.sew(dim, first, second))
+        .map_err(|_| PolylineError::SewFailed { dim, first, second })
 }
 
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
 pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool) -> ProfileKey {
-    g.edit_preserving(|edit| {
+    g.edit(|edit| {
         let darts: Vec<Dart> = (0..count).map(|_| edit.add_dart()).collect();
         for i in 0..count {
             edit.sew(Dim::Zero, darts[i], darts[(i + 1) % count])?;
@@ -206,9 +203,7 @@ pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool
         if closed {
             edit.sew(Dim::Zero, darts[count - 1], darts[0])?;
         }
-        Ok::<_, crate::topology::TopologyEditError>(
-            edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default())),
-        )
+        Ok(edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default())))
     })
     .expect("fresh profile topology must commit")
 }
@@ -255,9 +250,7 @@ fn add_segment_topology<P: Payload>(
     let mut segments = Vec::with_capacity(count);
     for _ in 0..count {
         let (start, end) = g
-            .edit_preserving(|edit| {
-                Ok::<_, crate::topology::TopologyEditError>((edit.add_dart(), edit.add_dart()))
-            })
+            .edit(|edit| Ok((edit.add_dart(), edit.add_dart())))
             .expect("fresh test darts must commit");
         sew(g, Dim::Zero, start, end)?;
         segments.push(SegmentTopology { start, end });

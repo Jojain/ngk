@@ -1,8 +1,9 @@
 # Topology edit transactions
 
-`GMap::edit` is the only public API meant to mutate alpha topology. It gives a
-builder a temporary `TopologyEdit`, then commits all topology and attribute-index
-updates as one operation.
+`GMap::edit` is the default public API for alpha topology mutation. It gives a
+builder a temporary `TopologyEdit`, then commits all topology, semantic identity,
+payload, and attribute-index updates as one operation. Use
+`GMap::edit_with_policy` when payload propagation needs a custom policy.
 
 The current implementation is intentionally clone-backed:
 
@@ -12,11 +13,12 @@ The current implementation is intentionally clone-backed:
    the clone.
 4. If the closure succeeds, validate the staged alpha relations with
    `validate_gmap`.
-5. Ensure mandatory structural attributes exist, then rebuild dart-to-key
-   indexes.
-6. If validation or reconciliation fails, drop the transaction and restore the
-   clone.
-7. If commit succeeds, discard the clone and keep the staged map.
+5. Ensure mandatory structural attributes exist.
+6. Apply explicit split/merge events through the edit policy.
+7. Rebuild dart-to-key indexes and reject duplicate keys for the same cell.
+8. If validation, policy, or reconciliation fails, drop the transaction and
+   restore the clone.
+9. If commit succeeds, discard the clone and keep the staged map.
 
 This gives builders a context-manager-like API: they cannot forget to commit or
 roll back. `TopologyEdit::Drop` restores the backup unless `commit` has marked
@@ -38,9 +40,40 @@ The raw alpha functions stay private to the topology module. This prevents
 callers from changing alpha relations without also rebuilding the derived
 indexes.
 
+## Semantic identity operations
+
+Builders declare domain intent explicitly. The edit layer does not infer that a
+key was split or merged by looking at topology.
+
+Creation methods mean "this is a new entity":
+
+- `add_vertex`, `add_edge`, `add_profile`, `add_face`, `add_sheet`, `add_solid`
+
+Split methods mean "this created key derives from this source key":
+
+- `add_vertex_split_from(source, attr)`
+- `add_edge_split_from(source, attr)`
+- `add_profile_split_from(source, attr)`
+- `add_face_split_from(source, attr)`
+- `add_sheet_split_from(source, attr)`
+- `add_solid_split_from(source, attr)`
+
+Merge methods mean "remove this key and merge its payload into this survivor":
+
+- `merge_vertices_into(survivor, removed)`
+- `merge_edges_into(survivor, removed)`
+- `merge_profiles_into(survivor, removed)`
+- `merge_faces_into(survivor, removed)`
+- `merge_sheets_into(survivor, removed)`
+- `merge_solids_into(survivor, removed)`
+
+These methods only record intent during the edit closure. They are applied at
+commit, after the staged alpha topology has validated.
+
 ## Reconciliation at commit
 
-After topology validation, commit rebuilds every derived dart-to-key index:
+After topology validation and semantic event application, commit rebuilds every
+derived dart-to-key index:
 
 - vertices: grouped by canonical 0-cell representative;
 - edges: grouped by canonical 1-cell representative;
@@ -49,12 +82,9 @@ After topology validation, commit rebuilds every derived dart-to-key index:
 - sheets: grouped by canonical 3-cell representative;
 - solids: grouped by shared shell representatives.
 
-This pass is deliberately structural only. It does not infer that two keys
-should merge, and it does not infer that a new key came from a split. If several
-attributes point to the same representative, the current index rebuild keeps the
-attributes and lets the last inserted representative mapping win. That is an
-intermediate refactor state; explicit builder-declared merge/split events should
-replace this.
+If two live keys point to the same representative after explicit merge events
+have been applied, commit fails. The builder must declare which key survives
+with the appropriate `merge_*_into` method.
 
 Before reconciliation, commit also materializes mandatory container attributes:
 
@@ -65,12 +95,17 @@ These default attributes are structural placeholders.
 
 ## Payload policy
 
-`EditPolicy` currently exists as a boundary for future semantic edit events. The
-commit path does not automatically call payload merge or split hooks.
+`EditPolicy` is called only from explicit semantic events:
 
-The intended next step is for builders to declare intent explicitly, for example
-“this edge key was split from that edge key” or “these face keys merged into
-this survivor.” Only those explicit events should drive payload policy.
+- split events initialize the created payload from the source payload;
+- merge events combine the removed payload into the survivor payload.
+
+`PreservePayload` is the default policy:
+
+- split: clone the source payload into the created payload;
+- merge: keep the survivor payload and discard the removed payload.
+
+Custom policies are passed through `GMap::edit_with_policy`.
 
 ## Important constraints
 
