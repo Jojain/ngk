@@ -3,6 +3,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use slotmap::SlotMap;
 
 use crate::topology::edge::Edge;
+pub use crate::topology::edit::{
+    EditPolicy, PreservePayload, TopologyCommitError, TopologyEdit, TopologyEditError,
+    TopologyTransactionError,
+};
 use crate::topology::face::Face;
 use crate::topology::orientation::Orientation;
 use crate::topology::profile::Profile;
@@ -63,7 +67,7 @@ impl Dim {
 pub const GMAP_INVOLUTION_COUNT: usize = 4;
 /// Pairing map computed while checking whether two dart orbits can be sewn.
 pub struct SewableDarts {
-    mapping: HashMap<Dart, Dart>,
+    pub(super) mapping: HashMap<Dart, Dart>,
 }
 
 /// Type marker for vertex attributes.
@@ -334,6 +338,41 @@ impl<P: Payload> GMap<P> {
         }
     }
 
+    /// Runs a clone-backed topology transaction with a caller-provided payload
+    /// policy.
+    ///
+    /// The closure's staged changes are committed only when the closure and
+    /// structural validation both succeed. Any failure restores the complete
+    /// pre-edit map.
+    pub fn edit<Q, T, E, F>(
+        &mut self,
+        policy: &mut Q,
+        operation: F,
+    ) -> Result<T, TopologyTransactionError<E, Q::Error>>
+    where
+        Q: EditPolicy<P>,
+        E: std::error::Error + Send + Sync + 'static,
+        F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, E>,
+    {
+        let mut edit = TopologyEdit::new(self);
+        let result = operation(&mut edit).map_err(TopologyTransactionError::Operation)?;
+        edit.commit(policy)
+            .map_err(TopologyTransactionError::Commit)?;
+        Ok(result)
+    }
+
+    /// Runs a clone-backed topology transaction using [`PreservePayload`].
+    pub fn edit_preserving<T, E, F>(
+        &mut self,
+        operation: F,
+    ) -> Result<T, TopologyTransactionError<E, std::convert::Infallible>>
+    where
+        E: std::error::Error + Send + Sync + 'static,
+        F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, E>,
+    {
+        self.edit(&mut PreservePayload, operation)
+    }
+
     /// Returns the number of alpha involutions.
     ///
     /// This is always [`GMAP_INVOLUTION_COUNT`] for the current 3-gmap.
@@ -364,7 +403,7 @@ impl<P: Payload> GMap<P> {
     /// Adds one isolated dart and returns its identifier.
     ///
     /// All alpha involutions initially map the new dart to itself.
-    pub fn add_dart(&mut self) -> Dart {
+    pub(super) fn add_dart(&mut self) -> Dart {
         let dart = if let Some(slot) = self.free_slots.pop_front() {
             Dart::new(slot)
         } else {
@@ -379,7 +418,7 @@ impl<P: Payload> GMap<P> {
     /// Removes a dart that the caller has proven isolated.
     ///
     /// The [`IsolatedDart`] wrapper records the caller's proof obligation.
-    pub fn remove_dart(&mut self, dart: IsolatedDart) {
+    pub(super) fn remove_dart(&mut self, dart: IsolatedDart) {
         for alphas in self.alphas.iter_mut() {
             alphas.remove(dart.id());
         }
@@ -477,15 +516,6 @@ impl<P: Payload> GMap<P> {
             .expect("vertex attribute should be in the map")
     }
 
-    pub(crate) fn remove_vertex(&mut self, key: VertexKey) -> Option<VertexAttr<P::V>> {
-        let vertex = self.vertices.remove(key)?;
-        let representative = self.cell_representative(vertex.dart, Dim::Zero);
-        if self.dart_to_vertex.get(&representative) == Some(&key) {
-            self.dart_to_vertex.remove(&representative);
-        }
-        Some(vertex)
-    }
-
     /// Iterate every stored 0-cell attribute paired with its slotmap key.
     pub fn iter_vertices(&self) -> impl Iterator<Item = (VertexKey, &VertexAttr<P::V>)> {
         self.vertices.iter()
@@ -499,7 +529,6 @@ impl<P: Payload> GMap<P> {
     ///
     /// Panics if an edge attribute is already registered for the same 1-cell.
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
-        self.rebuild_edge_index();
         let repr = self.cell_representative(edge.dart, Dim::One);
         assert!(
             self.dart_to_edge.get(&repr).is_none(),
@@ -612,7 +641,6 @@ impl<P: Payload> GMap<P> {
     ///
     /// Panics if the same alpha0/alpha1 component already has a profile key.
     pub fn add_profile(&mut self, profile: ProfileAttr<P::Profile>) -> ProfileKey {
-        self.rebuild_profile_index();
         let repr = self.profile_representative(profile.dart);
         assert!(
             !self.dart_to_profile.contains_key(&repr),
@@ -625,7 +653,6 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the profile key for `dart`, registering the component when needed.
     pub fn ensure_profile(&mut self, dart: Dart) -> ProfileKey {
-        self.rebuild_profile_index();
         self.profile_key(dart)
             .unwrap_or_else(|| self.add_profile(ProfileAttr::new(dart, P::Profile::default())))
     }
@@ -849,7 +876,6 @@ impl<P: Payload> GMap<P> {
     ///
     /// Panics if the same 3-cell already has a sheet key.
     pub fn add_sheet(&mut self, sheet: SheetAttr<P::Sheet>) -> SheetKey {
-        self.rebuild_sheet_index();
         let repr = self.cell_representative(sheet.dart, Dim::Three);
         assert!(
             !self.dart_to_sheet.contains_key(&repr),
@@ -862,7 +888,6 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the sheet key for `dart`, registering the 3-cell when needed.
     pub fn ensure_sheet(&mut self, dart: Dart) -> SheetKey {
-        self.rebuild_sheet_index();
         self.sheet_key(dart)
             .unwrap_or_else(|| self.add_sheet(SheetAttr::new(dart, P::Sheet::default())))
     }
@@ -1010,7 +1035,7 @@ impl<P: Payload> GMap<P> {
             .collect()
     }
 
-    fn profile_representative(&self, dart: Dart) -> Dart {
+    pub(super) fn profile_representative(&self, dart: Dart) -> Dart {
         self.orbit(dart, vec![Dim::Zero.index(), Dim::One.index()])
             .min()
             .expect("profile orbit cannot be empty")
@@ -1184,7 +1209,7 @@ impl<P: Payload> GMap<P> {
     }
 
     /// Algorithm 19 of the book
-    fn is_sewable(&self, d0: Dart, d1: Dart, d: Dim) -> Option<SewableDarts> {
+    pub(super) fn is_sewable(&self, d0: Dart, d1: Dart, d: Dim) -> Option<SewableDarts> {
         let i = d.index();
         if i >= self.dimension() || d0 == d1 || !self.is_free(d0, d) || !self.is_free(d1, d) {
             return None;
@@ -1321,205 +1346,18 @@ impl<P: Payload> GMap<P> {
         })
     }
 
-    fn apply_sew(&mut self, darts: SewableDarts, d: Dim) {
-        let _i = d.index();
-        for (d0, d1) in darts.mapping {
-            self.sew_unchecked(d, d0, d1);
-        }
-        self.reconcile_attributes_after_sew(d);
-    }
-
-    fn reconcile_attributes_after_sew(&mut self, d: Dim) {
-        if d.index() <= Dim::One.index() {
-            self.reconcile_profile_attributes();
-        }
-        if d.index() <= Dim::Two.index() {
-            self.reconcile_sheet_attributes();
-        }
-        if d.index() > Dim::Zero.index() {
-            self.reconcile_vertex_attributes();
-        }
-        if d.index() > Dim::One.index() {
-            self.reconcile_edge_attributes();
-        }
-        if d.index() > Dim::Two.index() {
-            self.reconcile_face_attributes();
-        }
-    }
-
-    fn reconcile_vertex_attributes(&mut self) {
-        let mut survivor_by_repr = HashMap::new();
-        let mut duplicates = Vec::new();
-        let vertex_keys = self.vertices.keys().collect::<Vec<_>>();
-
-        for key in vertex_keys {
-            let Some(attr) = self.vertices.get(key) else {
-                continue;
-            };
-            let repr = self.cell_representative(attr.dart, Dim::Zero);
-            if survivor_by_repr.insert(repr, key).is_some() {
-                duplicates.push(key);
-            } else {
-                self.vertices
-                    .get_mut(key)
-                    .expect("collected vertex key must remain valid")
-                    .dart = repr;
-            }
-        }
-
-        for key in duplicates {
-            self.vertices.remove(key);
-        }
-        self.rebuild_vertex_index();
-    }
-
-    fn rebuild_vertex_index(&mut self) {
-        self.dart_to_vertex.clear();
-        for (key, attr) in self.vertices.iter() {
-            self.dart_to_vertex.insert(attr.dart, key);
-        }
-    }
-
-    fn reconcile_edge_attributes(&mut self) {
-        let mut survivor_by_repr = HashMap::new();
-        let mut duplicates = Vec::new();
-        let edge_keys = self.edges.keys().collect::<Vec<_>>();
-
-        for key in edge_keys {
-            let Some(attr) = self.edges.get(key) else {
-                continue;
-            };
-            let repr = self.cell_representative(attr.dart, Dim::One);
-            if survivor_by_repr.insert(repr, key).is_some() {
-                duplicates.push(key);
-            }
-        }
-
-        for key in duplicates {
-            self.edges.remove(key);
-        }
-        self.rebuild_edge_index();
-    }
-
-    fn rebuild_edge_index(&mut self) {
-        self.dart_to_edge.clear();
-        for (key, attr) in self.edges.iter() {
-            let repr = self.cell_representative(attr.dart, Dim::One);
-            self.dart_to_edge.insert(repr, key);
-        }
-    }
-
-    fn reconcile_profile_attributes(&mut self) {
-        let mut survivor_by_repr = HashMap::new();
-        let mut duplicates = Vec::new();
-        let profile_keys = self.profiles.keys().collect::<Vec<_>>();
-
-        for key in profile_keys {
-            let Some(attr) = self.profiles.get(key) else {
-                continue;
-            };
-            let repr = self.profile_representative(attr.dart);
-            if survivor_by_repr.insert(repr, key).is_some() {
-                duplicates.push(key);
-            }
-        }
-
-        for key in duplicates {
-            self.profiles.remove(key);
-        }
-        self.rebuild_profile_index();
-    }
-
-    fn rebuild_profile_index(&mut self) {
-        self.dart_to_profile.clear();
-        for (key, attr) in self.profiles.iter() {
-            let repr = self.profile_representative(attr.dart);
-            self.dart_to_profile.insert(repr, key);
-        }
-    }
-
-    fn reconcile_face_attributes(&mut self) {
-        let mut survivor_by_repr = HashMap::new();
-        let mut duplicates = Vec::new();
-        let face_keys = self.faces.keys().collect::<Vec<_>>();
-
-        for key in face_keys {
-            let Some(attr) = self.faces.get(key) else {
-                continue;
-            };
-            let repr = self.cell_representative(attr.outer_loop, Dim::Two);
-            if survivor_by_repr.insert(repr, key).is_some() {
-                duplicates.push(key);
-            }
-        }
-
-        for key in duplicates {
-            self.faces.remove(key);
-        }
-        self.rebuild_face_index();
-    }
-
-    fn rebuild_face_index(&mut self) {
-        self.dart_to_face.clear();
-        let face_keys: Vec<FaceKey> = self.faces.keys().collect();
-        for key in face_keys {
-            self.index_face_loop_darts(key);
-        }
-    }
-
-    fn reconcile_sheet_attributes(&mut self) {
-        let mut survivor_by_repr = HashMap::new();
-        let mut duplicates = Vec::new();
-        let sheet_keys = self.sheets.keys().collect::<Vec<_>>();
-
-        for key in sheet_keys {
-            let Some(attr) = self.sheets.get(key) else {
-                continue;
-            };
-            let repr = self.cell_representative(attr.dart, Dim::Three);
-            if survivor_by_repr.insert(repr, key).is_some() {
-                duplicates.push(key);
-            }
-        }
-
-        for key in duplicates {
-            self.sheets.remove(key);
-        }
-        self.rebuild_sheet_index();
-    }
-
-    fn rebuild_sheet_index(&mut self) {
-        self.dart_to_sheet.clear();
-        for (key, attr) in self.sheets.iter() {
-            let repr = self.cell_representative(attr.dart, Dim::Three);
-            self.dart_to_sheet.insert(repr, key);
-        }
-    }
-
-    /// Sews `d0` and `d1` along dimension `d`.
-    ///
-    /// Returns an error when the darts are the same, either dart is already
-    /// sewn along `d`, or the generated sewing orbits are incompatible.
-    pub fn sew(&mut self, d: Dim, d0: Dart, d1: Dart) -> Result<(), &'static str> {
-        match self.is_sewable(d0, d1, d) {
-            Some(sd) => {
-                self.apply_sew(sd, d);
-                Ok(())
-            }
-            None => Err("darts are not i-sewable"),
-        }
-    }
-    pub(crate) fn sew_unchecked(&mut self, d: Dim, d0: Dart, d1: Dart) {
+    pub(super) fn link_raw(&mut self, d: Dim, d0: Dart, d1: Dart) {
         let i = d.index();
         self.alphas[i][d0.id()] = d1;
         self.alphas[i][d1.id()] = d0;
     }
 
-    pub(crate) fn unsew(&mut self, dart: Dart, d: Dim) {
+    pub(super) fn unlink_raw(&mut self, d: Dim, dart: Dart) -> Dart {
         let i = d.index();
         let a_i = self.alphas[i][dart.id()];
         self.alphas[i][a_i.id()] = a_i;
         self.alphas[i][dart.id()] = dart;
+        a_i
     }
 
     /// Returns the attribute associated with the `D`-cell containing `dart`.

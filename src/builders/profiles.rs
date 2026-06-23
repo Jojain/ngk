@@ -186,26 +186,31 @@ fn sew<P: Payload>(
     first: Dart,
     second: Dart,
 ) -> Result<(), PolylineError> {
-    g.sew(dim, first, second)
-        .map_err(|_| PolylineError::SewFailed { dim, first, second })
+    g.edit_preserving(|edit| {
+        edit.sew(dim, first, second)
+            .map_err(|_| PolylineError::SewFailed { dim, first, second })
+    })
+    .map_err(|_| PolylineError::SewFailed { dim, first, second })
 }
 
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
 pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool) -> ProfileKey {
-    let darts: Vec<Dart> = (0..count).map(|_| g.add_dart()).collect();
-    for i in 0..count {
-        g.sew(Dim::Zero, darts[i], darts[(i + 1) % count])
-            .expect("fresh dart pair should be alpha0-sewable");
-    }
-    for i in 0..count {
-        g.sew(Dim::One, darts[i], darts[(i + 1) % count])
-            .expect("fresh dart pair should be alpha1-sewable");
-    }
-    if closed {
-        g.sew(Dim::Zero, darts[count - 1], darts[0])
-            .expect("fresh dart pair should be alpha0-sewable");
-    }
-    g.add_profile(ProfileAttr::new(darts[0], P::Profile::default()))
+    g.edit_preserving(|edit| {
+        let darts: Vec<Dart> = (0..count).map(|_| edit.add_dart()).collect();
+        for i in 0..count {
+            edit.sew(Dim::Zero, darts[i], darts[(i + 1) % count])?;
+        }
+        for i in 0..count {
+            edit.sew(Dim::One, darts[i], darts[(i + 1) % count])?;
+        }
+        if closed {
+            edit.sew(Dim::Zero, darts[count - 1], darts[0])?;
+        }
+        Ok::<_, crate::topology::TopologyEditError>(
+            edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default())),
+        )
+    })
+    .expect("fresh profile topology must commit")
 }
 
 fn add_segments<P: Payload>(
@@ -249,8 +254,11 @@ fn add_segment_topology<P: Payload>(
 ) -> Result<Vec<SegmentTopology>, PolylineError> {
     let mut segments = Vec::with_capacity(count);
     for _ in 0..count {
-        let start = g.add_dart();
-        let end = g.add_dart();
+        let (start, end) = g
+            .edit_preserving(|edit| {
+                Ok::<_, crate::topology::TopologyEditError>((edit.add_dart(), edit.add_dart()))
+            })
+            .expect("fresh test darts must commit");
         sew(g, Dim::Zero, start, end)?;
         segments.push(SegmentTopology { start, end });
     }

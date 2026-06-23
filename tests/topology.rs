@@ -2,6 +2,8 @@
 mod edge;
 #[path = "topology/edge_split.rs"]
 mod edge_split;
+#[path = "topology/edit.rs"]
+mod edit;
 #[path = "topology/face.rs"]
 mod face;
 #[path = "topology/planar.rs"]

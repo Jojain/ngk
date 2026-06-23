@@ -145,19 +145,24 @@ fn add_closed_revolve_circle<P: Payload>(
 ) -> Result<Dart, RevolveError> {
     let projected = axis.project(point);
     let radius = distance(&projected, &point);
-    let first = g.add_dart();
-    let second = g.add_dart();
-    g.sew_unchecked(Dim::Zero, first, second);
-    g.sew_unchecked(Dim::One, first, second);
-    g.add_vertex(VertexAttr::new(first, point, P::V::default()));
-    g.add_edge(EdgeAttr::new(
-        first,
-        Curve::Circle(Circle::from_axis(
-            Axis3::new(projected, axis.direction),
-            radius,
-        )),
-        P::E::default(),
-    ));
+    let first = g
+        .edit_preserving(|edit| {
+            let first = edit.add_dart();
+            let second = edit.add_dart();
+            edit.link(Dim::Zero, first, second)?;
+            edit.link(Dim::One, first, second)?;
+            edit.add_vertex(VertexAttr::new(first, point, P::V::default()));
+            edit.add_edge(EdgeAttr::new(
+                first,
+                Curve::Circle(Circle::from_axis(
+                    Axis3::new(projected, axis.direction),
+                    radius,
+                )),
+                P::E::default(),
+            ));
+            Ok::<_, crate::topology::TopologyEditError>(first)
+        })
+        .expect("fresh revolve circle topology must commit");
     Ok(first)
 }
 
@@ -234,8 +239,11 @@ fn sew<P: Payload>(
     first: Dart,
     second: Dart,
 ) -> Result<(), RevolveError> {
-    g.sew(dim, first, second)
-        .map_err(|_| RevolveError::SewFailed { dim, first, second })
+    g.edit_preserving(|edit| {
+        edit.sew(dim, first, second)
+            .map_err(|_| RevolveError::SewFailed { dim, first, second })
+    })
+    .map_err(|_| RevolveError::SewFailed { dim, first, second })
 }
 
 pub fn add_revolved_profile<P: Payload>(
@@ -352,7 +360,11 @@ fn add_revolved_quad_face<P: Payload>(
     surface: Surface,
     pcurves: [(Point2, Point2); 4],
 ) -> Result<RevolvedFace, RevolveError> {
-    let darts: Vec<Dart> = (0..8).map(|_| g.add_dart()).collect();
+    let darts: Vec<Dart> = g
+        .edit_preserving(|edit| {
+            Ok::<_, crate::topology::TopologyEditError>((0..8).map(|_| edit.add_dart()).collect())
+        })
+        .expect("fresh revolve face darts must commit");
 
     for i in 0..4 {
         sew(g, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;

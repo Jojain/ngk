@@ -28,7 +28,11 @@ pub fn chamfer_profile_vertex<P: Payload>(
     let incoming_offset = offset_point(incoming_edge, vertex, previous, distance)?;
     let outgoing_offset = offset_point(outgoing_edge, vertex, next, distance)?;
 
-    g.unsew(incoming_end, Dim::One);
+    g.edit_preserving(|edit| {
+        edit.unlink(Dim::One, incoming_end)?;
+        Ok::<_, crate::topology::TopologyEditError>(())
+    })
+    .expect("profile corner must be alpha1-linked");
     g.set_vertex_point(incoming_end, incoming_offset);
     g.set_vertex_point(outgoing_start, outgoing_offset);
     reset_line_edge(g, incoming_end)?;
@@ -134,10 +138,17 @@ fn vertex_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Point3, ChamferEr
 }
 
 fn sew<P: Payload>(g: &mut GMap<P>, first: Dart, second: Dart) -> Result<(), ChamferError> {
-    g.sew(Dim::One, first, second)
-        .map_err(|_| ChamferError::SewFailed {
-            dim: Dim::One,
-            first,
-            second,
-        })
+    g.edit_preserving(|edit| {
+        edit.sew(Dim::One, first, second)
+            .map_err(|_| ChamferError::SewFailed {
+                dim: Dim::One,
+                first,
+                second,
+            })
+    })
+    .map_err(|_| ChamferError::SewFailed {
+        dim: Dim::One,
+        first,
+        second,
+    })
 }

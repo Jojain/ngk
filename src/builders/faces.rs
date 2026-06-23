@@ -682,24 +682,23 @@ fn merge_faces_across_edge<P: Payload>(
     g.remove_edge(edge)
         .ok_or(FaceImprintSplitError::MissingBoundaryEdge { dart: first_dart })?;
 
-    for dart in [first_dart, first_end, second_dart, second_end] {
-        g.unsew(dart, Dim::One);
-    }
-    g.sew(Dim::One, first_previous, second_next)
-        .map_err(|reason| FaceImprintSplitError::PeriodicMergeFailed {
-            face: original_face,
-            reason,
-        })?;
-    g.sew(Dim::One, second_previous, first_next)
-        .map_err(|reason| FaceImprintSplitError::PeriodicMergeFailed {
-            face: original_face,
-            reason,
-        })?;
+    g.edit_preserving(|edit| {
+        for dart in [first_dart, first_end, second_dart, second_end] {
+            edit.unlink(Dim::One, dart)?;
+        }
+        edit.sew(Dim::One, first_previous, second_next)?;
+        edit.sew(Dim::One, second_previous, first_next)?;
 
-    g.unsew(first_dart, Dim::Zero);
-    g.unsew(second_dart, Dim::Zero);
-    g.unsew(first_dart, Dim::Two);
-    g.unsew(first_end, Dim::Two);
+        edit.unlink(Dim::Zero, first_dart)?;
+        edit.unlink(Dim::Zero, second_dart)?;
+        edit.unlink(Dim::Two, first_dart)?;
+        edit.unlink(Dim::Two, first_end)?;
+        Ok::<_, crate::topology::TopologyEditError>(())
+    })
+    .map_err(|_| FaceImprintSplitError::PeriodicMergeFailed {
+        face: original_face,
+        reason: "periodic seam topology edit failed",
+    })?;
 
     let mut loop_dart = first_next;
     for _ in 0..2 {
@@ -785,16 +784,21 @@ fn merge_periodic_boundary_edge<P: Payload>(
     let first_end = g.alpha(Dim::Zero, first);
     let second_end = g.alpha(Dim::Zero, second);
     let vertex = g.cell_representative(first_end, Dim::Zero);
-    if let Some(key) = g.dart_to_vertex.get(&vertex).copied() {
-        g.remove_vertex(key);
-    }
-    g.remove_edge(first_key);
-    g.remove_edge(second_key);
-    g.unsew(first, Dim::Zero);
-    g.unsew(second, Dim::Zero);
-    g.unsew(first_end, Dim::One);
-    g.sew_unchecked(Dim::Zero, first, second_end);
-    g.add_edge(EdgeAttr::new(first, merged_curve, P::E::default()));
+    let vertex_key = g.dart_to_vertex.get(&vertex).copied();
+    g.edit_preserving(|edit| {
+        if let Some(key) = vertex_key {
+            edit.remove_vertex(key);
+        }
+        edit.remove_edge(first_key);
+        edit.remove_edge(second_key);
+        edit.unlink(Dim::Zero, first)?;
+        edit.unlink(Dim::Zero, second)?;
+        edit.unlink(Dim::One, first_end)?;
+        edit.link(Dim::Zero, first, second_end)?;
+        edit.add_edge(EdgeAttr::new(first, merged_curve, P::E::default()));
+        Ok::<_, crate::topology::TopologyEditError>(())
+    })
+    .expect("prepared periodic boundary merge must commit");
     pcurves.insert(first, Curve2::Line(Line2::new(start_uv, end_uv)));
 
     Ok(Some(if loop_dart == second {
@@ -1136,49 +1140,52 @@ fn add_section_loop<P: Payload>(
     imprints: &[FaceImprint],
 ) -> SectionLoop {
     let n = imprints.len();
-    let darts = (0..2 * n).map(|_| g.add_dart()).collect::<Vec<_>>();
+    g.edit_preserving(|edit| {
+        let darts = (0..2 * n).map(|_| edit.add_dart()).collect::<Vec<_>>();
 
-    for edge in 0..n {
-        g.sew_unchecked(Dim::Zero, darts[2 * edge], darts[2 * edge + 1]);
-    }
-    for edge in 0..n {
-        let end = darts[2 * edge + 1];
-        let next_start = darts[2 * ((edge + 1) % n)];
-        g.sew_unchecked(Dim::One, end, next_start);
-    }
+        for edge in 0..n {
+            edit.link(Dim::Zero, darts[2 * edge], darts[2 * edge + 1])?;
+        }
+        for edge in 0..n {
+            let end = darts[2 * edge + 1];
+            let next_start = darts[2 * ((edge + 1) % n)];
+            edit.link(Dim::One, end, next_start)?;
+        }
 
-    for vertex in 0..n {
-        let dart = g.cell_representative(darts[2 * vertex], Dim::Zero);
-        let uv = imprints[vertex].pcurve.point_at(0.0);
-        g.add_vertex(VertexAttr::new(
-            dart,
-            surface.point_at(uv.x, uv.y),
-            P::V::default(),
-        ));
-    }
+        for vertex in 0..n {
+            let dart = edit.cell_representative(darts[2 * vertex], Dim::Zero);
+            let uv = imprints[vertex].pcurve.point_at(0.0);
+            edit.add_vertex(VertexAttr::new(
+                dart,
+                surface.point_at(uv.x, uv.y),
+                P::V::default(),
+            ));
+        }
 
-    let edges = (0..n)
-        .map(|edge| {
-            let imprint = &imprints[edge];
-            SectionLoopEdge {
-                dart: darts[2 * edge],
-                start_uv: imprint.pcurve.point_at(0.0),
-                end_uv: imprint.pcurve.point_at(1.0),
-                curve: imprint.curve.clone(),
-                pcurve: imprint.pcurve.clone(),
-            }
+        let edges = (0..n)
+            .map(|edge| {
+                let imprint = &imprints[edge];
+                SectionLoopEdge {
+                    dart: darts[2 * edge],
+                    start_uv: imprint.pcurve.point_at(0.0),
+                    end_uv: imprint.pcurve.point_at(1.0),
+                    curve: imprint.curve.clone(),
+                    pcurve: imprint.pcurve.clone(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let pcurves = edges
+            .iter()
+            .map(|edge| (edge.dart, edge.pcurve.clone()))
+            .collect();
+
+        Ok::<_, crate::topology::TopologyEditError>(SectionLoop {
+            loop_dart: darts[0],
+            edges,
+            pcurves,
         })
-        .collect::<Vec<_>>();
-    let pcurves = edges
-        .iter()
-        .map(|edge| (edge.dart, edge.pcurve.clone()))
-        .collect();
-
-    SectionLoop {
-        loop_dart: darts[0],
-        edges,
-        pcurves,
-    }
+    })
+    .expect("fresh section loop topology must commit")
 }
 
 fn add_imprint_section_loop<P: Payload>(
@@ -1195,7 +1202,7 @@ fn sew_section_loops<P: Payload>(
     outside: &SectionLoop,
     island: &SectionLoop,
 ) -> Result<Vec<EdgeKey>, FaceImprintSplitError> {
-    outside
+    let pairs = outside
         .edges
         .iter()
         .map(|outside_edge| {
@@ -1205,18 +1212,29 @@ fn sew_section_loops<P: Payload>(
                     dart: outside_edge.dart,
                 },
             )?;
-
-            let island_end = g.alpha(Dim::Zero, island_edge.dart);
-            g.sew(Dim::Two, outside_edge.dart, island_end)
-                .map_err(|reason| FaceImprintSplitError::SectionLoopSewFailed { face, reason })?;
-
-            Ok(g.add_edge(EdgeAttr::new(
+            Ok((outside_edge, g.alpha(Dim::Zero, island_edge.dart)))
+        })
+        .collect::<Result<Vec<_>, FaceImprintSplitError>>()?;
+    g.edit_preserving(|edit| {
+        let mut edges = Vec::with_capacity(pairs.len());
+        for (outside_edge, island_end) in pairs {
+            edit.sew(Dim::Two, outside_edge.dart, island_end)
+                .map_err(|_| FaceImprintSplitError::SectionLoopSewFailed {
+                    face,
+                    reason: "section loop edges are not alpha2-sewable",
+                })?;
+            edges.push(edit.add_edge(EdgeAttr::new(
                 outside_edge.dart,
                 outside_edge.curve.clone(),
                 P::E::default(),
-            )))
-        })
-        .collect()
+            )));
+        }
+        Ok::<_, FaceImprintSplitError>(edges)
+    })
+    .map_err(|_| FaceImprintSplitError::SectionLoopSewFailed {
+        face,
+        reason: "section loop topology edit failed",
+    })
 }
 
 fn matching_reversed_loop_edge(
@@ -1494,22 +1512,37 @@ fn apply_outer_face_chord_split<P: Payload>(
     let end_previous_end = end.incoming().end().dart;
     let pcurve_ab = cut.pcurve.clone();
     let pcurve_ba = pcurve_ab.reversed();
-    let ab_start = g.add_dart();
-    let ab_end = g.add_dart();
-    let ba_start = g.add_dart();
-    let ba_end = g.add_dart();
+    let (ab_start, ba_start) = g
+        .edit_preserving(|edit| {
+            let ab_start = edit.add_dart();
+            let ab_end = edit.add_dart();
+            let ba_start = edit.add_dart();
+            let ba_end = edit.add_dart();
 
-    g.sew_unchecked(Dim::Zero, ab_start, ab_end);
-    g.sew_unchecked(Dim::Zero, ba_start, ba_end);
-    g.sew_unchecked(Dim::Two, ab_start, ba_end);
-    g.sew_unchecked(Dim::Two, ab_end, ba_start);
+            edit.link(Dim::Zero, ab_start, ab_end)
+                .expect("fresh section edge darts must be alpha0-free");
+            edit.link(Dim::Zero, ba_start, ba_end)
+                .expect("fresh section edge darts must be alpha0-free");
+            edit.link(Dim::Two, ab_start, ba_end)
+                .expect("fresh section sides must be alpha2-free");
+            edit.link(Dim::Two, ab_end, ba_start)
+                .expect("fresh section sides must be alpha2-free");
 
-    g.unsew(start_previous_end, Dim::One);
-    g.unsew(end_previous_end, Dim::One);
-    g.sew_unchecked(Dim::One, start_previous_end, ab_start);
-    g.sew_unchecked(Dim::One, ab_end, end_dart);
-    g.sew_unchecked(Dim::One, end_previous_end, ba_start);
-    g.sew_unchecked(Dim::One, ba_end, start_dart);
+            edit.unlink(Dim::One, start_previous_end)
+                .expect("split start corner must be alpha1-linked");
+            edit.unlink(Dim::One, end_previous_end)
+                .expect("split end corner must be alpha1-linked");
+            edit.link(Dim::One, start_previous_end, ab_start)
+                .expect("split start must be alpha1-free after unlink");
+            edit.link(Dim::One, ab_end, end_dart)
+                .expect("section endpoint must be alpha1-free");
+            edit.link(Dim::One, end_previous_end, ba_start)
+                .expect("split end must be alpha1-free after unlink");
+            edit.link(Dim::One, ba_end, start_dart)
+                .expect("section endpoint must be alpha1-free");
+            Ok::<_, crate::topology::TopologyEditError>((ab_start, ba_start))
+        })
+        .expect("prepared face chord split must commit");
 
     let section_edge = g.add_edge(EdgeAttr::new(ab_start, cut.curve.clone(), P::E::default()));
     let first_pcurves = split_face_pcurves(
@@ -1845,31 +1878,31 @@ pub fn add_polygon<P: Payload>(
         corners.len()
     );
     let n = corners.len();
-    let darts: Vec<Dart> = (0..2 * n).map(|_| g.add_dart()).collect();
+    g.edit_preserving(|edit| {
+        let darts: Vec<Dart> = (0..2 * n).map(|_| edit.add_dart()).collect();
 
-    for i in 0..n {
-        g.sew(Dim::Zero, darts[2 * i], darts[2 * i + 1])
-            .expect("fresh dart pair should be alpha0-sewable");
-    }
-    for i in 0..n {
-        let a = darts[2 * i + 1];
-        let b = darts[(2 * i + 2) % (2 * n)];
-        g.sew(Dim::One, a, b)
-            .expect("fresh dart pair should be alpha1-sewable");
-    }
+        for i in 0..n {
+            edit.sew(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
+        }
+        for i in 0..n {
+            let a = darts[2 * i + 1];
+            let b = darts[(2 * i + 2) % (2 * n)];
+            edit.sew(Dim::One, a, b)?;
+        }
 
-    for i in 0..n {
-        let dart = g.cell_representative(darts[2 * i], Dim::Zero);
-        g.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
-    }
+        for i in 0..n {
+            let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
+            edit.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
+        }
 
-    for i in 0..n {
-        let edge_dart = darts[2 * i];
-        let curve = Curve::line(corners[i], corners[(i + 1) % n]);
-        g.add_edge(EdgeAttr::new(edge_dart, curve, P::E::default()));
-    }
-    g.add_profile(crate::topology::attributes::ProfileAttr::new(
-        darts[0],
-        P::Profile::default(),
-    ))
+        for i in 0..n {
+            let edge_dart = darts[2 * i];
+            let curve = Curve::line(corners[i], corners[(i + 1) % n]);
+            edit.add_edge(EdgeAttr::new(edge_dart, curve, P::E::default()));
+        }
+        Ok::<_, crate::topology::TopologyEditError>(edit.add_profile(
+            crate::topology::attributes::ProfileAttr::new(darts[0], P::Profile::default()),
+        ))
+    })
+    .expect("fresh polygon topology must commit")
 }

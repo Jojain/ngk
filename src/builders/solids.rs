@@ -233,8 +233,11 @@ fn sew<P: Payload>(
     first: Dart,
     second: Dart,
 ) -> Result<(), ExtrudeError> {
-    g.sew(dim, first, second)
-        .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
+    g.edit_preserving(|edit| {
+        edit.sew(dim, first, second)
+            .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
+    })
+    .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
 }
 
 struct PreparedLateralFace {
@@ -287,7 +290,11 @@ fn prepare_lateral_face<P: Payload>(
 fn add_lateral_face_topology<P: Payload>(
     g: &mut GMap<P>,
 ) -> Result<LateralFaceTopology, ExtrudeError> {
-    let darts = std::array::from_fn(|_| g.add_dart());
+    let darts = g
+        .edit_preserving(|edit| {
+            Ok::<_, crate::topology::TopologyEditError>(std::array::from_fn(|_| edit.add_dart()))
+        })
+        .expect("fresh lateral face darts must commit");
 
     for i in 0..4 {
         sew(g, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;

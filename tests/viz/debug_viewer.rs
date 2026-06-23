@@ -22,8 +22,11 @@ fn two_faces_gmap() -> GMap<StandardPayload> {
         .expect("left face should build");
     add_polygon_with_holes(&mut g, Plane::xy(), &[p2, p5, p6, p3], &[])
         .expect("right face should build");
-    g.sew(Dim::Two, Dart::new(2), Dart::new(15))
-        .expect("shared edge should sew");
+    g.edit_preserving(|edit| {
+        edit.sew(Dim::Two, Dart::new(2), Dart::new(15))?;
+        Ok::<_, ngk::topology::TopologyEditError>(())
+    })
+    .expect("shared edge should sew");
     g
 }
 
@@ -41,8 +44,8 @@ fn debug_payload_contains_scene_gmap_and_inspection_metadata() {
     assert_eq!(payload.gmap.alphas[2][15], 2);
 
     assert_eq!(payload.metadata.faces.len(), 2);
-    assert_eq!(payload.metadata.edges.len(), 7);
-    assert_eq!(payload.metadata.vertices.len(), 6);
+    assert_eq!(payload.metadata.edges.len(), 8);
+    assert_eq!(payload.metadata.vertices.len(), 8);
     assert!(
         payload
             .metadata

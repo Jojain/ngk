@@ -2,6 +2,7 @@ pub mod attributes;
 pub mod closed;
 pub mod dart;
 pub mod edge;
+pub mod edit;
 pub mod face;
 pub mod gmap;
 pub mod orientation;
@@ -16,5 +17,9 @@ pub mod validation;
 pub mod vertex;
 pub use attributes::{FaceAttr, ProfileAttr, SheetAttr, SolidAttr};
 pub use dart::{Dart, IsolatedDart};
+pub use edit::{
+    EditPolicy, PreservePayload, TopologyCommitError, TopologyEdit, TopologyEditError,
+    TopologyTransactionError,
+};
 pub use orientation::Orientation;
 pub use payload::{Payload, StandardPayload};

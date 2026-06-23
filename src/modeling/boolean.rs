@@ -694,11 +694,22 @@ fn sew_matching_result_edges<P: Payload>(g: &mut GMap<P>) -> Result<(), BooleanE
             break;
         };
 
-        g.sew(Dim::Two, first.dart, second).map_err(|reason| {
-            BooleanError::ResultEdgeSewFailed {
-                first: first.dart,
-                second,
-                reason,
+        g.edit_preserving(|edit| {
+            edit.sew(Dim::Two, first.dart, second)
+                .map_err(|_| BooleanError::ResultEdgeSewFailed {
+                    first: first.dart,
+                    second,
+                    reason: "result edges are not alpha2-sewable",
+                })
+        })
+        .map_err(|error| match error {
+            crate::topology::TopologyTransactionError::Operation(error) => error,
+            crate::topology::TopologyTransactionError::Commit(_) => {
+                BooleanError::ResultEdgeSewFailed {
+                    first: first.dart,
+                    second,
+                    reason: "result edge sewing produced invalid topology",
+                }
             }
         })?;
     }
@@ -722,12 +733,24 @@ fn sew_degenerate_result_edges<P: Payload>(g: &mut GMap<P>) -> Result<(), Boolea
             continue;
         }
 
-        g.sew(Dim::Two, edge.dart, edge.reversed_dart)
-            .map_err(|reason| BooleanError::ResultEdgeSewFailed {
-                first: edge.dart,
-                second: edge.reversed_dart,
-                reason,
-            })?;
+        g.edit_preserving(|edit| {
+            edit.sew(Dim::Two, edge.dart, edge.reversed_dart)
+                .map_err(|_| BooleanError::ResultEdgeSewFailed {
+                    first: edge.dart,
+                    second: edge.reversed_dart,
+                    reason: "degenerate edge sides are not alpha2-sewable",
+                })
+        })
+        .map_err(|error| match error {
+            crate::topology::TopologyTransactionError::Operation(error) => error,
+            crate::topology::TopologyTransactionError::Commit(_) => {
+                BooleanError::ResultEdgeSewFailed {
+                    first: edge.dart,
+                    second: edge.reversed_dart,
+                    reason: "degenerate edge sewing produced invalid topology",
+                }
+            }
+        })?;
     }
     Ok(())
 }

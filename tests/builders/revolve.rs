@@ -128,19 +128,24 @@ fn full_revolved_edge_uses_closed_circle_special_case() {
 #[test]
 fn full_revolved_closed_edge_creates_one_vertex_circle() {
     let mut g = GMap::<StandardPayload>::new();
-    let first = g.add_dart();
-    let second = g.add_dart();
-    g.sew(Dim::Zero, first, second).unwrap();
-    g.sew(Dim::One, first, second).unwrap();
-    g.add_vertex(VertexAttr::new(first, Point3::new(1.0, 0.0, 0.0), ()));
-    g.add_edge(EdgeAttr::new(
-        first,
-        Curve::Circle(ngk::geometry::Circle::from_axis(
-            Axis3::new(Point3::origin(), Vector3::z()),
-            1.0,
-        )),
-        (),
-    ));
+    let (first, _) = g
+        .edit_preserving(|edit| {
+            let first = edit.add_dart();
+            let second = edit.add_dart();
+            edit.sew(Dim::Zero, first, second)?;
+            edit.sew(Dim::One, first, second)?;
+            edit.add_vertex(VertexAttr::new(first, Point3::new(1.0, 0.0, 0.0), ()));
+            edit.add_edge(EdgeAttr::new(
+                first,
+                Curve::Circle(ngk::geometry::Circle::from_axis(
+                    Axis3::new(Point3::origin(), Vector3::z()),
+                    1.0,
+                )),
+                (),
+            ));
+            Ok::<_, ngk::topology::TopologyEditError>((first, second))
+        })
+        .unwrap();
 
     let circle = add_revolved_edge(
         &mut g,

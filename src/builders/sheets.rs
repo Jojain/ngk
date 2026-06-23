@@ -212,7 +212,11 @@ fn add_extruded_edge_face<P: Payload>(
     corners: [Point3; 4],
     surface_data: ExtrudedSurface,
 ) -> Result<ExtrudedFace, ExtrudeError> {
-    let darts: Vec<Dart> = (0..8).map(|_| g.add_dart()).collect();
+    let darts: Vec<Dart> = g
+        .edit_preserving(|edit| {
+            Ok::<_, crate::topology::TopologyEditError>((0..8).map(|_| edit.add_dart()).collect())
+        })
+        .expect("fresh sweep face darts must commit");
 
     for i in 0..4 {
         sew(g, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
@@ -270,8 +274,11 @@ fn sew<P: Payload>(
     first: Dart,
     second: Dart,
 ) -> Result<(), ExtrudeError> {
-    g.sew(dim, first, second)
-        .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
+    g.edit_preserving(|edit| {
+        edit.sew(dim, first, second)
+            .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
+    })
+    .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
 }
 
 fn lateral_plane(
@@ -343,8 +350,8 @@ mod tests {
 
         assert!(g.sheet(sheet_key).is_some());
         assert_eq!(g.iter_faces().count(), 4);
-        assert_eq!(g.iter_edges().count(), 16);
-        assert_eq!(g.iter_vertices().count(), 12);
+        assert_eq!(g.iter_edges().count(), 20);
+        assert_eq!(g.iter_vertices().count(), 20);
 
         for (face, attr) in g.iter_faces() {
             assert_eq!(attr.pcurves.len(), 4);
