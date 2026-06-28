@@ -1,5 +1,5 @@
-use ngk::builders::profiles::{PolylineError, add_rectangle};
-use ngk::geometry::Plane;
+use ngk::builders::profiles::{PolylineError, add_polyline, add_rectangle};
+use ngk::geometry::{Plane, Point3};
 use ngk::topology::closed::Closeable;
 use ngk::topology::gmap::{Dim, GMap};
 use ngk::topology::payload::StandardPayload;
@@ -16,6 +16,25 @@ fn add_rectangle_creates_closed_four_edge_profile() {
     assert_eq!(g.iter_edges().count(), 4);
     assert_eq!(g.iter_vertices().count(), 4);
     assert_eq!(g.cells(Dim::Zero).count(), 4);
+}
+
+#[test]
+fn add_polyline_creates_valid_profile() {
+    let mut g = GMap::<StandardPayload>::new();
+    let points = [
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(1.0, 1.0, 0.0),
+    ];
+
+    let key = add_polyline(&mut g, &points).expect("open polyline should build");
+    let profile = g.profile_unchecked(key);
+
+    assert!(!profile.is_closed());
+    assert_eq!(profile.edges().len(), 2);
+    assert_eq!(profile.darts().count(), 4);
+    assert_eq!(g.iter_vertices().count(), 3);
+    assert_eq!(g.cells(Dim::Zero).count(), 3);
 }
 
 #[test]

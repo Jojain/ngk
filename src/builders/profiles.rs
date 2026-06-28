@@ -6,7 +6,7 @@ use crate::geometry::{
 };
 use crate::topology::attributes::{EdgeAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closeable;
-use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
+use crate::topology::gmap::{Cell0, Dart, Dim, GMap, TopologyEditError};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::ProfileKey;
@@ -25,8 +25,7 @@ pub fn add_polyline<P: Payload>(
         .windows(2)
         .map(|pair| (pair[0], pair[1], Curve::line(pair[0], pair[1])))
         .collect::<Vec<_>>();
-    let dart = add_segments(g, &segments)?;
-    Ok(g.add_profile(ProfileAttr::new(dart, P::Profile::default())))
+    add_segments(g, &segments)
 }
 
 pub fn add_edge_to_profile<P: Payload>(
@@ -211,30 +210,55 @@ pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool
 fn add_segments<P: Payload>(
     g: &mut GMap<P>,
     segments: &[(Point3, Point3, Curve)],
-) -> Result<Dart, PolylineError> {
+) -> Result<ProfileKey, PolylineError> {
     let first_segment = segments.first().ok_or(PolylineError::EmptyPolyline)?;
     let last_segment = segments.last().ok_or(PolylineError::EmptyPolyline)?;
     let closed = first_segment.0.coincides(&last_segment.1, LINEAR_TOLERANCE);
 
-    let segment_darts = add_segment_topology(g, segments.len())?;
-    let first_start = segment_darts[0].start;
+    g.edit(|edit| {
+        let mut segment_topology = Vec::with_capacity(segments.len());
+        for (start_point, _, curve) in segments {
+            let start_dart = edit.add_dart();
+            let end_dart = edit.add_dart();
+            edit.link(Dim::Zero, start_dart, end_dart)?;
+            edit.add_vertex(VertexAttr::new(start_dart, *start_point, P::V::default()));
+            edit.add_edge(EdgeAttr::new(start_dart, curve.clone(), P::E::default()));
+            segment_topology.push(SegmentTopology {
+                start: start_dart,
+                end: end_dart,
+            });
+        }
 
-    segment_darts.windows(2).try_for_each(|pair| {
-        let previous_end = pair[0].end;
-        let next_start = pair[1].start;
-        sew(g, Dim::One, previous_end, next_start)
-    })?;
+        for pair in segment_topology.windows(2) {
+            edit.sew(Dim::One, pair[0].end, pair[1].start)?;
+        }
 
-    if closed {
-        let last_end = segment_darts
-            .last()
-            .expect("non-empty polyline has a last segment")
-            .end;
-        sew(g, Dim::One, last_end, first_start)?;
-    }
+        if closed {
+            let first = segment_topology
+                .first()
+                .expect("non-empty segment list should have a first segment");
+            let last = segment_topology
+                .last()
+                .expect("non-empty segment list should have a last segment");
+            edit.sew(Dim::One, last.end, first.start)?;
+        } else {
+            let last_segment = segments
+                .last()
+                .expect("non-empty segment list should have a last segment");
+            let last_topology = segment_topology
+                .last()
+                .expect("non-empty segment list should have a last segment");
+            edit.add_vertex(VertexAttr::new(
+                last_topology.end,
+                last_segment.1,
+                P::V::default(),
+            ));
+        }
 
-    add_segment_attributes(g, segments, &segment_darts, closed);
-    Ok(first_start)
+        let first_start = segment_topology[0].start;
+        Ok(edit.add_profile(ProfileAttr::new(first_start, P::Profile::default())))
+    })
+    .map_err(polyline_edit_error)
 }
 
 #[derive(Clone, Copy)]
@@ -243,47 +267,14 @@ struct SegmentTopology {
     end: Dart,
 }
 
-fn add_segment_topology<P: Payload>(
-    g: &mut GMap<P>,
-    count: usize,
-) -> Result<Vec<SegmentTopology>, PolylineError> {
-    let mut segments = Vec::with_capacity(count);
-    for _ in 0..count {
-        let (start, end) = g
-            .edit(|edit| Ok((edit.add_dart(), edit.add_dart())))
-            .expect("fresh test darts must commit");
-        sew(g, Dim::Zero, start, end)?;
-        segments.push(SegmentTopology { start, end });
-    }
-    Ok(segments)
-}
-
-fn add_segment_attributes<P: Payload>(
-    g: &mut GMap<P>,
-    segments: &[(Point3, Point3, Curve)],
-    segment_darts: &[SegmentTopology],
-    closed: bool,
-) {
-    for (segment, darts) in segments.iter().zip(segment_darts) {
-        g.add_edge(EdgeAttr::new(
-            darts.start,
-            segment.2.clone(),
-            P::E::default(),
-        ));
-    }
-
-    for (segment, darts) in segments.iter().zip(segment_darts) {
-        let vertex_dart = g.cell_representative(darts.start, Dim::Zero);
-        g.add_vertex(VertexAttr::new(vertex_dart, segment.0, P::V::default()));
-    }
-
-    if !closed {
-        let last = segments
-            .last()
-            .zip(segment_darts.last())
-            .expect("non-empty segment list should have a last dart");
-        let vertex_dart = g.cell_representative(last.1.end, Dim::Zero);
-        g.add_vertex(VertexAttr::new(vertex_dart, last.0.1, P::V::default()));
+fn polyline_edit_error(error: TopologyEditError) -> PolylineError {
+    match error {
+        TopologyEditError::NotSewable { dim, first, second } => {
+            PolylineError::SewFailed { dim, first, second }
+        }
+        error => PolylineError::TopologyEditFailed {
+            reason: error.to_string(),
+        },
     }
 }
 

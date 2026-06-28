@@ -67,6 +67,8 @@ pub enum PolylineError {
     InvalidRectangleSize { axis: &'static str, value: f64 },
     #[error("darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
     SewFailed { dim: Dim, first: Dart, second: Dart },
+    #[error("polyline topology edit failed: {reason}")]
+    TopologyEditFailed { reason: String },
     #[error("failed to create polyline edge")]
     EdgeCreationFailed(#[from] EdgeCreationError),
     #[error("failed to create profile pcurve")]
