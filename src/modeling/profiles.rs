@@ -1,11 +1,11 @@
 use crate::builders::errors::EdgeCreationError;
 use crate::builders::profiles::{
-    PolylineError, add_edge_to_profile, add_polyline, add_rectangle, add_square,
+    PolylineError, add_polyline, add_rectangle, add_square, append_edge,
 };
 use crate::geometry::{Plane, Point3};
 use crate::modeling::edges;
 use crate::topology::closed::Closeable;
-use crate::topology::gmap::GMap;
+use crate::topology::gmap::{Cell1, GMap};
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
 
@@ -59,12 +59,14 @@ pub fn arc(
 
 impl<P: Payload> Shape<ProfileTag, P> {
     pub fn add(&mut self, edge: &Shape<EdgeTag, P>) -> Result<(), PolylineError> {
+        let profile_key = self.handle();
         let profile_dart = self.profile().dart;
         if self.profile().is_closed() {
             return Err(PolylineError::ClosedProfile { dart: profile_dart });
         }
 
         let edge_dart = self.map_mut().merge(edge.edge());
-        add_edge_to_profile(self.map_mut(), profile_dart, edge_dart)
+        let edge_key = self.map().cell_key_unchecked::<Cell1>(edge_dart);
+        append_edge(self.map_mut(), profile_key, edge_key)
     }
 }

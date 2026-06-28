@@ -9,7 +9,7 @@ use crate::topology::closed::Closeable;
 use crate::topology::gmap::{Cell0, Dart, Dim, GMap, TopologyEditError};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
-use crate::topology::shape_keys::ProfileKey;
+use crate::topology::shape_keys::{EdgeKey, ProfileKey, VertexKey};
 
 pub use crate::builders::errors::PolylineError;
 
@@ -28,42 +28,94 @@ pub fn add_polyline<P: Payload>(
     add_segments(g, &segments)
 }
 
-pub fn add_edge_to_profile<P: Payload>(
+/// Appends an existing edge to the open end of a profile.
+///
+/// The edge orientation is chosen from endpoint geometry: either stored edge
+/// direction may be appended as long as one endpoint coincides with the profile
+/// end. If the appended edge's other endpoint coincides with the profile start,
+/// the profile is closed.
+pub fn append_edge<P: Payload>(
     g: &mut GMap<P>,
-    profile_dart: Dart,
-    edge_dart: Dart,
+    profile_key: ProfileKey,
+    edge_key: EdgeKey,
 ) -> Result<(), PolylineError> {
-    g.ensure_profile(profile_dart);
-    let profile = Profile::from_dart(g, profile_dart)
-        .expect("profile dart must belong to a registered profile");
+    let profile = g
+        .profile(profile_key)
+        .ok_or(PolylineError::MissingProfile {
+            profile: profile_key,
+        })?;
     if profile.is_closed() {
-        return Err(PolylineError::ClosedProfile { dart: profile_dart });
+        return Err(PolylineError::ClosedProfile { dart: profile.dart });
     }
 
-    let profile_start = profile_dart;
+    let profile_start = profile.dart;
     let profile_end = profile
         .darts()
         .last()
         .expect("non-empty profile should have an end dart");
     let profile_start_point = vertex_point(g, profile_start)?;
     let profile_end_point = vertex_point(g, profile_end)?;
-    let edge_start_point = vertex_point(g, edge_dart)?;
-    let edge_end = g.alpha(Dim::Zero, edge_dart);
-    let edge_end_point = vertex_point(g, edge_end)?;
+    let default_edge_start = g
+        .edge_attr(edge_key)
+        .ok_or(PolylineError::MissingEdge { edge: edge_key })?
+        .dart;
+    let default_edge_end = g.alpha(Dim::Zero, default_edge_start);
+    let default_edge_start_point = vertex_point(g, default_edge_start)?;
+    let default_edge_end_point = vertex_point(g, default_edge_end)?;
 
-    if !profile_end_point.coincides(edge_start_point, LINEAR_TOLERANCE) {
+    let Some((edge_dart, edge_end, edge_end_point)) = append_orientation(
+        profile_end_point,
+        default_edge_start,
+        default_edge_start_point,
+        default_edge_end,
+        default_edge_end_point,
+    ) else {
         return Err(PolylineError::NonContiguousEdge {
             profile_end: profile_end_point,
-            edge_start: edge_start_point,
+            edge_start: default_edge_start_point,
         });
-    }
+    };
 
-    sew(g, Dim::One, profile_end, edge_dart)?;
-    if edge_end_point.coincides(profile_start_point, LINEAR_TOLERANCE) {
-        sew(g, Dim::One, edge_end, profile_start)?;
-    }
+    let append_merge = VertexMerge {
+        survivor: vertex_key(g, profile_end)?,
+        removed: vertex_key(g, edge_dart)?,
+    };
+    let close_merge = edge_end_point
+        .coincides(profile_start_point, LINEAR_TOLERANCE)
+        .then(|| {
+            Ok::<_, PolylineError>(VertexMerge {
+                survivor: vertex_key(g, profile_start)?,
+                removed: vertex_key(g, edge_end)?,
+            })
+        })
+        .transpose()?;
 
-    Ok(())
+    g.edit(|edit| {
+        edit.sew(Dim::One, profile_end, edge_dart)?;
+        edit.merge_vertices_into(append_merge.survivor, append_merge.removed);
+        if let Some(close_merge) = close_merge {
+            edit.sew(Dim::One, edge_end, profile_start)?;
+            edit.merge_vertices_into(close_merge.survivor, close_merge.removed);
+        }
+        Ok(())
+    })
+    .map_err(polyline_edit_error)
+}
+
+fn append_orientation(
+    profile_end_point: Point3,
+    edge_start: Dart,
+    edge_start_point: Point3,
+    edge_end: Dart,
+    edge_end_point: Point3,
+) -> Option<(Dart, Dart, Point3)> {
+    if profile_end_point.coincides(edge_start_point, LINEAR_TOLERANCE) {
+        Some((edge_start, edge_end, edge_end_point))
+    } else if profile_end_point.coincides(edge_end_point, LINEAR_TOLERANCE) {
+        Some((edge_end, edge_start, edge_start_point))
+    } else {
+        None
+    }
 }
 
 pub fn profile_pcurves<P: Payload>(
@@ -179,16 +231,6 @@ fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), Polylin
     }
 }
 
-fn sew<P: Payload>(
-    g: &mut GMap<P>,
-    dim: Dim,
-    first: Dart,
-    second: Dart,
-) -> Result<(), PolylineError> {
-    g.edit(|edit| edit.sew(dim, first, second))
-        .map_err(|_| PolylineError::SewFailed { dim, first, second })
-}
-
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
 pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool) -> ProfileKey {
     g.edit(|edit| {
@@ -267,6 +309,12 @@ struct SegmentTopology {
     end: Dart,
 }
 
+#[derive(Clone, Copy)]
+struct VertexMerge {
+    survivor: VertexKey,
+    removed: VertexKey,
+}
+
 fn polyline_edit_error(error: TopologyEditError) -> PolylineError {
     match error {
         TopologyEditError::NotSewable { dim, first, second } => {
@@ -281,5 +329,10 @@ fn polyline_edit_error(error: TopologyEditError) -> PolylineError {
 fn vertex_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Point3, PolylineError> {
     g.attribute::<Cell0>(dart)
         .map(|attr| attr.point)
+        .ok_or(PolylineError::MissingVertexPoint { dart })
+}
+
+fn vertex_key<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<VertexKey, PolylineError> {
+    g.cell_key::<Cell0>(dart)
         .ok_or(PolylineError::MissingVertexPoint { dart })
 }

@@ -1,5 +1,5 @@
 use ngk::builders::edges::{EdgeSplitError, add_line, split_edge};
-use ngk::builders::profiles::{add_edge_to_profile, add_rectangle};
+use ngk::builders::profiles::{add_polyline, add_rectangle};
 use ngk::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
 use ngk::modeling::faces;
 use ngk::topology::closed::Closeable;
@@ -125,16 +125,11 @@ fn split_profile_edge_preserves_open_profile_order() {
     let p0 = Point3::new(0.0, 0.0, 0.0);
     let p1 = Point3::new(1.0, 0.0, 0.0);
     let p2 = Point3::new(2.0, 0.0, 0.0);
-    let first_edge = add_line(&mut g, p0, p1).expect("first edge should build");
-    let second_edge = add_line(&mut g, p1, p2).expect("second edge should build");
-    let first_dart = g.edge_attr_unchecked(first_edge).dart;
-    let second_dart = g.edge_attr_unchecked(second_edge).dart;
-    add_edge_to_profile(&mut g, first_dart, second_dart)
-        .expect("edges should connect into a profile");
+    let profile_key = add_polyline(&mut g, &[p0, p1, p2]).expect("profile should build");
+    let first_edge = g.profile_unchecked(profile_key).edges()[0].key();
 
     let split = split_edge(&mut g, first_edge, 0.5).expect("profile edge should split");
-    let profile =
-        Profile::from_dart(&g, first_dart).expect("split edge should belong to a profile");
+    let profile = g.profile_unchecked(profile_key);
     let midpoint = Point3::new(0.5, 0.0, 0.0);
 
     assert_eq!(profile.edges().len(), 3);

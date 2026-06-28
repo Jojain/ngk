@@ -1,6 +1,11 @@
 use crate::{
     geometry::{NurbsError, Point3},
-    topology::{Dart, gmap::Dim, planar::PlanarityError, shape_keys::FaceKey},
+    topology::{
+        Dart,
+        gmap::Dim,
+        planar::PlanarityError,
+        shape_keys::{EdgeKey, FaceKey, ProfileKey},
+    },
 };
 use thiserror::Error;
 
@@ -48,6 +53,10 @@ pub enum PolylineError {
     InvalidPolygon { point_count: usize },
     #[error("profile starting at dart {dart:?} is already closed")]
     ClosedProfile { dart: Dart },
+    #[error("profile {profile:?} does not exist")]
+    MissingProfile { profile: ProfileKey },
+    #[error("edge {edge:?} does not exist")]
+    MissingEdge { edge: EdgeKey },
     #[error(
         "edge starting at {edge_start:?} cannot be added after profile ending at {profile_end:?}"
     )]
