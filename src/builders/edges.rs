@@ -132,11 +132,13 @@ fn split_edge_with_profile_links<P: Payload>(
             edit.edge_attr_mut(edge)
                 .expect("split edge must remain registered")
                 .curve = first_curve;
-            let second = edit.add_edge(EdgeAttr::new(second_mid, second_curve, P::E::default()));
+            let second = edit.add_edge_split_from(
+                edge,
+                EdgeAttr::new(second_mid, second_curve, P::E::default()),
+            );
             Ok((vertex, second))
         })
         .expect("prepared free edge split must commit");
-    g.ensure_profile(split.first_dart);
 
     Ok(EdgeSplit {
         first: edge,
@@ -198,15 +200,13 @@ fn split_attached_edge_with_profile_links<P: Payload>(
             edit.edge_attr_mut(edge)
                 .expect("split edge must remain registered")
                 .curve = first_curve;
-            let second = edit.add_edge(EdgeAttr::new(
-                mid_darts[&split.second_dart],
-                second_curve,
-                P::E::default(),
-            ));
+            let second = edit.add_edge_split_from(
+                edge,
+                EdgeAttr::new(mid_darts[&split.second_dart], second_curve, P::E::default()),
+            );
             Ok((vertex, second))
         })
         .expect("prepared attached edge split must commit");
-    g.ensure_profile(split.first_dart);
 
     Ok(EdgeSplit {
         first: edge,

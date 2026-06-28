@@ -4,9 +4,21 @@ use ngk::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
 use ngk::modeling::faces;
 use ngk::topology::closed::Closeable;
 use ngk::topology::gmap::GMap;
-use ngk::topology::payload::StandardPayload;
+use ngk::topology::payload::{Payload, StandardPayload};
 use ngk::topology::profile::Profile;
 use ngk::topology::shape_keys::EdgeKey;
+
+#[derive(Clone, Default)]
+struct EdgePayload;
+
+impl Payload for EdgePayload {
+    type V = ();
+    type E = String;
+    type Profile = ();
+    type F = ();
+    type Sheet = ();
+    type S = ();
+}
 
 #[test]
 fn split_profile_edge_handles_isolated_edge() {
@@ -65,7 +77,7 @@ fn split_profile_edge_handles_isolated_edge() {
 }
 
 #[test]
-fn split_profile_edge_turns_isolated_edge_into_open_profile() {
+fn split_isolated_edge_keeps_edge_profile_free() {
     let mut g = GMap::<StandardPayload>::new();
     let edge = add_line(
         &mut g,
@@ -75,11 +87,26 @@ fn split_profile_edge_turns_isolated_edge_into_open_profile() {
     .expect("line edge should build");
 
     let split = split_edge(&mut g, edge, 0.5).expect("isolated edge should split");
-    let first_dart = g.edge_attr_unchecked(split.first).dart;
-    let profile =
-        Profile::from_dart(&g, first_dart).expect("split edge should belong to a profile");
 
-    assert_eq!(profile.edges().len(), 2);
+    assert!(Profile::from_dart(&g, g.edge_attr_unchecked(split.first).dart).is_none());
+    assert!(Profile::from_dart(&g, g.edge_attr_unchecked(split.second).dart).is_none());
+}
+
+#[test]
+fn split_edge_initializes_split_edge_payload_from_source() {
+    let mut g = GMap::<EdgePayload>::new();
+    let edge = add_line(
+        &mut g,
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+    )
+    .expect("line edge should build");
+    g.edge_attr_mut_unchecked(edge).data = "source".to_owned();
+
+    let split = split_edge(&mut g, edge, 0.5).expect("edge should split");
+
+    assert_eq!(g.edge_attr_unchecked(split.first).data, "source");
+    assert_eq!(g.edge_attr_unchecked(split.second).data, "source");
 }
 
 #[test]
