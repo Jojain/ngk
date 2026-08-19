@@ -12,7 +12,7 @@ use ngk::topology::gmap::{Cell0, Dim, GMap};
 use ngk::topology::payload::StandardPayload;
 
 #[test]
-fn partial_revolved_edge_creates_rotated_endpoint_geometry() {
+fn partial_revolved_edge_creates_surface_face_with_rotated_boundary_edge() {
     let mut g = GMap::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
@@ -21,26 +21,50 @@ fn partial_revolved_edge_creates_rotated_endpoint_geometry() {
         Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
     )
     .expect("edge should build");
-    let edge_dart = g.edge_attr_unchecked(edge_key).dart;
 
-    let rotated = add_revolved_edge(
+    let face_key = add_revolved_edge(
         &mut g,
-        edge_dart,
+        edge_key,
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::QUARTER_TURN,
     )
     .unwrap();
-    let edge = g.edge_unchecked(rotated);
+    let face = g.face_unchecked(face_key);
+    let edges = face.outer_loop().edges();
+    let rotated = edges
+        .iter()
+        .find(|edge| {
+            edge.start()
+                .point()
+                .unwrap()
+                .coincides(Point3::new(0.0, 2.0, 0.0), LINEAR_TOLERANCE)
+                && edge
+                    .end()
+                    .point()
+                    .unwrap()
+                    .coincides(Point3::new(0.0, 1.0, 0.0), LINEAR_TOLERANCE)
+        })
+        .expect("revolved face should contain the rotated source edge");
 
-    assert_eq!(g.dart_count(), 8);
+    assert_eq!(g.iter_faces().count(), 1);
+    assert!(matches!(
+        g.face_attr_unchecked(face_key).surface,
+        Surface::Revolution(_)
+    ));
+    assert_eq!(g.face_attr_unchecked(face_key).pcurves.len(), edges.len());
+    let mesh = tessellate_face_key(&g, face_key, TessellateOpts::default())
+        .expect("partial revolved edge face should tessellate");
+    assert!(!mesh.is_empty());
     assert!(
-        edge.start()
+        rotated
+            .end()
             .point()
             .unwrap()
             .coincides(Point3::new(0.0, 1.0, 0.0), LINEAR_TOLERANCE)
     );
     assert!(
-        edge.end()
+        rotated
+            .start()
             .point()
             .unwrap()
             .coincides(Point3::new(0.0, 2.0, 0.0), LINEAR_TOLERANCE)
@@ -57,11 +81,10 @@ fn partial_revolved_edge_circle_side_uses_short_positive_sweep() {
         Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
     )
     .expect("edge should build");
-    let edge_dart = g.edge_attr_unchecked(edge_key).dart;
 
     add_revolved_edge(
         &mut g,
-        edge_dart,
+        edge_key,
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::QUARTER_TURN,
     )
@@ -99,7 +122,7 @@ fn partial_revolved_edge_circle_side_uses_short_positive_sweep() {
 }
 
 #[test]
-fn full_revolved_edge_uses_closed_circle_special_case() {
+fn full_revolved_edge_creates_surface_face_between_endpoint_circles() {
     let mut g = GMap::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
@@ -108,34 +131,33 @@ fn full_revolved_edge_uses_closed_circle_special_case() {
         Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
     )
     .expect("edge should build");
-    let edge_dart = g.edge_attr_unchecked(edge_key).dart;
 
-    let circle = add_revolved_edge(
+    let face_key = add_revolved_edge(
         &mut g,
-        edge_dart,
+        edge_key,
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
     .unwrap();
+    let face = g.face_attr_unchecked(face_key);
 
-    assert_eq!(g.dart_count(), 6);
-    assert!(matches!(
-        g.edge_unchecked(circle).curve(),
-        Some(Curve::Circle(_))
-    ));
+    assert_eq!(g.iter_faces().count(), 1);
+    assert_eq!(face.inner_loops.len(), 1);
+    assert_eq!(face.pcurves.len(), 2);
+    assert!(matches!(face.surface, Surface::Revolution(_)));
 }
 
 #[test]
-fn full_revolved_closed_edge_creates_one_vertex_circle() {
+fn full_revolved_closed_edge_creates_periodic_seam_face() {
     let mut g = GMap::<StandardPayload>::new();
-    let (first, _) = g
+    let edge_key = g
         .edit(|edit| {
             let first = edit.add_dart();
             let second = edit.add_dart();
             edit.sew(Dim::Zero, first, second)?;
             edit.sew(Dim::One, first, second)?;
             edit.add_vertex(VertexAttr::new(first, Point3::new(1.0, 0.0, 0.0), ()));
-            edit.add_edge(EdgeAttr::new(
+            let edge_key = edit.add_edge(EdgeAttr::new(
                 first,
                 Curve::Circle(ngk::geometry::Circle::from_axis(
                     Axis3::new(Point3::origin(), Vector3::z()),
@@ -143,23 +165,23 @@ fn full_revolved_closed_edge_creates_one_vertex_circle() {
                 )),
                 (),
             ));
-            Ok((first, second))
+            Ok(edge_key)
         })
         .unwrap();
 
-    let circle = add_revolved_edge(
+    let face_key = add_revolved_edge(
         &mut g,
-        first,
+        edge_key,
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
     .unwrap();
+    let face = g.face_attr_unchecked(face_key);
 
-    assert_eq!(g.dart_count(), 4);
-    assert!(matches!(
-        g.edge_unchecked(circle).curve(),
-        Some(Curve::Circle(_))
-    ));
+    assert_eq!(g.iter_faces().count(), 1);
+    assert!(face.inner_loops.is_empty());
+    assert_eq!(face.pcurves.len(), 1);
+    assert!(matches!(face.surface, Surface::Revolution(_)));
 }
 
 #[test]
