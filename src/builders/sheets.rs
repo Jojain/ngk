@@ -12,7 +12,7 @@ use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
-use crate::topology::shape_keys::SheetKey;
+use crate::topology::shape_keys::{EdgeKey, SheetKey, VertexKey};
 
 /// Adds an extruded profile to the given GMap.
 ///
@@ -260,10 +260,57 @@ fn add_extruded_edge_face<P: Payload>(
 
 fn sew_adjacent_sweep_edges<P: Payload>(
     g: &mut GMap<P>,
-    a: Dart,
-    b: Dart,
+    survivor: Dart,
+    removed: Dart,
 ) -> Result<(), ExtrudeError> {
-    sew(g, Dim::Two, a, b)
+    let merge = alpha2_sweep_merge(g, survivor, removed)?;
+    g.edit(|edit| {
+        edit.sew(Dim::Two, survivor, removed)?;
+        if merge.survivor_edge != merge.removed_edge {
+            edit.merge_edges_into(merge.survivor_edge, merge.removed_edge);
+        }
+        if merge.survivor_start != merge.removed_start {
+            edit.merge_vertices_into(merge.survivor_start, merge.removed_start);
+        }
+        if merge.survivor_end != merge.removed_end {
+            edit.merge_vertices_into(merge.survivor_end, merge.removed_end);
+        }
+        Ok(())
+    })
+    .map_err(|_| ExtrudeError::SewFailed {
+        dim: Dim::Two,
+        first: survivor,
+        second: removed,
+    })
+}
+
+struct Alpha2SweepMerge {
+    survivor_edge: EdgeKey,
+    removed_edge: EdgeKey,
+    survivor_start: VertexKey,
+    removed_start: VertexKey,
+    survivor_end: VertexKey,
+    removed_end: VertexKey,
+}
+
+fn alpha2_sweep_merge<P: Payload>(
+    g: &GMap<P>,
+    survivor: Dart,
+    removed: Dart,
+) -> Result<Alpha2SweepMerge, ExtrudeError> {
+    let survivor_edge =
+        Edge::from_dart(g, survivor).ok_or(ExtrudeError::MissingEdgeCurve { dart: survivor })?;
+    let removed_edge =
+        Edge::from_dart(g, removed).ok_or(ExtrudeError::MissingEdgeCurve { dart: removed })?;
+
+    Ok(Alpha2SweepMerge {
+        survivor_edge: survivor_edge.key(),
+        removed_edge: removed_edge.key(),
+        survivor_start: survivor_edge.start().key(),
+        removed_start: removed_edge.start().key(),
+        survivor_end: survivor_edge.end().key(),
+        removed_end: removed_edge.end().key(),
+    })
 }
 
 fn sew<P: Payload>(
@@ -345,8 +392,8 @@ mod tests {
 
         assert!(g.sheet(sheet_key).is_some());
         assert_eq!(g.iter_faces().count(), 4);
-        assert_eq!(g.iter_edges().count(), 20);
-        assert_eq!(g.iter_vertices().count(), 20);
+        assert_eq!(g.iter_edges().count(), 16);
+        assert_eq!(g.iter_vertices().count(), 12);
 
         for (face, attr) in g.iter_faces() {
             assert_eq!(attr.pcurves.len(), 4);
@@ -416,11 +463,11 @@ mod tests {
         assert_eq!(sheet.darts().count(), 32);
         let g = shape.map();
 
-        assert_valid_gmap(&g);
-        assert_orientable_gmap(&g);
-        assert_square_sweep_alpha2_seams_are_not_twisted(&g);
-        assert_alpha1_links_shared_corners(&g);
-        assert_alpha2_links_matching_edges(&g);
+        assert_valid_gmap(g);
+        assert_orientable_gmap(g);
+        assert_square_sweep_alpha2_seams_are_not_twisted(g);
+        assert_alpha1_links_shared_corners(g);
+        assert_alpha2_links_matching_edges(g);
 
         for (_, face) in g.iter_faces() {
             let loop_darts = g
