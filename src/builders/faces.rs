@@ -12,6 +12,7 @@ use crate::geometry::{
     LINEAR_TOLERANCE, Line2, NurbsError, Periodicity, Plane, Point2, Point3, Surface,
     SurfacePeriodicity,
 };
+use crate::topology::TopologyEditError;
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
 use crate::topology::closed::Closed;
 use crate::topology::edge::Edge;
@@ -46,7 +47,7 @@ pub enum FaceEdgeSplitError {
     PcurveSplitFailed(#[from] NurbsError),
 }
 
-#[derive(Debug, Clone, Error, PartialEq)]
+#[derive(Debug, Error)]
 pub enum FaceImprintSplitError {
     #[error("missing face for key {face:?}")]
     MissingFace { face: FaceKey },
@@ -60,14 +61,24 @@ pub enum FaceImprintSplitError {
     MissingBoundaryEdge { dart: Dart },
     #[error("failed to split boundary edge while paving face imprints")]
     BoundaryEdgeSplitFailed(#[from] FaceEdgeSplitError),
-    #[error("failed to sew closed imprint loop on face {face:?}: {reason}")]
-    SectionLoopSewFailed { face: FaceKey, reason: &'static str },
+    #[error("failed to sew closed imprint loop on face {face:?}: {source}")]
+    SectionLoopSewFailed {
+        face: FaceKey,
+        #[source]
+        source: TopologyEditError,
+    },
     #[error("failed to convert imprint curve geometry")]
     ImprintCurveConversion(#[from] NurbsError),
     #[error("failed to intersect face imprint pcurves")]
     ImprintIntersection(#[from] CurveIntersectionError),
     #[error("failed to merge periodic face {face:?} across its parameter seam: {reason}")]
     PeriodicMergeFailed { face: FaceKey, reason: &'static str },
+    #[error("failed to edit periodic face {face:?} across its parameter seam: {source}")]
+    PeriodicTopologyEditFailed {
+        face: FaceKey,
+        #[source]
+        source: TopologyEditError,
+    },
     #[error("periodic face {face:?} produced {count} regions instead of two")]
     UnexpectedPeriodicRegionCount { face: FaceKey, count: usize },
 }
@@ -695,9 +706,9 @@ fn merge_faces_across_edge<P: Payload>(
         edit.unlink(Dim::Two, first_end)?;
         Ok(())
     })
-    .map_err(|_| FaceImprintSplitError::PeriodicMergeFailed {
+    .map_err(|source| FaceImprintSplitError::PeriodicTopologyEditFailed {
         face: original_face,
-        reason: "periodic seam topology edit failed",
+        source,
     })?;
 
     let mut loop_dart = first_next;
@@ -1227,10 +1238,7 @@ fn sew_section_loops<P: Payload>(
         }
         Ok(edges)
     })
-    .map_err(|_| FaceImprintSplitError::SectionLoopSewFailed {
-        face,
-        reason: "section loop topology edit failed",
-    })
+    .map_err(|source| FaceImprintSplitError::SectionLoopSewFailed { face, source })
 }
 
 fn matching_reversed_loop_edge(

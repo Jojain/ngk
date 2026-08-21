@@ -15,6 +15,7 @@ use crate::geometry::{
     IntersectionOptions, Interval, LINEAR_TOLERANCE, NurbsCurve, NurbsCurve2, NurbsError,
     NurbsSurface, Plane, Point2, Point3, PointCoincidence, Surface, SurfaceSurfaceIntersection,
 };
+use crate::topology::TopologyEditError;
 use crate::topology::attributes::{FaceAttr, SolidAttr};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -76,11 +77,12 @@ pub enum BooleanError {
         operation: BooleanOperation,
         free_edge_count: usize,
     },
-    #[error("failed to sew selected result edges {first:?} and {second:?}: {reason}")]
+    #[error("failed to sew selected result edges {first:?} and {second:?}: {source}")]
     ResultEdgeSewFailed {
         first: Dart,
         second: Dart,
-        reason: &'static str,
+        #[source]
+        source: TopologyEditError,
     },
     #[error("face {face:?} has no orientation sample")]
     MissingOrientationSample { face: FaceKey },
@@ -695,10 +697,10 @@ fn sew_matching_result_edges<P: Payload>(g: &mut GMap<P>) -> Result<(), BooleanE
         };
 
         g.edit(|edit| edit.sew(Dim::Two, first.dart, second))
-            .map_err(|_| BooleanError::ResultEdgeSewFailed {
+            .map_err(|source| BooleanError::ResultEdgeSewFailed {
                 first: first.dart,
                 second,
-                reason: "result edge sewing failed",
+                source,
             })?;
     }
 
@@ -722,10 +724,10 @@ fn sew_degenerate_result_edges<P: Payload>(g: &mut GMap<P>) -> Result<(), Boolea
         }
 
         g.edit(|edit| edit.sew(Dim::Two, edge.dart, edge.reversed_dart))
-            .map_err(|_| BooleanError::ResultEdgeSewFailed {
+            .map_err(|source| BooleanError::ResultEdgeSewFailed {
                 first: edge.dart,
                 second: edge.reversed_dart,
-                reason: "degenerate edge sewing failed",
+                source,
             })?;
     }
     Ok(())
