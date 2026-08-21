@@ -65,8 +65,10 @@ impl<P: Payload> Shape<ProfileTag, P> {
             return Err(PolylineError::ClosedProfile { dart: profile_dart });
         }
 
-        let edge_dart = self.map_mut().merge(edge.edge());
-        let edge_key = self.map().cell_key_unchecked::<Cell1>(edge_dart);
-        append_edge(self.map_mut(), profile_key, edge_key)
+        self.map_mut().transaction(|g| {
+            let edge_dart = g.merge(edge.edge());
+            let edge_key = g.cell_key_unchecked::<Cell1>(edge_dart);
+            append_edge(g, profile_key, edge_key)
+        })
     }
 }

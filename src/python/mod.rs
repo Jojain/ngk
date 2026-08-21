@@ -20,7 +20,7 @@ use crate::modeling::{edges, faces, profiles, solids};
 use crate::tcv::{TcvOptions, to_tcv};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Dart, Dim, GMap};
+use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
 use crate::topology::profile::{Loop, Profile};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SolidKey, VertexKey};
 use crate::topology::sheet::ShellRef;
@@ -174,22 +174,14 @@ fn hash_topology_identity<T: Hash>(map: &SharedMap, value: T) -> isize {
 }
 
 fn edge_key(map: &GMap<StandardPayload>, edge: &Edge<'_, StandardPayload>) -> Option<EdgeKey> {
-    let repr = map.cell_representative(edge.dart(), Dim::One);
-    map.dart_to_edge
-        .get(&repr)
-        .or_else(|| map.dart_to_edge.get(&edge.dart()))
-        .copied()
+    map.cell_key::<Cell1>(edge.dart())
 }
 
 fn vertex_key(
     map: &GMap<StandardPayload>,
     vertex: &Vertex<'_, StandardPayload>,
 ) -> Option<VertexKey> {
-    let repr = map.cell_representative(vertex.dart, Dim::Zero);
-    map.dart_to_vertex
-        .get(&repr)
-        .or_else(|| map.dart_to_vertex.get(&vertex.dart))
-        .copied()
+    map.cell_key::<Cell0>(vertex.dart)
 }
 
 fn face_edges<'g>(face: &Face<'g, StandardPayload>) -> Vec<Edge<'g, StandardPayload>> {

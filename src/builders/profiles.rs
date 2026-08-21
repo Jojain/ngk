@@ -24,6 +24,14 @@ pub fn add_polyline<P: Payload>(
     g: &mut GMap<P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
+    g.transaction(|g| add_polyline_staged(g, points))
+}
+
+/// Builds all polyline edges and joins them into one staged profile.
+fn add_polyline_staged<P: Payload>(
+    g: &mut GMap<P>,
+    points: &[Point3],
+) -> Result<ProfileKey, PolylineError> {
     if points.len() < 2 {
         return Err(PolylineError::EmptyPolyline);
     }
@@ -42,6 +50,15 @@ pub fn add_polyline<P: Payload>(
 /// end. If the appended edge's other endpoint coincides with the profile start,
 /// the profile is closed.
 pub fn append_edge<P: Payload>(
+    g: &mut GMap<P>,
+    profile_key: ProfileKey,
+    edge_key: EdgeKey,
+) -> Result<(), PolylineError> {
+    g.transaction(|g| append_edge_staged(g, profile_key, edge_key))
+}
+
+/// Connects an edge to a profile and records any resulting vertex merge lineage.
+fn append_edge_staged<P: Payload>(
     g: &mut GMap<P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
@@ -219,6 +236,16 @@ pub fn add_rectangle<P: Payload>(
     x_size: f64,
     y_size: f64,
 ) -> Result<ProfileKey, PolylineError> {
+    g.transaction(|g| add_rectangle_staged(g, plane, x_size, y_size))
+}
+
+/// Builds the four rectangle edges and profile inside one transaction.
+fn add_rectangle_staged<P: Payload>(
+    g: &mut GMap<P>,
+    plane: Plane,
+    x_size: f64,
+    y_size: f64,
+) -> Result<ProfileKey, PolylineError> {
     validate_rectangle_size("x", x_size)?;
     validate_rectangle_size("y", y_size)?;
 
@@ -241,7 +268,7 @@ pub fn add_square<P: Payload>(
     plane: Plane,
     size: f64,
 ) -> Result<ProfileKey, PolylineError> {
-    add_rectangle(g, plane, size, size)
+    g.transaction(|g| add_rectangle_staged(g, plane, size, size))
 }
 
 fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), PolylineError> {
@@ -254,18 +281,20 @@ fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), Polylin
 
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
 pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool) -> ProfileKey {
-    g.edit(|edit| {
-        let darts: Vec<Dart> = (0..count).map(|_| edit.add_dart()).collect();
-        for i in 0..count {
-            edit.sew(Dim::Zero, darts[i], darts[(i + 1) % count])?;
-        }
-        for i in 0..count {
-            edit.sew(Dim::One, darts[i], darts[(i + 1) % count])?;
-        }
-        if closed {
-            edit.sew(Dim::Zero, darts[count - 1], darts[0])?;
-        }
-        Ok(edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default())))
+    g.transaction(|g| {
+        g.edit(|edit| {
+            let darts: Vec<Dart> = (0..count).map(|_| edit.add_dart()).collect();
+            for i in 0..count {
+                edit.sew(Dim::Zero, darts[i], darts[(i + 1) % count])?;
+            }
+            for i in 0..count {
+                edit.sew(Dim::One, darts[i], darts[(i + 1) % count])?;
+            }
+            if closed {
+                edit.sew(Dim::Zero, darts[count - 1], darts[0])?;
+            }
+            Ok(edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default())))
+        })
     })
     .expect("fresh profile topology must commit")
 }
@@ -337,14 +366,7 @@ struct VertexMerge {
 }
 
 fn polyline_edit_error(error: TopologyEditError) -> PolylineError {
-    match error {
-        TopologyEditError::NotSewable { dim, first, second } => {
-            PolylineError::SewFailed { dim, first, second }
-        }
-        error => PolylineError::TopologyEditFailed {
-            reason: error.to_string(),
-        },
-    }
+    error.into()
 }
 
 fn vertex_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Point3, PolylineError> {

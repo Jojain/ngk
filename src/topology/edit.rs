@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::error::Error;
+use std::hash::Hash;
 
 use thiserror::Error;
 
@@ -171,6 +172,36 @@ impl<P: Payload> EditPolicy<P> for PreservePayload {
 /// Failure raised while applying a safe topology mutation.
 #[derive(Debug, Error)]
 pub enum TopologyEditError {
+    /// A nested operation failed, so the outer transaction cannot commit.
+    #[error("topology transaction was poisoned by a nested failure")]
+    TransactionPoisoned,
+    /// Only the outermost transaction may select the payload policy.
+    #[error("cannot override the payload policy of an active topology transaction")]
+    NestedPolicyOverride,
+    /// A split or merge references an attribute that is not staged.
+    #[error("topology edit lineage references missing attribute {key:?}")]
+    MissingLineageAttribute { key: EditKey },
+    /// The same attribute was declared consumed more than once.
+    #[error("topology edit lineage consumes {removed:?} more than once")]
+    RepeatedMerge { removed: EditKey },
+    /// A merge cannot consume its own survivor.
+    #[error("topology edit lineage cannot merge {removed:?} into itself")]
+    InvalidMerge { survivor: EditKey, removed: EditKey },
+    /// Explicit merge declarations contain a cycle.
+    #[error("topology edit lineage contains a merge cycle through {key:?}")]
+    MergeCycle { key: EditKey },
+    /// Several transaction-start identities still describe one final cell.
+    #[error(
+        "{entity} cell {representative:?} retains multiple pre-existing identities {candidates:?}"
+    )]
+    UnresolvedPreExistingCollision {
+        entity: &'static str,
+        representative: Dart,
+        candidates: Vec<EditKey>,
+    },
+    /// Explicit lineage selected an identity discarded during reconciliation.
+    #[error("explicit lineage survivor {survivor:?} does not survive reconciliation")]
+    InvalidLineageSurvivor { survivor: EditKey },
     /// A dart does not exist in the edited map.
     #[error("dart {dart:?} does not exist")]
     MissingDart { dart: Dart },
@@ -200,18 +231,38 @@ pub enum TopologyEditError {
     Policy(#[source] Box<dyn Error + Send + Sync>),
 }
 
-/// Clone-backed topology transaction.
+/// Safe low-level mutation batch inside a [`GMap`] transaction.
 ///
-/// Dropping this value without a successful [`commit`](Self::commit) restores
-/// the complete map snapshot taken by [`GMap::edit`].
+/// The batch changes staged topology immediately and records semantic lineage
+/// for the outer transaction. Validation, policy application, and rollback are
+/// owned by the outermost [`GMap::transaction`](GMap::transaction).
 pub struct TopologyEdit<'g, P: Payload> {
     gmap: &'g mut GMap<P>,
-    backup: Option<GMap<P>>,
     events: Vec<EditEvent>,
 }
 
+/// Identifies a topology-associated attribute in edit-lineage diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EditKey {
+    /// Vertex attribute key.
+    Vertex(VertexKey),
+    /// Edge attribute key.
+    Edge(EdgeKey),
+    /// Profile attribute key.
+    Profile(ProfileKey),
+    /// Face attribute key.
+    Face(FaceKey),
+    /// Sheet attribute key.
+    Sheet(SheetKey),
+    /// Solid attribute key.
+    Solid(SolidKey),
+}
+
 #[derive(Debug, Clone, Copy)]
-enum EditEvent {
+pub(super) enum EditEvent {
+    Created {
+        key: EditKey,
+    },
     VertexSplit {
         source: VertexKey,
         created: VertexKey,
@@ -263,9 +314,9 @@ enum EditEvent {
 }
 
 impl<'g, P: Payload> TopologyEdit<'g, P> {
+    /// Opens a low-level batch that mutates the surrounding transaction in place.
     pub(super) fn new(gmap: &'g mut GMap<P>) -> Self {
         Self {
-            backup: Some(gmap.clone()),
             gmap,
             events: Vec::new(),
         }
@@ -333,7 +384,12 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
 
     /// Stages a vertex attribute for reconciliation at commit.
     pub fn add_vertex(&mut self, vertex: VertexAttr<P::V>) -> VertexKey {
-        self.gmap.vertices.insert(vertex)
+        let key = self.gmap.vertices.insert(vertex);
+        self.gmap.invalidate_derived_indexes();
+        self.events.push(EditEvent::Created {
+            key: EditKey::Vertex(key),
+        });
+        key
     }
 
     /// Stages a vertex created by explicitly splitting an existing vertex.
@@ -349,7 +405,12 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
 
     /// Stages an edge attribute for reconciliation at commit.
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
-        self.gmap.edges.insert(edge)
+        let key = self.gmap.edges.insert(edge);
+        self.gmap.invalidate_derived_indexes();
+        self.events.push(EditEvent::Created {
+            key: EditKey::Edge(key),
+        });
+        key
     }
 
     /// Stages an edge created by explicitly splitting an existing edge.
@@ -361,7 +422,12 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
 
     /// Stages a profile attribute for reconciliation at commit.
     pub fn add_profile(&mut self, profile: ProfileAttr<P::Profile>) -> ProfileKey {
-        self.gmap.profiles.insert(profile)
+        let key = self.gmap.profiles.insert(profile);
+        self.gmap.invalidate_derived_indexes();
+        self.events.push(EditEvent::Created {
+            key: EditKey::Profile(key),
+        });
+        key
     }
 
     /// Stages a profile created by explicitly splitting an existing profile.
@@ -378,7 +444,12 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
 
     /// Stages a face attribute for reconciliation at commit.
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
-        self.gmap.faces.insert(face)
+        let key = self.gmap.faces.insert(face);
+        self.gmap.invalidate_derived_indexes();
+        self.events.push(EditEvent::Created {
+            key: EditKey::Face(key),
+        });
+        key
     }
 
     /// Stages a face created by explicitly splitting an existing face.
@@ -390,7 +461,12 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
 
     /// Stages a sheet attribute for reconciliation at commit.
     pub fn add_sheet(&mut self, sheet: SheetAttr<P::Sheet>) -> SheetKey {
-        self.gmap.sheets.insert(sheet)
+        let key = self.gmap.sheets.insert(sheet);
+        self.gmap.invalidate_derived_indexes();
+        self.events.push(EditEvent::Created {
+            key: EditKey::Sheet(key),
+        });
+        key
     }
 
     /// Stages a sheet created by explicitly splitting an existing sheet.
@@ -406,7 +482,12 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
 
     /// Stages a solid attribute for reconciliation at commit.
     pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidKey {
-        self.gmap.solids.insert(solid)
+        let key = self.gmap.solids.insert(solid);
+        self.gmap.invalidate_derived_indexes();
+        self.events.push(EditEvent::Created {
+            key: EditKey::Solid(key),
+        });
+        key
     }
 
     /// Stages a solid created by explicitly splitting an existing solid.
@@ -452,80 +533,85 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
 
     /// Removes a vertex attribute inside the transaction.
     pub fn remove_vertex(&mut self, key: VertexKey) -> Option<VertexAttr<P::V>> {
-        self.gmap.vertices.remove(key)
+        let removed = self.gmap.vertices.remove(key);
+        self.gmap.invalidate_derived_indexes();
+        removed
     }
 
     /// Removes an edge attribute inside the transaction.
     pub fn remove_edge(&mut self, key: EdgeKey) -> Option<EdgeAttr<P::E>> {
-        self.gmap.edges.remove(key)
+        let removed = self.gmap.edges.remove(key);
+        self.gmap.invalidate_derived_indexes();
+        removed
     }
 
     /// Removes a profile attribute inside the transaction.
     pub fn remove_profile(&mut self, key: ProfileKey) -> Option<ProfileAttr<P::Profile>> {
-        self.gmap.profiles.remove(key)
+        let removed = self.gmap.profiles.remove(key);
+        self.gmap.invalidate_derived_indexes();
+        removed
     }
 
     /// Removes a face attribute inside the transaction.
     pub fn remove_face(&mut self, key: FaceKey) -> Option<FaceAttr<P::F>> {
-        self.gmap.faces.remove(key)
+        let removed = self.gmap.faces.remove(key);
+        self.gmap.invalidate_derived_indexes();
+        removed
     }
 
     /// Removes a sheet attribute inside the transaction.
     pub fn remove_sheet(&mut self, key: SheetKey) -> Option<SheetAttr<P::Sheet>> {
-        self.gmap.sheets.remove(key)
+        let removed = self.gmap.sheets.remove(key);
+        self.gmap.invalidate_derived_indexes();
+        removed
     }
 
     /// Removes a solid attribute inside the transaction.
     pub fn remove_solid(&mut self, key: SolidKey) -> Option<SolidAttr<P::S>> {
-        self.gmap.solids.remove(key)
+        let removed = self.gmap.solids.remove(key);
+        self.gmap.invalidate_derived_indexes();
+        removed
     }
 
     /// Returns mutable access to a staged vertex attribute.
     pub fn vertex_attr_mut(&mut self, key: VertexKey) -> Option<&mut VertexAttr<P::V>> {
+        self.gmap.invalidate_derived_indexes();
         self.gmap.vertices.get_mut(key)
     }
 
     /// Returns mutable access to a staged edge attribute.
     pub fn edge_attr_mut(&mut self, key: EdgeKey) -> Option<&mut EdgeAttr<P::E>> {
+        self.gmap.invalidate_derived_indexes();
         self.gmap.edges.get_mut(key)
     }
 
     /// Returns mutable access to a staged profile attribute.
     pub fn profile_attr_mut(&mut self, key: ProfileKey) -> Option<&mut ProfileAttr<P::Profile>> {
+        self.gmap.invalidate_derived_indexes();
         self.gmap.profiles.get_mut(key)
     }
 
     /// Returns mutable access to a staged face attribute.
     pub fn face_attr_mut(&mut self, key: FaceKey) -> Option<&mut FaceAttr<P::F>> {
+        self.gmap.invalidate_derived_indexes();
         self.gmap.faces.get_mut(key)
     }
 
     /// Returns mutable access to a staged sheet attribute.
     pub fn sheet_attr_mut(&mut self, key: SheetKey) -> Option<&mut SheetAttr<P::Sheet>> {
+        self.gmap.invalidate_derived_indexes();
         self.gmap.sheets.get_mut(key)
     }
 
     /// Returns mutable access to a staged solid attribute.
     pub fn solid_attr_mut(&mut self, key: SolidKey) -> Option<&mut SolidAttr<P::S>> {
+        self.gmap.invalidate_derived_indexes();
         self.gmap.solids.get_mut(key)
     }
 
-    /// Rebuilds derived indexes, then makes the edit permanent.
-    pub(super) fn commit<Q>(mut self, policy: &mut Q) -> Result<(), TopologyEditError>
-    where
-        Q: EditPolicy<P>,
-    {
-        validate_gmap(self.gmap).map_err(TopologyEditError::InvalidTopology)?;
-        ensure_required_domain_attributes(self.gmap);
-        apply_edit_events(self.gmap, &self.events, policy)?;
-        rebuild_vertex_index(self.gmap)?;
-        rebuild_edge_index(self.gmap)?;
-        rebuild_profile_index(self.gmap)?;
-        rebuild_face_index(self.gmap)?;
-        rebuild_sheet_index(self.gmap)?;
-        rebuild_solid_index(self.gmap)?;
-        self.backup = None;
-        Ok(())
+    /// Returns the lineage accumulated by this batch for the outer transaction.
+    pub(super) fn into_events(self) -> Vec<EditEvent> {
+        self.events
     }
 
     fn validate_dart(&self, dart: Dart) -> Result<(), TopologyEditError> {
@@ -576,17 +662,645 @@ fn ensure_required_domain_attributes<P: Payload>(g: &mut GMap<P>) {
     }
 }
 
-impl<P: Payload> Drop for TopologyEdit<'_, P> {
-    fn drop(&mut self) {
-        if let Some(backup) = self.backup.take() {
-            *self.gmap = backup;
+/// Validates and reconciles all staged work, then applies net payload events.
+///
+/// The caller owns rollback, so this function only mutates the staged map and
+/// returns the first commit error it encounters.
+pub(super) fn commit_topology_transaction<P, Q>(
+    g: &mut GMap<P>,
+    snapshot: &GMap<P>,
+    events: &[EditEvent],
+    policy: &mut Q,
+) -> Result<(), TopologyEditError>
+where
+    P: Payload,
+    Q: EditPolicy<P>,
+{
+    validate_gmap(g).map_err(TopologyEditError::InvalidTopology)?;
+    ensure_required_domain_attributes(g);
+    validate_edit_events(g, events)?;
+    let lineage = TransactionLineage::new(g, snapshot, events);
+    reconcile_transaction_attributes(g, snapshot, events, &lineage)?;
+    canonicalize_vertex_darts(g);
+    g.invalidate_derived_indexes();
+    let policy_events = resolve_policy_events(g, snapshot, events, &lineage);
+    apply_policy_events(g, snapshot, &policy_events, policy)?;
+    g.materialize_derived_indexes();
+    Ok(())
+}
+
+/// Rejects malformed lineage before reconciliation can consume any attributes.
+fn validate_edit_events<P: Payload>(
+    g: &GMap<P>,
+    events: &[EditEvent],
+) -> Result<(), TopologyEditError> {
+    let mut merges = HashMap::new();
+
+    for event in events {
+        if matches!(event, EditEvent::Created { .. }) {
+            // Transaction-local identities may be explicitly discarded by a
+            // later builder pass. Their creation record still determines
+            // ordering, but they need not survive until commit.
+            continue;
+        }
+
+        if let Some((source, created)) = event.split_keys() {
+            let source_was_created = events
+                .iter()
+                .any(|candidate| matches!(candidate, EditEvent::Created { key } if *key == source));
+            if !contains_edit_key(g, source) && !source_was_created {
+                return Err(TopologyEditError::MissingLineageAttribute { key: source });
+            }
+            // A split identity consumed by a later pass is transient and does
+            // not need to remain in the final attribute stores.
+            let _ = created;
+            continue;
+        }
+
+        let (first, second) = event.keys();
+        for key in std::iter::once(first).chain(second) {
+            if !contains_edit_key(g, key) {
+                return Err(TopologyEditError::MissingLineageAttribute { key });
+            }
+        }
+
+        let Some((survivor, removed)) = event.merge_keys() else {
+            continue;
+        };
+        if survivor == removed {
+            return Err(TopologyEditError::InvalidMerge { survivor, removed });
+        }
+        if merges.insert(removed, survivor).is_some() {
+            return Err(TopologyEditError::RepeatedMerge { removed });
+        }
+    }
+
+    for &start in merges.keys() {
+        let mut visited = HashSet::new();
+        let mut current = start;
+        while let Some(&next) = merges.get(&current) {
+            if !visited.insert(current) {
+                return Err(TopologyEditError::MergeCycle { key: current });
+            }
+            current = next;
+        }
+    }
+
+    Ok(())
+}
+
+impl EditEvent {
+    /// Returns the generic attribute keys carried by any event variant.
+    pub(super) fn keys(self) -> (EditKey, Option<EditKey>) {
+        match self {
+            Self::Created { key } => (key, None),
+            Self::VertexSplit { source, created } => {
+                (EditKey::Vertex(source), Some(EditKey::Vertex(created)))
+            }
+            Self::EdgeSplit { source, created } => {
+                (EditKey::Edge(source), Some(EditKey::Edge(created)))
+            }
+            Self::ProfileSplit { source, created } => {
+                (EditKey::Profile(source), Some(EditKey::Profile(created)))
+            }
+            Self::FaceSplit { source, created } => {
+                (EditKey::Face(source), Some(EditKey::Face(created)))
+            }
+            Self::SheetSplit { source, created } => {
+                (EditKey::Sheet(source), Some(EditKey::Sheet(created)))
+            }
+            Self::SolidSplit { source, created } => {
+                (EditKey::Solid(source), Some(EditKey::Solid(created)))
+            }
+            Self::VertexMerge { survivor, removed } => {
+                (EditKey::Vertex(survivor), Some(EditKey::Vertex(removed)))
+            }
+            Self::EdgeMerge { survivor, removed } => {
+                (EditKey::Edge(survivor), Some(EditKey::Edge(removed)))
+            }
+            Self::ProfileMerge { survivor, removed } => {
+                (EditKey::Profile(survivor), Some(EditKey::Profile(removed)))
+            }
+            Self::FaceMerge { survivor, removed } => {
+                (EditKey::Face(survivor), Some(EditKey::Face(removed)))
+            }
+            Self::SheetMerge { survivor, removed } => {
+                (EditKey::Sheet(survivor), Some(EditKey::Sheet(removed)))
+            }
+            Self::SolidMerge { survivor, removed } => {
+                (EditKey::Solid(survivor), Some(EditKey::Solid(removed)))
+            }
+        }
+    }
+
+    /// Extracts a split's source and created identity, independent of cell type.
+    fn split_keys(self) -> Option<(EditKey, EditKey)> {
+        match self {
+            Self::VertexSplit { source, created } => {
+                Some((EditKey::Vertex(source), EditKey::Vertex(created)))
+            }
+            Self::EdgeSplit { source, created } => {
+                Some((EditKey::Edge(source), EditKey::Edge(created)))
+            }
+            Self::ProfileSplit { source, created } => {
+                Some((EditKey::Profile(source), EditKey::Profile(created)))
+            }
+            Self::FaceSplit { source, created } => {
+                Some((EditKey::Face(source), EditKey::Face(created)))
+            }
+            Self::SheetSplit { source, created } => {
+                Some((EditKey::Sheet(source), EditKey::Sheet(created)))
+            }
+            Self::SolidSplit { source, created } => {
+                Some((EditKey::Solid(source), EditKey::Solid(created)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Extracts a merge's survivor and consumed identity, independent of cell type.
+    pub(super) fn merge_keys(self) -> Option<(EditKey, EditKey)> {
+        match self {
+            Self::VertexMerge { survivor, removed } => {
+                Some((EditKey::Vertex(survivor), EditKey::Vertex(removed)))
+            }
+            Self::EdgeMerge { survivor, removed } => {
+                Some((EditKey::Edge(survivor), EditKey::Edge(removed)))
+            }
+            Self::ProfileMerge { survivor, removed } => {
+                Some((EditKey::Profile(survivor), EditKey::Profile(removed)))
+            }
+            Self::FaceMerge { survivor, removed } => {
+                Some((EditKey::Face(survivor), EditKey::Face(removed)))
+            }
+            Self::SheetMerge { survivor, removed } => {
+                Some((EditKey::Sheet(survivor), EditKey::Sheet(removed)))
+            }
+            Self::SolidMerge { survivor, removed } => {
+                Some((EditKey::Solid(survivor), EditKey::Solid(removed)))
+            }
+            _ => None,
         }
     }
 }
 
-fn apply_edit_events<P, Q>(
-    g: &mut GMap<P>,
+/// Checks the appropriate attribute store for a type-erased edit key.
+fn contains_edit_key<P: Payload>(g: &GMap<P>, key: EditKey) -> bool {
+    match key {
+        EditKey::Vertex(key) => g.vertices.contains_key(key),
+        EditKey::Edge(key) => g.edges.contains_key(key),
+        EditKey::Profile(key) => g.profiles.contains_key(key),
+        EditKey::Face(key) => g.faces.contains_key(key),
+        EditKey::Sheet(key) => g.sheets.contains_key(key),
+        EditKey::Solid(key) => g.solids.contains_key(key),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CreationOrigin {
+    Fresh,
+    SplitFrom(EditKey),
+}
+
+struct TransactionLineage {
+    origins: HashMap<EditKey, CreationOrigin>,
+    creation_order: HashMap<EditKey, usize>,
+    merges: HashMap<EditKey, EditKey>,
+}
+
+impl TransactionLineage {
+    /// Builds origin, creation-order, and merge-chain metadata for the commit.
+    ///
+    /// Attributes inserted directly on the map are also discovered and treated
+    /// as fresh local identities so they participate in deterministic ordering.
+    fn new<P: Payload>(g: &GMap<P>, snapshot: &GMap<P>, events: &[EditEvent]) -> Self {
+        let mut origins = HashMap::new();
+        let mut creation_order = HashMap::new();
+        let mut merges = HashMap::new();
+
+        for (order, event) in events.iter().enumerate() {
+            match *event {
+                EditEvent::Created { key } => {
+                    origins.entry(key).or_insert(CreationOrigin::Fresh);
+                    creation_order.entry(key).or_insert(order);
+                }
+                _ => {
+                    if let Some((source, created)) = event.split_keys() {
+                        origins.insert(created, CreationOrigin::SplitFrom(source));
+                        creation_order.entry(created).or_insert(order);
+                    }
+                    if let Some((survivor, removed)) = event.merge_keys() {
+                        merges.insert(removed, survivor);
+                    }
+                }
+            }
+        }
+
+        let mut next_order = events.len();
+        for key in current_edit_keys(g) {
+            if contains_edit_key(snapshot, key) || creation_order.contains_key(&key) {
+                continue;
+            }
+            origins.insert(key, CreationOrigin::Fresh);
+            creation_order.insert(key, next_order);
+            next_order += 1;
+        }
+
+        Self {
+            origins,
+            creation_order,
+            merges,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PolicyEvent {
+    Split { source: EditKey, created: EditKey },
+    Merge { survivor: EditKey, removed: EditKey },
+}
+
+/// Reduces the raw journal to net changes visible outside the transaction.
+///
+/// Transient local identities are omitted, split ancestry is traced back to the
+/// snapshot, and merge chains target their final surviving identity.
+fn resolve_policy_events<P: Payload>(
+    g: &GMap<P>,
+    snapshot: &GMap<P>,
     events: &[EditEvent],
+    lineage: &TransactionLineage,
+) -> Vec<PolicyEvent> {
+    events
+        .iter()
+        .filter_map(|event| {
+            if let Some((source, created)) = event.split_keys() {
+                if !contains_edit_key(g, created) {
+                    return None;
+                }
+                return transaction_start_origin(snapshot, &lineage.origins, source)
+                    .map(|source| PolicyEvent::Split { source, created });
+            }
+
+            event.merge_keys().and_then(|(survivor, removed)| {
+                contains_edit_key(snapshot, removed).then(|| PolicyEvent::Merge {
+                    survivor: final_survivor(&lineage.merges, survivor),
+                    removed,
+                })
+            })
+        })
+        .collect()
+}
+
+/// Collects all topology-associated attribute keys currently stored by the map.
+fn current_edit_keys<P: Payload>(g: &GMap<P>) -> Vec<EditKey> {
+    let mut keys = Vec::new();
+    keys.extend(g.vertices.keys().map(EditKey::Vertex));
+    keys.extend(g.edges.keys().map(EditKey::Edge));
+    keys.extend(g.profiles.keys().map(EditKey::Profile));
+    keys.extend(g.faces.keys().map(EditKey::Face));
+    keys.extend(g.sheets.keys().map(EditKey::Sheet));
+    keys.extend(g.solids.keys().map(EditKey::Solid));
+    keys
+}
+
+/// Follows split ancestry until it reaches a transaction-start identity.
+fn transaction_start_origin<P: Payload>(
+    snapshot: &GMap<P>,
+    origins: &HashMap<EditKey, CreationOrigin>,
+    start: EditKey,
+) -> Option<EditKey> {
+    let mut current = start;
+    let mut visited = HashSet::new();
+
+    loop {
+        if contains_edit_key(snapshot, current) {
+            return Some(current);
+        }
+        if !visited.insert(current) {
+            return None;
+        }
+        match origins.get(&current) {
+            Some(CreationOrigin::SplitFrom(source)) => current = *source,
+            Some(CreationOrigin::Fresh) | None => return None,
+        }
+    }
+}
+
+/// Follows an already-validated merge chain to its final survivor.
+fn final_survivor(merges: &HashMap<EditKey, EditKey>, start: EditKey) -> EditKey {
+    let mut survivor = start;
+    while let Some(next) = merges.get(&survivor) {
+        survivor = *next;
+    }
+    survivor
+}
+
+/// Collapses duplicate identities that now describe the same final topological cell.
+///
+/// Explicitly consumed attributes are removed first. Remaining local collisions
+/// are resolved per cell type, while ambiguous pre-existing collisions are errors.
+fn reconcile_transaction_attributes<P: Payload>(
+    g: &mut GMap<P>,
+    snapshot: &GMap<P>,
+    events: &[EditEvent],
+    lineage: &TransactionLineage,
+) -> Result<(), TopologyEditError> {
+    remove_consumed_attributes(g, events);
+
+    let vertices = g
+        .vertices
+        .iter()
+        .map(|(key, attr)| (key, vec![g.cell_representative(attr.dart, Dim::Zero)]))
+        .collect();
+    reconcile_components(
+        g,
+        snapshot,
+        lineage,
+        "vertex",
+        collision_components(vertices),
+        EditKey::Vertex,
+    )?;
+
+    let edges = g
+        .edges
+        .iter()
+        .map(|(key, attr)| (key, vec![g.cell_representative(attr.dart, Dim::One)]))
+        .collect();
+    reconcile_components(
+        g,
+        snapshot,
+        lineage,
+        "edge",
+        collision_components(edges),
+        EditKey::Edge,
+    )?;
+
+    let profiles = g
+        .profiles
+        .iter()
+        .map(|(key, attr)| (key, vec![g.profile_representative(attr.dart)]))
+        .collect();
+    reconcile_components(
+        g,
+        snapshot,
+        lineage,
+        "profile",
+        collision_components(profiles),
+        EditKey::Profile,
+    )?;
+
+    let faces = g
+        .faces
+        .iter()
+        .map(|(key, attr)| {
+            let representatives = std::iter::once(attr.outer_loop)
+                .chain(attr.inner_loops.iter().copied())
+                .map(|dart| g.cell_representative(dart, Dim::Two))
+                .collect();
+            (key, representatives)
+        })
+        .collect();
+    reconcile_components(
+        g,
+        snapshot,
+        lineage,
+        "face",
+        collision_components(faces),
+        EditKey::Face,
+    )?;
+
+    let sheets = g
+        .sheets
+        .iter()
+        .map(|(key, attr)| (key, vec![g.cell_representative(attr.dart, Dim::Three)]))
+        .collect();
+    reconcile_components(
+        g,
+        snapshot,
+        lineage,
+        "sheet",
+        collision_components(sheets),
+        EditKey::Sheet,
+    )?;
+
+    let solids = g
+        .solids
+        .iter()
+        .map(|(key, attr)| {
+            let representatives = std::iter::once(attr.outer_shell)
+                .chain(attr.inner_shells.iter().flatten().copied())
+                .map(|dart| g.cell_representative(dart, Dim::Three))
+                .collect();
+            (key, representatives)
+        })
+        .collect();
+    reconcile_components(
+        g,
+        snapshot,
+        lineage,
+        "solid",
+        collision_components(solids),
+        EditKey::Solid,
+    )?;
+
+    let mut checked = HashSet::new();
+    for survivor in lineage.merges.values() {
+        let survivor = final_survivor(&lineage.merges, *survivor);
+        if checked.insert(survivor) && !contains_edit_key(g, survivor) {
+            return Err(TopologyEditError::InvalidLineageSurvivor { survivor });
+        }
+    }
+
+    Ok(())
+}
+
+/// Groups keys connected through one or more shared cell representatives.
+///
+/// Faces and solids can have multiple registered boundaries, so collisions are
+/// transitive rather than necessarily sharing a single representative directly.
+fn collision_components<K>(items: Vec<(K, Vec<Dart>)>) -> Vec<(Dart, Vec<K>)>
+where
+    K: Copy + Eq + Hash,
+{
+    let locations = items.into_iter().collect::<HashMap<_, _>>();
+    let mut by_representative = HashMap::<Dart, Vec<K>>::new();
+    for (&key, representatives) in &locations {
+        for &representative in representatives {
+            by_representative
+                .entry(representative)
+                .or_default()
+                .push(key);
+        }
+    }
+
+    let mut visited = HashSet::new();
+    let mut components = Vec::new();
+    for &start in locations.keys() {
+        if !visited.insert(start) {
+            continue;
+        }
+
+        let mut stack = vec![start];
+        let mut keys = Vec::new();
+        while let Some(key) = stack.pop() {
+            keys.push(key);
+            for representative in &locations[&key] {
+                for &neighbor in &by_representative[representative] {
+                    if visited.insert(neighbor) {
+                        stack.push(neighbor);
+                    }
+                }
+            }
+        }
+
+        if keys.len() < 2 {
+            continue;
+        }
+        let representative = keys
+            .iter()
+            .flat_map(|key| locations[key].iter().copied())
+            .filter(|representative| by_representative[representative].len() > 1)
+            .min_by_key(|representative| representative.id())
+            .expect("a collision component must share a representative");
+        components.push((representative, keys));
+    }
+    components.sort_by_key(|(representative, _)| representative.id());
+    components
+}
+
+/// Chooses one deterministic survivor in each collision component and drops locals.
+fn reconcile_components<P, K, F>(
+    g: &mut GMap<P>,
+    snapshot: &GMap<P>,
+    lineage: &TransactionLineage,
+    entity: &'static str,
+    components: Vec<(Dart, Vec<K>)>,
+    edit_key: F,
+) -> Result<(), TopologyEditError>
+where
+    P: Payload,
+    K: Copy,
+    F: Fn(K) -> EditKey,
+{
+    for (representative, keys) in components {
+        let keys = keys.into_iter().map(&edit_key).collect::<Vec<_>>();
+        let pre_existing = keys
+            .iter()
+            .copied()
+            .filter(|key| contains_edit_key(snapshot, *key))
+            .collect::<Vec<_>>();
+        if pre_existing.len() > 1 {
+            return Err(TopologyEditError::UnresolvedPreExistingCollision {
+                entity,
+                representative,
+                candidates: pre_existing,
+            });
+        }
+
+        let survivor = pre_existing.first().copied().unwrap_or_else(|| {
+            keys.iter()
+                .copied()
+                .min_by_key(|key| {
+                    lineage
+                        .creation_order
+                        .get(key)
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                })
+                .expect("a collision component cannot be empty")
+        });
+        for key in keys {
+            if key != survivor {
+                remove_edit_key(g, key);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Removes a type-erased attribute known to exist during reconciliation.
+fn remove_edit_key<P: Payload>(g: &mut GMap<P>, key: EditKey) {
+    match key {
+        EditKey::Vertex(key) => {
+            g.vertices
+                .remove(key)
+                .expect("reconciled vertex key must have an attribute");
+        }
+        EditKey::Edge(key) => {
+            g.edges
+                .remove(key)
+                .expect("reconciled edge key must have an attribute");
+        }
+        EditKey::Profile(key) => {
+            g.profiles
+                .remove(key)
+                .expect("reconciled profile key must have an attribute");
+        }
+        EditKey::Face(key) => {
+            g.faces
+                .remove(key)
+                .expect("reconciled face key must have an attribute");
+        }
+        EditKey::Sheet(key) => {
+            g.sheets
+                .remove(key)
+                .expect("reconciled sheet key must have an attribute");
+        }
+        EditKey::Solid(key) => {
+            g.solids
+                .remove(key)
+                .expect("reconciled solid key must have an attribute");
+        }
+    }
+}
+
+/// Removes every identity explicitly consumed by a validated merge declaration.
+fn remove_consumed_attributes<P: Payload>(g: &mut GMap<P>, events: &[EditEvent]) {
+    for event in events {
+        match *event {
+            EditEvent::VertexMerge { removed, .. } => {
+                g.vertices
+                    .remove(removed)
+                    .expect("declared removed vertex key must have an attribute");
+            }
+            EditEvent::EdgeMerge { removed, .. } => {
+                g.edges
+                    .remove(removed)
+                    .expect("declared removed edge key must have an attribute");
+            }
+            EditEvent::ProfileMerge { removed, .. } => {
+                g.profiles
+                    .remove(removed)
+                    .expect("declared removed profile key must have an attribute");
+            }
+            EditEvent::FaceMerge { removed, .. } => {
+                g.faces
+                    .remove(removed)
+                    .expect("declared removed face key must have an attribute");
+            }
+            EditEvent::SheetMerge { removed, .. } => {
+                g.sheets
+                    .remove(removed)
+                    .expect("declared removed sheet key must have an attribute");
+            }
+            EditEvent::SolidMerge { removed, .. } => {
+                g.solids
+                    .remove(removed)
+                    .expect("declared removed solid key must have an attribute");
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Applies net split and merge policy calls in journal order using snapshot inputs.
+///
+/// Source and removed payloads always come from the transaction-start snapshot;
+/// only surviving staged payloads are mutated.
+fn apply_policy_events<P, Q>(
+    g: &mut GMap<P>,
+    snapshot: &GMap<P>,
+    events: &[PolicyEvent],
     policy: &mut Q,
 ) -> Result<(), TopologyEditError>
 where
@@ -595,127 +1309,134 @@ where
 {
     for event in events {
         match *event {
-            EditEvent::VertexSplit { source, created } => {
-                let source_data = g.vertex_attr_unchecked(source).data.clone();
+            PolicyEvent::Split {
+                source: EditKey::Vertex(source),
+                created: EditKey::Vertex(created),
+            } => {
+                let source_data = snapshot.vertex_attr_unchecked(source).data.clone();
                 let created_data = &mut g.vertex_attr_mut_unchecked(created).data;
                 policy
                     .split_vertex_data(source, &source_data, created, created_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
-            EditEvent::EdgeSplit { source, created } => {
-                let source_data = g.edge_attr_unchecked(source).data.clone();
+            PolicyEvent::Split {
+                source: EditKey::Edge(source),
+                created: EditKey::Edge(created),
+            } => {
+                let source_data = snapshot.edge_attr_unchecked(source).data.clone();
                 let created_data = &mut g.edge_attr_mut_unchecked(created).data;
                 policy
                     .split_edge_data(source, &source_data, created, created_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
-            EditEvent::ProfileSplit { source, created } => {
-                let source_data = g.profile_attr_unchecked(source).data.clone();
+            PolicyEvent::Split {
+                source: EditKey::Profile(source),
+                created: EditKey::Profile(created),
+            } => {
+                let source_data = snapshot.profile_attr_unchecked(source).data.clone();
                 let created_data = &mut g.profile_attr_mut_unchecked(created).data;
                 policy
                     .split_profile_data(source, &source_data, created, created_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
-            EditEvent::FaceSplit { source, created } => {
-                let source_data = g.face_attr_unchecked(source).data.clone();
+            PolicyEvent::Split {
+                source: EditKey::Face(source),
+                created: EditKey::Face(created),
+            } => {
+                let source_data = snapshot.face_attr_unchecked(source).data.clone();
                 let created_data = &mut g.face_attr_mut_unchecked(created).data;
                 policy
                     .split_face_data(source, &source_data, created, created_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
-            EditEvent::SheetSplit { source, created } => {
-                let source_data = g.sheet_attr_unchecked(source).data.clone();
+            PolicyEvent::Split {
+                source: EditKey::Sheet(source),
+                created: EditKey::Sheet(created),
+            } => {
+                let source_data = snapshot.sheet_attr_unchecked(source).data.clone();
                 let created_data = &mut g.sheet_attr_mut_unchecked(created).data;
                 policy
                     .split_sheet_data(source, &source_data, created, created_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
-            EditEvent::SolidSplit { source, created } => {
-                let source_data = g.solid_attr_unchecked(source).data.clone();
+            PolicyEvent::Split {
+                source: EditKey::Solid(source),
+                created: EditKey::Solid(created),
+            } => {
+                let source_data = snapshot.solid_attr_unchecked(source).data.clone();
                 let created_data = &mut g.solid_attr_mut_unchecked(created).data;
                 policy
                     .split_solid_data(source, &source_data, created, created_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
-            EditEvent::VertexMerge { survivor, removed } => {
-                let removed_data = g
-                    .vertices
-                    .remove(removed)
-                    .expect("declared removed vertex key must have an attribute")
-                    .data;
+            PolicyEvent::Merge {
+                survivor: EditKey::Vertex(survivor),
+                removed: EditKey::Vertex(removed),
+            } => {
+                let removed_data = snapshot.vertex_attr_unchecked(removed).data.clone();
                 let survivor_data = &mut g.vertex_attr_mut_unchecked(survivor).data;
                 policy
                     .merge_vertex_data(survivor, survivor_data, removed, removed_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
-            EditEvent::EdgeMerge { survivor, removed } => {
-                let removed_data = g
-                    .edges
-                    .remove(removed)
-                    .expect("declared removed edge key must have an attribute")
-                    .data;
+            PolicyEvent::Merge {
+                survivor: EditKey::Edge(survivor),
+                removed: EditKey::Edge(removed),
+            } => {
+                let removed_data = snapshot.edge_attr_unchecked(removed).data.clone();
                 let survivor_data = &mut g.edge_attr_mut_unchecked(survivor).data;
                 policy
                     .merge_edge_data(survivor, survivor_data, removed, removed_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
-            EditEvent::ProfileMerge { survivor, removed } => {
-                let removed_data = g
-                    .profiles
-                    .remove(removed)
-                    .expect("declared removed profile key must have an attribute")
-                    .data;
+            PolicyEvent::Merge {
+                survivor: EditKey::Profile(survivor),
+                removed: EditKey::Profile(removed),
+            } => {
+                let removed_data = snapshot.profile_attr_unchecked(removed).data.clone();
                 let survivor_data = &mut g.profile_attr_mut_unchecked(survivor).data;
                 policy
                     .merge_profile_data(survivor, survivor_data, removed, removed_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
-            EditEvent::FaceMerge { survivor, removed } => {
-                let removed_data = g
-                    .faces
-                    .remove(removed)
-                    .expect("declared removed face key must have an attribute")
-                    .data;
+            PolicyEvent::Merge {
+                survivor: EditKey::Face(survivor),
+                removed: EditKey::Face(removed),
+            } => {
+                let removed_data = snapshot.face_attr_unchecked(removed).data.clone();
                 let survivor_data = &mut g.face_attr_mut_unchecked(survivor).data;
                 policy
                     .merge_face_data(survivor, survivor_data, removed, removed_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
-            EditEvent::SheetMerge { survivor, removed } => {
-                let removed_data = g
-                    .sheets
-                    .remove(removed)
-                    .expect("declared removed sheet key must have an attribute")
-                    .data;
+            PolicyEvent::Merge {
+                survivor: EditKey::Sheet(survivor),
+                removed: EditKey::Sheet(removed),
+            } => {
+                let removed_data = snapshot.sheet_attr_unchecked(removed).data.clone();
                 let survivor_data = &mut g.sheet_attr_mut_unchecked(survivor).data;
                 policy
                     .merge_sheet_data(survivor, survivor_data, removed, removed_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
-            EditEvent::SolidMerge { survivor, removed } => {
-                let removed_data = g
-                    .solids
-                    .remove(removed)
-                    .expect("declared removed solid key must have an attribute")
-                    .data;
+            PolicyEvent::Merge {
+                survivor: EditKey::Solid(survivor),
+                removed: EditKey::Solid(removed),
+            } => {
+                let removed_data = snapshot.solid_attr_unchecked(removed).data.clone();
                 let survivor_data = &mut g.solid_attr_mut_unchecked(survivor).data;
                 policy
                     .merge_solid_data(survivor, survivor_data, removed, removed_data)
                     .map_err(|error| TopologyEditError::Policy(Box::new(error)))?;
             }
+            _ => unreachable!("edit lineage always preserves the attribute type"),
         }
     }
     Ok(())
 }
 
-fn duplicate_cell_error(entity: &'static str, representative: Dart) -> TopologyEditError {
-    TopologyEditError::DuplicateCellAttribute {
-        entity,
-        representative,
-    }
-}
-
-fn rebuild_vertex_index<P: Payload>(g: &mut GMap<P>) -> Result<(), TopologyEditError> {
+/// Stores each surviving vertex attribute on its final canonical 0-cell dart.
+fn canonicalize_vertex_darts<P: Payload>(g: &mut GMap<P>) {
     let canonical_darts = g
         .vertices
         .iter()
@@ -724,78 +1445,4 @@ fn rebuild_vertex_index<P: Payload>(g: &mut GMap<P>) -> Result<(), TopologyEditE
     for (key, dart) in canonical_darts {
         g.vertices[key].dart = dart;
     }
-    g.dart_to_vertex.clear();
-    for (key, attr) in g.vertices.iter() {
-        if g.dart_to_vertex.contains_key(&attr.dart) {
-            return Err(duplicate_cell_error("vertex", attr.dart));
-        }
-        g.dart_to_vertex.insert(attr.dart, key);
-    }
-    Ok(())
-}
-
-fn rebuild_edge_index<P: Payload>(g: &mut GMap<P>) -> Result<(), TopologyEditError> {
-    g.dart_to_edge.clear();
-    for (key, attr) in g.edges.iter() {
-        let repr = g.cell_representative(attr.dart, Dim::One);
-        if g.dart_to_edge.contains_key(&repr) {
-            return Err(duplicate_cell_error("edge", repr));
-        }
-        g.dart_to_edge.insert(repr, key);
-    }
-    Ok(())
-}
-
-fn rebuild_profile_index<P: Payload>(g: &mut GMap<P>) -> Result<(), TopologyEditError> {
-    g.dart_to_profile.clear();
-    for (key, attr) in g.profiles.iter() {
-        let repr = g.profile_representative(attr.dart);
-        if g.dart_to_profile.contains_key(&repr) {
-            return Err(duplicate_cell_error("profile", repr));
-        }
-        g.dart_to_profile.insert(repr, key);
-    }
-    Ok(())
-}
-
-fn rebuild_face_index<P: Payload>(g: &mut GMap<P>) -> Result<(), TopologyEditError> {
-    g.dart_to_face.clear();
-    for (key, attr) in g.faces.iter() {
-        for dart in std::iter::once(attr.outer_loop).chain(attr.inner_loops.iter().copied()) {
-            let repr = g.cell_representative(dart, Dim::Two);
-            if g.dart_to_face.contains_key(&repr) {
-                return Err(duplicate_cell_error("face", repr));
-            }
-            g.dart_to_face.insert(repr, key);
-        }
-    }
-    Ok(())
-}
-
-fn rebuild_sheet_index<P: Payload>(g: &mut GMap<P>) -> Result<(), TopologyEditError> {
-    g.dart_to_sheet.clear();
-    for (key, attr) in g.sheets.iter() {
-        let repr = g.cell_representative(attr.dart, Dim::Three);
-        if g.dart_to_sheet.contains_key(&repr) {
-            return Err(duplicate_cell_error("sheet", repr));
-        }
-        g.dart_to_sheet.insert(repr, key);
-    }
-    Ok(())
-}
-
-fn rebuild_solid_index<P: Payload>(g: &mut GMap<P>) -> Result<(), TopologyEditError> {
-    g.dart_to_solid.clear();
-    for (key, attr) in g.solids.iter() {
-        for shell in
-            std::iter::once(attr.outer_shell).chain(attr.inner_shells.iter().flatten().copied())
-        {
-            let repr = g.cell_representative(shell, Dim::Three);
-            if g.dart_to_solid.contains_key(&repr) {
-                return Err(duplicate_cell_error("solid", repr));
-            }
-            g.dart_to_solid.insert(repr, key);
-        }
-    }
-    Ok(())
 }

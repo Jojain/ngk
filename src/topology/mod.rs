@@ -17,6 +17,6 @@ pub mod validation;
 pub mod vertex;
 pub use attributes::{FaceAttr, ProfileAttr, SheetAttr, SolidAttr};
 pub use dart::{Dart, IsolatedDart};
-pub use edit::{EditPolicy, PreservePayload, TopologyEdit, TopologyEditError};
+pub use edit::{EditKey, EditPolicy, PreservePayload, TopologyEdit, TopologyEditError};
 pub use orientation::Orientation;
 pub use payload::{Payload, StandardPayload};

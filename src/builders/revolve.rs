@@ -114,6 +114,16 @@ pub fn add_revolved_edge<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<FaceKey, RevolveError> {
+    g.transaction(|g| add_revolved_edge_staged(g, edge, axis, angle))
+}
+
+/// Builds the partial or full swept face within the caller's transaction.
+fn add_revolved_edge_staged<P: Payload>(
+    g: &mut GMap<P>,
+    edge: EdgeKey,
+    axis: Axis3,
+    angle: Rad64,
+) -> Result<FaceKey, RevolveError> {
     let source = RevolvedSourceEdge::from_key(g, edge)?;
     let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
     if is_full_turn(angle) {
@@ -379,6 +389,16 @@ fn is_full_turn(angle: Rad64) -> bool {
 /// geometry is missing, a source curve is unsupported, or generated faces
 /// cannot be sewn.
 pub fn add_revolved_profile<P: Payload>(
+    g: &mut GMap<P>,
+    profile_dart: Dart,
+    axis: Axis3,
+    angle: Rad64,
+) -> Result<SheetKey, RevolveError> {
+    g.transaction(|g| add_revolved_profile_staged(g, profile_dart, axis, angle))
+}
+
+/// Revolves every profile edge, sews the faces, and registers the staged sheet.
+fn add_revolved_profile_staged<P: Payload>(
     g: &mut GMap<P>,
     profile_dart: Dart,
     axis: Axis3,
@@ -673,6 +693,16 @@ fn quad_pcurves(uv: &[(Point2, Point2); 4], darts: &[Dart]) -> HashMap<Dart, Cur
 /// partial turn uses an unsupported cap surface, or generated topology cannot
 /// be sewn.
 pub fn add_revolved_face<P: Payload>(
+    g: &mut GMap<P>,
+    face_key: FaceKey,
+    axis: Axis3,
+    angle: Rad64,
+) -> Result<SolidKey, RevolveError> {
+    g.transaction(|g| add_revolved_face_staged(g, face_key, axis, angle))
+}
+
+/// Builds caps and lateral sheets, then registers the resulting staged solid.
+fn add_revolved_face_staged<P: Payload>(
     g: &mut GMap<P>,
     face_key: FaceKey,
     axis: Axis3,

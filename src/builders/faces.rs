@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::StandardPayload;
 use crate::builders::edges::add_circle as add_circle_edge;
 use crate::builders::edges::{EdgeSplit, EdgeSplitError, split_face_boundary_edge};
-use crate::builders::errors::FaceCreationError;
+use crate::builders::errors::{FaceCreationError, TopologyEditFailure};
 use crate::builders::profiles::{
     add_rectangle as add_rectangle_profile, add_square as add_square_profile, profile_pcurves,
 };
@@ -16,7 +16,7 @@ use crate::topology::TopologyEditError;
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
 use crate::topology::closed::Closed;
 use crate::topology::edge::Edge;
-use crate::topology::gmap::{Cell1, Cell2, Dart, Dim, GMap};
+use crate::topology::gmap::{Cell0, Cell1, Cell2, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
@@ -45,6 +45,14 @@ pub enum FaceEdgeSplitError {
     SplitPointNotOnPcurve { face: FaceKey, dart: Dart },
     #[error("failed to split face pcurve")]
     PcurveSplitFailed(#[from] NurbsError),
+    #[error("face edge topology edit failed")]
+    TopologyEditFailed(#[source] TopologyEditFailure),
+}
+
+impl From<TopologyEditError> for FaceEdgeSplitError {
+    fn from(error: TopologyEditError) -> Self {
+        Self::TopologyEditFailed(TopologyEditFailure::new(error))
+    }
 }
 
 #[derive(Debug, Error)]
@@ -81,6 +89,8 @@ pub enum FaceImprintSplitError {
     },
     #[error("periodic face {face:?} produced {count} regions instead of two")]
     UnexpectedPeriodicRegionCount { face: FaceKey, count: usize },
+    #[error("face imprint topology edit failed")]
+    TopologyEditFailed(#[from] TopologyEditError),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -457,6 +467,14 @@ pub fn add_face<P: Payload>(
     g: &mut GMap<P>,
     loop_dart: Dart,
 ) -> Result<FaceKey, FaceCreationError> {
+    g.transaction(|g| add_face_staged(g, loop_dart))
+}
+
+/// Derives and registers a face while remaining inside the caller's transaction.
+fn add_face_staged<P: Payload>(
+    g: &mut GMap<P>,
+    loop_dart: Dart,
+) -> Result<FaceKey, FaceCreationError> {
     let (plane, pcurves) = {
         let profile =
             Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
@@ -488,6 +506,16 @@ pub fn add_rectangle(
     x_size: f64,
     y_size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
+    g.transaction(|g| add_rectangle_staged(g, plane, x_size, y_size))
+}
+
+/// Builds the rectangle profile and face as one staged operation.
+fn add_rectangle_staged(
+    g: &mut GMap<StandardPayload>,
+    plane: Plane,
+    x_size: f64,
+    y_size: f64,
+) -> Result<FaceKey, FaceCreationError> {
     let profile = add_rectangle_profile(g, plane, x_size, y_size)?;
     let loop_dart = g.profile_attr_unchecked(profile).dart;
     add_face(g, loop_dart)
@@ -498,6 +526,15 @@ pub fn add_rectangle(
 /// The sides follow the plane's positive x and y directions. `size` must be
 /// positive and finite.
 pub fn add_square(
+    g: &mut GMap<StandardPayload>,
+    plane: Plane,
+    size: f64,
+) -> Result<FaceKey, FaceCreationError> {
+    g.transaction(|g| add_square_staged(g, plane, size))
+}
+
+/// Builds the square profile and face as one staged operation.
+fn add_square_staged(
     g: &mut GMap<StandardPayload>,
     plane: Plane,
     size: f64,
@@ -515,6 +552,16 @@ pub fn add_square(
 /// The returned [`EdgeSplit`] identifies both resulting edges and the inserted
 /// vertex; the original edge key is retained by the first segment.
 pub fn split_face_edge<P: Payload>(
+    g: &mut GMap<P>,
+    face: FaceKey,
+    edge: EdgeKey,
+    parameter: f64,
+) -> Result<EdgeSplit, FaceEdgeSplitError> {
+    g.transaction(|g| split_face_edge_staged(g, face, edge, parameter))
+}
+
+/// Splits topology and all incident face pcurves in the same transaction.
+fn split_face_edge_staged<P: Payload>(
     g: &mut GMap<P>,
     face: FaceKey,
     edge: EdgeKey,
@@ -543,6 +590,15 @@ pub fn split_face_edge<P: Payload>(
 /// Imprints that do not define an applicable cut may produce no split rather
 /// than an error; invalid topology or missing geometry is reported as an error.
 pub fn split_face_by_imprints<P: Payload>(
+    g: &mut GMap<P>,
+    face: FaceKey,
+    imprints: &[FaceImprint],
+) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
+    g.transaction(|g| split_face_by_imprints_staged(g, face, imprints))
+}
+
+/// Applies every open and closed imprint before the outer transaction commits.
+fn split_face_by_imprints_staged<P: Payload>(
     g: &mut GMap<P>,
     face: FaceKey,
     imprints: &[FaceImprint],
@@ -829,8 +885,7 @@ fn merge_periodic_boundary_edge<P: Payload>(
 
     let first_end = g.alpha(Dim::Zero, first);
     let second_end = g.alpha(Dim::Zero, second);
-    let vertex = g.cell_representative(first_end, Dim::Zero);
-    let vertex_key = g.dart_to_vertex.get(&vertex).copied();
+    let vertex_key = g.cell_key::<Cell0>(first_end);
     g.edit(|edit| {
         if let Some(key) = vertex_key {
             edit.remove_vertex(key);
@@ -1148,8 +1203,6 @@ fn finish_closed_imprint_split<P: Payload>(
     face_attr.inner_loops.push(outside_loop.loop_dart);
     face_attr.pcurves.extend(outside_loop.pcurves);
 
-    let representative = g.cell_representative(outside_loop.loop_dart, Dim::Two);
-    g.dart_to_face.insert(representative, face);
     let second = g.add_face(FaceAttr::with_pcurves(
         old_face.surface,
         old_face.data,
@@ -1399,6 +1452,15 @@ pub fn add_circle(
     plane: Plane,
     radius: f64,
 ) -> Result<FaceKey, FaceCreationError> {
+    g.transaction(|g| add_circle_staged(g, plane, radius))
+}
+
+/// Builds a circular boundary and its face within one staged operation.
+fn add_circle_staged(
+    g: &mut GMap<StandardPayload>,
+    plane: Plane,
+    radius: f64,
+) -> Result<FaceKey, FaceCreationError> {
     let edge = add_circle_edge(g, plane.clone(), radius)?;
     let loop_dart = g.edge_attr_unchecked(edge).dart;
     g.ensure_profile(loop_dart);
@@ -1445,7 +1507,6 @@ impl FaceImprintCut {
 
 #[derive(Debug, Clone, Copy)]
 struct BoundaryEdgeTarget {
-    dart: Dart,
     edge: EdgeKey,
 }
 
@@ -1495,7 +1556,6 @@ fn boundary_edge_at_uv<P: Payload>(
         }
 
         return Ok(Some(BoundaryEdgeTarget {
-            dart: edge.dart(),
             edge: boundary_edge_key(g, edge.dart())?,
         }));
     }
@@ -1667,6 +1727,16 @@ fn split_face_pcurves<P: Payload>(
 /// represent a hole. Both radii must be positive and finite, and `outer_radius`
 /// must be greater than `inner_radius`.
 pub fn add_annulus(
+    g: &mut GMap<StandardPayload>,
+    plane: Plane,
+    outer_radius: f64,
+    inner_radius: f64,
+) -> Result<FaceKey, FaceCreationError> {
+    g.transaction(|g| add_annulus_staged(g, plane, outer_radius, inner_radius))
+}
+
+/// Builds both annulus boundaries and registers their shared face atomically.
+fn add_annulus_staged(
     g: &mut GMap<StandardPayload>,
     plane: Plane,
     outer_radius: f64,
@@ -1873,6 +1943,16 @@ pub fn add_polygon_with_holes(
     outer: &[Point3],
     holes: &[&[Point3]],
 ) -> Result<FaceKey, FaceCreationError> {
+    g.transaction(|g| add_polygon_with_holes_staged(g, plane, outer, holes))
+}
+
+/// Builds the outer polygon and all hole loops before registering the face.
+fn add_polygon_with_holes_staged(
+    g: &mut GMap<StandardPayload>,
+    plane: Plane,
+    outer: &[Point3],
+    holes: &[&[Point3]],
+) -> Result<FaceKey, FaceCreationError> {
     validate_polygon(outer)?;
     for hole in holes {
         validate_polygon(hole)?;
@@ -1924,6 +2004,15 @@ fn validate_polygon(points: &[Point3]) -> Result<(), FaceCreationError> {
 ///
 /// Returns the profile key whose stored dart defines the polygon's orientation.
 pub fn add_polygon<P: Payload>(
+    g: &mut GMap<P>,
+    corners: &[Point3],
+) -> crate::topology::shape_keys::ProfileKey {
+    g.transaction(|g| Ok::<_, TopologyEditError>(add_polygon_staged(g, corners)))
+        .expect("fresh polygon operation must commit")
+}
+
+/// Creates and links polygon segments without opening another transaction scope.
+fn add_polygon_staged<P: Payload>(
     g: &mut GMap<P>,
     corners: &[Point3],
 ) -> crate::topology::shape_keys::ProfileKey {

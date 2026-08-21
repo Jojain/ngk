@@ -23,6 +23,15 @@ pub fn add_extruded_profile<P: Payload>(
     profile_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<SheetKey, ExtrudeError> {
+    g.transaction(|g| add_extruded_profile_staged(g, profile_dart, direction))
+}
+
+/// Extrudes the profile boundaries and registers their sheet in one transaction.
+fn add_extruded_profile_staged<P: Payload>(
+    g: &mut GMap<P>,
+    profile_dart: Dart,
+    direction: Vector3<f64>,
+) -> Result<SheetKey, ExtrudeError> {
     g.ensure_profile(profile_dart);
     let dart = add_extruded_profile_boundaries(g, profile_dart, direction)?.translated_dart;
     Ok(g.add_sheet(SheetAttr::new(dart, P::Sheet::default())))
@@ -33,6 +42,15 @@ pub(crate) struct ExtrudedProfile {
 }
 
 pub(crate) fn add_extruded_profile_boundaries<P: Payload>(
+    g: &mut GMap<P>,
+    profile_dart: Dart,
+    direction: Vector3<f64>,
+) -> Result<ExtrudedProfile, ExtrudeError> {
+    g.transaction(|g| add_extruded_profile_boundaries_staged(g, profile_dart, direction))
+}
+
+/// Builds and sews all lateral extrusion faces before returning staged handles.
+fn add_extruded_profile_boundaries_staged<P: Payload>(
     g: &mut GMap<P>,
     profile_dart: Dart,
     direction: Vector3<f64>,

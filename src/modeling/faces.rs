@@ -54,9 +54,11 @@ pub fn polygon(points: &[Point3]) -> Result<Shape<FaceTag, StandardPayload>, Fac
     }
 
     let mut g = GMap::new();
-    let profile_key = add_polygon(&mut g, points);
-    let loop_dart = g.profile_attr_unchecked(profile_key).dart;
-    let face_key = add_face(&mut g, loop_dart)?;
+    let face_key = g.transaction(|g| {
+        let profile_key = add_polygon(g, points);
+        let loop_dart = g.profile_attr_unchecked(profile_key).dart;
+        add_face(g, loop_dart)
+    })?;
     Ok(Shape::new(g, face_key))
 }
 

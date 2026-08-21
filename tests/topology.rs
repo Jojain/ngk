@@ -6,11 +6,15 @@ mod edge_split;
 mod edit;
 #[path = "topology/face.rs"]
 mod face;
+#[path = "topology/indexes.rs"]
+mod indexes;
 #[path = "topology/planar.rs"]
 mod planar;
 #[path = "topology/profile.rs"]
 mod profile;
 #[path = "topology/sheet.rs"]
 mod sheet;
+#[path = "topology/transaction.rs"]
+mod transaction;
 #[path = "topology/validation.rs"]
 mod validation;

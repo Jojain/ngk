@@ -9,7 +9,7 @@ use crate::tessellate::{
 };
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Dim, GMap};
+use crate::topology::gmap::{Cell1, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape, SolidTag};
@@ -401,9 +401,5 @@ fn bounding_box(shape: &TcvShape) -> Option<TcvBoundingBox> {
 }
 
 fn edge_key_from_edge<P: Payload>(g: &GMap<P>, edge: &Edge<'_, P>) -> Option<EdgeKey> {
-    let repr = g.cell_representative(edge.dart(), Dim::One);
-    g.dart_to_edge
-        .get(&repr)
-        .or_else(|| g.dart_to_edge.get(&edge.dart()))
-        .copied()
+    g.cell_key::<Cell1>(edge.dart())
 }

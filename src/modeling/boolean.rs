@@ -84,6 +84,8 @@ pub enum BooleanError {
         #[source]
         source: TopologyEditError,
     },
+    #[error("boolean topology transaction failed")]
+    TopologyTransaction(#[from] TopologyEditError),
     #[error("face {face:?} has no orientation sample")]
     MissingOrientationSample { face: FaceKey },
     #[error("face {face:?} uses a surface that cannot be orientation-flipped yet")]
@@ -493,22 +495,25 @@ impl<P: Payload> BooleanSplitOperands<P> {
         operation: BooleanOperation,
     ) -> Result<Shape<SolidTag, P>, BooleanError> {
         let selections = self.select_faces(operation)?;
-        let mut result = merge_selected_faces(&self.object, &self.tool, &selections)?;
-        sew_matching_result_edges(&mut result)?;
+        let mut result = GMap::new();
+        let solid = result.transaction(|result| {
+            merge_selected_faces_into(result, &self.object, &self.tool, &selections)?;
+            sew_matching_result_edges(result)?;
 
-        let Some(shell_dart) = result_shell_dart(&result) else {
-            return Err(BooleanError::OpenResultShell {
-                operation,
-                free_edge_count: free_result_edge_count(&result),
-            });
-        };
-        orient_result_shell(&mut result, shell_dart)?;
+            let Some(shell_dart) = result_shell_dart(result) else {
+                return Err(BooleanError::OpenResultShell {
+                    operation,
+                    free_edge_count: free_result_edge_count(result),
+                });
+            };
+            orient_result_shell(result, shell_dart)?;
 
-        let solid = result.add_solid(SolidAttr::new(
-            P::S::default(),
-            result.cell_representative(shell_dart, Dim::Three),
-            None,
-        ));
+            Ok(result.add_solid(SolidAttr::new(
+                P::S::default(),
+                result.cell_representative(shell_dart, Dim::Three),
+                None,
+            )))
+        })?;
         Ok(Shape::new(result, solid))
     }
 }
@@ -626,12 +631,13 @@ struct ResultEdge {
     end: Point3,
 }
 
-fn merge_selected_faces<P: Payload>(
+/// Copies selected operand faces into the result map's active transaction.
+fn merge_selected_faces_into<P: Payload>(
+    result: &mut GMap<P>,
     object: &GMap<P>,
     tool: &GMap<P>,
     selections: &[BooleanFaceSelection],
-) -> Result<GMap<P>, BooleanError> {
-    let mut result = GMap::new();
+) -> Result<(), BooleanError> {
     for source in [BooleanSource::Object, BooleanSource::Tool] {
         let map = operand_map(source, object, tool);
         let faces = selections
@@ -644,7 +650,7 @@ fn merge_selected_faces<P: Payload>(
         }
         result.merge(SelectedFaceSet::new(source, map, &faces)?);
     }
-    Ok(result)
+    Ok(())
 }
 
 struct SelectedFaceSet<'a, P: Payload> {
@@ -1678,9 +1684,9 @@ impl BooleanWorkspace {
     ) -> Result<BooleanSplitOperands<P>, BooleanError> {
         let mut object_map = object.map().clone();
         let mut tool_map = tool.map().clone();
-        let application = self
-            .split_plan
-            .apply_to_maps(&mut object_map, &mut tool_map)?;
+        let application = object_map.transaction(|object_map| {
+            tool_map.transaction(|tool_map| self.split_plan.apply_to_maps(object_map, tool_map))
+        })?;
 
         Ok(BooleanSplitOperands {
             object: object_map,

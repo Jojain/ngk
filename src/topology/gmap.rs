@@ -1,9 +1,13 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::OnceLock;
 
 use slotmap::SlotMap;
 
 use crate::topology::edge::Edge;
-pub use crate::topology::edit::{EditPolicy, PreservePayload, TopologyEdit, TopologyEditError};
+use crate::topology::edit::{EditEvent, commit_topology_transaction};
+pub use crate::topology::edit::{
+    EditKey, EditPolicy, PreservePayload, TopologyEdit, TopologyEditError,
+};
 use crate::topology::face::Face;
 use crate::topology::orientation::Orientation;
 use crate::topology::profile::Profile;
@@ -116,28 +120,29 @@ pub trait AttributeStore<D: CellDim> {
 }
 
 /// Trait for looking up a cell key from a canonical representative dart.
-pub(crate) trait CellKeyLookup<D: CellDim> {
+#[doc(hidden)]
+pub trait CellKeyLookup<D: CellDim> {
     fn get_key(&self, repr: Dart) -> Option<D::Key>;
 }
 
 impl<P: Payload> CellKeyLookup<Cell0> for GMap<P> {
     fn get_key(&self, repr: Dart) -> Option<VertexKey> {
-        self.dart_to_vertex.get(&repr).copied()
+        self.derived_indexes().vertex.get(&repr).copied()
     }
 }
 impl<P: Payload> CellKeyLookup<Cell1> for GMap<P> {
     fn get_key(&self, repr: Dart) -> Option<EdgeKey> {
-        self.dart_to_edge.get(&repr).copied()
+        self.derived_indexes().edge.get(&repr).copied()
     }
 }
 impl<P: Payload> CellKeyLookup<Cell2> for GMap<P> {
     fn get_key(&self, repr: Dart) -> Option<FaceKey> {
-        self.dart_to_face.get(&repr).copied()
+        self.derived_indexes().face.get(&repr).copied()
     }
 }
 impl<P: Payload> CellKeyLookup<Cell3> for GMap<P> {
     fn get_key(&self, repr: Dart) -> Option<SolidKey> {
-        self.dart_to_solid.get(&repr).copied()
+        self.derived_indexes().solid.get(&repr).copied()
     }
 }
 
@@ -212,41 +217,53 @@ where
 impl<P: Payload> AttributeStore<Cell0> for GMap<P> {
     type Attr = VertexAttr<P::V>;
     fn get(&self, repr: Dart) -> Option<&VertexAttr<P::V>> {
-        let vid = self.dart_to_vertex.get(&repr)?;
-        self.vertices.get(*vid)
+        let key = self.derived_indexes().vertex.get(&repr).copied()?;
+        self.vertices.get(key)
     }
     fn get_mut(&mut self, repr: Dart) -> Option<&mut VertexAttr<P::V>> {
-        let vid = self.dart_to_vertex.get(&repr)?;
-        self.vertices.get_mut(*vid)
+        let key = self.derived_indexes().vertex.get(&repr).copied()?;
+        self.invalidate_derived_indexes();
+        self.vertices.get_mut(key)
     }
 }
 impl<P: Payload> AttributeStore<Cell1> for GMap<P> {
     type Attr = EdgeAttr<P::E>;
     fn get(&self, repr: Dart) -> Option<&EdgeAttr<P::E>> {
-        let eid = self.dart_to_edge.get(&repr)?;
-        self.edges.get(*eid)
+        let key = self.derived_indexes().edge.get(&repr).copied()?;
+        self.edges.get(key)
     }
     fn get_mut(&mut self, repr: Dart) -> Option<&mut EdgeAttr<P::E>> {
-        let eid = self.dart_to_edge.get(&repr)?;
-        self.edges.get_mut(*eid)
+        let key = self.derived_indexes().edge.get(&repr).copied()?;
+        self.invalidate_derived_indexes();
+        self.edges.get_mut(key)
     }
 }
 impl<P: Payload> AttributeStore<Cell2> for GMap<P> {
     type Attr = FaceKey;
     fn get(&self, repr: Dart) -> Option<&FaceKey> {
-        self.dart_to_face.get(&repr)
+        self.derived_indexes().face.get(&repr)
     }
     fn get_mut(&mut self, repr: Dart) -> Option<&mut FaceKey> {
-        self.dart_to_face.get_mut(&repr)
+        self.materialize_derived_indexes();
+        self.derived_indexes
+            .get_mut()
+            .expect("derived indexes must be materialized")
+            .face
+            .get_mut(&repr)
     }
 }
 impl<P: Payload> AttributeStore<Cell3> for GMap<P> {
     type Attr = SolidKey;
     fn get(&self, repr: Dart) -> Option<&SolidKey> {
-        self.dart_to_solid.get(&repr)
+        self.derived_indexes().solid.get(&repr)
     }
     fn get_mut(&mut self, repr: Dart) -> Option<&mut SolidKey> {
-        self.dart_to_solid.get_mut(&repr)
+        self.materialize_derived_indexes();
+        self.derived_indexes
+            .get_mut()
+            .expect("derived indexes must be materialized")
+            .solid
+            .get_mut(&repr)
     }
 }
 
@@ -259,18 +276,31 @@ impl<P: Payload> AttributeStore<Cell3> for GMap<P> {
 pub struct GMap<P: Payload = StandardPayload> {
     alphas: [Vec<Dart>; GMAP_INVOLUTION_COUNT],
     free_slots: VecDeque<usize>,
-    pub(crate) dart_to_vertex: HashMap<Dart, VertexKey>,
-    pub(crate) dart_to_edge: HashMap<Dart, EdgeKey>,
-    pub(crate) dart_to_profile: HashMap<Dart, ProfileKey>,
-    pub(crate) dart_to_face: HashMap<Dart, FaceKey>,
-    pub(crate) dart_to_sheet: HashMap<Dart, SheetKey>,
-    pub(crate) dart_to_solid: HashMap<Dart, SolidKey>,
+    derived_indexes: OnceLock<DerivedCellIndexes>,
     pub(crate) vertices: SlotMap<VertexKey, VertexAttr<P::V>>,
     pub(crate) edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
     pub(crate) profiles: SlotMap<ProfileKey, ProfileAttr<P::Profile>>,
     pub(crate) faces: SlotMap<FaceKey, FaceAttr<P::F>>,
     pub(crate) sheets: SlotMap<SheetKey, SheetAttr<P::Sheet>>,
     pub(crate) solids: SlotMap<SolidKey, SolidAttr<P::S>>,
+    transaction: Option<Box<TransactionState<P>>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DerivedCellIndexes {
+    vertex: HashMap<Dart, VertexKey>,
+    edge: HashMap<Dart, EdgeKey>,
+    profile: HashMap<Dart, ProfileKey>,
+    face: HashMap<Dart, FaceKey>,
+    sheet: HashMap<Dart, SheetKey>,
+    solid: HashMap<Dart, SolidKey>,
+}
+
+struct TransactionState<P: Payload> {
+    snapshot: GMap<P>,
+    depth: usize,
+    poisoned: bool,
+    events: Vec<EditEvent>,
 }
 
 impl<P: Payload> Clone for GMap<P> {
@@ -278,18 +308,14 @@ impl<P: Payload> Clone for GMap<P> {
         Self {
             alphas: self.alphas.clone(),
             free_slots: self.free_slots.clone(),
+            derived_indexes: OnceLock::new(),
             vertices: self.vertices.clone(),
-            dart_to_vertex: self.dart_to_vertex.clone(),
             edges: self.edges.clone(),
-            dart_to_edge: self.dart_to_edge.clone(),
             profiles: self.profiles.clone(),
-            dart_to_profile: self.dart_to_profile.clone(),
-            dart_to_face: self.dart_to_face.clone(),
             sheets: self.sheets.clone(),
-            dart_to_sheet: self.dart_to_sheet.clone(),
-            dart_to_solid: self.dart_to_solid.clone(),
             faces: self.faces.clone(),
             solids: self.solids.clone(),
+            transaction: None,
         }
     }
 }
@@ -306,52 +332,192 @@ impl<P: Payload> GMap<P> {
         let alphas = std::array::from_fn(|_| Vec::new());
         let free_slots = VecDeque::new();
         let vertices = SlotMap::with_key();
-        let dart_to_vertex = HashMap::new();
         let edges = SlotMap::with_key();
-        let dart_to_edge = HashMap::new();
         let profiles = SlotMap::with_key();
-        let dart_to_profile = HashMap::new();
-        let dart_to_face = HashMap::new();
         let sheets = SlotMap::with_key();
-        let dart_to_sheet = HashMap::new();
-        let dart_to_solid = HashMap::new();
         let faces = SlotMap::with_key();
         let solids = SlotMap::with_key();
         Self {
             alphas,
             free_slots,
+            derived_indexes: OnceLock::new(),
             vertices,
-            dart_to_vertex,
             edges,
-            dart_to_edge,
             profiles,
-            dart_to_profile,
-            dart_to_face,
             sheets,
-            dart_to_sheet,
-            dart_to_solid,
             faces,
             solids,
+            transaction: None,
         }
     }
 
-    /// Runs a clone-backed topology transaction using [`PreservePayload`].
+    /// Runs one atomic operation against this map.
     ///
-    /// The closure's staged changes are committed only when the closure and
-    /// structural validation both succeed. Any failure restores the complete
-    /// pre-edit map.
+    /// Nested transactions join the active operation. Only the outermost
+    /// transaction commits, and any returned error restores its complete
+    /// starting snapshot. A nested error poisons the operation even when its
+    /// caller catches that error. Panics are not handled by this API.
+    pub fn transaction<T, E, F>(&mut self, operation: F) -> Result<T, E>
+    where
+        E: From<TopologyEditError>,
+        F: FnOnce(&mut Self) -> Result<T, E>,
+    {
+        self.run_transaction(&mut PreservePayload, false, operation)
+    }
+
+    /// Runs one atomic operation with a caller-provided payload policy.
+    ///
+    /// The policy belongs to the outermost transaction. Attempting to start a
+    /// policy-owning transaction while another transaction is active returns
+    /// [`TopologyEditError::NestedPolicyOverride`]. Policy event application is
+    /// performed when the outer operation commits.
+    pub fn transaction_with_policy<Q, T, E, F>(
+        &mut self,
+        policy: &mut Q,
+        operation: F,
+    ) -> Result<T, E>
+    where
+        Q: EditPolicy<P>,
+        E: From<TopologyEditError>,
+        F: FnOnce(&mut Self) -> Result<T, E>,
+    {
+        self.run_transaction(policy, true, operation)
+    }
+
+    /// Starts the outer transaction or delegates to the already-active one.
+    ///
+    /// The outer branch owns the snapshot and commit. It restores that snapshot
+    /// whenever the operation, a nested operation, or final commit fails.
+    fn run_transaction<Q, T, E, F>(
+        &mut self,
+        policy: &mut Q,
+        owns_policy: bool,
+        operation: F,
+    ) -> Result<T, E>
+    where
+        Q: EditPolicy<P>,
+        E: From<TopologyEditError>,
+        F: FnOnce(&mut Self) -> Result<T, E>,
+    {
+        if self.transaction.is_some() {
+            if owns_policy {
+                return Err(E::from(TopologyEditError::NestedPolicyOverride));
+            }
+            return self.run_nested_transaction(operation);
+        }
+
+        self.transaction = Some(Box::new(TransactionState {
+            snapshot: self.clone(),
+            depth: 1,
+            poisoned: false,
+            events: Vec::new(),
+        }));
+
+        match operation(self) {
+            Ok(_) if self.transaction_is_poisoned() => {
+                self.rollback_transaction();
+                Err(E::from(TopologyEditError::TransactionPoisoned))
+            }
+            Ok(value) => match self.commit_active_transaction(policy) {
+                Ok(()) => {
+                    self.transaction = None;
+                    Ok(value)
+                }
+                Err(error) => {
+                    self.rollback_transaction();
+                    Err(E::from(error))
+                }
+            },
+            Err(error) => {
+                self.rollback_transaction();
+                Err(error)
+            }
+        }
+    }
+
+    /// Runs a nested scope against the outer transaction and poisons it on error.
+    fn run_nested_transaction<T, E, F>(&mut self, operation: F) -> Result<T, E>
+    where
+        F: FnOnce(&mut Self) -> Result<T, E>,
+    {
+        if let Some(transaction) = &mut self.transaction {
+            transaction.depth += 1;
+        }
+
+        match operation(self) {
+            Ok(value) => {
+                self.leave_nested_transaction(false);
+                Ok(value)
+            }
+            Err(error) => {
+                self.leave_nested_transaction(true);
+                Err(error)
+            }
+        }
+    }
+
+    /// Leaves one nesting level and preserves any failure seen by the operation.
+    fn leave_nested_transaction(&mut self, poisoned: bool) {
+        if let Some(transaction) = &mut self.transaction {
+            transaction.depth = transaction.depth.saturating_sub(1);
+            transaction.poisoned |= poisoned;
+        }
+    }
+
+    /// Reports whether any nested scope has failed since the transaction began.
+    fn transaction_is_poisoned(&self) -> bool {
+        self.transaction
+            .as_ref()
+            .is_some_and(|transaction| transaction.poisoned)
+    }
+
+    /// Replaces all staged state with the snapshot owned by the transaction.
+    fn rollback_transaction(&mut self) {
+        if let Some(transaction) = self.transaction.take() {
+            *self = transaction.snapshot;
+        }
+    }
+
+    /// Finalizes the active transaction, restoring its snapshot if commit fails.
+    fn commit_active_transaction<Q>(&mut self, policy: &mut Q) -> Result<(), TopologyEditError>
+    where
+        Q: EditPolicy<P>,
+    {
+        let transaction = self
+            .transaction
+            .take()
+            .expect("an active transaction must exist while committing");
+        match commit_topology_transaction(self, &transaction.snapshot, &transaction.events, policy)
+        {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                *self = transaction.snapshot;
+                Err(error)
+            }
+        }
+    }
+
+    /// Runs one safe low-level topology mutation batch.
+    ///
+    /// When no operation transaction is active, this method creates an implicit
+    /// transaction using [`PreservePayload`]. Inside a transaction it appends
+    /// topology changes and lineage events to the outer operation without
+    /// validating or committing independently.
     pub fn edit<T, F>(&mut self, operation: F) -> Result<T, TopologyEditError>
     where
         F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, TopologyEditError>,
     {
-        self.edit_with_policy(&mut PreservePayload, operation)
+        if self.transaction.is_some() {
+            self.run_edit(operation)
+        } else {
+            self.transaction(|g| g.run_edit(operation))
+        }
     }
 
-    /// Runs a clone-backed topology transaction with a caller-provided payload
-    /// policy.
+    /// Runs one topology mutation batch with a caller-provided payload policy.
     ///
-    /// Use this when the edit closure declares semantic split/merge events and
-    /// payload propagation needs custom behavior.
+    /// This is single-batch sugar for [`GMap::transaction_with_policy`]. It
+    /// cannot override the policy of an already-active transaction.
     pub fn edit_with_policy<Q, T, F>(
         &mut self,
         policy: &mut Q,
@@ -361,10 +527,178 @@ impl<P: Payload> GMap<P> {
         Q: EditPolicy<P>,
         F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, TopologyEditError>,
     {
+        self.transaction_with_policy(policy, |g| g.run_edit(operation))
+    }
+
+    /// Executes one alpha-mutation batch and appends its lineage to the transaction.
+    fn run_edit<T, F>(&mut self, operation: F) -> Result<T, TopologyEditError>
+    where
+        F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, TopologyEditError>,
+    {
         let mut edit = TopologyEdit::new(self);
-        let result = operation(&mut edit)?;
-        edit.commit(policy)?;
-        Ok(result)
+        match operation(&mut edit) {
+            Ok(value) => {
+                let events = edit.into_events();
+                if let Some(transaction) = &mut self.transaction {
+                    transaction.events.extend(events);
+                }
+                Ok(value)
+            }
+            Err(error) => {
+                drop(edit);
+                if let Some(transaction) = &mut self.transaction {
+                    transaction.poisoned = true;
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Records attributes created outside `TopologyEdit` as transaction-local identities.
+    fn record_created_attribute(&mut self, key: EditKey) {
+        if let Some(transaction) = &mut self.transaction {
+            transaction.events.push(EditEvent::Created { key });
+        }
+    }
+
+    /// Discards cached dart-to-cell mappings after topology or attributes change.
+    pub(super) fn invalidate_derived_indexes(&mut self) {
+        self.derived_indexes.take();
+    }
+
+    /// Forces the lazy indexes to be built, notably as the last commit check.
+    pub(super) fn materialize_derived_indexes(&self) {
+        let _ = self.derived_indexes();
+    }
+
+    /// Returns the cached indexes, rebuilding them from authoritative state if needed.
+    fn derived_indexes(&self) -> &DerivedCellIndexes {
+        if self.derived_indexes.get().is_none() {
+            let indexes = self.build_derived_indexes();
+            self.derived_indexes
+                .set(indexes)
+                .expect("derived indexes are initialized only once");
+        }
+        self.derived_indexes
+            .get()
+            .expect("derived indexes must be initialized")
+    }
+
+    /// Reconstructs every dart-to-attribute index from current cells and attributes.
+    fn build_derived_indexes(&self) -> DerivedCellIndexes {
+        let mut indexes = DerivedCellIndexes::default();
+
+        for (key, attr) in self.vertices.iter() {
+            let repr = self.cell_representative(attr.dart, Dim::Zero);
+            self.insert_logical_key(&mut indexes.vertex, repr, key, EditKey::Vertex);
+        }
+        for (key, attr) in self.edges.iter() {
+            let repr = self.cell_representative(attr.dart, Dim::One);
+            self.insert_logical_key(&mut indexes.edge, repr, key, EditKey::Edge);
+        }
+        for (key, attr) in self.profiles.iter() {
+            let repr = self.profile_representative(attr.dart);
+            self.insert_logical_key(&mut indexes.profile, repr, key, EditKey::Profile);
+        }
+        for (key, attr) in self.faces.iter() {
+            for dart in std::iter::once(attr.outer_loop).chain(attr.inner_loops.iter().copied()) {
+                let repr = self.cell_representative(dart, Dim::Two);
+                self.insert_logical_key(&mut indexes.face, repr, key, EditKey::Face);
+            }
+        }
+        for (key, attr) in self.sheets.iter() {
+            let repr = self.cell_representative(attr.dart, Dim::Three);
+            self.insert_logical_key(&mut indexes.sheet, repr, key, EditKey::Sheet);
+        }
+        for (key, attr) in self.solids.iter() {
+            for dart in
+                std::iter::once(attr.outer_shell).chain(attr.inner_shells.iter().flatten().copied())
+            {
+                let repr = self.cell_representative(dart, Dim::Three);
+                self.insert_logical_key(&mut indexes.solid, repr, key, EditKey::Solid);
+            }
+        }
+
+        indexes
+    }
+
+    /// Inserts one cell key, resolving staged duplicate identities consistently.
+    fn insert_logical_key<K: Copy>(
+        &self,
+        index: &mut HashMap<Dart, K>,
+        representative: Dart,
+        candidate: K,
+        wrap: fn(K) -> EditKey,
+    ) {
+        let Some(existing) = index.get(&representative).copied() else {
+            index.insert(representative, candidate);
+            return;
+        };
+        if self.prefer_transaction_key(wrap(existing), wrap(candidate)) == wrap(candidate) {
+            index.insert(representative, candidate);
+        }
+    }
+
+    /// Selects the identity a staged lookup should expose before final reconciliation.
+    ///
+    /// Explicit lineage wins first, then transaction-start identities, then the
+    /// earliest-created local identity. Commit uses the same ordering rules.
+    fn prefer_transaction_key(&self, first: EditKey, second: EditKey) -> EditKey {
+        let Some(transaction) = &self.transaction else {
+            return first;
+        };
+
+        let final_key = |mut key: EditKey| {
+            let mut visited = HashSet::new();
+            while visited.insert(key) {
+                let Some(next) = transaction.events.iter().find_map(|event| {
+                    event
+                        .merge_keys()
+                        .and_then(|(survivor, removed)| (removed == key).then_some(survivor))
+                }) else {
+                    break;
+                };
+                key = next;
+            }
+            key
+        };
+        let first_final = final_key(first);
+        let second_final = final_key(second);
+        if first_final == second {
+            return second;
+        }
+        if second_final == first {
+            return first;
+        }
+
+        let existed = |key| match key {
+            EditKey::Vertex(key) => transaction.snapshot.vertices.contains_key(key),
+            EditKey::Edge(key) => transaction.snapshot.edges.contains_key(key),
+            EditKey::Profile(key) => transaction.snapshot.profiles.contains_key(key),
+            EditKey::Face(key) => transaction.snapshot.faces.contains_key(key),
+            EditKey::Sheet(key) => transaction.snapshot.sheets.contains_key(key),
+            EditKey::Solid(key) => transaction.snapshot.solids.contains_key(key),
+        };
+        match (existed(first), existed(second)) {
+            (true, false) => return first,
+            (false, true) => return second,
+            _ => {}
+        }
+
+        let creation_order = |key| {
+            transaction
+                .events
+                .iter()
+                .position(
+                    |event| matches!(event, EditEvent::Created { key: created } if *created == key),
+                )
+                .unwrap_or(usize::MAX)
+        };
+        if creation_order(second) < creation_order(first) {
+            second
+        } else {
+            first
+        }
     }
 
     /// Returns the number of alpha involutions.
@@ -398,6 +732,7 @@ impl<P: Payload> GMap<P> {
     ///
     /// All alpha involutions initially map the new dart to itself.
     pub(super) fn add_dart(&mut self) -> Dart {
+        self.invalidate_derived_indexes();
         let dart = if let Some(slot) = self.free_slots.pop_front() {
             Dart::new(slot)
         } else {
@@ -413,6 +748,7 @@ impl<P: Payload> GMap<P> {
     ///
     /// The [`IsolatedDart`] wrapper records the caller's proof obligation.
     pub(super) fn remove_dart(&mut self, dart: IsolatedDart) {
+        self.invalidate_derived_indexes();
         for alphas in self.alphas.iter_mut() {
             alphas.remove(dart.id());
         }
@@ -455,13 +791,14 @@ impl<P: Payload> GMap<P> {
     pub fn add_vertex(&mut self, vertex: VertexAttr<P::V>) -> VertexKey {
         let dart = self.cell_representative(vertex.dart, Dim::Zero);
         assert!(
-            self.dart_to_vertex.get(&dart).is_none(),
+            !self.derived_indexes().vertex.contains_key(&dart),
             "A vertex is already attached to this 0-cell"
         );
         let mut vertex = vertex;
         vertex.dart = dart;
         let key = self.vertices.insert(vertex);
-        self.dart_to_vertex.insert(dart, key);
+        self.invalidate_derived_indexes();
+        self.record_created_attribute(EditKey::Vertex(key));
         key
     }
 
@@ -497,6 +834,7 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the mutable vertex attribute for `key`, if it exists.
     pub fn vertex_attr_mut(&mut self, key: VertexKey) -> Option<&mut VertexAttr<P::V>> {
+        self.invalidate_derived_indexes();
         self.vertices.get_mut(key)
     }
 
@@ -525,11 +863,12 @@ impl<P: Payload> GMap<P> {
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
         let repr = self.cell_representative(edge.dart, Dim::One);
         assert!(
-            self.dart_to_edge.get(&repr).is_none(),
+            !self.derived_indexes().edge.contains_key(&repr),
             "An edge is already attached to this 1-cell"
         );
         let key = self.edges.insert(edge);
-        self.dart_to_edge.insert(repr, key);
+        self.invalidate_derived_indexes();
+        self.record_created_attribute(EditKey::Edge(key));
         key
     }
 
@@ -602,6 +941,7 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the mutable edge attribute for `key`, if it exists.
     pub fn edge_attr_mut(&mut self, key: EdgeKey) -> Option<&mut EdgeAttr<P::E>> {
+        self.invalidate_derived_indexes();
         self.edges.get_mut(key)
     }
 
@@ -617,10 +957,7 @@ impl<P: Payload> GMap<P> {
 
     pub(crate) fn remove_edge(&mut self, key: EdgeKey) -> Option<EdgeAttr<P::E>> {
         let edge = self.edges.remove(key)?;
-        let representative = self.cell_representative(edge.dart, Dim::One);
-        if self.dart_to_edge.get(&representative) == Some(&key) {
-            self.dart_to_edge.remove(&representative);
-        }
+        self.invalidate_derived_indexes();
         Some(edge)
     }
 
@@ -637,11 +974,12 @@ impl<P: Payload> GMap<P> {
     pub fn add_profile(&mut self, profile: ProfileAttr<P::Profile>) -> ProfileKey {
         let repr = self.profile_representative(profile.dart);
         assert!(
-            !self.dart_to_profile.contains_key(&repr),
+            !self.derived_indexes().profile.contains_key(&repr),
             "A profile is already attached to this alpha0/alpha1 component"
         );
         let key = self.profiles.insert(profile);
-        self.dart_to_profile.insert(repr, key);
+        self.invalidate_derived_indexes();
+        self.record_created_attribute(EditKey::Profile(key));
         key
     }
 
@@ -668,7 +1006,8 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the profile key for the alpha0/alpha1 component containing `dart`.
     pub fn profile_key(&self, dart: Dart) -> Option<ProfileKey> {
-        self.dart_to_profile
+        self.derived_indexes()
+            .profile
             .get(&self.profile_representative(dart))
             .copied()
     }
@@ -700,6 +1039,7 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the mutable profile attribute.
     pub fn profile_attr_mut(&mut self, key: ProfileKey) -> Option<&mut ProfileAttr<P::Profile>> {
+        self.invalidate_derived_indexes();
         self.profiles.get_mut(key)
     }
 
@@ -731,14 +1071,15 @@ impl<P: Payload> GMap<P> {
             .chain(face.inner_loops.iter().copied())
             .find_map(|d| {
                 let repr = self.cell_representative(d, Dim::Two);
-                self.dart_to_face.get(&repr)
+                self.derived_indexes().face.get(&repr)
             });
         assert!(
             reprs.is_none(),
             "A face is already attached to one of the boundary darts"
         );
         let key = self.faces.insert(face);
-        self.index_face_loop_darts(key);
+        self.invalidate_derived_indexes();
+        self.record_created_attribute(EditKey::Face(key));
         key
     }
 
@@ -772,14 +1113,6 @@ impl<P: Payload> GMap<P> {
             .chain(attr.inner_loops.iter().copied())
             .find_map(|seed| self.cell_orientation_from_seed(seed, dart, Dim::Two))
             .expect("face orientation requires dart to belong to face")
-    }
-
-    fn index_face_loop_darts(&mut self, key: FaceKey) {
-        let attr = &self.faces[key]; // This exists because attr has just been added
-        for seed in std::iter::once(attr.outer_loop).chain(attr.inner_loops.iter().copied()) {
-            let repr = self.cell_representative(seed, Dim::Two);
-            self.dart_to_face.insert(repr, key);
-        }
     }
 
     pub(crate) fn cell_orientation_from_seed(
@@ -837,6 +1170,7 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the mutable face attribute for `key`, if it exists.
     pub fn face_attr_mut(&mut self, key: FaceKey) -> Option<&mut FaceAttr<P::F>> {
+        self.invalidate_derived_indexes();
         self.faces.get_mut(key)
     }
 
@@ -852,10 +1186,7 @@ impl<P: Payload> GMap<P> {
 
     pub(crate) fn remove_face(&mut self, key: FaceKey) -> Option<FaceAttr<P::F>> {
         let face = self.faces.remove(key)?;
-        for seed in std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied()) {
-            let repr = self.cell_representative(seed, Dim::Two);
-            self.dart_to_face.remove(&repr);
-        }
+        self.invalidate_derived_indexes();
         Some(face)
     }
 
@@ -872,11 +1203,12 @@ impl<P: Payload> GMap<P> {
     pub fn add_sheet(&mut self, sheet: SheetAttr<P::Sheet>) -> SheetKey {
         let repr = self.cell_representative(sheet.dart, Dim::Three);
         assert!(
-            !self.dart_to_sheet.contains_key(&repr),
+            !self.derived_indexes().sheet.contains_key(&repr),
             "A sheet is already attached to this 3-cell"
         );
         let key = self.sheets.insert(sheet);
-        self.dart_to_sheet.insert(repr, key);
+        self.invalidate_derived_indexes();
+        self.record_created_attribute(EditKey::Sheet(key));
         key
     }
 
@@ -903,7 +1235,8 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the sheet key for the 3-cell containing `dart`.
     pub fn sheet_key(&self, dart: Dart) -> Option<SheetKey> {
-        self.dart_to_sheet
+        self.derived_indexes()
+            .sheet
             .get(&self.cell_representative(dart, Dim::Three))
             .copied()
     }
@@ -935,6 +1268,7 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the mutable sheet attribute.
     pub fn sheet_attr_mut(&mut self, key: SheetKey) -> Option<&mut SheetAttr<P::Sheet>> {
+        self.invalidate_derived_indexes();
         self.sheets.get_mut(key)
     }
 
@@ -968,15 +1302,14 @@ impl<P: Payload> GMap<P> {
         let shell_darts = self.solid_shell_representatives(&solid);
         let existing = shell_darts
             .iter()
-            .find_map(|dart| self.dart_to_solid.get(dart));
+            .find_map(|dart| self.derived_indexes().solid.get(dart));
         assert!(
             existing.is_none(),
             "A solid is already attached to one of the shell darts"
         );
         let key = self.solids.insert(solid);
-        for dart in shell_darts {
-            self.dart_to_solid.insert(dart, key);
-        }
+        self.invalidate_derived_indexes();
+        self.record_created_attribute(EditKey::Solid(key));
         key
     }
 
@@ -1012,6 +1345,7 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the mutable solid attribute for `key`, if it exists.
     pub fn solid_attr_mut(&mut self, key: SolidKey) -> Option<&mut SolidAttr<P::S>> {
+        self.invalidate_derived_indexes();
         self.solids.get_mut(key)
     }
 
@@ -1027,7 +1361,8 @@ impl<P: Payload> GMap<P> {
 
     /// Returns the solid key for the registered shell containing `dart`.
     pub fn solid_key(&self, dart: Dart) -> Option<SolidKey> {
-        self.dart_to_solid
+        self.derived_indexes()
+            .solid
             .get(&self.cell_representative(dart, Dim::Three))
             .copied()
     }
@@ -1082,9 +1417,6 @@ impl<P: Payload> GMap<P> {
             .collect::<Vec<_>>();
         let source_dart_set = source_darts.iter().copied().collect::<HashSet<_>>();
         let mut dart_map = HashMap::with_capacity(source_darts.len());
-        let mut vertex_map = HashMap::with_capacity(source.vertices.len());
-        let mut edge_map = HashMap::with_capacity(source.edges.len());
-        let mut face_map = HashMap::with_capacity(source.faces.len());
 
         for old in source_darts.iter().copied() {
             let new = self.add_dart();
@@ -1099,7 +1431,7 @@ impl<P: Payload> GMap<P> {
             }
         }
 
-        for (old_key, attr) in source.vertices.iter() {
+        for (_, attr) in source.vertices.iter() {
             let Some(attribute_dart) =
                 copied_cell_dart(source, &source_dart_set, attr.dart, Dim::Zero)
             else {
@@ -1108,20 +1440,10 @@ impl<P: Payload> GMap<P> {
             let mut attr = attr.clone();
             attr.dart = self.cell_representative(remap_dart(&dart_map, attribute_dart), Dim::Zero);
             let new_key = self.vertices.insert(attr);
-            vertex_map.insert(old_key, new_key);
-        }
-        for (old_key, attr) in source.vertices.iter() {
-            let Some(&new_key) = vertex_map.get(&old_key) else {
-                continue;
-            };
-            for old_dart in source.orbit(attr.dart, source.orbit_indices(Dim::Zero)) {
-                if let Some(&new_dart) = dart_map.get(&old_dart) {
-                    self.dart_to_vertex.insert(new_dart, new_key);
-                }
-            }
+            self.record_created_attribute(EditKey::Vertex(new_key));
         }
 
-        for (old_key, attr) in source.edges.iter() {
+        for (_, attr) in source.edges.iter() {
             let Some(attribute_dart) =
                 copied_cell_dart(source, &source_dart_set, attr.dart, Dim::One)
             else {
@@ -1130,17 +1452,7 @@ impl<P: Payload> GMap<P> {
             let mut attr = attr.clone();
             attr.dart = remap_dart(&dart_map, attribute_dart);
             let new_key = self.edges.insert(attr);
-            edge_map.insert(old_key, new_key);
-        }
-        for (old_key, attr) in source.edges.iter() {
-            let Some(&new_key) = edge_map.get(&old_key) else {
-                continue;
-            };
-            for old_dart in source.orbit(attr.dart, source.orbit_indices(Dim::One)) {
-                if let Some(&new_dart) = dart_map.get(&old_dart) {
-                    self.dart_to_edge.insert(new_dart, new_key);
-                }
-            }
+            self.record_created_attribute(EditKey::Edge(new_key));
         }
 
         for (_, attr) in source.profiles.iter() {
@@ -1152,12 +1464,11 @@ impl<P: Payload> GMap<P> {
             }
             let mut attr = attr.clone();
             attr.dart = remap_dart(&dart_map, attr.dart);
-            let repr = self.profile_representative(attr.dart);
             let new_key = self.profiles.insert(attr);
-            self.dart_to_profile.insert(repr, new_key);
+            self.record_created_attribute(EditKey::Profile(new_key));
         }
 
-        for (old_key, attr) in source.faces.iter() {
+        for (_, attr) in source.faces.iter() {
             if !source_dart_set.contains(&attr.outer_loop) {
                 continue;
             }
@@ -1174,8 +1485,7 @@ impl<P: Payload> GMap<P> {
                 .filter_map(|(dart, curve)| dart_map.get(&dart).copied().map(|d| (d, curve)))
                 .collect();
             let new_key = self.faces.insert(attr);
-            self.index_face_loop_darts(new_key);
-            face_map.insert(old_key, new_key);
+            self.record_created_attribute(EditKey::Face(new_key));
         }
 
         for (_, attr) in source.sheets.iter() {
@@ -1187,9 +1497,8 @@ impl<P: Payload> GMap<P> {
             }
             let mut attr = attr.clone();
             attr.dart = remap_dart(&dart_map, attr.dart);
-            let repr = self.cell_representative(attr.dart, Dim::Three);
             let new_key = self.sheets.insert(attr);
-            self.dart_to_sheet.insert(repr, new_key);
+            self.record_created_attribute(EditKey::Sheet(new_key));
         }
 
         for (_, attr) in source.solids.iter() {
@@ -1207,13 +1516,11 @@ impl<P: Payload> GMap<P> {
                     .filter_map(|dart| dart_map.get(&dart).copied())
                     .collect()
             });
-            let shell_darts = self.solid_shell_representatives(&attr);
             let new_key = self.solids.insert(attr);
-            for dart in shell_darts {
-                self.dart_to_solid.insert(dart, new_key);
-            }
+            self.record_created_attribute(EditKey::Solid(new_key));
         }
 
+        self.invalidate_derived_indexes();
         remap_dart(&dart_map, handle)
     }
 
@@ -1356,12 +1663,14 @@ impl<P: Payload> GMap<P> {
     }
 
     pub(super) fn link_raw(&mut self, d: Dim, d0: Dart, d1: Dart) {
+        self.invalidate_derived_indexes();
         let i = d.index();
         self.alphas[i][d0.id()] = d1;
         self.alphas[i][d1.id()] = d0;
     }
 
     pub(super) fn unlink_raw(&mut self, d: Dim, dart: Dart) -> Dart {
+        self.invalidate_derived_indexes();
         let i = d.index();
         let a_i = self.alphas[i][dart.id()];
         self.alphas[i][a_i.id()] = a_i;

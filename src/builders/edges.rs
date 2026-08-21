@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::builders::errors::EdgeCreationError;
+use crate::builders::errors::{EdgeCreationError, TopologyEditFailure};
 use crate::geometry::{
     Circle, Curve, Interval, LINEAR_TOLERANCE, NurbsError, Plane, Point3, PointCoincidence,
 };
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
-use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap};
+use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap, TopologyEditError};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, VertexKey};
 use thiserror::Error;
@@ -40,6 +40,14 @@ pub enum EdgeSplitError {
         #[source]
         source: NurbsError,
     },
+    #[error("edge split topology edit failed")]
+    TopologyEditFailed(#[source] TopologyEditFailure),
+}
+
+impl From<TopologyEditError> for EdgeSplitError {
+    fn from(error: TopologyEditError) -> Self {
+        Self::TopologyEditFailed(TopologyEditFailure::new(error))
+    }
 }
 
 struct PreparedFreeEdgeSplit {
@@ -68,6 +76,16 @@ pub fn add_edge<P: Payload>(
     end: Point3,
     curve: Curve,
 ) -> Result<EdgeKey, EdgeCreationError> {
+    g.transaction(|g| add_edge_staged(g, start, end, curve))
+}
+
+/// Builds an open edge without introducing an independent transaction boundary.
+fn add_edge_staged<P: Payload>(
+    g: &mut GMap<P>,
+    start: Point3,
+    end: Point3,
+    curve: Curve,
+) -> Result<EdgeKey, EdgeCreationError> {
     check_non_coincident_points(start, end)?;
     let edge = g
         .edit(|edit| {
@@ -90,8 +108,7 @@ pub fn add_line<P: Payload>(
     start: Point3,
     end: Point3,
 ) -> Result<EdgeKey, EdgeCreationError> {
-    let curve = Curve::line(start, end);
-    add_edge(g, start, end, curve)
+    g.transaction(|g| add_edge_staged(g, start, end, Curve::line(start, end)))
 }
 
 /// Splits a profile-only edge at a parameter of its stored curve.
@@ -108,8 +125,10 @@ pub fn split_edge<P: Payload>(
     edge: EdgeKey,
     parameter: f64,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    let split = prepare_profile_edge_split(g, edge, parameter)?;
-    split_edge_with_profile_links(g, edge, parameter, split)
+    g.transaction(|g| {
+        let split = prepare_profile_edge_split(g, edge, parameter)?;
+        split_edge_with_profile_links(g, edge, parameter, split)
+    })
 }
 
 pub(crate) fn split_face_boundary_edge<P: Payload>(
@@ -118,8 +137,10 @@ pub(crate) fn split_face_boundary_edge<P: Payload>(
     parameter: f64,
     reversed: bool,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    let split = prepare_attached_edge_split(g, edge, parameter)?;
-    split_attached_edge_with_profile_links(g, edge, parameter, split, reversed)
+    g.transaction(|g| {
+        let split = prepare_attached_edge_split(g, edge, parameter)?;
+        split_attached_edge_with_profile_links(g, edge, parameter, split, reversed)
+    })
 }
 
 fn split_edge_with_profile_links<P: Payload>(
@@ -157,7 +178,7 @@ fn split_edge_with_profile_links<P: Payload>(
             );
             Ok((vertex, second))
         })
-        .expect("prepared free edge split must commit");
+        .map_err(EdgeSplitError::from)?;
 
     Ok(EdgeSplit {
         first: edge,
@@ -225,7 +246,7 @@ fn split_attached_edge_with_profile_links<P: Payload>(
             );
             Ok((vertex, second))
         })
-        .expect("prepared attached edge split must commit");
+        .map_err(EdgeSplitError::from)?;
 
     Ok(EdgeSplit {
         first: edge,
@@ -443,6 +464,17 @@ pub fn add_arc<P: Payload>(
     start_angle: f64,
     end_angle: f64,
 ) -> Result<EdgeKey, EdgeCreationError> {
+    g.transaction(|g| add_arc_staged(g, plane, radius, start_angle, end_angle))
+}
+
+/// Validates and builds an arc inside the caller's active transaction.
+fn add_arc_staged<P: Payload>(
+    g: &mut GMap<P>,
+    plane: Plane,
+    radius: f64,
+    start_angle: f64,
+    end_angle: f64,
+) -> Result<EdgeKey, EdgeCreationError> {
     check_valid_radius(radius)?;
     check_valid_angle("start", start_angle)?;
     check_valid_angle("end", end_angle)?;
@@ -450,7 +482,7 @@ pub fn add_arc<P: Payload>(
     let curve = Curve::Circle(Circle::new(plane, radius));
     let start = curve.point_at(start_angle);
     let end = curve.point_at(end_angle);
-    add_edge(g, start, end, curve)
+    add_edge_staged(g, start, end, curve)
 }
 
 /// Adds a closed, single-edge circle on `plane`.
@@ -459,6 +491,15 @@ pub fn add_arc<P: Payload>(
 /// two darts are alpha-0- and alpha-1-linked to form a closed profile. `radius`
 /// must be positive and finite.
 pub fn add_circle<P: Payload>(
+    g: &mut GMap<P>,
+    plane: Plane,
+    radius: f64,
+) -> Result<EdgeKey, EdgeCreationError> {
+    g.transaction(|g| add_circle_staged(g, plane, radius))
+}
+
+/// Builds a closed circular edge inside the caller's active transaction.
+fn add_circle_staged<P: Payload>(
     g: &mut GMap<P>,
     plane: Plane,
     radius: f64,

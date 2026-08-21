@@ -1,3 +1,5 @@
+#[path = "builders/chamfer.rs"]
+mod chamfer;
 #[path = "builders/faces.rs"]
 mod faces;
 #[path = "builders/profiles.rs"]

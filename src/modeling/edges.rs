@@ -1,6 +1,7 @@
 use crate::builders::edges::{add_arc, add_circle, add_line};
 use crate::builders::errors::EdgeCreationError;
 use crate::geometry::{Plane, Point3};
+use crate::topology::TopologyEditError;
 use crate::topology::gmap::GMap;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
@@ -38,10 +39,13 @@ impl<P: Payload> Shape<EdgeTag, P> {
     pub fn into_profile(self) -> Shape<ProfileTag, P> {
         let (mut g, edge_key) = self.into_map();
         let dart = g.edge_attr_unchecked(edge_key).dart;
-        let profile_key = g.add_profile(crate::topology::attributes::ProfileAttr::new(
-            dart,
-            P::Profile::default(),
-        ));
+        let profile_key = g
+            .transaction(|g| {
+                Ok::<_, TopologyEditError>(g.add_profile(
+                    crate::topology::attributes::ProfileAttr::new(dart, P::Profile::default()),
+                ))
+            })
+            .expect("edge-to-profile conversion must commit");
         Shape::new(g, profile_key)
     }
 }

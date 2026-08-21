@@ -1,3 +1,4 @@
+pub mod chamfer;
 pub mod edges;
 pub mod errors;
 pub mod faces;

@@ -86,6 +86,15 @@ pub fn add_extruded_face<P: Payload>(
     face_key: FaceKey,
     direction: Vector3<f64>,
 ) -> Result<SolidKey, ExtrudeError> {
+    g.transaction(|g| add_extruded_face_staged(g, face_key, direction))
+}
+
+/// Builds translated caps and lateral faces, then registers the staged solid.
+fn add_extruded_face_staged<P: Payload>(
+    g: &mut GMap<P>,
+    face_key: FaceKey,
+    direction: Vector3<f64>,
+) -> Result<SolidKey, ExtrudeError> {
     let bot_face = g
         .face_attr(face_key)
         .map(|attr| attr.face(g))
