@@ -55,6 +55,13 @@ struct PreparedAttachedEdgeSplit {
     edge_darts: Vec<Dart>,
 }
 
+/// Adds an isolated edge with the supplied endpoints and curve geometry.
+///
+/// The new edge contains two vertices joined by an alpha-0 link and remains
+/// free in higher dimensions. The curve is stored as provided; this function
+/// does not verify that it interpolates `start` and `end`.
+///
+/// Returns an error when the endpoints coincide within [`LINEAR_TOLERANCE`].
 pub fn add_edge<P: Payload>(
     g: &mut GMap<P>,
     start: Point3,
@@ -75,6 +82,9 @@ pub fn add_edge<P: Payload>(
     Ok(edge)
 }
 
+/// Adds an isolated straight edge between `start` and `end`.
+///
+/// Returns an error when the endpoints coincide within [`LINEAR_TOLERANCE`].
 pub fn add_line<P: Payload>(
     g: &mut GMap<P>,
     start: Point3,
@@ -84,6 +94,15 @@ pub fn add_line<P: Payload>(
     add_edge(g, start, end, curve)
 }
 
+/// Splits a profile-only edge at a parameter of its stored curve.
+///
+/// The original edge key is retained for the first segment. The returned
+/// [`EdgeSplit`] also identifies the newly created second segment and the
+/// inserted vertex. Existing alpha-1 profile links are preserved on both sides
+/// of the split.
+///
+/// This operation rejects edges attached to faces; use
+/// [`crate::builders::faces::split_face_edge`] for face-boundary edges.
 pub fn split_edge<P: Payload>(
     g: &mut GMap<P>,
     edge: EdgeKey,
@@ -412,6 +431,11 @@ fn check_split_parameter<P: Payload>(
     Ok(())
 }
 
+/// Adds an isolated circular arc edge on `plane`.
+///
+/// The endpoint positions are sampled from the circle at `start_angle` and
+/// `end_angle`. The radius must be positive and finite, both angles must be
+/// finite, and the resulting endpoints must not coincide.
 pub fn add_arc<P: Payload>(
     g: &mut GMap<P>,
     plane: Plane,
@@ -429,6 +453,11 @@ pub fn add_arc<P: Payload>(
     add_edge(g, start, end, curve)
 }
 
+/// Adds a closed, single-edge circle on `plane`.
+///
+/// The edge has one topological vertex at the plane's positive x-axis and its
+/// two darts are alpha-0- and alpha-1-linked to form a closed profile. `radius`
+/// must be positive and finite.
 pub fn add_circle<P: Payload>(
     g: &mut GMap<P>,
     plane: Plane,

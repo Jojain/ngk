@@ -11,6 +11,15 @@ enum CornerRole {
     OutgoingStart,
 }
 
+/// Replaces a corner of a line-only profile with a straight chamfer edge.
+///
+/// `vertex_dart` may identify either side of the profile corner. The builder
+/// moves each incident edge endpoint by `distance` from the original vertex,
+/// updates both line geometries, and sews a new line between the offset points.
+///
+/// Returns an error when the dart is an open-profile endpoint, the corner is
+/// ambiguous, either incident edge is not a line, or `distance` is non-positive
+/// or too large for either edge.
 pub fn chamfer_profile_vertex<P: Payload>(
     g: &mut GMap<P>,
     vertex_dart: Dart,

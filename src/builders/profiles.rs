@@ -13,6 +13,13 @@ use crate::topology::shape_keys::{EdgeKey, ProfileKey, VertexKey};
 
 pub use crate::builders::errors::PolylineError;
 
+/// Adds a profile made of straight segments through `points` in order.
+///
+/// Consecutive points define the profile edges. When the last point coincides
+/// with the first within [`LINEAR_TOLERANCE`], the final edge closes the profile;
+/// otherwise both ends remain open.
+///
+/// At least two points are required.
 pub fn add_polyline<P: Payload>(
     g: &mut GMap<P>,
     points: &[Point3],
@@ -118,6 +125,12 @@ fn append_orientation(
     }
 }
 
+/// Builds the face-parameter curves for every edge of `profile` on `plane`.
+///
+/// Each result is keyed by the oriented profile-edge dart. Straight edges
+/// become UV-space lines; other supported curves are converted to NURBS and
+/// their control points are projected into the plane's local coordinates.
+/// This function does not require the source geometry to lie on `plane`.
 pub fn profile_pcurves<P: Payload>(
     profile: &Profile<'_, P>,
     plane: &Plane,
@@ -182,6 +195,10 @@ fn curve_pcurve(
     }
 }
 
+/// Returns the local `(u, v)` coordinates of `point` in `plane`.
+///
+/// The coordinates are the projections of `point - plane.origin()` onto the
+/// plane's x and y directions.
 pub fn plane_uv(plane: &Plane, point: Point3) -> Point2 {
     let v = point - plane.origin();
     Point2::new(v.dot(&plane.x_dir()), v.dot(&plane.y_dir()))
@@ -215,6 +232,10 @@ pub fn add_rectangle<P: Payload>(
     add_polyline(g, &corners)
 }
 
+/// Adds a closed square profile on `plane`.
+///
+/// The first corner is the plane origin and the sides follow its positive x and
+/// y directions. `size` must be positive and finite.
 pub fn add_square<P: Payload>(
     g: &mut GMap<P>,
     plane: Plane,

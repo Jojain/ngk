@@ -18,6 +18,14 @@ use crate::{
     },
 };
 
+/// Returns an isolated copy of `face` translated by `direction`.
+///
+/// Vertex positions, edge curves, and the supporting surface are translated;
+/// face pcurves remain unchanged because they use the face's local parameter
+/// space. The source map is not modified.
+///
+/// Returns an error for a zero direction or when curve or surface geometry
+/// cannot be translated.
 pub fn translate_face<P: Payload>(
     face: &Face<'_, P>,
     direction: Vector3<f64>,
@@ -64,6 +72,15 @@ pub fn translate_face<P: Payload>(
     Ok(Shape::new(translated, translated_face_key))
 }
 
+/// Extrudes an existing face into a solid along `direction`.
+///
+/// The source face becomes one cap, a translated copy becomes the opposite cap,
+/// and one lateral face is added for every edge of the outer and inner boundary
+/// loops. Cap winding is adjusted so the resulting shell faces outward.
+///
+/// Returns an error when the face is missing, the direction is zero, required
+/// boundary geometry is absent, or a lateral face is degenerate or cannot be
+/// sewn into the shell.
 pub fn add_extruded_face<P: Payload>(
     g: &mut GMap<P>,
     face_key: FaceKey,

@@ -444,6 +444,15 @@ struct IncidentFacePcurve {
     fraction: f64,
 }
 
+/// Adds a planar face bounded by an existing profile loop.
+///
+/// The profile must be closed and planar. Its plane becomes the supporting
+/// surface, and a pcurve is generated for every oriented boundary edge. The
+/// existing profile topology is reused as the face's outer loop.
+///
+/// # Panics
+///
+/// Panics if `loop_dart` does not belong to a registered profile.
 pub fn add_face<P: Payload>(
     g: &mut GMap<P>,
     loop_dart: Dart,
@@ -469,6 +478,10 @@ pub fn add_face<P: Payload>(
     Ok(face_key)
 }
 
+/// Adds a planar rectangular face whose first corner is `plane.origin()`.
+///
+/// The sides follow the plane's positive x and y directions and have lengths
+/// `x_size` and `y_size`. Both sizes must be positive and finite.
 pub fn add_rectangle(
     g: &mut GMap<StandardPayload>,
     plane: Plane,
@@ -480,6 +493,10 @@ pub fn add_rectangle(
     add_face(g, loop_dart)
 }
 
+/// Adds a planar square face whose first corner is `plane.origin()`.
+///
+/// The sides follow the plane's positive x and y directions. `size` must be
+/// positive and finite.
 pub fn add_square(
     g: &mut GMap<StandardPayload>,
     plane: Plane,
@@ -490,6 +507,13 @@ pub fn add_square(
     add_face(g, loop_dart)
 }
 
+/// Splits a face-boundary edge and all of its incident face pcurves.
+///
+/// `parameter` is interpreted in the stored 3D curve's parameter domain. The
+/// split is applied across the full topological edge, so pcurves on neighboring
+/// faces sharing that edge are split at the corresponding surface points too.
+/// The returned [`EdgeSplit`] identifies both resulting edges and the inserted
+/// vertex; the original edge key is retained by the first segment.
 pub fn split_face_edge<P: Payload>(
     g: &mut GMap<P>,
     face: FaceKey,
@@ -507,6 +531,17 @@ pub fn split_face_edge<P: Payload>(
     Ok(split)
 }
 
+/// Subdivides a face with model-space curves paired with face pcurves.
+///
+/// Imprint endpoints on boundary-edge interiors are inserted before paving the
+/// face. Open boundary-to-boundary imprints form section edges, while closed
+/// imprints form interior loops and separate faces. Intersecting pcurves are
+/// normalized through [`FaceImprintGraph`] so coincident fragments are not
+/// inserted twice.
+///
+/// Returns one [`FaceImprintSplit`] for each subdivision that was applied.
+/// Imprints that do not define an applicable cut may produce no split rather
+/// than an error; invalid topology or missing geometry is reported as an error.
 pub fn split_face_by_imprints<P: Payload>(
     g: &mut GMap<P>,
     face: FaceKey,
@@ -1355,6 +1390,10 @@ fn split_one_face_by_imprints<P: Payload>(
     Ok(Some(apply_outer_face_chord_split(g, face, old_face, &cut)?))
 }
 
+/// Adds a planar disk face bounded by one circular edge.
+///
+/// The circle is centered at `plane.origin()` and uses the plane orientation.
+/// `radius` must be positive and finite.
 pub fn add_circle(
     g: &mut GMap<StandardPayload>,
     plane: Plane,
@@ -1622,6 +1661,11 @@ fn split_face_pcurves<P: Payload>(
     Ok(pcurves)
 }
 
+/// Adds a planar annular face with concentric circular boundary loops.
+///
+/// The outer loop follows `plane` orientation and the inner loop is reversed to
+/// represent a hole. Both radii must be positive and finite, and `outer_radius`
+/// must be greater than `inner_radius`.
 pub fn add_annulus(
     g: &mut GMap<StandardPayload>,
     plane: Plane,
@@ -1816,6 +1860,13 @@ fn assign_split_pcurves<P: Payload>(
     Ok(())
 }
 
+/// Adds a planar polygon face with zero or more polygonal holes.
+///
+/// `outer` and every entry in `holes` are interpreted in the supplied order and
+/// projected into `plane` to build their pcurves. Each loop must contain at
+/// least three points. The caller is responsible for supplying coplanar,
+/// non-self-intersecting loops with suitable winding and containment; those
+/// geometric relationships are not validated here.
 pub fn add_polygon_with_holes(
     g: &mut GMap<StandardPayload>,
     plane: Plane,
