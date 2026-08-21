@@ -1,7 +1,19 @@
-# Topology Orientation Refactor Plan
+# Topology Identity and Orientation Design
 
-This document records the intended refactor for stable topology identity,
-orientation-sensitive views, shared faces, and mutation safety.
+This document records the adopted design for stable topology identity,
+orientation-sensitive views, shared cells, and mutation safety.
+
+The central rule is:
+
+```text
+identity = XKey
+default orientation = reference dart stored in XAttr
+contextual orientation = dart carried by the topology view
+```
+
+An entity keeps one durable key even when different traversals observe it with
+opposite orientations. Oriented uses are derived from darts and do not receive
+their own durable keys unless they eventually need persistent data.
 
 ## Problem
 
@@ -14,11 +26,11 @@ However, several topology views expose orientation-sensitive behavior:
 
 - `Edge::start`, `Edge::end`, and tangents depend on edge direction.
 - `Profile` traversal and tangents depend on profile direction.
-- `Face::normal` depends on trim orientation relative to the support surface.
-- Solid outward normals depend on how a face is used by a shell or solid.
+- `Face::normal_at` depends on trim orientation relative to the support surface.
+- Solid outward normals depend on how a shared face is reached from a shell.
 
-The refactor must make these orientations explicit and stable without making
-callers manage raw dart lifetimes.
+The API must preserve stable identity while carrying the exact local traversal
+context internally.
 
 ## Orientation Layers
 
@@ -29,90 +41,108 @@ The model has three orientation layers.
 Geometry has its own intrinsic parameter direction.
 
 - A `Curve` has a parameter direction.
-- A `Surface` has a UV parameterization and a surface normal.
+- A `Surface` has a UV parameterization and a support-surface normal.
 
 This layer does not know about topology ownership or traversal context.
 
 ### 2. Default Entity Orientation
 
-Each durable topology entity has a default orientation stored through its
-`XAttr` locator dart.
-
-The locator is not just any representative dart. It is the current live dart
-that preserves the entity's chosen orientation.
+Each durable topology entity has a default orientation stored through a live
+locator dart in its attribute.
 
 Examples:
 
 - `EdgeKey -> EdgeAttr { dart, curve, ... }`
+- `ProfileKey -> ProfileAttr { dart, ... }`
 - `FaceKey -> FaceAttr { outer_loop, inner_loops, surface, pcurves, ... }`
-- future `ProfileKey -> ProfileAttr { dart, ... }`
+- `SheetKey -> SheetAttr { dart, ... }`
 
-Views built from keys use this default orientation.
+The locator is not an arbitrary canonical representative. It is a live dart
+that preserves the entity's chosen default orientation. A view built from a key
+starts from that reference orientation.
 
-### 3. Use Orientation
+### 3. Contextual Use Orientation
 
 A use is a local traversal or incidence of an entity inside another entity.
-It is relative to the default orientation.
+Its orientation is relative to the entity's default locator.
 
 Examples:
 
-- A profile traverses an edge forward or reversed.
-- A face loop traverses an edge forward or reversed.
-- A shell uses a face with the same or opposite orientation.
+- A profile traverses a shared edge forward or reversed.
+- A face loop traverses a shared edge forward or reversed.
+- Two shells reach the same shared face from opposite volumes.
 
-Uses are usually derived views, not stored identities.
+Uses are normally transient views. The traversed dart is enough to preserve the
+context, so there is no need to store a separate `Orientation` field or create
+`EdgeUseKey` and `FaceUseKey` identities.
 
-## Public View Shape
+## Topology Views
 
-Keep the public names simple. `Face` and `Edge` carry an `Orientation` instead
-of introducing public `FaceUse` and `EdgeUse` types immediately.
+`Edge`, `Face`, `Profile`, and `Sheet` combine a stable key with a contextual
+dart. The essential shape is:
 
 ```rust
-pub enum Orientation {
-    Same,
-    Reversed,
-}
-
 pub struct Edge<'g, P> {
     gmap: &'g GMap<P>,
     key: EdgeKey,
-    orientation: Orientation,
+    dart: Dart,
 }
 
 pub struct Face<'g, P> {
     gmap: &'g GMap<P>,
     key: FaceKey,
-    orientation: Orientation,
+    dart: Dart,
 }
 ```
 
-Default key lookup returns `Orientation::Same`.
+Construction from a key uses the attribute's reference dart:
 
-```rust
-gmap.edge(edge_key) -> Edge { key, orientation: Same }
-gmap.face(face_key) -> Face { key, orientation: Same }
+```text
+gmap.edge(edge_key) -> Edge { key, dart: EdgeAttr.dart }
+gmap.face(face_key) -> Face { key, dart: FaceAttr.outer_loop }
 ```
 
-Traversal APIs derive the appropriate orientation.
+Construction during traversal preserves the dart that was actually reached:
 
-```rust
-profile.edges() -> impl Iterator<Item = Edge<'g, P>>
-face.outer_loop().edges() -> impl Iterator<Item = Edge<'g, P>>
-shell.faces() -> impl Iterator<Item = Face<'g, P>>
+```text
+Edge::from_dart(gmap, dart) -> Edge { resolved key, dart }
+Face::from_dart(gmap, dart) -> Face { resolved key, dart }
 ```
 
-Each view exposes:
+`reversed()` keeps the same key and replaces the contextual dart with
+`alpha0(dart)`. Orientation-sensitive operations derive `Same` or `Reversed`
+from the contextual dart only when they need it.
 
-- `key()`
-- `orientation()`
-- `reversed()`
-- orientation-sensitive methods that apply `orientation`
-- explicit geometry/default methods when useful
+Traversal APIs therefore return correctly oriented views without exposing an
+extra public use type:
 
-## Face Semantics
+```rust
+profile.edges() -> Vec<Edge<'g, P>>
+face.edges() -> Vec<Edge<'g, P>>
+sheet.faces() -> Vec<Face<'g, P>>
+```
 
-Do not introduce a separate attribute layer for raw GMap 2-cell orbits.
-`FaceKey -> FaceAttr` is the face storage boundary.
+## Shared Face Semantics
+
+`FaceKey` identifies one complete topological 2-cell.
+
+When two volumes are 3-sewn, `alpha3` identifies their two initial boundary
+faces as one shared 2-cell. The resulting interface therefore has one
+`FaceKey`, one `FaceAttr`, and one set of support and trimming data.
+
+```text
+volume A -- contextual dart d ------\
+                                      FaceKey F -> FaceAttr
+volume B -- contextual dart alpha3(d) /
+```
+
+The two volumes do not need different face identities. Their shell traversals
+produce `Face` views with the same key and contextual darts that resolve to the
+appropriate relative orientation. Consequently, the face normal is outward or
+inward according to the traversal without duplicating the face entity.
+
+`FaceAttr.outer_loop` defines the shared face's default orientation. It does
+not identify a volume-specific side.
 
 ```rust
 FaceKey -> FaceAttr {
@@ -124,31 +154,25 @@ FaceKey -> FaceAttr {
 }
 ```
 
-`FaceKey` identifies one oriented CAD face side. `FaceAttr.outer_loop` is the
-current live oriented root of that side. `FaceAttr.surface` and
-`FaceAttr.pcurves` are the support geometry and trimming data for that face.
+This design intentionally means that persistent data attached to `FaceAttr`
+belongs to the shared face, not to one face-volume incidence. If persistent
+per-volume-side data becomes necessary, it should be modeled as explicit
+incidence/use data rather than by duplicating `FaceKey`.
 
-This intentionally duplicates geometry when two sewn solids have opposite sides
-of the same geometric interface. That is acceptable for the first design:
+There is no separate `Facet` or raw-2-cell attribute layer. `FaceAttr` is the
+storage boundary for the face's topology-facing geometry and payload.
 
-- the common CAD-facing identity is the oriented `FaceKey`;
-- `gmap.face(face_key)` can always rebuild a stable oriented `Face`;
-- `solid.faces()` can return plain `Face` views with the correct solid-relative
-  orientation;
-- there is no extra raw-2-cell key that callers or builders must keep in sync.
+### Sewing Faces That Already Have Keys
 
-The raw GMap 2-cell orbit may still span both sides when two volumes are sewn
-through `alpha3`. That shared orbit is a topology relation, not a stored CAD
-face identity. If algorithms need to inspect the shared interface, they can do
-so by traversing the GMap cell orbit or by following `alpha3` from one face side
-to the opposite side.
-
-Shared support storage can be introduced later only if duplication becomes a
-real problem. It should not be part of the first orientation refactor.
+Before a 3-sew, the two independent boundary faces may each have their own
+`FaceKey`. Once sewing identifies them as one 2-cell, topology reconciliation
+must select one surviving key, merge payloads according to the edit policy, and
+remove the consumed key. Rebuilding the face index must never leave two keys
+for the same 2-cell.
 
 ## Edge Semantics
 
-`EdgeKey` identifies a durable edge with a default direction.
+`EdgeKey` identifies one durable 1-cell with a default direction.
 
 ```rust
 EdgeKey -> EdgeAttr {
@@ -164,205 +188,164 @@ The intended invariant is:
 EdgeAttr.curve parameter direction follows EdgeAttr.dart.
 ```
 
-So `gmap.edge(edge_key)` can answer `start`, `end`, and `tangent` in a stable
-default orientation. When a profile or loop traverses the edge in the opposite
-direction, it returns an `Edge` view with `Orientation::Reversed`.
+`gmap.edge(edge_key)` can therefore answer `start`, `end`, and tangent queries
+in a stable default orientation. When a profile or face loop reaches the edge
+in the opposite direction, `Edge::from_dart` returns the same `EdgeKey` with the
+opposite contextual dart. `start` and `end` then naturally swap.
 
-No `EdgeUseKey` is needed initially. Add one only if edge uses need durable
-identity or own persistent data.
+No `EdgeUseKey` is needed unless an edge use eventually owns persistent data.
 
-## Profile Semantics
+## Profile and Sheet Semantics
 
-`Profile` can remain a transient dart-based view while profiles are only
-temporary traversal results.
-
-If profiles become durable user/modeling entities, add:
+Profiles and sheets are durable keyed entities with oriented reference darts:
 
 ```rust
-ProfileKey -> ProfileAttr {
-    dart: Dart,
-}
+ProfileKey -> ProfileAttr { dart, data }
+SheetKey -> SheetAttr { dart, data }
 ```
 
-Then `ProfileAttr.dart` is the current live oriented root, not a canonical
-representative. `gmap.profile(profile_key)` can then answer start/end/tangent in
-a stable direction.
+Views created from keys start at these reference darts. Views created during a
+traversal keep the reached darts. Reversing a profile or sheet traversal changes
+the orientation of the returned edge or face views without changing their
+keys.
+
+## Orientation Derivation
+
+`Orientation::{Same, Reversed}` remains a useful derived value, but it is not
+stored in topology views.
+
+`GMap::cell_orientation_from_seed` compares a contextual dart with a reference
+dart inside the same cell orbit. Moving through a lower-dimensional involution
+reverses the cell orientation; moving through a higher-dimensional incidence
+preserves its intrinsic orientation.
+
+This lets typed views retain the exact traversal dart while centralizing the
+rules used by `edge_orientation_at_dart` and `face_orientation_at_dart`.
 
 ## Stored Data Versus Derived Uses
 
-Store durable entities and their locators:
+Store durable entities and their default locators:
 
 - `VertexKey -> VertexAttr`
 - `EdgeKey -> EdgeAttr`
+- `ProfileKey -> ProfileAttr`
 - `FaceKey -> FaceAttr`
+- `SheetKey -> SheetAttr`
 - `SolidKey -> SolidAttr`
-- optional future `ProfileKey -> ProfileAttr`
 
-Derive uses during traversal:
+Derive oriented uses during traversal:
 
-- `profile.edges()` derives edge orientation from the traversed dart.
-- `face.outer_loop().edges()` derives edge orientation from the loop dart.
-- `shell.faces()` derives face orientation from the shell traversal dart.
+- `profile.edges()` preserves each traversed edge dart.
+- `face.edges()` preserves the oriented boundary traversal.
+- `sheet.faces()` preserves each face's sheet-relative traversal dart.
+- solid shell traversal delegates to an oriented `Sheet`/`ShellRef` view.
 
 Do not add `XUseKey` until a use needs durable identity or persistent data.
 
 ## Indexing Requirements
 
-The map needs indexes that resolve keys from darts without using raw darts as
-durable handles.
+Indexes resolve keys from darts without using raw darts as durable public
+handles.
 
-Existing or required indexes:
+- canonical 0-cell representative to `VertexKey`
+- canonical 1-cell representative to `EdgeKey`
+- profile representative to `ProfileKey`
+- canonical 2-cell representative to `FaceKey`
+- canonical 3-cell representative to `SheetKey`
 
-- cell representative to `VertexKey`
-- cell representative to `EdgeKey`
-- face-side or loop representative to `FaceKey`
+Canonical representatives define cell identity for indexing. They do not
+define public orientation: the live locators stored in attributes do that.
 
-Canonical representatives are useful for indexes, but must not define
-user-facing orientation.
-
-`XAttr.dart` or `FaceAttr.outer_loop` defines the default orientation.
-
-For faces, the index must resolve a traversed side to the correct `FaceKey`
-without merging the opposite side reached through `alpha3`.
+For faces, the canonical 2-cell orbit includes `alpha3`. Both volume-side darts
+of a sewn interface must therefore resolve to the same `FaceKey`. Index rebuild
+must reject duplicate keys for a single resulting cell unless an explicit merge
+event selects the survivor.
 
 ## Pcurves
 
-Pcurves live in `FaceAttr`.
+Pcurves live in the shared `FaceAttr`.
 
-The stored pcurve for a dart follows that dart's oriented boundary traversal.
-When a view requests the pcurve from the opposite traversal direction, return a
-reversed curve view/value.
+The stored pcurve for a boundary dart follows that dart's oriented boundary
+traversal. When a face view requests the pcurve from the opposite orientation,
+the centralized lookup returns the reversed curve value.
 
-The pcurve lookup should be centralized so callers do not manually inspect
-`alpha0`/`alpha3` combinations.
+Callers should not manually inspect `alpha0`, `alpha2`, or `alpha3` combinations
+to orient pcurves.
 
 ## Mutation Safety
 
-The biggest risk is stale locators. If an operation deletes the dart stored in
-`EdgeAttr.dart`, `FaceAttr.outer_loop`, an inner loop, or a pcurve key, the key
-can remain valid only if the locator is repaired.
+If an operation deletes a dart stored in `VertexAttr.dart`, `EdgeAttr.dart`,
+`ProfileAttr.dart`, `FaceAttr.outer_loop`, `FaceAttr.inner_loops`,
+`SheetAttr.dart`, `SolidAttr`, or a pcurve key, the durable key can remain valid
+only if topology reconciliation repairs the locator.
 
-Topology mutation code must not update attributes ad hoc.
+Topology mutation therefore goes through the centralized edit pipeline. It
+reconciles live locators, semantic split/merge events, payload policy, and all
+`dart_to_*` indexes before validating and committing the result.
 
-Introduce a centralized topology edit/remap pipeline:
+The reconciliation step must verify that remapped darts still belong to the
+expected cell and preserve the intended default orientation unless the edit
+explicitly reverses the entity.
 
-```rust
-TopologyEdit {
-    dart_remaps: old_dart -> new_dart,
-    removed_keys,
-    new_keys,
-}
-```
+## Required Invariants and Tests
 
-Then one internal `GMap` method applies the edit and reconciles:
+- Every attribute locator dart is live.
+- Every locator belongs to the cell identified by its key.
+- Every topological cell has at most one key of its dimension.
+- Both darts related across `alpha3` on a sewn face resolve to the same
+  `FaceKey`.
+- Traversing that shared face from opposite volume contexts produces opposite
+  relative orientations and normals.
+- `EdgeAttr.curve` direction matches `EdgeAttr.dart`.
+- `FaceAttr.outer_loop` and inner loops are closed.
+- Pcurve keys resolve to valid oriented boundary darts.
+- Every index can be rebuilt from attributes after topology edits.
 
-- `VertexAttr.dart`
-- `EdgeAttr.dart`
-- `FaceAttr.outer_loop`
-- `FaceAttr.inner_loops`
-- future `ProfileAttr.dart`
-- `SolidAttr` locators
-- `FaceAttr.pcurves` keys
-- `dart_to_*` indexes
-
-The reconciliation step should validate that remapped darts still belong to the
-expected cell/side and preserve the expected orientation unless the edit
-explicitly says an entity was reversed.
-
-## Refactor Steps
-
-1. Introduce `Orientation`.
-
-   Add a small orientation enum with helpers such as `flip`, `apply_vector`, and
-   `compose`.
-
-2. Change `Edge` view to key plus orientation.
-
-   `GMap::edge(EdgeKey)` returns `Orientation::Same`. Traversals that currently
-   create `Edge::new(gmap, dart)` should resolve `EdgeKey` and derive
-   `Orientation`.
-
-3. Make `EdgeAttr.dart` orientation-preserving.
-
-   Stop treating it as a canonical representative for public orientation.
-   Keep separate representative-based indexes for lookup.
-
-4. Change `Face` view to key plus orientation.
-
-   `GMap::face(FaceKey)` returns `Orientation::Same`. Shell/solid traversal
-   derives `Orientation` relative to `FaceAttr.outer_loop`.
-
-5. Collapse face geometry into `FaceAttr`.
-
-   Keep raw 2-cell orbits as topology only. Store `surface`, `pcurves`, and
-   face payload directly on `FaceAttr`.
-
-6. Centralize pcurve orientation lookup.
-
-   Replace direct pcurve map access in higher-level code with a method that
-   returns direct or reversed pcurves according to the requested oriented dart.
-
-7. Add side-to-face indexing.
-
-   Ensure `GMap` can resolve a traversed face-side dart to the correct
-   `FaceKey` without merging the alpha3-opposite side.
-
-8. Introduce topology edit remapping.
-
-   Start with a minimal remap table and a reconciliation method for locators and
-   indexes. Migrate split/chamfer/imprint code to emit/apply remaps instead of
-   manually mutating attrs.
-
-9. Add invariant checks.
-
-   Provide debug/test helpers that verify:
-
-   - every attr locator dart is live;
-   - every locator belongs to the expected cell/side;
-   - `EdgeAttr.curve` direction matches `EdgeAttr.dart`;
-   - `FaceAttr.outer_loop` and inner loops are closed;
-   - pcurve keys resolve to valid oriented boundary darts;
-   - every index can be rebuilt from attrs.
-
-10. Decide later whether `ProfileKey` is needed.
-
-   Keep `Profile` transient for now unless durable profile identity is needed.
-   If introduced, make `ProfileAttr.dart` an orientation-preserving live locator
-   and include it in the topology edit remap pipeline.
-
-## Non-goals For The First Pass
+## Non-goals
 
 - Do not add `EdgeUseKey`, `FaceUseKey`, or `ProfileUseKey` unless a use needs
-  durable identity or own data.
-- Do not add a separate raw-2-cell attribute layer unless shared support
-  storage becomes a demonstrated need.
+  durable identity or persistent data.
+- Do not create separate `FaceKey` values for the two volume-side uses of one
+  `alpha3`-shared face.
+- Do not add a separate `Facet` or raw-2-cell attribute layer.
 - Do not encode face holes into artificial GMap topology just to avoid
   `FaceAttr.inner_loops`.
-- Do not use canonical dart representatives as default public orientation.
+- Do not use canonical representatives as default public orientation.
 - Do not expose raw mutable access to orientation locator fields from builders.
 
-## Desired End State
+## API Examples
 
-The stable API should feel like:
+Default views use the stored orientation:
 
 ```rust
 let edge = gmap.edge(edge_key)?;
 edge.start();
 edge.end();
-edge.tangent_at(t);
 
 let face = gmap.face(face_key)?;
 face.normal_at(u, v);
+```
 
+Traversal returns contextual views:
+
+```rust
 for edge in profile.edges() {
-    edge.tangent_at(t); // local traversal orientation
+    edge.start(); // profile-relative start
+    edge.end();   // profile-relative end
 }
 
 for face in shell.faces() {
-    face.normal_at(u, v); // shell-relative orientation
+    face.normal_at(u, v); // shell-relative normal, shared FaceKey
 }
 ```
 
-Keys preserve identity. Attrs preserve live default orientation. Views carry
-`Orientation` when they represent a local use. Raw darts remain internal
-traversal tools, not durable user-facing handles.
+Reversing changes the view, not the identity:
+
+```rust
+let reversed = face.reversed();
+assert_eq!(face.key(), reversed.key());
+```
+
+Keys preserve identity. Attributes preserve live default orientation. Views
+carry contextual darts. `Orientation` is derived only when an operation needs
+to compare a contextual use with the default orientation.

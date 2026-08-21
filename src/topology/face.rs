@@ -12,14 +12,15 @@ use crate::topology::attributes::FaceAttr;
 use crate::topology::shape_keys::FaceKey;
 use nalgebra::UnitVector3;
 
-/// A domain-level face view with key and orientation.
+/// A domain-level face view with stable identity and contextual orientation.
 ///
 /// A face is a surface region backed by a stored [`FaceAttr`]. It has one
 /// outer boundary loop and zero or more inner loops for holes.
 ///
-/// The [`orientation`](Self::orientation) records whether this view's traversal
-/// direction matches the face's default orientation. The face's default
-/// orientation is defined by its [`outer_loop`](FaceAttr::outer_loop) dart.
+/// The view's dart records how the face was reached by the current traversal.
+/// Its orientation is derived relative to the default orientation defined by
+/// [`FaceAttr::outer_loop`]. Opposite volume-side uses of a sewn face therefore
+/// share one [`FaceKey`] while producing oppositely oriented views.
 pub struct Face<'g, P: Payload = StandardPayload> {
     gmap: &'g GMap<P>,
     key: FaceKey,

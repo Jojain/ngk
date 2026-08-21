@@ -13,15 +13,15 @@ use super::vertex::Vertex;
 
 /// A typed view over a 1-cell of a [`GMap`].
 ///
-/// The view carries a stable [`EdgeKey`] and an [`Orientation`] that records
-/// whether the local traversal direction matches the edge's default direction.
+/// The view carries a stable [`EdgeKey`] and a contextual dart. The dart records
+/// the local traversal direction relative to the edge's stored default dart.
 ///
 /// # Default orientation
 ///
-/// `GMap::edge(edge_key)` returns `Orientation::Same`. Traversals such as
+/// `GMap::edge(edge_key)` uses the dart stored in `EdgeAttr`. Traversals such as
 /// [`Profile::edges`](crate::topology::profile::Profile::edges) or
-/// [`Face::edges`](crate::topology::face::Face::edges) resolve the correct
-/// [`Orientation`] based on the traversed dart.
+/// [`Face::edges`](crate::topology::face::Face::edges) preserve the exact dart
+/// reached in that traversal context.
 pub struct Edge<'a, P: Payload = StandardPayload> {
     gmap: &'a GMap<P>,
     key: EdgeKey,
@@ -51,10 +51,6 @@ impl<'a, P: Payload> Edge<'a, P> {
 
     /// Returns the dart that represents this edge view in the current
     /// traversal context.
-    ///
-    /// When `orientation` is [`Same`](Orientation::Same), this is
-    /// the edge's default dart. When [`Reversed`](Orientation::Reversed),
-    /// this is `alpha0` of the default dart.
     pub fn dart(&self) -> Dart {
         self.dart
     }

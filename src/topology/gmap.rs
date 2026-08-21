@@ -759,8 +759,8 @@ impl<P: Payload> GMap<P> {
         self.face(key).expect("face should be in the map")
     }
 
-    /// Returns the orientation of the face side traversed at `dart` relative
-    /// to the face's default orientation.
+    /// Returns the face orientation at `dart` relative to the face's stored
+    /// default orientation.
     ///
     /// # Panics
     ///
