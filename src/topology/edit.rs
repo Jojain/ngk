@@ -200,6 +200,12 @@ pub enum TopologyEditError {
     /// A dart does not exist in the edited map.
     #[error("dart {dart:?} does not exist")]
     MissingDart { dart: Dart },
+    /// A face boundary does not have a registered profile identity.
+    #[error("face {face:?} boundary at {dart:?} has no registered profile")]
+    MissingProfileRegistration { face: FaceKey, dart: Dart },
+    /// A solid shell does not have a registered sheet identity.
+    #[error("solid {solid:?} shell at {dart:?} has no registered sheet")]
+    MissingSheetRegistration { solid: SolidKey, dart: Dart },
     /// An involution cannot link a dart to itself.
     #[error("cannot link dart {dart:?} to itself")]
     SameDart { dart: Dart },
@@ -324,24 +330,6 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
         T: MergeTopology<P>,
     {
         self.gmap.merge(topology)
-    }
-
-    /// Returns the profile containing `dart`, registering it when needed.
-    pub fn ensure_profile(&mut self, dart: Dart) -> ProfileKey {
-        if let Some(key) = self.gmap.profile_key(dart) {
-            key
-        } else {
-            self.add_profile(ProfileAttr::new(dart, P::Profile::default()))
-        }
-    }
-
-    /// Returns the sheet containing `dart`, registering it when needed.
-    pub fn ensure_sheet(&mut self, dart: Dart) -> SheetKey {
-        if let Some(key) = self.gmap.sheet_key(dart) {
-            key
-        } else {
-            self.add_sheet(SheetAttr::new(dart, P::Sheet::default()))
-        }
     }
 
     /// Adds an isolated dart inside the transaction.
@@ -469,9 +457,6 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
 
     /// Stages a face attribute for reconciliation at commit.
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
-        for dart in std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied()) {
-            self.ensure_profile(dart);
-        }
         let key = self.gmap.faces.insert(face);
         self.gmap.invalidate_derived_indexes();
         self.gmap.record_edit_event(EditEvent::Created {
@@ -512,11 +497,6 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
 
     /// Stages a solid attribute for reconciliation at commit.
     pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidKey {
-        for dart in
-            std::iter::once(solid.outer_shell).chain(solid.inner_shells.iter().flatten().copied())
-        {
-            self.ensure_sheet(dart);
-        }
         let key = self.gmap.solids.insert(solid);
         self.gmap.invalidate_derived_indexes();
         self.gmap.record_edit_event(EditEvent::Created {
@@ -698,45 +678,26 @@ impl<P: Payload> Deref for TopologyEdit<'_, P> {
     }
 }
 
-fn ensure_required_domain_attributes<P: Payload>(g: &mut GMap<P>) {
-    let mut profile_components = g
-        .profiles
-        .iter()
-        .map(|(_, attr)| g.profile_representative(attr.dart))
-        .collect::<HashSet<_>>();
-    let face_loops = g
-        .faces
-        .iter()
-        .flat_map(|(_, attr)| {
-            std::iter::once(attr.outer_loop).chain(attr.inner_loops.iter().copied())
-        })
-        .collect::<Vec<_>>();
-    for dart in face_loops {
-        let repr = g.profile_representative(dart);
-        if profile_components.insert(repr) {
-            g.profiles
-                .insert(ProfileAttr::new(dart, P::Profile::default()));
+fn validate_required_domain_attributes<P: Payload>(g: &GMap<P>) -> Result<(), TopologyEditError> {
+    for (face, attr) in g.faces.iter() {
+        for dart in std::iter::once(attr.outer_loop).chain(attr.inner_loops.iter().copied()) {
+            if g.profile_key(dart).is_none() {
+                return Err(TopologyEditError::MissingProfileRegistration { face, dart });
+            }
         }
     }
 
-    let mut sheet_components = g
-        .sheets
-        .iter()
-        .map(|(_, attr)| g.cell_representative(attr.dart, Dim::Three))
-        .collect::<HashSet<_>>();
-    let solid_shells = g
-        .solids
-        .iter()
-        .flat_map(|(_, attr)| {
+    for (solid, attr) in g.solids.iter() {
+        for dart in
             std::iter::once(attr.outer_shell).chain(attr.inner_shells.iter().flatten().copied())
-        })
-        .collect::<Vec<_>>();
-    for dart in solid_shells {
-        let repr = g.cell_representative(dart, Dim::Three);
-        if sheet_components.insert(repr) {
-            g.sheets.insert(SheetAttr::new(dart, P::Sheet::default()));
+        {
+            if g.sheet_key(dart).is_none() {
+                return Err(TopologyEditError::MissingSheetRegistration { solid, dart });
+            }
         }
     }
+
+    Ok(())
 }
 
 /// Validates and reconciles all staged work, then applies net payload events.
@@ -754,7 +715,7 @@ where
     Q: EditPolicy<P>,
 {
     validate_gmap(g).map_err(TopologyEditError::InvalidTopology)?;
-    ensure_required_domain_attributes(g);
+    validate_required_domain_attributes(g)?;
     validate_edit_events(g, events)?;
     let lineage = TransactionLineage::new(g, snapshot, events);
     reconcile_transaction_attributes(g, snapshot, events, &lineage)?;

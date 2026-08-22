@@ -14,7 +14,7 @@ use crate::geometry::{
     LINEAR_TOLERANCE, Line2, NurbsError, Periodicity, Plane, Point2, Point3, Surface,
     SurfacePeriodicity,
 };
-use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
+use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closed;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Cell0, Cell1, Cell2, Dart, Dim, GMap};
@@ -847,7 +847,6 @@ fn merge_periodic_boundary_edge<P: Payload>(
     pcurves: &mut HashMap<Dart, Curve2>,
     period: f64,
 ) -> Result<Option<Dart>, FaceImprintSplitError> {
-    g.ensure_profile(loop_dart);
     let edges = Profile::from_dart(g, loop_dart)
         .expect("face loop must have a registered profile")
         .edges();
@@ -1206,8 +1205,14 @@ fn finish_closed_imprint_split<P: Payload>(
     island_loop: SectionLoop,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
     let section_edges = sew_section_loops(g, face, &outside_loop, &island_loop)?;
-    g.ensure_profile(outside_loop.loop_dart);
-    g.ensure_profile(island_loop.loop_dart);
+    g.add_profile(ProfileAttr::new(
+        outside_loop.loop_dart,
+        P::Profile::default(),
+    ));
+    g.add_profile(ProfileAttr::new(
+        island_loop.loop_dart,
+        P::Profile::default(),
+    ));
 
     let face_attr = g
         .face_attr_mut(face)
@@ -1473,7 +1478,7 @@ fn add_circle_staged(
 ) -> Result<FaceKey, FaceCreationError> {
     let edge = add_circle_edge_staged(g, plane.clone(), radius)?;
     let loop_dart = g.edge_attr_unchecked(edge).dart;
-    g.ensure_profile(loop_dart);
+    g.add_profile(ProfileAttr::new(loop_dart, ()));
     let profile =
         Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
     let pcurves = profile_pcurves(&profile, &plane)?;
@@ -1612,6 +1617,9 @@ fn apply_outer_face_chord_split<P: Payload>(
     old_face: FaceAttr<P::F>,
     cut: &FaceImprintCut,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
+    let source_profile = g
+        .profile_key(old_face.outer_loop)
+        .expect("face loop must have a registered profile");
     let loop_ = Closed::new_unchecked(
         Profile::from_dart(g, old_face.outer_loop)
             .expect("face loop must have a registered profile"),
@@ -1651,6 +1659,24 @@ fn apply_outer_face_chord_split<P: Payload>(
         .expect("split end must be alpha1-free after unlink");
     g.link(Dim::One, ba_end, start_dart)
         .expect("section endpoint must be alpha1-free");
+
+    let start_profile = g.profile_key(start_dart);
+    let end_profile = g.profile_key(end_dart);
+    match (start_profile, end_profile) {
+        (Some(key), None) if key == source_profile => {
+            g.add_profile_split_from(
+                source_profile,
+                ProfileAttr::new(end_dart, P::Profile::default()),
+            );
+        }
+        (None, Some(key)) if key == source_profile => {
+            g.add_profile_split_from(
+                source_profile,
+                ProfileAttr::new(start_dart, P::Profile::default()),
+            );
+        }
+        _ => panic!("a chord split must retain one source profile and create one split profile"),
+    }
 
     let start_pcurves = split_face_pcurves(
         g,
@@ -1716,7 +1742,6 @@ fn split_face_pcurves<P: Payload>(
     section_pcurve: &Curve2,
 ) -> Result<HashMap<Dart, Curve2>, FaceImprintSplitError> {
     let mut pcurves = HashMap::new();
-    g.ensure_profile(loop_dart);
     let profile =
         Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
     for profile_dart in profile.darts().step_by(2) {
@@ -1775,8 +1800,8 @@ fn add_annulus_staged(
     let inner_edge = add_circle_edge_staged(g, inner_plane, inner_radius)?;
     let outer_loop = g.edge_attr_unchecked(outer_edge).dart;
     let inner_loop = g.edge_attr_unchecked(inner_edge).dart;
-    g.ensure_profile(outer_loop);
-    g.ensure_profile(inner_loop);
+    g.add_profile(ProfileAttr::new(outer_loop, ()));
+    g.add_profile(ProfileAttr::new(inner_loop, ()));
 
     let outer_profile =
         Profile::from_dart(g, outer_loop).expect("outer loop must have a registered profile");

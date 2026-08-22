@@ -1,8 +1,8 @@
 use std::convert::Infallible;
 
-use ngk::geometry::{Curve, Point3};
+use ngk::geometry::{Curve, Plane, Point3, Surface};
 use ngk::topology::Dart;
-use ngk::topology::attributes::{EdgeAttr, VertexAttr};
+use ngk::topology::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
 use ngk::topology::gmap::{Cell1, Dim, EditPolicy, GMap, PreservePayload, TopologyEditError};
 use ngk::topology::payload::Payload;
 use ngk::topology::shape_keys::EdgeKey;
@@ -43,6 +43,45 @@ fn failed_transaction_closure_rolls_back_the_complete_map() {
     assert_eq!(g.dart_count(), original_dart_count);
     assert!(g.is_free(first, Dim::Zero));
     assert_eq!(second.id(), 1);
+}
+
+#[test]
+fn face_registration_requires_registered_boundary_profiles() {
+    let mut g = GMap::<TestPayload>::new();
+    let result = g.transaction(|edit| {
+        let boundary = edit.add_dart();
+        edit.add_face(FaceAttr::new(
+            Surface::Plane(Plane::xy()),
+            (),
+            boundary,
+            Vec::new(),
+        ));
+        Ok::<_, TopologyEditError>(())
+    });
+
+    assert!(matches!(
+        result,
+        Err(TopologyEditError::MissingProfileRegistration { .. })
+    ));
+    assert_eq!(g.dart_count(), 0);
+    assert_eq!(g.iter_faces().count(), 0);
+}
+
+#[test]
+fn solid_registration_requires_registered_shell_sheets() {
+    let mut g = GMap::<TestPayload>::new();
+    let result = g.transaction(|edit| {
+        let shell = edit.add_dart();
+        edit.add_solid(SolidAttr::new((), shell, None));
+        Ok::<_, TopologyEditError>(())
+    });
+
+    assert!(matches!(
+        result,
+        Err(TopologyEditError::MissingSheetRegistration { .. })
+    ));
+    assert_eq!(g.dart_count(), 0);
+    assert_eq!(g.iter_solids().count(), 0);
 }
 
 #[test]

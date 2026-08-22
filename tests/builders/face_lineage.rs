@@ -6,7 +6,7 @@ use ngk::geometry::{Curve, Curve2, Line2, Plane, Point2, Point3};
 use ngk::topology::TopologyEditError;
 use ngk::topology::gmap::{EditPolicy, GMap};
 use ngk::topology::payload::Payload;
-use ngk::topology::shape_keys::FaceKey;
+use ngk::topology::shape_keys::{FaceKey, ProfileKey};
 
 #[derive(Clone, Default)]
 struct FacePayload;
@@ -14,7 +14,7 @@ struct FacePayload;
 impl Payload for FacePayload {
     type V = ();
     type E = ();
-    type Profile = ();
+    type Profile = String;
     type F = String;
     type Sheet = ();
     type S = ();
@@ -23,6 +23,7 @@ impl Payload for FacePayload {
 #[derive(Default)]
 struct RecordFaceSplits {
     splits: Vec<(FaceKey, FaceKey)>,
+    profile_splits: Vec<(ProfileKey, ProfileKey)>,
 }
 
 impl EditPolicy<FacePayload> for RecordFaceSplits {
@@ -39,12 +40,27 @@ impl EditPolicy<FacePayload> for RecordFaceSplits {
         *created_data = format!("{source_data}:split");
         Ok(())
     }
+
+    fn split_profile_data(
+        &mut self,
+        source: ProfileKey,
+        source_data: &String,
+        created: ProfileKey,
+        created_data: &mut String,
+    ) -> Result<(), Self::Error> {
+        self.profile_splits.push((source, created));
+        *created_data = format!("{source_data}:split");
+        Ok(())
+    }
 }
 
 #[test]
 fn boundary_chord_split_preserves_source_face_and_applies_payload_policy() {
     let mut g = attributed_rectangle();
     let source = g.iter_faces().next().expect("face should exist").0;
+    let source_profile = g
+        .profile_key(g.face_attr_unchecked(source).outer_loop)
+        .expect("source face should have a profile");
     let imprint = planar_line_imprint(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0));
     let mut policy = RecordFaceSplits::default();
 
@@ -59,6 +75,12 @@ fn boundary_chord_split_preserves_source_face_and_applies_payload_policy() {
     assert_eq!(g.face_attr_unchecked(source).data, "source");
     assert_eq!(g.face_attr_unchecked(splits[0].second).data, "source:split");
     assert_eq!(policy.splits, vec![(source, splits[0].second)]);
+    assert_eq!(policy.profile_splits.len(), 1);
+    assert_eq!(policy.profile_splits[0].0, source_profile);
+    assert_eq!(
+        g.profile_attr_unchecked(policy.profile_splits[0].1).data,
+        "source profile:split"
+    );
 }
 
 #[test]
@@ -133,6 +155,7 @@ fn attributed_rectangle() -> GMap<FacePayload> {
         .expect("rectangle profile should build");
     let face = add_face(&mut g, profile).expect("rectangle face should build");
     g.transaction(|edit| {
+        edit.profile_attr_mut_unchecked(profile).data = "source profile".to_owned();
         edit.face_attr_mut_unchecked(face).data = "source".to_owned();
         Ok::<_, TopologyEditError>(())
     })

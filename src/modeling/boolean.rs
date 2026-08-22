@@ -16,7 +16,7 @@ use crate::geometry::{
     IntersectionOptions, Interval, LINEAR_TOLERANCE, NurbsCurve, NurbsCurve2, NurbsError,
     NurbsSurface, Plane, Point2, Point3, PointCoincidence, Surface, SurfaceSurfaceIntersection,
 };
-use crate::topology::attributes::{FaceAttr, SolidAttr};
+use crate::topology::attributes::{FaceAttr, SheetAttr, SolidAttr};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::gmap::Cell1;
@@ -508,6 +508,10 @@ impl<P: Payload> BooleanSplitOperands<P> {
                 });
             };
             orient_result_shell(result, shell_dart)?;
+
+            if result.sheet_key(shell_dart).is_none() {
+                result.add_sheet(SheetAttr::new(shell_dart, P::Sheet::default()));
+            }
 
             Ok(result.add_solid(SolidAttr::new(
                 P::S::default(),

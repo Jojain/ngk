@@ -9,7 +9,9 @@ use crate::geometry::{
     ANGULAR_TOLERANCE, Circle, Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3,
     Surface, SurfaceOfRevolution,
 };
-use crate::topology::attributes::{EdgeAttr, FaceAttr, SheetAttr, SolidAttr, VertexAttr};
+use crate::topology::attributes::{
+    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
+};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::edit::{TopologyEdit, TopologyEditError};
@@ -226,6 +228,7 @@ fn add_partial_revolved_edge_face<P: Payload>(
         )),
     );
 
+    g.add_profile(ProfileAttr::new(bottom_start, P::Profile::default()));
     Ok(g.add_face(FaceAttr::with_pcurves(
         surface,
         P::F::default(),
@@ -341,6 +344,7 @@ fn add_closed_revolve_boundary_loop<P: Payload>(
     edit.link(Dim::One, first, second)?;
     edit.add_vertex(VertexAttr::new(first, point, P::V::default()));
     edit.add_edge(EdgeAttr::new(first, curve, P::E::default()));
+    edit.add_profile(ProfileAttr::new(first, P::Profile::default()));
     Ok(first)
 }
 
@@ -409,7 +413,6 @@ fn add_revolved_profile_from_dart_staged<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<SheetKey, RevolveError> {
-    g.ensure_profile(profile_dart);
     let profile = Profile::from_dart(g, profile_dart)
         .expect("profile dart must belong to a registered profile");
     let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
@@ -440,7 +443,6 @@ fn add_revolved_profile_faces<P: Payload>(
     close_ring: bool,
 ) -> Result<RevolvedProfile, RevolveError> {
     let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
-    g.ensure_profile(profile_dart);
     let profile = Profile::from_dart(g, profile_dart)
         .expect("profile dart must belong to a registered profile");
     let source_edges = profile
@@ -537,6 +539,7 @@ fn add_revolved_quad_face<P: Payload>(
         ));
     }
 
+    g.add_profile(ProfileAttr::new(darts[0], P::Profile::default()));
     g.add_face(FaceAttr::with_pcurves(
         surface,
         P::F::default(),
@@ -734,6 +737,9 @@ fn add_revolved_face_staged<P: Payload>(
     }
 
     let shell = shell.expect("a face should have at least one boundary loop");
+    if g.sheet_key(shell).is_none() {
+        g.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
+    }
     Ok(g.add_solid(SolidAttr::new(P::S::default(), shell, None)))
 }
 

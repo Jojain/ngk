@@ -29,6 +29,14 @@ checked alpha operations `add_dart`, `remove_dart`, `link`, `unlink`, and `sew`,
 plus topology-associated attribute creation, removal, mutation, split, and
 merge declarations.
 
+Profile and sheet registration follows the same explicit model as edge and
+vertex registration. Adding a face does not synthesize profiles for its
+boundary loops, and adding a solid does not synthesize sheets for its shells.
+Builders register fresh components with `add_profile` / `add_sheet`, and use
+the corresponding `*_split_from` or `merge_*_into` operation when identity is
+derived from existing topology. Commit rejects faces or solids whose referenced
+components have not been registered.
+
 ## Lineage and policy
 
 Plain `add_*` records a fresh transaction-local identity. `add_*_split_from`

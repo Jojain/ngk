@@ -7,7 +7,7 @@ use crate::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
 };
 use crate::topology::TopologyEdit;
-use crate::topology::attributes::{EdgeAttr, FaceAttr, SheetAttr, VertexAttr};
+use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim, GMap};
@@ -231,6 +231,7 @@ fn add_extruded_edge_face<P: Payload>(
         ));
     }
 
+    g.add_profile(ProfileAttr::new(darts[0], P::Profile::default()));
     g.add_face(FaceAttr::with_pcurves(
         surface_data.surface,
         P::F::default(),

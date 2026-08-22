@@ -7,8 +7,8 @@ use crate::{
         Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
     },
     topology::{
-        Dart, SolidAttr, TopologyEdit,
-        attributes::{EdgeAttr, FaceAttr},
+        Dart, SheetAttr, SolidAttr, TopologyEdit,
+        attributes::{EdgeAttr, FaceAttr, ProfileAttr},
         edge::Edge,
         face::Face,
         gmap::{Cell2, Dim, GMap, MergeTopology},
@@ -123,6 +123,9 @@ fn add_extruded_face_staged<P: Payload>(
     // The shell dart is contextual: unlike a cell representative, it must retain
     // the outward orientation established for the bottom cap.
     let outer_shell = g.face_attr_unchecked(face_key).outer_loop;
+    if g.sheet_key(outer_shell).is_none() {
+        g.add_sheet(SheetAttr::new(outer_shell, P::Sheet::default()));
+    }
     let solid = g.add_solid(SolidAttr::new(P::S::default(), outer_shell, None));
     Ok(solid)
 }
@@ -345,6 +348,7 @@ fn add_lateral_face_attributes<P: Payload>(
     topology: &LateralFaceTopology,
     prepared: &PreparedLateralFace,
 ) {
+    g.add_profile(ProfileAttr::new(topology.loop_dart, P::Profile::default()));
     g.add_face(FaceAttr::with_pcurves(
         prepared.surface.clone(),
         P::F::default(),
