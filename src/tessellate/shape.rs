@@ -47,7 +47,11 @@ pub fn tessellate_edge<P: Payload>(
     let p1 = v1.point()?;
     let p2 = v2.point()?;
     let curve = &edge.curve()?;
-    let t0 = curve.param_at(*p1);
-    let t1 = curve.param_at(*p2);
-    Some(tessellate_curve(curve, t0, t1, opts.curve))
+    let interval = curve.parameters_between(*p1, *p2);
+    Some(tessellate_curve(
+        curve,
+        interval.start,
+        interval.end,
+        opts.curve,
+    ))
 }
