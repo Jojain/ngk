@@ -11,80 +11,52 @@ use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::payload::Payload;
-use crate::topology::profile::Profile;
-use crate::topology::shape_keys::{EdgeKey, SheetKey, VertexKey};
+use crate::topology::shape_keys::{EdgeKey, ProfileKey, SheetKey, VertexKey};
 
 /// Adds an extruded profile to the given GMap.
 ///
 /// Returns the generated sheet key. Its stored dart belongs to the translated
 /// copy of the input edge.
+///
+/// # Panics
+///
+/// Panics if `profile_key` does not identify a registered profile.
 pub fn add_extruded_profile<P: Payload>(
     g: &mut GMap<P>,
-    profile_dart: Dart,
+    profile_key: ProfileKey,
     direction: Vector3<f64>,
 ) -> Result<SheetKey, ExtrudeError> {
-    g.transaction(|g| add_extruded_profile_staged(g, profile_dart, direction))
-}
-
-/// Extrudes the profile boundaries and registers their sheet in one transaction.
-fn add_extruded_profile_staged<P: Payload>(
-    g: &mut GMap<P>,
-    profile_dart: Dart,
-    direction: Vector3<f64>,
-) -> Result<SheetKey, ExtrudeError> {
-    g.ensure_profile(profile_dart);
-    let dart = add_extruded_profile_boundaries(g, profile_dart, direction)?.translated_dart;
-    Ok(g.add_sheet(SheetAttr::new(dart, P::Sheet::default())))
-}
-
-pub(crate) struct ExtrudedProfile {
-    pub translated_dart: Dart,
-}
-
-pub(crate) fn add_extruded_profile_boundaries<P: Payload>(
-    g: &mut GMap<P>,
-    profile_dart: Dart,
-    direction: Vector3<f64>,
-) -> Result<ExtrudedProfile, ExtrudeError> {
-    g.transaction(|g| add_extruded_profile_boundaries_staged(g, profile_dart, direction))
-}
-
-/// Builds and sews all lateral extrusion faces before returning staged handles.
-fn add_extruded_profile_boundaries_staged<P: Payload>(
-    g: &mut GMap<P>,
-    profile_dart: Dart,
-    direction: Vector3<f64>,
-) -> Result<ExtrudedProfile, ExtrudeError> {
-    if direction.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
-        return Err(ExtrudeError::ZeroDirection);
-    }
-
-    g.ensure_profile(profile_dart);
-    let profile = Profile::from_dart(g, profile_dart)
-        .expect("profile dart must belong to a registered profile");
-    let is_closed = profile.is_closed();
-    let mut faces = Vec::new();
-    let mut extruded_profile_dart = None;
-    let edges_darts = profile
-        .edges()
-        .into_iter()
-        .map(|edge| edge.dart())
-        .collect::<Vec<_>>();
-    for edge_dart in edges_darts {
-        let extruded_face = extrude_edge(g, edge_dart, direction)?;
-        if edge_dart == profile_dart {
-            extruded_profile_dart = Some(extruded_face.translated_start);
-        } else if g.alpha(Dim::Zero, edge_dart) == profile_dart {
-            extruded_profile_dart = Some(extruded_face.translated_end);
+    g.transaction(|g| {
+        if direction.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
+            return Err(ExtrudeError::ZeroDirection);
         }
-        faces.push(extruded_face);
-    }
 
-    sew_extruded_faces(g, &faces, is_closed)?;
+        let profile = g.profile_unchecked(profile_key);
+        let profile_dart = profile.dart;
+        let is_closed = profile.is_closed();
+        let edge_darts = profile
+            .edges()
+            .into_iter()
+            .map(|edge| edge.dart())
+            .collect::<Vec<_>>();
+        let mut faces = Vec::with_capacity(edge_darts.len());
+        let mut translated_dart = None;
 
-    Ok(ExtrudedProfile {
-        translated_dart: extruded_profile_dart
-            .expect("profile dart must belong to one of its profile edges"),
+        for edge_dart in edge_darts {
+            let extruded_face = extrude_edge(g, edge_dart, direction)?;
+            if edge_dart == profile_dart {
+                translated_dart = Some(extruded_face.translated_start);
+            } else if g.alpha(Dim::Zero, edge_dart) == profile_dart {
+                translated_dart = Some(extruded_face.translated_end);
+            }
+            faces.push(extruded_face);
+        }
+
+        sew_extruded_faces(g, &faces, is_closed)?;
+        let translated_dart =
+            translated_dart.expect("profile dart must belong to one of its profile edges");
+
+        Ok(g.add_sheet(SheetAttr::new(translated_dart, P::Sheet::default())))
     })
 }
 
@@ -436,8 +408,7 @@ mod tests {
         let source_dart_count = source.dart_count();
         let direction = Vector3::new(0.0, 0.0, 2.0);
 
-        let profile_dart = source.profile_attr_unchecked(profile_key).dart;
-        let sheet_key = add_extruded_profile(&mut source, profile_dart, direction).unwrap();
+        let sheet_key = add_extruded_profile(&mut source, profile_key, direction).unwrap();
         let translated_dart = source.sheet_attr_unchecked(sheet_key).dart;
 
         assert!(

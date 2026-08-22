@@ -12,7 +12,8 @@ pub fn extrude_profile<P: Payload>(
     direction: Vector3<f64>,
 ) -> Result<Shape<SheetTag, P>, ExtrudeError> {
     let (mut g, profile_dart) = profile.isolate();
-    let sheet_dart = add_extruded_profile(&mut g, profile_dart, direction)?;
+    let profile_key = g.profile_key_unchecked(profile_dart);
+    let sheet_dart = add_extruded_profile(&mut g, profile_key, direction)?;
     Ok(Shape::new(g, sheet_dart))
 }
 

@@ -195,8 +195,7 @@ fn revolved_face_adds_surface_of_revolution_faces() {
             Point3::new(0.85, 0.0, 0.9),
         ],
     );
-    let loop_dart = g.profile_attr_unchecked(profile_key).dart;
-    let source_face = add_face(&mut g, loop_dart).unwrap();
+    let source_face = add_face(&mut g, profile_key).unwrap();
 
     add_revolved_face(
         &mut g,

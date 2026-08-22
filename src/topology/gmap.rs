@@ -1814,8 +1814,7 @@ mod tests {
         let profile_key =
             add_rectangle(&mut source, Plane::xy(), 2.0, 1.0).expect("profile should build");
         source.profile_attr_mut(profile_key).unwrap().data = "profile".to_owned();
-        let profile_dart = source.profile_attr(profile_key).unwrap().dart;
-        let sheet_key = add_extruded_profile(&mut source, profile_dart, Vector3::z())
+        let sheet_key = add_extruded_profile(&mut source, profile_key, Vector3::z())
             .expect("sheet should build");
         source.sheet_attr_mut(sheet_key).unwrap().data = "sheet".to_owned();
 

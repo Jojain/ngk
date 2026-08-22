@@ -130,8 +130,7 @@ fn attributed_rectangle() -> GMap<FacePayload> {
     let mut g = GMap::new();
     let profile = add_rectangle_profile(&mut g, Plane::xy(), 2.0, 2.0)
         .expect("rectangle profile should build");
-    let loop_dart = g.profile_attr_unchecked(profile).dart;
-    let face = add_face(&mut g, loop_dart).expect("rectangle face should build");
+    let face = add_face(&mut g, profile).expect("rectangle face should build");
     g.face_attr_mut_unchecked(face).data = "source".to_owned();
     g
 }

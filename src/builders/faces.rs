@@ -20,7 +20,7 @@ use crate::topology::gmap::{Cell0, Cell1, Cell2, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
-use crate::topology::shape_keys::{EdgeKey, FaceKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
 use crate::topology::vertex::Vertex;
 use nalgebra::Vector2;
 use thiserror::Error;
@@ -462,38 +462,31 @@ struct IncidentFacePcurve {
 ///
 /// # Panics
 ///
-/// Panics if `loop_dart` does not belong to a registered profile.
+/// Panics if `profile` does not identify a registered profile.
 pub fn add_face<P: Payload>(
     g: &mut GMap<P>,
-    loop_dart: Dart,
+    profile: ProfileKey,
 ) -> Result<FaceKey, FaceCreationError> {
-    g.transaction(|g| add_face_staged(g, loop_dart))
-}
+    g.transaction(|g| {
+        let (loop_dart, plane, pcurves) = {
+            let profile = g.profile_unchecked(profile);
+            let loop_dart = profile.dart;
+            let closed =
+                Closed::new(profile).ok_or(FaceCreationError::OpenProfile { dart: loop_dart })?;
+            let planar = Planar::new(closed)?;
+            let (closed, plane) = planar.into_parts();
+            let pcurves = profile_pcurves(closed.inner(), &plane)?;
+            (loop_dart, plane, pcurves)
+        };
 
-/// Derives and registers a face while remaining inside the caller's transaction.
-fn add_face_staged<P: Payload>(
-    g: &mut GMap<P>,
-    loop_dart: Dart,
-) -> Result<FaceKey, FaceCreationError> {
-    let (plane, pcurves) = {
-        let profile =
-            Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
-        let closed =
-            Closed::new(profile).ok_or(FaceCreationError::OpenProfile { dart: loop_dart })?;
-        let planar = Planar::new(closed)?;
-        let (closed, plane) = planar.into_parts();
-        let pcurves = profile_pcurves(closed.inner(), &plane)?;
-        (plane, pcurves)
-    };
-
-    let face_key = g.add_face(FaceAttr::with_pcurves(
-        Surface::Plane(plane),
-        P::F::default(),
-        loop_dart,
-        Vec::new(),
-        pcurves,
-    ));
-    Ok(face_key)
+        Ok(g.add_face(FaceAttr::with_pcurves(
+            Surface::Plane(plane),
+            P::F::default(),
+            loop_dart,
+            Vec::new(),
+            pcurves,
+        )))
+    })
 }
 
 /// Adds a planar rectangular face whose first corner is `plane.origin()`.
@@ -506,19 +499,10 @@ pub fn add_rectangle(
     x_size: f64,
     y_size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    g.transaction(|g| add_rectangle_staged(g, plane, x_size, y_size))
-}
-
-/// Builds the rectangle profile and face as one staged operation.
-fn add_rectangle_staged(
-    g: &mut GMap<StandardPayload>,
-    plane: Plane,
-    x_size: f64,
-    y_size: f64,
-) -> Result<FaceKey, FaceCreationError> {
-    let profile = add_rectangle_profile(g, plane, x_size, y_size)?;
-    let loop_dart = g.profile_attr_unchecked(profile).dart;
-    add_face(g, loop_dart)
+    g.transaction(|g| {
+        let profile = add_rectangle_profile(g, plane, x_size, y_size)?;
+        add_face(g, profile)
+    })
 }
 
 /// Adds a planar square face whose first corner is `plane.origin()`.
@@ -530,18 +514,10 @@ pub fn add_square(
     plane: Plane,
     size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    g.transaction(|g| add_square_staged(g, plane, size))
-}
-
-/// Builds the square profile and face as one staged operation.
-fn add_square_staged(
-    g: &mut GMap<StandardPayload>,
-    plane: Plane,
-    size: f64,
-) -> Result<FaceKey, FaceCreationError> {
-    let profile = add_square_profile(g, plane, size)?;
-    let loop_dart = g.profile_attr_unchecked(profile).dart;
-    add_face(g, loop_dart)
+    g.transaction(|g| {
+        let profile = add_square_profile(g, plane, size)?;
+        add_face(g, profile)
+    })
 }
 
 /// Splits a face-boundary edge and all of its incident face pcurves.

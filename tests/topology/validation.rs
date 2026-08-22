@@ -31,8 +31,7 @@ fn revolved_triangle_validates_as_closed_manifold_shell() {
             Point3::new(0.85, 0.0, 0.9),
         ],
     );
-    let loop_dart = g.profile_attr_unchecked(profile_key).dart;
-    let face_key = add_face(&mut g, loop_dart).expect("triangle face should build");
+    let face_key = add_face(&mut g, profile_key).expect("triangle face should build");
     let solid = add_revolved_face(
         &mut g,
         face_key,

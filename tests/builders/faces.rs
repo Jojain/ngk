@@ -165,8 +165,7 @@ fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
         Point3::new(1.0, 1.0, 0.0),
     ];
     let profile = add_polyline(&mut g, &points).expect("two-edge profile should build");
-    let profile_dart = g.profile_attr_unchecked(profile).dart;
-    add_extruded_profile(&mut g, profile_dart, Vector3::new(0.0, 0.0, 2.0))
+    add_extruded_profile(&mut g, profile, Vector3::new(0.0, 0.0, 2.0))
         .expect("profile should extrude into two faces");
 
     let edge = edge_between_points(&g, Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 0.0, 2.0));
@@ -297,8 +296,7 @@ fn split_face_by_imprints_applies_multiple_non_crossing_chords() {
         Point3::new(0.0, 1.0, 0.0),
     ];
     let profile_key = add_polygon(&mut g, &points);
-    let loop_dart = g.profile_attr_unchecked(profile_key).dart;
-    let face_key = add_face(&mut g, loop_dart).expect("polygon face should build");
+    let face_key = add_face(&mut g, profile_key).expect("polygon face should build");
     let imprints = vec![
         planar_imprint(Curve2::Line(Line2::new(
             Point2::new(0.0, 0.0),

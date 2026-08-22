@@ -19,7 +19,7 @@ use crate::topology::payload::Payload;
 use crate::topology::planar::{Planar, PlanarityError};
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceTag, Shape};
-use crate::topology::shape_keys::{EdgeKey, FaceKey, SheetKey, SolidKey, VertexKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::vertex::Vertex;
 
 #[derive(Debug, Error)]
@@ -388,30 +388,36 @@ fn is_full_turn(angle: Rad64) -> bool {
 /// Returns an error if the profile is not planar, required edge or vertex
 /// geometry is missing, a source curve is unsupported, or generated faces
 /// cannot be sewn.
+///
+/// # Panics
+///
+/// Panics if `profile` does not identify a registered profile.
 pub fn add_revolved_profile<P: Payload>(
     g: &mut GMap<P>,
-    profile_dart: Dart,
+    profile: ProfileKey,
     axis: Axis3,
     angle: Rad64,
 ) -> Result<SheetKey, RevolveError> {
-    g.transaction(|g| add_revolved_profile_staged(g, profile_dart, axis, angle))
+    let profile_dart = g.profile_unchecked(profile).dart;
+    add_revolved_profile_from_dart(g, profile_dart, axis, angle)
 }
 
-/// Revolves every profile edge, sews the faces, and registers the staged sheet.
-fn add_revolved_profile_staged<P: Payload>(
+/// Revolves a profile from an oriented traversal dart for internal callers.
+pub(crate) fn add_revolved_profile_from_dart<P: Payload>(
     g: &mut GMap<P>,
     profile_dart: Dart,
     axis: Axis3,
     angle: Rad64,
 ) -> Result<SheetKey, RevolveError> {
-    g.ensure_profile(profile_dart);
-    let profile = Profile::from_dart(g, profile_dart)
-        .expect("profile dart must belong to a registered profile");
-    let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
-    let profile = planar.inner();
-    let close_ring = profile.is_closed();
-    let dart = add_revolved_profile_faces(g, profile_dart, axis, angle, close_ring)?.swept_dart;
-    Ok(g.edit(|edit| Ok(edit.add_sheet(SheetAttr::new(dart, P::Sheet::default()))))?)
+    g.transaction(|g| {
+        g.ensure_profile(profile_dart);
+        let profile = Profile::from_dart(g, profile_dart)
+            .expect("profile dart must belong to a registered profile");
+        let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
+        let close_ring = planar.inner().is_closed();
+        let dart = add_revolved_profile_faces(g, profile_dart, axis, angle, close_ring)?.swept_dart;
+        Ok(g.edit(|edit| Ok(edit.add_sheet(SheetAttr::new(dart, P::Sheet::default()))))?)
+    })
 }
 
 struct RevolvedProfile {
@@ -747,7 +753,7 @@ fn add_full_revolved_face<P: Payload>(
 ) -> Result<SolidKey, RevolveError> {
     let mut shell = None;
     for loop_dart in loops {
-        let revolved = add_revolved_profile(g, loop_dart, axis, angle)?;
+        let revolved = add_revolved_profile_from_dart(g, loop_dart, axis, angle)?;
         let revolved_dart = g.sheet_attr_unchecked(revolved).dart;
         shell.get_or_insert(revolved_dart);
     }
