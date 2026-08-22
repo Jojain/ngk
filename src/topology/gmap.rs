@@ -955,12 +955,6 @@ impl<P: Payload> GMap<P> {
             .expect("edge attribute should be in the map")
     }
 
-    pub(crate) fn remove_edge(&mut self, key: EdgeKey) -> Option<EdgeAttr<P::E>> {
-        let edge = self.edges.remove(key)?;
-        self.invalidate_derived_indexes();
-        Some(edge)
-    }
-
     /// Iterate every stored 1-cell attribute paired with its slotmap key.
     pub fn iter_edges(&self) -> impl Iterator<Item = (EdgeKey, &EdgeAttr<P::E>)> {
         self.edges.iter()
@@ -1182,12 +1176,6 @@ impl<P: Payload> GMap<P> {
     pub fn face_attr_mut_unchecked(&mut self, key: FaceKey) -> &mut FaceAttr<P::F> {
         self.face_attr_mut(key)
             .expect("face attribute should be in the map")
-    }
-
-    pub(crate) fn remove_face(&mut self, key: FaceKey) -> Option<FaceAttr<P::F>> {
-        let face = self.faces.remove(key)?;
-        self.invalidate_derived_indexes();
-        Some(face)
     }
 
     /// Iterate every stored 2-cell attribute paired with its slotmap key.

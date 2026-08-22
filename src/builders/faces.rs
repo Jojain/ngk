@@ -724,25 +724,28 @@ fn split_periodic_face_by_imprints<P: Payload>(
         });
     }
 
-    let merged = merge_faces_across_edge(g, face, seam, seam_faces[0], seam_faces[1], period)?;
     let remaining = g
         .iter_faces()
         .map(|(key, _)| key)
-        .find(|key| *key != merged)
-        .ok_or(FaceImprintSplitError::UnexpectedPeriodicRegionCount { face, count: 1 })?;
-    if g.iter_faces().count() != 2 {
-        return Err(FaceImprintSplitError::UnexpectedPeriodicRegionCount {
+        .find(|key| !seam_faces.contains(key))
+        .ok_or(FaceImprintSplitError::UnexpectedPeriodicRegionCount {
             face,
             count: g.iter_faces().count(),
-        });
-    }
+        })?;
+    let merged = merge_faces_across_edge(g, face, seam, seam_faces[0], seam_faces[1], period)?;
     unwrap_periodic_face_pcurves(g, remaining)?;
     unwrap_periodic_face_pcurves(g, merged)?;
     rebuild_periodic_boundary_curves(g, [remaining, merged])?;
 
+    let (first, second) = if remaining == face {
+        (remaining, merged)
+    } else {
+        debug_assert_eq!(merged, face);
+        (merged, remaining)
+    };
     Ok(vec![FaceImprintSplit {
-        first: remaining,
-        second: merged,
+        first,
+        second,
         section_edges,
     }])
 }
@@ -771,20 +774,32 @@ fn merge_faces_across_edge<P: Payload>(
     let second_next = g.alpha(Dim::One, second_end);
 
     let first_attr = g
-        .remove_face(first)
+        .face_attr(first)
+        .cloned()
         .ok_or(FaceImprintSplitError::MissingFace { face: first })?;
     let second_attr = g
-        .remove_face(second)
+        .face_attr(second)
+        .cloned()
         .ok_or(FaceImprintSplitError::MissingFace { face: second })?;
+    let (survivor, removed) = if first == original_face {
+        (first, second)
+    } else if second == original_face {
+        (second, first)
+    } else {
+        (first, second)
+    };
     let mut pcurves = first_attr.pcurves;
     pcurves.extend(second_attr.pcurves);
     for dart in [first_dart, first_end, second_dart, second_end] {
         pcurves.remove(&dart);
     }
-    g.remove_edge(edge)
-        .ok_or(FaceImprintSplitError::MissingBoundaryEdge { dart: first_dart })?;
+    if g.edge_attr(edge).is_none() {
+        return Err(FaceImprintSplitError::MissingBoundaryEdge { dart: first_dart });
+    }
 
     g.edit(|edit| {
+        edit.remove_edge(edge)
+            .expect("checked periodic seam edge must remain staged");
         for dart in [first_dart, first_end, second_dart, second_end] {
             edit.unlink(Dim::One, dart)?;
         }
@@ -818,13 +833,18 @@ fn merge_faces_across_edge<P: Payload>(
         })?;
     }
 
-    Ok(g.add_face(FaceAttr::with_pcurves(
-        first_attr.surface,
-        first_attr.data,
-        loop_dart,
-        Vec::new(),
-        pcurves,
-    )))
+    g.edit(|edit| {
+        let survivor_attr = edit
+            .face_attr_mut(survivor)
+            .expect("periodic face merge survivor must remain staged");
+        survivor_attr.surface = first_attr.surface;
+        survivor_attr.outer_loop = loop_dart;
+        survivor_attr.inner_loops.clear();
+        survivor_attr.pcurves = pcurves;
+        edit.merge_faces_into(survivor, removed);
+        Ok(())
+    })?;
+    Ok(survivor)
 }
 
 fn merge_periodic_boundary_edge<P: Payload>(
@@ -1197,19 +1217,24 @@ fn finish_closed_imprint_split<P: Payload>(
     g.ensure_profile(outside_loop.loop_dart);
     g.ensure_profile(island_loop.loop_dart);
 
-    let face_attr = g
-        .face_attr_mut(face)
-        .ok_or(FaceImprintSplitError::MissingFace { face })?;
-    face_attr.inner_loops.push(outside_loop.loop_dart);
-    face_attr.pcurves.extend(outside_loop.pcurves);
+    let second = g.edit(|edit| {
+        let face_attr = edit
+            .face_attr_mut(face)
+            .expect("source face must remain staged during a closed-loop split");
+        face_attr.inner_loops.push(outside_loop.loop_dart);
+        face_attr.pcurves.extend(outside_loop.pcurves);
 
-    let second = g.add_face(FaceAttr::with_pcurves(
-        old_face.surface,
-        old_face.data,
-        island_loop.loop_dart,
-        Vec::new(),
-        island_loop.pcurves,
-    ));
+        Ok(edit.add_face_split_from(
+            face,
+            FaceAttr::with_pcurves(
+                old_face.surface,
+                P::F::default(),
+                island_loop.loop_dart,
+                Vec::new(),
+                island_loop.pcurves,
+            ),
+        ))
+    })?;
 
     Ok(FaceImprintSplit {
         first: face,
@@ -1437,9 +1462,7 @@ fn split_one_face_by_imprints<P: Payload>(
         return Err(FaceImprintSplitError::InnerLoopsNotSupported { face });
     }
 
-    let old_face = g
-        .remove_face(face)
-        .ok_or(FaceImprintSplitError::MissingFace { face })?;
+    let old_face = face_attr.clone();
     Ok(Some(apply_outer_face_chord_split(g, face, old_face, &cut)?))
 }
 
@@ -1647,8 +1670,7 @@ fn apply_outer_face_chord_split<P: Payload>(
         })
         .expect("prepared face chord split must commit");
 
-    let section_edge = g.add_edge(EdgeAttr::new(ab_start, cut.curve.clone(), P::E::default()));
-    let first_pcurves = split_face_pcurves(
+    let start_pcurves = split_face_pcurves(
         g,
         original_face,
         &old_face.pcurves,
@@ -1656,7 +1678,7 @@ fn apply_outer_face_chord_split<P: Payload>(
         ba_start,
         &pcurve_ba,
     )?;
-    let second_pcurves = split_face_pcurves(
+    let end_pcurves = split_face_pcurves(
         g,
         original_face,
         &old_face.pcurves,
@@ -1664,23 +1686,44 @@ fn apply_outer_face_chord_split<P: Payload>(
         ab_start,
         &pcurve_ab,
     )?;
-    let first = g.add_face(FaceAttr::with_pcurves(
-        old_face.surface.clone(),
-        old_face.data.clone(),
-        start_dart,
-        Vec::new(),
-        first_pcurves,
-    ));
-    let second = g.add_face(FaceAttr::with_pcurves(
-        old_face.surface,
-        old_face.data,
-        end_dart,
-        Vec::new(),
-        second_pcurves,
-    ));
+    let source_uses_start_loop = g.cell_key::<Cell2>(start_dart) == Some(original_face);
+    let source_uses_end_loop = g.cell_key::<Cell2>(end_dart) == Some(original_face);
+    assert_ne!(
+        source_uses_start_loop, source_uses_end_loop,
+        "exactly one split region must contain the source face root"
+    );
+    let (source_loop, source_pcurves, created_loop, created_pcurves) = if source_uses_start_loop {
+        (start_dart, start_pcurves, end_dart, end_pcurves)
+    } else {
+        (end_dart, end_pcurves, start_dart, start_pcurves)
+    };
+
+    let (section_edge, second) = g.edit(|edit| {
+        let section_edge =
+            edit.add_edge(EdgeAttr::new(ab_start, cut.curve.clone(), P::E::default()));
+        let source_attr = edit
+            .face_attr_mut(original_face)
+            .expect("source face must remain staged during a chord split");
+        source_attr.surface = old_face.surface.clone();
+        source_attr.outer_loop = source_loop;
+        source_attr.inner_loops.clear();
+        source_attr.pcurves = source_pcurves;
+
+        let created = edit.add_face_split_from(
+            original_face,
+            FaceAttr::with_pcurves(
+                old_face.surface,
+                P::F::default(),
+                created_loop,
+                Vec::new(),
+                created_pcurves,
+            ),
+        );
+        Ok((section_edge, created))
+    })?;
 
     Ok(FaceImprintSplit {
-        first,
+        first: original_face,
         second,
         section_edges: vec![section_edge],
     })

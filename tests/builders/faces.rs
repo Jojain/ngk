@@ -18,6 +18,7 @@ use ngk::topology::gmap::GMap;
 use ngk::topology::gmap::{Cell0, Dim};
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
+use ngk::viz::debug_viewer::show;
 use ngk::viz::debug_viewer::show_gmap;
 
 #[test]
@@ -214,11 +215,12 @@ fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
     let splits = split_face_by_imprints(&mut g, face_key, &[planar_imprint(imprint)])
         .expect("face imprint split should run");
 
-    assert!(g.face_attr(face_key).is_none());
+    assert_eq!(splits[0].first, face_key);
+    assert!(g.face_attr(face_key).is_some());
     assert_eq!(splits.len(), 1);
     assert_eq!(g.iter_faces().count(), 2);
     assert_eq!(g.iter_edges().count(), 5);
-    assert_eq!(g.cells(Dim::Zero).count(), 4);
+    assert_eq!(g.iter_vertices().count(), 4);
     assert_eq!(splits[0].section_edges.len(), 1);
     assert!(g.edge_attr(splits[0].section_edges[0]).is_some());
 
@@ -529,6 +531,8 @@ fn split_face_preserves_curved_loop() {
 
     let splits =
         split_face_by_imprints(&mut g, face_key, &imprints).expect("curved loop should split");
+
+    show(&g);
     assert_eq!(splits.len(), 1);
     assert_eq!(splits[0].section_edges.len(), 4);
     assert!(

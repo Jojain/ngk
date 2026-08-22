@@ -9,6 +9,27 @@ This plan documents how to migrate `src/builders/*` and their script/test consum
 - commit no longer fails with duplicate domain attributes after sewing;
 - payload propagation is handled through `EditPolicy`, defaulting to `PreservePayload`.
 
+## Current status
+
+- Profile sewing, edge splitting, sheet sewing, and revolve sewing declare their
+  split and merge lineage through `TopologyEdit`.
+- Face imprint splitting now preserves the source `FaceKey` on the result that
+  contains its oriented root and declares every other result with
+  `add_face_split_from`.
+- Closed-loop imprint islands use the same face-split policy path instead of
+  copying payloads directly.
+- Periodic seam face merging keeps the original face identity when it
+  participates in the merge and declares the consumed face with
+  `merge_faces_into`.
+- Direct builder-only `GMap::remove_edge` and `GMap::remove_face` escape hatches
+  have been removed; topology-associated removal goes through `TopologyEdit`.
+
+The remaining periodic-imprint algorithm needs its own behavior milestone. A
+standard ruled circular extrusion currently does not produce a split for an
+individual constant-`u` imprint, so the periodic two-imprint seam path still
+lacks a representative end-to-end regression test. This is separate from the
+face identity and payload-lineage migration above.
+
 ## Key migration rules
 
 - Fresh independent entities use plain creation:
