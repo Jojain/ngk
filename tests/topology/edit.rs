@@ -20,19 +20,19 @@ impl Payload for TestPayload {
 }
 
 #[test]
-fn failed_edit_closure_rolls_back_the_complete_map() {
+fn failed_transaction_closure_rolls_back_the_complete_map() {
     let mut g = GMap::<TestPayload>::new();
     let (first, second) = g
-        .edit(|edit| {
+        .transaction(|edit| {
             let first = edit.add_dart();
             let second = edit.add_dart();
             edit.add_vertex(VertexAttr::new(first, Point3::origin(), ()));
-            Ok((first, second))
+            Ok::<_, TopologyEditError>((first, second))
         })
         .unwrap();
     let original_dart_count = g.dart_count();
 
-    let result = g.edit(|edit| {
+    let result = g.transaction(|edit| {
         let added = edit.add_dart();
         edit.link(Dim::Zero, first, added)?;
         assert_eq!(edit.dart_count(), original_dart_count + 1);
@@ -49,7 +49,7 @@ fn failed_edit_closure_rolls_back_the_complete_map() {
 fn committing_topology_edit_reindexes_cells_after_explicit_merge() {
     let mut g = GMap::<TestPayload>::new();
     let (first, second) = g
-        .edit(|edit| {
+        .transaction(|edit| {
             let first = edit.add_dart();
             let first_end = edit.add_dart();
             let second = edit.add_dart();
@@ -69,9 +69,9 @@ fn committing_topology_edit_reindexes_cells_after_explicit_merge() {
             edit.sew(Dim::Two, first, second_end)
                 .expect("matching edges should sew");
             edit.merge_edges_into(first_edge, second_edge);
-            Ok((first, second))
+            Ok::<_, TopologyEditError>((first, second))
         })
-        .expect("edit should commit");
+        .expect("transaction should commit");
 
     let edge = g
         .cell_key::<Cell1>(second)
@@ -85,7 +85,7 @@ fn topology_transaction_rejects_repeated_merge_consumption() {
     let mut g = GMap::<TestPayload>::new();
     let (first, second) = add_two_test_edges(&mut g);
 
-    let result = g.edit(|edit| {
+    let result = g.transaction(|edit| {
         edit.merge_edges_into(first, second);
         edit.merge_edges_into(first, second);
         Ok(())
@@ -103,7 +103,7 @@ fn topology_transaction_rejects_merge_cycles() {
     let mut g = GMap::<TestPayload>::new();
     let (first, second) = add_two_test_edges(&mut g);
 
-    let result = g.edit(|edit| {
+    let result = g.transaction(|edit| {
         edit.merge_edges_into(first, second);
         edit.merge_edges_into(second, first);
         Ok(())
@@ -115,7 +115,7 @@ fn topology_transaction_rejects_merge_cycles() {
 
 /// Creates two independent attributed edges for lineage-validation tests.
 fn add_two_test_edges(g: &mut GMap<TestPayload>) -> (EdgeKey, EdgeKey) {
-    g.edit(|edit| {
+    g.transaction(|edit| {
         let first_start = edit.add_dart();
         let first_end = edit.add_dart();
         let second_start = edit.add_dart();
@@ -132,7 +132,7 @@ fn add_two_test_edges(g: &mut GMap<TestPayload>) -> (EdgeKey, EdgeKey) {
             Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
             "second".to_owned(),
         ));
-        Ok((first, second))
+        Ok::<_, TopologyEditError>((first, second))
     })
     .expect("independent edges should commit")
 }
@@ -141,7 +141,7 @@ fn add_two_test_edges(g: &mut GMap<TestPayload>) -> (EdgeKey, EdgeKey) {
 fn invalid_topology_commit_rolls_back_the_complete_map() {
     let mut g = GMap::<TestPayload>::new();
     let mut staged_darts = None;
-    let result = g.edit_with_policy(&mut PreservePayload, |edit| {
+    let result = g.transaction_with_policy(&mut PreservePayload, |edit| {
         let darts: [Dart; 4] = std::array::from_fn(|_| edit.add_dart());
         staged_darts = Some(darts);
         edit.link(Dim::Zero, darts[0], darts[1]).unwrap();
@@ -159,7 +159,7 @@ fn invalid_topology_commit_rolls_back_the_complete_map() {
 fn explicit_edge_merge_uses_the_policy_and_removes_the_consumed_key() {
     let mut g = GMap::<TestPayload>::new();
     let (first, second_end, first_edge, second_edge) = g
-        .edit(|edit| {
+        .transaction(|edit| {
             let first = edit.add_dart();
             let first_end = edit.add_dart();
             let second = edit.add_dart();
@@ -176,18 +176,18 @@ fn explicit_edge_merge_uses_the_policy_and_removes_the_consumed_key() {
                 Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
                 "right".to_owned(),
             ));
-            Ok((first, second_end, first_edge, second_edge))
+            Ok::<_, TopologyEditError>((first, second_end, first_edge, second_edge))
         })
         .unwrap();
 
     let mut policy = JoinEdgeNames;
-    let result = g.edit_with_policy(&mut policy, |edit| {
+    let result: Result<(), TopologyEditError> = g.transaction_with_policy(&mut policy, |edit| {
         edit.sew(Dim::Two, first, second_end).unwrap();
         edit.merge_edges_into(first_edge, second_edge);
         Ok(())
     });
 
-    result.expect("edit should commit");
+    result.expect("transaction should commit");
     let (_, edge) = g.iter_edges().next().expect("one edge should remain");
     assert_eq!(edge.data, "left+right");
     assert_eq!(g.iter_edges().count(), 1);
@@ -218,7 +218,7 @@ impl EditPolicy<TestPayload> for JoinEdgeNames {
 fn explicit_edge_split_uses_the_policy() {
     let mut g = GMap::<TestPayload>::new();
     let (start, end, source) = g
-        .edit(|edit| {
+        .transaction(|edit| {
             let start = edit.add_dart();
             let end = edit.add_dart();
             edit.link(Dim::Zero, start, end).unwrap();
@@ -227,13 +227,13 @@ fn explicit_edge_split_uses_the_policy() {
                 Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
                 "source".to_owned(),
             ));
-            Ok((start, end, source))
+            Ok::<_, TopologyEditError>((start, end, source))
         })
         .unwrap();
 
     let mut policy = MarkSplit;
     let created = g
-        .edit_with_policy(&mut policy, |edit| {
+        .transaction_with_policy(&mut policy, |edit| {
             let first_mid = edit.add_dart();
             let second_mid = edit.add_dart();
             edit.unlink(Dim::Zero, start).unwrap();
@@ -248,7 +248,7 @@ fn explicit_edge_split_uses_the_policy() {
                     "builder".to_owned(),
                 ),
             );
-            Ok(created)
+            Ok::<_, TopologyEditError>(created)
         })
         .unwrap();
 
@@ -313,7 +313,7 @@ fn fresh_creation_followed_by_merge_does_not_call_policy() {
     let mut g = GMap::<TestPayload>::new();
     let mut policy = RecordEdgePolicy::default();
 
-    g.edit_with_policy(&mut policy, |edit| {
+    g.transaction_with_policy(&mut policy, |edit| {
         let start = edit.add_dart();
         let end = edit.add_dart();
         edit.link(Dim::Zero, start, end)?;
@@ -328,7 +328,7 @@ fn fresh_creation_followed_by_merge_does_not_call_policy() {
             "temporary".to_owned(),
         ));
         edit.merge_edges_into(survivor, removed);
-        Ok(())
+        Ok::<_, TopologyEditError>(())
     })
     .expect("the local merge should commit");
 
@@ -344,11 +344,11 @@ fn surviving_split_calls_policy_once() {
     let mut policy = RecordEdgePolicy::default();
 
     let created = g
-        .edit_with_policy(&mut policy, |edit| {
+        .transaction_with_policy(&mut policy, |edit| {
             let start = edit.add_dart();
             let end = edit.add_dart();
             edit.link(Dim::Zero, start, end)?;
-            Ok(edit.add_edge_split_from(
+            Ok::<_, TopologyEditError>(edit.add_edge_split_from(
                 source,
                 EdgeAttr::new(
                     start,
@@ -369,7 +369,7 @@ fn transient_split_does_not_call_policy() {
     let (dart, source) = add_named_test_edge(&mut g, 0.0, "source");
     let mut policy = RecordEdgePolicy::default();
 
-    g.edit_with_policy(&mut policy, |edit| {
+    g.transaction_with_policy(&mut policy, |edit| {
         let created = edit.add_edge_split_from(
             source,
             EdgeAttr::new(
@@ -379,7 +379,7 @@ fn transient_split_does_not_call_policy() {
             ),
         );
         edit.merge_edges_into(source, created);
-        Ok(())
+        Ok::<_, TopologyEditError>(())
     })
     .expect("the transient split should commit");
 
@@ -396,10 +396,10 @@ fn chained_merges_target_the_final_survivor_in_declaration_order() {
     let (_, final_survivor) = add_named_test_edge(&mut g, 4.0, "final");
     let mut policy = RecordEdgePolicy::default();
 
-    g.edit_with_policy(&mut policy, |edit| {
+    g.transaction_with_policy(&mut policy, |edit| {
         edit.merge_edges_into(first, second);
         edit.merge_edges_into(final_survivor, first);
-        Ok(())
+        Ok::<_, TopologyEditError>(())
     })
     .expect("the merge chain should commit");
 
@@ -422,7 +422,7 @@ fn policy_receives_transaction_start_source_and_removed_payloads() {
     let mut policy = RecordEdgePolicy::default();
 
     let created = g
-        .edit_with_policy(&mut policy, |edit| {
+        .transaction_with_policy(&mut policy, |edit| {
             edit.edge_attr_mut(source).unwrap().data = "source-staged".to_owned();
             edit.edge_attr_mut(removed).unwrap().data = "removed-staged".to_owned();
             let start = edit.add_dart();
@@ -437,7 +437,7 @@ fn policy_receives_transaction_start_source_and_removed_payloads() {
                 ),
             );
             edit.merge_edges_into(survivor, removed);
-            Ok(created)
+            Ok::<_, TopologyEditError>(created)
         })
         .expect("the transaction should commit");
 
@@ -475,7 +475,7 @@ fn policy_failure_restores_topology_and_payloads() {
     let original_dart_count = g.dart_count();
     let mut policy = RejectEdgeSplit;
 
-    let result = g.edit_with_policy(&mut policy, |edit| {
+    let result = g.transaction_with_policy(&mut policy, |edit| {
         edit.edge_attr_mut(source).unwrap().data = "source-staged".to_owned();
         let start = edit.add_dart();
         let end = edit.add_dart();
@@ -499,7 +499,7 @@ fn policy_failure_restores_topology_and_payloads() {
 
 /// Creates a positioned edge whose payload makes reconciliation choices observable.
 fn add_named_test_edge(g: &mut GMap<TestPayload>, start_x: f64, data: &str) -> (Dart, EdgeKey) {
-    g.edit(|edit| {
+    g.transaction(|edit| {
         let start = edit.add_dart();
         let end = edit.add_dart();
         edit.link(Dim::Zero, start, end)?;
@@ -511,7 +511,7 @@ fn add_named_test_edge(g: &mut GMap<TestPayload>, start_x: f64, data: &str) -> (
             ),
             data.to_owned(),
         ));
-        Ok((start, key))
+        Ok::<_, TopologyEditError>((start, key))
     })
     .expect("the edge should commit")
 }
@@ -521,7 +521,7 @@ fn local_local_collision_keeps_the_earliest_created_key() {
     let mut g = GMap::<TestPayload>::new();
 
     let (earliest, later) = g
-        .edit(|edit| {
+        .transaction(|edit| {
             let start = edit.add_dart();
             let end = edit.add_dart();
             edit.link(Dim::Zero, start, end)?;
@@ -535,7 +535,7 @@ fn local_local_collision_keeps_the_earliest_created_key() {
                 Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
                 "later".to_owned(),
             ));
-            Ok((earliest, later))
+            Ok::<_, TopologyEditError>((earliest, later))
         })
         .expect("local identities should reconcile");
 
@@ -550,8 +550,8 @@ fn local_existing_collision_keeps_the_existing_key() {
     let (dart, existing) = add_named_test_edge(&mut g, 0.0, "existing");
 
     let local = g
-        .edit(|edit| {
-            Ok(edit.add_edge(EdgeAttr::new(
+        .transaction(|edit| {
+            Ok::<_, TopologyEditError>(edit.add_edge(EdgeAttr::new(
                 dart,
                 Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
                 "local".to_owned(),
@@ -571,7 +571,7 @@ fn multiple_existing_identities_require_explicit_lineage() {
     let (second_dart, second) = add_named_test_edge(&mut g, 1.0, "second");
     let second_end = g.alpha(Dim::Zero, second_dart);
 
-    let result = g.edit(|edit| edit.sew(Dim::Two, first_dart, second_end));
+    let result = g.transaction(|edit| edit.sew(Dim::Two, first_dart, second_end));
 
     assert!(matches!(
         result,
@@ -590,10 +590,10 @@ fn explicit_existing_collision_keeps_declared_survivor_and_calls_policy_once() {
     let removed_end = g.alpha(Dim::Zero, removed_dart);
     let mut policy = RecordEdgePolicy::default();
 
-    g.edit_with_policy(&mut policy, |edit| {
+    g.transaction_with_policy(&mut policy, |edit| {
         edit.sew(Dim::Two, survivor_dart, removed_end)?;
         edit.merge_edges_into(survivor, removed);
-        Ok(())
+        Ok::<_, TopologyEditError>(())
     })
     .expect("explicit lineage should select the survivor");
 
@@ -612,7 +612,7 @@ fn explicit_lineage_survivor_must_survive_reconciliation() {
     let (existing_dart, existing) = add_named_test_edge(&mut g, 0.0, "existing");
     let (_, removed) = add_named_test_edge(&mut g, 2.0, "removed");
 
-    let result = g.edit(|edit| {
+    let result = g.transaction(|edit| {
         let local_survivor = edit.add_edge(EdgeAttr::new(
             existing_dart,
             Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
@@ -639,8 +639,8 @@ fn split_discarded_by_reconciliation_does_not_call_policy() {
     let mut policy = RecordEdgePolicy::default();
 
     let created = g
-        .edit_with_policy(&mut policy, |edit| {
-            Ok(edit.add_edge_split_from(
+        .transaction_with_policy(&mut policy, |edit| {
+            Ok::<_, TopologyEditError>(edit.add_edge_split_from(
                 source,
                 EdgeAttr::new(
                     existing_dart,

@@ -1,6 +1,7 @@
-use crate::builders::edges::add_line;
+use crate::builders::edges::add_edge_staged;
 use crate::builders::errors::ChamferError;
 use crate::geometry::{Curve, LINEAR_TOLERANCE, Point3};
+use crate::topology::TopologyEdit;
 use crate::topology::attributes::VertexAttr;
 use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
@@ -31,7 +32,7 @@ pub fn chamfer_profile_vertex<P: Payload>(
 
 /// Performs the complete chamfer inside the transaction opened by the public API.
 fn chamfer_profile_vertex_staged<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     vertex_dart: Dart,
     distance: f64,
 ) -> Result<EdgeKey, ChamferError> {
@@ -50,29 +51,31 @@ fn chamfer_profile_vertex_staged<P: Payload>(
         .cell_key::<Cell0>(incoming_end)
         .ok_or(ChamferError::MissingVertexPoint { dart: incoming_end })?;
 
-    g.edit(|edit| {
-        edit.unlink(Dim::One, incoming_end)?;
-        edit.vertex_attr_mut(corner_key)
-            .expect("validated chamfer vertex must remain registered")
-            .dart = incoming_end;
-        edit.add_vertex_split_from(
-            corner_key,
-            VertexAttr::new(outgoing_start, vertex, P::V::default()),
-        );
-        Ok(())
-    })
-    .map_err(ChamferError::from)?;
-    g.attribute_mut::<Cell0>(incoming_end)
+    g.unlink(Dim::One, incoming_end)
+        .map_err(ChamferError::from)?;
+    g.vertex_attr_mut(corner_key)
+        .expect("validated chamfer vertex must remain registered")
+        .dart = incoming_end;
+    let outgoing_key = g.add_vertex_split_from(
+        corner_key,
+        VertexAttr::new(outgoing_start, vertex, P::V::default()),
+    );
+    g.vertex_attr_mut(corner_key)
         .expect("validated chamfer vertex must remain registered")
         .point = incoming_offset;
-    g.attribute_mut::<Cell0>(outgoing_start)
+    g.vertex_attr_mut(outgoing_key)
         .expect("validated chamfer vertex must remain registered")
         .point = outgoing_offset;
     reset_line_edge(g, incoming_end)?;
     reset_line_edge(g, outgoing_start)?;
 
-    let chamfer_edge = add_line(g, incoming_offset, outgoing_offset)
-        .map_err(|_| ChamferError::ZeroLengthEdge { dart: incoming_end })?;
+    let chamfer_edge = add_edge_staged(
+        g,
+        incoming_offset,
+        outgoing_offset,
+        Curve::line(incoming_offset, outgoing_offset),
+    )
+    .map_err(|_| ChamferError::ZeroLengthEdge { dart: incoming_end })?;
     let chamfer_start = g.edge_attr_unchecked(chamfer_edge).dart;
     let chamfer_end = g.alpha(Dim::Zero, chamfer_start);
     sew(g, incoming_end, chamfer_start)?;
@@ -151,13 +154,19 @@ fn offset_point(
     Ok(vertex + direction / edge_length * distance)
 }
 
-fn reset_line_edge<P: Payload>(g: &mut GMap<P>, dart: Dart) -> Result<(), ChamferError> {
+fn reset_line_edge<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    dart: Dart,
+) -> Result<(), ChamferError> {
     let edge_dart = line_edge_dart(g, dart)?;
     let start = vertex_point(g, edge_dart)?;
     let end = vertex_point(g, g.alpha(Dim::Zero, edge_dart))?;
-    let attr = g
-        .attribute_mut::<Cell1>(edge_dart)
+    let edge_key = g
+        .cell_key::<Cell1>(edge_dart)
         .ok_or(ChamferError::MissingEdgeCurve { dart: edge_dart })?;
+    let attr = g
+        .edge_attr_mut(edge_key)
+        .expect("validated chamfer edge must remain registered");
     attr.curve = Curve::line(start, end);
     Ok(())
 }
@@ -168,8 +177,12 @@ fn vertex_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Point3, ChamferEr
         .ok_or(ChamferError::MissingVertexPoint { dart })
 }
 
-fn sew<P: Payload>(g: &mut GMap<P>, first: Dart, second: Dart) -> Result<(), ChamferError> {
-    g.edit(|edit| edit.sew(Dim::One, first, second))
+fn sew<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    first: Dart,
+    second: Dart,
+) -> Result<(), ChamferError> {
+    g.sew(Dim::One, first, second)
         .map_err(|_| ChamferError::SewFailed {
             dim: Dim::One,
             first,

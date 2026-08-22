@@ -6,7 +6,7 @@ use ngk::topology::StandardPayload;
 use ngk::topology::gmap::GMap;
 
 #[test]
-fn late_outer_failure_rolls_back_a_completed_chamfer_builder() {
+fn failed_chamfer_builder_preserves_the_source_profile() {
     let mut g = GMap::<StandardPayload>::new();
     let profile = add_polyline(
         &mut g,
@@ -22,10 +22,7 @@ fn late_outer_failure_rolls_back_a_completed_chamfer_builder() {
     let before_edges = g.iter_edges().count();
     let before_vertices = g.iter_vertices().count();
 
-    let result = g.transaction(|g| {
-        chamfer_profile_vertex(g, corner, 0.25)?;
-        Err::<(), _>(ChamferError::InvalidDistance { distance: -1.0 })
-    });
+    let result = chamfer_profile_vertex(&mut g, corner, -1.0);
 
     assert!(
         matches!(result, Err(ChamferError::InvalidDistance { .. })),

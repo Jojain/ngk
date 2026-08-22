@@ -8,7 +8,7 @@ use ngk::geometry::axis::Axis3;
 use ngk::geometry::{Curve, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface};
 use ngk::tessellate::{TessellateOpts, tessellate_face_key};
 use ngk::topology::attributes::{EdgeAttr, VertexAttr};
-use ngk::topology::gmap::{Cell0, Dim, GMap};
+use ngk::topology::gmap::{Cell0, Dim, GMap, TopologyEditError};
 use ngk::topology::payload::StandardPayload;
 
 #[test]
@@ -151,7 +151,7 @@ fn full_revolved_edge_creates_surface_face_between_endpoint_circles() {
 fn full_revolved_closed_edge_creates_periodic_seam_face() {
     let mut g = GMap::<StandardPayload>::new();
     let edge_key = g
-        .edit(|edit| {
+        .transaction(|edit| {
             let first = edit.add_dart();
             let second = edit.add_dart();
             edit.sew(Dim::Zero, first, second)?;
@@ -165,7 +165,7 @@ fn full_revolved_closed_edge_creates_periodic_seam_face() {
                 )),
                 (),
             ));
-            Ok(edge_key)
+            Ok::<_, TopologyEditError>(edge_key)
         })
         .unwrap();
 

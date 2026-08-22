@@ -1,6 +1,6 @@
 use crate::builders::errors::EdgeCreationError;
 use crate::builders::profiles::{
-    PolylineError, add_polyline, add_rectangle, add_square, append_edge,
+    PolylineError, add_polyline, add_rectangle, add_square, append_edge_staged,
 };
 use crate::geometry::{Plane, Point3};
 use crate::modeling::edges;
@@ -68,7 +68,7 @@ impl<P: Payload> Shape<ProfileTag, P> {
         self.map_mut().transaction(|g| {
             let edge_dart = g.merge(edge.edge());
             let edge_key = g.cell_key_unchecked::<Cell1>(edge_dart);
-            append_edge(g, profile_key, edge_key)
+            append_edge_staged(g, profile_key, edge_key)
         })
     }
 }

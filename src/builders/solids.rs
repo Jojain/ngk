@@ -7,7 +7,7 @@ use crate::{
         Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
     },
     topology::{
-        Dart, SolidAttr,
+        Dart, SolidAttr, TopologyEdit,
         attributes::{EdgeAttr, FaceAttr},
         edge::Edge,
         face::Face,
@@ -40,34 +40,37 @@ pub fn translate_face<P: Payload>(
         .iter_vertices()
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
-    for key in vertex_keys {
-        let vertex = translated.vertex_attr_mut_unchecked(key);
-        vertex.point += direction;
-    }
-
     let edge_keys = translated
         .iter_edges()
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
-    for key in edge_keys {
-        let edge = translated.edge_attr_mut_unchecked(key);
-        edge.curve = edge.curve.translated(direction).map_err(|source| {
-            ExtrudeError::CurveTranslationFailed {
-                dart: edge.dart,
-                source,
-            }
-        })?;
-    }
-
     let translated_face_key = *translated.attribute_unchecked::<Cell2>(translated_dart);
-    let translated_face = translated.face_attr_mut_unchecked(translated_face_key);
-    translated_face.surface = translated_face
-        .surface
-        .translated(direction)
-        .map_err(|source| ExtrudeError::SurfaceTranslationFailed {
-            dart: translated_face.outer_loop,
-            source,
-        })?;
+    translated.transaction(|edit| {
+        for key in vertex_keys {
+            edit.vertex_attr_mut_unchecked(key).point += direction;
+        }
+
+        for key in edge_keys {
+            let edge = edit.edge_attr_mut_unchecked(key);
+            edge.curve = edge.curve.translated(direction).map_err(|source| {
+                ExtrudeError::CurveTranslationFailed {
+                    dart: edge.dart,
+                    source,
+                }
+            })?;
+        }
+
+        let translated_face = edit.face_attr_mut_unchecked(translated_face_key);
+        translated_face.surface =
+            translated_face
+                .surface
+                .translated(direction)
+                .map_err(|source| ExtrudeError::SurfaceTranslationFailed {
+                    dart: translated_face.outer_loop,
+                    source,
+                })?;
+        Ok::<_, ExtrudeError>(())
+    })?;
 
     Ok(Shape::new(translated, translated_face_key))
 }
@@ -91,7 +94,7 @@ pub fn add_extruded_face<P: Payload>(
 
 /// Builds translated caps and lateral faces, then registers the staged solid.
 fn add_extruded_face_staged<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
 ) -> Result<SolidKey, ExtrudeError> {
@@ -125,7 +128,7 @@ fn add_extruded_face_staged<P: Payload>(
 }
 
 fn orient_extruded_caps<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     bottom_face: FaceKey,
     top_face: FaceKey,
     direction: Vector3<f64>,
@@ -152,7 +155,7 @@ fn face_normal_dot_direction<P: Payload>(
     face.face(g).normal_at(0.0, 0.0).dot(&direction)
 }
 
-fn reverse_face_winding<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
+fn reverse_face_winding<P: Payload>(g: &mut TopologyEdit<'_, P>, face: FaceKey) {
     let Some(face_attr) = g.face_attr(face).cloned() else {
         return;
     };
@@ -183,7 +186,7 @@ fn reverse_face_winding<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
 }
 
 fn sew_extruded_loop<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     bottom_loop_dart: Dart,
     top_loop_dart: Dart,
     direction: Vector3<f64>,
@@ -254,12 +257,12 @@ fn sew_extruded_loop<P: Payload>(
 }
 
 fn sew<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     dim: Dim,
     first: Dart,
     second: Dart,
 ) -> Result<(), ExtrudeError> {
-    g.edit(|edit| edit.sew(dim, first, second))
+    g.sew(dim, first, second)
         .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
 }
 
@@ -311,11 +314,9 @@ fn prepare_lateral_face<P: Payload>(
 }
 
 fn add_lateral_face_topology<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
 ) -> Result<LateralFaceTopology, ExtrudeError> {
-    let darts = g
-        .edit(|edit| Ok(std::array::from_fn(|_| edit.add_dart())))
-        .expect("fresh lateral face darts must commit");
+    let darts = std::array::from_fn(|_| g.add_dart());
 
     for i in 0..4 {
         sew(g, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
@@ -340,7 +341,7 @@ fn add_lateral_face_topology<P: Payload>(
 }
 
 fn add_lateral_face_attributes<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     topology: &LateralFaceTopology,
     prepared: &PreparedLateralFace,
 ) {

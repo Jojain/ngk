@@ -5,7 +5,7 @@ use std::thread;
 use ngk::builders::faces::add_polygon_with_holes;
 use ngk::geometry::{Plane, Point3};
 use ngk::modeling::solids::block;
-use ngk::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
+use ngk::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap, TopologyEditError};
 use ngk::topology::payload::StandardPayload;
 use ngk::viz::debug_viewer::{DebugViewerOptions, payload_for_gmap, show_gmap_with_options};
 
@@ -28,12 +28,12 @@ fn two_faces_gmap() -> GMap<StandardPayload> {
     let right_start = g.cell_key_unchecked::<Cell0>(Dart::new(15));
     let left_end = g.cell_key_unchecked::<Cell0>(Dart::new(3));
     let right_end = g.cell_key_unchecked::<Cell0>(Dart::new(14));
-    g.edit(|edit| {
+    g.transaction(|edit| {
         edit.sew(Dim::Two, Dart::new(2), Dart::new(15))?;
         edit.merge_edges_into(left_edge, right_edge);
         edit.merge_vertices_into(left_start, right_start);
         edit.merge_vertices_into(left_end, right_end);
-        Ok(())
+        Ok::<_, TopologyEditError>(())
     })
     .expect("shared edge should sew");
     g

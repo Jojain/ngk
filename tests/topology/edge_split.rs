@@ -2,6 +2,7 @@ use ngk::builders::edges::{EdgeSplitError, add_line, split_edge};
 use ngk::builders::profiles::{add_polyline, add_rectangle};
 use ngk::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
 use ngk::modeling::faces;
+use ngk::topology::TopologyEditError;
 use ngk::topology::closed::Closeable;
 use ngk::topology::gmap::GMap;
 use ngk::topology::payload::{Payload, StandardPayload};
@@ -101,7 +102,11 @@ fn split_edge_initializes_split_edge_payload_from_source() {
         Point3::new(1.0, 0.0, 0.0),
     )
     .expect("line edge should build");
-    g.edge_attr_mut_unchecked(edge).data = "source".to_owned();
+    g.transaction(|edit| {
+        edit.edge_attr_mut_unchecked(edge).data = "source".to_owned();
+        Ok::<_, TopologyEditError>(())
+    })
+    .unwrap();
 
     let split = split_edge(&mut g, edge, 0.5).expect("edge should split");
 

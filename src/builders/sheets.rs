@@ -6,6 +6,7 @@ use crate::builders::errors::ExtrudeError;
 use crate::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
 };
+use crate::topology::TopologyEdit;
 use crate::topology::attributes::{EdgeAttr, FaceAttr, SheetAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
@@ -61,7 +62,7 @@ pub fn add_extruded_profile<P: Payload>(
 }
 
 fn extrude_edge<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     edge_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<ExtrudedFace, ExtrudeError> {
@@ -85,7 +86,7 @@ fn extrude_edge<P: Payload>(
 }
 
 fn sew_extruded_faces<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     faces: &[ExtrudedFace],
     close_ring: bool,
 ) -> Result<(), ExtrudeError> {
@@ -198,13 +199,11 @@ fn is_linear_curve(curve: &Curve) -> bool {
 }
 
 fn add_extruded_edge_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     corners: [Point3; 4],
     surface_data: ExtrudedSurface,
 ) -> Result<ExtrudedFace, ExtrudeError> {
-    let darts: Vec<Dart> = g
-        .edit(|edit| Ok((0..8).map(|_| edit.add_dart()).collect()))
-        .expect("fresh sweep face darts must commit");
+    let darts: Vec<Dart> = (0..8).map(|_| g.add_dart()).collect();
 
     for i in 0..4 {
         sew(g, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
@@ -249,29 +248,27 @@ fn add_extruded_edge_face<P: Payload>(
 }
 
 fn sew_adjacent_sweep_edges<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     survivor: Dart,
     removed: Dart,
 ) -> Result<(), ExtrudeError> {
     let merge = alpha2_sweep_merge(g, survivor, removed)?;
-    g.edit(|edit| {
-        edit.sew(Dim::Two, survivor, removed)?;
-        if merge.survivor_edge != merge.removed_edge {
-            edit.merge_edges_into(merge.survivor_edge, merge.removed_edge);
-        }
-        if merge.survivor_start != merge.removed_start {
-            edit.merge_vertices_into(merge.survivor_start, merge.removed_start);
-        }
-        if merge.survivor_end != merge.removed_end {
-            edit.merge_vertices_into(merge.survivor_end, merge.removed_end);
-        }
-        Ok(())
-    })
-    .map_err(|_| ExtrudeError::SewFailed {
-        dim: Dim::Two,
-        first: survivor,
-        second: removed,
-    })
+    g.sew(Dim::Two, survivor, removed)
+        .map_err(|_| ExtrudeError::SewFailed {
+            dim: Dim::Two,
+            first: survivor,
+            second: removed,
+        })?;
+    if merge.survivor_edge != merge.removed_edge {
+        g.merge_edges_into(merge.survivor_edge, merge.removed_edge);
+    }
+    if merge.survivor_start != merge.removed_start {
+        g.merge_vertices_into(merge.survivor_start, merge.removed_start);
+    }
+    if merge.survivor_end != merge.removed_end {
+        g.merge_vertices_into(merge.survivor_end, merge.removed_end);
+    }
+    Ok(())
 }
 
 struct Alpha2SweepMerge {
@@ -304,12 +301,12 @@ fn alpha2_sweep_merge<P: Payload>(
 }
 
 fn sew<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     dim: Dim,
     first: Dart,
     second: Dart,
 ) -> Result<(), ExtrudeError> {
-    g.edit(|edit| edit.sew(dim, first, second))
+    g.sew(dim, first, second)
         .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
 }
 

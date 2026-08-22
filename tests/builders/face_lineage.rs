@@ -1,8 +1,9 @@
 use std::convert::Infallible;
 
-use ngk::builders::faces::{FaceImprint, add_face, split_face_by_imprints};
+use ngk::builders::faces::{FaceImprint, add_face, split_face_by_imprints_staged};
 use ngk::builders::profiles::add_rectangle as add_rectangle_profile;
 use ngk::geometry::{Curve, Curve2, Line2, Plane, Point2, Point3};
+use ngk::topology::TopologyEditError;
 use ngk::topology::gmap::{EditPolicy, GMap};
 use ngk::topology::payload::Payload;
 use ngk::topology::shape_keys::FaceKey;
@@ -49,7 +50,7 @@ fn boundary_chord_split_preserves_source_face_and_applies_payload_policy() {
 
     let splits = g
         .transaction_with_policy(&mut policy, |g| {
-            split_face_by_imprints(g, source, &[imprint])
+            split_face_by_imprints_staged(g, source, &[imprint])
         })
         .expect("face imprint split should commit");
 
@@ -79,7 +80,7 @@ fn closed_loop_split_declares_the_island_as_a_source_face_split() {
 
     let splits = g
         .transaction_with_policy(&mut policy, |g| {
-            split_face_by_imprints(g, source, &imprints)
+            split_face_by_imprints_staged(g, source, &imprints)
         })
         .expect("closed face imprint split should commit");
 
@@ -99,7 +100,7 @@ fn late_face_policy_failure_restores_the_complete_source_face() {
     let mut policy = RejectFaceSplit;
 
     let result = g.transaction_with_policy(&mut policy, |g| {
-        split_face_by_imprints(g, source, &[imprint])
+        split_face_by_imprints_staged(g, source, &[imprint])
     });
 
     assert!(result.is_err());
@@ -131,7 +132,11 @@ fn attributed_rectangle() -> GMap<FacePayload> {
     let profile = add_rectangle_profile(&mut g, Plane::xy(), 2.0, 2.0)
         .expect("rectangle profile should build");
     let face = add_face(&mut g, profile).expect("rectangle face should build");
-    g.face_attr_mut_unchecked(face).data = "source".to_owned();
+    g.transaction(|edit| {
+        edit.face_attr_mut_unchecked(face).data = "source".to_owned();
+        Ok::<_, TopologyEditError>(())
+    })
+    .unwrap();
     g
 }
 

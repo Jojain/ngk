@@ -119,7 +119,7 @@ pub fn add_revolved_edge<P: Payload>(
 
 /// Builds the partial or full swept face within the caller's transaction.
 fn add_revolved_edge_staged<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     edge: EdgeKey,
     axis: Axis3,
     angle: Rad64,
@@ -134,7 +134,7 @@ fn add_revolved_edge_staged<P: Payload>(
 }
 
 fn add_partial_revolved_edge_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
@@ -147,99 +147,96 @@ fn add_partial_revolved_edge_face<P: Payload>(
     let interval = source.curve.parameters_between(start, end);
     let surface = Surface::Revolution(SurfaceOfRevolution::new(source.curve.clone(), axis));
 
-    let face = g.edit(|edit| {
-        let bottom_start = edit.add_dart();
-        let bottom_end = edit.add_dart();
-        let end_arc_start = edit.add_dart();
-        let end_arc_end = edit.add_dart();
-        let rotated_start_dart = edit.add_dart();
-        let rotated_end_dart = edit.add_dart();
-        let start_arc_start = edit.add_dart();
-        let start_arc_end = edit.add_dart();
+    let bottom_start = g.add_dart();
+    let bottom_end = g.add_dart();
+    let end_arc_start = g.add_dart();
+    let end_arc_end = g.add_dart();
+    let rotated_start_dart = g.add_dart();
+    let rotated_end_dart = g.add_dart();
+    let start_arc_start = g.add_dart();
+    let start_arc_end = g.add_dart();
 
-        edit.link(Dim::Zero, bottom_start, bottom_end)?;
-        edit.link(Dim::Zero, end_arc_start, end_arc_end)?;
-        edit.link(Dim::Zero, rotated_start_dart, rotated_end_dart)?;
-        edit.link(Dim::Zero, start_arc_start, start_arc_end)?;
+    g.link(Dim::Zero, bottom_start, bottom_end)?;
+    g.link(Dim::Zero, end_arc_start, end_arc_end)?;
+    g.link(Dim::Zero, rotated_start_dart, rotated_end_dart)?;
+    g.link(Dim::Zero, start_arc_start, start_arc_end)?;
 
-        edit.link(Dim::One, bottom_end, end_arc_start)?;
-        edit.link(Dim::One, end_arc_end, rotated_start_dart)?;
-        edit.link(Dim::One, rotated_end_dart, start_arc_start)?;
-        edit.link(Dim::One, start_arc_end, bottom_start)?;
+    g.link(Dim::One, bottom_end, end_arc_start)?;
+    g.link(Dim::One, end_arc_end, rotated_start_dart)?;
+    g.link(Dim::One, rotated_end_dart, start_arc_start)?;
+    g.link(Dim::One, start_arc_end, bottom_start)?;
 
-        edit.add_vertex(VertexAttr::new(bottom_start, start, P::V::default()));
-        edit.add_vertex(VertexAttr::new(bottom_end, end, P::V::default()));
-        edit.add_vertex(VertexAttr::new(end_arc_end, rotated_end, P::V::default()));
-        edit.add_vertex(VertexAttr::new(
-            rotated_end_dart,
-            rotated_start,
-            P::V::default(),
-        ));
+    g.add_vertex(VertexAttr::new(bottom_start, start, P::V::default()));
+    g.add_vertex(VertexAttr::new(bottom_end, end, P::V::default()));
+    g.add_vertex(VertexAttr::new(end_arc_end, rotated_end, P::V::default()));
+    g.add_vertex(VertexAttr::new(
+        rotated_end_dart,
+        rotated_start,
+        P::V::default(),
+    ));
 
-        edit.add_edge(EdgeAttr::new(
-            bottom_start,
-            source.curve.clone(),
-            P::E::default(),
-        ));
-        edit.add_edge(EdgeAttr::new(
-            end_arc_start,
-            revolve_circle_curve(axis, end),
-            P::E::default(),
-        ));
-        edit.add_edge(EdgeAttr::new(
-            rotated_end_dart,
-            rotated_curve,
-            P::E::default(),
-        ));
-        edit.add_edge(EdgeAttr::new(
-            start_arc_end,
-            revolve_circle_curve(axis, start),
-            P::E::default(),
-        ));
+    g.add_edge(EdgeAttr::new(
+        bottom_start,
+        source.curve.clone(),
+        P::E::default(),
+    ));
+    g.add_edge(EdgeAttr::new(
+        end_arc_start,
+        revolve_circle_curve(axis, end),
+        P::E::default(),
+    ));
+    g.add_edge(EdgeAttr::new(
+        rotated_end_dart,
+        rotated_curve,
+        P::E::default(),
+    ));
+    g.add_edge(EdgeAttr::new(
+        start_arc_end,
+        revolve_circle_curve(axis, start),
+        P::E::default(),
+    ));
 
-        let mut pcurves = HashMap::with_capacity(4);
-        pcurves.insert(
-            bottom_start,
-            Curve2::Line(Line2::new(
-                Point2::new(interval.start, 0.0),
-                Point2::new(interval.end, 0.0),
-            )),
-        );
-        pcurves.insert(
-            end_arc_start,
-            Curve2::Line(Line2::new(
-                Point2::new(interval.end, 0.0),
-                Point2::new(interval.end, angle.val()),
-            )),
-        );
-        pcurves.insert(
-            rotated_start_dart,
-            Curve2::Line(Line2::new(
-                Point2::new(interval.end, angle.val()),
-                Point2::new(interval.start, angle.val()),
-            )),
-        );
-        pcurves.insert(
-            start_arc_start,
-            Curve2::Line(Line2::new(
-                Point2::new(interval.start, angle.val()),
-                Point2::new(interval.start, 0.0),
-            )),
-        );
+    let mut pcurves = HashMap::with_capacity(4);
+    pcurves.insert(
+        bottom_start,
+        Curve2::Line(Line2::new(
+            Point2::new(interval.start, 0.0),
+            Point2::new(interval.end, 0.0),
+        )),
+    );
+    pcurves.insert(
+        end_arc_start,
+        Curve2::Line(Line2::new(
+            Point2::new(interval.end, 0.0),
+            Point2::new(interval.end, angle.val()),
+        )),
+    );
+    pcurves.insert(
+        rotated_start_dart,
+        Curve2::Line(Line2::new(
+            Point2::new(interval.end, angle.val()),
+            Point2::new(interval.start, angle.val()),
+        )),
+    );
+    pcurves.insert(
+        start_arc_start,
+        Curve2::Line(Line2::new(
+            Point2::new(interval.start, angle.val()),
+            Point2::new(interval.start, 0.0),
+        )),
+    );
 
-        Ok(edit.add_face(FaceAttr::with_pcurves(
-            surface,
-            P::F::default(),
-            bottom_start,
-            Vec::new(),
-            pcurves,
-        )))
-    })?;
-    Ok(face)
+    Ok(g.add_face(FaceAttr::with_pcurves(
+        surface,
+        P::F::default(),
+        bottom_start,
+        Vec::new(),
+        pcurves,
+    )))
 }
 
 fn add_full_revolved_edge_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
@@ -252,7 +249,7 @@ fn add_full_revolved_edge_face<P: Payload>(
 }
 
 fn add_full_revolved_open_edge_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
@@ -264,53 +261,50 @@ fn add_full_revolved_open_edge_face<P: Payload>(
     let start_radius = revolve_radius(axis, source.start.point);
     let end_radius = revolve_radius(axis, source.end.point);
 
-    let face = g.edit(|edit| {
-        let start_loop = add_closed_revolve_boundary_loop(
-            edit,
-            source.start.point,
-            revolve_circle_curve(axis, source.start.point),
-        )?;
-        let end_loop = add_closed_revolve_boundary_loop(
-            edit,
-            source.end.point,
-            revolve_circle_curve(axis, source.end.point),
-        )?;
+    let start_loop = add_closed_revolve_boundary_loop(
+        g,
+        source.start.point,
+        revolve_circle_curve(axis, source.start.point),
+    )?;
+    let end_loop = add_closed_revolve_boundary_loop(
+        g,
+        source.end.point,
+        revolve_circle_curve(axis, source.end.point),
+    )?;
 
-        let (outer_loop, outer_u, inner_loop, inner_u) = if start_radius >= end_radius {
-            (start_loop, interval.start, end_loop, interval.end)
-        } else {
-            (end_loop, interval.end, start_loop, interval.start)
-        };
+    let (outer_loop, outer_u, inner_loop, inner_u) = if start_radius >= end_radius {
+        (start_loop, interval.start, end_loop, interval.end)
+    } else {
+        (end_loop, interval.end, start_loop, interval.start)
+    };
 
-        let mut pcurves = HashMap::with_capacity(2);
-        pcurves.insert(
-            outer_loop,
-            Curve2::Line(Line2::new(
-                Point2::new(outer_u, 0.0),
-                Point2::new(outer_u, angle.val()),
-            )),
-        );
-        pcurves.insert(
-            inner_loop,
-            Curve2::Line(Line2::new(
-                Point2::new(inner_u, angle.val()),
-                Point2::new(inner_u, 0.0),
-            )),
-        );
+    let mut pcurves = HashMap::with_capacity(2);
+    pcurves.insert(
+        outer_loop,
+        Curve2::Line(Line2::new(
+            Point2::new(outer_u, 0.0),
+            Point2::new(outer_u, angle.val()),
+        )),
+    );
+    pcurves.insert(
+        inner_loop,
+        Curve2::Line(Line2::new(
+            Point2::new(inner_u, angle.val()),
+            Point2::new(inner_u, 0.0),
+        )),
+    );
 
-        Ok(edit.add_face(FaceAttr::with_pcurves(
-            surface,
-            P::F::default(),
-            outer_loop,
-            vec![inner_loop],
-            pcurves,
-        )))
-    })?;
-    Ok(face)
+    Ok(g.add_face(FaceAttr::with_pcurves(
+        surface,
+        P::F::default(),
+        outer_loop,
+        vec![inner_loop],
+        pcurves,
+    )))
 }
 
 fn add_full_revolved_closed_edge_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
@@ -318,25 +312,22 @@ fn add_full_revolved_closed_edge_face<P: Payload>(
     let start = source.start.point;
     let interval = source.curve.parameters_between(start, source.end.point);
     let surface = Surface::Revolution(SurfaceOfRevolution::new(source.curve.clone(), axis));
-    let face = g.edit(|edit| {
-        let seam = add_closed_revolve_boundary_loop(edit, start, source.curve.clone())?;
-        let mut pcurves = HashMap::with_capacity(1);
-        pcurves.insert(
-            seam,
-            Curve2::Line(Line2::new(
-                Point2::new(interval.start, 0.0),
-                Point2::new(interval.end, angle.val()),
-            )),
-        );
-        Ok(edit.add_face(FaceAttr::with_pcurves(
-            surface,
-            P::F::default(),
-            seam,
-            Vec::new(),
-            pcurves,
-        )))
-    })?;
-    Ok(face)
+    let seam = add_closed_revolve_boundary_loop(g, start, source.curve.clone())?;
+    let mut pcurves = HashMap::with_capacity(1);
+    pcurves.insert(
+        seam,
+        Curve2::Line(Line2::new(
+            Point2::new(interval.start, 0.0),
+            Point2::new(interval.end, angle.val()),
+        )),
+    );
+    Ok(g.add_face(FaceAttr::with_pcurves(
+        surface,
+        P::F::default(),
+        seam,
+        Vec::new(),
+        pcurves,
+    )))
 }
 
 fn add_closed_revolve_boundary_loop<P: Payload>(
@@ -409,15 +400,22 @@ pub(crate) fn add_revolved_profile_from_dart<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<SheetKey, RevolveError> {
-    g.transaction(|g| {
-        g.ensure_profile(profile_dart);
-        let profile = Profile::from_dart(g, profile_dart)
-            .expect("profile dart must belong to a registered profile");
-        let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
-        let close_ring = planar.inner().is_closed();
-        let dart = add_revolved_profile_faces(g, profile_dart, axis, angle, close_ring)?.swept_dart;
-        Ok(g.edit(|edit| Ok(edit.add_sheet(SheetAttr::new(dart, P::Sheet::default()))))?)
-    })
+    g.transaction(|g| add_revolved_profile_from_dart_staged(g, profile_dart, axis, angle))
+}
+
+fn add_revolved_profile_from_dart_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    profile_dart: Dart,
+    axis: Axis3,
+    angle: Rad64,
+) -> Result<SheetKey, RevolveError> {
+    g.ensure_profile(profile_dart);
+    let profile = Profile::from_dart(g, profile_dart)
+        .expect("profile dart must belong to a registered profile");
+    let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
+    let close_ring = planar.inner().is_closed();
+    let dart = add_revolved_profile_faces(g, profile_dart, axis, angle, close_ring)?.swept_dart;
+    Ok(g.add_sheet(SheetAttr::new(dart, P::Sheet::default())))
 }
 
 struct RevolvedProfile {
@@ -435,7 +433,7 @@ struct RevolvedFace {
 }
 
 fn add_revolved_profile_faces<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     profile_dart: Dart,
     axis: Axis3,
     angle: Rad64,
@@ -466,7 +464,7 @@ fn add_revolved_profile_faces<P: Payload>(
 }
 
 fn add_revolved_edge_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
@@ -510,57 +508,54 @@ fn add_revolved_edge_face<P: Payload>(
 }
 
 fn add_revolved_quad_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     corners: [Point3; 4],
     boundary_curves: [Curve; 4],
     surface: Surface,
     pcurves: [(Point2, Point2); 4],
 ) -> Result<RevolvedFace, RevolveError> {
-    let face = g.edit(|edit| {
-        let darts: Vec<Dart> = (0..8).map(|_| edit.add_dart()).collect();
+    let darts: Vec<Dart> = (0..8).map(|_| g.add_dart()).collect();
 
-        for i in 0..4 {
-            edit.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
-        }
-        for i in 0..4 {
-            edit.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % darts.len()])?;
-        }
+    for i in 0..4 {
+        g.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
+    }
+    for i in 0..4 {
+        g.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % darts.len()])?;
+    }
 
-        for i in 0..4 {
-            let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
-            edit.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
-        }
+    for i in 0..4 {
+        let dart = g.cell_representative(darts[2 * i], Dim::Zero);
+        g.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
+    }
 
-        for i in 0..4 {
-            let edge_dart = darts[2 * i];
-            edit.add_edge(EdgeAttr::new(
-                edge_dart,
-                boundary_curves[i].clone(),
-                P::E::default(),
-            ));
-        }
-
-        edit.add_face(FaceAttr::with_pcurves(
-            surface,
-            P::F::default(),
-            darts[0],
-            Vec::new(),
-            quad_pcurves(&pcurves, &darts),
+    for i in 0..4 {
+        let edge_dart = darts[2 * i];
+        g.add_edge(EdgeAttr::new(
+            edge_dart,
+            boundary_curves[i].clone(),
+            P::E::default(),
         ));
+    }
 
-        Ok(RevolvedFace {
-            bottom_edge: darts[0],
-            top_edge: darts[4],
-            start_side: darts[7],
-            end_side: darts[2],
-            outer_loop: darts[0],
-        })
-    })?;
-    Ok(face)
+    g.add_face(FaceAttr::with_pcurves(
+        surface,
+        P::F::default(),
+        darts[0],
+        Vec::new(),
+        quad_pcurves(&pcurves, &darts),
+    ));
+
+    Ok(RevolvedFace {
+        bottom_edge: darts[0],
+        top_edge: darts[4],
+        start_side: darts[7],
+        end_side: darts[2],
+        outer_loop: darts[0],
+    })
 }
 
 fn sew_revolved_faces<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     faces: &[RevolvedFace],
     close_ring: bool,
 ) -> Result<(), RevolveError> {
@@ -585,7 +580,7 @@ struct Alpha2RevolveMerge {
 }
 
 fn sew_revolved_side_edges<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     survivor: Dart,
     removed: Dart,
 ) -> Result<(), RevolveError> {
@@ -593,34 +588,31 @@ fn sew_revolved_side_edges<P: Payload>(
 }
 
 fn sew_revolved_alpha2_edges<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     first: Dart,
     second: Dart,
     survivor: Dart,
     removed: Dart,
 ) -> Result<(), RevolveError> {
     let merge = alpha2_revolve_merge(g, first, second, survivor, removed)?;
-    g.edit(|edit| {
-        edit.sew(Dim::Two, first, second)?;
-        if merge.survivor_edge != merge.removed_edge {
-            edit.merge_edges_into(merge.survivor_edge, merge.removed_edge);
-        }
-        let mut removed_vertices = Vec::new();
-        if merge.survivor_start != merge.removed_start {
-            edit.merge_vertices_into(merge.survivor_start, merge.removed_start);
-            removed_vertices.push(merge.removed_start);
-        }
-        if merge.survivor_end != merge.removed_end && !removed_vertices.contains(&merge.removed_end)
-        {
-            edit.merge_vertices_into(merge.survivor_end, merge.removed_end);
-        }
-        Ok(())
-    })
-    .map_err(|_| RevolveError::SewFailed {
-        dim: Dim::Two,
-        first,
-        second,
-    })
+    g.sew(Dim::Two, first, second)
+        .map_err(|_| RevolveError::SewFailed {
+            dim: Dim::Two,
+            first,
+            second,
+        })?;
+    if merge.survivor_edge != merge.removed_edge {
+        g.merge_edges_into(merge.survivor_edge, merge.removed_edge);
+    }
+    let mut removed_vertices = Vec::new();
+    if merge.survivor_start != merge.removed_start {
+        g.merge_vertices_into(merge.survivor_start, merge.removed_start);
+        removed_vertices.push(merge.removed_start);
+    }
+    if merge.survivor_end != merge.removed_end && !removed_vertices.contains(&merge.removed_end) {
+        g.merge_vertices_into(merge.survivor_end, merge.removed_end);
+    }
+    Ok(())
 }
 
 fn alpha2_revolve_merge<P: Payload>(
@@ -709,7 +701,7 @@ pub fn add_revolved_face<P: Payload>(
 
 /// Builds caps and lateral sheets, then registers the resulting staged solid.
 fn add_revolved_face_staged<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face_key: FaceKey,
     axis: Axis3,
     angle: Rad64,
@@ -742,28 +734,28 @@ fn add_revolved_face_staged<P: Payload>(
     }
 
     let shell = shell.expect("a face should have at least one boundary loop");
-    Ok(g.edit(|edit| Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None))))?)
+    Ok(g.add_solid(SolidAttr::new(P::S::default(), shell, None)))
 }
 
 fn add_full_revolved_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     loops: Vec<Dart>,
     axis: Axis3,
     angle: Rad64,
 ) -> Result<SolidKey, RevolveError> {
     let mut shell = None;
     for loop_dart in loops {
-        let revolved = add_revolved_profile_from_dart(g, loop_dart, axis, angle)?;
+        let revolved = add_revolved_profile_from_dart_staged(g, loop_dart, axis, angle)?;
         let revolved_dart = g.sheet_attr_unchecked(revolved).dart;
         shell.get_or_insert(revolved_dart);
     }
 
     let shell = shell.expect("a face should have at least one boundary loop");
-    Ok(g.edit(|edit| Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None))))?)
+    Ok(g.add_solid(SolidAttr::new(P::S::default(), shell, None)))
 }
 
 fn sew_revolved_loop_to_caps<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     bottom_loop: Dart,
     top_loop: Dart,
     axis: Axis3,
@@ -804,21 +796,24 @@ fn rotate_face<P: Payload>(
         .iter_vertices()
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
-    for key in vertex_keys {
-        let vertex = rotated.vertex_attr_mut_unchecked(key);
-        vertex.point = rotate_point(axis, vertex.point, angle);
-    }
-
     let edge_keys = rotated.iter_edges().map(|(key, _)| key).collect::<Vec<_>>();
-    for key in edge_keys {
-        let edge = rotated.edge_attr_mut_unchecked(key);
-        edge.curve = rotate_curve(edge.dart, &edge.curve, axis, angle)?;
-    }
-
     let rotated_face_key = *rotated.attribute_unchecked::<Cell2>(rotated_dart);
-    let rotated_face = rotated.face_attr_mut_unchecked(rotated_face_key);
-    rotated_face.surface =
-        rotate_surface(rotated_face.outer_loop, &rotated_face.surface, axis, angle)?;
+    rotated.transaction(|edit| {
+        for key in vertex_keys {
+            let vertex = edit.vertex_attr_mut_unchecked(key);
+            vertex.point = rotate_point(axis, vertex.point, angle);
+        }
+
+        for key in edge_keys {
+            let edge = edit.edge_attr_mut_unchecked(key);
+            edge.curve = rotate_curve(edge.dart, &edge.curve, axis, angle)?;
+        }
+
+        let rotated_face = edit.face_attr_mut_unchecked(rotated_face_key);
+        rotated_face.surface =
+            rotate_surface(rotated_face.outer_loop, &rotated_face.surface, axis, angle)?;
+        Ok::<_, RevolveError>(())
+    })?;
 
     Ok(Shape::new(rotated, rotated_face_key))
 }

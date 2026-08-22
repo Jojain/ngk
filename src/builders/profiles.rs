@@ -4,6 +4,7 @@ use crate::geometry::{
     ControlPolygon2, Curve, Curve2, HPoint2, LINEAR_TOLERANCE, Line2, NurbsCurve2, Plane, Point2,
     Point3, PointCoincidence,
 };
+use crate::topology::TopologyEdit;
 use crate::topology::attributes::{EdgeAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::gmap::{Cell0, Dart, Dim, GMap, TopologyEditError};
@@ -28,8 +29,8 @@ pub fn add_polyline<P: Payload>(
 }
 
 /// Builds all polyline edges and joins them into one staged profile.
-fn add_polyline_staged<P: Payload>(
-    g: &mut GMap<P>,
+pub fn add_polyline_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
     if points.len() < 2 {
@@ -58,8 +59,8 @@ pub fn append_edge<P: Payload>(
 }
 
 /// Connects an edge to a profile and records any resulting vertex merge lineage.
-fn append_edge_staged<P: Payload>(
-    g: &mut GMap<P>,
+pub(crate) fn append_edge_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
 ) -> Result<(), PolylineError> {
@@ -114,16 +115,15 @@ fn append_edge_staged<P: Payload>(
         })
         .transpose()?;
 
-    g.edit(|edit| {
-        edit.sew(Dim::One, profile_end, edge_dart)?;
-        edit.merge_vertices_into(append_merge.survivor, append_merge.removed);
-        if let Some(close_merge) = close_merge {
-            edit.sew(Dim::One, edge_end, profile_start)?;
-            edit.merge_vertices_into(close_merge.survivor, close_merge.removed);
-        }
-        Ok(())
-    })
-    .map_err(polyline_edit_error)
+    g.sew(Dim::One, profile_end, edge_dart)
+        .map_err(polyline_edit_error)?;
+    g.merge_vertices_into(append_merge.survivor, append_merge.removed);
+    if let Some(close_merge) = close_merge {
+        g.sew(Dim::One, edge_end, profile_start)
+            .map_err(polyline_edit_error)?;
+        g.merge_vertices_into(close_merge.survivor, close_merge.removed);
+    }
+    Ok(())
 }
 
 fn append_orientation(
@@ -240,8 +240,8 @@ pub fn add_rectangle<P: Payload>(
 }
 
 /// Builds the four rectangle edges and profile inside one transaction.
-fn add_rectangle_staged<P: Payload>(
-    g: &mut GMap<P>,
+pub(crate) fn add_rectangle_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
     plane: Plane,
     x_size: f64,
     y_size: f64,
@@ -256,7 +256,7 @@ fn add_rectangle_staged<P: Payload>(
         plane.point_at(0.0, y_size),
         plane.point_at(0.0, 0.0),
     ];
-    add_polyline(g, &corners)
+    add_polyline_staged(g, &corners)
 }
 
 /// Adds a closed square profile on `plane`.
@@ -281,76 +281,76 @@ fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), Polylin
 
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
 pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool) -> ProfileKey {
-    g.transaction(|g| {
-        g.edit(|edit| {
-            let darts: Vec<Dart> = (0..count).map(|_| edit.add_dart()).collect();
-            for i in 0..count {
-                edit.sew(Dim::Zero, darts[i], darts[(i + 1) % count])?;
-            }
-            for i in 0..count {
-                edit.sew(Dim::One, darts[i], darts[(i + 1) % count])?;
-            }
-            if closed {
-                edit.sew(Dim::Zero, darts[count - 1], darts[0])?;
-            }
-            Ok(edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default())))
-        })
+    g.transaction(|edit| {
+        let darts: Vec<Dart> = (0..count).map(|_| edit.add_dart()).collect();
+        for i in 0..count {
+            edit.sew(Dim::Zero, darts[i], darts[(i + 1) % count])?;
+        }
+        for i in 0..count {
+            edit.sew(Dim::One, darts[i], darts[(i + 1) % count])?;
+        }
+        if closed {
+            edit.sew(Dim::Zero, darts[count - 1], darts[0])?;
+        }
+        Ok::<_, TopologyEditError>(
+            edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default())),
+        )
     })
     .expect("fresh profile topology must commit")
 }
 
 fn add_segments<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     segments: &[(Point3, Point3, Curve)],
 ) -> Result<ProfileKey, PolylineError> {
     let first_segment = segments.first().ok_or(PolylineError::EmptyPolyline)?;
     let last_segment = segments.last().ok_or(PolylineError::EmptyPolyline)?;
     let closed = first_segment.0.coincides(&last_segment.1, LINEAR_TOLERANCE);
 
-    g.edit(|edit| {
-        let mut segment_topology = Vec::with_capacity(segments.len());
-        for (start_point, _, curve) in segments {
-            let start_dart = edit.add_dart();
-            let end_dart = edit.add_dart();
-            edit.link(Dim::Zero, start_dart, end_dart)?;
-            edit.add_vertex(VertexAttr::new(start_dart, *start_point, P::V::default()));
-            edit.add_edge(EdgeAttr::new(start_dart, curve.clone(), P::E::default()));
-            segment_topology.push(SegmentTopology {
-                start: start_dart,
-                end: end_dart,
-            });
-        }
+    let mut segment_topology = Vec::with_capacity(segments.len());
+    for (start_point, _, curve) in segments {
+        let start_dart = g.add_dart();
+        let end_dart = g.add_dart();
+        g.link(Dim::Zero, start_dart, end_dart)
+            .map_err(polyline_edit_error)?;
+        g.add_vertex(VertexAttr::new(start_dart, *start_point, P::V::default()));
+        g.add_edge(EdgeAttr::new(start_dart, curve.clone(), P::E::default()));
+        segment_topology.push(SegmentTopology {
+            start: start_dart,
+            end: end_dart,
+        });
+    }
 
-        for pair in segment_topology.windows(2) {
-            edit.sew(Dim::One, pair[0].end, pair[1].start)?;
-        }
+    for pair in segment_topology.windows(2) {
+        g.sew(Dim::One, pair[0].end, pair[1].start)
+            .map_err(polyline_edit_error)?;
+    }
 
-        if closed {
-            let first = segment_topology
-                .first()
-                .expect("non-empty segment list should have a first segment");
-            let last = segment_topology
-                .last()
-                .expect("non-empty segment list should have a last segment");
-            edit.sew(Dim::One, last.end, first.start)?;
-        } else {
-            let last_segment = segments
-                .last()
-                .expect("non-empty segment list should have a last segment");
-            let last_topology = segment_topology
-                .last()
-                .expect("non-empty segment list should have a last segment");
-            edit.add_vertex(VertexAttr::new(
-                last_topology.end,
-                last_segment.1,
-                P::V::default(),
-            ));
-        }
+    if closed {
+        let first = segment_topology
+            .first()
+            .expect("non-empty segment list should have a first segment");
+        let last = segment_topology
+            .last()
+            .expect("non-empty segment list should have a last segment");
+        g.sew(Dim::One, last.end, first.start)
+            .map_err(polyline_edit_error)?;
+    } else {
+        let last_segment = segments
+            .last()
+            .expect("non-empty segment list should have a last segment");
+        let last_topology = segment_topology
+            .last()
+            .expect("non-empty segment list should have a last segment");
+        g.add_vertex(VertexAttr::new(
+            last_topology.end,
+            last_segment.1,
+            P::V::default(),
+        ));
+    }
 
-        let first_start = segment_topology[0].start;
-        Ok(edit.add_profile(ProfileAttr::new(first_start, P::Profile::default())))
-    })
-    .map_err(polyline_edit_error)
+    let first_start = segment_topology[0].start;
+    Ok(g.add_profile(ProfileAttr::new(first_start, P::Profile::default())))
 }
 
 #[derive(Clone, Copy)]

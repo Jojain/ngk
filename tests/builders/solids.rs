@@ -1,8 +1,7 @@
 use nalgebra::Vector3;
-use ngk::builders::faces::add_polygon;
+use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::solids::translate_face;
-use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, Surface};
-use ngk::topology::attributes::FaceAttr;
+use ngk::geometry::{LINEAR_TOLERANCE, Point3, Surface};
 use ngk::topology::gmap::GMap;
 use ngk::topology::payload::StandardPayload;
 
@@ -18,17 +17,7 @@ fn translate_face_copies_face_into_translated_map() {
             Point3::new(0.0, 1.0, 0.0),
         ],
     );
-    let loop_dart = source.profile_attr_unchecked(profile_key).dart;
-    let face_key = source.add_face(FaceAttr::new(
-        Surface::Plane(Plane::from_xy(
-            Point3::new(0.0, 0.0, 0.0),
-            Vector3::x(),
-            Vector3::y(),
-        )),
-        (),
-        loop_dart,
-        Vec::new(),
-    ));
+    let face_key = add_face(&mut source, profile_key).expect("face should build");
     let face = source.face_unchecked(face_key);
 
     let translated = translate_face(&face, Vector3::new(0.0, 0.0, 2.0)).unwrap();

@@ -4,6 +4,7 @@ use crate::builders::errors::{EdgeCreationError, TopologyEditFailure};
 use crate::geometry::{
     Circle, Curve, Interval, LINEAR_TOLERANCE, NurbsError, Plane, Point3, PointCoincidence,
 };
+use crate::topology::TopologyEdit;
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
 use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap, TopologyEditError};
 use crate::topology::payload::Payload;
@@ -80,24 +81,19 @@ pub fn add_edge<P: Payload>(
 }
 
 /// Builds an open edge without introducing an independent transaction boundary.
-fn add_edge_staged<P: Payload>(
-    g: &mut GMap<P>,
+pub(crate) fn add_edge_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
     start: Point3,
     end: Point3,
     curve: Curve,
 ) -> Result<EdgeKey, EdgeCreationError> {
     check_non_coincident_points(start, end)?;
-    let edge = g
-        .edit(|edit| {
-            let d1 = edit.add_dart();
-            let d2 = edit.add_dart();
-            edit.link(Dim::Zero, d1, d2)?;
-            edit.add_vertex(VertexAttr::new(d1, start, P::V::default()));
-            edit.add_vertex(VertexAttr::new(d2, end, P::V::default()));
-            Ok(edit.add_edge(EdgeAttr::new(d1, curve, P::E::default())))
-        })
-        .expect("fresh edge topology must commit");
-    Ok(edge)
+    let d1 = g.add_dart();
+    let d2 = g.add_dart();
+    g.link(Dim::Zero, d1, d2)?;
+    g.add_vertex(VertexAttr::new(d1, start, P::V::default()));
+    g.add_vertex(VertexAttr::new(d2, end, P::V::default()));
+    Ok(g.add_edge(EdgeAttr::new(d1, curve, P::E::default())))
 }
 
 /// Adds an isolated straight edge between `start` and `end`.
@@ -132,19 +128,17 @@ pub fn split_edge<P: Payload>(
 }
 
 pub(crate) fn split_face_boundary_edge<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     edge: EdgeKey,
     parameter: f64,
     reversed: bool,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    g.transaction(|g| {
-        let split = prepare_attached_edge_split(g, edge, parameter)?;
-        split_attached_edge_with_profile_links(g, edge, parameter, split, reversed)
-    })
+    let split = prepare_attached_edge_split(g, edge, parameter)?;
+    split_attached_edge_with_profile_links(g, edge, parameter, split, reversed)
 }
 
 fn split_edge_with_profile_links<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     edge: EdgeKey,
     parameter: f64,
     split: PreparedFreeEdgeSplit,
@@ -158,27 +152,22 @@ fn split_edge_with_profile_links<P: Payload>(
         &split.curve,
         parameter,
     )?;
-    let (vertex, second) = g
-        .edit(|edit| {
-            let first_mid = edit.add_dart();
-            let second_mid = edit.add_dart();
+    let first_mid = g.add_dart();
+    let second_mid = g.add_dart();
 
-            edit.unlink(Dim::Zero, split.first_dart)?;
-            edit.link(Dim::Zero, split.first_dart, first_mid)?;
-            edit.link(Dim::Zero, second_mid, split.second_dart)?;
-            edit.link(Dim::One, first_mid, second_mid)?;
+    g.unlink(Dim::Zero, split.first_dart)?;
+    g.link(Dim::Zero, split.first_dart, first_mid)?;
+    g.link(Dim::Zero, second_mid, split.second_dart)?;
+    g.link(Dim::One, first_mid, second_mid)?;
 
-            let vertex = edit.add_vertex(VertexAttr::new(first_mid, midpoint, P::V::default()));
-            edit.edge_attr_mut(edge)
-                .expect("split edge must remain registered")
-                .curve = first_curve;
-            let second = edit.add_edge_split_from(
-                edge,
-                EdgeAttr::new(second_mid, second_curve, P::E::default()),
-            );
-            Ok((vertex, second))
-        })
-        .map_err(EdgeSplitError::from)?;
+    let vertex = g.add_vertex(VertexAttr::new(first_mid, midpoint, P::V::default()));
+    g.edge_attr_mut(edge)
+        .expect("split edge must remain registered")
+        .curve = first_curve;
+    let second = g.add_edge_split_from(
+        edge,
+        EdgeAttr::new(second_mid, second_curve, P::E::default()),
+    );
 
     Ok(EdgeSplit {
         first: edge,
@@ -188,7 +177,7 @@ fn split_edge_with_profile_links<P: Payload>(
 }
 
 fn split_attached_edge_with_profile_links<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     edge: EdgeKey,
     parameter: f64,
     split: PreparedAttachedEdgeSplit,
@@ -211,42 +200,37 @@ fn split_attached_edge_with_profile_links<P: Payload>(
     }
     let alpha0_pairs = alpha_pairs(g, &split.edge_darts, Dim::Zero);
     let alpha2_pairs = alpha_pairs(g, &split.edge_darts, Dim::Two);
-    let (vertex, second) = g
-        .edit(|edit| {
-            let mid_darts = split
-                .edge_darts
-                .iter()
-                .map(|dart| (*dart, edit.add_dart()))
-                .collect::<HashMap<_, _>>();
+    let mid_darts = split
+        .edge_darts
+        .iter()
+        .map(|dart| (*dart, g.add_dart()))
+        .collect::<HashMap<_, _>>();
 
-            for (first, second) in alpha0_pairs {
-                let first_mid = mid_darts[&first];
-                let second_mid = mid_darts[&second];
-                edit.unlink(Dim::Zero, first)?;
-                edit.link(Dim::Zero, first, first_mid)?;
-                edit.link(Dim::Zero, second, second_mid)?;
-                edit.link(Dim::One, first_mid, second_mid)?;
-            }
+    for (first, second) in alpha0_pairs {
+        let first_mid = mid_darts[&first];
+        let second_mid = mid_darts[&second];
+        g.unlink(Dim::Zero, first)?;
+        g.link(Dim::Zero, first, first_mid)?;
+        g.link(Dim::Zero, second, second_mid)?;
+        g.link(Dim::One, first_mid, second_mid)?;
+    }
 
-            for (first, second) in alpha2_pairs {
-                edit.link(Dim::Two, mid_darts[&first], mid_darts[&second])?;
-            }
+    for (first, second) in alpha2_pairs {
+        g.link(Dim::Two, mid_darts[&first], mid_darts[&second])?;
+    }
 
-            let vertex = edit.add_vertex(VertexAttr::new(
-                mid_darts[&split.first_dart],
-                midpoint,
-                P::V::default(),
-            ));
-            edit.edge_attr_mut(edge)
-                .expect("split edge must remain registered")
-                .curve = first_curve;
-            let second = edit.add_edge_split_from(
-                edge,
-                EdgeAttr::new(mid_darts[&split.second_dart], second_curve, P::E::default()),
-            );
-            Ok((vertex, second))
-        })
-        .map_err(EdgeSplitError::from)?;
+    let vertex = g.add_vertex(VertexAttr::new(
+        mid_darts[&split.first_dart],
+        midpoint,
+        P::V::default(),
+    ));
+    g.edge_attr_mut(edge)
+        .expect("split edge must remain registered")
+        .curve = first_curve;
+    let second = g.add_edge_split_from(
+        edge,
+        EdgeAttr::new(mid_darts[&split.second_dart], second_curve, P::E::default()),
+    );
 
     Ok(EdgeSplit {
         first: edge,
@@ -469,7 +453,7 @@ pub fn add_arc<P: Payload>(
 
 /// Validates and builds an arc inside the caller's active transaction.
 fn add_arc_staged<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     plane: Plane,
     radius: f64,
     start_angle: f64,
@@ -499,25 +483,20 @@ pub fn add_circle<P: Payload>(
 }
 
 /// Builds a closed circular edge inside the caller's active transaction.
-fn add_circle_staged<P: Payload>(
-    g: &mut GMap<P>,
+pub(crate) fn add_circle_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
     plane: Plane,
     radius: f64,
 ) -> Result<EdgeKey, EdgeCreationError> {
     check_valid_radius(radius)?;
-    let edge = g
-        .edit(|edit| {
-            let d1 = edit.add_dart();
-            let d2 = edit.add_dart();
-            let start = plane.point_at(radius, 0.0);
-            edit.add_vertex(VertexAttr::new(d1, start, P::V::default()));
-            let curve = Curve::circle(plane, radius);
-            edit.link(Dim::Zero, d1, d2)?;
-            edit.link(Dim::One, d1, d2)?;
-            Ok(edit.add_edge(EdgeAttr::new(d1, curve, P::E::default())))
-        })
-        .expect("fresh circle topology must commit");
-    Ok(edge)
+    let d1 = g.add_dart();
+    let d2 = g.add_dart();
+    let start = plane.point_at(radius, 0.0);
+    g.add_vertex(VertexAttr::new(d1, start, P::V::default()));
+    let curve = Curve::circle(plane, radius);
+    g.link(Dim::Zero, d1, d2)?;
+    g.link(Dim::One, d1, d2)?;
+    Ok(g.add_edge(EdgeAttr::new(d1, curve, P::E::default())))
 }
 
 fn check_non_coincident_points(start: Point3, end: Point3) -> Result<(), EdgeCreationError> {

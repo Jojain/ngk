@@ -2,12 +2,13 @@ use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::error::Error;
 use std::hash::Hash;
+use std::ops::Deref;
 
 use thiserror::Error;
 
 use super::Dart;
 use super::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr};
-use super::gmap::{Dim, GMap};
+use super::gmap::{Dim, GMap, MergeTopology};
 use super::payload::Payload;
 use super::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use super::validation::{GMapValidationError, validate_gmap};
@@ -172,12 +173,6 @@ impl<P: Payload> EditPolicy<P> for PreservePayload {
 /// Failure raised while applying a safe topology mutation.
 #[derive(Debug, Error)]
 pub enum TopologyEditError {
-    /// A nested operation failed, so the outer transaction cannot commit.
-    #[error("topology transaction was poisoned by a nested failure")]
-    TransactionPoisoned,
-    /// Only the outermost transaction may select the payload policy.
-    #[error("cannot override the payload policy of an active topology transaction")]
-    NestedPolicyOverride,
     /// A split or merge references an attribute that is not staged.
     #[error("topology edit lineage references missing attribute {key:?}")]
     MissingLineageAttribute { key: EditKey },
@@ -231,14 +226,13 @@ pub enum TopologyEditError {
     Policy(#[source] Box<dyn Error + Send + Sync>),
 }
 
-/// Safe low-level mutation batch inside a [`GMap`] transaction.
+/// Transaction-scoped capability for reading and mutating a [`GMap`].
 ///
-/// The batch changes staged topology immediately and records semantic lineage
-/// for the outer transaction. Validation, policy application, and rollback are
-/// owned by the outermost [`GMap::transaction`](GMap::transaction).
+/// All staged mutations and semantic lineage pass through this capability.
+/// Validation, policy application, and rollback are owned by
+/// [`GMap::transaction`](GMap::transaction).
 pub struct TopologyEdit<'g, P: Payload> {
     gmap: &'g mut GMap<P>,
-    events: Vec<EditEvent>,
 }
 
 /// Identifies a topology-associated attribute in edit-lineage diagnostics.
@@ -314,11 +308,39 @@ pub(super) enum EditEvent {
 }
 
 impl<'g, P: Payload> TopologyEdit<'g, P> {
-    /// Opens a low-level batch that mutates the surrounding transaction in place.
+    /// Opens the mutation capability owned by an active transaction.
     pub(super) fn new(gmap: &'g mut GMap<P>) -> Self {
-        Self {
-            gmap,
-            events: Vec::new(),
+        Self { gmap }
+    }
+
+    /// Returns an immutable view of the staged map.
+    pub fn map(&self) -> &GMap<P> {
+        self.gmap
+    }
+
+    /// Copies a topology view into the staged map and returns its remapped handle.
+    pub fn merge<T>(&mut self, topology: T) -> Dart
+    where
+        T: MergeTopology<P>,
+    {
+        self.gmap.merge(topology)
+    }
+
+    /// Returns the profile containing `dart`, registering it when needed.
+    pub fn ensure_profile(&mut self, dart: Dart) -> ProfileKey {
+        if let Some(key) = self.gmap.profile_key(dart) {
+            key
+        } else {
+            self.add_profile(ProfileAttr::new(dart, P::Profile::default()))
+        }
+    }
+
+    /// Returns the sheet containing `dart`, registering it when needed.
+    pub fn ensure_sheet(&mut self, dart: Dart) -> SheetKey {
+        if let Some(key) = self.gmap.sheet_key(dart) {
+            key
+        } else {
+            self.add_sheet(SheetAttr::new(dart, P::Sheet::default()))
         }
     }
 
@@ -383,10 +405,11 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
     }
 
     /// Stages a vertex attribute for reconciliation at commit.
-    pub fn add_vertex(&mut self, vertex: VertexAttr<P::V>) -> VertexKey {
+    pub fn add_vertex(&mut self, mut vertex: VertexAttr<P::V>) -> VertexKey {
+        vertex.dart = self.gmap.cell_representative(vertex.dart, Dim::Zero);
         let key = self.gmap.vertices.insert(vertex);
         self.gmap.invalidate_derived_indexes();
-        self.events.push(EditEvent::Created {
+        self.gmap.record_edit_event(EditEvent::Created {
             key: EditKey::Vertex(key),
         });
         key
@@ -399,7 +422,8 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
         vertex: VertexAttr<P::V>,
     ) -> VertexKey {
         let created = self.add_vertex(vertex);
-        self.events.push(EditEvent::VertexSplit { source, created });
+        self.gmap
+            .record_edit_event(EditEvent::VertexSplit { source, created });
         created
     }
 
@@ -407,7 +431,7 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
         let key = self.gmap.edges.insert(edge);
         self.gmap.invalidate_derived_indexes();
-        self.events.push(EditEvent::Created {
+        self.gmap.record_edit_event(EditEvent::Created {
             key: EditKey::Edge(key),
         });
         key
@@ -416,7 +440,8 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
     /// Stages an edge created by explicitly splitting an existing edge.
     pub fn add_edge_split_from(&mut self, source: EdgeKey, edge: EdgeAttr<P::E>) -> EdgeKey {
         let created = self.add_edge(edge);
-        self.events.push(EditEvent::EdgeSplit { source, created });
+        self.gmap
+            .record_edit_event(EditEvent::EdgeSplit { source, created });
         created
     }
 
@@ -424,7 +449,7 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
     pub fn add_profile(&mut self, profile: ProfileAttr<P::Profile>) -> ProfileKey {
         let key = self.gmap.profiles.insert(profile);
         self.gmap.invalidate_derived_indexes();
-        self.events.push(EditEvent::Created {
+        self.gmap.record_edit_event(EditEvent::Created {
             key: EditKey::Profile(key),
         });
         key
@@ -437,16 +462,19 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
         profile: ProfileAttr<P::Profile>,
     ) -> ProfileKey {
         let created = self.add_profile(profile);
-        self.events
-            .push(EditEvent::ProfileSplit { source, created });
+        self.gmap
+            .record_edit_event(EditEvent::ProfileSplit { source, created });
         created
     }
 
     /// Stages a face attribute for reconciliation at commit.
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
+        for dart in std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied()) {
+            self.ensure_profile(dart);
+        }
         let key = self.gmap.faces.insert(face);
         self.gmap.invalidate_derived_indexes();
-        self.events.push(EditEvent::Created {
+        self.gmap.record_edit_event(EditEvent::Created {
             key: EditKey::Face(key),
         });
         key
@@ -455,7 +483,8 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
     /// Stages a face created by explicitly splitting an existing face.
     pub fn add_face_split_from(&mut self, source: FaceKey, face: FaceAttr<P::F>) -> FaceKey {
         let created = self.add_face(face);
-        self.events.push(EditEvent::FaceSplit { source, created });
+        self.gmap
+            .record_edit_event(EditEvent::FaceSplit { source, created });
         created
     }
 
@@ -463,7 +492,7 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
     pub fn add_sheet(&mut self, sheet: SheetAttr<P::Sheet>) -> SheetKey {
         let key = self.gmap.sheets.insert(sheet);
         self.gmap.invalidate_derived_indexes();
-        self.events.push(EditEvent::Created {
+        self.gmap.record_edit_event(EditEvent::Created {
             key: EditKey::Sheet(key),
         });
         key
@@ -476,15 +505,21 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
         sheet: SheetAttr<P::Sheet>,
     ) -> SheetKey {
         let created = self.add_sheet(sheet);
-        self.events.push(EditEvent::SheetSplit { source, created });
+        self.gmap
+            .record_edit_event(EditEvent::SheetSplit { source, created });
         created
     }
 
     /// Stages a solid attribute for reconciliation at commit.
     pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidKey {
+        for dart in
+            std::iter::once(solid.outer_shell).chain(solid.inner_shells.iter().flatten().copied())
+        {
+            self.ensure_sheet(dart);
+        }
         let key = self.gmap.solids.insert(solid);
         self.gmap.invalidate_derived_indexes();
-        self.events.push(EditEvent::Created {
+        self.gmap.record_edit_event(EditEvent::Created {
             key: EditKey::Solid(key),
         });
         key
@@ -493,42 +528,45 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
     /// Stages a solid created by explicitly splitting an existing solid.
     pub fn add_solid_split_from(&mut self, source: SolidKey, solid: SolidAttr<P::S>) -> SolidKey {
         let created = self.add_solid(solid);
-        self.events.push(EditEvent::SolidSplit { source, created });
+        self.gmap
+            .record_edit_event(EditEvent::SolidSplit { source, created });
         created
     }
 
     /// Declares that `removed` merged into `survivor`.
     pub fn merge_vertices_into(&mut self, survivor: VertexKey, removed: VertexKey) {
-        self.events
-            .push(EditEvent::VertexMerge { survivor, removed });
+        self.gmap
+            .record_edit_event(EditEvent::VertexMerge { survivor, removed });
     }
 
     /// Declares that `removed` merged into `survivor`.
     pub fn merge_edges_into(&mut self, survivor: EdgeKey, removed: EdgeKey) {
-        self.events.push(EditEvent::EdgeMerge { survivor, removed });
+        self.gmap
+            .record_edit_event(EditEvent::EdgeMerge { survivor, removed });
     }
 
     /// Declares that `removed` merged into `survivor`.
     pub fn merge_profiles_into(&mut self, survivor: ProfileKey, removed: ProfileKey) {
-        self.events
-            .push(EditEvent::ProfileMerge { survivor, removed });
+        self.gmap
+            .record_edit_event(EditEvent::ProfileMerge { survivor, removed });
     }
 
     /// Declares that `removed` merged into `survivor`.
     pub fn merge_faces_into(&mut self, survivor: FaceKey, removed: FaceKey) {
-        self.events.push(EditEvent::FaceMerge { survivor, removed });
+        self.gmap
+            .record_edit_event(EditEvent::FaceMerge { survivor, removed });
     }
 
     /// Declares that `removed` merged into `survivor`.
     pub fn merge_sheets_into(&mut self, survivor: SheetKey, removed: SheetKey) {
-        self.events
-            .push(EditEvent::SheetMerge { survivor, removed });
+        self.gmap
+            .record_edit_event(EditEvent::SheetMerge { survivor, removed });
     }
 
     /// Declares that `removed` merged into `survivor`.
     pub fn merge_solids_into(&mut self, survivor: SolidKey, removed: SolidKey) {
-        self.events
-            .push(EditEvent::SolidMerge { survivor, removed });
+        self.gmap
+            .record_edit_event(EditEvent::SolidMerge { survivor, removed });
     }
 
     /// Removes a vertex attribute inside the transaction.
@@ -579,10 +617,22 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
         self.gmap.vertices.get_mut(key)
     }
 
+    /// Returns mutable access to a staged vertex attribute, or panics if absent.
+    pub fn vertex_attr_mut_unchecked(&mut self, key: VertexKey) -> &mut VertexAttr<P::V> {
+        self.vertex_attr_mut(key)
+            .expect("vertex attribute should be in the map")
+    }
+
     /// Returns mutable access to a staged edge attribute.
     pub fn edge_attr_mut(&mut self, key: EdgeKey) -> Option<&mut EdgeAttr<P::E>> {
         self.gmap.invalidate_derived_indexes();
         self.gmap.edges.get_mut(key)
+    }
+
+    /// Returns mutable access to a staged edge attribute, or panics if absent.
+    pub fn edge_attr_mut_unchecked(&mut self, key: EdgeKey) -> &mut EdgeAttr<P::E> {
+        self.edge_attr_mut(key)
+            .expect("edge attribute should be in the map")
     }
 
     /// Returns mutable access to a staged profile attribute.
@@ -591,10 +641,22 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
         self.gmap.profiles.get_mut(key)
     }
 
+    /// Returns mutable access to a staged profile attribute, or panics if absent.
+    pub fn profile_attr_mut_unchecked(&mut self, key: ProfileKey) -> &mut ProfileAttr<P::Profile> {
+        self.profile_attr_mut(key)
+            .expect("profile attribute should be in the map")
+    }
+
     /// Returns mutable access to a staged face attribute.
     pub fn face_attr_mut(&mut self, key: FaceKey) -> Option<&mut FaceAttr<P::F>> {
         self.gmap.invalidate_derived_indexes();
         self.gmap.faces.get_mut(key)
+    }
+
+    /// Returns mutable access to a staged face attribute, or panics if absent.
+    pub fn face_attr_mut_unchecked(&mut self, key: FaceKey) -> &mut FaceAttr<P::F> {
+        self.face_attr_mut(key)
+            .expect("face attribute should be in the map")
     }
 
     /// Returns mutable access to a staged sheet attribute.
@@ -603,21 +665,36 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
         self.gmap.sheets.get_mut(key)
     }
 
+    /// Returns mutable access to a staged sheet attribute, or panics if absent.
+    pub fn sheet_attr_mut_unchecked(&mut self, key: SheetKey) -> &mut SheetAttr<P::Sheet> {
+        self.sheet_attr_mut(key)
+            .expect("sheet attribute should be in the map")
+    }
+
     /// Returns mutable access to a staged solid attribute.
     pub fn solid_attr_mut(&mut self, key: SolidKey) -> Option<&mut SolidAttr<P::S>> {
         self.gmap.invalidate_derived_indexes();
         self.gmap.solids.get_mut(key)
     }
 
-    /// Returns the lineage accumulated by this batch for the outer transaction.
-    pub(super) fn into_events(self) -> Vec<EditEvent> {
-        self.events
+    /// Returns mutable access to a staged solid attribute, or panics if absent.
+    pub fn solid_attr_mut_unchecked(&mut self, key: SolidKey) -> &mut SolidAttr<P::S> {
+        self.solid_attr_mut(key)
+            .expect("solid attribute should be in the map")
     }
 
     fn validate_dart(&self, dart: Dart) -> Result<(), TopologyEditError> {
         (dart.id() < self.gmap.dart_count())
             .then_some(())
             .ok_or(TopologyEditError::MissingDart { dart })
+    }
+}
+
+impl<P: Payload> Deref for TopologyEdit<'_, P> {
+    type Target = GMap<P>;
+
+    fn deref(&self) -> &Self::Target {
+        self.gmap
     }
 }
 

@@ -14,6 +14,7 @@ use ngk::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, NurbsCurve2, Plane, Point2, Point3, PointCoincidence,
     Surface,
 };
+use ngk::topology::TopologyEditError;
 use ngk::topology::gmap::GMap;
 use ngk::topology::gmap::{Cell0, Dim};
 use ngk::topology::payload::StandardPayload;
@@ -145,7 +146,11 @@ fn split_face_edge_uses_existing_pcurve_for_non_planar_surface_variant() {
         .surface
         .to_nurbs()
         .expect("face surface should convert to nurbs");
-    g.face_attr_mut_unchecked(face_key).surface = Surface::Nurbs(surface);
+    g.transaction(|edit| {
+        edit.face_attr_mut_unchecked(face_key).surface = Surface::Nurbs(surface);
+        Ok::<_, TopologyEditError>(())
+    })
+    .unwrap();
     let edge = first_outer_edge_key(&g, face_key);
 
     split_face_edge(&mut g, face_key, edge, 0.5)

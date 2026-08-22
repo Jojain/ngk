@@ -4,7 +4,8 @@ use nalgebra::Vector3;
 use thiserror::Error;
 
 use crate::builders::faces::{
-    FaceEdgeSplitError, FaceImprint, FaceImprintSplitError, split_face_by_imprints, split_face_edge,
+    FaceEdgeSplitError, FaceImprint, FaceImprintSplitError, split_face_by_imprints_staged,
+    split_face_edge_staged,
 };
 use crate::geometry::dim3::intersections::{
     intersect_curve_surface_with_options, intersect_curves_with_options,
@@ -15,7 +16,6 @@ use crate::geometry::{
     IntersectionOptions, Interval, LINEAR_TOLERANCE, NurbsCurve, NurbsCurve2, NurbsError,
     NurbsSurface, Plane, Point2, Point3, PointCoincidence, Surface, SurfaceSurfaceIntersection,
 };
-use crate::topology::TopologyEditError;
 use crate::topology::attributes::{FaceAttr, SolidAttr};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -26,6 +26,7 @@ use crate::topology::profile::Loop;
 use crate::topology::shape::{Shape, SolidTag};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 use crate::topology::solid::Solid;
+use crate::topology::{TopologyEdit, TopologyEditError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BooleanSource {
@@ -633,7 +634,7 @@ struct ResultEdge {
 
 /// Copies selected operand faces into the result map's active transaction.
 fn merge_selected_faces_into<P: Payload>(
-    result: &mut GMap<P>,
+    result: &mut TopologyEdit<'_, P>,
     object: &GMap<P>,
     tool: &GMap<P>,
     selections: &[BooleanFaceSelection],
@@ -695,19 +696,20 @@ impl<P: Payload> MergeTopology<P> for SelectedFaceSet<'_, P> {
     }
 }
 
-fn sew_matching_result_edges<P: Payload>(g: &mut GMap<P>) -> Result<(), BooleanError> {
+fn sew_matching_result_edges<P: Payload>(g: &mut TopologyEdit<'_, P>) -> Result<(), BooleanError> {
     loop {
         let free_edges = result_free_edges(g)?;
         let Some((first, second)) = matching_free_edge_pair(&free_edges) else {
             break;
         };
 
-        g.edit(|edit| edit.sew(Dim::Two, first.dart, second))
-            .map_err(|source| BooleanError::ResultEdgeSewFailed {
+        g.sew(Dim::Two, first.dart, second).map_err(|source| {
+            BooleanError::ResultEdgeSewFailed {
                 first: first.dart,
                 second,
                 source,
-            })?;
+            }
+        })?;
     }
 
     sew_degenerate_result_edges(g)?;
@@ -723,13 +725,15 @@ fn matching_free_edge_pair(free_edges: &[ResultEdge]) -> Option<(ResultEdge, Dar
     })
 }
 
-fn sew_degenerate_result_edges<P: Payload>(g: &mut GMap<P>) -> Result<(), BooleanError> {
+fn sew_degenerate_result_edges<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+) -> Result<(), BooleanError> {
     for edge in result_free_edges(g)? {
         if !g.is_free(edge.dart, Dim::Two) || !edge_is_degenerate(edge) {
             continue;
         }
 
-        g.edit(|edit| edit.sew(Dim::Two, edge.dart, edge.reversed_dart))
+        g.sew(Dim::Two, edge.dart, edge.reversed_dart)
             .map_err(|source| BooleanError::ResultEdgeSewFailed {
                 first: edge.dart,
                 second: edge.reversed_dart,
@@ -824,7 +828,10 @@ fn free_result_edge_count<P: Payload>(g: &GMap<P>) -> usize {
         .count()
 }
 
-fn orient_result_shell<P: Payload>(g: &mut GMap<P>, shell_dart: Dart) -> Result<(), BooleanError> {
+fn orient_result_shell<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    shell_dart: Dart,
+) -> Result<(), BooleanError> {
     let shell_darts = g.orbit(shell_dart, vec![0, 1, 2]).collect::<Vec<_>>();
     let Some(shell_center) = shell_centroid(g, &shell_darts) else {
         return Ok(());
@@ -895,7 +902,7 @@ fn sample_face_uv<P: Payload>(face: &Face<'_, P>) -> Option<Point2> {
 }
 
 fn flip_face_surface_orientation<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
 ) -> Result<(), BooleanError> {
     let attr = g
@@ -1188,11 +1195,33 @@ impl BooleanSplitPlan {
         object: &mut GMap<P>,
         tool: &mut GMap<P>,
     ) -> Result<BooleanSplitApplication, BooleanError> {
+        let object_snapshot = object.clone();
+        let tool_snapshot = tool.clone();
+        let result =
+            object.transaction(|object| tool.transaction(|tool| self.apply_to_edits(object, tool)));
+        if result.is_err() {
+            *object = object_snapshot;
+            *tool = tool_snapshot;
+        }
+        result
+    }
+
+    fn apply_to_edits<P: Payload>(
+        &self,
+        object: &mut TopologyEdit<'_, P>,
+        tool: &mut TopologyEdit<'_, P>,
+    ) -> Result<BooleanSplitApplication, BooleanError> {
         let mut application = BooleanSplitApplication::default();
 
         for (edge, parameters) in self.edge_split_groups() {
-            let map = operand_map_mut(edge.source, object, tool);
-            apply_edge_splits_to_map(map, edge, &parameters, &mut application)?;
+            match edge.source {
+                BooleanSource::Object => {
+                    apply_edge_splits_to_map(object, edge, &parameters, &mut application)?
+                }
+                BooleanSource::Tool => {
+                    apply_edge_splits_to_map(tool, edge, &parameters, &mut application)?
+                }
+            }
         }
         apply_face_sections_to_maps(self.face_sections(), object, tool, &mut application)?;
 
@@ -1329,7 +1358,7 @@ impl BooleanSplitPlan {
 }
 
 fn apply_edge_splits_to_map<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     edge: EdgeHandle,
     parameters: &[f64],
     application: &mut BooleanSplitApplication,
@@ -1352,7 +1381,7 @@ fn apply_edge_splits_to_map<P: Payload>(
         };
         let segment = segments[segment_index];
         let face = incident_face_for_edge(g, edge, segment.edge)?;
-        let split = split_face_edge(g, face, segment.edge, parameter).map_err(|source| {
+        let split = split_face_edge_staged(g, face, segment.edge, parameter).map_err(|source| {
             BooleanError::EdgeSplitApplicationFailed {
                 edge,
                 parameter,
@@ -1384,13 +1413,13 @@ fn apply_edge_splits_to_map<P: Payload>(
 
 fn apply_face_sections_to_maps<P: Payload>(
     sections: &[FaceSection],
-    object: &mut GMap<P>,
-    tool: &mut GMap<P>,
+    object: &mut TopologyEdit<'_, P>,
+    tool: &mut TopologyEdit<'_, P>,
     application: &mut BooleanSplitApplication,
 ) -> Result<(), BooleanError> {
     let applied = {
-        let object = &*object;
-        let tool = &*tool;
+        let object = object.map();
+        let tool = tool.map();
         sections
             .iter()
             .map(|section| {
@@ -1403,11 +1432,18 @@ fn apply_face_sections_to_maps<P: Payload>(
     application.face_sections.extend(applied);
 
     for (face, imprints) in imprint_groups {
-        let map = operand_map_mut(face.source, object, tool);
-        let face_key = face_key_for_handle(map, face)?;
-        for split in split_face_by_imprints(map, face_key, &imprints)
-            .map_err(|source| BooleanError::FaceSplitApplicationFailed { face, source })?
-        {
+        let splits = match face.source {
+            BooleanSource::Object => {
+                let face_key = face_key_for_handle(object, face)?;
+                split_face_by_imprints_staged(object, face_key, &imprints)
+            }
+            BooleanSource::Tool => {
+                let face_key = face_key_for_handle(tool, face)?;
+                split_face_by_imprints_staged(tool, face_key, &imprints)
+            }
+        }
+        .map_err(|source| BooleanError::FaceSplitApplicationFailed { face, source })?;
+        for split in splits {
             application.face_splits.push(AppliedFaceSplit {
                 face,
                 first: split.first,
@@ -1482,17 +1518,6 @@ fn face_imprint_groups(sections: &[AppliedFaceSection]) -> Vec<(FaceHandle, Vec<
         }
     }
     groups
-}
-
-fn operand_map_mut<'a, P: Payload>(
-    source: BooleanSource,
-    object: &'a mut GMap<P>,
-    tool: &'a mut GMap<P>,
-) -> &'a mut GMap<P> {
-    match source {
-        BooleanSource::Object => object,
-        BooleanSource::Tool => tool,
-    }
 }
 
 fn operand_map<'a, P: Payload>(
@@ -1684,9 +1709,9 @@ impl BooleanWorkspace {
     ) -> Result<BooleanSplitOperands<P>, BooleanError> {
         let mut object_map = object.map().clone();
         let mut tool_map = tool.map().clone();
-        let application = object_map.transaction(|object_map| {
-            tool_map.transaction(|tool_map| self.split_plan.apply_to_maps(object_map, tool_map))
-        })?;
+        let application = self
+            .split_plan
+            .apply_to_maps(&mut object_map, &mut tool_map)?;
 
         Ok(BooleanSplitOperands {
             object: object_map,

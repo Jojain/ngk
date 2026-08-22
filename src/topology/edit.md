@@ -1,27 +1,28 @@
 # GMap operation transactions
 
 `GMap::transaction` is the atomic boundary for a complete modeling operation.
-Builders keep accepting `&mut GMap`, so a builder invoked inside another
-builder automatically joins the transaction already active on that map. Only
-the outermost operation validates, reconciles identities, applies payload
-policy, and commits.
+Its closure receives a `TopologyEdit`, which is the public mutation capability
+for the staged map. Returning an error, failing validation, failing identity
+reconciliation, or failing payload policy restores the complete
+transaction-start snapshot.
 
-`GMap::transaction_with_policy` gives the outermost operation a custom
-`EditPolicy`. A nested operation cannot replace that policy. If any nested
-closure returns an error, the transaction is poisoned; catching the nested
-error does not permit the outer operation to commit. Returning an error from
-the outer closure, poisoning, validation failure, reconciliation failure, or
-policy failure restores the complete transaction-start snapshot.
+`GMap::transaction_with_policy` uses the same boundary with a caller-provided
+`EditPolicy`. Policy event application happens only after the complete staged
+operation passes topology validation and identity reconciliation.
 
 Transactions intentionally do not catch panics. Operation code uses `Result`
 for recoverable failure.
 
-## Low-level edits
+## Builder composition
 
-`GMap::edit` opens a short `TopologyEdit` alpha-mutation batch. Used alone, it
-creates an implicit operation transaction with `PreservePayload`. Used inside
-a builder transaction, it mutates the staged map and appends lineage events to
-the outer journal without validating or committing independently.
+Each public builder accepts `&mut GMap` and starts one transaction. Its private
+staged helper accepts `&mut TopologyEdit` and performs the actual work. A
+composite builder calls other staged helpers with the same edit capability, so
+the whole modeling operation has one snapshot, one journal, and one commit.
+
+Raw `GMap` mutation is topology-internal. Builders can inspect the map through
+the immutable access exposed by `TopologyEdit`, but cannot bypass the
+transaction when adding darts, changing alpha links, or mutating attributes.
 
 `TopologyEdit` owns no snapshot and has no independent commit. It provides the
 checked alpha operations `add_dart`, `remove_dart`, `link`, `unlink`, and `sew`,
@@ -34,7 +35,7 @@ Plain `add_*` records a fresh transaction-local identity. `add_*_split_from`
 records an identity derived from a source key. `merge_*_into` explicitly names
 the surviving and consumed identities.
 
-At outer commit, merge chains are resolved to their final survivor. Policy is
+At commit, merge chains are resolved to their final survivor. Policy is
 then applied only to net changes visible outside the operation:
 
 - a surviving split derived from a transaction-start identity;
@@ -62,7 +63,7 @@ lookups resolve the operation's logical survivor.
 
 The six dart-to-key maps are one lazy `DerivedCellIndexes` cache. Topology or
 topology-associated attribute mutation invalidates it. The first typed lookup
-or traversal rebuilds it, subsequent reads reuse it, and the outer commit
+or traversal rebuilds it, subsequent reads reuse it, and commit
 materializes it after reconciliation. Builders use typed APIs such as
 `cell_key`, `attribute`, and topology views rather than accessing indexes
 directly.
