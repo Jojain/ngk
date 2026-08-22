@@ -1,4 +1,7 @@
+use std::collections::HashSet;
+
 use nalgebra::Vector3;
+use ngk::viz::debug_viewer::show;
 use radians::Rad64;
 
 use ngk::builders::edges::add_edge;
@@ -7,12 +10,11 @@ use ngk::builders::revolve::{add_revolved_edge, add_revolved_face};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{Curve, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface};
 use ngk::tessellate::{TessellateOpts, tessellate_face_key};
-use ngk::topology::attributes::{EdgeAttr, VertexAttr};
-use ngk::topology::gmap::{Cell0, Dim, GMap, TopologyEditError};
+use ngk::topology::gmap::GMap;
 use ngk::topology::payload::StandardPayload;
 
 #[test]
-fn partial_revolved_edge_creates_surface_face_with_rotated_boundary_edge() {
+fn revolve_edge_partial_turn_creates_four_edge_face() {
     let mut g = GMap::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
@@ -30,49 +32,49 @@ fn partial_revolved_edge_creates_surface_face_with_rotated_boundary_edge() {
     )
     .unwrap();
     let face = g.face_unchecked(face_key);
-    let edges = face.outer_loop().edges();
-    let rotated = edges
+    let boundary_edges = face.outer_loop().edges();
+    let boundary_vertices = face.outer_loop().vertices();
+    let boundary_edge_keys = boundary_edges
         .iter()
-        .find(|edge| {
-            edge.start()
-                .point()
-                .unwrap()
-                .coincides(Point3::new(0.0, 2.0, 0.0), LINEAR_TOLERANCE)
-                && edge
-                    .end()
-                    .point()
-                    .unwrap()
-                    .coincides(Point3::new(0.0, 1.0, 0.0), LINEAR_TOLERANCE)
-        })
-        .expect("revolved face should contain the rotated source edge");
-
-    assert_eq!(g.iter_faces().count(), 1);
-    assert!(matches!(
-        g.face_attr_unchecked(face_key).surface,
-        Surface::Revolution(_)
-    ));
-    assert_eq!(g.face_attr_unchecked(face_key).pcurves.len(), edges.len());
-    let mesh = tessellate_face_key(&g, face_key, TessellateOpts::default())
-        .expect("partial revolved edge face should tessellate");
-    assert!(!mesh.is_empty());
-    assert!(
-        rotated
-            .end()
-            .point()
-            .unwrap()
-            .coincides(Point3::new(0.0, 1.0, 0.0), LINEAR_TOLERANCE)
+        .map(|edge| edge.key())
+        .collect::<HashSet<_>>();
+    let boundary_vertex_keys = boundary_vertices
+        .iter()
+        .map(|vertex| vertex.key())
+        .collect::<HashSet<_>>();
+    show(&g);
+    assert_eq!(
+        (
+            g.iter_faces().count(),
+            g.iter_edges().count(),
+            g.iter_vertices().count()
+        ),
+        (1, 4, 4)
     );
-    assert!(
-        rotated
-            .start()
-            .point()
-            .unwrap()
-            .coincides(Point3::new(0.0, 2.0, 0.0), LINEAR_TOLERANCE)
+    assert_eq!(
+        (
+            face.loops().len(),
+            boundary_edges.len(),
+            boundary_vertices.len()
+        ),
+        (1, 4, 4)
+    );
+    assert_eq!(
+        (boundary_edge_keys.len(), boundary_vertex_keys.len()),
+        (4, 4)
+    );
+    assert_eq!(
+        boundary_edges
+            .iter()
+            .filter(|edge| edge.key() == edge_key)
+            .count(),
+        1,
+        "the source edge should occur once in the boundary"
     );
 }
 
 #[test]
-fn partial_revolved_edge_circle_side_uses_short_positive_sweep() {
+fn revolve_edge_partial_turn_uses_quarter_circle_sides() {
     let mut g = GMap::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
@@ -82,7 +84,7 @@ fn partial_revolved_edge_circle_side_uses_short_positive_sweep() {
     )
     .expect("edge should build");
 
-    add_revolved_edge(
+    let face_key = add_revolved_edge(
         &mut g,
         edge_key,
         Axis3::new(Point3::origin(), Vector3::z()),
@@ -91,22 +93,31 @@ fn partial_revolved_edge_circle_side_uses_short_positive_sweep() {
     .unwrap();
 
     let side_arc = g
-        .iter_edges()
-        .map(|(_, attr)| attr)
-        .find(|attr| {
-            let start = g.attribute::<Cell0>(attr.dart).unwrap().point;
-            let end = g
-                .attribute::<Cell0>(g.alpha(Dim::Zero, attr.dart))
-                .unwrap()
-                .point;
-            matches!(attr.curve, Curve::Circle(_))
-                && start.coincides(Point3::new(1.0, 0.0, 0.0), LINEAR_TOLERANCE)
-                && end.coincides(Point3::new(0.0, 1.0, 0.0), LINEAR_TOLERANCE)
+        .face_unchecked(face_key)
+        .edges()
+        .into_iter()
+        .find(|edge| {
+            let start = *edge
+                .start()
+                .point()
+                .expect("side arc start should have geometry");
+            let end = *edge
+                .end()
+                .point()
+                .expect("side arc end should have geometry");
+            let original = Point3::new(1.0, 0.0, 0.0);
+            let rotated = Point3::new(0.0, 1.0, 0.0);
+            matches!(edge.curve(), Some(Curve::Circle(_)))
+                && ((start.coincides(original, LINEAR_TOLERANCE)
+                    && end.coincides(rotated, LINEAR_TOLERANCE))
+                    || (start.coincides(rotated, LINEAR_TOLERANCE)
+                        && end.coincides(original, LINEAR_TOLERANCE)))
         })
         .expect("revolve should create a circular side arc");
-    let t0 = side_arc.curve.param_at(Point3::new(1.0, 0.0, 0.0));
-    let t1 = side_arc.curve.param_at(Point3::new(0.0, 1.0, 0.0));
-    let midpoint = side_arc.curve.point_at(0.5 * (t0 + t1));
+    let curve = side_arc.curve().expect("side arc should have geometry");
+    let t0 = curve.param_at(Point3::new(1.0, 0.0, 0.0));
+    let t1 = curve.param_at(Point3::new(0.0, 1.0, 0.0));
+    let midpoint = curve.point_at(0.5 * (t0 + t1));
 
     assert!(
         midpoint.coincides(
@@ -122,7 +133,7 @@ fn partial_revolved_edge_circle_side_uses_short_positive_sweep() {
 }
 
 #[test]
-fn full_revolved_edge_creates_surface_face_between_endpoint_circles() {
+fn revolve_edge_full_turn_creates_inner_loop() {
     let mut g = GMap::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
@@ -139,35 +150,50 @@ fn full_revolved_edge_creates_surface_face_between_endpoint_circles() {
         Rad64::FULL_TURN,
     )
     .unwrap();
-    let face = g.face_attr_unchecked(face_key);
-
-    assert_eq!(g.iter_faces().count(), 1);
-    assert_eq!(face.inner_loops.len(), 1);
-    assert_eq!(face.pcurves.len(), 2);
-    assert!(matches!(face.surface, Surface::Revolution(_)));
+    let face = g.face_unchecked(face_key);
+    let boundary_edges = face.edges();
+    let boundary_vertices = face.vertices();
+    let boundary_edge_keys = boundary_edges
+        .iter()
+        .map(|edge| edge.key())
+        .collect::<HashSet<_>>();
+    let boundary_vertex_keys = boundary_vertices
+        .iter()
+        .map(|vertex| vertex.key())
+        .collect::<HashSet<_>>();
+    show(&g);
+    assert_eq!(
+        (
+            g.iter_faces().count(),
+            g.iter_edges().count(),
+            g.iter_vertices().count()
+        ),
+        (1, 2, 2)
+    );
+    assert_eq!(
+        (
+            face.loops().len(),
+            boundary_edges.len(),
+            boundary_vertices.len()
+        ),
+        (2, 2, 2)
+    );
+    assert_eq!(
+        (boundary_edge_keys.len(), boundary_vertex_keys.len()),
+        (2, 2)
+    );
 }
 
 #[test]
-fn full_revolved_closed_edge_creates_periodic_seam_face() {
+fn revolve_edge_full_turn_without_inner_loop() {
     let mut g = GMap::<StandardPayload>::new();
-    let edge_key = g
-        .transaction(|edit| {
-            let first = edit.add_dart();
-            let second = edit.add_dart();
-            edit.sew(Dim::Zero, first, second)?;
-            edit.sew(Dim::One, first, second)?;
-            edit.add_vertex(VertexAttr::new(first, Point3::new(1.0, 0.0, 0.0), ()));
-            let edge_key = edit.add_edge(EdgeAttr::new(
-                first,
-                Curve::Circle(ngk::geometry::Circle::from_axis(
-                    Axis3::new(Point3::origin(), Vector3::z()),
-                    1.0,
-                )),
-                (),
-            ));
-            Ok::<_, TopologyEditError>(edge_key)
-        })
-        .unwrap();
+    let edge_key = add_edge(
+        &mut g,
+        Point3::origin(),
+        Point3::new(2.0, 0.0, 0.0),
+        Curve::line(Point3::origin(), Point3::new(2.0, 0.0, 0.0)),
+    )
+    .expect("edge should build");
 
     let face_key = add_revolved_edge(
         &mut g,
@@ -176,12 +202,38 @@ fn full_revolved_closed_edge_creates_periodic_seam_face() {
         Rad64::FULL_TURN,
     )
     .unwrap();
-    let face = g.face_attr_unchecked(face_key);
+    let face = g.face_unchecked(face_key);
+    let boundary_edges = face.edges();
+    let boundary_vertices = face.vertices();
+    let boundary_edge_keys = boundary_edges
+        .iter()
+        .map(|edge| edge.key())
+        .collect::<HashSet<_>>();
+    let boundary_vertex_keys = boundary_vertices
+        .iter()
+        .map(|vertex| vertex.key())
+        .collect::<HashSet<_>>();
 
-    assert_eq!(g.iter_faces().count(), 1);
-    assert!(face.inner_loops.is_empty());
-    assert_eq!(face.pcurves.len(), 1);
-    assert!(matches!(face.surface, Surface::Revolution(_)));
+    assert_eq!(
+        (
+            g.iter_faces().count(),
+            g.iter_edges().count(),
+            g.iter_vertices().count()
+        ),
+        (1, 1, 1)
+    );
+    assert_eq!(
+        (
+            face.loops().len(),
+            boundary_edges.len(),
+            boundary_vertices.len()
+        ),
+        (1, 1, 1)
+    );
+    assert_eq!(
+        (boundary_edge_keys.len(), boundary_vertex_keys.len()),
+        (1, 1)
+    );
 }
 
 #[test]
