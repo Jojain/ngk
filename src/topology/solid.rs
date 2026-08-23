@@ -53,6 +53,11 @@ impl<'g, P: Payload> Solid<'g, P> {
         self.key
     }
 
+    /// Returns the dart through which this solid view was reached.
+    pub fn dart(&self) -> Dart {
+        self.dart
+    }
+
     /// Returns the user payload attached to this solid.
     pub fn data(&self) -> &P::S {
         &self.gmap.solid_attr_unchecked(self.key).data

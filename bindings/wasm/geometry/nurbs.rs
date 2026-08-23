@@ -1,4 +1,4 @@
-use js_sys::Float64Array;
+use js_sys::{Array, Float64Array};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -8,12 +8,14 @@ use crate::geometry::{
     sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
 };
 
+use super::values::{WasmPoint3, WasmVector3, point, unit_vector};
+
 fn js_err(e: impl ToString) -> JsValue {
     JsValue::from_str(&e.to_string())
 }
 
 fn points_from_flat(xyz: &[f64]) -> Result<Vec<Point3>, JsValue> {
-    if xyz.len() % 3 != 0 {
+    if !xyz.len().is_multiple_of(3) {
         return Err(JsValue::from_str(
             "xyz array length must be a multiple of 3",
         ));
@@ -45,6 +47,12 @@ fn flat_from_f64(values: &[f64]) -> Float64Array {
 #[wasm_bindgen(js_name = NurbsCurve)]
 pub struct WasmNurbsCurve {
     inner: NurbsCurve,
+}
+
+impl WasmNurbsCurve {
+    pub(crate) fn from_inner(inner: NurbsCurve) -> Self {
+        Self { inner }
+    }
 }
 
 #[wasm_bindgen]
@@ -80,10 +88,10 @@ impl WasmNurbsCurve {
         Ok(Self { inner })
     }
 
+    /// Evaluates the curve at the supplied parameter.
     #[wasm_bindgen(js_name = pointAt)]
-    pub fn point_at(&self, u: f64) -> Float64Array {
-        let p = self.inner.point_at(u);
-        flat_from_points(&[p])
+    pub fn point_at(&self, u: f64) -> WasmPoint3 {
+        point(self.inner.point_at(u))
     }
 
     /// Uniformly sample `n + 1` points.
@@ -102,21 +110,25 @@ impl WasmNurbsCurve {
         ))
     }
 
+    /// Inserts a knot while preserving the represented curve.
     #[wasm_bindgen(js_name = insertKnot)]
     pub fn insert_knot(&mut self, u: f64) {
         self.inner.insert_knot(u);
     }
 
-    #[wasm_bindgen(js_name = knots)]
+    /// Returns the knot vector.
+    #[wasm_bindgen(getter)]
     pub fn knots(&self) -> Float64Array {
         flat_from_f64(self.inner.knots().as_slice())
     }
 
-    #[wasm_bindgen(js_name = degree)]
+    /// Returns the curve degree.
+    #[wasm_bindgen(getter)]
     pub fn degree(&self) -> usize {
         self.inner.degree().get()
     }
 
+    /// Returns the Cartesian control points as a flat xyz array.
     #[wasm_bindgen(js_name = controlPointsXyz)]
     pub fn control_points_xyz(&self) -> Float64Array {
         let pts: Vec<Point3> = self
@@ -128,6 +140,20 @@ impl WasmNurbsCurve {
         flat_from_points(&pts)
     }
 
+    /// Returns `[Point3, weight]` pairs for the control polygon.
+    #[wasm_bindgen(getter, js_name = controlPoints)]
+    pub fn control_points(&self) -> Array {
+        let values = Array::new();
+        for control_point in self.inner.control_points().iter() {
+            let pair = Array::new();
+            pair.push(&point(control_point.to_cartesian()).into());
+            pair.push(&JsValue::from_f64(control_point.weight()));
+            values.push(&pair);
+        }
+        values
+    }
+
+    /// Returns the control-point weights.
     #[wasm_bindgen(js_name = weights)]
     pub fn weights(&self) -> Float64Array {
         let ws: Vec<f64> = self
@@ -139,12 +165,14 @@ impl WasmNurbsCurve {
         flat_from_f64(&ws)
     }
 
-    #[wasm_bindgen(js_name = domain)]
+    /// Returns the parameter domain as `[start, end]`.
+    #[wasm_bindgen(getter)]
     pub fn domain(&self) -> Float64Array {
         let domain = self.inner.domain();
         flat_from_f64(&[domain.start, domain.end])
     }
 
+    /// Intersects this curve with another NURBS curve.
     #[wasm_bindgen(js_name = intersectCurve)]
     pub fn intersect_curve(&self, other: &WasmNurbsCurve) -> Result<JsValue, JsValue> {
         let a = Curve::Nurbs(self.inner.clone());
@@ -157,6 +185,7 @@ impl WasmNurbsCurve {
         serde_wasm_bindgen::to_value(&out).map_err(js_err)
     }
 
+    /// Intersects this curve with a NURBS surface.
     #[wasm_bindgen(js_name = intersectSurface)]
     pub fn intersect_surface(&self, surface: &WasmNurbsSurface) -> Result<JsValue, JsValue> {
         let curve = Curve::Nurbs(self.inner.clone());
@@ -292,8 +321,16 @@ pub struct WasmNurbsSurface {
     inner: NurbsSurface,
 }
 
+impl WasmNurbsSurface {
+    pub(crate) fn from_inner(inner: NurbsSurface) -> Self {
+        Self { inner }
+    }
+}
+
 #[wasm_bindgen]
 impl WasmNurbsSurface {
+    /// Builds a NURBS surface from flat Cartesian control points and knot vectors.
+    #[allow(clippy::too_many_arguments)]
     #[wasm_bindgen(constructor)]
     pub fn new(
         degree_u: usize,
@@ -315,6 +352,7 @@ impl WasmNurbsSurface {
         Ok(Self { inner })
     }
 
+    /// Builds a NURBS surface with clamped-uniform knot vectors on `[0, 1]`.
     #[wasm_bindgen(js_name = uniform)]
     pub fn uniform(
         degree_u: usize,
@@ -332,10 +370,73 @@ impl WasmNurbsSurface {
         Ok(Self { inner })
     }
 
+    /// Evaluates the surface at the supplied parameters.
     #[wasm_bindgen(js_name = pointAt)]
-    pub fn point_at(&self, u: f64, v: f64) -> Float64Array {
-        let p = self.inner.point_at(u, v);
-        flat_from_points(&[p])
+    pub fn point_at(&self, u: f64, v: f64) -> WasmPoint3 {
+        point(self.inner.point_at(u, v))
+    }
+
+    /// Returns the degree in the u direction.
+    #[wasm_bindgen(getter, js_name = degreeU)]
+    pub fn degree_u(&self) -> usize {
+        self.inner.degree_u().get()
+    }
+
+    /// Returns the degree in the v direction.
+    #[wasm_bindgen(getter, js_name = degreeV)]
+    pub fn degree_v(&self) -> usize {
+        self.inner.degree_v().get()
+    }
+
+    /// Returns the u parameter domain as `[start, end]`.
+    #[wasm_bindgen(getter, js_name = domainU)]
+    pub fn domain_u(&self) -> Float64Array {
+        let domain = self.inner.domain_u();
+        flat_from_f64(&[domain.start, domain.end])
+    }
+
+    /// Returns the v parameter domain as `[start, end]`.
+    #[wasm_bindgen(getter, js_name = domainV)]
+    pub fn domain_v(&self) -> Float64Array {
+        let domain = self.inner.domain_v();
+        flat_from_f64(&[domain.start, domain.end])
+    }
+
+    /// Returns the u knot vector.
+    #[wasm_bindgen(getter, js_name = knotsU)]
+    pub fn knots_u(&self) -> Float64Array {
+        flat_from_f64(self.inner.knots_u().as_slice())
+    }
+
+    /// Returns the v knot vector.
+    #[wasm_bindgen(getter, js_name = knotsV)]
+    pub fn knots_v(&self) -> Float64Array {
+        flat_from_f64(self.inner.knots_v().as_slice())
+    }
+
+    /// Returns the weighted control net as rows of `[Point3, weight]` pairs.
+    #[wasm_bindgen(getter, js_name = controlPoints)]
+    pub fn control_points(&self) -> Array {
+        let points = self.inner.control_points();
+        let rows = Array::new();
+        for v in 0..points.nv() {
+            let row = Array::new();
+            for u in 0..points.nu() {
+                let control_point = points.get(u, v);
+                let pair = Array::new();
+                pair.push(&point(control_point.to_cartesian()).into());
+                pair.push(&JsValue::from_f64(control_point.weight()));
+                row.push(&pair);
+            }
+            rows.push(&row);
+        }
+        rows
+    }
+
+    /// Evaluates the surface normal.
+    #[wasm_bindgen(js_name = normalAt)]
+    pub fn normal_at(&self, u: f64, v: f64) -> WasmVector3 {
+        unit_vector(self.inner.normal_at(u, v))
     }
 
     /// Tessellate into a regular `nu × nv` grid. Returns an object
@@ -363,6 +464,7 @@ impl WasmNurbsSurface {
         serde_wasm_bindgen::to_value(&out).map_err(js_err)
     }
 
+    /// Intersects this surface with another NURBS surface.
     #[wasm_bindgen(js_name = intersectSurface)]
     pub fn intersect_surface(&self, other: &WasmNurbsSurface) -> Result<JsValue, JsValue> {
         let a = Surface::Nurbs(self.inner.clone());

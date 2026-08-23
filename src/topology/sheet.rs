@@ -52,6 +52,15 @@ impl<'a, P: Payload> Sheet<'a, P> {
         self.key
     }
 
+    /// Returns the same sheet with the opposite traversal orientation.
+    pub fn reversed(&self) -> Self {
+        Self {
+            gmap: self.gmap,
+            key: self.key,
+            dart: self.gmap.alpha(Dim::Zero, self.dart),
+        }
+    }
+
     /// Returns the user payload attached to this sheet.
     pub fn data(&self) -> &P::Sheet {
         &self.gmap.sheet_attr_unchecked(self.key).data
@@ -143,3 +152,10 @@ impl<'a, P: Payload> Closeable for Sheet<'a, P> {
 /// The closedness invariant is checked by [`Closed::new`] or trusted by
 /// [`Closed::new_unchecked`].
 pub type ShellRef<'a, P = StandardPayload> = Closed<Sheet<'a, P>>;
+
+impl<'a, P: Payload> Closed<Sheet<'a, P>> {
+    /// Returns the same closed shell with the opposite traversal orientation.
+    pub fn reversed(&self) -> Self {
+        Closed::new_unchecked(self.inner().reversed())
+    }
+}

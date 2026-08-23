@@ -67,6 +67,11 @@ impl<'g, P: Payload> Face<'g, P> {
         self.key
     }
 
+    /// Returns the dart carrying this face view's contextual orientation.
+    pub fn dart(&self) -> Dart {
+        self.dart
+    }
+
     /// Returns a new face view with the opposite orientation.
     pub fn reversed(&self) -> Self {
         Self {

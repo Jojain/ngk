@@ -9,6 +9,10 @@ pub mod topology;
 pub mod viz;
 pub use topology::{Payload, StandardPayload};
 
+#[cfg(any(feature = "python", feature = "wasm"))]
+#[path = "../bindings/common/mod.rs"]
+mod binding_common;
+
 #[cfg(feature = "python")]
 #[path = "../bindings/python/mod.rs"]
 pub mod python;

@@ -6,7 +6,7 @@ use super::{PyPoint3, PyVector3, point, unit_vector};
 
 #[pyclass(name = "NurbsCurve", module = "ngk")]
 #[derive(Clone)]
-pub(super) struct PyNurbsCurve {
+pub(crate) struct PyNurbsCurve {
     pub(super) curve: NurbsCurve,
 }
 
@@ -37,11 +37,6 @@ impl PyNurbsCurve {
             .collect()
     }
 
-    #[getter]
-    fn kind(&self) -> &'static str {
-        "nurbs_curve"
-    }
-
     fn point_at(&self, u: f64) -> PyPoint3 {
         point(self.curve.point_at(u))
     }
@@ -53,7 +48,7 @@ impl PyNurbsCurve {
 
 #[pyclass(name = "NurbsSurface", module = "ngk")]
 #[derive(Clone)]
-pub(super) struct PyNurbsSurface {
+pub(crate) struct PyNurbsSurface {
     pub(super) surface: NurbsSurface,
 }
 
@@ -104,11 +99,6 @@ impl PyNurbsSurface {
                     .collect()
             })
             .collect()
-    }
-
-    #[getter]
-    fn kind(&self) -> &'static str {
-        "nurbs_surface"
     }
 
     fn point_at(&self, u: f64, v: f64) -> PyPoint3 {
