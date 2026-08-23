@@ -30,15 +30,23 @@ use serde::Serialize;
 pub use hints::{Style, VizHints};
 pub use scene::{VizAlphaLink, VizDart, VizEdge, VizFace, VizLabel, VizScene, VizVertex};
 
-use crate::tessellate::TessellateOpts;
+use crate::tessellate::{CurveOpts, SurfaceOpts, TessellateOpts};
 use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 
-/// Build a fully-tessellated scene from a `GMap`. `hints` carries
-/// presentation overrides (colors, labels, opacity); pass
-/// [`VizHints::new`] when you don't care.
+const VIEWER_TESSELLATION_OPTS: TessellateOpts = TessellateOpts {
+    curve: CurveOpts { segments: 64 },
+    surface: SurfaceOpts { nu: 64, nv: 32 },
+};
+
+/// Builds a viewer-quality tessellated scene from a `GMap`.
+///
+/// Curves use 64 segments and curved surfaces use a 64 × 32 grid. `hints`
+/// carries presentation overrides (colors, labels, opacity); pass
+/// [`VizHints::new`] when no overrides are needed. Lower-level tessellation
+/// consumers keep the lighter [`TessellateOpts::default`] preset.
 pub fn scene_from_gmap<P: Payload>(g: &GMap<P>, hints: &VizHints) -> VizScene {
-    scene_from_gmap_with_opts(g, hints, TessellateOpts::default())
+    scene_from_gmap_with_opts(g, hints, VIEWER_TESSELLATION_OPTS)
 }
 
 /// Same as [`scene_from_gmap`], with explicit tessellation knobs.

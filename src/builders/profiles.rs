@@ -175,7 +175,11 @@ pub fn profile_pcurves<P: Payload>(
     Ok(pcurves)
 }
 
-fn curve_pcurve(
+/// Projects one oriented 3D curve boundary into a plane's parameter space.
+///
+/// Lines stay analytical. Other curve variants preserve their NURBS degree,
+/// weights, and knots while projecting the homogeneous control polygon.
+pub(crate) fn curve_pcurve(
     curve: &Curve,
     start: Point3,
     end: Point3,

@@ -1,7 +1,13 @@
+use std::collections::HashSet;
+
+use nalgebra::Vector3;
 use ngk::builders::chamfer::chamfer;
+use ngk::builders::edges::add_edge;
 use ngk::builders::errors::ChamferError;
-use ngk::builders::profiles::add_polyline;
-use ngk::geometry::Point3;
+use ngk::builders::faces::add_face;
+use ngk::builders::profiles::{add_polyline, append_edge};
+use ngk::builders::solids::add_extruded_face;
+use ngk::geometry::{Curve, NurbsCurve, Point3, Surface};
 use ngk::modeling::solids::block;
 use ngk::topology::StandardPayload;
 use ngk::topology::gmap::GMap;
@@ -19,7 +25,7 @@ fn failed_chamfer_builder_preserves_the_source_profile() {
         ],
     )
     .expect("profile should build");
-    let corner = g.profile_unchecked(profile).edges()[0].end().dart;
+    let corner = g.profile_unchecked(profile).edges()[0].end().key();
     let before_darts = g.dart_count();
     let before_edges = g.iter_edges().count();
     let before_vertices = g.iter_vertices().count();
@@ -47,7 +53,7 @@ fn profile_chamfer_mutates_in_place_without_returning_a_topology_handle() {
         ],
     )
     .expect("profile should build");
-    let corner = g.profile_unchecked(profile).edges()[0].end().dart;
+    let corner = g.profile_unchecked(profile).edges()[0].end().key();
 
     let result: Result<(), ChamferError> = chamfer(&mut g, corner, 0.25);
 
@@ -158,4 +164,122 @@ fn several_disjoint_solid_edges_can_be_chamfered_in_one_transaction() {
     validate_solid_manifold(shape.map(), solid).expect("multi-chamfer should remain manifold");
     validate_solid_orientation(shape.map(), solid)
         .expect("multi-chamfer faces should remain outward");
+}
+
+#[test]
+fn solid_face_profile_chamfer_replaces_the_complete_rim_with_a_bevel_ring() {
+    let mut shape = block(2.0, 3.0, 4.0).expect("block should build");
+    let solid = shape.key();
+    let top_profile = shape
+        .solid()
+        .faces()
+        .into_iter()
+        .find(|face| {
+            face.vertices().iter().all(|vertex| {
+                vertex
+                    .point()
+                    .is_some_and(|point| (point.z - 4.0).abs() < 1.0e-9)
+            })
+        })
+        .expect("block should have a top face")
+        .outer_loop()
+        .key();
+
+    chamfer(shape.map_mut(), top_profile, 0.25)
+        .expect("complete top profile should chamfer as one solid operation");
+
+    assert_eq!(shape.solid().faces().len(), 10);
+    assert_eq!(shape.solid().edges().len(), 20);
+    assert_eq!(shape.solid().vertices().len(), 12);
+    validate_solid_manifold(shape.map(), solid)
+        .expect("profile-chamfered block should remain manifold");
+    validate_solid_orientation(shape.map(), solid)
+        .expect("profile-chamfered block faces should remain outward");
+}
+
+#[test]
+fn solid_edge_chamfer_supports_an_extruded_nurbs_profile_edge() {
+    let mut g = GMap::<StandardPayload>::new();
+    let profile = add_polyline(
+        &mut g,
+        &[
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(4.0, 0.0, 0.0),
+            Point3::new(4.0, 3.0, 0.0),
+        ],
+    )
+    .expect("open profile should build");
+    let wavy_edge = add_edge(
+        &mut g,
+        Point3::new(4.0, 3.0, 0.0),
+        Point3::new(0.0, 3.0, 0.0),
+        Curve::Nurbs(
+            NurbsCurve::interpolate(&[
+                Point3::new(4.0, 3.0, 0.0),
+                Point3::new(3.0, 2.65, 0.0),
+                Point3::new(2.0, 3.35, 0.0),
+                Point3::new(1.0, 2.65, 0.0),
+                Point3::new(0.0, 3.0, 0.0),
+            ])
+            .expect("wave samples should interpolate"),
+        ),
+    )
+    .expect("wavy edge should build");
+    append_edge(&mut g, profile, wavy_edge).expect("wavy edge should append");
+    let closing_edge = add_edge(
+        &mut g,
+        Point3::new(0.0, 3.0, 0.0),
+        Point3::new(0.0, 0.0, 0.0),
+        Curve::line(Point3::new(0.0, 3.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
+    )
+    .expect("closing edge should build");
+    append_edge(&mut g, profile, closing_edge).expect("profile should close");
+    let face = add_face(&mut g, profile).expect("wavy planar face should build");
+    let solid = add_extruded_face(&mut g, face, Vector3::new(0.0, 0.0, 2.0))
+        .expect("wavy face should extrude");
+    let top_wavy_edge = g
+        .solid_unchecked(solid)
+        .edges()
+        .into_iter()
+        .find(|edge| {
+            matches!(edge.curve(), Some(Curve::Nurbs(_)))
+                && edge
+                    .start()
+                    .point()
+                    .is_some_and(|point| (point.z - 2.0).abs() < 1.0e-9)
+        })
+        .expect("extrusion should contain a translated wavy edge")
+        .key();
+    let original_faces = g.iter_faces().map(|(key, _)| key).collect::<HashSet<_>>();
+
+    chamfer(&mut g, top_wavy_edge, 0.2).expect("wavy solid edge should chamfer");
+
+    assert_eq!(g.solid_unchecked(solid).faces().len(), 7);
+    let chamfer_face = g
+        .solid_unchecked(solid)
+        .faces()
+        .into_iter()
+        .find(|face| {
+            !original_faces.contains(&face.key())
+                && matches!(
+                    face.surface(),
+                    Surface::Ruled(surface) if surface.direction().y.abs() > 1.0e-9
+                )
+        })
+        .expect("chamfer should insert a new face");
+    assert!(
+        matches!(chamfer_face.surface(), Surface::Ruled(_)),
+        "the curved chamfer should have a ruled support surface"
+    );
+    assert_eq!(
+        chamfer_face
+            .edges()
+            .iter()
+            .filter(|edge| matches!(edge.curve(), Some(Curve::Nurbs(_))))
+            .count(),
+        2,
+        "the chamfer should retain both curved NURBS boundaries"
+    );
+    validate_solid_manifold(&g, solid).expect("curved chamfer should remain manifold");
+    validate_solid_orientation(&g, solid).expect("curved chamfer faces should remain outward");
 }

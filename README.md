@@ -49,6 +49,12 @@ npm run dev
 
 See `visualization/README.md` for details about adding new experiments.
 
+## Architecture Notes
+
+- [Chamfer algorithm](docs/chamfer_architecture.md)
+- [Model API direction](docs/model_api.md)
+- [Topology identity and orientation](docs/topology_orientation_refactor.md)
+
 ## License
 
 NGK is licensed under the MIT License. See `LICENSE`.

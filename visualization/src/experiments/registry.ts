@@ -71,15 +71,21 @@ export const experiments: ExperimentMeta[] = [
   },
   {
     id: "chamfered-rectangle",
-    title: "Chamfered rectangle corner (2D)",
+    title: "Profile vs vertex chamfer (2D)",
     group: "Display",
     component: lazy(() => import("./ChamferedRectangle")),
   },
   {
     id: "chamfered-block",
-    title: "Chamfered block edge (3D)",
+    title: "Profile vs vertex chamfer (3D)",
     group: "Display",
     component: lazy(() => import("./ChamferedBlock")),
+  },
+  {
+    id: "chamfered-wavy-edge",
+    title: "Chamfered wavy NURBS edge (3D)",
+    group: "Display",
+    component: lazy(() => import("./ChamferedWavyEdge")),
   },
   {
     id: "block-primitive",

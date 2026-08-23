@@ -9,22 +9,22 @@ import {
   type ScriptResult,
 } from "../../kernel/viz";
 
-const SCRIPT_ID = "chamfered_block";
+const SCRIPT_ID = "chamfered_wavy_edge";
 
 type ChamferKernel = Kernel & {
-  chamferBlock: (distance: number) => ScriptResult;
+  chamferWavyEdge: (distance: number) => ScriptResult;
 };
 
-export default function ChamferedBlock() {
+export default function ChamferedWavyEdge() {
   const kernel = useKernel() as ChamferKernel | null;
   const [distance, setDistance] = useState(0.35);
   const controls = useVizControls();
 
-  useControls("3D chamfer", {
+  useControls("Wavy NURBS chamfer", {
     distance: {
       value: distance,
       min: 0.05,
-      max: 0.75,
+      max: 0.8,
       step: 0.05,
       onChange: (value: number) => setDistance(value),
     },
@@ -32,8 +32,8 @@ export default function ChamferedBlock() {
 
   const result = useMemo<ScriptResult | null>(() => {
     if (!kernel) return null;
-    return kernel.chamferBlock
-      ? kernel.chamferBlock(distance)
+    return kernel.chamferWavyEdge
+      ? kernel.chamferWavyEdge(distance)
       : runScript(kernel, SCRIPT_ID);
   }, [kernel, distance]);
 

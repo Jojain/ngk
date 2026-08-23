@@ -58,9 +58,27 @@ pub fn revolve_triangle(angle_radians: f64) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
-/// Builds the chamfered block scene from a live chamfer distance.
+/// Builds the 3D whole-profile versus single-vertex chamfer comparison from a
+/// live chamfer distance.
 #[wasm_bindgen(js_name = chamferBlock)]
 pub fn chamfer_block(distance: f64) -> Result<JsValue, JsValue> {
     let result = scripts::chamfered_block::build(distance).map_err(|e| JsValue::from_str(&e))?;
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Builds the 2D whole-profile versus single-vertex chamfer comparison from a
+/// live chamfer distance.
+#[wasm_bindgen(js_name = chamferRectangleComparison)]
+pub fn chamfer_rectangle_comparison(distance: f64) -> Result<JsValue, JsValue> {
+    let result =
+        scripts::chamfered_rectangle::build(distance).map_err(|e| JsValue::from_str(&e))?;
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Builds the wavy-edge solid scene from a live chamfer distance.
+#[wasm_bindgen(js_name = chamferWavyEdge)]
+pub fn chamfer_wavy_edge(distance: f64) -> Result<JsValue, JsValue> {
+    let result =
+        scripts::chamfered_wavy_edge::build(distance).map_err(|e| JsValue::from_str(&e))?;
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
