@@ -77,7 +77,11 @@ mod tests {
         let solid = build_hollow_cylinder_solid().expect("build");
         let shell_dart = solid.solid().outer_shell().dart;
         assert!(
-            Closed::new(Sheet::new(solid.map(), shell_dart)).is_some(),
+            Closed::new(
+                Sheet::from_dart(solid.map(), shell_dart)
+                    .expect("solid shell must have a registered sheet"),
+            )
+            .is_some(),
             "hollow cylinder boundary should be a closed 2-shell"
         );
     }
@@ -109,7 +113,11 @@ mod tests {
         let shell_dart = solid.solid().outer_shell().dart;
 
         assert!(
-            Closed::new(Sheet::new(solid.map(), shell_dart)).is_some(),
+            Closed::new(
+                Sheet::from_dart(solid.map(), shell_dart)
+                    .expect("solid shell must have a registered sheet"),
+            )
+            .is_some(),
             "extruding the annular source face should produce a closed shell"
         );
     }

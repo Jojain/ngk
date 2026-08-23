@@ -3,11 +3,10 @@ use std::collections::HashSet;
 use super::closed::Closed;
 use super::edge::Edge;
 use super::face::Face;
-use super::gmap::{Cell3, GMap, MergeTopology, TopologyMerge};
+use super::gmap::{Dart, GMap, MergeTopology, TopologyMerge};
 use super::payload::{Payload, StandardPayload};
 use super::sheet::{Sheet, ShellRef};
 use super::vertex::Vertex;
-use crate::topology::attributes::SolidAttr;
 use crate::topology::shape_keys::SolidKey;
 
 /// A domain-level solid view.
@@ -17,22 +16,31 @@ use crate::topology::shape_keys::SolidKey;
 /// [`GMap`].
 pub struct Solid<'g, P: Payload = StandardPayload> {
     gmap: &'g GMap<P>,
-    attr: &'g SolidAttr<P::S>,
+    key: SolidKey,
+    dart: Dart,
 }
 
 impl<'g, P: Payload> Clone for Solid<'g, P> {
     fn clone(&self) -> Self {
         Self {
             gmap: self.gmap,
-            attr: self.attr,
+            key: self.key,
+            dart: self.dart,
         }
     }
 }
 
 impl<'g, P: Payload> Solid<'g, P> {
-    /// Creates a solid view from a stored solid attribute.
-    pub fn new(gmap: &'g GMap<P>, attr: &'g SolidAttr<P::S>) -> Self {
-        Self { gmap, attr }
+    /// Creates a solid view from its key using the outer shell reference dart.
+    pub fn new(gmap: &'g GMap<P>, key: SolidKey) -> Self {
+        let dart = gmap.solid_attr_unchecked(key).outer_shell;
+        Self { gmap, key, dart }
+    }
+
+    /// Creates a solid view from a dart on one of its registered shells.
+    pub fn from_dart(gmap: &'g GMap<P>, dart: Dart) -> Option<Self> {
+        let key = gmap.solid_key(dart)?;
+        Some(Self { gmap, key, dart })
     }
 
     /// Returns the stable key of this solid in the source map.
@@ -42,21 +50,20 @@ impl<'g, P: Payload> Solid<'g, P> {
     /// Panics if the solid's outer shell is not registered in the map's solid
     /// index.
     pub fn key(&self) -> SolidKey {
-        *self
-            .gmap
-            .attribute::<Cell3>(self.attr.outer_shell)
-            .expect("solid view must have a registered solid key")
+        self.key
     }
 
     /// Returns the user payload attached to this solid.
     pub fn data(&self) -> &P::S {
-        &self.attr.data
+        &self.gmap.solid_attr_unchecked(self.key).data
     }
 
     /// Returns the outer closed shell of the solid.
     pub fn outer_shell(&self) -> ShellRef<'g, P> {
-        let d = self.attr.outer_shell;
-        Closed::new_unchecked(Sheet::new(self.gmap, d))
+        let d = self.gmap.solid_attr_unchecked(self.key).outer_shell;
+        Closed::new_unchecked(
+            Sheet::from_dart(self.gmap, d).expect("solid outer shell must have a sheet"),
+        )
     }
 
     /// Returns all inner closed shells of the solid.
@@ -64,12 +71,21 @@ impl<'g, P: Payload> Solid<'g, P> {
     /// `None` means no inner-shell storage was provided. `Some(vec![])` means
     /// the solid explicitly stores an empty inner-shell list.
     pub fn inner_shells(&self) -> Option<Vec<ShellRef<'g, P>>> {
-        self.attr.inner_shells.as_ref().map(|inner| {
-            inner
-                .iter()
-                .map(|d| Closed::new_unchecked(Sheet::new(self.gmap, *d)))
-                .collect()
-        })
+        self.gmap
+            .solid_attr_unchecked(self.key)
+            .inner_shells
+            .as_ref()
+            .map(|inner| {
+                inner
+                    .iter()
+                    .map(|d| {
+                        Closed::new_unchecked(
+                            Sheet::from_dart(self.gmap, *d)
+                                .expect("solid inner shell must have a sheet"),
+                        )
+                    })
+                    .collect()
+            })
     }
 
     /// Returns every shell of the solid, outer shell first.
@@ -140,6 +156,6 @@ impl<P: Payload> MergeTopology<P> for Solid<'_, P> {
         for shell in self.shells() {
             darts.extend(shell.darts());
         }
-        TopologyMerge::new(self.gmap, darts, self.attr.outer_shell)
+        TopologyMerge::new(self.gmap, darts, self.dart)
     }
 }

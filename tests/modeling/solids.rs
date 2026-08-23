@@ -14,7 +14,10 @@ fn block_builds_closed_box_with_expected_cell_counts() {
     let shell = solid.outer_shell();
 
     assert!(
-        Closed::new(Sheet::new(g, shell.dart)).is_some(),
+        Closed::new(
+            Sheet::from_dart(g, shell.dart).expect("solid shell should have a registered sheet"),
+        )
+        .is_some(),
         "block outer shell should be closed"
     );
     assert_eq!(

@@ -1,7 +1,7 @@
 use crate::builders::errors::FaceCreationError;
 use crate::builders::faces::{
-    add_annulus, add_circle, add_face, add_polygon, add_polygon_with_holes, add_rectangle,
-    add_square,
+    add_annulus, add_circle, add_face_staged, add_polygon_staged, add_polygon_with_holes,
+    add_rectangle, add_square,
 };
 use crate::geometry::{Plane, Point3};
 use crate::topology::gmap::GMap;
@@ -23,8 +23,8 @@ pub fn square(
     size: f64,
 ) -> Result<Shape<FaceTag, StandardPayload>, FaceCreationError> {
     let mut g = GMap::new();
-    let face_key = add_square(&mut g, plane, size)?;
-    Ok(Shape::new(g, face_key))
+    let handle = add_square(&mut g, plane, size)?;
+    Ok(Shape::new(g, handle))
 }
 
 pub fn circle(
@@ -54,8 +54,10 @@ pub fn polygon(points: &[Point3]) -> Result<Shape<FaceTag, StandardPayload>, Fac
     }
 
     let mut g = GMap::new();
-    let loop_dart = add_polygon(&mut g, points);
-    let face_key = add_face(&mut g, loop_dart)?;
+    let face_key = g.transaction(|g| {
+        let profile_key = add_polygon_staged(g, points);
+        add_face_staged(g, profile_key)
+    })?;
     Ok(Shape::new(g, face_key))
 }
 

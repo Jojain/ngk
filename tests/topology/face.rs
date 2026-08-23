@@ -1,11 +1,9 @@
-use ngk::builders::faces::{add_face, add_polygon, add_polygon_with_holes};
+use ngk::builders::faces::{add_annulus, add_circle};
 use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
-use ngk::modeling::faces;
-use ngk::topology::attributes::FaceAttr;
-use ngk::topology::facet::Facet;
+use ngk::modeling::{faces, solids};
+use ngk::topology::face::Face;
 use ngk::topology::gmap::{Dim, GMap};
 use ngk::topology::payload::StandardPayload;
-use ngk::topology::sheet::Sheet;
 
 #[test]
 fn face_point_at_evaluates_its_support_surface() {
@@ -24,94 +22,97 @@ fn face_point_at_is_defined_inside_a_trimmed_hole() {
 }
 
 #[test]
-fn face_key_resolves_stored_oriented_connectivity() {
+fn face_views_from_opposite_darts_reverse_boundary_and_normal() {
     let mut g = GMap::<StandardPayload>::new();
-    let loop_dart = add_polygon(
-        &mut g,
-        &[
-            Point3::new(0.0, 0.0, 0.0),
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(1.0, 1.0, 0.0),
-            Point3::new(0.0, 1.0, 0.0),
-        ],
-    );
-    let key = add_face(&mut g, loop_dart).expect("face should build");
-    let face = g.face(key).expect("face key should resolve");
+    let face_key = add_circle(&mut g, Plane::xy(), 1.0).expect("circle face should build");
+    let default_dart = g.face_attr_unchecked(face_key).outer_loop;
+    let reversed_dart = g.alpha(Dim::Zero, default_dart);
+    let default_face = Face::from_dart(&g, default_dart).expect("face should resolve");
+    let reversed_face = Face::from_dart(&g, reversed_dart).expect("face should resolve");
 
-    assert_eq!(face.key(), key);
-    assert_eq!(face.outer_loop().dart, loop_dart);
-}
-
-#[test]
-fn alpha3_shared_faces_have_distinct_keys_and_one_facet_key() {
-    let mut g = GMap::<StandardPayload>::new();
-    let corners = [
-        Point3::new(0.0, 0.0, 0.0),
-        Point3::new(1.0, 0.0, 0.0),
-        Point3::new(1.0, 1.0, 0.0),
-        Point3::new(0.0, 1.0, 0.0),
-    ];
-    let first_loop = add_polygon(&mut g, &corners);
-    let first_key = add_face(&mut g, first_loop).expect("face should build");
-    let facet_key = g.face(first_key).expect("face should resolve").facet_key();
-    let second_loop = add_polygon(&mut g, &corners);
-    g.sew(Dim::Three, first_loop, second_loop)
-        .expect("matching face sides should be alpha3-sewable");
-    let second_key = g.add_face_use(FaceAttr::new(facet_key, second_loop, Vec::new()));
-
-    let first = g.face(first_key).expect("first face should resolve");
-    let second = g.face(second_key).expect("second face should resolve");
-
-    assert_ne!(first.key(), second.key());
-    assert_eq!(first.facet_key(), second.facet_key());
-    assert!(first.normal_at(0.5, 0.5).dot(&second.normal_at(0.5, 0.5)) < -0.999);
+    assert_eq!(default_face.key(), face_key);
+    assert_eq!(reversed_face.key(), face_key);
+    assert_eq!(default_face.outer_loop().dart, default_dart);
+    assert_eq!(reversed_face.outer_loop().dart, reversed_dart);
     assert!(
-        second
-            .outer_loop()
-            .edges()
-            .into_iter()
-            .all(|edge| second.pcurve(edge.dart).is_some())
+        default_face
+            .normal_at(0.0, 0.0)
+            .dot(&reversed_face.normal_at(0.0, 0.0))
+            < -1.0 + LINEAR_TOLERANCE,
+        "face views built from opposite darts should have opposite normals"
     );
-
-    assert_eq!(Sheet::new(&g, first_loop).faces()[0].key(), first_key);
-    assert_eq!(Sheet::new(&g, second_loop).faces()[0].key(), second_key);
 }
 
 #[test]
-fn shared_face_keys_store_oriented_inner_loops() {
+fn face_views_from_stored_loop_seeds_share_the_same_normal() {
     let mut g = GMap::<StandardPayload>::new();
-    let outer = [
-        Point3::new(0.0, 0.0, 0.0),
-        Point3::new(4.0, 0.0, 0.0),
-        Point3::new(4.0, 4.0, 0.0),
-        Point3::new(0.0, 4.0, 0.0),
-    ];
-    let hole = [
-        Point3::new(1.0, 1.0, 0.0),
-        Point3::new(1.0, 3.0, 0.0),
-        Point3::new(3.0, 3.0, 0.0),
-        Point3::new(3.0, 1.0, 0.0),
-    ];
-    let first_key = add_polygon_with_holes(&mut g, Plane::xy(), &outer, &[&hole])
-        .expect("face with a hole should build");
-    let first = g.face(first_key).expect("face should resolve");
-    let first_outer = first.outer_loop().dart;
-    let first_inner = first.inner_loops()[0].dart;
-    let facet_key = first.facet_key();
-    let second_outer = add_polygon(&mut g, &outer);
-    let second_inner = add_polygon(&mut g, &hole);
+    let face_key = add_annulus(&mut g, Plane::xy(), 2.0, 1.0).expect("annulus face should build");
+    let attr = g.face_attr_unchecked(face_key);
+    let outer = Face::from_dart(&g, attr.outer_loop).expect("outer loop should resolve its face");
+    let inner =
+        Face::from_dart(&g, attr.inner_loops[0]).expect("inner loop should resolve its face");
 
-    g.sew(Dim::Three, first_outer, second_outer)
-        .expect("outer loops should be alpha3-sewable");
-    g.sew(Dim::Three, first_inner, second_inner)
-        .expect("inner loops should be alpha3-sewable");
-    let second_key = g.add_face_use(FaceAttr::new(facet_key, second_outer, vec![second_inner]));
+    assert!(
+        outer.normal_at(0.0, 0.0).dot(&inner.normal_at(0.0, 0.0)) > 1.0 - LINEAR_TOLERANCE,
+        "all stored loop seeds should produce the same geometric face orientation"
+    );
+}
 
-    let second = g.face(second_key).expect("second face should resolve");
-    assert_eq!(second.inner_loops()[0].dart, second_inner);
+#[test]
+fn face_boundary_edges_preserve_their_exact_loop_darts() {
+    let shape = solids::block(1.0, 2.0, 3.0).expect("block should build");
 
-    let face_from_inner_facet = Facet::new(&g, second_inner)
-        .face()
-        .expect("inner facet should resolve its oriented face");
-    assert_eq!(face_from_inner_facet.key(), second_key);
+    for face in shape.solid().faces() {
+        let loop_darts = face.outer_loop().darts().step_by(2).collect::<Vec<_>>();
+        let edges = face.outer_loop().edges();
+
+        assert_eq!(edges.len(), loop_darts.len());
+        for (edge, loop_dart) in edges.iter().zip(loop_darts) {
+            assert_eq!(
+                edge.dart(),
+                loop_dart,
+                "face {:?} edge {:?} should retain the exact dart discovered by its boundary traversal",
+                face.key(),
+                edge.key()
+            );
+        }
+    }
+}
+
+#[test]
+fn block_face_pcurves_follow_oriented_boundary_edges() {
+    let shape = solids::block(1.0, 2.0, 3.0).expect("block should build");
+
+    for face in shape.solid().faces() {
+        for edge in face.outer_loop().edges() {
+            let pcurve = face
+                .pcurve(edge.dart())
+                .expect("each block boundary edge should have a pcurve");
+            let start_uv = pcurve.point_at(0.0);
+            let end_uv = pcurve.point_at(1.0);
+            let pcurve_start = face.point_at(start_uv.x, start_uv.y);
+            let pcurve_end = face.point_at(end_uv.x, end_uv.y);
+            let edge_start = *edge
+                .start()
+                .point()
+                .expect("block edge start should have geometry");
+            let edge_end = *edge
+                .end()
+                .point()
+                .expect("block edge end should have geometry");
+
+            assert!(
+                pcurve_start.coincides(edge_start, LINEAR_TOLERANCE),
+                "face {:?} edge {:?} pcurve should start at its oriented edge start: {pcurve_start:?} != {edge_start:?}",
+                face.key(),
+                edge.key()
+            );
+            assert!(
+                pcurve_end.coincides(edge_end, LINEAR_TOLERANCE),
+                "face {:?} edge {:?} pcurve should end at its oriented edge end: {pcurve_end:?} != {edge_end:?}",
+                face.key(),
+                edge.key()
+            );
+        }
+    }
 }

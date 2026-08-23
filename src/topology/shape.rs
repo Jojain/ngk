@@ -2,11 +2,10 @@ use std::marker::PhantomData;
 
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::facet::Facet;
-use crate::topology::gmap::{Dart, GMap};
+use crate::topology::gmap::GMap;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
-use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
 use crate::topology::vertex::Vertex;
@@ -17,8 +16,6 @@ pub struct VertexTag;
 pub struct EdgeTag;
 /// Type marker for an owned face shape.
 pub struct FaceTag;
-/// Type marker for an owned facet shape.
-pub struct FacetTag;
 /// Type marker for an owned profile shape.
 pub struct ProfileTag;
 /// Type marker for an owned sheet shape.
@@ -44,16 +41,12 @@ impl ShapeKind for FaceTag {
     type Handle = FaceKey;
 }
 
-impl ShapeKind for FacetTag {
-    type Handle = Dart;
-}
-
 impl ShapeKind for ProfileTag {
-    type Handle = Dart;
+    type Handle = ProfileKey;
 }
 
 impl ShapeKind for SheetTag {
-    type Handle = Dart;
+    type Handle = SheetKey;
 }
 
 impl ShapeKind for SolidTag {
@@ -112,10 +105,8 @@ impl<P: Payload> Shape<VertexTag, P> {
     ///
     /// Panics if the stored vertex key is no longer present in the map.
     pub fn vertex(&self) -> Vertex<'_, P> {
-        self.map
-            .vertex_attr(self.handle)
-            .map(|v| v.vertex(&self.map))
-            .expect("vertex shape key must be in the map")
+        let v = self.map.vertex_attr_unchecked(self.handle);
+        v.vertex(&self.map)
     }
 
     /// Returns the primary vertex key.
@@ -131,10 +122,7 @@ impl<P: Payload> Shape<EdgeTag, P> {
     ///
     /// Panics if the stored edge key is no longer present in the map.
     pub fn edge(&self) -> Edge<'_, P> {
-        self.map
-            .edge_attr(self.handle)
-            .map(|e| e.edge(&self.map))
-            .expect("edge shape key must be in the map")
+        self.map.edge_unchecked(self.handle)
     }
 
     /// Returns the primary edge key.
@@ -148,11 +136,10 @@ impl<P: Payload> Shape<FaceTag, P> {
     ///
     /// # Panics
     ///
-    /// Panics if the stored face identity is no longer present in the map.
+    /// Panics if the stored face key is no longer present in the map.
     pub fn face(&self) -> Face<'_, P> {
-        self.map
-            .face(self.handle)
-            .expect("face shape id must be in the map")
+        let f = self.map.face_attr_unchecked(self.handle);
+        f.face(&self.map)
     }
 
     /// Returns the primary face key.
@@ -164,23 +151,11 @@ impl<P: Payload> Shape<FaceTag, P> {
 impl<P: Payload> Shape<ProfileTag, P> {
     /// Returns the primary profile view.
     pub fn profile(&self) -> Profile<'_, P> {
-        Profile::new(&self.map, self.handle)
+        self.map.profile_unchecked(self.handle)
     }
 
-    /// Returns the primary profile dart.
-    pub fn dart(&self) -> Dart {
-        self.handle
-    }
-}
-
-impl<P: Payload> Shape<FacetTag, P> {
-    /// Returns the primary facet view.
-    pub fn facet(&self) -> Facet<'_, P> {
-        Facet::new(&self.map, self.handle)
-    }
-
-    /// Returns the primary facet dart.
-    pub fn dart(&self) -> Dart {
+    /// Returns the primary profile key.
+    pub fn key(&self) -> ProfileKey {
         self.handle
     }
 }
@@ -188,11 +163,11 @@ impl<P: Payload> Shape<FacetTag, P> {
 impl<P: Payload> Shape<SheetTag, P> {
     /// Returns the primary sheet view.
     pub fn sheet(&self) -> Sheet<'_, P> {
-        Sheet::new(&self.map, self.handle)
+        self.map.sheet_unchecked(self.handle)
     }
 
-    /// Returns the primary sheet dart.
-    pub fn dart(&self) -> Dart {
+    /// Returns the primary sheet key.
+    pub fn key(&self) -> SheetKey {
         self.handle
     }
 }
@@ -204,10 +179,7 @@ impl<P: Payload> Shape<SolidTag, P> {
     ///
     /// Panics if the stored solid key is no longer present in the map.
     pub fn solid(&self) -> Solid<'_, P> {
-        self.map
-            .solid_attr(self.handle)
-            .map(|s| Solid::new(&self.map, s))
-            .expect("solid shape key must be in the map")
+        self.map.solid_unchecked(self.handle)
     }
 
     /// Returns the primary solid key.

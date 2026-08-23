@@ -1,6 +1,6 @@
 //! Exploration scripts: named Rust functions that use the kernel to build a
 //! small scene and return it as a [`ScriptResult`]. Scripts are the canonical
-//! way to prototype in ngk — the wasm surface only exposes this registry.
+//! way to prototype in ngk; the wasm surface only exposes this registry.
 
 use crate::viz::ScriptResult;
 
@@ -12,7 +12,6 @@ pub mod extruded_square;
 pub mod hollow_cylinder;
 pub mod interactive_extrusion;
 pub mod revolved_triangle;
-pub mod two_faces_alpha2;
 
 pub type ScriptFn = fn() -> Result<ScriptResult, String>;
 
@@ -27,11 +26,6 @@ pub const SCRIPTS: &[Script] = &[
         id: "boolean_configs",
         title: "Boolean configurations",
         run: boolean_configs::run,
-    },
-    Script {
-        id: "two_faces_alpha2",
-        title: "Two faces α2-sewn on a shared edge",
-        run: two_faces_alpha2::run,
     },
     Script {
         id: "hollow_cylinder",

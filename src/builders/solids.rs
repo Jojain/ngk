@@ -7,18 +7,25 @@ use crate::{
         Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
     },
     topology::{
-        Dart, SolidAttr,
-        attributes::{EdgeAttr, FacetAttr},
+        Dart, SheetAttr, SolidAttr, TopologyEdit,
+        attributes::{EdgeAttr, FaceAttr, ProfileAttr},
         edge::Edge,
         face::Face,
-        gmap::{Dim, GMap, MergeTopology},
+        gmap::{Cell2, Dim, GMap, MergeTopology},
         profile::Profile,
         shape::{FaceTag, Shape},
         shape_keys::{FaceKey, SolidKey},
-        sheet::Sheet,
     },
 };
 
+/// Returns an isolated copy of `face` translated by `direction`.
+///
+/// Vertex positions, edge curves, and the supporting surface are translated;
+/// face pcurves remain unchanged because they use the face's local parameter
+/// space. The source map is not modified.
+///
+/// Returns an error for a zero direction or when curve or surface geometry
+/// cannot be translated.
 pub fn translate_face<P: Payload>(
     face: &Face<'_, P>,
     direction: Vector3<f64>,
@@ -33,92 +40,105 @@ pub fn translate_face<P: Payload>(
         .iter_vertices()
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
-    for key in vertex_keys {
-        let vertex = translated
-            .vertex_attr_mut(key)
-            .expect("collected vertex key must remain valid");
-        vertex.point += direction;
-    }
-
     let edge_keys = translated
         .iter_edges()
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
-    for key in edge_keys {
-        let edge = translated
-            .edge_attr_mut(key)
-            .expect("collected edge key must remain valid");
-        edge.curve = edge.curve.translated(direction).map_err(|source| {
-            ExtrudeError::CurveTranslationFailed {
-                dart: edge.dart,
-                source,
-            }
-        })?;
-    }
+    let translated_face_key = *translated.attribute_unchecked::<Cell2>(translated_dart);
+    translated.transaction(|edit| {
+        for key in vertex_keys {
+            edit.vertex_attr_mut_unchecked(key).point += direction;
+        }
 
-    let translated_face_key = translated
-        .face_key_at(translated_dart)
-        .expect("isolating a face must preserve its face attribute");
-    let translated_facet_key = translated
-        .face_attr(translated_face_key)
-        .expect("isolated face key must remain valid")
-        .facet;
-    let translated_face = translated
-        .facet_attr_mut(translated_facet_key)
-        .expect("isolated facet key must remain valid");
-    translated_face.surface = translated_face
-        .surface
-        .translated(direction)
-        .map_err(|source| ExtrudeError::SurfaceTranslationFailed {
-            dart: translated_dart,
-            source,
-        })?;
+        for key in edge_keys {
+            let edge = edit.edge_attr_mut_unchecked(key);
+            edge.curve = edge.curve.translated(direction).map_err(|source| {
+                ExtrudeError::CurveTranslationFailed {
+                    dart: edge.dart,
+                    source,
+                }
+            })?;
+        }
+
+        let translated_face = edit.face_attr_mut_unchecked(translated_face_key);
+        translated_face.surface =
+            translated_face
+                .surface
+                .translated(direction)
+                .map_err(|source| ExtrudeError::SurfaceTranslationFailed {
+                    dart: translated_face.outer_loop,
+                    source,
+                })?;
+        Ok::<_, ExtrudeError>(())
+    })?;
 
     Ok(Shape::new(translated, translated_face_key))
 }
 
+/// Extrudes an existing face into a solid along `direction`.
+///
+/// The source face becomes one cap, a translated copy becomes the opposite cap,
+/// and one lateral face is added for every edge of the outer and inner boundary
+/// loops. Cap winding is adjusted so the resulting shell faces outward.
+///
+/// Returns an error when the face is missing, the direction is zero, required
+/// boundary geometry is absent, or a lateral face is degenerate or cannot be
+/// sewn into the shell.
 pub fn add_extruded_face<P: Payload>(
     g: &mut GMap<P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
 ) -> Result<SolidKey, ExtrudeError> {
+    g.transaction(|g| add_extruded_face_staged(g, face_key, direction))
+}
+
+/// Builds translated caps and lateral faces, then registers the staged solid.
+fn add_extruded_face_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    face_key: FaceKey,
+    direction: Vector3<f64>,
+) -> Result<SolidKey, ExtrudeError> {
     let bot_face = g
-        .face(face_key)
+        .face_attr(face_key)
+        .map(|attr| attr.face(g))
         .ok_or(ExtrudeError::MissingFace { dart: face_key })?;
     let top_face = translate_face(&bot_face, direction)?;
+    let mut bottom_loop_darts = Vec::with_capacity(1 + bot_face.inner_loops().len());
+    bottom_loop_darts.push(bot_face.outer_loop().dart);
+    bottom_loop_darts.extend(bot_face.inner_loops().into_iter().map(|loop_| loop_.dart));
 
     let top_face_dart = g.merge(top_face.face());
-    let top_face_key = g
-        .face_key_at(top_face_dart)
-        .expect("merged top face should preserve its face attribute");
-    let bottom_loop_darts =
-        face_loop_darts(&g.face(face_key).expect("bottom face must remain valid"));
-    let top_loop_darts =
-        face_loop_darts(&g.face(top_face_key).expect("top face must remain valid"));
+    let top_face_key = *g.attribute_unchecked::<Cell2>(top_face_dart);
+    let top_face_attr = g.face_attr_unchecked(top_face_key);
+    let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
+    top_loop_darts.push(top_face_attr.outer_loop);
+    top_loop_darts.extend(top_face_attr.inner_loops.iter().copied());
+
     orient_extruded_caps(g, face_key, top_face_key, direction);
 
-    let mut shell_representative = None;
     for (bottom_loop_dart, top_loop_dart) in bottom_loop_darts.into_iter().zip(top_loop_darts) {
-        let extruded = sew_extruded_loop(g, bottom_loop_dart, top_loop_dart, direction)?;
-        shell_representative.get_or_insert(extruded);
+        sew_extruded_loop(g, bottom_loop_dart, top_loop_dart, direction)?;
     }
 
-    let shell_representative =
-        shell_representative.expect("a face should have at least one outer loop");
-    orient_shell_faces_outward(g, shell_representative);
-    let solid = g.add_solid(SolidAttr::new(P::S::default(), shell_representative, None));
+    // The shell dart is contextual: unlike a cell representative, it must retain
+    // the outward orientation established for the bottom cap.
+    let outer_shell = g.face_attr_unchecked(face_key).outer_loop;
+    if g.sheet_key(outer_shell).is_none() {
+        g.add_sheet(SheetAttr::new(outer_shell, P::Sheet::default()));
+    }
+    let solid = g.add_solid(SolidAttr::new(P::S::default(), outer_shell, None));
     Ok(solid)
 }
 
 fn orient_extruded_caps<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     bottom_face: FaceKey,
     top_face: FaceKey,
     direction: Vector3<f64>,
 ) {
     let Some(bottom_normal_dot_direction) = g
-        .face(bottom_face)
-        .map(|face| face.normal_at(0.0, 0.0).dot(&direction))
+        .face_attr(bottom_face)
+        .map(|attr| face_normal_dot_direction(g, attr, direction))
     else {
         return;
     };
@@ -130,83 +150,61 @@ fn orient_extruded_caps<P: Payload>(
     }
 }
 
-fn face_loop_darts<P: Payload>(face: &Face<'_, P>) -> Vec<Dart> {
-    let mut loops = Vec::with_capacity(1 + face.inner_loops().len());
-    loops.push(face.outer_loop().dart);
-    loops.extend(face.inner_loops().into_iter().map(|loop_| loop_.dart));
-    loops
+fn face_normal_dot_direction<P: Payload>(
+    g: &GMap<P>,
+    face: &FaceAttr<P::F>,
+    direction: Vector3<f64>,
+) -> f64 {
+    face.face(g).normal_at(0.0, 0.0).dot(&direction)
 }
 
-fn orient_shell_faces_outward<P: Payload>(g: &mut GMap<P>, shell: Dart) {
-    let face_keys = Sheet::new(g, shell)
-        .faces()
-        .into_iter()
-        .map(|face| face.key())
-        .collect::<Vec<_>>();
-    let points = face_keys
-        .iter()
-        .filter_map(|key| g.face(*key))
-        .flat_map(|face| face.vertices())
-        .filter_map(|vertex| vertex.point().copied())
-        .collect::<Vec<_>>();
-    if points.is_empty() {
+fn reverse_face_winding<P: Payload>(g: &mut TopologyEdit<'_, P>, face: FaceKey) {
+    let Some(face_attr) = g.face_attr(face).cloned() else {
         return;
-    }
-    let center = points
-        .iter()
-        .map(|point| point.coords)
-        .sum::<Vector3<f64>>()
-        / points.len() as f64;
-    let flips = face_keys
-        .into_iter()
-        .filter(|key| {
-            let Some(face) = g.face(*key) else {
-                return false;
-            };
-            let uvs = face
-                .outer_loop()
-                .edges()
-                .into_iter()
-                .filter_map(|edge| face.pcurve(edge.dart))
-                .flat_map(|pcurve| pcurve.sample(1))
-                .collect::<Vec<_>>();
-            if uvs.is_empty() {
-                return false;
-            }
-            let uv = uvs
-                .iter()
-                .map(|point| point.coords)
-                .sum::<nalgebra::Vector2<f64>>()
-                / uvs.len() as f64;
-            let face_center = face.point_at(uv.x, uv.y).coords;
-            let dot = face.normal_at(0.0, 0.0).dot(&(face_center - center));
-            dot < 0.0
-        })
-        .collect::<Vec<_>>();
-    for face in flips {
-        g.reverse_face(face);
-    }
-}
+    };
 
-fn reverse_face_winding<P: Payload>(g: &mut GMap<P>, face: FaceKey) {
-    g.reverse_face(face);
+    let outer_loop = g.alpha(Dim::Zero, face_attr.outer_loop);
+    let inner_loops = face_attr
+        .inner_loops
+        .iter()
+        .map(|dart| g.alpha(Dim::Zero, *dart))
+        .collect::<Vec<_>>();
+    let pcurves = face_attr
+        .face(g)
+        .edges()
+        .into_iter()
+        .filter_map(|edge| {
+            face_attr
+                .pcurves
+                .get(&edge.dart())
+                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart()), pcurve.reversed()))
+        })
+        .collect();
+
+    if let Some(face) = g.face_attr_mut(face) {
+        face.outer_loop = outer_loop;
+        face.inner_loops = inner_loops;
+        face.pcurves = pcurves;
+    }
 }
 
 fn sew_extruded_loop<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     bottom_loop_dart: Dart,
     top_loop_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<Dart, ExtrudeError> {
-    let bottom_edges = Profile::new(g, bottom_loop_dart)
+    let bottom_edges = Profile::from_dart(g, bottom_loop_dart)
+        .expect("bottom loop must have a registered profile")
         .edges()
         .into_iter()
-        .map(|edge| edge.dart)
+        .map(|edge| edge.dart())
         .collect::<Vec<_>>();
-    let top_edges = Profile::new(g, top_loop_dart)
+    let top_edges = Profile::from_dart(g, top_loop_dart)
+        .expect("top loop must have a registered profile")
         .edges()
         .into_iter()
-        .map(|edge| edge.dart)
+        .map(|edge| edge.dart())
         .collect::<Vec<_>>();
     let laterals = bottom_edges
         .iter()
@@ -262,7 +260,7 @@ fn sew_extruded_loop<P: Payload>(
 }
 
 fn sew<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     dim: Dim,
     first: Dart,
     second: Dart,
@@ -298,17 +296,18 @@ fn prepare_lateral_face<P: Payload>(
     _top_edge: Dart,
     direction: Vector3<f64>,
 ) -> Result<PreparedLateralFace, ExtrudeError> {
-    let bottom_edge = Edge::new(g, bottom_edge);
-    let edge_dart = bottom_edge.dart;
-    let start = *bottom_edge
+    let bottom_edge_view = Edge::from_dart(g, bottom_edge)
+        .ok_or(ExtrudeError::MissingEdgeCurve { dart: bottom_edge })?;
+    let edge_dart = bottom_edge_view.dart();
+    let start = *bottom_edge_view
         .start()
         .point()
         .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
-    let end = *bottom_edge
+    let end = *bottom_edge_view
         .end()
         .point()
         .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
-    let curve = bottom_edge
+    let curve = bottom_edge_view
         .curve()
         .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
     let surface = lateral_face_surface(edge_dart, curve, start, end, direction)?;
@@ -318,7 +317,7 @@ fn prepare_lateral_face<P: Payload>(
 }
 
 fn add_lateral_face_topology<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
 ) -> Result<LateralFaceTopology, ExtrudeError> {
     let darts = std::array::from_fn(|_| g.add_dart());
 
@@ -345,19 +344,18 @@ fn add_lateral_face_topology<P: Payload>(
 }
 
 fn add_lateral_face_attributes<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     topology: &LateralFaceTopology,
     prepared: &PreparedLateralFace,
 ) {
-    g.add_face(
+    g.add_profile(ProfileAttr::new(topology.loop_dart, P::Profile::default()));
+    g.add_face(FaceAttr::with_pcurves(
+        prepared.surface.clone(),
+        P::F::default(),
         topology.loop_dart,
         Vec::new(),
-        FacetAttr::with_pcurves(
-            prepared.surface.clone(),
-            P::F::default(),
-            quad_pcurves(&prepared.uv, &topology.darts),
-        ),
-    );
+        quad_pcurves(&prepared.uv, &topology.darts),
+    ));
 }
 
 fn lateral_face_surface(

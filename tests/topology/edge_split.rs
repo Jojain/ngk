@@ -1,19 +1,32 @@
 use ngk::builders::edges::{EdgeSplitError, add_line, split_edge};
-use ngk::builders::profiles::{add_edge_to_profile, add_rectangle};
+use ngk::builders::profiles::{add_polyline, add_rectangle};
 use ngk::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
 use ngk::modeling::faces;
+use ngk::topology::TopologyEditError;
 use ngk::topology::closed::Closeable;
-use ngk::topology::gmap::{Dim, GMap};
-use ngk::topology::payload::StandardPayload;
+use ngk::topology::gmap::GMap;
+use ngk::topology::payload::{Payload, StandardPayload};
 use ngk::topology::profile::Profile;
 use ngk::topology::shape_keys::EdgeKey;
+
+#[derive(Clone, Default)]
+struct EdgePayload;
+
+impl Payload for EdgePayload {
+    type V = ();
+    type E = String;
+    type Profile = ();
+    type F = ();
+    type Sheet = ();
+    type S = ();
+}
 
 #[test]
 fn split_profile_edge_handles_isolated_edge() {
     let mut g = GMap::<StandardPayload>::new();
     let start = Point3::new(0.0, 0.0, 0.0);
     let end = Point3::new(1.0, 0.0, 0.0);
-    let (_, edge) = add_line(&mut g, start, end).expect("line edge should build");
+    let edge = add_line(&mut g, start, end).expect("line edge should build");
 
     let split = split_edge(&mut g, edge, 0.25).expect("isolated edge should split");
 
@@ -21,10 +34,7 @@ fn split_profile_edge_handles_isolated_edge() {
     assert_eq!(g.iter_vertices().count(), 3);
 
     let midpoint = Point3::new(0.25, 0.0, 0.0);
-    let split_vertex = g
-        .vertex_attr(split.vertex)
-        .expect("split vertex should be stored")
-        .vertex(&g);
+    let split_vertex = g.vertex_attr_unchecked(split.vertex).vertex(&g);
     assert!(
         split_vertex
             .point()
@@ -32,14 +42,8 @@ fn split_profile_edge_handles_isolated_edge() {
             .coincides(midpoint, LINEAR_TOLERANCE)
     );
 
-    let first = g
-        .edge_attr(split.first)
-        .expect("first edge should exist")
-        .edge(&g);
-    let second = g
-        .edge_attr(split.second)
-        .expect("second edge should exist")
-        .edge(&g);
+    let first = g.edge_unchecked(split.first);
+    let second = g.edge_unchecked(split.second);
     assert!(
         first
             .start()
@@ -55,31 +59,28 @@ fn split_profile_edge_handles_isolated_edge() {
             .coincides(midpoint, LINEAR_TOLERANCE)
     );
 
-    let second_vertices = second
-        .vertices()
-        .into_iter()
-        .map(|vertex| {
-            *vertex
-                .point()
-                .expect("split edge vertex should have a point")
-        })
-        .collect::<Vec<_>>();
     assert!(
-        second_vertices
-            .iter()
-            .any(|point| point.coincides(midpoint, LINEAR_TOLERANCE))
+        second
+            .start()
+            .point()
+            .expect("second split edge start should have geometry")
+            .coincides(midpoint, LINEAR_TOLERANCE),
+        "the second split edge should start at the split point"
     );
     assert!(
-        second_vertices
-            .iter()
-            .any(|point| point.coincides(end, LINEAR_TOLERANCE))
+        second
+            .end()
+            .point()
+            .expect("second split edge end should have geometry")
+            .coincides(end, LINEAR_TOLERANCE),
+        "the second split edge should preserve the original end point"
     );
 }
 
 #[test]
-fn split_profile_edge_turns_isolated_edge_into_open_profile() {
+fn split_isolated_edge_keeps_edge_profile_free() {
     let mut g = GMap::<StandardPayload>::new();
-    let (_, edge) = add_line(
+    let edge = add_line(
         &mut g,
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 0.0, 0.0),
@@ -87,19 +88,36 @@ fn split_profile_edge_turns_isolated_edge_into_open_profile() {
     .expect("line edge should build");
 
     let split = split_edge(&mut g, edge, 0.5).expect("isolated edge should split");
-    let first_dart = g
-        .edge_attr(split.first)
-        .expect("first edge should exist")
-        .dart;
-    let profile = Profile::new(&g, first_dart);
 
-    assert_eq!(profile.edges().len(), 2);
+    assert!(Profile::from_dart(&g, g.edge_attr_unchecked(split.first).dart).is_none());
+    assert!(Profile::from_dart(&g, g.edge_attr_unchecked(split.second).dart).is_none());
+}
+
+#[test]
+fn split_edge_initializes_split_edge_payload_from_source() {
+    let mut g = GMap::<EdgePayload>::new();
+    let edge = add_line(
+        &mut g,
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+    )
+    .expect("line edge should build");
+    g.transaction(|edit| {
+        edit.edge_attr_mut_unchecked(edge).data = "source".to_owned();
+        Ok::<_, TopologyEditError>(())
+    })
+    .unwrap();
+
+    let split = split_edge(&mut g, edge, 0.5).expect("edge should split");
+
+    assert_eq!(g.edge_attr_unchecked(split.first).data, "source");
+    assert_eq!(g.edge_attr_unchecked(split.second).data, "source");
 }
 
 #[test]
 fn split_profile_edge_rejects_boundary_parameters() {
     let mut g = GMap::<StandardPayload>::new();
-    let (_, edge) = add_line(
+    let edge = add_line(
         &mut g,
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 0.0, 0.0),
@@ -139,19 +157,16 @@ fn split_profile_edge_preserves_open_profile_order() {
     let p0 = Point3::new(0.0, 0.0, 0.0);
     let p1 = Point3::new(1.0, 0.0, 0.0);
     let p2 = Point3::new(2.0, 0.0, 0.0);
-    let (first_dart, first_edge) = add_line(&mut g, p0, p1).expect("first edge should build");
-    let (second_dart, _) = add_line(&mut g, p1, p2).expect("second edge should build");
-    add_edge_to_profile(&mut g, first_dart, second_dart)
-        .expect("edges should connect into a profile");
+    let profile_key = add_polyline(&mut g, &[p0, p1, p2]).expect("profile should build");
+    let first_edge = g.profile_unchecked(profile_key).edges()[0].key();
 
     let split = split_edge(&mut g, first_edge, 0.5).expect("profile edge should split");
-    let profile = Profile::new(&g, first_dart);
+    let profile = g.profile_unchecked(profile_key);
     let midpoint = Point3::new(0.5, 0.0, 0.0);
 
     assert_eq!(profile.edges().len(), 3);
     assert!(
-        g.vertex_attr(split.vertex)
-            .expect("split vertex should exist")
+        g.vertex_attr_unchecked(split.vertex)
             .point
             .coincides(midpoint, LINEAR_TOLERANCE)
     );
@@ -160,21 +175,18 @@ fn split_profile_edge_preserves_open_profile_order() {
 #[test]
 fn split_profile_edge_preserves_closed_profile() {
     let mut g = GMap::<StandardPayload>::new();
-    let profile_dart = add_rectangle(&mut g, ngk::geometry::Plane::xy(), 1.0, 1.0)
+    let profile_key = add_rectangle(&mut g, ngk::geometry::Plane::xy(), 1.0, 1.0)
         .expect("rectangle profile should build");
-    let first_edge_dart = Profile::new(&g, profile_dart).edges()[0].dart;
+    let first_edge_dart = g.profile_unchecked(profile_key).edges()[0].dart();
     let first_edge = edge_key_for_dart(&g, first_edge_dart);
 
     split_edge(&mut g, first_edge, 0.5).expect("closed profile edge should split");
-    let profile = Profile::new(&g, profile_dart);
+    let profile = g.profile_unchecked(profile_key);
 
     assert!(profile.is_closed());
     assert_eq!(profile.edges().len(), 5);
 }
 
 fn edge_key_for_dart(g: &GMap<StandardPayload>, dart: ngk::topology::Dart) -> EdgeKey {
-    let representative = g.cell_representative(dart, Dim::One);
-    g.iter_edges()
-        .find_map(|(key, edge)| (edge.dart == representative).then_some(key))
-        .expect("edge key should exist for dart")
+    g.cell_key_unchecked::<ngk::topology::gmap::Cell1>(dart)
 }

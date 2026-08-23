@@ -257,6 +257,10 @@ function InspectorPanel({
 }) {
   const info = payload && inspected ? selectedInfo(payload, inspected) : null;
   const face = info?.kind === "face" ? info.face : null;
+  const memberships =
+    payload && info?.representativeDart !== undefined
+      ? topologyMemberships(payload, info.representativeDart)
+      : null;
   const uvGroups =
     payload && inspected ? associatedPcurveGroups(payload, selected ?? inspected) : [];
 
@@ -277,6 +281,32 @@ function InspectorPanel({
             <KeyValue label="repr dart" value={String(info.representativeDart)} />
           )}
           {info.darts && <KeyValue label="darts" value={info.darts.join(", ")} />}
+          {memberships?.profile && (
+            <>
+              <KeyValue label="profile" value={memberships.profile.key} />
+              <KeyValue
+                label="profile darts"
+                value={memberships.profile.darts.join(", ")}
+              />
+              <KeyValue
+                label="profile edges"
+                value={memberships.profile.edgeKeys.join(", ")}
+              />
+            </>
+          )}
+          {memberships?.sheet && (
+            <>
+              <KeyValue label="sheet" value={memberships.sheet.key} />
+              <KeyValue
+                label="sheet darts"
+                value={memberships.sheet.darts.join(", ")}
+              />
+              <KeyValue
+                label="sheet faces"
+                value={memberships.sheet.faceKeys.join(", ")}
+              />
+            </>
+          )}
           {face?.normals[0] && (
             <KeyValue
               label="normal"
@@ -316,9 +346,21 @@ function Summary({ payload }: { payload: DebugViewerPayload }) {
       <KeyValue label="faces" value={String(payload.metadata.faces.length)} />
       <KeyValue label="edges" value={String(payload.metadata.edges.length)} />
       <KeyValue label="vertices" value={String(payload.metadata.vertices.length)} />
+      <KeyValue label="profiles" value={String(payload.metadata.profiles.length)} />
+      <KeyValue label="sheets" value={String(payload.metadata.sheets.length)} />
       <KeyValue label="solids" value={String(payload.metadata.solids.length)} />
     </div>
   );
+}
+
+function topologyMemberships(payload: DebugViewerPayload, dart: number) {
+  const dartMetadata = payload.gmap.darts[dart];
+  return {
+    profile: payload.metadata.profiles.find(
+      (profile) => profile.key === dartMetadata?.profile,
+    ),
+    sheet: payload.metadata.sheets.find((sheet) => sheet.key === dartMetadata?.sheet),
+  };
 }
 
 type FacePcurveGroup = {

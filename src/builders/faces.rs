@@ -1,26 +1,29 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::StandardPayload;
-use crate::builders::edges::add_circle as add_circle_edge;
-use crate::builders::edges::{EdgeSplit, EdgeSplitError, split_face_boundary_edge};
-use crate::builders::errors::FaceCreationError;
+use crate::builders::edges::{
+    EdgeSplit, EdgeSplitError, add_circle_staged as add_circle_edge_staged,
+    split_face_boundary_edge,
+};
+use crate::builders::errors::{FaceCreationError, TopologyEditFailure};
 use crate::builders::profiles::{
-    add_rectangle as add_rectangle_profile, add_square as add_square_profile, profile_pcurves,
+    add_rectangle_staged as add_rectangle_profile_staged, profile_pcurves,
 };
 use crate::geometry::{
     Circle, Curve, Curve2, CurveCurveIntersection2, CurveIntersectionError, Interval,
     LINEAR_TOLERANCE, Line2, NurbsError, Periodicity, Plane, Point2, Point3, Surface,
     SurfacePeriodicity,
 };
-use crate::topology::attributes::{EdgeAttr, FaceAttr, FacetAttr, VertexAttr};
+use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closed;
 use crate::topology::edge::Edge;
-use crate::topology::gmap::{Cell2, Dart, Dim, GMap};
+use crate::topology::gmap::{Cell0, Cell1, Cell2, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
-use crate::topology::shape_keys::{EdgeKey, FaceKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
 use crate::topology::vertex::Vertex;
+use crate::topology::{TopologyEdit, TopologyEditError};
 use nalgebra::Vector2;
 use thiserror::Error;
 
@@ -44,9 +47,17 @@ pub enum FaceEdgeSplitError {
     SplitPointNotOnPcurve { face: FaceKey, dart: Dart },
     #[error("failed to split face pcurve")]
     PcurveSplitFailed(#[from] NurbsError),
+    #[error("face edge topology edit failed")]
+    TopologyEditFailed(#[source] TopologyEditFailure),
 }
 
-#[derive(Debug, Clone, Error, PartialEq)]
+impl From<TopologyEditError> for FaceEdgeSplitError {
+    fn from(error: TopologyEditError) -> Self {
+        Self::TopologyEditFailed(TopologyEditFailure::new(error))
+    }
+}
+
+#[derive(Debug, Error)]
 pub enum FaceImprintSplitError {
     #[error("missing face for key {face:?}")]
     MissingFace { face: FaceKey },
@@ -60,16 +71,28 @@ pub enum FaceImprintSplitError {
     MissingBoundaryEdge { dart: Dart },
     #[error("failed to split boundary edge while paving face imprints")]
     BoundaryEdgeSplitFailed(#[from] FaceEdgeSplitError),
-    #[error("failed to sew closed imprint loop on face {face:?}: {reason}")]
-    SectionLoopSewFailed { face: FaceKey, reason: &'static str },
+    #[error("failed to sew closed imprint loop on face {face:?}: {source}")]
+    SectionLoopSewFailed {
+        face: FaceKey,
+        #[source]
+        source: TopologyEditError,
+    },
     #[error("failed to convert imprint curve geometry")]
     ImprintCurveConversion(#[from] NurbsError),
     #[error("failed to intersect face imprint pcurves")]
     ImprintIntersection(#[from] CurveIntersectionError),
     #[error("failed to merge periodic face {face:?} across its parameter seam: {reason}")]
     PeriodicMergeFailed { face: FaceKey, reason: &'static str },
+    #[error("failed to edit periodic face {face:?} across its parameter seam: {source}")]
+    PeriodicTopologyEditFailed {
+        face: FaceKey,
+        #[source]
+        source: TopologyEditError,
+    },
     #[error("periodic face {face:?} produced {count} regions instead of two")]
     UnexpectedPeriodicRegionCount { face: FaceKey, count: usize },
+    #[error("face imprint topology edit failed")]
+    TopologyEditFailed(#[from] TopologyEditError),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -110,7 +133,7 @@ fn vertex_point<P: Payload>(vertex: Vertex<'_, P>) -> Result<Point3, MissingVert
 }
 
 fn edge_curve<'a, P: Payload>(edge: &'a Edge<'_, P>) -> Result<&'a Curve, MissingEdgeCurve> {
-    edge.curve().ok_or(MissingEdgeCurve(edge.dart))
+    edge.curve().ok_or(MissingEdgeCurve(edge.dart()))
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -428,54 +451,101 @@ fn ordered_edge_key(a: usize, b: usize) -> (usize, usize) {
 
 struct IncidentFacePcurve {
     face: FaceKey,
-    source_dart: Dart,
     dart: Dart,
     pcurve: Curve2,
     fraction: f64,
 }
 
+/// Adds a planar face bounded by an existing profile loop.
+///
+/// The profile must be closed and planar. Its plane becomes the supporting
+/// surface, and a pcurve is generated for every oriented boundary edge. The
+/// existing profile topology is reused as the face's outer loop.
+///
+/// # Panics
+///
+/// Panics if `profile` does not identify a registered profile.
 pub fn add_face<P: Payload>(
     g: &mut GMap<P>,
-    loop_dart: Dart,
+    profile: ProfileKey,
 ) -> Result<FaceKey, FaceCreationError> {
-    let (plane, pcurves) = {
-        let profile = Profile::new(g, loop_dart);
+    g.transaction(|g| add_face_staged(g, profile))
+}
+
+pub(crate) fn add_face_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    profile: ProfileKey,
+) -> Result<FaceKey, FaceCreationError> {
+    let (loop_dart, plane, pcurves) = {
+        let profile = g.profile_unchecked(profile);
+        let loop_dart = profile.dart;
         let closed =
             Closed::new(profile).ok_or(FaceCreationError::OpenProfile { dart: loop_dart })?;
         let planar = Planar::new(closed)?;
         let (closed, plane) = planar.into_parts();
         let pcurves = profile_pcurves(closed.inner(), &plane)?;
-        (plane, pcurves)
+        (loop_dart, plane, pcurves)
     };
 
-    Ok(g.add_face(
+    Ok(g.add_face(FaceAttr::with_pcurves(
+        Surface::Plane(plane),
+        P::F::default(),
         loop_dart,
         Vec::new(),
-        FacetAttr::with_pcurves(Surface::Plane(plane), P::F::default(), pcurves),
-    ))
+        pcurves,
+    )))
 }
 
+/// Adds a planar rectangular face whose first corner is `plane.origin()`.
+///
+/// The sides follow the plane's positive x and y directions and have lengths
+/// `x_size` and `y_size`. Both sizes must be positive and finite.
 pub fn add_rectangle(
     g: &mut GMap<StandardPayload>,
     plane: Plane,
     x_size: f64,
     y_size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    let loop_dart = add_rectangle_profile(g, plane, x_size, y_size)?;
-    add_face(g, loop_dart)
+    g.transaction(|g| {
+        let profile = add_rectangle_profile_staged(g, plane, x_size, y_size)?;
+        add_face_staged(g, profile)
+    })
 }
 
+/// Adds a planar square face whose first corner is `plane.origin()`.
+///
+/// The sides follow the plane's positive x and y directions. `size` must be
+/// positive and finite.
 pub fn add_square(
     g: &mut GMap<StandardPayload>,
     plane: Plane,
     size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    let loop_dart = add_square_profile(g, plane, size)?;
-    add_face(g, loop_dart)
+    g.transaction(|g| {
+        let profile = add_rectangle_profile_staged(g, plane, size, size)?;
+        add_face_staged(g, profile)
+    })
 }
 
+/// Splits a face-boundary edge and all of its incident face pcurves.
+///
+/// `parameter` is interpreted in the stored 3D curve's parameter domain. The
+/// split is applied across the full topological edge, so pcurves on neighboring
+/// faces sharing that edge are split at the corresponding surface points too.
+/// The returned [`EdgeSplit`] identifies both resulting edges and the inserted
+/// vertex; the original edge key is retained by the first segment.
 pub fn split_face_edge<P: Payload>(
     g: &mut GMap<P>,
+    face: FaceKey,
+    edge: EdgeKey,
+    parameter: f64,
+) -> Result<EdgeSplit, FaceEdgeSplitError> {
+    g.transaction(|g| split_face_edge_staged(g, face, edge, parameter))
+}
+
+/// Splits topology and all incident face pcurves in the same transaction.
+pub(crate) fn split_face_edge_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     edge: EdgeKey,
     parameter: f64,
@@ -491,8 +561,28 @@ pub fn split_face_edge<P: Payload>(
     Ok(split)
 }
 
+/// Subdivides a face with model-space curves paired with face pcurves.
+///
+/// Imprint endpoints on boundary-edge interiors are inserted before paving the
+/// face. Open boundary-to-boundary imprints form section edges, while closed
+/// imprints form interior loops and separate faces. Intersecting pcurves are
+/// normalized through [`FaceImprintGraph`] so coincident fragments are not
+/// inserted twice.
+///
+/// Returns one [`FaceImprintSplit`] for each subdivision that was applied.
+/// Imprints that do not define an applicable cut may produce no split rather
+/// than an error; invalid topology or missing geometry is reported as an error.
 pub fn split_face_by_imprints<P: Payload>(
     g: &mut GMap<P>,
+    face: FaceKey,
+    imprints: &[FaceImprint],
+) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
+    g.transaction(|g| split_face_by_imprints_staged(g, face, imprints))
+}
+
+/// Applies every open and closed imprint before the outer transaction commits.
+pub fn split_face_by_imprints_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
@@ -529,7 +619,7 @@ pub fn split_face_by_imprints<P: Payload>(
 }
 
 fn split_open_imprints<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     mut active_faces: Vec<FaceKey>,
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
@@ -559,7 +649,7 @@ fn split_open_imprints<P: Payload>(
 }
 
 fn periodic_u_period<P: Payload>(g: &GMap<P>, face: FaceKey) -> Option<f64> {
-    match g.face(face)?.surface().periodicity() {
+    match g.face_attr(face)?.surface.periodicity() {
         SurfacePeriodicity::UPeriodic(period) | SurfacePeriodicity::UVPeriodic(period, _) => {
             Some(period)
         }
@@ -582,7 +672,9 @@ fn periodic_seam_edge<P: Payload>(
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
     let mut counts = HashMap::<EdgeKey, usize>::new();
     for edge in face.outer_loop().edges() {
-        *counts.entry(boundary_edge_key(g, edge.dart)?).or_default() += 1;
+        *counts
+            .entry(boundary_edge_key(g, edge.dart())?)
+            .or_default() += 1;
     }
     Ok(counts
         .into_iter()
@@ -590,7 +682,7 @@ fn periodic_seam_edge<P: Payload>(
 }
 
 fn split_periodic_face_by_imprints<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
     seam: EdgeKey,
@@ -615,31 +707,34 @@ fn split_periodic_face_by_imprints<P: Payload>(
         });
     }
 
-    let merged = merge_faces_across_edge(g, face, seam, seam_faces[0], seam_faces[1], period)?;
     let remaining = g
         .iter_faces()
         .map(|(key, _)| key)
-        .find(|key| *key != merged)
-        .ok_or(FaceImprintSplitError::UnexpectedPeriodicRegionCount { face, count: 1 })?;
-    if g.iter_faces().count() != 2 {
-        return Err(FaceImprintSplitError::UnexpectedPeriodicRegionCount {
+        .find(|key| !seam_faces.contains(key))
+        .ok_or(FaceImprintSplitError::UnexpectedPeriodicRegionCount {
             face,
             count: g.iter_faces().count(),
-        });
-    }
+        })?;
+    let merged = merge_faces_across_edge(g, face, seam, seam_faces[0], seam_faces[1], period)?;
     unwrap_periodic_face_pcurves(g, remaining)?;
     unwrap_periodic_face_pcurves(g, merged)?;
     rebuild_periodic_boundary_curves(g, [remaining, merged])?;
 
+    let (first, second) = if remaining == face {
+        (remaining, merged)
+    } else {
+        debug_assert_eq!(merged, face);
+        (merged, remaining)
+    };
     Ok(vec![FaceImprintSplit {
-        first: remaining,
-        second: merged,
+        first,
+        second,
         section_edges,
     }])
 }
 
 fn merge_faces_across_edge<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     original_face: FaceKey,
     edge: EdgeKey,
     first: FaceKey,
@@ -649,8 +744,7 @@ fn merge_faces_across_edge<P: Payload>(
     let first_dart = face_edge_dart_for_imprint(g, first, edge)?;
     let first_end = g.alpha(Dim::Zero, first_dart);
     let second_dart = g.alpha(Dim::Two, first_end);
-    let second_facet = g.face_attr(second).map(|face| face.facet);
-    if g.attribute::<Cell2>(second_dart).copied() != second_facet {
+    if g.attribute::<Cell2>(second_dart).copied() != Some(second) {
         return Err(FaceImprintSplitError::PeriodicMergeFailed {
             face: original_face,
             reason: "parameter seam does not separate the expected faces",
@@ -663,37 +757,60 @@ fn merge_faces_across_edge<P: Payload>(
     let second_next = g.alpha(Dim::One, second_end);
 
     let first_attr = g
-        .remove_face(first)
+        .face_attr(first)
+        .cloned()
         .ok_or(FaceImprintSplitError::MissingFace { face: first })?;
     let second_attr = g
-        .remove_face(second)
+        .face_attr(second)
+        .cloned()
         .ok_or(FaceImprintSplitError::MissingFace { face: second })?;
+    let (survivor, removed) = if first == original_face {
+        (first, second)
+    } else if second == original_face {
+        (second, first)
+    } else {
+        (first, second)
+    };
     let mut pcurves = first_attr.pcurves;
     pcurves.extend(second_attr.pcurves);
     for dart in [first_dart, first_end, second_dart, second_end] {
         pcurves.remove(&dart);
     }
-    g.remove_edge(edge)
-        .ok_or(FaceImprintSplitError::MissingBoundaryEdge { dart: first_dart })?;
-
-    for dart in [first_dart, first_end, second_dart, second_end] {
-        g.unsew(dart, Dim::One);
+    if g.edge_attr(edge).is_none() {
+        return Err(FaceImprintSplitError::MissingBoundaryEdge { dart: first_dart });
     }
-    g.sew(Dim::One, first_previous, second_next)
-        .map_err(|reason| FaceImprintSplitError::PeriodicMergeFailed {
-            face: original_face,
-            reason,
-        })?;
-    g.sew(Dim::One, second_previous, first_next)
-        .map_err(|reason| FaceImprintSplitError::PeriodicMergeFailed {
-            face: original_face,
-            reason,
-        })?;
 
-    g.unsew(first_dart, Dim::Zero);
-    g.unsew(second_dart, Dim::Zero);
-    g.unsew(first_dart, Dim::Two);
-    g.unsew(first_end, Dim::Two);
+    g.remove_edge(edge)
+        .expect("checked periodic seam edge must remain staged");
+    for dart in [first_dart, first_end, second_dart, second_end] {
+        g.unlink(Dim::One, dart).map_err(|source| {
+            FaceImprintSplitError::PeriodicTopologyEditFailed {
+                face: original_face,
+                source,
+            }
+        })?;
+    }
+    for (first, second) in [(first_previous, second_next), (second_previous, first_next)] {
+        g.sew(Dim::One, first, second).map_err(|source| {
+            FaceImprintSplitError::PeriodicTopologyEditFailed {
+                face: original_face,
+                source,
+            }
+        })?;
+    }
+    for (dim, dart) in [
+        (Dim::Zero, first_dart),
+        (Dim::Zero, second_dart),
+        (Dim::Two, first_dart),
+        (Dim::Two, first_end),
+    ] {
+        g.unlink(dim, dart).map_err(|source| {
+            FaceImprintSplitError::PeriodicTopologyEditFailed {
+                face: original_face,
+                source,
+            }
+        })?;
+    }
 
     let mut loop_dart = first_next;
     for _ in 0..2 {
@@ -711,29 +828,35 @@ fn merge_faces_across_edge<P: Payload>(
         })?;
     }
 
-    Ok(g.add_face(
-        loop_dart,
-        Vec::new(),
-        FacetAttr::with_pcurves(first_attr.surface, first_attr.data, pcurves),
-    ))
+    let survivor_attr = g
+        .face_attr_mut(survivor)
+        .expect("periodic face merge survivor must remain staged");
+    survivor_attr.surface = first_attr.surface;
+    survivor_attr.outer_loop = loop_dart;
+    survivor_attr.inner_loops.clear();
+    survivor_attr.pcurves = pcurves;
+    g.merge_faces_into(survivor, removed);
+    Ok(survivor)
 }
 
 fn merge_periodic_boundary_edge<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     loop_dart: Dart,
     surface: &Surface,
     pcurves: &mut HashMap<Dart, Curve2>,
     period: f64,
 ) -> Result<Option<Dart>, FaceImprintSplitError> {
-    let edges = Profile::new(g, loop_dart).edges();
+    let edges = Profile::from_dart(g, loop_dart)
+        .expect("face loop must have a registered profile")
+        .edges();
     let Some((first, second)) = edges
         .iter()
         .zip(edges.iter().cycle().skip(1))
         .take(edges.len())
         .find_map(|(first, second)| {
-            let first_pcurve = pcurves.get(&first.dart)?;
-            let second_pcurve = pcurves.get(&second.dart)?;
+            let first_pcurve = pcurves.get(&first.dart())?;
+            let second_pcurve = pcurves.get(&second.dart())?;
             let first_start = first_pcurve.point_at(0.0);
             let first_end = first_pcurve.point_at(1.0);
             let second_start = second_pcurve.point_at(0.0);
@@ -742,7 +865,7 @@ fn merge_periodic_boundary_edge<P: Payload>(
                 && (second_start.y - second_end.y).abs() <= LINEAR_TOLERANCE
                 && (first_end.y - second_start.y).abs() <= LINEAR_TOLERANCE
                 && ((first_end.x - second_start.x).abs() - period).abs() <= LINEAR_TOLERANCE)
-                .then_some((first.dart, second.dart))
+                .then_some((first.dart(), second.dart()))
         })
     else {
         return Ok(None);
@@ -773,16 +896,20 @@ fn merge_periodic_boundary_edge<P: Payload>(
 
     let first_end = g.alpha(Dim::Zero, first);
     let second_end = g.alpha(Dim::Zero, second);
-    let vertex = g.cell_representative(first_end, Dim::Zero);
-    if let Some(key) = g.dart_to_vertex.get(&vertex).copied() {
+    let vertex_key = g.cell_key::<Cell0>(first_end);
+    if let Some(key) = vertex_key {
         g.remove_vertex(key);
     }
     g.remove_edge(first_key);
     g.remove_edge(second_key);
-    g.unsew(first, Dim::Zero);
-    g.unsew(second, Dim::Zero);
-    g.unsew(first_end, Dim::One);
-    g.sew_unchecked(Dim::Zero, first, second_end);
+    g.unlink(Dim::Zero, first)
+        .expect("prepared periodic boundary merge must unlink its first edge");
+    g.unlink(Dim::Zero, second)
+        .expect("prepared periodic boundary merge must unlink its second edge");
+    g.unlink(Dim::One, first_end)
+        .expect("prepared periodic boundary merge must unlink its seam vertex");
+    g.link(Dim::Zero, first, second_end)
+        .expect("prepared periodic boundary merge must link the merged edge");
     g.add_edge(EdgeAttr::new(first, merged_curve, P::E::default()));
     pcurves.insert(first, Curve2::Line(Line2::new(start_uv, end_uv)));
 
@@ -826,16 +953,13 @@ fn periodic_boundary_curve(
 }
 
 fn rebuild_periodic_boundary_curves<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     faces: [FaceKey; 2],
 ) -> Result<(), FaceImprintSplitError> {
     for face in faces {
         let (surface, pcurves) = {
-            let view = g
-                .face(face)
-                .ok_or(FaceImprintSplitError::MissingFace { face })?;
             let attr = g
-                .facet_attr(view.facet_key())
+                .face_attr(face)
                 .ok_or(FaceImprintSplitError::MissingFace { face })?;
             (
                 attr.surface.clone(),
@@ -864,7 +988,7 @@ fn rebuild_periodic_boundary_curves<P: Payload>(
 }
 
 fn unwrap_periodic_face_pcurves<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
 ) -> Result<(), FaceImprintSplitError> {
     let (periodicity, pcurves) = {
@@ -879,12 +1003,11 @@ fn unwrap_periodic_face_pcurves<P: Payload>(
                 .into_iter()
                 .map(|edge| {
                     face_view
-                        .pcurve(edge.dart)
-                        .map(|curve| curve.into_owned())
-                        .map(|pcurve| (edge.dart, pcurve))
+                        .pcurve(edge.dart())
+                        .map(|pcurve| (edge.dart(), pcurve))
                         .ok_or(FaceImprintSplitError::MissingPcurve {
                             face,
-                            dart: edge.dart,
+                            dart: edge.dart(),
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?,
@@ -903,12 +1026,8 @@ fn unwrap_periodic_face_pcurves<P: Payload>(
         unwrapped.push((dart, pcurve));
     }
 
-    let facet = g
-        .face_attr(face)
-        .ok_or(FaceImprintSplitError::MissingFace { face })?
-        .facet;
     let face_attr = g
-        .facet_attr_mut(facet)
+        .face_attr_mut(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
     for (dart, pcurve) in unwrapped {
         face_attr.pcurves.insert(dart, pcurve);
@@ -939,20 +1058,20 @@ fn face_edge_dart_for_imprint<P: Payload>(
     face: FaceKey,
     edge: EdgeKey,
 ) -> Result<Dart, FaceImprintSplitError> {
-    let face = g
+    let face_view = g
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
-    face.edges()
+    let profile_darts: Vec<Dart> = face_view.outer_loop().darts().step_by(2).collect();
+    profile_darts
         .into_iter()
-        .find(|candidate| candidate.key() == edge)
-        .map(|candidate| candidate.dart)
+        .find(|profile_dart| g.cell_key::<Cell1>(*profile_dart) == Some(edge))
         .ok_or(FaceImprintSplitError::MissingBoundaryEdge {
-            dart: face.outer_loop().dart,
+            dart: face_view.outer_loop().dart,
         })
 }
 
 fn split_imprint_boundary_endpoints<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<(), FaceImprintSplitError> {
@@ -969,7 +1088,7 @@ fn split_imprint_boundary_endpoints<P: Payload>(
 }
 
 fn add_closed_curve_imprint_loops<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     imprints: &[&FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
@@ -1008,16 +1127,12 @@ fn reverse_imprint(imprint: &FaceImprint) -> Result<FaceImprint, NurbsError> {
 }
 
 fn split_face_by_closed_curve_imprint<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     imprint: &FaceImprint,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
     let old_face = g
-        .face(face)
-        .ok_or(FaceImprintSplitError::MissingFace { face })?
-        .facet_key();
-    let old_face = g
-        .facet_attr(old_face)
+        .face_attr(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?
         .clone();
     let outside_loop = add_imprint_section_loop(g, &old_face.surface, imprint);
@@ -1026,7 +1141,7 @@ fn split_face_by_closed_curve_imprint<P: Payload>(
 }
 
 fn add_closed_imprint_loops<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     graph: &FaceImprintGraph,
     imprints: &[FaceImprint],
@@ -1067,16 +1182,12 @@ fn add_closed_imprint_loops<P: Payload>(
 }
 
 fn split_face_by_closed_imprint_loop<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
     let old_face = g
-        .face(face)
-        .ok_or(FaceImprintSplitError::MissingFace { face })?
-        .facet_key();
-    let old_face = g
-        .facet_attr(old_face)
+        .face_attr(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?
         .clone();
     let island_imprints = reversed_imprint_loop(imprints)?;
@@ -1087,32 +1198,41 @@ fn split_face_by_closed_imprint_loop<P: Payload>(
 }
 
 fn finish_closed_imprint_split<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
-    old_face: FacetAttr<P::F>,
+    old_face: FaceAttr<P::F>,
     outside_loop: SectionLoop,
     island_loop: SectionLoop,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
     let section_edges = sew_section_loops(g, face, &outside_loop, &island_loop)?;
-
-    let facet = g
-        .face_attr(face)
-        .ok_or(FaceImprintSplitError::MissingFace { face })?
-        .facet;
-    let face_attr = g
-        .facet_attr_mut(facet)
-        .ok_or(FaceImprintSplitError::MissingFace { face })?;
-    face_attr.pcurves.extend(outside_loop.pcurves);
-    g.add_face_inner_loop(face, outside_loop.loop_dart);
-    let first = face;
-    let second = g.add_face(
+    g.add_profile(ProfileAttr::new(
+        outside_loop.loop_dart,
+        P::Profile::default(),
+    ));
+    g.add_profile(ProfileAttr::new(
         island_loop.loop_dart,
-        Vec::new(),
-        FacetAttr::with_pcurves(old_face.surface, old_face.data, island_loop.pcurves),
+        P::Profile::default(),
+    ));
+
+    let face_attr = g
+        .face_attr_mut(face)
+        .expect("source face must remain staged during a closed-loop split");
+    face_attr.inner_loops.push(outside_loop.loop_dart);
+    face_attr.pcurves.extend(outside_loop.pcurves);
+
+    let second = g.add_face_split_from(
+        face,
+        FaceAttr::with_pcurves(
+            old_face.surface,
+            P::F::default(),
+            island_loop.loop_dart,
+            Vec::new(),
+            island_loop.pcurves,
+        ),
     );
 
     Ok(FaceImprintSplit {
-        first,
+        first: face,
         second,
         section_edges,
     })
@@ -1134,7 +1254,7 @@ struct SectionLoopEdge {
 }
 
 fn add_section_loop<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     surface: &Surface,
     imprints: &[FaceImprint],
 ) -> SectionLoop {
@@ -1142,12 +1262,14 @@ fn add_section_loop<P: Payload>(
     let darts = (0..2 * n).map(|_| g.add_dart()).collect::<Vec<_>>();
 
     for edge in 0..n {
-        g.sew_unchecked(Dim::Zero, darts[2 * edge], darts[2 * edge + 1]);
+        g.link(Dim::Zero, darts[2 * edge], darts[2 * edge + 1])
+            .expect("fresh section edge darts must be alpha0-free");
     }
     for edge in 0..n {
         let end = darts[2 * edge + 1];
         let next_start = darts[2 * ((edge + 1) % n)];
-        g.sew_unchecked(Dim::One, end, next_start);
+        g.link(Dim::One, end, next_start)
+            .expect("fresh section loop darts must be alpha1-free");
     }
 
     for vertex in 0..n {
@@ -1185,7 +1307,7 @@ fn add_section_loop<P: Payload>(
 }
 
 fn add_imprint_section_loop<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     surface: &Surface,
     imprint: &FaceImprint,
 ) -> SectionLoop {
@@ -1193,12 +1315,12 @@ fn add_imprint_section_loop<P: Payload>(
 }
 
 fn sew_section_loops<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     outside: &SectionLoop,
     island: &SectionLoop,
 ) -> Result<Vec<EdgeKey>, FaceImprintSplitError> {
-    outside
+    let pairs = outside
         .edges
         .iter()
         .map(|outside_edge| {
@@ -1208,18 +1330,20 @@ fn sew_section_loops<P: Payload>(
                     dart: outside_edge.dart,
                 },
             )?;
-
-            let island_end = g.alpha(Dim::Zero, island_edge.dart);
-            g.sew(Dim::Two, outside_edge.dart, island_end)
-                .map_err(|reason| FaceImprintSplitError::SectionLoopSewFailed { face, reason })?;
-
-            Ok(g.add_edge(EdgeAttr::new(
-                outside_edge.dart,
-                outside_edge.curve.clone(),
-                P::E::default(),
-            )))
+            Ok((outside_edge, g.alpha(Dim::Zero, island_edge.dart)))
         })
-        .collect()
+        .collect::<Result<Vec<_>, FaceImprintSplitError>>()?;
+    let mut edges = Vec::with_capacity(pairs.len());
+    for (outside_edge, island_end) in pairs {
+        g.sew(Dim::Two, outside_edge.dart, island_end)
+            .map_err(|source| FaceImprintSplitError::SectionLoopSewFailed { face, source })?;
+        edges.push(g.add_edge(EdgeAttr::new(
+            outside_edge.dart,
+            outside_edge.curve.clone(),
+            P::E::default(),
+        )));
+    }
+    Ok(edges)
 }
 
 fn matching_reversed_loop_edge(
@@ -1274,7 +1398,7 @@ fn signed_area(uvs: &[Point2]) -> f64 {
 }
 
 fn split_boundary_at_uv<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     uv: Point2,
 ) -> Result<(), FaceImprintSplitError> {
@@ -1287,7 +1411,7 @@ fn split_boundary_at_uv<P: Payload>(
         return Ok(());
     };
 
-    let edge = Edge::new(g, target.dart);
+    let edge = Edge::new(g, target.edge);
     let curve = edge_curve(&edge)?;
     let face_view = g
         .face(face)
@@ -1305,12 +1429,12 @@ fn split_boundary_at_uv<P: Payload>(
             parameter -= period;
         }
     }
-    split_face_edge(g, face, target.edge, parameter)?;
+    split_face_edge_staged(g, face, target.edge, parameter)?;
     Ok(())
 }
 
 fn split_one_face_by_imprints<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<Option<FaceImprintSplit>, FaceImprintSplitError> {
@@ -1330,36 +1454,42 @@ fn split_one_face_by_imprints<P: Payload>(
         return Err(FaceImprintSplitError::InnerLoopsNotSupported { face });
     }
 
-    let old_topology = g
-        .face_attr(face)
-        .ok_or(FaceImprintSplitError::MissingFace { face })?
-        .clone();
-    let oriented_pcurves = oriented_face_pcurves(g, face)?;
-    let mut old_face = g
-        .remove_face(face)
-        .ok_or(FaceImprintSplitError::MissingFace { face })?;
-    old_face.pcurves = oriented_pcurves;
-    Ok(Some(apply_outer_face_chord_split(
-        g,
-        face,
-        old_topology,
-        old_face,
-        &cut,
-    )?))
+    let old_face = face_attr.clone();
+    Ok(Some(apply_outer_face_chord_split(g, face, old_face, &cut)?))
 }
 
+/// Adds a planar disk face bounded by one circular edge.
+///
+/// The circle is centered at `plane.origin()` and uses the plane orientation.
+/// `radius` must be positive and finite.
 pub fn add_circle(
     g: &mut GMap<StandardPayload>,
     plane: Plane,
     radius: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    let (loop_dart, _) = add_circle_edge(g, plane.clone(), radius)?;
-    let pcurves = profile_pcurves(&Profile::new(g, loop_dart), &plane)?;
-    Ok(g.add_face(
+    g.transaction(|g| add_circle_staged(g, plane, radius))
+}
+
+/// Builds a circular boundary and its face within one staged operation.
+fn add_circle_staged(
+    g: &mut TopologyEdit<'_, StandardPayload>,
+    plane: Plane,
+    radius: f64,
+) -> Result<FaceKey, FaceCreationError> {
+    let edge = add_circle_edge_staged(g, plane.clone(), radius)?;
+    let loop_dart = g.edge_attr_unchecked(edge).dart;
+    g.add_profile(ProfileAttr::new(loop_dart, ()));
+    let profile =
+        Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
+    let pcurves = profile_pcurves(&profile, &plane)?;
+    let face_key = g.add_face(FaceAttr::with_pcurves(
+        Surface::Plane(plane),
+        (),
         loop_dart,
         Vec::new(),
-        FacetAttr::with_pcurves(Surface::Plane(plane), (), pcurves),
-    ))
+        pcurves,
+    ));
+    Ok(face_key)
 }
 
 #[derive(Clone)]
@@ -1392,7 +1522,6 @@ impl FaceImprintCut {
 
 #[derive(Debug, Clone, Copy)]
 struct BoundaryEdgeTarget {
-    dart: Dart,
     edge: EdgeKey,
 }
 
@@ -1409,7 +1538,7 @@ fn face_boundary_uvs<P: Payload>(
         .corners()
         .iter()
         .map(|corner| {
-            let dart = corner.outgoing().dart;
+            let dart = corner.outgoing().dart();
             face_view
                 .pcurve(dart)
                 .map(|pcurve| pcurve.point_at(0.0))
@@ -1429,10 +1558,10 @@ fn boundary_edge_at_uv<P: Payload>(
 
     for edge in face_view.outer_loop().edges() {
         let pcurve = face_view
-            .pcurve(edge.dart)
+            .pcurve(edge.dart())
             .ok_or(FaceImprintSplitError::MissingPcurve {
                 face,
-                dart: edge.dart,
+                dart: edge.dart(),
             })?;
         let Some(fraction) = pcurve_fraction_at(&pcurve, uv) else {
             continue;
@@ -1442,8 +1571,7 @@ fn boundary_edge_at_uv<P: Payload>(
         }
 
         return Ok(Some(BoundaryEdgeTarget {
-            dart: edge.dart,
-            edge: boundary_edge_key(g, edge.dart)?,
+            edge: boundary_edge_key(g, edge.dart())?,
         }));
     }
 
@@ -1458,9 +1586,7 @@ fn boundary_edge_key<P: Payload>(
     g: &GMap<P>,
     dart: Dart,
 ) -> Result<EdgeKey, FaceImprintSplitError> {
-    let representative = g.cell_representative(dart, Dim::One);
-    g.iter_edges()
-        .find_map(|(key, edge)| (edge.dart == representative).then_some(key))
+    g.cell_key::<Cell1>(dart)
         .ok_or(FaceImprintSplitError::MissingBoundaryEdge { dart })
 }
 
@@ -1486,18 +1612,23 @@ fn valid_chord(start: usize, end: usize, corner_count: usize) -> bool {
 }
 
 fn apply_outer_face_chord_split<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     original_face: FaceKey,
-    old_topology: FaceAttr,
-    old_face: FacetAttr<P::F>,
+    old_face: FaceAttr<P::F>,
     cut: &FaceImprintCut,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
-    let loop_ = Closed::new_unchecked(Profile::new(g, old_topology.outer_loop));
+    let source_profile = g
+        .profile_key(old_face.outer_loop)
+        .expect("face loop must have a registered profile");
+    let loop_ = Closed::new_unchecked(
+        Profile::from_dart(g, old_face.outer_loop)
+            .expect("face loop must have a registered profile"),
+    );
     let corners = loop_.corners();
     let start = &corners[cut.start_corner];
     let end = &corners[cut.end_corner];
-    let start_dart = start.outgoing().dart;
-    let end_dart = end.outgoing().dart;
+    let start_dart = start.outgoing().dart();
+    let end_dart = end.outgoing().dart();
     let start_previous_end = start.incoming().end().dart;
     let end_previous_end = end.incoming().end().dart;
     let pcurve_ab = cut.pcurve.clone();
@@ -1507,20 +1638,47 @@ fn apply_outer_face_chord_split<P: Payload>(
     let ba_start = g.add_dart();
     let ba_end = g.add_dart();
 
-    g.sew_unchecked(Dim::Zero, ab_start, ab_end);
-    g.sew_unchecked(Dim::Zero, ba_start, ba_end);
-    g.sew_unchecked(Dim::Two, ab_start, ba_end);
-    g.sew_unchecked(Dim::Two, ab_end, ba_start);
+    g.link(Dim::Zero, ab_start, ab_end)
+        .expect("fresh section edge darts must be alpha0-free");
+    g.link(Dim::Zero, ba_start, ba_end)
+        .expect("fresh section edge darts must be alpha0-free");
+    g.link(Dim::Two, ab_start, ba_end)
+        .expect("fresh section sides must be alpha2-free");
+    g.link(Dim::Two, ab_end, ba_start)
+        .expect("fresh section sides must be alpha2-free");
 
-    g.unsew(start_previous_end, Dim::One);
-    g.unsew(end_previous_end, Dim::One);
-    g.sew_unchecked(Dim::One, start_previous_end, ab_start);
-    g.sew_unchecked(Dim::One, ab_end, end_dart);
-    g.sew_unchecked(Dim::One, end_previous_end, ba_start);
-    g.sew_unchecked(Dim::One, ba_end, start_dart);
+    g.unlink(Dim::One, start_previous_end)
+        .expect("split start corner must be alpha1-linked");
+    g.unlink(Dim::One, end_previous_end)
+        .expect("split end corner must be alpha1-linked");
+    g.link(Dim::One, start_previous_end, ab_start)
+        .expect("split start must be alpha1-free after unlink");
+    g.link(Dim::One, ab_end, end_dart)
+        .expect("section endpoint must be alpha1-free");
+    g.link(Dim::One, end_previous_end, ba_start)
+        .expect("split end must be alpha1-free after unlink");
+    g.link(Dim::One, ba_end, start_dart)
+        .expect("section endpoint must be alpha1-free");
 
-    let section_edge = g.add_edge(EdgeAttr::new(ab_start, cut.curve.clone(), P::E::default()));
-    let first_pcurves = split_face_pcurves(
+    let start_profile = g.profile_key(start_dart);
+    let end_profile = g.profile_key(end_dart);
+    match (start_profile, end_profile) {
+        (Some(key), None) if key == source_profile => {
+            g.add_profile_split_from(
+                source_profile,
+                ProfileAttr::new(end_dart, P::Profile::default()),
+            );
+        }
+        (None, Some(key)) if key == source_profile => {
+            g.add_profile_split_from(
+                source_profile,
+                ProfileAttr::new(start_dart, P::Profile::default()),
+            );
+        }
+        _ => panic!("a chord split must retain one source profile and create one split profile"),
+    }
+
+    let start_pcurves = split_face_pcurves(
         g,
         original_face,
         &old_face.pcurves,
@@ -1528,7 +1686,7 @@ fn apply_outer_face_chord_split<P: Payload>(
         ba_start,
         &pcurve_ba,
     )?;
-    let second_pcurves = split_face_pcurves(
+    let end_pcurves = split_face_pcurves(
         g,
         original_face,
         &old_face.pcurves,
@@ -1536,30 +1694,47 @@ fn apply_outer_face_chord_split<P: Payload>(
         ab_start,
         &pcurve_ab,
     )?;
-    let first = g.add_face(
-        start_dart,
-        Vec::new(),
-        FacetAttr::with_pcurves(
-            old_face.surface.clone(),
-            old_face.data.clone(),
-            first_pcurves,
-        ),
+    let source_uses_start_loop = g.cell_key::<Cell2>(start_dart) == Some(original_face);
+    let source_uses_end_loop = g.cell_key::<Cell2>(end_dart) == Some(original_face);
+    assert_ne!(
+        source_uses_start_loop, source_uses_end_loop,
+        "exactly one split region must contain the source face root"
     );
-    let second = g.add_face(
-        end_dart,
-        Vec::new(),
-        FacetAttr::with_pcurves(old_face.surface, old_face.data, second_pcurves),
+    let (source_loop, source_pcurves, created_loop, created_pcurves) = if source_uses_start_loop {
+        (start_dart, start_pcurves, end_dart, end_pcurves)
+    } else {
+        (end_dart, end_pcurves, start_dart, start_pcurves)
+    };
+
+    let section_edge = g.add_edge(EdgeAttr::new(ab_start, cut.curve.clone(), P::E::default()));
+    let source_attr = g
+        .face_attr_mut(original_face)
+        .expect("source face must remain staged during a chord split");
+    source_attr.surface = old_face.surface.clone();
+    source_attr.outer_loop = source_loop;
+    source_attr.inner_loops.clear();
+    source_attr.pcurves = source_pcurves;
+
+    let second = g.add_face_split_from(
+        original_face,
+        FaceAttr::with_pcurves(
+            old_face.surface,
+            P::F::default(),
+            created_loop,
+            Vec::new(),
+            created_pcurves,
+        ),
     );
 
     Ok(FaceImprintSplit {
-        first,
+        first: original_face,
         second,
         section_edges: vec![section_edge],
     })
 }
 
 fn split_face_pcurves<P: Payload>(
-    g: &GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     old_pcurves: &HashMap<Dart, Curve2>,
     loop_dart: Dart,
@@ -1567,25 +1742,48 @@ fn split_face_pcurves<P: Payload>(
     section_pcurve: &Curve2,
 ) -> Result<HashMap<Dart, Curve2>, FaceImprintSplitError> {
     let mut pcurves = HashMap::new();
-    for edge in Profile::new(g, loop_dart).edges() {
-        let pcurve = if edge.dart == section_dart {
+    let profile =
+        Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
+    for profile_dart in profile.darts().step_by(2) {
+        let pcurve = if profile_dart == section_dart {
             section_pcurve.clone()
         } else {
-            old_pcurves
-                .get(&edge.dart)
+            let candidates = [
+                profile_dart,
+                g.alpha(Dim::Zero, profile_dart),
+                g.alpha(Dim::Two, profile_dart),
+            ];
+            candidates
+                .iter()
+                .find_map(|&d| old_pcurves.get(&d))
                 .cloned()
                 .ok_or(FaceImprintSplitError::MissingPcurve {
                     face,
-                    dart: edge.dart,
+                    dart: profile_dart,
                 })?
         };
-        pcurves.insert(edge.dart, pcurve);
+        pcurves.insert(profile_dart, pcurve);
     }
     Ok(pcurves)
 }
 
+/// Adds a planar annular face with concentric circular boundary loops.
+///
+/// The outer loop follows `plane` orientation and the inner loop is reversed to
+/// represent a hole. Both radii must be positive and finite, and `outer_radius`
+/// must be greater than `inner_radius`.
 pub fn add_annulus(
     g: &mut GMap<StandardPayload>,
+    plane: Plane,
+    outer_radius: f64,
+    inner_radius: f64,
+) -> Result<FaceKey, FaceCreationError> {
+    g.transaction(|g| add_annulus_staged(g, plane, outer_radius, inner_radius))
+}
+
+/// Builds both annulus boundaries and registers their shared face atomically.
+fn add_annulus_staged(
+    g: &mut TopologyEdit<'_, StandardPayload>,
     plane: Plane,
     outer_radius: f64,
     inner_radius: f64,
@@ -1598,17 +1796,28 @@ pub fn add_annulus(
     }
 
     let inner_plane = Plane::new(plane.origin(), plane.x_dir(), -plane.normal());
-    let (outer_loop, _) = add_circle_edge(g, plane.clone(), outer_radius)?;
-    let (inner_loop, _) = add_circle_edge(g, inner_plane, inner_radius)?;
+    let outer_edge = add_circle_edge_staged(g, plane.clone(), outer_radius)?;
+    let inner_edge = add_circle_edge_staged(g, inner_plane, inner_radius)?;
+    let outer_loop = g.edge_attr_unchecked(outer_edge).dart;
+    let inner_loop = g.edge_attr_unchecked(inner_edge).dart;
+    g.add_profile(ProfileAttr::new(outer_loop, ()));
+    g.add_profile(ProfileAttr::new(inner_loop, ()));
 
-    let mut pcurves = profile_pcurves(&Profile::new(g, outer_loop), &plane)?;
-    pcurves.extend(profile_pcurves(&Profile::new(g, inner_loop), &plane)?);
+    let outer_profile =
+        Profile::from_dart(g, outer_loop).expect("outer loop must have a registered profile");
+    let inner_profile =
+        Profile::from_dart(g, inner_loop).expect("inner loop must have a registered profile");
+    let mut pcurves = profile_pcurves(&outer_profile, &plane)?;
+    pcurves.extend(profile_pcurves(&inner_profile, &plane)?);
 
-    Ok(g.add_face(
+    let face_key = g.add_face(FaceAttr::with_pcurves(
+        Surface::Plane(plane),
+        (),
         outer_loop,
         vec![inner_loop],
-        FacetAttr::with_pcurves(Surface::Plane(plane), (), pcurves),
-    ))
+        pcurves,
+    ));
+    Ok(face_key)
 }
 
 fn face_edge_dart<P: Payload>(
@@ -1625,12 +1834,19 @@ fn face_edge_dart<P: Payload>(
             EdgeSplitError::MissingEdge { edge },
         ))?;
     let edge_dart = g.cell_representative(edge_attr.dart, Dim::One);
-    std::iter::once(face_attr.outer_loop)
+    let profile_darts: Vec<Dart> = std::iter::once(face_attr.outer_loop)
         .chain(face_attr.inner_loops.iter().copied())
-        .flat_map(|loop_dart| Profile::new(g, loop_dart).edges())
-        .find_map(|candidate| {
-            (g.cell_representative(candidate.dart, Dim::One) == edge_dart).then_some(candidate.dart)
+        .flat_map(|loop_dart| {
+            Profile::from_dart(g, loop_dart)
+                .expect("face loop must have a registered profile")
+                .darts()
+                .step_by(2)
+                .collect::<Vec<_>>()
         })
+        .collect();
+    profile_darts
+        .into_iter()
+        .find(|profile_dart| g.cell_representative(*profile_dart, Dim::One) == edge_dart)
         .ok_or(FaceEdgeSplitError::EdgeNotOnFace { face, edge })
 }
 
@@ -1639,36 +1855,14 @@ fn face_pcurve<P: Payload>(
     face: FaceKey,
     dart: Dart,
 ) -> Result<Curve2, FaceEdgeSplitError> {
-    let face_view = g
-        .face(face)
+    let face_attr = g
+        .face_attr(face)
         .ok_or(FaceEdgeSplitError::MissingFace { face })?;
-    face_view
-        .pcurve(dart)
-        .map(|curve| curve.into_owned())
+    face_attr
+        .pcurves
+        .get(&dart)
+        .cloned()
         .ok_or(FaceEdgeSplitError::MissingPcurve { face, dart })
-}
-
-fn oriented_face_pcurves<P: Payload>(
-    g: &GMap<P>,
-    face: FaceKey,
-) -> Result<HashMap<Dart, Curve2>, FaceImprintSplitError> {
-    let face_view = g
-        .face(face)
-        .ok_or(FaceImprintSplitError::MissingFace { face })?;
-    face_view
-        .loops()
-        .into_iter()
-        .flat_map(|loop_| loop_.edges())
-        .map(|edge| {
-            face_view
-                .pcurve(edge.dart)
-                .map(|pcurve| (edge.dart, pcurve.into_owned()))
-                .ok_or(FaceImprintSplitError::MissingPcurve {
-                    face,
-                    dart: edge.dart,
-                })
-        })
-        .collect()
 }
 
 fn closed_boundary_curve_reversed<P: Payload>(
@@ -1677,7 +1871,8 @@ fn closed_boundary_curve_reversed<P: Payload>(
     edge: EdgeKey,
     dart: Dart,
 ) -> Result<bool, FaceEdgeSplitError> {
-    let edge_view = Edge::new(g, dart);
+    let edge_view =
+        Edge::from_dart(g, dart).ok_or(FaceEdgeSplitError::EdgeNotOnFace { face, edge })?;
     let start = vertex_point(edge_view.start())?;
     let end = vertex_point(edge_view.end())?;
     if (start - end).norm() > LINEAR_TOLERANCE {
@@ -1719,20 +1914,14 @@ fn incident_face_pcurves<P: Payload>(
     let split_point = edge_attr.curve.point_at(parameter);
     let mut seen = HashSet::new();
     g.orbit(edge_attr.dart, g.orbit_indices(Dim::One))
-        .filter_map(|dart| {
-            let face = g.face_key_at(dart)?;
-            let facet = g.face_attr(face)?.facet;
-            seen.insert(facet).then_some(face)
-        })
+        .filter_map(|dart| g.attribute::<Cell2>(dart).copied())
+        .filter(|face| seen.insert(*face))
         .map(|face| {
             let dart = face_edge_dart(g, face, edge)?;
+            let pcurve = face_pcurve(g, face, dart)?;
             let face_view = g
                 .face(face)
                 .ok_or(FaceEdgeSplitError::MissingFace { face })?;
-            let source_dart = face_view
-                .pcurve_source_dart(dart)
-                .ok_or(FaceEdgeSplitError::MissingPcurve { face, dart })?;
-            let pcurve = face_pcurve(g, face, dart)?;
             let surface = face_view.surface();
             let uv = periodic_image_near_pcurve(
                 surface,
@@ -1744,7 +1933,6 @@ fn incident_face_pcurves<P: Payload>(
                 .ok_or(FaceEdgeSplitError::SplitPointNotOnPcurve { face, dart })?;
             Ok(IncidentFacePcurve {
                 face,
-                source_dart,
                 dart,
                 pcurve,
                 fraction,
@@ -1774,26 +1962,39 @@ fn periodic_image_near_pcurve(surface: &Surface, pcurve: &Curve2, mut uv: Point2
 }
 
 fn assign_split_pcurves<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     pcurve: IncidentFacePcurve,
 ) -> Result<(), FaceEdgeSplitError> {
     let second_dart = g.alpha(Dim::One, g.alpha(Dim::Zero, pcurve.dart));
     let (first_pcurve, second_pcurve) = pcurve.pcurve.split_at(pcurve.fraction)?;
-    let facet = g
-        .face_attr(pcurve.face)
-        .ok_or(FaceEdgeSplitError::MissingFace { face: pcurve.face })?
-        .facet;
     let face_attr = g
-        .facet_attr_mut(facet)
+        .face_attr_mut(pcurve.face)
         .ok_or(FaceEdgeSplitError::MissingFace { face: pcurve.face })?;
-    face_attr.pcurves.remove(&pcurve.source_dart);
+    face_attr.pcurves.remove(&pcurve.dart);
     face_attr.pcurves.insert(pcurve.dart, first_pcurve);
     face_attr.pcurves.insert(second_dart, second_pcurve);
     Ok(())
 }
 
+/// Adds a planar polygon face with zero or more polygonal holes.
+///
+/// `outer` and every entry in `holes` are interpreted in the supplied order and
+/// projected into `plane` to build their pcurves. Each loop must contain at
+/// least three points. The caller is responsible for supplying coplanar,
+/// non-self-intersecting loops with suitable winding and containment; those
+/// geometric relationships are not validated here.
 pub fn add_polygon_with_holes(
     g: &mut GMap<StandardPayload>,
+    plane: Plane,
+    outer: &[Point3],
+    holes: &[&[Point3]],
+) -> Result<FaceKey, FaceCreationError> {
+    g.transaction(|g| add_polygon_with_holes_staged(g, plane, outer, holes))
+}
+
+/// Builds the outer polygon and all hole loops before registering the face.
+fn add_polygon_with_holes_staged(
+    g: &mut TopologyEdit<'_, StandardPayload>,
     plane: Plane,
     outer: &[Point3],
     holes: &[&[Point3]],
@@ -1803,21 +2004,30 @@ pub fn add_polygon_with_holes(
         validate_polygon(hole)?;
     }
 
-    let outer_loop = add_polygon(g, outer);
+    let outer_profile = add_polygon_staged(g, outer);
+    let outer_loop = g.profile_attr_unchecked(outer_profile).dart;
     let mut inner_loops = Vec::with_capacity(holes.len());
-    let mut pcurves = profile_pcurves(&Profile::new(g, outer_loop), &plane)?;
+    let outer_profile =
+        Profile::from_dart(g, outer_loop).expect("outer loop must have a registered profile");
+    let mut pcurves = profile_pcurves(&outer_profile, &plane)?;
 
     for hole in holes {
-        let inner_loop = add_polygon(g, hole);
-        pcurves.extend(profile_pcurves(&Profile::new(g, inner_loop), &plane)?);
+        let inner_profile = add_polygon_staged(g, hole);
+        let inner_loop = g.profile_attr_unchecked(inner_profile).dart;
+        let inner_profile =
+            Profile::from_dart(g, inner_loop).expect("inner loop must have a registered profile");
+        pcurves.extend(profile_pcurves(&inner_profile, &plane)?);
         inner_loops.push(inner_loop);
     }
 
-    Ok(g.add_face(
+    let face_key = g.add_face(FaceAttr::with_pcurves(
+        Surface::Plane(plane),
+        (),
         outer_loop,
         inner_loops,
-        FacetAttr::with_pcurves(Surface::Plane(plane), (), pcurves),
-    ))
+        pcurves,
+    ));
+    Ok(face_key)
 }
 
 fn validate_polygon(points: &[Point3]) -> Result<(), FaceCreationError> {
@@ -1838,8 +2048,20 @@ fn validate_polygon(points: &[Point3]) -> Result<(), FaceCreationError> {
 /// dart geometry) have a curve to follow. Does not touch alpha2; the face is
 /// returned with free boundary, ready to be stitched to neighbors.
 ///
-/// Returns a dart on the outer <alpha0, alpha1> loop (same as the first corner dart).
-pub fn add_polygon<P: Payload>(g: &mut GMap<P>, corners: &[Point3]) -> Dart {
+/// Returns the profile key whose stored dart defines the polygon's orientation.
+pub fn add_polygon<P: Payload>(
+    g: &mut GMap<P>,
+    corners: &[Point3],
+) -> crate::topology::shape_keys::ProfileKey {
+    g.transaction(|g| Ok::<_, TopologyEditError>(add_polygon_staged(g, corners)))
+        .expect("fresh polygon operation must commit")
+}
+
+/// Creates and links polygon segments without opening another transaction scope.
+pub(crate) fn add_polygon_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    corners: &[Point3],
+) -> crate::topology::shape_keys::ProfileKey {
     assert!(
         corners.len() >= 3,
         "add_polygon requires at least 3 corners, got {}",
@@ -1850,13 +2072,13 @@ pub fn add_polygon<P: Payload>(g: &mut GMap<P>, corners: &[Point3]) -> Dart {
 
     for i in 0..n {
         g.sew(Dim::Zero, darts[2 * i], darts[2 * i + 1])
-            .expect("fresh dart pair should be alpha0-sewable");
+            .expect("fresh polygon edge darts must be alpha0-free");
     }
     for i in 0..n {
         let a = darts[2 * i + 1];
         let b = darts[(2 * i + 2) % (2 * n)];
         g.sew(Dim::One, a, b)
-            .expect("fresh dart pair should be alpha1-sewable");
+            .expect("fresh polygon boundary darts must be alpha1-free");
     }
 
     for i in 0..n {
@@ -1865,9 +2087,12 @@ pub fn add_polygon<P: Payload>(g: &mut GMap<P>, corners: &[Point3]) -> Dart {
     }
 
     for i in 0..n {
-        let edge_dart = g.cell_representative(darts[2 * i], Dim::One);
+        let edge_dart = darts[2 * i];
         let curve = Curve::line(corners[i], corners[(i + 1) % n]);
         g.add_edge(EdgeAttr::new(edge_dart, curve, P::E::default()));
     }
-    darts[0]
+    g.add_profile(crate::topology::attributes::ProfileAttr::new(
+        darts[0],
+        P::Profile::default(),
+    ))
 }

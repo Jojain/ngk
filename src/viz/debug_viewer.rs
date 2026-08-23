@@ -14,15 +14,13 @@ use thiserror::Error;
 use super::{VizHints, VizScene, scene_from_gmap};
 use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::{Curve, Surface};
+use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::facet::Facet;
 use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap, MergeTopology};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
-use crate::topology::shape::{
-    EdgeTag, FaceTag, FacetTag, ProfileTag, Shape, SheetTag, SolidTag, VertexTag,
-};
+use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape, SheetTag, SolidTag, VertexTag};
 use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
 use crate::topology::vertex::Vertex;
@@ -96,7 +94,9 @@ pub struct DartMetadata {
     pub dart: u32,
     pub vertex: Option<String>,
     pub edge: Option<String>,
+    pub profile: Option<String>,
     pub face: Option<String>,
+    pub sheet: Option<String>,
     pub solid: Option<String>,
 }
 
@@ -121,7 +121,9 @@ pub struct EntitySelection {
 pub struct DebugMetadata {
     pub vertices: Vec<VertexMetadata>,
     pub edges: Vec<EdgeMetadata>,
+    pub profiles: Vec<ProfileMetadata>,
     pub faces: Vec<FaceMetadata>,
+    pub sheets: Vec<SheetMetadata>,
     pub solids: Vec<SolidMetadata>,
 }
 
@@ -147,6 +149,18 @@ pub struct EdgeMetadata {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProfileMetadata {
+    pub key: String,
+    pub representative_dart: u32,
+    pub darts: Vec<u32>,
+    pub closed: bool,
+    pub edge_keys: Vec<String>,
+    pub vertex_keys: Vec<String>,
+    pub payload: PayloadSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FaceMetadata {
     pub key: String,
     pub representative_dart: u32,
@@ -164,6 +178,19 @@ pub struct FaceMetadata {
 pub struct NormalSample {
     pub origin: [f64; 3],
     pub direction: [f64; 3],
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SheetMetadata {
+    pub key: String,
+    pub representative_dart: u32,
+    pub darts: Vec<u32>,
+    pub closed: bool,
+    pub face_keys: Vec<String>,
+    pub edge_keys: Vec<String>,
+    pub vertex_keys: Vec<String>,
+    pub payload: PayloadSummary,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -244,7 +271,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -257,7 +286,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -270,7 +301,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -283,7 +316,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -296,20 +331,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        self.map().append_debug_gmaps(gmaps);
-    }
-}
-
-impl<P> DebugDisplay for Shape<FacetTag, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -322,7 +346,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -335,7 +361,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -348,7 +376,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -361,7 +391,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -374,7 +406,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -387,20 +421,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        append_topology_item::<P, _>(self, gmaps);
-    }
-}
-
-impl<P> DebugDisplay for Facet<'_, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -413,7 +436,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -426,7 +451,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
@@ -451,7 +478,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     show_gmap_with_options(g, &DebugViewerOptions::default())
@@ -465,7 +494,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     let payload = payload_for_gmap(g, options);
@@ -486,7 +517,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     payload_for_items(vec![item_for_gmap(g)], options)
@@ -505,7 +538,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
     T: MergeTopology<P>,
 {
@@ -540,7 +575,9 @@ fn payload_for_items(
         scene.labels.extend(item.scene.labels);
         metadata.vertices.extend(item.metadata.vertices);
         metadata.edges.extend(item.metadata.edges);
+        metadata.profiles.extend(item.metadata.profiles);
         metadata.faces.extend(item.metadata.faces);
+        metadata.sheets.extend(item.metadata.sheets);
         metadata.solids.extend(item.metadata.solids);
     }
 
@@ -564,7 +601,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     let scene = scene_from_gmap(g, &VizHints::new());
@@ -601,9 +640,11 @@ fn snapshot_for_gmap<P: Payload>(g: &GMap<P>) -> GMapDebugSnapshot {
                 edge: g
                     .attribute::<Cell1>(d)
                     .map(|_| key_string(g.cell_representative(d, Dim::One), "edge")),
+                profile: g.profile_key(d).map(|key| debug_key(&key)),
                 face: g
                     .attribute::<crate::topology::gmap::Cell2>(d)
                     .map(debug_key),
+                sheet: g.sheet_key(d).map(|key| debug_key(&key)),
                 solid: g
                     .attribute::<crate::topology::gmap::Cell3>(d)
                     .map(debug_key),
@@ -624,7 +665,9 @@ where
     P: Payload,
     P::V: Debug,
     P::E: Debug,
+    P::Profile: Debug,
     P::F: Debug,
+    P::Sheet: Debug,
     P::S: Debug,
 {
     let vertices = g
@@ -649,23 +692,42 @@ where
         })
         .collect();
 
+    let profiles = g
+        .iter_profiles()
+        .map(|(key, attr)| {
+            let profile = g.profile_unchecked(key);
+            ProfileMetadata {
+                key: debug_key(&key),
+                representative_dart: attr.dart.id() as u32,
+                darts: profile.darts().map(|dart| dart.id() as u32).collect(),
+                closed: profile.is_closed(),
+                edge_keys: profile
+                    .edges()
+                    .iter()
+                    .map(|edge| debug_key(&edge.key()))
+                    .collect(),
+                vertex_keys: profile
+                    .vertices()
+                    .iter()
+                    .map(|vertex| debug_key(&vertex.key()))
+                    .collect(),
+                payload: payload_summary(&attr.data),
+            }
+        })
+        .collect();
+
     let faces = g
         .iter_faces()
         .map(|(key, attr)| {
-            let face = g
-                .face(key)
-                .expect("iterated face key must resolve to a face");
-            let facet = g
-                .facet_attr(face.facet_key())
-                .expect("face facet key must remain valid");
+            let face = attr.face(g);
             let pcurves = face
                 .loops()
                 .into_iter()
                 .flat_map(|loop_| loop_.edges())
                 .filter_map(|edge| {
-                    let curve = face.pcurve(edge.dart)?;
+                    let curve = face.pcurve(edge.dart())?;
                     Some(PcurveMetadata {
-                        dart: edge.dart.id() as u32,
+                        dart: edge.dart().id() as u32,
                         edge_key: debug_key(&edge.key()),
                         start_vertex_key: debug_key(&edge.start().key()),
                         end_vertex_key: debug_key(&edge.end().key()),
@@ -685,10 +747,44 @@ where
                     .iter()
                     .map(|dart| loop_darts(g, *dart))
                     .collect(),
-                surface: surface_summary(&facet.surface),
+                surface: surface_summary(&attr.surface),
                 normals: normal_samples_for_face(&face, &pcurves),
                 pcurves,
-                payload: payload_summary(&facet.data),
+                payload: payload_summary(&attr.data),
+            }
+        })
+        .collect();
+
+    let sheets = g
+        .iter_sheets()
+        .map(|(key, attr)| {
+            let sheet = g.sheet_unchecked(key);
+            let mut darts = sheet
+                .darts()
+                .map(|dart| dart.id() as u32)
+                .collect::<Vec<_>>();
+            darts.sort_unstable();
+            SheetMetadata {
+                key: debug_key(&key),
+                representative_dart: attr.dart.id() as u32,
+                darts,
+                closed: sheet.is_closed(),
+                face_keys: sheet
+                    .faces()
+                    .iter()
+                    .map(|face| debug_key(&face.key()))
+                    .collect(),
+                edge_keys: sheet
+                    .edges()
+                    .iter()
+                    .map(|edge| debug_key(&edge.key()))
+                    .collect(),
+                vertex_keys: sheet
+                    .vertices()
+                    .iter()
+                    .map(|vertex| debug_key(&vertex.key()))
+                    .collect(),
+                payload: payload_summary(&attr.data),
             }
         })
         .collect();
@@ -710,7 +806,9 @@ where
     DebugMetadata {
         vertices,
         edges,
+        profiles,
         faces,
+        sheets,
         solids,
     }
 }

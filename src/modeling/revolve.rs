@@ -1,6 +1,6 @@
 use radians::Rad64;
 
-use crate::builders::revolve::{RevolveError, add_revolved_face, add_revolved_profile};
+use crate::builders::revolve::{RevolveError, add_revolved_face, add_revolved_profile_from_dart};
 use crate::geometry::axis::Axis3;
 use crate::topology::gmap::MergeTopology;
 use crate::topology::payload::Payload;
@@ -13,7 +13,7 @@ pub fn revolve_profile<P: Payload>(
     angle: Rad64,
 ) -> Result<Shape<SheetTag, P>, RevolveError> {
     let (mut g, profile_dart) = profile.isolate();
-    let sheet_dart = add_revolved_profile(&mut g, profile_dart, axis, angle)?;
+    let sheet_dart = add_revolved_profile_from_dart(&mut g, profile_dart, axis, angle)?;
     Ok(Shape::new(g, sheet_dart))
 }
 

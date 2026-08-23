@@ -2,12 +2,20 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 
+use nalgebra::Vector3;
+use radians::Rad64;
+
+use ngk::builders::edges::add_edge;
 use ngk::builders::faces::add_polygon_with_holes;
-use ngk::geometry::{Plane, Point3};
+use ngk::builders::revolve::add_revolved_edge;
+use ngk::geometry::axis::Axis3;
+use ngk::geometry::{Curve, LINEAR_TOLERANCE, Plane, Point3};
 use ngk::modeling::solids::block;
-use ngk::topology::gmap::{Dart, Dim, GMap};
+use ngk::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap, TopologyEditError};
 use ngk::topology::payload::StandardPayload;
-use ngk::viz::debug_viewer::{DebugViewerOptions, payload_for_gmap, show_gmap_with_options};
+use ngk::viz::debug_viewer::{
+    DebugViewerOptions, DebugViewerPayload, payload_for_gmap, show_gmap_with_options,
+};
 
 fn two_faces_gmap() -> GMap<StandardPayload> {
     let mut g = GMap::<StandardPayload>::new();
@@ -22,9 +30,73 @@ fn two_faces_gmap() -> GMap<StandardPayload> {
         .expect("left face should build");
     add_polygon_with_holes(&mut g, Plane::xy(), &[p2, p5, p6, p3], &[])
         .expect("right face should build");
-    g.sew(Dim::Two, Dart::new(2), Dart::new(15))
-        .expect("shared edge should sew");
+    let left_edge = g.cell_key_unchecked::<Cell1>(Dart::new(2));
+    let right_edge = g.cell_key_unchecked::<Cell1>(Dart::new(15));
+    let left_start = g.cell_key_unchecked::<Cell0>(Dart::new(2));
+    let right_start = g.cell_key_unchecked::<Cell0>(Dart::new(15));
+    let left_end = g.cell_key_unchecked::<Cell0>(Dart::new(3));
+    let right_end = g.cell_key_unchecked::<Cell0>(Dart::new(14));
+    g.transaction(|edit| {
+        edit.sew(Dim::Two, Dart::new(2), Dart::new(15))?;
+        edit.merge_edges_into(left_edge, right_edge);
+        edit.merge_vertices_into(left_start, right_start);
+        edit.merge_vertices_into(left_end, right_end);
+        Ok::<_, TopologyEditError>(())
+    })
+    .expect("shared edge should sew");
     g
+}
+
+fn full_turn_revolved_edge_payload(start: Point3, end: Point3) -> DebugViewerPayload {
+    let mut g = GMap::<StandardPayload>::new();
+    let edge =
+        add_edge(&mut g, start, end, Curve::line(start, end)).expect("source edge should build");
+    add_revolved_edge(
+        &mut g,
+        edge,
+        Axis3::new(Point3::origin(), Vector3::z()),
+        Rad64::FULL_TURN,
+    )
+    .expect("full revolution should build");
+    payload_for_gmap(&g, &DebugViewerOptions::default())
+}
+
+fn assert_full_turn_revolve_is_visible(payload: &DebugViewerPayload, expected_edges: usize) {
+    assert_eq!(payload.scene.edges.len(), expected_edges);
+    assert!(payload.scene.edges.iter().all(|edge| {
+        edge.polyline.windows(2).any(|segment| {
+            let start = Point3::from(segment[0]);
+            let end = Point3::from(segment[1]);
+            (end - start).norm() > LINEAR_TOLERANCE
+        })
+    }));
+
+    let face = payload
+        .scene
+        .faces
+        .first()
+        .expect("revolved face should be rendered");
+    assert!(face.indices.chunks_exact(3).any(|triangle| {
+        let a = Point3::from(face.positions[triangle[0] as usize]);
+        let b = Point3::from(face.positions[triangle[1] as usize]);
+        let c = Point3::from(face.positions[triangle[2] as usize]);
+        (b - a).cross(&(c - a)).norm() > LINEAR_TOLERANCE
+    }));
+}
+
+#[test]
+fn debug_scene_renders_full_turn_revolved_edge_with_inner_loop() {
+    let payload =
+        full_turn_revolved_edge_payload(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0));
+
+    assert_full_turn_revolve_is_visible(&payload, 2);
+}
+
+#[test]
+fn debug_scene_renders_full_turn_revolved_edge_without_inner_loop() {
+    let payload = full_turn_revolved_edge_payload(Point3::origin(), Point3::new(2.0, 0.0, 0.0));
+
+    assert_full_turn_revolve_is_visible(&payload, 1);
 }
 
 #[test]
@@ -142,6 +214,35 @@ fn block_debug_metadata_uses_oriented_normals_and_boundary_ordered_pcurves() {
             .all(|sample| sample.direction[2] < 0.0),
         "bottom-face debug normals should point outward"
     );
+}
+
+#[test]
+fn debug_payload_includes_profile_and_sheet_topology() {
+    let block = block(1.0, 2.0, 3.0).expect("block should build");
+    let payload = payload_for_gmap(block.map(), &DebugViewerOptions::default());
+
+    assert_eq!(
+        payload.metadata.profiles.len(),
+        block.map().iter_profiles().count()
+    );
+    assert_eq!(
+        payload.metadata.sheets.len(),
+        block.map().iter_sheets().count()
+    );
+    assert!(payload.metadata.profiles.iter().all(|profile| {
+        profile.darts.contains(&profile.representative_dart)
+            && payload.gmap.darts[profile.representative_dart as usize]
+                .profile
+                .as_deref()
+                == Some(profile.key.as_str())
+    }));
+    assert!(payload.metadata.sheets.iter().all(|sheet| {
+        sheet.darts.contains(&sheet.representative_dart)
+            && payload.gmap.darts[sheet.representative_dart as usize]
+                .sheet
+                .as_deref()
+                == Some(sheet.key.as_str())
+    }));
 }
 
 #[test]

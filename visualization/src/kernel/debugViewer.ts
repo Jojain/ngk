@@ -26,7 +26,9 @@ export type DartMetadata = {
   dart: number;
   vertex?: string;
   edge?: string;
+  profile?: string;
   face?: string;
+  sheet?: string;
   solid?: string;
 };
 
@@ -45,7 +47,9 @@ export type EntitySelection = {
 export type DebugMetadata = {
   vertices: VertexMetadata[];
   edges: EdgeMetadata[];
+  profiles: ProfileMetadata[];
   faces: FaceMetadata[];
+  sheets: SheetMetadata[];
   solids: SolidMetadata[];
 };
 
@@ -65,6 +69,16 @@ export type EdgeMetadata = {
   payload: PayloadSummary;
 };
 
+export type ProfileMetadata = {
+  key: string;
+  representativeDart: number;
+  darts: number[];
+  closed: boolean;
+  edgeKeys: string[];
+  vertexKeys: string[];
+  payload: PayloadSummary;
+};
+
 export type FaceMetadata = {
   key: string;
   representativeDart: number;
@@ -80,6 +94,17 @@ export type FaceMetadata = {
 export type NormalSample = {
   origin: Vec3;
   direction: Vec3;
+};
+
+export type SheetMetadata = {
+  key: string;
+  representativeDart: number;
+  darts: number[];
+  closed: boolean;
+  faceKeys: string[];
+  edgeKeys: string[];
+  vertexKeys: string[];
+  payload: PayloadSummary;
 };
 
 export type SolidMetadata = {

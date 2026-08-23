@@ -6,70 +6,68 @@ use crate::builders::errors::ExtrudeError;
 use crate::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
 };
-use crate::topology::attributes::{EdgeAttr, FacetAttr, VertexAttr};
+use crate::topology::TopologyEdit;
+use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::payload::Payload;
-use crate::topology::profile::Profile;
+use crate::topology::shape_keys::{EdgeKey, ProfileKey, SheetKey, VertexKey};
 
 /// Adds an extruded profile to the given GMap.
 ///
-/// Return the equivalent dart belonging to the extruded edge of which the provided dart belongs to.
+/// Returns the generated sheet key. Its stored dart belongs to the translated
+/// copy of the input edge.
+///
+/// # Panics
+///
+/// Panics if `profile_key` does not identify a registered profile.
 pub fn add_extruded_profile<P: Payload>(
     g: &mut GMap<P>,
-    profile_dart: Dart,
+    profile_key: ProfileKey,
     direction: Vector3<f64>,
-) -> Result<Dart, ExtrudeError> {
-    Ok(add_extruded_profile_boundaries(g, profile_dart, direction)?.translated_dart)
-}
-
-pub(crate) struct ExtrudedProfile {
-    pub translated_dart: Dart,
-}
-
-pub(crate) fn add_extruded_profile_boundaries<P: Payload>(
-    g: &mut GMap<P>,
-    profile_dart: Dart,
-    direction: Vector3<f64>,
-) -> Result<ExtrudedProfile, ExtrudeError> {
-    if direction.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
-        return Err(ExtrudeError::ZeroDirection);
-    }
-
-    let profile = Profile::new(g, profile_dart);
-    let is_closed = profile.is_closed();
-    let mut faces = Vec::new();
-    let mut extruded_profile_dart = None;
-    let edges_darts = profile
-        .edges()
-        .into_iter()
-        .map(|edge| edge.dart)
-        .collect::<Vec<_>>();
-    for edge_dart in edges_darts {
-        let extruded_face = extrude_edge(g, edge_dart, direction)?;
-        if edge_dart == profile_dart {
-            extruded_profile_dart = Some(extruded_face.translated_start);
-        } else if g.alpha(Dim::Zero, edge_dart) == profile_dart {
-            extruded_profile_dart = Some(extruded_face.translated_end);
+) -> Result<SheetKey, ExtrudeError> {
+    g.transaction(|g| {
+        if direction.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
+            return Err(ExtrudeError::ZeroDirection);
         }
-        faces.push(extruded_face);
-    }
 
-    sew_extruded_faces(g, &faces, is_closed)?;
+        let profile = g.profile_unchecked(profile_key);
+        let profile_dart = profile.dart;
+        let is_closed = profile.is_closed();
+        let edge_darts = profile
+            .edges()
+            .into_iter()
+            .map(|edge| edge.dart())
+            .collect::<Vec<_>>();
+        let mut faces = Vec::with_capacity(edge_darts.len());
+        let mut translated_dart = None;
 
-    Ok(ExtrudedProfile {
-        translated_dart: extruded_profile_dart
-            .expect("profile dart must belong to one of its profile edges"),
+        for edge_dart in edge_darts {
+            let extruded_face = extrude_edge(g, edge_dart, direction)?;
+            if edge_dart == profile_dart {
+                translated_dart = Some(extruded_face.translated_start);
+            } else if g.alpha(Dim::Zero, edge_dart) == profile_dart {
+                translated_dart = Some(extruded_face.translated_end);
+            }
+            faces.push(extruded_face);
+        }
+
+        sew_extruded_faces(g, &faces, is_closed)?;
+        let translated_dart =
+            translated_dart.expect("profile dart must belong to one of its profile edges");
+
+        Ok(g.add_sheet(SheetAttr::new(translated_dart, P::Sheet::default())))
     })
 }
 
 fn extrude_edge<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     edge_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<ExtrudedFace, ExtrudeError> {
-    let edge = Edge::new(g, edge_dart);
+    let edge =
+        Edge::from_dart(g, edge_dart).ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
     let start = *edge
         .start()
         .point()
@@ -83,12 +81,12 @@ fn extrude_edge<P: Payload>(
         .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
 
     let corners = [start, end, end + direction, start + direction];
-    let surface_data = extruded_edge_surface(edge.dart, curve, start, end, direction)?;
+    let surface_data = extruded_edge_surface(edge.dart(), curve, start, end, direction)?;
     add_extruded_edge_face(g, corners, surface_data)
 }
 
 fn sew_extruded_faces<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     faces: &[ExtrudedFace],
     close_ring: bool,
 ) -> Result<(), ExtrudeError> {
@@ -201,7 +199,7 @@ fn is_linear_curve(curve: &Curve) -> bool {
 }
 
 fn add_extruded_edge_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     corners: [Point3; 4],
     surface_data: ExtrudedSurface,
 ) -> Result<ExtrudedFace, ExtrudeError> {
@@ -225,7 +223,7 @@ fn add_extruded_edge_face<P: Payload>(
     }
 
     for i in 0..4 {
-        let edge_dart = g.cell_representative(darts[2 * i], Dim::One);
+        let edge_dart = darts[2 * i];
         g.add_edge(EdgeAttr::new(
             edge_dart,
             surface_data.boundary_curves[i].clone(),
@@ -233,15 +231,14 @@ fn add_extruded_edge_face<P: Payload>(
         ));
     }
 
-    g.add_face(
+    g.add_profile(ProfileAttr::new(darts[0], P::Profile::default()));
+    g.add_face(FaceAttr::with_pcurves(
+        surface_data.surface,
+        P::F::default(),
         darts[0],
         Vec::new(),
-        FacetAttr::with_pcurves(
-            surface_data.surface,
-            P::F::default(),
-            quad_pcurves(&surface_data.uv, &darts),
-        ),
-    );
+        quad_pcurves(&surface_data.uv, &darts),
+    ));
 
     Ok(ExtrudedFace {
         start_side: darts[7],
@@ -252,15 +249,60 @@ fn add_extruded_edge_face<P: Payload>(
 }
 
 fn sew_adjacent_sweep_edges<P: Payload>(
-    g: &mut GMap<P>,
-    a: Dart,
-    b: Dart,
+    g: &mut TopologyEdit<'_, P>,
+    survivor: Dart,
+    removed: Dart,
 ) -> Result<(), ExtrudeError> {
-    sew(g, Dim::Two, a, b)
+    let merge = alpha2_sweep_merge(g, survivor, removed)?;
+    g.sew(Dim::Two, survivor, removed)
+        .map_err(|_| ExtrudeError::SewFailed {
+            dim: Dim::Two,
+            first: survivor,
+            second: removed,
+        })?;
+    if merge.survivor_edge != merge.removed_edge {
+        g.merge_edges_into(merge.survivor_edge, merge.removed_edge);
+    }
+    if merge.survivor_start != merge.removed_start {
+        g.merge_vertices_into(merge.survivor_start, merge.removed_start);
+    }
+    if merge.survivor_end != merge.removed_end {
+        g.merge_vertices_into(merge.survivor_end, merge.removed_end);
+    }
+    Ok(())
+}
+
+struct Alpha2SweepMerge {
+    survivor_edge: EdgeKey,
+    removed_edge: EdgeKey,
+    survivor_start: VertexKey,
+    removed_start: VertexKey,
+    survivor_end: VertexKey,
+    removed_end: VertexKey,
+}
+
+fn alpha2_sweep_merge<P: Payload>(
+    g: &GMap<P>,
+    survivor: Dart,
+    removed: Dart,
+) -> Result<Alpha2SweepMerge, ExtrudeError> {
+    let survivor_edge =
+        Edge::from_dart(g, survivor).ok_or(ExtrudeError::MissingEdgeCurve { dart: survivor })?;
+    let removed_edge =
+        Edge::from_dart(g, removed).ok_or(ExtrudeError::MissingEdgeCurve { dart: removed })?;
+
+    Ok(Alpha2SweepMerge {
+        survivor_edge: survivor_edge.key(),
+        removed_edge: removed_edge.key(),
+        survivor_start: survivor_edge.start().key(),
+        removed_start: removed_edge.start().key(),
+        survivor_end: survivor_edge.end().key(),
+        removed_end: removed_edge.end().key(),
+    })
 }
 
 fn sew<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut TopologyEdit<'_, P>,
     dim: Dim,
     first: Dart,
     second: Dart,
@@ -315,12 +357,11 @@ mod tests {
     use crate::topology::StandardPayload;
     use crate::topology::edge::Edge;
     use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
-    use crate::topology::profile::Profile;
 
     #[test]
     fn extrude_closed_profile_builds_one_lateral_face_per_edge() {
         let mut source = GMap::<StandardPayload>::new();
-        let loop_dart = add_polygon(
+        let profile_key = add_polygon(
             &mut source,
             &[
                 Point3::new(0.0, 0.0, 0.0),
@@ -331,25 +372,19 @@ mod tests {
         );
 
         let shape = extrude_profile(
-            Profile::new(&source, loop_dart),
+            source.profile_unchecked(profile_key),
             Vector3::new(0.0, 0.0, 2.0),
         )
         .unwrap();
-        let (g, sheet_dart) = shape.into_map();
+        let (g, sheet_key) = shape.into_map();
 
-        assert!(g.darts().any(|dart| dart == sheet_dart));
+        assert!(g.sheet(sheet_key).is_some());
         assert_eq!(g.iter_faces().count(), 4);
         assert_eq!(g.iter_edges().count(), 16);
         assert_eq!(g.iter_vertices().count(), 12);
 
         for (face, attr) in g.iter_faces() {
-            assert_eq!(
-                g.facet_attr(attr.facet)
-                    .expect("face facet should exist")
-                    .pcurves
-                    .len(),
-                4
-            );
+            assert_eq!(attr.pcurves.len(), 4);
             let mesh = tessellate_face_key(&g, face, TessellateOpts::default())
                 .expect("extruded face should tessellate");
             assert!(!mesh.positions.is_empty());
@@ -358,9 +393,9 @@ mod tests {
     }
 
     #[test]
-    fn add_extruded_profile_returns_equivalent_translated_edge_dart() {
+    fn add_extruded_profile_key_uses_translated_edge_as_default_dart() {
         let mut source = GMap::<StandardPayload>::new();
-        let loop_dart = add_polygon(
+        let profile_key = add_polygon(
             &mut source,
             &[
                 Point3::new(0.0, 0.0, 0.0),
@@ -371,13 +406,15 @@ mod tests {
         let source_dart_count = source.dart_count();
         let direction = Vector3::new(0.0, 0.0, 2.0);
 
-        let translated_dart = add_extruded_profile(&mut source, loop_dart, direction).unwrap();
+        let sheet_key = add_extruded_profile(&mut source, profile_key, direction).unwrap();
+        let translated_dart = source.sheet_attr_unchecked(sheet_key).dart;
 
         assert!(
             translated_dart.id() >= source_dart_count,
             "returned dart should belong to generated extrusion topology"
         );
-        let translated_edge = Edge::new(&source, translated_dart);
+        let translated_edge = Edge::from_dart(&source, translated_dart)
+            .expect("translated dart should belong to an edge");
         let start = *translated_edge
             .start()
             .point()
@@ -394,7 +431,7 @@ mod tests {
     #[test]
     fn extrude_closed_square_preserves_gmap_and_corner_connectivity() {
         let mut source = GMap::<StandardPayload>::new();
-        let loop_dart = add_polygon(
+        let profile_key = add_polygon(
             &mut source,
             &[
                 Point3::new(0.0, 0.0, 0.0),
@@ -405,7 +442,7 @@ mod tests {
         );
 
         let shape = extrude_profile(
-            Profile::new(&source, loop_dart),
+            source.profile_unchecked(profile_key),
             Vector3::new(0.0, 0.0, 2.0),
         )
         .unwrap();
@@ -566,9 +603,7 @@ mod tests {
     }
 
     fn vertex_point(g: &GMap<StandardPayload>, dart: Dart) -> Point3 {
-        g.attribute::<Cell0>(dart)
-            .expect("test map should have vertex attributes on every dart")
-            .point
+        g.attribute_unchecked::<Cell0>(dart).point
     }
 
     fn same_undirected_edge(a: (Point3, Point3), b: (Point3, Point3)) -> bool {

@@ -9,20 +9,16 @@ new_key_type! {
     pub struct EdgeKey;
 }
 new_key_type! {
-    /// Stable key reserved for future loop attributes.
-    pub struct LoopKey;
+    /// Stable key for a stored profile identity and default orientation.
+    pub struct ProfileKey;
 }
 new_key_type! {
-    /// Stable key for shared geometric data attached to a 2-cell.
-    pub struct FacetKey;
-}
-new_key_type! {
-    /// Stable key for an oriented trimmed face occurrence.
+    /// Stable key for a stored face attribute.
     pub struct FaceKey;
 }
 new_key_type! {
-    /// Stable key reserved for future shell attributes.
-    pub struct ShellKey;
+    /// Stable key for a stored sheet identity and default orientation.
+    pub struct SheetKey;
 }
 new_key_type! {
     /// Stable key for a stored solid attribute.

@@ -23,7 +23,7 @@ fn block_solid_orientation_validation_requires_outward_face_normals() {
 #[test]
 fn revolved_triangle_validates_as_closed_manifold_shell() {
     let mut g = GMap::<StandardPayload>::new();
-    let loop_dart = add_polygon(
+    let profile_key = add_polygon(
         &mut g,
         &[
             Point3::new(0.75, 0.0, -0.85),
@@ -31,7 +31,7 @@ fn revolved_triangle_validates_as_closed_manifold_shell() {
             Point3::new(0.85, 0.0, 0.9),
         ],
     );
-    let face_key = add_face(&mut g, loop_dart).expect("triangle face should build");
+    let face_key = add_face(&mut g, profile_key).expect("triangle face should build");
     let solid = add_revolved_face(
         &mut g,
         face_key,

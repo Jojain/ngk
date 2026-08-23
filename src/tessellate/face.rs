@@ -18,7 +18,7 @@
 use nalgebra::UnitVector3;
 
 use super::{IndexedMesh, TessellateOpts, surface::tessellate_surface_patch};
-use crate::geometry::{LINEAR_TOLERANCE, Point2, PointCoincidence, Surface};
+use crate::geometry::{Curve, Interval, LINEAR_TOLERANCE, Point2, PointCoincidence, Surface};
 use crate::topology::face::Face;
 use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
@@ -49,11 +49,15 @@ pub fn tessellate_face<P: Payload>(
         .filter_map(|loop_| sample_loop_pcurve(face, loop_, opts))
         .collect();
 
-    let ccw = signed_area(&outer_uv) > 0.0;
+    let signed_outer_area = signed_area(&outer_uv);
+    let ccw = signed_outer_area > 0.0;
 
     Some(match face.surface() {
-        Surface::Cylinder(_) | Surface::Ruled(_) | Surface::Revolution(_) => {
+        Surface::Cylinder(_) | Surface::Ruled(_) => {
             surface_grid(face.surface(), &outer_uv, ccw, opts)
+        }
+        Surface::Revolution(surface) => {
+            revolution_surface_grid(face, surface.curve(), &outer_uv, signed_outer_area, opts)
         }
         Surface::Plane(_) => plane_polygon_with_holes(face.surface(), &outer_uv, &inner_uv, ccw),
         // TODO: real CDT for NURBS surfaces.
@@ -71,7 +75,8 @@ pub fn tessellate_face_key<P: Payload>(
     key: FaceKey,
     opts: TessellateOpts,
 ) -> Option<IndexedMesh> {
-    let face = g.face(key)?;
+    let attr = g.face_attr(key)?;
+    let face = attr.face(g);
     tessellate_face(&face, opts)
 }
 
@@ -133,6 +138,63 @@ fn surface_grid(
     opts: TessellateOpts,
 ) -> IndexedMesh {
     let (u_min, u_max, v_min, v_max) = uv_bbox(outer_uv);
+    surface_grid_over_bounds(surface, (u_min, u_max, v_min, v_max), ccw, opts)
+}
+
+fn revolution_surface_grid<P: Payload>(
+    face: &Face<'_, P>,
+    profile_curve: &Curve,
+    outer_uv: &[Point2],
+    signed_outer_area: f64,
+    opts: TessellateOpts,
+) -> IndexedMesh {
+    let parameter_samples = sample_all_pcurves(face, opts).unwrap_or_else(|| outer_uv.to_vec());
+    let (mut u_min, mut u_max, v_min, v_max) = uv_bbox(&parameter_samples);
+    if (u_max - u_min).abs() <= EPS
+        && let Some(domain) = finite_curve_domain(profile_curve)
+    {
+        u_min = domain.start;
+        u_max = domain.end;
+    }
+
+    let ccw = if signed_outer_area.abs() > EPS {
+        signed_outer_area > 0.0
+    } else {
+        outer_uv
+            .first()
+            .zip(outer_uv.last())
+            .is_none_or(|(first, last)| last.y >= first.y)
+    };
+    surface_grid_over_bounds(face.surface(), (u_min, u_max, v_min, v_max), ccw, opts)
+}
+
+fn sample_all_pcurves<P: Payload>(face: &Face<'_, P>, opts: TessellateOpts) -> Option<Vec<Point2>> {
+    let segments = opts.curve.segments.max(1);
+    let mut points = Vec::new();
+    for loop_ in face.loops() {
+        for dart in loop_.darts().step_by(2) {
+            points.extend(face.pcurve(dart)?.sample(segments));
+        }
+    }
+    (!points.is_empty()).then_some(points)
+}
+
+fn finite_curve_domain(curve: &Curve) -> Option<Interval> {
+    match curve {
+        Curve::Line(_) => None,
+        Curve::Circle(_) => Some(Interval::new(0.0, std::f64::consts::TAU)),
+        Curve::Nurbs(curve) => Some(curve.domain()),
+        Curve::Bounded(_) => Some(Interval::new(0.0, 1.0)),
+    }
+}
+
+fn surface_grid_over_bounds(
+    surface: &Surface,
+    bounds: (f64, f64, f64, f64),
+    ccw: bool,
+    opts: TessellateOpts,
+) -> IndexedMesh {
+    let (u_min, u_max, v_min, v_max) = bounds;
     let mut mesh = tessellate_surface_patch(surface, (u_min, u_max), (v_min, v_max), opts.surface);
     if !ccw {
         flip_winding(&mut mesh.indices);

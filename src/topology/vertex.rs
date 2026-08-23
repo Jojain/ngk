@@ -1,9 +1,11 @@
+use std::collections::HashSet;
+
 use crate::geometry::Point3;
-use crate::topology::gmap::{Cell0, Dim, MergeTopology, TopologyMerge};
+use crate::topology::face::Face;
+use crate::topology::gmap::{Cell0, Cell2, Dim, MergeTopology, TopologyMerge};
 use crate::topology::shape_keys::VertexKey;
 
 use super::edge::Edge;
-use super::facet::Facet;
 use super::gmap::{Dart, GMap};
 use super::payload::{Payload, StandardPayload};
 use super::sheet::Sheet;
@@ -16,18 +18,23 @@ use super::sheet::Sheet;
 /// alpha-level representation at every call site.
 #[derive(Clone, Copy)]
 pub struct Vertex<'a, P: Payload = StandardPayload> {
+    gmap: &'a GMap<P>,
+    key: VertexKey,
     /// A dart belonging to this vertex's 0-cell orbit.
     pub dart: Dart,
-    gmap: &'a GMap<P>,
 }
 
 impl<'a, P: Payload> Vertex<'a, P> {
-    /// Creates a vertex view rooted at `dart`.
-    ///
-    /// The dart is not validated eagerly. Methods that need a stored vertex
-    /// attribute or key expect `dart` to belong to a registered 0-cell.
-    pub fn new(gmap: &'a GMap<P>, dart: Dart) -> Self {
-        Self { gmap, dart }
+    /// Creates a vertex view from its key using the attribute's reference dart.
+    pub fn new(gmap: &'a GMap<P>, key: VertexKey) -> Self {
+        let dart = gmap.vertex_attr_unchecked(key).dart;
+        Self { gmap, key, dart }
+    }
+
+    /// Creates a vertex view from a dart in a registered vertex cell.
+    pub fn from_dart(gmap: &'a GMap<P>, dart: Dart) -> Option<Self> {
+        let key = gmap.cell_key::<Cell0>(dart)?;
+        Some(Self { gmap, key, dart })
     }
 
     /// Returns the stable key of this vertex attribute in the source map.
@@ -39,8 +46,7 @@ impl<'a, P: Payload> Vertex<'a, P> {
     ///
     /// Panics if this vertex orbit has no registered vertex attribute.
     pub fn key(&self) -> VertexKey {
-        let dart = self.gmap.cell_representative(self.dart, Dim::Zero);
-        self.gmap.dart_to_vertex[&dart]
+        self.key
     }
 
     /// Returns all edge 1-cells incident to this vertex.
@@ -50,19 +56,23 @@ impl<'a, P: Payload> Vertex<'a, P> {
     pub fn edges(&self) -> Vec<Edge<'a, P>> {
         self.gmap
             .incident_cells(self.dart, Dim::Zero, Dim::One)
-            .map(|d| Edge::new(self.gmap, d))
+            .filter_map(|d| Edge::from_dart(self.gmap, d))
             .collect()
     }
 
-    /// Returns all gmap 2-cell facets incident to this vertex.
+    /// Returns the distinct domain faces incident to this vertex.
     ///
-    /// A [`Facet`] is the topological 2-cell. Use [`Facet::face`] when you need
-    /// the optional domain-level [`Face`](crate::topology::face::Face) attached
-    /// to that facet.
-    pub fn facets(&self) -> Vec<Facet<'a, P>> {
+    /// Raw 2-cells without a registered face attribute are skipped.
+    pub fn faces(&self) -> Vec<Face<'a, P>> {
+        let mut seen = HashSet::new();
         self.gmap
             .incident_cells(self.dart, Dim::Zero, Dim::Two)
-            .map(|d| Facet::new(self.gmap, d))
+            .filter_map(|dart| {
+                let key = self.gmap.cell_key::<Cell2>(dart)?;
+                seen.insert(key)
+                    .then(|| Face::from_dart(self.gmap, dart))
+                    .flatten()
+            })
             .collect()
     }
 
@@ -74,7 +84,7 @@ impl<'a, P: Payload> Vertex<'a, P> {
     pub fn sheets(&self) -> Vec<Sheet<'a, P>> {
         self.gmap
             .incident_cells(self.dart, Dim::Zero, Dim::Three)
-            .map(|d| Sheet::new(self.gmap, d))
+            .filter_map(|d| Sheet::from_dart(self.gmap, d))
             .collect()
     }
 
@@ -82,7 +92,7 @@ impl<'a, P: Payload> Vertex<'a, P> {
     ///
     /// `None` means the 0-cell has no registered vertex attribute in the map.
     pub fn point(&self) -> Option<&Point3> {
-        self.gmap.attribute::<Cell0>(self.dart).map(|v| &v.point)
+        Some(&self.gmap.vertex_attr_unchecked(self.key).point)
     }
 }
 
