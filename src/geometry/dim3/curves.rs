@@ -13,6 +13,7 @@ use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::tolerance::{LINEAR_TOLERANCE_SQUARED, MAX_DISTANCE};
 use crate::geometry::{Interval, LINEAR_TOLERANCE};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Periodicity {
@@ -20,7 +21,7 @@ pub enum Periodicity {
     Periodic(f64),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum Curve {
     Line(Line),
     Circle(Circle),
@@ -217,7 +218,7 @@ impl Curve {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Bounded<T> {
     inner: T,
     bounds: Interval,
@@ -400,7 +401,7 @@ mod tests {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Line {
     pub axis: Axis3,
 }
@@ -466,7 +467,7 @@ impl Line {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Circle {
     plane: Plane,
     radius: f64,

@@ -2,6 +2,7 @@ use crate::geometry::{
     ControlPolygon2, Degree, HPoint2, Interval, KnotVector, LINEAR_TOLERANCE, NurbsError,
 };
 use nalgebra::Vector2;
+use serde::{Deserialize, Serialize};
 
 use super::intersections::{
     CurveCurveIntersections2, CurveIntersectionError, CurveIntersectionOptions, intersect_curves,
@@ -11,7 +12,7 @@ use super::nurbs::NurbsCurve2;
 use super::utils::Point2;
 
 /// A curve in a surface's 2D parameter space.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Curve2 {
     Line(Line2),
     Nurbs(NurbsCurve2),
@@ -190,7 +191,7 @@ impl Curve2 {
 }
 
 /// A bounded straight segment in 2D parameter space.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Line2 {
     pub start: Point2,
     pub end: Point2,

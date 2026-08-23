@@ -8,8 +8,9 @@ use crate::geometry::Point2;
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use nalgebra::{Rotation3, UnitVector3, Vector3};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum Surface {
     Plane(Plane),
     Cylinder(Cylinder),
@@ -138,7 +139,7 @@ impl Surface {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Plane {
     pub frame: Frame,
 }
@@ -213,7 +214,7 @@ impl Plane {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Cylinder {
     pub frame: Frame,
     pub radius: f64,
@@ -300,7 +301,7 @@ impl Cylinder {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RuledSurface {
     curve: Curve,
     direction: Vector3<f64>,
@@ -353,7 +354,7 @@ impl RuledSurface {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SurfaceOfRevolution {
     curve: Curve,
     pub axis: Axis3,

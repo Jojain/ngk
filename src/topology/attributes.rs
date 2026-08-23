@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::{Curve, Point3, Surface};
 use crate::topology::dart::Dart;
@@ -11,7 +13,7 @@ use crate::topology::shape_keys::EdgeKey;
 use crate::topology::vertex::Vertex;
 
 /// Stored data for a keyed vertex 0-cell.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct VertexAttr<T> {
     /// Representative dart of the vertex orbit.
     pub dart: Dart,
@@ -37,7 +39,7 @@ impl<T> VertexAttr<T> {
 }
 
 /// Stored data for a keyed edge 1-cell.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct EdgeAttr<T> {
     /// Representative dart of the edge orbit.
     pub dart: Dart,
@@ -62,7 +64,7 @@ impl<T> EdgeAttr<T> {
 }
 
 /// Stored data and default orientation for a profile.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProfileAttr<T> {
     /// Oriented dart used as the profile's default traversal root.
     pub dart: Dart,
@@ -102,7 +104,7 @@ impl<T> ProfileAttr<T> {
 /// `(alpha0(d), curve.reversed())`. Copy, merge, and topology-edit operations
 /// must preserve these oriented darts rather than substitute canonical cell
 /// representatives.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FaceAttr<T> {
     /// Geometric support surface of the face.
     pub surface: Surface,
@@ -161,7 +163,7 @@ impl<T> FaceAttr<T> {
 }
 
 /// Stored data and default orientation for a sheet.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SheetAttr<T> {
     /// Oriented dart used as the sheet's default traversal root.
     pub dart: Dart,
@@ -177,7 +179,7 @@ impl<T> SheetAttr<T> {
 }
 
 /// Stored data for a keyed domain solid.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SolidAttr<T> {
     /// User payload attached to the solid.
     pub data: T,

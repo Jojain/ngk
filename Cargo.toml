@@ -17,7 +17,7 @@ python = ["dep:pyo3"]
 wasm = ["dep:wasm-bindgen", "dep:js-sys", "dep:serde-wasm-bindgen", "dep:console_error_panic_hook"]
 
 [dependencies]
-nalgebra = "0.34.2"
+nalgebra = { version = "0.34.2", features = ["serde-serialize"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 pyo3 = { version = "0.22.6", optional = true, features = ["extension-module", "abi3", "abi3-py39", "generate-import-lib"] }
@@ -25,7 +25,7 @@ wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
-slotmap = "1.1.1"
+slotmap = { version = "1.1.1", features = ["serde"] }
 radians = "0.3.1"
 thiserror = "2.0.18"
 

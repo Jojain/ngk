@@ -2,8 +2,9 @@ use crate::geometry::axis::Axis3;
 
 use super::utils::{IntoUnit, Point3};
 use nalgebra::{UnitVector3, Vector3};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Frame {
     pub origin: Point3,
     pub x_dir: UnitVector3<f64>,

@@ -1,8 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 /// Identifier for one dart in a generalized map.
 ///
 /// Darts are the atomic elements of the topology. Higher-level cells are
 /// represented as orbits of darts under selected alpha involutions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 pub struct Dart(usize);
 
 impl Dart {

@@ -1,5 +1,7 @@
 //! Type-level bundles of user data attached at each dimension of a [`GMap`](super::gmap::GMap).
 
+use serde::{Deserialize, Serialize};
+
 /// Per-dimension payload types for a generalized map.
 ///
 /// `V` / `E` are carried in [`VertexAttr`](super::attributes::VertexAttr) /
@@ -21,7 +23,7 @@ pub trait Payload: Clone + 'static {
 }
 
 /// Default payload: no extra data (`()` at every dimension).
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Default, Debug, Serialize, Deserialize)]
 pub struct StandardPayload;
 
 impl Payload for StandardPayload {

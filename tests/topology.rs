@@ -12,6 +12,8 @@ mod indexes;
 mod planar;
 #[path = "topology/profile.rs"]
 mod profile;
+#[path = "topology/serialization.rs"]
+mod serialization;
 #[path = "topology/sheet.rs"]
 mod sheet;
 #[path = "topology/transaction.rs"]

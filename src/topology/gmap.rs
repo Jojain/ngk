@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::OnceLock;
 
+use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 use crate::topology::edge::Edge;
@@ -246,9 +247,15 @@ impl<P: Payload> AttributeStore<Cell3> for GMap<P> {
 /// typed view objects (`Vertex`, `Edge`, `Face`, `Sheet`, `Solid`) for routine
 /// traversal, and use `GMap` methods when implementing lower-level topology
 /// algorithms.
+#[derive(Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "P::V: Serialize, P::E: Serialize, P::Profile: Serialize, P::F: Serialize, P::Sheet: Serialize, P::S: Serialize",
+    deserialize = "P::V: Deserialize<'de>, P::E: Deserialize<'de>, P::Profile: Deserialize<'de>, P::F: Deserialize<'de>, P::Sheet: Deserialize<'de>, P::S: Deserialize<'de>"
+))]
 pub struct GMap<P: Payload = StandardPayload> {
     alphas: [Vec<Dart>; GMAP_INVOLUTION_COUNT],
     free_slots: VecDeque<usize>,
+    #[serde(skip)]
     derived_indexes: OnceLock<DerivedCellIndexes>,
     pub(super) vertices: SlotMap<VertexKey, VertexAttr<P::V>>,
     pub(super) edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
@@ -256,6 +263,7 @@ pub struct GMap<P: Payload = StandardPayload> {
     pub(super) faces: SlotMap<FaceKey, FaceAttr<P::F>>,
     pub(super) sheets: SlotMap<SheetKey, SheetAttr<P::Sheet>>,
     pub(super) solids: SlotMap<SolidKey, SolidAttr<P::S>>,
+    #[serde(skip)]
     transaction: Option<Box<TransactionState<P>>>,
 }
 

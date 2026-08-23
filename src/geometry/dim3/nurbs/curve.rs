@@ -1,4 +1,5 @@
 use nalgebra::{DMatrix, DVector, Point4, Vector3};
+use serde::{Deserialize, Serialize};
 
 use super::bezier::Bezier;
 use super::degree::Degree;
@@ -11,7 +12,7 @@ use crate::geometry::{Interval, LINEAR_TOLERANCE, Point3, PointCoincidence};
 const LENGTH_TOLERANCE: f64 = 1.0e-10;
 const MAX_LENGTH_RECURSION: usize = 24;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NurbsCurve {
     degree: Degree,
     control_points: ControlPolygon,

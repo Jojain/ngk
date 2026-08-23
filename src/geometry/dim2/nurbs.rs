@@ -1,4 +1,5 @@
 use nalgebra::{DMatrix, DVector, Point3, Vector2, Vector3};
+use serde::{Deserialize, Serialize};
 
 use crate::geometry::nurbs::basis::{basis_function_derivatives, basis_functions};
 use crate::geometry::{Degree, Interval, KnotVector, LINEAR_TOLERANCE, NurbsError, Point2};
@@ -6,7 +7,7 @@ use crate::geometry::{Degree, Interval, KnotVector, LINEAR_TOLERANCE, NurbsError
 use super::bezier::Bezier2;
 
 /// A homogeneous 2D control point stored as `(x*w, y*w, w)`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct HPoint2(Point3<f64>);
 
 impl HPoint2 {
@@ -36,7 +37,7 @@ impl HPoint2 {
 }
 
 /// The control-point sequence of a 2D NURBS curve.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ControlPolygon2(Vec<HPoint2>);
 
 impl ControlPolygon2 {
@@ -88,7 +89,7 @@ impl ControlPolygon2 {
 }
 
 /// A rational B-spline curve in a surface's 2D parameter space.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NurbsCurve2 {
     degree: Degree,
     control_points: ControlPolygon2,

@@ -1,5 +1,6 @@
 use crate::geometry::Point3;
 use nalgebra::Point4;
+use serde::{Deserialize, Serialize};
 
 use crate::geometry::nurbs::error::NurbsError;
 
@@ -8,7 +9,7 @@ use crate::geometry::nurbs::error::NurbsError;
 /// This is the canonical rational-spline representation: evaluation algorithms
 /// (Cox-de Boor, de Boor, knot insertion) all run directly on `Point4`, with a
 /// single perspective divide at the very end to recover the cartesian point.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct HPoint(pub Point4<f64>);
 
 impl HPoint {
@@ -48,7 +49,7 @@ impl From<Point4<f64>> for HPoint {
 }
 
 /// The 1D control-point sequence of a NURBS curve.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ControlPolygon(Vec<HPoint>);
 
 impl ControlPolygon {
@@ -119,7 +120,7 @@ impl ControlPolygon {
 
 /// A 2D control grid for NURBS surfaces, stored flat in row-major order
 /// (u varies fastest). Has `nu * nv` entries.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ControlNet {
     points: Vec<HPoint>,
     nu: usize,

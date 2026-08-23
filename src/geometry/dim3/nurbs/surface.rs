@@ -1,4 +1,5 @@
 use nalgebra::{Point2, Point4, UnitVector3, Vector3, Vector4};
+use serde::{Deserialize, Serialize};
 
 use super::degree::Degree;
 use super::knots::KnotVector;
@@ -7,7 +8,7 @@ use crate::geometry::nurbs::basis::{basis_function_derivatives, basis_functions}
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{Interval, Point3};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NurbsSurface {
     degree_u: Degree,
     degree_v: Degree,

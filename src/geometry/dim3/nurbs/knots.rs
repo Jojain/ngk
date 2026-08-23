@@ -1,9 +1,10 @@
 use super::degree::Degree;
 use crate::geometry::Interval;
 use crate::geometry::nurbs::error::NurbsError;
+use serde::{Deserialize, Serialize};
 
 /// A non-decreasing knot vector.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KnotVector(Vec<f64>);
 
 impl KnotVector {
