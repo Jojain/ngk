@@ -70,6 +70,18 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./ExtrudedSquare")),
   },
   {
+    id: "chamfered-rectangle",
+    title: "Chamfered rectangle corner (2D)",
+    group: "Display",
+    component: lazy(() => import("./ChamferedRectangle")),
+  },
+  {
+    id: "chamfered-block",
+    title: "Chamfered block edge (3D)",
+    group: "Display",
+    component: lazy(() => import("./ChamferedBlock")),
+  },
+  {
     id: "block-primitive",
     title: "Block primitive",
     group: "Display",

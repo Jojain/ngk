@@ -81,6 +81,24 @@ pub enum ChamferError {
     },
     #[error("darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
     SewFailed { dim: Dim, first: Dart, second: Dart },
+    #[error("edge {edge:?} does not exist")]
+    MissingChamferEdge { edge: EdgeKey },
+    #[error("edge {edge:?} must have exactly two incident faces, got {count}")]
+    InvalidChamferEdgeIncidence { edge: EdgeKey, count: usize },
+    #[error("edge {edge:?} requires straight edges and planar incident faces")]
+    UnsupportedSolidChamferGeometry { edge: EdgeKey },
+    #[error("vertex {vertex:?} does not exist")]
+    MissingChamferVertex {
+        vertex: crate::topology::shape_keys::VertexKey,
+    },
+    #[error("vertex {vertex:?} requires a trihedral corner with straight edges and planar faces")]
+    UnsupportedSolidVertexChamferGeometry {
+        vertex: crate::topology::shape_keys::VertexKey,
+    },
+    #[error("failed to trim face {face:?} while building a chamfer")]
+    ChamferFaceSplitFailed { face: FaceKey },
+    #[error("chamfer target is not implemented by the planar builder yet")]
+    UnsupportedChamferTarget,
     #[error("chamfer topology edit failed")]
     TopologyEditFailed(#[source] TopologyEditFailure),
 }

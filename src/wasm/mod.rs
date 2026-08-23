@@ -57,3 +57,10 @@ pub fn revolve_triangle(angle_radians: f64) -> Result<JsValue, JsValue> {
         .map_err(|e| JsValue::from_str(&e))?;
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
+
+/// Builds the chamfered block scene from a live chamfer distance.
+#[wasm_bindgen(js_name = chamferBlock)]
+pub fn chamfer_block(distance: f64) -> Result<JsValue, JsValue> {
+    let result = scripts::chamfered_block::build(distance).map_err(|e| JsValue::from_str(&e))?;
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}

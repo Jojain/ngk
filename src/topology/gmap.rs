@@ -627,6 +627,85 @@ impl<P: Payload> GMap<P> {
         self.free_slots.push_back(dart.id());
     }
 
+    /// Removes several isolated darts while atomically remapping every retained
+    /// dart reference. This avoids the index shifting inherent in repeated
+    /// single-dart removal.
+    pub(super) fn remove_isolated_darts(
+        &mut self,
+        darts: Vec<IsolatedDart>,
+    ) -> HashMap<Dart, Dart> {
+        if darts.is_empty() {
+            return self.darts().map(|dart| (dart, dart)).collect();
+        }
+        let removed = darts
+            .into_iter()
+            .map(|dart| dart.id())
+            .collect::<HashSet<_>>();
+        for &id in &removed {
+            let dart = Dart::new(id);
+            assert!(
+                (0..GMAP_INVOLUTION_COUNT).all(|dim| self.alphas[dim][id] == dart),
+                "bulk dart removal requires every removed dart to be isolated"
+            );
+        }
+
+        let mut remap = vec![None; self.dart_count()];
+        let mut next = 0;
+        for (old, slot) in remap.iter_mut().enumerate() {
+            if !removed.contains(&old) {
+                *slot = Some(Dart::new(next));
+                next += 1;
+            }
+        }
+        let map_dart = |dart: Dart| {
+            remap[dart.id()].expect("retained topology must not reference a removed dart")
+        };
+        self.alphas = std::array::from_fn(|dim| {
+            (0..remap.len())
+                .filter(|old| !removed.contains(old))
+                .map(|old| map_dart(self.alphas[dim][old]))
+                .collect()
+        });
+        self.free_slots.clear();
+
+        for attr in self.vertices.values_mut() {
+            attr.dart = map_dart(attr.dart);
+        }
+        for attr in self.edges.values_mut() {
+            attr.dart = map_dart(attr.dart);
+        }
+        for attr in self.profiles.values_mut() {
+            attr.dart = map_dart(attr.dart);
+        }
+        for attr in self.faces.values_mut() {
+            attr.outer_loop = map_dart(attr.outer_loop);
+            for dart in &mut attr.inner_loops {
+                *dart = map_dart(*dart);
+            }
+            attr.pcurves = std::mem::take(&mut attr.pcurves)
+                .into_iter()
+                .map(|(dart, pcurve)| (map_dart(dart), pcurve))
+                .collect();
+        }
+        for attr in self.sheets.values_mut() {
+            attr.dart = map_dart(attr.dart);
+        }
+        for attr in self.solids.values_mut() {
+            attr.outer_shell = map_dart(attr.outer_shell);
+            if let Some(shells) = &mut attr.inner_shells {
+                for dart in shells {
+                    *dart = map_dart(*dart);
+                }
+            }
+        }
+        self.invalidate_derived_indexes();
+        remap
+            .into_iter()
+            .enumerate()
+            .filter_map(|(old, new)| new.map(|new| (Dart::new(old), new)))
+            .collect()
+    }
+
     /// Iterates the orbit generated from `dart` by the given alpha indices.
     ///
     /// For cell traversals, prefer [`Self::orbit_indices`] and typed view

@@ -342,6 +342,15 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
         self.gmap.remove_dart(dart);
     }
 
+    /// Removes several isolated darts and remaps all retained topology and
+    /// attribute references in one atomic compaction.
+    pub fn remove_isolated_darts(
+        &mut self,
+        darts: Vec<super::IsolatedDart>,
+    ) -> std::collections::HashMap<super::Dart, super::Dart> {
+        self.gmap.remove_isolated_darts(darts)
+    }
+
     /// Returns the current number of dart slots in the staged topology.
     pub fn dart_count(&self) -> usize {
         self.gmap.dart_count()
@@ -716,7 +725,7 @@ where
 {
     validate_gmap(g).map_err(TopologyEditError::InvalidTopology)?;
     validate_required_domain_attributes(g)?;
-    validate_edit_events(g, events)?;
+    validate_edit_events(g, snapshot, events)?;
     let lineage = TransactionLineage::new(g, snapshot, events);
     reconcile_transaction_attributes(g, snapshot, events, &lineage)?;
     canonicalize_vertex_darts(g);
@@ -730,6 +739,7 @@ where
 /// Rejects malformed lineage before reconciliation can consume any attributes.
 fn validate_edit_events<P: Payload>(
     g: &GMap<P>,
+    snapshot: &GMap<P>,
     events: &[EditEvent],
 ) -> Result<(), TopologyEditError> {
     let mut merges = HashMap::new();
@@ -746,7 +756,10 @@ fn validate_edit_events<P: Payload>(
             let source_was_created = events
                 .iter()
                 .any(|candidate| matches!(candidate, EditEvent::Created { key } if *key == source));
-            if !contains_edit_key(g, source) && !source_was_created {
+            if !contains_edit_key(g, source)
+                && !contains_edit_key(snapshot, source)
+                && !source_was_created
+            {
                 return Err(TopologyEditError::MissingLineageAttribute { key: source });
             }
             // A split identity consumed by a later pass is transient and does

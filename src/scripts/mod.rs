@@ -5,6 +5,8 @@
 use crate::viz::ScriptResult;
 
 pub mod boolean_configs;
+pub mod chamfered_block;
+pub mod chamfered_rectangle;
 pub mod cylinder;
 pub mod extruded_holed_pentagon;
 pub mod extruded_open_polyline;
@@ -26,6 +28,16 @@ pub const SCRIPTS: &[Script] = &[
         id: "boolean_configs",
         title: "Boolean configurations",
         run: boolean_configs::run,
+    },
+    Script {
+        id: "chamfered_rectangle",
+        title: "Chamfered rectangle corner (2D)",
+        run: chamfered_rectangle::run,
+    },
+    Script {
+        id: "chamfered_block",
+        title: "Chamfered block edge (3D)",
+        run: chamfered_block::run,
     },
     Script {
         id: "hollow_cylinder",
