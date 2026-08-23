@@ -12,11 +12,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use crate::StandardPayload;
-use crate::geometry::{
-    Circle, Curve, NurbsCurve, NurbsSurface, Plane, Point3, Surface, SurfaceOfRevolution,
-};
+use crate::geometry::{Circle, Curve, Plane, Point3, Surface, SurfaceOfRevolution};
 use crate::geometry::{Cylinder, Line, RuledSurface};
-use crate::modeling::{edges, faces, profiles, solids};
 use crate::tcv::{TcvOptions, to_tcv};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -26,14 +23,16 @@ use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SolidKey, Vertex
 use crate::topology::sheet::ShellRef;
 use crate::topology::vertex::Vertex;
 
+mod modeling;
+mod nurbs;
+
+use nurbs::{PyNurbsCurve, PyNurbsSurface};
+
 type SharedMap = Arc<GMap<StandardPayload>>;
 
 #[pymodule]
 pub fn _ngk(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(block, m)?)?;
-    m.add_function(wrap_pyfunction!(line, m)?)?;
-    m.add_function(wrap_pyfunction!(rectangle_profile, m)?)?;
-    m.add_function(wrap_pyfunction!(rectangle_face, m)?)?;
+    modeling::register(m)?;
     m.add_function(wrap_pyfunction!(_to_tcv_json, m)?)?;
     m.add_class::<PySolid>()?;
     m.add_class::<PyShell>()?;
@@ -53,38 +52,6 @@ pub fn _ngk(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySurfaceOfRevolution>()?;
     m.add_class::<PyNurbsSurface>()?;
     Ok(())
-}
-
-#[pyfunction]
-fn block(x: f64, y: f64, z: f64) -> PyResult<PySolid> {
-    let shape = solids::block(x, y, z).map_err(|err| PyValueError::new_err(err.to_string()))?;
-    let (map, key) = shape.into_map();
-    Ok(PySolid::new(Arc::new(map), key))
-}
-
-#[pyfunction]
-fn line(start: (f64, f64, f64), end: (f64, f64, f64)) -> PyResult<PyEdge> {
-    let start = Point3::new(start.0, start.1, start.2);
-    let end = Point3::new(end.0, end.1, end.2);
-    let shape = edges::line(start, end).map_err(|err| PyValueError::new_err(err.to_string()))?;
-    let (map, key) = shape.into_map();
-    Ok(PyEdge::from_key(Arc::new(map), key))
-}
-
-#[pyfunction]
-fn rectangle_profile(x_size: f64, y_size: f64) -> PyResult<PyProfile> {
-    let shape = profiles::rectangle(Plane::xy(), x_size, y_size)
-        .map_err(|err| PyValueError::new_err(err.to_string()))?;
-    let (map, key) = shape.into_map();
-    Ok(PyProfile::new(Arc::new(map), key))
-}
-
-#[pyfunction]
-fn rectangle_face(x_size: f64, y_size: f64) -> PyResult<PyFace> {
-    let shape = faces::rectangle(Plane::xy(), x_size, y_size)
-        .map_err(|err| PyValueError::new_err(err.to_string()))?;
-    let (map, key) = shape.into_map();
-    Ok(PyFace::new(Arc::new(map), key))
 }
 
 #[pyfunction]
@@ -913,53 +880,6 @@ impl PyCircle {
     }
 }
 
-#[pyclass(name = "NurbsCurve", module = "ngk")]
-#[derive(Clone)]
-pub struct PyNurbsCurve {
-    curve: NurbsCurve,
-}
-
-#[pymethods]
-impl PyNurbsCurve {
-    #[getter]
-    fn degree(&self) -> usize {
-        self.curve.degree().get()
-    }
-
-    #[getter]
-    fn domain(&self) -> (f64, f64) {
-        let domain = self.curve.domain();
-        (domain.start, domain.end)
-    }
-
-    #[getter]
-    fn knots(&self) -> Vec<f64> {
-        self.curve.knots().as_slice().to_vec()
-    }
-
-    #[getter]
-    fn control_points(&self) -> Vec<(PyPoint3, f64)> {
-        self.curve
-            .control_points()
-            .iter()
-            .map(|p| (point(p.to_cartesian()), p.weight()))
-            .collect()
-    }
-
-    #[getter]
-    fn kind(&self) -> &'static str {
-        "nurbs_curve"
-    }
-
-    fn point_at(&self, u: f64) -> PyPoint3 {
-        point(self.curve.point_at(u))
-    }
-
-    fn __repr__(&self) -> String {
-        format!("NurbsCurve(degree={})", self.curve.degree().get())
-    }
-}
-
 #[pyclass(name = "Plane", module = "ngk")]
 #[derive(Clone)]
 pub struct PyPlane {
@@ -1126,82 +1046,5 @@ impl PySurfaceOfRevolution {
 
     fn __repr__(&self) -> &'static str {
         "SurfaceOfRevolution()"
-    }
-}
-
-#[pyclass(name = "NurbsSurface", module = "ngk")]
-#[derive(Clone)]
-pub struct PyNurbsSurface {
-    surface: NurbsSurface,
-}
-
-#[pymethods]
-impl PyNurbsSurface {
-    #[getter]
-    fn degree_u(&self) -> usize {
-        self.surface.degree_u().get()
-    }
-
-    #[getter]
-    fn degree_v(&self) -> usize {
-        self.surface.degree_v().get()
-    }
-
-    #[getter]
-    fn domain_u(&self) -> (f64, f64) {
-        let domain = self.surface.domain_u();
-        (domain.start, domain.end)
-    }
-
-    #[getter]
-    fn domain_v(&self) -> (f64, f64) {
-        let domain = self.surface.domain_v();
-        (domain.start, domain.end)
-    }
-
-    #[getter]
-    fn knots_u(&self) -> Vec<f64> {
-        self.surface.knots_u().as_slice().to_vec()
-    }
-
-    #[getter]
-    fn knots_v(&self) -> Vec<f64> {
-        self.surface.knots_v().as_slice().to_vec()
-    }
-
-    #[getter]
-    fn control_points(&self) -> Vec<Vec<(PyPoint3, f64)>> {
-        let points = self.surface.control_points();
-        (0..points.nv())
-            .map(|v| {
-                (0..points.nu())
-                    .map(|u| {
-                        let point_ = points.get(u, v);
-                        (point(point_.to_cartesian()), point_.weight())
-                    })
-                    .collect()
-            })
-            .collect()
-    }
-
-    #[getter]
-    fn kind(&self) -> &'static str {
-        "nurbs_surface"
-    }
-
-    fn point_at(&self, u: f64, v: f64) -> PyPoint3 {
-        point(self.surface.point_at(u, v))
-    }
-
-    fn normal_at(&self, u: f64, v: f64) -> PyVector3 {
-        unit_vector(self.surface.normal_at(u, v))
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "NurbsSurface(degree_u={}, degree_v={})",
-            self.surface.degree_u().get(),
-            self.surface.degree_v().get()
-        )
     }
 }
