@@ -710,6 +710,243 @@ html, body, #root {
   margin-top: 12px;
 }
 
+.debug-console-panel {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  left: 578px;
+  height: min(360px, 46vh);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  max-height: calc(100vh - 20px);
+  min-height: 180px;
+  pointer-events: auto;
+}
+
+.debug-console-panel.is-collapsed {
+  height: auto;
+  min-height: 0;
+}
+
+.debug-console-panel.is-collapsed .debug-panel-header {
+  margin-bottom: 0;
+}
+
+.debug-console-panel.is-collapsed .debug-console-output,
+.debug-console-panel.is-collapsed .debug-console-input-wrap {
+  display: none;
+}
+
+.debug-console-resize-handle {
+  position: absolute;
+  top: -7px;
+  right: 12px;
+  left: 12px;
+  z-index: 1;
+  height: 13px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.debug-console-resize-handle::after {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 46px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  content: "";
+  transform: translateX(-50%);
+  transition: background 120ms ease, width 120ms ease;
+}
+
+.debug-console-resize-handle:hover::after,
+.debug-console-resize-handle:focus-visible::after {
+  width: 64px;
+  background: var(--accent);
+}
+
+.debug-console-resize-handle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.debug-console-output {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px 6px 0 0;
+  background: rgba(12, 12, 16, 0.96);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.debug-console-help {
+  padding: 12px;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+
+.debug-console-help code {
+  color: #a9dcff;
+}
+
+.debug-console-entry {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.debug-console-entry.error {
+  color: #ffaaaa;
+}
+
+.debug-console-command {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 5px;
+  color: #a9dcff;
+  white-space: pre-wrap;
+}
+
+.debug-console-command span,
+.debug-console-prompt {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.debug-console-value {
+  color: #d8dce6;
+  overflow-wrap: anywhere;
+}
+
+.debug-console-object {
+  min-width: 0;
+}
+
+.debug-section .debug-console-disclosure {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #d8dce6;
+  font-family: inherit;
+}
+
+.debug-console-properties {
+  display: grid;
+  gap: 3px;
+  margin: 5px 0 2px 14px;
+  padding-left: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.debug-console-property {
+  display: grid;
+  grid-template-columns: minmax(80px, max-content) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.debug-console-property > span {
+  color: #c3a6ff;
+}
+
+.debug-console-property code {
+  color: var(--text-dim);
+}
+
+.debug-console-accessor {
+  min-width: 0;
+}
+
+.debug-console-accessor .debug-console-disclosure code {
+  color: #a9dcff;
+  font-family: inherit;
+}
+
+.debug-console-accessor-result {
+  min-width: 0;
+  margin-top: 5px;
+}
+
+.debug-console-accessor-result.error {
+  color: #ffaaaa;
+}
+
+.debug-console-input-wrap {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  background: var(--panel-hi);
+}
+
+.debug-console-prompt {
+  padding-top: 7px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.debug-console-input-wrap textarea {
+  width: 100%;
+  min-height: 31px;
+  max-height: 92px;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 7px 0;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.debug-console-completions {
+  position: absolute;
+  right: 54px;
+  bottom: calc(100% - 1px);
+  left: 27px;
+  z-index: 2;
+  display: grid;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #17171d;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
+}
+
+.debug-section .debug-console-completions button {
+  border: 0;
+  border-radius: 0;
+  padding: 6px 9px;
+  background: transparent;
+  text-align: left;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.debug-section .debug-console-completions button.active {
+  background: rgba(86, 184, 255, 0.18);
+  color: #a9dcff;
+}
+
+@media (max-width: 980px) {
+  .debug-console-panel {
+    left: 270px;
+  }
+
+  .debug-side-panel {
+    max-height: calc(54vh - 20px);
+  }
+}
+
 .debug-uv-face {
   display: grid;
   gap: 6px;

@@ -38,6 +38,7 @@ impl WasmSolid {
 
     /// Returns inner shells.
     #[wasm_bindgen(js_name = innerShells)]
+    #[wasm_bindgen(unchecked_return_type = "Shell[]")]
     pub fn inner_shells(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -49,6 +50,7 @@ impl WasmSolid {
     }
 
     /// Returns all shells, outer first.
+    #[wasm_bindgen(unchecked_return_type = "Shell[]")]
     pub fn shells(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -60,6 +62,7 @@ impl WasmSolid {
     }
 
     /// Returns faces belonging to this solid.
+    #[wasm_bindgen(unchecked_return_type = "Face[]")]
     pub fn faces(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -71,6 +74,7 @@ impl WasmSolid {
     }
 
     /// Returns edges belonging to this solid.
+    #[wasm_bindgen(unchecked_return_type = "Edge[]")]
     pub fn edges(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -82,6 +86,7 @@ impl WasmSolid {
     }
 
     /// Returns vertices belonging to this solid.
+    #[wasm_bindgen(unchecked_return_type = "Vertex[]")]
     pub fn vertices(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner

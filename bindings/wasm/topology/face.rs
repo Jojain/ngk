@@ -44,6 +44,7 @@ impl WasmFace {
 
     /// Returns inner loops.
     #[wasm_bindgen(js_name = innerLoops)]
+    #[wasm_bindgen(unchecked_return_type = "Loop[]")]
     pub fn inner_loops(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -55,6 +56,7 @@ impl WasmFace {
     }
 
     /// Returns all loops, outer first.
+    #[wasm_bindgen(unchecked_return_type = "Loop[]")]
     pub fn loops(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -66,6 +68,7 @@ impl WasmFace {
     }
 
     /// Returns boundary edges in loop order.
+    #[wasm_bindgen(unchecked_return_type = "Edge[]")]
     pub fn edges(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -77,6 +80,7 @@ impl WasmFace {
     }
 
     /// Returns boundary vertices in loop order.
+    #[wasm_bindgen(unchecked_return_type = "Vertex[]")]
     pub fn vertices(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner

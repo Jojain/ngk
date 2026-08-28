@@ -1,20 +1,22 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { Line } from "@react-three/drei";
-import VizSceneView, {
-  type VizSelection,
-} from "../../components/VizSceneView";
+
+import VizSceneView, { type VizSelection } from "../../components/VizSceneView";
 import { useVizControls } from "../../components/useVizControls";
 import {
   clearDebugDumps,
   fetchDebugDumps,
+  hydrateDebugDump,
+  type DebugEntityEntry,
   type DebugViewerEnvelope,
-  type DebugViewerPayload,
-  type FaceMetadata,
-  type PcurveMetadata,
+  type HydratedDebugDump,
 } from "../../kernel/debugViewer";
+import { useKernel } from "../../kernel/useKernel";
+import type { Edge, Face, Vertex } from "../../wasm/ngk";
+import { ConsolePane } from "./ConsolePane";
 
 export default function DebugViewer() {
+  const kernel = useKernel();
   const controls = useVizControls({
     showDarts: false,
     showDartLabels: false,
@@ -25,8 +27,10 @@ export default function DebugViewer() {
   const [followLatest, setFollowLatest] = useState(true);
   const [selected, setSelected] = useState<VizSelection | null>(null);
   const [hovered, setHovered] = useState<VizSelection | null>(null);
-  const [showNormals, setShowNormals] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const hydrationCache = useRef(
+    new Map<string, { dump: HydratedDebugDump | null; error: string | null }>(),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -35,13 +39,13 @@ export default function DebugViewer() {
         const next = await fetchDebugDumps();
         if (cancelled) return;
         setDumps(next);
-        setError(null);
+        setFetchError(null);
         if (next.length > 0 && followLatest) {
           setActiveSequence(next[next.length - 1].sequence);
         }
-      } catch (err) {
+      } catch (error) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
+          setFetchError(error instanceof Error ? error.message : String(error));
         }
       }
     };
@@ -60,6 +64,24 @@ export default function DebugViewer() {
       null,
     [activeSequence, dumps],
   );
+  const hydrated = useMemo(() => {
+    if (!active || !kernel) return { dump: null, error: null };
+    const cacheKey = `${active.sequence}:${active.receivedAt}`;
+    const cached = hydrationCache.current.get(cacheKey);
+    if (cached) return cached;
+    try {
+      const result = { dump: hydrateDebugDump(active.payload, kernel), error: null };
+      hydrationCache.current.set(cacheKey, result);
+      return result;
+    } catch (error) {
+      const result = {
+        dump: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      hydrationCache.current.set(cacheKey, result);
+      return result;
+    }
+  }, [active, kernel]);
 
   useEffect(() => {
     setSelected(null);
@@ -73,6 +95,7 @@ export default function DebugViewer() {
     setFollowLatest(true);
     setSelected(null);
     setHovered(null);
+    hydrationCache.current.clear();
   };
 
   const selectDump = (sequence: number) => {
@@ -85,10 +108,7 @@ export default function DebugViewer() {
     setActiveSequence(dumps[dumps.length - 1]?.sequence ?? null);
   };
 
-  const selectedFace =
-    active?.payload && selected ? selectedFaceInfo(active.payload, selected) : null;
   const inspected = selected ?? hovered;
-
   const hud = (
     <div className="debug-viewer">
       <aside className="debug-side-panel">
@@ -96,39 +116,28 @@ export default function DebugViewer() {
           dumps={dumps}
           activeSequence={active?.sequence ?? null}
           followLatest={followLatest}
-          error={error}
+          error={fetchError ?? hydrated.error}
           onSelect={selectDump}
           onLatest={selectLatest}
           onClear={() => void clear()}
         />
-        <InspectorPanel
-          payload={active?.payload ?? null}
-          inspected={inspected}
-          selected={selected}
-          hovered={hovered}
-          showNormals={showNormals}
-          onSelect={setSelected}
-          onHover={setHovered}
-          onShowNormalsChange={setShowNormals}
-        />
+        <InspectorPanel dump={hydrated.dump} inspected={inspected} />
       </aside>
+      <ConsolePane dump={hydrated.dump} kernel={kernel} />
     </div>
   );
 
   return (
     <>
-      {active && (
+      {hydrated.dump && (
         <VizSceneView
-          scene={active.payload.scene}
+          scene={hydrated.dump.scene}
           {...controls}
           selected={selected}
           hovered={hovered}
           onSelect={setSelected}
           onHover={setHovered}
         />
-      )}
-      {showNormals && selectedFace && (
-        <FaceNormals samples={selectedFace.normals} />
       )}
       <BodyHud>{hud}</BodyHud>
     </>
@@ -137,20 +146,16 @@ export default function DebugViewer() {
 
 function BodyHud({ children }: { children: ReactNode }) {
   const rootRef = useRef<Root | null>(null);
-  const hostRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const host = document.createElement("div");
     host.className = "debug-hud-root";
     document.body.appendChild(host);
-    hostRef.current = host;
     rootRef.current = createRoot(host);
-
     return () => {
       rootRef.current?.unmount();
       rootRef.current = null;
       host.remove();
-      hostRef.current = null;
     };
   }, []);
 
@@ -159,28 +164,6 @@ function BodyHud({ children }: { children: ReactNode }) {
   }, [children]);
 
   return null;
-}
-
-function FaceNormals({ samples }: { samples: FaceMetadata["normals"] }) {
-  return (
-    <group>
-      {samples.map((sample, index) => {
-        const end: [number, number, number] = [
-          sample.origin[0] + sample.direction[0] * 0.4,
-          sample.origin[1] + sample.direction[1] * 0.4,
-          sample.origin[2] + sample.direction[2] * 0.4,
-        ];
-        return (
-          <Line
-            key={index}
-            points={[sample.origin, end]}
-            color="#ff5fb7"
-            lineWidth={3}
-          />
-        );
-      })}
-    </group>
-  );
 }
 
 function TimelinePanel({
@@ -203,7 +186,7 @@ function TimelinePanel({
   return (
     <section className="debug-section debug-timeline">
       <div className="debug-panel-header">
-        <h2>Debug dumps</h2>
+        <h2>Debug shapes</h2>
         <div className="debug-header-actions">
           <button type="button" onClick={onLatest} disabled={dumps.length === 0 || followLatest}>
             Latest
@@ -237,556 +220,158 @@ function TimelinePanel({
 }
 
 function InspectorPanel({
-  payload,
+  dump,
   inspected,
-  selected,
-  hovered,
-  showNormals,
-  onSelect,
-  onHover,
-  onShowNormalsChange,
 }: {
-  payload: DebugViewerPayload | null;
+  dump: HydratedDebugDump | null;
   inspected: VizSelection | null;
-  selected: VizSelection | null;
-  hovered: VizSelection | null;
-  showNormals: boolean;
-  onSelect: (selection: VizSelection) => void;
-  onHover: (selection: VizSelection | null) => void;
-  onShowNormalsChange: (value: boolean) => void;
 }) {
-  const info = payload && inspected ? selectedInfo(payload, inspected) : null;
-  const face = info?.kind === "face" ? info.face : null;
-  const memberships =
-    payload && info?.representativeDart !== undefined
-      ? topologyMemberships(payload, info.representativeDart)
-      : null;
-  const uvGroups =
-    payload && inspected ? associatedPcurveGroups(payload, selected ?? inspected) : [];
-
+  const entity = dump && inspected ? inspectedEntity(dump, inspected) : null;
   return (
     <section className="debug-section debug-inspector">
       <div className="debug-panel-header">
         <h2>Inspector</h2>
-        {payload && <span>{payload.gmap.dartCount} darts</span>}
+        {dump && <span>{dump.gmaps.reduce((sum, gmap) => sum + gmap.dartCount, 0)} darts</span>}
       </div>
-      {!payload && <div className="debug-empty">No dump loaded</div>}
-      {payload && !inspected && <Summary payload={payload} />}
-      {info && (
+      {!dump && <div className="debug-empty">No shape loaded</div>}
+      {dump && !inspected && <Summary dump={dump} />}
+      {entity?.kind === "vertex" && <VertexInfo entry={entity.entry} />}
+      {entity?.kind === "edge" && <EdgeInfo entry={entity.entry} />}
+      {entity?.kind === "face" && <FaceInfo entry={entity.entry} />}
+      {entity?.kind === "dart" && (
         <>
-          <KeyValue label="kind" value={info.kind} />
-          <KeyValue label="id" value={String(info.id)} />
-          {info.key && <KeyValue label="key" value={info.key} />}
-          {info.representativeDart !== undefined && (
-            <KeyValue label="repr dart" value={String(info.representativeDart)} />
-          )}
-          {info.darts && <KeyValue label="darts" value={info.darts.join(", ")} />}
-          {memberships?.profile && (
-            <>
-              <KeyValue label="profile" value={memberships.profile.key} />
-              <KeyValue
-                label="profile darts"
-                value={memberships.profile.darts.join(", ")}
-              />
-              <KeyValue
-                label="profile edges"
-                value={memberships.profile.edgeKeys.join(", ")}
-              />
-            </>
-          )}
-          {memberships?.sheet && (
-            <>
-              <KeyValue label="sheet" value={memberships.sheet.key} />
-              <KeyValue
-                label="sheet darts"
-                value={memberships.sheet.darts.join(", ")}
-              />
-              <KeyValue
-                label="sheet faces"
-                value={memberships.sheet.faceKeys.join(", ")}
-              />
-            </>
-          )}
-          {face?.normals[0] && (
-            <KeyValue
-              label="normal"
-              value={formatVec3(face.normals[0].direction)}
-            />
-          )}
-          {face && (
-            <label className="debug-checkbox">
-              <input
-                type="checkbox"
-                checked={showNormals}
-                onChange={(event) => onShowNormalsChange(event.currentTarget.checked)}
-              />
-              <span>Display normals</span>
-            </label>
-          )}
-          {payload && uvGroups.length > 0 && (
-            <AssociatedUvPanels
-              payload={payload}
-              groups={uvGroups}
-              selected={selected}
-              hovered={hovered}
-              onSelect={onSelect}
-              onHover={onHover}
-            />
-          )}
+          <KeyValue label="kind" value="dart" />
+          <KeyValue label="id" value={String(entity.entry.dart)} />
+          <KeyValue
+            label="alphas"
+            value={Array.from(
+              { length: entity.entry.gmap.involutionCount },
+              (_, alpha) => `α${alpha}: ${entity.entry.gmap.alpha(alpha, entity.entry.dart)}`,
+            ).join(", ")}
+          />
+        </>
+      )}
+      {entity?.kind === "alphaLink" && (
+        <>
+          <KeyValue label="kind" value={`alpha ${entity.involution}`} />
+          <KeyValue label="darts" value={`${entity.dartA}, ${entity.dartB}`} />
         </>
       )}
     </section>
   );
 }
 
-function Summary({ payload }: { payload: DebugViewerPayload }) {
+function Summary({ dump }: { dump: HydratedDebugDump }) {
   return (
     <div className="debug-summary">
-      <KeyValue label="name" value={payload.name} />
-      <KeyValue label="faces" value={String(payload.metadata.faces.length)} />
-      <KeyValue label="edges" value={String(payload.metadata.edges.length)} />
-      <KeyValue label="vertices" value={String(payload.metadata.vertices.length)} />
-      <KeyValue label="profiles" value={String(payload.metadata.profiles.length)} />
-      <KeyValue label="sheets" value={String(payload.metadata.sheets.length)} />
-      <KeyValue label="solids" value={String(payload.metadata.solids.length)} />
+      <KeyValue label="name" value={dump.name} />
+      <KeyValue label="shapes" value={String(dump.shapes.length)} />
+      <KeyValue label="faces" value={String(dump.selection.faces.length)} />
+      <KeyValue label="edges" value={String(dump.selection.edges.length)} />
+      <KeyValue label="vertices" value={String(dump.selection.vertices.length)} />
     </div>
   );
 }
 
-function topologyMemberships(payload: DebugViewerPayload, dart: number) {
-  const dartMetadata = payload.gmap.darts[dart];
-  return {
-    profile: payload.metadata.profiles.find(
-      (profile) => profile.key === dartMetadata?.profile,
-    ),
-    sheet: payload.metadata.sheets.find((sheet) => sheet.key === dartMetadata?.sheet),
-  };
-}
+type InspectedEntity =
+  | { kind: "vertex"; entry: DebugEntityEntry<Vertex> }
+  | { kind: "edge"; entry: DebugEntityEntry<Edge> }
+  | { kind: "face"; entry: DebugEntityEntry<Face> }
+  | { kind: "dart"; entry: HydratedDebugDump["selection"]["darts"][number] }
+  | { kind: "alphaLink"; involution: number; dartA: number; dartB: number };
 
-type FacePcurveGroup = {
-  face: FaceMetadata;
-  curves: PcurveMetadata[];
-};
-
-function AssociatedUvPanels({
-  payload,
-  groups,
-  selected,
-  hovered,
-  onSelect,
-  onHover,
-}: {
-  payload: DebugViewerPayload;
-  groups: FacePcurveGroup[];
-  selected: VizSelection | null;
-  hovered: VizSelection | null;
-  onSelect: (selection: VizSelection) => void;
-  onHover: (selection: VizSelection | null) => void;
-}) {
-  return (
-    <div className="debug-uv">
-      {groups.map(({ face, curves }) => (
-        <div className="debug-uv-face" key={face.key}>
-          <h3>UV · {face.key}</h3>
-          <UvSvg
-            payload={payload}
-            curves={curves}
-            selected={selected}
-            hovered={hovered}
-            onSelect={onSelect}
-            onHover={onHover}
-          />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function UvSvg({
-  payload,
-  curves,
-  selected,
-  hovered,
-  onSelect,
-  onHover,
-}: {
-  payload: DebugViewerPayload;
-  curves: PcurveMetadata[];
-  selected: VizSelection | null;
-  hovered: VizSelection | null;
-  onSelect: (selection: VizSelection) => void;
-  onHover: (selection: VizSelection | null) => void;
-}) {
-  const endMarkerRadius = 2.75;
-  const points = curves.flatMap((curve) => curve.samples);
-  const minU = Math.min(...points.map((point) => point[0]));
-  const maxU = Math.max(...points.map((point) => point[0]));
-  const minV = Math.min(...points.map((point) => point[1]));
-  const maxV = Math.max(...points.map((point) => point[1]));
-  const width = Math.max(maxU - minU, 1e-9);
-  const height = Math.max(maxV - minV, 1e-9);
-  const project = ([u, v]: [number, number]) => {
-    const x = 16 + ((u - minU) / width) * 208;
-    const y = 16 + (1 - (v - minV) / height) * 168;
-    return [x, y] as const;
-  };
-  const svgPoint = ([x, y]: readonly [number, number]) =>
-    `${x.toFixed(2)},${y.toFixed(2)}`;
-
-  return (
-    <svg className="debug-uv-svg" viewBox="0 0 240 200" role="img">
-      <defs>
-        <marker
-          id="debug-uv-arrow"
-          viewBox="0 0 10 10"
-          refX="8"
-          refY="5"
-          markerWidth="5"
-          markerHeight="5"
-          orient="auto-start-reverse"
-        >
-          <path d="M 1 1 L 8 5 L 1 9" />
-        </marker>
-      </defs>
-      <rect x="1" y="1" width="238" height="198" />
-      {curves.map((curve, index) => {
-        const projected = curve.samples.map(project);
-        const start = projected[0];
-        const end = projected[projected.length - 1];
-        const edgeSelection = selectionForKey(payload, "edge", curve.edgeKey);
-        const startSelection = selectionForKey(
-          payload,
-          "vertex",
-          curve.startVertexKey,
-        );
-        const endSelection = selectionForKey(payload, "vertex", curve.endVertexKey);
-        const edgeSelected = selectionMatchesKey(
-          payload,
-          selected,
-          "edge",
-          curve.edgeKey,
-        );
-        const edgeHovered = selectionMatchesKey(
-          payload,
-          hovered,
-          "edge",
-          curve.edgeKey,
-        );
-        const startSelected = selectionMatchesKey(
-          payload,
-          selected,
-          "vertex",
-          curve.startVertexKey,
-        );
-        const startHovered = selectionMatchesKey(
-          payload,
-          hovered,
-          "vertex",
-          curve.startVertexKey,
-        );
-        const endSelected = selectionMatchesKey(
-          payload,
-          selected,
-          "vertex",
-          curve.endVertexKey,
-        );
-        const endHovered = selectionMatchesKey(
-          payload,
-          hovered,
-          "vertex",
-          curve.endVertexKey,
-        );
-        const startRadius = interactionRadius(5, startSelected, startHovered);
-        const endRadius = interactionRadius(
-          endMarkerRadius,
-          endSelected,
-          endHovered,
-        );
-        const points = projected.map(svgPoint).join(" ");
-        return (
-          <g key={`${curve.dart}-${index}`}>
-            <polyline
-              className={interactionClass(
-                "debug-uv-pcurve",
-                edgeSelected,
-                edgeHovered,
-              )}
-              points={points}
-            />
-            {orientationSegments(projected, endRadius).map((points, arrowIndex) => (
-              <polyline
-                key={arrowIndex}
-                className="debug-uv-arrow-segment"
-                points={points.map(svgPoint).join(" ")}
-                markerEnd="url(#debug-uv-arrow)"
-              />
-            ))}
-            <polyline
-              className="debug-uv-pcurve-hit"
-              points={points}
-              onPointerEnter={() => onHover(edgeSelection)}
-              onPointerLeave={() => onHover(null)}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (edgeSelection) onSelect(edgeSelection);
-              }}
-            >
-              <title>{`edge ${curve.edgeKey} · dart ${curve.dart}`}</title>
-            </polyline>
-            <circle
-              className={interactionClass(
-                "debug-uv-start",
-                startSelected,
-                startHovered,
-              )}
-              cx={start[0]}
-              cy={start[1]}
-              r={startRadius}
-              onPointerEnter={(event) => {
-                event.stopPropagation();
-                onHover(startSelection);
-              }}
-              onPointerLeave={(event) => {
-                event.stopPropagation();
-                onHover(null);
-              }}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (startSelection) onSelect(startSelection);
-              }}
-            >
-              <title>{`vertex ${curve.startVertexKey} · dart ${curve.dart} start`}</title>
-            </circle>
-            <circle
-              className={interactionClass(
-                "debug-uv-end",
-                endSelected,
-                endHovered,
-              )}
-              cx={end[0]}
-              cy={end[1]}
-              r={endRadius}
-              onPointerEnter={(event) => {
-                event.stopPropagation();
-                onHover(endSelection);
-              }}
-              onPointerLeave={(event) => {
-                event.stopPropagation();
-                onHover(null);
-              }}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (endSelection) onSelect(endSelection);
-              }}
-            >
-              <title>{`vertex ${curve.endVertexKey} · dart ${curve.dart} end`}</title>
-            </circle>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
-function associatedPcurveGroups(
-  payload: DebugViewerPayload,
+function inspectedEntity(
+  dump: HydratedDebugDump,
   selection: VizSelection,
-): FacePcurveGroup[] {
-  const entity = selectionEntity(payload, selection);
-  if (!entity) return [];
-
-  return payload.metadata.faces.flatMap((face) => {
-    const associated = face.pcurves.some((curve) => {
-      if (entity.kind === "face") return face.key === entity.key;
-      if (entity.kind === "edge") return curve.edgeKey === entity.key;
-      if (entity.kind === "vertex") {
-        return (
-          curve.startVertexKey === entity.key || curve.endVertexKey === entity.key
-        );
-      }
-      return false;
-    });
-    const curves = face.pcurves.filter((curve) => curve.samples.length > 0);
-    return associated && curves.length > 0 ? [{ face, curves }] : [];
-  });
-}
-
-function selectionEntity(
-  payload: DebugViewerPayload,
-  selection: VizSelection | null,
-): { kind: "vertex" | "edge" | "face"; key: string } | null {
-  if (!selection || selection.kind === "dart" || selection.kind === "alphaLink") {
-    return null;
+): InspectedEntity | null {
+  if (selection.kind === "vertex") {
+    const entry = dump.selection.vertices.find(({ id }) => id === selection.id);
+    return entry ? { kind: "vertex", entry } : null;
   }
-  const entries = selectionEntries(payload, selection.kind);
-  const entry = entries.find((item) => item.renderId === selection.id);
-  return entry ? { kind: selection.kind, key: entry.key } : null;
-}
-
-function selectionForKey(
-  payload: DebugViewerPayload,
-  kind: "vertex" | "edge",
-  key: string,
-): VizSelection | null {
-  const entry = selectionEntries(payload, kind).find((item) => item.key === key);
-  return entry ? { kind, id: entry.renderId } : null;
-}
-
-function selectionEntries(
-  payload: DebugViewerPayload,
-  kind: "vertex" | "edge" | "face",
-) {
-  if (kind === "vertex") return payload.selection.vertices;
-  if (kind === "edge") return payload.selection.edges;
-  return payload.selection.faces;
-}
-
-function selectionMatchesKey(
-  payload: DebugViewerPayload,
-  selection: VizSelection | null,
-  kind: "vertex" | "edge",
-  key: string,
-) {
-  const entity = selectionEntity(payload, selection);
-  return entity?.kind === kind && entity.key === key;
-}
-
-function interactionClass(base: string, selected: boolean, hovered: boolean) {
-  return `${base}${selected ? " selected" : ""}${hovered ? " hovered" : ""}`;
-}
-
-function interactionRadius(base: number, selected: boolean, hovered: boolean) {
-  if (selected) return base * 1.6;
-  if (hovered) return base * 1.35;
-  return base;
-}
-
-function orientationSegments(
-  points: readonly (readonly [number, number])[],
-  endInset: number,
-): [readonly [number, number], readonly [number, number]][] {
-  if (points.length < 2) return [];
-  const step = Math.max(2, Math.ceil(points.length / 3));
-  const segments: [readonly [number, number], readonly [number, number]][] = [];
-  for (let i = step; i < points.length; i += step) {
-    segments.push([points[i - 1], points[i]]);
+  if (selection.kind === "edge") {
+    const entry = dump.selection.edges.find(({ id }) => id === selection.id);
+    return entry ? { kind: "edge", entry } : null;
   }
-  const last = points.length - 1;
-  if (segments.length === 0 || segments[segments.length - 1][1] !== points[last]) {
-    segments.push([points[last - 1], points[last]]);
+  if (selection.kind === "face") {
+    const entry = dump.selection.faces.find(({ id }) => id === selection.id);
+    return entry ? { kind: "face", entry } : null;
   }
-  const final = segments.length - 1;
-  segments[final] = [
-    segments[final][0],
-    insetSegmentEnd(segments[final][0], segments[final][1], endInset),
-  ];
-  return segments;
-}
-
-function insetSegmentEnd(
-  start: readonly [number, number],
-  end: readonly [number, number],
-  inset: number,
-): readonly [number, number] {
-  const dx = end[0] - start[0];
-  const dy = end[1] - start[1];
-  const length = Math.hypot(dx, dy);
-  if (length <= inset) return start;
-  const scale = (length - inset) / length;
-  return [start[0] + dx * scale, start[1] + dy * scale];
-}
-
-type SelectedInfo = {
-  kind: string;
-  id: number;
-  key?: string;
-  representativeDart?: number;
-  darts?: number[];
-  payload?: { typeName: string; debug: string };
-  alpha?: number[];
-  face?: FaceMetadata;
-};
-
-function selectedInfo(
-  payload: DebugViewerPayload,
-  selected: VizSelection,
-): SelectedInfo | null {
-  if (selected.kind === "face") {
-    const selection = payload.selection.faces.find((item) => item.renderId === selected.id);
-    const face = payload.metadata.faces.find((item) => item.key === selection?.key);
-    if (!selection || !face) return null;
-    return {
-      kind: "face",
-      id: selected.id,
-      key: face.key,
-      representativeDart: face.representativeDart,
-      darts: face.darts,
-      payload: face.payload,
-      alpha: alphasAt(payload, face.representativeDart),
-      face,
-    };
+  if (selection.kind === "dart") {
+    const entry = dump.selection.darts.find(({ id }) => id === selection.id);
+    return entry ? { kind: "dart", entry } : null;
   }
-  if (selected.kind === "edge") {
-    const selection = payload.selection.edges.find((item) => item.renderId === selected.id);
-    const edge = payload.metadata.edges.find((item) => item.key === selection?.key);
-    if (!selection || !edge) return null;
-    return {
-      kind: "edge",
-      id: selected.id,
-      key: edge.key,
-      representativeDart: edge.representativeDart,
-      darts: edge.darts,
-      payload: edge.payload,
-      alpha: alphasAt(payload, edge.representativeDart),
-    };
-  }
-  if (selected.kind === "vertex") {
-    const selection = payload.selection.vertices.find((item) => item.renderId === selected.id);
-    const vertex = payload.metadata.vertices.find((item) => item.key === selection?.key);
-    if (!selection || !vertex) return null;
-    return {
-      kind: "vertex",
-      id: selected.id,
-      key: vertex.key,
-      representativeDart: vertex.representativeDart,
-      darts: vertex.darts,
-      payload: vertex.payload,
-      alpha: alphasAt(payload, vertex.representativeDart),
-    };
-  }
-  if (selected.kind === "dart") {
-    return {
-      kind: "dart",
-      id: selected.id,
-      representativeDart: selected.id,
-      alpha: alphasAt(payload, selected.id),
-    };
-  }
-  const link = payload.scene.alphaLinks[selected.id];
+  const link = dump.scene.alphaLinks[selection.id];
   return link
     ? {
-        kind: `alpha ${link.involution}`,
-        id: selected.id,
-        darts: [link.dartA, link.dartB],
+        kind: "alphaLink",
+        involution: link.involution,
+        dartA: link.dartA,
+        dartB: link.dartB,
       }
     : null;
 }
 
-function selectedFaceInfo(
-  payload: DebugViewerPayload,
-  selected: VizSelection,
-): FaceMetadata | null {
-  if (selected.kind !== "face") return null;
-  const selection = payload.selection.faces.find((item) => item.renderId === selected.id);
-  return payload.metadata.faces.find((item) => item.key === selection?.key) ?? null;
+function VertexInfo({ entry }: { entry: DebugEntityEntry<Vertex> }) {
+  return (
+    <>
+      <EntityIdentity kind="vertex" entry={entry} dimension={0} />
+      <KeyValue label="point" value={pointText(entry.value.point)} />
+      <KeyValue label="edges" value={String(entry.value.edges().length)} />
+      <KeyValue label="faces" value={String(entry.value.faces().length)} />
+    </>
+  );
 }
 
-function alphasAt(payload: DebugViewerPayload, dart: number) {
-  return payload.gmap.alphas.map((alpha) => alpha[dart]);
+function EdgeInfo({ entry }: { entry: DebugEntityEntry<Edge> }) {
+  return (
+    <>
+      <EntityIdentity kind="edge" entry={entry} dimension={1} />
+      <KeyValue label="start" value={pointText(entry.value.start.point)} />
+      <KeyValue label="end" value={pointText(entry.value.end.point)} />
+      <KeyValue label="length" value={entry.value.length?.toFixed(6) ?? "unknown"} />
+      <KeyValue label="faces" value={String(entry.value.faces().length)} />
+    </>
+  );
 }
 
-function formatVec3(value: [number, number, number]) {
-  return value.map((coord) => coord.toFixed(3)).join(", ");
+function FaceInfo({ entry }: { entry: DebugEntityEntry<Face> }) {
+  return (
+    <>
+      <EntityIdentity kind="face" entry={entry} dimension={2} />
+      <KeyValue label="loops" value={String(entry.value.loops().length)} />
+      <KeyValue label="edges" value={String(entry.value.edges().length)} />
+      <KeyValue label="vertices" value={String(entry.value.vertices().length)} />
+      <KeyValue label="surface" value={entry.value.surface.constructor.name} />
+    </>
+  );
+}
+
+function EntityIdentity<T extends { key: string; dartId: number }>({
+  kind,
+  entry,
+  dimension,
+}: {
+  kind: string;
+  entry: DebugEntityEntry<T>;
+  dimension: number;
+}) {
+  return (
+    <>
+      <KeyValue label="kind" value={kind} />
+      <KeyValue label="key" value={entry.value.key} />
+      <KeyValue label="dart" value={String(entry.value.dartId)} />
+      <KeyValue
+        label="cell darts"
+        value={Array.from(entry.gmap.cellDarts(entry.value.dartId, dimension)).join(", ")}
+      />
+    </>
+  );
+}
+
+function pointText(point: { x: number; y: number; z: number } | undefined) {
+  return point
+    ? [point.x, point.y, point.z].map((coordinate) => coordinate.toFixed(6)).join(", ")
+    : "none";
 }
 
 function KeyValue({ label, value }: { label: string; value: string }) {

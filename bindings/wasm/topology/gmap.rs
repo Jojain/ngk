@@ -109,6 +109,7 @@ impl WasmGMap {
     }
 
     /// Returns every registered vertex.
+    #[wasm_bindgen(unchecked_return_type = "Vertex[]")]
     pub fn vertices(&self) -> Array {
         values(
             self.inner
@@ -119,6 +120,7 @@ impl WasmGMap {
     }
 
     /// Returns every registered edge.
+    #[wasm_bindgen(unchecked_return_type = "Edge[]")]
     pub fn edges(&self) -> Array {
         values(
             self.inner
@@ -129,6 +131,7 @@ impl WasmGMap {
     }
 
     /// Returns every registered profile.
+    #[wasm_bindgen(unchecked_return_type = "Profile[]")]
     pub fn profiles(&self) -> Array {
         values(
             self.inner
@@ -139,6 +142,7 @@ impl WasmGMap {
     }
 
     /// Returns every registered face.
+    #[wasm_bindgen(unchecked_return_type = "Face[]")]
     pub fn faces(&self) -> Array {
         values(
             self.inner
@@ -149,6 +153,7 @@ impl WasmGMap {
     }
 
     /// Returns every registered sheet.
+    #[wasm_bindgen(unchecked_return_type = "Sheet[]")]
     pub fn sheets(&self) -> Array {
         values(
             self.inner
@@ -159,6 +164,7 @@ impl WasmGMap {
     }
 
     /// Returns every registered solid.
+    #[wasm_bindgen(unchecked_return_type = "Solid[]")]
     pub fn solids(&self) -> Array {
         values(
             self.inner

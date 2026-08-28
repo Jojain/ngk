@@ -28,6 +28,7 @@ entity_common!(WasmShell);
 #[wasm_bindgen]
 impl WasmShell {
     /// Returns faces belonging to this shell.
+    #[wasm_bindgen(unchecked_return_type = "Face[]")]
     pub fn faces(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -39,6 +40,7 @@ impl WasmShell {
     }
 
     /// Returns edges belonging to this shell.
+    #[wasm_bindgen(unchecked_return_type = "Edge[]")]
     pub fn edges(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -50,6 +52,7 @@ impl WasmShell {
     }
 
     /// Returns vertices belonging to this shell.
+    #[wasm_bindgen(unchecked_return_type = "Vertex[]")]
     pub fn vertices(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -95,6 +98,7 @@ impl WasmSheet {
     }
 
     /// Returns faces belonging to this sheet.
+    #[wasm_bindgen(unchecked_return_type = "Face[]")]
     pub fn faces(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -106,6 +110,7 @@ impl WasmSheet {
     }
 
     /// Returns edges belonging to this sheet.
+    #[wasm_bindgen(unchecked_return_type = "Edge[]")]
     pub fn edges(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -117,6 +122,7 @@ impl WasmSheet {
     }
 
     /// Returns vertices belonging to this sheet.
+    #[wasm_bindgen(unchecked_return_type = "Vertex[]")]
     pub fn vertices(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner

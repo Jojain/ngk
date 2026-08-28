@@ -32,6 +32,7 @@ impl WasmLoop {
     }
 
     /// Returns traversal-order edges.
+    #[wasm_bindgen(unchecked_return_type = "Edge[]")]
     pub fn edges(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -43,6 +44,7 @@ impl WasmLoop {
     }
 
     /// Returns traversal-order vertices.
+    #[wasm_bindgen(unchecked_return_type = "Vertex[]")]
     pub fn vertices(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -100,6 +102,7 @@ impl WasmProfile {
     }
 
     /// Returns traversal-order edges.
+    #[wasm_bindgen(unchecked_return_type = "Edge[]")]
     pub fn edges(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -111,6 +114,7 @@ impl WasmProfile {
     }
 
     /// Returns traversal-order vertices.
+    #[wasm_bindgen(unchecked_return_type = "Vertex[]")]
     pub fn vertices(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner

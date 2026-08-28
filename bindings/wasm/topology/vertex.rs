@@ -35,6 +35,7 @@ impl WasmVertex {
     }
 
     /// Returns incident edges.
+    #[wasm_bindgen(unchecked_return_type = "Edge[]")]
     pub fn edges(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -46,6 +47,7 @@ impl WasmVertex {
     }
 
     /// Returns incident faces.
+    #[wasm_bindgen(unchecked_return_type = "Face[]")]
     pub fn faces(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner
@@ -57,6 +59,7 @@ impl WasmVertex {
     }
 
     /// Returns incident sheets.
+    #[wasm_bindgen(unchecked_return_type = "Sheet[]")]
     pub fn sheets(&self) -> Result<Array, JsValue> {
         Ok(values(
             self.inner

@@ -186,7 +186,7 @@ export default function NurbsKnotExplorer() {
       curve.free();
       return {
         points: curvePoints,
-        point: new THREE.Vector3(at[0], at[1], at[2]),
+        point: new THREE.Vector3(at.x, at.y, at.z),
         error: null,
       };
     } catch (e) {

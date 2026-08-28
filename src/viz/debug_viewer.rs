@@ -1,9 +1,6 @@
-//! Send rich NGK topology dumps to the dedicated debug viewer.
+//! Send complete NGK shapes to the dedicated debug viewer.
 
-use std::any::type_name;
-use std::collections::HashSet;
 use std::env;
-use std::fmt::Debug;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -11,14 +8,10 @@ use std::time::Duration;
 use serde::Serialize;
 use thiserror::Error;
 
-use super::{VizHints, VizScene, scene_from_gmap};
-use crate::geometry::dim2::curves::Curve2;
-use crate::geometry::{Curve, Surface};
-use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap, MergeTopology};
-use crate::topology::payload::Payload;
+use crate::topology::gmap::{Dart, GMap, MergeTopology};
+use crate::topology::payload::StandardPayload;
 use crate::topology::profile::Profile;
 use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape, SheetTag, SolidTag, VertexTag};
 use crate::topology::sheet::Sheet;
@@ -31,7 +24,7 @@ const DEFAULT_ENDPOINT: &str = "/__ngk_debug/dumps";
 
 #[derive(Debug, Error)]
 pub enum DebugViewerError {
-    #[error("failed to serialize debug viewer payload: {0}")]
+    #[error("failed to serialize debug viewer shape: {0}")]
     Serialize(#[from] serde_json::Error),
     #[error("failed to connect to debug viewer on {host}:{port}: {source}")]
     Connect {
@@ -42,7 +35,7 @@ pub enum DebugViewerError {
     },
     #[error("debug viewer rejected the POST with response: {0}")]
     Http(String),
-    #[error("failed to send debug viewer payload: {0}")]
+    #[error("failed to send debug viewer shape: {0}")]
     Send(#[from] std::io::Error),
 }
 
@@ -68,463 +61,219 @@ impl Default for DebugViewerOptions {
     }
 }
 
+/// Transport envelope understood by the browser debug viewer.
+///
+/// Every entry contains a complete serialized standard-payload map. The
+/// browser deserializes it through the NGK WASM bindings and resolves the
+/// optional primary dart back to the concrete topology object that was shown.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DebugViewerPayload {
     pub kind: String,
     pub name: String,
-    pub scene: VizScene,
-    pub gmap: GMapDebugSnapshot,
-    pub selection: SelectionIndex,
-    pub metadata: DebugMetadata,
+    pub shapes: Vec<SerializedDebugShape>,
 }
 
+/// One complete shape and the information required to restore its primary
+/// typed handle in the browser.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GMapDebugSnapshot {
-    pub dimension: u32,
-    pub dart_count: u32,
-    pub alphas: Vec<Vec<u32>>,
-    pub darts: Vec<DartMetadata>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DartMetadata {
-    pub dart: u32,
-    pub vertex: Option<String>,
-    pub edge: Option<String>,
-    pub profile: Option<String>,
-    pub face: Option<String>,
-    pub sheet: Option<String>,
-    pub solid: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SelectionIndex {
-    pub vertices: Vec<EntitySelection>,
-    pub edges: Vec<EntitySelection>,
-    pub faces: Vec<EntitySelection>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EntitySelection {
-    pub render_id: u32,
-    pub key: String,
-    pub representative_dart: u32,
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DebugMetadata {
-    pub vertices: Vec<VertexMetadata>,
-    pub edges: Vec<EdgeMetadata>,
-    pub profiles: Vec<ProfileMetadata>,
-    pub faces: Vec<FaceMetadata>,
-    pub sheets: Vec<SheetMetadata>,
-    pub solids: Vec<SolidMetadata>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VertexMetadata {
-    pub key: String,
-    pub representative_dart: u32,
-    pub darts: Vec<u32>,
-    pub point: [f64; 3],
-    pub payload: PayloadSummary,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EdgeMetadata {
-    pub key: String,
-    pub representative_dart: u32,
-    pub darts: Vec<u32>,
-    pub curve: GeometrySummary,
-    pub payload: PayloadSummary,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProfileMetadata {
-    pub key: String,
-    pub representative_dart: u32,
-    pub darts: Vec<u32>,
-    pub closed: bool,
-    pub edge_keys: Vec<String>,
-    pub vertex_keys: Vec<String>,
-    pub payload: PayloadSummary,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FaceMetadata {
-    pub key: String,
-    pub representative_dart: u32,
-    pub darts: Vec<u32>,
-    pub outer_loop: Vec<u32>,
-    pub inner_loops: Vec<Vec<u32>>,
-    pub surface: GeometrySummary,
-    pub normals: Vec<NormalSample>,
-    pub pcurves: Vec<PcurveMetadata>,
-    pub payload: PayloadSummary,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NormalSample {
-    pub origin: [f64; 3],
-    pub direction: [f64; 3],
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SheetMetadata {
-    pub key: String,
-    pub representative_dart: u32,
-    pub darts: Vec<u32>,
-    pub closed: bool,
-    pub face_keys: Vec<String>,
-    pub edge_keys: Vec<String>,
-    pub vertex_keys: Vec<String>,
-    pub payload: PayloadSummary,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SolidMetadata {
-    pub key: String,
-    pub representative_dart: u32,
-    pub darts: Vec<u32>,
-    pub inner_shells: Option<Vec<u32>>,
-    pub payload: PayloadSummary,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PcurveMetadata {
-    pub dart: u32,
-    pub edge_key: String,
-    pub start_vertex_key: String,
-    pub end_vertex_key: String,
-    pub curve: GeometrySummary,
-    pub samples: Vec<[f64; 2]>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GeometrySummary {
-    pub kind: String,
+pub struct SerializedDebugShape {
+    pub kind: DebugShapeKind,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<String>,
+    pub primary_dart: Option<u32>,
+    pub serialized: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PayloadSummary {
-    pub type_name: String,
-    pub debug: String,
+/// The concrete JavaScript topology class to resolve after deserialization.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DebugShapeKind {
+    GMap,
+    Vertex,
+    Edge,
+    Profile,
+    Face,
+    Sheet,
+    Solid,
 }
 
+/// Values that can be transferred to the debug viewer as real NGK shapes.
+///
+/// Debug transfer deliberately targets [`StandardPayload`]. Arbitrary custom
+/// Rust payload types cannot be reconstructed by the browser's statically
+/// compiled WASM module.
 pub trait DebugDisplay {
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>);
-}
-
-pub struct GMapDebugItem {
-    scene: VizScene,
-    snapshot: GMapDebugSnapshot,
-    selection: SelectionIndex,
-    metadata: DebugMetadata,
+    /// Appends complete serialized maps and their primary topology handles.
+    fn append_debug_shapes(
+        &self,
+        shapes: &mut Vec<SerializedDebugShape>,
+    ) -> Result<(), serde_json::Error>;
 }
 
 impl<T: DebugDisplay + ?Sized> DebugDisplay for &T {
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        (*self).append_debug_gmaps(gmaps);
+    fn append_debug_shapes(
+        &self,
+        shapes: &mut Vec<SerializedDebugShape>,
+    ) -> Result<(), serde_json::Error> {
+        (*self).append_debug_shapes(shapes)
     }
 }
 
 impl<T: DebugDisplay> DebugDisplay for Vec<T> {
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        self.as_slice().append_debug_gmaps(gmaps);
+    fn append_debug_shapes(
+        &self,
+        shapes: &mut Vec<SerializedDebugShape>,
+    ) -> Result<(), serde_json::Error> {
+        self.as_slice().append_debug_shapes(shapes)
     }
 }
 
 impl<T: DebugDisplay> DebugDisplay for [T] {
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
+    fn append_debug_shapes(
+        &self,
+        shapes: &mut Vec<SerializedDebugShape>,
+    ) -> Result<(), serde_json::Error> {
         for item in self {
-            item.append_debug_gmaps(gmaps);
+            item.append_debug_shapes(shapes)?;
         }
+        Ok(())
     }
 }
 
 impl<T: DebugDisplay, const N: usize> DebugDisplay for [T; N] {
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        self.as_slice().append_debug_gmaps(gmaps);
+    fn append_debug_shapes(
+        &self,
+        shapes: &mut Vec<SerializedDebugShape>,
+    ) -> Result<(), serde_json::Error> {
+        self.as_slice().append_debug_shapes(shapes)
     }
 }
 
-impl<P> DebugDisplay for GMap<P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        gmaps.push(item_for_gmap(self));
+impl DebugDisplay for GMap<StandardPayload> {
+    fn append_debug_shapes(
+        &self,
+        shapes: &mut Vec<SerializedDebugShape>,
+    ) -> Result<(), serde_json::Error> {
+        shapes.push(serialize_shape(self, DebugShapeKind::GMap, None)?);
+        Ok(())
     }
 }
 
-impl<P> DebugDisplay for Shape<VertexTag, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        self.map().append_debug_gmaps(gmaps);
-    }
+macro_rules! impl_owned_shape_display {
+    ($tag:ty, $kind:expr, $view:ident, $dart:expr) => {
+        impl DebugDisplay for Shape<$tag, StandardPayload> {
+            fn append_debug_shapes(
+                &self,
+                shapes: &mut Vec<SerializedDebugShape>,
+            ) -> Result<(), serde_json::Error> {
+                let view = self.$view();
+                shapes.push(serialize_shape(self.map(), $kind, Some($dart(&view)))?);
+                Ok(())
+            }
+        }
+    };
 }
 
-impl<P> DebugDisplay for Shape<EdgeTag, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        self.map().append_debug_gmaps(gmaps);
-    }
+impl_owned_shape_display!(
+    VertexTag,
+    DebugShapeKind::Vertex,
+    vertex,
+    |view: &Vertex<'_, StandardPayload>| view.dart
+);
+impl_owned_shape_display!(EdgeTag, DebugShapeKind::Edge, edge, |view: &Edge<
+    '_,
+    StandardPayload,
+>| view.dart());
+impl_owned_shape_display!(
+    ProfileTag,
+    DebugShapeKind::Profile,
+    profile,
+    |view: &Profile<'_, StandardPayload>| view.dart
+);
+impl_owned_shape_display!(FaceTag, DebugShapeKind::Face, face, |view: &Face<
+    '_,
+    StandardPayload,
+>| view.dart());
+impl_owned_shape_display!(SheetTag, DebugShapeKind::Sheet, sheet, |view: &Sheet<
+    '_,
+    StandardPayload,
+>| view.dart);
+impl_owned_shape_display!(SolidTag, DebugShapeKind::Solid, solid, |view: &Solid<
+    '_,
+    StandardPayload,
+>| view.dart());
+
+macro_rules! impl_view_display {
+    ($view:ty, $kind:expr) => {
+        impl DebugDisplay for $view {
+            fn append_debug_shapes(
+                &self,
+                shapes: &mut Vec<SerializedDebugShape>,
+            ) -> Result<(), serde_json::Error> {
+                append_isolated_shape(self, $kind, shapes)
+            }
+        }
+    };
 }
 
-impl<P> DebugDisplay for Shape<ProfileTag, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        self.map().append_debug_gmaps(gmaps);
-    }
-}
+impl_view_display!(Vertex<'_, StandardPayload>, DebugShapeKind::Vertex);
+impl_view_display!(Edge<'_, StandardPayload>, DebugShapeKind::Edge);
+impl_view_display!(Profile<'_, StandardPayload>, DebugShapeKind::Profile);
+impl_view_display!(Face<'_, StandardPayload>, DebugShapeKind::Face);
+impl_view_display!(Sheet<'_, StandardPayload>, DebugShapeKind::Sheet);
+impl_view_display!(Solid<'_, StandardPayload>, DebugShapeKind::Solid);
 
-impl<P> DebugDisplay for Shape<FaceTag, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        self.map().append_debug_gmaps(gmaps);
-    }
-}
-
-impl<P> DebugDisplay for Shape<SheetTag, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        self.map().append_debug_gmaps(gmaps);
-    }
-}
-
-impl<P> DebugDisplay for Shape<SolidTag, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        self.map().append_debug_gmaps(gmaps);
-    }
-}
-
-impl<P> DebugDisplay for Vertex<'_, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        append_topology_item::<P, _>(self, gmaps);
-    }
-}
-
-impl<P> DebugDisplay for Edge<'_, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        append_topology_item::<P, _>(self, gmaps);
-    }
-}
-
-impl<P> DebugDisplay for Profile<'_, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        append_topology_item::<P, _>(self, gmaps);
-    }
-}
-
-impl<P> DebugDisplay for Face<'_, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        append_topology_item::<P, _>(self, gmaps);
-    }
-}
-
-impl<P> DebugDisplay for Sheet<'_, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        append_topology_item::<P, _>(self, gmaps);
-    }
-}
-
-impl<P> DebugDisplay for Solid<'_, P>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    fn append_debug_gmaps(&self, gmaps: &mut Vec<GMapDebugItem>) {
-        append_topology_item::<P, _>(self, gmaps);
-    }
-}
-
+/// Sends a shape to the debug viewer using the default connection options.
 pub fn show<T: DebugDisplay + ?Sized>(display: &T) -> Result<(), DebugViewerError> {
     show_with_options(display, &DebugViewerOptions::default())
 }
 
+/// Sends a shape to the debug viewer using explicit connection options.
 pub fn show_with_options<T: DebugDisplay + ?Sized>(
     display: &T,
     options: &DebugViewerOptions,
 ) -> Result<(), DebugViewerError> {
-    let payload = payload_for_display(display, options);
+    let payload = payload_for_display(display, options)?;
     send_payload(&payload, options)
 }
 
-pub fn show_gmap<P>(g: &GMap<P>) -> Result<(), DebugViewerError>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    show_gmap_with_options(g, &DebugViewerOptions::default())
+/// Sends a complete standard-payload map to the debug viewer.
+pub fn show_gmap(gmap: &GMap<StandardPayload>) -> Result<(), DebugViewerError> {
+    show_gmap_with_options(gmap, &DebugViewerOptions::default())
 }
 
-pub fn show_gmap_with_options<P>(
-    g: &GMap<P>,
+/// Sends a complete standard-payload map with explicit connection options.
+pub fn show_gmap_with_options(
+    gmap: &GMap<StandardPayload>,
     options: &DebugViewerOptions,
-) -> Result<(), DebugViewerError>
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    let payload = payload_for_gmap(g, options);
-    send_payload(&payload, options)
+) -> Result<(), DebugViewerError> {
+    show_with_options(gmap, options)
 }
 
+/// Builds the serialized shape envelope without sending it.
 pub fn payload_for_display<T: DebugDisplay + ?Sized>(
     display: &T,
     options: &DebugViewerOptions,
-) -> DebugViewerPayload {
-    let mut items = Vec::new();
-    display.append_debug_gmaps(&mut items);
-    payload_for_items(items, options)
+) -> Result<DebugViewerPayload, DebugViewerError> {
+    let mut shapes = Vec::new();
+    display.append_debug_shapes(&mut shapes)?;
+    Ok(DebugViewerPayload {
+        kind: "ngk.debug.v2".to_owned(),
+        name: clean_name(&options.name),
+        shapes,
+    })
 }
 
-pub fn payload_for_gmap<P>(g: &GMap<P>, options: &DebugViewerOptions) -> DebugViewerPayload
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    payload_for_items(vec![item_for_gmap(g)], options)
+/// Builds the serialized shape envelope for a complete map without sending it.
+pub fn payload_for_gmap(
+    gmap: &GMap<StandardPayload>,
+    options: &DebugViewerOptions,
+) -> Result<DebugViewerPayload, DebugViewerError> {
+    payload_for_display(gmap, options)
 }
 
+/// Sends an already-built debug viewer payload.
 pub fn send_payload(
     payload: &DebugViewerPayload,
     options: &DebugViewerOptions,
@@ -533,462 +282,29 @@ pub fn send_payload(
     post_json(options, &json)
 }
 
-fn append_topology_item<P, T>(topology: T, gmaps: &mut Vec<GMapDebugItem>)
+fn append_isolated_shape<T>(
+    topology: T,
+    kind: DebugShapeKind,
+    shapes: &mut Vec<SerializedDebugShape>,
+) -> Result<(), serde_json::Error>
 where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-    T: MergeTopology<P>,
+    T: MergeTopology<StandardPayload>,
 {
-    let (g, _) = GMap::isolate(topology);
-    gmaps.push(item_for_gmap(&g));
+    let (gmap, primary_dart) = GMap::isolate(topology);
+    shapes.push(serialize_shape(&gmap, kind, Some(primary_dart))?);
+    Ok(())
 }
 
-fn payload_for_items(
-    items: Vec<GMapDebugItem>,
-    options: &DebugViewerOptions,
-) -> DebugViewerPayload {
-    if items.len() == 1 {
-        let item = items.into_iter().next().expect("one item exists");
-        return DebugViewerPayload {
-            kind: "ngk.debug.v1".to_owned(),
-            name: clean_name(&options.name),
-            scene: item.scene,
-            gmap: item.snapshot,
-            selection: item.selection,
-            metadata: item.metadata,
-        };
-    }
-
-    let mut scene = VizScene::new();
-    let mut metadata = DebugMetadata::default();
-    for item in items {
-        scene.vertices.extend(item.scene.vertices);
-        scene.edges.extend(item.scene.edges);
-        scene.faces.extend(item.scene.faces);
-        scene.darts.extend(item.scene.darts);
-        scene.alpha_links.extend(item.scene.alpha_links);
-        scene.labels.extend(item.scene.labels);
-        metadata.vertices.extend(item.metadata.vertices);
-        metadata.edges.extend(item.metadata.edges);
-        metadata.profiles.extend(item.metadata.profiles);
-        metadata.faces.extend(item.metadata.faces);
-        metadata.sheets.extend(item.metadata.sheets);
-        metadata.solids.extend(item.metadata.solids);
-    }
-
-    DebugViewerPayload {
-        kind: "ngk.debug.v1".to_owned(),
-        name: clean_name(&options.name),
-        scene,
-        gmap: GMapDebugSnapshot {
-            dimension: 0,
-            dart_count: 0,
-            alphas: Vec::new(),
-            darts: Vec::new(),
-        },
-        selection: SelectionIndex::default(),
-        metadata,
-    }
-}
-
-fn item_for_gmap<P>(g: &GMap<P>) -> GMapDebugItem
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    let scene = scene_from_gmap(g, &VizHints::new());
-    let metadata = metadata_for_gmap(g);
-    let selection = selection_for_scene(g, &scene, &metadata);
-    let snapshot = snapshot_for_gmap(g);
-    GMapDebugItem {
-        scene,
-        snapshot,
-        selection,
-        metadata,
-    }
-}
-
-fn snapshot_for_gmap<P: Payload>(g: &GMap<P>) -> GMapDebugSnapshot {
-    let dim = g.dimension();
-    let n = g.dart_count();
-    let mut alphas: Vec<Vec<u32>> = (0..dim).map(|_| Vec::with_capacity(n)).collect();
-    for (i, alpha) in alphas.iter_mut().enumerate().take(dim) {
-        for id in 0..n {
-            let d = Dart::new(id);
-            alpha.push(g.alpha(Dim::from_index(i), d).id() as u32);
-        }
-    }
-
-    let darts = (0..n)
-        .map(|id| {
-            let d = Dart::new(id);
-            DartMetadata {
-                dart: id as u32,
-                vertex: g
-                    .attribute::<Cell0>(d)
-                    .map(|_| key_string(g.cell_representative(d, Dim::Zero), "vertex")),
-                edge: g
-                    .attribute::<Cell1>(d)
-                    .map(|_| key_string(g.cell_representative(d, Dim::One), "edge")),
-                profile: g.profile_key(d).map(|key| debug_key(&key)),
-                face: g
-                    .attribute::<crate::topology::gmap::Cell2>(d)
-                    .map(debug_key),
-                sheet: g.sheet_key(d).map(|key| debug_key(&key)),
-                solid: g
-                    .attribute::<crate::topology::gmap::Cell3>(d)
-                    .map(debug_key),
-            }
-        })
-        .collect();
-
-    GMapDebugSnapshot {
-        dimension: dim as u32,
-        dart_count: n as u32,
-        alphas,
-        darts,
-    }
-}
-
-fn metadata_for_gmap<P>(g: &GMap<P>) -> DebugMetadata
-where
-    P: Payload,
-    P::V: Debug,
-    P::E: Debug,
-    P::Profile: Debug,
-    P::F: Debug,
-    P::Sheet: Debug,
-    P::S: Debug,
-{
-    let vertices = g
-        .iter_vertices()
-        .map(|(key, attr)| VertexMetadata {
-            key: debug_key(&key),
-            representative_dart: attr.dart.id() as u32,
-            darts: cell_darts(g, attr.dart, Dim::Zero),
-            point: [attr.point.x, attr.point.y, attr.point.z],
-            payload: payload_summary(&attr.data),
-        })
-        .collect();
-
-    let edges = g
-        .iter_edges()
-        .map(|(key, attr)| EdgeMetadata {
-            key: debug_key(&key),
-            representative_dart: attr.dart.id() as u32,
-            darts: cell_darts(g, attr.dart, Dim::One),
-            curve: curve_summary(&attr.curve),
-            payload: payload_summary(&attr.data),
-        })
-        .collect();
-
-    let profiles = g
-        .iter_profiles()
-        .map(|(key, attr)| {
-            let profile = g.profile_unchecked(key);
-            ProfileMetadata {
-                key: debug_key(&key),
-                representative_dart: attr.dart.id() as u32,
-                darts: profile.darts().map(|dart| dart.id() as u32).collect(),
-                closed: profile.is_closed(),
-                edge_keys: profile
-                    .edges()
-                    .iter()
-                    .map(|edge| debug_key(&edge.key()))
-                    .collect(),
-                vertex_keys: profile
-                    .vertices()
-                    .iter()
-                    .map(|vertex| debug_key(&vertex.key()))
-                    .collect(),
-                payload: payload_summary(&attr.data),
-            }
-        })
-        .collect();
-
-    let faces = g
-        .iter_faces()
-        .map(|(key, attr)| {
-            let face = attr.face(g);
-            let pcurves = face
-                .loops()
-                .into_iter()
-                .flat_map(|loop_| loop_.edges())
-                .filter_map(|edge| {
-                    let curve = face.pcurve(edge.dart())?;
-                    Some(PcurveMetadata {
-                        dart: edge.dart().id() as u32,
-                        edge_key: debug_key(&edge.key()),
-                        start_vertex_key: debug_key(&edge.start().key()),
-                        end_vertex_key: debug_key(&edge.end().key()),
-                        curve: curve2_summary(&curve),
-                        samples: curve.sample(32).iter().map(|p| [p.x, p.y]).collect(),
-                    })
-                })
-                .collect::<Vec<_>>();
-
-            FaceMetadata {
-                key: debug_key(&key),
-                representative_dart: attr.outer_loop.id() as u32,
-                darts: cell_darts(g, attr.outer_loop, Dim::Two),
-                outer_loop: loop_darts(g, attr.outer_loop),
-                inner_loops: attr
-                    .inner_loops
-                    .iter()
-                    .map(|dart| loop_darts(g, *dart))
-                    .collect(),
-                surface: surface_summary(&attr.surface),
-                normals: normal_samples_for_face(&face, &pcurves),
-                pcurves,
-                payload: payload_summary(&attr.data),
-            }
-        })
-        .collect();
-
-    let sheets = g
-        .iter_sheets()
-        .map(|(key, attr)| {
-            let sheet = g.sheet_unchecked(key);
-            let mut darts = sheet
-                .darts()
-                .map(|dart| dart.id() as u32)
-                .collect::<Vec<_>>();
-            darts.sort_unstable();
-            SheetMetadata {
-                key: debug_key(&key),
-                representative_dart: attr.dart.id() as u32,
-                darts,
-                closed: sheet.is_closed(),
-                face_keys: sheet
-                    .faces()
-                    .iter()
-                    .map(|face| debug_key(&face.key()))
-                    .collect(),
-                edge_keys: sheet
-                    .edges()
-                    .iter()
-                    .map(|edge| debug_key(&edge.key()))
-                    .collect(),
-                vertex_keys: sheet
-                    .vertices()
-                    .iter()
-                    .map(|vertex| debug_key(&vertex.key()))
-                    .collect(),
-                payload: payload_summary(&attr.data),
-            }
-        })
-        .collect();
-
-    let solids = g
-        .iter_solids()
-        .map(|(key, attr)| SolidMetadata {
-            key: debug_key(&key),
-            representative_dart: attr.outer_shell.id() as u32,
-            darts: cell_darts(g, attr.outer_shell, Dim::Three),
-            inner_shells: attr
-                .inner_shells
-                .as_ref()
-                .map(|darts| darts.iter().map(|d| d.id() as u32).collect()),
-            payload: payload_summary(&attr.data),
-        })
-        .collect();
-
-    DebugMetadata {
-        vertices,
-        edges,
-        profiles,
-        faces,
-        sheets,
-        solids,
-    }
-}
-
-fn selection_for_scene<P: Payload>(
-    g: &GMap<P>,
-    scene: &VizScene,
-    metadata: &DebugMetadata,
-) -> SelectionIndex {
-    SelectionIndex {
-        vertices: scene
-            .vertices
-            .iter()
-            .filter_map(|vertex| {
-                let meta = metadata.vertices.get(vertex.vertex_id as usize)?;
-                Some(EntitySelection {
-                    render_id: vertex.vertex_id,
-                    key: meta.key.clone(),
-                    representative_dart: g
-                        .cell_representative(
-                            Dart::new(meta.representative_dart as usize),
-                            Dim::Zero,
-                        )
-                        .id() as u32,
-                })
-            })
-            .collect(),
-        edges: scene
-            .edges
-            .iter()
-            .filter_map(|edge| {
-                let meta = metadata.edges.get(edge.edge_id as usize)?;
-                Some(EntitySelection {
-                    render_id: edge.edge_id,
-                    key: meta.key.clone(),
-                    representative_dart: g
-                        .cell_representative(Dart::new(meta.representative_dart as usize), Dim::One)
-                        .id() as u32,
-                })
-            })
-            .collect(),
-        faces: scene
-            .faces
-            .iter()
-            .filter_map(|face| {
-                let meta = metadata.faces.get(face.face_id as usize)?;
-                Some(EntitySelection {
-                    render_id: face.face_id,
-                    key: meta.key.clone(),
-                    representative_dart: g
-                        .cell_representative(Dart::new(meta.representative_dart as usize), Dim::Two)
-                        .id() as u32,
-                })
-            })
-            .collect(),
-    }
-}
-
-fn cell_darts<P: Payload>(g: &GMap<P>, dart: Dart, dim: Dim) -> Vec<u32> {
-    let mut darts = g
-        .orbit(dart, g.orbit_indices(dim))
-        .map(|d| d.id() as u32)
-        .collect::<Vec<_>>();
-    darts.sort_unstable();
-    darts
-}
-
-fn loop_darts<P: Payload>(g: &GMap<P>, dart: Dart) -> Vec<u32> {
-    let mut out = Vec::new();
-    let mut seen = HashSet::new();
-    let mut current = dart;
-    while seen.insert(current) {
-        out.push(current.id() as u32);
-        current = g.alpha(Dim::One, g.alpha(Dim::Zero, current));
-    }
-    out
-}
-
-fn normal_samples_for_face<P: Payload>(
-    face: &Face<'_, P>,
-    pcurves: &[PcurveMetadata],
-) -> Vec<NormalSample> {
-    let Some((min_u, max_u, min_v, max_v)) = uv_bounds(pcurves) else {
-        return Vec::new();
-    };
-
-    const SAMPLES_U: usize = 10;
-    const SAMPLES_V: usize = 10;
-    let step_u = if SAMPLES_U > 1 {
-        (max_u - min_u) / (SAMPLES_U - 1) as f64
-    } else {
-        0.0
-    };
-    let step_v = if SAMPLES_V > 1 {
-        (max_v - min_v) / (SAMPLES_V - 1) as f64
-    } else {
-        0.0
-    };
-
-    let mut samples = Vec::with_capacity(SAMPLES_U * SAMPLES_V);
-    for u_index in 0..SAMPLES_U {
-        for v_index in 0..SAMPLES_V {
-            let u = min_u + step_u * u_index as f64;
-            let v = min_v + step_v * v_index as f64;
-            let origin = face.point_at(u, v);
-            let direction = face.normal_at(u, v).into_inner();
-            samples.push(NormalSample {
-                origin: [origin.x, origin.y, origin.z],
-                direction: [direction.x, direction.y, direction.z],
-            });
-        }
-    }
-    samples
-}
-
-fn uv_bounds(pcurves: &[PcurveMetadata]) -> Option<(f64, f64, f64, f64)> {
-    let mut points = pcurves.iter().flat_map(|pcurve| pcurve.samples.iter());
-    let first = points.next()?;
-    let (mut min_u, mut max_u) = (first[0], first[0]);
-    let (mut min_v, mut max_v) = (first[1], first[1]);
-    for point in points {
-        min_u = min_u.min(point[0]);
-        max_u = max_u.max(point[0]);
-        min_v = min_v.min(point[1]);
-        max_v = max_v.max(point[1]);
-    }
-    Some((min_u, max_u, min_v, max_v))
-}
-
-fn curve_summary(curve: &Curve) -> GeometrySummary {
-    GeometrySummary {
-        kind: match curve {
-            Curve::Line(_) => "line",
-            Curve::Circle(_) => "circle",
-            Curve::Nurbs(_) => "nurbs",
-            Curve::Bounded(_) => "bounded",
-        }
-        .to_owned(),
-        details: None,
-    }
-}
-
-fn curve2_summary(curve: &Curve2) -> GeometrySummary {
-    GeometrySummary {
-        kind: match curve {
-            Curve2::Line(_) => "line",
-            Curve2::Nurbs(_) => "nurbs",
-        }
-        .to_owned(),
-        details: Some(format!("{curve:?}")),
-    }
-}
-
-fn surface_summary(surface: &Surface) -> GeometrySummary {
-    GeometrySummary {
-        kind: match surface {
-            Surface::Plane(_) => "plane",
-            Surface::Cylinder(_) => "cylinder",
-            Surface::Ruled(_) => "ruled",
-            Surface::Revolution(_) => "revolution",
-            Surface::Nurbs(_) => "nurbs",
-        }
-        .to_owned(),
-        details: None,
-    }
-}
-
-fn payload_summary<T: Debug + 'static>(value: &T) -> PayloadSummary {
-    PayloadSummary {
-        type_name: type_name::<T>().to_owned(),
-        debug: format!("{value:#?}"),
-    }
-}
-
-fn debug_key<T: Debug>(key: &T) -> String {
-    format!("{key:?}")
-}
-
-fn key_string(dart: Dart, kind: &str) -> String {
-    format!("{kind}@d{}", dart.id())
+fn serialize_shape(
+    gmap: &GMap<StandardPayload>,
+    kind: DebugShapeKind,
+    primary_dart: Option<Dart>,
+) -> Result<SerializedDebugShape, serde_json::Error> {
+    Ok(SerializedDebugShape {
+        kind,
+        primary_dart: primary_dart.map(|dart| dart.id() as u32),
+        serialized: serde_json::to_string(gmap)?,
+    })
 }
 
 fn clean_name(name: &str) -> String {

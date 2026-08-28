@@ -3,8 +3,17 @@ use wasm_bindgen::prelude::*;
 use crate::modeling::solids;
 use crate::viz::{ScriptResult, Style, VizHints};
 
+use super::super::topology::WasmGMap;
+
 fn js_err(error: impl ToString) -> JsValue {
     JsValue::from_str(&error.to_string())
+}
+
+/// Tessellates a deserialized browser-owned GMap for the debug viewer.
+#[wasm_bindgen(js_name = sceneFromGMap)]
+pub fn scene_from_gmap(gmap: &WasmGMap) -> Result<JsValue, JsValue> {
+    let scene = crate::viz::scene_from_gmap(gmap.inner.map(), &VizHints::new());
+    serde_wasm_bindgen::to_value(&scene).map_err(js_err)
 }
 
 /// Builds the visualization-only block scene used by the frontend experiment.
