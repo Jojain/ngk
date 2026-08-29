@@ -1,4 +1,3 @@
-pub mod boolean;
 pub mod edges;
 pub mod errors;
 pub mod faces;

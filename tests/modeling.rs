@@ -1,5 +1,3 @@
-#[path = "modeling/boolean.rs"]
-mod boolean;
 #[path = "modeling/edges.rs"]
 mod edges;
 #[path = "modeling/faces.rs"]

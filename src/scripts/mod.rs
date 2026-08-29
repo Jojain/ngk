@@ -4,7 +4,6 @@
 
 use crate::viz::ScriptResult;
 
-pub mod boolean_configs;
 pub mod chamfered_block;
 pub mod chamfered_rectangle;
 pub mod chamfered_wavy_edge;
@@ -25,11 +24,6 @@ pub struct Script {
 }
 
 pub const SCRIPTS: &[Script] = &[
-    Script {
-        id: "boolean_configs",
-        title: "Boolean configurations",
-        run: boolean_configs::run,
-    },
     Script {
         id: "chamfered_rectangle",
         title: "Profile vs vertex chamfer (2D)",
