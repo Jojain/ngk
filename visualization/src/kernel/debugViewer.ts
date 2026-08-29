@@ -38,6 +38,12 @@ export type SerializedDebugShape = {
 };
 
 export type DebugShape = GMap | Vertex | Edge | Profile | Face | Sheet | Solid;
+export type DebugTopologyEntity = Vertex | Edge | Face;
+export type DebugTopologyKind = "vertex" | "edge" | "face";
+export type DebugTopologySelection = {
+  kind: DebugTopologyKind;
+  id: number;
+};
 
 export type HydratedShape = {
   kind: DebugShapeKind;
@@ -67,6 +73,70 @@ export type HydratedDebugDump = {
   scene: VizScene;
   selection: DebugSelectionIndex;
 };
+
+/** Returns the render selection corresponding to a real topology handle. */
+export function debugSelectionForTopology(
+  dump: HydratedDebugDump,
+  entity: DebugTopologyEntity,
+): DebugTopologySelection | null {
+  const kind = debugTopologyKind(entity);
+  const entry =
+    kind === "vertex"
+      ? dump.selection.vertices.find(({ value }) => sameTopology(value, entity))
+      : kind === "edge"
+        ? dump.selection.edges.find(({ value }) => sameTopology(value, entity))
+        : kind === "face"
+          ? dump.selection.faces.find(({ value }) => sameTopology(value, entity))
+          : undefined;
+  return kind && entry ? { kind, id: entry.id } : null;
+}
+
+/** Returns the real topology handle represented by a render selection. */
+export function debugTopologyForSelection(
+  dump: HydratedDebugDump,
+  selection: { kind: string; id: number } | null,
+): DebugTopologyEntity | null {
+  if (selection?.kind === "vertex") {
+    return (
+      dump.selection.vertices.find(({ id }) => id === selection.id)?.value ?? null
+    );
+  }
+  if (selection?.kind === "edge") {
+    return dump.selection.edges.find(({ id }) => id === selection.id)?.value ?? null;
+  }
+  if (selection?.kind === "face") {
+    return dump.selection.faces.find(({ id }) => id === selection.id)?.value ?? null;
+  }
+  return null;
+}
+
+export function debugTopologyKind(value: unknown): DebugTopologyKind | null {
+  if (typeof value !== "object" || value === null) return null;
+  const candidate = value as {
+    constructor?: { name?: string };
+    key?: unknown;
+    equals?: unknown;
+  };
+  if (typeof candidate.key !== "string" || typeof candidate.equals !== "function") {
+    return null;
+  }
+  if (candidate.constructor?.name === "Vertex") return "vertex";
+  if (candidate.constructor?.name === "Edge") return "edge";
+  if (candidate.constructor?.name === "Face") return "face";
+  return null;
+}
+
+/** Compares stable keys and owning maps through the typed WASM handle API. */
+export function sameTopology(
+  left: DebugTopologyEntity,
+  right: DebugTopologyEntity,
+): boolean {
+  const kind = debugTopologyKind(left);
+  if (kind !== debugTopologyKind(right) || left.key !== right.key) return false;
+  if (kind === "vertex") return (left as Vertex).equals(right as Vertex);
+  if (kind === "edge") return (left as Edge).equals(right as Edge);
+  return kind === "face" && (left as Face).equals(right as Face);
+}
 
 const ENDPOINT = "/__ngk_debug/dumps";
 

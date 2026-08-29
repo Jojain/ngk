@@ -8,7 +8,12 @@ import {
 } from "react";
 
 import type { Kernel } from "../../kernel/useKernel";
-import type { HydratedDebugDump } from "../../kernel/debugViewer";
+import {
+  debugTopologyKind,
+  sameTopology,
+  type DebugTopologyEntity,
+  type HydratedDebugDump,
+} from "../../kernel/debugViewer";
 import { objectPreview } from "./objectPreviews";
 
 type ConsoleBindings = {
@@ -53,9 +58,13 @@ const INSPECTABLE_ACCESSORS = new Set([
 export function ConsolePane({
   dump,
   kernel,
+  highlightedTopology,
+  onToggleTopologyHighlight,
 }: {
   dump: HydratedDebugDump | null;
   kernel: Kernel | null;
+  highlightedTopology: DebugTopologyEntity | null;
+  onToggleTopologyHighlight: (entity: DebugTopologyEntity) => void;
 }) {
   const [source, setSource] = useState("shape");
   const [caret, setCaret] = useState(5);
@@ -291,7 +300,11 @@ export function ConsolePane({
         {entries.map((entry) => (
           <div className={`debug-console-entry${entry.error ? " error" : ""}`} key={entry.id}>
             <div className="debug-console-command"><span>›</span>{entry.source}</div>
-            <InspectableValue value={entry.value} />
+            <InspectableValue
+              value={entry.value}
+              highlightedTopology={highlightedTopology}
+              onToggleTopologyHighlight={onToggleTopologyHighlight}
+            />
           </div>
         ))}
       </div>
@@ -441,14 +454,34 @@ function InspectableValue({
   depth = 0,
   ancestors = new Set<object>(),
   defaultOpen = false,
+  highlightedTopology,
+  onToggleTopologyHighlight,
 }: {
   value: unknown;
   depth?: number;
   ancestors?: Set<object>;
   defaultOpen?: boolean;
+  highlightedTopology: DebugTopologyEntity | null;
+  onToggleTopologyHighlight: (entity: DebugTopologyEntity) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const topology = debugTopologyKind(value)
+    ? (value as DebugTopologyEntity)
+    : null;
+  const highlighted =
+    topology && highlightedTopology
+      ? sameTopology(topology, highlightedTopology)
+      : false;
   if (!isExpandable(value) || depth >= MAX_INSPECTOR_DEPTH) {
+    if (topology) {
+      return (
+        <TopologyReference
+          value={topology}
+          highlighted={highlighted}
+          onToggle={onToggleTopologyHighlight}
+        />
+      );
+    }
     return <span className="debug-console-value">{preview(value)}</span>;
   }
   if (ancestors.has(value)) {
@@ -459,9 +492,25 @@ function InspectableValue({
   nextAncestors.add(value);
   return (
     <div className="debug-console-object">
-      <button type="button" className="debug-console-disclosure" onClick={() => setOpen(!open)}>
-        <span>{open ? "▾" : "▸"}</span>{preview(value)}
-      </button>
+      <div className="debug-console-object-summary">
+        <button
+          type="button"
+          className="debug-console-disclosure"
+          aria-label={(open ? "Collapse " : "Expand ") + preview(value)}
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          <span>{open ? "▾" : "▸"}</span>
+          {!topology && preview(value)}
+        </button>
+        {topology && (
+          <TopologyReference
+            value={topology}
+            highlighted={highlighted}
+            onToggle={onToggleTopologyHighlight}
+          />
+        )}
+      </div>
       {open && (
         <div className="debug-console-properties">
           {properties(value).map((property) => (
@@ -471,11 +520,39 @@ function InspectableValue({
               property={property}
               depth={depth}
               ancestors={nextAncestors}
+              highlightedTopology={highlightedTopology}
+              onToggleTopologyHighlight={onToggleTopologyHighlight}
             />
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function TopologyReference({
+  value,
+  highlighted,
+  onToggle,
+}: {
+  value: DebugTopologyEntity;
+  highlighted: boolean;
+  onToggle: (entity: DebugTopologyEntity) => void;
+}) {
+  const kind = debugTopologyKind(value);
+  return (
+    <button
+      type="button"
+      className={
+        "debug-console-topology-reference" + (highlighted ? " selected" : "")
+      }
+      aria-label={(highlighted ? "Unhighlight " : "Highlight ") + kind}
+      aria-pressed={highlighted}
+      title={(highlighted ? "Unhighlight " : "Highlight ") + kind + " " + value.key}
+      onClick={() => onToggle(value)}
+    >
+      {preview(value)}
+    </button>
   );
 }
 
@@ -491,11 +568,15 @@ function InspectableProperty({
   property,
   depth,
   ancestors,
+  highlightedTopology,
+  onToggleTopologyHighlight,
 }: {
   owner: object;
   property: InspectedProperty;
   depth: number;
   ancestors: Set<object>;
+  highlightedTopology: DebugTopologyEntity | null;
+  onToggleTopologyHighlight: (entity: DebugTopologyEntity) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState<{
@@ -511,6 +592,8 @@ function InspectableProperty({
           value={property.child}
           depth={depth + 1}
           ancestors={ancestors}
+          highlightedTopology={highlightedTopology}
+          onToggleTopologyHighlight={onToggleTopologyHighlight}
         />
       </div>
     );
@@ -561,6 +644,8 @@ function InspectableProperty({
               depth={depth + 1}
               ancestors={ancestors}
               defaultOpen
+              highlightedTopology={highlightedTopology}
+              onToggleTopologyHighlight={onToggleTopologyHighlight}
             />
           </div>
         )}

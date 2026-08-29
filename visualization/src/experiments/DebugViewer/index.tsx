@@ -5,9 +5,12 @@ import VizSceneView, { type VizSelection } from "../../components/VizSceneView";
 import { useVizControls } from "../../components/useVizControls";
 import {
   clearDebugDumps,
+  debugSelectionForTopology,
+  debugTopologyForSelection,
   fetchDebugDumps,
   hydrateDebugDump,
   type DebugEntityEntry,
+  type DebugTopologyEntity,
   type DebugViewerEnvelope,
   type HydratedDebugDump,
 } from "../../kernel/debugViewer";
@@ -109,6 +112,17 @@ export default function DebugViewer() {
   };
 
   const inspected = selected ?? hovered;
+  const highlightedTopology = hydrated.dump
+    ? debugTopologyForSelection(hydrated.dump, selected)
+    : null;
+  const toggleTopologyHighlight = (entity: DebugTopologyEntity) => {
+    if (!hydrated.dump) return;
+    const next = debugSelectionForTopology(hydrated.dump, entity);
+    if (!next) return;
+    setSelected((current) =>
+      current?.kind === next.kind && current.id === next.id ? null : next,
+    );
+  };
   const hud = (
     <div className="debug-viewer">
       <aside className="debug-side-panel">
@@ -123,7 +137,12 @@ export default function DebugViewer() {
         />
         <InspectorPanel dump={hydrated.dump} inspected={inspected} />
       </aside>
-      <ConsolePane dump={hydrated.dump} kernel={kernel} />
+      <ConsolePane
+        dump={hydrated.dump}
+        kernel={kernel}
+        highlightedTopology={highlightedTopology}
+        onToggleTopologyHighlight={toggleTopologyHighlight}
+      />
     </div>
   );
 

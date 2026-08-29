@@ -824,6 +824,13 @@ html, body, #root {
   min-width: 0;
 }
 
+.debug-console-object-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+}
+
 .debug-section .debug-console-disclosure {
   display: inline-flex;
   gap: 5px;
@@ -833,6 +840,27 @@ html, body, #root {
   background: transparent;
   color: #d8dce6;
   font-family: inherit;
+}
+
+.debug-section .debug-console-topology-reference {
+  min-width: 0;
+  padding: 1px 4px;
+  border: 0;
+  background: transparent;
+  color: #a9dcff;
+  font-family: inherit;
+  overflow-wrap: anywhere;
+}
+
+.debug-section .debug-console-topology-reference:hover {
+  background: rgba(105, 216, 255, 0.14);
+  color: #d4f4ff;
+}
+
+.debug-section .debug-console-topology-reference.selected {
+  background: rgba(247, 227, 107, 0.16);
+  color: #f7e36b;
+  box-shadow: inset 0 0 0 1px rgba(247, 227, 107, 0.45);
 }
 
 .debug-console-properties {
