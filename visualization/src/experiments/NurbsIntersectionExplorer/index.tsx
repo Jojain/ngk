@@ -125,8 +125,8 @@ function cloneSpec(spec: CurveSpec): CurveSpec {
 }
 
 function pointAt(curve: WasmCurve, u: number) {
-  const flat = curve.pointAt(u);
-  return new THREE.Vector3(flat[0], flat[1], flat[2]);
+  const point = curve.pointAt(u);
+  return new THREE.Vector3(point.x, point.y, point.z);
 }
 
 function sampleInterval(curve: WasmCurve, interval: [number, number]) {

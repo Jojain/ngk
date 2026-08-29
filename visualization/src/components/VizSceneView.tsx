@@ -35,6 +35,8 @@ export type VizSceneViewProps = {
   vertexSize?: number;
   edgeWidth?: number;
   arrowHeadRatio?: number;
+  /** Shows a world-space XYZ frame rooted at [0, 0, 0]. */
+  showWorldFrame?: boolean;
   showVertices?: boolean;
   showEdges?: boolean;
   showFaces?: boolean;
@@ -58,6 +60,17 @@ const DEFAULT_ALPHA_COLORS: Record<number, string> = {
   2: "#00b0ff",
   3: "#ffea00",
 };
+
+const WORLD_FRAME_SIZE = 1;
+const WORLD_FRAME_LABELS: Array<{
+  axis: "X" | "Y" | "Z";
+  position: Vec3;
+  color: string;
+}> = [
+  { axis: "X", position: [1.12, 0, 0], color: "#ff5f5f" },
+  { axis: "Y", position: [0, 1.12, 0], color: "#62d26f" },
+  { axis: "Z", position: [0, 0, 1.12], color: "#6ea8ff" },
+];
 
 function hasVisibleAlphaLinks(
   links: VizAlphaLink[],
@@ -89,6 +102,7 @@ export default function VizSceneView({
   vertexSize = 0.04,
   edgeWidth = 6,
   arrowHeadRatio = 0.28,
+  showWorldFrame = true,
   showVertices = true,
   showEdges = true,
   showFaces = true,
@@ -110,6 +124,7 @@ export default function VizSceneView({
 
   return (
     <group>
+      {showWorldFrame && <WorldFrame />}
       {showFaces && (
         <BrepLayer
           faces={scene.faces}
@@ -197,6 +212,31 @@ export default function VizSceneView({
             {l.text}
           </Html>
         ))}
+    </group>
+  );
+}
+
+function WorldFrame() {
+  return (
+    <group userData={{ kind: "worldFrame" }}>
+      <axesHelper args={[WORLD_FRAME_SIZE]} />
+      {WORLD_FRAME_LABELS.map(({ axis, position, color }) => (
+        <Html
+          key={axis}
+          position={position}
+          center
+          distanceFactor={8}
+          style={{
+            color,
+            fontSize: 11,
+            fontWeight: 700,
+            pointerEvents: "none",
+            textShadow: "0 1px 2px #000",
+          }}
+        >
+          {axis}
+        </Html>
+      ))}
     </group>
   );
 }
@@ -330,18 +370,69 @@ function EdgePolyline({
   onSelect?: (selection: VizSelection) => void;
   onHover?: (selection: VizSelection | null) => void;
 }) {
+  const arrow = useMemo(
+    () => (edge.arrowHead ? polylineArrowHead(edge.polyline) : null),
+    [edge.arrowHead, edge.polyline],
+  );
   if (edge.polyline.length < 2) return null;
+  const displayColor = selected ? "#f7e36b" : hovered ? "#69d8ff" : color;
   return (
-    <Line
-      points={edge.polyline}
-      color={selected ? "#f7e36b" : hovered ? "#69d8ff" : color}
-      lineWidth={selected ? width + 3 : hovered ? width + 2 : width}
+    <group
       userData={{ kind: "edge", edgeId: edge.edgeId }}
       onClick={selecting(onSelect, { kind: "edge", id: edge.edgeId })}
       onPointerOver={hovering(onHover, { kind: "edge", id: edge.edgeId })}
       onPointerOut={leaving(onHover)}
-    />
+    >
+      <Line
+        points={edge.polyline}
+        color={displayColor}
+        lineWidth={selected ? width + 3 : hovered ? width + 2 : width}
+      />
+      {arrow && (
+        <mesh position={arrow.center} quaternion={arrow.quaternion}>
+          <coneGeometry args={[arrow.radius, arrow.length, 16]} />
+          <meshStandardMaterial color={displayColor} />
+        </mesh>
+      )}
+    </group>
   );
+}
+
+function polylineArrowHead(points: Vec3[]) {
+  let totalLength = 0;
+  for (let index = 1; index < points.length; index++) {
+    const previous = points[index - 1];
+    const current = points[index];
+    totalLength += Math.hypot(
+      current[0] - previous[0],
+      current[1] - previous[1],
+      current[2] - previous[2],
+    );
+  }
+  if (totalLength < 1e-12) return null;
+
+  const end = new THREE.Vector3(...points[points.length - 1]);
+  let direction: THREE.Vector3 | null = null;
+  for (let index = points.length - 1; index > 0; index--) {
+    const previous = new THREE.Vector3(...points[index - 1]);
+    const candidate = end.clone().sub(previous);
+    if (candidate.lengthSq() > 1e-24) {
+      direction = candidate.normalize();
+      break;
+    }
+  }
+  if (!direction) return null;
+
+  const length = totalLength * 0.18;
+  return {
+    center: end.clone().addScaledVector(direction, -length / 2),
+    quaternion: new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      direction,
+    ),
+    radius: length * 0.4,
+    length,
+  };
 }
 
 function FaceMesh({

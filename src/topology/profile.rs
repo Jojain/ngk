@@ -46,6 +46,15 @@ impl<'a, P: Payload> Profile<'a, P> {
         self.key
     }
 
+    /// Returns the same profile with the opposite traversal orientation.
+    pub fn reversed(&self) -> Self {
+        Self {
+            gmap: self.gmap,
+            key: self.key,
+            dart: self.gmap.alpha(Dim::Zero, self.dart),
+        }
+    }
+
     /// Returns the user payload attached to this profile.
     pub fn data(&self) -> &P::Profile {
         &self.gmap.profile_attr_unchecked(self.key).data
@@ -151,6 +160,11 @@ impl<'a, P: Payload> LoopCorner<'a, P> {
 }
 
 impl<'a, P: Payload> Closed<Profile<'a, P>> {
+    /// Returns the same closed loop with the opposite traversal orientation.
+    pub fn reversed(&self) -> Self {
+        Closed::new_unchecked(self.inner().reversed())
+    }
+
     /// Returns the loop corners in traversal order.
     ///
     /// Each corner pairs an incoming edge with the following outgoing edge.

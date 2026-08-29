@@ -13,4 +13,4 @@ dependencies = []
 [tool.maturin]
 features = ["python"]
 module-name = "ngk._ngk"
-python-source = "python"
+python-source = "bindings/python/python"

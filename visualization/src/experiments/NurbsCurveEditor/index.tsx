@@ -83,7 +83,7 @@ export default function NurbsCurveEditor() {
       if (!s.kernel) return;
       const curve = buildCurveFrom(s.kernel, s.points, s.weights, s.knotsState, s.degree);
       if (!curve) return;
-      const domain = curve.domain();
+  const domain = curve.domain;
       const mid = 0.5 * (domain[0] + domain[1]);
       curve.insertKnot(mid);
       const flat = curve.controlPointsXyz();
@@ -92,7 +92,7 @@ export default function NurbsCurveEditor() {
         newPts.push([flat[i], flat[i + 1], flat[i + 2]]);
       }
       const newWeights = Array.from(curve.weights());
-      const newKnots = Array.from(curve.knots());
+  const newKnots = Array.from(curve.knots);
       curve.free();
       setPoints(newPts);
       setWeights(newWeights);
@@ -117,7 +117,7 @@ export default function NurbsCurveEditor() {
       for (let i = 0; i < flat.length; i += 3) {
         out.push(new THREE.Vector3(flat[i], flat[i + 1], flat[i + 2]));
       }
-      const ks = Array.from(curve.knots());
+    const ks = Array.from(curve.knots);
       curve.free();
       return [out, ks];
     } catch (e) {
