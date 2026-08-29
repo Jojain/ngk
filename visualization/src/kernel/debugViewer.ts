@@ -1,11 +1,21 @@
 import type {
+  Circle,
+  Cylinder,
   Edge,
   Face,
   GMap,
+  Line,
+  NurbsCurve,
+  NurbsSurface,
+  Plane,
+  Point3,
   Profile,
+  RuledSurface,
   Sheet,
   Solid,
+  SurfaceOfRevolution,
   Vertex,
+  Vector3,
 } from "../wasm/ngk";
 import type { Kernel } from "./useKernel";
 import type { VizScene } from "./viz";
@@ -17,27 +27,51 @@ export type DebugViewerEnvelope = {
 };
 
 export type DebugViewerPayload = {
-  kind: "ngk.debug.v2";
+  kind: "ngk.debug.v3";
   name: string;
-  shapes: SerializedDebugShape[];
+  objects: SerializedDebugObject[];
 };
 
-export type DebugShapeKind =
+export type DebugObjectKind =
   | "gmap"
   | "vertex"
   | "edge"
   | "profile"
   | "face"
   | "sheet"
-  | "solid";
+  | "solid"
+  | "point"
+  | "vector"
+  | "plane"
+  | "curve"
+  | "surface";
 
-export type SerializedDebugShape = {
-  kind: DebugShapeKind;
+export type SerializedDebugObject = {
+  kind: DebugObjectKind;
   primaryDart?: number;
   serialized: string;
 };
 
-export type DebugShape = GMap | Vertex | Edge | Profile | Face | Sheet | Solid;
+export type DebugGeometry =
+  | Point3
+  | Vector3
+  | Plane
+  | Line
+  | Circle
+  | NurbsCurve
+  | Cylinder
+  | RuledSurface
+  | SurfaceOfRevolution
+  | NurbsSurface;
+export type DebugObject =
+  | GMap
+  | Vertex
+  | Edge
+  | Profile
+  | Face
+  | Sheet
+  | Solid
+  | DebugGeometry;
 export type DebugTopologyEntity = Vertex | Edge | Face;
 export type DebugTopologyKind = "vertex" | "edge" | "face";
 export type DebugTopologySelection = {
@@ -45,10 +79,10 @@ export type DebugTopologySelection = {
   id: number;
 };
 
-export type HydratedShape = {
-  kind: DebugShapeKind;
-  value: DebugShape;
-  gmap: GMap;
+export type HydratedObject = {
+  kind: DebugObjectKind;
+  value: DebugObject;
+  gmap?: GMap;
 };
 
 export type DebugEntityEntry<T> = {
@@ -66,8 +100,10 @@ export type DebugSelectionIndex = {
 
 export type HydratedDebugDump = {
   name: string;
-  shape: DebugShape | undefined;
-  shapes: DebugShape[];
+  object: DebugObject | undefined;
+  objects: DebugObject[];
+  shape: DebugObject | undefined;
+  shapes: DebugObject[];
   gmap: GMap | undefined;
   gmaps: GMap[];
   scene: VizScene;
@@ -142,22 +178,22 @@ const ENDPOINT = "/__ngk_debug/dumps";
 
 export async function fetchDebugDumps(): Promise<DebugViewerEnvelope[]> {
   const response = await fetch(ENDPOINT);
-  if (!response.ok) throw new Error(`debug shape fetch failed: ${response.status}`);
+  if (!response.ok) throw new Error(`debug object fetch failed: ${response.status}`);
   return (await response.json()) as DebugViewerEnvelope[];
 }
 
 export async function clearDebugDumps(): Promise<void> {
   const response = await fetch(ENDPOINT, { method: "DELETE" });
-  if (!response.ok) throw new Error(`debug shape clear failed: ${response.status}`);
+  if (!response.ok) throw new Error(`debug object clear failed: ${response.status}`);
 }
 
-/** Restores the transported maps as real WASM topology objects. */
+/** Restores transported values as real WASM topology and geometry objects. */
 export function hydrateDebugDump(
   payload: DebugViewerPayload,
   kernel: Kernel,
 ): HydratedDebugDump {
-  if (payload.kind !== "ngk.debug.v2") {
-    throw new Error(`unsupported debug shape payload: ${String(payload.kind)}`);
+  if (payload.kind !== "ngk.debug.v3") {
+    throw new Error(`unsupported debug object payload: ${String(payload.kind)}`);
   }
 
   const scene = emptyScene();
@@ -167,68 +203,82 @@ export function hydrateDebugDump(
     faces: [],
     darts: [],
   };
-  const hydrated: HydratedShape[] = [];
+  const hydrated: HydratedObject[] = [];
   let vertexBase = 0;
   let edgeBase = 0;
   let faceBase = 0;
   let dartBase = 0;
 
-  for (const serialized of payload.shapes) {
-    const gmap = kernel.GMap.deserialize(serialized.serialized);
-    const vertices = gmap.vertices();
-    const edges = gmap.edges();
-    const faces = gmap.faces();
-    const localScene = kernel.sceneFromGMap(gmap) as VizScene;
-    appendScene(scene, localScene, { vertexBase, edgeBase, faceBase, dartBase });
+  for (const serialized of payload.objects) {
+    let localScene: VizScene;
+    if (isTopologyKind(serialized.kind)) {
+      const gmap = kernel.GMap.deserialize(serialized.serialized);
+      const vertices = gmap.vertices();
+      const edges = gmap.edges();
+      const faces = gmap.faces();
+      localScene = kernel.sceneFromGMap(gmap) as VizScene;
 
-    selection.vertices.push(
-      ...vertices.map((value, id) => ({ id: vertexBase + id, value, gmap })),
-    );
-    selection.edges.push(
-      ...edges.map((value, id) => ({ id: edgeBase + id, value, gmap })),
-    );
-    selection.faces.push(
-      ...faces.map((value, id) => ({ id: faceBase + id, value, gmap })),
-    );
-    selection.darts.push(
-      ...Array.from(gmap.darts(), (dart) => ({
-        id: dartBase + dart,
-        dart,
+      selection.vertices.push(
+        ...vertices.map((value, id) => ({ id: vertexBase + id, value, gmap })),
+      );
+      selection.edges.push(
+        ...edges.map((value, id) => ({ id: edgeBase + id, value, gmap })),
+      );
+      selection.faces.push(
+        ...faces.map((value, id) => ({ id: faceBase + id, value, gmap })),
+      );
+      selection.darts.push(
+        ...Array.from(gmap.darts(), (dart) => ({
+          id: dartBase + dart,
+          dart,
+          gmap,
+        })),
+      );
+
+      hydrated.push({
+        kind: serialized.kind,
+        value: resolvePrimaryTopology(gmap, serialized),
         gmap,
-      })),
-    );
+      });
+    } else {
+      const geometry = kernel.hydrateDebugGeometry(
+        serialized.kind,
+        serialized.serialized,
+      ) as { value: DebugGeometry; scene: VizScene };
+      localScene = geometry.scene;
+      hydrated.push({ kind: serialized.kind, value: geometry.value });
+    }
 
-    hydrated.push({
-      kind: serialized.kind,
-      value: resolvePrimaryShape(gmap, serialized),
-      gmap,
-    });
-
-    vertexBase += vertices.length;
-    edgeBase += edges.length;
-    faceBase += faces.length;
-    dartBase += gmap.dartCount;
+    appendScene(scene, localScene, { vertexBase, edgeBase, faceBase, dartBase });
+    vertexBase += sceneIdSpan(localScene.vertices, "vertexId");
+    edgeBase += sceneIdSpan(localScene.edges, "edgeId");
+    faceBase += sceneIdSpan(localScene.faces, "faceId");
+    dartBase += sceneIdSpan(localScene.darts, "dartId");
   }
 
+  const objects = hydrated.map(({ value }) => value);
+  const gmaps = hydrated.flatMap(({ gmap }) => (gmap ? [gmap] : []));
   return {
     name: payload.name,
-    shape: hydrated[0]?.value,
-    shapes: hydrated.map(({ value }) => value),
-    gmap: hydrated[0]?.gmap,
-    gmaps: hydrated.map(({ gmap }) => gmap),
+    object: objects[0],
+    objects,
+    shape: objects[0],
+    shapes: objects,
+    gmap: gmaps[0],
+    gmaps,
     scene,
     selection,
   };
 }
 
-function resolvePrimaryShape(
+function resolvePrimaryTopology(
   gmap: GMap,
-  serialized: SerializedDebugShape,
-): DebugShape {
+  serialized: SerializedDebugObject,
+): GMap | Vertex | Edge | Profile | Face | Sheet | Solid {
   if (serialized.kind === "gmap") return gmap;
   const dart = serialized.primaryDart;
   if (dart === undefined) {
-    throw new Error(`${serialized.kind} debug shape has no primary dart`);
+    throw new Error(`${serialized.kind} debug object has no primary dart`);
   }
 
   const value =
@@ -245,6 +295,20 @@ function resolvePrimaryShape(
               : gmap.solid(dart);
   if (!value) throw new Error(`could not restore ${serialized.kind} at dart ${dart}`);
   return value;
+}
+
+function isTopologyKind(
+  kind: DebugObjectKind,
+): kind is "gmap" | "vertex" | "edge" | "profile" | "face" | "sheet" | "solid" {
+  return (
+    kind === "gmap" ||
+    kind === "vertex" ||
+    kind === "edge" ||
+    kind === "profile" ||
+    kind === "face" ||
+    kind === "sheet" ||
+    kind === "solid"
+  );
 }
 
 type SceneOffsets = {
@@ -288,6 +352,13 @@ function appendScene(target: VizScene, source: VizScene, offsets: SceneOffsets) 
     })),
   );
   target.labels.push(...source.labels);
+}
+
+function sceneIdSpan<T extends Record<K, number>, K extends string>(
+  entries: T[],
+  key: K,
+): number {
+  return entries.reduce((largest, entry) => Math.max(largest, entry[key] + 1), 0);
 }
 
 function emptyScene(): VizScene {

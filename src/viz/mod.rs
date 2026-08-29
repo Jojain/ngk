@@ -20,6 +20,7 @@
 
 pub mod brep;
 pub mod debug_viewer;
+pub mod geometry;
 pub mod gmap;
 pub mod hints;
 pub mod ocp_vscode;
@@ -27,6 +28,9 @@ pub mod scene;
 
 use serde::Serialize;
 
+pub use geometry::{
+    scene_from_curve, scene_from_plane, scene_from_point, scene_from_surface, scene_from_vector,
+};
 pub use hints::{Style, VizHints};
 pub use scene::{VizAlphaLink, VizDart, VizEdge, VizFace, VizLabel, VizScene, VizVertex};
 

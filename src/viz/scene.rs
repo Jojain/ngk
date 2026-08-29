@@ -51,6 +51,8 @@ pub struct VizEdge {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub arrow_head: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
 

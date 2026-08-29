@@ -1,13 +1,18 @@
-//! Send complete NGK shapes to the dedicated debug viewer.
+//! Send live NGK topology and geometry values to the dedicated debug viewer.
 
 use std::env;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
+use nalgebra::{UnitVector3, Vector3};
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::geometry::{
+    Bounded, Circle, Curve, Cylinder, Line, NurbsCurve, NurbsSurface, Plane, Point3, RuledSurface,
+    Surface, SurfaceOfRevolution,
+};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, GMap, MergeTopology};
@@ -24,7 +29,7 @@ const DEFAULT_ENDPOINT: &str = "/__ngk_debug/dumps";
 
 #[derive(Debug, Error)]
 pub enum DebugViewerError {
-    #[error("failed to serialize debug viewer shape: {0}")]
+    #[error("failed to serialize debug viewer object: {0}")]
     Serialize(#[from] serde_json::Error),
     #[error("failed to connect to debug viewer on {host}:{port}: {source}")]
     Connect {
@@ -35,7 +40,7 @@ pub enum DebugViewerError {
     },
     #[error("debug viewer rejected the POST with response: {0}")]
     Http(String),
-    #[error("failed to send debug viewer shape: {0}")]
+    #[error("failed to send debug viewer object: {0}")]
     Send(#[from] std::io::Error),
 }
 
@@ -63,32 +68,32 @@ impl Default for DebugViewerOptions {
 
 /// Transport envelope understood by the browser debug viewer.
 ///
-/// Every entry contains a complete serialized standard-payload map. The
-/// browser deserializes it through the NGK WASM bindings and resolves the
-/// optional primary dart back to the concrete topology object that was shown.
+/// Topology entries contain a complete serialized standard-payload map.
+/// Geometry entries contain the serde representation of the real kernel value.
+/// The browser hydrates both through the NGK WASM bindings.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DebugViewerPayload {
     pub kind: String,
     pub name: String,
-    pub shapes: Vec<SerializedDebugShape>,
+    pub objects: Vec<SerializedDebugObject>,
 }
 
-/// One complete shape and the information required to restore its primary
-/// typed handle in the browser.
+/// One debug value and the information required to restore its real WASM
+/// object in the browser.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SerializedDebugShape {
-    pub kind: DebugShapeKind,
+pub struct SerializedDebugObject {
+    pub kind: DebugObjectKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_dart: Option<u32>,
     pub serialized: String,
 }
 
-/// The concrete JavaScript topology class to resolve after deserialization.
+/// The concrete JavaScript class to resolve after deserialization.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum DebugShapeKind {
+pub enum DebugObjectKind {
     GMap,
     Vertex,
     Edge,
@@ -96,66 +101,71 @@ pub enum DebugShapeKind {
     Face,
     Sheet,
     Solid,
+    Point,
+    Vector,
+    Plane,
+    Curve,
+    Surface,
 }
 
-/// Values that can be transferred to the debug viewer as real NGK shapes.
+/// Values that can be transferred to the debug viewer as real NGK objects.
 ///
-/// Debug transfer deliberately targets [`StandardPayload`]. Arbitrary custom
+/// Topology transfer deliberately targets StandardPayload. Arbitrary custom
 /// Rust payload types cannot be reconstructed by the browser's statically
 /// compiled WASM module.
 pub trait DebugDisplay {
-    /// Appends complete serialized maps and their primary topology handles.
-    fn append_debug_shapes(
+    /// Appends serialized objects for browser-side hydration.
+    fn append_debug_objects(
         &self,
-        shapes: &mut Vec<SerializedDebugShape>,
+        objects: &mut Vec<SerializedDebugObject>,
     ) -> Result<(), serde_json::Error>;
 }
 
 impl<T: DebugDisplay + ?Sized> DebugDisplay for &T {
-    fn append_debug_shapes(
+    fn append_debug_objects(
         &self,
-        shapes: &mut Vec<SerializedDebugShape>,
+        objects: &mut Vec<SerializedDebugObject>,
     ) -> Result<(), serde_json::Error> {
-        (*self).append_debug_shapes(shapes)
+        (*self).append_debug_objects(objects)
     }
 }
 
 impl<T: DebugDisplay> DebugDisplay for Vec<T> {
-    fn append_debug_shapes(
+    fn append_debug_objects(
         &self,
-        shapes: &mut Vec<SerializedDebugShape>,
+        objects: &mut Vec<SerializedDebugObject>,
     ) -> Result<(), serde_json::Error> {
-        self.as_slice().append_debug_shapes(shapes)
+        self.as_slice().append_debug_objects(objects)
     }
 }
 
 impl<T: DebugDisplay> DebugDisplay for [T] {
-    fn append_debug_shapes(
+    fn append_debug_objects(
         &self,
-        shapes: &mut Vec<SerializedDebugShape>,
+        objects: &mut Vec<SerializedDebugObject>,
     ) -> Result<(), serde_json::Error> {
         for item in self {
-            item.append_debug_shapes(shapes)?;
+            item.append_debug_objects(objects)?;
         }
         Ok(())
     }
 }
 
 impl<T: DebugDisplay, const N: usize> DebugDisplay for [T; N] {
-    fn append_debug_shapes(
+    fn append_debug_objects(
         &self,
-        shapes: &mut Vec<SerializedDebugShape>,
+        objects: &mut Vec<SerializedDebugObject>,
     ) -> Result<(), serde_json::Error> {
-        self.as_slice().append_debug_shapes(shapes)
+        self.as_slice().append_debug_objects(objects)
     }
 }
 
 impl DebugDisplay for GMap<StandardPayload> {
-    fn append_debug_shapes(
+    fn append_debug_objects(
         &self,
-        shapes: &mut Vec<SerializedDebugShape>,
+        objects: &mut Vec<SerializedDebugObject>,
     ) -> Result<(), serde_json::Error> {
-        shapes.push(serialize_shape(self, DebugShapeKind::GMap, None)?);
+        objects.push(serialize_topology(self, DebugObjectKind::GMap, None)?);
         Ok(())
     }
 }
@@ -163,12 +173,12 @@ impl DebugDisplay for GMap<StandardPayload> {
 macro_rules! impl_owned_shape_display {
     ($tag:ty, $kind:expr, $view:ident, $dart:expr) => {
         impl DebugDisplay for Shape<$tag, StandardPayload> {
-            fn append_debug_shapes(
+            fn append_debug_objects(
                 &self,
-                shapes: &mut Vec<SerializedDebugShape>,
+                objects: &mut Vec<SerializedDebugObject>,
             ) -> Result<(), serde_json::Error> {
                 let view = self.$view();
-                shapes.push(serialize_shape(self.map(), $kind, Some($dart(&view)))?);
+                objects.push(serialize_topology(self.map(), $kind, Some($dart(&view)))?);
                 Ok(())
             }
         }
@@ -177,29 +187,29 @@ macro_rules! impl_owned_shape_display {
 
 impl_owned_shape_display!(
     VertexTag,
-    DebugShapeKind::Vertex,
+    DebugObjectKind::Vertex,
     vertex,
     |view: &Vertex<'_, StandardPayload>| view.dart
 );
-impl_owned_shape_display!(EdgeTag, DebugShapeKind::Edge, edge, |view: &Edge<
+impl_owned_shape_display!(EdgeTag, DebugObjectKind::Edge, edge, |view: &Edge<
     '_,
     StandardPayload,
 >| view.dart());
 impl_owned_shape_display!(
     ProfileTag,
-    DebugShapeKind::Profile,
+    DebugObjectKind::Profile,
     profile,
     |view: &Profile<'_, StandardPayload>| view.dart
 );
-impl_owned_shape_display!(FaceTag, DebugShapeKind::Face, face, |view: &Face<
+impl_owned_shape_display!(FaceTag, DebugObjectKind::Face, face, |view: &Face<
     '_,
     StandardPayload,
 >| view.dart());
-impl_owned_shape_display!(SheetTag, DebugShapeKind::Sheet, sheet, |view: &Sheet<
+impl_owned_shape_display!(SheetTag, DebugObjectKind::Sheet, sheet, |view: &Sheet<
     '_,
     StandardPayload,
 >| view.dart);
-impl_owned_shape_display!(SolidTag, DebugShapeKind::Solid, solid, |view: &Solid<
+impl_owned_shape_display!(SolidTag, DebugObjectKind::Solid, solid, |view: &Solid<
     '_,
     StandardPayload,
 >| view.dart());
@@ -207,29 +217,112 @@ impl_owned_shape_display!(SolidTag, DebugShapeKind::Solid, solid, |view: &Solid<
 macro_rules! impl_view_display {
     ($view:ty, $kind:expr) => {
         impl DebugDisplay for $view {
-            fn append_debug_shapes(
+            fn append_debug_objects(
                 &self,
-                shapes: &mut Vec<SerializedDebugShape>,
+                objects: &mut Vec<SerializedDebugObject>,
             ) -> Result<(), serde_json::Error> {
-                append_isolated_shape(self, $kind, shapes)
+                append_isolated_topology(self, $kind, objects)
             }
         }
     };
 }
 
-impl_view_display!(Vertex<'_, StandardPayload>, DebugShapeKind::Vertex);
-impl_view_display!(Edge<'_, StandardPayload>, DebugShapeKind::Edge);
-impl_view_display!(Profile<'_, StandardPayload>, DebugShapeKind::Profile);
-impl_view_display!(Face<'_, StandardPayload>, DebugShapeKind::Face);
-impl_view_display!(Sheet<'_, StandardPayload>, DebugShapeKind::Sheet);
-impl_view_display!(Solid<'_, StandardPayload>, DebugShapeKind::Solid);
+impl_view_display!(Vertex<'_, StandardPayload>, DebugObjectKind::Vertex);
+impl_view_display!(Edge<'_, StandardPayload>, DebugObjectKind::Edge);
+impl_view_display!(Profile<'_, StandardPayload>, DebugObjectKind::Profile);
+impl_view_display!(Face<'_, StandardPayload>, DebugObjectKind::Face);
+impl_view_display!(Sheet<'_, StandardPayload>, DebugObjectKind::Sheet);
+impl_view_display!(Solid<'_, StandardPayload>, DebugObjectKind::Solid);
 
-/// Sends a shape to the debug viewer using the default connection options.
+macro_rules! impl_geometry_display {
+    ($value:ty, $kind:expr) => {
+        impl DebugDisplay for $value {
+            fn append_debug_objects(
+                &self,
+                objects: &mut Vec<SerializedDebugObject>,
+            ) -> Result<(), serde_json::Error> {
+                objects.push(serialize_geometry(self, $kind)?);
+                Ok(())
+            }
+        }
+    };
+}
+
+impl_geometry_display!(Point3, DebugObjectKind::Point);
+impl_geometry_display!(Vector3<f64>, DebugObjectKind::Vector);
+impl_geometry_display!(Plane, DebugObjectKind::Plane);
+impl_geometry_display!(Curve, DebugObjectKind::Curve);
+impl_geometry_display!(Surface, DebugObjectKind::Surface);
+
+impl DebugDisplay for UnitVector3<f64> {
+    fn append_debug_objects(
+        &self,
+        objects: &mut Vec<SerializedDebugObject>,
+    ) -> Result<(), serde_json::Error> {
+        objects.push(serialize_geometry(
+            &(*self).into_inner(),
+            DebugObjectKind::Vector,
+        )?);
+        Ok(())
+    }
+}
+
+macro_rules! impl_curve_display {
+    ($value:ty, $variant:ident) => {
+        impl DebugDisplay for $value {
+            fn append_debug_objects(
+                &self,
+                objects: &mut Vec<SerializedDebugObject>,
+            ) -> Result<(), serde_json::Error> {
+                let curve = Curve::$variant(self.clone());
+                objects.push(serialize_geometry(&curve, DebugObjectKind::Curve)?);
+                Ok(())
+            }
+        }
+    };
+}
+
+impl_curve_display!(Line, Line);
+impl_curve_display!(Circle, Circle);
+impl_curve_display!(NurbsCurve, Nurbs);
+
+impl DebugDisplay for Bounded<Curve> {
+    fn append_debug_objects(
+        &self,
+        objects: &mut Vec<SerializedDebugObject>,
+    ) -> Result<(), serde_json::Error> {
+        let curve = Curve::Bounded(Box::new(self.clone()));
+        objects.push(serialize_geometry(&curve, DebugObjectKind::Curve)?);
+        Ok(())
+    }
+}
+
+macro_rules! impl_surface_display {
+    ($value:ty, $variant:ident) => {
+        impl DebugDisplay for $value {
+            fn append_debug_objects(
+                &self,
+                objects: &mut Vec<SerializedDebugObject>,
+            ) -> Result<(), serde_json::Error> {
+                let surface = Surface::$variant(self.clone());
+                objects.push(serialize_geometry(&surface, DebugObjectKind::Surface)?);
+                Ok(())
+            }
+        }
+    };
+}
+
+impl_surface_display!(Cylinder, Cylinder);
+impl_surface_display!(RuledSurface, Ruled);
+impl_surface_display!(SurfaceOfRevolution, Revolution);
+impl_surface_display!(NurbsSurface, Nurbs);
+
+/// Sends an object to the debug viewer using the default connection options.
 pub fn show<T: DebugDisplay + ?Sized>(display: &T) -> Result<(), DebugViewerError> {
     show_with_options(display, &DebugViewerOptions::default())
 }
 
-/// Sends a shape to the debug viewer using explicit connection options.
+/// Sends an object to the debug viewer using explicit connection options.
 pub fn show_with_options<T: DebugDisplay + ?Sized>(
     display: &T,
     options: &DebugViewerOptions,
@@ -251,21 +344,21 @@ pub fn show_gmap_with_options(
     show_with_options(gmap, options)
 }
 
-/// Builds the serialized shape envelope without sending it.
+/// Builds the serialized object envelope without sending it.
 pub fn payload_for_display<T: DebugDisplay + ?Sized>(
     display: &T,
     options: &DebugViewerOptions,
 ) -> Result<DebugViewerPayload, DebugViewerError> {
-    let mut shapes = Vec::new();
-    display.append_debug_shapes(&mut shapes)?;
+    let mut objects = Vec::new();
+    display.append_debug_objects(&mut objects)?;
     Ok(DebugViewerPayload {
-        kind: "ngk.debug.v2".to_owned(),
+        kind: "ngk.debug.v3".to_owned(),
         name: clean_name(&options.name),
-        shapes,
+        objects,
     })
 }
 
-/// Builds the serialized shape envelope for a complete map without sending it.
+/// Builds the serialized object envelope for a complete map without sending it.
 pub fn payload_for_gmap(
     gmap: &GMap<StandardPayload>,
     options: &DebugViewerOptions,
@@ -282,28 +375,39 @@ pub fn send_payload(
     post_json(options, &json)
 }
 
-fn append_isolated_shape<T>(
+fn append_isolated_topology<T>(
     topology: T,
-    kind: DebugShapeKind,
-    shapes: &mut Vec<SerializedDebugShape>,
+    kind: DebugObjectKind,
+    objects: &mut Vec<SerializedDebugObject>,
 ) -> Result<(), serde_json::Error>
 where
     T: MergeTopology<StandardPayload>,
 {
     let (gmap, primary_dart) = GMap::isolate(topology);
-    shapes.push(serialize_shape(&gmap, kind, Some(primary_dart))?);
+    objects.push(serialize_topology(&gmap, kind, Some(primary_dart))?);
     Ok(())
 }
 
-fn serialize_shape(
+fn serialize_topology(
     gmap: &GMap<StandardPayload>,
-    kind: DebugShapeKind,
+    kind: DebugObjectKind,
     primary_dart: Option<Dart>,
-) -> Result<SerializedDebugShape, serde_json::Error> {
-    Ok(SerializedDebugShape {
+) -> Result<SerializedDebugObject, serde_json::Error> {
+    Ok(SerializedDebugObject {
         kind,
         primary_dart: primary_dart.map(|dart| dart.id() as u32),
         serialized: serde_json::to_string(gmap)?,
+    })
+}
+
+fn serialize_geometry(
+    value: &impl Serialize,
+    kind: DebugObjectKind,
+) -> Result<SerializedDebugObject, serde_json::Error> {
+    Ok(SerializedDebugObject {
+        kind,
+        primary_dart: None,
+        serialized: serde_json::to_string(value)?,
     })
 }
 

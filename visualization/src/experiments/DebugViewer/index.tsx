@@ -205,7 +205,7 @@ function TimelinePanel({
   return (
     <section className="debug-section debug-timeline">
       <div className="debug-panel-header">
-        <h2>Debug shapes</h2>
+        <h2>Debug objects</h2>
         <div className="debug-header-actions">
           <button type="button" onClick={onLatest} disabled={dumps.length === 0 || followLatest}>
             Latest
@@ -250,10 +250,10 @@ function InspectorPanel({
     <section className="debug-section debug-inspector">
       <div className="debug-panel-header">
         <h2>Inspector</h2>
-        {dump && <span>{dump.gmaps.reduce((sum, gmap) => sum + gmap.dartCount, 0)} darts</span>}
+        {dump && <span>{dump.objects.length} object{dump.objects.length === 1 ? "" : "s"}</span>}
       </div>
-      {!dump && <div className="debug-empty">No shape loaded</div>}
-      {dump && !inspected && <Summary dump={dump} />}
+      {!dump && <div className="debug-empty">No object loaded</div>}
+      {dump && (!inspected || !entity) && <Summary dump={dump} />}
       {entity?.kind === "vertex" && <VertexInfo entry={entity.entry} />}
       {entity?.kind === "edge" && <EdgeInfo entry={entity.entry} />}
       {entity?.kind === "face" && <FaceInfo entry={entity.entry} />}
@@ -284,7 +284,11 @@ function Summary({ dump }: { dump: HydratedDebugDump }) {
   return (
     <div className="debug-summary">
       <KeyValue label="name" value={dump.name} />
-      <KeyValue label="shapes" value={String(dump.shapes.length)} />
+      <KeyValue label="objects" value={String(dump.objects.length)} />
+      <KeyValue
+        label="types"
+        value={dump.objects.map((object) => object.constructor?.name ?? "Object").join(", ")}
+      />
       <KeyValue label="faces" value={String(dump.selection.faces.length)} />
       <KeyValue label="edges" value={String(dump.selection.edges.length)} />
       <KeyValue label="vertices" value={String(dump.selection.vertices.length)} />

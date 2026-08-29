@@ -5,6 +5,7 @@ import { button, useControls, folder } from "leva";
  * Shared leva controls for any experiment that renders a `VizScene`.
  */
 export type VizControlsProps = {
+  showWorldFrame: boolean;
   showVertices: boolean;
   showEdges: boolean;
   showFaces: boolean;
@@ -23,6 +24,7 @@ export type VizControlsProps = {
 };
 
 export type VizControlsInitial = Partial<{
+  showWorldFrame: boolean;
   showVertices: boolean;
   showEdges: boolean;
   showFaces: boolean;
@@ -48,6 +50,12 @@ export type VizControlsInitial = Partial<{
 
 export function useVizControls(initial: VizControlsInitial = {}): VizControlsProps {
   const [values, set] = useControls("Viz", () => ({
+    Scene: folder({
+      showWorldFrame: {
+        value: initial.showWorldFrame ?? true,
+        label: "world XYZ frame",
+      },
+    }),
     BRep: folder({
       showVertices: { value: initial.showVertices ?? true, label: "vertices" },
       showEdges: { value: initial.showEdges ?? true, label: "edges" },
@@ -164,6 +172,7 @@ export function useVizControls(initial: VizControlsInitial = {}): VizControlsPro
   );
 
   return {
+    showWorldFrame: values.showWorldFrame,
     showVertices: values.showVertices,
     showEdges: values.showEdges,
     showFaces: values.showFaces,

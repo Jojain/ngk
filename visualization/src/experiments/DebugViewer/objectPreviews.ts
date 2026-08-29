@@ -26,6 +26,82 @@ export const OBJECT_PREVIEW_FORMATTERS: Record<
       ")"
     );
   },
+  Line: (value) => {
+    const line = value as { start: Coordinate3; end: Coordinate3 };
+    return (
+      "Line(" +
+      coordinatePreview("P", line.start) +
+      " → " +
+      coordinatePreview("P", line.end) +
+      ")"
+    );
+  },
+  Circle: (value) => {
+    const circle = value as {
+      radius: number;
+      plane: { origin: Coordinate3 };
+    };
+    return (
+      "Circle(center=" +
+      coordinatePreview("P", circle.plane.origin) +
+      ", r=" +
+      formatScalar(circle.radius) +
+      ")"
+    );
+  },
+  Cylinder: (value) => {
+    const cylinder = value as {
+      origin: Coordinate3;
+      axis: Coordinate3;
+      radius: number;
+    };
+    return (
+      "Cylinder(origin=" +
+      coordinatePreview("P", cylinder.origin) +
+      ", axis=" +
+      coordinatePreview("V", cylinder.axis) +
+      ", r=" +
+      formatScalar(cylinder.radius) +
+      ")"
+    );
+  },
+  RuledSurface: (value) => {
+    const surface = value as { direction: Coordinate3 };
+    return "RuledSurface(direction=" + coordinatePreview("V", surface.direction) + ")";
+  },
+  SurfaceOfRevolution: (value) => {
+    const surface = value as { origin: Coordinate3; axis: Coordinate3 };
+    return (
+      "SurfaceOfRevolution(origin=" +
+      coordinatePreview("P", surface.origin) +
+      ", axis=" +
+      coordinatePreview("V", surface.axis) +
+      ")"
+    );
+  },
+  NurbsCurve: (value) => {
+    const curve = value as { degree: number; domain: ArrayLike<number> };
+    return "NurbsCurve(degree=" + curve.degree + ", domain=" + intervalPreview(curve.domain) + ")";
+  },
+  NurbsSurface: (value) => {
+    const surface = value as {
+      degreeU: number;
+      degreeV: number;
+      domainU: ArrayLike<number>;
+      domainV: ArrayLike<number>;
+    };
+    return (
+      "NurbsSurface(degree=" +
+      surface.degreeU +
+      "×" +
+      surface.degreeV +
+      ", u=" +
+      intervalPreview(surface.domainU) +
+      ", v=" +
+      intervalPreview(surface.domainV) +
+      ")"
+    );
+  },
 };
 
 export function objectPreview(value: object): string | null {
@@ -47,6 +123,10 @@ function coordinatePreview(prefix: string, value: Coordinate3): string {
     [value.x, value.y, value.z].map(formatScalar).join(",") +
     ")"
   );
+}
+
+function intervalPreview(value: ArrayLike<number>): string {
+  return "[" + formatScalar(value[0]) + "," + formatScalar(value[1]) + "]";
 }
 
 function formatScalar(value: number): string {

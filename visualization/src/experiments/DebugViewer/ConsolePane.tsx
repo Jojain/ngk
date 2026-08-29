@@ -17,6 +17,8 @@ import {
 import { objectPreview } from "./objectPreviews";
 
 type ConsoleBindings = {
+  object: HydratedDebugDump["object"];
+  objects: HydratedDebugDump["objects"];
   shape: HydratedDebugDump["shape"];
   shapes: HydratedDebugDump["shapes"];
   gmap: HydratedDebugDump["gmap"];
@@ -86,6 +88,8 @@ export function ConsolePane({
     () =>
       dump && kernel
         ? {
+            object: dump.object,
+            objects: dump.objects,
             shape: dump.shape,
             shapes: dump.shapes,
             gmap: dump.gmap,
@@ -243,7 +247,7 @@ export function ConsolePane({
         <div
           className="debug-console-resize-handle"
           role="separator"
-          aria-label="Resize shape console"
+          aria-label="Resize debug console"
           aria-orientation="horizontal"
           aria-valuemin={minimumConsoleHeight()}
           aria-valuemax={maximumConsoleHeight()}
@@ -269,9 +273,9 @@ export function ConsolePane({
         />
       )}
       <div className="debug-panel-header">
-        <h2>Shape console</h2>
+        <h2>Object console</h2>
         <div className="debug-header-actions">
-          <span>{dump ? `${dump.shapes.length} shape${dump.shapes.length === 1 ? "" : "s"}` : "offline"}</span>
+          <span>{dump ? `${dump.objects.length} object${dump.objects.length === 1 ? "" : "s"}` : "offline"}</span>
           <button type="button" onClick={() => setEntries([])} disabled={entries.length === 0}>
             Clear
           </button>
@@ -292,9 +296,10 @@ export function ConsolePane({
       >
         {entries.length === 0 && (
           <div className="debug-console-help">
-            Try <code>shape.faces</code> and unfold the result, or run{" "}
-            <code>shape.edges()[0].start.point</code>. Tab completes members;
-            Enter runs, Shift+Enter adds a line.
+            Explore <code>shape</code> (or <code>object</code>) and unfold its
+            properties. For topology, try <code>shape.faces</code>; for geometry,
+            try <code>shape.pointAt(0.5)</code>. Tab completes members; Enter
+            runs, Shift+Enter adds a line.
           </div>
         )}
         {entries.map((entry) => (
@@ -316,8 +321,8 @@ export function ConsolePane({
           disabled={!bindings}
           rows={1}
           spellCheck={false}
-          aria-label="JavaScript shape console"
-          placeholder={bindings ? "Explore shape…" : "Waiting for a shape…"}
+          aria-label="JavaScript debug object console"
+          placeholder={bindings ? "Explore object…" : "Waiting for an object…"}
           onChange={(event) => {
             setSource(event.currentTarget.value);
             setCaret(event.currentTarget.selectionStart);

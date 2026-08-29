@@ -97,6 +97,7 @@ fn emit_edges<P: Payload>(
             polyline,
             color: style.and_then(|s| s.color.clone()),
             width: style.and_then(|s| s.width),
+            arrow_head: None,
             label: style.and_then(|s| s.label.clone()),
         });
     }

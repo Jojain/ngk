@@ -17,6 +17,7 @@ export type VizEdge = {
   polyline: Vec3[];
   color?: string;
   width?: number;
+  arrowHead?: boolean;
   label?: string;
 };
 
