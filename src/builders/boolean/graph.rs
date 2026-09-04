@@ -1,10 +1,12 @@
 //! Canonical intersection network shared by both Boolean operands.
 
-use crate::geometry::{Curve, Curve2, Interval, Point2, Point3, PointCoincidence};
+use crate::geometry::{
+    Curve, Curve2, Interval, KnotVector, NurbsCurve, NurbsError, Point2, Point3, PointCoincidence,
+};
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use thiserror::Error;
 
-use super::{BooleanCell, BooleanSide, PointContactKind};
+use super::{BooleanCell, BooleanError, BooleanSide, PointContactKind};
 
 /// Stable index of a remarkable point in an intersection network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -231,9 +233,6 @@ impl IntersectionNetworkBuilder {
         let end = self.record_event(end_point, PointContactKind::Transverse, end_uses);
         let incoming_uses = uses.into_iter().collect::<Vec<_>>();
         if let Some((index, span)) = self.network.spans.iter_mut().enumerate().find(|(_, span)| {
-            if span.kind != kind {
-                return false;
-            }
             let same_direction = span.start == start && span.end == end;
             let reversed_direction = span.start == end && span.end == start;
             (same_direction || reversed_direction)
@@ -311,7 +310,15 @@ fn align_span_use(span_use: IntersectionSpanUse, reversed: bool) -> Intersection
             pcurve: Box::new(pcurve.reversed()),
             orientation,
         },
-        edge_use @ IntersectionSpanUse::Edge { .. } => edge_use,
+        IntersectionSpanUse::Edge {
+            side,
+            edge,
+            interval,
+        } => IntersectionSpanUse::Edge {
+            side,
+            edge,
+            interval: Interval::new(interval.end, interval.start),
+        },
     }
 }
 
@@ -405,4 +412,141 @@ pub(crate) fn face_use(side: BooleanSide, face: FaceKey, uv: Point2) -> Intersec
         cell: BooleanCell::Face(face),
         location: IntersectionEventLocation::Face { uv },
     }
+}
+
+/// An original span interval mapped to a canonical subdivided span.
+#[derive(Clone)]
+pub(crate) struct SpanSubdivision {
+    pub(crate) span: IntersectionSpanId,
+    pub(crate) interval: Interval,
+    pub(crate) reversed: bool,
+}
+
+/// Nodes all span interiors at compatible events, then deduplicates the exact pieces.
+/// Input events already include every observed span endpoint, so partial overlaps
+/// gain common endpoints before canonicalization.
+pub(crate) fn finalize_network(
+    network: &IntersectionNetwork,
+    linear: f64,
+    parameter: f64,
+) -> Result<(IntersectionNetwork, Vec<Vec<SpanSubdivision>>), BooleanError> {
+    let mut builder = IntersectionNetworkBuilder::new(linear);
+    for event in &network.events {
+        builder.record_event(event.point, event.kind, event.uses.clone());
+    }
+    let mut mapping = Vec::new();
+    for span in &network.spans {
+        let mut parameters = vec![0.0, 1.0];
+        for event in &network.events {
+            let t = span.curve.param_at(event.point);
+            if t <= parameter
+                || t >= 1.0 - parameter
+                || !span.curve.point_at(t).coincides(event.point, linear)
+            {
+                continue;
+            }
+            let uses = span_event_uses(&span.uses, t);
+            if uses_are_compatible(&event.uses, &uses, linear) {
+                parameters.push(t);
+            }
+        }
+        parameters.sort_by(f64::total_cmp);
+        parameters.dedup_by(|a, b| (*a - *b).abs() <= parameter);
+        let mut pieces = Vec::new();
+        for pair in parameters.windows(2) {
+            let interval = Interval::new(pair[0], pair[1]);
+            let curve = normalized_subcurve(&span.curve, interval)?;
+            let start = curve.point_at(0.0);
+            let uses = span
+                .uses
+                .iter()
+                .map(|span_use| match span_use {
+                    IntersectionSpanUse::Face {
+                        side,
+                        face,
+                        pcurve,
+                        orientation,
+                    } => Ok(IntersectionSpanUse::Face {
+                        side: *side,
+                        face: *face,
+                        pcurve: Box::new(pcurve.trimmed(interval)?),
+                        orientation: *orientation,
+                    }),
+                    IntersectionSpanUse::Edge {
+                        side,
+                        edge,
+                        interval: source,
+                    } => Ok(IntersectionSpanUse::Edge {
+                        side: *side,
+                        edge: *edge,
+                        interval: Interval::new(
+                            source.start + (source.end - source.start) * pair[0],
+                            source.start + (source.end - source.start) * pair[1],
+                        ),
+                    }),
+                })
+                .collect::<Result<Vec<_>, NurbsError>>()?;
+            if let Some(id) = builder.record_span(
+                curve,
+                span.kind,
+                span_event_uses(&span.uses, pair[0]),
+                span_event_uses(&span.uses, pair[1]),
+                uses,
+            ) {
+                let canonical = &builder.network.spans[id.0];
+                let reversed = !builder.network.events[canonical.start.0]
+                    .point
+                    .coincides(start, linear);
+                pieces.push(SpanSubdivision {
+                    span: id,
+                    interval,
+                    reversed,
+                });
+            }
+        }
+        mapping.push(pieces);
+    }
+    for region in &network.regions {
+        builder.record_region(region.first_face, region.second_face, Vec::new());
+    }
+    Ok((builder.finish()?, mapping))
+}
+
+/// Converts a span parameter into each of its operand-local event incidences.
+fn span_event_uses(uses: &[IntersectionSpanUse], t: f64) -> Vec<IntersectionEventUse> {
+    uses.iter()
+        .map(|usage| match usage {
+            IntersectionSpanUse::Face {
+                side, face, pcurve, ..
+            } => face_use(*side, *face, pcurve.point_at(t)),
+            IntersectionSpanUse::Edge {
+                side,
+                edge,
+                interval,
+            } => edge_use(
+                *side,
+                *edge,
+                interval.start + (interval.end - interval.start) * t,
+            ),
+        })
+        .collect()
+}
+
+/// Restores a normalized parameter domain after exact NURBS trimming.
+pub(crate) fn normalized_subcurve(curve: &Curve, interval: Interval) -> Result<Curve, NurbsError> {
+    let trimmed = curve.trimmed(interval)?.to_nurbs()?;
+    let domain = trimmed.domain();
+    let knots = KnotVector::new(
+        trimmed
+            .knots()
+            .as_slice()
+            .iter()
+            .map(|knot| (knot - domain.start) / (domain.end - domain.start))
+            .collect(),
+    )?;
+    Ok(Curve::Nurbs(NurbsCurve::new(
+        trimmed.degree(),
+        trimmed.control_points().clone(),
+        knots,
+    )?))
 }

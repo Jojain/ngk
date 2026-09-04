@@ -36,12 +36,14 @@ that curve**. The algorithm needs two different connectivity structures:
   how the newly created face fragments are connected and how classification
   crosses the intersection.
 
-ngk already has the beginning of the first structure and transactional
-imprinting. It does not yet have the second graph, solid classification,
-fragment selection, or final assembly. More urgently, its general
-surface/surface intersection is currently a sampled triangle approximation;
-it cannot provide the completeness or topology guarantees required by a CAD
-Boolean.
+ngk now has a transactional solid Boolean pipeline with a separate fragment
+graph, deterministic planar classification, operation selection, and canonical
+span sewing. Transverse box operations and nested cavities are covered end to
+end. The public result contains one solid; empty and disconnected outcomes are
+errors with rollback. Curved classification, complete coplanar arrangements,
+and fully certified network finalization remain unfinished. Surface/surface
+coverage and quality diagnostics prevent incomplete solver results from being
+used as a solid Boolean.
 
 For targeted reading of the source paper, the essential sequence is PDF pages
 13–21 (representation and the six algorithm stages), pages 22–24 (software
@@ -333,39 +335,30 @@ In fact, region boundaries are currently created empty in
 
 #### 4.5 Imprinting is preparation, not Boolean evaluation
 
-The public result is [`BooleanPreparation`](../src/builders/boolean/result.rs#L50),
-which contains the split operands, network, and lineage. There is no public
-`union`, `intersection`, or `difference` result yet.
-
-The modules originally anticipated for the remaining stages—`neighborhood`,
-`classify`, `select`, and `assemble`—do not exist. Consequently ngk does not yet:
-
-- construct maximal connected face-fragment components;
-- classify fragments relative to the other solid;
-- apply operation-specific selection rules;
-- reverse the tool-side fragments for difference;
-- reconcile coincident/tangent cases;
-- remove rejected topology;
-- sew selected fragments into result shells;
-- register and validate a resulting solid.
-
+`BooleanPreparation` remains available for split-only callers. The additive
+`boolean` entry point returns `BooleanResult` for union, intersection, and
+difference. The `neighborhood`, `classify`, `select`, and `assemble` modules
+provide fragment adjacency, planar polygon classification, operation selection,
+tool-face reversal for subtraction, deletion, identity-based sewing, and
+validated result registration. General coincident/tangent arrangements and
+curved certification remain pending.
 ### Comparison matrix
 
 | Concern | BOOLE | ngk now | Required direction |
 |---|---|---|---|
 | Surface representation | Trimmed rational Bézier patches | Analytic surfaces normalized to NURBS, faces with pcurves | Stay NURBS-first; decompose into Bézier spans internally where convex-hull bounds are useful |
 | Topology | Explicit face/edge/vertex adjacency graph | GMap cells, darts, involutions, typed views | Use GMap as the B-rep authority; do not duplicate its adjacency permanently |
-| Broad phase | Control-point AABB, then convex-hull LP | Exhaustive face pairs | Conservative per-face/per-span bounds and a BVH; optional hull-separation refinement |
-| Surface intersection | Complete symbolic-numeric tracing with loop/singularity detection | Fixed triangulation, unordered hit points | Adaptive NURBS subdivision, seed isolation, analytic refinement, branch tracing, loop and singularity handling |
-| Trimmed intersection | Curve/trim intersection followed by analytic refinement | Per-sample inside filtering | Split at exact/refined trim crossings; retain ordered valid intervals |
+| Broad phase | Control-point AABB, then convex-hull LP | Deterministic BVH over planar trim and native NURBS Bézier hulls; unbounded fallback | Conservative per-face/per-span bounds and a BVH; optional hull-separation refinement |
+| Surface intersection | Complete symbolic-numeric tracing with loop/singularity detection | Synchronized branches with explicit certification and coverage status | Adaptive NURBS subdivision, seed isolation, analytic refinement, branch tracing, loop and singularity handling |
+| Trimmed intersection | Curve/trim intersection followed by analytic refinement | Exact pcurve crossings and synchronized interval trimming; adaptive winding for holes | Split at exact/refined trim crossings; retain ordered valid intervals |
 | Common curve | 3D + both parameter domains + analytic/polyline forms | Canonical event/span network with 3D curve and pcurve uses | Preserve this model; strengthen finalization and validation |
-| 2D overlap | Detected as a two-dimensional intersection | Region marker; planar convex overlay path | Add oriented region boundaries and general overlap policy |
-| Boundary partition | Patch-domain partitions and connectivity graph | Transactional edge/face splitting with lineage | Complete arrangements and guarantee identical subdivision on both operands |
-| Component graph | Explicit orientation-invariant components and adjacency | Missing | Add a post-imprint fragment graph derived from GMap incidence plus network barriers |
-| Classification | Ray shooting plus propagation | Missing | Certified point-on-solid classifier, local sector rules, propagation with ambiguity states |
-| Selection | Operation table over classified components | Missing | Add explicit regularized Boolean policy including `OnBoundary` cases |
-| Assembly | Rebuild adjacency from source topology and common curves | Missing; GMap sew and validators already exist | Sew by canonical network identity, then validate closure, GMap axioms, manifoldness, and orientation |
-| Robustness | Stable numerics, checkpoints, planned exact fallbacks | Global tolerances and structural checks | Operation-scoped tolerance context, residual/error checks, filtered predicates, deterministic diagnostics |
+| 2D overlap | Detected as a two-dimensional intersection | Planar convex overlay; general overlap candidates retained as unresolved diagnostics | Add oriented region boundaries and general overlap policy |
+| Boundary partition | Patch-domain partitions and connectivity graph | Transactional splitting; original imprint indices, directed intervals, and face-produced span/edge lineage | Complete arrangements and guarantee identical subdivision on both operands |
+| Component graph | Explicit orientation-invariant components and adjacency | Separate post-imprint adjacency with known span barriers | Add a post-imprint fragment graph derived from GMap incidence plus network barriers |
+| Classification | Ray shooting plus propagation | Deterministic planar polygon ray classification with two agreeing rays; explicit ambiguity; no propagation yet | Certified point-on-solid classifier, local sector rules, propagation with ambiguity states |
+| Selection | Operation table over classified components | Union/intersection/difference table including on-boundary states | Add explicit regularized Boolean policy including `OnBoundary` cases |
+| Assembly | Rebuild adjacency from source topology and common curves | Transactional deletion, span-identity sewing, shell discovery and validated single-solid registration | Sew by canonical network identity, then validate closure, GMap axioms, manifoldness, and orientation |
+| Robustness | Stable numerics, checkpoints, planned exact fallbacks | Operation-scoped tolerances, coverage rejection, rollback and structural validation | Operation-scoped tolerance context, residual/error checks, filtered predicates, deterministic diagnostics |
 
 ## 5. Recommended ngk architecture
 
@@ -713,9 +706,9 @@ The decisive work still required is:
 1. a complete and residual-controlled NURBS surface-intersection engine;
 2. exact branch clipping against trimmed domains;
 3. stronger network finalization and invariants;
-4. a separate post-imprint fragment graph;
+4. complete sectors and barriers in the fragment graph;
 5. certified classification and propagation;
-6. operation-aware selection and GMap assembly;
+6. complete coincident/tangent assembly and original-edge span realization;
 7. filtered predicates and explicit degeneracy policies.
 
 If those stages remain separate and every transition has a checkable contract,

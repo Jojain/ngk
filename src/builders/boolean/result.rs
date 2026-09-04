@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 
-use super::IntersectionNetwork;
+use super::{BooleanDiagnostics, IntersectionNetwork, IntersectionSpanId};
 
 /// A dimension-erased operand accepted by Boolean preparation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -57,6 +57,9 @@ pub struct BooleanPreparation {
     /// Retained for callers that only need to distinguish import mode.
     pub imported_second: bool,
     pub network: IntersectionNetwork,
+    pub diagnostics: BooleanDiagnostics,
+    /// Section edges produced by face imprints, ordered along each span on each side.
+    pub span_edges: HashMap<IntersectionSpanId, [Vec<EdgeKey>; 2]>,
     pub first_lineage: BooleanLineage,
     pub second_lineage: BooleanLineage,
 }
@@ -86,4 +89,29 @@ impl BooleanPreparation {
             BooleanSide::Second => &self.second_lineage,
         }
     }
+}
+
+/// Regularized set operations on two admitted solids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BooleanOperation {
+    Union,
+    Intersection,
+    Difference,
+}
+
+/// One successfully validated, committed solid boundary.
+pub struct BooleanResult {
+    pub operation: BooleanOperation,
+    pub solid: SolidKey,
+    pub lineage: BooleanResultLineage,
+    pub diagnostics: BooleanDiagnostics,
+}
+
+/// Surviving source identities and pre-sewing intersection edge provenance.
+pub struct BooleanResultLineage {
+    pub first: BooleanLineage,
+    pub second: BooleanLineage,
+    /// Historical keys before sewing; a second-side key can be consumed at commit.
+    pub span_edges: HashMap<IntersectionSpanId, [Vec<EdgeKey>; 2]>,
+    pub discarded_faces: Vec<FaceKey>,
 }

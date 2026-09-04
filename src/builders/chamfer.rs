@@ -377,11 +377,11 @@ fn split_chamfer_face<P: Payload>(
         .find(|candidate| is_patch(g, *candidate))
         .ok_or(ChamferError::ChamferFaceSplitFailed { face })?;
     let section = split
-        .section_edges
+        .sections
         .into_iter()
         .next()
         .ok_or(ChamferError::ChamferFaceSplitFailed { face })?;
-    Ok((patch, section))
+    Ok((patch, section.edge))
 }
 
 /// Builds synchronized model-space and UV-space line geometry for a planar

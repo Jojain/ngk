@@ -1,12 +1,22 @@
 //! Boolean preparation: contact computation and two-sided B-Rep splitting.
 
+mod assemble;
 mod broad_phase;
+mod classify;
+mod clip;
 mod contacts;
+mod diagnostics;
 mod errors;
+mod neighborhood;
+mod select;
+pub use diagnostics::BooleanDiagnostics;
 mod graph;
 mod imprint;
 mod operand;
 mod result;
+mod tolerance;
+mod trim;
+pub use tolerance::{BooleanTolerancePolicy, BooleanTolerances};
 
 use contacts::{
     compute_edge_contacts, compute_edge_face_contacts, compute_face_contacts,
@@ -20,12 +30,13 @@ pub use graph::{
     IntersectionSpanUse,
 };
 use graph::{IntersectionNetworkBuilder, edge_use, face_use, vertex_use};
-use operand::{OperandCells, import_operand, operand_cells};
+use operand::{BooleanContext, OperandCells, import_operand, operand_cells};
 pub use result::{
-    BooleanCell, BooleanLineage, BooleanOperand, BooleanPreparation, BooleanSide, PointContactKind,
+    BooleanCell, BooleanLineage, BooleanOperand, BooleanOperation, BooleanPreparation,
+    BooleanResult, BooleanResultLineage, BooleanSide, PointContactKind,
 };
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::builders::edges::split_edge_staged;
 use crate::builders::faces::{FaceImprint, split_face_by_imprints_staged, split_face_edge_staged};
@@ -33,14 +44,15 @@ use crate::geometry::dim3::intersections::intersect_curve_surface_with_options;
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveCurveIntersection,
     CurveSurfaceIntersection, Degree, HPoint, HPoint2, IntersectionOptions, Interval, KnotVector,
-    LINEAR_TOLERANCE, Line2, NurbsCurve, NurbsCurve2, NurbsError, Point2, Point3, PointCoincidence,
-    Surface, SurfaceSurfaceIntersection,
+    Line2, NurbsCurve, NurbsCurve2, NurbsError, Point2, Point3, PointCoincidence, Surface,
+    SurfaceSurfaceIntersection,
 };
 use crate::topology::TopologyEdit;
 use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
-use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 use nalgebra::Vector2;
+use slotmap::Key;
 
 /// Raw narrow-phase observation consumed during network canonicalization.
 #[derive(Clone)]
@@ -64,23 +76,96 @@ enum RawIntersection {
 }
 
 /// Tunables used by Boolean intersection and splitting.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BooleanOptions {
     pub intersections: IntersectionOptions,
+    pub tolerances: BooleanTolerancePolicy,
+    pub max_classification_rays: usize,
+    pub strict: bool,
 }
 
+impl Default for BooleanOptions {
+    fn default() -> Self {
+        Self {
+            intersections: IntersectionOptions::default(),
+            tolerances: BooleanTolerancePolicy::default(),
+            max_classification_rays: 16,
+            strict: true,
+        }
+    }
+}
+
+/// Evaluates one regularized Boolean inside a single transaction.
+/// Consumes the operand boundary registrations on success. Empty and disconnected
+/// results, ambiguous classification, or incomplete geometric coverage roll back.
+/// The current certified classification path admits planar polygonal boundaries.
+pub fn boolean<P: Payload>(
+    map: &mut GMap<P>,
+    first: SolidKey,
+    second: SolidKey,
+    operation: BooleanOperation,
+    options: BooleanOptions,
+) -> Result<BooleanResult, BooleanError> {
+    let context = BooleanContext::admit(map, first, second, operation, options)?;
+    map.transaction(|edit| {
+        if first == second {
+            if operation == BooleanOperation::Difference {
+                return Err(BooleanError::EmptyResult);
+            }
+            let cells = operand_cells(edit, BooleanOperand::Solid(first))?;
+            return Ok(BooleanResult {
+                operation,
+                solid: first,
+                lineage: BooleanResultLineage {
+                    first: lineage_for(&cells, &HashMap::new(), &HashMap::new()),
+                    second: BooleanLineage::default(),
+                    span_edges: HashMap::new(),
+                    discarded_faces: Vec::new(),
+                },
+                diagnostics: BooleanDiagnostics {
+                    tolerances: context.tolerances,
+                    ..Default::default()
+                },
+            });
+        }
+        let plan = compute_boolean_intersections(
+            edit,
+            BooleanOperand::Solid(first),
+            BooleanOperand::Solid(second),
+            context.options,
+        )?;
+        if !plan.diagnostics.coverage.is_empty()
+            || plan.diagnostics.branches_uncertified > 0
+            || !plan.diagnostics.unresolved_overlaps.is_empty()
+        {
+            return Err(BooleanError::IncompleteIntersections {
+                diagnostics: Box::new(plan.diagnostics),
+            });
+        }
+        let mut prepared = apply_boolean_splits_staged(edit, plan, false)?;
+        let graph = neighborhood::FragmentGraph::build(edit, &prepared);
+        let (classes, rays) = classify::run(edit, &graph, context.options, context.tolerances)?;
+        prepared.diagnostics.classification_rays = rays;
+        let selection = select::run(operation, &graph, &classes);
+        assemble::run(edit, &context, &graph, prepared, selection)
+    })
+}
 /// A non-mutating contact plan for two operands already in one map.
 #[derive(Clone)]
 pub struct BooleanIntersectionPlan {
     pub first: BooleanOperand,
     pub second: BooleanOperand,
     pub network: IntersectionNetwork,
+    pub diagnostics: BooleanDiagnostics,
+    options: BooleanOptions,
+    face_imprints: HashMap<FaceKey, Vec<imprint::SpanImprint>>,
     first_cells: OperandCells,
     second_cells: OperandCells,
 }
 
 /// Mutable narrow-phase observations discarded after network canonicalization.
 struct IntersectionAccumulator {
+    diagnostics: BooleanDiagnostics,
     contacts: Vec<RawIntersection>,
     first_cells: OperandCells,
     second_cells: OperandCells,
@@ -95,9 +180,20 @@ pub fn compute_boolean_intersections<P: Payload>(
     second: BooleanOperand,
     options: BooleanOptions,
 ) -> Result<BooleanIntersectionPlan, BooleanError> {
+    if !options.intersections.validate() {
+        return Err(crate::geometry::IntersectionError::InvalidOptions.into());
+    }
     let first_cells = operand_cells(g, first)?;
     let second_cells = operand_cells(g, second)?;
+    let tolerances =
+        BooleanTolerances::from_cells(g, &first_cells, &second_cells, options.tolerances)?;
+    let mut options = options;
+    tolerances.apply(&mut options.intersections);
     let mut observations = IntersectionAccumulator {
+        diagnostics: BooleanDiagnostics {
+            tolerances,
+            ..Default::default()
+        },
         contacts: Vec::new(),
         first_cells,
         second_cells,
@@ -109,9 +205,28 @@ pub fn compute_boolean_intersections<P: Payload>(
     compute_edge_contacts(g, &mut observations, options)?;
     compute_edge_face_contacts(g, &mut observations, options)?;
     compute_face_contacts(g, &mut observations, options)?;
-    normalize_face_imprint_chains(g, &mut observations)?;
-    let network = build_intersection_network(g, &observations, options)?;
+    normalize_face_imprint_chains(g, &mut observations, options)?;
+    let observed_network = build_intersection_network(g, &observations, options)?;
+    let mut face_imprints = imprint::face_imprints(&observed_network);
+    let (network, subdivision) =
+        graph::finalize_network(&observed_network, tolerances.linear, tolerances.parameter)?;
+    for imprint in face_imprints.values_mut().flatten() {
+        imprint.pieces = subdivision[imprint.span.0].clone();
+        if imprint.orientation == IntersectionOrientation::Reversed {
+            for piece in &mut imprint.pieces {
+                piece.interval =
+                    Interval::new(1.0 - piece.interval.end, 1.0 - piece.interval.start);
+                piece.reversed = !piece.reversed;
+            }
+        }
+    }
+    observations.diagnostics.events = network.events().len();
+    observations.diagnostics.spans = network.spans().len();
+    observations.diagnostics.regions = network.regions().len();
     Ok(BooleanIntersectionPlan {
+        diagnostics: observations.diagnostics,
+        face_imprints,
+        options,
         first,
         second,
         network,
@@ -183,7 +298,9 @@ fn build_intersection_network<P: Payload>(
         }
     }
 
-    for (face, imprints) in &plan.face_imprints {
+    let mut faces = plan.face_imprints.iter().collect::<Vec<_>>();
+    faces.sort_by_key(|(face, _)| face.data().as_ffi());
+    for (face, imprints) in faces {
         let side = if plan.first_cells.faces.contains(face) {
             BooleanSide::First
         } else {
@@ -293,27 +410,50 @@ fn apply_boolean_splits_staged<P: Payload>(
         .iter()
         .chain(&plan.second_cells.edges)
         .copied()
-        .collect::<HashSet<_>>()
+        .collect::<BTreeSet<_>>()
     {
         let points = edge_points.get(&source).cloned().unwrap_or_default();
-        edge_lineage.insert(source, split_edge_at_points(g, source, points)?);
+        edge_lineage.insert(
+            source,
+            split_edge_at_points(g, source, points, plan.options.intersections)?,
+        );
     }
 
-    let face_imprints = imprint::face_imprints(&plan.network);
+    let face_imprints = plan.face_imprints;
     let mut face_lineage = HashMap::new();
+    let mut span_sections = HashMap::<IntersectionSpanId, [Vec<(f64, EdgeKey)>; 2]>::new();
     for source in plan
         .first_cells
         .faces
         .iter()
         .chain(&plan.second_cells.faces)
         .copied()
-        .collect::<HashSet<_>>()
+        .collect::<BTreeSet<_>>()
     {
         let imprints = face_imprints.get(&source).cloned().unwrap_or_default();
-        let splits = split_face_by_imprints_staged(g, source, &imprints)?;
+        let curves = imprints
+            .iter()
+            .map(|imprint| imprint.imprint.clone())
+            .collect::<Vec<_>>();
+        let splits = split_face_by_imprints_staged(g, source, &curves)?;
+        for section in splits.iter().flat_map(|split| &split.sections) {
+            let imprint = &imprints[section.imprint];
+            let side = match imprint.side {
+                BooleanSide::First => 0,
+                BooleanSide::Second => 1,
+            };
+            for (span, parameter, edge) in imprint::realize_section(
+                g,
+                imprint,
+                section,
+                plan.options.intersections.parameter_tolerance,
+            )? {
+                span_sections.entry(span).or_default()[side].push((parameter, edge));
+            }
+        }
         let mut fragments = vec![source];
         fragments.extend(splits.into_iter().map(|split| split.second));
-        fragments.sort_by_key(|key| format!("{key:?}"));
+        fragments.sort_by_key(|key| key.data().as_ffi());
         fragments.dedup();
         face_lineage.insert(source, fragments);
     }
@@ -326,6 +466,21 @@ fn apply_boolean_splits_staged<P: Payload>(
         imported_tool: imported_second.then_some(plan.second),
         imported_second,
         network: plan.network,
+        diagnostics: plan.diagnostics,
+        span_edges: span_sections
+            .into_iter()
+            .map(|(span, sides)| {
+                let edges = sides.map(|mut sections| {
+                    sections.sort_by(|a, b| {
+                        a.0.total_cmp(&b.0)
+                            .then_with(|| a.1.data().as_ffi().cmp(&b.1.data().as_ffi()))
+                    });
+                    sections.dedup_by_key(|section| section.1);
+                    sections.into_iter().map(|(_, edge)| edge).collect()
+                });
+                (span, edges)
+            })
+            .collect(),
         first_lineage,
         second_lineage,
     })
@@ -374,6 +529,7 @@ fn split_edge_at_points<P: Payload>(
     g: &mut TopologyEdit<'_, P>,
     source: EdgeKey,
     mut points: Vec<Point3>,
+    options: IntersectionOptions,
 ) -> Result<Vec<EdgeKey>, BooleanError> {
     let source_curve = g
         .edge(source)
@@ -386,7 +542,7 @@ fn split_edge_at_points<P: Payload>(
             .param_at(*a)
             .total_cmp(&source_curve.param_at(*b))
     });
-    points.dedup_by(|a, b| a.coincides(*b, LINEAR_TOLERANCE));
+    points.dedup_by(|a, b| a.coincides(*b, options.linear_tolerance));
 
     let mut fragments = vec![source];
     for point in points {
@@ -399,9 +555,9 @@ fn split_edge_at_points<P: Payload>(
             let end = *view.end().point().expect("edge end geometry");
             let parameter = curve.param_at(point);
             let domain = curve.parameters_between(start, end).ordered();
-            domain.contains(parameter, LINEAR_TOLERANCE)
-                && (parameter - domain.start).abs() > LINEAR_TOLERANCE
-                && (parameter - domain.end).abs() > LINEAR_TOLERANCE
+            domain.contains(parameter, options.parameter_tolerance)
+                && (parameter - domain.start).abs() > options.parameter_tolerance
+                && (parameter - domain.end).abs() > options.parameter_tolerance
         }) else {
             continue;
         };

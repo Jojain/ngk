@@ -1,6 +1,8 @@
 //! Narrow-phase geometric contact computation.
 
 use super::*;
+use super::{clip::clip_branch, trim::FaceTrimDomain};
+use crate::geometry::IntersectionCoverage;
 
 pub(super) fn compute_vertex_contacts<P: Payload>(
     g: &GMap<P>,
@@ -197,12 +199,6 @@ fn push_point_contact(
     first: BooleanCell,
     second: BooleanCell,
 ) {
-    if contacts.iter().any(|contact| {
-        matches!(contact, RawIntersection::Point { point: existing, .. }
-            if existing.coincides(point, LINEAR_TOLERANCE))
-    }) {
-        return;
-    }
     contacts.push(RawIntersection::Point {
         point,
         first,
@@ -272,17 +268,12 @@ fn intersect_edge_face<P: Payload>(
                 } else {
                     (BooleanCell::Face(face_key), BooleanCell::Edge(edge_key))
                 };
-                if !plan.contacts.iter().any(|existing| {
-                    matches!(existing, RawIntersection::Point { point: other, .. }
-                        if other.coincides(point, LINEAR_TOLERANCE))
-                }) {
-                    plan.contacts.push(RawIntersection::Point {
-                        point,
-                        first,
-                        second,
-                        kind,
-                    });
-                }
+                plan.contacts.push(RawIntersection::Point {
+                    point,
+                    first,
+                    second,
+                    kind,
+                });
             }
             CurveSurfaceIntersection::Overlap { curve_interval } => {
                 // Boundary-edge contacts already appear in edge/edge dispatch.
@@ -317,9 +308,15 @@ pub(super) fn compute_face_contacts<P: Payload>(
     plan: &mut IntersectionAccumulator,
     options: BooleanOptions,
 ) -> Result<(), BooleanError> {
-    let candidates =
-        broad_phase::candidate_face_pairs(&plan.first_cells.faces, &plan.second_cells.faces);
-    for (first, second) in candidates {
+    let candidates = broad_phase::candidate_face_pairs(
+        g,
+        &plan.first_cells.faces,
+        &plan.second_cells.faces,
+        options.intersections.bbox_tolerance,
+    );
+    plan.diagnostics.candidate_pairs_tested = candidates.pairs.len();
+    plan.diagnostics.candidate_pairs_pruned = candidates.pruned;
+    for (first, second) in candidates.pairs {
         intersect_face_pair(g, plan, first, second, options)?;
     }
     Ok(())
@@ -333,11 +330,16 @@ pub(super) fn compute_face_contacts<P: Payload>(
 pub(super) fn normalize_face_imprint_chains<P: Payload>(
     g: &GMap<P>,
     plan: &mut IntersectionAccumulator,
+    options: BooleanOptions,
 ) -> Result<(), BooleanError> {
     let face_keys = plan.face_imprints.keys().copied().collect::<Vec<_>>();
     for face_key in face_keys {
         let imprints = plan.face_imprints.remove(&face_key).unwrap_or_default();
-        if imprints.len() < 2 {
+        if imprints.len() < 2
+            || imprints
+                .iter()
+                .any(|imprint| !matches!(imprint.curve.base(), Curve::Line(_)))
+        {
             plan.face_imprints.insert(face_key, imprints);
             continue;
         }
@@ -345,8 +347,16 @@ pub(super) fn normalize_face_imprint_chains<P: Payload>(
         let mut nodes = Vec::<Point2>::new();
         let mut edges = Vec::<(usize, usize, usize)>::new();
         for (index, imprint) in imprints.iter().enumerate() {
-            let start = graph_node(&mut nodes, imprint.pcurve.point_at(0.0));
-            let end = graph_node(&mut nodes, imprint.pcurve.point_at(1.0));
+            let start = graph_node(
+                &mut nodes,
+                imprint.pcurve.point_at(0.0),
+                options.intersections.parameter_tolerance,
+            );
+            let end = graph_node(
+                &mut nodes,
+                imprint.pcurve.point_at(1.0),
+                options.intersections.parameter_tolerance,
+            );
             edges.push((start, end, index));
         }
 
@@ -364,14 +374,23 @@ pub(super) fn normalize_face_imprint_chains<P: Payload>(
                 *degree.entry(start).or_default() += 1;
                 *degree.entry(end).or_default() += 1;
             }
-            let endpoints = degree
+            let mut endpoints = degree
                 .iter()
                 .filter_map(|(node, degree)| (*degree == 1).then_some(*node))
                 .collect::<Vec<_>>();
+            endpoints.sort_unstable();
             let is_open_chain = endpoints.len() == 2 && degree.values().all(|value| *value <= 2);
             if !is_open_chain
-                || !point_on_face_boundary(&face, nodes[endpoints[0]])
-                || !point_on_face_boundary(&face, nodes[endpoints[1]])
+                || !point_on_face_boundary(
+                    &face,
+                    nodes[endpoints[0]],
+                    options.intersections.parameter_tolerance,
+                )
+                || !point_on_face_boundary(
+                    &face,
+                    nodes[endpoints[1]],
+                    options.intersections.parameter_tolerance,
+                )
             {
                 normalized.extend(
                     component
@@ -401,10 +420,10 @@ pub(super) fn normalize_face_imprint_chains<P: Payload>(
     Ok(())
 }
 
-fn graph_node(nodes: &mut Vec<Point2>, point: Point2) -> usize {
+fn graph_node(nodes: &mut Vec<Point2>, point: Point2, tolerance: f64) -> usize {
     if let Some(index) = nodes
         .iter()
-        .position(|existing| (*existing - point).norm() <= LINEAR_TOLERANCE)
+        .position(|existing| (*existing - point).norm() <= tolerance)
     {
         index
     } else {
@@ -437,7 +456,8 @@ fn order_chain(start: usize, component: &[usize], edges: &[(usize, usize, usize)
     while let Some(edge_index) = unused
         .iter()
         .copied()
-        .find(|index| edges[*index].0 == current || edges[*index].1 == current)
+        .filter(|index| edges[*index].0 == current || edges[*index].1 == current)
+        .min()
     {
         unused.remove(&edge_index);
         let edge = edges[edge_index];
@@ -450,10 +470,11 @@ fn order_chain(start: usize, component: &[usize], edges: &[(usize, usize, usize)
 fn point_on_face_boundary<P: Payload>(
     face: &crate::topology::face::Face<'_, P>,
     point: Point2,
+    tolerance: f64,
 ) -> bool {
     face.edges().into_iter().any(|edge| {
         face.pcurve(edge.dart())
-            .and_then(|pcurve| pcurve.parameter_at(point, LINEAR_TOLERANCE))
+            .and_then(|pcurve| pcurve.parameter_at(point, tolerance))
             .is_some()
     })
 }
@@ -524,10 +545,16 @@ fn intersect_face_pair<P: Payload>(
     let second_normal = *second_plane.normal();
     let cross = first_normal.cross(&second_normal);
     let cross_squared = cross.norm_squared();
-    if cross_squared <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
+    if cross_squared <= options.intersections.angular_tolerance.powi(2) {
         let distance = (second_plane.origin() - first_plane.origin()).dot(&first_normal);
-        if distance.abs() <= LINEAR_TOLERANCE
-            && add_planar_overlap_imprints(g, plan, first_key, second_key)
+        if distance.abs() <= options.intersections.linear_tolerance
+            && add_planar_overlap_imprints(
+                g,
+                plan,
+                first_key,
+                second_key,
+                options.intersections.parameter_tolerance,
+            )
         {
             plan.contacts.push(RawIntersection::Region {
                 first_face: first_key,
@@ -544,14 +571,24 @@ fn intersect_face_pair<P: Payload>(
         (first_offset * second_normal.cross(&cross) + second_offset * cross.cross(&first_normal))
             / cross_squared,
     );
-    let first_intervals = line_intervals_in_face(&first, line_point, direction);
-    let second_intervals = line_intervals_in_face(&second, line_point, direction);
+    let first_intervals = line_intervals_in_face(
+        &first,
+        line_point,
+        direction,
+        options.intersections.parameter_tolerance,
+    );
+    let second_intervals = line_intervals_in_face(
+        &second,
+        line_point,
+        direction,
+        options.intersections.parameter_tolerance,
+    );
 
     for first_interval in first_intervals {
         for second_interval in &second_intervals {
             let start_t = first_interval.start.max(second_interval.start);
             let end_t = first_interval.end.min(second_interval.end);
-            if end_t - start_t <= LINEAR_TOLERANCE {
+            if end_t - start_t <= options.intersections.linear_tolerance {
                 continue;
             }
             let start = line_point + direction * start_t;
@@ -592,15 +629,19 @@ fn intersect_general_face_pair<P: Payload>(
         second.surface(),
         options.intersections,
     )?;
-    for contact in contacts {
+    if let IntersectionCoverage::Incomplete(reasons) = contacts.coverage() {
+        for reason in reasons {
+            if !plan.diagnostics.coverage.contains(reason) {
+                plan.diagnostics.coverage.push(*reason);
+            }
+        }
+    }
+    for contact in contacts.intersections() {
         match contact {
-            SurfaceSurfaceIntersection::Point {
-                point,
-                surface_a_u,
-                surface_a_v,
-                surface_b_u,
-                surface_b_v,
-            } => {
+            SurfaceSurfaceIntersection::Point(contact) => {
+                let point = contact.point;
+                let (surface_a_u, surface_a_v) = (contact.uv_a.x, contact.uv_a.y);
+                let (surface_b_u, surface_b_v) = (contact.uv_b.x, contact.uv_b.y);
                 if face_contains_uv(&first_loops, Point2::new(surface_a_u, surface_a_v))
                     && face_contains_uv(&second_loops, Point2::new(surface_b_u, surface_b_v))
                 {
@@ -612,72 +653,34 @@ fn intersect_general_face_pair<P: Payload>(
                     );
                 }
             }
-            SurfaceSurfaceIntersection::Curve { points } => {
-                let clipped = points
-                    .into_iter()
-                    .filter_map(|point| {
-                        let first_uv = first.surface().closest_parameter(point).ok()?;
-                        let second_uv = second.surface().closest_parameter(point).ok()?;
-                        (face_contains_uv(&first_loops, first_uv)
-                            && face_contains_uv(&second_loops, second_uv))
-                        .then_some((point, first_uv, second_uv))
-                    })
-                    .collect::<Vec<_>>();
-                if clipped.len() < 2 {
-                    continue;
+            SurfaceSurfaceIntersection::Branch(branch) => {
+                plan.diagnostics.branches_found += 1;
+                plan.diagnostics.branches_uncertified += usize::from(!branch.quality.certified);
+                let first_trim =
+                    FaceTrimDomain::new(&first, options.intersections.parameter_tolerance)?;
+                let second_trim =
+                    FaceTrimDomain::new(&second, options.intersections.parameter_tolerance)?;
+                for [first_imprint, second_imprint] in
+                    clip_branch(branch, &first_trim, &second_trim, options.intersections)?
+                {
+                    plan.face_imprints
+                        .entry(first_key)
+                        .or_default()
+                        .push(first_imprint);
+                    plan.face_imprints
+                        .entry(second_key)
+                        .or_default()
+                        .push(second_imprint);
                 }
-                let points = clipped.iter().map(|sample| sample.0).collect::<Vec<_>>();
-                let first_uvs = clipped.iter().map(|sample| sample.1).collect::<Vec<_>>();
-                let second_uvs = clipped.iter().map(|sample| sample.2).collect::<Vec<_>>();
-                let (curve, first_pcurve, second_pcurve) =
-                    synchronized_interpolation(&points, &first_uvs, &second_uvs)?;
-                plan.face_imprints
-                    .entry(first_key)
-                    .or_default()
-                    .push(FaceImprint::new(curve.clone(), first_pcurve.clone()));
-                plan.face_imprints
-                    .entry(second_key)
-                    .or_default()
-                    .push(FaceImprint::new(curve.clone(), second_pcurve.clone()));
             }
-            SurfaceSurfaceIntersection::Region => {
-                plan.contacts.push(RawIntersection::Region {
-                    first_face: first_key,
-                    second_face: second_key,
-                });
+            SurfaceSurfaceIntersection::OverlapCandidate(_) => {
+                plan.diagnostics
+                    .unresolved_overlaps
+                    .push((first_key, second_key));
             }
         }
     }
     Ok(())
-}
-
-fn synchronized_interpolation(
-    points: &[Point3],
-    first_uvs: &[Point2],
-    second_uvs: &[Point2],
-) -> Result<(Curve, Curve2, Curve2), NurbsError> {
-    if points.len() == 2 {
-        return Ok((
-            Curve::line(points[0], points[1]),
-            Curve2::Line(Line2::new(first_uvs[0], first_uvs[1])),
-            Curve2::Line(Line2::new(second_uvs[0], second_uvs[1])),
-        ));
-    }
-    let parameters = chord_parameters(points);
-    Ok((
-        Curve::Nurbs(NurbsCurve::interpolate_with_parameters(
-            points,
-            &parameters,
-        )?),
-        Curve2::Nurbs(NurbsCurve2::interpolate_with_parameters(
-            first_uvs,
-            &parameters,
-        )?),
-        Curve2::Nurbs(NurbsCurve2::interpolate_with_parameters(
-            second_uvs,
-            &parameters,
-        )?),
-    ))
 }
 
 /// Overlays two coplanar convex outer loops and imprints the non-boundary part
@@ -687,6 +690,7 @@ fn add_planar_overlap_imprints<P: Payload>(
     plan: &mut IntersectionAccumulator,
     first_key: FaceKey,
     second_key: FaceKey,
+    tolerance: f64,
 ) -> bool {
     let first = g.face_unchecked(first_key);
     let second = g.face_unchecked(second_key);
@@ -700,12 +704,12 @@ fn add_planar_overlap_imprints<P: Payload>(
         .into_iter()
         .map(|uv| first_plane.parameter_at(second.point_at(uv.x, uv.y)))
         .collect::<Vec<_>>();
-    let overlap = clip_convex_polygon(second_in_first, &first_polygon);
-    if overlap.len() < 3 || signed_area2(&overlap).abs() <= LINEAR_TOLERANCE {
+    let overlap = clip_convex_polygon(second_in_first, &first_polygon, tolerance);
+    if overlap.len() < 3 || signed_area2(&overlap).abs() <= tolerance {
         return false;
     }
 
-    let first_imprints = overlap_segments_for_face(&first, &overlap);
+    let first_imprints = overlap_segments_for_face(&first, &overlap, tolerance);
     let overlap_second = overlap
         .iter()
         .map(|uv| {
@@ -713,7 +717,7 @@ fn add_planar_overlap_imprints<P: Payload>(
             second_plane.parameter_at(point)
         })
         .collect::<Vec<_>>();
-    let second_imprints = overlap_segments_for_face(&second, &overlap_second);
+    let second_imprints = overlap_segments_for_face(&second, &overlap_second, tolerance);
     plan.face_imprints
         .entry(first_key)
         .or_default()
@@ -736,6 +740,7 @@ fn face_outer_corners_uv<P: Payload>(face: &crate::topology::face::Face<'_, P>) 
 fn overlap_segments_for_face<P: Payload>(
     face: &crate::topology::face::Face<'_, P>,
     polygon: &[Point2],
+    tolerance: f64,
 ) -> Vec<FaceImprint> {
     polygon
         .iter()
@@ -743,11 +748,11 @@ fn overlap_segments_for_face<P: Payload>(
         .zip(polygon.iter().copied().cycle().skip(1))
         .take(polygon.len())
         .filter_map(|(start_uv, end_uv)| {
-            if (end_uv - start_uv).norm() <= LINEAR_TOLERANCE {
+            if (end_uv - start_uv).norm() <= tolerance {
                 return None;
             }
             let midpoint = Point2::from((start_uv.coords + end_uv.coords) * 0.5);
-            if point_on_face_boundary(face, midpoint) {
+            if point_on_face_boundary(face, midpoint, tolerance) {
                 return None;
             }
             let start = face.point_at(start_uv.x, start_uv.y);
@@ -760,7 +765,7 @@ fn overlap_segments_for_face<P: Payload>(
         .collect()
 }
 
-fn clip_convex_polygon(mut subject: Vec<Point2>, clip: &[Point2]) -> Vec<Point2> {
+fn clip_convex_polygon(mut subject: Vec<Point2>, clip: &[Point2], tolerance: f64) -> Vec<Point2> {
     if subject.len() < 3 || clip.len() < 3 {
         return Vec::new();
     }
@@ -777,13 +782,13 @@ fn clip_convex_polygon(mut subject: Vec<Point2>, clip: &[Point2]) -> Vec<Point2>
             break;
         };
         let mut previous_inside =
-            polygon_half_plane_contains(clip_start, clip_end, previous, orientation);
+            polygon_half_plane_contains(clip_start, clip_end, previous, orientation, tolerance);
         for current in input {
             let current_inside =
-                polygon_half_plane_contains(clip_start, clip_end, current, orientation);
+                polygon_half_plane_contains(clip_start, clip_end, current, orientation, tolerance);
             if current_inside != previous_inside
                 && let Some(intersection) =
-                    segment_line_intersection(previous, current, clip_start, clip_end)
+                    segment_line_intersection(previous, current, clip_start, clip_end, tolerance)
             {
                 subject.push(intersection);
             }
@@ -794,7 +799,7 @@ fn clip_convex_polygon(mut subject: Vec<Point2>, clip: &[Point2]) -> Vec<Point2>
             previous_inside = current_inside;
         }
     }
-    dedup_polygon(subject)
+    dedup_polygon(subject, tolerance)
 }
 
 fn polygon_half_plane_contains(
@@ -802,8 +807,9 @@ fn polygon_half_plane_contains(
     edge_end: Point2,
     point: Point2,
     orientation: f64,
+    tolerance: f64,
 ) -> bool {
-    cross2(edge_end - edge_start, point - edge_start) * orientation >= -LINEAR_TOLERANCE
+    cross2(edge_end - edge_start, point - edge_start) * orientation >= -tolerance
 }
 
 fn segment_line_intersection(
@@ -811,29 +817,30 @@ fn segment_line_intersection(
     segment_end: Point2,
     line_start: Point2,
     line_end: Point2,
+    tolerance: f64,
 ) -> Option<Point2> {
     let segment = segment_end - segment_start;
     let line = line_end - line_start;
     let denominator = cross2(segment, line);
-    if denominator.abs() <= LINEAR_TOLERANCE {
+    if denominator.abs() <= tolerance {
         return None;
     }
     let parameter = cross2(line_start - segment_start, line) / denominator;
     Some(segment_start + segment * parameter)
 }
 
-fn dedup_polygon(points: Vec<Point2>) -> Vec<Point2> {
+fn dedup_polygon(points: Vec<Point2>, tolerance: f64) -> Vec<Point2> {
     let mut deduped = Vec::<Point2>::new();
     for point in points {
         if deduped
             .last()
-            .is_none_or(|previous| (*previous - point).norm() > LINEAR_TOLERANCE)
+            .is_none_or(|previous| (*previous - point).norm() > tolerance)
         {
             deduped.push(point);
         }
     }
     if deduped.len() > 1
-        && (deduped[0] - *deduped.last().expect("non-empty polygon")).norm() <= LINEAR_TOLERANCE
+        && (deduped[0] - *deduped.last().expect("non-empty polygon")).norm() <= tolerance
     {
         deduped.pop();
     }
@@ -853,6 +860,7 @@ fn line_intervals_in_face<P: Payload>(
     face: &crate::topology::face::Face<'_, P>,
     line_point: Point3,
     direction: nalgebra::Vector3<f64>,
+    tolerance: f64,
 ) -> Vec<Interval> {
     let origin_uv = face
         .surface()
@@ -872,14 +880,14 @@ fn line_intervals_in_face<P: Payload>(
             .take(loop_.len())
         {
             if let Some(parameter) =
-                line_segment_parameter(origin_uv, direction_uv, *segment.0, *segment.1)
+                line_segment_parameter(origin_uv, direction_uv, *segment.0, *segment.1, tolerance)
             {
                 parameters.push(parameter);
             }
         }
     }
     parameters.sort_by(f64::total_cmp);
-    parameters.dedup_by(|a, b| (*a - *b).abs() <= LINEAR_TOLERANCE);
+    parameters.dedup_by(|a, b| (*a - *b).abs() <= tolerance);
     parameters
         .windows(2)
         .filter_map(|pair| {
@@ -913,16 +921,17 @@ fn line_segment_parameter(
     line_direction: Vector2<f64>,
     segment_start: Point2,
     segment_end: Point2,
+    tolerance: f64,
 ) -> Option<f64> {
     let segment_direction = segment_end - segment_start;
     let denominator = cross2(line_direction, segment_direction);
-    if denominator.abs() <= LINEAR_TOLERANCE {
+    if denominator.abs() <= tolerance {
         return None;
     }
     let delta = segment_start - line_origin;
     let line_t = cross2(delta, segment_direction) / denominator;
     let segment_t = cross2(delta, line_direction) / denominator;
-    (-LINEAR_TOLERANCE..=1.0 + LINEAR_TOLERANCE)
+    (-tolerance..=1.0 + tolerance)
         .contains(&segment_t)
         .then_some(line_t)
 }

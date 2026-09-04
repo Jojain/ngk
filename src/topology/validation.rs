@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use nalgebra::Vector3;
 use thiserror::Error;
 
-use crate::geometry::{Curve2, LINEAR_TOLERANCE, Point2};
+use crate::geometry::{Curve2, LINEAR_TOLERANCE, Point2, Surface};
 use crate::topology::closed::Closed;
 
 use super::attributes::FaceAttr;
@@ -212,6 +212,19 @@ fn validate_shell_orientation<P: Payload>(
     shell: Dart,
     side: ShellSide,
 ) -> Result<(), GMapValidationError> {
+    let sheet = Sheet::from_dart(g, shell).expect("validated shell registration");
+    if sheet.faces().iter().all(|face| {
+        matches!(face.surface(), Surface::Plane(_))
+            && face.edges().iter().all(|edge| {
+                edge.curve().is_some_and(|curve| {
+                    curve
+                        .to_nurbs()
+                        .is_ok_and(|nurbs| nurbs.degree().get() == 1)
+                })
+            })
+    }) {
+        return validate_polygon_shell_orientation(g, solid, shell, side);
+    }
     let shell_darts = Sheet::from_dart(g, shell)
         .expect("solid shell must have a registered sheet")
         .darts()
@@ -246,6 +259,75 @@ fn validate_shell_orientation<P: Payload>(
     Ok(())
 }
 
+/// Checks local winding and global signed volume without a star-shaped-shell assumption.
+fn validate_polygon_shell_orientation<P: Payload>(
+    g: &GMap<P>,
+    solid: SolidKey,
+    shell: Dart,
+    side: ShellSide,
+) -> Result<(), GMapValidationError> {
+    let faces = Sheet::from_dart(g, shell)
+        .expect("validated shell")
+        .faces()
+        .into_iter()
+        .map(|face| g.face_unchecked(face.key()))
+        .collect::<Vec<_>>();
+    let mut directed = HashSet::new();
+    let mut volume = 0.0;
+    let reference = faces[0].vertices()[0].point().copied().ok_or(
+        GMapValidationError::SolidFaceOrientationUnavailable {
+            solid,
+            shell,
+            face: faces[0].key(),
+        },
+    )?;
+    for face in &faces {
+        for boundary in face.loops() {
+            let mut points = Vec::new();
+            for edge in boundary.edges() {
+                directed.insert(edge.dart());
+                points.push(edge.start().point().copied().ok_or(
+                    GMapValidationError::SolidFaceOrientationUnavailable {
+                        solid,
+                        shell,
+                        face: face.key(),
+                    },
+                )?);
+            }
+            for pair in points[1..].windows(2) {
+                volume += (points[0] - reference)
+                    .dot(&(pair[0] - reference).cross(&(pair[1] - reference)))
+                    / 6.0;
+            }
+        }
+    }
+    for face in &faces {
+        for boundary in face.loops() {
+            for edge in boundary.edges() {
+                if !directed.contains(&g.alpha(Dim::Zero, g.alpha(Dim::Two, edge.dart()))) {
+                    return Err(GMapValidationError::SolidFaceNormalNotOutward {
+                        solid,
+                        shell,
+                        face: face.key(),
+                    });
+                }
+            }
+        }
+    }
+    let valid = volume.is_finite()
+        && match side {
+            ShellSide::Outer => volume > 0.0,
+            ShellSide::Inner => volume < 0.0,
+        };
+    if !valid {
+        return Err(GMapValidationError::SolidFaceNormalNotOutward {
+            solid,
+            shell,
+            face: faces[0].key(),
+        });
+    }
+    Ok(())
+}
 #[derive(Clone, Copy)]
 enum ShellSide {
     Outer,

@@ -136,11 +136,21 @@ fn edge_curve<'a, P: Payload>(edge: &'a Edge<'_, P>) -> Result<&'a Curve, Missin
     edge.curve().ok_or(MissingEdgeCurve(edge.dart()))
 }
 
+/// A section edge and its directed interval on the original input imprint.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FaceImprintSection {
+    pub edge: EdgeKey,
+    /// Index in the input slice passed to the splitter.
+    pub imprint: usize,
+    /// Source parameters at the start and end of the stored edge.
+    pub interval: Interval,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FaceImprintSplit {
     pub first: FaceKey,
     pub second: FaceKey,
-    pub section_edges: Vec<EdgeKey>,
+    pub sections: Vec<FaceImprintSection>,
 }
 
 /// Paired model-space and face-parameter-space geometry for a face imprint.
@@ -586,6 +596,8 @@ pub fn split_face_by_imprints_staged<P: Payload>(
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
+    let (closed_indices, open_indices): (Vec<_>, Vec<_>) =
+        (0..imprints.len()).partition(|&index| imprints[index].pcurve.is_closed());
     let (closed_imprints, open_imprints) = imprints.iter().fold(
         (Vec::new(), Vec::new()),
         |(mut closed, mut open), imprint| {
@@ -613,9 +625,19 @@ pub fn split_face_by_imprints_staged<P: Payload>(
     let graph = FaceImprintGraph::from_curves(&pcurves)?;
     split_imprint_boundary_endpoints(g, face, imprints)?;
     let mut splits = add_closed_curve_imprint_loops(g, face, &closed_imprints)?;
-    splits.extend(add_closed_imprint_loops(g, face, &graph, &open_imprints)?);
-    splits.extend(split_open_imprints(g, vec![face], &open_imprints)?);
+    remap_section_indices(&mut splits, &closed_indices);
+    let mut open_splits = add_closed_imprint_loops(g, face, &graph, &open_imprints)?;
+    open_splits.extend(split_open_imprints(g, vec![face], &open_imprints)?);
+    remap_section_indices(&mut open_splits, &open_indices);
+    splits.extend(open_splits);
     Ok(splits)
+}
+
+/// Restores original input indices after partitioning closed and open curves.
+fn remap_section_indices(splits: &mut [FaceImprintSplit], indices: &[usize]) {
+    for section in splits.iter_mut().flat_map(|split| &mut split.sections) {
+        section.imprint = indices[section.imprint];
+    }
 }
 
 fn split_open_imprints<P: Payload>(
@@ -690,9 +712,9 @@ fn split_periodic_face_by_imprints<P: Payload>(
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
     split_imprint_boundary_endpoints(g, face, imprints)?;
     let splits = split_open_imprints(g, vec![face], imprints)?;
-    let section_edges = splits
+    let sections = splits
         .iter()
-        .flat_map(|split| split.section_edges.iter().copied())
+        .flat_map(|split| split.sections.iter().cloned())
         .collect::<Vec<_>>();
     let seam_faces = g
         .edge(seam)
@@ -729,7 +751,7 @@ fn split_periodic_face_by_imprints<P: Payload>(
     Ok(vec![FaceImprintSplit {
         first,
         second,
-        section_edges,
+        sections,
     }])
 }
 
@@ -1096,7 +1118,7 @@ fn add_closed_curve_imprint_loops<P: Payload>(
     let boundary_area = signed_area(&boundary_uvs);
     let mut splits = Vec::new();
 
-    for imprint in imprints {
+    for (index, imprint) in imprints.iter().enumerate() {
         let samples = imprint
             .pcurve
             .adaptive_samples(LINEAR_TOLERANCE, 16)
@@ -1117,7 +1139,17 @@ fn add_closed_curve_imprint_loops<P: Payload>(
         } else {
             (*imprint).clone()
         };
-        splits.push(split_face_by_closed_curve_imprint(g, face, &outside)?);
+        let mut split = split_face_by_closed_curve_imprint(g, face, &outside)?;
+        let reversed = boundary_area.signum() == imprint_area.signum();
+        for section in &mut split.sections {
+            section.imprint = index;
+            section.interval = if reversed {
+                Interval::new(1.0, 0.0)
+            } else {
+                Interval::new(0.0, 1.0)
+            };
+        }
+        splits.push(split);
     }
     Ok(splits)
 }
@@ -1174,8 +1206,30 @@ fn add_closed_imprint_loops<P: Payload>(
             continue;
         }
 
-        orient_imprint_loop_against_boundary(&boundary_uvs, &mut loop_imprints)?;
-        splits.push(split_face_by_closed_imprint_loop(g, face, &loop_imprints)?);
+        let mut provenance = component
+            .iter()
+            .map(|oriented| {
+                let edge = &graph.edges[oriented.edge];
+                let interval = if oriented.reversed {
+                    Interval::new(edge.interval.end, edge.interval.start)
+                } else {
+                    edge.interval
+                };
+                (edge.source_curve, interval)
+            })
+            .collect::<Vec<_>>();
+        if orient_imprint_loop_against_boundary(&boundary_uvs, &mut loop_imprints)? {
+            provenance.reverse();
+            for (_, interval) in &mut provenance {
+                *interval = Interval::new(interval.end, interval.start);
+            }
+        }
+        let mut split = split_face_by_closed_imprint_loop(g, face, &loop_imprints)?;
+        for (section, (imprint, interval)) in split.sections.iter_mut().zip(provenance) {
+            section.imprint = imprint;
+            section.interval = interval;
+        }
+        splits.push(split);
     }
 
     Ok(splits)
@@ -1234,7 +1288,15 @@ fn finish_closed_imprint_split<P: Payload>(
     Ok(FaceImprintSplit {
         first: face,
         second,
-        section_edges,
+        sections: section_edges
+            .into_iter()
+            .enumerate()
+            .map(|(imprint, edge)| FaceImprintSection {
+                edge,
+                imprint,
+                interval: Interval::new(0.0, 1.0),
+            })
+            .collect(),
     })
 }
 
@@ -1362,7 +1424,7 @@ fn matching_reversed_loop_edge(
 fn orient_imprint_loop_against_boundary(
     boundary_uvs: &[Point2],
     imprints: &mut Vec<FaceImprint>,
-) -> Result<(), NurbsError> {
+) -> Result<bool, NurbsError> {
     let boundary_area = signed_area(boundary_uvs);
     let loop_uvs = imprints
         .iter()
@@ -1371,13 +1433,14 @@ fn orient_imprint_loop_against_boundary(
     let loop_area = signed_area(&loop_uvs);
 
     if boundary_area.abs() <= LINEAR_TOLERANCE || loop_area.abs() <= LINEAR_TOLERANCE {
-        return Ok(());
+        return Ok(false);
     }
 
     if boundary_area.signum() == loop_area.signum() {
         *imprints = reversed_imprint_loop(imprints)?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 fn reversed_imprint_loop(imprints: &[FaceImprint]) -> Result<Vec<FaceImprint>, NurbsError> {
@@ -1443,10 +1506,9 @@ fn split_one_face_by_imprints<P: Payload>(
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
 
     let boundary_uvs = face_boundary_uvs(g, face)?;
-    let Some(cut) = imprints
-        .iter()
-        .find_map(|imprint| FaceImprintCut::from_imprint(imprint, &boundary_uvs))
-    else {
+    let Some((index, cut)) = imprints.iter().enumerate().find_map(|(index, imprint)| {
+        FaceImprintCut::from_imprint(imprint, &boundary_uvs).map(|cut| (index, cut))
+    }) else {
         return Ok(None);
     };
 
@@ -1455,7 +1517,9 @@ fn split_one_face_by_imprints<P: Payload>(
     }
 
     let old_face = face_attr.clone();
-    Ok(Some(apply_outer_face_chord_split(g, face, old_face, &cut)?))
+    let mut split = apply_outer_face_chord_split(g, face, old_face, &cut)?;
+    split.sections[0].imprint = index;
+    Ok(Some(split))
 }
 
 /// Adds a planar disk face bounded by one circular edge.
@@ -1729,7 +1793,11 @@ fn apply_outer_face_chord_split<P: Payload>(
     Ok(FaceImprintSplit {
         first: original_face,
         second,
-        section_edges: vec![section_edge],
+        sections: vec![FaceImprintSection {
+            edge: section_edge,
+            imprint: 0,
+            interval: Interval::new(0.0, 1.0),
+        }],
     })
 }
 

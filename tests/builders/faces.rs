@@ -225,8 +225,8 @@ fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
     assert_eq!(g.iter_faces().count(), 2);
     assert_eq!(g.iter_edges().count(), 5);
     assert_eq!(g.iter_vertices().count(), 4);
-    assert_eq!(splits[0].section_edges.len(), 1);
-    assert!(g.edge_attr(splits[0].section_edges[0]).is_some());
+    assert_eq!(splits[0].sections.len(), 1);
+    assert!(g.edge_attr(splits[0].sections[0].edge).is_some());
 
     for face in [splits[0].first, splits[0].second] {
         let attr = g.face_attr_unchecked(face);
@@ -258,8 +258,8 @@ fn split_face_by_imprints_deduplicates_reversed_boundary_chords() {
     .expect("face imprint split should run");
 
     assert_eq!(splits.len(), 1);
-    assert_eq!(splits[0].section_edges.len(), 1);
-    assert!(g.edge_attr(splits[0].section_edges[0]).is_some());
+    assert_eq!(splits[0].sections.len(), 1);
+    assert!(g.edge_attr(splits[0].sections[0].edge).is_some());
     assert_eq!(g.iter_faces().count(), 2);
     assert_eq!(g.iter_edges().count(), 5);
 }
@@ -377,12 +377,12 @@ fn split_face_by_imprints_adds_closed_interior_loop() {
 
     assert_eq!(splits.len(), 1);
     assert_eq!(splits[0].first, face_key);
-    assert_eq!(splits[0].section_edges.len(), 4);
+    assert_eq!(splits[0].sections.len(), 4);
     assert!(
         splits[0]
-            .section_edges
+            .sections
             .iter()
-            .all(|edge| g.edge_attr(*edge).is_some())
+            .all(|section| g.edge_attr(section.edge).is_some())
     );
     assert_eq!(g.iter_faces().count(), 2);
     assert_eq!(g.iter_edges().count(), 8);
@@ -498,7 +498,7 @@ fn split_face_by_imprints_preserves_curved_section_edge_geometry() {
 
     let splits = split_face_by_imprints(&mut g, face_key, &[planar_imprint(pcurve)])
         .expect("curved face imprint should split");
-    let edge = g.edge_attr_unchecked(splits[0].section_edges[0]);
+    let edge = g.edge_attr_unchecked(splits[0].sections[0].edge);
 
     assert!(matches!(edge.curve, Curve::Nurbs(_)));
 }
@@ -537,12 +537,12 @@ fn split_face_preserves_curved_loop() {
 
     show(&g);
     assert_eq!(splits.len(), 1);
-    assert_eq!(splits[0].section_edges.len(), 4);
+    assert_eq!(splits[0].sections.len(), 4);
     assert!(
         splits[0]
-            .section_edges
+            .sections
             .iter()
-            .all(|edge| { matches!(g.edge_attr_unchecked(*edge).curve, Curve::Nurbs(_)) })
+            .all(|edge| { matches!(g.edge_attr_unchecked(edge.edge).curve, Curve::Nurbs(_)) })
     );
 }
 
@@ -565,9 +565,9 @@ fn split_face_by_imprints_preserves_closed_nurbs_as_single_curved_edge() {
         .expect("closed curved imprint should split");
 
     assert_eq!(splits.len(), 1);
-    assert_eq!(splits[0].section_edges.len(), 1);
+    assert_eq!(splits[0].sections.len(), 1);
     assert!(matches!(
-        g.edge_attr_unchecked(splits[0].section_edges[0]).curve,
+        g.edge_attr_unchecked(splits[0].sections[0].edge).curve,
         Curve::Nurbs(_)
     ));
     assert_eq!(
@@ -630,4 +630,46 @@ fn edge_between_points(g: &GMap<StandardPayload>, first: Point3, second: Point3)
             .then_some(key)
         })
         .expect("edge should connect the requested points")
+}
+
+#[test]
+fn imprint_sections_retain_source_indices_and_directed_intervals() {
+    let mut g = GMap::<StandardPayload>::new();
+    let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
+    let points = [
+        Point2::new(1.0, 1.0),
+        Point2::new(3.0, 1.0),
+        Point2::new(3.0, 3.0),
+        Point2::new(1.0, 3.0),
+        Point2::new(1.0, 1.0),
+    ];
+    let imprints = points
+        .windows(2)
+        .map(|pair| planar_imprint(Curve2::Line(Line2::new(pair[0], pair[1]))))
+        .collect::<Vec<_>>();
+    let splits = split_face_by_imprints(&mut g, face, &imprints).unwrap();
+    let sections = &splits[0].sections;
+    assert_eq!(sections.len(), 4);
+    let mut indices = sections
+        .iter()
+        .map(|section| section.imprint)
+        .collect::<Vec<_>>();
+    indices.sort_unstable();
+    assert_eq!(indices, vec![0, 1, 2, 3]);
+    for section in sections {
+        let edge = g.edge_unchecked(section.edge);
+        let source = &imprints[section.imprint].curve;
+        assert!(
+            edge.start()
+                .point()
+                .unwrap()
+                .coincides(source.point_at(section.interval.start), LINEAR_TOLERANCE)
+        );
+        assert!(
+            edge.end()
+                .point()
+                .unwrap()
+                .coincides(source.point_at(section.interval.end), LINEAR_TOLERANCE)
+        );
+    }
 }

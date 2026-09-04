@@ -1,10 +1,13 @@
 use nalgebra::Vector3;
+use ngk::builders::boolean::compute_boolean_intersections;
 use ngk::builders::boolean::{
     BooleanCell, BooleanOperand, BooleanOptions, BooleanSide, IntersectionSpanUse, prepare_boolean,
     prepare_boolean_with_external_tool,
 };
 use ngk::builders::edges::add_line;
+use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints};
 use ngk::builders::solids::add_extruded_face;
+use ngk::geometry::{Curve, Curve2, Line2, Point2, Surface};
 use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
 use ngk::modeling::{edges, faces};
 use ngk::topology::TopologyEditError;
@@ -13,6 +16,7 @@ use ngk::topology::gmap::GMap;
 use ngk::topology::shape_keys::SolidKey;
 use ngk::topology::shape_keys::VertexKey;
 use ngk::topology::validation::{validate_gmap, validate_solid_manifold};
+use ngk::viz::debug_viewer::show;
 
 fn isolated_vertex(point: Point3) -> (GMap<ngk::StandardPayload>, VertexKey) {
     let mut map = GMap::new();
@@ -443,4 +447,384 @@ fn block_at(
     let solid =
         add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, size)).expect("block extrusion");
     (map, solid)
+}
+
+#[test]
+fn nurbs_face_intersection_does_not_bridge_an_inner_loop() {
+    let mut map = GMap::<ngk::StandardPayload>::new();
+    let first = add_rectangle(&mut map, Plane::xy(), 1.0, 1.0).unwrap();
+    let points = [
+        Point2::new(0.4, 0.4),
+        Point2::new(0.6, 0.4),
+        Point2::new(0.6, 0.6),
+        Point2::new(0.4, 0.6),
+        Point2::new(0.4, 0.4),
+    ];
+    let imprints = points
+        .windows(2)
+        .map(|pair| {
+            FaceImprint::new(
+                Curve::line(
+                    Point3::new(pair[0].x, pair[0].y, 0.0),
+                    Point3::new(pair[1].x, pair[1].y, 0.0),
+                ),
+                Curve2::Line(Line2::new(pair[0], pair[1])),
+            )
+        })
+        .collect::<Vec<_>>();
+    split_face_by_imprints(&mut map, first, &imprints).unwrap();
+    let plane = Plane::from_xy(Point3::new(0.0, 0.5, -0.5), Vector3::x(), Vector3::z());
+    let second = add_rectangle(&mut map, plane, 1.0, 1.0).unwrap();
+    map.transaction(|edit| {
+        for face in [first, second] {
+            let attr = edit.face_attr_mut(face).unwrap();
+            attr.surface = Surface::Nurbs(attr.surface.to_nurbs().unwrap());
+        }
+        Ok::<_, TopologyEditError>(())
+    })
+    .unwrap();
+    let plan = compute_boolean_intersections(
+        &map,
+        BooleanOperand::Face(first),
+        BooleanOperand::Face(second),
+        BooleanOptions::default(),
+    )
+    .unwrap();
+    let spans = plan.network.spans();
+    assert!(!spans.is_empty());
+    for span in spans {
+        for i in 1..100 {
+            let point = span.curve.point_at(i as f64 / 100.0);
+            assert!(
+                point.x <= 0.4 + LINEAR_TOLERANCE || point.x >= 0.6 - LINEAR_TOLERANCE,
+                "intersection bridges the hole at {point:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn separated_faces_are_pruned_before_surface_intersection() {
+    let mut map = GMap::<ngk::StandardPayload>::new();
+    let first = add_rectangle(&mut map, Plane::xy(), 1.0, 1.0).unwrap();
+    let second = add_rectangle(
+        &mut map,
+        Plane::from_xy(Point3::new(10.0, 0.0, 0.0), Vector3::x(), Vector3::y()),
+        1.0,
+        1.0,
+    )
+    .unwrap();
+    let plan = compute_boolean_intersections(
+        &map,
+        BooleanOperand::Face(first),
+        BooleanOperand::Face(second),
+        BooleanOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(plan.diagnostics.candidate_pairs_tested, 0);
+    assert_eq!(plan.diagnostics.candidate_pairs_pruned, 1);
+}
+
+#[test]
+fn intersecting_faces_retain_both_sides_of_span_lineage() {
+    let mut map = GMap::<ngk::StandardPayload>::new();
+    let first = add_rectangle(&mut map, Plane::xy(), 1.0, 1.0).unwrap();
+    let second = add_rectangle(
+        &mut map,
+        Plane::from_xy(Point3::new(0.0, 0.5, -0.5), Vector3::x(), Vector3::z()),
+        1.0,
+        1.0,
+    )
+    .unwrap();
+    let result = prepare_boolean(
+        &mut map,
+        BooleanOperand::Face(first),
+        BooleanOperand::Face(second),
+        BooleanOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(result.span_edges.len(), 1);
+    let sides = result.span_edges.values().next().unwrap();
+    assert_eq!(sides[0].len(), 1);
+    assert_eq!(sides[1].len(), 1);
+    for side in sides {
+        assert!(map.edge(side[0]).is_some());
+    }
+}
+
+#[test]
+fn planar_face_bounds_keep_every_overlap_on_a_translation_grid() {
+    for x in [-2.0, -0.5, 0.0, 0.5, 2.0] {
+        let mut map = GMap::<ngk::StandardPayload>::new();
+        let first = add_rectangle(&mut map, Plane::xy(), 1.0, 1.0).unwrap();
+        let second = add_rectangle(
+            &mut map,
+            Plane::from_xy(Point3::new(x, 0.5, -0.5), Vector3::x(), Vector3::z()),
+            1.0,
+            1.0,
+        )
+        .unwrap();
+        let plan = compute_boolean_intersections(
+            &map,
+            BooleanOperand::Face(first),
+            BooleanOperand::Face(second),
+            BooleanOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            plan.diagnostics.candidate_pairs_tested,
+            usize::from(x.abs() < 1.0)
+        );
+        assert_eq!(
+            plan.diagnostics.candidate_pairs_tested + plan.diagnostics.candidate_pairs_pruned,
+            1
+        );
+        if x.abs() < 1.0 {
+            assert!(!plan.network.spans().is_empty());
+        }
+    }
+}
+
+#[test]
+fn boolean_tolerances_scale_world_distances_but_not_parameters() {
+    use ngk::builders::boolean::{BooleanTolerancePolicy, BooleanTolerances};
+    let policy = BooleanTolerancePolicy::ModelScaled {
+        base_linear: 1.0e-8,
+    };
+    let small = BooleanTolerances::resolve(policy, 0.01).unwrap();
+    let large = BooleanTolerances::resolve(policy, 10.0).unwrap();
+    assert!((large.linear / small.linear - 1000.0).abs() < 1.0e-10);
+    assert_eq!(large.parameter, small.parameter);
+    assert_eq!(large.angular, small.angular);
+    assert_eq!(large.probe_margin, 100.0 * large.linear);
+    assert!(BooleanTolerances::resolve(policy, f64::NAN).is_err());
+}
+
+#[test]
+fn fixed_boolean_tolerances_survive_preparation_unchanged() {
+    use ngk::builders::boolean::{BooleanTolerancePolicy, BooleanTolerances};
+    let tolerances = BooleanTolerances::resolve(
+        BooleanTolerancePolicy::ModelScaled {
+            base_linear: 1.0e-7,
+        },
+        2.0,
+    )
+    .unwrap();
+    let mut options = BooleanOptions::default();
+    options.tolerances = BooleanTolerancePolicy::Fixed(tolerances);
+    let mut map = GMap::<ngk::StandardPayload>::new();
+    let first = add_line(
+        &mut map,
+        Point3::new(-1.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+    )
+    .unwrap();
+    let second = add_line(
+        &mut map,
+        Point3::new(0.0, -1.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+    )
+    .unwrap();
+    let result = prepare_boolean(
+        &mut map,
+        BooleanOperand::Edge(first),
+        BooleanOperand::Edge(second),
+        options,
+    )
+    .unwrap();
+    assert_eq!(result.diagnostics.tolerances, tolerances);
+    assert_eq!(result.first_lineage.edges[&first].len(), 2);
+}
+
+fn two_blocks(
+    first_origin: Point3,
+    first_size: f64,
+    second_origin: Point3,
+    second_size: f64,
+) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+    let (mut map, first) = block_at(first_origin, first_size);
+    let (tool, second) = block_at(second_origin, second_size);
+    let second = map
+        .transaction(|edit| {
+            let dart = edit.merge(tool.solid_unchecked(second));
+            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+        })
+        .unwrap();
+    (map, first, second)
+}
+
+#[test]
+fn boolean_disjoint_results_follow_the_single_solid_contract() {
+    use ngk::builders::boolean::{BooleanError, BooleanOperation, boolean};
+    for operation in [
+        BooleanOperation::Union,
+        BooleanOperation::Intersection,
+        BooleanOperation::Difference,
+    ] {
+        let (mut map, first, second) =
+            two_blocks(Point3::origin(), 1.0, Point3::new(3.0, 0.0, 0.0), 1.0);
+        let before = serde_json::to_value(&map).unwrap();
+        let result = boolean(
+            &mut map,
+            first,
+            second,
+            operation,
+            BooleanOptions::default(),
+        );
+        match operation {
+            BooleanOperation::Union => {
+                assert!(matches!(
+                    result,
+                    Err(BooleanError::DisconnectedResult { .. })
+                ));
+                assert_eq!(serde_json::to_value(&map).unwrap(), before);
+            }
+            BooleanOperation::Intersection => {
+                assert!(matches!(result, Err(BooleanError::EmptyResult)));
+                assert_eq!(serde_json::to_value(&map).unwrap(), before);
+            }
+            BooleanOperation::Difference => {
+                let result = result.unwrap();
+                validate_solid_manifold(&map, result.solid).unwrap();
+                assert_eq!(map.solid_unchecked(result.solid).faces().len(), 6);
+            }
+        }
+    }
+}
+
+#[test]
+fn boolean_nested_difference_registers_a_closed_cavity() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 3.0, Point3::new(1.0, 1.0, 1.0), 1.0);
+    let result = boolean(
+        &mut map,
+        first,
+        second,
+        BooleanOperation::Difference,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+    validate_solid_manifold(&map, result.solid).unwrap();
+    ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+    assert_eq!(map.solid_unchecked(result.solid).shells().len(), 2);
+    assert_eq!(map.solid_unchecked(result.solid).faces().len(), 12);
+}
+
+#[test]
+fn boolean_overlapping_boxes_union_produces_one_closed_solid() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 1.0), 2.0);
+    let result = boolean(
+        &mut map,
+        first,
+        second,
+        BooleanOperation::Union,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    validate_solid_manifold(&map, result.solid).unwrap();
+    ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+    assert_eq!(map.solid_unchecked(result.solid).shells().len(), 1);
+    assert_eq!(map.solid_unchecked(result.solid).faces().len(), 12);
+}
+
+#[test]
+fn boolean_overlapping_boxes_intersection_and_difference_are_closed() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    for (operation, faces) in [
+        (BooleanOperation::Intersection, 6),
+        (BooleanOperation::Difference, 9),
+    ] {
+        let (mut map, first, second) =
+            two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 1.0), 2.0);
+        let result = boolean(
+            &mut map,
+            first,
+            second,
+            operation,
+            BooleanOptions::default(),
+        )
+        .unwrap();
+        show(&map);
+
+        validate_solid_manifold(&map, result.solid).unwrap();
+        ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+        assert_eq!(map.solid_unchecked(result.solid).faces().len(), faces);
+        for face in map.solid_unchecked(result.solid).faces() {
+            assert!(
+                result
+                    .lineage
+                    .first
+                    .faces
+                    .values()
+                    .chain(result.lineage.second.faces.values())
+                    .any(|descendants| descendants.contains(&face.key()))
+            );
+        }
+    }
+}
+
+#[test]
+fn boolean_union_preserves_topology_under_scale_and_operand_swap() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    for scale in [1.0e-3, 1.0e3] {
+        let (mut map, first, second) = two_blocks(
+            Point3::origin(),
+            2.0 * scale,
+            Point3::new(scale, scale, scale),
+            2.0 * scale,
+        );
+        let result = boolean(
+            &mut map,
+            second,
+            first,
+            BooleanOperation::Union,
+            BooleanOptions::default(),
+        )
+        .unwrap();
+        let solid = map.solid_unchecked(result.solid);
+        assert_eq!(solid.faces().len(), 12);
+        assert_eq!(
+            solid.vertices().len() as isize - solid.edges().len() as isize
+                + solid.faces().len() as isize,
+            2
+        );
+    }
+}
+
+#[test]
+fn boolean_result_can_be_consumed_by_a_second_operation() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 1.0), 2.0);
+    let union = boolean(
+        &mut map,
+        first,
+        second,
+        BooleanOperation::Union,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+    let (tool, cavity) = block_at(Point3::new(0.25, 0.25, 0.25), 0.5);
+    let cavity = map
+        .transaction(|edit| {
+            let dart = edit.merge(tool.solid_unchecked(cavity));
+            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+        })
+        .unwrap();
+    let result = boolean(
+        &mut map,
+        union.solid,
+        cavity,
+        BooleanOperation::Difference,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+    validate_solid_manifold(&map, result.solid).unwrap();
+    ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+    assert_eq!(map.solid_unchecked(result.solid).shells().len(), 2);
+    assert_eq!(map.solid_unchecked(result.solid).faces().len(), 18);
 }
