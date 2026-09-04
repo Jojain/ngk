@@ -1,21 +1,21 @@
-use super::curve_surface::{closest_surface_parameter, distance_to_surface};
+mod fitting;
+mod seeds;
+mod simplification;
+mod tracer;
+
+use fitting::fit_branch;
+use seeds::boundary_seeds;
+use tracer::{TraceState, trace_from_seed};
+
 use super::error::IntersectionError;
 use super::options::IntersectionOptions;
-use super::{SurfaceSurfaceIntersection, SurfaceSurfaceIntersections};
-use crate::geometry::{NurbsSurface, Point3, PointCoincidence, Surface};
+use super::{
+    IntersectionCoverage, SurfaceIntersectionIncompleteReason, SurfaceIntersectionPointKind,
+    SurfaceOverlapCandidate, SurfaceSurfaceIntersection, SurfaceSurfaceIntersections,
+};
+use crate::geometry::{BBox, NurbsSurface, Surface};
 
-#[derive(Debug, Clone, Copy)]
-struct SurfaceSample {
-    point: Point3,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct SurfaceTriangle {
-    a: SurfaceSample,
-    b: SurfaceSample,
-    c: SurfaceSample,
-}
-
+/// Intersects two surfaces with the default operation-scoped tolerances.
 pub fn intersect_surfaces(
     a: &Surface,
     b: &Surface,
@@ -23,6 +23,7 @@ pub fn intersect_surfaces(
     intersect_surfaces_with_options(a, b, IntersectionOptions::default())
 }
 
+/// Intersects two surfaces and returns ordered observations with explicit coverage.
 pub fn intersect_surfaces_with_options(
     a: &Surface,
     b: &Surface,
@@ -34,196 +35,198 @@ pub fn intersect_surfaces_with_options(
 
     let a = a.to_nurbs()?;
     let b = b.to_nurbs()?;
-
-    if surfaces_are_coincident(&a, &b, options) {
-        return Ok(vec![SurfaceSurfaceIntersection::Region]);
+    if !has_supported_weights(&a) || !has_supported_weights(&b) {
+        return Ok(SurfaceSurfaceIntersections::new(
+            Vec::new(),
+            IntersectionCoverage::Incomplete(vec![
+                SurfaceIntersectionIncompleteReason::UnsupportedControlPointWeights,
+            ]),
+        ));
+    }
+    if control_hulls_are_disjoint(&a, &b, options)
+        || bezier_span_hulls_are_disjoint(&a, &b, options)?
+    {
+        return Ok(SurfaceSurfaceIntersections::new(
+            Vec::new(),
+            IntersectionCoverage::Complete,
+        ));
+    }
+    if same_nurbs_surface(&a, &b, options) {
+        return Ok(SurfaceSurfaceIntersections::new(
+            vec![SurfaceSurfaceIntersection::OverlapCandidate(
+                SurfaceOverlapCandidate {
+                    domain_a_u: a.domain_u(),
+                    domain_a_v: a.domain_v(),
+                    domain_b_u: b.domain_u(),
+                    domain_b_v: b.domain_v(),
+                },
+            )],
+            IntersectionCoverage::Incomplete(vec![
+                SurfaceIntersectionIncompleteReason::CoincidentRegionResolutionNotImplemented,
+            ]),
+        ));
     }
 
-    let triangles_a = surface_triangles(&a, options);
-    let triangles_b = surface_triangles(&b, options);
-    let mut points = Vec::new();
+    let seed_search = boundary_seeds(&a, &b, options)?;
+    let mut intersections = Vec::new();
+    let mut reasons = vec![SurfaceIntersectionIncompleteReason::InteriorLoopSearchNotImplemented];
+    if seed_search.overlap_boundary_found {
+        push_reason(
+            &mut reasons,
+            SurfaceIntersectionIncompleteReason::TangentOrSingularContact,
+        );
+    }
 
-    for triangle_a in &triangles_a {
-        for triangle_b in &triangles_b {
-            triangle_triangle_points(*triangle_a, *triangle_b, options, &mut points);
+    for seed in seed_search.seeds {
+        let Some(outcome) = trace_from_seed(&a, &b, seed, options) else {
+            push_singular_point(&mut intersections, seed, options);
+            push_reason(
+                &mut reasons,
+                SurfaceIntersectionIncompleteReason::TangentOrSingularContact,
+            );
+            continue;
+        };
+        for reason in outcome.incomplete_reasons {
+            push_reason(&mut reasons, reason);
+        }
+        if outcome.states.len() < 2 {
+            push_singular_point(&mut intersections, seed, options);
+            continue;
+        }
+        let branch = fit_branch(&a, &b, outcome.states, outcome.closed, options)?;
+        if !branch.quality.certified {
+            push_reason(
+                &mut reasons,
+                SurfaceIntersectionIncompleteReason::SynchronizedFitToleranceExceeded,
+            );
+        }
+        if !contains_equivalent_branch(&intersections, &branch, options) {
+            intersections.push(SurfaceSurfaceIntersection::Branch(branch));
         }
     }
 
-    let points = dedup_points(points, options);
-    if points.is_empty() {
-        Ok(Vec::new())
-    } else if points.len() == 1 {
-        let point = points[0];
-        let (surface_a_u, surface_a_v, _) = closest_surface_parameter(&a, point, options);
-        let (surface_b_u, surface_b_v, _) = closest_surface_parameter(&b, point, options);
-        Ok(vec![SurfaceSurfaceIntersection::Point {
-            point,
-            surface_a_u,
-            surface_a_v,
-            surface_b_u,
-            surface_b_v,
-        }])
-    } else {
-        Ok(vec![SurfaceSurfaceIntersection::Curve {
-            points: sort_curve_points(points),
-        }])
-    }
+    Ok(SurfaceSurfaceIntersections::new(
+        intersections,
+        IntersectionCoverage::Incomplete(reasons),
+    ))
 }
 
-fn surface_triangles(surface: &NurbsSurface, options: IntersectionOptions) -> Vec<SurfaceTriangle> {
-    let domain_u = surface.domain_u();
-    let domain_v = surface.domain_v();
-    let mut grid = Vec::with_capacity(
-        (options.surface_u_sample_count + 1) * (options.surface_v_sample_count + 1),
-    );
-
-    for j in 0..=options.surface_v_sample_count {
-        let tv = j as f64 / options.surface_v_sample_count as f64;
-        let v = domain_v.start + (domain_v.end - domain_v.start) * tv;
-        for i in 0..=options.surface_u_sample_count {
-            let tu = i as f64 / options.surface_u_sample_count as f64;
-            let u = domain_u.start + (domain_u.end - domain_u.start) * tu;
-            grid.push(SurfaceSample {
-                point: surface.point_at(u, v),
-            });
-        }
-    }
-
-    let stride = options.surface_u_sample_count + 1;
-    let mut triangles =
-        Vec::with_capacity(options.surface_u_sample_count * options.surface_v_sample_count * 2);
-    for j in 0..options.surface_v_sample_count {
-        for i in 0..options.surface_u_sample_count {
-            let a = grid[j * stride + i];
-            let b = grid[j * stride + i + 1];
-            let c = grid[(j + 1) * stride + i];
-            let d = grid[(j + 1) * stride + i + 1];
-            triangles.push(SurfaceTriangle { a, b, c });
-            triangles.push(SurfaceTriangle { a: b, b: d, c });
-        }
-    }
-    triangles
+fn has_supported_weights(surface: &NurbsSurface) -> bool {
+    surface
+        .control_points()
+        .as_slice()
+        .iter()
+        .all(|point| point.weight().is_finite() && point.weight() > 0.0)
 }
 
-fn triangle_triangle_points(
-    a: SurfaceTriangle,
-    b: SurfaceTriangle,
-    options: IntersectionOptions,
-    points: &mut Vec<Point3>,
-) {
-    for (start, end) in [(a.a, a.b), (a.b, a.c), (a.c, a.a)] {
-        if let Some(point) = segment_triangle_intersection(start.point, end.point, b, options) {
-            points.push(point);
-        }
-    }
-    for (start, end) in [(b.a, b.b), (b.b, b.c), (b.c, b.a)] {
-        if let Some(point) = segment_triangle_intersection(start.point, end.point, a, options) {
-            points.push(point);
-        }
-    }
-}
-
-fn segment_triangle_intersection(
-    start: Point3,
-    end: Point3,
-    triangle: SurfaceTriangle,
-    options: IntersectionOptions,
-) -> Option<Point3> {
-    let direction = end - start;
-    let edge_1 = triangle.b.point - triangle.a.point;
-    let edge_2 = triangle.c.point - triangle.a.point;
-    let h = direction.cross(&edge_2);
-    let det = edge_1.dot(&h);
-    if det.abs() <= options.linear_tolerance {
-        return None;
-    }
-
-    let inv_det = 1.0 / det;
-    let s = start - triangle.a.point;
-    let beta = inv_det * s.dot(&h);
-    if beta < -options.linear_tolerance || beta > 1.0 + options.linear_tolerance {
-        return None;
-    }
-
-    let q = s.cross(&edge_1);
-    let gamma = inv_det * direction.dot(&q);
-    if gamma < -options.linear_tolerance || beta + gamma > 1.0 + options.linear_tolerance {
-        return None;
-    }
-
-    let t = inv_det * edge_2.dot(&q);
-    if t < -options.linear_tolerance || t > 1.0 + options.linear_tolerance {
-        return None;
-    }
-
-    Some(start + direction * t.clamp(0.0, 1.0))
-}
-
-fn surfaces_are_coincident(
+fn control_hulls_are_disjoint(
     a: &NurbsSurface,
     b: &NurbsSurface,
     options: IntersectionOptions,
 ) -> bool {
-    surface_samples(a, options)
-        .all(|point| distance_to_surface(b, point, options) <= options.linear_tolerance * 10.0)
-        && surface_samples(b, options)
-            .all(|point| distance_to_surface(a, point, options) <= options.linear_tolerance * 10.0)
+    let bbox_a = BBox::from_points(
+        a.control_points()
+            .as_slice()
+            .iter()
+            .map(|point| point.to_cartesian()),
+    );
+    let bbox_b = BBox::from_points(
+        b.control_points()
+            .as_slice()
+            .iter()
+            .map(|point| point.to_cartesian()),
+    );
+    !bbox_a.intersects(&bbox_b, options.bbox_tolerance)
 }
 
-fn surface_samples(
-    surface: &NurbsSurface,
+/// Uses exact Bézier decomposition so non-overlapping local control hulls are rejected conservatively.
+fn bezier_span_hulls_are_disjoint(
+    a: &NurbsSurface,
+    b: &NurbsSurface,
     options: IntersectionOptions,
-) -> impl Iterator<Item = Point3> + '_ {
-    let domain_u = surface.domain_u();
-    let domain_v = surface.domain_v();
-    let sample_u = options.surface_u_sample_count.clamp(2, 8);
-    let sample_v = options.surface_v_sample_count.clamp(2, 8);
+) -> Result<bool, IntersectionError> {
+    let spans_a = a.bezier_spans()?;
+    let spans_b = b.bezier_spans()?;
+    Ok(!spans_a.iter().any(|span_a| {
+        let bbox_a = span_a.bbox();
+        spans_b
+            .iter()
+            .any(|span_b| bbox_a.intersects(&span_b.bbox(), options.bbox_tolerance))
+    }))
+}
 
-    (0..=sample_v).flat_map(move |j| {
-        let tv = j as f64 / sample_v as f64;
-        let v = domain_v.start + (domain_v.end - domain_v.start) * tv;
-        (0..=sample_u).map(move |i| {
-            let tu = i as f64 / sample_u as f64;
-            let u = domain_u.start + (domain_u.end - domain_u.start) * tu;
-            surface.point_at(u, v)
-        })
+fn same_nurbs_surface(a: &NurbsSurface, b: &NurbsSurface, options: IntersectionOptions) -> bool {
+    a.degree_u() == b.degree_u()
+        && a.degree_v() == b.degree_v()
+        && a.knots_u().as_slice() == b.knots_u().as_slice()
+        && a.knots_v().as_slice() == b.knots_v().as_slice()
+        && a.control_points().nu() == b.control_points().nu()
+        && a.control_points().nv() == b.control_points().nv()
+        && a.control_points()
+            .as_slice()
+            .iter()
+            .zip(b.control_points().as_slice())
+            .all(|(a, b)| {
+                (a.0.coords - b.0.coords).norm()
+                    <= options.linear_tolerance * a.weight().abs().max(b.weight().abs()).max(1.0)
+            })
+}
+
+fn push_singular_point(
+    intersections: &mut Vec<SurfaceSurfaceIntersection>,
+    seed: TraceState,
+    options: IntersectionOptions,
+) {
+    if intersections.iter().any(|intersection| match intersection {
+        SurfaceSurfaceIntersection::Point(point) => {
+            (point.point - seed.point).norm() <= options.linear_tolerance
+        }
+        SurfaceSurfaceIntersection::Branch(_) | SurfaceSurfaceIntersection::OverlapCandidate(_) => {
+            false
+        }
+    }) {
+        return;
+    }
+    intersections.push(SurfaceSurfaceIntersection::Point(
+        seed.sample(SurfaceIntersectionPointKind::Singular),
+    ));
+}
+
+fn contains_equivalent_branch(
+    intersections: &[SurfaceSurfaceIntersection],
+    candidate: &super::SurfaceIntersectionBranch,
+    options: IntersectionOptions,
+) -> bool {
+    let Some((candidate_start, candidate_end)) =
+        candidate.samples.first().zip(candidate.samples.last())
+    else {
+        return false;
+    };
+    intersections.iter().any(|intersection| {
+        let SurfaceSurfaceIntersection::Branch(existing) = intersection else {
+            return false;
+        };
+        let Some((existing_start, existing_end)) =
+            existing.samples.first().zip(existing.samples.last())
+        else {
+            return false;
+        };
+        let same_direction = (candidate_start.point - existing_start.point).norm()
+            <= options.linear_tolerance * 10.0
+            && (candidate_end.point - existing_end.point).norm() <= options.linear_tolerance * 10.0;
+        let reverse_direction = (candidate_start.point - existing_end.point).norm()
+            <= options.linear_tolerance * 10.0
+            && (candidate_end.point - existing_start.point).norm()
+                <= options.linear_tolerance * 10.0;
+        same_direction || reverse_direction
     })
 }
 
-fn dedup_points(points: Vec<Point3>, options: IntersectionOptions) -> Vec<Point3> {
-    let tolerance = options.linear_tolerance.sqrt() * 10.0;
-    let mut deduped = Vec::new();
-    for point in points {
-        if !deduped
-            .iter()
-            .any(|existing| point.coincides(*existing, tolerance))
-        {
-            deduped.push(point);
-        }
+fn push_reason(
+    reasons: &mut Vec<SurfaceIntersectionIncompleteReason>,
+    reason: SurfaceIntersectionIncompleteReason,
+) {
+    if !reasons.contains(&reason) {
+        reasons.push(reason);
     }
-    deduped
-}
-
-fn sort_curve_points(mut points: Vec<Point3>) -> Vec<Point3> {
-    let (min, max) = points.iter().fold(
-        (points[0].coords, points[0].coords),
-        |(mut min, mut max), point| {
-            min.x = min.x.min(point.x);
-            min.y = min.y.min(point.y);
-            min.z = min.z.min(point.z);
-            max.x = max.x.max(point.x);
-            max.y = max.y.max(point.y);
-            max.z = max.z.max(point.z);
-            (min, max)
-        },
-    );
-    let range = max - min;
-    if range.x >= range.y && range.x >= range.z {
-        points.sort_by(|a, b| a.x.total_cmp(&b.x));
-    } else if range.y >= range.z {
-        points.sort_by(|a, b| a.y.total_cmp(&b.y));
-    } else {
-        points.sort_by(|a, b| a.z.total_cmp(&b.z));
-    }
-    points
 }

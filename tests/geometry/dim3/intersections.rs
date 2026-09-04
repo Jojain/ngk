@@ -1,8 +1,10 @@
 use nalgebra::Vector3;
 use ngk::geometry::{
-    Circle, ControlPolygon, Curve, CurveCurveIntersection, CurveSurfaceIntersection, Degree,
-    HPoint, KnotVector, LINEAR_TOLERANCE, NurbsCurve, Plane, Point3, PointCoincidence, Surface,
-    SurfaceSurfaceIntersection,
+    Circle, ControlNet, ControlPolygon, Curve, Curve2, CurveCurveIntersection,
+    CurveSurfaceIntersection, Cylinder, Degree, HPoint, IntersectionCoverage, IntersectionOptions,
+    KnotVector, LINEAR_TOLERANCE, NurbsCurve, NurbsSurface, Plane, Point3, PointCoincidence,
+    Surface, SurfaceIntersectionIncompleteReason, SurfaceSurfaceIntersection,
+    intersect_surfaces_with_options,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -44,6 +46,14 @@ fn unique_points(points: impl IntoIterator<Item = Point3>) -> Vec<Point3> {
 
 fn line(a: Point3, b: Point3) -> Curve {
     Curve::line(a, b)
+}
+
+fn is_bounded_line(curve: &Curve) -> bool {
+    matches!(curve, Curve::Bounded(curve) if matches!(curve.inner(), Curve::Line(_)))
+}
+
+fn is_bounded_circle(curve: &Curve) -> bool {
+    matches!(curve, Curve::Bounded(curve) if matches!(curve.inner(), Curve::Circle(_)))
 }
 
 #[test]
@@ -205,20 +215,40 @@ fn perpendicular_planes_return_surface_surface_curve() {
     let results = a.intersect_surface(&b).unwrap();
 
     assert_eq!(results.len(), 1, "{results:?}");
-    let SurfaceSurfaceIntersection::Curve { points } = &results[0] else {
-        panic!("expected intersection curve, got {results:?}");
+    let SurfaceSurfaceIntersection::Branch(branch) = &results[0] else {
+        panic!(
+            "expected intersection branch, got {:?}",
+            results.intersections()
+        );
     };
-    assert!(points.len() >= 2, "{results:?}");
+    assert!(branch.samples.len() >= 2, "{:?}", results.intersections());
+    assert!(is_bounded_line(&branch.curve_3d));
+    assert!(matches!(branch.pcurve_a, Curve2::Line(_)));
+    assert!(matches!(branch.pcurve_b, Curve2::Line(_)));
     assert!(
-        points
+        branch
+            .samples
             .iter()
-            .all(|point| point.y.abs() <= LINEAR_TOLERANCE * 10.0
-                && point.z.abs() <= LINEAR_TOLERANCE * 10.0)
+            .all(|sample| sample.point.y.abs() <= LINEAR_TOLERANCE * 10.0
+                && sample.point.z.abs() <= LINEAR_TOLERANCE * 10.0
+                && sample.residual <= LINEAR_TOLERANCE)
     );
+    for parameter in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        let point = branch.curve_3d.point_at(parameter);
+        let uv_a = branch.pcurve_a.point_at(parameter);
+        let uv_b = branch.pcurve_b.point_at(parameter);
+        assert_point_near(point, a.point_at(uv_a.x, uv_a.y));
+        assert_point_near(point, b.point_at(uv_b.x, uv_b.y));
+    }
+    assert!(matches!(
+        results.coverage(),
+        IntersectionCoverage::Incomplete(reasons)
+            if reasons.contains(&SurfaceIntersectionIncompleteReason::InteriorLoopSearchNotImplemented)
+    ));
 }
 
 #[test]
-fn coincident_planes_return_surface_surface_region() {
+fn coincident_planes_return_overlap_candidate() {
     let a = Surface::Plane(Plane::xy());
     let b = Surface::Plane(Plane::xy());
 
@@ -226,7 +256,259 @@ fn coincident_planes_return_surface_surface_region() {
 
     assert!(matches!(
         results.as_slice(),
-        [SurfaceSurfaceIntersection::Region]
+        [SurfaceSurfaceIntersection::OverlapCandidate(_)]
+    ));
+    assert!(matches!(
+        results.coverage(),
+        IntersectionCoverage::Incomplete(reasons)
+            if reasons.contains(
+                &SurfaceIntersectionIncompleteReason::CoincidentRegionResolutionNotImplemented
+            )
+    ));
+}
+
+#[test]
+fn plane_cylinder_intersection_returns_closed_synchronized_branch() {
+    let plane = square_nurbs_plane(0.5, 2.0);
+    let cylinder = Surface::Cylinder(Cylinder::new(
+        Point3::origin(),
+        Vector3::x(),
+        Vector3::z(),
+        1.0,
+    ));
+
+    let results = plane.intersect_surface(&cylinder).unwrap();
+
+    let branches = results
+        .intersections()
+        .iter()
+        .filter_map(|intersection| match intersection {
+            SurfaceSurfaceIntersection::Branch(branch) => Some(branch),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(branches.len(), 1, "{:?}", results.intersections());
+    let branch = branches[0];
+    assert!(
+        branch.closed,
+        "terminal samples: {:?}",
+        [branch.samples.first(), branch.samples.last()]
+    );
+    assert!(branch.samples.len() > 16);
+    assert!(is_bounded_circle(&branch.curve_3d));
+    assert!(matches!(branch.pcurve_a, Curve2::Circle(_)));
+    assert!(matches!(branch.pcurve_b, Curve2::Nurbs(_)));
+    assert!(
+        branch.quality.max_residual <= LINEAR_TOLERANCE,
+        "{:?}",
+        branch.quality
+    );
+    assert!(
+        branch.quality.max_fit_error <= IntersectionOptions::default().fit_tolerance,
+        "{:?}",
+        branch.quality
+    );
+    assert!(branch.quality.certified);
+    assert_point_near(branch.curve_3d.point_at(0.0), branch.curve_3d.point_at(1.0));
+    for parameter in [0.125, 0.375, 0.625, 0.875] {
+        let point = branch.curve_3d.point_at(parameter);
+        let uv_plane = branch.pcurve_a.point_at(parameter);
+        let uv_cylinder = branch.pcurve_b.point_at(parameter);
+        let fit_tolerance = IntersectionOptions::default().fit_tolerance;
+        assert!((point - plane.point_at(uv_plane.x, uv_plane.y)).norm() <= fit_tolerance);
+        assert!((point - cylinder.point_at(uv_cylinder.x, uv_cylinder.y)).norm() <= fit_tolerance);
+    }
+}
+
+#[test]
+fn surface_intersection_simplification_is_enabled_by_default() {
+    assert!(IntersectionOptions::default().simplify_curves);
+}
+
+#[test]
+fn surface_intersection_can_keep_synchronized_nurbs_curves() {
+    let a = Surface::Plane(Plane::xy());
+    let b = Surface::Plane(Plane::xz());
+    let options = IntersectionOptions {
+        simplify_curves: false,
+        ..IntersectionOptions::default()
+    };
+
+    let results = intersect_surfaces_with_options(&a, &b, options).unwrap();
+
+    let SurfaceSurfaceIntersection::Branch(branch) = &results[0] else {
+        panic!("expected an intersection branch, got {results:?}");
+    };
+    assert!(matches!(branch.curve_3d, Curve::Nurbs(_)));
+    assert!(matches!(branch.pcurve_a, Curve2::Nurbs(_)));
+    assert!(matches!(branch.pcurve_b, Curve2::Nurbs(_)));
+}
+
+#[test]
+fn disjoint_surface_control_hulls_return_complete_empty_coverage() {
+    let a = Surface::Plane(Plane::xy());
+    let b = Surface::Plane(Plane::from_xy(
+        Point3::new(0.0, 0.0, 2.0),
+        Vector3::x(),
+        Vector3::y(),
+    ));
+
+    let results = a.intersect_surface(&b).unwrap();
+
+    assert!(results.is_empty());
+    assert_eq!(results.coverage(), &IntersectionCoverage::Complete);
+}
+
+#[test]
+fn invalid_surface_intersection_options_return_an_error() {
+    let options = IntersectionOptions {
+        residual_tolerance: 0.0,
+        ..IntersectionOptions::default()
+    };
+
+    let error = intersect_surfaces_with_options(
+        &Surface::Plane(Plane::xy()),
+        &Surface::Plane(Plane::xz()),
+        options,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        ngk::geometry::IntersectionError::InvalidOptions
+    ));
+}
+
+#[test]
+fn unsupported_surface_weights_return_incomplete_coverage() {
+    let points = vec![
+        HPoint::from_cartesian(Point3::new(0.0, 0.0, 0.0), -1.0),
+        HPoint::from_cartesian(Point3::new(1.0, 0.0, 0.0), 1.0),
+        HPoint::from_cartesian(Point3::new(0.0, 1.0, 0.0), 1.0),
+        HPoint::from_cartesian(Point3::new(1.0, 1.0, 0.0), 1.0),
+    ];
+    let knots = KnotVector::new(vec![0.0, 0.0, 1.0, 1.0]).unwrap();
+    let unsupported = Surface::Nurbs(
+        NurbsSurface::new(
+            Degree::new(1).unwrap(),
+            Degree::new(1).unwrap(),
+            ControlNet::new(points, 2, 2).unwrap(),
+            knots.clone(),
+            knots,
+        )
+        .unwrap(),
+    );
+
+    let results = unsupported
+        .intersect_surface(&Surface::Plane(Plane::xz()))
+        .unwrap();
+
+    assert!(results.is_empty());
+    assert!(matches!(
+        results.coverage(),
+        IntersectionCoverage::Incomplete(reasons)
+            if reasons == &[SurfaceIntersectionIncompleteReason::UnsupportedControlPointWeights]
+    ));
+}
+
+#[test]
+fn exhausted_trace_budget_is_reported_as_incomplete() {
+    let options = IntersectionOptions {
+        max_trace_steps: 1,
+        ..IntersectionOptions::default()
+    };
+
+    let results = intersect_surfaces_with_options(
+        &Surface::Plane(Plane::xy()),
+        &Surface::Plane(Plane::xz()),
+        options,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        results.coverage(),
+        IntersectionCoverage::Incomplete(reasons)
+            if reasons.contains(&SurfaceIntersectionIncompleteReason::TraceBudgetExhausted)
+    ));
+}
+
+#[test]
+fn minimum_trace_step_returns_a_singular_point_and_incomplete_reason() {
+    let options = IntersectionOptions {
+        residual_tolerance: 1.0e-14,
+        newton_max_iterations: 1,
+        min_trace_step: 2.0e-2,
+        max_trace_step: 2.0e-2,
+        ..IntersectionOptions::default()
+    };
+    let plane = square_nurbs_plane(0.5, 2.0);
+    let cylinder = Surface::Cylinder(Cylinder::new(
+        Point3::origin(),
+        Vector3::x(),
+        Vector3::z(),
+        1.0,
+    ));
+
+    let results = intersect_surfaces_with_options(&plane, &cylinder, options).unwrap();
+
+    assert!(results.intersections().iter().any(|intersection| matches!(
+        intersection,
+        SurfaceSurfaceIntersection::Point(point)
+            if point.kind == ngk::geometry::SurfaceIntersectionPointKind::Singular
+    )));
+    assert!(matches!(
+        results.coverage(),
+        IntersectionCoverage::Incomplete(reasons)
+            if reasons.contains(&SurfaceIntersectionIncompleteReason::MinimumTraceStepReached)
+    ));
+}
+
+#[test]
+fn synchronized_fit_tolerance_failure_is_reported_as_incomplete() {
+    let options = IntersectionOptions {
+        simplify_curves: false,
+        fit_tolerance: 1.0e-12,
+        ..IntersectionOptions::default()
+    };
+    let plane = square_nurbs_plane(0.5, 2.0);
+    let cylinder = Surface::Cylinder(Cylinder::new(
+        Point3::origin(),
+        Vector3::x(),
+        Vector3::z(),
+        1.0,
+    ));
+
+    let results = intersect_surfaces_with_options(&plane, &cylinder, options).unwrap();
+
+    assert!(matches!(
+        results.coverage(),
+        IntersectionCoverage::Incomplete(reasons)
+            if reasons.contains(
+                &SurfaceIntersectionIncompleteReason::SynchronizedFitToleranceExceeded
+            )
+    ));
+}
+
+#[test]
+fn tangent_boundary_contact_is_reported_as_incomplete() {
+    let tangent_plane = Surface::Plane(Plane::from_xy(
+        Point3::new(1.0, 0.0, 0.0),
+        Vector3::y(),
+        Vector3::z(),
+    ));
+    let cylinder = Surface::Cylinder(Cylinder::new(
+        Point3::origin(),
+        Vector3::x(),
+        Vector3::z(),
+        1.0,
+    ));
+
+    let results = tangent_plane.intersect_surface(&cylinder).unwrap();
+
+    assert!(matches!(
+        results.coverage(),
+        IntersectionCoverage::Incomplete(reasons)
+            if reasons.contains(&SurfaceIntersectionIncompleteReason::TangentOrSingularContact)
     ));
 }
 
@@ -243,4 +525,27 @@ fn quadratic_curve(points: [Point3; 3]) -> NurbsCurve {
         KnotVector::new(vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]).unwrap(),
     )
     .unwrap()
+}
+
+fn square_nurbs_plane(z: f64, half_size: f64) -> Surface {
+    let points = vec![
+        Point3::new(-half_size, -half_size, z),
+        Point3::new(half_size, -half_size, z),
+        Point3::new(-half_size, half_size, z),
+        Point3::new(half_size, half_size, z),
+    ]
+    .into_iter()
+    .map(|point| HPoint::from_cartesian(point, 1.0))
+    .collect();
+    let knots = KnotVector::new(vec![0.0, 0.0, 1.0, 1.0]).unwrap();
+    Surface::Nurbs(
+        NurbsSurface::new(
+            Degree::new(1).unwrap(),
+            Degree::new(1).unwrap(),
+            ControlNet::new(points, 2, 2).unwrap(),
+            knots.clone(),
+            knots,
+        )
+        .unwrap(),
+    )
 }

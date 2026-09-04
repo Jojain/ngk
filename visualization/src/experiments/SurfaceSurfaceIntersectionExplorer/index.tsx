@@ -10,8 +10,14 @@ type WasmSurface = ReturnType<Kernel["NurbsSurface"]["uniform"]>;
 
 type SurfaceSurfaceIntersection =
   | { kind: "point"; point: [number, number, number] }
-  | { kind: "curve"; points: [number, number, number][] }
-  | { kind: "region" };
+  | { kind: "branch"; points: [number, number, number][] }
+  | { kind: "overlapCandidate" };
+
+type SurfaceSurfaceIntersectionResult = {
+  intersections: SurfaceSurfaceIntersection[];
+  coverage: "complete" | "incomplete";
+  incomplete_reasons: string[];
+};
 
 type Preset = {
   id: string;
@@ -117,19 +123,20 @@ export default function SurfaceSurfaceIntersectionExplorer() {
         vec3ArrayToFlat(surfaceB),
         new Float64Array(WEIGHTS),
       );
-      const intersections = a.intersectSurface(b) as SurfaceSurfaceIntersection[];
+      const result = a.intersectSurface(b) as SurfaceSurfaceIntersectionResult;
+      const intersections = result.intersections;
       return {
         geometryA: surfaceGeometry(a),
         geometryB: surfaceGeometry(b),
         curves: intersections.flatMap((intersection) =>
-          intersection.kind === "curve"
+          intersection.kind === "branch"
             ? [intersection.points.map((point) => new THREE.Vector3(...point))]
             : [],
         ),
         points: intersections.flatMap((intersection) =>
           intersection.kind === "point" ? [new THREE.Vector3(...intersection.point)] : [],
         ),
-        region: intersections.some((intersection) => intersection.kind === "region"),
+        region: intersections.some((intersection) => intersection.kind === "overlapCandidate"),
         intersections,
         error: null as string | null,
       };

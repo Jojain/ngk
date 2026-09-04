@@ -1,6 +1,9 @@
 use super::curves::{Curve, Periodicity, circle_nurbs_control_points, circle_nurbs_knots};
 use super::frame::Frame;
-use super::intersections::{IntersectionError, SurfaceSurfaceIntersections, intersect_surfaces};
+use super::intersections::{
+    IntersectionError, IntersectionOptions, SurfaceSurfaceIntersections, intersect_surfaces,
+    intersect_surfaces_with_options,
+};
 use super::nurbs::{ControlNet, Degree, HPoint, KnotVector, NurbsSurface};
 use super::utils::{IntoUnit, Point3};
 use crate::geometry::LINEAR_TOLERANCE;
@@ -92,6 +95,15 @@ impl Surface {
         intersect_surfaces(self, other)
     }
 
+    /// Intersects this surface with another using the supplied solver options.
+    pub fn intersect_surface_with_options(
+        &self,
+        other: &Surface,
+        options: IntersectionOptions,
+    ) -> Result<SurfaceSurfaceIntersections, IntersectionError> {
+        intersect_surfaces_with_options(self, other, options)
+    }
+
     pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
         match self {
             Surface::Plane(plane) => Ok(Surface::Plane(Plane::from_xy(
@@ -139,7 +151,7 @@ impl Surface {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Plane {
     pub frame: Frame,
 }
