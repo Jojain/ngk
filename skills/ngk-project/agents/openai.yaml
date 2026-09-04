@@ -1,0 +1,4 @@
+interface:
+  display_name: "NGK Project"
+  short_description: "Work safely in the NGK Rust and visualization project"
+  default_prompt: "Use $ngk-project to implement the requested NGK project change."
