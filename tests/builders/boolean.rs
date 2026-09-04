@@ -1348,10 +1348,6 @@ fn box_between(min: Point3, max: Point3) -> (GMap<ngk::StandardPayload>, SolidKe
 }
 
 #[test]
-#[ignore = "a face's inner loop is a separate alpha0/alpha1 orbit, so the shell sheet \
-            traversal never reaches the shaft walls: `Sheet::faces()` reports 6 of the 10 \
-            result faces and `validate_solid_orientation` rejects the correct solid. \
-            Fixing this belongs to the topology layer, not to Boolean assembly."]
 fn boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps() {
     use ngk::builders::boolean::{BooleanOperation, boolean, solid_contains_point};
     // The planar counterpart of "box minus a through cylinder": the tool leaves

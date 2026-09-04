@@ -479,19 +479,61 @@ impl<P: Payload> GMap<P> {
             }
         }
         for (key, attr) in self.sheets.iter() {
-            let repr = self.cell_representative(attr.dart, Dim::Three);
-            self.insert_logical_key(&mut indexes.sheet, repr, key, EditKey::Sheet);
+            for dart in self.logical_sheet_darts(attr.dart, &indexes.face) {
+                let repr = self.cell_representative(dart, Dim::Three);
+                self.insert_logical_key(&mut indexes.sheet, repr, key, EditKey::Sheet);
+            }
         }
         for (key, attr) in self.solids.iter() {
             for dart in
                 std::iter::once(attr.outer_shell).chain(attr.inner_shells.iter().flatten().copied())
             {
-                let repr = self.cell_representative(dart, Dim::Three);
-                self.insert_logical_key(&mut indexes.solid, repr, key, EditKey::Solid);
+                for shell_dart in self.logical_sheet_darts(dart, &indexes.face) {
+                    let repr = self.cell_representative(shell_dart, Dim::Three);
+                    self.insert_logical_key(&mut indexes.solid, repr, key, EditKey::Solid);
+                }
             }
         }
 
         indexes
+    }
+
+    /// Collects every raw alpha0/alpha1/alpha2 component in a logical sheet.
+    ///
+    /// A face with holes is represented by several disconnected 2-cell orbits
+    /// tied to one face attribute. Crossing between those boundary components
+    /// makes the incident raw 3-cell components part of the same domain sheet.
+    fn logical_sheet_darts(&self, start: Dart, face_index: &HashMap<Dart, FaceKey>) -> Vec<Dart> {
+        let mut pending = VecDeque::from([start]);
+        let mut seen_components = HashSet::new();
+        let mut seen_faces = HashSet::new();
+        let mut darts = Vec::new();
+
+        while let Some(seed) = pending.pop_front() {
+            let component = self.cell_representative(seed, Dim::Three);
+            if !seen_components.insert(component) {
+                continue;
+            }
+
+            for dart in self.incident_cells(seed, Dim::Three, Dim::Two) {
+                let face_component = self.cell_representative(dart, Dim::Two);
+                if let Some(&face_key) = face_index.get(&face_component)
+                    && seen_faces.insert(face_key)
+                {
+                    let face = self.face_attr_unchecked(face_key);
+                    pending.push_back(face.outer_loop);
+                    pending.extend(face.inner_loops.iter().copied());
+                }
+            }
+            darts.extend(self.orbit(seed, self.orbit_indices(Dim::Three)));
+        }
+
+        darts
+    }
+
+    /// Returns all darts in the logical sheet containing `start`.
+    pub(crate) fn sheet_darts(&self, start: Dart) -> Vec<Dart> {
+        self.logical_sheet_darts(start, &self.derived_indexes().face)
     }
 
     /// Inserts one cell key, resolving staged duplicate identities consistently.
@@ -1069,7 +1111,10 @@ impl<P: Payload> GMap<P> {
         self.sheet(key).expect("sheet should be in the map")
     }
 
-    /// Returns the sheet key for the 3-cell containing `dart`.
+    /// Returns the sheet key for the logical sheet containing `dart`.
+    ///
+    /// Logical sheets cross between the disconnected boundary components of a
+    /// multi-loop face through its stored face attribute.
     pub fn sheet_key(&self, dart: Dart) -> Option<SheetKey> {
         self.derived_indexes()
             .sheet
@@ -1077,7 +1122,7 @@ impl<P: Payload> GMap<P> {
             .copied()
     }
 
-    /// Returns the sheet key for the 3-cell containing `dart`.
+    /// Returns the sheet key for the logical sheet containing `dart`.
     ///
     /// # Panics
     ///
@@ -1169,7 +1214,7 @@ impl<P: Payload> GMap<P> {
             .expect("solid attribute should be in the map")
     }
 
-    /// Returns the solid key for the registered shell containing `dart`.
+    /// Returns the solid key for the registered logical shell containing `dart`.
     pub fn solid_key(&self, dart: Dart) -> Option<SolidKey> {
         self.derived_indexes()
             .solid
