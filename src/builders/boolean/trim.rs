@@ -5,6 +5,7 @@ use crate::geometry::{
 };
 use crate::topology::face::Face;
 use crate::topology::payload::Payload;
+use crate::topology::shape_keys::EdgeKey;
 
 use super::BooleanError;
 
@@ -146,4 +147,28 @@ fn winding_contains(polygon: &[Point2], point: Point2) -> bool {
         }
     }
     inside
+}
+
+/// Locates the boundary edge of `face` that already realizes `pcurve`.
+///
+/// A contact section running along a face's own trim loop must never be
+/// imprinted: the edge already carries that geometry, and splitting the face
+/// along its own loop yields a degenerate fragment with no interior probe.
+/// Such a section is realized on the existing edge instead.
+pub(crate) fn boundary_edge_for<P: Payload>(
+    face: &Face<'_, P>,
+    pcurve: &Curve2,
+    tolerance: f64,
+) -> Option<EdgeKey> {
+    let samples = [0.0, 0.25, 0.5, 0.75, 1.0].map(|t| pcurve.point_at(t));
+    face.edges()
+        .into_iter()
+        .find(|edge| {
+            face.pcurve(edge.dart()).is_some_and(|boundary| {
+                samples
+                    .iter()
+                    .all(|point| boundary.parameter_at(*point, tolerance).is_some())
+            })
+        })
+        .map(|edge| edge.key())
 }

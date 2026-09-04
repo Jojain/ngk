@@ -20,7 +20,7 @@ pub use tolerance::{BooleanTolerancePolicy, BooleanTolerances};
 
 use contacts::{
     compute_edge_contacts, compute_edge_face_contacts, compute_face_contacts,
-    compute_vertex_contacts, normalize_face_imprint_chains,
+    compute_vertex_contacts, normalize_face_imprint_chains, reroute_boundary_imprints,
 };
 pub use errors::BooleanError;
 pub use graph::{
@@ -71,6 +71,13 @@ enum RawIntersection {
     Region {
         first_face: FaceKey,
         second_face: FaceKey,
+    },
+    /// A contact section one operand's existing edge already realizes.
+    EdgeSection {
+        side: BooleanSide,
+        edge: EdgeKey,
+        curve: Curve,
+        interval: Interval,
     },
 }
 
@@ -204,6 +211,7 @@ pub fn compute_boolean_intersections<P: Payload>(
     compute_edge_contacts(g, &mut observations, options)?;
     compute_edge_face_contacts(g, &mut observations, options)?;
     compute_face_contacts(g, &mut observations, options)?;
+    reroute_boundary_imprints(g, &mut observations, options);
     normalize_face_imprint_chains(g, &mut observations, options)?;
     let observed_network = build_intersection_network(g, &observations, options)?;
     let mut face_imprints = imprint::face_imprints(&observed_network);
@@ -294,6 +302,24 @@ fn build_intersection_network<P: Payload>(
                 first_face,
                 second_face,
             } => builder.record_region(*first_face, *second_face, Vec::new()),
+            RawIntersection::EdgeSection {
+                side,
+                edge,
+                curve,
+                interval,
+            } => {
+                builder.record_span(
+                    curve.clone(),
+                    IntersectionSpanKind::Overlap,
+                    [edge_use(*side, *edge, interval.start)],
+                    [edge_use(*side, *edge, interval.end)],
+                    [IntersectionSpanUse::Edge {
+                        side: *side,
+                        edge: *edge,
+                        interval: *interval,
+                    }],
+                );
+            }
         }
     }
 
@@ -421,6 +447,18 @@ fn apply_boolean_splits_staged<P: Payload>(
     let face_imprints = plan.face_imprints;
     let mut face_lineage = HashMap::new();
     let mut span_sections = HashMap::<IntersectionSpanId, [Vec<(f64, EdgeKey)>; 2]>::new();
+    for (span, side, edge) in imprint::realize_edge_spans(
+        g,
+        &plan.network,
+        &edge_lineage,
+        plan.options.intersections.linear_tolerance,
+    ) {
+        let index = match side {
+            BooleanSide::First => 0,
+            BooleanSide::Second => 1,
+        };
+        span_sections.entry(span).or_default()[index].push((0.0, edge));
+    }
     for source in plan
         .first_cells
         .faces

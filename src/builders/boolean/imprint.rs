@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use super::graph::SpanSubdivision;
 use crate::builders::faces::{FaceImprint, FaceImprintSection, split_face_edge_staged};
-use crate::geometry::{Curve, Point3};
+use crate::geometry::{Curve, Point3, PointCoincidence};
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
-use crate::topology::{TopologyEdit, payload::Payload};
+use crate::topology::{TopologyEdit, gmap::GMap, payload::Payload};
 
 use super::{
     BooleanCell, BooleanError, BooleanSide, IntersectionNetwork, IntersectionOrientation,
@@ -123,4 +123,45 @@ pub(crate) fn realize_section<P: Payload>(
         output.push((piece.span, a.min(b), current));
     }
     Ok(output)
+}
+
+/// Records the existing edge fragment realizing each edge-borne canonical span.
+///
+/// Contacts running along an operand's own boundary are never imprinted, so the
+/// only realization available is the fragment the edge split pass produced.
+/// Spans with no matching fragment are left unrealized; assembly rejects the
+/// operation when a surviving span is then missing a side.
+pub(crate) fn realize_edge_spans<P: Payload>(
+    map: &GMap<P>,
+    network: &IntersectionNetwork,
+    lineage: &HashMap<EdgeKey, Vec<EdgeKey>>,
+    tolerance: f64,
+) -> Vec<(IntersectionSpanId, BooleanSide, EdgeKey)> {
+    let mut realized = Vec::new();
+    for (index, span) in network.spans().iter().enumerate() {
+        let start = span.curve.point_at(0.0);
+        let end = span.curve.point_at(1.0);
+        for span_use in &span.uses {
+            let IntersectionSpanUse::Edge { side, edge, .. } = span_use else {
+                continue;
+            };
+            let Some(fragments) = lineage.get(edge) else {
+                continue;
+            };
+            let fragment = fragments.iter().copied().find(|fragment| {
+                let view = map.edge_unchecked(*fragment);
+                let (start_vertex, end_vertex) = (view.start(), view.end());
+                let (Some(a), Some(b)) = (start_vertex.point(), end_vertex.point()) else {
+                    return false;
+                };
+                let (a, b) = (*a, *b);
+                (a.coincides(start, tolerance) && b.coincides(end, tolerance))
+                    || (a.coincides(end, tolerance) && b.coincides(start, tolerance))
+            });
+            if let Some(fragment) = fragment {
+                realized.push((IntersectionSpanId(index), *side, fragment));
+            }
+        }
+    }
+    realized
 }

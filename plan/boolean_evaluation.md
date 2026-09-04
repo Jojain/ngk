@@ -1118,7 +1118,36 @@ uses consistent registered face winding and signed volume, allowing concavity.
 
 This completes the concrete transverse-box slice in section 14, not the whole
 plan. Remaining requirements include fixed-point span/span noding, complete
-oriented overlap-region boundaries, original-edge span realization for contact
-and coplanar cases, certified curved classification/intersection, sector-aware
-propagation, and the remaining end-to-end test matrix. Unsupported or ambiguous
-geometry must remain an error rather than produce an unverified solid.
+oriented overlap-region boundaries, certified curved
+classification/intersection, sector-aware propagation, and the remaining
+end-to-end test matrix. Unsupported or ambiguous geometry must remain an error
+rather than produce an unverified solid.
+
+## Implementation checkpoint: boundary-coincident contacts (2026-09-04)
+
+Contact sections that run along an operand's own trim loop are no longer
+imprinted. `contacts::reroute_boundary_imprints` recognizes them with
+`trim::boundary_edge_for` and records them as `RawIntersection::EdgeSection`,
+so the network carries an `IntersectionSpanUse::Edge` for that side instead of
+a face imprint that would split the face along its own boundary and leave a
+degenerate fragment with no interior probe. `imprint::realize_edge_spans` then
+resolves each such span to the fragment produced by the edge split pass, giving
+assembly the second side it needs to sew by canonical span identity. This is
+the "original-edge span realization for contact and coplanar cases" requirement.
+
+Two supporting defects were fixed in the same slice:
+
+- solid contacts are observed by several face pairs at once — a coplanar
+  overlap and the transverse pairs bounding it report the same section — and the
+  repeated imprint gave the chain graph a doubled edge, hiding the open chain the
+  face splitter needs. `contacts::dedup_face_imprints` drops the repeats;
+- `contacts.rs` iterated `face_imprints` in hash order while recording raw
+  contacts, so canonical span identity varied between two runs on the same input.
+  Both passes now iterate sorted keys.
+
+Newly verified cases: union and difference of boxes sharing a full face; union,
+difference in both operand orders, and empty intersection of boxes meeting on a
+coplanar partial face; union and intersection of nested boxes and the empty
+inner-minus-outer difference; difference of overlapping boxes in both operand
+orders; and rejection, with the map restored, of union and intersection for
+operands meeting only on an edge or a vertex.

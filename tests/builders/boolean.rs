@@ -880,3 +880,219 @@ fn edge_face_broad_phase_prunes_pairs_that_cannot_touch() {
         "expected most edge/face pairs pruned, {tested} still tested"
     );
 }
+
+#[test]
+fn boolean_union_of_boxes_sharing_a_full_face_closes_across_the_contact() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 1.0, Point3::new(1.0, 0.0, 0.0), 1.0);
+    let result = boolean(
+        &mut map,
+        first,
+        second,
+        BooleanOperation::Union,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    validate_solid_manifold(&map, result.solid).unwrap();
+    ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+    let solid = map.solid_unchecked(result.solid);
+    assert_eq!(solid.shells().len(), 1);
+    assert_eq!(solid.faces().len(), 10);
+    assert_eq!(
+        solid.vertices().len() as isize - solid.edges().len() as isize
+            + solid.faces().len() as isize,
+        2
+    );
+}
+
+#[test]
+fn boolean_difference_of_boxes_sharing_a_full_face_keeps_the_first_operand() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 1.0, Point3::new(1.0, 0.0, 0.0), 1.0);
+    let result = boolean(
+        &mut map,
+        first,
+        second,
+        BooleanOperation::Difference,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    validate_solid_manifold(&map, result.solid).unwrap();
+    ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+    assert_eq!(map.solid_unchecked(result.solid).faces().len(), 6);
+}
+
+#[test]
+fn boolean_union_of_boxes_meeting_on_a_coplanar_partial_face_is_closed() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 2.0), 2.0);
+    let result = boolean(
+        &mut map,
+        first,
+        second,
+        BooleanOperation::Union,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    validate_solid_manifold(&map, result.solid).unwrap();
+    ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+    let solid = map.solid_unchecked(result.solid);
+    assert_eq!(solid.shells().len(), 1);
+    assert_eq!(solid.faces().len(), 12);
+}
+
+#[test]
+fn boolean_rejects_operands_meeting_only_on_an_edge_or_a_vertex() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    for tool_origin in [Point3::new(1.0, 1.0, 0.0), Point3::new(1.0, 1.0, 1.0)] {
+        for operation in [
+            BooleanOperation::Union,
+            BooleanOperation::Intersection,
+            BooleanOperation::Difference,
+        ] {
+            let (mut map, first, second) = two_blocks(Point3::origin(), 1.0, tool_origin, 1.0);
+            let before = serde_json::to_value(&map).unwrap();
+            let result = boolean(
+                &mut map,
+                first,
+                second,
+                operation,
+                BooleanOptions::default(),
+            );
+            if operation == BooleanOperation::Difference {
+                let result = result.unwrap();
+                validate_solid_manifold(&map, result.solid).unwrap();
+                assert_eq!(map.solid_unchecked(result.solid).faces().len(), 6);
+            } else {
+                assert!(
+                    result.is_err(),
+                    "{tool_origin:?} {operation:?} must not build a non-manifold solid"
+                );
+                assert_eq!(serde_json::to_value(&map).unwrap(), before);
+            }
+        }
+    }
+}
+
+#[test]
+fn boolean_coplanar_partial_contact_keeps_each_operand_whole_under_difference() {
+    use ngk::builders::boolean::{BooleanError, BooleanOperation, boolean};
+    // The operands meet on a square of the plane z = 2 only, so the regularized
+    // difference is the untouched minuend and the intersection is empty.
+    for (minuend_first, faces) in [(true, 7), (false, 7)] {
+        let (mut map, first, second) =
+            two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 2.0), 2.0);
+        let (minuend, subtrahend) = if minuend_first {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        let result = boolean(
+            &mut map,
+            minuend,
+            subtrahend,
+            BooleanOperation::Difference,
+            BooleanOptions::default(),
+        )
+        .unwrap();
+        validate_solid_manifold(&map, result.solid).unwrap();
+        ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+        let solid = map.solid_unchecked(result.solid);
+        assert_eq!(solid.shells().len(), 1);
+        assert_eq!(solid.faces().len(), faces);
+    }
+
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 2.0), 2.0);
+    let before = serde_json::to_value(&map).unwrap();
+    assert!(matches!(
+        boolean(
+            &mut map,
+            first,
+            second,
+            BooleanOperation::Intersection,
+            BooleanOptions::default(),
+        ),
+        Err(BooleanError::EmptyResult)
+    ));
+    assert_eq!(serde_json::to_value(&map).unwrap(), before);
+}
+
+#[test]
+fn boolean_of_nested_boxes_selects_the_enclosing_or_enclosed_boundary() {
+    use ngk::builders::boolean::{BooleanError, BooleanOperation, boolean};
+    for (operation, expected) in [
+        (BooleanOperation::Union, Some(6)),
+        (BooleanOperation::Intersection, Some(6)),
+    ] {
+        let (mut map, first, second) =
+            two_blocks(Point3::origin(), 3.0, Point3::new(1.0, 1.0, 1.0), 1.0);
+        let result = boolean(
+            &mut map,
+            first,
+            second,
+            operation,
+            BooleanOptions::default(),
+        )
+        .unwrap();
+        validate_solid_manifold(&map, result.solid).unwrap();
+        ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+        let solid = map.solid_unchecked(result.solid);
+        assert_eq!(solid.shells().len(), 1);
+        assert_eq!(solid.faces().len(), expected.unwrap());
+    }
+
+    // Subtracting the container from the contained solid leaves nothing.
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 3.0, Point3::new(1.0, 1.0, 1.0), 1.0);
+    let before = serde_json::to_value(&map).unwrap();
+    assert!(matches!(
+        boolean(
+            &mut map,
+            second,
+            first,
+            BooleanOperation::Difference,
+            BooleanOptions::default(),
+        ),
+        Err(BooleanError::EmptyResult)
+    ));
+    assert_eq!(serde_json::to_value(&map).unwrap(), before);
+}
+
+#[test]
+fn boolean_difference_is_computed_in_both_operand_orders() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    for swapped in [false, true] {
+        let (mut map, first, second) =
+            two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 1.0), 2.0);
+        let (minuend, subtrahend) = if swapped {
+            (second, first)
+        } else {
+            (first, second)
+        };
+        let result = boolean(
+            &mut map,
+            minuend,
+            subtrahend,
+            BooleanOperation::Difference,
+            BooleanOptions::default(),
+        )
+        .unwrap();
+        validate_solid_manifold(&map, result.solid).unwrap();
+        ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+        let solid = map.solid_unchecked(result.solid);
+        assert_eq!(solid.shells().len(), 1);
+        assert_eq!(solid.faces().len(), 9);
+        assert_eq!(
+            solid.vertices().len() as isize - solid.edges().len() as isize
+                + solid.faces().len() as isize,
+            2
+        );
+    }
+}

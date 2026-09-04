@@ -1,7 +1,10 @@
 //! Narrow-phase geometric contact computation.
 
 use super::*;
-use super::{clip::clip_branch, trim::FaceTrimDomain};
+use super::{
+    clip::clip_branch,
+    trim::{FaceTrimDomain, boundary_edge_for},
+};
 use crate::geometry::IntersectionCoverage;
 use std::collections::hash_map::Entry;
 
@@ -402,6 +405,87 @@ pub(super) fn compute_face_contacts<P: Payload>(
     Ok(())
 }
 
+/// Moves contact sections lying on a face's own trim loop onto that edge.
+///
+/// Imprinting such a section would split the face along its own boundary and
+/// leave a degenerate fragment with no interior probe. The edge already carries
+/// the geometry, so the section is recorded as an edge contact and later
+/// realized on the fragment the edge split pass produces. Running this before
+/// chain normalization keeps boundary sections out of the chained polylines.
+pub(super) fn reroute_boundary_imprints<P: Payload>(
+    g: &GMap<P>,
+    plan: &mut IntersectionAccumulator,
+    options: BooleanOptions,
+) {
+    // Sorted, because the recorded order fixes canonical span identity.
+    let mut face_keys = plan.face_imprints.keys().copied().collect::<Vec<_>>();
+    face_keys.sort_by_key(|face| face.data().as_ffi());
+    for face_key in face_keys {
+        let side = if plan.first_cells.faces.contains(&face_key) {
+            BooleanSide::First
+        } else {
+            BooleanSide::Second
+        };
+        let face = g.face_unchecked(face_key);
+        let imprints = plan.face_imprints.remove(&face_key).unwrap_or_default();
+        let mut retained = Vec::new();
+        for imprint in imprints {
+            let Some(edge) = boundary_edge_for(
+                &face,
+                &imprint.pcurve,
+                options.intersections.parameter_tolerance,
+            ) else {
+                retained.push(imprint);
+                continue;
+            };
+            let edge_view = g.edge_unchecked(edge);
+            let curve = edge_view.curve().expect("registered edge geometry");
+            let start = curve.param_at(imprint.curve.point_at(0.0));
+            let end = curve.param_at(imprint.curve.point_at(1.0));
+            plan.contacts.push(RawIntersection::EdgeSection {
+                side,
+                edge,
+                curve: imprint.curve.clone(),
+                interval: Interval::new(start, end),
+            });
+        }
+        if !retained.is_empty() {
+            plan.face_imprints.insert(face_key, retained);
+        }
+    }
+}
+
+/// Discards face imprints that repeat a section already recorded on that face.
+///
+/// A solid contact is observed by several face pairs at once — a coplanar
+/// overlap and the transverse pairs bounding it report the same section — and a
+/// repeated section would give the chain graph a doubled edge, hiding the open
+/// chain the face splitter needs.
+fn dedup_face_imprints(imprints: &mut Vec<FaceImprint>, tolerance: f64) {
+    let mut kept = Vec::<FaceImprint>::new();
+    for imprint in imprints.drain(..) {
+        if !kept
+            .iter()
+            .any(|existing| same_section(&existing.pcurve, &imprint.pcurve, tolerance))
+        {
+            kept.push(imprint);
+        }
+    }
+    *imprints = kept;
+}
+
+/// Whether two pcurves trace the same section, in either direction.
+fn same_section(left: &Curve2, right: &Curve2, tolerance: f64) -> bool {
+    let samples = [0.0, 0.25, 0.5, 0.75, 1.0];
+    let forward = samples
+        .iter()
+        .all(|t| (left.point_at(*t) - right.point_at(*t)).norm() <= tolerance);
+    let reversed = samples
+        .iter()
+        .all(|t| (left.point_at(*t) - right.point_at(1.0 - *t)).norm() <= tolerance);
+    forward || reversed
+}
+
 /// Replaces connected open segment chains with one exact polyline NURBS.
 ///
 /// The face splitter consumes one boundary-to-boundary curve at a time. Solid
@@ -412,9 +496,11 @@ pub(super) fn normalize_face_imprint_chains<P: Payload>(
     plan: &mut IntersectionAccumulator,
     options: BooleanOptions,
 ) -> Result<(), BooleanError> {
-    let face_keys = plan.face_imprints.keys().copied().collect::<Vec<_>>();
+    let mut face_keys = plan.face_imprints.keys().copied().collect::<Vec<_>>();
+    face_keys.sort_by_key(|face| face.data().as_ffi());
     for face_key in face_keys {
-        let imprints = plan.face_imprints.remove(&face_key).unwrap_or_default();
+        let mut imprints = plan.face_imprints.remove(&face_key).unwrap_or_default();
+        dedup_face_imprints(&mut imprints, options.intersections.parameter_tolerance);
         if imprints.len() < 2
             || imprints
                 .iter()
@@ -823,10 +909,6 @@ fn overlap_segments_for_face<P: Payload>(
         .take(polygon.len())
         .filter_map(|(start_uv, end_uv)| {
             if (end_uv - start_uv).norm() <= tolerance {
-                return None;
-            }
-            let midpoint = Point2::from((start_uv.coords + end_uv.coords) * 0.5);
-            if point_on_face_boundary(face, midpoint, tolerance) {
                 return None;
             }
             let start = face.point_at(start_uv.x, start_uv.y);
