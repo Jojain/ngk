@@ -1,12 +1,16 @@
 //! Deterministic planar ray classification and interior fragment probes.
 
 use super::{
-    BooleanError, BooleanOptions, BooleanSide, BooleanTolerances, neighborhood::FragmentGraph,
-    trim::FaceTrimDomain,
+    BooleanError, BooleanOperand, BooleanOptions, BooleanSide, BooleanTolerances,
+    neighborhood::FragmentGraph, operand::operand_cells, trim::FaceTrimDomain,
 };
 use crate::geometry::{Point2, Point3, Surface};
 use crate::tessellate::{TessellateOpts, tessellate_face_key};
-use crate::topology::{gmap::GMap, payload::Payload, shape_keys::FaceKey};
+use crate::topology::{
+    gmap::GMap,
+    payload::Payload,
+    shape_keys::{FaceKey, SolidKey},
+};
 use nalgebra::Vector3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,4 +243,29 @@ pub(crate) fn run<P: Payload>(
         result.push(location);
     }
     Ok((result, rays))
+}
+
+/// Reports whether `point` lies inside a registered solid, using the same
+/// certified ray classifier the Boolean selection stage relies on.
+///
+/// A point on the boundary has no answer here: every ray from it is rejected,
+/// so the classification is reported as ambiguous rather than guessed.
+pub fn solid_contains_point<P: Payload>(
+    map: &GMap<P>,
+    solid: SolidKey,
+    point: Point3,
+    options: BooleanOptions,
+) -> Result<bool, BooleanError> {
+    let cells = operand_cells(map, BooleanOperand::Solid(solid))?;
+    let tolerances = BooleanTolerances::from_cells(map, &cells, &cells, options.tolerances)?;
+    let source = *cells
+        .faces
+        .iter()
+        .next()
+        .ok_or(BooleanError::MissingOperand {
+            operand: BooleanOperand::Solid(solid),
+        })?;
+    let caster = SolidRayCaster::new(map, cells.faces.iter().copied(), options, tolerances)?;
+    let mut rays = 0;
+    Ok(caster.classify(point, source, &mut rays)? == RelativeLocation::Inside)
 }

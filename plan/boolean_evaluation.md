@@ -926,10 +926,10 @@ no test can produce a span bridging an invalid interval.
 
 ### Milestone 3 — Network finalization
 
-- [ ] Fixed-point noding of events into span interiors.
-- [ ] Partial-overlap span splitting and deduplication.
-- [ ] Two-sidedness, pcurve-agreement, valence, and region-closure validation.
-- [ ] Oriented region boundaries replacing `record_region(.., Vec::new())`.
+- [x] Fixed-point noding of events into span interiors.
+- [x] Partial-overlap span splitting and deduplication.
+- [x] Two-sidedness, pcurve-agreement, valence, and region-closure validation.
+- [x] Oriented region boundaries replacing `record_region(.., Vec::new())`.
 
 Exit: the network is a valid noded arrangement shared by both operands and is
 rejected outright when it is not.
@@ -1153,3 +1153,100 @@ orders; rejection, with the map restored, of union and intersection for
 operands meeting only on an edge or a vertex; and refusal of a block/cylinder
 difference, with the map restored, because surface intersection coverage is
 still incomplete for curved operands.
+
+## Implementation checkpoint: network finalization (2026-09-04)
+
+Milestone 3 is implemented in `graph.rs`.
+
+`finalize_network` now runs noding to a fixed point: each pass re-nodes the
+original spans against the previous pass's canonical events and stops when a
+pass adds none, bounded by `MAX_NODING_PASSES`. One pass was not enough because
+`record_event` merges incidences, so a point can only become compatible with a
+span — and therefore only become a split parameter — after an earlier pass
+merged the uses that made it compatible. `BooleanError::NodingDidNotConverge`
+reports tolerance thrash instead of looping.
+
+`close_regions` replaces `record_region(.., Vec::new())`. For every coincident
+face pair it collects the spans that lie on both faces — recognizing a section
+carried by a face's own boundary edge, not only face imprints, since the
+boundary-coincident reroute records those as `IntersectionSpanUse::Edge` —
+walks them into one closed cycle, and orients it counterclockwise in the first
+face's parameter domain by signed area. `IntersectionRegion` therefore carries
+`Vec<(IntersectionSpanId, IntersectionOrientation)>` plus `normals_agree`,
+compared from the two oriented face normals at the overlap centroid. Spans that
+form no single closed cycle raise `UnboundedRegion`.
+
+`validate_solid_network` holds the contract that only a *solid* evaluation
+needs: every span realized on both operands, every face pcurve evaluating onto
+the canonical curve within the residual budget, even valence at every event,
+and a bounded boundary for every coincident region. It runs from `boolean()`
+only. The general `prepare_boolean` facility keeps admitting one-sided and open
+contacts — imprinting a lone face against a solid is a legitimate use — so the
+check cannot live in `finish`. Parity counts transverse spans only and skips
+events touched by a coincident span: an edge/edge or face/face coincidence ends
+where the boundaries stop sharing area, not on another crossing, which is why
+two blocks meeting on one edge are still a legal difference.
+
+New focused tests in `tests/builders/boolean_network.rs`: no event lies in a
+canonical span interior; a coplanar overlap is bounded by a closed
+counterclockwise cycle with opposing normals; a transverse box pair validates
+and is two-sided everywhere; and two perpendicular faces, whose section ends on
+a free boundary, are rejected with `OpenIntersectionLoop`.
+
+## Test-matrix checkpoint and two blockers (2026-09-04)
+
+### Focused tests added
+
+- `tests/builders/boolean_broad_phase.rs` — the BVH keeps every face pair whose
+  own vertex extents overlap, measured against a brute-force count on a sweep of
+  block offsets, and every pair is either tested or pruned; candidate
+  enumeration and event canonicalization repeat identically on a second run.
+- `tests/builders/boolean_clip.rs` — a section that leaves and re-enters a
+  U-shaped face is clipped into two spans and never bridges the notch. This
+  exercises the planar interval path in `contacts.rs`; the `clip.rs` branch path
+  is unreachable until curved pairs can be certified (see below).
+- `tests/builders/boolean_classify.rs` — ray parity on a block, including points
+  whose rays run straight at corners and edges and must be rejected and retried,
+  and a point on a face reported as `AmbiguousClassification` rather than guessed.
+- `tests/builders/boolean_network.rs` — see the finalization checkpoint above.
+
+### End-to-end assertions added
+
+`tests/builders/boolean.rs` now also asserts, for a transverse union: Euler
+characteristic two per shell, every result face resolving to an operand source
+face, and no two coplanar result faces with overlapping extents; membership spot
+checks through the new public `solid_contains_point` for all three operations;
+and identical result topology when one operand's faces are built on a rotated
+parameter frame.
+
+`solid_contains_point` exposes the certified ray classifier the selection stage
+uses. It is the classifier §11 asks the membership assertions to use, and it is
+useful on its own.
+
+### Blocker 1 — curved operands wait on the surface/surface plan
+
+`intersect_surfaces` pushes `InteriorLoopSearchNotImplemented` unconditionally
+for every non-planar pair, so `boolean()` rejects any operand pair whose
+candidate faces include a curved surface — before classification is ever
+reached. Milestone 7 therefore cannot start here: it is gated on
+`plan/nurbs_surface_surface_intersection.md`, exactly as this plan's dependency
+line states. Generalizing `SolidRayCaster` beyond planes would be dead code
+until that lands.
+
+### Blocker 2 — a face's inner loop is invisible to shell traversal
+
+`boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps` is
+written and `#[ignore]`d. The Boolean itself is correct: the ten result faces
+are built, both caps carry the shaft as an inner loop, every face's oriented
+flux is right, and `signed_volume` returns the exact 24. It is rejected by
+`validate_solid_orientation` because a face's inner loop is a *separate*
+alpha0/alpha1 orbit, so the shell's alpha0/alpha1/alpha2 orbit from a cap dart
+never reaches the shaft walls: `Sheet::faces()` reports six of the ten faces and
+`Closed::new` passes on that partial shell. The same limitation makes
+`add_extruded_face` return a six-faced solid for a profile with a hole.
+
+This is a topology-layer representation gap — a multi-loop face needs its loops
+connected in the sheet orbit — and fixing it there would also fix extrusion,
+tessellation, and validation of any holed shell. Until then the "through
+cylinder / inner loop on two faces" row of the matrix cannot pass, by either the
+curved or the planar route.

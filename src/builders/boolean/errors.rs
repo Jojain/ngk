@@ -18,6 +18,16 @@ use super::{BooleanCell, BooleanOperand, IntersectionNetworkValidationError};
 pub enum BooleanError {
     #[error("imprint section cannot be attributed to canonical span {span:?}")]
     UnrealizedSpan { span: IntersectionSpanId },
+    #[error("intersection noding did not reach a fixed point in {passes} passes")]
+    NodingDidNotConverge { passes: usize },
+    #[error("intersection span {span} is realized on one operand only")]
+    SpanNotTwoSided { span: usize },
+    #[error("intersection span {span} disagrees with its pcurve by {residual}")]
+    PcurveDisagreesWithCurve { span: usize, residual: f64 },
+    #[error("intersection loop is open at event {event} ({point:?})")]
+    OpenIntersectionLoop { event: usize, point: Point3 },
+    #[error("coincident faces {first:?} and {second:?} have no bounded overlap")]
+    RegionWithoutBoundary { first: FaceKey, second: FaceKey },
     #[error("solid {solid:?} is not a closed, consistently oriented operand")]
     InvalidOperand {
         solid: SolidKey,

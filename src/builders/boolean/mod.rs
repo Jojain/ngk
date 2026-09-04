@@ -18,6 +18,7 @@ mod tolerance;
 mod trim;
 pub use tolerance::{BooleanTolerancePolicy, BooleanTolerances};
 
+pub use classify::solid_contains_point;
 use contacts::{
     compute_edge_contacts, compute_edge_face_contacts, compute_face_contacts,
     compute_vertex_contacts, normalize_face_imprint_chains, reroute_boundary_imprints,
@@ -27,7 +28,7 @@ pub use graph::{
     IntersectionEvent, IntersectionEventId, IntersectionEventLocation, IntersectionEventUse,
     IntersectionNetwork, IntersectionNetworkValidationError, IntersectionOrientation,
     IntersectionRegion, IntersectionSpan, IntersectionSpanId, IntersectionSpanKind,
-    IntersectionSpanUse,
+    IntersectionSpanUse, validate_solid_network,
 };
 use graph::{IntersectionNetworkBuilder, edge_use, face_use, vertex_use};
 use operand::{BooleanContext, OperandCells, import_operand, operand_cells};
@@ -148,6 +149,7 @@ pub fn boolean<P: Payload>(
                 diagnostics: Box::new(plan.diagnostics),
             });
         }
+        validate_solid_network(edit, &plan.network, context.tolerances)?;
         let mut prepared = apply_boolean_splits_staged(edit, plan, false)?;
         let graph = neighborhood::FragmentGraph::build(edit, &prepared);
         let (classes, rays) = classify::run(edit, &graph, context.options, context.tolerances)?;
@@ -215,8 +217,9 @@ pub fn compute_boolean_intersections<P: Payload>(
     normalize_face_imprint_chains(g, &mut observations, options)?;
     let observed_network = build_intersection_network(g, &observations, options)?;
     let mut face_imprints = imprint::face_imprints(&observed_network);
-    let (network, subdivision) =
+    let (mut network, subdivision) =
         graph::finalize_network(&observed_network, tolerances.linear, tolerances.parameter)?;
+    graph::close_regions(&mut network, g)?;
     for imprint in face_imprints.values_mut().flatten() {
         imprint.pieces = subdivision[imprint.span.0].clone();
         if imprint.orientation == IntersectionOrientation::Reversed {
@@ -301,7 +304,7 @@ fn build_intersection_network<P: Payload>(
             RawIntersection::Region {
                 first_face,
                 second_face,
-            } => builder.record_region(*first_face, *second_face, Vec::new()),
+            } => builder.record_region(*first_face, *second_face),
             RawIntersection::EdgeSection {
                 side,
                 edge,

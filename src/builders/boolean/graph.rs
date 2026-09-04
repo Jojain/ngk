@@ -3,10 +3,14 @@
 use crate::geometry::{
     Curve, Curve2, Interval, KnotVector, NurbsCurve, NurbsError, Point2, Point3, PointCoincidence,
 };
+use crate::topology::gmap::GMap;
+use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
+use nalgebra::Vector3;
+use std::collections::HashSet;
 use thiserror::Error;
 
-use super::{BooleanCell, BooleanError, BooleanSide, PointContactKind};
+use super::{BooleanCell, BooleanError, BooleanSide, BooleanTolerances, PointContactKind};
 
 /// Stable index of a remarkable point in an intersection network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -85,7 +89,10 @@ pub struct IntersectionSpan {
 pub struct IntersectionRegion {
     pub first_face: FaceKey,
     pub second_face: FaceKey,
-    pub boundary: Vec<IntersectionSpanId>,
+    /// Oriented boundary cycle, counterclockwise in the first face's parameter domain.
+    pub boundary: Vec<(IntersectionSpanId, IntersectionOrientation)>,
+    /// Whether the two coincident faces are oriented the same way on the overlap.
+    pub normals_agree: bool,
 }
 
 /// Canonical source of truth for all contacts between two Boolean operands.
@@ -107,6 +114,8 @@ pub enum IntersectionNetworkValidationError {
     SpanWithoutUse { span: usize },
     #[error("intersection span {span} does not meet its canonical endpoint")]
     SpanEndpointMismatch { span: usize },
+    #[error("coincident region {region} is not bounded by one closed oriented cycle")]
+    UnboundedRegion { region: usize },
 }
 
 impl IntersectionNetwork {
@@ -128,6 +137,11 @@ impl IntersectionNetwork {
     /// Resolves an event identifier.
     pub fn event(&self, id: IntersectionEventId) -> Option<&IntersectionEvent> {
         self.events.get(id.0)
+    }
+
+    /// Resolves a span identifier.
+    pub fn span(&self, id: IntersectionSpanId) -> Option<&IntersectionSpan> {
+        self.spans.get(id.0)
     }
 
     /// Checks connectivity and geometric endpoint consistency.
@@ -263,16 +277,21 @@ impl IntersectionNetworkBuilder {
         Some(id)
     }
 
-    pub(crate) fn record_region(
-        &mut self,
-        first_face: FaceKey,
-        second_face: FaceKey,
-        boundary: Vec<IntersectionSpanId>,
-    ) {
+    /// Records a coincident face pair; its oriented boundary is closed after noding.
+    pub(crate) fn record_region(&mut self, first_face: FaceKey, second_face: FaceKey) {
+        if self
+            .network
+            .regions
+            .iter()
+            .any(|region| region.first_face == first_face && region.second_face == second_face)
+        {
+            return;
+        }
         self.network.regions.push(IntersectionRegion {
             first_face,
             second_face,
-            boundary,
+            boundary: Vec::new(),
+            normals_agree: false,
         });
     }
 
@@ -422,22 +441,47 @@ pub(crate) struct SpanSubdivision {
     pub(crate) reversed: bool,
 }
 
-/// Nodes all span interiors at compatible events, then deduplicates the exact pieces.
-/// Input events already include every observed span endpoint, so partial overlaps
-/// gain common endpoints before canonicalization.
+/// Bounded guard against tolerance thrash in the noding fixed point.
+const MAX_NODING_PASSES: usize = 8;
+
+/// Nodes every span interior at compatible events, repeating until no pass adds an
+/// event. A pass can split a span at a point whose incidences only became
+/// compatible once an earlier pass merged them, so one pass is not a fixed point.
 pub(crate) fn finalize_network(
     network: &IntersectionNetwork,
     linear: f64,
     parameter: f64,
 ) -> Result<(IntersectionNetwork, Vec<Vec<SpanSubdivision>>), BooleanError> {
+    let mut events = network.events.clone();
+    for _ in 0..MAX_NODING_PASSES {
+        let (builder, mapping) = node_spans(network, &events, linear, parameter)?;
+        if builder.network.events.len() <= events.len() {
+            return Ok((builder.finish()?, mapping));
+        }
+        events = builder.network.events.clone();
+    }
+    Err(BooleanError::NodingDidNotConverge {
+        passes: MAX_NODING_PASSES,
+    })
+}
+
+/// One noding pass of the original spans against `events`, which already include
+/// every observed span endpoint, so partial overlaps gain common endpoints before
+/// canonicalization.
+fn node_spans(
+    network: &IntersectionNetwork,
+    events: &[IntersectionEvent],
+    linear: f64,
+    parameter: f64,
+) -> Result<(IntersectionNetworkBuilder, Vec<Vec<SpanSubdivision>>), BooleanError> {
     let mut builder = IntersectionNetworkBuilder::new(linear);
-    for event in &network.events {
+    for event in events {
         builder.record_event(event.point, event.kind, event.uses.clone());
     }
     let mut mapping = Vec::new();
     for span in &network.spans {
         let mut parameters = vec![0.0, 1.0];
-        for event in &network.events {
+        for event in events {
             let t = span.curve.param_at(event.point);
             if t <= parameter
                 || t >= 1.0 - parameter
@@ -507,9 +551,9 @@ pub(crate) fn finalize_network(
         mapping.push(pieces);
     }
     for region in &network.regions {
-        builder.record_region(region.first_face, region.second_face, Vec::new());
+        builder.record_region(region.first_face, region.second_face);
     }
-    Ok((builder.finish()?, mapping))
+    Ok((builder, mapping))
 }
 
 /// Converts a span parameter into each of its operand-local event incidences.
@@ -549,4 +593,255 @@ pub(crate) fn normalized_subcurve(curve: &Curve, interval: Interval) -> Result<C
         trimmed.control_points().clone(),
         knots,
     )?))
+}
+
+/// Edge keys bounding one face, used to recognize a section a face already carries.
+fn face_edge_keys<P: Payload>(map: &GMap<P>, face: FaceKey) -> HashSet<EdgeKey> {
+    map.face_unchecked(face)
+        .edges()
+        .into_iter()
+        .map(|edge| edge.key())
+        .collect()
+}
+
+/// Whether one operand realizes `span` on `face`, either as an imprint or as one
+/// of that face's own boundary edges.
+fn span_lies_on_face(
+    span: &IntersectionSpan,
+    side: BooleanSide,
+    face: FaceKey,
+    edges: &HashSet<EdgeKey>,
+) -> bool {
+    span.uses.iter().any(|span_use| match span_use {
+        IntersectionSpanUse::Face {
+            side: use_side,
+            face: use_face,
+            ..
+        } => *use_side == side && *use_face == face,
+        IntersectionSpanUse::Edge {
+            side: use_side,
+            edge,
+            ..
+        } => *use_side == side && edges.contains(edge),
+    })
+}
+
+/// Chains the region's spans into a single closed cycle, or reports that they do
+/// not form exactly one.
+fn walk_cycle(
+    network: &IntersectionNetwork,
+    candidates: &[IntersectionSpanId],
+) -> Option<Vec<(IntersectionSpanId, IntersectionOrientation)>> {
+    let (&seed, rest) = candidates.split_first()?;
+    let mut remaining = rest.to_vec();
+    let origin = network.spans[seed.0].start;
+    let mut current = network.spans[seed.0].end;
+    let mut cycle = vec![(seed, IntersectionOrientation::Forward)];
+    while current != origin {
+        let position = remaining.iter().position(|id| {
+            let span = &network.spans[id.0];
+            span.start == current || span.end == current
+        })?;
+        let id = remaining.remove(position);
+        let span = &network.spans[id.0];
+        let (orientation, next) = if span.start == current {
+            (IntersectionOrientation::Forward, span.end)
+        } else {
+            (IntersectionOrientation::Reversed, span.start)
+        };
+        cycle.push((id, orientation));
+        current = next;
+    }
+    remaining.is_empty().then_some(cycle)
+}
+
+/// Signed area of the cycle in one face's parameter domain; positive is counterclockwise.
+fn cycle_signed_area<P: Payload>(
+    map: &GMap<P>,
+    network: &IntersectionNetwork,
+    face: FaceKey,
+    cycle: &[(IntersectionSpanId, IntersectionOrientation)],
+) -> Result<f64, BooleanError> {
+    let view = map.face_unchecked(face);
+    let mut area = 0.0;
+    for (id, orientation) in cycle {
+        let span = &network.spans[id.0];
+        let (start, end) = match orientation {
+            IntersectionOrientation::Forward => (span.start, span.end),
+            IntersectionOrientation::Reversed => (span.end, span.start),
+        };
+        let start = view
+            .surface()
+            .closest_parameter(network.events[start.0].point)?;
+        let end = view
+            .surface()
+            .closest_parameter(network.events[end.0].point)?;
+        area += start.x * end.y - end.x * start.y;
+    }
+    Ok(area)
+}
+
+/// Walks every coincident region into one counterclockwise cycle in the first
+/// face's domain and records whether the two faces are oriented alike there.
+///
+/// This is the closure step classification and selection rely on: a coincident
+/// region with no oriented boundary is indistinguishable from an unresolved overlap.
+pub(crate) fn close_regions<P: Payload>(
+    network: &mut IntersectionNetwork,
+    map: &GMap<P>,
+) -> Result<(), BooleanError> {
+    for index in 0..network.regions.len() {
+        let first_face = network.regions[index].first_face;
+        let second_face = network.regions[index].second_face;
+        let first_edges = face_edge_keys(map, first_face);
+        let second_edges = face_edge_keys(map, second_face);
+        let candidates = network
+            .spans
+            .iter()
+            .enumerate()
+            .filter(|(_, span)| {
+                span_lies_on_face(span, BooleanSide::First, first_face, &first_edges)
+                    && span_lies_on_face(span, BooleanSide::Second, second_face, &second_edges)
+            })
+            .map(|(id, _)| IntersectionSpanId(id))
+            .collect::<Vec<_>>();
+        let mut cycle = walk_cycle(network, &candidates)
+            .ok_or(IntersectionNetworkValidationError::UnboundedRegion { region: index })?;
+        if cycle_signed_area(map, network, first_face, &cycle)? < 0.0 {
+            cycle.reverse();
+            for (_, orientation) in &mut cycle {
+                *orientation = match orientation {
+                    IntersectionOrientation::Forward => IntersectionOrientation::Reversed,
+                    IntersectionOrientation::Reversed => IntersectionOrientation::Forward,
+                };
+            }
+        }
+        let normals_agree = region_normals_agree(map, network, first_face, second_face, &cycle)?;
+        let region = &mut network.regions[index];
+        region.boundary = cycle;
+        region.normals_agree = normals_agree;
+    }
+    Ok(())
+}
+
+/// Compares the two oriented face normals at the region's boundary centroid.
+fn region_normals_agree<P: Payload>(
+    map: &GMap<P>,
+    network: &IntersectionNetwork,
+    first_face: FaceKey,
+    second_face: FaceKey,
+    cycle: &[(IntersectionSpanId, IntersectionOrientation)],
+) -> Result<bool, BooleanError> {
+    let mut centroid = Vector3::zeros();
+    for (id, orientation) in cycle {
+        let span = &network.spans[id.0];
+        let start = match orientation {
+            IntersectionOrientation::Forward => span.start,
+            IntersectionOrientation::Reversed => span.end,
+        };
+        centroid += network.events[start.0].point.coords;
+    }
+    let centroid = Point3::from(centroid / cycle.len() as f64);
+    let first = map.face_unchecked(first_face);
+    let second = map.face_unchecked(second_face);
+    let first_uv = first.surface().closest_parameter(centroid)?;
+    let second_uv = second.surface().closest_parameter(centroid)?;
+    let first_normal = *first.normal_at(first_uv.x, first_uv.y);
+    let second_normal = *second.normal_at(second_uv.x, second_uv.y);
+    Ok(first_normal.dot(&second_normal) > 0.0)
+}
+
+/// Checks the contract a regularized solid Boolean requires of a finalized network:
+/// every section is realized on both operands, agrees with its pcurves, closes into
+/// loops, and every coincident region is bounded.
+///
+/// The general preparation facility deliberately admits open, one-sided contacts,
+/// so this is checked only where a closed result solid must follow.
+pub fn validate_solid_network<P: Payload>(
+    map: &GMap<P>,
+    network: &IntersectionNetwork,
+    tolerances: BooleanTolerances,
+) -> Result<(), BooleanError> {
+    let mut valence = vec![0usize; network.events.len()];
+    let mut coincident = vec![false; network.events.len()];
+    for (index, span) in network.spans.iter().enumerate() {
+        for side in [BooleanSide::First, BooleanSide::Second] {
+            if !span
+                .uses
+                .iter()
+                .any(|span_use| span_use_side(span_use) == side)
+            {
+                return Err(BooleanError::SpanNotTwoSided { span: index });
+            }
+        }
+        validate_span_pcurves(map, span, index, tolerances)?;
+        // Parity is a statement about transverse loops only: a coincident section
+        // ends where the two boundaries stop sharing area, not on another crossing.
+        match span.kind {
+            IntersectionSpanKind::Transverse => {
+                valence[span.start.0] += 1;
+                valence[span.end.0] += 1;
+            }
+            IntersectionSpanKind::Overlap => {
+                coincident[span.start.0] = true;
+                coincident[span.end.0] = true;
+            }
+        }
+    }
+    for (index, event) in network.events.iter().enumerate() {
+        if event.kind == PointContactKind::Tangent
+            || coincident[index]
+            || valence[index].is_multiple_of(2)
+        {
+            continue;
+        }
+        return Err(BooleanError::OpenIntersectionLoop {
+            event: index,
+            point: event.point,
+        });
+    }
+    for region in &network.regions {
+        if region.boundary.is_empty() {
+            return Err(BooleanError::RegionWithoutBoundary {
+                first: region.first_face,
+                second: region.second_face,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Which operand a section representation belongs to.
+fn span_use_side(span_use: &IntersectionSpanUse) -> BooleanSide {
+    match span_use {
+        IntersectionSpanUse::Edge { side, .. } | IntersectionSpanUse::Face { side, .. } => *side,
+    }
+}
+
+/// Rejects a pcurve that does not evaluate onto the canonical section curve.
+fn validate_span_pcurves<P: Payload>(
+    map: &GMap<P>,
+    span: &IntersectionSpan,
+    index: usize,
+    tolerances: BooleanTolerances,
+) -> Result<(), BooleanError> {
+    const SAMPLES: usize = 8;
+    for span_use in &span.uses {
+        let IntersectionSpanUse::Face { face, pcurve, .. } = span_use else {
+            continue;
+        };
+        let view = map.face_unchecked(*face);
+        for step in 0..=SAMPLES {
+            let t = step as f64 / SAMPLES as f64;
+            let uv = pcurve.point_at(t);
+            let residual = (view.point_at(uv.x, uv.y) - span.curve.point_at(t)).norm();
+            if residual > tolerances.residual {
+                return Err(BooleanError::PcurveDisagreesWithCurve {
+                    span: index,
+                    residual,
+                });
+            }
+        }
+    }
+    Ok(())
 }

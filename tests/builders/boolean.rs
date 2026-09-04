@@ -894,6 +894,7 @@ fn boolean_union_of_boxes_sharing_a_full_face_closes_across_the_contact() {
         BooleanOptions::default(),
     )
     .unwrap();
+    show(&map);
 
     validate_solid_manifold(&map, result.solid).unwrap();
     ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
@@ -1137,4 +1138,274 @@ fn boolean_refuses_incomplete_intersection_coverage_and_restores_the_map() {
     };
     assert!(!diagnostics.coverage.is_empty());
     assert_eq!(serde_json::to_value(&map).unwrap(), before);
+}
+
+/// Bounding box of a face in the parameter domain of `surface`.
+fn face_uv_extent(
+    face: &ngk::topology::face::Face<'_, ngk::StandardPayload>,
+    surface: &Surface,
+) -> (Point2, Point2) {
+    let mut min = Point2::new(f64::INFINITY, f64::INFINITY);
+    let mut max = Point2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for vertex in face.vertices() {
+        let point = *vertex.point().expect("face geometry");
+        let uv = surface.closest_parameter(point).expect("planar parameter");
+        min = Point2::new(min.x.min(uv.x), min.y.min(uv.y));
+        max = Point2::new(max.x.max(uv.x), max.y.max(uv.y));
+    }
+    (min, max)
+}
+
+/// Whether two planar faces rest on the same plane, in either orientation.
+fn share_a_plane(first: &Surface, second: &Surface) -> bool {
+    let (Surface::Plane(first), Surface::Plane(second)) = (first, second) else {
+        return false;
+    };
+    let parallel = first.normal().dot(&second.normal()).abs() > 1.0 - LINEAR_TOLERANCE;
+    let offset = (second.origin() - first.origin())
+        .dot(&first.normal())
+        .abs();
+    parallel && offset <= LINEAR_TOLERANCE
+}
+
+#[test]
+fn boolean_union_shells_are_euler_two_and_resolve_to_operand_faces() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 1.0), 2.0);
+    let result = boolean(
+        &mut map,
+        first,
+        second,
+        BooleanOperation::Union,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    let solid = map.solid_unchecked(result.solid);
+    for shell in solid.shells() {
+        let euler = shell.vertices().len() as isize - shell.edges().len() as isize
+            + shell.faces().len() as isize;
+        assert_eq!(euler, 2, "every result shell must be a topological sphere");
+    }
+
+    let sources = result
+        .lineage
+        .first
+        .faces
+        .values()
+        .chain(result.lineage.second.faces.values())
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+    for face in solid.faces() {
+        assert!(
+            sources.contains(&face.key()),
+            "result face {:?} has no operand source",
+            face.key()
+        );
+    }
+
+    let faces = solid.faces();
+    for (index, face) in faces.iter().enumerate() {
+        for other in &faces[index + 1..] {
+            if !share_a_plane(face.surface(), other.surface()) {
+                continue;
+            }
+            let (min, max) = face_uv_extent(face, face.surface());
+            let (other_min, other_max) = face_uv_extent(other, face.surface());
+            let overlaps = min.x < other_max.x - LINEAR_TOLERANCE
+                && other_min.x < max.x - LINEAR_TOLERANCE
+                && min.y < other_max.y - LINEAR_TOLERANCE
+                && other_min.y < max.y - LINEAR_TOLERANCE;
+            assert!(
+                !overlaps,
+                "coplanar result faces {:?} and {:?} overlap",
+                face.key(),
+                other.key()
+            );
+        }
+    }
+}
+
+#[test]
+fn boolean_results_classify_sample_points_like_the_mathematical_set() {
+    use ngk::builders::boolean::{BooleanOperation, boolean, solid_contains_point};
+    // A = [0,2]^3, B = [1,3]^3.
+    let inside_a_only = Point3::new(0.5, 0.5, 0.5);
+    let inside_both = Point3::new(1.5, 1.5, 1.5);
+    let inside_b_only = Point3::new(2.5, 2.5, 2.5);
+    let outside_both = Point3::new(2.5, 0.5, 0.5);
+    for (operation, expectations) in [
+        (
+            BooleanOperation::Union,
+            [
+                (inside_a_only, true),
+                (inside_both, true),
+                (inside_b_only, true),
+                (outside_both, false),
+            ],
+        ),
+        (
+            BooleanOperation::Intersection,
+            [
+                (inside_a_only, false),
+                (inside_both, true),
+                (inside_b_only, false),
+                (outside_both, false),
+            ],
+        ),
+        (
+            BooleanOperation::Difference,
+            [
+                (inside_a_only, true),
+                (inside_both, false),
+                (inside_b_only, false),
+                (outside_both, false),
+            ],
+        ),
+    ] {
+        let (mut map, first, second) =
+            two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 1.0), 2.0);
+        let result = boolean(
+            &mut map,
+            first,
+            second,
+            operation,
+            BooleanOptions::default(),
+        )
+        .unwrap();
+        for (point, expected) in expectations {
+            let inside =
+                solid_contains_point(&map, result.solid, point, BooleanOptions::default()).unwrap();
+            assert_eq!(
+                inside, expected,
+                "{operation:?} membership at {point:?} must be {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn boolean_union_topology_is_stable_under_face_reparameterization() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    // The same box, built on a plane frame rotated a quarter turn in its own
+    // domain: identical geometry, different pcurve parameterization.
+    let reparameterized = {
+        let plane = Plane::from_xy(Point3::new(3.0, 1.0, 1.0), Vector3::y(), -Vector3::x());
+        let base = faces::rectangle(plane, 2.0, 2.0).expect("rotated base");
+        let (mut map, face) = base.into_map();
+        let solid =
+            add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 2.0)).expect("rotated block");
+        (map, solid)
+    };
+
+    let mut counts = Vec::new();
+    for rotated in [false, true] {
+        let (mut map, first, second) = if rotated {
+            let (mut map, first) = block_at(Point3::origin(), 2.0);
+            let (tool, block) = &reparameterized;
+            let second = map
+                .transaction(|edit| {
+                    let dart = edit.merge(tool.solid_unchecked(*block));
+                    Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+                })
+                .unwrap();
+            (map, first, second)
+        } else {
+            two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 1.0), 2.0)
+        };
+        let result = boolean(
+            &mut map,
+            first,
+            second,
+            BooleanOperation::Union,
+            BooleanOptions::default(),
+        )
+        .unwrap();
+        validate_solid_manifold(&map, result.solid).unwrap();
+        let solid = map.solid_unchecked(result.solid);
+        counts.push((
+            solid.vertices().len(),
+            solid.edges().len(),
+            solid.faces().len(),
+        ));
+    }
+    assert_eq!(
+        counts[0], counts[1],
+        "reparameterizing a face must not change the result topology"
+    );
+}
+
+/// An axis-aligned box spanning `min` to `max`.
+fn box_between(min: Point3, max: Point3) -> (GMap<ngk::StandardPayload>, SolidKey) {
+    let plane = Plane::from_xy(min, Vector3::x(), Vector3::y());
+    let base = faces::rectangle(plane, max.x - min.x, max.y - min.y).expect("box base");
+    let (mut map, face) = base.into_map();
+    let solid = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, max.z - min.z))
+        .expect("box extrusion");
+    (map, solid)
+}
+
+#[test]
+#[ignore = "a face's inner loop is a separate alpha0/alpha1 orbit, so the shell sheet \
+            traversal never reaches the shaft walls: `Sheet::faces()` reports 6 of the 10 \
+            result faces and `validate_solid_orientation` rejects the correct solid. \
+            Fixing this belongs to the topology layer, not to Boolean assembly."]
+fn boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps() {
+    use ngk::builders::boolean::{BooleanOperation, boolean, solid_contains_point};
+    // The planar counterpart of "box minus a through cylinder": the tool leaves
+    // both caps with a hole and the result is a genus-one shell.
+    let (mut map, block) = box_between(Point3::origin(), Point3::new(3.0, 3.0, 3.0));
+    let (tool, slot) = box_between(Point3::new(1.0, 1.0, -1.0), Point3::new(2.0, 2.0, 4.0));
+    let slot = map
+        .transaction(|edit| {
+            let dart = edit.merge(tool.solid_unchecked(slot));
+            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+        })
+        .unwrap();
+
+    let result = boolean(
+        &mut map,
+        block,
+        slot,
+        BooleanOperation::Difference,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    validate_gmap(&map).unwrap();
+    validate_solid_manifold(&map, result.solid).unwrap();
+    ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+    let solid = map.solid_unchecked(result.solid);
+    assert_eq!(solid.shells().len(), 1);
+    assert_eq!(
+        solid
+            .faces()
+            .iter()
+            .filter(|face| !face.inner_loops().is_empty())
+            .count(),
+        2,
+        "both caps must carry the shaft as an inner loop"
+    );
+    assert_eq!(solid.faces().len(), 10);
+    // A genus-one shell: the two holed caps each cost one unit of Euler characteristic.
+    let shell = &solid.shells()[0];
+    assert_eq!(
+        shell.vertices().len() as isize - shell.edges().len() as isize
+            + shell.faces().len() as isize,
+        2
+    );
+
+    for (point, expected) in [
+        (Point3::new(0.5, 0.5, 1.5), true),
+        (Point3::new(1.5, 1.5, 1.5), false),
+        (Point3::new(2.5, 2.5, 1.5), true),
+    ] {
+        assert_eq!(
+            solid_contains_point(&map, result.solid, point, BooleanOptions::default()).unwrap(),
+            expected,
+            "membership at {point:?} after cutting the slot"
+        );
+    }
 }
