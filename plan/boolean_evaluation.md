@@ -1149,5 +1149,7 @@ Newly verified cases: union and difference of boxes sharing a full face; union,
 difference in both operand orders, and empty intersection of boxes meeting on a
 coplanar partial face; union and intersection of nested boxes and the empty
 inner-minus-outer difference; difference of overlapping boxes in both operand
-orders; and rejection, with the map restored, of union and intersection for
-operands meeting only on an edge or a vertex.
+orders; rejection, with the map restored, of union and intersection for
+operands meeting only on an edge or a vertex; and refusal of a block/cylinder
+difference, with the map restored, because surface intersection coverage is
+still incomplete for curved operands.

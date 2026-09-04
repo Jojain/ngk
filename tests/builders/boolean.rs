@@ -1096,3 +1096,45 @@ fn boolean_difference_is_computed_in_both_operand_orders() {
         );
     }
 }
+
+#[test]
+fn boolean_refuses_incomplete_intersection_coverage_and_restores_the_map() {
+    use ngk::builders::boolean::{BooleanError, BooleanOperation, boolean};
+    // A cylinder is a legal operand, but the surface/surface solver cannot yet
+    // certify that it found every branch. The operation must report the gap and
+    // leave the map untouched rather than register an unverified solid.
+    let disc = faces::circle(
+        Plane::from_xy(Point3::new(1.0, 1.0, -1.0), Vector3::x(), Vector3::y()),
+        0.5,
+    )
+    .expect("cylinder base");
+    let (tool, cylinder) = {
+        let (mut map, face) = disc.into_map();
+        let solid =
+            add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 4.0)).expect("cylinder");
+        (map, solid)
+    };
+    let (mut map, block) = block_at(Point3::origin(), 2.0);
+    let cylinder = map
+        .transaction(|edit| {
+            let dart = edit.merge(tool.solid_unchecked(cylinder));
+            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+        })
+        .unwrap();
+
+    let before = serde_json::to_value(&map).unwrap();
+    let Err(error) = boolean(
+        &mut map,
+        block,
+        cylinder,
+        BooleanOperation::Difference,
+        BooleanOptions::default(),
+    ) else {
+        panic!("curved classification is not certified yet");
+    };
+    let BooleanError::IncompleteIntersections { diagnostics } = error else {
+        panic!("unexpected error: {error:?}");
+    };
+    assert!(!diagnostics.coverage.is_empty());
+    assert_eq!(serde_json::to_value(&map).unwrap(), before);
+}
