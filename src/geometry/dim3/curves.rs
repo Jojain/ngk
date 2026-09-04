@@ -21,7 +21,7 @@ pub enum Periodicity {
     Periodic(f64),
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Curve {
     Line(Line),
     Circle(Circle),
@@ -285,7 +285,7 @@ impl Curve {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bounded<T> {
     inner: T,
     bounds: Interval,
@@ -484,7 +484,7 @@ mod tests {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Line {
     pub axis: Axis3,
 }
@@ -550,7 +550,7 @@ impl Line {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Circle {
     plane: Plane,
     radius: f64,

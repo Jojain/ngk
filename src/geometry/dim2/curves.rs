@@ -1,7 +1,9 @@
+use std::f64::consts::{FRAC_PI_2, TAU};
+
 use crate::geometry::{
     ControlPolygon2, Degree, HPoint2, Interval, KnotVector, LINEAR_TOLERANCE, NurbsError,
 };
-use nalgebra::Vector2;
+use nalgebra::{UnitVector2, Vector2};
 use serde::{Deserialize, Serialize};
 
 use super::intersections::{
@@ -15,6 +17,7 @@ use super::utils::Point2;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Curve2 {
     Line(Line2),
+    Circle(Circle2),
     Nurbs(NurbsCurve2),
 }
 
@@ -30,6 +33,7 @@ impl Curve2 {
                 ])?,
                 KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
             ),
+            Curve2::Circle(circle) => circle.to_nurbs(),
             Curve2::Nurbs(curve) => Ok(curve.clone()),
         }
     }
@@ -38,6 +42,7 @@ impl Curve2 {
     pub fn point_at(&self, parameter: f64) -> Point2 {
         match self {
             Curve2::Line(line) => line.point_at(parameter),
+            Curve2::Circle(circle) => circle.point_at(parameter),
             Curve2::Nurbs(curve) => curve.point_at(native_parameter(curve.domain(), parameter)),
         }
     }
@@ -59,6 +64,7 @@ impl Curve2 {
     pub fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
         match self {
             Curve2::Line(line) => vec![(0.0, line.start), (1.0, line.end)],
+            Curve2::Circle(circle) => circle.adaptive_samples(tolerance, max_depth),
             Curve2::Nurbs(curve) => {
                 let domain = curve.domain();
                 curve
@@ -74,6 +80,7 @@ impl Curve2 {
     pub fn reversed(&self) -> Self {
         match self {
             Curve2::Line(line) => Curve2::Line(line.reversed()),
+            Curve2::Circle(circle) => Curve2::Circle(circle.reversed()),
             Curve2::Nurbs(curve) => Curve2::Nurbs(curve.reversed()),
         }
     }
@@ -85,6 +92,7 @@ impl Curve2 {
                 line.start + offset,
                 line.end + offset,
             ))),
+            Curve2::Circle(circle) => Ok(Curve2::Circle(circle.translated(offset))),
             Curve2::Nurbs(curve) => Ok(Curve2::Nurbs(curve.translated(offset)?)),
         }
     }
@@ -101,6 +109,10 @@ impl Curve2 {
             Curve2::Line(line) => {
                 let (first, second) = line.split_at(parameter);
                 Ok((Curve2::Line(first), Curve2::Line(second)))
+            }
+            Curve2::Circle(circle) => {
+                let (first, second) = circle.split_at(parameter);
+                Ok((Curve2::Circle(first), Curve2::Circle(second)))
             }
             Curve2::Nurbs(curve) => {
                 let (first, second) =
@@ -146,6 +158,7 @@ impl Curve2 {
                 line.point_at(start),
                 line.point_at(end),
             ))),
+            Curve2::Circle(circle) => Ok(Curve2::Circle(circle.trimmed(start, end))),
             Curve2::Nurbs(curve) => {
                 let domain = curve.domain();
                 Ok(Curve2::Nurbs(curve.trimmed(
@@ -160,6 +173,7 @@ impl Curve2 {
     pub fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
         match self {
             Curve2::Line(line) => line.parameter_at(point, tolerance),
+            Curve2::Circle(circle) => circle.parameter_at(point, tolerance),
             Curve2::Nurbs(curve) => curve
                 .parameter_at(point, tolerance)
                 .map(|parameter| normalized_parameter(curve.domain(), parameter)),
@@ -187,6 +201,149 @@ impl Curve2 {
         options: CurveIntersectionOptions,
     ) -> Result<CurveCurveIntersections2, CurveIntersectionError> {
         intersect_curves_with_options(self, other, options)
+    }
+}
+
+/// A bounded circular arc in 2D, evaluated over the normalized `[0, 1]` domain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Circle2 {
+    center: Point2,
+    x_dir: UnitVector2<f64>,
+    radius: f64,
+    sweep: f64,
+}
+
+impl Circle2 {
+    /// Creates an arc starting along `x_dir` and rotating by `sweep` radians.
+    pub fn new(center: Point2, x_dir: Vector2<f64>, radius: f64, sweep: f64) -> Self {
+        Self {
+            center,
+            x_dir: UnitVector2::new_normalize(x_dir),
+            radius,
+            sweep,
+        }
+    }
+
+    pub fn center(&self) -> Point2 {
+        self.center
+    }
+
+    pub fn radius(&self) -> f64 {
+        self.radius
+    }
+
+    pub fn sweep(&self) -> f64 {
+        self.sweep
+    }
+
+    /// Evaluates the arc using a normalized parameter.
+    pub fn point_at(&self, parameter: f64) -> Point2 {
+        let angle = self.sweep * parameter;
+        let y_dir = Vector2::new(-self.x_dir.y, self.x_dir.x);
+        self.center + self.radius * (angle.cos() * *self.x_dir + angle.sin() * y_dir)
+    }
+
+    /// Returns adaptive samples with a chord sag bounded by `tolerance`.
+    pub fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
+        let ratio = (1.0 - tolerance / self.radius.abs().max(tolerance)).clamp(-1.0, 1.0);
+        let angle_step = (2.0 * ratio.acos()).max(1.0e-6);
+        let depth_limit = 1usize.checked_shl(max_depth.min(20) as u32).unwrap_or(1);
+        let segments = ((self.sweep.abs() / angle_step).ceil() as usize)
+            .max(1)
+            .min(depth_limit);
+        (0..=segments)
+            .map(|index| {
+                let parameter = index as f64 / segments as f64;
+                (parameter, self.point_at(parameter))
+            })
+            .collect()
+    }
+
+    pub fn reversed(&self) -> Self {
+        Self::new(
+            self.center,
+            self.point_at(1.0) - self.center,
+            self.radius,
+            -self.sweep,
+        )
+    }
+
+    pub fn translated(&self, offset: Vector2<f64>) -> Self {
+        Self {
+            center: self.center + offset,
+            ..self.clone()
+        }
+    }
+
+    pub fn split_at(&self, parameter: f64) -> (Self, Self) {
+        let parameter = parameter.clamp(0.0, 1.0);
+        (self.trimmed(0.0, parameter), self.trimmed(parameter, 1.0))
+    }
+
+    pub fn trimmed(&self, start: f64, end: f64) -> Self {
+        Self::new(
+            self.center,
+            self.point_at(start) - self.center,
+            self.radius,
+            self.sweep * (end - start),
+        )
+    }
+
+    /// Recovers the normalized parameter of a coincident point on the arc.
+    pub fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
+        let radial = point - self.center;
+        if (radial.norm() - self.radius).abs() > tolerance {
+            return None;
+        }
+        let y_dir = Vector2::new(-self.x_dir.y, self.x_dir.x);
+        let mut angle = radial.dot(&y_dir).atan2(radial.dot(&self.x_dir));
+        if self.sweep > 0.0 {
+            while angle < 0.0 {
+                angle += TAU;
+            }
+        } else {
+            while angle > 0.0 {
+                angle -= TAU;
+            }
+        }
+        let parameter = angle / self.sweep;
+        if !(-tolerance..=1.0 + tolerance).contains(&parameter) {
+            return None;
+        }
+        let parameter = parameter.clamp(0.0, 1.0);
+        ((self.point_at(parameter) - point).norm() <= tolerance).then_some(parameter)
+    }
+
+    /// Converts the arc to an exact rational quadratic NURBS representation.
+    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        if self.sweep.abs() <= LINEAR_TOLERANCE {
+            return Err(NurbsError::DegenerateInterval {
+                start: 0.0,
+                end: self.sweep,
+            });
+        }
+        let segment_count = (self.sweep.abs() / FRAC_PI_2).ceil() as usize;
+        let segment_sweep = self.sweep / segment_count as f64;
+        let middle_weight = (0.5 * segment_sweep).cos();
+        let mut points = Vec::with_capacity(segment_count * 2 + 1);
+        let mut knots = vec![0.0; 3];
+        points.push(HPoint2::from_cartesian(self.point_at(0.0), 1.0));
+        for segment in 0..segment_count {
+            let middle = (segment as f64 + 0.5) / segment_count as f64;
+            let end = (segment + 1) as f64 / segment_count as f64;
+            let middle_point = self.center + (self.point_at(middle) - self.center) / middle_weight;
+            points.push(HPoint2::from_cartesian(middle_point, middle_weight));
+            points.push(HPoint2::from_cartesian(self.point_at(end), 1.0));
+            if segment + 1 < segment_count {
+                knots.extend([end, end]);
+            }
+        }
+        knots.extend([1.0, 1.0, 1.0]);
+        NurbsCurve2::new(
+            Degree::new(2)?,
+            ControlPolygon2::new(points)?,
+            KnotVector::new(knots)?,
+        )
     }
 }
 

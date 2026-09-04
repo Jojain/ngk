@@ -3,9 +3,10 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use crate::geometry::{
-    ControlNet, ControlPolygon, Curve, CurveCurveIntersection, CurveSurfaceIntersection, Degree,
-    KnotVector, NurbsCurve, NurbsSurface, Point3, Surface, SurfaceSurfaceIntersection,
-    sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
+    ControlNet, ControlPolygon, Curve, Curve2, CurveCurveIntersection, CurveSurfaceIntersection,
+    Degree, IntersectionCoverage, KnotVector, NurbsCurve, NurbsSurface, Point3, Surface,
+    SurfaceSurfaceIntersection, sample_curve_uniform, tessellate_curve_adaptive,
+    tessellate_surface_grid,
 };
 
 use super::values::{WasmPoint3, WasmVector3, point, unit_vector};
@@ -278,42 +279,106 @@ enum WasmSurfaceSurfaceIntersection {
     #[serde(rename = "point")]
     Point {
         point: [f64; 3],
-        surface_a_u: f64,
-        surface_a_v: f64,
-        surface_b_u: f64,
-        surface_b_v: f64,
+        surface_a_uv: [f64; 2],
+        surface_b_uv: [f64; 2],
+        contact_kind: String,
+        residual: f64,
     },
-    #[serde(rename = "curve")]
-    Curve { points: Vec<[f64; 3]> },
-    #[serde(rename = "region")]
-    Region,
+    #[serde(rename = "branch")]
+    Branch {
+        points: Vec<[f64; 3]>,
+        surface_a_parameters: Vec<[f64; 2]>,
+        surface_b_parameters: Vec<[f64; 2]>,
+        curve_representation: &'static str,
+        surface_a_curve_representation: &'static str,
+        surface_b_curve_representation: &'static str,
+        closed: bool,
+        contact_kind: String,
+        max_residual: f64,
+        max_fit_error: f64,
+        certified: bool,
+    },
+    #[serde(rename = "overlapCandidate")]
+    OverlapCandidate {
+        surface_a_u_domain: [f64; 2],
+        surface_a_v_domain: [f64; 2],
+        surface_b_u_domain: [f64; 2],
+        surface_b_v_domain: [f64; 2],
+    },
 }
 
 impl From<SurfaceSurfaceIntersection> for WasmSurfaceSurfaceIntersection {
     fn from(value: SurfaceSurfaceIntersection) -> Self {
         match value {
-            SurfaceSurfaceIntersection::Point {
-                point,
-                surface_a_u,
-                surface_a_v,
-                surface_b_u,
-                surface_b_v,
-            } => Self::Point {
-                point: [point.x, point.y, point.z],
-                surface_a_u,
-                surface_a_v,
-                surface_b_u,
-                surface_b_v,
+            SurfaceSurfaceIntersection::Point(point) => Self::Point {
+                point: [point.point.x, point.point.y, point.point.z],
+                surface_a_uv: [point.uv_a.x, point.uv_a.y],
+                surface_b_uv: [point.uv_b.x, point.uv_b.y],
+                contact_kind: format!("{:?}", point.kind),
+                residual: point.residual,
             },
-            SurfaceSurfaceIntersection::Curve { points } => Self::Curve {
-                points: points
-                    .into_iter()
-                    .map(|point| [point.x, point.y, point.z])
-                    .collect(),
+            SurfaceSurfaceIntersection::Branch(branch) => {
+                let curve_representation = curve_representation(&branch.curve_3d);
+                let surface_a_curve_representation = pcurve_representation(&branch.pcurve_a);
+                let surface_b_curve_representation = pcurve_representation(&branch.pcurve_b);
+                Self::Branch {
+                    points: branch
+                        .samples
+                        .iter()
+                        .map(|sample| [sample.point.x, sample.point.y, sample.point.z])
+                        .collect(),
+                    surface_a_parameters: branch
+                        .samples
+                        .iter()
+                        .map(|sample| [sample.uv_a.x, sample.uv_a.y])
+                        .collect(),
+                    surface_b_parameters: branch
+                        .samples
+                        .iter()
+                        .map(|sample| [sample.uv_b.x, sample.uv_b.y])
+                        .collect(),
+                    curve_representation,
+                    surface_a_curve_representation,
+                    surface_b_curve_representation,
+                    closed: branch.closed,
+                    contact_kind: format!("{:?}", branch.kind),
+                    max_residual: branch.quality.max_residual,
+                    max_fit_error: branch.quality.max_fit_error,
+                    certified: branch.quality.certified,
+                }
+            }
+            SurfaceSurfaceIntersection::OverlapCandidate(candidate) => Self::OverlapCandidate {
+                surface_a_u_domain: [candidate.domain_a_u.start, candidate.domain_a_u.end],
+                surface_a_v_domain: [candidate.domain_a_v.start, candidate.domain_a_v.end],
+                surface_b_u_domain: [candidate.domain_b_u.start, candidate.domain_b_u.end],
+                surface_b_v_domain: [candidate.domain_b_v.start, candidate.domain_b_v.end],
             },
-            SurfaceSurfaceIntersection::Region => Self::Region,
         }
     }
+}
+
+fn curve_representation(curve: &Curve) -> &'static str {
+    match curve {
+        Curve::Line(_) => "line",
+        Curve::Circle(_) => "circle",
+        Curve::Nurbs(_) => "nurbs",
+        Curve::Bounded(curve) => curve_representation(curve.inner()),
+    }
+}
+
+fn pcurve_representation(curve: &Curve2) -> &'static str {
+    match curve {
+        Curve2::Line(_) => "line",
+        Curve2::Circle(_) => "circle",
+        Curve2::Nurbs(_) => "nurbs",
+    }
+}
+
+#[derive(Serialize)]
+struct WasmSurfaceSurfaceIntersections {
+    intersections: Vec<WasmSurfaceSurfaceIntersection>,
+    coverage: &'static str,
+    incomplete_reasons: Vec<String>,
 }
 
 #[wasm_bindgen(js_name = NurbsSurface)]
@@ -470,10 +535,24 @@ impl WasmNurbsSurface {
         let a = Surface::Nurbs(self.inner.clone());
         let b = Surface::Nurbs(other.inner.clone());
         let intersections = a.intersect_surface(&b).map_err(js_err)?;
-        let out: Vec<WasmSurfaceSurfaceIntersection> = intersections
-            .into_iter()
+        let out = intersections
+            .intersections()
+            .iter()
+            .cloned()
             .map(WasmSurfaceSurfaceIntersection::from)
             .collect();
+        let (coverage, incomplete_reasons) = match intersections.coverage() {
+            IntersectionCoverage::Complete => ("complete", Vec::new()),
+            IntersectionCoverage::Incomplete(reasons) => (
+                "incomplete",
+                reasons.iter().map(|reason| format!("{reason:?}")).collect(),
+            ),
+        };
+        let out = WasmSurfaceSurfaceIntersections {
+            intersections: out,
+            coverage,
+            incomplete_reasons,
+        };
         serde_wasm_bindgen::to_value(&out).map_err(js_err)
     }
 }

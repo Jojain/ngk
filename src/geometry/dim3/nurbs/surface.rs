@@ -1,12 +1,51 @@
 use nalgebra::{Point2, Point4, UnitVector3, Vector3, Vector4};
 use serde::{Deserialize, Serialize};
 
+use super::curve::NurbsCurve;
 use super::degree::Degree;
 use super::knots::KnotVector;
-use super::points::{ControlNet, HPoint};
+use super::points::{ControlNet, ControlPolygon, HPoint};
 use crate::geometry::nurbs::basis::{basis_function_derivatives, basis_functions};
 use crate::geometry::nurbs::error::NurbsError;
-use crate::geometry::{Interval, Point3};
+use crate::geometry::{BBox, Interval, Point3};
+
+/// One exact rational Bézier patch extracted from a parent NURBS surface.
+#[derive(Debug, Clone)]
+pub struct BezierSurface {
+    surface: NurbsSurface,
+}
+
+impl BezierSurface {
+    /// Returns the patch domain in the parent surface's u parameter.
+    pub fn domain_u(&self) -> Interval {
+        self.surface.domain_u()
+    }
+
+    /// Returns the patch domain in the parent surface's v parameter.
+    pub fn domain_v(&self) -> Interval {
+        self.surface.domain_v()
+    }
+
+    /// Returns the patch's rational control net.
+    pub fn control_points(&self) -> &ControlNet {
+        self.surface.control_points()
+    }
+
+    /// Evaluates the patch in parent-surface parameters.
+    pub fn point_at(&self, u: f64, v: f64) -> Point3 {
+        self.surface.point_at(u, v)
+    }
+
+    /// Returns a conservative control-hull bound for positive weights.
+    pub fn bbox(&self) -> BBox {
+        BBox::from_points(
+            self.control_points()
+                .as_slice()
+                .iter()
+                .map(|point| point.to_cartesian()),
+        )
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NurbsSurface {
@@ -214,4 +253,138 @@ impl NurbsSurface {
         let dv = (ds_v_xyz - s_xyz * (s_v.w / w)) / w;
         (du, dv)
     }
+
+    /// Decomposes this surface exactly into rational Bézier knot spans.
+    pub fn bezier_spans(&self) -> Result<Vec<BezierSurface>, NurbsError> {
+        let mut refined = self.clone();
+        let domain_u = refined.domain_u();
+        let domain_v = refined.domain_v();
+        for knot in distinct_interior_knots(refined.knots_u.as_slice(), domain_u) {
+            while refined.knots_u.multiplicity(knot) < refined.degree_u.get() {
+                refined.insert_knot_u(knot)?;
+            }
+        }
+        for knot in distinct_interior_knots(refined.knots_v.as_slice(), domain_v) {
+            while refined.knots_v.multiplicity(knot) < refined.degree_v.get() {
+                refined.insert_knot_v(knot)?;
+            }
+        }
+
+        let u_breaks = distinct_domain_knots(refined.knots_u.as_slice(), domain_u);
+        let v_breaks = distinct_domain_knots(refined.knots_v.as_slice(), domain_v);
+        let u_offsets = span_offsets(&refined.knots_u, refined.degree_u, &u_breaks);
+        let v_offsets = span_offsets(&refined.knots_v, refined.degree_v, &v_breaks);
+        let mut spans = Vec::new();
+        for (v_index, v_window) in v_breaks.windows(2).enumerate() {
+            for (u_index, u_window) in u_breaks.windows(2).enumerate() {
+                let mut points =
+                    Vec::with_capacity((refined.degree_u.get() + 1) * (refined.degree_v.get() + 1));
+                for local_v in 0..=refined.degree_v.get() {
+                    for local_u in 0..=refined.degree_u.get() {
+                        points.push(
+                            refined
+                                .control_points
+                                .get(u_offsets[u_index] + local_u, v_offsets[v_index] + local_v),
+                        );
+                    }
+                }
+                let surface = NurbsSurface::new(
+                    refined.degree_u,
+                    refined.degree_v,
+                    ControlNet::new(
+                        points,
+                        refined.degree_u.get() + 1,
+                        refined.degree_v.get() + 1,
+                    )?,
+                    bezier_knots(refined.degree_u, u_window[0], u_window[1])?,
+                    bezier_knots(refined.degree_v, v_window[0], v_window[1])?,
+                )?;
+                spans.push(BezierSurface { surface });
+            }
+        }
+        Ok(spans)
+    }
+
+    fn insert_knot_u(&mut self, knot: f64) -> Result<(), NurbsError> {
+        let old_nu = self.control_points.nu();
+        let nv = self.control_points.nv();
+        let mut rows = Vec::with_capacity(nv);
+        let mut knots = None;
+        for v in 0..nv {
+            let mut curve = NurbsCurve::new(
+                self.degree_u,
+                ControlPolygon::new((0..old_nu).map(|u| self.control_points.get(u, v)).collect())?,
+                self.knots_u.clone(),
+            )?;
+            curve.insert_knot(knot);
+            knots = Some(curve.knots().clone());
+            rows.push(curve.control_points().as_slice().to_vec());
+        }
+        self.control_points =
+            ControlNet::new(rows.into_iter().flatten().collect(), old_nu + 1, nv)?;
+        self.knots_u = knots.expect("a valid control net has at least one row");
+        Ok(())
+    }
+
+    fn insert_knot_v(&mut self, knot: f64) -> Result<(), NurbsError> {
+        let nu = self.control_points.nu();
+        let old_nv = self.control_points.nv();
+        let mut columns = Vec::with_capacity(nu);
+        let mut knots = None;
+        for u in 0..nu {
+            let mut curve = NurbsCurve::new(
+                self.degree_v,
+                ControlPolygon::new((0..old_nv).map(|v| self.control_points.get(u, v)).collect())?,
+                self.knots_v.clone(),
+            )?;
+            curve.insert_knot(knot);
+            knots = Some(curve.knots().clone());
+            columns.push(curve.control_points().as_slice().to_vec());
+        }
+        let mut points = Vec::with_capacity(nu * (old_nv + 1));
+        for v in 0..=old_nv {
+            for column in &columns {
+                points.push(column[v]);
+            }
+        }
+        self.control_points = ControlNet::new(points, nu, old_nv + 1)?;
+        self.knots_v = knots.expect("a valid control net has at least one column");
+        Ok(())
+    }
+}
+
+fn bezier_knots(degree: Degree, start: f64, end: f64) -> Result<KnotVector, NurbsError> {
+    let mut knots = vec![start; degree.get() + 1];
+    knots.extend(std::iter::repeat_n(end, degree.get() + 1));
+    KnotVector::new(knots)
+}
+
+fn distinct_interior_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
+    distinct_domain_knots(knots, domain)
+        .into_iter()
+        .filter(|knot| *knot > domain.start && *knot < domain.end)
+        .collect()
+}
+
+fn distinct_domain_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
+    let mut distinct = Vec::new();
+    for &knot in knots {
+        if knot < domain.start || knot > domain.end {
+            continue;
+        }
+        if distinct.last().is_none_or(|last| *last != knot) {
+            distinct.push(knot);
+        }
+    }
+    distinct
+}
+
+fn span_offsets(knots: &KnotVector, degree: Degree, breaks: &[f64]) -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(breaks.len().saturating_sub(1));
+    let mut offset = 0;
+    for end in breaks.iter().copied().skip(1) {
+        offsets.push(offset);
+        offset += knots.multiplicity(end).min(degree.get() + 1);
+    }
+    offsets
 }

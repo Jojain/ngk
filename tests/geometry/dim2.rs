@@ -1,6 +1,6 @@
 use ngk::geometry::{
-    ControlPolygon2, Curve2, CurveCurveIntersection2, Degree, HPoint2, KnotVector,
-    LINEAR_TOLERANCE, Line2, NurbsCurve2, Point2,
+    Circle2, ControlPolygon2, Curve2, CurveCurveIntersection2, Degree, HPoint2, KnotVector,
+    LINEAR_TOLERANCE, Line2, NurbsCurve2, Point2, Vector2,
 };
 
 fn assert_point2_close(actual: Point2, expected: Point2) {
@@ -26,6 +26,61 @@ fn line2_split_at_returns_two_lines_sharing_split_point() {
     assert_eq!(first.end, Point2::new(0.5, 0.0));
     assert_eq!(second.start, Point2::new(0.5, 0.0));
     assert_eq!(second.end, Point2::new(2.0, 0.0));
+}
+
+#[test]
+fn circle2_uses_normalized_parameter_and_recovers_it() {
+    let circle = Curve2::Circle(Circle2::new(
+        Point2::new(2.0, 3.0),
+        Vector2::x(),
+        2.0,
+        std::f64::consts::TAU,
+    ));
+
+    let quarter = circle.point_at(0.25);
+
+    assert_point2_close(quarter, Point2::new(2.0, 5.0));
+    let parameter = circle
+        .parameter_at(quarter, LINEAR_TOLERANCE)
+        .expect("a point on the circle should have a normalized parameter");
+    assert!((parameter - 0.25).abs() <= LINEAR_TOLERANCE);
+}
+
+#[test]
+fn circle2_reverse_and_split_preserve_geometry() {
+    let circle = Curve2::Circle(Circle2::new(
+        Point2::origin(),
+        Vector2::x(),
+        1.0,
+        std::f64::consts::PI,
+    ));
+    let reversed = circle.reversed();
+    let (first, second) = circle.split_at(0.4).unwrap();
+
+    for index in 0..=10 {
+        let parameter = index as f64 / 10.0;
+        assert_point2_close(
+            reversed.point_at(parameter),
+            circle.point_at(1.0 - parameter),
+        );
+    }
+    assert_point2_close(first.point_at(1.0), circle.point_at(0.4));
+    assert_point2_close(second.point_at(0.0), circle.point_at(0.4));
+}
+
+#[test]
+fn circle2_converts_to_exact_rational_nurbs_geometry() {
+    let circle = Curve2::Circle(Circle2::new(
+        Point2::new(-1.0, 2.0),
+        Vector2::x(),
+        3.0,
+        std::f64::consts::TAU,
+    ));
+    let nurbs = circle.to_nurbs().unwrap();
+
+    for parameter in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        assert_point2_close(nurbs.point_at(parameter), circle.point_at(parameter));
+    }
 }
 
 #[test]

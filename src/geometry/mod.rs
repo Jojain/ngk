@@ -5,7 +5,7 @@ pub mod interval;
 pub mod nurbs;
 pub mod tolerance;
 
-pub use dim2::curves::{Curve2, Line2};
+pub use dim2::curves::{Circle2, Curve2, Line2};
 pub use dim2::intersections::{
     CurveCurveIntersection2, CurveCurveIntersections2, CurveIntersectionError,
     CurveIntersectionOptions,
@@ -17,14 +17,18 @@ pub use dim3::curves::{Bounded, Circle, Curve, Line, Periodicity};
 pub use dim3::frame::Frame;
 pub use dim3::intersections::{
     CurveCurveIntersection, CurveCurveIntersections, CurveSurfaceIntersection,
-    CurveSurfaceIntersections, IntersectionError, IntersectionOptions, SurfaceSurfaceIntersection,
-    SurfaceSurfaceIntersections,
+    CurveSurfaceIntersections, IntersectionCoverage, IntersectionError, IntersectionOptions,
+    IntersectionQuality, SurfaceIntersectionBranch, SurfaceIntersectionBranchKind,
+    SurfaceIntersectionIncompleteReason, SurfaceIntersectionPoint, SurfaceIntersectionPointKind,
+    SurfaceOverlapCandidate, SurfaceSurfaceIntersection, SurfaceSurfaceIntersections,
+    intersect_surfaces, intersect_surfaces_with_options,
 };
 pub use dim3::nurbs::tessellate::{
     sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
 };
 pub use dim3::nurbs::{
-    Bezier, ControlNet, ControlPolygon, Degree, HPoint, KnotVector, NurbsCurve, NurbsSurface,
+    Bezier, BezierSurface, ControlNet, ControlPolygon, Degree, HPoint, KnotVector, NurbsCurve,
+    NurbsSurface,
 };
 pub use dim3::surfaces::{
     Cylinder, Plane, RuledSurface, Surface, SurfaceOfRevolution, SurfacePeriodicity,
