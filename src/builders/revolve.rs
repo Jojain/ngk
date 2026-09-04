@@ -1,14 +1,17 @@
 use std::collections::HashMap;
 
-use nalgebra::{Rotation3, distance};
+use nalgebra::{Rotation3, Vector3, distance};
 use radians::{Angle, Rad64};
 use thiserror::Error;
 
+use crate::builders::faces::reverse_face_winding;
 use crate::geometry::axis::Axis3;
+use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{
-    ANGULAR_TOLERANCE, Circle, Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3,
-    Surface, SurfaceOfRevolution,
+    ANGULAR_TOLERANCE, Circle, Curve, Curve2, Interval, LINEAR_TOLERANCE, Line2, Plane, Point2,
+    Point3, Surface, SurfaceOfRevolution,
 };
+use crate::topology::IsolatedDart;
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
 };
@@ -47,11 +50,14 @@ pub enum RevolveError {
     #[error("A full revolution of closed edge {key:?} has no boundary loops")]
     BoundarylessFullRevolve { key: EdgeKey },
 
-    #[error("Only line edges can be partially revolved for now: {dart:?}")]
-    UnsupportedPartialRevolveCurve { dart: Dart },
+    #[error("Edge {key:?} lies on the revolution axis and sweeps no area")]
+    EdgeOnRevolutionAxis { key: EdgeKey },
 
-    #[error("Only planar cap faces can be partially revolved for now: {dart:?}")]
-    UnsupportedPartialRevolveSurface { dart: Dart },
+    #[error("Edge {key:?} touches the revolution axis; apex faces are not supported yet")]
+    ApexRevolveUnsupported { key: EdgeKey },
+
+    #[error("failed to rotate the geometry of dart {dart:?}")]
+    RotationFailed { dart: Dart, source: NurbsError },
 
     #[error("Darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
     SewFailed { dim: Dim, first: Dart, second: Dart },
@@ -144,6 +150,8 @@ fn add_partial_revolved_edge_face<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<FaceKey, RevolveError> {
+    validate_revolvable_radii(axis, source)?;
+
     let start = source.start.point;
     let end = source.end.point;
     let rotated_start = rotate_point(axis, start, angle);
@@ -179,7 +187,7 @@ fn add_partial_revolved_edge_face<P: Payload>(
 
     g.add_edge(EdgeAttr::new(
         end_arc_start,
-        revolve_circle_curve(axis, end),
+        revolve_circle_curve(axis, end, angle),
         P::E::default(),
     ));
     g.add_edge(EdgeAttr::new(
@@ -189,7 +197,7 @@ fn add_partial_revolved_edge_face<P: Payload>(
     ));
     g.add_edge(EdgeAttr::new(
         start_arc_end,
-        revolve_circle_curve(axis, start),
+        revolve_circle_curve(axis, start, angle),
         P::E::default(),
     ));
 
@@ -273,7 +281,7 @@ fn add_full_revolved_open_edge_face<P: Payload>(
         g,
         source,
         reused_loop_point,
-        revolve_circle_curve(axis, reused_loop_point),
+        revolve_circle_curve(axis, reused_loop_point, angle),
     )?;
 
     let start_loop = (start_radius > LINEAR_TOLERANCE)
@@ -284,7 +292,7 @@ fn add_full_revolved_open_edge_face<P: Payload>(
                 add_closed_revolve_boundary_loop(
                     g,
                     source.start.point,
-                    revolve_circle_curve(axis, source.start.point),
+                    revolve_circle_curve(axis, source.start.point, angle),
                 )
             }
         })
@@ -298,7 +306,7 @@ fn add_full_revolved_open_edge_face<P: Payload>(
                 add_closed_revolve_boundary_loop(
                     g,
                     source.end.point,
-                    revolve_circle_curve(axis, source.end.point),
+                    revolve_circle_curve(axis, source.end.point, angle),
                 )
             }
         })
@@ -401,21 +409,20 @@ fn add_closed_revolve_boundary_loop<P: Payload>(
     Ok(first)
 }
 
+/// Rotates an edge curve, keeping its parameterisation.
+///
+/// Rebuilding the curve from sampled endpoints instead would re-parameterise
+/// it, so the rotated edge would no longer agree with the parameter interval
+/// the caller computed on the source curve.
 fn rotate_curve(
     dart: Dart,
     curve: &Curve,
     axis: Axis3,
     angle: Rad64,
 ) -> Result<Curve, RevolveError> {
-    match curve {
-        Curve::Line(_) | Curve::Bounded(_) => Ok(Curve::line(
-            rotate_point(axis, curve.point_at(0.0), angle),
-            rotate_point(axis, curve.point_at(1.0), angle),
-        )),
-        Curve::Circle(_) | Curve::Nurbs(_) => {
-            Err(RevolveError::UnsupportedPartialRevolveCurve { dart })
-        }
-    }
+    curve
+        .rotated(axis, angle.val())
+        .map_err(|source| RevolveError::RotationFailed { dart, source })
 }
 
 fn rotate_point(axis: Axis3, point: Point3, angle: Rad64) -> Point3 {
@@ -478,14 +485,23 @@ struct RevolvedProfile {
     swept_dart: Dart,
     bottom_edges: Vec<Dart>,
     top_edges: Vec<Dart>,
+    faces: Vec<FaceKey>,
 }
 
 struct RevolvedFace {
+    /// Dart of the un-rotated source edge, sitting at the source `start` vertex.
     bottom_edge: Dart,
+    /// Dart of the rotated edge, sitting at the rotated `start` vertex.
+    ///
+    /// The quad loop traverses the rotated edge backwards (`rotated_end` to
+    /// `rotated_start`), so this is the *second* dart of that edge rather than
+    /// the loop-order one. Keeping it at `rotated_start` makes it line up with
+    /// the matching cap edge dart, which also sits at `rotated_start`.
     top_edge: Dart,
     start_side: Dart,
     end_side: Dart,
     outer_loop: Dart,
+    key: FaceKey,
 }
 
 fn add_revolved_profile_faces<P: Payload>(
@@ -515,6 +531,7 @@ fn add_revolved_profile_faces<P: Payload>(
         swept_dart,
         bottom_edges: faces.iter().map(|face| face.bottom_edge).collect(),
         top_edges: faces.iter().map(|face| face.top_edge).collect(),
+        faces: faces.iter().map(|face| face.key).collect(),
     })
 }
 
@@ -524,14 +541,16 @@ fn add_revolved_edge_face<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<RevolvedFace, RevolveError> {
+    validate_revolvable_radii(axis, source)?;
+
     let start = source.start.point;
     let end = source.end.point;
     let curve = source.curve.clone();
     let rotated_start = rotate_point(axis, start, angle);
     let rotated_end = rotate_point(axis, end, angle);
     let rotated_curve = rotate_curve(source.dart, &curve, axis, angle)?;
-    let start_arc = revolve_circle_curve(axis, start);
-    let end_arc = revolve_circle_curve(axis, end);
+    let start_arc = revolve_circle_curve(axis, start, angle);
+    let end_arc = revolve_circle_curve(axis, end, angle);
     let interval = curve.parameters_between(start, end);
     let surface = Surface::Revolution(SurfaceOfRevolution::new(curve.clone(), axis));
     let pcurves = [
@@ -593,7 +612,7 @@ fn add_revolved_quad_face<P: Payload>(
     }
 
     g.add_profile(ProfileAttr::new(darts[0], P::Profile::default()));
-    g.add_face(FaceAttr::with_pcurves(
+    let key = g.add_face(FaceAttr::with_pcurves(
         surface,
         P::F::default(),
         darts[0],
@@ -603,10 +622,13 @@ fn add_revolved_quad_face<P: Payload>(
 
     Ok(RevolvedFace {
         bottom_edge: darts[0],
-        top_edge: darts[4],
+        // darts[4] is at `rotated_end`; darts[5] is its alpha0 partner at
+        // `rotated_start`, which is the vertex the cap edge dart carries.
+        top_edge: darts[5],
         start_side: darts[7],
         end_side: darts[2],
         outer_loop: darts[0],
+        key,
     })
 }
 
@@ -708,20 +730,41 @@ fn alpha2_revolve_merge<P: Payload>(
     Err(RevolveError::MissingEdgeCurve { dart: survivor })
 }
 
-fn revolve_circle_curve(axis: Axis3, point: Point3) -> Curve {
+/// Returns the trajectory swept by `point` turning `angle` around `axis`.
+///
+/// A partial turn yields a bounded arc running from `point` at parameter `0`
+/// to its rotated image at parameter `1`. A full turn yields the closed circle
+/// itself, because a closed edge needs the periodic curve that
+/// [`Curve::parameters_between`] can span over a whole period.
+fn revolve_circle_curve(axis: Axis3, point: Point3, angle: Rad64) -> Curve {
     let projected = axis.project(point);
     let radius = distance(&projected, &point);
-    if radius <= LINEAR_TOLERANCE {
-        return Curve::Circle(Circle::from_axis(
-            Axis3::new(projected, axis.direction),
-            radius,
-        ));
+    let plane = if radius <= LINEAR_TOLERANCE {
+        Circle::from_axis(Axis3::new(projected, axis.direction), radius)
+            .plane()
+            .clone()
+    } else {
+        Plane::new(projected, point - projected, axis.direction)
+    };
+
+    if is_full_turn(angle) {
+        return Curve::circle(plane, radius);
     }
 
-    Curve::Circle(Circle::new(
-        Plane::new(projected, point - projected, axis.direction),
-        radius,
-    ))
+    Curve::arc(plane, radius, Interval::new(0.0, angle.val()))
+}
+
+/// Rejects source edges that cannot sweep a well-formed face.
+fn validate_revolvable_radii(axis: Axis3, source: &RevolvedSourceEdge) -> Result<(), RevolveError> {
+    let start_on_axis = revolve_radius(axis, source.start.point) <= LINEAR_TOLERANCE;
+    let end_on_axis = revolve_radius(axis, source.end.point) <= LINEAR_TOLERANCE;
+    match (start_on_axis, end_on_axis) {
+        (true, true) => Err(RevolveError::EdgeOnRevolutionAxis { key: source.key }),
+        (true, false) | (false, true) => {
+            Err(RevolveError::ApexRevolveUnsupported { key: source.key })
+        }
+        (false, false) => Ok(()),
+    }
 }
 
 fn revolve_radius(axis: Axis3, point: Point3) -> f64 {
@@ -771,8 +814,11 @@ fn add_revolved_face_staged<P: Payload>(
     loops.push(face.outer_loop().dart);
     loops.extend(face.inner_loops().into_iter().map(|loop_| loop_.dart));
 
+    let sweep = revolve_sweep_direction(axis, &face);
+    let cap_faces_sweep = face.normal_at(0.0, 0.0).dot(&sweep);
+
     if is_full_turn(angle) {
-        return add_full_revolved_face(g, loops, axis, angle);
+        return add_full_revolved_face(g, face_key, loops, axis, angle, cap_faces_sweep);
     }
 
     let rotated_face = rotate_face(&face, axis, angle)?;
@@ -783,34 +829,149 @@ fn add_revolved_face_staged<P: Payload>(
     top_loops.push(top_face_attr.outer_loop);
     top_loops.extend(top_face_attr.inner_loops.iter().copied());
 
-    let mut shell = None;
+    let mut lateral_faces = Vec::new();
     for (bottom_loop, top_loop) in loops.into_iter().zip(top_loops) {
         let revolved = sew_revolved_loop_to_caps(g, bottom_loop, top_loop, axis, angle)?;
-        shell.get_or_insert(revolved);
+        lateral_faces.extend(revolved.faces);
     }
 
-    let shell = shell.expect("a face should have at least one boundary loop");
+    orient_revolved_shell(g, face_key, top_face_key, &lateral_faces, cap_faces_sweep);
+
+    // Contextual, like the extruded shell: it must keep the outward
+    // orientation just established for the source cap.
+    let shell = g.face_attr_unchecked(face_key).outer_loop;
     if g.sheet_key(shell).is_none() {
         g.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
     }
     Ok(g.add_solid(SolidAttr::new(P::S::default(), shell, None)))
 }
 
+/// Returns the direction the revolution sweeps a point of `face`, `axis x r`.
+fn revolve_sweep_direction<P: Payload>(axis: Axis3, face: &Face<'_, P>) -> Vector3<f64> {
+    let point = face
+        .outer_loop()
+        .edges()
+        .first()
+        .and_then(|edge| edge.start().point().copied())
+        .unwrap_or(axis.origin);
+    axis.direction.cross(&(point - axis.project(point)))
+}
+
+/// Makes every face of a revolved shell point away from the material.
+///
+/// The cap at angle zero must face against the sweep, so exactly one of the two
+/// caps is reversed. The lateral faces carry `dS/du x dS/dv`, which points at
+/// the inside of the swept region precisely when the source cap already faces
+/// against the sweep, so they flip together with the far cap.
+fn orient_revolved_shell<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    bottom_face: FaceKey,
+    top_face: FaceKey,
+    lateral_faces: &[FaceKey],
+    bottom_normal_dot_sweep: f64,
+) {
+    if bottom_normal_dot_sweep > LINEAR_TOLERANCE {
+        reverse_face_winding(g, bottom_face);
+        return;
+    }
+
+    reverse_face_winding(g, top_face);
+    for &face in lateral_faces {
+        reverse_face_winding(g, face);
+    }
+}
+
+/// Builds the shell of a full turn, which has no caps.
+///
+/// Every lateral face closes onto itself along the seam at angle zero, so the
+/// swept edge at the end of the turn is sewn back to the one at its start. The
+/// source face is then dropped: it is interior to the solid, and its boundary
+/// wire survives only as the loops the lateral faces were built from.
 fn add_full_revolved_face<P: Payload>(
     g: &mut TopologyEdit<'_, P>,
+    face_key: FaceKey,
     loops: Vec<Dart>,
     axis: Axis3,
     angle: Rad64,
+    source_normal_dot_sweep: f64,
 ) -> Result<SolidKey, RevolveError> {
     let mut shell = None;
-    for loop_dart in loops {
-        let revolved = add_revolved_profile_from_dart_staged(g, loop_dart, axis, angle)?;
-        let revolved_dart = g.sheet_attr_unchecked(revolved).dart;
-        shell.get_or_insert(revolved_dart);
+    let mut lateral_faces = Vec::new();
+    for &loop_dart in &loops {
+        let revolved = add_revolved_profile_faces(g, loop_dart, axis, angle, true)?;
+        sew_full_revolved_seam(g, &revolved)?;
+        lateral_faces.extend(revolved.faces);
+        shell.get_or_insert(revolved.swept_dart);
+    }
+
+    if source_normal_dot_sweep <= LINEAR_TOLERANCE {
+        for &face in &lateral_faces {
+            reverse_face_winding(g, face);
+        }
     }
 
     let shell = shell.expect("a face should have at least one boundary loop");
+    let shell = consume_revolved_source_face(g, face_key, &loops, shell)?;
+    if g.sheet_key(shell).is_none() {
+        g.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
+    }
     Ok(g.add_solid(SolidAttr::new(P::S::default(), shell, None)))
+}
+
+/// Deletes the source face and its boundary wire after a full turn.
+///
+/// A full turn leaves the source geometry strictly inside the solid, where a
+/// leftover face and dangling wire would be counted by every cell traversal.
+/// Removing darts compacts the map, so `shell` is returned remapped.
+fn consume_revolved_source_face<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    face_key: FaceKey,
+    loops: &[Dart],
+    shell: Dart,
+) -> Result<Dart, RevolveError> {
+    g.remove_face(face_key);
+
+    let mut darts = Vec::new();
+    for &loop_dart in loops {
+        let profile =
+            Profile::from_dart(g, loop_dart).expect("source loop must have a registered profile");
+        let profile_key = profile.key();
+        let loop_darts = profile.darts().collect::<Vec<_>>();
+        for dart in loop_darts.iter().copied().step_by(2) {
+            if let Some(edge) = Edge::from_dart(g, dart) {
+                let (edge_key, vertex_key) = (edge.key(), edge.start().key());
+                g.remove_edge(edge_key);
+                g.remove_vertex(vertex_key);
+            }
+        }
+        g.remove_profile(profile_key);
+        darts.extend(loop_darts);
+    }
+
+    for &dart in &darts {
+        for dim in [Dim::Zero, Dim::One, Dim::Two, Dim::Three] {
+            if !g.is_free(dart, dim) {
+                g.unlink(dim, dart)?;
+            }
+        }
+    }
+
+    let isolated = darts.into_iter().map(IsolatedDart::new).collect();
+    let remapped = g.remove_isolated_darts(isolated);
+    Ok(remapped.get(&shell).copied().unwrap_or(shell))
+}
+
+/// Sews the seam of a full turn, where the swept copy of each source edge lands
+/// back on the source edge itself.
+fn sew_full_revolved_seam<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    revolved: &RevolvedProfile,
+) -> Result<(), RevolveError> {
+    for (&bottom, &top) in revolved.bottom_edges.iter().zip(revolved.top_edges.iter()) {
+        sew_revolved_alpha2_edges(g, bottom, top, bottom, top)?;
+    }
+
+    Ok(())
 }
 
 fn sew_revolved_loop_to_caps<P: Payload>(
@@ -819,7 +980,7 @@ fn sew_revolved_loop_to_caps<P: Payload>(
     top_loop: Dart,
     axis: Axis3,
     angle: Rad64,
-) -> Result<Dart, RevolveError> {
+) -> Result<RevolvedProfile, RevolveError> {
     let bottom_edges = Profile::from_dart(g, bottom_loop)
         .expect("bottom loop must have a registered profile")
         .edges()
@@ -834,6 +995,10 @@ fn sew_revolved_loop_to_caps<P: Payload>(
         .collect::<Vec<_>>();
     let revolved = add_revolved_profile_faces(g, bottom_loop, axis, angle, true)?;
 
+    // `Profile::edges` yields the dart at each edge's traversal start, and
+    // `Edge::start` is the vertex at that dart, so an alpha2 sew is only
+    // vertex-correct when both darts sit on the same 3D point. `bottom_edge`
+    // and `top_edge` are chosen to satisfy that against the cap loop darts.
     for (&cap_edge, &side_edge) in bottom_edges.iter().zip(revolved.bottom_edges.iter()) {
         sew_revolved_alpha2_edges(g, side_edge, cap_edge, cap_edge, side_edge)?;
     }
@@ -841,7 +1006,7 @@ fn sew_revolved_loop_to_caps<P: Payload>(
         sew_revolved_alpha2_edges(g, side_edge, cap_edge, cap_edge, side_edge)?;
     }
 
-    Ok(g.cell_representative(revolved.swept_dart, Dim::Three))
+    Ok(revolved)
 }
 
 fn rotate_face<P: Payload>(
@@ -877,25 +1042,17 @@ fn rotate_face<P: Payload>(
     Ok(Shape::new(rotated, rotated_face_key))
 }
 
+/// Rotates a face's support surface, keeping its parameterisation so the
+/// face's existing pcurves stay valid on the rotated copy.
 fn rotate_surface(
     dart: Dart,
     surface: &Surface,
     axis: Axis3,
     angle: Rad64,
 ) -> Result<Surface, RevolveError> {
-    match surface {
-        Surface::Plane(plane) => {
-            let rotation = Rotation3::from_axis_angle(&axis.direction, angle.val());
-            Ok(Surface::Plane(Plane::from_xy(
-                rotate_point(axis, plane.origin(), angle),
-                rotation * *plane.x_dir(),
-                rotation * *plane.y_dir(),
-            )))
-        }
-        Surface::Cylinder(_) | Surface::Ruled(_) | Surface::Revolution(_) | Surface::Nurbs(_) => {
-            Err(RevolveError::UnsupportedPartialRevolveSurface { dart })
-        }
-    }
+    surface
+        .rotated(axis, angle.val())
+        .map_err(|source| RevolveError::RotationFailed { dart, source })
 }
 
 /// Returns the key of the face incident to `dart`, if the dart belongs to one.

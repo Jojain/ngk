@@ -2096,3 +2096,42 @@ pub(crate) fn add_polygon_staged<P: Payload>(
         P::Profile::default(),
     ))
 }
+
+/// Flips a face's orientation in place.
+///
+/// Every boundary loop is re-rooted on its `alpha0` partner and every pcurve is
+/// re-keyed to that partner and reversed, so the loops are traversed the other
+/// way round and [`Face::normal_at`](crate::topology::face::Face::normal_at)
+/// returns the opposite normal. The map's topology is untouched — only the
+/// face attribute changes — so darts captured for sewing stay valid.
+///
+/// Does nothing when `face` is not a registered face.
+pub fn reverse_face_winding<P: Payload>(g: &mut TopologyEdit<'_, P>, face: FaceKey) {
+    let Some(face_attr) = g.face_attr(face).cloned() else {
+        return;
+    };
+
+    let outer_loop = g.alpha(Dim::Zero, face_attr.outer_loop);
+    let inner_loops = face_attr
+        .inner_loops
+        .iter()
+        .map(|dart| g.alpha(Dim::Zero, *dart))
+        .collect::<Vec<_>>();
+    let pcurves = face_attr
+        .face(g)
+        .edges()
+        .into_iter()
+        .filter_map(|edge| {
+            face_attr
+                .pcurves
+                .get(&edge.dart())
+                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart()), pcurve.reversed()))
+        })
+        .collect();
+
+    if let Some(face) = g.face_attr_mut(face) {
+        face.outer_loop = outer_loop;
+        face.inner_loops = inner_loops;
+        face.pcurves = pcurves;
+    }
+}

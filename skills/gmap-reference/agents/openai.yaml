@@ -1,0 +1,4 @@
+interface:
+  display_name: "GMap Reference"
+  short_description: "Use the private GMap theory book carefully"
+  default_prompt: "Use $gmap-reference when reasoning about combinatorial maps or GMap topology in this repo."

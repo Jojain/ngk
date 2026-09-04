@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test-first Workflow"
+  short_description: "Write tests as desired behavior, prove red, then fix green."
+  default_prompt: "Use this when adding or changing tests."

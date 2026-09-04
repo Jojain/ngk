@@ -1,6 +1,8 @@
-use nalgebra::Vector3;
+use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
-use ngk::geometry::{Bounded, Circle, Curve, Interval, LINEAR_TOLERANCE, Point3, PointCoincidence};
+use ngk::geometry::{
+    Bounded, Circle, Curve, Interval, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence,
+};
 
 fn assert_point_near(actual: Point3, expected: Point3) {
     assert!(
@@ -119,4 +121,43 @@ fn bounded_circle_converts_to_trimmed_nurbs_curve() {
     assert_eq!(nurbs.domain(), Interval::new(0.25, 1.75));
     assert_point_near(nurbs.point_at(0.25), circle.point_at(0.25));
     assert_point_near(nurbs.point_at(1.75), circle.point_at(1.75));
+}
+
+#[test]
+fn arc_spanning_more_than_half_a_turn_reports_its_own_span() {
+    let plane = Plane::new(Point3::origin(), Vector3::x(), Vector3::z());
+    let span = 3.0 * std::f64::consts::FRAC_PI_2;
+    let arc = Curve::arc(plane, 1.0, Interval::new(0.0, span));
+
+    let start = arc.point_at(0.0);
+    let end = arc.point_at(1.0);
+    let interval = arc.parameters_between(start, end);
+
+    // The end sits at -90 degrees on the circle's own atan2 branch. Reading it
+    // back there would describe the complementary quarter instead of this arc.
+    assert!((interval.start - 0.0).abs() <= 1.0e-9);
+    assert!((interval.end - 1.0).abs() <= 1.0e-9);
+
+    let midpoint = arc.point_at(0.5);
+    let expected = 0.5 * span;
+    assert!((midpoint.x - expected.cos()).abs() <= 1.0e-9);
+    assert!((midpoint.y - expected.sin()).abs() <= 1.0e-9);
+}
+
+#[test]
+fn rotated_curve_keeps_its_parameterisation() {
+    let axis = Axis3::new(Point3::origin(), Vector3::z());
+    let curve = Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 1.0));
+    let rotated = curve
+        .rotated(axis, std::f64::consts::FRAC_PI_2)
+        .expect("a bounded line should rotate");
+
+    for t in [0.0, 0.25, 1.0] {
+        let expected = Rotation3::from_axis_angle(&axis.direction, std::f64::consts::FRAC_PI_2)
+            * curve.point_at(t);
+        assert!(
+            (rotated.point_at(t) - expected).norm() <= 1.0e-9,
+            "rotating must not re-parameterise the curve"
+        );
+    }
 }

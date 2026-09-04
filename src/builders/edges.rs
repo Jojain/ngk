@@ -121,10 +121,17 @@ pub fn split_edge<P: Payload>(
     edge: EdgeKey,
     parameter: f64,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    g.transaction(|g| {
-        let split = prepare_profile_edge_split(g, edge, parameter)?;
-        split_edge_with_profile_links(g, edge, parameter, split)
-    })
+    g.transaction(|g| split_edge_staged(g, edge, parameter))
+}
+
+/// Splits a profile-only edge inside an existing builder transaction.
+pub(crate) fn split_edge_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    edge: EdgeKey,
+    parameter: f64,
+) -> Result<EdgeSplit, EdgeSplitError> {
+    let split = prepare_profile_edge_split(g, edge, parameter)?;
+    split_edge_with_profile_links(g, edge, parameter, split)
 }
 
 pub(crate) fn split_face_boundary_edge<P: Payload>(

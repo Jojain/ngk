@@ -3,6 +3,7 @@ use nalgebra::Vector3;
 use crate::{
     Payload,
     builders::errors::ExtrudeError,
+    builders::faces::reverse_face_winding,
     geometry::{
         Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
     },
@@ -156,36 +157,6 @@ fn face_normal_dot_direction<P: Payload>(
     direction: Vector3<f64>,
 ) -> f64 {
     face.face(g).normal_at(0.0, 0.0).dot(&direction)
-}
-
-fn reverse_face_winding<P: Payload>(g: &mut TopologyEdit<'_, P>, face: FaceKey) {
-    let Some(face_attr) = g.face_attr(face).cloned() else {
-        return;
-    };
-
-    let outer_loop = g.alpha(Dim::Zero, face_attr.outer_loop);
-    let inner_loops = face_attr
-        .inner_loops
-        .iter()
-        .map(|dart| g.alpha(Dim::Zero, *dart))
-        .collect::<Vec<_>>();
-    let pcurves = face_attr
-        .face(g)
-        .edges()
-        .into_iter()
-        .filter_map(|edge| {
-            face_attr
-                .pcurves
-                .get(&edge.dart())
-                .map(|pcurve| (g.alpha(Dim::Zero, edge.dart()), pcurve.reversed()))
-        })
-        .collect();
-
-    if let Some(face) = g.face_attr_mut(face) {
-        face.outer_loop = outer_loop;
-        face.inner_loops = inner_loops;
-        face.pcurves = pcurves;
-    }
 }
 
 fn sew_extruded_loop<P: Payload>(
