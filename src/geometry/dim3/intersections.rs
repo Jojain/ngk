@@ -9,13 +9,16 @@ use std::ops::Index;
 use crate::geometry::{Curve, Curve2, Interval, Point2, Point3};
 
 pub use curve_curve::{intersect_curves, intersect_curves_with_options};
-pub use curve_surface::{intersect_curve_surface, intersect_curve_surface_with_options};
+pub use curve_surface::{
+    PreparedCurve, PreparedSurface, intersect_curve_surface, intersect_curve_surface_with_options,
+    intersect_prepared_curve_surface,
+};
 pub use error::IntersectionError;
 pub use options::IntersectionOptions;
 pub use surface_surface::{intersect_surfaces, intersect_surfaces_with_options};
 
 pub type CurveCurveIntersections = Vec<CurveCurveIntersection>;
-pub type CurveSurfaceIntersections = Vec<CurveSurfaceIntersection>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CurveCurveIntersection {
     Point {
@@ -40,6 +43,72 @@ pub enum CurveSurfaceIntersection {
     Overlap {
         curve_interval: Interval,
     },
+}
+
+/// Curve/surface observations plus an explicit coverage statement.
+///
+/// Newton convergence on the observations found is not evidence that every
+/// intersection was found, so callers that must not miss one have to read
+/// [`Self::coverage`] rather than only the observation list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CurveSurfaceIntersections {
+    intersections: Vec<CurveSurfaceIntersection>,
+    coverage: IntersectionCoverage,
+}
+
+impl CurveSurfaceIntersections {
+    /// Creates a result set with its coverage status.
+    pub fn new(
+        intersections: Vec<CurveSurfaceIntersection>,
+        coverage: IntersectionCoverage,
+    ) -> Self {
+        Self {
+            intersections,
+            coverage,
+        }
+    }
+
+    /// Returns the ordered intersection observations.
+    pub fn intersections(&self) -> &[CurveSurfaceIntersection] {
+        &self.intersections
+    }
+
+    /// Returns the candidate-space coverage status.
+    pub fn coverage(&self) -> &IntersectionCoverage {
+        &self.coverage
+    }
+
+    /// Returns the number of intersection observations.
+    pub fn len(&self) -> usize {
+        self.intersections.len()
+    }
+
+    /// Returns whether no intersection observations were found.
+    pub fn is_empty(&self) -> bool {
+        self.intersections.is_empty()
+    }
+
+    /// Returns the observations as a slice.
+    pub fn as_slice(&self) -> &[CurveSurfaceIntersection] {
+        &self.intersections
+    }
+}
+
+impl Index<usize> for CurveSurfaceIntersections {
+    type Output = CurveSurfaceIntersection;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.intersections[index]
+    }
+}
+
+impl IntoIterator for CurveSurfaceIntersections {
+    type Item = CurveSurfaceIntersection;
+    type IntoIter = std::vec::IntoIter<CurveSurfaceIntersection>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.intersections.into_iter()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,12 +180,12 @@ pub struct SurfaceOverlapCandidate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IntersectionCoverage {
     Complete,
-    Incomplete(Vec<SurfaceIntersectionIncompleteReason>),
+    Incomplete(Vec<IntersectionIncompleteReason>),
 }
 
 /// Structured reasons why a result set cannot claim complete coverage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SurfaceIntersectionIncompleteReason {
+pub enum IntersectionIncompleteReason {
     InteriorLoopSearchNotImplemented,
     CoincidentRegionResolutionNotImplemented,
     TangentOrSingularContact,
@@ -124,6 +193,15 @@ pub enum SurfaceIntersectionIncompleteReason {
     TraceBudgetExhausted,
     SynchronizedFitToleranceExceeded,
     UnsupportedControlPointWeights,
+    /// Subdivision hit its depth limit with a candidate domain still unresolved,
+    /// so roots inside that domain may be missing or merged.
+    SubdivisionBudgetExhausted,
+    /// A curve span stayed within tolerance of a non-planar patch. The reported
+    /// interval is a candidate, not a certified overlap.
+    UnresolvedOverlap,
+    /// A candidate domain was isolated but Newton correction did not reach the
+    /// residual tolerance, so its root is reported by no observation.
+    RefinementFailed,
 }
 
 /// Surface/surface observations plus an explicit coverage statement.

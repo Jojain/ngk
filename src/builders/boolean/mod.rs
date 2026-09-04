@@ -40,12 +40,11 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::builders::edges::split_edge_staged;
 use crate::builders::faces::{FaceImprint, split_face_by_imprints_staged, split_face_edge_staged};
-use crate::geometry::dim3::intersections::intersect_curve_surface_with_options;
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveCurveIntersection,
     CurveSurfaceIntersection, Degree, HPoint, HPoint2, IntersectionOptions, Interval, KnotVector,
-    Line2, NurbsCurve, NurbsCurve2, NurbsError, Point2, Point3, PointCoincidence, Surface,
-    SurfaceSurfaceIntersection,
+    Line2, NurbsCurve, NurbsCurve2, NurbsError, Point2, Point3, PointCoincidence, PreparedCurve,
+    PreparedSurface, Surface, SurfaceSurfaceIntersection, intersect_prepared_curve_surface,
 };
 use crate::topology::TopologyEdit;
 use crate::topology::gmap::GMap;

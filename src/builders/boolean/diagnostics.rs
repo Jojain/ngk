@@ -1,6 +1,6 @@
 //! Observable work and unresolved geometry from Boolean preparation.
 
-use crate::geometry::SurfaceIntersectionIncompleteReason;
+use crate::geometry::IntersectionIncompleteReason;
 use crate::topology::shape_keys::FaceKey;
 
 /// Work counters and coverage limitations retained with the contact plan.
@@ -12,6 +12,8 @@ pub struct BooleanDiagnostics {
     pub classification_rays: usize,
     pub candidate_pairs_tested: usize,
     pub candidate_pairs_pruned: usize,
+    pub edge_face_pairs_tested: usize,
+    pub edge_face_pairs_pruned: usize,
     pub branches_found: usize,
     pub branches_uncertified: usize,
     pub spans: usize,
@@ -19,5 +21,5 @@ pub struct BooleanDiagnostics {
     pub regions: usize,
     /// Candidate overlap is not proof of a coincident trimmed region.
     pub unresolved_overlaps: Vec<(FaceKey, FaceKey)>,
-    pub coverage: Vec<SurfaceIntersectionIncompleteReason>,
+    pub coverage: Vec<IntersectionIncompleteReason>,
 }

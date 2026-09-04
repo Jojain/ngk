@@ -3,6 +3,7 @@
 use super::*;
 use super::{clip::clip_branch, trim::FaceTrimDomain};
 use crate::geometry::IntersectionCoverage;
+use std::collections::hash_map::Entry;
 
 pub(super) fn compute_vertex_contacts<P: Payload>(
     g: &GMap<P>,
@@ -193,6 +194,18 @@ fn push_edge_point(plan: &mut IntersectionAccumulator, edge: EdgeKey, point: Poi
     plan.edge_points.entry(edge).or_default().push(point);
 }
 
+/// Records every distinct reason a narrow-phase result was not certified.
+fn merge_coverage(plan: &mut IntersectionAccumulator, coverage: &IntersectionCoverage) {
+    let IntersectionCoverage::Incomplete(reasons) = coverage else {
+        return;
+    };
+    for reason in reasons {
+        if !plan.diagnostics.coverage.contains(reason) {
+            plan.diagnostics.coverage.push(*reason);
+        }
+    }
+}
+
 fn push_point_contact(
     contacts: &mut Vec<RawIntersection>,
     point: Point3,
@@ -207,24 +220,86 @@ fn push_point_contact(
     });
 }
 
+/// Decomposed operand geometry reused across every candidate pair.
+///
+/// Bézier decomposition dominates a single curve/surface query, so an operand
+/// touched by many pairs must be decomposed once rather than once per pair.
+#[derive(Default)]
+struct PreparedGeometry {
+    edges: HashMap<EdgeKey, PreparedCurve>,
+    faces: HashMap<FaceKey, PreparedSurface>,
+}
+
+impl PreparedGeometry {
+    fn edge<P: Payload>(
+        &mut self,
+        g: &GMap<P>,
+        key: EdgeKey,
+    ) -> Result<&PreparedCurve, BooleanError> {
+        match self.edges.entry(key) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let edge = g.edge_unchecked(key);
+                let curve = edge.curve().expect("registered edge geometry");
+                Ok(entry.insert(PreparedCurve::new(curve)?))
+            }
+        }
+    }
+
+    /// Prepares a face's surface over its own trim domain.
+    ///
+    /// An unbounded analytic surface otherwise converts to an arbitrary unit
+    /// patch, which drops every contact outside it.
+    fn face<P: Payload>(
+        &mut self,
+        g: &GMap<P>,
+        key: FaceKey,
+    ) -> Result<&PreparedSurface, BooleanError> {
+        match self.faces.entry(key) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                let face = g.face_unchecked(key);
+                let prepared = match broad_phase::face_uv_bounds(&face) {
+                    Some((domain_u, domain_v)) => {
+                        PreparedSurface::over(face.surface(), domain_u, domain_v)?
+                    }
+                    None => PreparedSurface::new(face.surface())?,
+                };
+                Ok(entry.insert(prepared))
+            }
+        }
+    }
+}
+
 pub(super) fn compute_edge_face_contacts<P: Payload>(
     g: &GMap<P>,
     plan: &mut IntersectionAccumulator,
     options: BooleanOptions,
 ) -> Result<(), BooleanError> {
-    let first_edges = plan.first_cells.edges.clone();
-    let second_faces = plan.second_cells.faces.clone();
-    for edge in first_edges {
-        for face in second_faces.iter().copied() {
-            intersect_edge_face(g, plan, edge, face, true, options)?;
-        }
-    }
-
-    let second_edges = plan.second_cells.edges.clone();
-    let first_faces = plan.first_cells.faces.clone();
-    for edge in second_edges {
-        for face in first_faces.iter().copied() {
-            intersect_edge_face(g, plan, edge, face, false, options)?;
+    let mut geometry = PreparedGeometry::default();
+    let sides = [
+        (
+            plan.first_cells.edges.clone(),
+            plan.second_cells.faces.clone(),
+            true,
+        ),
+        (
+            plan.second_cells.edges.clone(),
+            plan.first_cells.faces.clone(),
+            false,
+        ),
+    ];
+    for (edges, faces, edge_is_first) in sides {
+        let candidates = broad_phase::candidate_edge_face_pairs(
+            g,
+            &edges,
+            &faces,
+            options.intersections.bbox_tolerance,
+        );
+        plan.diagnostics.edge_face_pairs_tested += candidates.pairs.len();
+        plan.diagnostics.edge_face_pairs_pruned += candidates.pruned;
+        for (edge, face) in candidates.pairs {
+            intersect_edge_face(g, plan, &mut geometry, edge, face, edge_is_first, options)?;
         }
     }
     Ok(())
@@ -233,6 +308,7 @@ pub(super) fn compute_edge_face_contacts<P: Payload>(
 fn intersect_edge_face<P: Payload>(
     g: &GMap<P>,
     plan: &mut IntersectionAccumulator,
+    geometry: &mut PreparedGeometry,
     edge_key: EdgeKey,
     face_key: FaceKey,
     edge_is_first: bool,
@@ -242,9 +318,13 @@ fn intersect_edge_face<P: Payload>(
     let face = g.face_unchecked(face_key);
     let curve = edge.curve().expect("registered edge geometry");
     let loops = face_uv_loops(&face);
-    for contact in
-        intersect_curve_surface_with_options(curve, face.surface(), options.intersections)?
-    {
+    let contacts = {
+        let prepared_curve = geometry.edge(g, edge_key)?.clone();
+        let prepared_face = geometry.face(g, face_key)?;
+        intersect_prepared_curve_surface(&prepared_curve, prepared_face, options.intersections)?
+    };
+    merge_coverage(plan, contacts.coverage());
+    for contact in contacts {
         match contact {
             CurveSurfaceIntersection::Point {
                 point,
@@ -629,13 +709,7 @@ fn intersect_general_face_pair<P: Payload>(
         second.surface(),
         options.intersections,
     )?;
-    if let IntersectionCoverage::Incomplete(reasons) = contacts.coverage() {
-        for reason in reasons {
-            if !plan.diagnostics.coverage.contains(reason) {
-                plan.diagnostics.coverage.push(*reason);
-            }
-        }
-    }
+    merge_coverage(plan, contacts.coverage());
     for contact in contacts.intersections() {
         match contact {
             SurfaceSurfaceIntersection::Point(contact) => {

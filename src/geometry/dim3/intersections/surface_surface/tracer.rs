@@ -2,8 +2,8 @@ use nalgebra::{Matrix2, Matrix3, Matrix4, Vector2, Vector4};
 
 use super::super::options::IntersectionOptions;
 use crate::geometry::{
-    Interval, NurbsSurface, Point2, Point3, SurfaceIntersectionIncompleteReason,
-    SurfaceIntersectionPoint, SurfaceIntersectionPointKind,
+    IntersectionIncompleteReason, Interval, NurbsSurface, Point2, Point3, SurfaceIntersectionPoint,
+    SurfaceIntersectionPointKind,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -40,7 +40,7 @@ impl TraceState {
 pub(super) struct TraceOutcome {
     pub states: Vec<TraceState>,
     pub closed: bool,
-    pub incomplete_reasons: Vec<SurfaceIntersectionIncompleteReason>,
+    pub incomplete_reasons: Vec<IntersectionIncompleteReason>,
 }
 
 enum DirectionStop {
@@ -84,11 +84,11 @@ pub(super) fn trace_from_seed(
         match stop {
             DirectionStop::MinimumStep => push_reason(
                 &mut incomplete_reasons,
-                SurfaceIntersectionIncompleteReason::MinimumTraceStepReached,
+                IntersectionIncompleteReason::MinimumTraceStepReached,
             ),
             DirectionStop::Budget => push_reason(
                 &mut incomplete_reasons,
-                SurfaceIntersectionIncompleteReason::TraceBudgetExhausted,
+                IntersectionIncompleteReason::TraceBudgetExhausted,
             ),
             DirectionStop::Boundary | DirectionStop::Closed => {}
         }
@@ -393,8 +393,8 @@ fn dedup_consecutive(states: &mut Vec<TraceState>, options: IntersectionOptions)
 }
 
 fn push_reason(
-    reasons: &mut Vec<SurfaceIntersectionIncompleteReason>,
-    reason: SurfaceIntersectionIncompleteReason,
+    reasons: &mut Vec<IntersectionIncompleteReason>,
+    reason: IntersectionIncompleteReason,
 ) {
     if !reasons.contains(&reason) {
         reasons.push(reason);

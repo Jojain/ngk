@@ -7,9 +7,9 @@ use super::intersections::{
 use super::nurbs::{ControlNet, Degree, HPoint, KnotVector, NurbsSurface};
 use super::utils::{IntoUnit, Point3};
 use crate::geometry::LINEAR_TOLERANCE;
-use crate::geometry::Point2;
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
+use crate::geometry::{Interval, Point2};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +56,19 @@ impl Surface {
             Surface::Ruled(surface) => surface.to_nurbs(),
             Surface::Revolution(surface) => surface.to_nurbs(),
             Surface::Nurbs(surface) => Ok(surface.clone()),
+        }
+    }
+
+    /// Converts to NURBS realized over the requested parameter box.
+    ///
+    /// An unbounded analytic surface spans the box exactly, so callers holding a
+    /// trim domain no longer silently lose the part of it outside the default
+    /// unit patch. Surfaces already carrying their own finite parameterization
+    /// ignore the box and return their full extent.
+    pub fn to_nurbs_over(&self, u: Interval, v: Interval) -> Result<NurbsSurface, NurbsError> {
+        match self {
+            Surface::Plane(plane) => plane.to_nurbs_over(u, v),
+            surface => surface.to_nurbs(),
         }
     }
 
@@ -259,24 +272,33 @@ impl Plane {
     }
 
     pub fn to_nurbs(&self) -> Result<NurbsSurface, NurbsError> {
+        self.to_nurbs_over(Interval::new(0.0, 1.0), Interval::new(0.0, 1.0))
+    }
+
+    /// Realizes this unbounded plane as the NURBS patch spanning `u` x `v`.
+    ///
+    /// The patch keeps the plane's own parameterization, so a point at plane
+    /// parameters `(u, v)` inside the box has the same parameters on the patch.
+    pub fn to_nurbs_over(&self, u: Interval, v: Interval) -> Result<NurbsSurface, NurbsError> {
         let origin = self.origin();
         let x = *self.x_dir();
         let y = *self.y_dir();
+        let corner = |su: f64, sv: f64| HPoint::from_cartesian(origin + x * su + y * sv, 1.0);
         NurbsSurface::new(
             Degree::new(1)?,
             Degree::new(1)?,
             ControlNet::new(
                 vec![
-                    HPoint::from_cartesian(origin, 1.0),
-                    HPoint::from_cartesian(origin + x, 1.0),
-                    HPoint::from_cartesian(origin + y, 1.0),
-                    HPoint::from_cartesian(origin + x + y, 1.0),
+                    corner(u.start, v.start),
+                    corner(u.end, v.start),
+                    corner(u.start, v.end),
+                    corner(u.end, v.end),
                 ],
                 2,
                 2,
             )?,
-            unit_linear_knots()?,
-            unit_linear_knots()?,
+            linear_knots(u)?,
+            linear_knots(v)?,
         )
     }
 }
@@ -529,5 +551,10 @@ impl SurfaceOfRevolution {
 }
 
 fn unit_linear_knots() -> Result<KnotVector, NurbsError> {
-    KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])
+    linear_knots(Interval::new(0.0, 1.0))
+}
+
+/// Clamped degree-1 knots spanning `domain`.
+fn linear_knots(domain: Interval) -> Result<KnotVector, NurbsError> {
+    KnotVector::new(vec![domain.start, domain.start, domain.end, domain.end])
 }

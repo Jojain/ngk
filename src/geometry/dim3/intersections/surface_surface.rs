@@ -10,7 +10,7 @@ use tracer::{TraceState, trace_from_seed};
 use super::error::IntersectionError;
 use super::options::IntersectionOptions;
 use super::{
-    IntersectionCoverage, SurfaceIntersectionIncompleteReason, SurfaceIntersectionPointKind,
+    IntersectionCoverage, IntersectionIncompleteReason, SurfaceIntersectionPointKind,
     SurfaceOverlapCandidate, SurfaceSurfaceIntersection, SurfaceSurfaceIntersections,
 };
 use crate::geometry::{BBox, NurbsSurface, Surface};
@@ -39,7 +39,7 @@ pub fn intersect_surfaces_with_options(
         return Ok(SurfaceSurfaceIntersections::new(
             Vec::new(),
             IntersectionCoverage::Incomplete(vec![
-                SurfaceIntersectionIncompleteReason::UnsupportedControlPointWeights,
+                IntersectionIncompleteReason::UnsupportedControlPointWeights,
             ]),
         ));
     }
@@ -62,18 +62,23 @@ pub fn intersect_surfaces_with_options(
                 },
             )],
             IntersectionCoverage::Incomplete(vec![
-                SurfaceIntersectionIncompleteReason::CoincidentRegionResolutionNotImplemented,
+                IntersectionIncompleteReason::CoincidentRegionResolutionNotImplemented,
             ]),
         ));
     }
 
     let seed_search = boundary_seeds(&a, &b, options)?;
     let mut intersections = Vec::new();
-    let mut reasons = vec![SurfaceIntersectionIncompleteReason::InteriorLoopSearchNotImplemented];
+    let mut reasons = vec![IntersectionIncompleteReason::InteriorLoopSearchNotImplemented];
+    // Boundary seeding cannot certify more than the curve/surface searches it
+    // is built from, so its limitations become limitations here.
+    for reason in &seed_search.incomplete_reasons {
+        push_reason(&mut reasons, *reason);
+    }
     if seed_search.overlap_boundary_found {
         push_reason(
             &mut reasons,
-            SurfaceIntersectionIncompleteReason::TangentOrSingularContact,
+            IntersectionIncompleteReason::TangentOrSingularContact,
         );
     }
 
@@ -82,7 +87,7 @@ pub fn intersect_surfaces_with_options(
             push_singular_point(&mut intersections, seed, options);
             push_reason(
                 &mut reasons,
-                SurfaceIntersectionIncompleteReason::TangentOrSingularContact,
+                IntersectionIncompleteReason::TangentOrSingularContact,
             );
             continue;
         };
@@ -97,7 +102,7 @@ pub fn intersect_surfaces_with_options(
         if !branch.quality.certified {
             push_reason(
                 &mut reasons,
-                SurfaceIntersectionIncompleteReason::SynchronizedFitToleranceExceeded,
+                IntersectionIncompleteReason::SynchronizedFitToleranceExceeded,
             );
         }
         if !contains_equivalent_branch(&intersections, &branch, options) {
@@ -223,8 +228,8 @@ fn contains_equivalent_branch(
 }
 
 fn push_reason(
-    reasons: &mut Vec<SurfaceIntersectionIncompleteReason>,
-    reason: SurfaceIntersectionIncompleteReason,
+    reasons: &mut Vec<IntersectionIncompleteReason>,
+    reason: IntersectionIncompleteReason,
 ) {
     if !reasons.contains(&reason) {
         reasons.push(reason);

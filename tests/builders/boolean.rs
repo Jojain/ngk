@@ -748,7 +748,6 @@ fn boolean_overlapping_boxes_intersection_and_difference_are_closed() {
             BooleanOptions::default(),
         )
         .unwrap();
-        show(&map);
 
         validate_solid_manifold(&map, result.solid).unwrap();
         ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
@@ -824,7 +823,60 @@ fn boolean_result_can_be_consumed_by_a_second_operation() {
     )
     .unwrap();
     validate_solid_manifold(&map, result.solid).unwrap();
+
     ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
     assert_eq!(map.solid_unchecked(result.solid).shells().len(), 2);
     assert_eq!(map.solid_unchecked(result.solid).faces().len(), 18);
+}
+
+#[test]
+fn boolean_intersection_is_closed_for_faces_larger_than_the_unit_patch() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    // Faces of these blocks are four units across, so their contacts sit at
+    // surface parameters well past the unit patch an unbounded plane converts
+    // to by default. The narrow phase has to use each face's own trim domain
+    // to see them at all.
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 4.0, Point3::new(2.0, 2.0, 2.0), 4.0);
+
+    let result = boolean(
+        &mut map,
+        first,
+        second,
+        BooleanOperation::Intersection,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    let solid = map.solid_unchecked(result.solid);
+    assert_eq!(solid.faces().len(), 6);
+    assert_eq!(
+        solid.vertices().len() as isize - solid.edges().len() as isize
+            + solid.faces().len() as isize,
+        2
+    );
+}
+
+#[test]
+fn edge_face_broad_phase_prunes_pairs_that_cannot_touch() {
+    use ngk::builders::boolean::{BooleanOperand, compute_boolean_intersections};
+    let (map, first, second) = two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 1.0), 2.0);
+
+    let plan = compute_boolean_intersections(
+        &map,
+        BooleanOperand::Solid(first),
+        BooleanOperand::Solid(second),
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    let tested = plan.diagnostics.edge_face_pairs_tested;
+    let pruned = plan.diagnostics.edge_face_pairs_pruned;
+    // Two blocks give 12 edges against 6 faces in each direction. Only the pairs
+    // near the shared corner can touch, so the narrow phase must see far fewer.
+    assert_eq!(tested + pruned, 144, "{tested} tested, {pruned} pruned");
+    assert!(
+        tested < 40,
+        "expected most edge/face pairs pruned, {tested} still tested"
+    );
 }

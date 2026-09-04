@@ -1,7 +1,12 @@
 use nalgebra::Vector4;
 
-use super::super::curve_surface::intersect_curve_surface_with_options;
-use super::super::{CurveSurfaceIntersection, IntersectionError, IntersectionOptions};
+use super::super::curve_surface::{
+    PreparedCurve, PreparedSurface, intersect_prepared_curve_surface,
+};
+use super::super::{
+    CurveSurfaceIntersection, IntersectionCoverage, IntersectionError,
+    IntersectionIncompleteReason, IntersectionOptions,
+};
 use super::tracer::TraceState;
 use crate::geometry::{ControlPolygon, Curve, NurbsCurve, NurbsSurface, Surface};
 
@@ -16,6 +21,10 @@ enum Boundary {
 pub(super) struct SeedSearch {
     pub seeds: Vec<TraceState>,
     pub overlap_boundary_found: bool,
+    /// Reasons the shared curve/surface solver could not certify a boundary
+    /// search. Surface/surface coverage cannot exceed the coverage of the
+    /// boundary searches it is built from.
+    pub incomplete_reasons: Vec<IntersectionIncompleteReason>,
 }
 
 /// Finds regular branch seeds where either surface boundary meets the other surface.
@@ -24,22 +33,15 @@ pub(super) fn boundary_seeds(
     b: &NurbsSurface,
     options: IntersectionOptions,
 ) -> Result<SeedSearch, IntersectionError> {
-    let mut seeds = Vec::new();
-    let mut overlap_boundary_found = false;
-    collect_surface_boundaries(a, b, true, options, &mut seeds, &mut overlap_boundary_found)?;
-    collect_surface_boundaries(
-        b,
-        a,
-        false,
-        options,
-        &mut seeds,
-        &mut overlap_boundary_found,
-    )?;
-    dedup_seeds(&mut seeds, options);
-    Ok(SeedSearch {
-        seeds,
-        overlap_boundary_found,
-    })
+    let mut search = SeedSearch {
+        seeds: Vec::new(),
+        overlap_boundary_found: false,
+        incomplete_reasons: Vec::new(),
+    };
+    collect_surface_boundaries(a, b, true, options, &mut search)?;
+    collect_surface_boundaries(b, a, false, options, &mut search)?;
+    dedup_seeds(&mut search.seeds, options);
+    Ok(search)
 }
 
 fn collect_surface_boundaries(
@@ -47,9 +49,11 @@ fn collect_surface_boundaries(
     other_surface: &NurbsSurface,
     boundary_belongs_to_a: bool,
     options: IntersectionOptions,
-    seeds: &mut Vec<TraceState>,
-    overlap_boundary_found: &mut bool,
+    search: &mut SeedSearch,
 ) -> Result<(), IntersectionError> {
+    // The other surface is decomposed once and reused across all four
+    // boundaries rather than re-decomposed per boundary curve.
+    let other_prepared = PreparedSurface::new(&Surface::Nurbs(other_surface.clone()))?;
     for boundary in [
         Boundary::UMin,
         Boundary::UMax,
@@ -57,11 +61,18 @@ fn collect_surface_boundaries(
         Boundary::VMax,
     ] {
         let curve = boundary_curve(boundary_surface, boundary)?;
-        let results = intersect_curve_surface_with_options(
-            &Curve::Nurbs(curve),
-            &Surface::Nurbs(other_surface.clone()),
+        let results = intersect_prepared_curve_surface(
+            &PreparedCurve::new(&Curve::Nurbs(curve))?,
+            &other_prepared,
             options,
         )?;
+        if let IntersectionCoverage::Incomplete(reasons) = results.coverage() {
+            for reason in reasons {
+                if !search.incomplete_reasons.contains(reason) {
+                    search.incomplete_reasons.push(*reason);
+                }
+            }
+        }
         for result in results {
             match result {
                 CurveSurfaceIntersection::Point {
@@ -76,7 +87,7 @@ fn collect_surface_boundaries(
                     } else {
                         Vector4::new(surface_u, surface_v, boundary_uv.0, boundary_uv.1)
                     };
-                    seeds.push(TraceState::new(
+                    search.seeds.push(TraceState::new(
                         if boundary_belongs_to_a {
                             boundary_surface
                         } else {
@@ -91,7 +102,7 @@ fn collect_surface_boundaries(
                     ));
                 }
                 CurveSurfaceIntersection::Overlap { .. } => {
-                    *overlap_boundary_found = true;
+                    search.overlap_boundary_found = true;
                 }
             }
         }

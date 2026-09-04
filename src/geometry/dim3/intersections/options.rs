@@ -16,9 +16,6 @@ pub struct IntersectionOptions {
     pub min_trace_step: f64,
     pub max_trace_step: f64,
     pub max_trace_steps: usize,
-    pub curve_sample_count: usize,
-    pub surface_u_sample_count: usize,
-    pub surface_v_sample_count: usize,
 }
 
 impl IntersectionOptions {
@@ -44,9 +41,6 @@ impl IntersectionOptions {
             && self.max_trace_step.is_finite()
             && self.max_trace_step >= self.min_trace_step
             && self.max_trace_steps > 0
-            && self.curve_sample_count > 0
-            && self.surface_u_sample_count > 0
-            && self.surface_v_sample_count > 0
     }
 
     pub fn linear_tolerance_squared(self) -> f64 {
@@ -70,9 +64,6 @@ impl Default for IntersectionOptions {
             min_trace_step: 1.0e-6,
             max_trace_step: 2.0e-2,
             max_trace_steps: 4096,
-            curve_sample_count: 64,
-            surface_u_sample_count: 32,
-            surface_v_sample_count: 32,
         }
     }
 }

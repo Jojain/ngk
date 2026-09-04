@@ -1,10 +1,11 @@
 //! Conservative trimmed-face bounds and deterministic BVH candidate generation.
 
-use crate::geometry::{Point2, Point3, Surface};
+use crate::geometry::{Interval, Point2, Point3, Surface};
+use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
-use crate::topology::shape_keys::FaceKey;
+use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use slotmap::Key;
 
 #[derive(Clone, Copy)]
@@ -50,6 +51,48 @@ impl Bounds {
             max: Point3::from(self.max.coords.sup(&other.max.coords)),
         }
     }
+}
+
+/// Conservative model-space bounds of a bounded edge, from its control hull.
+///
+/// Positive weights make the hull a true bound; anything else keeps the edge
+/// unbounded so no candidate pair is dropped on unverified data.
+fn edge_bounds<P: Payload>(edge: Edge<'_, P>, padding: f64) -> Option<Bounds> {
+    let curve = edge.curve()?.to_nurbs().ok()?;
+    let mut points = Vec::with_capacity(curve.control_points().len());
+    for point in curve.control_points().as_slice() {
+        if !point.weight().is_finite() || point.weight() <= 0.0 {
+            return None;
+        }
+        points.push(point.to_cartesian());
+    }
+    Bounds::from_points(points, padding)
+}
+
+/// Conservative parameter-space bounds of a face's trimmed region.
+///
+/// Callers converting an unbounded analytic surface to NURBS need this so the
+/// patch they build actually covers the trimmed region.
+pub(crate) fn face_uv_bounds<P: Payload>(face: &Face<'_, P>) -> Option<(Interval, Interval)> {
+    let mut u = (f64::INFINITY, f64::NEG_INFINITY);
+    let mut v = (f64::INFINITY, f64::NEG_INFINITY);
+    for boundary in face.loops() {
+        for edge in boundary.edges() {
+            let pcurve = face.pcurve(edge.dart())?.to_nurbs().ok()?;
+            for point in pcurve.control_points().as_slice() {
+                if !point.weight().is_finite() || point.weight() <= 0.0 {
+                    return None;
+                }
+                let uv = point.to_cartesian();
+                if !uv.x.is_finite() || !uv.y.is_finite() {
+                    return None;
+                }
+                u = (u.0.min(uv.x), u.1.max(uv.x));
+                v = (v.0.min(uv.y), v.1.max(uv.y));
+            }
+        }
+    }
+    (u.0 <= u.1 && v.0 <= v.1).then(|| (Interval::new(u.0, u.1), Interval::new(v.0, v.1)))
 }
 
 /// Positive rational trim control hulls bound the whole trimmed parameter domain.
@@ -177,6 +220,49 @@ impl FaceBvh {
 pub(crate) struct CandidateSet {
     pub(crate) pairs: Vec<(FaceKey, FaceKey)>,
     pub(crate) pruned: usize,
+}
+
+/// Edge/face pairs that survive conservative bounds rejection.
+pub(crate) struct EdgeFaceCandidateSet {
+    pub(crate) pairs: Vec<(EdgeKey, FaceKey)>,
+    pub(crate) pruned: usize,
+}
+
+/// Keeps every unbounded operand and every potentially overlapping bounded pair.
+///
+/// Narrow-phase curve/surface work dominates Boolean cost, and most edge/face
+/// pairs of two solids cannot touch, so rejecting them here is what keeps that
+/// cost proportional to the contacts that exist.
+pub(crate) fn candidate_edge_face_pairs<P: Payload>(
+    map: &GMap<P>,
+    edges: &[EdgeKey],
+    faces: &[FaceKey],
+    padding: f64,
+) -> EdgeFaceCandidateSet {
+    let mut bounded = Vec::new();
+    let mut unbounded = Vec::new();
+    for &key in faces {
+        match face_bounds(map.face_unchecked(key), padding) {
+            Some(bounds) => bounded.push((key, bounds)),
+            None => unbounded.push(key),
+        }
+    }
+    let tree = FaceBvh::build(bounded);
+    let mut pairs = Vec::new();
+    for &edge in edges {
+        let bounds = edge_bounds(map.edge_unchecked(edge), padding);
+        let mut hits = unbounded.clone();
+        if let Some(tree) = &tree {
+            tree.query(bounds, &mut hits);
+        }
+        pairs.extend(hits.into_iter().map(|face| (edge, face)));
+    }
+    pairs.sort_by_key(|(edge, face)| (edge.data().as_ffi(), face.data().as_ffi()));
+    pairs.dedup();
+    EdgeFaceCandidateSet {
+        pruned: edges.len() * faces.len() - pairs.len(),
+        pairs,
+    }
 }
 
 /// Keeps every unbounded face and every potentially overlapping bounded pair.
