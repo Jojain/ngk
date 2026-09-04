@@ -92,6 +92,61 @@ impl Surface {
         intersect_surfaces(self, other)
     }
 
+    /// Returns this surface rotated by `angle` radians around `axis`.
+    ///
+    /// The parameterisation is preserved, so pcurves expressed in this
+    /// surface's parameter space stay valid on the rotated copy.
+    pub fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
+        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
+        let rotate = |point: Point3| axis.origin + rotation * (point - axis.origin);
+        match self {
+            Surface::Plane(plane) => Ok(Surface::Plane(Plane::from_xy(
+                rotate(plane.origin()),
+                rotation * *plane.x_dir(),
+                rotation * *plane.y_dir(),
+            ))),
+            Surface::Cylinder(cylinder) => Ok(Surface::Cylinder(Cylinder::new(
+                rotate(cylinder.origin()),
+                rotation * *cylinder.x_dir(),
+                rotation * *cylinder.axis(),
+                cylinder.radius,
+            ))),
+            Surface::Ruled(surface) => Ok(Surface::Ruled(RuledSurface::new(
+                surface.curve.rotated(axis, angle)?,
+                rotation * surface.direction,
+            ))),
+            Surface::Revolution(surface) => Ok(Surface::Revolution(SurfaceOfRevolution::new(
+                surface.curve.rotated(axis, angle)?,
+                Axis3::new(
+                    rotate(surface.axis.origin),
+                    rotation * *surface.axis.direction,
+                ),
+            ))),
+            Surface::Nurbs(surface) => {
+                let control_points = surface
+                    .control_points()
+                    .as_slice()
+                    .iter()
+                    .map(|point| {
+                        HPoint::from_cartesian(rotate(point.to_cartesian()), point.weight())
+                    })
+                    .collect();
+                let control_points = ControlNet::new(
+                    control_points,
+                    surface.control_points().nu(),
+                    surface.control_points().nv(),
+                )?;
+                Ok(Surface::Nurbs(NurbsSurface::new(
+                    surface.degree_u(),
+                    surface.degree_v(),
+                    control_points,
+                    surface.knots_u().clone(),
+                    surface.knots_v().clone(),
+                )?))
+            }
+        }
+    }
+
     pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
         match self {
             Surface::Plane(plane) => Ok(Surface::Plane(Plane::from_xy(
@@ -325,7 +380,7 @@ impl RuledSurface {
     }
 
     pub fn normal_at(&self, u: f64, _v: f64) -> UnitVector3<f64> {
-        let du = finite_difference_curve_tangent(&self.curve, u);
+        let du = self.curve.derivative_at(u, 1);
         let n = du.cross(&self.direction);
         match UnitVector3::try_new(n, LINEAR_TOLERANCE) {
             Some(n) => n,
@@ -386,23 +441,31 @@ impl SurfaceOfRevolution {
         proj + (rot * radial)
     }
 
+    /// Returns the unit surface normal, `dS/du x dS/dv`.
+    ///
+    /// Degenerates on the axis, where `dS/dv` vanishes and the surface has an
+    /// apex rather than a tangent plane; the axis direction is returned there.
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         let du = self.partial_u(u, v);
         let dv = self.partial_v(u, v);
         let n = du.cross(&dv);
-        UnitVector3::try_new(n, LINEAR_TOLERANCE).unwrap_or(Vector3::z_axis())
+        UnitVector3::try_new(n, LINEAR_TOLERANCE).unwrap_or(self.axis.direction)
     }
 
+    /// Analytic `dS/du`: the profile tangent carried around the axis by `v`.
+    ///
+    /// Rotating about the axis is a rigid motion independent of `u`, so it
+    /// commutes with differentiation along the profile.
     fn partial_u(&self, u: f64, v: f64) -> Vector3<f64> {
-        let h = 1e-6;
-        self.point_at(u + h, v) - self.point_at(u - h, v)
+        Rotation3::from_axis_angle(&self.axis.direction, v) * self.curve.derivative_at(u, 1)
     }
 
+    /// Analytic `dS/dv`: the rotational velocity `axis x radius`.
     fn partial_v(&self, u: f64, v: f64) -> Vector3<f64> {
-        // Analytical: dS/dv = rot(v) * radial_perp
-        // But finite difference is consistent with your existing style
-        let h = 1e-6;
-        self.point_at(u, v + h) - self.point_at(u, v - h)
+        let point = self.point_at(u, v);
+        self.axis
+            .direction
+            .cross(&(point - self.axis.project(point)))
     }
 
     pub fn to_nurbs(&self) -> Result<NurbsSurface, NurbsError> {
@@ -451,13 +514,6 @@ impl SurfaceOfRevolution {
             circle_nurbs_knots()?,
         )
     }
-}
-
-fn finite_difference_curve_tangent(curve: &Curve, u: f64) -> Vector3<f64> {
-    let h = 1.0e-6;
-    let before = curve.point_at(u - h);
-    let after = curve.point_at(u + h);
-    after - before
 }
 
 fn unit_linear_knots() -> Result<KnotVector, NurbsError> {

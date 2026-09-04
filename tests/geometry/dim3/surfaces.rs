@@ -1,6 +1,6 @@
 use std::f64::consts::FRAC_PI_2;
 
-use nalgebra::Vector3;
+use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::{
     Circle, Curve, Cylinder, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence, RuledSurface,
     Surface, SurfaceOfRevolution, SurfacePeriodicity, axis::Axis3,
@@ -187,5 +187,49 @@ fn surface_of_revolution_converts_to_matching_nurbs_patch() {
         std::f64::consts::TAU,
     ] {
         assert_point_near(nurbs.point_at(0.25, v), surface.point_at(0.25, v));
+    }
+}
+
+#[test]
+fn surface_of_revolution_normal_is_radial_on_a_cylinder() {
+    let surface = SurfaceOfRevolution::new(
+        Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 0.0, 1.0)),
+        Axis3::new(Point3::origin(), Vector3::z()),
+    );
+
+    // Central differences of the surface point are order 1e-6 apart, so their
+    // cross product lands under the degeneracy tolerance and reports no normal
+    // at all; the normal has to come from the analytic partials.
+    for angle in [0.0, std::f64::consts::FRAC_PI_2, 2.0] {
+        let normal = *surface.normal_at(0.5, angle);
+        let point = surface.point_at(0.5, angle);
+        let radial = Vector3::new(point.x, point.y, 0.0).normalize();
+
+        assert!(
+            (normal + radial).norm() <= 1.0e-9,
+            "normal at {angle} should be the inward radial direction, got {normal:?}"
+        );
+    }
+}
+
+#[test]
+fn rotated_surface_keeps_its_parameterisation() {
+    let axis = Axis3::new(Point3::origin(), Vector3::z());
+    let surface = Surface::Plane(Plane::from_xy(
+        Point3::new(1.0, 0.0, 0.0),
+        Vector3::x(),
+        Vector3::z(),
+    ));
+    let rotated = surface
+        .rotated(axis, std::f64::consts::FRAC_PI_2)
+        .expect("a plane should rotate");
+
+    for (u, v) in [(0.0, 0.0), (0.3, -0.7), (2.0, 1.5)] {
+        let expected = Rotation3::from_axis_angle(&axis.direction, std::f64::consts::FRAC_PI_2)
+            * surface.point_at(u, v);
+        assert!(
+            (rotated.point_at(u, v) - expected).norm() <= 1.0e-9,
+            "rotating must not re-parameterise the surface"
+        );
     }
 }

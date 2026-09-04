@@ -11,7 +11,7 @@ use super::utils::{IntoUnit, Point3, PointCoincidence};
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::tolerance::{LINEAR_TOLERANCE_SQUARED, MAX_DISTANCE};
-use crate::geometry::{Interval, LINEAR_TOLERANCE};
+use crate::geometry::{ANGULAR_TOLERANCE, Interval, LINEAR_TOLERANCE};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +40,31 @@ impl Curve {
     }
     pub fn circle(plane: Plane, radius: f64) -> Self {
         Curve::Circle(Circle::new(plane, radius))
+    }
+
+    /// Returns the arc of a circle spanning `bounds` (radians, measured from
+    /// the plane's `x_dir`), parameterised over `[0, 1]`.
+    ///
+    /// Prefer this over [`Curve::circle`] for an edge that covers only part of
+    /// a turn: a whole circle carries the `atan2` range `(-pi, pi]`, so
+    /// [`Curve::parameters_between`] cannot express a span wider than half a
+    /// turn and silently returns the complementary arc instead.
+    pub fn arc(plane: Plane, radius: f64, bounds: Interval) -> Self {
+        Curve::Bounded(Box::new(Bounded::new(
+            Curve::Circle(Circle::new(plane, radius)),
+            bounds,
+        )))
+    }
+
+    /// Returns the innermost curve, unwrapping any [`Bounded`] trimming.
+    ///
+    /// Use it to ask what kind of geometry an edge carries — a trimmed arc is
+    /// a `Bounded` wrapper around a [`Curve::Circle`], not a `Curve::Circle`.
+    pub fn base(&self) -> &Curve {
+        match self {
+            Curve::Bounded(bounded) => bounded.inner().base(),
+            curve => curve,
+        }
     }
 
     pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
@@ -187,6 +212,48 @@ impl Curve {
         }
     }
 
+    /// Returns this curve rotated by `angle` radians around `axis`.
+    ///
+    /// The parameterisation is preserved: `rotated(..).point_at(t)` is
+    /// `point_at(t)` rotated, for every `t`. Callers therefore keep any
+    /// parameter interval computed on the source curve.
+    pub fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
+        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
+        let rotate = |point: Point3| axis.origin + rotation * (point - axis.origin);
+        match self {
+            Curve::Line(line) => Ok(Curve::Line(Line::new(Axis3::new(
+                rotate(line.origin()),
+                rotation * *line.direction(),
+            )))),
+            Curve::Circle(circle) => Ok(Curve::Circle(Circle::new(
+                Plane::new(
+                    rotate(circle.plane().origin()),
+                    rotation * *circle.plane().x_dir(),
+                    rotation * *circle.plane().normal(),
+                ),
+                circle.radius(),
+            ))),
+            Curve::Bounded(curve) => Ok(Curve::Bounded(Box::new(Bounded::new(
+                curve.inner().rotated(axis, angle)?,
+                curve.bounds(),
+            )))),
+            Curve::Nurbs(nurbs) => {
+                let points = nurbs
+                    .control_points()
+                    .iter()
+                    .map(|point| {
+                        HPoint::from_cartesian(rotate(point.to_cartesian()), point.weight())
+                    })
+                    .collect();
+                Ok(Curve::Nurbs(NurbsCurve::new(
+                    nurbs.degree(),
+                    ControlPolygon::new(points)?,
+                    nurbs.knots().clone(),
+                )?))
+            }
+        }
+    }
+
     pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
         match self {
             Curve::Line(line) => Ok(Curve::Line(line.translated(direction))),
@@ -265,8 +332,24 @@ impl Bounded<Curve> {
         }
     }
 
+    /// Returns the normalised parameter of `point` on the trimmed curve.
+    ///
+    /// A periodic inner curve reports its parameter on one fixed branch — a
+    /// circle uses `atan2`, so `(-pi, pi]` — which need not be the branch this
+    /// trim lives on. The raw parameter is therefore shifted by whole periods
+    /// until it lands at or after the start of the bounds, so an arc spanning
+    /// more than half a turn reports its own span instead of the complementary
+    /// one.
     pub fn param_at(&self, point: Point3) -> f64 {
-        self.local_parameter(self.inner.param_at(point))
+        let raw = self.inner.param_at(point);
+        let Periodicity::Periodic(period) = self.inner.periodicity() else {
+            return self.local_parameter(raw);
+        };
+
+        // The nudge keeps a point sitting exactly on the start of the bounds
+        // from wrapping to the far end when rounding puts it barely below.
+        let start = self.bounds.start.min(self.bounds.end) - ANGULAR_TOLERANCE;
+        self.local_parameter(start + (raw - start).rem_euclid(period))
     }
 
     pub fn length(&self, t0: f64, t1: f64) -> f64 {

@@ -15,7 +15,7 @@ pub fn build(angle: Rad64) -> Result<ScriptResult, String> {
 
     let mut hints = VizHints::new();
     for (key, attr) in shape.map().iter_edges() {
-        let color = match attr.curve {
+        let color = match attr.curve.base() {
             Curve::Circle(_) => "#ffb454",
             _ => "#76d7ea",
         };
