@@ -1,3 +1,5 @@
+#[path = "builders/boolean.rs"]
+mod boolean;
 #[path = "builders/chamfer.rs"]
 mod chamfer;
 #[path = "builders/face_lineage.rs"]
