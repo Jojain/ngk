@@ -4,13 +4,11 @@ use ngk::builders::boolean::{
     prepare_boolean_with_external_tool,
 };
 use ngk::builders::edges::add_line;
-use ngk::builders::solids::add_extruded_face;
-use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
-use ngk::modeling::{edges, faces};
+use ngk::geometry::{Frame, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
+use ngk::modeling::{edges, faces, solids};
 use ngk::topology::TopologyEditError;
 use ngk::topology::attributes::VertexAttr;
 use ngk::topology::gmap::GMap;
-use ngk::topology::shape_keys::SolidKey;
 use ngk::topology::shape_keys::VertexKey;
 use ngk::topology::validation::{validate_gmap, validate_solid_manifold};
 
@@ -354,8 +352,18 @@ fn edge_face_contact_splits_the_edge_and_records_the_face_contact() {
 
 #[test]
 fn overlapping_external_solids_are_imported_and_split_on_both_sides() {
-    let (mut target_map, target_solid) = block_at(Point3::origin(), 1.0);
-    let (tool_map, tool_solid) = block_at(Point3::new(0.5, 0.5, 0.5), 1.0);
+    let (mut target_map, target_solid) =
+        solids::block_at(Frame::xyz(), 1.0, 1.0, 1.0)
+            .expect("target block")
+            .into_map();
+    let (tool_map, tool_solid) = solids::block_at(
+        Frame::from_xy(Point3::new(0.5, 0.5, 0.5), Vector3::x(), Vector3::y()),
+        1.0,
+        1.0,
+        1.0,
+    )
+    .expect("tool block")
+    .into_map();
 
     let prepared = prepare_boolean_with_external_tool(
         &mut target_map,
@@ -433,14 +441,3 @@ fn coplanar_partial_overlap_imprints_the_region_boundary_on_both_faces() {
     validate_gmap(&target_map).expect("coplanar preparation must remain valid");
 }
 
-fn block_at(
-    origin: Point3,
-    size: f64,
-) -> (ngk::topology::gmap::GMap<ngk::StandardPayload>, SolidKey) {
-    let plane = Plane::from_xy(origin, Vector3::x(), Vector3::y());
-    let base = faces::rectangle(plane, size, size).expect("block base");
-    let (mut map, face) = base.into_map();
-    let solid =
-        add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, size)).expect("block extrusion");
-    (map, solid)
-}
