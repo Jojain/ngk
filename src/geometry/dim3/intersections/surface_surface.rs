@@ -1,17 +1,20 @@
 mod fitting;
+mod normals;
 mod seeds;
 mod simplification;
 mod tracer;
 
 use fitting::fit_branch;
-use seeds::boundary_seeds;
+use seeds::{pair_seeds, planar_seeds};
 use tracer::{TraceState, trace_from_seed};
 
+use super::PreparedSurface;
 use super::error::IntersectionError;
 use super::options::IntersectionOptions;
 use super::{
-    IntersectionCoverage, SurfaceIntersectionIncompleteReason, SurfaceIntersectionPointKind,
-    SurfaceOverlapCandidate, SurfaceSurfaceIntersection, SurfaceSurfaceIntersections,
+    IntersectionCoverage, IntersectionIncompleteReason, SurfaceIntersectionBranch,
+    SurfaceIntersectionPointKind, SurfaceOverlapCandidate, SurfaceSurfaceIntersection,
+    SurfaceSurfaceIntersections,
 };
 use crate::geometry::{BBox, NurbsSurface, Surface};
 
@@ -33,25 +36,45 @@ pub fn intersect_surfaces_with_options(
         return Err(IntersectionError::InvalidOptions);
     }
 
-    let a = a.to_nurbs()?;
-    let b = b.to_nurbs()?;
-    if !has_supported_weights(&a) || !has_supported_weights(&b) {
+    let nurbs_a = a.to_nurbs()?;
+    let nurbs_b = b.to_nurbs()?;
+    intersect_nurbs_surfaces(a, b, &nurbs_a, &nurbs_b, options)
+}
+
+/// Intersects two surfaces already realized over operation-specific domains.
+pub fn intersect_prepared_surfaces(
+    a: &PreparedSurface,
+    b: &PreparedSurface,
+    options: IntersectionOptions,
+) -> Result<SurfaceSurfaceIntersections, IntersectionError> {
+    if !options.validate() {
+        return Err(IntersectionError::InvalidOptions);
+    }
+    intersect_nurbs_surfaces(a.source(), b.source(), a.nurbs(), b.nurbs(), options)
+}
+
+fn intersect_nurbs_surfaces(
+    source_a: &Surface,
+    source_b: &Surface,
+    a: &NurbsSurface,
+    b: &NurbsSurface,
+    options: IntersectionOptions,
+) -> Result<SurfaceSurfaceIntersections, IntersectionError> {
+    if !has_supported_weights(a) || !has_supported_weights(b) {
         return Ok(SurfaceSurfaceIntersections::new(
             Vec::new(),
             IntersectionCoverage::Incomplete(vec![
-                SurfaceIntersectionIncompleteReason::UnsupportedControlPointWeights,
+                IntersectionIncompleteReason::UnsupportedControlPointWeights,
             ]),
         ));
     }
-    if control_hulls_are_disjoint(&a, &b, options)
-        || bezier_span_hulls_are_disjoint(&a, &b, options)?
-    {
+    if control_hulls_are_disjoint(a, b, options) || bezier_span_hulls_are_disjoint(a, b, options)? {
         return Ok(SurfaceSurfaceIntersections::new(
             Vec::new(),
             IntersectionCoverage::Complete,
         ));
     }
-    if same_nurbs_surface(&a, &b, options) {
+    if same_nurbs_surface(a, b, options) {
         return Ok(SurfaceSurfaceIntersections::new(
             vec![SurfaceSurfaceIntersection::OverlapCandidate(
                 SurfaceOverlapCandidate {
@@ -62,27 +85,47 @@ pub fn intersect_surfaces_with_options(
                 },
             )],
             IntersectionCoverage::Incomplete(vec![
-                SurfaceIntersectionIncompleteReason::CoincidentRegionResolutionNotImplemented,
+                IntersectionIncompleteReason::CoincidentRegionResolutionNotImplemented,
             ]),
         ));
     }
 
-    let seed_search = boundary_seeds(&a, &b, options)?;
+    // A planar operand is searched by Bernstein sign arguments on the other
+    // surface; otherwise the pair is subdivided until its normal cones separate.
+    let seed_search = match planar_seeds(a, b, options)? {
+        Some(search) => search,
+        None => pair_seeds(a, b, options)?,
+    };
     let mut intersections = Vec::new();
-    let mut reasons = vec![SurfaceIntersectionIncompleteReason::InteriorLoopSearchNotImplemented];
+    let mut reasons = Vec::new();
+    // Seeding cannot certify more than the curve/surface searches it is built
+    // from, so its limitations become limitations here.
+    for reason in &seed_search.incomplete_reasons {
+        push_reason(&mut reasons, *reason);
+    }
+    // Tangential branches are already exact, so they are adopted before the
+    // traced ones and keep any traced duplicate from being added on top.
+    for branch in seed_search.tangencies {
+        if !contains_equivalent_branch(&intersections, &branch, options) {
+            intersections.push(SurfaceSurfaceIntersection::Branch(branch));
+        }
+    }
     if seed_search.overlap_boundary_found {
         push_reason(
             &mut reasons,
-            SurfaceIntersectionIncompleteReason::TangentOrSingularContact,
+            IntersectionIncompleteReason::TangentOrSingularContact,
         );
     }
 
     for seed in seed_search.seeds {
-        let Some(outcome) = trace_from_seed(&a, &b, seed, options) else {
+        if branch_contains_seed(&intersections, seed, options) {
+            continue;
+        }
+        let Some(outcome) = trace_from_seed(a, b, seed, options) else {
             push_singular_point(&mut intersections, seed, options);
             push_reason(
                 &mut reasons,
-                SurfaceIntersectionIncompleteReason::TangentOrSingularContact,
+                IntersectionIncompleteReason::TangentOrSingularContact,
             );
             continue;
         };
@@ -93,11 +136,14 @@ pub fn intersect_surfaces_with_options(
             push_singular_point(&mut intersections, seed, options);
             continue;
         }
-        let branch = fit_branch(&a, &b, outcome.states, outcome.closed, options)?;
+        let mut branch = fit_branch(source_a, source_b, outcome.states, outcome.closed, options)?;
+        if !branch.quality.certified {
+            branch = refit_with_denser_trace(source_a, source_b, a, b, seed, branch, options)?;
+        }
         if !branch.quality.certified {
             push_reason(
                 &mut reasons,
-                SurfaceIntersectionIncompleteReason::SynchronizedFitToleranceExceeded,
+                IntersectionIncompleteReason::SynchronizedFitToleranceExceeded,
             );
         }
         if !contains_equivalent_branch(&intersections, &branch, options) {
@@ -105,10 +151,81 @@ pub fn intersect_surfaces_with_options(
         }
     }
 
-    Ok(SurfaceSurfaceIntersections::new(
-        intersections,
-        IntersectionCoverage::Incomplete(reasons),
-    ))
+    let coverage = if reasons.is_empty() {
+        IntersectionCoverage::Complete
+    } else {
+        IntersectionCoverage::Incomplete(reasons)
+    };
+    Ok(SurfaceSurfaceIntersections::new(intersections, coverage))
+}
+
+/// How many times a branch that missed the fit tolerance is retraced.
+const MAX_FIT_REFINEMENTS: usize = 4;
+
+/// Sample count past which a denser trace costs more than the fit can gain.
+///
+/// Interpolation through the trace is dense, so doubling the sample count
+/// multiplies the fitting work; a branch this long is reported uncertified
+/// instead of retraced again.
+const MAX_FIT_SAMPLES: usize = 512;
+
+/// Retraces a branch with shorter steps until its fitted curves are certified.
+///
+/// A curve of higher degree than the interpolant — a cylinder/cylinder quartic,
+/// say — needs more samples than the default step produces. Each round halves
+/// the step and keeps the result only while the measured fit error improves, so
+/// a branch that cannot be certified costs a bounded amount of work and is still
+/// reported with its best fit rather than silently accepted.
+fn refit_with_denser_trace(
+    source_a: &Surface,
+    source_b: &Surface,
+    a: &NurbsSurface,
+    b: &NurbsSurface,
+    seed: TraceState,
+    mut branch: SurfaceIntersectionBranch,
+    options: IntersectionOptions,
+) -> Result<SurfaceIntersectionBranch, IntersectionError> {
+    let mut refined_options = options;
+    for _ in 0..MAX_FIT_REFINEMENTS {
+        refined_options.max_trace_step *= 0.5;
+        refined_options.min_trace_step *= 0.5;
+        let Some(outcome) = trace_from_seed(a, b, seed, refined_options) else {
+            break;
+        };
+        if outcome.states.len() < 2 || outcome.states.len() > MAX_FIT_SAMPLES {
+            break;
+        }
+        let refined = fit_branch(
+            source_a,
+            source_b,
+            outcome.states,
+            outcome.closed,
+            refined_options,
+        )?;
+        if refined.quality.max_fit_error >= branch.quality.max_fit_error {
+            break;
+        }
+        let certified = refined.quality.certified;
+        branch = refined;
+        if certified {
+            break;
+        }
+    }
+    Ok(branch)
+}
+
+fn branch_contains_seed(
+    intersections: &[SurfaceSurfaceIntersection],
+    seed: TraceState,
+    options: IntersectionOptions,
+) -> bool {
+    intersections.iter().any(|intersection| {
+        let SurfaceSurfaceIntersection::Branch(branch) = intersection else {
+            return false;
+        };
+        let parameter = branch.curve_3d.param_at(seed.point);
+        (branch.curve_3d.point_at(parameter) - seed.point).norm() <= options.fit_tolerance
+    })
 }
 
 fn has_supported_weights(surface: &NurbsSurface) -> bool {
@@ -223,8 +340,8 @@ fn contains_equivalent_branch(
 }
 
 fn push_reason(
-    reasons: &mut Vec<SurfaceIntersectionIncompleteReason>,
-    reason: SurfaceIntersectionIncompleteReason,
+    reasons: &mut Vec<IntersectionIncompleteReason>,
+    reason: IntersectionIncompleteReason,
 ) {
     if !reasons.contains(&reason) {
         reasons.push(reason);

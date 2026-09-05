@@ -7,7 +7,7 @@
     "wasm": "wasm-pack build --target web --out-dir visualization/src/wasm --features wasm ..",
     "wasm:build": "cd .. && wasm-pack build --target web --out-dir visualization/src/wasm --features wasm",
     "dev": "npm run wasm:build && vite",
-    "debug": "vite --host 127.0.0.1 --port 3941",
+    "debug": "npm run wasm:build && vite --host 127.0.0.1 --port 3941",
     "build": "npm run wasm:build && tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit --incremental false",

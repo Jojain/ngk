@@ -12,6 +12,18 @@ use ngk::topology::validation::{
 };
 
 #[test]
+fn extruded_annulus_orientation_accepts_inward_facing_shaft_walls() {
+    let mut g = GMap::<StandardPayload>::new();
+    let face =
+        ngk::builders::faces::add_annulus(&mut g, ngk::geometry::Plane::xy(), 2.0, 1.0).unwrap();
+    let solid =
+        ngk::builders::solids::add_extruded_face(&mut g, face, nalgebra::Vector3::z() * 3.0)
+            .unwrap();
+    validate_solid_orientation(&g, solid)
+        .expect("shaft walls point into the hole, not away from the shell center");
+}
+
+#[test]
 fn block_solid_orientation_validation_requires_outward_face_normals() {
     let block = block(1.0, 2.0, 3.0).expect("block should build");
 

@@ -7,7 +7,12 @@ use crate::topology::gmap::{Cell0, Cell1, Cell2, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
 
-use super::{BooleanCell, BooleanError, BooleanOperand};
+use super::{
+    BooleanCell, BooleanError, BooleanOperand, BooleanOperation, BooleanOptions,
+    BooleanTolerancePolicy, BooleanTolerances,
+};
+use crate::topology::shape_keys::SolidKey;
+use crate::topology::validation::{validate_solid_manifold, validate_solid_orientation};
 
 #[derive(Clone, Default)]
 pub(crate) struct OperandCells {
@@ -163,4 +168,53 @@ fn unique<T: Copy + Eq + std::hash::Hash>(values: impl IntoIterator<Item = T>) -
         .into_iter()
         .filter(|value| seen.insert(*value))
         .collect()
+}
+
+pub(crate) struct BooleanContext {
+    pub(crate) first: SolidKey,
+    pub(crate) second: SolidKey,
+    pub(crate) operation: BooleanOperation,
+    pub(crate) options: BooleanOptions,
+    pub(crate) tolerances: BooleanTolerances,
+}
+
+impl BooleanContext {
+    /// Validates both closed oriented operands before any mutation and fixes the budget.
+    pub(crate) fn admit<P: Payload>(
+        map: &GMap<P>,
+        first: SolidKey,
+        second: SolidKey,
+        operation: BooleanOperation,
+        mut options: BooleanOptions,
+    ) -> Result<Self, BooleanError> {
+        if !options.intersections.validate() || options.max_classification_rays < 2 {
+            return Err(crate::geometry::IntersectionError::InvalidOptions.into());
+        }
+        let first_cells = operand_cells(map, BooleanOperand::Solid(first))?;
+        let second_cells = operand_cells(map, BooleanOperand::Solid(second))?;
+        for solid in [first, second] {
+            validate_solid_manifold(map, solid)
+                .and_then(|()| validate_solid_orientation(map, solid))
+                .map_err(|source| BooleanError::InvalidOperand { solid, source })?;
+        }
+        if first != second
+            && first_cells
+                .faces
+                .iter()
+                .any(|face| second_cells.faces.contains(face))
+        {
+            return Err(BooleanError::SharedOperandBoundary);
+        }
+        let tolerances =
+            BooleanTolerances::from_cells(map, &first_cells, &second_cells, options.tolerances)?;
+        tolerances.apply(&mut options.intersections);
+        options.tolerances = BooleanTolerancePolicy::Fixed(tolerances);
+        Ok(Self {
+            first,
+            second,
+            operation,
+            options,
+            tolerances,
+        })
+    }
 }

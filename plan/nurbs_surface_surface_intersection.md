@@ -555,7 +555,7 @@ branch, contact-type, or quality information.
       spans.
 - [x] Preserve exact mappings between local and parent parameter domains.
 - [x] Implement conservative bounds from homogeneous/control-net data.
-- [ ] Add recursive span-pair subdivision.
+- [x] Add recursive span-pair subdivision.
 - [ ] Prove candidate pruning cannot discard a valid transverse intersection
       for supported weight configurations.
 - [x] Add diagnostics for unsupported/non-convex weight cases.
@@ -570,7 +570,7 @@ candidate parameter boxes.
 - [x] Implement constrained Newton correction with damping.
 - [x] Implement boundary seed generation.
 - [x] Trace regular transverse branches in both directions.
-- [ ] Cross neighbouring Bézier spans without duplicating branches.
+- [x] Cross neighbouring Bézier spans without duplicating branches.
 - [x] Add adaptive step control and termination diagnostics.
 
 Exit criterion: simple plane/plane, plane/cylinder, and transverse curved
@@ -582,7 +582,7 @@ examples return ordered synchronized states with bounded residual.
 - [x] Recognize and validate supported analytical 3D curves and pcurves, with
       synchronized NURBS fallback.
 - [x] Measure adaptive fit and surface-consistency errors.
-- [ ] Refine trace samples or fitting knots when validation fails.
+- [x] Refine trace samples or fitting knots when validation fails.
 - [ ] Canonically orient, anchor, and sort branches.
 - [ ] Deduplicate by parameter-domain coverage.
 
@@ -590,11 +590,11 @@ Exit criterion: consumers no longer depend on raw unordered point lists.
 
 ### Milestone 4 — Loop completeness
 
-- [ ] Detect closure of a traced branch robustly.
+- [x] Detect closure of a traced branch robustly.
 - [ ] Track coverage of candidate subdivision boxes.
-- [ ] Implement conservative interior-loop seed search.
-- [ ] Add tests containing small loops fully inside both patch domains.
-- [ ] Fail explicitly if any candidate box remains unresolved.
+- [x] Implement conservative interior-loop seed search.
+- [x] Add tests containing small loops fully inside both patch domains.
+- [x] Fail explicitly if any candidate box remains unresolved.
 
 Exit criterion: the supported regular case has no silent missed-loop path.
 
@@ -664,16 +664,16 @@ Boolean integration tests remain under `tests/builders/`.
 
 - [x] plane/plane straight line;
 - [x] plane/cylinder closed branch;
-- [ ] cylinder/cylinder multiple branches;
+- [x] cylinder/cylinder multiple branches;
 - [ ] non-monotone branch which cannot be sorted by one axis;
-- [ ] branch crossing several Bézier spans;
+- [x] branch crossing several Bézier spans;
 - [ ] reverse tracing joins without duplicate seed points;
 - [ ] adaptive step shrinks in high curvature;
 - [ ] trace-budget exhaustion returns incomplete status.
 
 ### 11.4 Completeness and degeneracies
 
-- [ ] small interior closed loop;
+- [x] small interior closed loop;
 - [ ] two disjoint loops in one surface pair;
 - [ ] isolated tangent point;
 - [ ] tangent curve;
@@ -823,3 +823,74 @@ Start with the smallest slice that establishes the correct architecture:
 This slice intentionally does not claim a production-complete Boolean. It
 establishes the core solver and data contracts without hiding the loop,
 trimming, or degeneracy work that remains.
+
+## Implementation checkpoint: certified loop completeness (2026-09-05)
+
+Milestone 4 is implemented. `intersect_surfaces_with_options` no longer reports
+`InteriorLoopSearchNotImplemented` unconditionally; that variant is replaced by
+`LoopFreedomNotCertified`, which names a parameter box a search actually failed
+to resolve. Coverage is now `Complete` for every case the two searches below
+certify, which is what unblocked curved operands in `builders::boolean`.
+
+### Planar pairs — `seeds::planar_seeds`
+
+When one surface is a plane, the signed distance from the other surface's
+control points bounds the distance of the patch, so a sign-definite patch is
+discarded. A surviving patch is accounted for by exactly one regular arc under
+either Bernstein argument:
+
+- the distance numerators vanish on one patch edge and are strictly sign
+  definite everywhere else, so no Bernstein combination vanishes off that edge
+  and the contour *is* the edge — the two-perpendicular-planes case, where the
+  intersection line is a boundary of the finite patch;
+- the numerators are weakly monotone in one direction, so the zero set is
+  connected along it and cannot close into a loop, and every edge that is a
+  level set of that direction is sign definite or monotone and so contributes at
+  most one crossing.
+
+Weak rather than strict monotonicity is required because a paraboloid
+subdivided at its own axis has a vanishing coefficient difference there. A patch
+that the control hull proves never crosses the plane, and whose normal at a
+near-zero control point is parallel to the plane normal, is reported as
+`TangentOrSingularContact` rather than subdivided to the budget.
+
+### General pairs — `seeds::pair_seeds` and `surface_surface::normals`
+
+For two curved surfaces the pair of patches is subdivided until their normal
+cones are disjoint. By the Sederberg-Meyers loop criterion the pair then holds
+no closed intersection loop, so every branch crossing it also crosses the patch
+boundary, and the existing boundary-curve seeding accounts for all of them. The
+patch with the wider cone is the one that gets split.
+
+The cone is sound for rational patches. For `S = P/w` with positive weights,
+`S_u x S_v` is parallel to `w (P_u x P_v) - w_v (P_u x P) - w_u (P x P_v)`,
+whose three terms all have bidegree `(3p-1, 3q-1)`. `normals.rs` forms that
+Bernstein net exactly with the product rule
+`B_i^m B_j^n = C(m,i) C(n,j) / C(m+n,i+j) B_{i+j}^{m+n}`; its values are convex
+combinations of its coefficients, so the cone those coefficients span contains
+every normal direction. Disjointness is tested against the other cone and
+against its opposite, so the verdict is independent of how either patch is
+parameterized.
+
+### Tracing and fitting corrections found by the same work
+
+- `tracer::periods` detects parameter directions that close on themselves. The
+  trace continues from the far seam edge instead of stopping, and recognizes
+  exact closure when the wrapped state returns to the seed. Without this a loop
+  crossing a cylinder's `u = 0` came back as several open fragments;
+- `refit_with_denser_trace` retraces with halved steps, up to four rounds and
+  only while the measured fit error improves. A cylinder/cylinder branch is a
+  quartic that the cubic interpolant cannot fit at the default step, so this is
+  what makes such a branch certified rather than merely reported. Refinement
+  also stops above `MAX_FIT_SAMPLES`: interpolation through the trace is dense,
+  so a branch that long is reported uncertified rather than refitted at a cost
+  that grows with the cube of the sample count. Replacing that interpolation
+  with knot refinement is the way to lift the cap.
+
+### Remaining
+
+Milestone 4's coverage tracking is report-on-failure, not a persisted map of
+resolved boxes. Milestone 6 (tangency and singularity classification, and
+conservative overlap isolation) is untouched beyond the planar tangency report
+above, and equal-radius orthogonal cylinders — tangent at two points — remain an
+explicitly uncertified case.

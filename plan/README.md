@@ -5,6 +5,7 @@ This directory contains implementation plans for substantial kernel work.
 | Plan | Status | Purpose |
 |---|---|---|
 | [NURBS surface/surface intersection](nurbs_surface_surface_intersection.md) | In progress | Replace the sampled triangle approximation with a topology-safe, tolerance-controlled intersection engine |
+| [Boolean evaluation](boolean_evaluation.md) | Proposed | Complete the regularized solid Boolean: clipping, network finalization, fragment classification, selection, and GMap assembly |
 
 Statuses used by the plans:
 

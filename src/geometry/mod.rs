@@ -17,11 +17,12 @@ pub use dim3::curves::{Bounded, Circle, Curve, Line, Periodicity};
 pub use dim3::frame::Frame;
 pub use dim3::intersections::{
     CurveCurveIntersection, CurveCurveIntersections, CurveSurfaceIntersection,
-    CurveSurfaceIntersections, IntersectionCoverage, IntersectionError, IntersectionOptions,
-    IntersectionQuality, SurfaceIntersectionBranch, SurfaceIntersectionBranchKind,
-    SurfaceIntersectionIncompleteReason, SurfaceIntersectionPoint, SurfaceIntersectionPointKind,
-    SurfaceOverlapCandidate, SurfaceSurfaceIntersection, SurfaceSurfaceIntersections,
-    intersect_surfaces, intersect_surfaces_with_options,
+    CurveSurfaceIntersections, IntersectionCoverage, IntersectionError,
+    IntersectionIncompleteReason, IntersectionOptions, IntersectionQuality, PreparedCurve,
+    PreparedSurface, SurfaceIntersectionBranch, SurfaceIntersectionBranchKind,
+    SurfaceIntersectionPoint, SurfaceIntersectionPointKind, SurfaceOverlapCandidate,
+    SurfaceSurfaceIntersection, SurfaceSurfaceIntersections, intersect_prepared_curve_surface,
+    intersect_prepared_surfaces, intersect_surfaces, intersect_surfaces_with_options,
 };
 pub use dim3::nurbs::tessellate::{
     sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,

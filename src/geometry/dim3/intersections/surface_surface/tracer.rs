@@ -2,8 +2,8 @@ use nalgebra::{Matrix2, Matrix3, Matrix4, Vector2, Vector4};
 
 use super::super::options::IntersectionOptions;
 use crate::geometry::{
-    Interval, NurbsSurface, Point2, Point3, SurfaceIntersectionIncompleteReason,
-    SurfaceIntersectionPoint, SurfaceIntersectionPointKind,
+    IntersectionIncompleteReason, Interval, NurbsSurface, Point2, Point3, SurfaceIntersectionPoint,
+    SurfaceIntersectionPointKind,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -40,7 +40,7 @@ impl TraceState {
 pub(super) struct TraceOutcome {
     pub states: Vec<TraceState>,
     pub closed: bool,
-    pub incomplete_reasons: Vec<SurfaceIntersectionIncompleteReason>,
+    pub incomplete_reasons: Vec<IntersectionIncompleteReason>,
 }
 
 enum DirectionStop {
@@ -58,8 +58,15 @@ pub(super) fn trace_from_seed(
     options: IntersectionOptions,
 ) -> Option<TraceOutcome> {
     let tangent = parameter_tangent(a, b, seed.parameters, options)?;
-    let (mut backward, backward_stop) = trace_direction(a, b, seed, -tangent, options);
     let (forward, forward_stop) = trace_direction(a, b, seed, tangent, options);
+    if matches!(forward_stop, DirectionStop::Closed) {
+        return Some(TraceOutcome {
+            states: forward,
+            closed: true,
+            incomplete_reasons: Vec::new(),
+        });
+    }
+    let (mut backward, backward_stop) = trace_direction(a, b, seed, -tangent, options);
 
     backward.reverse();
     if backward.last().is_some_and(|state| {
@@ -84,11 +91,11 @@ pub(super) fn trace_from_seed(
         match stop {
             DirectionStop::MinimumStep => push_reason(
                 &mut incomplete_reasons,
-                SurfaceIntersectionIncompleteReason::MinimumTraceStepReached,
+                IntersectionIncompleteReason::MinimumTraceStepReached,
             ),
             DirectionStop::Budget => push_reason(
                 &mut incomplete_reasons,
-                SurfaceIntersectionIncompleteReason::TraceBudgetExhausted,
+                IntersectionIncompleteReason::TraceBudgetExhausted,
             ),
             DirectionStop::Boundary | DirectionStop::Closed => {}
         }
@@ -109,15 +116,30 @@ fn trace_direction(
     options: IntersectionOptions,
 ) -> (Vec<TraceState>, DirectionStop) {
     let domains = domains(a, b);
+    let periods = periods(a, b, options);
     let mut states = vec![seed];
     let mut tangent = initial_tangent;
     let mut step = options.max_trace_step;
 
     for _ in 0..options.max_trace_steps {
-        let current = *states.last().expect("a trace always contains its seed");
-        let boundary_step = distance_to_boundary(current.parameters, tangent, domains, options);
+        let mut current = *states.last().expect("a trace always contains its seed");
+        let mut boundary_step = distance_to_boundary(current.parameters, tangent, domains, options);
         if boundary_step <= options.parameter_tolerance {
-            return (states, DirectionStop::Boundary);
+            let Some(wrapped) = wrap_periodic(a, b, current, tangent, domains, periods, options)
+            else {
+                return (states, DirectionStop::Boundary);
+            };
+            current = wrapped;
+            *states.last_mut().expect("a trace always contains its seed") = wrapped;
+            // Crossing the seam back onto the seed closes the branch exactly,
+            // and stopping here keeps the seam point from being recorded twice.
+            if states.len() > 2
+                && parameter_distance(current.parameters, seed.parameters)
+                    <= options.parameter_tolerance
+            {
+                return (states, DirectionStop::Closed);
+            }
+            boundary_step = distance_to_boundary(current.parameters, tangent, domains, options);
         }
         let trial_step = step.min(boundary_step);
         let reaches_boundary = boundary_step <= step;
@@ -155,25 +177,37 @@ fn trace_direction(
                 },
             );
         }
-        states.push(next);
-
         let Some(mut next_tangent) = parameter_tangent(a, b, next.parameters, options) else {
+            states.push(next);
             return (states, DirectionStop::MinimumStep);
         };
         if next_tangent.dot(&tangent) < 0.0 {
             next_tangent = -next_tangent;
         }
-        tangent = next_tangent;
 
+        let closure_tolerance = (next.point - current.point)
+            .norm()
+            .mul_add(1.5, options.linear_tolerance * 10.0);
+        let parameter_closure_tolerance = (next.parameters - current.parameters)
+            .norm()
+            .mul_add(1.5, options.parameter_tolerance);
         if states.len() > 8
-            && (next.point - seed.point).norm() <= options.linear_tolerance * 10.0
+            && (next.point - seed.point).norm() <= closure_tolerance
+            && parameter_distance(next.parameters, seed.parameters) <= parameter_closure_tolerance
             && tangent.dot(&initial_tangent) > 0.9
         {
+            if states
+                .last()
+                .is_none_or(|last| (last.point - seed.point).norm() > options.linear_tolerance)
+            {
+                states.push(seed);
+            }
             return (states, DirectionStop::Closed);
         }
-        if reaches_boundary {
-            return (states, DirectionStop::Boundary);
-        }
+        states.push(next);
+        tangent = next_tangent;
+        // A state that landed on a domain boundary is resolved at the top of
+        // the next pass, which stops or crosses a seam as the domain allows.
 
         step = if correction_step < trial_step {
             correction_step
@@ -350,6 +384,74 @@ fn domains(a: &NurbsSurface, b: &NurbsSurface) -> [Interval; 4] {
     [a.domain_u(), a.domain_v(), b.domain_u(), b.domain_v()]
 }
 
+/// Returns the period of each parameter direction that closes on itself.
+///
+/// A closed direction is a seam rather than a boundary: a cylinder's `u = 0`
+/// and `u = 2pi` edges are the same curve, so a branch that reaches one
+/// continues from the other instead of ending there.
+fn periods(a: &NurbsSurface, b: &NurbsSurface, options: IntersectionOptions) -> [Option<f64>; 4] {
+    [
+        closed_period(a, true, options),
+        closed_period(a, false, options),
+        closed_period(b, true, options),
+        closed_period(b, false, options),
+    ]
+}
+
+fn closed_period(surface: &NurbsSurface, in_u: bool, options: IntersectionOptions) -> Option<f64> {
+    const SAMPLES: usize = 5;
+    let (seam, across) = if in_u {
+        (surface.domain_u(), surface.domain_v())
+    } else {
+        (surface.domain_v(), surface.domain_u())
+    };
+    let evaluate = |seam_value: f64, across_value: f64| {
+        if in_u {
+            surface.point_at(seam_value, across_value)
+        } else {
+            surface.point_at(across_value, seam_value)
+        }
+    };
+    (0..=SAMPLES)
+        .map(|index| across.start + (across.end - across.start) * index as f64 / SAMPLES as f64)
+        .all(|value| {
+            (evaluate(seam.start, value) - evaluate(seam.end, value)).norm()
+                <= options.linear_tolerance
+        })
+        .then_some(seam.end - seam.start)
+}
+
+/// Moves a state that reached a closed parameter boundary to the far seam edge.
+///
+/// Returns `None` when any boundary the tangent points through is a real domain
+/// edge, because the branch genuinely leaves the patch there.
+fn wrap_periodic(
+    a: &NurbsSurface,
+    b: &NurbsSurface,
+    state: TraceState,
+    tangent: Vector4<f64>,
+    domains: [Interval; 4],
+    periods: [Option<f64>; 4],
+    options: IntersectionOptions,
+) -> Option<TraceState> {
+    let mut parameters = state.parameters;
+    let mut wrapped = false;
+    for index in 0..4 {
+        let domain = domains[index];
+        let leaving_end = tangent[index] > options.parameter_tolerance
+            && (parameters[index] - domain.end).abs() <= options.parameter_tolerance;
+        let leaving_start = tangent[index] < -options.parameter_tolerance
+            && (parameters[index] - domain.start).abs() <= options.parameter_tolerance;
+        if !leaving_end && !leaving_start {
+            continue;
+        }
+        let period = periods[index]?;
+        parameters[index] += if leaving_end { -period } else { period };
+        wrapped = true;
+    }
+    wrapped.then(|| TraceState::new(a, b, parameters))
+}
+
 fn distance_to_boundary(
     parameters: Vector4<f64>,
     direction: Vector4<f64>,
@@ -393,8 +495,8 @@ fn dedup_consecutive(states: &mut Vec<TraceState>, options: IntersectionOptions)
 }
 
 fn push_reason(
-    reasons: &mut Vec<SurfaceIntersectionIncompleteReason>,
-    reason: SurfaceIntersectionIncompleteReason,
+    reasons: &mut Vec<IntersectionIncompleteReason>,
+    reason: IntersectionIncompleteReason,
 ) {
     if !reasons.contains(&reason) {
         reasons.push(reason);

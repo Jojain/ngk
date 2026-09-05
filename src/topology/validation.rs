@@ -1,16 +1,12 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use nalgebra::Vector3;
 use thiserror::Error;
 
-use crate::geometry::{Curve2, LINEAR_TOLERANCE, Point2};
+use crate::geometry::Surface;
 use crate::topology::closed::Closed;
 
-use super::attributes::FaceAttr;
-use super::face::Face;
-use super::gmap::{Cell2, Dart, Dim, GMap};
+use super::gmap::{Dart, Dim, GMap};
 use super::payload::Payload;
-use super::profile::Profile;
 use super::shape_keys::{FaceKey, SolidKey};
 use super::sheet::Sheet;
 
@@ -212,103 +208,97 @@ fn validate_shell_orientation<P: Payload>(
     shell: Dart,
     side: ShellSide,
 ) -> Result<(), GMapValidationError> {
-    let shell_darts = Sheet::from_dart(g, shell)
-        .expect("solid shell must have a registered sheet")
-        .darts()
-        .collect::<Vec<_>>();
-    let Some(shell_center) = shell_centroid(g, &shell_darts) else {
-        return Ok(());
-    };
-
-    let shell_darts = shell_darts.into_iter().collect::<HashSet<_>>();
-    for (face, attr) in g.iter_faces() {
-        if !shell_darts.contains(&attr.outer_loop) {
-            continue;
-        }
-        let Some((face_center, normal)) = face_orientation_sample(g, attr) else {
-            return Err(GMapValidationError::SolidFaceOrientationUnavailable {
-                solid,
-                shell,
-                face,
-            });
-        };
-        let outward = face_center - shell_center;
-        let normal_dot_outward = normal.dot(&outward);
-        let is_valid = match side {
-            ShellSide::Outer => normal_dot_outward > LINEAR_TOLERANCE,
-            ShellSide::Inner => normal_dot_outward < -LINEAR_TOLERANCE,
-        };
-        if !is_valid {
-            return Err(GMapValidationError::SolidFaceNormalNotOutward { solid, shell, face });
-        }
-    }
-
-    Ok(())
+    validate_oriented_shell_volume(g, solid, shell, side)
 }
 
+/// Checks local winding and global signed volume without a star-shaped-shell assumption.
+fn validate_oriented_shell_volume<P: Payload>(
+    g: &GMap<P>,
+    solid: SolidKey,
+    shell: Dart,
+    side: ShellSide,
+) -> Result<(), GMapValidationError> {
+    let faces = Sheet::from_dart(g, shell)
+        .expect("validated shell")
+        .faces()
+        .into_iter()
+        .map(|face| g.face_unchecked(face.key()))
+        .collect::<Vec<_>>();
+    let mut directed = HashSet::new();
+    let mut volume = 0.0;
+    let reference = faces[0].vertices()[0].point().copied().ok_or(
+        GMapValidationError::SolidFaceOrientationUnavailable {
+            solid,
+            shell,
+            face: faces[0].key(),
+        },
+    )?;
+    for face in &faces {
+        let planar = matches!(face.surface(), Surface::Plane(_))
+            && face.edges().iter().all(|edge| {
+                edge.curve().is_some_and(|curve| {
+                    curve
+                        .to_nurbs()
+                        .is_ok_and(|curve| curve.degree().get() == 1)
+                })
+            });
+        if !planar {
+            volume += face.signed_volume_contribution(reference).ok_or(
+                GMapValidationError::SolidFaceOrientationUnavailable {
+                    solid,
+                    shell,
+                    face: face.key(),
+                },
+            )?;
+        }
+        for boundary in face.loops() {
+            let mut points = Vec::new();
+            for edge in boundary.edges() {
+                directed.insert(edge.dart());
+                points.push(edge.start().point().copied().ok_or(
+                    GMapValidationError::SolidFaceOrientationUnavailable {
+                        solid,
+                        shell,
+                        face: face.key(),
+                    },
+                )?);
+            }
+            for pair in points[1..].windows(2).filter(|_| planar) {
+                volume += (points[0] - reference)
+                    .dot(&(pair[0] - reference).cross(&(pair[1] - reference)))
+                    / 6.0;
+            }
+        }
+    }
+    for face in &faces {
+        for boundary in face.loops() {
+            for edge in boundary.edges() {
+                if !directed.contains(&g.alpha(Dim::Zero, g.alpha(Dim::Two, edge.dart()))) {
+                    return Err(GMapValidationError::SolidFaceNormalNotOutward {
+                        solid,
+                        shell,
+                        face: face.key(),
+                    });
+                }
+            }
+        }
+    }
+    let valid = volume.is_finite()
+        && match side {
+            ShellSide::Outer => volume > 0.0,
+            ShellSide::Inner => volume < 0.0,
+        };
+    if !valid {
+        return Err(GMapValidationError::SolidFaceNormalNotOutward {
+            solid,
+            shell,
+            face: faces[0].key(),
+        });
+    }
+    Ok(())
+}
 #[derive(Clone, Copy)]
 enum ShellSide {
     Outer,
     Inner,
-}
-
-fn shell_centroid<P: Payload>(g: &GMap<P>, shell_darts: &[Dart]) -> Option<Vector3<f64>> {
-    let shell_darts = shell_darts.iter().copied().collect::<HashSet<_>>();
-    let mut sum = Vector3::zeros();
-    let mut count = 0;
-
-    for (_, attr) in g.iter_faces() {
-        if !shell_darts.contains(&attr.outer_loop) {
-            continue;
-        }
-        let (face_center, _) = face_orientation_sample(g, attr)?;
-        sum += face_center;
-        count += 1;
-    }
-
-    (count > 0).then_some(sum / count as f64)
-}
-
-fn face_orientation_sample<P: Payload>(
-    g: &GMap<P>,
-    attr: &FaceAttr<P::F>,
-) -> Option<(Vector3<f64>, Vector3<f64>)> {
-    let outer_uv = sample_loop_pcurve(g, attr.outer_loop, &attr.pcurves)?;
-    if outer_uv.is_empty() {
-        return None;
-    }
-
-    let uv_center = uv_centroid(&outer_uv);
-    let face_center = attr.surface.point_at(uv_center.x, uv_center.y).coords;
-    let face_key = g
-        .cell_key::<Cell2>(attr.outer_loop)
-        .expect("FaceAttr outer_loop must resolve to a FaceKey");
-    let normal = *Face::new(g, face_key).normal_at(uv_center.x, uv_center.y);
-
-    Some((face_center, normal))
-}
-
-fn sample_loop_pcurve(
-    g: &GMap<impl Payload>,
-    loop_dart: Dart,
-    pcurves: &HashMap<Dart, Curve2>,
-) -> Option<Vec<Point2>> {
-    let profile =
-        Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
-    let edge_darts = profile.darts().step_by(2);
-    let mut points = Vec::new();
-    for dart in edge_darts {
-        let samples = pcurves.get(&dart)?.sample(1);
-        let n = samples.len();
-        points.extend(samples.into_iter().take(n.saturating_sub(1)));
-    }
-
-    (!points.is_empty()).then_some(points)
-}
-
-fn uv_centroid(points: &[Point2]) -> Point2 {
-    let sum = points
-        .iter()
-        .fold(nalgebra::Vector2::zeros(), |sum, point| sum + point.coords);
-    Point2::from(sum / points.len() as f64)
 }

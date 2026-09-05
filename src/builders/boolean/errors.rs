@@ -2,16 +2,79 @@
 
 use thiserror::Error;
 
+use super::{BooleanDiagnostics, IntersectionSpanId};
 use crate::builders::edges::EdgeSplitError;
 use crate::builders::faces::{FaceEdgeSplitError, FaceImprintSplitError};
-use crate::geometry::{IntersectionError, NurbsError};
+use crate::geometry::Point3;
+use crate::geometry::{CurveIntersectionError, IntersectionError, NurbsError};
 use crate::topology::TopologyEditError;
+use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
+use crate::topology::validation::GMapValidationError;
 
 use super::{BooleanCell, BooleanOperand, IntersectionNetworkValidationError};
 
 /// Failure returned by Boolean preparation.
 #[derive(Debug, Error)]
 pub enum BooleanError {
+    #[error("imprint section cannot be attributed to canonical span {span:?}")]
+    UnrealizedSpan { span: IntersectionSpanId },
+    #[error("intersection noding did not reach a fixed point in {passes} passes")]
+    NodingDidNotConverge { passes: usize },
+    #[error("intersection span {span} is realized on one operand only")]
+    SpanNotTwoSided { span: usize },
+    #[error("intersection span {span} disagrees with its pcurve by {residual}")]
+    PcurveDisagreesWithCurve { span: usize, residual: f64 },
+    #[error("intersection loop is open at event {event} ({point:?})")]
+    OpenIntersectionLoop { event: usize, point: Point3 },
+    #[error("coincident faces {first:?} and {second:?} have no bounded overlap")]
+    RegionWithoutBoundary { first: FaceKey, second: FaceKey },
+    #[error("solid {solid:?} is not a closed, consistently oriented operand")]
+    InvalidOperand {
+        solid: SolidKey,
+        source: GMapValidationError,
+    },
+    #[error("distinct operands share registered boundary faces")]
+    SharedOperandBoundary,
+    #[error("regularized Boolean result is empty")]
+    EmptyResult,
+    #[error("regularized Boolean result has {components} disconnected solids")]
+    DisconnectedResult { components: usize },
+    #[error("surface intersection coverage is incomplete")]
+    IncompleteIntersections {
+        diagnostics: Box<BooleanDiagnostics>,
+    },
+    #[error("no certified ray/trim classifier is available for face {face:?}")]
+    UncertifiedClassificationSurface { face: FaceKey },
+    #[error("face {face:?} has no interior probe with sufficient clearance")]
+    MissingFragmentProbe { face: FaceKey },
+    #[error(
+        "classification of face {face:?} at {point:?} is ambiguous after {directions} directions"
+    )]
+    AmbiguousClassification {
+        face: FaceKey,
+        point: Point3,
+        directions: usize,
+    },
+    #[error("span {span:?} has {first} first-side and {second} second-side boundary edges")]
+    NonIsomorphicSpanSubdivision {
+        span: IntersectionSpanId,
+        first: usize,
+        second: usize,
+    },
+    #[error("sewing endpoints disagree for span {span:?}")]
+    SpanEndpointMismatch { span: IntersectionSpanId },
+    #[error("result shell containing face {face:?} is open")]
+    OpenResultShell { face: FaceKey },
+    #[error("result shell containing face {face:?} has zero signed volume")]
+    DegenerateResultShell { face: FaceKey },
+    #[error("Boolean result failed topology validation")]
+    InvalidResult(#[from] GMapValidationError),
+    #[error("Boolean tolerance policy contains an invalid or non-finite budget")]
+    InvalidTolerances,
+    #[error("face {face:?} has no trim curve for edge {edge:?}")]
+    MissingTrimCurve { face: FaceKey, edge: EdgeKey },
+    #[error("Boolean trim intersection failed")]
+    TrimIntersection(#[from] CurveIntersectionError),
     #[error("operand {operand:?} is not registered in the map")]
     MissingOperand { operand: BooleanOperand },
     #[error("Boolean cell {cell:?} has no geometric payload")]

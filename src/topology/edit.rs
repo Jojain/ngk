@@ -173,6 +173,8 @@ impl<P: Payload> EditPolicy<P> for PreservePayload {
 /// Failure raised while applying a safe topology mutation.
 #[derive(Debug, Error)]
 pub enum TopologyEditError {
+    #[error("cannot delete dart {dart:?} while it is a registered sheet or solid root")]
+    ReferencedDartDeletion { dart: Dart },
     /// A split or merge references an attribute that is not staged.
     #[error("topology edit lineage references missing attribute {key:?}")]
     MissingLineageAttribute { key: EditKey },
@@ -558,6 +560,97 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
             .record_edit_event(EditEvent::SolidMerge { survivor, removed });
     }
 
+    /// Deletes face loops and orphaned lower-dimensional cells in one compaction pass.
+    /// Sheet/solid registrations rooted in the deleted set must first be removed or moved.
+    /// All cached darts are invalid afterwards; resolve surviving cells from their keys.
+    pub fn remove_faces(&mut self, faces: &[FaceKey]) -> Result<(), TopologyEditError> {
+        let mut removed = HashSet::new();
+        for &key in faces {
+            let face = self
+                .gmap
+                .face(key)
+                .ok_or(TopologyEditError::MissingLineageAttribute {
+                    key: EditKey::Face(key),
+                })?;
+            for boundary in face.loops() {
+                removed.extend(boundary.darts());
+            }
+        }
+        for root in self.gmap.iter_sheets().map(|(_, attr)| attr.dart).chain(
+            self.gmap.iter_solids().flat_map(|(_, attr)| {
+                std::iter::once(attr.outer_shell).chain(attr.inner_shells.iter().flatten().copied())
+            }),
+        ) {
+            if removed.contains(&root) {
+                return Err(TopologyEditError::ReferencedDartDeletion { dart: root });
+            }
+        }
+        let edges = self
+            .gmap
+            .iter_edges()
+            .map(|(key, attr)| {
+                let start = self.gmap.cell_key::<super::gmap::Cell0>(attr.dart);
+                let replacement = self
+                    .gmap
+                    .orbit(attr.dart, self.gmap.orbit_indices(Dim::One))
+                    .find(|dart| {
+                        !removed.contains(dart)
+                            && self.gmap.cell_key::<super::gmap::Cell0>(*dart) == start
+                    });
+                (key, replacement)
+            })
+            .collect::<Vec<_>>();
+        let vertices = self
+            .gmap
+            .iter_vertices()
+            .map(|(key, attr)| {
+                (
+                    key,
+                    self.gmap
+                        .orbit(attr.dart, self.gmap.orbit_indices(Dim::Zero))
+                        .find(|dart| !removed.contains(dart)),
+                )
+            })
+            .collect::<Vec<_>>();
+        let profiles = self
+            .gmap
+            .iter_profiles()
+            .filter_map(|(key, attr)| removed.contains(&attr.dart).then_some(key))
+            .collect::<Vec<_>>();
+        for &key in faces {
+            self.remove_face(key);
+        }
+        for key in profiles {
+            self.remove_profile(key);
+        }
+        for (key, dart) in edges {
+            match dart {
+                Some(dart) => self.edge_attr_mut_unchecked(key).dart = dart,
+                None => {
+                    self.remove_edge(key);
+                }
+            }
+        }
+        for (key, dart) in vertices {
+            match dart {
+                Some(dart) => self.vertex_attr_mut_unchecked(key).dart = dart,
+                None => {
+                    self.remove_vertex(key);
+                }
+            }
+        }
+        let mut darts = removed.into_iter().collect::<Vec<_>>();
+        darts.sort_by_key(|dart| dart.id());
+        for &dart in &darts {
+            for dim in [Dim::Zero, Dim::One, Dim::Two, Dim::Three] {
+                if !self.is_free(dart, dim) {
+                    self.unlink(dim, dart)?;
+                }
+            }
+        }
+        self.remove_isolated_darts(darts.into_iter().map(super::IsolatedDart::new).collect());
+        Ok(())
+    }
     /// Removes a vertex attribute inside the transaction.
     pub fn remove_vertex(&mut self, key: VertexKey) -> Option<VertexAttr<P::V>> {
         let removed = self.gmap.vertices.remove(key);

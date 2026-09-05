@@ -56,12 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     show_named("curved boolean 1 - cube before", &working_map)?;
     show_named("curved boolean 2 - NURBS sheet before", &curved_map)?;
 
-    // Lower sampling keeps this interactive debug example responsive. Use
-    // `BooleanOptions::default()` when evaluating production tolerances.
-    let mut options = BooleanOptions::default();
-    options.intersections.curve_sample_count = 24;
-    options.intersections.surface_u_sample_count = 12;
-    options.intersections.surface_v_sample_count = 12;
+    let options = BooleanOptions::default();
     let preparation = prepare_boolean_with_external_tool(
         &mut working_map,
         BooleanOperand::Solid(cube),

@@ -36,6 +36,16 @@ impl BezierSurface {
         self.surface.point_at(u, v)
     }
 
+    /// Returns the patch as a NURBS surface over its own parameter box.
+    pub fn surface(&self) -> &NurbsSurface {
+        &self.surface
+    }
+
+    /// Returns the patch normal in parent-surface parameters.
+    pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
+        self.surface.normal_at(u, v)
+    }
+
     /// Returns a conservative control-hull bound for positive weights.
     pub fn bbox(&self) -> BBox {
         BBox::from_points(
@@ -44,6 +54,103 @@ impl BezierSurface {
                 .iter()
                 .map(|point| point.to_cartesian()),
         )
+    }
+
+    /// Returns whether every control weight is finite and positive.
+    ///
+    /// The control hull bounds the patch only under this condition, which every
+    /// subdivision-based rejection test relies on.
+    pub fn has_positive_weights(&self) -> bool {
+        self.control_points()
+            .as_slice()
+            .iter()
+            .all(|point| point.weight().is_finite() && point.weight() > 0.0)
+    }
+
+    /// Splits the patch at `u`, keeping both halves in parent-surface parameters.
+    pub fn subdivide_u(&self, u: f64) -> Result<(Self, Self), NurbsError> {
+        let domain = self.domain_u();
+        if u <= domain.start || u >= domain.end {
+            return Err(NurbsError::DegenerateInterval {
+                start: domain.start,
+                end: u,
+            });
+        }
+        let degree = self.surface.degree_u;
+        let p = degree.get();
+        let mut refined = self.surface.clone();
+        for _ in 0..p {
+            refined.insert_knot_u(u)?;
+        }
+        let nv = refined.control_points.nv();
+        let mut left = Vec::with_capacity((p + 1) * nv);
+        let mut right = Vec::with_capacity((p + 1) * nv);
+        for v in 0..nv {
+            for i in 0..=p {
+                left.push(refined.control_points.get(i, v));
+                right.push(refined.control_points.get(p + i, v));
+            }
+        }
+        Ok((
+            self.rebuilt_u(left, Interval::new(domain.start, u))?,
+            self.rebuilt_u(right, Interval::new(u, domain.end))?,
+        ))
+    }
+
+    /// Splits the patch at `v`, keeping both halves in parent-surface parameters.
+    pub fn subdivide_v(&self, v: f64) -> Result<(Self, Self), NurbsError> {
+        let domain = self.domain_v();
+        if v <= domain.start || v >= domain.end {
+            return Err(NurbsError::DegenerateInterval {
+                start: domain.start,
+                end: v,
+            });
+        }
+        let degree = self.surface.degree_v;
+        let q = degree.get();
+        let mut refined = self.surface.clone();
+        for _ in 0..q {
+            refined.insert_knot_v(v)?;
+        }
+        let nu = refined.control_points.nu();
+        let mut lower = Vec::with_capacity(nu * (q + 1));
+        let mut upper = Vec::with_capacity(nu * (q + 1));
+        for j in 0..=q {
+            for u in 0..nu {
+                lower.push(refined.control_points.get(u, j));
+                upper.push(refined.control_points.get(u, q + j));
+            }
+        }
+        Ok((
+            self.rebuilt_v(lower, Interval::new(domain.start, v))?,
+            self.rebuilt_v(upper, Interval::new(v, domain.end))?,
+        ))
+    }
+
+    fn rebuilt_u(&self, points: Vec<HPoint>, domain_u: Interval) -> Result<Self, NurbsError> {
+        let degree_u = self.surface.degree_u;
+        Ok(Self {
+            surface: NurbsSurface::new(
+                degree_u,
+                self.surface.degree_v,
+                ControlNet::new(points, degree_u.get() + 1, self.surface.control_points.nv())?,
+                bezier_knots(degree_u, domain_u.start, domain_u.end)?,
+                self.surface.knots_v.clone(),
+            )?,
+        })
+    }
+
+    fn rebuilt_v(&self, points: Vec<HPoint>, domain_v: Interval) -> Result<Self, NurbsError> {
+        let degree_v = self.surface.degree_v;
+        Ok(Self {
+            surface: NurbsSurface::new(
+                self.surface.degree_u,
+                degree_v,
+                ControlNet::new(points, self.surface.control_points.nu(), degree_v.get() + 1)?,
+                self.surface.knots_u.clone(),
+                bezier_knots(degree_v, domain_v.start, domain_v.end)?,
+            )?,
+        })
     }
 }
 

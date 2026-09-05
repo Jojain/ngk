@@ -3,8 +3,8 @@ use wasm_bindgen::prelude::*;
 use crate::geometry::{Curve, Curve2, Surface};
 
 use super::curves::{WasmCircle, WasmLine};
-use super::pcurves::{WasmCircle2, WasmLine2, WasmNurbsCurve2};
 use super::nurbs::{WasmNurbsCurve, WasmNurbsSurface};
+use super::pcurves::{WasmCircle2, WasmLine2, WasmNurbsCurve2};
 use super::surfaces::{WasmCylinder, WasmPlane, WasmRuledSurface, WasmSurfaceOfRevolution};
 
 fn js_err(error: impl ToString) -> JsValue {
