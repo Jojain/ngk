@@ -4,6 +4,7 @@ pub mod edges;
 pub mod errors;
 pub mod faces;
 pub mod profiles;
+pub mod removal;
 pub mod revolve;
 pub mod sheets;
 pub mod solids;

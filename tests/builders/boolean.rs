@@ -2,20 +2,23 @@ use nalgebra::Vector3;
 use ngk::builders::boolean::{
     BooleanCell, BooleanOperand, BooleanOperation, BooleanOptions, BooleanSide,
     IntersectionSpanUse, boolean, compute_boolean_intersections, prepare_boolean,
-    prepare_boolean_with_external_tool,
+    prepare_boolean_with_external_tool, solid_contains_point,
 };
 
 use ngk::builders::edges::add_line;
 use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints};
-use ngk::geometry::{Curve, Curve2, Line2, Point2, Surface};
+use ngk::geometry::{Curve, Curve2, Interval, Line2, Point2, Surface};
 use ngk::geometry::{Frame, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
 use ngk::modeling::{edges, faces, solids};
 use ngk::topology::TopologyEditError;
 use ngk::topology::attributes::VertexAttr;
-use ngk::topology::gmap::GMap;
-use ngk::topology::shape_keys::{SolidKey, VertexKey};
+use ngk::topology::edge::Edge;
+use ngk::topology::gmap::{Dim, GMap};
+use ngk::topology::profile::Loop;
+use ngk::topology::shape_keys::{FaceKey, SolidKey, VertexKey};
 use ngk::topology::validation::{validate_gmap, validate_solid_manifold};
 use ngk::viz::debug_viewer::show;
+use std::f64::consts::PI;
 
 fn isolated_vertex(point: Point3) -> (GMap<ngk::StandardPayload>, VertexKey) {
     let mut map = GMap::new();
@@ -1648,14 +1651,235 @@ fn block_fused_with_cylinder_tangent_to_block_faces() {
         &mut map,
         block_key,
         cylinder,
-        BooleanOperation::Intersection,
+        BooleanOperation::Union,
         BooleanOptions::default(),
     );
     show(&map);
-    assert!(result.is_ok(), "boolean union failed: {result:?}");
+    let result = result.expect("boolean union failed");
 
-    assert!(
-        map.iter_solids().count() == 1,
+    assert_eq!(
+        map.iter_solids().count(),
+        1,
         "result should be a single solid"
     );
+    let solid = map.solid_unchecked(result.solid);
+    assert_eq!(
+        solid.shells().len(),
+        1,
+        "the union is a single closed shell"
+    );
+    let shell = &solid.shells()[0];
+    assert_eq!(
+        shell.vertices().len() as isize - shell.edges().len() as isize
+            + shell.faces().len() as isize,
+        2,
+        "the union is topologically a sphere"
+    );
+
+    // The circle of the cylinder passes exactly through the block corners
+    // (2,0,0) and (0,2,0), so at z = 0 the union's boundary is the disc plus
+    // the block corner that pokes out of it. Splitting tiles that region with
+    // three coplanar fragments, each present exactly once: the quarter disc the
+    // two operands share, the rest of the disc, and the corner.
+    let bottom = planar_faces_at_height(&map, result.solid, 0.0);
+    let mut areas = bottom
+        .iter()
+        .map(|&face| planar_face_area(&map, face))
+        .collect::<Vec<_>>();
+    areas.sort_by(f64::total_cmp);
+    assert_eq!(
+        bottom.len(),
+        3,
+        "the union bottom is tiled by the shared quarter disc, the rest of the disc, and the block corner; got areas {areas:?}"
+    );
+    for (got, expected) in areas.iter().zip([4.0 - PI, PI, 3.0 * PI]) {
+        assert!(
+            (got - expected).abs() <= 1.0e-2,
+            "bottom fragment areas should be {:?}, got {areas:?}",
+            [4.0 - PI, PI, 3.0 * PI]
+        );
+    }
+    assert!(
+        (areas.iter().sum::<f64>() - (3.0 * PI + 4.0)).abs() <= 1.0e-2,
+        "the bottom fragments must cover the disc and the block corner exactly once"
+    );
+
+    // Every boundary must describe one curve twice: once in model space and
+    // once in each incident face's parameter space. A collapsed 3D curve, or a
+    // 3D curve that traces a different arc than its pcurve, is a corrupt edge
+    // even when the face partition itself is sound.
+    for edge in solid.edges() {
+        let curve = edge.curve().expect("a result edge must carry a curve");
+        let samples = sample_curve(curve, edge_span(&edge), CURVE_SAMPLES);
+        let midpoint = samples[CURVE_SAMPLES / 2];
+        assert!(
+            !midpoint.coincides(samples[0], 1.0e-9)
+                && !midpoint.coincides(samples[CURVE_SAMPLES], 1.0e-9),
+            "edge {:?} has a collapsed curve: it stays at {midpoint:?}",
+            edge.key()
+        );
+        // Four darts is a manifold edge used by exactly two face sides. The
+        // count, rather than the number of distinct faces, is what a seam edge
+        // needs: there the same face bounds the edge twice.
+        assert_eq!(
+            map.orbit(edge.dart(), map.orbit_indices(Dim::One)).count(),
+            4,
+            "edge {:?} must be used by exactly two face sides",
+            edge.key()
+        );
+    }
+    for face in solid.faces() {
+        for boundary in face.loops() {
+            for edge in boundary.edges() {
+                let curve = edge.curve().expect("a result edge must carry a curve");
+                let samples = sample_curve(curve, edge_span(&edge), CURVE_SAMPLES);
+                let pcurve = face.pcurve(edge.dart()).unwrap_or_else(|| {
+                    panic!(
+                        "face {:?} must carry a pcurve for edge {:?}",
+                        face.key(),
+                        edge.key()
+                    )
+                });
+                let lifted = pcurve
+                    .sample(CURVE_SAMPLES)
+                    .into_iter()
+                    .map(|uv| face.point_at(uv.x, uv.y))
+                    .collect::<Vec<_>>();
+                assert!(
+                    polylines_agree(&lifted, &samples, CURVE_TOLERANCE)
+                        && polylines_agree(&samples, &lifted, CURVE_TOLERANCE),
+                    "edge {:?} traces a different curve on face {:?} than it does in model space: \
+                     model space runs {:?} -> {:?} -> {:?}, the pcurve lifts to {:?} -> {:?} -> {:?}",
+                    edge.key(),
+                    face.key(),
+                    samples[0],
+                    samples[CURVE_SAMPLES / 2],
+                    samples[CURVE_SAMPLES],
+                    lifted[0],
+                    lifted[CURVE_SAMPLES / 2],
+                    lifted[CURVE_SAMPLES],
+                );
+            }
+        }
+    }
+
+    for (point, expected) in [
+        (Point3::new(1.9, 1.9, 1.0), true), // block corner outside the cylinder
+        (Point3::new(0.0, 0.0, 3.0), true), // cylinder above the block
+        (Point3::new(-1.0, -1.0, 1.0), true), // cylinder beside the block
+        (Point3::new(2.5, 2.5, 1.0), false), // outside both
+        (Point3::new(1.9, 1.9, 3.0), false), // above the block, outside the cylinder
+    ] {
+        assert_eq!(
+            solid_contains_point(&map, result.solid, point, BooleanOptions::default()).unwrap(),
+            expected,
+            "membership at {point:?} in the tangent union"
+        );
+    }
+}
+
+/// Samples taken per curve when comparing a boundary's two representations.
+///
+/// The two are compared as polylines, and a curve and its parameter curve are
+/// rarely sampled at matching parameters, so the chord sag of a full circle
+/// sets the floor on what the comparison can resolve. At this density that sag
+/// is well under [`CURVE_TOLERANCE`], while a boundary tracing the wrong arc is
+/// out by more than the radius.
+const CURVE_SAMPLES: usize = 256;
+
+/// How far a boundary's two representations may drift apart.
+const CURVE_TOLERANCE: f64 = 1.0e-3;
+
+/// Samples taken per boundary when measuring a face's area.
+///
+/// The area is measured on an inscribed polygon, so a full arc needs enough
+/// segments for the chord sag to stay well under the assertion tolerance.
+const AREA_SAMPLES: usize = 256;
+
+/// Returns the parameter span an edge's curve covers between its endpoints.
+fn edge_span(edge: &Edge<'_, ngk::StandardPayload>) -> Interval {
+    let curve = edge.curve().expect("edge should carry a curve");
+    let start = *edge.start().point().expect("edge should have endpoints");
+    let end = *edge.end().point().expect("edge should have endpoints");
+    curve.parameters_between(start, end)
+}
+
+/// Returns `segments + 1` points along a curve's own parameterization.
+fn sample_curve(curve: &Curve, span: Interval, segments: usize) -> Vec<Point3> {
+    (0..=segments)
+        .map(|index| {
+            let fraction = index as f64 / segments as f64;
+            curve.point_at(span.start + (span.end - span.start) * fraction)
+        })
+        .collect()
+}
+
+/// Reports whether every point of `points` lies within `tolerance` of the
+/// polyline through `polyline`.
+fn polylines_agree(points: &[Point3], polyline: &[Point3], tolerance: f64) -> bool {
+    points.iter().all(|&point| {
+        polyline
+            .windows(2)
+            .map(|segment| {
+                let direction = segment[1] - segment[0];
+                let length = direction.norm_squared();
+                if length <= f64::EPSILON {
+                    return (point - segment[0]).norm();
+                }
+                let parameter = ((point - segment[0]).dot(&direction) / length).clamp(0.0, 1.0);
+                (point - (segment[0] + direction * parameter)).norm()
+            })
+            .fold(f64::INFINITY, f64::min)
+            <= tolerance
+    })
+}
+
+/// Returns the solid's planar faces whose vertices all sit at `height`.
+fn planar_faces_at_height(
+    g: &GMap<ngk::StandardPayload>,
+    solid: SolidKey,
+    height: f64,
+) -> Vec<FaceKey> {
+    g.solid_unchecked(solid)
+        .faces()
+        .iter()
+        .filter(|face| matches!(face.surface(), Surface::Plane(_)))
+        .filter(|face| {
+            face.vertices().iter().all(|vertex| {
+                vertex
+                    .point()
+                    .is_some_and(|point| (point.z - height).abs() <= LINEAR_TOLERANCE)
+            })
+        })
+        .map(|face| face.key())
+        .collect()
+}
+
+/// Returns the area of a planar face, measured on its boundary pcurves.
+fn planar_face_area(g: &GMap<ngk::StandardPayload>, key: FaceKey) -> f64 {
+    let face = g.face(key).expect("face should be registered");
+    let signed = |boundary: &Loop<'_, ngk::StandardPayload>| {
+        let points = boundary
+            .edges()
+            .iter()
+            .flat_map(|edge| {
+                let pcurve = face
+                    .pcurve(edge.dart())
+                    .expect("a planar boundary must carry a pcurve");
+                pcurve.sample(AREA_SAMPLES).into_iter().take(AREA_SAMPLES)
+            })
+            .collect::<Vec<_>>();
+        0.5 * points
+            .iter()
+            .zip(points.iter().cycle().skip(1))
+            .take(points.len())
+            .map(|(a, b)| a.x * b.y - b.x * a.y)
+            .sum::<f64>()
+    };
+    signed(&face.outer_loop()).abs()
+        - face
+            .inner_loops()
+            .iter()
+            .map(|boundary| signed(boundary).abs())
+            .sum::<f64>()
 }

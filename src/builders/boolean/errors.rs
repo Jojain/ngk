@@ -37,6 +37,8 @@ pub enum BooleanError {
     SharedOperandBoundary,
     #[error("regularized Boolean result is empty")]
     EmptyResult,
+    #[error("healing the Boolean result failed")]
+    Healing(#[from] crate::healing::HealingError),
     #[error("regularized Boolean result has {components} disconnected solids")]
     DisconnectedResult { components: usize },
     #[error("surface intersection coverage is incomplete")]

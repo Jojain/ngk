@@ -6,13 +6,14 @@ use super::{
 };
 use crate::builders::faces::reverse_face_winding;
 use crate::geometry::{Point3, PointCoincidence};
+use crate::healing::{HealingOptions, HealingScope, heal_staged};
 use crate::topology::{
     TopologyEdit,
     attributes::{SheetAttr, SolidAttr},
     closed::Closed,
     gmap::{Dim, GMap},
     payload::Payload,
-    shape_keys::{EdgeKey, FaceKey, VertexKey},
+    shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey},
     validation::{validate_gmap, validate_solid_manifold, validate_solid_orientation},
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -155,6 +156,9 @@ pub(crate) fn run<P: Payload>(
             vertices.retain(|vertex| edit.vertex(*vertex).is_some());
         }
     }
+    if context.options.heal {
+        heal_result(edit, context, solid, &mut prepared)?;
+    }
     prepared.diagnostics.fragments = graph.fragments.len();
     prepared.diagnostics.components = graph.components.len();
     Ok(BooleanResult {
@@ -168,6 +172,68 @@ pub(crate) fn run<P: Payload>(
             discarded_faces: selection.dropped,
         },
     })
+}
+
+/// Removes the redundant topology imprinting left in the result.
+///
+/// A contact that lands on geometry the result keeps splits an edge or a face
+/// without changing its shape, so the fragments are fused back together here.
+/// Healing runs on the Boolean's own tolerances, because sections fitted by the
+/// intersection engine do not meet the kernel's default budget. Lineage is then
+/// rewritten onto the surviving identities.
+fn heal_result<P: Payload>(
+    edit: &mut TopologyEdit<'_, P>,
+    context: &BooleanContext,
+    solid: SolidKey,
+    prepared: &mut BooleanPreparation,
+) -> Result<(), BooleanError> {
+    let report = heal_staged(
+        edit,
+        &HealingOptions {
+            scope: HealingScope::Solid(solid),
+            linear_tolerance: context.tolerances.linear,
+            angular_tolerance: context.tolerances.angular,
+            ..HealingOptions::default()
+        },
+    )?;
+    if report.is_empty() {
+        return Ok(());
+    }
+
+    let faces = fusion_map(&report.fused_faces);
+    let edges = fusion_map(&report.fused_edges);
+    for lineage in [&mut prepared.first_lineage, &mut prepared.second_lineage] {
+        for keys in lineage.faces.values_mut() {
+            remap_keys(keys, &faces);
+            keys.retain(|face| edit.face(*face).is_some());
+        }
+        for keys in lineage.edges.values_mut() {
+            remap_keys(keys, &edges);
+            keys.retain(|edge| edit.edge(*edge).is_some());
+        }
+        for keys in lineage.vertices.values_mut() {
+            keys.retain(|vertex| edit.vertex(*vertex).is_some());
+        }
+    }
+    for sides in prepared.span_edges.values_mut() {
+        for side in sides.iter_mut() {
+            remap_keys(side, &edges);
+            side.retain(|edge| edit.edge(*edge).is_some());
+        }
+    }
+
+    validate_gmap(edit)?;
+    validate_solid_manifold(edit, solid)?;
+    validate_solid_orientation(edit, solid)?;
+    Ok(())
+}
+
+/// Turns `(survivor, consumed)` fusions into the merge chain `remap_keys` wants.
+fn fusion_map<K: Copy + Eq + std::hash::Hash>(fusions: &[(K, K)]) -> HashMap<K, K> {
+    fusions
+        .iter()
+        .map(|&(survivor, consumed)| (consumed, survivor))
+        .collect()
 }
 
 /// Applies merge chains to lineage; geometric proximity never chooses sewing partners.

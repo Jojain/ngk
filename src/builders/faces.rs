@@ -18,6 +18,7 @@ use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closed;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Cell0, Cell1, Cell2, Dart, Dim, GMap};
+use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
@@ -2098,7 +2099,17 @@ fn closed_boundary_curve_reversed<P: Payload>(
     let sample = face_view.point_at(sample_uv.x, sample_uv.y);
     let forward = curve.point_at(domain.start + domain.length() * fraction);
     let reverse = curve.point_at(domain.end - domain.length() * fraction);
-    Ok((sample - reverse).norm_squared() < (sample - forward).norm_squared())
+    let against = (sample - reverse).norm_squared() < (sample - forward).norm_squared();
+
+    // A closed boundary starts and ends at one point, so only its direction
+    // says which half is which. The sample above follows the face from `dart`,
+    // while the split hands its first half to the edge's own reference dart. On
+    // an open edge the two endpoints settle that; here, when those two darts
+    // run opposite ways, the halves have to be read the other way round.
+    Ok(match g.edge_orientation_at_dart(edge, dart) {
+        Orientation::Same => against,
+        Orientation::Reversed => !against,
+    })
 }
 
 fn incident_face_pcurves<P: Payload>(

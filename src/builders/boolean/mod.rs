@@ -89,6 +89,14 @@ pub struct BooleanOptions {
     pub tolerances: BooleanTolerancePolicy,
     pub max_classification_rays: usize,
     pub strict: bool,
+    /// Remove the redundant topology imprinting leaves behind.
+    ///
+    /// Splitting one operand against the other creates edges and vertices that
+    /// carry no shape wherever a contact falls on geometry the result keeps.
+    /// When set, [`crate::healing`] runs over the result solid inside the same
+    /// transaction, using the Boolean's own tolerances rather than the
+    /// kernel's default ones.
+    pub heal: bool,
 }
 
 impl Default for BooleanOptions {
@@ -98,6 +106,7 @@ impl Default for BooleanOptions {
             tolerances: BooleanTolerancePolicy::default(),
             max_classification_rays: 16,
             strict: true,
+            heal: false,
         }
     }
 }

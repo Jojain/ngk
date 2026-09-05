@@ -18,6 +18,8 @@ mod face_lineage;
 mod faces;
 #[path = "builders/profiles.rs"]
 mod profiles;
+#[path = "builders/removal.rs"]
+mod removal;
 #[path = "builders/revolve.rs"]
 mod revolve;
 #[path = "builders/solids.rs"]

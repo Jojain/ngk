@@ -28,6 +28,7 @@ parametric modeler. Operations mutate one map and return explicit handles.
 | `geometry` | `src/geometry/` | Pure math: points, curves, surfaces, NURBS, intersections, bbox, tolerance |
 | `builders` | `src/builders/` | Low-level topology construction (`&mut GMap`), one transaction each |
 | `modeling` | `src/modeling/` | Thin user-facing standalone shape builders (`block`, `revolve`, …) |
+| `healing` | `src/healing/` | Removes topology that carries no shape (`i`-removal passes over `builders::removal`) |
 | `tessellate` | `src/tessellate/` | Geometry/BRep → polylines + indexed meshes |
 | `viz` | `src/viz/` | `VizScene` assembly, dart/α overlays, debug viewer, ocp_vscode bridge |
 | `scripts` | `src/scripts/` | Named exploration scenes, registered in `SCRIPTS` |
@@ -102,6 +103,12 @@ attribute create/remove/split/merge declarations).
   `BooleanLineage`, `BooleanSide`). Currently it computes **contacts + two-sided
   B-Rep splitting**; region classification/assembly is the next step.
   Design refs: `docs/boole_paper_ngk_integration.md`, `docs/boolean_algorithm_guide_fr.md`.
+- 🚧 **Shape healing** — `src/builders/removal.rs` (`i`-removal, Defs. 58–59 of the
+  GMap book) plus `src/healing/` (two passes: fuse cosurfacial faces, then fuse
+  cocurvilinear edges). Removing an edge the same face bounds twice rejoins that
+  face's boundary; a removal that would split it into two loops is refused.
+  Wired into `boolean` behind `BooleanOptions::heal` (opt-in — flipping the
+  default needs four raw-count tests updated). Plan: `plan/shape_healing.md`.
 - 🚧 `Model` API — design only (`docs/model_api.md`).
 - 🚧 Face tessellation uses per-surface shortcuts; real constrained Delaunay is
   still `// TODO: real CDT` in `src/tessellate/face.rs`.

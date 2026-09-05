@@ -861,6 +861,13 @@ fn validate_edit_events<P: Payload>(
             continue;
         }
 
+        // A merge both of whose identities are gone was spent: a later pass in
+        // the same operation removed the cell they had just come to share, so
+        // there is nothing left to reconcile or to hand the payload policy.
+        if is_spent_merge(g, *event) {
+            continue;
+        }
+
         let (first, second) = event.keys();
         for key in std::iter::once(first).chain(second) {
             if !contains_edit_key(g, key) {
@@ -988,6 +995,17 @@ impl EditEvent {
     }
 }
 
+/// Reports whether a merge declaration has nothing left to reconcile.
+///
+/// Both identities are absent exactly when a later pass removed the cell they
+/// were merging into. The declaration is then inert: it names no surviving
+/// identity, consumes nothing, and reaches no payload policy.
+fn is_spent_merge<P: Payload>(g: &GMap<P>, event: EditEvent) -> bool {
+    event.merge_keys().is_some_and(|(survivor, removed)| {
+        !contains_edit_key(g, survivor) && !contains_edit_key(g, removed)
+    })
+}
+
 /// Checks the appropriate attribute store for a type-erased edit key.
 fn contains_edit_key<P: Payload>(g: &GMap<P>, key: EditKey) -> bool {
     match key {
@@ -1086,10 +1104,10 @@ fn resolve_policy_events<P: Payload>(
             }
 
             event.merge_keys().and_then(|(survivor, removed)| {
-                contains_edit_key(snapshot, removed).then(|| PolicyEvent::Merge {
-                    survivor: final_survivor(&lineage.merges, survivor),
-                    removed,
-                })
+                let survivor = final_survivor(&lineage.merges, survivor);
+                // A spent merge has no surviving payload to merge into.
+                (contains_edit_key(snapshot, removed) && contains_edit_key(g, survivor))
+                    .then_some(PolicyEvent::Merge { survivor, removed })
             })
         })
         .collect()
@@ -1149,6 +1167,12 @@ fn reconcile_transaction_attributes<P: Payload>(
     events: &[EditEvent],
     lineage: &TransactionLineage,
 ) -> Result<(), TopologyEditError> {
+    let spent = events
+        .iter()
+        .filter(|event| is_spent_merge(g, **event))
+        .filter_map(|event| event.merge_keys())
+        .map(|(survivor, _)| survivor)
+        .collect::<HashSet<_>>();
     remove_consumed_attributes(g, events);
 
     let vertices = g
@@ -1250,7 +1274,8 @@ fn reconcile_transaction_attributes<P: Payload>(
     let mut checked = HashSet::new();
     for survivor in lineage.merges.values() {
         let survivor = final_survivor(&lineage.merges, *survivor);
-        if checked.insert(survivor) && !contains_edit_key(g, survivor) {
+        if checked.insert(survivor) && !spent.contains(&survivor) && !contains_edit_key(g, survivor)
+        {
             return Err(TopologyEditError::InvalidLineageSurvivor { survivor });
         }
     }
@@ -1399,38 +1424,29 @@ fn remove_edit_key<P: Payload>(g: &mut GMap<P>, key: EditKey) {
 }
 
 /// Removes every identity explicitly consumed by a validated merge declaration.
+/// A consumed identity is normally still staged, having been validated above.
+/// The exception is a spent merge, whose cell a later pass of the same
+/// operation removed outright, taking both identities with it.
 fn remove_consumed_attributes<P: Payload>(g: &mut GMap<P>, events: &[EditEvent]) {
     for event in events {
         match *event {
             EditEvent::VertexMerge { removed, .. } => {
-                g.vertices
-                    .remove(removed)
-                    .expect("declared removed vertex key must have an attribute");
+                g.vertices.remove(removed);
             }
             EditEvent::EdgeMerge { removed, .. } => {
-                g.edges
-                    .remove(removed)
-                    .expect("declared removed edge key must have an attribute");
+                g.edges.remove(removed);
             }
             EditEvent::ProfileMerge { removed, .. } => {
-                g.profiles
-                    .remove(removed)
-                    .expect("declared removed profile key must have an attribute");
+                g.profiles.remove(removed);
             }
             EditEvent::FaceMerge { removed, .. } => {
-                g.faces
-                    .remove(removed)
-                    .expect("declared removed face key must have an attribute");
+                g.faces.remove(removed);
             }
             EditEvent::SheetMerge { removed, .. } => {
-                g.sheets
-                    .remove(removed)
-                    .expect("declared removed sheet key must have an attribute");
+                g.sheets.remove(removed);
             }
             EditEvent::SolidMerge { removed, .. } => {
-                g.solids
-                    .remove(removed)
-                    .expect("declared removed solid key must have an attribute");
+                g.solids.remove(removed);
             }
             _ => {}
         }

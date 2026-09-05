@@ -1,5 +1,6 @@
 pub mod builders;
 pub mod geometry;
+pub mod healing;
 pub mod model;
 pub mod modeling;
 pub mod scripts;
