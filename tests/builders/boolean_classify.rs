@@ -1,23 +1,12 @@
-use nalgebra::Vector3;
 use ngk::builders::boolean::{BooleanError, BooleanOptions, solid_contains_point};
-use ngk::builders::solids::add_extruded_face;
-use ngk::geometry::{Plane, Point3};
-use ngk::modeling::faces;
-use ngk::topology::gmap::GMap;
-use ngk::topology::shape_keys::SolidKey;
-
-fn block_at(origin: Point3, size: f64) -> (GMap<ngk::StandardPayload>, SolidKey) {
-    let plane = Plane::from_xy(origin, Vector3::x(), Vector3::y());
-    let base = faces::rectangle(plane, size, size).expect("block base");
-    let (mut map, face) = base.into_map();
-    let solid =
-        add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, size)).expect("block extrusion");
-    (map, solid)
-}
+use ngk::geometry::{Frame, Point3};
+use ngk::modeling::solids;
 
 #[test]
 fn ray_parity_classifies_interior_and_exterior_points_of_a_block() {
-    let (map, block) = block_at(Point3::origin(), 2.0);
+    let (map, block) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
+        .expect("block")
+        .into_map();
     for (point, expected) in [
         // The centre sends rays straight at the box corners and edges; those
         // rays must be rejected and retried, not counted.
@@ -35,7 +24,9 @@ fn ray_parity_classifies_interior_and_exterior_points_of_a_block() {
 
 #[test]
 fn a_point_on_the_boundary_is_reported_as_ambiguous_rather_than_guessed() {
-    let (map, block) = block_at(Point3::origin(), 2.0);
+    let (map, block) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
+        .expect("block")
+        .into_map();
     let error = solid_contains_point(
         &map,
         block,

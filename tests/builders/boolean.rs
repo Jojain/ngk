@@ -1,5 +1,4 @@
 use nalgebra::Vector3;
-use ngk::builders;
 use ngk::builders::boolean::{
     BooleanCell, BooleanOperand, BooleanOperation, BooleanOptions, BooleanSide,
     IntersectionSpanUse, boolean, compute_boolean_intersections, prepare_boolean,
@@ -14,7 +13,7 @@ use ngk::modeling::{edges, faces, solids};
 use ngk::topology::TopologyEditError;
 use ngk::topology::attributes::VertexAttr;
 use ngk::topology::gmap::GMap;
-use ngk::topology::shape_keys::VertexKey;
+use ngk::topology::shape_keys::{SolidKey, VertexKey};
 use ngk::topology::validation::{validate_gmap, validate_solid_manifold};
 use ngk::viz::debug_viewer::show;
 
@@ -358,10 +357,9 @@ fn edge_face_contact_splits_the_edge_and_records_the_face_contact() {
 
 #[test]
 fn overlapping_external_solids_are_imported_and_split_on_both_sides() {
-    let (mut target_map, target_solid) =
-        solids::block_at(Frame::xyz(), 1.0, 1.0, 1.0)
-            .expect("target block")
-            .into_map();
+    let (mut target_map, target_solid) = solids::block_at(Frame::xyz(), 1.0, 1.0, 1.0)
+        .expect("target block")
+        .into_map();
     let (tool_map, tool_solid) = solids::block_at(
         Frame::from_xy(Point3::new(0.5, 0.5, 0.5), Vector3::x(), Vector3::y()),
         1.0,
@@ -445,18 +443,6 @@ fn coplanar_partial_overlap_imprints_the_region_boundary_on_both_faces() {
         2
     );
     validate_gmap(&target_map).expect("coplanar preparation must remain valid");
-}
-
-fn block_at(
-    origin: Point3,
-    size: f64,
-) -> (ngk::topology::gmap::GMap<ngk::StandardPayload>, SolidKey) {
-    let plane = Plane::from_xy(origin, Vector3::x(), Vector3::y());
-    let base = faces::rectangle(plane, size, size).expect("block base");
-    let (mut map, face) = base.into_map();
-    let solid =
-        add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, size)).expect("block extrusion");
-    (map, solid)
 }
 
 #[test]
@@ -652,8 +638,22 @@ fn two_blocks(
     second_origin: Point3,
     second_size: f64,
 ) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
-    let (mut map, first) = block_at(first_origin, first_size);
-    let (tool, second) = block_at(second_origin, second_size);
+    let (mut map, first) = solids::block_at(
+        Frame::from_xy(first_origin, Vector3::x(), Vector3::y()),
+        first_size,
+        first_size,
+        first_size,
+    )
+    .expect("first block")
+    .into_map();
+    let (tool, second) = solids::block_at(
+        Frame::from_xy(second_origin, Vector3::x(), Vector3::y()),
+        second_size,
+        second_size,
+        second_size,
+    )
+    .expect("second block")
+    .into_map();
     let second = map
         .transaction(|edit| {
             let dart = edit.merge(tool.solid_unchecked(second));
@@ -817,7 +817,14 @@ fn boolean_result_can_be_consumed_by_a_second_operation() {
         BooleanOptions::default(),
     )
     .unwrap();
-    let (tool, cavity) = block_at(Point3::new(0.25, 0.25, 0.25), 0.5);
+    let (tool, cavity) = solids::block_at(
+        Frame::from_xy(Point3::new(0.25, 0.25, 0.25), Vector3::x(), Vector3::y()),
+        0.5,
+        0.5,
+        0.5,
+    )
+    .expect("cavity block")
+    .into_map();
     let cavity = map
         .transaction(|edit| {
             let dart = edit.merge(tool.solid_unchecked(cavity));
@@ -1116,18 +1123,16 @@ fn block_with_cylinder(
     base: f64,
     height: f64,
 ) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
-    let disc = faces::circle(
-        Plane::from_xy(Point3::new(1.0, 1.0, base), Vector3::x(), Vector3::y()),
+    let (tool, tool_cylinder) = solids::cylinder_at(
+        Frame::from_xy(Point3::new(1.0, 1.0, base), Vector3::x(), Vector3::y()),
         radius,
+        height,
     )
-    .expect("cylinder base");
-    let (tool, tool_cylinder) = {
-        let (mut map, face) = disc.into_map();
-        let solid =
-            add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, height)).expect("cylinder");
-        (map, solid)
-    };
-    let (mut map, block) = block_at(Point3::origin(), 2.0);
+    .expect("cylinder")
+    .into_map();
+    let (mut map, block) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
+        .expect("block")
+        .into_map();
     let cylinder = map
         .transaction(|edit| {
             let dart = edit.merge(tool.solid_unchecked(tool_cylinder));
@@ -1306,17 +1311,13 @@ fn boolean_difference_crosses_two_cylindrical_holes() {
 
     // The second bore is narrower than the first and crosses it, so its wall
     // meets the first bore's wall: the first operand pair with no planar face.
-    let disc = faces::circle(
-        Plane::from_xy(Point3::new(-1.0, 1.0, 1.0), Vector3::y(), Vector3::z()),
+    let (tool, tool_cylinder) = solids::cylinder_at(
+        Frame::from_xy(Point3::new(-1.0, 1.0, 1.0), Vector3::y(), Vector3::z()),
         0.3,
+        4.0,
     )
-    .expect("second bore base");
-    let (tool, tool_cylinder) = {
-        let (mut tool_map, face) = disc.into_map();
-        let solid = add_extruded_face(&mut tool_map, face, Vector3::new(4.0, 0.0, 0.0))
-            .expect("second bore");
-        (tool_map, solid)
-    };
+    .expect("second bore")
+    .into_map();
     let lying = map
         .transaction(|edit| {
             let dart = edit.merge(tool.solid_unchecked(tool_cylinder));
@@ -1507,18 +1508,22 @@ fn boolean_union_topology_is_stable_under_face_reparameterization() {
     // The same box, built on a plane frame rotated a quarter turn in its own
     // domain: identical geometry, different pcurve parameterization.
     let reparameterized = {
-        let plane = Plane::from_xy(Point3::new(3.0, 1.0, 1.0), Vector3::y(), -Vector3::x());
-        let base = faces::rectangle(plane, 2.0, 2.0).expect("rotated base");
-        let (mut map, face) = base.into_map();
-        let solid =
-            add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 2.0)).expect("rotated block");
-        (map, solid)
+        solids::block_at(
+            Frame::from_xy(Point3::new(3.0, 1.0, 1.0), Vector3::y(), -Vector3::x()),
+            2.0,
+            2.0,
+            2.0,
+        )
+        .expect("rotated block")
+        .into_map()
     };
 
     let mut counts = Vec::new();
     for rotated in [false, true] {
         let (mut map, first, second) = if rotated {
-            let (mut map, first) = block_at(Point3::origin(), 2.0);
+            let (mut map, first) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
+                .expect("block")
+                .into_map();
             let (tool, block) = &reparameterized;
             let second = map
                 .transaction(|edit| {
@@ -1554,12 +1559,14 @@ fn boolean_union_topology_is_stable_under_face_reparameterization() {
 
 /// An axis-aligned box spanning `min` to `max`.
 fn box_between(min: Point3, max: Point3) -> (GMap<ngk::StandardPayload>, SolidKey) {
-    let plane = Plane::from_xy(min, Vector3::x(), Vector3::y());
-    let base = faces::rectangle(plane, max.x - min.x, max.y - min.y).expect("box base");
-    let (mut map, face) = base.into_map();
-    let solid = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, max.z - min.z))
-        .expect("box extrusion");
-    (map, solid)
+    solids::block_at(
+        Frame::from_xy(min, Vector3::x(), Vector3::y()),
+        max.x - min.x,
+        max.y - min.y,
+        max.z - min.z,
+    )
+    .expect("box")
+    .into_map()
 }
 
 #[test]
@@ -1624,10 +1631,18 @@ fn boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps() {
 #[test]
 fn block_fused_with_cylinder_tangent_to_block_faces() {
     let size = 2.0;
-    let (mut map, block_key) = block_at(Point3::origin(), size);
-    let face = builders::faces::add_circle(&mut map, Plane::xy(), size).expect("should build");
-    let cylinder = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 2.0 * size))
-        .expect("should build");
+    let (mut map, block_key) = solids::block_at(Frame::xyz(), size, size, size)
+        .expect("block")
+        .into_map();
+    let (tool, tool_cylinder) = solids::cylinder_at(Frame::xyz(), size, 2.0 * size)
+        .expect("cylinder")
+        .into_map();
+    let cylinder = map
+        .transaction(|edit| {
+            let dart = edit.merge(tool.solid_unchecked(tool_cylinder));
+            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+        })
+        .expect("import cylinder");
 
     let result = boolean(
         &mut map,

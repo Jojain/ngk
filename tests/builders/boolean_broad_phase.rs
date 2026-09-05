@@ -1,20 +1,10 @@
 use nalgebra::Vector3;
 use ngk::builders::boolean::{BooleanOperand, BooleanOptions, compute_boolean_intersections};
-use ngk::builders::solids::add_extruded_face;
-use ngk::geometry::{Plane, Point3};
-use ngk::modeling::faces;
+use ngk::geometry::{Frame, Point3};
+use ngk::modeling::solids;
 use ngk::topology::TopologyEditError;
 use ngk::topology::gmap::GMap;
 use ngk::topology::shape_keys::{FaceKey, SolidKey};
-
-fn block_at(origin: Point3, size: f64) -> (GMap<ngk::StandardPayload>, SolidKey) {
-    let plane = Plane::from_xy(origin, Vector3::x(), Vector3::y());
-    let base = faces::rectangle(plane, size, size).expect("block base");
-    let (mut map, face) = base.into_map();
-    let solid =
-        add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, size)).expect("block extrusion");
-    (map, solid)
-}
 
 fn two_blocks(
     first_origin: Point3,
@@ -22,8 +12,22 @@ fn two_blocks(
     second_origin: Point3,
     second_size: f64,
 ) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
-    let (mut map, first) = block_at(first_origin, first_size);
-    let (tool, second) = block_at(second_origin, second_size);
+    let (mut map, first) = solids::block_at(
+        Frame::from_xy(first_origin, Vector3::x(), Vector3::y()),
+        first_size,
+        first_size,
+        first_size,
+    )
+    .expect("first block")
+    .into_map();
+    let (tool, second) = solids::block_at(
+        Frame::from_xy(second_origin, Vector3::x(), Vector3::y()),
+        second_size,
+        second_size,
+        second_size,
+    )
+    .expect("second block")
+    .into_map();
     let second = map
         .transaction(|edit| {
             let dart = edit.merge(tool.solid_unchecked(second));

@@ -76,28 +76,20 @@ fn each_dart_shaft_starts_at_its_own_vertex() {
 #[test]
 fn dart_shafts_stay_on_a_drilled_bore() {
     use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
-    use ngk::builders::solids::add_extruded_face;
-    use ngk::modeling::faces;
+    use ngk::geometry::Frame;
+    use ngk::modeling::solids;
     use ngk::topology::TopologyEditError;
 
-    let plane = Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::y());
-    let (mut map, block) = {
-        let base = faces::rectangle(plane, 2.0, 2.0).expect("block base");
-        let (mut map, face) = base.into_map();
-        let solid = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 2.0)).expect("block");
-        (map, solid)
-    };
-    let (tool, tool_solid) = {
-        let disc = faces::circle(
-            Plane::from_xy(Point3::new(1.0, 1.0, -1.0), Vector3::x(), Vector3::y()),
-            0.5,
-        )
-        .expect("bore base");
-        let (mut map, face) = disc.into_map();
-        let solid =
-            add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 4.0)).expect("bore body");
-        (map, solid)
-    };
+    let (mut map, block) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
+        .expect("block")
+        .into_map();
+    let (tool, tool_solid) = solids::cylinder_at(
+        Frame::from_xy(Point3::new(1.0, 1.0, -1.0), Vector3::x(), Vector3::y()),
+        0.5,
+        4.0,
+    )
+    .expect("bore")
+    .into_map();
     let cylinder = map
         .transaction(|edit| {
             let dart = edit.merge(tool.solid_unchecked(tool_solid));
