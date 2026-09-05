@@ -1,13 +1,22 @@
 //! Trim-domain queries and exact pcurve crossings for Boolean branches.
 
 use crate::geometry::{
-    Curve2, CurveCurveIntersection2, CurveIntersectionError, CurveIntersectionOptions, Point2,
+    Curve2, CurveCurveIntersection2, CurveIntersectionError, CurveIntersectionOptions,
+    IntersectionOptions, Interval, Line2, Point2,
 };
 use crate::topology::face::Face;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::EdgeKey;
 
 use super::BooleanError;
+
+/// Location of a parameter-space point relative to a trimmed face.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum TrimLocation {
+    Inside { margin: f64 },
+    Outside { margin: f64 },
+    OnBoundary { loop_index: usize, parameter: f64 },
+}
 
 /// Cached oriented loops; polylines are used only for winding classification.
 pub(crate) struct FaceTrimDomain {
@@ -56,15 +65,6 @@ impl FaceTrimDomain {
         })
     }
 
-    /// Whether the winding polyline is exact (piecewise linear pcurves only).
-    pub(crate) fn is_polygonal(&self) -> bool {
-        self.loops.iter().flatten().all(|curve| {
-            curve
-                .to_nurbs()
-                .is_ok_and(|curve| curve.degree().get() == 1)
-        })
-    }
-
     /// Distance to the nearest polyline segment; exact for admitted polygonal faces.
     pub(crate) fn boundary_distance(&self, point: Point2) -> f64 {
         self.polygons
@@ -86,24 +86,102 @@ impl FaceTrimDomain {
             })
             .fold(f64::INFINITY, f64::min)
     }
-    /// Strict interior membership; exact curve proximity excludes the boundary.
-    pub(crate) fn contains(&self, point: Point2) -> bool {
-        if self
-            .loops
-            .iter()
-            .flatten()
-            .any(|curve| curve.parameter_at(point, self.tolerance).is_some())
-        {
-            return false;
+    /// Classifies a point, refining boundary proximity against the exact pcurves.
+    pub(crate) fn classify(&self, point: Point2) -> TrimLocation {
+        for (loop_index, curves) in self.loops.iter().enumerate() {
+            for curve in curves {
+                if let Some(parameter) = curve.parameter_at(point, self.tolerance) {
+                    return TrimLocation::OnBoundary {
+                        loop_index,
+                        parameter,
+                    };
+                }
+            }
         }
-        self.polygons
+        let margin = self.boundary_distance(point);
+        let inside = self
+            .polygons
             .first()
             .is_some_and(|outer| winding_contains(outer, point))
             && self
                 .polygons
                 .iter()
                 .skip(1)
-                .all(|hole| !winding_contains(hole, point))
+                .all(|hole| !winding_contains(hole, point));
+        if inside {
+            TrimLocation::Inside { margin }
+        } else {
+            TrimLocation::Outside { margin }
+        }
+    }
+
+    /// Strict interior membership; exact curve proximity excludes the boundary.
+    pub(crate) fn contains(&self, point: Point2) -> bool {
+        matches!(self.classify(point), TrimLocation::Inside { .. })
+    }
+
+    /// Intervals of an unbounded UV line whose midpoints lie inside this domain.
+    ///
+    /// The line is bounded over the adaptive trim extent, then intersected with
+    /// the exact pcurves. The adaptive points only establish a conservative
+    /// finite parameter range; they do not define crossing positions.
+    pub(crate) fn line_intervals(
+        &self,
+        origin: Point2,
+        direction: nalgebra::Vector2<f64>,
+        options: IntersectionOptions,
+    ) -> Result<Vec<Interval>, CurveIntersectionError> {
+        let direction_norm = direction.norm();
+        if direction_norm <= self.tolerance {
+            return Ok(Vec::new());
+        }
+        let mut projected = self
+            .polygons
+            .iter()
+            .flatten()
+            .map(|point| (point - origin).dot(&direction) / direction.norm_squared());
+        let Some(first) = projected.next() else {
+            return Ok(Vec::new());
+        };
+        let (mut start, mut end) = (first, first);
+        for parameter in projected {
+            start = start.min(parameter);
+            end = end.max(parameter);
+        }
+        let parameter_tolerance = self.tolerance / direction_norm;
+        let padding =
+            2.0 * parameter_tolerance + 64.0 * f64::EPSILON * start.abs().max(end.abs()).max(1.0);
+        start -= padding;
+        end += padding;
+
+        let bounded_line = Curve2::Line(Line2::new(
+            origin + direction * start,
+            origin + direction * end,
+        ));
+        let curve_options = CurveIntersectionOptions {
+            linear_tolerance: options.parameter_tolerance,
+            parameter_tolerance: options.parameter_tolerance,
+            bbox_tolerance: options.parameter_tolerance,
+            max_subdivision_depth: options.max_subdivision_depth,
+            leaf_diagonal_tolerance: options.parameter_tolerance * 10.0,
+            newton_max_iterations: options.newton_max_iterations,
+        };
+        let mut normalized = Vec::new();
+        self.crossings(&bounded_line, curve_options, &mut normalized)?;
+        let mut parameters = normalized
+            .into_iter()
+            .map(|parameter| start + parameter * (end - start))
+            .collect::<Vec<_>>();
+        parameters.sort_by(f64::total_cmp);
+        parameters.dedup_by(|a, b| (*a - *b).abs() <= parameter_tolerance);
+        Ok(parameters
+            .windows(2)
+            .filter_map(|pair| {
+                let midpoint = 0.5 * (pair[0] + pair[1]);
+                self.contains(origin + direction * midpoint)
+                    .then_some(Interval::new(pair[0], pair[1]))
+            })
+            .collect())
     }
 
     /// Adds every exact trim crossing in the branch's normalized parameter space.

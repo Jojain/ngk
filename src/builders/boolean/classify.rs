@@ -1,10 +1,14 @@
-//! Deterministic planar ray classification and interior fragment probes.
+//! Deterministic ray classification and surface-evaluated interior fragment probes.
 
+use super::broad_phase::face_uv_bounds;
 use super::{
     BooleanError, BooleanOperand, BooleanOptions, BooleanSide, BooleanTolerances,
     neighborhood::FragmentGraph, operand::operand_cells, trim::FaceTrimDomain,
 };
-use crate::geometry::{Point2, Point3, Surface};
+use crate::geometry::{
+    Curve, CurveSurfaceIntersection, IntersectionCoverage, IntersectionOptions, Point2, Point3,
+    PreparedCurve, PreparedSurface, Surface, SurfacePeriodicity, intersect_prepared_curve_surface,
+};
 use crate::tessellate::{TessellateOpts, tessellate_face_key};
 use crate::topology::{
     gmap::GMap,
@@ -26,6 +30,8 @@ struct RayFace {
     origin: Point3,
     normal: Vector3<f64>,
     trim: FaceTrimDomain,
+    curved: Option<PreparedSurface>,
+    uv_center: Point2,
 }
 
 pub(crate) struct SolidRayCaster<'a, P: Payload> {
@@ -46,18 +52,24 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
         let mut faces = Vec::new();
         for key in keys {
             let face = map.face_unchecked(key);
-            let Surface::Plane(plane) = face.surface() else {
-                return Err(BooleanError::UncertifiedClassificationSurface { face: key });
+            let (origin, normal, curved) = if let Surface::Plane(plane) = face.surface() {
+                (plane.origin(), *plane.normal(), None)
+            } else {
+                let (u, v) = face_uv_bounds(&face)
+                    .ok_or(BooleanError::UncertifiedClassificationSurface { face: key })?;
+                let prepared = PreparedSurface::over(face.surface(), u, v)?;
+                (Point3::origin(), Vector3::zeros(), Some(prepared))
             };
             let trim = FaceTrimDomain::new(&face, tolerances.parameter)?;
-            if !trim.is_polygonal() {
-                return Err(BooleanError::UncertifiedClassificationSurface { face: key });
-            }
             faces.push(RayFace {
                 key,
-                origin: plane.origin(),
-                normal: *plane.normal(),
+                origin,
+                normal,
                 trim,
+                curved,
+                uv_center: face_uv_bounds(&face)
+                    .map(|(u, v)| Point2::new((u.start + u.end) * 0.5, (v.start + v.end) * 0.5))
+                    .unwrap_or(Point2::origin()),
             });
         }
         Ok(Self {
@@ -110,6 +122,10 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
     fn ray(&self, point: Point3, direction: Vector3<f64>) -> Option<bool> {
         let mut count = 0;
         for face in &self.faces {
+            if let Some(surface) = &face.curved {
+                count += self.curved_ray(face, surface, point, direction)?;
+                continue;
+            }
             let distance = face.normal.dot(&(face.origin - point));
             let incidence = face.normal.dot(&direction);
             if incidence.abs() <= self.tolerances.angular {
@@ -129,7 +145,7 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
                 .surface()
                 .closest_parameter(hit)
                 .ok()?;
-            if face.trim.boundary_distance(uv) <= self.tolerances.parameter {
+            if face.trim.boundary_distance(uv) <= 2.0 * self.tolerances.parameter {
                 return None;
             }
             if !face.trim.contains(uv) {
@@ -143,17 +159,74 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
         Some(count % 2 == 1)
     }
 
+    /// Bounds a finite ray by the positive-weight control hull and rejects incomplete searches.
+    fn curved_ray(
+        &self,
+        face: &RayFace,
+        surface: &PreparedSurface,
+        point: Point3,
+        direction: Vector3<f64>,
+    ) -> Option<usize> {
+        let mut length: f64 = 1.0;
+        for control in surface.nurbs().control_points().as_slice() {
+            if control.weight() <= 0.0 || !control.weight().is_finite() {
+                return None;
+            }
+            length = length.max((control.to_cartesian() - point).norm() + 1.0);
+        }
+        let curve = PreparedCurve::new(&Curve::line(point, point + direction * length)).ok()?;
+        let options = IntersectionOptions {
+            linear_tolerance: self.tolerances.linear,
+            parameter_tolerance: self.tolerances.parameter,
+            ..IntersectionOptions::default()
+        };
+        let hits = intersect_prepared_curve_surface(&curve, surface, options).ok()?;
+        if !matches!(hits.coverage(), IntersectionCoverage::Complete) {
+            return None;
+        }
+        let mut count = 0;
+        for hit in hits {
+            let CurveSurfaceIntersection::Point { point: hit, .. } = hit else {
+                return None;
+            };
+            let uv = periodic_uv(
+                surface.source().closest_parameter(hit).ok()?,
+                face.uv_center,
+                surface.source().periodicity(),
+            );
+            if face.trim.boundary_distance(uv) <= 2.0 * self.tolerances.parameter {
+                return None;
+            }
+            if !face.trim.contains(uv) {
+                continue;
+            }
+            if (hit - point).dot(&direction) <= self.tolerances.linear
+                || surface.source().normal_at(uv.x, uv.y).dot(&direction).abs()
+                    <= self.tolerances.angular
+            {
+                return None;
+            }
+            count += 1;
+        }
+        Some(count)
+    }
+
     /// Detects coincidence on the other solid before attempting origin-sensitive rays.
     fn boundary(&self, point: Point3, normal: Vector3<f64>) -> Option<RelativeLocation> {
         for face in &self.faces {
-            if face.normal.dot(&(point - face.origin)).abs() > self.tolerances.linear {
+            if face.curved.is_none()
+                && face.normal.dot(&(point - face.origin)).abs() > self.tolerances.linear
+            {
                 continue;
             }
             let view = self.map.face_unchecked(face.key);
             let Ok(uv) = view.surface().closest_parameter(point) else {
                 continue;
             };
-            if face.trim.contains(uv) {
+            let uv = periodic_uv(uv, face.uv_center, view.surface().periodicity());
+            if (view.point_at(uv.x, uv.y) - point).norm() <= self.tolerances.linear
+                && face.trim.contains(uv)
+            {
                 return Some(if normal.dot(&view.normal_at(uv.x, uv.y)) > 0.0 {
                     RelativeLocation::OnBoundarySame
                 } else {
@@ -163,6 +236,23 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
         }
         None
     }
+}
+
+/// Chooses the equivalent periodic image in the face's trimming chart.
+fn periodic_uv(mut uv: Point2, center: Point2, periodicity: SurfacePeriodicity) -> Point2 {
+    let (u, v) = match periodicity {
+        SurfacePeriodicity::None => (None, None),
+        SurfacePeriodicity::UPeriodic(u) => (Some(u), None),
+        SurfacePeriodicity::VPeriodic(v) => (None, Some(v)),
+        SurfacePeriodicity::UVPeriodic(u, v) => (Some(u), Some(v)),
+    };
+    if let Some(period) = u {
+        uv.x += ((center.x - uv.x) / period).round() * period;
+    }
+    if let Some(period) = v {
+        uv.y += ((center.y - uv.y) / period).round() * period;
+    }
+    uv
 }
 
 /// Chooses a mesh-derived witness only after checking exact polygonal trim clearance.
@@ -194,7 +284,7 @@ fn probe<P: Payload>(
     for (_, point) in triangles {
         let uv = view.surface().closest_parameter(point)?;
         if trim.contains(uv) && trim.boundary_distance(uv) > tolerances.probe_margin {
-            return Ok((point, uv));
+            return Ok((view.point_at(uv.x, uv.y), uv));
         }
     }
     Err(BooleanError::MissingFragmentProbe { face })

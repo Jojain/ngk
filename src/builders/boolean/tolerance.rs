@@ -30,6 +30,13 @@ pub struct BooleanTolerances {
     pub angular: f64,
     pub bbox: f64,
     pub probe_margin: f64,
+    /// How far a fitted section may sit from its own supporting surfaces.
+    ///
+    /// A curved section is an approximation produced by the surface/surface
+    /// fitter, so the network cannot demand more agreement between a section
+    /// curve and its pcurves than that fitter promises. Exact planar sections
+    /// stay far inside this budget.
+    pub section_fit: f64,
     pub model_scale: f64,
 }
 
@@ -58,6 +65,7 @@ impl BooleanTolerances {
                     angular: defaults.angular_tolerance,
                     bbox: linear,
                     probe_margin: linear * 100.0,
+                    section_fit: defaults.fit_tolerance * model_scale,
                     model_scale,
                 }
             }
@@ -68,6 +76,7 @@ impl BooleanTolerances {
             result.parameter,
             result.angular,
             result.probe_margin,
+            result.section_fit,
             result.model_scale,
         ]
         .iter()

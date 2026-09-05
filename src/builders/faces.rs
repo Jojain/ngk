@@ -208,8 +208,7 @@ impl FaceImprintGraph {
     pub fn from_curves(curves: &[Curve2]) -> Result<Self, CurveIntersectionError> {
         let split_parameters = curve_split_parameters(curves)?;
         let mut vertices = Vec::<Point2>::new();
-        let mut edges = Vec::new();
-        let mut seen_edges = HashSet::<(usize, usize)>::new();
+        let mut edges: Vec<FaceImprintGraphEdge> = Vec::new();
 
         for (source_curve, (curve, parameters)) in curves.iter().zip(split_parameters).enumerate() {
             for pair in parameters.windows(2) {
@@ -223,7 +222,22 @@ impl FaceImprintGraph {
                     continue;
                 }
 
-                if seen_edges.insert(ordered_edge_key(start, end)) {
+                let mut duplicate = false;
+                for existing in &edges {
+                    if ordered_edge_key(start, end)
+                        != ordered_edge_key(existing.start, existing.end)
+                    {
+                        continue;
+                    }
+                    duplicate |= curve.intersect_curve(&curves[existing.source_curve])?.iter().any(|hit| {
+                        matches!(hit, CurveCurveIntersection2::Overlap { interval_a, interval_b }
+                            if interval_a.ordered().contains(pair[0], LINEAR_TOLERANCE)
+                                && interval_a.ordered().contains(pair[1], LINEAR_TOLERANCE)
+                                && interval_b.ordered().contains(existing.interval.start, LINEAR_TOLERANCE)
+                                && interval_b.ordered().contains(existing.interval.end, LINEAR_TOLERANCE))
+                    });
+                }
+                if !duplicate {
                     edges.push(FaceImprintGraphEdge {
                         start,
                         end,
@@ -279,7 +293,7 @@ impl FaceImprintGraph {
             }
 
             let component = self.component_vertices(start, &mut visited);
-            if component.len() < 3
+            if component.len() < 2
                 || !component
                     .iter()
                     .all(|vertex| self.vertex_degree(*vertex) == 2)
@@ -384,7 +398,7 @@ impl FaceImprintGraph {
                 continue;
             }
             let component = self.component_vertices(start, &mut visited);
-            if component.len() >= 3
+            if component.len() >= 2
                 && component
                     .iter()
                     .all(|vertex| self.vertex_degree(*vertex) == 2)
@@ -1198,7 +1212,7 @@ fn add_closed_imprint_loops<P: Payload>(
             .iter()
             .map(|imprint| imprint.pcurve.point_at(0.0))
             .collect::<Vec<_>>();
-        if uvs.len() < 3
+        if uvs.len() < 2
             || uvs
                 .iter()
                 .any(|uv| snap_boundary_corner(&boundary_uvs, *uv).is_some())
@@ -1428,7 +1442,7 @@ fn orient_imprint_loop_against_boundary(
     let boundary_area = signed_area(boundary_uvs);
     let loop_uvs = imprints
         .iter()
-        .map(|imprint| imprint.pcurve.point_at(0.0))
+        .flat_map(|imprint| imprint.pcurve.sample(16).into_iter().take(16))
         .collect::<Vec<_>>();
     let loop_area = signed_area(&loop_uvs);
 
@@ -1506,9 +1520,7 @@ fn split_one_face_by_imprints<P: Payload>(
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
 
     let boundary_uvs = face_boundary_uvs(g, face)?;
-    let Some((index, cut)) = imprints.iter().enumerate().find_map(|(index, imprint)| {
-        FaceImprintCut::from_imprint(imprint, &boundary_uvs).map(|cut| (index, cut))
-    }) else {
+    let Some(cut) = FaceImprintCut::from_chain(imprints, &boundary_uvs)? else {
         return Ok(None);
     };
 
@@ -1517,8 +1529,7 @@ fn split_one_face_by_imprints<P: Payload>(
     }
 
     let old_face = face_attr.clone();
-    let mut split = apply_outer_face_chord_split(g, face, old_face, &cut)?;
-    split.sections[0].imprint = index;
+    let split = apply_outer_face_chord_split(g, face, old_face, &cut)?;
     Ok(Some(split))
 }
 
@@ -1560,27 +1571,77 @@ fn add_circle_staged(
 struct FaceImprintCut {
     start_corner: usize,
     end_corner: usize,
-    curve: Curve,
-    pcurve: Curve2,
+    sections: Vec<(usize, bool, FaceImprint)>,
 }
 
 impl FaceImprintCut {
-    fn from_imprint(imprint: &FaceImprint, boundary_uvs: &[Point2]) -> Option<Self> {
-        let pcurve = &imprint.pcurve;
-        let start_uv = pcurve.point_at(0.0);
-        let end_uv = pcurve.point_at(1.0);
-        let start = snap_boundary_corner(boundary_uvs, start_uv)?;
-        let end = snap_boundary_corner(boundary_uvs, end_uv)?;
-        if !valid_chord(start, end, boundary_uvs.len()) {
-            return None;
+    /// Follows a nonbranching path from one boundary corner to another.
+    fn from_chain(
+        imprints: &[FaceImprint],
+        boundary: &[Point2],
+    ) -> Result<Option<Self>, NurbsError> {
+        for (index, imprint) in imprints.iter().enumerate() {
+            for reversed in [false, true] {
+                let uv = imprint.pcurve.point_at(if reversed { 1.0 } else { 0.0 });
+                let Some(start) = snap_boundary_corner(boundary, uv) else {
+                    continue;
+                };
+                if let Some(cut) = Self::follow(imprints, boundary, start, index, reversed)? {
+                    return Ok(Some(cut));
+                }
+            }
         }
+        Ok(None)
+    }
 
-        Some(Self {
-            start_corner: start,
-            end_corner: end,
-            curve: imprint.curve.clone(),
-            pcurve: pcurve.clone(),
-        })
+    /// Stops at boundary vertices or ambiguous junctions rather than inventing a path.
+    fn follow(
+        imprints: &[FaceImprint],
+        boundary: &[Point2],
+        start: usize,
+        index: usize,
+        reversed: bool,
+    ) -> Result<Option<Self>, NurbsError> {
+        let mut next = (index, reversed);
+        let mut sections = Vec::new();
+        let mut visited = HashSet::new();
+        loop {
+            let (index, reversed) = next;
+            if !visited.insert(index) {
+                return Ok(None);
+            }
+            let imprint = if reversed {
+                imprints[index].reversed()?
+            } else {
+                imprints[index].clone()
+            };
+            let end_uv = imprint.pcurve.point_at(1.0);
+            sections.push((index, reversed, imprint));
+            if let Some(end) = snap_boundary_corner(boundary, end_uv) {
+                return Ok(valid_chord(start, end, boundary.len()).then_some(Self {
+                    start_corner: start,
+                    end_corner: end,
+                    sections,
+                }));
+            }
+            let candidates = imprints
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !visited.contains(index))
+                .flat_map(|(index, imprint)| {
+                    [false, true].into_iter().filter_map(move |reversed| {
+                        ((imprint.pcurve.point_at(if reversed { 1.0 } else { 0.0 }) - end_uv)
+                            .norm()
+                            <= LINEAR_TOLERANCE)
+                            .then_some((index, reversed))
+                    })
+                })
+                .collect::<Vec<_>>();
+            if candidates.len() != 1 {
+                return Ok(None);
+            }
+            next = candidates[0];
+        }
     }
 }
 
@@ -1678,7 +1739,7 @@ fn valid_chord(start: usize, end: usize, corner_count: usize) -> bool {
 fn apply_outer_face_chord_split<P: Payload>(
     g: &mut TopologyEdit<'_, P>,
     original_face: FaceKey,
-    old_face: FaceAttr<P::F>,
+    mut old_face: FaceAttr<P::F>,
     cut: &FaceImprintCut,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
     let source_profile = g
@@ -1695,21 +1756,38 @@ fn apply_outer_face_chord_split<P: Payload>(
     let end_dart = end.outgoing().dart();
     let start_previous_end = start.incoming().end().dart;
     let end_previous_end = end.incoming().end().dart;
-    let pcurve_ab = cut.pcurve.clone();
-    let pcurve_ba = pcurve_ab.reversed();
-    let ab_start = g.add_dart();
-    let ab_end = g.add_dart();
-    let ba_start = g.add_dart();
-    let ba_end = g.add_dart();
-
-    g.link(Dim::Zero, ab_start, ab_end)
-        .expect("fresh section edge darts must be alpha0-free");
-    g.link(Dim::Zero, ba_start, ba_end)
-        .expect("fresh section edge darts must be alpha0-free");
-    g.link(Dim::Two, ab_start, ba_end)
-        .expect("fresh section sides must be alpha2-free");
-    g.link(Dim::Two, ab_end, ba_start)
-        .expect("fresh section sides must be alpha2-free");
+    let darts = cut
+        .sections
+        .iter()
+        .map(|_| [g.add_dart(), g.add_dart(), g.add_dart(), g.add_dart()])
+        .collect::<Vec<_>>();
+    for (index, (_, _, imprint)) in cut.sections.iter().enumerate() {
+        let [a, b, c, d] = darts[index];
+        g.link(Dim::Zero, a, b).expect("fresh section edge");
+        g.link(Dim::Zero, c, d).expect("fresh section edge");
+        g.link(Dim::Two, a, d).expect("fresh section sides");
+        g.link(Dim::Two, b, c).expect("fresh section sides");
+        old_face.pcurves.insert(a, imprint.pcurve.clone());
+        old_face.pcurves.insert(c, imprint.pcurve.reversed());
+        if index > 0 {
+            g.link(Dim::One, darts[index - 1][1], a)
+                .expect("chain vertex");
+            g.link(Dim::One, d, darts[index - 1][2])
+                .expect("reverse chain vertex");
+            let uv = imprint.pcurve.point_at(0.0);
+            g.add_vertex(VertexAttr::new(
+                a,
+                old_face.surface.point_at(uv.x, uv.y),
+                P::V::default(),
+            ));
+        }
+    }
+    let ab_start = darts[0][0];
+    let ab_end = darts.last().unwrap()[1];
+    let ba_start = darts.last().unwrap()[2];
+    let ba_end = darts[0][3];
+    let pcurve_ab = old_face.pcurves[&ab_start].clone();
+    let pcurve_ba = old_face.pcurves[&ba_start].clone();
 
     g.unlink(Dim::One, start_previous_end)
         .expect("split start corner must be alpha1-linked");
@@ -1770,7 +1848,27 @@ fn apply_outer_face_chord_split<P: Payload>(
         (end_dart, end_pcurves, start_dart, start_pcurves)
     };
 
-    let section_edge = g.add_edge(EdgeAttr::new(ab_start, cut.curve.clone(), P::E::default()));
+    let sections = cut
+        .sections
+        .iter()
+        .zip(&darts)
+        .map(|((index, reversed, imprint), darts)| {
+            let edge = g.add_edge(EdgeAttr::new(
+                darts[0],
+                imprint.curve.clone(),
+                P::E::default(),
+            ));
+            FaceImprintSection {
+                edge,
+                imprint: *index,
+                interval: if *reversed {
+                    Interval::new(1.0, 0.0)
+                } else {
+                    Interval::new(0.0, 1.0)
+                },
+            }
+        })
+        .collect();
     let source_attr = g
         .face_attr_mut(original_face)
         .expect("source face must remain staged during a chord split");
@@ -1793,11 +1891,7 @@ fn apply_outer_face_chord_split<P: Payload>(
     Ok(FaceImprintSplit {
         first: original_face,
         second,
-        sections: vec![FaceImprintSection {
-            edge: section_edge,
-            imprint: 0,
-            interval: Interval::new(0.0, 1.0),
-        }],
+        sections,
     })
 }
 
@@ -1918,21 +2012,6 @@ fn face_edge_dart<P: Payload>(
         .ok_or(FaceEdgeSplitError::EdgeNotOnFace { face, edge })
 }
 
-fn face_pcurve<P: Payload>(
-    g: &GMap<P>,
-    face: FaceKey,
-    dart: Dart,
-) -> Result<Curve2, FaceEdgeSplitError> {
-    let face_attr = g
-        .face_attr(face)
-        .ok_or(FaceEdgeSplitError::MissingFace { face })?;
-    face_attr
-        .pcurves
-        .get(&dart)
-        .cloned()
-        .ok_or(FaceEdgeSplitError::MissingPcurve { face, dart })
-}
-
 fn closed_boundary_curve_reversed<P: Payload>(
     g: &GMap<P>,
     face: FaceKey,
@@ -1974,22 +2053,33 @@ fn incident_face_pcurves<P: Payload>(
     edge: EdgeKey,
     parameter: f64,
 ) -> Result<Vec<IncidentFacePcurve>, FaceEdgeSplitError> {
-    let edge_attr = g
-        .edge_attr(edge)
-        .ok_or(FaceEdgeSplitError::EdgeSplitFailed(
-            EdgeSplitError::MissingEdge { edge },
-        ))?;
-    let split_point = edge_attr.curve.point_at(parameter);
-    let mut seen = HashSet::new();
-    g.orbit(edge_attr.dart, g.orbit_indices(Dim::One))
-        .filter_map(|dart| g.attribute::<Cell2>(dart).copied())
-        .filter(|face| seen.insert(*face))
-        .map(|face| {
-            let dart = face_edge_dart(g, face, edge)?;
-            let pcurve = face_pcurve(g, face, dart)?;
+    let edge_view = g.edge(edge).ok_or(FaceEdgeSplitError::EdgeSplitFailed(
+        EdgeSplitError::MissingEdge { edge },
+    ))?;
+    let split_point = edge_view
+        .curve()
+        .ok_or(FaceEdgeSplitError::MissingEdgeCurve {
+            dart: edge_view.dart(),
+        })?
+        .point_at(parameter);
+    // A seam has two boundary occurrences on one face, each with its own UV curve.
+    let mut occurrences = HashSet::new();
+    for face in edge_view.faces() {
+        for boundary in g.face_unchecked(face.key()).edges() {
+            if boundary.key() == edge {
+                occurrences.insert((face.key(), boundary.dart()));
+            }
+        }
+    }
+    occurrences
+        .into_iter()
+        .map(|(face, dart)| {
             let face_view = g
                 .face(face)
                 .ok_or(FaceEdgeSplitError::MissingFace { face })?;
+            let pcurve = face_view
+                .pcurve(dart)
+                .ok_or(FaceEdgeSplitError::MissingPcurve { face, dart })?;
             let surface = face_view.surface();
             let uv = periodic_image_near_pcurve(
                 surface,

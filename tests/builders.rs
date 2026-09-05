@@ -8,6 +8,8 @@ mod boolean_classify;
 mod boolean_clip;
 #[path = "builders/boolean_network.rs"]
 mod boolean_network;
+#[path = "builders/boolean_trim.rs"]
+mod boolean_trim;
 #[path = "builders/chamfer.rs"]
 mod chamfer;
 #[path = "builders/face_lineage.rs"]

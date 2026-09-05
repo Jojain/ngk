@@ -10,6 +10,7 @@ use ngk::builders::faces::{
 };
 use ngk::builders::profiles::add_polyline;
 use ngk::builders::sheets::add_extruded_profile;
+use ngk::builders::solids::add_extruded_face;
 use ngk::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, Line2, NurbsCurve2, Plane, Point2, Point3, PointCoincidence,
     Surface,
@@ -21,6 +22,98 @@ use ngk::topology::payload::StandardPayload;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 use ngk::viz::debug_viewer::show;
 use ngk::viz::debug_viewer::show_gmap;
+
+#[test]
+fn connected_imprints_split_a_face_and_retain_each_section() {
+    let mut g = GMap::<StandardPayload>::new();
+    let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
+    let imprints = [
+        planar_imprint(Curve2::Line(Line2::new(
+            Point2::new(0.0, 2.0),
+            Point2::new(2.0, 2.0),
+        ))),
+        planar_imprint(Curve2::Line(Line2::new(
+            Point2::new(2.0, 2.0),
+            Point2::new(4.0, 2.0),
+        ))),
+    ];
+    let splits = split_face_by_imprints(&mut g, face, &imprints).unwrap();
+    assert_eq!(splits.len(), 1);
+    assert_eq!(splits[0].sections.len(), 2);
+    assert_eq!(
+        splits[0]
+            .sections
+            .iter()
+            .map(|section| section.imprint)
+            .collect::<HashSet<_>>(),
+        HashSet::from([0, 1])
+    );
+}
+
+#[test]
+fn two_semicircle_imprints_form_a_closed_inner_loop() {
+    use nalgebra::Vector2;
+    use ngk::geometry::Circle2;
+    let mut g = GMap::<StandardPayload>::new();
+    let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
+    let curves = [Vector2::x(), -Vector2::x()].map(|axis| {
+        Curve2::Circle(Circle2::new(
+            Point2::new(2.0, 2.0),
+            axis,
+            1.0,
+            std::f64::consts::PI,
+        ))
+    });
+    let graph = FaceImprintGraph::from_curves(&curves).unwrap();
+    assert_eq!(graph.edges().len(), 2);
+    assert_eq!(graph.closed_component_count(), 1);
+    let splits = split_face_by_imprints(&mut g, face, &curves.map(planar_imprint)).unwrap();
+    assert_eq!(splits.len(), 1);
+    assert_eq!(g.face_unchecked(face).inner_loops().len(), 1);
+}
+
+#[test]
+fn splitting_a_cylinder_seam_preserves_both_face_pcurves() {
+    let mut g = GMap::<StandardPayload>::new();
+    let cap = add_circle(&mut g, Plane::xy(), 1.0).unwrap();
+    let solid = add_extruded_face(&mut g, cap, Vector3::z() * 2.0).unwrap();
+    let side = g
+        .solid_unchecked(solid)
+        .faces()
+        .into_iter()
+        .find(|face| !matches!(face.surface(), Surface::Plane(_)))
+        .unwrap()
+        .key();
+    let edges = g.face_unchecked(side).outer_loop().edges();
+    let seam = edges
+        .iter()
+        .find(|edge| {
+            edges
+                .iter()
+                .filter(|other| other.key() == edge.key())
+                .count()
+                == 2
+        })
+        .unwrap()
+        .key();
+    split_face_edge(&mut g, side, seam, 0.5).unwrap();
+
+    let face = g.face_unchecked(side);
+    assert_eq!(face.outer_loop().edges().len(), 6);
+    for edge in face.outer_loop().edges() {
+        let pcurve = face
+            .pcurve(edge.dart())
+            .expect("every seam occurrence needs its own pcurve");
+        assert!(
+            face.point_at(pcurve.point_at(0.0).x, pcurve.point_at(0.0).y)
+                .coincides(*edge.start().point().unwrap(), LINEAR_TOLERANCE)
+        );
+        assert!(
+            face.point_at(pcurve.point_at(1.0).x, pcurve.point_at(1.0).y)
+                .coincides(*edge.end().point().unwrap(), LINEAR_TOLERANCE)
+        );
+    }
+}
 
 #[test]
 fn add_rectangle_creates_single_planar_face_with_pcurves() {

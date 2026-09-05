@@ -1,6 +1,6 @@
 # Boolean evaluation implementation plan
 
-- Status: **In progress — transverse planar solid evaluation implemented**
+- Status: **In progress — planar evaluation plus certified block/cylinder Booleans; curved/curved blocked on parameter-seam handling**
 - Owner: `boolean` branch
 - Target subsystem: `builders::boolean`
 - Depends on: [NURBS surface/surface intersection](nurbs_surface_surface_intersection.md)
@@ -969,13 +969,16 @@ Exit: the polyhedral vertical slice from
 
 ### Milestone 7 — Curved solids
 
-- [ ] Consume certified `SurfaceIntersectionBranch` output for curved pairs.
+- [x] Consume certified `SurfaceIntersectionBranch` output for curved pairs.
+- [ ] Parameter-seam handling in trim classification and face splitting.
 - [ ] Tangent-span policy in classification (barrier, no implied flip).
 - [ ] Coincident curved regions.
 - [ ] Cross-span propagation with sector analysis as a measured optimization,
       guarded by a debug assertion against the per-component ray result.
 
 Exit: box/cylinder, cylinder/cylinder, and through-hole subtraction pass.
+Box/cylinder and the through hole pass; cylinder/cylinder is blocked on the
+seam item above.
 
 ### Milestone 8 — Regularization, degeneracies, performance
 
@@ -1233,20 +1236,139 @@ reached. Milestone 7 therefore cannot start here: it is gated on
 line states. Generalizing `SolidRayCaster` beyond planes would be dead code
 until that lands.
 
-### Blocker 2 — a face's inner loop is invisible to shell traversal
+### Resolved blocker — loop-aware shell traversal (2026-09-04)
 
-`boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps` is
-written and `#[ignore]`d. The Boolean itself is correct: the ten result faces
-are built, both caps carry the shaft as an inner loop, every face's oriented
-flux is right, and `signed_volume` returns the exact 24. It is rejected by
-`validate_solid_orientation` because a face's inner loop is a *separate*
-alpha0/alpha1 orbit, so the shell's alpha0/alpha1/alpha2 orbit from a cap dart
-never reaches the shaft walls: `Sheet::faces()` reports six of the ten faces and
-`Closed::new` passes on that partial shell. The same limitation makes
-`add_extruded_face` return a six-faced solid for a profile with a hole.
+The topology layer now treats the raw alpha0/alpha1/alpha2 components joined by
+one multi-loop `FaceAttr` as one logical sheet. `Sheet::darts()` and
+`Sheet::faces()` cross stored outer/inner loop seeds transitively, preserving
+the contextual orientation of every reached face. Derived sheet and solid
+indexes cover every joined component, so lookup from a shaft-wall dart returns
+the same `SheetKey` and `SolidKey` as lookup from an outer cap.
 
-This is a topology-layer representation gap — a multi-loop face needs its loops
-connected in the sheet orbit — and fixing it there would also fix extrusion,
-tessellation, and validation of any holed shell. Until then the "through
-cylinder / inner loop on two faces" row of the matrix cannot pass, by either the
-curved or the planar route.
+`add_extruded_face` over `faces::polygon_with_holes` now returns the complete
+ten-face shell, passes solid orientation validation, and has Euler
+characteristic two. The through-slot Boolean regression is no longer ignored;
+it passes with ten faces, two holed caps, one shell, correct membership, and the
+expected Euler characteristic.
+
+## Implementation checkpoint: shared adaptive trim queries (2026-09-04)
+
+`FaceTrimDomain` now owns strict `Inside` / `Outside` / `OnBoundary`
+classification. Winding uses tolerance-controlled adaptive pcurve polylines,
+while points near a boundary are refined against the exact `Curve2`. Vertex/face,
+edge/face, general face-point, curved-branch clipping, planar line midpoint
+classification, fragment probes, and solid ray casting therefore share one
+trim-domain implementation. The fixed 16-sample membership helpers were removed
+from `contacts.rs`, and missing pcurves now propagate a Boolean error instead of
+being silently omitted.
+
+Focused tests in `tests/builders/boolean_trim.rs` cover points between the old
+inscribed polygon approximation and an exact circular outer trim, the
+corresponding case inside a circular hole, and a planar section whose endpoints
+must remain on the exact circular pcurve. `boolean_clip` continues to prove that
+a planar section leaving and re-entering a concave face becomes two spans.
+
+Both finite curved solver branches and planar intersection lines now obtain
+crossing parameters from exact `Curve2` intersections. The unbounded planar
+line is first bounded conservatively over the adaptive trim extent; those
+samples choose only the finite search interval and never define a crossing.
+Remaining Milestone 2 work is closed-loop anchoring beyond the current midpoint
+split and explicit `TrimCrossing`/`SpanBoundary` incidence metadata.
+
+## Implementation checkpoint: curved operands (2026-09-05)
+
+Milestone 7's first item is done: `boolean()` now evaluates operand pairs whose
+faces carry curved surfaces, provided the surface/surface solver certifies its
+own coverage. The three block/cylinder operations are green end to end.
+
+### Certified planar-versus-anything contours
+
+`seeds::planar_seeds` decides, per Bézier patch of the non-planar operand,
+whether that patch is fully accounted for by one regular arc. Two Bernstein
+arguments are admitted, and both are stated in the module so a later reader can
+check them:
+
+- the distance numerators vanish on one patch edge and are strictly sign
+  definite on every other control point, so no Bernstein combination can vanish
+  off that edge and the contour *is* the edge. This is the case for two
+  perpendicular planes, whose intersection line is the boundary of the finite
+  patch, and it is what the previous revision could not certify;
+- the numerators are monotone in one parameter direction — weakly, since a
+  paraboloid subdivided at its own axis has a vanishing difference there — so
+  the zero set is connected along that direction and cannot close into an
+  interior loop, and every edge that is a level set of that direction is sign
+  definite or monotone and so contributes at most one crossing.
+
+A patch whose control hull proves it never crosses the plane, and whose normal
+at a near-zero control point is parallel to the plane normal, carries a tangency
+rather than an arc; that is now reported as `TangentOrSingularContact` instead
+of subdivided until the budget runs out.
+
+### Certified curved-versus-curved contours
+
+`seeds::pair_seeds` subdivides a *pair* of patches until their normal cones are
+disjoint. By the Sederberg-Meyers loop criterion the pair then contains no
+closed intersection loop, so every branch through it meets the pair boundary and
+seeding from the patch boundary curves accounts for all of them.
+
+`intersections::surface_surface::normals` computes the cone. For a rational
+patch `S = P/w`, `S_u x S_v` is parallel to
+`w (P_u x P_v) - w_v (P_u x P) - w_u (P x P_v)`, a tensor-product Bernstein
+polynomial of bidegree `(3p-1, 3q-1)` in every term. Its values are convex
+combinations of its own coefficients, so the cone spanned by those coefficients
+contains every normal direction. Disjointness is tested against the other cone
+*and its opposite*, so the verdict does not depend on how either patch happens
+to be parameterized. `IntersectionIncompleteReason::InteriorLoopSearchNotImplemented`
+is therefore gone, replaced by `LoopFreedomNotCertified`, which now names an
+actual unresolved box rather than a missing feature.
+
+Two supporting gaps were closed in the same slice:
+
+- the tracer stopped at every parameter-domain boundary, including a cylinder's
+  seam, so a loop crossing `u = 0` came back as several open fragments.
+  `tracer::periods` detects the directions that close on themselves and the
+  trace now continues from the far edge, recognizing exact closure when it
+  returns to the seed;
+- a cylinder/cylinder branch is a quartic, which the cubic interpolant cannot
+  fit at the default step. `refit_with_denser_trace` retraces with halved steps
+  while the measured fit error improves, bounded to four rounds.
+
+### Tolerance correction
+
+`BooleanTolerances` gains `section_fit`. A curved section is an approximation
+produced by the surface/surface fitter, so `validate_span_pcurves` cannot demand
+that its pcurves evaluate onto it within the point-coincidence budget. The
+budget for that check is now the fitter's own, and exact planar sections stay
+far inside it.
+
+### Newly verified cases
+
+- block minus a through cylinder: seven faces, two of them holed;
+- block intersected with a through cylinder: the three-faced common core, with
+  membership spot checks;
+- block united with a protruding cylinder: eight faces and one inner loop;
+- two orthogonal cylinders of different radii whose intersection is two closed
+  loops lying strictly inside both patches, found with complete coverage;
+- a paraboloid/plane interior loop, previously the only certified interior case.
+
+### Remaining blocker — the parameter seam
+
+`boolean_difference_crosses_two_cylindrical_holes` is written and `#[ignore]`d.
+It drills a second, narrower bore across the first, so the two bore walls meet:
+the first operand pair in the test matrix with no planar face. The solver is not
+the problem — the network holds all six sections, each two-sided, and the seam
+edge of the crossing cylinder is split at all three events on it. Both remaining
+failures are the same gap in the layers above:
+
+- the bore wall's own seam sits at `u = 0`, and one of the two wall/wall loops
+  straddles it. Its pcurve leaves `[0, 2pi]`, so `FaceTrimDomain` classifies
+  part of it as outside and the loop is dropped. Only the loop centred on
+  `u = pi` reaches the network;
+- a wall/plane loop that *does* reach the network still cannot be imprinted on
+  the crossing cylinder. In that face's parameter domain the loop is a chord
+  from the `u = 0` seam to the `u = 2pi` seam, and `FaceImprintCut` only
+  recognizes a chord between two boundary corners of a single traversal.
+
+Both want the same thing: trim domains, clipping, and face splitting that treat
+a periodic parameter as a seam rather than an edge. That is the next Milestone 7
+item, and it is topology-layer work rather than solver work.

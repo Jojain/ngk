@@ -166,6 +166,48 @@ impl<'g, P: Payload> Face<'g, P> {
         self.attr().surface.point_at(u, v)
     }
 
+    /// Approximates this oriented face's signed tetrahedral volume contribution.
+    ///
+    /// Signed parameter-space triangle fans include concave boundaries and holes.
+    /// Curved triangles are subdivided on the support surface; this is an
+    /// orientation estimate, not a certified mass-property calculation.
+    pub(crate) fn signed_volume_contribution(&self, reference: Point3) -> Option<f64> {
+        let planar = matches!(self.surface(), Surface::Plane(_));
+        let mut volume = 0.0;
+        for boundary in self.loops() {
+            let mut uvs = Vec::new();
+            for edge in boundary.edges() {
+                let curve = self.pcurve(edge.dart())?;
+                let count = if matches!(curve, Curve2::Line(_)) {
+                    1
+                } else {
+                    32
+                };
+                uvs.extend(curve.sample(count).into_iter().take(count));
+            }
+            let origin = *uvs.first()?;
+            for pair in uvs[1..].windows(2) {
+                let count = if planar { 1 } else { 16 };
+                let point = |i: usize, j: usize| {
+                    let uv = origin
+                        + (pair[0] - origin) * (i as f64 / count as f64)
+                        + (pair[1] - origin) * (j as f64 / count as f64);
+                    self.point_at(uv.x, uv.y) - reference
+                };
+                for i in 0..count {
+                    for j in 0..count - i {
+                        let (a, b, c) = (point(i, j), point(i + 1, j), point(i, j + 1));
+                        volume += a.dot(&b.cross(&c)) / 6.0;
+                        if i + j + 1 < count {
+                            volume += b.dot(&point(i + 1, j + 1).cross(&c)) / 6.0;
+                        }
+                    }
+                }
+            }
+        }
+        volume.is_finite().then_some(volume)
+    }
+
     /// Returns the oriented face normal at a surface parameter.
     ///
     /// Counter-clockwise outer-loop pcurves keep the support-surface normal;

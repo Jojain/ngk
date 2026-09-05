@@ -2,19 +2,30 @@ use super::super::IntersectionOptions;
 use super::simplification::{recognize_curve_3d, simplify_curve_2d};
 use super::tracer::TraceState;
 use crate::geometry::{
-    Curve, Curve2, IntersectionError, IntersectionQuality, NurbsCurve, NurbsCurve2, NurbsSurface,
-    Point2, SurfaceIntersectionBranch, SurfaceIntersectionBranchKind, SurfaceIntersectionPointKind,
+    Curve, Curve2, IntersectionError, IntersectionQuality, NurbsCurve, NurbsCurve2, Point2,
+    Surface, SurfaceIntersectionBranch, SurfaceIntersectionBranchKind,
+    SurfaceIntersectionPointKind, SurfacePeriodicity,
 };
 
 /// Fits synchronized 3D and parameter-space curves using one chord-length parameterization.
 pub(super) fn fit_branch(
-    a: &NurbsSurface,
-    b: &NurbsSurface,
+    a: &Surface,
+    b: &Surface,
     mut states: Vec<TraceState>,
     closed: bool,
     options: IntersectionOptions,
 ) -> Result<SurfaceIntersectionBranch, IntersectionError> {
     canonicalize_states(&mut states, closed);
+    for state in &mut states {
+        let uv_a = a.closest_parameter(state.point)?;
+        let uv_b = b.closest_parameter(state.point)?;
+        state.parameters.x = uv_a.x;
+        state.parameters.y = uv_a.y;
+        state.parameters.z = uv_b.x;
+        state.parameters.w = uv_b.y;
+    }
+    unwrap_surface_parameters(&mut states, a.periodicity(), 0, 1);
+    unwrap_surface_parameters(&mut states, b.periodicity(), 2, 3);
     let points = states.iter().map(|state| state.point).collect::<Vec<_>>();
     let uv_a = states
         .iter()
@@ -101,6 +112,36 @@ pub(super) fn fit_branch(
     })
 }
 
+fn unwrap_surface_parameters(
+    states: &mut [TraceState],
+    periodicity: SurfacePeriodicity,
+    u_index: usize,
+    v_index: usize,
+) {
+    match periodicity {
+        SurfacePeriodicity::None => {}
+        SurfacePeriodicity::UPeriodic(period) => unwrap_parameter(states, u_index, period),
+        SurfacePeriodicity::VPeriodic(period) => unwrap_parameter(states, v_index, period),
+        SurfacePeriodicity::UVPeriodic(u_period, v_period) => {
+            unwrap_parameter(states, u_index, u_period);
+            unwrap_parameter(states, v_index, v_period);
+        }
+    }
+}
+
+fn unwrap_parameter(states: &mut [TraceState], index: usize, period: f64) {
+    for current in 1..states.len() {
+        let previous = states[current - 1].parameters[index];
+        let value = &mut states[current].parameters[index];
+        while *value + period * 0.5 < previous {
+            *value += period;
+        }
+        while *value - period * 0.5 > previous {
+            *value -= period;
+        }
+    }
+}
+
 fn canonicalize_states(states: &mut [TraceState], closed: bool) {
     if closed {
         if states
@@ -129,8 +170,8 @@ fn state_key(state: TraceState) -> f64 {
 }
 
 fn validate_fit(
-    a: &NurbsSurface,
-    b: &NurbsSurface,
+    a: &Surface,
+    b: &Surface,
     curve_3d: &Curve,
     pcurve_a: &Curve2,
     pcurve_b: &Curve2,
@@ -143,6 +184,9 @@ fn validate_fit(
             .windows(2)
             .map(|window| 0.5 * (window[0] + window[1])),
     );
+    const GLOBAL_CHECKPOINTS: usize = 128;
+    checkpoints
+        .extend((0..=GLOBAL_CHECKPOINTS).map(|index| index as f64 / GLOBAL_CHECKPOINTS as f64));
     let mut max_fit_error: f64 = 0.0;
     for parameter in checkpoints {
         let point = curve_3d.point_at(parameter);

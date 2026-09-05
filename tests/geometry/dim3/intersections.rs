@@ -240,11 +240,7 @@ fn perpendicular_planes_return_surface_surface_curve() {
         assert_point_near(point, a.point_at(uv_a.x, uv_a.y));
         assert_point_near(point, b.point_at(uv_b.x, uv_b.y));
     }
-    assert!(matches!(
-        results.coverage(),
-        IntersectionCoverage::Incomplete(reasons)
-            if reasons.contains(&IntersectionIncompleteReason::InteriorLoopSearchNotImplemented)
-    ));
+    assert_eq!(results.coverage(), &IntersectionCoverage::Complete);
 }
 
 #[test]
@@ -279,6 +275,8 @@ fn plane_cylinder_intersection_returns_closed_synchronized_branch() {
 
     let results = plane.intersect_surface(&cylinder).unwrap();
 
+    assert_eq!(results.coverage(), &IntersectionCoverage::Complete);
+
     let branches = results
         .intersections()
         .iter()
@@ -297,7 +295,7 @@ fn plane_cylinder_intersection_returns_closed_synchronized_branch() {
     assert!(branch.samples.len() > 16);
     assert!(is_bounded_circle(&branch.curve_3d));
     assert!(matches!(branch.pcurve_a, Curve2::Circle(_)));
-    assert!(matches!(branch.pcurve_b, Curve2::Nurbs(_)));
+    assert!(matches!(branch.pcurve_b, Curve2::Line(_)));
     assert!(
         branch.quality.max_residual <= LINEAR_TOLERANCE,
         "{:?}",
@@ -318,11 +316,41 @@ fn plane_cylinder_intersection_returns_closed_synchronized_branch() {
         assert!((point - plane.point_at(uv_plane.x, uv_plane.y)).norm() <= fit_tolerance);
         assert!((point - cylinder.point_at(uv_cylinder.x, uv_cylinder.y)).norm() <= fit_tolerance);
     }
+    for index in 0..=128 {
+        let parameter = index as f64 / 128.0;
+        let point = branch.curve_3d.point_at(parameter);
+        let uv_plane = branch.pcurve_a.point_at(parameter);
+        let uv_cylinder = branch.pcurve_b.point_at(parameter);
+        let fit_tolerance = IntersectionOptions::default().fit_tolerance;
+        assert!((point - plane.point_at(uv_plane.x, uv_plane.y)).norm() <= fit_tolerance);
+        assert!((point - cylinder.point_at(uv_cylinder.x, uv_cylinder.y)).norm() <= fit_tolerance);
+    }
 }
 
 #[test]
 fn surface_intersection_simplification_is_enabled_by_default() {
     assert!(IntersectionOptions::default().simplify_curves);
+}
+
+#[test]
+fn interior_paraboloid_plane_loop_is_found_with_complete_coverage() {
+    let paraboloid = square_paraboloid(0.5);
+    let plane = square_nurbs_plane(0.0, 1.0);
+
+    let results = paraboloid.intersect_surface(&plane).unwrap();
+
+    assert_eq!(results.coverage(), &IntersectionCoverage::Complete);
+    let branches = results
+        .intersections()
+        .iter()
+        .filter_map(|intersection| match intersection {
+            SurfaceSurfaceIntersection::Branch(branch) => Some(branch),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(branches.len(), 1, "{results:?}");
+    assert!(branches[0].closed, "{results:?}");
+    assert!(is_bounded_circle(&branches[0].curve_3d), "{results:?}");
 }
 
 #[test]
@@ -543,6 +571,37 @@ fn square_nurbs_plane(z: f64, half_size: f64) -> Surface {
             Degree::new(1).unwrap(),
             Degree::new(1).unwrap(),
             ControlNet::new(points, 2, 2).unwrap(),
+            knots.clone(),
+            knots,
+        )
+        .unwrap(),
+    )
+}
+
+/// Exact biquadratic patch `z = x^2 + y^2 - radius^2` over `[-1, 1]^2`.
+fn square_paraboloid(radius: f64) -> Surface {
+    let coordinates = [-1.0, 0.0, 1.0];
+    let square_coefficients = [1.0, -1.0, 1.0];
+    let points = (0..3)
+        .flat_map(|v| {
+            (0..3).map(move |u| {
+                HPoint::from_cartesian(
+                    Point3::new(
+                        coordinates[u],
+                        coordinates[v],
+                        square_coefficients[u] + square_coefficients[v] - radius * radius,
+                    ),
+                    1.0,
+                )
+            })
+        })
+        .collect();
+    let knots = KnotVector::new(vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]).unwrap();
+    Surface::Nurbs(
+        NurbsSurface::new(
+            Degree::new(2).unwrap(),
+            Degree::new(2).unwrap(),
+            ControlNet::new(points, 3, 3).unwrap(),
             knots.clone(),
             knots,
         )
@@ -828,4 +887,62 @@ fn a_curve_crossing_a_plane_nine_times_is_fully_resolved() {
         };
         assert!(point.z.abs() <= LINEAR_TOLERANCE * 10.0, "{point:?}");
     }
+}
+
+#[test]
+fn crossing_cylinders_return_two_interior_loops_with_complete_coverage() {
+    // Both intersection curves lie strictly inside the two unit-height patches
+    // and never touch a patch boundary, so they are only found once a
+    // subdivision certifies that the parameter boxes hold no other loop.
+    // Different radii keep the crossing transverse everywhere.
+    let upright = Surface::Cylinder(Cylinder::new(
+        Point3::new(0.0, 0.0, -0.5),
+        Vector3::x(),
+        Vector3::z(),
+        0.3,
+    ));
+    let lying = Surface::Cylinder(Cylinder::new(
+        Point3::new(-0.5, 0.0, 0.0),
+        Vector3::y(),
+        Vector3::x(),
+        0.2,
+    ));
+
+    let results = upright.intersect_surface(&lying).unwrap();
+
+    assert_eq!(
+        results.coverage(),
+        &IntersectionCoverage::Complete,
+        "{results:?}"
+    );
+    let branches = results
+        .intersections()
+        .iter()
+        .filter_map(|intersection| match intersection {
+            SurfaceSurfaceIntersection::Branch(branch) => Some(branch),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(branches.len(), 2, "{results:?}");
+    for branch in &branches {
+        assert!(branch.closed, "{branch:?}");
+        assert!(branch.quality.certified, "{branch:?}");
+        for index in 0..=64 {
+            let parameter = index as f64 / 64.0;
+            let point = branch.curve_3d.point_at(parameter);
+            assert!(
+                (point.x * point.x + point.y * point.y - 0.09).abs() <= 1.0e-6,
+                "{point:?}"
+            );
+            assert!(
+                (point.y * point.y + point.z * point.z - 0.04).abs() <= 1.0e-6,
+                "{point:?}"
+            );
+        }
+    }
+    // The two loops sit on opposite sides of the upright cylinder's axis.
+    assert!(
+        branches[0].curve_3d.point_at(0.0).x * branches[1].curve_3d.point_at(0.0).x < 0.0,
+        "{results:?}"
+    );
 }

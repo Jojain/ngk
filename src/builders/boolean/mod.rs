@@ -209,7 +209,7 @@ pub fn compute_boolean_intersections<P: Payload>(
         face_imprints: HashMap::new(),
     };
 
-    compute_vertex_contacts(g, &mut observations, options);
+    compute_vertex_contacts(g, &mut observations, options)?;
     compute_edge_contacts(g, &mut observations, options)?;
     compute_edge_face_contacts(g, &mut observations, options)?;
     compute_face_contacts(g, &mut observations, options)?;

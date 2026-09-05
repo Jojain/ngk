@@ -258,6 +258,21 @@ fn signed_volume<P: Payload>(map: &GMap<P>, faces: &[FaceKey]) -> f64 {
         .expect("admitted geometry");
     let mut volume = 0.0;
     for &key in faces {
+        let face = map.face_unchecked(key);
+        if !matches!(face.surface(), crate::geometry::Surface::Plane(_))
+            || face.edges().iter().any(|edge| {
+                edge.curve().is_some_and(|curve| {
+                    curve
+                        .to_nurbs()
+                        .is_ok_and(|curve| curve.degree().get() != 1)
+                })
+            })
+        {
+            volume += face
+                .signed_volume_contribution(reference)
+                .unwrap_or(f64::NAN);
+            continue;
+        }
         for boundary in map.face_unchecked(key).loops() {
             let points = boundary
                 .edges()

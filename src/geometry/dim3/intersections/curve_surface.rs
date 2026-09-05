@@ -62,8 +62,9 @@ impl PreparedCurve {
 }
 
 /// A surface decomposed once for repeated intersection against many curves.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PreparedSurface {
+    source: Surface,
     nurbs: NurbsSurface,
     patches: Vec<BezierSurface>,
 }
@@ -71,7 +72,7 @@ pub struct PreparedSurface {
 impl PreparedSurface {
     /// Decomposes `surface` into its exact rational Bézier patches.
     pub fn new(surface: &Surface) -> Result<Self, IntersectionError> {
-        Self::from_nurbs(surface.to_nurbs()?)
+        Self::from_nurbs(surface.clone(), surface.to_nurbs()?)
     }
 
     /// Decomposes `surface` realized over the requested parameter box.
@@ -84,12 +85,16 @@ impl PreparedSurface {
         domain_u: Interval,
         domain_v: Interval,
     ) -> Result<Self, IntersectionError> {
-        Self::from_nurbs(surface.to_nurbs_over(domain_u, domain_v)?)
+        Self::from_nurbs(surface.clone(), surface.to_nurbs_over(domain_u, domain_v)?)
     }
 
-    fn from_nurbs(nurbs: NurbsSurface) -> Result<Self, IntersectionError> {
+    fn from_nurbs(source: Surface, nurbs: NurbsSurface) -> Result<Self, IntersectionError> {
         let patches = nurbs.bezier_spans()?;
-        Ok(Self { nurbs, patches })
+        Ok(Self {
+            source,
+            nurbs,
+            patches,
+        })
     }
 
     /// Returns the u parameter domain of the underlying surface.
@@ -105,6 +110,11 @@ impl PreparedSurface {
     /// Returns the underlying NURBS surface.
     pub fn nurbs(&self) -> &NurbsSurface {
         &self.nurbs
+    }
+
+    /// Returns the source surface whose parameter space public results use.
+    pub fn source(&self) -> &Surface {
+        &self.source
     }
 }
 

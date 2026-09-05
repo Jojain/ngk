@@ -36,6 +36,16 @@ impl BezierSurface {
         self.surface.point_at(u, v)
     }
 
+    /// Returns the patch as a NURBS surface over its own parameter box.
+    pub fn surface(&self) -> &NurbsSurface {
+        &self.surface
+    }
+
+    /// Returns the patch normal in parent-surface parameters.
+    pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
+        self.surface.normal_at(u, v)
+    }
+
     /// Returns a conservative control-hull bound for positive weights.
     pub fn bbox(&self) -> BBox {
         BBox::from_points(

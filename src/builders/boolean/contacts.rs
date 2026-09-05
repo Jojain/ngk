@@ -12,7 +12,7 @@ pub(super) fn compute_vertex_contacts<P: Payload>(
     g: &GMap<P>,
     plan: &mut IntersectionAccumulator,
     options: BooleanOptions,
-) {
+) -> Result<(), BooleanError> {
     let tolerance = options.intersections.linear_tolerance;
     let first_vertices = plan.first_cells.vertices.clone();
     let second_vertices = plan.second_cells.vertices.clone();
@@ -57,15 +57,16 @@ pub(super) fn compute_vertex_contacts<P: Payload>(
     let second_faces = plan.second_cells.faces.clone();
     for vertex in first_vertices {
         for face in second_faces.iter().copied() {
-            intersect_vertex_face(g, plan, vertex, face, true, tolerance);
+            intersect_vertex_face(g, plan, vertex, face, true, options)?;
         }
     }
     let first_faces = plan.first_cells.faces.clone();
     for vertex in second_vertices {
         for face in first_faces.iter().copied() {
-            intersect_vertex_face(g, plan, vertex, face, false, tolerance);
+            intersect_vertex_face(g, plan, vertex, face, false, options)?;
         }
     }
+    Ok(())
 }
 
 fn intersect_vertex_edge<P: Payload>(
@@ -114,23 +115,24 @@ fn intersect_vertex_face<P: Payload>(
     vertex_key: VertexKey,
     face_key: FaceKey,
     vertex_is_first: bool,
-    tolerance: f64,
-) {
+    options: BooleanOptions,
+) -> Result<(), BooleanError> {
     let point = *g
         .vertex_unchecked(vertex_key)
         .point()
         .expect("registered vertex geometry");
     let face = g.face_unchecked(face_key);
     let Ok(uv) = face.surface().closest_parameter(point) else {
-        return;
+        return Ok(());
     };
+    let trim = FaceTrimDomain::new(&face, options.intersections.parameter_tolerance)?;
     if !face
         .surface()
         .point_at(uv.x, uv.y)
-        .coincides(point, tolerance)
-        || !face_contains_uv(&face_uv_loops(&face), uv)
+        .coincides(point, options.intersections.linear_tolerance)
+        || !trim.contains(uv)
     {
-        return;
+        return Ok(());
     }
 
     let (first, second) = if vertex_is_first {
@@ -139,6 +141,7 @@ fn intersect_vertex_face<P: Payload>(
         (BooleanCell::Face(face_key), BooleanCell::Vertex(vertex_key))
     };
     push_point_contact(&mut plan.contacts, point, first, second);
+    Ok(())
 }
 
 pub(super) fn compute_edge_contacts<P: Payload>(
@@ -320,7 +323,7 @@ fn intersect_edge_face<P: Payload>(
     let edge = g.edge_unchecked(edge_key);
     let face = g.face_unchecked(face_key);
     let curve = edge.curve().expect("registered edge geometry");
-    let loops = face_uv_loops(&face);
+    let trim = FaceTrimDomain::new(&face, options.intersections.parameter_tolerance)?;
     let contacts = {
         let prepared_curve = geometry.edge(g, edge_key)?.clone();
         let prepared_face = geometry.face(g, face_key)?;
@@ -335,7 +338,7 @@ fn intersect_edge_face<P: Payload>(
                 surface_u,
                 surface_v,
             } => {
-                if !face_contains_uv(&loops, Point2::new(surface_u, surface_v)) {
+                if !trim.contains(Point2::new(surface_u, surface_v)) {
                     continue;
                 }
                 push_edge_point(plan, edge_key, point);
@@ -369,7 +372,7 @@ fn intersect_edge_face<P: Payload>(
                 let Some((start_uv, end_uv)) = start_uv.zip(end_uv) else {
                     continue;
                 };
-                if !face_contains_uv(&loops, start_uv) || !face_contains_uv(&loops, end_uv) {
+                if !trim.contains(start_uv) || !trim.contains(end_uv) {
                     continue;
                 }
                 let imprint_curve = Curve::line(start, end);
@@ -737,18 +740,10 @@ fn intersect_face_pair<P: Payload>(
         (first_offset * second_normal.cross(&cross) + second_offset * cross.cross(&first_normal))
             / cross_squared,
     );
-    let first_intervals = line_intervals_in_face(
-        &first,
-        line_point,
-        direction,
-        options.intersections.parameter_tolerance,
-    );
-    let second_intervals = line_intervals_in_face(
-        &second,
-        line_point,
-        direction,
-        options.intersections.parameter_tolerance,
-    );
+    let first_intervals =
+        line_intervals_in_face(&first, line_point, direction, options.intersections)?;
+    let second_intervals =
+        line_intervals_in_face(&second, line_point, direction, options.intersections)?;
 
     for first_interval in first_intervals {
         for second_interval in &second_intervals {
@@ -788,11 +783,18 @@ fn intersect_general_face_pair<P: Payload>(
 ) -> Result<(), BooleanError> {
     let first = g.face_unchecked(first_key);
     let second = g.face_unchecked(second_key);
-    let first_loops = face_uv_loops(&first);
-    let second_loops = face_uv_loops(&second);
-    let contacts = crate::geometry::dim3::intersections::intersect_surfaces_with_options(
-        first.surface(),
-        second.surface(),
+    let first_trim = FaceTrimDomain::new(&first, options.intersections.parameter_tolerance)?;
+    let second_trim = FaceTrimDomain::new(&second, options.intersections.parameter_tolerance)?;
+    let prepare =
+        |face: &crate::topology::face::Face<'_, P>| match broad_phase::face_uv_bounds(face) {
+            Some((domain_u, domain_v)) => PreparedSurface::over(face.surface(), domain_u, domain_v),
+            None => PreparedSurface::new(face.surface()),
+        };
+    let prepared_first = prepare(&first)?;
+    let prepared_second = prepare(&second)?;
+    let contacts = crate::geometry::intersect_prepared_surfaces(
+        &prepared_first,
+        &prepared_second,
         options.intersections,
     )?;
     merge_coverage(plan, contacts.coverage());
@@ -802,8 +804,8 @@ fn intersect_general_face_pair<P: Payload>(
                 let point = contact.point;
                 let (surface_a_u, surface_a_v) = (contact.uv_a.x, contact.uv_a.y);
                 let (surface_b_u, surface_b_v) = (contact.uv_b.x, contact.uv_b.y);
-                if face_contains_uv(&first_loops, Point2::new(surface_a_u, surface_a_v))
-                    && face_contains_uv(&second_loops, Point2::new(surface_b_u, surface_b_v))
+                if first_trim.contains(Point2::new(surface_a_u, surface_a_v))
+                    && second_trim.contains(Point2::new(surface_b_u, surface_b_v))
                 {
                     push_point_contact(
                         &mut plan.contacts,
@@ -816,10 +818,6 @@ fn intersect_general_face_pair<P: Payload>(
             SurfaceSurfaceIntersection::Branch(branch) => {
                 plan.diagnostics.branches_found += 1;
                 plan.diagnostics.branches_uncertified += usize::from(!branch.quality.certified);
-                let first_trim =
-                    FaceTrimDomain::new(&first, options.intersections.parameter_tolerance)?;
-                let second_trim =
-                    FaceTrimDomain::new(&second, options.intersections.parameter_tolerance)?;
                 for [first_imprint, second_imprint] in
                     clip_branch(branch, &first_trim, &second_trim, options.intersections)?
                 {
@@ -1016,8 +1014,8 @@ fn line_intervals_in_face<P: Payload>(
     face: &crate::topology::face::Face<'_, P>,
     line_point: Point3,
     direction: nalgebra::Vector3<f64>,
-    tolerance: f64,
-) -> Vec<Interval> {
+    options: IntersectionOptions,
+) -> Result<Vec<Interval>, BooleanError> {
     let origin_uv = face
         .surface()
         .closest_parameter(line_point)
@@ -1027,101 +1025,15 @@ fn line_intervals_in_face<P: Payload>(
         .closest_parameter(line_point + direction)
         .expect("planar parameter projection")
         - origin_uv;
-    let loops = face_uv_loops(face);
-    let mut parameters = Vec::new();
-    for loop_ in &loops {
-        for segment in loop_
-            .iter()
-            .zip(loop_.iter().cycle().skip(1))
-            .take(loop_.len())
-        {
-            if let Some(parameter) =
-                line_segment_parameter(origin_uv, direction_uv, *segment.0, *segment.1, tolerance)
-            {
-                parameters.push(parameter);
-            }
-        }
-    }
-    parameters.sort_by(f64::total_cmp);
-    parameters.dedup_by(|a, b| (*a - *b).abs() <= tolerance);
-    parameters
-        .windows(2)
-        .filter_map(|pair| {
-            let midpoint = 0.5 * (pair[0] + pair[1]);
-            let uv = origin_uv + direction_uv * midpoint;
-            face_contains_uv(&loops, uv).then_some(Interval::new(pair[0], pair[1]))
-        })
-        .collect()
-}
-
-fn face_uv_loops<P: Payload>(face: &crate::topology::face::Face<'_, P>) -> Vec<Vec<Point2>> {
-    face.loops()
-        .into_iter()
-        .map(|loop_| {
-            loop_
-                .edges()
-                .into_iter()
-                .filter_map(|edge| face.pcurve(edge.dart()))
-                .flat_map(|pcurve| {
-                    let samples = pcurve.sample(16);
-                    let count = samples.len().saturating_sub(1);
-                    samples.into_iter().take(count)
-                })
-                .collect()
-        })
-        .collect()
-}
-
-fn line_segment_parameter(
-    line_origin: Point2,
-    line_direction: Vector2<f64>,
-    segment_start: Point2,
-    segment_end: Point2,
-    tolerance: f64,
-) -> Option<f64> {
-    let segment_direction = segment_end - segment_start;
-    let denominator = cross2(line_direction, segment_direction);
-    if denominator.abs() <= tolerance {
-        return None;
-    }
-    let delta = segment_start - line_origin;
-    let line_t = cross2(delta, segment_direction) / denominator;
-    let segment_t = cross2(delta, line_direction) / denominator;
-    (-tolerance..=1.0 + tolerance)
-        .contains(&segment_t)
-        .then_some(line_t)
+    Ok(
+        FaceTrimDomain::new(face, options.parameter_tolerance)?.line_intervals(
+            origin_uv,
+            direction_uv,
+            options,
+        )?,
+    )
 }
 
 fn cross2(a: Vector2<f64>, b: Vector2<f64>) -> f64 {
     a.x * b.y - a.y * b.x
-}
-
-fn face_contains_uv(loops: &[Vec<Point2>], point: Point2) -> bool {
-    let Some(outer) = loops.first() else {
-        return false;
-    };
-    point_in_polygon(outer, point)
-        && loops
-            .iter()
-            .skip(1)
-            .all(|hole| !point_in_polygon(hole, point))
-}
-
-fn point_in_polygon(polygon: &[Point2], point: Point2) -> bool {
-    if polygon.len() < 3 {
-        return false;
-    }
-    let mut inside = false;
-    for (a, b) in polygon
-        .iter()
-        .zip(polygon.iter().cycle().skip(1))
-        .take(polygon.len())
-    {
-        let crosses = (a.y > point.y) != (b.y > point.y)
-            && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x;
-        if crosses {
-            inside = !inside;
-        }
-    }
-    inside
 }

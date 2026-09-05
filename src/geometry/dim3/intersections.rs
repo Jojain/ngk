@@ -15,7 +15,9 @@ pub use curve_surface::{
 };
 pub use error::IntersectionError;
 pub use options::IntersectionOptions;
-pub use surface_surface::{intersect_surfaces, intersect_surfaces_with_options};
+pub use surface_surface::{
+    intersect_prepared_surfaces, intersect_surfaces, intersect_surfaces_with_options,
+};
 
 pub type CurveCurveIntersections = Vec<CurveCurveIntersection>;
 
@@ -186,7 +188,10 @@ pub enum IntersectionCoverage {
 /// Structured reasons why a result set cannot claim complete coverage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntersectionIncompleteReason {
-    InteriorLoopSearchNotImplemented,
+    /// A candidate parameter box was left without a certificate that its
+    /// intersection contains no closed loop, so a loop entirely inside both
+    /// patches may be missing from the reported branches.
+    LoopFreedomNotCertified,
     CoincidentRegionResolutionNotImplemented,
     TangentOrSingularContact,
     MinimumTraceStepReached,

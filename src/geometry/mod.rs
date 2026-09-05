@@ -22,7 +22,7 @@ pub use dim3::intersections::{
     PreparedSurface, SurfaceIntersectionBranch, SurfaceIntersectionBranchKind,
     SurfaceIntersectionPoint, SurfaceIntersectionPointKind, SurfaceOverlapCandidate,
     SurfaceSurfaceIntersection, SurfaceSurfaceIntersections, intersect_prepared_curve_surface,
-    intersect_surfaces, intersect_surfaces_with_options,
+    intersect_prepared_surfaces, intersect_surfaces, intersect_surfaces_with_options,
 };
 pub use dim3::nurbs::tessellate::{
     sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,

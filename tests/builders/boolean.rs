@@ -894,7 +894,6 @@ fn boolean_union_of_boxes_sharing_a_full_face_closes_across_the_contact() {
         BooleanOptions::default(),
     )
     .unwrap();
-    show(&map);
 
     validate_solid_manifold(&map, result.solid).unwrap();
     ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
@@ -1098,46 +1097,219 @@ fn boolean_difference_is_computed_in_both_operand_orders() {
     }
 }
 
-#[test]
-fn boolean_refuses_incomplete_intersection_coverage_and_restores_the_map() {
-    use ngk::builders::boolean::{BooleanError, BooleanOperation, boolean};
-    // A cylinder is a legal operand, but the surface/surface solver cannot yet
-    // certify that it found every branch. The operation must report the gap and
-    // leave the map untouched rather than register an unverified solid.
+/// Builds a size-2 block at the origin together with a coaxial cylinder.
+///
+/// The cylinder is centred on the block's axis at `(1, 1)`, so `base` and
+/// `height` alone decide whether it passes through, stops inside, or protrudes.
+fn block_with_cylinder(
+    radius: f64,
+    base: f64,
+    height: f64,
+) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
     let disc = faces::circle(
-        Plane::from_xy(Point3::new(1.0, 1.0, -1.0), Vector3::x(), Vector3::y()),
-        0.5,
+        Plane::from_xy(Point3::new(1.0, 1.0, base), Vector3::x(), Vector3::y()),
+        radius,
     )
     .expect("cylinder base");
-    let (tool, cylinder) = {
+    let (tool, tool_cylinder) = {
         let (mut map, face) = disc.into_map();
         let solid =
-            add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 4.0)).expect("cylinder");
+            add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, height)).expect("cylinder");
         (map, solid)
     };
     let (mut map, block) = block_at(Point3::origin(), 2.0);
     let cylinder = map
         .transaction(|edit| {
-            let dart = edit.merge(tool.solid_unchecked(cylinder));
+            let dart = edit.merge(tool.solid_unchecked(tool_cylinder));
             Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
         })
         .unwrap();
+    (map, block, cylinder)
+}
 
-    let before = serde_json::to_value(&map).unwrap();
-    let Err(error) = boolean(
+#[test]
+fn boolean_difference_supports_a_cylindrical_through_hole() {
+    use ngk::builders::boolean::{BooleanOperation, boolean};
+    let (mut map, block, cylinder) = block_with_cylinder(0.5, -1.0, 4.0);
+
+    let result = boolean(
         &mut map,
         block,
         cylinder,
         BooleanOperation::Difference,
         BooleanOptions::default(),
-    ) else {
-        panic!("curved classification is not certified yet");
+    )
+    .unwrap();
+
+    validate_solid_manifold(&map, result.solid).unwrap();
+    ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+    let solid = map.solid_unchecked(result.solid);
+    show(&map);
+
+    assert_eq!(solid.shells().len(), 1);
+    assert_eq!(solid.faces().len(), 7);
+    assert_eq!(
+        solid
+            .faces()
+            .iter()
+            .filter(|face| !face.inner_loops().is_empty())
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn boolean_intersection_of_a_block_and_a_through_cylinder_is_the_common_core() {
+    use ngk::builders::boolean::{BooleanOperation, boolean, solid_contains_point};
+    let (mut map, block, cylinder) = block_with_cylinder(0.5, -1.0, 4.0);
+
+    let result = boolean(
+        &mut map,
+        block,
+        cylinder,
+        BooleanOperation::Intersection,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    validate_solid_manifold(&map, result.solid).unwrap();
+    ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+    let solid = map.solid_unchecked(result.solid);
+    assert_eq!(solid.shells().len(), 1);
+    // The block's caps clip the cylinder to the block height, leaving the two
+    // trimmed discs and the cylindrical wall between them.
+    assert_eq!(solid.faces().len(), 3);
+    assert!(
+        solid
+            .faces()
+            .iter()
+            .all(|face| face.inner_loops().is_empty())
+    );
+    for (point, expected) in [
+        (Point3::new(1.0, 1.0, 1.0), true),
+        (Point3::new(1.6, 1.0, 1.0), false),
+        (Point3::new(1.0, 1.0, 2.5), false),
+    ] {
+        assert_eq!(
+            solid_contains_point(&map, result.solid, point, BooleanOptions::default()).unwrap(),
+            expected,
+            "{point:?}"
+        );
+    }
+}
+
+#[test]
+fn boolean_union_of_a_block_and_a_protruding_cylinder_opens_one_inner_loop() {
+    use ngk::builders::boolean::{BooleanOperation, boolean, solid_contains_point};
+    let (mut map, block, cylinder) = block_with_cylinder(0.5, 1.0, 2.0);
+
+    let result = boolean(
+        &mut map,
+        block,
+        cylinder,
+        BooleanOperation::Union,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    validate_solid_manifold(&map, result.solid).unwrap();
+    ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+    let solid = map.solid_unchecked(result.solid);
+    assert_eq!(solid.shells().len(), 1);
+    // Six block faces, the protruding wall, and the cylinder's own top cap; the
+    // stub below the block's top face is interior and is discarded.
+    assert_eq!(solid.faces().len(), 8);
+    assert_eq!(
+        solid
+            .faces()
+            .iter()
+            .filter(|face| !face.inner_loops().is_empty())
+            .count(),
+        1
+    );
+    for (point, expected) in [
+        (Point3::new(1.0, 1.0, 1.0), true),
+        (Point3::new(1.0, 1.0, 2.5), true),
+        (Point3::new(1.6, 1.0, 2.5), false),
+    ] {
+        assert_eq!(
+            solid_contains_point(&map, result.solid, point, BooleanOptions::default()).unwrap(),
+            expected,
+            "{point:?}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "curved faces are not yet split across their parameter seam"]
+fn boolean_difference_crosses_two_cylindrical_holes() {
+    // Both remaining gaps are the same one, in the trimming and face-splitting
+    // layers rather than in the solver. The bore wall's own seam sits at `u = 0`
+    // and one of the two wall/wall loops straddles it, so trim classification
+    // drops that loop; the wall/plane loops do reach the network, but realizing
+    // one on the crossing cylinder needs a chord that runs from the seam back to
+    // the seam, which `FaceImprintCut` cannot express yet.
+    use ngk::builders::boolean::{BooleanOperation, boolean, solid_contains_point};
+    let (mut map, block, upright) = block_with_cylinder(0.5, -1.0, 4.0);
+    let drilled = boolean(
+        &mut map,
+        block,
+        upright,
+        BooleanOperation::Difference,
+        BooleanOptions::default(),
+    )
+    .unwrap()
+    .solid;
+
+    // The second bore is narrower than the first and crosses it, so its wall
+    // meets the first bore's wall: the first operand pair with no planar face.
+    let disc = faces::circle(
+        Plane::from_xy(Point3::new(-1.0, 1.0, 1.0), Vector3::y(), Vector3::z()),
+        0.3,
+    )
+    .expect("second bore base");
+    let (tool, tool_cylinder) = {
+        let (mut tool_map, face) = disc.into_map();
+        let solid = add_extruded_face(&mut tool_map, face, Vector3::new(4.0, 0.0, 0.0))
+            .expect("second bore");
+        (tool_map, solid)
     };
-    let BooleanError::IncompleteIntersections { diagnostics } = error else {
-        panic!("unexpected error: {error:?}");
-    };
-    assert!(!diagnostics.coverage.is_empty());
-    assert_eq!(serde_json::to_value(&map).unwrap(), before);
+    let lying = map
+        .transaction(|edit| {
+            let dart = edit.merge(tool.solid_unchecked(tool_cylinder));
+            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+        })
+        .unwrap();
+
+    let result = boolean(
+        &mut map,
+        drilled,
+        lying,
+        BooleanOperation::Difference,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    validate_gmap(&map).unwrap();
+    validate_solid_manifold(&map, result.solid).unwrap();
+    ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
+    assert_eq!(map.solid_unchecked(result.solid).shells().len(), 1);
+    for (point, expected) in [
+        // Solid material away from both bores.
+        (Point3::new(0.2, 0.2, 1.0), true),
+        // Inside the upright bore.
+        (Point3::new(1.0, 1.0, 0.2), false),
+        // Inside the crossing bore, outside the upright one.
+        (Point3::new(0.3, 1.0, 1.0), false),
+        // Between the two bore radii, so material again.
+        (Point3::new(0.3, 1.0, 1.45), true),
+    ] {
+        assert_eq!(
+            solid_contains_point(&map, result.solid, point, BooleanOptions::default()).unwrap(),
+            expected,
+            "{point:?}"
+        );
+    }
 }
 
 /// Bounding box of a face in the parameter domain of `surface`.

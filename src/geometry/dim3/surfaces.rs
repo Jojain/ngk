@@ -10,7 +10,7 @@ use crate::geometry::LINEAR_TOLERANCE;
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{Interval, Point2};
-use nalgebra::{Rotation3, UnitVector3, Vector3};
+use nalgebra::{Matrix2, Rotation3, UnitVector3, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -86,6 +86,7 @@ impl Surface {
         match self {
             Surface::Plane(plane) => Ok(plane.parameter_at(point)),
             Surface::Cylinder(cylinder) => Ok(cylinder.closest_parameter(point)),
+            Surface::Ruled(surface) => Ok(surface.closest_parameter(point)),
             Surface::Nurbs(surface) => Ok(surface.closest_parameter(point)),
             surface => Ok(surface.to_nurbs()?.closest_parameter(point)),
         }
@@ -411,6 +412,37 @@ impl RuledSurface {
 
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
         self.curve.point_at(u) + self.direction * v
+    }
+
+    /// Returns the least-squares source parameters of a point on the ruled surface.
+    pub fn closest_parameter(&self, point: Point3) -> Point2 {
+        let direction_squared = self.direction.norm_squared();
+        let mut u = self.curve.param_at(point);
+        let mut v = if direction_squared > LINEAR_TOLERANCE * LINEAR_TOLERANCE {
+            (point - self.curve.point_at(u)).dot(&self.direction) / direction_squared
+        } else {
+            0.0
+        };
+        for _ in 0..16 {
+            let residual = self.point_at(u, v) - point;
+            let du = self.curve.derivative_at(u, 1);
+            let jacobian = Matrix2::new(
+                du.dot(&du),
+                du.dot(&self.direction),
+                du.dot(&self.direction),
+                direction_squared,
+            );
+            let rhs = Vector2::new(-du.dot(&residual), -self.direction.dot(&residual));
+            let Some(delta) = jacobian.lu().solve(&rhs) else {
+                break;
+            };
+            u += delta.x;
+            v += delta.y;
+            if delta.norm() <= 1.0e-12 {
+                break;
+            }
+        }
+        Point2::new(u, v)
     }
 
     pub fn normal_at(&self, u: f64, _v: f64) -> UnitVector3<f64> {
