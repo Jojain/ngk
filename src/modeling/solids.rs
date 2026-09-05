@@ -1,16 +1,16 @@
-use nalgebra::Vector3;
+use nalgebra::{Unit, Vector3};
 
 use crate::{
     StandardPayload,
     builders::solids::add_extruded_face,
-    geometry::Plane,
+    geometry::{Frame, Plane},
     modeling::faces,
-    topology::shape::{Shape, SolidTag},
+    topology::shape::{FaceTag, Shape, SolidTag},
 };
 
 pub use crate::modeling::errors::PrimitiveError;
 
-fn validate_size(axis: &'static str, value: f64) -> Result<(), PrimitiveError> {
+fn validate_length(axis: &'static str, value: f64) -> Result<(), PrimitiveError> {
     if value.is_finite() && value > 0.0 {
         Ok(())
     } else {
@@ -18,19 +18,69 @@ fn validate_size(axis: &'static str, value: f64) -> Result<(), PrimitiveError> {
     }
 }
 
+/// Creates a block (rectangular prism) at the given frame with the specified dimensions.
+pub fn block_at(
+    frame: Frame,
+    x_size: f64,
+    y_size: f64,
+    z_size: f64,
+) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
+    validate_length("x", x_size)?;
+    validate_length("y", y_size)?;
+    validate_length("z", z_size)?;
+    let direction = frame.z_dir.into_inner() * z_size;
+    let plane = Plane::from_frame(frame);
+    let base =
+        faces::rectangle(plane, x_size, y_size).map_err(|_| PrimitiveError::FaceCreationFailed)?;
+    let (mut g, face_key) = base.into_map();
+    let solid_key = add_extruded_face(&mut g, face_key, direction)
+        .map_err(|_| PrimitiveError::SolidCreationFailed)?;
+    Ok(Shape::new(g, solid_key))
+}
+
+// Creates a block at the origin with the specified dimensions.
 pub fn block(
     x_size: f64,
     y_size: f64,
     z_size: f64,
 ) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
-    validate_size("x", x_size)?;
-    validate_size("y", y_size)?;
-    validate_size("z", z_size)?;
+    block_at(Frame::xyz(), x_size, y_size, z_size)
+}
 
-    let base = faces::rectangle(Plane::xy(), x_size, y_size)
-        .map_err(|_| PrimitiveError::FaceCreationFailed)?;
+/// Creates a cylinder at the given frame with the specified radius and height.
+pub fn cylinder_at(
+    frame: Frame,
+    radius: f64,
+    height: f64,
+) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
+    validate_length("radius", radius)?;
+    validate_length("height", height)?;
+    let direction = frame.z_dir.into_inner() * height;
+    let plane = Plane::from_frame(frame);
+    let base = faces::circle(plane, radius).map_err(|_| PrimitiveError::FaceCreationFailed)?;
     let (mut g, face_key) = base.into_map();
-    let direction = Vector3::new(0.0, 0.0, z_size);
+    let solid_key = add_extruded_face(&mut g, face_key, direction)
+        .map_err(|_| PrimitiveError::SolidCreationFailed)?;
+    Ok(Shape::new(g, solid_key))
+}
+
+/// Creates a cylinder at the origin with the specified radius and height.
+pub fn cylinder(
+    radius: f64,
+    height: f64,
+) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
+    cylinder_at(Frame::xyz(), radius, height)
+}
+
+/// Creates a solid by extruding the given face in the specified direction.
+pub fn extruded(
+    face: Shape<FaceTag, StandardPayload>,
+    direction: Unit<Vector3<f64>>,
+    distance: f64,
+) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
+    validate_length("distance", distance)?;
+    let direction = direction.into_inner() * distance;
+    let (mut g, face_key) = face.into_map();
     let solid_key = add_extruded_face(&mut g, face_key, direction)
         .map_err(|_| PrimitiveError::SolidCreationFailed)?;
     Ok(Shape::new(g, solid_key))

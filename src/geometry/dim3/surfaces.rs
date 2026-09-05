@@ -217,6 +217,9 @@ impl Plane {
             frame: Frame::from_xz(origin, x_dir, normal),
         }
     }
+    pub fn from_frame(frame: Frame) -> Self {
+        Self { frame }
+    }
     pub fn from_xy(origin: Point3, x_dir: impl IntoUnit<3>, y_dir: impl IntoUnit<3>) -> Self {
         Self {
             frame: Frame::from_xy(origin, x_dir, y_dir),
