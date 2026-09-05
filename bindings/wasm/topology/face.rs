@@ -1,4 +1,5 @@
 use js_sys::Array;
+use js_sys::{Object, Reflect};
 use wasm_bindgen::prelude::*;
 
 use super::common::{entity_common, js_err, values};
@@ -7,7 +8,7 @@ use super::gmap::WasmGMap;
 use crate::binding_common::explore::SharedFace;
 use crate::topology::StandardPayload;
 
-use super::super::geometry::surface_to_js;
+use super::super::geometry::{curve2_to_js, surface_to_js};
 use super::edge::WasmEdge;
 use super::profile::WasmLoop;
 use super::vertex::WasmVertex;
@@ -89,6 +90,53 @@ impl WasmFace {
                 .into_iter()
                 .map(|inner| WasmVertex::from_inner(inner).into()),
         ))
+    }
+
+    /// Returns the exact pcurves attached to the face boundary darts.
+    #[wasm_bindgen(unchecked_return_type = "FacePcurve[]", js_name = pcurves)]
+    pub fn pcurves(&self) -> Result<Array, JsValue> {
+        let curves = Array::new();
+        for (loop_index, boundary_loop) in self.inner.loops().map_err(js_err)?.into_iter().enumerate()
+        {
+            for edge in boundary_loop.edges().map_err(js_err)? {
+                let Some(pcurve) = self.inner.pcurve(edge.dart_id()).map_err(js_err)? else {
+                    continue;
+                };
+                let record = Object::new();
+                Reflect::set(
+                    record.as_ref(),
+                    &JsValue::from_str("loopIndex"),
+                    &JsValue::from_f64(loop_index as f64),
+                )?;
+                Reflect::set(
+                    record.as_ref(),
+                    &JsValue::from_str("dartId"),
+                    &JsValue::from_f64(edge.dart_id() as f64),
+                )?;
+                Reflect::set(
+                    record.as_ref(),
+                    &JsValue::from_str("edgeKey"),
+                    &JsValue::from_str(&format!("{:?}", edge.key())),
+                )?;
+                Reflect::set(
+                    record.as_ref(),
+                    &JsValue::from_str("startVertexKey"),
+                    &JsValue::from_str(&format!("{:?}", edge.start().map_err(js_err)?.key())),
+                )?;
+                Reflect::set(
+                    record.as_ref(),
+                    &JsValue::from_str("endVertexKey"),
+                    &JsValue::from_str(&format!("{:?}", edge.end().map_err(js_err)?.key())),
+                )?;
+                Reflect::set(
+                    record.as_ref(),
+                    &JsValue::from_str("curve"),
+                    &curve2_to_js(pcurve),
+                )?;
+                curves.push(&record);
+            }
+        }
+        Ok(curves)
     }
 
     /// Returns the same face in opposite orientation.

@@ -1,8 +1,9 @@
 use wasm_bindgen::prelude::*;
 
-use crate::geometry::{Curve, Surface};
+use crate::geometry::{Curve, Curve2, Surface};
 
 use super::curves::{WasmCircle, WasmLine};
+use super::pcurves::{WasmCircle2, WasmLine2, WasmNurbsCurve2};
 use super::nurbs::{WasmNurbsCurve, WasmNurbsSurface};
 use super::surfaces::{WasmCylinder, WasmPlane, WasmRuledSurface, WasmSurfaceOfRevolution};
 
@@ -19,6 +20,15 @@ pub(crate) fn curve_to_js(curve: Curve) -> Result<JsValue, JsValue> {
         Curve::Bounded(curve) => {
             Ok(WasmNurbsCurve::from_inner(curve.to_nurbs().map_err(js_err)?).into())
         }
+    }
+}
+
+/// Converts a polymorphic 2D curve to its concrete JavaScript class.
+pub(crate) fn curve2_to_js(curve: Curve2) -> JsValue {
+    match curve {
+        Curve2::Line(line) => WasmLine2::from_inner(line).into(),
+        Curve2::Circle(circle) => WasmCircle2::from_inner(circle).into(),
+        Curve2::Nurbs(curve) => WasmNurbsCurve2::from_inner(curve).into(),
     }
 }
 

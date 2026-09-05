@@ -9,6 +9,7 @@ import {
   debugTopologyForSelection,
   fetchDebugDumps,
   hydrateDebugDump,
+  type DebugFacePcurve,
   type DebugEntityEntry,
   type DebugTopologyEntity,
   type DebugViewerEnvelope,
@@ -135,7 +136,14 @@ export default function DebugViewer() {
           onLatest={selectLatest}
           onClear={() => void clear()}
         />
-        <InspectorPanel dump={hydrated.dump} inspected={inspected} />
+        <InspectorPanel
+          dump={hydrated.dump}
+          inspected={inspected}
+          selected={selected}
+          hovered={hovered}
+          onSelect={setSelected}
+          onHover={setHovered}
+        />
       </aside>
       <ConsolePane
         dump={hydrated.dump}
@@ -241,9 +249,17 @@ function TimelinePanel({
 function InspectorPanel({
   dump,
   inspected,
+  selected,
+  hovered,
+  onSelect,
+  onHover,
 }: {
   dump: HydratedDebugDump | null;
   inspected: VizSelection | null;
+  selected: VizSelection | null;
+  hovered: VizSelection | null;
+  onSelect: (selection: VizSelection) => void;
+  onHover: (selection: VizSelection | null) => void;
 }) {
   const entity = dump && inspected ? inspectedEntity(dump, inspected) : null;
   return (
@@ -255,8 +271,26 @@ function InspectorPanel({
       {!dump && <div className="debug-empty">No object loaded</div>}
       {dump && (!inspected || !entity) && <Summary dump={dump} />}
       {entity?.kind === "vertex" && <VertexInfo entry={entity.entry} />}
-      {entity?.kind === "edge" && <EdgeInfo entry={entity.entry} />}
-      {entity?.kind === "face" && <FaceInfo entry={entity.entry} />}
+      {entity?.kind === "edge" && (
+        <EdgeInfo
+          dump={dump!}
+          entry={entity.entry}
+          selected={selected}
+          hovered={hovered}
+          onSelect={onSelect}
+          onHover={onHover}
+        />
+      )}
+      {entity?.kind === "face" && (
+        <FaceInfo
+          dump={dump!}
+          entry={entity.entry}
+          selected={selected}
+          hovered={hovered}
+          onSelect={onSelect}
+          onHover={onHover}
+        />
+      )}
       {entity?.kind === "dart" && (
         <>
           <KeyValue label="kind" value="dart" />
@@ -345,28 +379,303 @@ function VertexInfo({ entry }: { entry: DebugEntityEntry<Vertex> }) {
   );
 }
 
-function EdgeInfo({ entry }: { entry: DebugEntityEntry<Edge> }) {
+function EdgeInfo({
+  dump,
+  entry,
+  selected,
+  hovered,
+  onSelect,
+  onHover,
+}: {
+  dump: HydratedDebugDump;
+  entry: DebugEntityEntry<Edge>;
+  selected: VizSelection | null;
+  hovered: VizSelection | null;
+  onSelect: (selection: VizSelection) => void;
+  onHover: (selection: VizSelection | null) => void;
+}) {
+  const incidentFaces = entry.value.faces();
+  const faceEntries = incidentFaces
+    .map((face) => dump.selection.faces.find(({ value }) => value.equals(face)))
+    .filter((face): face is DebugEntityEntry<Face> => face !== undefined);
+
   return (
     <>
       <EntityIdentity kind="edge" entry={entry} dimension={1} />
       <KeyValue label="start" value={pointText(entry.value.start.point)} />
       <KeyValue label="end" value={pointText(entry.value.end.point)} />
       <KeyValue label="length" value={entry.value.length?.toFixed(6) ?? "unknown"} />
-      <KeyValue label="faces" value={String(entry.value.faces().length)} />
+      <KeyValue label="faces" value={String(incidentFaces.length)} />
+      <div className="debug-edge-faces">
+        <h3>Incident face inspectors</h3>
+        {faceEntries.length === 0 ? (
+          <div className="debug-empty">No face inspector available</div>
+        ) : (
+          faceEntries.map((faceEntry, index) => (
+            <FaceInfo
+              key={faceEntry.id}
+              dump={dump}
+              entry={faceEntry}
+              heading={`Face ${index + 1} of ${faceEntries.length}`}
+              selected={selected}
+              hovered={hovered}
+              onSelect={onSelect}
+              onHover={onHover}
+            />
+          ))
+        )}
+      </div>
     </>
   );
 }
 
-function FaceInfo({ entry }: { entry: DebugEntityEntry<Face> }) {
+type FaceInfoProps = {
+  dump: HydratedDebugDump;
+  entry: DebugEntityEntry<Face>;
+  heading?: string;
+  selected: VizSelection | null;
+  hovered: VizSelection | null;
+  onSelect: (selection: VizSelection) => void;
+  onHover: (selection: VizSelection | null) => void;
+};
+
+function FaceInfo({ dump, entry, heading, selected, hovered, onSelect, onHover }: FaceInfoProps) {
+  const pcurves = facePcurves(entry.value);
   return (
-    <>
+    <div className="debug-face-inspector">
+      {heading && <h3>{heading}</h3>}
       <EntityIdentity kind="face" entry={entry} dimension={2} />
       <KeyValue label="loops" value={String(entry.value.loops().length)} />
       <KeyValue label="edges" value={String(entry.value.edges().length)} />
       <KeyValue label="vertices" value={String(entry.value.vertices().length)} />
       <KeyValue label="surface" value={entry.value.surface.constructor.name} />
-    </>
+      <KeyValue label="pcurves" value={String(pcurves.length)} />
+      {pcurves.length > 0 && (
+        <FaceUvPanel
+          dump={dump}
+          face={entry.value}
+          pcurves={pcurves}
+          selected={selected}
+          hovered={hovered}
+          onSelect={onSelect}
+          onHover={onHover}
+        />
+      )}
+    </div>
   );
+}
+
+type DebugFaceWithPcurves = Face & {
+  pcurves: () => DebugFacePcurve[];
+};
+
+function facePcurves(face: Face): DebugFacePcurve[] {
+  try {
+    return (face as DebugFaceWithPcurves).pcurves() ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function FaceUvPanel({
+  dump,
+  face,
+  pcurves,
+  selected,
+  hovered,
+  onSelect,
+  onHover,
+}: {
+  dump: HydratedDebugDump;
+  face: Face;
+  pcurves: DebugFacePcurve[];
+  selected: VizSelection | null;
+  hovered: VizSelection | null;
+  onSelect: (selection: VizSelection) => void;
+  onHover: (selection: VizSelection | null) => void;
+}) {
+  const samples = pcurves.flatMap((pcurve) => curveSamples(pcurve.curve));
+  const bounds = uvBounds(samples);
+  if (!bounds) return null;
+
+  const [minU, maxU, minV, maxV] = bounds;
+  const width = Math.max(maxU - minU, 1e-9);
+  const height = Math.max(maxV - minV, 1e-9);
+  const project = ([u, v]: [number, number]) => {
+    const x = 16 + ((u - minU) / width) * 208;
+    const y = 16 + (1 - (v - minV) / height) * 168;
+    return [x, y] as const;
+  };
+  const svgPoint = ([x, y]: readonly [number, number]) =>
+    `${x.toFixed(2)},${y.toFixed(2)}`;
+
+  return (
+    <div className="debug-uv">
+      <div className="debug-uv-face">
+        <h3>UV · {surfaceTitle(face.surface.constructor?.name ?? "surface")}</h3>
+        <KeyValue
+          label="box"
+          value={`${formatScalar(minU)} .. ${formatScalar(maxU)} × ${formatScalar(minV)} .. ${formatScalar(maxV)}`}
+        />
+        <svg className="debug-uv-svg" viewBox="0 0 240 200" role="img">
+          <defs>
+            <marker
+              id="debug-uv-arrow"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="5"
+              markerHeight="5"
+              orient="auto-start-reverse"
+            >
+              <path d="M 1 1 L 8 5 L 1 9" />
+            </marker>
+          </defs>
+          <rect x="1" y="1" width="238" height="198" />
+          {pcurves.map((pcurve, index) => {
+            const projected = curveSamples(pcurve.curve).map(project);
+            const points = projected.map(svgPoint).join(" ");
+            const edgeSelection = edgeSelectionForPcurve(dump, face, pcurve);
+            const isSelected =
+              edgeSelection &&
+              selected?.kind === edgeSelection.kind &&
+              selected.id === edgeSelection.id;
+            const isHovered =
+              edgeSelection &&
+              hovered?.kind === edgeSelection.kind &&
+              hovered.id === edgeSelection.id;
+            const stroke = curveStroke(pcurve.curve.kind);
+
+            return (
+              <g key={`${pcurve.dartId}-${index}`}>
+                <polyline
+                  className={interactionClass(
+                    "debug-uv-pcurve",
+                    Boolean(isSelected),
+                    Boolean(isHovered),
+                  )}
+                  points={points}
+                  stroke={stroke}
+                />
+                <polyline
+                  className="debug-uv-pcurve-hit"
+                  points={points}
+                  onPointerEnter={() => onHover(edgeSelection ?? null)}
+                  onPointerLeave={() => onHover(null)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (edgeSelection) onSelect(edgeSelection);
+                  }}
+                >
+                  <title>
+                    {`${pcurve.curve.kind} edge ${pcurve.edgeKey} · dart ${pcurve.dartId}`}
+                  </title>
+                </polyline>
+                {orientationSegments(projected, 2.75).map((segment, arrowIndex) => (
+                  <polyline
+                    key={arrowIndex}
+                    className="debug-uv-arrow-segment"
+                    points={segment.map(svgPoint).join(" ")}
+                    markerEnd="url(#debug-uv-arrow)"
+                  />
+                ))}
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function curveSamples(curve: DebugFacePcurve["curve"], segments = 64): [number, number][] {
+  const raw = curve.sample(segments) as ArrayLike<number>;
+  const out: [number, number][] = [];
+  for (let index = 0; index + 1 < raw.length; index += 2) {
+    out.push([Number(raw[index]), Number(raw[index + 1])]);
+  }
+  return out;
+}
+
+function interactionClass(base: string, selected: boolean, hovered: boolean) {
+  return `${base}${selected ? " selected" : ""}${hovered ? " hovered" : ""}`;
+}
+
+function orientationSegments(
+  points: readonly (readonly [number, number])[],
+  endInset: number,
+): [readonly [number, number], readonly [number, number]][] {
+  if (points.length < 2) return [];
+  const step = Math.max(2, Math.ceil(points.length / 3));
+  const segments: [readonly [number, number], readonly [number, number]][] = [];
+  for (let index = step; index < points.length; index += step) {
+    segments.push([points[index - 1], points[index]]);
+  }
+  const last = points.length - 1;
+  if (segments.length === 0 || segments[segments.length - 1][1] !== points[last]) {
+    segments.push([points[last - 1], points[last]]);
+  }
+  const final = segments.length - 1;
+  segments[final] = [
+    segments[final][0],
+    insetSegmentEnd(segments[final][0], segments[final][1], endInset),
+  ];
+  return segments;
+}
+
+function insetSegmentEnd(
+  start: readonly [number, number],
+  end: readonly [number, number],
+  inset: number,
+): readonly [number, number] {
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const length = Math.hypot(dx, dy);
+  if (length <= inset) return start;
+  const scale = (length - inset) / length;
+  return [start[0] + dx * scale, start[1] + dy * scale];
+}
+
+function uvBounds(points: [number, number][]) {
+  if (points.length === 0) return null;
+  let minU = points[0][0];
+  let maxU = points[0][0];
+  let minV = points[0][1];
+  let maxV = points[0][1];
+  for (const [u, v] of points) {
+    minU = Math.min(minU, u);
+    maxU = Math.max(maxU, u);
+    minV = Math.min(minV, v);
+    maxV = Math.max(maxV, v);
+  }
+  const padU = Math.max((maxU - minU) * 0.08, 1e-6);
+  const padV = Math.max((maxV - minV) * 0.08, 1e-6);
+  return [minU - padU, maxU + padU, minV - padV, maxV + padV] as const;
+}
+
+function edgeSelectionForPcurve(
+  dump: HydratedDebugDump,
+  face: Face,
+  pcurve: DebugFacePcurve,
+): VizSelection | null {
+  const edge = face.edges().find((edge) => edge.key === pcurve.edgeKey);
+  return edge ? debugSelectionForTopology(dump, edge) : null;
+}
+
+function curveStroke(kind: string) {
+  if (kind === "line") return "#aeb4c0";
+  if (kind === "circle") return "#69d8ff";
+  return "#c7a8ff";
+}
+
+function surfaceTitle(name: string) {
+  return name.replace(/^Wasm/, "");
+}
+
+function formatScalar(value: number) {
+  if (!Number.isFinite(value)) return String(value);
+  if (Math.abs(value) < 1e-12) return "0";
+  return String(Number(value.toPrecision(6)));
 }
 
 function EntityIdentity<T extends { key: string; dartId: number }>({

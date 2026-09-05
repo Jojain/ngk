@@ -562,6 +562,30 @@ html, body, #root {
   min-height: 0;
 }
 
+.debug-edge-faces {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.debug-edge-faces > h3,
+.debug-face-inspector > h3 {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.debug-face-inspector {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
 .debug-panel-header {
   display: flex;
   align-items: center;

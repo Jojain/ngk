@@ -4,6 +4,8 @@ type Coordinate3 = {
   z: number;
 };
 
+type Coordinate2 = ArrayLike<number>;
+
 export type ObjectPreviewFormatter = (value: object) => string;
 
 // Register compact, side-effect-free debugger presentations by WASM class name.
@@ -36,6 +38,16 @@ export const OBJECT_PREVIEW_FORMATTERS: Record<
       ")"
     );
   },
+  Line2: (value) => {
+    const line = value as { start: Coordinate2; end: Coordinate2 };
+    return (
+      "Line2(" +
+      coordinatePreview2("P", line.start) +
+      " → " +
+      coordinatePreview2("P", line.end) +
+      ")"
+    );
+  },
   Circle: (value) => {
     const circle = value as {
       radius: number;
@@ -46,6 +58,22 @@ export const OBJECT_PREVIEW_FORMATTERS: Record<
       coordinatePreview("P", circle.plane.origin) +
       ", r=" +
       formatScalar(circle.radius) +
+      ")"
+    );
+  },
+  Circle2: (value) => {
+    const circle = value as {
+      center: Coordinate2;
+      radius: number;
+      sweep: number;
+    };
+    return (
+      "Circle2(center=" +
+      coordinatePreview2("P", circle.center) +
+      ", r=" +
+      formatScalar(circle.radius) +
+      ", sweep=" +
+      formatScalar(circle.sweep) +
       ")"
     );
   },
@@ -102,6 +130,19 @@ export const OBJECT_PREVIEW_FORMATTERS: Record<
       ")"
     );
   },
+  NurbsCurve2: (value) => {
+    const curve = value as {
+      degree: number;
+      domain: ArrayLike<number>;
+    };
+    return (
+      "NurbsCurve2(degree=" +
+      curve.degree +
+      ", domain=" +
+      intervalPreview(curve.domain) +
+      ")"
+    );
+  },
 };
 
 export function objectPreview(value: object): string | null {
@@ -121,6 +162,15 @@ function coordinatePreview(prefix: string, value: Coordinate3): string {
     prefix +
     "(" +
     [value.x, value.y, value.z].map(formatScalar).join(",") +
+    ")"
+  );
+}
+
+function coordinatePreview2(prefix: string, value: Coordinate2): string {
+  return (
+    prefix +
+    "(" +
+    [value[0], value[1]].map(formatScalar).join(",") +
     ")"
   );
 }

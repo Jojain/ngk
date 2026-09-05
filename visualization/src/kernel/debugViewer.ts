@@ -79,6 +79,30 @@ export type DebugTopologySelection = {
   id: number;
 };
 
+export type DebugPcurveCurve = {
+  kind: string;
+  sample: (segments: number) => Float64Array;
+  pointAt: (parameter: number) => Float64Array;
+  degree?: number;
+  domain?: Float64Array;
+  radius?: number;
+  sweep?: number;
+  center?: Float64Array;
+  start?: Float64Array;
+  end?: Float64Array;
+  weights?: Float64Array;
+  controlPoints?: unknown;
+};
+
+export type DebugFacePcurve = {
+  loopIndex: number;
+  dartId: number;
+  edgeKey: string;
+  startVertexKey: string;
+  endVertexKey: string;
+  curve: DebugPcurveCurve;
+};
+
 export type HydratedObject = {
   kind: DebugObjectKind;
   value: DebugObject;
