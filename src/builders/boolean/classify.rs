@@ -145,7 +145,12 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
                 .surface()
                 .closest_parameter(hit)
                 .ok()?;
-            if face.trim.boundary_distance(uv) <= 2.0 * self.tolerances.parameter {
+            if face.trim.boundary_distance(uv)
+                <= face
+                    .trim
+                    .boundary_epsilon()
+                    .max(2.0 * self.tolerances.parameter)
+            {
                 return None;
             }
             if !face.trim.contains(uv) {
@@ -194,7 +199,12 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
                 face.uv_center,
                 surface.source().periodicity(),
             );
-            if face.trim.boundary_distance(uv) <= 2.0 * self.tolerances.parameter {
+            if face.trim.boundary_distance(uv)
+                <= face
+                    .trim
+                    .boundary_epsilon()
+                    .max(2.0 * self.tolerances.parameter)
+            {
                 return None;
             }
             if !face.trim.contains(uv) {
@@ -283,7 +293,9 @@ fn probe<P: Payload>(
     triangles.sort_by(|a, b| b.0.total_cmp(&a.0));
     for (_, point) in triangles {
         let uv = view.surface().closest_parameter(point)?;
-        if trim.contains(uv) && trim.boundary_distance(uv) > tolerances.probe_margin {
+        if trim.contains(uv)
+            && trim.boundary_distance(uv) > tolerances.probe_margin.max(trim.boundary_epsilon())
+        {
             return Ok((view.point_at(uv.x, uv.y), uv));
         }
     }

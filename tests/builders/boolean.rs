@@ -1144,17 +1144,50 @@ fn boolean_difference_supports_a_cylindrical_through_hole() {
     validate_solid_manifold(&map, result.solid).unwrap();
     ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
     let solid = map.solid_unchecked(result.solid);
-    show(&map);
 
     assert_eq!(solid.shells().len(), 1);
     assert_eq!(solid.faces().len(), 7);
-    assert_eq!(
-        solid
-            .faces()
-            .iter()
-            .filter(|face| !face.inner_loops().is_empty())
-            .count(),
-        2
+    let rims: Vec<_> = solid
+        .faces()
+        .into_iter()
+        .filter(|face| !face.inner_loops().is_empty())
+        .collect();
+    assert_eq!(rims.len(), 2);
+
+    // Both rims are built the same way: one closed loop of arcs on the bore
+    // radius, every one of them shared with the single bore wall face.
+    let mut walls = Vec::new();
+    for rim in &rims {
+        let inner = rim.inner_loops();
+        assert_eq!(inner.len(), 1);
+        let edges = inner[0].edges();
+        assert!(edges.len() >= 2, "a rim needs at least two arcs");
+        for edge in &edges {
+            let neighbours: Vec<_> = edge
+                .faces()
+                .iter()
+                .map(|face| face.key())
+                .filter(|key| *key != rim.key())
+                .collect();
+            assert_eq!(
+                neighbours.len(),
+                1,
+                "a rim arc joins its cap to exactly one other face"
+            );
+            walls.push(neighbours[0]);
+
+            let curve = edge.curve().expect("a rim arc carries geometry");
+            let mid = curve.point_at(0.5);
+            let radius = ((mid.x - 1.0).powi(2) + (mid.y - 1.0).powi(2)).sqrt();
+            assert!(
+                (radius - 0.5).abs() <= LINEAR_TOLERANCE,
+                "rim arc midpoint {mid:?} is off the bore radius ({radius})"
+            );
+        }
+    }
+    assert!(
+        walls.windows(2).all(|pair| pair[0] == pair[1]),
+        "both rims must border the same bore wall, got {walls:?}"
     );
 }
 

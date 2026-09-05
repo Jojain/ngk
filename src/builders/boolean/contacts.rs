@@ -55,16 +55,12 @@ pub(super) fn compute_vertex_contacts<P: Payload>(
     }
 
     let second_faces = plan.second_cells.faces.clone();
-    for vertex in first_vertices {
-        for face in second_faces.iter().copied() {
-            intersect_vertex_face(g, plan, vertex, face, true, options)?;
-        }
+    for face in second_faces.iter().copied() {
+        intersect_vertices_face(g, plan, &first_vertices, face, true, options)?;
     }
     let first_faces = plan.first_cells.faces.clone();
-    for vertex in second_vertices {
-        for face in first_faces.iter().copied() {
-            intersect_vertex_face(g, plan, vertex, face, false, options)?;
-        }
+    for face in first_faces.iter().copied() {
+        intersect_vertices_face(g, plan, &second_vertices, face, false, options)?;
     }
     Ok(())
 }
@@ -109,38 +105,55 @@ fn intersect_vertex_edge<P: Payload>(
     push_point_contact(&mut plan.contacts, point, first, second);
 }
 
-fn intersect_vertex_face<P: Payload>(
+/// Records every vertex of one operand lying inside one trimmed face of the other.
+///
+/// The face's trim domain is flattened at most once here, and only once a
+/// vertex has actually reached the face's surface. A vertex that misses the
+/// surface -- the common case, since most face pairs never touch -- therefore
+/// costs one closest point and one surface evaluation.
+fn intersect_vertices_face<P: Payload>(
     g: &GMap<P>,
     plan: &mut IntersectionAccumulator,
-    vertex_key: VertexKey,
+    vertices: &[VertexKey],
     face_key: FaceKey,
-    vertex_is_first: bool,
+    vertices_are_first: bool,
     options: BooleanOptions,
 ) -> Result<(), BooleanError> {
-    let point = *g
-        .vertex_unchecked(vertex_key)
-        .point()
-        .expect("registered vertex geometry");
     let face = g.face_unchecked(face_key);
-    let Ok(uv) = face.surface().closest_parameter(point) else {
-        return Ok(());
-    };
-    let trim = FaceTrimDomain::new(&face, options.intersections.parameter_tolerance)?;
-    if !face
-        .surface()
-        .point_at(uv.x, uv.y)
-        .coincides(point, options.intersections.linear_tolerance)
-        || !trim.contains(uv)
-    {
-        return Ok(());
-    }
+    let mut trim: Option<FaceTrimDomain> = None;
+    for vertex_key in vertices.iter().copied() {
+        let point = *g
+            .vertex_unchecked(vertex_key)
+            .point()
+            .expect("registered vertex geometry");
+        let Ok(uv) = face.surface().closest_parameter(point) else {
+            continue;
+        };
+        if !face
+            .surface()
+            .point_at(uv.x, uv.y)
+            .coincides(point, options.intersections.linear_tolerance)
+        {
+            continue;
+        }
+        let trim = match trim {
+            Some(ref trim) => trim,
+            None => trim.insert(FaceTrimDomain::new(
+                &face,
+                options.intersections.parameter_tolerance,
+            )?),
+        };
+        if !trim.contains(uv) {
+            continue;
+        }
 
-    let (first, second) = if vertex_is_first {
-        (BooleanCell::Vertex(vertex_key), BooleanCell::Face(face_key))
-    } else {
-        (BooleanCell::Face(face_key), BooleanCell::Vertex(vertex_key))
-    };
-    push_point_contact(&mut plan.contacts, point, first, second);
+        let (first, second) = if vertices_are_first {
+            (BooleanCell::Vertex(vertex_key), BooleanCell::Face(face_key))
+        } else {
+            (BooleanCell::Face(face_key), BooleanCell::Vertex(vertex_key))
+        };
+        push_point_contact(&mut plan.contacts, point, first, second);
+    }
     Ok(())
 }
 

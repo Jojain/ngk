@@ -18,11 +18,23 @@ pub(crate) enum TrimLocation {
     OnBoundary { loop_index: usize, parameter: f64 },
 }
 
+/// Relative chord budget used when flattening trim loops into winding polygons.
+///
+/// The polygons answer which side of the boundary a point falls on, never where
+/// exactly the boundary runs -- that question is settled against the exact
+/// pcurves. Scaling the flattening to the loops' own parameter extent keeps a
+/// polygon a few hundred points wide at any model scale. Flattening to a
+/// convergence tolerance such as `1e-10` instead asks a single circular pcurve
+/// for roughly 157000 points, and every later query walks all of them.
+const TRIM_CHORD_RATIO: f64 = 1.0e-4;
+
 /// Cached oriented loops; polylines are used only for winding classification.
 pub(crate) struct FaceTrimDomain {
     loops: Vec<Vec<Curve2>>,
     polygons: Vec<Vec<Point2>>,
     tolerance: f64,
+    /// Upper bound on how far `polygons` may stray from `loops`.
+    chord: f64,
 }
 
 impl FaceTrimDomain {
@@ -45,13 +57,14 @@ impl FaceTrimDomain {
             }
             loops.push(curves);
         }
+        let chord = chord_budget(&loops, tolerance);
         let polygons = loops
             .iter()
             .map(|curves| {
                 curves
                     .iter()
                     .flat_map(|curve| {
-                        let mut points = curve.adaptive_samples(tolerance, 20);
+                        let mut points = curve.adaptive_samples(chord, 20);
                         points.pop();
                         points.into_iter().map(|(_, point)| point)
                     })
@@ -62,7 +75,18 @@ impl FaceTrimDomain {
             loops,
             polygons,
             tolerance,
+            chord,
         })
+    }
+
+    /// How close to the boundary [`Self::boundary_distance`] stops discriminating.
+    ///
+    /// A caller rejecting boundary-grazing queries must compare against this
+    /// rather than against its own tolerance: the polygons locate the boundary
+    /// only to their own chord budget, so a smaller threshold would accept
+    /// queries the polygons cannot actually place.
+    pub(crate) fn boundary_epsilon(&self) -> f64 {
+        self.chord.max(self.tolerance)
     }
 
     /// Distance to the nearest polyline segment; exact for admitted polygonal faces.
@@ -207,6 +231,30 @@ impl FaceTrimDomain {
             }
         }
         Ok(())
+    }
+}
+
+/// Chord budget for flattening, scaled to the extent the loops actually span.
+///
+/// Five samples per pcurve only need to size the domain, not to bound it: the
+/// budget sets the polygons' resolution, and [`FaceTrimDomain::boundary_epsilon`]
+/// reports it so no caller reads the polygons finer than they were built. A
+/// domain with no measurable extent falls back to `floor`.
+fn chord_budget(loops: &[Vec<Curve2>], floor: f64) -> f64 {
+    let mut min = Point2::new(f64::INFINITY, f64::INFINITY);
+    let mut max = Point2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for curve in loops.iter().flatten() {
+        for step in 0..=4 {
+            let sample = curve.point_at(f64::from(step) / 4.0);
+            min = Point2::new(min.x.min(sample.x), min.y.min(sample.y));
+            max = Point2::new(max.x.max(sample.x), max.y.max(sample.y));
+        }
+    }
+    let diagonal = (max - min).norm();
+    if diagonal.is_finite() && diagonal > 0.0 {
+        (diagonal * TRIM_CHORD_RATIO).max(floor)
+    } else {
+        floor
     }
 }
 

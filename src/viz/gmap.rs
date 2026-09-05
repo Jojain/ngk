@@ -12,7 +12,7 @@ use nalgebra::Vector3;
 use super::brep::BrepIndex;
 use super::hints::VizHints;
 use super::scene::{VizAlphaLink, VizDart, VizScene};
-use crate::geometry::{Curve, LINEAR_TOLERANCE, Point3, PointCoincidence};
+use crate::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
 use crate::tessellate::{TessellateOpts, tessellate_curve};
 use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
@@ -73,14 +73,26 @@ fn build_dart<P: Payload>(
     let v1 = g.attribute::<Cell0>(other).map(|v| v.point)?;
 
     let curve = &edge_attr.curve;
-    if matches!(curve, Curve::Nurbs(_)) && !v0.coincides(v1, LINEAR_TOLERANCE) {
-        return chord_arrow(edge_id, v0, v1);
-    }
     let interval = curve.parameters_between(v0, v1);
-    let (t0, t1) = if v0.coincides(v1, LINEAR_TOLERANCE) && d != edge_attr.dart {
+    let (t0, t1) = if v0.coincides(v1, LINEAR_TOLERANCE) {
+        // A closed edge starts and ends at the same vertex: the two darts split
+        // the period, so the non-reference one walks it backwards.
+        if d == edge_attr.dart {
+            (interval.start, interval.end)
+        } else {
+            (interval.end, interval.start)
+        }
+    } else if curve
+        .point_at(interval.start)
+        .coincides(v0, LINEAR_TOLERANCE)
+    {
+        (interval.start, interval.end)
+    } else if curve.point_at(interval.end).coincides(v0, LINEAR_TOLERANCE) {
+        // `parameters_between` reports a NURBS edge's whole domain, which is
+        // ordered by the curve rather than by this dart's vertex.
         (interval.end, interval.start)
     } else {
-        (interval.start, interval.end)
+        return chord_arrow(edge_id, v0, v1);
     };
     if !(t0.is_finite() && t1.is_finite()) {
         return chord_arrow(edge_id, v0, v1);
