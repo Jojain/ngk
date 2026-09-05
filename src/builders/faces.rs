@@ -1519,8 +1519,8 @@ fn split_one_face_by_imprints<P: Payload>(
         .face_attr(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
 
-    let boundary_uvs = face_boundary_uvs(g, face)?;
-    let Some(cut) = FaceImprintCut::from_chain(imprints, &boundary_uvs)? else {
+    let boundary = face_boundary_edges(g, face)?;
+    let Some(cut) = FaceImprintCut::from_chain(imprints, &boundary)? else {
         return Ok(None);
     };
 
@@ -1578,12 +1578,12 @@ impl FaceImprintCut {
     /// Follows a nonbranching path from one boundary corner to another.
     fn from_chain(
         imprints: &[FaceImprint],
-        boundary: &[Point2],
+        boundary: &[(Point2, Curve2)],
     ) -> Result<Option<Self>, NurbsError> {
         for (index, imprint) in imprints.iter().enumerate() {
             for reversed in [false, true] {
                 let uv = imprint.pcurve.point_at(if reversed { 1.0 } else { 0.0 });
-                let Some(start) = snap_boundary_corner(boundary, uv) else {
+                let Some(start) = snap_boundary_corner_in(boundary, uv) else {
                     continue;
                 };
                 if let Some(cut) = Self::follow(imprints, boundary, start, index, reversed)? {
@@ -1597,7 +1597,7 @@ impl FaceImprintCut {
     /// Stops at boundary vertices or ambiguous junctions rather than inventing a path.
     fn follow(
         imprints: &[FaceImprint],
-        boundary: &[Point2],
+        boundary: &[(Point2, Curve2)],
         start: usize,
         index: usize,
         reversed: bool,
@@ -1617,12 +1617,14 @@ impl FaceImprintCut {
             };
             let end_uv = imprint.pcurve.point_at(1.0);
             sections.push((index, reversed, imprint));
-            if let Some(end) = snap_boundary_corner(boundary, end_uv) {
-                return Ok(valid_chord(start, end, boundary.len()).then_some(Self {
-                    start_corner: start,
-                    end_corner: end,
-                    sections,
-                }));
+            if let Some(end) = snap_boundary_corner_in(boundary, end_uv) {
+                return Ok(
+                    valid_chord(start, end, boundary, &sections).then_some(Self {
+                        start_corner: start,
+                        end_corner: end,
+                        sections,
+                    }),
+                );
             }
             let candidates = imprints
                 .iter()
@@ -1654,6 +1656,17 @@ fn face_boundary_uvs<P: Payload>(
     g: &GMap<P>,
     face: FaceKey,
 ) -> Result<Vec<Point2>, FaceImprintSplitError> {
+    Ok(face_boundary_edges(g, face)?
+        .into_iter()
+        .map(|(uv, _)| uv)
+        .collect())
+}
+
+/// Each outer-loop corner with the pcurve leaving it, in loop order.
+fn face_boundary_edges<P: Payload>(
+    g: &GMap<P>,
+    face: FaceKey,
+) -> Result<Vec<(Point2, Curve2)>, FaceImprintSplitError> {
     let face_view = g
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
@@ -1666,7 +1679,7 @@ fn face_boundary_uvs<P: Payload>(
             let dart = corner.outgoing().dart();
             face_view
                 .pcurve(dart)
-                .map(|pcurve| pcurve.point_at(0.0))
+                .map(|pcurve| (pcurve.point_at(0.0), pcurve))
                 .ok_or(FaceImprintSplitError::MissingPcurve { face, dart })
         })
         .collect()
@@ -1715,6 +1728,19 @@ fn boundary_edge_key<P: Payload>(
         .ok_or(FaceImprintSplitError::MissingBoundaryEdge { dart })
 }
 
+/// [`snap_boundary_corner`] over corners paired with their outgoing pcurves.
+fn snap_boundary_corner_in(boundary: &[(Point2, Curve2)], uv: Point2) -> Option<usize> {
+    boundary
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (corner, _))| {
+            let distance = (*corner - uv).norm();
+            (distance <= LINEAR_TOLERANCE).then_some((distance, index))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, index)| index)
+}
+
 fn snap_boundary_corner(boundary_uvs: &[Point2], uv: Point2) -> Option<usize> {
     boundary_uvs
         .iter()
@@ -1727,13 +1753,40 @@ fn snap_boundary_corner(boundary_uvs: &[Point2], uv: Point2) -> Option<usize> {
         .map(|(_, index)| index)
 }
 
-fn valid_chord(start: usize, end: usize, corner_count: usize) -> bool {
-    if corner_count < 3 || start == end {
-        return false;
-    }
+/// Whether two boundary corners can bound a chord.
+///
+/// The ends have to be two distinct corners. Neighbouring corners are allowed —
+/// the chord that cuts a lens off a disc joins two of them — as long as the
+/// chain does not simply retrace the one boundary edge between them. That case
+/// would leave a fragment with no interior, and, because the chord it produces
+/// is itself that boundary edge, would let the splitter cut the same face
+/// forever.
+fn valid_chord(
+    start: usize,
+    end: usize,
+    boundary: &[(Point2, Curve2)],
+    sections: &[(usize, bool, FaceImprint)],
+) -> bool {
+    boundary.len() >= 2 && start != end && !retraces_boundary(boundary, sections)
+}
 
-    let distance = start.abs_diff(end);
-    distance > 1 && distance < corner_count - 1
+/// Whether a chain already runs along the face's own boundary.
+///
+/// This is what bounds the splitter's work: cutting a face turns the chain into
+/// boundary edges of both fragments, so the same chain is refused on everything
+/// it has already produced.
+fn retraces_boundary(
+    boundary: &[(Point2, Curve2)],
+    sections: &[(usize, bool, FaceImprint)],
+) -> bool {
+    sections.iter().all(|(_, _, imprint)| {
+        [0.25, 0.5, 0.75].iter().all(|fraction| {
+            let uv = imprint.pcurve.point_at(*fraction);
+            boundary
+                .iter()
+                .any(|(_, pcurve)| pcurve.parameter_at(uv, LINEAR_TOLERANCE).is_some())
+        })
+    })
 }
 
 fn apply_outer_face_chord_split<P: Payload>(

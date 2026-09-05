@@ -5,13 +5,16 @@ use super::super::curve_surface::{
 };
 use super::super::{
     CurveSurfaceIntersection, IntersectionCoverage, IntersectionError,
-    IntersectionIncompleteReason, IntersectionOptions,
+    IntersectionIncompleteReason, IntersectionOptions, IntersectionQuality,
+    SurfaceIntersectionBranch, SurfaceIntersectionBranchKind, SurfaceIntersectionPoint,
+    SurfaceIntersectionPointKind,
 };
 use super::normals::NormalCone;
 use super::tracer::TraceState;
 use crate::geometry::{
-    BBox, BezierSurface, ControlNet, ControlPolygon, Curve, Interval, NurbsCurve, NurbsSurface,
-    Point2, Point3, Surface,
+    BBox, BezierSurface, ControlNet, ControlPolygon, ControlPolygon2, Curve, Curve2, HPoint2,
+    Interval, KnotVector, Line2, NurbsCurve, NurbsCurve2, NurbsError, NurbsSurface, Point2, Point3,
+    Surface,
 };
 
 const PLANAR_SEARCH_NODE_BUDGET: usize = 4_096;
@@ -27,6 +30,8 @@ enum Boundary {
 
 pub(super) struct SeedSearch {
     pub seeds: Vec<TraceState>,
+    /// Branches the search resolved exactly instead of handing to the tracer.
+    pub tangencies: Vec<SurfaceIntersectionBranch>,
     pub overlap_boundary_found: bool,
     /// Reasons the shared curve/surface solver could not certify a boundary
     /// search. Surface/surface coverage cannot exceed the coverage of the
@@ -38,6 +43,25 @@ pub(super) struct SeedSearch {
 struct PlaneEquation {
     origin: Point3,
     normal: Vector3<f64>,
+}
+
+/// The contour crossings of one patch, split by whether they landed on the
+/// planar operand's trimmed domain.
+struct PatchSeeds {
+    seeds: Vec<TraceState>,
+    /// Crossings that fell outside the planar operand's parameter domain.
+    discarded: usize,
+}
+
+impl PatchSeeds {
+    /// Whether these crossings account for exactly one regular arc.
+    ///
+    /// A certified patch is entered and left once, so its two boundary
+    /// crossings must all be present — as a seed, or as a crossing proven to
+    /// lie off the planar operand.
+    fn accounts_for_one_arc(&self) -> bool {
+        self.seeds.len() + self.discarded == 2
+    }
 }
 
 /// The parameter direction in which a patch's distance numerator is monotone,
@@ -143,6 +167,16 @@ impl PatchEdge {
         [varying.start, varying.end].map(|value| self.parameters(patch, value))
     }
 
+    /// Names this edge as a surface boundary of the patch it belongs to.
+    fn boundary(self) -> Boundary {
+        match (self.varying_u, self.at_end) {
+            (true, false) => Boundary::VMin,
+            (true, true) => Boundary::VMax,
+            (false, false) => Boundary::UMin,
+            (false, true) => Boundary::UMax,
+        }
+    }
+
     /// Returns whether this edge is a level set of the monotone direction.
     ///
     /// Monotonicity already bounds an edge running along that direction to one
@@ -219,6 +253,7 @@ impl<'a> PlanarSeedSearch<'a> {
             options,
             search: SeedSearch {
                 seeds: Vec::new(),
+                tangencies: Vec::new(),
                 overlap_boundary_found: false,
                 incomplete_reasons: Vec::new(),
             },
@@ -266,17 +301,26 @@ impl<'a> PlanarSeedSearch<'a> {
             .edge_contour_seeds(&patch, &numerators)
             .or_else(|| self.monotone_contour_seeds(&patch, &numerators))
         {
-            self.search.seeds.extend(seeds);
+            if seeds.seeds.is_empty() && seeds.discarded > 0 {
+                self.boundary_seeds(&patch)?;
+            } else {
+                self.search.seeds.extend(seeds.seeds);
+            }
             return Ok(());
         }
 
         // The control hull already proves the patch stays on one side of the
         // plane, so a contact here cannot be a regular crossing.
-        if (minimum >= -tolerance || maximum <= tolerance)
-            && self.touches_tangentially(&patch, &distances)
-        {
-            self.report(IntersectionIncompleteReason::TangentOrSingularContact);
-            return Ok(());
+        if minimum >= -tolerance || maximum <= tolerance {
+            let tangencies = self.tangency_branches(&patch, &numerators, &distances)?;
+            if !tangencies.is_empty() {
+                self.search.tangencies.extend(tangencies);
+                return Ok(());
+            }
+            if self.touches_tangentially(&patch, &distances) {
+                self.report(IntersectionIncompleteReason::TangentOrSingularContact);
+                return Ok(());
+            }
         }
 
         if depth >= self.options.max_subdivision_depth {
@@ -296,11 +340,7 @@ impl<'a> PlanarSeedSearch<'a> {
     }
 
     /// Seeds a patch whose contour is exactly one of its own edges.
-    fn edge_contour_seeds(
-        &self,
-        patch: &BezierSurface,
-        numerators: &[f64],
-    ) -> Option<Vec<TraceState>> {
+    fn edge_contour_seeds(&self, patch: &BezierSurface, numerators: &[f64]) -> Option<PatchSeeds> {
         let tolerance = self.options.linear_tolerance;
         for edge in PatchEdge::ALL {
             if !edge
@@ -314,7 +354,7 @@ impl<'a> PlanarSeedSearch<'a> {
                 continue;
             }
             let seeds = self.seeds_at(patch, edge.corners(patch));
-            if seeds.len() == 2 {
+            if seeds.accounts_for_one_arc() {
                 return Some(seeds);
             }
         }
@@ -326,7 +366,7 @@ impl<'a> PlanarSeedSearch<'a> {
         &self,
         patch: &BezierSurface,
         numerators: &[f64],
-    ) -> Option<Vec<TraceState>> {
+    ) -> Option<PatchSeeds> {
         let tolerance = self.options.linear_tolerance;
         let direction = monotone_direction(patch, numerators, tolerance)?;
         let mut roots = Vec::new();
@@ -339,7 +379,178 @@ impl<'a> PlanarSeedSearch<'a> {
             roots.extend(isolate_edge_root(patch, self.plane, edge, self.options));
         }
         let seeds = self.seeds_at(patch, roots);
-        (seeds.len() == 2).then_some(seeds)
+        seeds.accounts_for_one_arc().then_some(seeds)
+    }
+
+    /// Certifies the patch edges along which a one-sided patch touches the plane.
+    ///
+    /// The signed distance is a rational Bernstein form, and every basis
+    /// function is strictly positive inside the patch, so a one-signed numerator
+    /// can only vanish where each of its non-zero coefficients is multiplied by
+    /// a basis function that vanishes — which happens on the patch boundary
+    /// alone. A patch edge whose own coefficients are all zero therefore lies
+    /// entirely in the zero set, and the remaining zeros are isolated corners.
+    ///
+    /// Such an edge is a curve on both surfaces and is reported exactly rather
+    /// than traced: the tracer's Newton system is singular along a tangency.
+    /// An edge the surface crosses transversally is not one of these — the
+    /// contour seeds above already accounted for it — so the surface normal is
+    /// required to be parallel to the plane's.
+    fn tangency_branches(
+        &self,
+        patch: &BezierSurface,
+        numerators: &[f64],
+        distances: &[f64],
+    ) -> Result<Vec<SurfaceIntersectionBranch>, IntersectionError> {
+        let tolerance = self.options.linear_tolerance;
+        let mut branches = Vec::new();
+        for edge in PatchEdge::ALL {
+            if !edge
+                .coefficients(patch, numerators)
+                .iter()
+                .all(|value| value.abs() <= tolerance)
+            {
+                continue;
+            }
+            // A patch whose every coefficient vanishes is coincident with the
+            // plane, not tangent to it, and is not resolved here.
+            if edge
+                .complement(patch, numerators)
+                .iter()
+                .all(|value| value.abs() <= tolerance)
+            {
+                continue;
+            }
+            if !self.edge_is_tangential(patch, edge, distances) {
+                continue;
+            }
+            branches.push(self.branch_along_patch_edge(patch, edge)?);
+        }
+        Ok(branches)
+    }
+
+    /// Whether the patch normal runs parallel to the plane's along `edge`.
+    fn edge_is_tangential(
+        &self,
+        patch: &BezierSurface,
+        edge: PatchEdge,
+        distances: &[f64],
+    ) -> bool {
+        let net = patch.control_points();
+        let mut touching = indexed_coefficients(net, distances)
+            .filter(|(u, v, distance)| {
+                edge.holds_index(net, *u, *v) && distance.abs() <= self.options.linear_tolerance
+            })
+            .peekable();
+        touching.peek().is_some()
+            && touching.all(|(u, v, _)| {
+                let uv = Point2::new(
+                    greville(patch.domain_u(), u, net.nu()),
+                    greville(patch.domain_v(), v, net.nv()),
+                );
+                patch.normal_at(uv.x, uv.y).cross(&self.plane.normal).norm()
+                    <= self.options.angular_tolerance
+            })
+    }
+
+    /// Realizes one patch edge as an exact synchronized branch on both surfaces.
+    ///
+    /// The edge curve is a boundary row of the patch's own control net, its
+    /// image in the patch's parameter space is the straight level set the edge
+    /// holds fixed, and the plane maps model space to its parameters affinely,
+    /// so all three curves are exact and share one parameterization.
+    fn branch_along_patch_edge(
+        &self,
+        patch: &BezierSurface,
+        edge: PatchEdge,
+    ) -> Result<SurfaceIntersectionBranch, IntersectionError> {
+        let curve = normalized_knots(boundary_curve(patch.surface(), edge.boundary())?)?;
+        let varying = edge.varying(patch);
+        let pcurve_other = Curve2::Line(Line2::new(
+            edge.parameters(patch, varying.start),
+            edge.parameters(patch, varying.end),
+        ));
+        let pcurve_planar = self.planar_pcurve(&curve)?;
+        let (pcurve_a, pcurve_b) = if self.planar_is_a {
+            (pcurve_planar, pcurve_other)
+        } else {
+            (pcurve_other, pcurve_planar)
+        };
+        let curve_3d = Curve::Nurbs(curve);
+        let samples = [0.0, 1.0]
+            .map(|t| {
+                let point = curve_3d.point_at(t);
+                SurfaceIntersectionPoint {
+                    point,
+                    uv_a: pcurve_a.point_at(t),
+                    uv_b: pcurve_b.point_at(t),
+                    kind: SurfaceIntersectionPointKind::Tangent,
+                    residual: 0.0,
+                }
+            })
+            .to_vec();
+        Ok(SurfaceIntersectionBranch {
+            curve_3d,
+            pcurve_a,
+            pcurve_b,
+            samples,
+            closed: false,
+            kind: SurfaceIntersectionBranchKind::Tangent,
+            quality: IntersectionQuality {
+                max_residual: 0.0,
+                max_fit_error: 0.0,
+                certified: true,
+            },
+        })
+    }
+
+    /// Maps a curve lying in the plane into the planar operand's parameters.
+    ///
+    /// A planar NURBS patch is a parallelogram, so its parameterization is
+    /// affine and the control points carry over with their own weights.
+    fn planar_pcurve(&self, curve: &NurbsCurve) -> Result<Curve2, IntersectionError> {
+        let domain_u = self.planar.domain_u();
+        let domain_v = self.planar.domain_v();
+        let origin = self.planar.point_at(domain_u.start, domain_v.start);
+        let along_u = (self.planar.point_at(domain_u.end, domain_v.start) - origin)
+            / (domain_u.end - domain_u.start);
+        let along_v = (self.planar.point_at(domain_u.start, domain_v.end) - origin)
+            / (domain_v.end - domain_v.start);
+        // The frame is not orthogonal in general, so the parameters come from
+        // the Gram system rather than from bare projections.
+        let uu = along_u.dot(&along_u);
+        let uv = along_u.dot(&along_v);
+        let vv = along_v.dot(&along_v);
+        let determinant = uu * vv - uv * uv;
+        if determinant.abs() <= f64::EPSILON {
+            return Err(IntersectionError::Nurbs(NurbsError::DegenerateInterval {
+                start: domain_u.start,
+                end: domain_u.end,
+            }));
+        }
+        let parameters = |point: Point3| {
+            let offset = point - origin;
+            let ru = along_u.dot(&offset);
+            let rv = along_v.dot(&offset);
+            Point2::new(
+                domain_u.start + (vv * ru - uv * rv) / determinant,
+                domain_v.start + (uu * rv - uv * ru) / determinant,
+            )
+        };
+        let control_points = ControlPolygon2::new(
+            curve
+                .control_points()
+                .iter()
+                .map(|point| {
+                    HPoint2::from_cartesian(parameters(point.to_cartesian()), point.weight())
+                })
+                .collect(),
+        )?;
+        Ok(Curve2::Nurbs(NurbsCurve2::new(
+            curve.degree(),
+            control_points,
+            curve.knots().clone(),
+        )?))
     }
 
     /// Confirms that a one-sided patch really meets the plane, and tangentially.
@@ -363,12 +574,18 @@ impl<'a> PlanarSeedSearch<'a> {
     }
 
     /// Realizes patch parameters as trace seeds shared by both surfaces.
+    ///
+    /// A crossing that leaves the planar operand's own parameter domain is not
+    /// a contact of the two *trimmed* patches, so it is counted as discarded
+    /// rather than seeded. It still accounts for one end of the patch contour,
+    /// which is what certification asks about.
     fn seeds_at(
         &self,
         patch: &BezierSurface,
         parameters: impl IntoIterator<Item = Point2>,
-    ) -> Vec<TraceState> {
+    ) -> PatchSeeds {
         let mut seeds: Vec<TraceState> = Vec::new();
+        let mut discarded = 0;
         for other_uv in parameters {
             let point = patch.point_at(other_uv.x, other_uv.y);
             let plane_uv = self.planar.closest_parameter(point);
@@ -383,6 +600,7 @@ impl<'a> PlanarSeedSearch<'a> {
                 || (self.planar.point_at(plane_uv.x, plane_uv.y) - point).norm()
                     > self.options.residual_tolerance
             {
+                discarded += 1;
                 continue;
             }
             let parameters = if self.planar_is_a {
@@ -401,12 +619,91 @@ impl<'a> PlanarSeedSearch<'a> {
                 seeds.push(state);
             }
         }
-        seeds
+        PatchSeeds { seeds, discarded }
+    }
+
+    /// Seeds the part of a certified arc that only enters the planar operand
+    /// through its own domain boundary.
+    ///
+    /// Every crossing of this patch left the planar domain, so nothing on the
+    /// patch boundary can start the trace. Whatever piece of the arc does stay
+    /// inside the domain has to cross one of the planar boundary curves, and
+    /// those crossings are exactly the missing seeds.
+    fn boundary_seeds(&mut self, patch: &BezierSurface) -> Result<(), IntersectionError> {
+        let prepared = PreparedSurface::new(&Surface::Nurbs(patch.surface().clone()))?;
+        for boundary in [
+            Boundary::UMin,
+            Boundary::UMax,
+            Boundary::VMin,
+            Boundary::VMax,
+        ] {
+            let curve = boundary_curve(self.planar, boundary)?;
+            let results = intersect_prepared_curve_surface(
+                &PreparedCurve::new(&Curve::Nurbs(curve))?,
+                &prepared,
+                self.options,
+            )?;
+            if let IntersectionCoverage::Incomplete(reasons) = results.coverage() {
+                for reason in reasons.clone() {
+                    self.report(reason);
+                }
+            }
+            for result in results {
+                match result {
+                    CurveSurfaceIntersection::Point {
+                        curve_u,
+                        surface_u,
+                        surface_v,
+                        ..
+                    } => {
+                        let (u, v) = boundary_parameters(self.planar, boundary, curve_u);
+                        let parameters = if self.planar_is_a {
+                            Vector4::new(u, v, surface_u, surface_v)
+                        } else {
+                            Vector4::new(surface_u, surface_v, u, v)
+                        };
+                        let state = if self.planar_is_a {
+                            TraceState::new(self.planar, self.other, parameters)
+                        } else {
+                            TraceState::new(self.other, self.planar, parameters)
+                        };
+                        self.search.seeds.push(state);
+                    }
+                    CurveSurfaceIntersection::Overlap { .. } => {
+                        self.search.overlap_boundary_found = true;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn report(&mut self, reason: IntersectionIncompleteReason) {
         push_reason(&mut self.search.incomplete_reasons, reason);
     }
+}
+
+/// Rescales a curve's knots onto `[0, 1]` without moving the curve.
+///
+/// Branch curves and their pcurves share one parameter, and `Curve2` always
+/// runs over the unit interval, so a curve lifted out of a patch's own
+/// parameterization has to be rescaled before the two can be read together.
+fn normalized_knots(curve: NurbsCurve) -> Result<NurbsCurve, IntersectionError> {
+    let domain = curve.domain();
+    let extent = domain.end - domain.start;
+    let knots = KnotVector::new(
+        curve
+            .knots()
+            .as_slice()
+            .iter()
+            .map(|knot| (knot - domain.start) / extent)
+            .collect(),
+    )?;
+    Ok(NurbsCurve::new(
+        curve.degree(),
+        curve.control_points().clone(),
+        knots,
+    )?)
 }
 
 fn control_bbox(surface: &NurbsSurface) -> BBox {
@@ -460,6 +757,7 @@ pub(super) fn pair_seeds(
         options,
         search: SeedSearch {
             seeds: Vec::new(),
+            tangencies: Vec::new(),
             overlap_boundary_found: false,
             incomplete_reasons: Vec::new(),
         },

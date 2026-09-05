@@ -96,7 +96,8 @@ impl WasmFace {
     #[wasm_bindgen(unchecked_return_type = "FacePcurve[]", js_name = pcurves)]
     pub fn pcurves(&self) -> Result<Array, JsValue> {
         let curves = Array::new();
-        for (loop_index, boundary_loop) in self.inner.loops().map_err(js_err)?.into_iter().enumerate()
+        for (loop_index, boundary_loop) in
+            self.inner.loops().map_err(js_err)?.into_iter().enumerate()
         {
             for edge in boundary_loop.edges().map_err(js_err)? {
                 let Some(pcurve) = self.inner.pcurve(edge.dart_id()).map_err(js_err)? else {

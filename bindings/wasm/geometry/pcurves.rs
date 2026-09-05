@@ -1,9 +1,9 @@
 use js_sys::{Array, Float64Array};
 use wasm_bindgen::prelude::*;
 
+use crate::geometry::Point2;
 use crate::geometry::dim2::curves::{Circle2, Curve2, Line2};
 use crate::geometry::dim2::nurbs::NurbsCurve2;
-use crate::geometry::Point2;
 
 fn point_array(point: Point2) -> Float64Array {
     let out = Float64Array::new_with_length(2);

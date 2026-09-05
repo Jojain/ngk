@@ -37,6 +37,14 @@ pub struct BooleanTolerances {
     /// curve and its pcurves than that fitter promises. Exact planar sections
     /// stay far inside this budget.
     pub section_fit: f64,
+    /// How far a grazing contact may be reported from where it truly is.
+    ///
+    /// A contact where the operands touch without crossing is a double root, so
+    /// a solver working to a distance tolerance locates it only to the square
+    /// root of that tolerance. Two grazing observations closer together than
+    /// this are one contact, and an exact point this close to one is the answer
+    /// the solver was approximating.
+    pub graze: f64,
     pub model_scale: f64,
 }
 
@@ -66,6 +74,7 @@ impl BooleanTolerances {
                     bbox: linear,
                     probe_margin: linear * 100.0,
                     section_fit: defaults.fit_tolerance * model_scale,
+                    graze: (linear * model_scale).sqrt(),
                     model_scale,
                 }
             }
@@ -77,6 +86,7 @@ impl BooleanTolerances {
             result.angular,
             result.probe_margin,
             result.section_fit,
+            result.graze,
             result.model_scale,
         ]
         .iter()

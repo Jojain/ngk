@@ -100,6 +100,7 @@ pub enum BooleanOperation {
 }
 
 /// One successfully validated, committed solid boundary.
+#[derive(Debug)]
 pub struct BooleanResult {
     pub operation: BooleanOperation,
     pub solid: SolidKey,
@@ -108,6 +109,7 @@ pub struct BooleanResult {
 }
 
 /// Surviving source identities and pre-sewing intersection edge provenance.
+#[derive(Debug)]
 pub struct BooleanResultLineage {
     pub first: BooleanLineage,
     pub second: BooleanLineage,

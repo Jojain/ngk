@@ -3,9 +3,9 @@
 use super::*;
 use super::{
     clip::clip_branch,
-    trim::{FaceTrimDomain, boundary_edge_for},
+    trim::{FaceTrimDomain, TrimLocation, boundary_edge_for},
 };
-use crate::geometry::IntersectionCoverage;
+use crate::geometry::{CurveIntersectionOptions, IntersectionCoverage};
 use std::collections::hash_map::Entry;
 
 pub(super) fn compute_vertex_contacts<P: Payload>(
@@ -178,6 +178,22 @@ pub(super) fn compute_edge_contacts<P: Payload>(
             {
                 match contact {
                     CurveCurveIntersection::Point { point, .. } => {
+                        let point = grazed_vertex(
+                            [&first_edge, &second_edge],
+                            |candidate| {
+                                [first_curve, second_curve].iter().all(|curve| {
+                                    lies_on_curve(
+                                        curve,
+                                        candidate,
+                                        options.intersections.linear_tolerance,
+                                    )
+                                })
+                            },
+                            point,
+                            options.intersections.linear_tolerance,
+                            plan.diagnostics.tolerances.graze,
+                        )
+                        .unwrap_or(point);
                         push_edge_point(plan, first, point);
                         push_edge_point(plan, second, point);
                         push_point_contact(
@@ -273,17 +289,13 @@ impl PreparedGeometry {
         &mut self,
         g: &GMap<P>,
         key: FaceKey,
+        tolerance: f64,
     ) -> Result<&PreparedSurface, BooleanError> {
         match self.faces.entry(key) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
             Entry::Vacant(entry) => {
                 let face = g.face_unchecked(key);
-                let prepared = match broad_phase::face_uv_bounds(&face) {
-                    Some((domain_u, domain_v)) => {
-                        PreparedSurface::over(face.surface(), domain_u, domain_v)?
-                    }
-                    None => PreparedSurface::new(face.surface())?,
-                };
+                let prepared = prepare_face_surface(&face, tolerance)?;
                 Ok(entry.insert(prepared))
             }
         }
@@ -337,9 +349,18 @@ fn intersect_edge_face<P: Payload>(
     let face = g.face_unchecked(face_key);
     let curve = edge.curve().expect("registered edge geometry");
     let trim = FaceTrimDomain::new(&face, options.intersections.parameter_tolerance)?;
+    // Points both operands have already located exactly.
+    let anchors = plan
+        .contacts
+        .iter()
+        .filter_map(|contact| match contact {
+            RawIntersection::Point { point, .. } => Some(*point),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     let contacts = {
         let prepared_curve = geometry.edge(g, edge_key)?.clone();
-        let prepared_face = geometry.face(g, face_key)?;
+        let prepared_face = geometry.face(g, face_key, options.intersections.linear_tolerance)?;
         intersect_prepared_curve_surface(&prepared_curve, prepared_face, options.intersections)?
     };
     merge_coverage(plan, contacts.coverage());
@@ -354,6 +375,21 @@ fn intersect_edge_face<P: Payload>(
                 if !trim.contains(Point2::new(surface_u, surface_v)) {
                     continue;
                 }
+                let point = grazed_vertex(
+                    [&edge],
+                    |candidate| {
+                        let surface = face.surface();
+                        surface.closest_parameter(candidate).is_ok_and(|uv| {
+                            surface
+                                .point_at(uv.x, uv.y)
+                                .coincides(candidate, options.intersections.linear_tolerance)
+                        })
+                    },
+                    point,
+                    options.intersections.linear_tolerance,
+                    plan.diagnostics.tolerances.graze,
+                )
+                .unwrap_or(point);
                 push_edge_point(plan, edge_key, point);
                 let tangent = curve.derivative_at(curve_u, 1);
                 let normal = face.surface().normal_at(surface_u, surface_v);
@@ -375,31 +411,247 @@ fn intersect_edge_face<P: Payload>(
                 });
             }
             CurveSurfaceIntersection::Overlap { curve_interval } => {
-                // Boundary-edge contacts already appear in edge/edge dispatch.
-                // An edge through the face interior becomes a face imprint when
-                // both overlap endpoints belong to the trimmed region.
-                let start = curve.point_at(curve_interval.start);
-                let end = curve.point_at(curve_interval.end);
-                let start_uv = face.surface().closest_parameter(start).ok();
-                let end_uv = face.surface().closest_parameter(end).ok();
-                let Some((start_uv, end_uv)) = start_uv.zip(end_uv) else {
+                // The edge rests on the surface over this interval, but only the
+                // part the face's own trim keeps is a contact of the two cells.
+                // The solver reports the interval in the curve's own NURBS
+                // parameters; subcurves are taken over normalized ones.
+                let native = curve.to_nurbs()?.domain();
+                let extent = native.end - native.start;
+                let section = graph::normalized_subcurve(
+                    curve,
+                    Interval::new(
+                        ((curve_interval.start - native.start) / extent).clamp(0.0, 1.0),
+                        ((curve_interval.end - native.start) / extent).clamp(0.0, 1.0),
+                    ),
+                )?;
+                let Some(imprint) = section_imprint(&face, &section, options)? else {
                     continue;
                 };
-                if !trim.contains(start_uv) || !trim.contains(end_uv) {
-                    continue;
+                let side = if edge_is_first {
+                    BooleanSide::First
+                } else {
+                    BooleanSide::Second
+                };
+                for piece in clip_imprint_to_trim(
+                    &trim,
+                    &imprint,
+                    &anchors,
+                    plan.diagnostics.tolerances.graze,
+                    options,
+                )? {
+                    let start = piece.curve.point_at(0.0);
+                    let end = piece.curve.point_at(1.0);
+                    push_edge_point(plan, edge_key, start);
+                    push_edge_point(plan, edge_key, end);
+                    // The section belongs to both cells: the edge carries it
+                    // already, the face has to be split along it.
+                    plan.contacts.push(RawIntersection::EdgeSection {
+                        side,
+                        edge: edge_key,
+                        curve: piece.curve.clone(),
+                        interval: Interval::new(curve.param_at(start), curve.param_at(end)),
+                    });
+                    plan.face_imprints.entry(face_key).or_default().push(piece);
                 }
-                let imprint_curve = Curve::line(start, end);
-                let pcurve = Curve2::Line(Line2::new(start_uv, end_uv));
-                plan.face_imprints
-                    .entry(face_key)
-                    .or_default()
-                    .push(FaceImprint::new(imprint_curve, pcurve));
-                push_edge_point(plan, edge_key, start);
-                push_edge_point(plan, edge_key, end);
             }
         }
     }
     Ok(())
+}
+
+/// Relative margin added to a face's own parameter box before intersection.
+///
+/// The box exists to cover the face; trimming happens afterwards against the
+/// exact pcurves. A branch that leaves the box exactly where the face's trim
+/// ends is stopped by a boundary correction that is a double root at a
+/// tangential exit, which both misplaces the branch end and lets the same
+/// section be traced twice from opposite seeds. Overshooting the trim keeps
+/// every branch end transversal.
+const DOMAIN_MARGIN: f64 = 1.0e-2;
+
+/// Prepares a face's surface over a parameter box that overshoots its trim.
+///
+/// A direction the surface already closes in is left alone: extending it would
+/// wrap the surface over itself.
+fn prepare_face_surface<P: Payload>(
+    face: &crate::topology::face::Face<'_, P>,
+    tolerance: f64,
+) -> Result<PreparedSurface, BooleanError> {
+    let Some((domain_u, domain_v)) = broad_phase::face_uv_bounds(face) else {
+        return Ok(PreparedSurface::new(face.surface())?);
+    };
+    let surface = face.surface();
+    let middle = |domain: Interval| 0.5 * (domain.start + domain.end);
+    let closed_in_u = surface
+        .point_at(domain_u.start, middle(domain_v))
+        .coincides(surface.point_at(domain_u.end, middle(domain_v)), tolerance);
+    let closed_in_v = surface
+        .point_at(middle(domain_u), domain_v.start)
+        .coincides(surface.point_at(middle(domain_u), domain_v.end), tolerance);
+    let grown = |domain: Interval, closed: bool| {
+        if closed {
+            return domain;
+        }
+        let margin = (domain.end - domain.start) * DOMAIN_MARGIN;
+        Interval::new(domain.start - margin, domain.end + margin)
+    };
+    let domain_u = grown(domain_u, closed_in_u);
+    let domain_v = grown(domain_v, closed_in_v);
+    match PreparedSurface::over(surface, domain_u, domain_v) {
+        Ok(prepared) => Ok(prepared),
+        // A surface that cannot be realized past its own extent keeps the box
+        // the face gave it.
+        Err(_) => Ok(PreparedSurface::over(
+            surface,
+            broad_phase::face_uv_bounds(face)
+                .expect("bounds computed above")
+                .0,
+            broad_phase::face_uv_bounds(face)
+                .expect("bounds computed above")
+                .1,
+        )?),
+    }
+}
+
+/// Returns the edge vertex a grazing curve/surface contact actually is.
+///
+/// Where an edge only grazes a surface the crossing is a double root, and the
+/// solver locates it to the square root of its distance tolerance rather than
+/// to the tolerance itself. When such a contact lands beside an endpoint of the
+/// edge that is itself on the surface, that vertex is the exact answer the
+/// solver was approximating, and is used instead.
+fn grazed_vertex<P: Payload, const N: usize>(
+    edges: [&crate::topology::edge::Edge<'_, P>; N],
+    on_other: impl Fn(Point3) -> bool,
+    point: Point3,
+    tolerance: f64,
+    graze: f64,
+) -> Option<Point3> {
+    edges
+        .into_iter()
+        .flat_map(|edge| [edge.start(), edge.end()])
+        .filter_map(|vertex| vertex.point().copied())
+        .find(|vertex| {
+            !vertex.coincides(point, tolerance)
+                && (vertex - point).norm() <= graze
+                && on_other(*vertex)
+        })
+}
+
+/// Whether `point` sits on `curve` within `tolerance`.
+fn lies_on_curve(curve: &Curve, point: Point3, tolerance: f64) -> bool {
+    curve
+        .point_at(curve.param_at(point))
+        .coincides(point, tolerance)
+}
+/// Samples used to carry a section whose parameter image is not a straight line.
+const SECTION_SAMPLE_COUNT: usize = 32;
+
+/// Builds the parameter-space image of a section already resting on `face`.
+///
+/// A planar face maps model space to its parameter space affinely, so the
+/// section's own control points carry over exactly. On a curved surface a
+/// section whose projection stays collinear — a ruling, say — is still exact;
+/// anything else is carried by the interpolating polyline the face splitter
+/// consumes. `None` means the section does not project onto the surface at all.
+fn section_imprint<P: Payload>(
+    face: &crate::topology::face::Face<'_, P>,
+    section: &Curve,
+    options: BooleanOptions,
+) -> Result<Option<FaceImprint>, BooleanError> {
+    if let Surface::Plane(plane) = face.surface() {
+        let pcurve = crate::builders::profiles::curve_pcurve(
+            section,
+            section.point_at(0.0),
+            section.point_at(1.0),
+            plane,
+        )?;
+        return Ok(Some(FaceImprint::new(section.clone(), pcurve)));
+    }
+    let mut points = Vec::with_capacity(SECTION_SAMPLE_COUNT + 1);
+    let mut uv_points = Vec::with_capacity(SECTION_SAMPLE_COUNT + 1);
+    for index in 0..=SECTION_SAMPLE_COUNT {
+        let point = section.point_at(index as f64 / SECTION_SAMPLE_COUNT as f64);
+        let Ok(uv) = face.surface().closest_parameter(point) else {
+            return Ok(None);
+        };
+        points.push(point);
+        uv_points.push(uv);
+    }
+    let tolerance = options.intersections.parameter_tolerance;
+    let chord = uv_points[SECTION_SAMPLE_COUNT] - uv_points[0];
+    let collinear = chord.norm() > tolerance
+        && uv_points
+            .iter()
+            .all(|uv| cross2(chord, uv - uv_points[0]).abs() <= tolerance * chord.norm());
+    if collinear {
+        return Ok(Some(FaceImprint::new(
+            section.clone(),
+            Curve2::Line(Line2::new(uv_points[0], uv_points[SECTION_SAMPLE_COUNT])),
+        )));
+    }
+    Ok(Some(polyline_imprint(&points, &uv_points)?))
+}
+
+/// Splits an imprint at its exact trim crossings and keeps the interior pieces.
+///
+/// A piece running along a trim loop is dropped: that section is already
+/// carried by the boundary edge it rests on, and imprinting it again would
+/// split the face along its own boundary.
+fn clip_imprint_to_trim(
+    trim: &FaceTrimDomain,
+    imprint: &FaceImprint,
+    anchors: &[Point3],
+    graze: f64,
+    options: BooleanOptions,
+) -> Result<Vec<FaceImprint>, BooleanError> {
+    let tolerance = options.intersections.parameter_tolerance;
+    let curve_options = CurveIntersectionOptions {
+        linear_tolerance: tolerance,
+        parameter_tolerance: tolerance,
+        bbox_tolerance: tolerance,
+        max_subdivision_depth: options.intersections.max_subdivision_depth,
+        leaf_diagonal_tolerance: tolerance * 10.0,
+        newton_max_iterations: options.intersections.newton_max_iterations,
+    };
+    let mut crossings = Vec::new();
+    trim.crossings(&imprint.pcurve, curve_options, &mut crossings)?;
+    // A crossing where the section grazes the trim is a double root, located
+    // only to `graze`. An exact point that close to it is what it approximates,
+    // and cutting there instead keeps the piece ending on a known event.
+    let nodes = crossings
+        .iter()
+        .filter_map(|crossing| {
+            let point = imprint.curve.point_at(*crossing);
+            anchors
+                .iter()
+                .find(|anchor| (point - **anchor).norm() <= graze)
+        })
+        .map(|anchor| imprint.curve.param_at(*anchor).clamp(0.0, 1.0))
+        .collect::<Vec<_>>();
+    crossings.retain(|crossing| {
+        let point = imprint.curve.point_at(*crossing);
+        !nodes
+            .iter()
+            .any(|node| (point - imprint.curve.point_at(*node)).norm() <= graze)
+    });
+    let mut parameters = vec![0.0, 1.0];
+    parameters.append(&mut crossings);
+    parameters.extend(nodes);
+    parameters.sort_by(f64::total_cmp);
+    parameters.dedup_by(|a, b| (*a - *b).abs() <= tolerance);
+    let mut pieces = Vec::new();
+    for pair in parameters.windows(2) {
+        let midpoint = 0.5 * (pair[0] + pair[1]);
+        if !matches!(
+            trim.classify(imprint.pcurve.point_at(midpoint)),
+            TrimLocation::Inside { .. }
+        ) {
+            continue;
+        }
+        pieces.push(imprint.trimmed(Interval::new(pair[0], pair[1]))?);
+    }
+    Ok(pieces)
 }
 
 pub(super) fn compute_face_contacts<P: Payload>(
@@ -728,15 +980,12 @@ fn intersect_face_pair<P: Payload>(
     let cross = first_normal.cross(&second_normal);
     let cross_squared = cross.norm_squared();
     if cross_squared <= options.intersections.angular_tolerance.powi(2) {
+        // The section each face cuts out of the other is its partner's boundary
+        // clipped to its own trim, which the edge/face pass already imprinted.
+        // Only the region record is left to make here.
         let distance = (second_plane.origin() - first_plane.origin()).dot(&first_normal);
         if distance.abs() <= options.intersections.linear_tolerance
-            && add_planar_overlap_imprints(
-                g,
-                plan,
-                first_key,
-                second_key,
-                options.intersections.parameter_tolerance,
-            )
+            && coplanar_faces_share_area(&first, &second, options)?
         {
             plan.contacts.push(RawIntersection::Region {
                 first_face: first_key,
@@ -798,19 +1047,25 @@ fn intersect_general_face_pair<P: Payload>(
     let second = g.face_unchecked(second_key);
     let first_trim = FaceTrimDomain::new(&first, options.intersections.parameter_tolerance)?;
     let second_trim = FaceTrimDomain::new(&second, options.intersections.parameter_tolerance)?;
-    let prepare =
-        |face: &crate::topology::face::Face<'_, P>| match broad_phase::face_uv_bounds(face) {
-            Some((domain_u, domain_v)) => PreparedSurface::over(face.surface(), domain_u, domain_v),
-            None => PreparedSurface::new(face.surface()),
-        };
-    let prepared_first = prepare(&first)?;
-    let prepared_second = prepare(&second)?;
+    let prepared_first = prepare_face_surface(&first, options.intersections.linear_tolerance)?;
+    let prepared_second = prepare_face_surface(&second, options.intersections.linear_tolerance)?;
     let contacts = crate::geometry::intersect_prepared_surfaces(
         &prepared_first,
         &prepared_second,
         options.intersections,
     )?;
     merge_coverage(plan, contacts.coverage());
+    // Points both operands already located exactly. A branch is a fit, so where
+    // it runs into one of these the exact point is the node, not the crossing
+    // the fit reports for itself.
+    let anchors = plan
+        .contacts
+        .iter()
+        .filter_map(|contact| match contact {
+            RawIntersection::Point { point, .. } => Some(*point),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     for contact in contacts.intersections() {
         match contact {
             SurfaceSurfaceIntersection::Point(contact) => {
@@ -831,9 +1086,14 @@ fn intersect_general_face_pair<P: Payload>(
             SurfaceSurfaceIntersection::Branch(branch) => {
                 plan.diagnostics.branches_found += 1;
                 plan.diagnostics.branches_uncertified += usize::from(!branch.quality.certified);
-                for [first_imprint, second_imprint] in
-                    clip_branch(branch, &first_trim, &second_trim, options.intersections)?
-                {
+                for [first_imprint, second_imprint] in clip_branch(
+                    branch,
+                    (first.surface(), &first_trim),
+                    (second.surface(), &second_trim),
+                    &anchors,
+                    plan.diagnostics.tolerances.graze,
+                    options.intersections,
+                )? {
                     plan.face_imprints
                         .entry(first_key)
                         .or_default()
@@ -854,173 +1114,64 @@ fn intersect_general_face_pair<P: Payload>(
     Ok(())
 }
 
-/// Overlays two coplanar convex outer loops and imprints the non-boundary part
-/// of the overlap polygon on each face.
-fn add_planar_overlap_imprints<P: Payload>(
-    g: &GMap<P>,
-    plan: &mut IntersectionAccumulator,
-    first_key: FaceKey,
-    second_key: FaceKey,
-    tolerance: f64,
-) -> bool {
-    let first = g.face_unchecked(first_key);
-    let second = g.face_unchecked(second_key);
-    let (Surface::Plane(first_plane), Surface::Plane(second_plane)) =
-        (first.surface(), second.surface())
-    else {
-        return false;
-    };
-    let first_polygon = face_outer_corners_uv(&first);
-    let second_in_first = face_outer_corners_uv(&second)
-        .into_iter()
-        .map(|uv| first_plane.parameter_at(second.point_at(uv.x, uv.y)))
-        .collect::<Vec<_>>();
-    let overlap = clip_convex_polygon(second_in_first, &first_polygon, tolerance);
-    if overlap.len() < 3 || signed_area2(&overlap).abs() <= tolerance {
-        return false;
-    }
-
-    let first_imprints = overlap_segments_for_face(&first, &overlap, tolerance);
-    let overlap_second = overlap
-        .iter()
-        .map(|uv| {
-            let point = first.point_at(uv.x, uv.y);
-            second_plane.parameter_at(point)
-        })
-        .collect::<Vec<_>>();
-    let second_imprints = overlap_segments_for_face(&second, &overlap_second, tolerance);
-    plan.face_imprints
-        .entry(first_key)
-        .or_default()
-        .extend(first_imprints);
-    plan.face_imprints
-        .entry(second_key)
-        .or_default()
-        .extend(second_imprints);
-    true
-}
-
-fn face_outer_corners_uv<P: Payload>(face: &crate::topology::face::Face<'_, P>) -> Vec<Point2> {
-    face.outer_loop()
-        .edges()
-        .into_iter()
-        .filter_map(|edge| face.pcurve(edge.dart()).map(|pcurve| pcurve.point_at(0.0)))
-        .collect()
-}
-
-fn overlap_segments_for_face<P: Payload>(
-    face: &crate::topology::face::Face<'_, P>,
-    polygon: &[Point2],
-    tolerance: f64,
-) -> Vec<FaceImprint> {
-    polygon
-        .iter()
-        .copied()
-        .zip(polygon.iter().copied().cycle().skip(1))
-        .take(polygon.len())
-        .filter_map(|(start_uv, end_uv)| {
-            if (end_uv - start_uv).norm() <= tolerance {
-                return None;
+/// Whether two coplanar faces share area rather than only touching.
+///
+/// Faces that meet along an edge or at a corner have every shared point on both
+/// boundaries, so no probe reaches the interior of the other. Each face is
+/// probed at its own boundary samples — which catches a partial overlap — and at
+/// their centroid, which catches a face contained in the other.
+fn coplanar_faces_share_area<P: Payload>(
+    first: &crate::topology::face::Face<'_, P>,
+    second: &crate::topology::face::Face<'_, P>,
+    options: BooleanOptions,
+) -> Result<bool, BooleanError> {
+    let tolerance = options.intersections.parameter_tolerance;
+    let trims = [
+        FaceTrimDomain::new(first, tolerance)?,
+        FaceTrimDomain::new(second, tolerance)?,
+    ];
+    for (index, face) in [first, second].into_iter().enumerate() {
+        let other = [second, first][index];
+        let other_trim = &trims[1 - index];
+        let mut samples = Vec::new();
+        for boundary in face.loops() {
+            for edge in boundary.edges() {
+                let Some(pcurve) = face.pcurve(edge.dart()) else {
+                    continue;
+                };
+                for fraction in [0.0, 0.5] {
+                    let uv = pcurve.point_at(fraction);
+                    samples.push(face.point_at(uv.x, uv.y));
+                }
             }
-            let start = face.point_at(start_uv.x, start_uv.y);
-            let end = face.point_at(end_uv.x, end_uv.y);
-            Some(FaceImprint::new(
-                Curve::line(start, end),
-                Curve2::Line(Line2::new(start_uv, end_uv)),
-            ))
-        })
-        .collect()
-}
-
-fn clip_convex_polygon(mut subject: Vec<Point2>, clip: &[Point2], tolerance: f64) -> Vec<Point2> {
-    if subject.len() < 3 || clip.len() < 3 {
-        return Vec::new();
-    }
-    let orientation = signed_area2(clip).signum();
-    for (clip_start, clip_end) in clip
-        .iter()
-        .copied()
-        .zip(clip.iter().copied().cycle().skip(1))
-        .take(clip.len())
-    {
-        let input = subject;
-        subject = Vec::new();
-        let Some(mut previous) = input.last().copied() else {
-            break;
+        }
+        let Some(centroid) = centroid_of(&samples) else {
+            continue;
         };
-        let mut previous_inside =
-            polygon_half_plane_contains(clip_start, clip_end, previous, orientation, tolerance);
-        for current in input {
-            let current_inside =
-                polygon_half_plane_contains(clip_start, clip_end, current, orientation, tolerance);
-            if current_inside != previous_inside
-                && let Some(intersection) =
-                    segment_line_intersection(previous, current, clip_start, clip_end, tolerance)
-            {
-                subject.push(intersection);
-            }
-            if current_inside {
-                subject.push(current);
-            }
-            previous = current;
-            previous_inside = current_inside;
+        samples.push(centroid);
+        if samples.iter().any(|point| {
+            other
+                .surface()
+                .closest_parameter(*point)
+                .is_ok_and(|uv| other_trim.contains(uv))
+        }) {
+            return Ok(true);
         }
     }
-    dedup_polygon(subject, tolerance)
+    Ok(false)
 }
 
-fn polygon_half_plane_contains(
-    edge_start: Point2,
-    edge_end: Point2,
-    point: Point2,
-    orientation: f64,
-    tolerance: f64,
-) -> bool {
-    cross2(edge_end - edge_start, point - edge_start) * orientation >= -tolerance
-}
-
-fn segment_line_intersection(
-    segment_start: Point2,
-    segment_end: Point2,
-    line_start: Point2,
-    line_end: Point2,
-    tolerance: f64,
-) -> Option<Point2> {
-    let segment = segment_end - segment_start;
-    let line = line_end - line_start;
-    let denominator = cross2(segment, line);
-    if denominator.abs() <= tolerance {
-        return None;
-    }
-    let parameter = cross2(line_start - segment_start, line) / denominator;
-    Some(segment_start + segment * parameter)
-}
-
-fn dedup_polygon(points: Vec<Point2>, tolerance: f64) -> Vec<Point2> {
-    let mut deduped = Vec::<Point2>::new();
-    for point in points {
-        if deduped
-            .last()
-            .is_none_or(|previous| (*previous - point).norm() > tolerance)
-        {
-            deduped.push(point);
-        }
-    }
-    if deduped.len() > 1
-        && (deduped[0] - *deduped.last().expect("non-empty polygon")).norm() <= tolerance
-    {
-        deduped.pop();
-    }
-    deduped
-}
-
-fn signed_area2(points: &[Point2]) -> f64 {
-    0.5 * points
-        .iter()
-        .zip(points.iter().cycle().skip(1))
-        .take(points.len())
-        .map(|(a, b)| a.x * b.y - b.x * a.y)
-        .sum::<f64>()
+/// Averages points, or `None` when there are none.
+fn centroid_of(points: &[Point3]) -> Option<Point3> {
+    let count = points.len();
+    (count > 0).then(|| {
+        Point3::from(
+            points
+                .iter()
+                .fold(nalgebra::Vector3::zeros(), |sum, point| sum + point.coords)
+                / count as f64,
+        )
+    })
 }
 
 fn line_intervals_in_face<P: Payload>(

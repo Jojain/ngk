@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use crate::geometry::{
-    ControlPolygon2, Curve, Curve2, HPoint2, LINEAR_TOLERANCE, Line2, NurbsCurve2, Plane, Point2,
-    Point3, PointCoincidence,
+    ControlPolygon2, Curve, Curve2, HPoint2, LINEAR_TOLERANCE, Line2, NurbsCurve2, NurbsError,
+    Plane, Point2, Point3, PointCoincidence,
 };
 use crate::topology::TopologyEdit;
 use crate::topology::attributes::{EdgeAttr, ProfileAttr, VertexAttr};
@@ -184,7 +184,7 @@ pub(crate) fn curve_pcurve(
     start: Point3,
     end: Point3,
     plane: &Plane,
-) -> Result<Curve2, PolylineError> {
+) -> Result<Curve2, NurbsError> {
     match curve {
         Curve::Line(_) => Ok(Curve2::Line(Line2::new(
             plane_uv(plane, start),

@@ -1,9 +1,11 @@
 use nalgebra::Vector3;
-use ngk::builders::boolean::compute_boolean_intersections;
+use ngk::builders;
 use ngk::builders::boolean::{
-    BooleanCell, BooleanOperand, BooleanOptions, BooleanSide, IntersectionSpanUse, prepare_boolean,
+    BooleanCell, BooleanOperand, BooleanOperation, BooleanOptions, BooleanSide,
+    IntersectionSpanUse, boolean, compute_boolean_intersections, prepare_boolean,
     prepare_boolean_with_external_tool,
 };
+
 use ngk::builders::edges::add_line;
 use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints};
 use ngk::builders::solids::add_extruded_face;
@@ -1554,7 +1556,7 @@ fn box_between(min: Point3, max: Point3) -> (GMap<ngk::StandardPayload>, SolidKe
 
 #[test]
 fn boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps() {
-    use ngk::builders::boolean::{BooleanOperation, boolean, solid_contains_point};
+    use ngk::builders::boolean::solid_contains_point;
     // The planar counterpart of "box minus a through cylinder": the tool leaves
     // both caps with a hole and the result is a genus-one shell.
     let (mut map, block) = box_between(Point3::origin(), Point3::new(3.0, 3.0, 3.0));
@@ -1609,4 +1611,28 @@ fn boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps() {
             "membership at {point:?} after cutting the slot"
         );
     }
+}
+
+#[test]
+fn block_fused_with_cylinder_tangent_to_block_faces() {
+    let size = 2.0;
+    let (mut map, block_key) = block_at(Point3::origin(), size);
+    let face = builders::faces::add_circle(&mut map, Plane::xy(), size).expect("should build");
+    let cylinder = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 2.0 * size))
+        .expect("should build");
+
+    let result = boolean(
+        &mut map,
+        block_key,
+        cylinder,
+        BooleanOperation::Intersection,
+        BooleanOptions::default(),
+    );
+    show(&map);
+    assert!(result.is_ok(), "boolean union failed: {result:?}");
+
+    assert!(
+        map.iter_solids().count() == 1,
+        "result should be a single solid"
+    );
 }

@@ -103,6 +103,13 @@ fn intersect_nurbs_surfaces(
     for reason in &seed_search.incomplete_reasons {
         push_reason(&mut reasons, *reason);
     }
+    // Tangential branches are already exact, so they are adopted before the
+    // traced ones and keep any traced duplicate from being added on top.
+    for branch in seed_search.tangencies {
+        if !contains_equivalent_branch(&intersections, &branch, options) {
+            intersections.push(SurfaceSurfaceIntersection::Branch(branch));
+        }
+    }
     if seed_search.overlap_boundary_found {
         push_reason(
             &mut reasons,

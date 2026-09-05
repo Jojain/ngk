@@ -4,7 +4,8 @@ use ngk::geometry::{
     CurveSurfaceIntersection, Cylinder, Degree, HPoint, IntersectionCoverage,
     IntersectionIncompleteReason, IntersectionOptions, KnotVector, LINEAR_TOLERANCE, NurbsCurve,
     NurbsSurface, Plane, Point3, PointCoincidence, PreparedCurve, PreparedSurface, Surface,
-    SurfaceSurfaceIntersection, intersect_prepared_curve_surface, intersect_surfaces_with_options,
+    SurfaceIntersectionBranchKind, SurfaceSurfaceIntersection, intersect_prepared_curve_surface,
+    intersect_surfaces_with_options,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -518,7 +519,7 @@ fn synchronized_fit_tolerance_failure_is_reported_as_incomplete() {
 }
 
 #[test]
-fn tangent_boundary_contact_is_reported_as_incomplete() {
+fn a_plane_tangent_to_a_cylinder_yields_the_ruling_it_touches_along() {
     let tangent_plane = Surface::Plane(Plane::from_xy(
         Point3::new(1.0, 0.0, 0.0),
         Vector3::y(),
@@ -533,11 +534,28 @@ fn tangent_boundary_contact_is_reported_as_incomplete() {
 
     let results = tangent_plane.intersect_surface(&cylinder).unwrap();
 
-    assert!(matches!(
-        results.coverage(),
-        IntersectionCoverage::Incomplete(reasons)
-            if reasons.contains(&IntersectionIncompleteReason::TangentOrSingularContact)
-    ));
+    assert_eq!(results.coverage(), &IntersectionCoverage::Complete);
+    let branches = results
+        .intersections()
+        .iter()
+        .filter_map(|contact| match contact {
+            SurfaceSurfaceIntersection::Branch(branch) => Some(branch),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(branches.len(), 1);
+    let branch = branches[0];
+    assert_eq!(branch.kind, SurfaceIntersectionBranchKind::Tangent);
+    assert!(branch.quality.certified);
+    // The contact is the ruling the plane rests on, so every point of the
+    // branch stays on both surfaces' shared line.
+    for step in 0..=8 {
+        let point = branch.curve_3d.point_at(f64::from(step) / 8.0);
+        assert!(
+            (point.x - 1.0).abs() <= LINEAR_TOLERANCE && point.y.abs() <= LINEAR_TOLERANCE,
+            "tangency point {point:?} left the ruling"
+        );
+    }
 }
 
 fn quadratic_curve(points: [Point3; 3]) -> NurbsCurve {

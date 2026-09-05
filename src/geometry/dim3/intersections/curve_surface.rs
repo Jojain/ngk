@@ -29,6 +29,13 @@ const EARLY_REFINEMENT_DEPTH: usize = 10;
 /// solver cannot resolve approach the cap.
 const SEARCH_NODE_BUDGET: usize = 4_096;
 
+/// Samples used to decide whether a Bézier span rests on a surface.
+///
+/// The span and the surface are both polynomial, so their separation is smooth;
+/// a span that agrees at this many parameters and nowhere departs between them
+/// is treated as resting on the surface.
+const OVERLAP_SAMPLE_COUNT: usize = 16;
+
 /// A curve decomposed once for repeated intersection against many surfaces.
 ///
 /// Building this is the expensive part of a curve/surface query, so callers
@@ -309,6 +316,14 @@ impl Search<'_> {
             }
         }
 
+        // A curve resting on a curved surface keeps both hulls overlapping
+        // however far the pair is split, so subdivision alone never settles it.
+        // The untouched span is tested against the surface directly instead.
+        if curve.depth == 0 && self.span_lies_on_surface(&curve.bezier) {
+            self.overlaps.push(curve.bezier.domain());
+            return;
+        }
+
         let curve_leaf = curve.diagonal_length() <= options.leaf_diagonal_tolerance;
         let surface_leaf = surface.diagonal_length() <= options.leaf_diagonal_tolerance;
         // The cap is on total splits: bounding each side separately admits the
@@ -320,7 +335,7 @@ impl Search<'_> {
             // will not correct to tolerance, mean a tangential or singular
             // contact this solver does not resolve.
             if !self.refine(&curve, &surface) && curve_bbox.intersects(&surface_bbox, 0.0) {
-                self.push_reason(IntersectionIncompleteReason::TangentOrSingularContact);
+                self.report_unresolved(&curve);
             }
             return;
         }
@@ -343,8 +358,35 @@ impl Search<'_> {
             self.visit(curve.clone(), left);
             self.visit(curve, right);
         } else if !self.refine(&curve, &surface) && curve_bbox.intersects(&surface_bbox, 0.0) {
-            self.push_reason(IntersectionIncompleteReason::TangentOrSingularContact);
+            self.report_unresolved(&curve);
         }
+    }
+
+    /// Records an abandoned candidate as an overlap when the span rests on the
+    /// surface, and as an unresolved tangency otherwise.
+    ///
+    /// A span that only *partly* rests on the surface is abandoned in pieces,
+    /// and `finish` merges those pieces back into one interval.
+    fn report_unresolved(&mut self, curve: &CurvePiece) {
+        if self.span_lies_on_surface(&curve.bezier) {
+            self.overlaps.push(curve.bezier.domain());
+            return;
+        }
+        self.push_reason(IntersectionIncompleteReason::TangentOrSingularContact);
+    }
+
+    /// Whether every sample of `span` projects onto the surface within tolerance.
+    ///
+    /// The projection is clamped to the surface's own parameter domain, so a
+    /// span running alongside the surface but past its trim is not an overlap.
+    fn span_lies_on_surface(&self, span: &Bezier) -> bool {
+        let domain = span.domain();
+        (0..=OVERLAP_SAMPLE_COUNT).all(|index| {
+            let fraction = index as f64 / OVERLAP_SAMPLE_COUNT as f64;
+            let point = span.point_at(domain.start + (domain.end - domain.start) * fraction);
+            let uv = self.surface.closest_parameter(point);
+            (self.surface.point_at(uv.x, uv.y) - point).norm() <= self.options.residual_tolerance
+        })
     }
 
     /// Corrects one isolated candidate against the original NURBS equations.
