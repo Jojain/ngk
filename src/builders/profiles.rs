@@ -193,7 +193,7 @@ pub(crate) fn curve_pcurve(
         Curve::Bounded(bounded) if matches!(bounded.inner(), Curve::Line(_)) => Ok(Curve2::Line(
             Line2::new(plane_uv(plane, start), plane_uv(plane, end)),
         )),
-        Curve::Circle(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
+        Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
             let nurbs = curve.to_nurbs()?;
             let control_points = ControlPolygon2::new(
                 nurbs

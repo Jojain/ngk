@@ -19,6 +19,7 @@ use crate::geometry::traits::Curve2Geometry;
 pub enum Curve2 {
     Line(Line2),
     Circle(Circle2),
+    Ellipse(Ellipse2),
     Nurbs(NurbsCurve2),
 }
 
@@ -28,6 +29,7 @@ impl Curve2 {
         match self {
             Curve2::Line(line) => line.to_nurbs(),
             Curve2::Circle(circle) => circle.to_nurbs(),
+            Curve2::Ellipse(ellipse) => ellipse.to_nurbs(),
             Curve2::Nurbs(curve) => Ok(curve.clone()),
         }
     }
@@ -37,6 +39,7 @@ impl Curve2 {
         match self {
             Curve2::Line(line) => line.point_at(parameter),
             Curve2::Circle(circle) => circle.point_at(parameter),
+            Curve2::Ellipse(ellipse) => ellipse.point_at(parameter),
             Curve2::Nurbs(curve) => curve.point_at(native_parameter(curve.domain(), parameter)),
         }
     }
@@ -59,6 +62,7 @@ impl Curve2 {
         match self {
             Curve2::Line(line) => vec![(0.0, line.start), (1.0, line.end)],
             Curve2::Circle(circle) => circle.adaptive_samples(tolerance, max_depth),
+            Curve2::Ellipse(ellipse) => ellipse.adaptive_samples(tolerance, max_depth),
             Curve2::Nurbs(curve) => {
                 let domain = curve.domain();
                 curve
@@ -75,6 +79,7 @@ impl Curve2 {
         match self {
             Curve2::Line(line) => Curve2::Line(line.reversed()),
             Curve2::Circle(circle) => Curve2::Circle(circle.reversed()),
+            Curve2::Ellipse(ellipse) => Curve2::Ellipse(ellipse.reversed()),
             Curve2::Nurbs(curve) => Curve2::Nurbs(curve.reversed()),
         }
     }
@@ -87,6 +92,7 @@ impl Curve2 {
                 line.end + offset,
             ))),
             Curve2::Circle(circle) => Ok(Curve2::Circle(circle.translated(offset))),
+            Curve2::Ellipse(ellipse) => Ok(Curve2::Ellipse(ellipse.translated(offset))),
             Curve2::Nurbs(curve) => Ok(Curve2::Nurbs(curve.translated(offset)?)),
         }
     }
@@ -107,6 +113,10 @@ impl Curve2 {
             Curve2::Circle(circle) => {
                 let (first, second) = circle.split_at(parameter);
                 Ok((Curve2::Circle(first), Curve2::Circle(second)))
+            }
+            Curve2::Ellipse(ellipse) => {
+                let (first, second) = ellipse.split_at(parameter);
+                Ok((Curve2::Ellipse(first), Curve2::Ellipse(second)))
             }
             Curve2::Nurbs(curve) => {
                 let (first, second) =
@@ -153,6 +163,7 @@ impl Curve2 {
                 line.point_at(end),
             ))),
             Curve2::Circle(circle) => Ok(Curve2::Circle(circle.trimmed(start, end))),
+            Curve2::Ellipse(ellipse) => Ok(Curve2::Ellipse(ellipse.trimmed(start, end))),
             Curve2::Nurbs(curve) => {
                 let domain = curve.domain();
                 Ok(Curve2::Nurbs(curve.trimmed(
@@ -168,6 +179,7 @@ impl Curve2 {
         match self {
             Curve2::Line(line) => line.parameter_at(point, tolerance),
             Curve2::Circle(circle) => circle.parameter_at(point, tolerance),
+            Curve2::Ellipse(ellipse) => ellipse.parameter_at(point, tolerance),
             Curve2::Nurbs(curve) => curve
                 .parameter_at(point, tolerance)
                 .map(|parameter| normalized_parameter(curve.domain(), parameter)),
@@ -341,6 +353,173 @@ impl Circle2 {
     }
 }
 
+/// A bounded elliptical arc in 2D, evaluated over the normalized `[0, 1]` domain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Ellipse2 {
+    center: Point2,
+    x_dir: UnitVector2<f64>,
+    major_radius: f64,
+    minor_radius: f64,
+    start_angle: f64,
+    sweep: f64,
+}
+
+impl Ellipse2 {
+    /// Creates an arc starting on the major axis and rotating by `sweep` radians.
+    pub fn new(
+        center: Point2,
+        x_dir: Vector2<f64>,
+        major_radius: f64,
+        minor_radius: f64,
+        sweep: f64,
+    ) -> Self {
+        Self {
+            center,
+            x_dir: UnitVector2::new_normalize(x_dir),
+            major_radius,
+            minor_radius,
+            start_angle: 0.0,
+            sweep,
+        }
+    }
+
+    fn with_start_angle(&self, start_angle: f64, sweep: f64) -> Self {
+        Self {
+            start_angle,
+            sweep,
+            ..self.clone()
+        }
+    }
+
+    pub fn center(&self) -> Point2 {
+        self.center
+    }
+
+    pub fn x_dir(&self) -> UnitVector2<f64> {
+        self.x_dir
+    }
+
+    pub fn major_radius(&self) -> f64 {
+        self.major_radius
+    }
+
+    pub fn minor_radius(&self) -> f64 {
+        self.minor_radius
+    }
+
+    pub fn sweep(&self) -> f64 {
+        self.sweep
+    }
+
+    pub fn point_at(&self, parameter: f64) -> Point2 {
+        let angle = self.start_angle + self.sweep * parameter;
+        let y_dir = Vector2::new(-self.x_dir.y, self.x_dir.x);
+        self.center
+            + *self.x_dir * (self.major_radius * angle.cos())
+            + y_dir * (self.minor_radius * angle.sin())
+    }
+
+    pub fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
+        let radius = self.major_radius.abs().max(self.minor_radius.abs());
+        let ratio = (1.0 - tolerance / radius.max(tolerance)).clamp(-1.0, 1.0);
+        let angle_step = (2.0 * ratio.acos()).max(1.0e-6);
+        let depth_limit = 1usize.checked_shl(max_depth.min(20) as u32).unwrap_or(1);
+        let segments = ((self.sweep.abs() / angle_step).ceil() as usize)
+            .max(1)
+            .min(depth_limit);
+        (0..=segments)
+            .map(|index| {
+                let parameter = index as f64 / segments as f64;
+                (parameter, self.point_at(parameter))
+            })
+            .collect()
+    }
+
+    pub fn reversed(&self) -> Self {
+        self.with_start_angle(self.start_angle + self.sweep, -self.sweep)
+    }
+
+    pub fn translated(&self, offset: Vector2<f64>) -> Self {
+        Self {
+            center: self.center + offset,
+            ..self.clone()
+        }
+    }
+
+    pub fn split_at(&self, parameter: f64) -> (Self, Self) {
+        let parameter = parameter.clamp(0.0, 1.0);
+        (self.trimmed(0.0, parameter), self.trimmed(parameter, 1.0))
+    }
+
+    pub fn trimmed(&self, start: f64, end: f64) -> Self {
+        self.with_start_angle(
+            self.start_angle + self.sweep * start,
+            self.sweep * (end - start),
+        )
+    }
+
+    pub fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
+        let offset = point - self.center;
+        let y_dir = Vector2::new(-self.x_dir.y, self.x_dir.x);
+        let x = offset.dot(&self.x_dir) / self.major_radius;
+        let y = offset.dot(&y_dir) / self.minor_radius;
+        if (x * x + y * y - 1.0).abs() > tolerance * 2.0 {
+            return None;
+        }
+        let mut angle = y.atan2(x) - self.start_angle;
+        if self.sweep > 0.0 {
+            while angle < 0.0 {
+                angle += TAU;
+            }
+        } else {
+            while angle > 0.0 {
+                angle -= TAU;
+            }
+        }
+        let parameter = angle / self.sweep;
+        if !(-tolerance..=1.0 + tolerance).contains(&parameter) {
+            return None;
+        }
+        let parameter = parameter.clamp(0.0, 1.0);
+        ((self.point_at(parameter) - point).norm() <= tolerance).then_some(parameter)
+    }
+
+    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        if self.sweep.abs() <= LINEAR_TOLERANCE {
+            return Err(NurbsError::DegenerateInterval {
+                start: 0.0,
+                end: self.sweep,
+            });
+        }
+        let segment_count = (self.sweep.abs() / FRAC_PI_2).ceil() as usize;
+        let segment_sweep = self.sweep / segment_count as f64;
+        let weight = (0.5 * segment_sweep).cos();
+        let y_dir = Vector2::new(-self.x_dir.y, self.x_dir.x);
+        let mut points = Vec::with_capacity(segment_count * 2 + 1);
+        let mut knots = vec![0.0; 3];
+        points.push(HPoint2::from_cartesian(self.point_at(0.0), 1.0));
+        for segment in 0..segment_count {
+            let middle = (segment as f64 + 0.5) / segment_count as f64;
+            let end = (segment + 1) as f64 / segment_count as f64;
+            let angle = self.start_angle + self.sweep * middle;
+            let middle_point = self.center
+                + *self.x_dir * (self.major_radius * angle.cos() / weight)
+                + y_dir * (self.minor_radius * angle.sin() / weight);
+            points.push(HPoint2::from_cartesian(middle_point, weight));
+            points.push(HPoint2::from_cartesian(self.point_at(end), 1.0));
+            if segment + 1 < segment_count {
+                knots.extend([end, end]);
+            }
+        }
+        knots.extend([1.0, 1.0, 1.0]);
+        NurbsCurve2::new(
+            Degree::new(2)?,
+            ControlPolygon2::new(points)?,
+            KnotVector::new(knots)?,
+        )
+    }
+}
+
 /// A bounded straight segment in 2D parameter space.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Line2 {
@@ -485,6 +664,36 @@ impl Curve2Geometry for Circle2 {
 
     fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
         Circle2::to_nurbs(self)
+    }
+}
+
+impl Curve2Geometry for Ellipse2 {
+    fn point_at(&self, parameter: f64) -> Point2 {
+        Ellipse2::point_at(self, parameter)
+    }
+
+    fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
+        Ellipse2::adaptive_samples(self, tolerance, max_depth)
+    }
+
+    fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
+        Ellipse2::parameter_at(self, point, tolerance)
+    }
+
+    fn reversed(&self) -> Self {
+        Ellipse2::reversed(self)
+    }
+
+    fn translated(&self, offset: Vector2<f64>) -> Result<Self, NurbsError> {
+        Ok(Ellipse2::translated(self, offset))
+    }
+
+    fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
+        Ok(Ellipse2::split_at(self, parameter))
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        Ellipse2::to_nurbs(self)
     }
 }
 

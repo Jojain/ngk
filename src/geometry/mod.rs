@@ -6,7 +6,7 @@ pub mod nurbs;
 pub mod tolerance;
 pub mod traits;
 
-pub use dim2::curves::{Circle2, Curve2, Line2};
+pub use dim2::curves::{Circle2, Curve2, Ellipse2, Line2};
 pub use dim2::intersections::{
     CurveCurveIntersection2, CurveCurveIntersections2, CurveIntersectionError,
     CurveIntersectionOptions,
@@ -14,7 +14,7 @@ pub use dim2::intersections::{
 pub use dim2::nurbs::{ControlPolygon2, HPoint2, NurbsCurve2};
 pub use dim2::utils::{Point2, Vector2};
 pub use dim3::bbox::BBox;
-pub use dim3::curves::{Bounded, Circle, Curve, Line, Periodicity};
+pub use dim3::curves::{Bounded, Circle, Curve, Ellipse, Line, Periodicity};
 pub use dim3::frame::Frame;
 pub use dim3::intersections::{
     CurveCurveIntersection, CurveCurveIntersections, CurveSurfaceIntersection,

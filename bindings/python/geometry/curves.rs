@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-use crate::geometry::{Circle, Line};
+use crate::geometry::{Circle, Ellipse, Line};
 
 use super::{PyPlane, PyPoint3, point};
 
@@ -57,5 +57,36 @@ impl PyCircle {
 
     fn __repr__(&self) -> String {
         format!("Circle(radius={})", self.circle.radius())
+    }
+}
+
+#[pyclass(name = "Ellipse", module = "ngk")]
+#[derive(Clone)]
+pub(crate) struct PyEllipse {
+    pub(super) ellipse: Ellipse,
+}
+
+#[pymethods]
+impl PyEllipse {
+    #[getter]
+    fn major_radius(&self) -> f64 {
+        self.ellipse.major_radius()
+    }
+
+    #[getter]
+    fn minor_radius(&self) -> f64 {
+        self.ellipse.minor_radius()
+    }
+
+    fn point_at(&self, t: f64) -> PyPoint3 {
+        point(self.ellipse.point_at(t))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Ellipse(major_radius={}, minor_radius={})",
+            self.ellipse.major_radius(),
+            self.ellipse.minor_radius()
+        )
     }
 }

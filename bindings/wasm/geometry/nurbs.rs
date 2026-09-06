@@ -361,6 +361,7 @@ fn curve_representation(curve: &Curve) -> &'static str {
     match curve {
         Curve::Line(_) => "line",
         Curve::Circle(_) => "circle",
+        Curve::Ellipse(_) => "ellipse",
         Curve::Nurbs(_) => "nurbs",
         Curve::Bounded(curve) => curve_representation(curve.inner()),
     }
@@ -370,6 +371,7 @@ fn pcurve_representation(curve: &Curve2) -> &'static str {
     match curve {
         Curve2::Line(_) => "line",
         Curve2::Circle(_) => "circle",
+        Curve2::Ellipse(_) => "ellipse",
         Curve2::Nurbs(_) => "nurbs",
     }
 }

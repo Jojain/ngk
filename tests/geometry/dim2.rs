@@ -1,6 +1,6 @@
 use ngk::geometry::{
-    Circle2, ControlPolygon2, Curve2, CurveCurveIntersection2, Degree, HPoint2, KnotVector,
-    LINEAR_TOLERANCE, Line2, NurbsCurve2, Point2, Vector2,
+    Circle2, ControlPolygon2, Curve2, CurveCurveIntersection2, Degree, Ellipse2, HPoint2,
+    KnotVector, LINEAR_TOLERANCE, Line2, NurbsCurve2, Point2, Vector2,
 };
 
 fn assert_point2_close(actual: Point2, expected: Point2) {
@@ -8,6 +8,71 @@ fn assert_point2_close(actual: Point2, expected: Point2) {
         (actual - expected).norm() <= LINEAR_TOLERANCE,
         "expected {expected:?}, got {actual:?}"
     );
+}
+
+#[test]
+fn ellipse2_uses_normalized_parameter_and_exact_nurbs_geometry() {
+    let ellipse = Ellipse2::new(
+        Point2::new(1.0, -2.0),
+        Vector2::y(),
+        4.0,
+        2.0,
+        std::f64::consts::TAU,
+    );
+    let curve = Curve2::Ellipse(ellipse.clone());
+
+    assert_point2_close(curve.point_at(0.0), Point2::new(1.0, 2.0));
+    assert_point2_close(curve.point_at(0.25), Point2::new(-1.0, -2.0));
+    let parameter = curve
+        .parameter_at(curve.point_at(0.37), LINEAR_TOLERANCE)
+        .expect("ellipse point should have a normalized parameter");
+    assert!((parameter - 0.37).abs() <= 1.0e-10);
+
+    let nurbs = curve.to_nurbs().expect("ellipse should convert exactly");
+    assert_eq!(nurbs.degree().get(), 2);
+    assert!(
+        nurbs
+            .control_points()
+            .as_slice()
+            .iter()
+            .any(|point| (point.weight() - 1.0).abs() > 1.0e-12)
+    );
+    for parameter in [0.07, 0.31, 0.58, 0.89] {
+        let point = nurbs.point_at(parameter);
+        let offset = point - ellipse.center();
+        let x = offset.dot(ellipse.x_dir().as_ref()) / ellipse.major_radius();
+        let y_dir = Vector2::new(-ellipse.x_dir().y, ellipse.x_dir().x);
+        let y = offset.dot(&y_dir) / ellipse.minor_radius();
+        assert!((x * x + y * y - 1.0).abs() <= 1.0e-9);
+    }
+}
+
+#[test]
+fn ellipse2_reverse_split_and_translation_preserve_geometry() {
+    let ellipse = Curve2::Ellipse(Ellipse2::new(
+        Point2::new(1.0, 2.0),
+        Vector2::x(),
+        3.0,
+        1.5,
+        1.7 * std::f64::consts::PI,
+    ));
+    let reversed = ellipse.reversed();
+    let (first, second) = ellipse.split_at(0.43).unwrap();
+    let offset = Vector2::new(4.0, -3.0);
+    let translated = ellipse.translated(offset).unwrap();
+
+    for parameter in [0.0, 0.23, 0.67, 1.0] {
+        assert_point2_close(
+            reversed.point_at(parameter),
+            ellipse.point_at(1.0 - parameter),
+        );
+        assert_point2_close(
+            translated.point_at(parameter),
+            ellipse.point_at(parameter) + offset,
+        );
+    }
+    assert_point2_close(first.point_at(1.0), ellipse.point_at(0.43));
+    assert_point2_close(second.point_at(0.0), ellipse.point_at(0.43));
 }
 
 #[test]

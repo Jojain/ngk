@@ -1,5 +1,7 @@
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, TAU};
 
+use super::conics::conic_arc_nurbs;
+use super::frame::Frame;
 use super::intersections::{
     CurveCurveIntersections, CurveSurfaceIntersections, IntersectionError, IntersectionOptions,
     intersect_curve_surface, intersect_curves, intersect_curves_with_options,
@@ -26,6 +28,7 @@ pub enum Periodicity {
 pub enum Curve {
     Line(Line),
     Circle(Circle),
+    Ellipse(Ellipse),
     Nurbs(NurbsCurve),
     Bounded(Box<Bounded<Curve>>),
 }
@@ -72,6 +75,7 @@ impl Curve {
         match self {
             Curve::Line(line) => line.to_nurbs(),
             Curve::Circle(circle) => circle.to_nurbs(),
+            Curve::Ellipse(ellipse) => ellipse.to_nurbs(),
             Curve::Nurbs(nurbs) => Ok(nurbs.clone()),
             Curve::Bounded(curve) => curve.to_nurbs(),
         }
@@ -81,6 +85,7 @@ impl Curve {
         match self {
             Curve::Line(_) => Periodicity::None,
             Curve::Circle(_) => Periodicity::Periodic(TAU),
+            Curve::Ellipse(_) => Periodicity::Periodic(TAU),
             Curve::Nurbs(_) => Periodicity::None,
             Curve::Bounded(_) => Periodicity::None,
         }
@@ -89,6 +94,7 @@ impl Curve {
         match self {
             Curve::Line(l) => l.point_at(t),
             Curve::Circle(c) => c.point_at(t),
+            Curve::Ellipse(c) => c.point_at(t),
             Curve::Nurbs(n) => n.point_at(t),
             Curve::Bounded(c) => c.point_at(t),
         }
@@ -103,6 +109,7 @@ impl Curve {
         match self {
             Curve::Line(l) => l.derivative_at(t, order),
             Curve::Circle(c) => c.derivative_at(t, order),
+            Curve::Ellipse(c) => c.derivative_at(t, order),
             Curve::Nurbs(n) => n.derivative_at(t, order),
             Curve::Bounded(c) => c.derivative_at(t, order),
         }
@@ -112,6 +119,7 @@ impl Curve {
         match self {
             Curve::Line(l) => l.param_at(point),
             Curve::Circle(c) => c.param_at(point),
+            Curve::Ellipse(c) => c.param_at(point),
             Curve::Nurbs(n) => closest_sample_parameter(n, point),
             Curve::Bounded(c) => c.param_at(point),
         }
@@ -120,7 +128,7 @@ impl Curve {
     pub fn parameters_between(&self, start: Point3, end: Point3) -> Interval {
         match self {
             Curve::Bounded(_) => Interval::new(self.param_at(start), self.param_at(end)),
-            Curve::Line(_) | Curve::Circle(_) => {
+            Curve::Line(_) | Curve::Circle(_) | Curve::Ellipse(_) => {
                 let t0 = self.param_at(start);
                 let mut t1 = self.param_at(end);
                 if start.coincides(end, LINEAR_TOLERANCE)
@@ -177,6 +185,7 @@ impl Curve {
         match self {
             Curve::Line(l) => l.length(t0, t1),
             Curve::Circle(c) => c.length(t0, t1),
+            Curve::Ellipse(c) => c.length(t0, t1),
             Curve::Nurbs(n) => n.length(t0, t1),
             Curve::Bounded(c) => c.length(t0, t1),
         }
@@ -209,6 +218,7 @@ impl Curve {
         match self {
             Curve::Line(curve) => curve.project(point),
             Curve::Circle(curve) => curve.project(point),
+            Curve::Ellipse(curve) => curve.project(point),
             Curve::Nurbs(curve) => curve.project(point),
             Curve::Bounded(curve) => curve.project(point),
         }
@@ -222,6 +232,7 @@ impl Curve {
         match self {
             Curve::Line(curve) => CurveGeometry::domain(curve),
             Curve::Circle(curve) => CurveGeometry::domain(curve),
+            Curve::Ellipse(curve) => CurveGeometry::domain(curve),
             Curve::Nurbs(curve) => CurveGeometry::domain(curve),
             Curve::Bounded(curve) => CurveGeometry::domain(&**curve),
         }
@@ -248,6 +259,7 @@ impl Curve {
                 ),
                 circle.radius(),
             ))),
+            Curve::Ellipse(ellipse) => Ok(Curve::Ellipse(ellipse.rotated(axis, angle)?)),
             Curve::Bounded(curve) => Ok(Curve::Bounded(Box::new(Bounded::new(
                 curve.inner().rotated(axis, angle)?,
                 curve.bounds(),
@@ -281,6 +293,7 @@ impl Curve {
                 ),
                 circle.radius,
             ))),
+            Curve::Ellipse(ellipse) => Ok(Curve::Ellipse(ellipse.translated(direction)?)),
             Curve::Nurbs(nurbs) => {
                 let points = nurbs
                     .control_points()
@@ -391,6 +404,7 @@ impl Bounded<Curve> {
                 KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
             ),
             Curve::Circle(circle) => circle.to_nurbs_between(self.bounds.start, self.bounds.end),
+            Curve::Ellipse(ellipse) => ellipse.to_nurbs_between(self.bounds.start, self.bounds.end),
             _ => self
                 .inner
                 .to_nurbs()?
@@ -635,47 +649,154 @@ impl Circle {
 
     /// Converts an angular interval of the circle to an exact rational NURBS arc.
     pub fn to_nurbs_between(&self, start: f64, end: f64) -> Result<NurbsCurve, NurbsError> {
-        if (end - start).abs() <= LINEAR_TOLERANCE {
-            return Err(NurbsError::DegenerateInterval { start, end });
-        }
-        if end < start {
-            return Ok(self.to_nurbs_between(end, start)?.reversed());
-        }
-
-        let span = end - start;
-        let segment_count = (span / FRAC_PI_2).ceil() as usize;
-        let segment_angle = span / segment_count as f64;
-        let weight = (0.5 * segment_angle).cos();
-        let mut points = Vec::with_capacity(2 * segment_count + 1);
-        let mut knots = vec![start; 3];
-
-        for segment in 0..segment_count {
-            let angle_start = start + segment as f64 * segment_angle;
-            let angle_end = angle_start + segment_angle;
-            let angle_middle = 0.5 * (angle_start + angle_end);
-            let start_point = self.point_at(angle_start);
-            let middle_direction =
-                angle_middle.cos() * *self.plane.x_dir() + angle_middle.sin() * *self.plane.y_dir();
-            let middle_point = self.plane.origin() + middle_direction * (self.radius / weight);
-            let end_point = self.point_at(angle_end);
-
-            if segment == 0 {
-                points.push(HPoint::from_cartesian(start_point, 1.0));
-            }
-            points.push(HPoint::from_cartesian(middle_point, weight));
-            points.push(HPoint::from_cartesian(end_point, 1.0));
-
-            if segment + 1 < segment_count {
-                knots.extend(std::iter::repeat_n(angle_end, 2));
-            }
-        }
-        knots.extend(std::iter::repeat_n(end, 3));
-
-        NurbsCurve::new(
-            Degree::new(2)?,
-            ControlPolygon::new(points)?,
-            KnotVector::new(knots)?,
+        conic_arc_nurbs(
+            start,
+            end,
+            FRAC_PI_2,
+            |t| self.point_at(t),
+            |t| self.derivative_at(t, 1),
         )
+    }
+}
+
+/// A planar ellipse parameterized by angle in its local frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Ellipse {
+    frame: Frame,
+    major_radius: f64,
+    minor_radius: f64,
+}
+
+impl Ellipse {
+    /// Creates an ellipse whose axes follow the frame's X and Y directions.
+    pub fn new(frame: Frame, major_radius: f64, minor_radius: f64) -> Self {
+        Self {
+            frame,
+            major_radius,
+            minor_radius,
+        }
+    }
+
+    pub fn frame(&self) -> &Frame {
+        &self.frame
+    }
+
+    pub fn major_radius(&self) -> f64 {
+        self.major_radius
+    }
+
+    pub fn minor_radius(&self) -> f64 {
+        self.minor_radius
+    }
+
+    pub fn point_at(&self, t: f64) -> Point3 {
+        self.frame.origin
+            + *self.frame.x_dir * (self.major_radius * t.cos())
+            + *self.frame.y_dir * (self.minor_radius * t.sin())
+    }
+
+    pub fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
+        if order == 0 {
+            return self.point_at(t).coords;
+        }
+        let phase = t + order as f64 * FRAC_PI_2;
+        *self.frame.x_dir * (self.major_radius * phase.cos())
+            + *self.frame.y_dir * (self.minor_radius * phase.sin())
+    }
+
+    /// Returns the closest-point parameter, measured from the frame's X axis.
+    pub fn param_at(&self, point: Point3) -> f64 {
+        let local = self.frame.coordinates_of(point);
+        let mut best = 0.0;
+        let mut best_distance = f64::INFINITY;
+        for index in 0..64 {
+            let t = TAU * index as f64 / 64.0;
+            let distance = (self.point_at(t) - point).norm_squared();
+            if distance < best_distance {
+                best_distance = distance;
+                best = t;
+            }
+        }
+
+        let a = self.major_radius;
+        let b = self.minor_radius;
+        for _ in 0..16 {
+            let (sin, cos) = best.sin_cos();
+            let first = (a * a - b * b) * sin * cos - a * local.x * sin + b * local.y * cos;
+            let second =
+                (a * a - b * b) * (cos * cos - sin * sin) - a * local.x * cos - b * local.y * sin;
+            if second.abs() <= 1.0e-14 {
+                break;
+            }
+            let next = best - first / second;
+            if (next - best).abs() <= 1.0e-13 {
+                best = next;
+                break;
+            }
+            best = next;
+        }
+        best.rem_euclid(TAU)
+    }
+
+    pub fn project(&self, point: Point3) -> Point3 {
+        self.point_at(self.param_at(point))
+    }
+
+    /// Numerically integrates the analytic speed over the interval.
+    pub fn length(&self, t0: f64, t1: f64) -> f64 {
+        let segments = 256usize;
+        let start = t0.min(t1);
+        let span = (t1 - t0).abs();
+        let step = span / segments as f64;
+        let speed = |t: f64| {
+            ((self.major_radius * t.sin()).powi(2) + (self.minor_radius * t.cos()).powi(2)).sqrt()
+        };
+        let mut sum = speed(start) + speed(start + span);
+        for index in 1..segments {
+            let coefficient = if index % 2 == 0 { 2.0 } else { 4.0 };
+            sum += coefficient * speed(start + index as f64 * step);
+        }
+        sum * step / 3.0
+    }
+
+    pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        self.to_nurbs_between(0.0, TAU)
+    }
+
+    /// Converts an angular interval to an exact rational-quadratic NURBS arc.
+    pub fn to_nurbs_between(&self, start: f64, end: f64) -> Result<NurbsCurve, NurbsError> {
+        conic_arc_nurbs(
+            start,
+            end,
+            FRAC_PI_2,
+            |t| self.point_at(t),
+            |t| self.derivative_at(t, 1),
+        )
+    }
+
+    pub fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
+        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
+        Ok(Self::new(
+            Frame::from_xy(
+                axis.origin + rotation * (self.frame.origin - axis.origin),
+                rotation * *self.frame.x_dir,
+                rotation * *self.frame.y_dir,
+            ),
+            self.major_radius,
+            self.minor_radius,
+        ))
+    }
+
+    pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
+        Ok(Self::new(
+            Frame::from_xy(
+                self.frame.origin + direction,
+                self.frame.x_dir,
+                self.frame.y_dir,
+            ),
+            self.major_radius,
+            self.minor_radius,
+        ))
     }
 }
 
@@ -792,6 +913,48 @@ impl CurveGeometry for Circle {
             ),
             self.radius,
         ))
+    }
+}
+
+impl CurveGeometry for Ellipse {
+    fn domain(&self) -> Interval {
+        Interval::new(0.0, TAU)
+    }
+
+    fn periodicity(&self) -> Periodicity {
+        Periodicity::Periodic(TAU)
+    }
+
+    fn point_at(&self, t: f64) -> Point3 {
+        Ellipse::point_at(self, t)
+    }
+
+    fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
+        Ellipse::derivative_at(self, t, order)
+    }
+
+    fn param_at(&self, point: Point3) -> f64 {
+        Ellipse::param_at(self, point)
+    }
+
+    fn project(&self, point: Point3) -> Point3 {
+        Ellipse::project(self, point)
+    }
+
+    fn length(&self, t0: f64, t1: f64) -> f64 {
+        Ellipse::length(self, t0, t1)
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        Ellipse::to_nurbs(self)
+    }
+
+    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
+        Ellipse::rotated(self, axis, angle)
+    }
+
+    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
+        Ellipse::translated(self, direction)
     }
 }
 

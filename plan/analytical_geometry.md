@@ -168,9 +168,15 @@ support.
 - [ ] `Curve::reversed` in closed form, so trimming and reversal stop degrading analytic
       curves to NURBS.
 
-### Milestone 2 — `conic_arc_nurbs` + `Ellipse` (3D and 2D)
+### Milestone 2 — `conic_arc_nurbs` + `Ellipse` (3D and 2D) 🚧
 
 Establishes the full per-type checklist on the easiest type.
+
+- [x] Shared 3D `conic_arc_nurbs`; trimmed circles and ellipses use it.
+- [x] `Ellipse` / `Ellipse2` concrete types, enum and trait forwarding,
+      transformations, exact NURBS conversion, bindings, and focused tests.
+- [ ] Add the Milestone 1 `ParamMap` and `bbox_over` contracts, then cover those
+      cross-cutting invariants for ellipse.
 
 ### Milestone 3 — `Sphere`, `Cone`, `Torus`
 

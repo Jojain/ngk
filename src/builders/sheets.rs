@@ -166,7 +166,7 @@ fn extruded_edge_surface(
                 ],
             })
         }
-        Curve::Circle(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
+        Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
             let interval = curve.parameters_between(start, end);
             let translated_curve = curve
                 .translated(direction)

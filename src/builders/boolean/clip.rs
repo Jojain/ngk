@@ -263,6 +263,6 @@ fn snapped_pcurve(
                 nurbs.knots().clone(),
             )?))
         }
-        Curve2::Circle(_) => Ok(curve.clone()),
+        Curve2::Circle(_) | Curve2::Ellipse(_) => Ok(curve.clone()),
     }
 }

@@ -1,4 +1,5 @@
 pub mod bbox;
+pub(crate) mod conics;
 pub mod curves;
 pub mod frame;
 pub mod intersections;

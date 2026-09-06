@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use crate::geometry::{Curve, Surface};
 
 use super::{
-    PyCircle, PyCylinder, PyLine, PyNurbsCurve, PyNurbsSurface, PyPlane, PyRuledSurface,
+    PyCircle, PyCylinder, PyEllipse, PyLine, PyNurbsCurve, PyNurbsSurface, PyPlane, PyRuledSurface,
     PySurfaceOfRevolution,
 };
 
@@ -12,6 +12,7 @@ pub(crate) fn curve_to_py(py: Python<'_>, curve: Curve) -> PyResult<PyObject> {
     match curve {
         Curve::Line(line) => Ok(Py::new(py, PyLine { line })?.into_py(py)),
         Curve::Circle(circle) => Ok(Py::new(py, PyCircle { circle })?.into_py(py)),
+        Curve::Ellipse(ellipse) => Ok(Py::new(py, PyEllipse { ellipse })?.into_py(py)),
         Curve::Nurbs(curve) => Ok(Py::new(py, PyNurbsCurve { curve })?.into_py(py)),
         Curve::Bounded(curve) => {
             let curve = curve.to_nurbs().map_err(|err| {

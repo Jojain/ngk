@@ -321,7 +321,7 @@ fn sampled_curve_points(curve: &Curve, t0: f64, t1: f64) -> Vec<Point3> {
         Curve::Bounded(bounded) if matches!(bounded.inner(), Curve::Line(_)) => {
             vec![curve.point_at(t0), curve.point_at(t1)]
         }
-        Curve::Circle(_) | Curve::Nurbs(_) => {
+        Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) => {
             let segments = 32usize;
             (0..=segments)
                 .map(|i| {

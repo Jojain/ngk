@@ -676,7 +676,7 @@ fn planar_imprint(pcurve: Curve2) -> FaceImprint {
         .collect::<Vec<_>>();
     let curve = match &pcurve {
         Curve2::Line(_) => Curve::line(points[0], *points.last().unwrap()),
-        Curve2::Circle(_) | Curve2::Nurbs(_) => Curve::Nurbs(
+        Curve2::Circle(_) | Curve2::Ellipse(_) | Curve2::Nurbs(_) => Curve::Nurbs(
             ngk::geometry::NurbsCurve::interpolate(&points)
                 .expect("sampled planar pcurve should interpolate in 3D"),
         ),

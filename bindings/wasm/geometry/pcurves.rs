@@ -2,7 +2,7 @@ use js_sys::{Array, Float64Array};
 use wasm_bindgen::prelude::*;
 
 use crate::geometry::Point2;
-use crate::geometry::dim2::curves::{Circle2, Curve2, Line2};
+use crate::geometry::dim2::curves::{Circle2, Curve2, Ellipse2, Line2};
 use crate::geometry::dim2::nurbs::NurbsCurve2;
 
 fn point_array(point: Point2) -> Float64Array {
@@ -86,6 +86,59 @@ pub struct WasmCircle2 {
 impl WasmCircle2 {
     pub(crate) fn from_inner(inner: Circle2) -> Self {
         Self { inner }
+    }
+}
+
+/// Read-only 2D elliptical arc used to display face pcurves.
+#[wasm_bindgen(js_name = Ellipse2)]
+pub struct WasmEllipse2 {
+    pub(crate) inner: Ellipse2,
+}
+
+impl WasmEllipse2 {
+    pub(crate) fn from_inner(inner: Ellipse2) -> Self {
+        Self { inner }
+    }
+}
+
+#[wasm_bindgen]
+impl WasmEllipse2 {
+    #[wasm_bindgen(getter)]
+    pub fn kind(&self) -> String {
+        "ellipse".to_owned()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn center(&self) -> Float64Array {
+        point_array(self.inner.center())
+    }
+
+    #[wasm_bindgen(getter, js_name = majorRadius)]
+    pub fn major_radius(&self) -> f64 {
+        self.inner.major_radius()
+    }
+
+    #[wasm_bindgen(getter, js_name = minorRadius)]
+    pub fn minor_radius(&self) -> f64 {
+        self.inner.minor_radius()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn sweep(&self) -> f64 {
+        self.inner.sweep()
+    }
+
+    #[wasm_bindgen(js_name = pointAt)]
+    pub fn point_at(&self, parameter: f64) -> Float64Array {
+        point_array(self.inner.point_at(parameter))
+    }
+
+    pub fn sample(&self, segments: usize) -> Float64Array {
+        points_array(&Curve2::Ellipse(self.inner.clone()).sample(segments))
+    }
+
+    pub fn reversed(&self) -> WasmEllipse2 {
+        Self::from_inner(self.inner.reversed())
     }
 }
 

@@ -380,7 +380,7 @@ fn lateral_face_surface(
         Curve::Bounded(_) if is_linear_curve(curve) => {
             Ok(Surface::Plane(lateral_plane(dart, start, end, direction)?))
         }
-        Curve::Circle(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
+        Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
             Ok(Surface::Ruled(RuledSurface::new(curve.clone(), direction)))
         }
     }
