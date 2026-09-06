@@ -1,6 +1,6 @@
 use nalgebra::Vector3;
 use ngk::geometry::{LINEAR_TOLERANCE, PointCoincidence, Surface};
-use ngk::modeling::solids::{PrimitiveError, block, sphere};
+use ngk::modeling::solids::{PrimitiveError, block, block_at, cut, fuse, intersect, sphere};
 use ngk::tessellate::{TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
 use ngk::topology::gmap::Dim;
@@ -216,4 +216,36 @@ fn sphere_builds_a_well_formed_solid() {
             .norm()
             > LINEAR_TOLERANCE * LINEAR_TOLERANCE
     }));
+}
+
+#[test]
+fn solid_boolean_modeling_operations_accept_owned_shapes_and_return_closed_shapes() {
+    let operations = [("fuse", 12), ("intersect", 6), ("cut", 9)];
+
+    for (operation, expected_faces) in operations {
+        let first = block(2.0, 2.0, 2.0).expect("first block");
+        let second = block_at(
+            ngk::geometry::Frame::from_xy(
+                ngk::geometry::Point3::new(1.0, 1.0, 1.0),
+                Vector3::x(),
+                Vector3::y(),
+            ),
+            2.0,
+            2.0,
+            2.0,
+        )
+        .expect("second block");
+
+        let result = match operation {
+            "fuse" => fuse(first, second),
+            "intersect" => intersect(first, second),
+            "cut" => cut(first, second),
+            _ => unreachable!(),
+        }
+        .expect("Boolean should succeed");
+
+        validate_solid_manifold(result.map(), result.key())
+            .expect("modeling Boolean result should be manifold");
+        assert_eq!(result.solid().faces().len(), expected_faces);
+    }
 }

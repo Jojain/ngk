@@ -913,7 +913,7 @@ impl<P: Payload> SharedSolid<P> {
         }
     }
 
-    fn view(&self) -> Result<Solid<'_, P>, ExploreError> {
+    pub(crate) fn view(&self) -> Result<Solid<'_, P>, ExploreError> {
         Solid::from_dart(self.map.map(), self.dart)
             .filter(|view| view.key() == self.key)
             .ok_or_else(|| missing("solid", self.dart.id()))

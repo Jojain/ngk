@@ -2,14 +2,20 @@ use nalgebra::{Unit, Vector3};
 
 use crate::{
     StandardPayload,
+    builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, boolean},
     builders::solids::{add_extruded_face, add_sphere},
     geometry::{Frame, Plane},
     modeling::faces,
     topology::{
+        TopologyEditError,
         gmap::GMap,
+        payload::Payload,
         shape::{FaceTag, Shape, SolidTag},
     },
 };
+
+#[cfg(feature = "python")]
+use crate::topology::solid::Solid;
 
 pub use crate::modeling::errors::PrimitiveError;
 
@@ -107,4 +113,75 @@ pub fn extruded(
     let solid_key = add_extruded_face(&mut g, face_key, direction)
         .map_err(|_| PrimitiveError::SolidCreationFailed)?;
     Ok(Shape::new(g, solid_key))
+}
+
+/// Consumes two owned solid shapes and fuses them into one owned solid.
+pub fn fuse<P: Payload>(
+    first: Shape<SolidTag, P>,
+    second: Shape<SolidTag, P>,
+) -> Result<Shape<SolidTag, P>, BooleanError> {
+    combine_shapes(first, second, BooleanOperation::Union)
+}
+
+/// Consumes two owned solid shapes and subtracts `tool` from `target`.
+pub fn cut<P: Payload>(
+    target: Shape<SolidTag, P>,
+    tool: Shape<SolidTag, P>,
+) -> Result<Shape<SolidTag, P>, BooleanError> {
+    combine_shapes(target, tool, BooleanOperation::Difference)
+}
+
+/// Consumes two owned solid shapes and returns their common volume.
+pub fn intersect<P: Payload>(
+    first: Shape<SolidTag, P>,
+    second: Shape<SolidTag, P>,
+) -> Result<Shape<SolidTag, P>, BooleanError> {
+    combine_shapes(first, second, BooleanOperation::Intersection)
+}
+
+/// Moves two owned shapes into one working map and evaluates one Boolean.
+fn combine_shapes<P: Payload>(
+    target: Shape<SolidTag, P>,
+    tool: Shape<SolidTag, P>,
+    operation: BooleanOperation,
+) -> Result<Shape<SolidTag, P>, BooleanError> {
+    let (mut map, target) = target.into_map();
+    let (tool_map, tool) = tool.into_map();
+    let tool = map.transaction(|edit| {
+        let dart = edit.merge(tool_map.solid_unchecked(tool));
+        Ok::<_, TopologyEditError>(
+            edit.solid_key(dart)
+                .expect("copied tool solid must retain its registration"),
+        )
+    })?;
+    let result = boolean(&mut map, target, tool, operation, BooleanOptions::default())?;
+    Ok(Shape::new(map, result.solid))
+}
+
+/// Copies two borrowed solid views for language bindings and evaluates a Boolean.
+#[cfg(feature = "python")]
+pub(crate) fn combine_views<P: Payload>(
+    first: Solid<'_, P>,
+    second: Solid<'_, P>,
+    operation: BooleanOperation,
+) -> Result<Shape<SolidTag, P>, BooleanError> {
+    let mut map = GMap::new();
+    let (first, second) = map.transaction(|edit| {
+        let first_dart = edit.merge(first);
+        let second_dart = edit.merge(second);
+        Ok::<_, TopologyEditError>((
+            edit.solid_key(first_dart)
+                .expect("copied first solid must retain its registration"),
+            edit.solid_key(second_dart)
+                .expect("copied second solid must retain its registration"),
+        ))
+    })?;
+    let result = boolean(
+        &mut map,
+        first,
+        second,
+        operation,
+        BooleanOptions::default(),
+    )?;
+    Ok(Shape::new(map, result.solid))
 }

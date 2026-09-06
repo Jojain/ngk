@@ -1,6 +1,5 @@
 import ngk
 
-
 def test_block_traversal_counts():
     solid = ngk.block(1.0, 2.0, 3.0)
 
@@ -100,3 +99,18 @@ def test_vertices_and_edges_traverse_to_faces():
     assert edge in vertex.edges()
     assert len(edge.faces()) == 2
     assert len(vertex.faces()) == 3
+
+
+def test_solid_boolean_functions_return_new_results_without_mutating_inputs():
+    first = ngk.block(2.0, 2.0, 2.0)
+    second = ngk.block(1.0, 1.0, 1.0)
+
+    fused = ngk.fuse(first, second)
+    common = ngk.intersect(first, second)
+    remainder = ngk.cut(first, second)
+
+    assert fused.face_count == 6
+    assert common.face_count == 6
+    assert remainder.face_count == 9
+    assert first.face_count == 6
+    assert second.face_count == 6

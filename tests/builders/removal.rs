@@ -251,7 +251,10 @@ fn tangent_union() -> (GMap<StandardPayload>, ngk::topology::shape_keys::SolidKe
         block_key,
         cylinder,
         BooleanOperation::Union,
-        BooleanOptions::default(),
+        BooleanOptions {
+            heal: false,
+            ..BooleanOptions::default()
+        },
     )
     .expect("the tangent union should succeed");
     (map, result.solid)

@@ -106,7 +106,7 @@ impl Default for BooleanOptions {
             tolerances: BooleanTolerancePolicy::default(),
             max_classification_rays: 16,
             strict: true,
-            heal: false,
+            heal: true,
         }
     }
 }

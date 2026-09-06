@@ -110,12 +110,38 @@ fn healing_a_tangent_union_fuses_the_fragments_the_imprint_created() {
 }
 
 #[test]
-fn healing_a_boolean_result_is_opt_in() {
+fn boolean_results_are_healed_by_default() {
     let (_, _, raw) = evaluate(BooleanOperation::Union, false);
-    let (_, _, healed) = evaluate(BooleanOperation::Union, true);
+    let (mut map, solid, default) = {
+        let size = 2.0;
+        let (mut map, block) = solids::block_at(Frame::xyz(), size, size, size)
+            .expect("block")
+            .into_map();
+        let cylinder = import(
+            &mut map,
+            solids::cylinder_at(Frame::xyz(), size, 2.0 * size).expect("cylinder"),
+        );
+        let result = boolean(
+            &mut map,
+            block,
+            cylinder,
+            BooleanOperation::Union,
+            BooleanOptions::default(),
+        )
+        .expect("the default Boolean should succeed");
+        let solid = result.solid;
+        let view = map.solid_unchecked(solid);
+        let counts = (
+            view.faces().len(),
+            view.edges().len(),
+            view.vertices().len(),
+        );
+        (map, solid, counts)
+    };
 
     assert!(
-        raw.0 > healed.0,
-        "the default must leave the raw result untouched: raw {raw:?}, healed {healed:?}"
+        raw.0 > default.0,
+        "the default must heal redundant topology: raw {raw:?}, default {default:?}"
     );
+    assert!(reheal(&mut map, solid).is_empty());
 }

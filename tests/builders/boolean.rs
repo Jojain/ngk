@@ -918,7 +918,7 @@ fn boolean_union_of_boxes_sharing_a_full_face_closes_across_the_contact() {
     ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
     let solid = map.solid_unchecked(result.solid);
     assert_eq!(solid.shells().len(), 1);
-    assert_eq!(solid.faces().len(), 10);
+    assert_eq!(solid.faces().len(), 6);
     assert_eq!(
         solid.vertices().len() as isize - solid.edges().len() as isize
             + solid.faces().len() as isize,
@@ -1004,7 +1004,7 @@ fn boolean_coplanar_partial_contact_keeps_each_operand_whole_under_difference() 
     use ngk::builders::boolean::{BooleanError, BooleanOperation, boolean};
     // The operands meet on a square of the plane z = 2 only, so the regularized
     // difference is the untouched minuend and the intersection is empty.
-    for (minuend_first, faces) in [(true, 7), (false, 7)] {
+    for (minuend_first, faces) in [(true, 6), (false, 6)] {
         let (mut map, first, second) =
             two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 2.0), 2.0);
         let (minuend, subtrahend) = if minuend_first {
