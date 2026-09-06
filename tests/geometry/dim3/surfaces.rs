@@ -2,8 +2,8 @@ use std::f64::consts::FRAC_PI_2;
 
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::{
-    Circle, Curve, Cylinder, Interval, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence,
-    RuledSurface, Surface, SurfaceOfRevolution, SurfacePeriodicity, axis::Axis3,
+    Circle, Curve, Cylinder, Interval, LINEAR_TOLERANCE, Plane, Point2, Point3, PointCoincidence,
+    RuledSurface, Surface, SurfaceGeometry, SurfaceOfRevolution, SurfacePeriodicity, axis::Axis3,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -178,6 +178,92 @@ fn cylinder_nurbs_patch_spans_the_requested_height_interval() {
     // sampling only the seam does not.
     for v in [0.0, 1.0, 2.5, 5.0] {
         assert_point_near(nurbs.point_at(0.0, v), surface.point_at(0.0, v));
+    }
+}
+
+#[test]
+fn cylinder_param_map_matches_off_knot_analytic_parameters() {
+    let surface = Surface::Cylinder(Cylinder::new(
+        Point3::new(1.0, 2.0, 3.0),
+        Vector3::x(),
+        Vector3::z(),
+        2.0,
+    ));
+    let u = Interval::new(0.23, 2.41);
+    let v = Interval::new(-1.7, 4.2);
+    let nurbs = surface.to_nurbs_over(u, v).unwrap();
+    let map = surface.param_map_over(u, v);
+
+    for (analytic_u, analytic_v) in [(0.37, -0.9), (1.14, 0.6), (2.19, 3.8)] {
+        let mapped = map.map(Point2::new(analytic_u, analytic_v));
+        assert_point_near(
+            nurbs.point_at(mapped.x, mapped.y),
+            surface.point_at(analytic_u, analytic_v),
+        );
+        let recovered = map.inverse(mapped);
+        assert!((recovered.x - analytic_u).abs() <= 1.0e-12);
+        assert!((recovered.y - analytic_v).abs() <= 1.0e-12);
+    }
+}
+
+#[test]
+fn cylinder_param_map_handles_shifted_and_reversed_full_turns() {
+    let surface = Surface::Cylinder(Cylinder::new(
+        Point3::origin(),
+        Vector3::x(),
+        Vector3::z(),
+        1.7,
+    ));
+    for u in [
+        Interval::new(0.23, 0.23 + std::f64::consts::TAU),
+        Interval::new(2.4, -0.7),
+    ] {
+        let v = Interval::new(-1.0, 2.0);
+        let nurbs = surface.to_nurbs_over(u, v).unwrap();
+        let map = surface.param_map_over(u, v);
+        for fraction in [0.0, 0.17, 0.43, 0.79, 1.0] {
+            let analytic_u = u.start + (u.end - u.start) * fraction;
+            let mapped = map.map(Point2::new(analytic_u, 0.37));
+            assert_point_near(
+                nurbs.point_at(mapped.x, mapped.y),
+                surface.point_at(analytic_u, 0.37),
+            );
+            let recovered = map.inverse(mapped).x;
+            assert!(
+                (recovered - analytic_u).abs() <= 1.0e-11,
+                "interval {u:?}, fraction {fraction}: mapped {}, recovered {recovered}, expected {analytic_u}",
+                mapped.x,
+            );
+        }
+    }
+}
+
+#[test]
+fn cylinder_bbox_over_contains_a_trimmed_patch() {
+    let cylinder = Cylinder::new(
+        Point3::new(1.0, 2.0, 3.0),
+        Vector3::y(),
+        Vector3::new(1.0, 0.0, 1.0),
+        2.3,
+    );
+    let u = Interval::new(0.31, 4.77);
+    let v = Interval::new(-2.4, 5.1);
+    let bounds = cylinder
+        .bbox_over(u, v)
+        .expect("a finite cylinder patch has exact bounds");
+
+    for iu in 0..=64 {
+        for iv in 0..=8 {
+            let parameter_u = u.start + u.length() * iu as f64 / 64.0;
+            let parameter_v = v.start + v.length() * iv as f64 / 8.0;
+            assert!(
+                bounds.contains_point(
+                    cylinder.point_at(parameter_u, parameter_v),
+                    LINEAR_TOLERANCE,
+                ),
+                "cylinder point ({parameter_u}, {parameter_v}) escaped its bounds"
+            );
+        }
     }
 }
 

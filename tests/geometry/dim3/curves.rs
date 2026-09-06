@@ -1,7 +1,8 @@
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
-    Bounded, Circle, Curve, Interval, LINEAR_TOLERANCE, Line, Plane, Point3, PointCoincidence,
+    Bounded, Circle, Curve, Ellipse, Frame, Interval, LINEAR_TOLERANCE, Line, Plane, Point3,
+    PointCoincidence,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -178,6 +179,32 @@ fn rotated_curve_keeps_its_parameterisation() {
             (rotated.point_at(t) - expected).norm() <= 1.0e-9,
             "rotating must not re-parameterise the curve"
         );
+    }
+}
+
+#[test]
+fn reversed_analytic_curve_preserves_support_and_flips_parameter_direction() {
+    let curves = [
+        Curve::arc(Plane::xy(), 2.0, Interval::new(0.31, 4.72)),
+        Curve::Bounded(Box::new(Bounded::new(
+            Curve::Ellipse(Ellipse::new(Frame::xyz(), 3.0, 1.5)),
+            Interval::new(0.43, 2.81),
+        ))),
+        Curve::line(Point3::new(-2.0, 1.0, 0.5), Point3::new(4.0, 3.0, 2.0)),
+    ];
+
+    for curve in curves {
+        let reversed = curve.reversed();
+        assert!(
+            !matches!(reversed, Curve::Nurbs(_)),
+            "reversing an analytic curve must not degrade it to NURBS"
+        );
+        for parameter in [0.0, 0.17, 0.63, 1.0] {
+            assert_point_near(
+                reversed.point_at(parameter),
+                curve.point_at(1.0 - parameter),
+            );
+        }
     }
 }
 

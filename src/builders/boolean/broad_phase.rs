@@ -114,25 +114,6 @@ fn face_bounds<P: Payload>(face: Face<'_, P>, padding: f64) -> Option<Bounds> {
     {
         return None;
     }
-    if let Surface::Plane(plane) = face.surface() {
-        return Bounds::from_points(
-            uv_points.into_iter().map(|uv| plane.point_at(uv.x, uv.y)),
-            padding,
-        );
-    }
-    // Analytical-to-NURBS conversion may change the UV parameterization.
-    // Keep those faces unbounded until their trim mapping is available.
-    let Surface::Nurbs(surface) = face.surface() else {
-        return None;
-    };
-    let du = surface.domain_u();
-    let dv = surface.domain_v();
-    if uv_points
-        .iter()
-        .any(|uv| uv.x < du.start || uv.x > du.end || uv.y < dv.start || uv.y > dv.end)
-    {
-        return None;
-    }
     let u_min = uv_points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
     let u_max = uv_points
         .iter()
@@ -143,6 +124,27 @@ fn face_bounds<P: Payload>(face: Face<'_, P>, padding: f64) -> Option<Bounds> {
         .iter()
         .map(|p| p.y)
         .fold(f64::NEG_INFINITY, f64::max);
+
+    // Analytic supports bound their own parameterization directly. This avoids
+    // pretending that rational-conic NURBS parameters are the original angles.
+    if !matches!(face.surface(), Surface::Nurbs(_)) {
+        let bbox = face
+            .surface()
+            .bbox_over(Interval::new(u_min, u_max), Interval::new(v_min, v_max))?;
+        return Bounds::from_points(bbox.corners()?, padding);
+    }
+
+    let Surface::Nurbs(surface) = face.surface() else {
+        unreachable!("non-NURBS surfaces returned above")
+    };
+    let du = surface.domain_u();
+    let dv = surface.domain_v();
+    if uv_points
+        .iter()
+        .any(|uv| uv.x < du.start || uv.x > du.end || uv.y < dv.start || uv.y > dv.end)
+    {
+        return None;
+    }
     let mut points = Vec::new();
     for patch in surface.bezier_spans().ok()? {
         if patch.domain_u().end < u_min

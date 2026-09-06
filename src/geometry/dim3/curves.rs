@@ -1,5 +1,6 @@
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, TAU};
 
+use super::bbox::BBox;
 use super::conics::conic_arc_nurbs;
 use super::frame::Frame;
 use super::intersections::{
@@ -14,7 +15,7 @@ use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::tolerance::{LINEAR_TOLERANCE_SQUARED, MAX_DISTANCE};
 use crate::geometry::traits::CurveGeometry;
-use crate::geometry::{ANGULAR_TOLERANCE, Interval, LINEAR_TOLERANCE};
+use crate::geometry::{ANGULAR_TOLERANCE, Interval, LINEAR_TOLERANCE, Reparam};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -238,6 +239,33 @@ impl Curve {
         }
     }
 
+    /// Returns a conservative finite box over `interval` when one can be proven.
+    pub fn bbox_over(&self, interval: Interval) -> Option<BBox> {
+        match self {
+            Curve::Line(curve) => curve.bbox_over(interval),
+            Curve::Circle(curve) => curve.bbox_over(interval),
+            Curve::Ellipse(curve) => curve.bbox_over(interval),
+            Curve::Nurbs(curve) => curve.bbox_over(interval),
+            Curve::Bounded(curve) => curve.bbox_over(interval),
+        }
+    }
+
+    /// Maps this curve's public parameter to the parameter of `to_nurbs()`.
+    pub(crate) fn nurbs_param_map(&self) -> Reparam {
+        match self {
+            Curve::Circle(_) | Curve::Ellipse(_) => {
+                Reparam::conic_arc(self.domain(), self.domain())
+            }
+            Curve::Bounded(curve) => match curve.inner().base() {
+                Curve::Circle(_) | Curve::Ellipse(_) => {
+                    Reparam::conic_arc(Interval::new(0.0, 1.0), curve.bounds())
+                }
+                _ => Reparam::Identity,
+            },
+            _ => Reparam::Identity,
+        }
+    }
+
     /// Returns this curve rotated by `angle` radians around `axis`.
     ///
     /// The parameterisation is preserved: `rotated(..).point_at(t)` is
@@ -309,6 +337,40 @@ impl Curve {
                     nurbs.knots().clone(),
                 )?))
             }
+        }
+    }
+
+    /// Returns the same support traversed in the opposite direction.
+    ///
+    /// Analytic variants remain analytic, which lets trimming, imprints and
+    /// healing reverse orientation without degrading exact support identity.
+    pub fn reversed(&self) -> Self {
+        match self {
+            Curve::Line(line) => {
+                Curve::Line(Line::new(Axis3::new(line.origin(), -*line.direction())))
+            }
+            Curve::Circle(circle) => Curve::Circle(Circle::new(
+                Plane::new(
+                    circle.plane().origin(),
+                    circle.plane().x_dir(),
+                    -*circle.plane().normal(),
+                ),
+                circle.radius(),
+            )),
+            Curve::Ellipse(ellipse) => Curve::Ellipse(Ellipse::new(
+                Frame::from_xy(
+                    ellipse.frame().origin,
+                    ellipse.frame().x_dir,
+                    -*ellipse.frame().y_dir,
+                ),
+                ellipse.major_radius(),
+                ellipse.minor_radius(),
+            )),
+            Curve::Nurbs(curve) => Curve::Nurbs(curve.reversed()),
+            Curve::Bounded(curve) => Curve::Bounded(Box::new(Bounded::new(
+                curve.inner().clone(),
+                Interval::new(curve.bounds().end, curve.bounds().start),
+            ))),
         }
     }
 }
@@ -411,6 +473,26 @@ impl Bounded<Curve> {
                 .trimmed(self.bounds.start, self.bounds.end),
         }
     }
+
+    /// Bounds a normalized portion of this trimmed curve.
+    pub fn bbox_over(&self, interval: Interval) -> Option<BBox> {
+        self.inner.bbox_over(Interval::new(
+            self.global_parameter(interval.start),
+            self.global_parameter(interval.end),
+        ))
+    }
+}
+
+/// Parameters containing both arc endpoints and every coordinate extremum.
+fn conic_extrema_parameters(interval: Interval) -> Vec<f64> {
+    let ordered = interval.ordered();
+    let mut parameters = vec![ordered.start, ordered.end];
+    let first = (ordered.start / FRAC_PI_2).ceil() as i64;
+    let last = (ordered.end / FRAC_PI_2).floor() as i64;
+    for index in first..=last {
+        parameters.push(index as f64 * FRAC_PI_2);
+    }
+    parameters
 }
 
 pub(crate) fn circle_nurbs_control_points(plane: &Plane, radius: f64) -> (Vec<HPoint>, Vec<f64>) {
@@ -833,6 +915,16 @@ impl CurveGeometry for Line {
         Line::to_nurbs(self)
     }
 
+    fn bbox_over(&self, interval: Interval) -> Option<BBox> {
+        if !interval.is_finite() {
+            return None;
+        }
+        Some(BBox::from_points([
+            self.point_at(interval.start),
+            self.point_at(interval.end),
+        ]))
+    }
+
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
         let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
         Ok(Line::new(Axis3::new(
@@ -892,6 +984,18 @@ impl CurveGeometry for Circle {
         Circle::to_nurbs(self)
     }
 
+    fn bbox_over(&self, interval: Interval) -> Option<BBox> {
+        if !interval.is_finite() {
+            return None;
+        }
+        Some(BBox::from_points_in_frame(
+            self.plane.frame.clone(),
+            conic_extrema_parameters(interval)
+                .into_iter()
+                .map(|parameter| self.point_at(parameter)),
+        ))
+    }
+
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
         let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
         Ok(Circle::new(
@@ -949,6 +1053,18 @@ impl CurveGeometry for Ellipse {
         Ellipse::to_nurbs(self)
     }
 
+    fn bbox_over(&self, interval: Interval) -> Option<BBox> {
+        if !interval.is_finite() {
+            return None;
+        }
+        Some(BBox::from_points_in_frame(
+            self.frame.clone(),
+            conic_extrema_parameters(interval)
+                .into_iter()
+                .map(|parameter| self.point_at(parameter)),
+        ))
+    }
+
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
         Ellipse::rotated(self, axis, angle)
     }
@@ -989,6 +1105,19 @@ impl CurveGeometry for NurbsCurve {
 
     fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
         Ok(self.clone())
+    }
+
+    fn bbox_over(&self, _interval: Interval) -> Option<BBox> {
+        self.control_points()
+            .iter()
+            .all(|point| point.weight().is_finite() && point.weight() > 0.0)
+            .then(|| {
+                BBox::from_points(
+                    self.control_points()
+                        .iter()
+                        .map(|point| point.to_cartesian()),
+                )
+            })
     }
 
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
@@ -1055,6 +1184,10 @@ impl CurveGeometry for Bounded<Curve> {
         Bounded::<Curve>::to_nurbs(self)
     }
 
+    fn bbox_over(&self, interval: Interval) -> Option<BBox> {
+        Bounded::<Curve>::bbox_over(self, interval)
+    }
+
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
         Ok(Bounded::new(
             self.inner().rotated(axis, angle)?,
@@ -1103,6 +1236,10 @@ impl CurveGeometry for Curve {
 
     fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
         Curve::to_nurbs(self)
+    }
+
+    fn bbox_over(&self, interval: Interval) -> Option<BBox> {
+        Curve::bbox_over(self, interval)
     }
 
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {

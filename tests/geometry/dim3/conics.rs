@@ -3,7 +3,8 @@ use std::f64::consts::TAU;
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
-    Curve, Ellipse, Frame, Interval, LINEAR_TOLERANCE, Periodicity, Point3, PointCoincidence,
+    Curve, CurveGeometry, Ellipse, Frame, Interval, LINEAR_TOLERANCE, Periodicity, Point3,
+    PointCoincidence,
 };
 
 fn ellipse() -> Ellipse {
@@ -88,6 +89,23 @@ fn ellipse_rotation_and_translation_preserve_parameterization() {
         assert_point_near(
             translated.point_at(parameter),
             ellipse.point_at(parameter) + offset,
+        );
+    }
+}
+
+#[test]
+fn ellipse_bbox_over_contains_an_off_axis_arc() {
+    let ellipse = ellipse();
+    let interval = Interval::new(0.31, 2.17);
+    let bounds = ellipse
+        .bbox_over(interval)
+        .expect("an ellipse arc has finite exact bounds");
+
+    for index in 0..=128 {
+        let parameter = interval.start + interval.length() * index as f64 / 128.0;
+        assert!(
+            bounds.contains_point(ellipse.point_at(parameter), LINEAR_TOLERANCE),
+            "ellipse point at {parameter} escaped its analytic bounds"
         );
     }
 }

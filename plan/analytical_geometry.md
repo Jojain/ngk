@@ -154,7 +154,7 @@ support.
 - [x] `Surface::to_nurbs_over` and `Surface::closest_parameter` wildcards replaced by
       explicit per-variant arms.
 
-### Milestone 1 — honest `to_nurbs_over` + `ParamMap` 🚧
+### Milestone 1 — honest `to_nurbs_over` + `ParamMap` ✅
 
 - [x] `Cylinder::to_nurbs_over` spans the requested height. `Cylinder::point_at` moves
       `v` *units* along the axis while `to_nurbs` offset its second control-point row by
@@ -162,10 +162,11 @@ support.
       silently lost the geometry above `v = 1` on entering the intersection engine.
       Regression test:
       `tests/geometry/dim3/surfaces.rs::cylinder_nurbs_patch_spans_the_requested_height_interval`.
-- [ ] `ParamMap { u: Reparam, v: Reparam }` with `Reparam::{Identity, ConicArc}`.
-- [ ] `bbox_over` on both traits, exact for the quadrics, conservative elsewhere.
-- [ ] Wire both into `broad_phase.rs::face_bounds`, replacing its `None` fallback.
-- [ ] `Curve::reversed` in closed form, so trimming and reversal stop degrading analytic
+- [x] `ParamMap { u: Reparam, v: Reparam }` with `Reparam::{Identity, ConicArc}`.
+- [x] `bbox_over` on both traits, exact for the quadrics, conservative elsewhere.
+- [x] Wire analytic bounds into `broad_phase.rs::face_bounds`, replacing its `None`
+      fallback without carrying analytic UV values through a NURBS parameterization.
+- [x] `Curve::reversed` in closed form, so trimming and reversal stop degrading analytic
       curves to NURBS.
 
 ### Milestone 2 — `conic_arc_nurbs` + `Ellipse` (3D and 2D) 🚧
@@ -175,7 +176,7 @@ Establishes the full per-type checklist on the easiest type.
 - [x] Shared 3D `conic_arc_nurbs`; trimmed circles and ellipses use it.
 - [x] `Ellipse` / `Ellipse2` concrete types, enum and trait forwarding,
       transformations, exact NURBS conversion, bindings, and focused tests.
-- [ ] Add the Milestone 1 `ParamMap` and `bbox_over` contracts, then cover those
+- [x] Add the Milestone 1 `ParamMap` and `bbox_over` contracts, then cover those
       cross-cutting invariants for ellipse.
 
 ### Milestone 3 — `Sphere`, `Cone`, `Torus`

@@ -23,12 +23,14 @@
 use crate::geometry::axis::Axis3;
 use crate::geometry::dim2::nurbs::NurbsCurve2;
 use crate::geometry::dim2::utils::Point2;
+use crate::geometry::dim3::bbox::BBox;
 use crate::geometry::dim3::curves::Periodicity;
 use crate::geometry::dim3::nurbs::{NurbsCurve, NurbsSurface};
 use crate::geometry::dim3::surfaces::SurfacePeriodicity;
 use crate::geometry::dim3::utils::Point3;
 use crate::geometry::interval::Interval;
 use crate::geometry::nurbs::error::NurbsError;
+use crate::geometry::reparam::ParamMap;
 use nalgebra::{UnitVector3, Vector2, Vector3};
 
 /// The behaviour every 3D support curve provides.
@@ -65,6 +67,12 @@ pub trait CurveGeometry: Sized {
     /// The parameterization is **not** generally preserved — see the module
     /// documentation.
     fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError>;
+
+    /// A conservative bounding box of the curve restricted to `interval`.
+    ///
+    /// `None` means the representation cannot prove a finite bound, for
+    /// example a rational NURBS with a non-positive control weight.
+    fn bbox_over(&self, interval: Interval) -> Option<BBox>;
 
     /// The curve rotated by `angle` radians around `axis`.
     ///
@@ -150,6 +158,12 @@ pub trait SurfaceGeometry: Sized {
     /// patch instead silently drops everything outside it. Surfaces that carry
     /// their own finite parameterization may ignore the box.
     fn to_nurbs_over(&self, u: Interval, v: Interval) -> Result<NurbsSurface, NurbsError>;
+
+    /// Maps analytic parameters in the requested box to the NURBS patch.
+    fn param_map_over(&self, u: Interval, v: Interval) -> ParamMap;
+
+    /// A conservative bounding box of the surface restricted to a finite box.
+    fn bbox_over(&self, u: Interval, v: Interval) -> Option<BBox>;
 
     /// The surface rotated by `angle` radians around `axis`.
     ///

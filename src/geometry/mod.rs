@@ -3,6 +3,7 @@ pub mod dim2;
 pub mod dim3;
 pub mod interval;
 pub mod nurbs;
+pub mod reparam;
 pub mod tolerance;
 pub mod traits;
 
@@ -38,5 +39,6 @@ pub use dim3::surfaces::{
 pub use dim3::utils::{IntoUnit, Point3, PointCoincidence};
 pub use interval::Interval;
 pub use nurbs::error::NurbsError;
+pub use reparam::{ParamMap, Reparam};
 pub use tolerance::{ANGULAR_TOLERANCE, LINEAR_TOLERANCE};
 pub use traits::{Curve2Geometry, CurveGeometry, SurfaceGeometry};

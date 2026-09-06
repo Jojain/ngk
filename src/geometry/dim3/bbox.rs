@@ -39,6 +39,19 @@ impl BBox {
         Self::fit_points(&points)
     }
 
+    /// Builds a box in a caller-selected frame and expands it over `points`.
+    ///
+    /// Analytic supports use their natural frame so extrema in parameter space
+    /// produce an exact oriented box rather than a sampled PCA approximation.
+    pub fn from_points_in_frame(frame: Frame, points: impl IntoIterator<Item = Point3>) -> Self {
+        let points = points.into_iter().collect::<Vec<_>>();
+        if points.is_empty() {
+            Self::Empty
+        } else {
+            Self::fit_points_in_frame(&points, frame)
+        }
+    }
+
     /// Returns true when the box contains no points.
     pub fn is_empty(&self) -> bool {
         matches!(self, Self::Empty)

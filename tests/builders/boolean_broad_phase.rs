@@ -37,6 +37,33 @@ fn two_blocks(
     (map, first, second)
 }
 
+fn two_cylinders(
+    first_origin: Point3,
+    second_origin: Point3,
+) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+    let (mut map, first) = solids::cylinder_at(
+        Frame::from_xy(first_origin, Vector3::x(), Vector3::y()),
+        1.0,
+        2.0,
+    )
+    .expect("first cylinder")
+    .into_map();
+    let (tool, second) = solids::cylinder_at(
+        Frame::from_xy(second_origin, Vector3::x(), Vector3::y()),
+        1.0,
+        2.0,
+    )
+    .expect("second cylinder")
+    .into_map();
+    let second = map
+        .transaction(|edit| {
+            let dart = edit.merge(tool.solid_unchecked(second));
+            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+        })
+        .unwrap();
+    (map, first, second)
+}
+
 /// Axis-aligned extent of a face, from its own vertices.
 fn face_bounds(map: &GMap<ngk::StandardPayload>, face: FaceKey) -> (Point3, Point3) {
     let mut min = Point3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
@@ -142,4 +169,19 @@ fn candidate_enumeration_is_deterministic() {
         assert_eq!(left.start, right.start);
         assert_eq!(left.end, right.end);
     }
+}
+
+#[test]
+fn separated_cylinder_faces_are_all_pruned_by_analytic_bounds() {
+    let (map, first, second) = two_cylinders(Point3::origin(), Point3::new(20.0, 0.0, 0.0));
+    let plan = compute_boolean_intersections(
+        &map,
+        BooleanOperand::Solid(first),
+        BooleanOperand::Solid(second),
+        BooleanOptions::default(),
+    )
+    .expect("separated cylinders must produce a complete empty plan");
+
+    assert_eq!(plan.diagnostics.candidate_pairs_tested, 0);
+    assert_eq!(plan.diagnostics.candidate_pairs_pruned, 9);
 }

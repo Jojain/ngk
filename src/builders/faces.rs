@@ -176,10 +176,7 @@ impl FaceImprint {
     }
 
     fn reversed(&self) -> Result<Self, NurbsError> {
-        Ok(Self::new(
-            Curve::Nurbs(self.curve.to_nurbs()?.reversed()),
-            self.pcurve.reversed(),
-        ))
+        Ok(Self::new(self.curve.reversed(), self.pcurve.reversed()))
     }
 }
 

@@ -173,11 +173,7 @@ fn on_circle(
 
 /// Returns the same curve traversed the other way.
 ///
-/// [`Curve`] has no in-place reversal, so this goes through the exact NURBS
-/// form. Used when a face traverses a fused edge against its stored direction.
+/// Used when a face traverses a fused edge against its stored direction.
 pub fn reversed(curve: &Curve) -> Option<Curve> {
-    curve
-        .to_nurbs()
-        .ok()
-        .map(|nurbs| Curve::Nurbs(nurbs.reversed()))
+    Some(curve.reversed())
 }

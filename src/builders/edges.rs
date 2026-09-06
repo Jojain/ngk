@@ -247,18 +247,11 @@ fn split_attached_edge_with_profile_links<P: Payload>(
 }
 
 fn reverse_split_curve(
-    edge: EdgeKey,
-    parameter: f64,
+    _edge: EdgeKey,
+    _parameter: f64,
     curve: Curve,
 ) -> Result<Curve, EdgeSplitError> {
-    curve
-        .to_nurbs()
-        .map(|curve| Curve::Nurbs(curve.reversed()))
-        .map_err(|source| EdgeSplitError::CurveTrimFailed {
-            edge,
-            parameter,
-            source,
-        })
+    Ok(curve.reversed())
 }
 
 fn prepare_profile_edge_split<P: Payload>(

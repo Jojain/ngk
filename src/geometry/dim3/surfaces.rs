@@ -1,3 +1,4 @@
+use super::bbox::BBox;
 use super::curves::{Curve, Periodicity, circle_nurbs_control_points, circle_nurbs_knots};
 use super::frame::Frame;
 use super::intersections::{
@@ -10,7 +11,7 @@ use crate::geometry::LINEAR_TOLERANCE;
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::traits::SurfaceGeometry;
-use crate::geometry::{Interval, Point2};
+use crate::geometry::{Interval, ParamMap, Point2, Reparam};
 use nalgebra::{Matrix2, Rotation3, UnitVector3, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -103,6 +104,28 @@ impl Surface {
             Surface::Ruled(surface) => surface.to_nurbs_over(u, v),
             Surface::Revolution(surface) => surface.to_nurbs_over(u, v),
             Surface::Nurbs(surface) => surface.to_nurbs_over(u, v),
+        }
+    }
+
+    /// Returns the analytic-to-NURBS parameter map for the requested patch.
+    pub fn param_map_over(&self, u: Interval, v: Interval) -> ParamMap {
+        match self {
+            Surface::Plane(surface) => surface.param_map_over(u, v),
+            Surface::Cylinder(surface) => surface.param_map_over(u, v),
+            Surface::Ruled(surface) => surface.param_map_over(u, v),
+            Surface::Revolution(surface) => surface.param_map_over(u, v),
+            Surface::Nurbs(surface) => surface.param_map_over(u, v),
+        }
+    }
+
+    /// Returns a conservative finite box for the requested surface patch.
+    pub fn bbox_over(&self, u: Interval, v: Interval) -> Option<BBox> {
+        match self {
+            Surface::Plane(surface) => surface.bbox_over(u, v),
+            Surface::Cylinder(surface) => surface.bbox_over(u, v),
+            Surface::Ruled(surface) => surface.bbox_over(u, v),
+            Surface::Revolution(surface) => surface.bbox_over(u, v),
+            Surface::Nurbs(surface) => surface.bbox_over(u, v),
         }
     }
 
@@ -213,6 +236,14 @@ impl SurfaceGeometry for Surface {
 
     fn to_nurbs_over(&self, u: Interval, v: Interval) -> Result<NurbsSurface, NurbsError> {
         Surface::to_nurbs_over(self, u, v)
+    }
+
+    fn param_map_over(&self, u: Interval, v: Interval) -> ParamMap {
+        Surface::param_map_over(self, u, v)
+    }
+
+    fn bbox_over(&self, u: Interval, v: Interval) -> Option<BBox> {
+        Surface::bbox_over(self, u, v)
     }
 
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
@@ -409,7 +440,9 @@ impl Cylinder {
             Plane::new(self.origin(), self.x_dir(), self.axis()),
             self.radius,
         );
-        let arc = if (u.length() - std::f64::consts::TAU).abs() <= LINEAR_TOLERANCE {
+        let arc = if u.start.abs() <= LINEAR_TOLERANCE
+            && (u.end - std::f64::consts::TAU).abs() <= LINEAR_TOLERANCE
+        {
             circle.to_nurbs()?
         } else {
             circle.to_nurbs_between(u.start, u.end)?
@@ -669,6 +702,25 @@ impl SurfaceGeometry for Plane {
         Plane::to_nurbs_over(self, u, v)
     }
 
+    fn param_map_over(&self, _u: Interval, _v: Interval) -> ParamMap {
+        ParamMap::identity()
+    }
+
+    fn bbox_over(&self, u: Interval, v: Interval) -> Option<BBox> {
+        if !u.is_finite() || !v.is_finite() {
+            return None;
+        }
+        Some(BBox::from_points_in_frame(
+            self.frame.clone(),
+            [
+                self.point_at(u.start, v.start),
+                self.point_at(u.end, v.start),
+                self.point_at(u.start, v.end),
+                self.point_at(u.end, v.end),
+            ],
+        ))
+    }
+
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
         let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
         Ok(Plane::from_xy(
@@ -721,6 +773,32 @@ impl SurfaceGeometry for Cylinder {
 
     fn to_nurbs_over(&self, u: Interval, v: Interval) -> Result<NurbsSurface, NurbsError> {
         Cylinder::to_nurbs_over(self, u, v)
+    }
+
+    fn param_map_over(&self, u: Interval, _v: Interval) -> ParamMap {
+        ParamMap {
+            u: Reparam::conic_arc(u, u),
+            v: Reparam::Identity,
+        }
+    }
+
+    fn bbox_over(&self, u: Interval, v: Interval) -> Option<BBox> {
+        if !u.is_finite() || !v.is_finite() {
+            return None;
+        }
+        let ordered = u.ordered();
+        let mut angles = vec![ordered.start, ordered.end];
+        let first = (ordered.start / std::f64::consts::FRAC_PI_2).ceil() as i64;
+        let last = (ordered.end / std::f64::consts::FRAC_PI_2).floor() as i64;
+        angles.extend((first..=last).map(|index| index as f64 * std::f64::consts::FRAC_PI_2));
+        Some(BBox::from_points_in_frame(
+            self.frame.clone(),
+            [v.start, v.end].into_iter().flat_map(|height| {
+                angles
+                    .iter()
+                    .map(move |&angle| self.point_at(angle, height))
+            }),
+        ))
     }
 
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
@@ -781,6 +859,28 @@ impl SurfaceGeometry for RuledSurface {
         RuledSurface::to_nurbs(self)
     }
 
+    fn param_map_over(&self, _u: Interval, _v: Interval) -> ParamMap {
+        ParamMap {
+            u: self.curve.nurbs_param_map(),
+            v: Reparam::Identity,
+        }
+    }
+
+    fn bbox_over(&self, u: Interval, v: Interval) -> Option<BBox> {
+        if !u.is_finite() || !v.is_finite() {
+            return None;
+        }
+        let curve_bounds = self.curve.bbox_over(u)?;
+        let corners = curve_bounds.corners()?;
+        Some(BBox::from_points([v.start, v.end].into_iter().flat_map(
+            |parameter| {
+                corners
+                    .iter()
+                    .map(move |point| *point + self.direction * parameter)
+            },
+        )))
+    }
+
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
         let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
         Ok(RuledSurface::new(
@@ -838,6 +938,20 @@ impl SurfaceGeometry for SurfaceOfRevolution {
         SurfaceOfRevolution::to_nurbs(self)
     }
 
+    fn param_map_over(&self, _u: Interval, _v: Interval) -> ParamMap {
+        ParamMap {
+            u: self.curve.nurbs_param_map(),
+            v: Reparam::conic_arc(
+                Interval::new(0.0, std::f64::consts::TAU),
+                Interval::new(0.0, std::f64::consts::TAU),
+            ),
+        }
+    }
+
+    fn bbox_over(&self, _u: Interval, _v: Interval) -> Option<BBox> {
+        positive_surface_control_bounds(&self.to_nurbs().ok()?)
+    }
+
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
         let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
         Ok(SurfaceOfRevolution::new(
@@ -892,6 +1006,14 @@ impl SurfaceGeometry for NurbsSurface {
         Ok(self.clone())
     }
 
+    fn param_map_over(&self, _u: Interval, _v: Interval) -> ParamMap {
+        ParamMap::identity()
+    }
+
+    fn bbox_over(&self, _u: Interval, _v: Interval) -> Option<BBox> {
+        positive_surface_control_bounds(self)
+    }
+
     fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
         let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
         let points = self
@@ -937,4 +1059,23 @@ impl SurfaceGeometry for NurbsSurface {
             self.knots_v().clone(),
         )
     }
+}
+
+/// Bounds a rational surface by its control hull when the convex-hull
+/// precondition (finite positive weights) is satisfied.
+fn positive_surface_control_bounds(surface: &NurbsSurface) -> Option<BBox> {
+    surface
+        .control_points()
+        .as_slice()
+        .iter()
+        .all(|point| point.weight().is_finite() && point.weight() > 0.0)
+        .then(|| {
+            BBox::from_points(
+                surface
+                    .control_points()
+                    .as_slice()
+                    .iter()
+                    .map(|point| point.to_cartesian()),
+            )
+        })
 }
