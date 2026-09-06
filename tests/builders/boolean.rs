@@ -17,7 +17,6 @@ use ngk::topology::gmap::{Dim, GMap};
 use ngk::topology::profile::Loop;
 use ngk::topology::shape_keys::{FaceKey, SolidKey, VertexKey};
 use ngk::topology::validation::{validate_gmap, validate_solid_manifold};
-use ngk::viz::debug_viewer::show;
 use std::f64::consts::PI;
 
 fn isolated_vertex(point: Point3) -> (GMap<ngk::StandardPayload>, VertexKey) {
@@ -1654,7 +1653,6 @@ fn block_fused_with_cylinder_tangent_to_block_faces() {
         BooleanOperation::Union,
         BooleanOptions::default(),
     );
-    show(&map);
     let result = result.expect("boolean union failed");
 
     assert_eq!(

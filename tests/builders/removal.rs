@@ -8,7 +8,6 @@ use ngk::modeling::{faces, solids};
 use ngk::topology::gmap::{Dim, GMap};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 use ngk::topology::{StandardPayload, TopologyEditError};
-use ngk::viz::debug_viewer::show;
 
 /// Returns the first face of the map together with one of its boundary edges.
 fn any_boundary_edge(g: &GMap<StandardPayload>) -> (FaceKey, EdgeKey) {
@@ -417,7 +416,6 @@ fn single_edge_filled_inner_loop_gets_removed() {
     assert_eq!(g.iter_edges().count(), 5);
 
     let result = remove_redundant_cells(&mut g, HealingOptions::default()).unwrap();
-    show(&g);
     assert_eq!(g.iter_faces().count(), 1);
     let healed = g.iter_faces().next().unwrap().0;
     assert!(g.face_unchecked(healed).inner_loops().is_empty());

@@ -20,8 +20,6 @@ use ngk::topology::gmap::GMap;
 use ngk::topology::gmap::{Cell0, Dim};
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
-use ngk::viz::debug_viewer::show;
-use ngk::viz::debug_viewer::show_gmap;
 
 #[test]
 fn connected_imprints_split_a_face_and_retain_each_section() {
@@ -628,7 +626,6 @@ fn split_face_preserves_curved_loop() {
     let splits =
         split_face_by_imprints(&mut g, face_key, &imprints).expect("curved loop should split");
 
-    show(&g);
     assert_eq!(splits.len(), 1);
     assert_eq!(splits[0].sections.len(), 4);
     assert!(

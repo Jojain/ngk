@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use nalgebra::Vector3;
-use ngk::viz::debug_viewer::show;
 use radians::Rad64;
 
 use ngk::builders::edges::add_edge;
@@ -43,7 +42,6 @@ fn revolve_edge_partial_turn_creates_four_edge_face() {
         .iter()
         .map(|vertex| vertex.key())
         .collect::<HashSet<_>>();
-    show(&g);
     assert_eq!(
         (
             g.iter_faces().count(),
@@ -196,7 +194,6 @@ fn revolve_edge_full_turn_creates_inner_loop() {
         .iter()
         .map(|vertex| vertex.key())
         .collect::<HashSet<_>>();
-    show(&g);
     assert_eq!(
         (
             g.iter_faces().count(),
