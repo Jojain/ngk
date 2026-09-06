@@ -60,9 +60,32 @@ export type DebugGeometry =
   | Circle
   | NurbsCurve
   | Cylinder
+  | DebugSphere
+  | DebugCone
   | RuledSurface
   | SurfaceOfRevolution
   | NurbsSurface;
+
+/** Structural view of the analytical sphere returned by the WASM binding. */
+export type DebugSphere = {
+  readonly origin: Point3;
+  readonly xDir: Vector3;
+  readonly axis: Vector3;
+  readonly radius: number;
+  pointAt: (u: number, v: number) => Point3;
+  normalAt: (u: number, v: number) => Vector3;
+};
+/** Structural view of the analytical cone returned by the WASM binding. */
+export type DebugCone = {
+  readonly origin: Point3;
+  readonly xDir: Vector3;
+  readonly axis: Vector3;
+  readonly referenceRadius: number;
+  readonly halfAngle: number;
+  readonly apexParameter?: number;
+  pointAt: (u: number, v: number) => Point3;
+  normalAt: (u: number, v: number) => Vector3;
+};
 export type DebugObject =
   | GMap
   | Vertex

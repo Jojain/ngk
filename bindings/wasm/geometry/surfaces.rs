@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 
-use crate::geometry::{Cylinder, Plane, RuledSurface, SurfaceOfRevolution};
+use crate::geometry::{Cone, Cylinder, Plane, RuledSurface, Sphere, SurfaceOfRevolution};
 
 use super::convert::curve_to_js;
 use super::values::{WasmPoint3, WasmVector3, point, unit_vector, vector};
@@ -88,6 +88,100 @@ impl WasmCylinder {
     }
 
     /// Evaluates the cylinder normal.
+    #[wasm_bindgen(js_name = normalAt)]
+    pub fn normal_at(&self, u: f64, v: f64) -> WasmVector3 {
+        unit_vector(self.inner.normal_at(u, v))
+    }
+}
+
+/// Analytical sphere surface.
+#[wasm_bindgen(js_name = Sphere)]
+pub struct WasmSphere {
+    pub(crate) inner: Sphere,
+}
+
+#[wasm_bindgen]
+impl WasmSphere {
+    /// Returns the sphere center.
+    #[wasm_bindgen(getter)]
+    pub fn origin(&self) -> WasmPoint3 {
+        point(self.inner.frame().origin)
+    }
+
+    /// Returns the local x direction from which longitude is measured.
+    #[wasm_bindgen(getter, js_name = xDir)]
+    pub fn x_dir(&self) -> WasmVector3 {
+        unit_vector(self.inner.frame().x_dir)
+    }
+
+    /// Returns the local z axis through the poles.
+    #[wasm_bindgen(getter)]
+    pub fn axis(&self) -> WasmVector3 {
+        unit_vector(self.inner.frame().z_dir)
+    }
+
+    /// Returns the sphere radius.
+    #[wasm_bindgen(getter)]
+    pub fn radius(&self) -> f64 {
+        self.inner.radius()
+    }
+
+    /// Evaluates the sphere at longitude and latitude.
+    #[wasm_bindgen(js_name = pointAt)]
+    pub fn point_at(&self, u: f64, v: f64) -> WasmPoint3 {
+        point(self.inner.point_at(u, v))
+    }
+
+    /// Evaluates the outward sphere normal.
+    #[wasm_bindgen(js_name = normalAt)]
+    pub fn normal_at(&self, u: f64, v: f64) -> WasmVector3 {
+        unit_vector(self.inner.normal_at(u, v))
+    }
+}
+
+/// Analytical cone surface.
+#[wasm_bindgen(js_name = Cone)]
+pub struct WasmCone {
+    pub(crate) inner: Cone,
+}
+
+#[wasm_bindgen]
+impl WasmCone {
+    #[wasm_bindgen(getter)]
+    pub fn origin(&self) -> WasmPoint3 {
+        point(self.inner.frame().origin)
+    }
+
+    #[wasm_bindgen(getter, js_name = xDir)]
+    pub fn x_dir(&self) -> WasmVector3 {
+        unit_vector(self.inner.frame().x_dir)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn axis(&self) -> WasmVector3 {
+        unit_vector(self.inner.frame().z_dir)
+    }
+
+    #[wasm_bindgen(getter, js_name = referenceRadius)]
+    pub fn reference_radius(&self) -> f64 {
+        self.inner.reference_radius()
+    }
+
+    #[wasm_bindgen(getter, js_name = halfAngle)]
+    pub fn half_angle(&self) -> f64 {
+        self.inner.half_angle()
+    }
+
+    #[wasm_bindgen(getter, js_name = apexParameter)]
+    pub fn apex_parameter(&self) -> Option<f64> {
+        self.inner.apex_parameter()
+    }
+
+    #[wasm_bindgen(js_name = pointAt)]
+    pub fn point_at(&self, u: f64, v: f64) -> WasmPoint3 {
+        point(self.inner.point_at(u, v))
+    }
+
     #[wasm_bindgen(js_name = normalAt)]
     pub fn normal_at(&self, u: f64, v: f64) -> WasmVector3 {
         unit_vector(self.inner.normal_at(u, v))

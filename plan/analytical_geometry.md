@@ -185,6 +185,15 @@ One per pass. Includes switching `builders/solids.rs::add_sphere` to `Surface::S
 (which moves raw dart/face counts in existing sphere tests) and extending
 `builders/faces.rs::periodic_boundary_curve`.
 
+- [x] `Sphere`: longitude/latitude support, exact rational biquadratic patches,
+      pole degeneracy, analytic primitive/pcurves, bounds, healing, tessellation,
+      debug visualization, and Python/Wasm binding source.
+- [x] `Cone`: signed generatrix-distance support across both nappes, exact
+      rational quadratic/linear patches, apex degeneracy and tessellation,
+      analytic closest parameters and bounds, periodic boundary reconstruction,
+      healing identity, debug visualization, and Python/Wasm binding source.
+- [ ] `Torus`.
+
 ### Milestone 4 — `Hyperbola`, `Parabola` (3D and 2D)
 
 Unbounded domains exercise `domain()`'s infinite intervals and `to_nurbs_over`'s box

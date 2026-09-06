@@ -10,8 +10,8 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::geometry::{
-    Bounded, Circle, Curve, Cylinder, Line, NurbsCurve, NurbsSurface, Plane, Point3, RuledSurface,
-    Surface, SurfaceOfRevolution,
+    Bounded, Circle, Cone, Curve, Cylinder, Line, NurbsCurve, NurbsSurface, Plane, Point3,
+    RuledSurface, Sphere, Surface, SurfaceOfRevolution,
 };
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -313,6 +313,8 @@ macro_rules! impl_surface_display {
 }
 
 impl_surface_display!(Cylinder, Cylinder);
+impl_surface_display!(Sphere, Sphere);
+impl_surface_display!(Cone, Cone);
 impl_surface_display!(RuledSurface, Ruled);
 impl_surface_display!(SurfaceOfRevolution, Revolution);
 impl_surface_display!(NurbsSurface, Nurbs);

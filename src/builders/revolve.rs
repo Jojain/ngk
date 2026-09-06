@@ -152,6 +152,35 @@ pub(crate) fn add_revolved_edge_staged<P: Payload>(
     add_partial_revolved_edge_face(g, &source, axis, angle)
 }
 
+/// Builds full-revolution topology while attaching an analytical support
+/// directly when that support has a more specific parameterization.
+pub(crate) fn add_full_revolved_edge_staged_with_surface<P, F>(
+    g: &mut TopologyEdit<'_, P>,
+    edge: EdgeKey,
+    axis: Axis3,
+    surface: Surface,
+    map_pcurve_point: F,
+) -> Result<FaceKey, RevolveError>
+where
+    P: Payload,
+    F: Fn(Point2) -> Point2,
+{
+    let source = RevolvedSourceEdge::from_key(g, edge)?;
+    let start_on_axis = revolve_radius(axis, source.start.point) <= LINEAR_TOLERANCE;
+    let end_on_axis = revolve_radius(axis, source.end.point) <= LINEAR_TOLERANCE;
+    if !start_on_axis || !end_on_axis {
+        return Err(RevolveError::ApexRevolveUnsupported { key: edge });
+    }
+    add_full_revolved_apex_to_apex_face(
+        g,
+        &source,
+        axis,
+        Rad64::FULL_TURN,
+        surface,
+        &map_pcurve_point,
+    )
+}
+
 fn add_partial_revolved_edge_face<P: Payload>(
     g: &mut TopologyEdit<'_, P>,
     source: &RevolvedSourceEdge,
@@ -262,7 +291,10 @@ fn add_full_revolved_edge_face<P: Payload>(
     let start_on_axis = revolve_radius(axis, source.start.point) <= LINEAR_TOLERANCE;
     let end_on_axis = revolve_radius(axis, source.end.point) <= LINEAR_TOLERANCE;
     if start_on_axis && end_on_axis {
-        return add_full_revolved_apex_to_apex_face(g, source, axis, angle);
+        let surface = Surface::Revolution(SurfaceOfRevolution::new(source.curve.clone(), axis));
+        return add_full_revolved_apex_to_apex_face(g, source, axis, angle, surface, &|point| {
+            point
+        });
     }
 
     add_full_revolved_open_edge_face(g, source, axis, angle)
@@ -278,6 +310,8 @@ fn add_full_revolved_apex_to_apex_face<P: Payload>(
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
+    surface: Surface,
+    map_pcurve_point: &impl Fn(Point2) -> Point2,
 ) -> Result<FaceKey, RevolveError> {
     validate_consumable_source_edge(g, source)?;
     let interval = source
@@ -309,19 +343,19 @@ fn add_full_revolved_apex_to_apex_face<P: Payload>(
     pcurves.insert(
         seam_start,
         Curve2::Line(Line2::new(
-            Point2::new(interval.start, 0.0),
-            Point2::new(interval.end, 0.0),
+            map_pcurve_point(Point2::new(interval.start, 0.0)),
+            map_pcurve_point(Point2::new(interval.end, 0.0)),
         )),
     );
     pcurves.insert(
         opposite_end,
         Curve2::Line(Line2::new(
-            Point2::new(interval.end, angle.val()),
-            Point2::new(interval.start, angle.val()),
+            map_pcurve_point(Point2::new(interval.end, angle.val())),
+            map_pcurve_point(Point2::new(interval.start, angle.val())),
         )),
     );
     let face = g.add_face(FaceAttr::with_pcurves(
-        Surface::Revolution(SurfaceOfRevolution::new(source.curve.clone(), axis)),
+        surface,
         P::F::default(),
         seam_start,
         Vec::new(),

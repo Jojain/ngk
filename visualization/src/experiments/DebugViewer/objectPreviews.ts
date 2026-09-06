@@ -93,6 +93,41 @@ export const OBJECT_PREVIEW_FORMATTERS: Record<
       ")"
     );
   },
+  Sphere: (value) => {
+    const sphere = value as {
+      origin: Coordinate3;
+      axis: Coordinate3;
+      radius: number;
+    };
+    return (
+      "Sphere(origin=" +
+      coordinatePreview("P", sphere.origin) +
+      ", axis=" +
+      coordinatePreview("V", sphere.axis) +
+      ", r=" +
+      formatScalar(sphere.radius) +
+      ")"
+      );
+    },
+  Cone: (value) => {
+    const cone = value as {
+      origin: Coordinate3;
+      axis: Coordinate3;
+      referenceRadius: number;
+      halfAngle: number;
+    };
+    return (
+      "Cone(origin=" +
+      coordinatePreview("P", cone.origin) +
+      ", axis=" +
+      coordinatePreview("V", cone.axis) +
+      ", r=" +
+      formatScalar(cone.referenceRadius) +
+      ", angle=" +
+      formatScalar(cone.halfAngle) +
+      ")"
+    );
+  },
   RuledSurface: (value) => {
     const surface = value as { direction: Coordinate3 };
     return "RuledSurface(direction=" + coordinatePreview("V", surface.direction) + ")";

@@ -1,5 +1,5 @@
 use nalgebra::Vector3;
-use ngk::geometry::LINEAR_TOLERANCE;
+use ngk::geometry::{LINEAR_TOLERANCE, PointCoincidence, Surface};
 use ngk::modeling::solids::{PrimitiveError, block, sphere};
 use ngk::tessellate::{TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
@@ -155,4 +155,65 @@ fn block_error_message_names_the_invalid_axis_and_value() {
 fn sphere_builds_a_well_formed_solid() {
     let shape = sphere(2.0).expect("sphere primitive should build");
     validate_solid_manifold(shape.map(), shape.key()).expect("sphere should be well formed");
+    let faces = shape.solid().faces();
+    assert_eq!(faces.len(), 1);
+    assert!(
+        matches!(faces[0].surface(), Surface::Sphere(surface) if surface.radius() == 2.0),
+        "sphere primitive should preserve its analytical support"
+    );
+
+    let face = &faces[0];
+    for edge in face.outer_loop().edges() {
+        let curve = edge
+            .curve()
+            .expect("sphere seam should carry its meridian curve");
+        let pcurve = face
+            .pcurve(edge.dart())
+            .expect("sphere seam should carry a longitude/latitude pcurve");
+        for parameter in [0.0, 0.37, 1.0] {
+            let uv = pcurve.point_at(parameter);
+            let lifted = face.surface().point_at(uv.x, uv.y);
+            assert!(
+                lifted.coincides(curve.project(lifted), LINEAR_TOLERANCE),
+                "sphere pcurve at dart {:?}, t={parameter}, uv={uv:?} lifted off its seam curve",
+                edge.dart()
+            );
+        }
+        assert!(
+            face.surface()
+                .point_at(pcurve.point_at(0.0).x, pcurve.point_at(0.0).y)
+                .coincides(
+                    *edge
+                        .start()
+                        .point()
+                        .expect("sphere pole should have geometry"),
+                    LINEAR_TOLERANCE,
+                )
+        );
+        assert!(
+            face.surface()
+                .point_at(pcurve.point_at(1.0).x, pcurve.point_at(1.0).y)
+                .coincides(
+                    *edge
+                        .end()
+                        .point()
+                        .expect("sphere pole should have geometry"),
+                    LINEAR_TOLERANCE,
+                )
+        );
+    }
+
+    let mesh = tessellate_face_key(shape.map(), face.key(), TessellateOpts::default())
+        .expect("sphere face should tessellate");
+    assert!(mesh.indices.chunks_exact(3).all(|triangle| {
+        let [a, b, c] = [
+            triangle[0] as usize,
+            triangle[1] as usize,
+            triangle[2] as usize,
+        ];
+        (mesh.positions[b] - mesh.positions[a])
+            .cross(&(mesh.positions[c] - mesh.positions[a]))
+            .norm()
+            > LINEAR_TOLERANCE * LINEAR_TOLERANCE
+    }));
 }

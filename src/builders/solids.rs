@@ -1,7 +1,6 @@
 use std::f64::consts::FRAC_PI_2;
 
 use nalgebra::Vector3;
-use radians::Rad64;
 use thiserror::Error;
 
 use crate::{
@@ -10,10 +9,11 @@ use crate::{
     builders::{
         edges::add_arc_staged,
         errors::{EdgeCreationError, ExtrudeError},
-        revolve::{RevolveError, add_revolved_edge_staged},
+        revolve::{RevolveError, add_full_revolved_edge_staged_with_surface},
     },
     geometry::{
-        Curve, Curve2, Frame, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
+        Curve, Curve2, Frame, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Sphere,
+        Surface,
     },
     topology::{
         Dart, SheetAttr, SolidAttr, TopologyEdit,
@@ -50,7 +50,13 @@ pub fn add_sphere<P: Payload>(
         let meridian = Plane::from_xy(frame.origin, frame.x_dir, frame.z_dir);
         let axis = frame.z_axis();
         let arc = add_arc_staged(g, meridian, radius, FRAC_PI_2, -FRAC_PI_2)?;
-        let face = add_revolved_edge_staged(g, arc, axis, Rad64::FULL_TURN)?;
+        let face = add_full_revolved_edge_staged_with_surface(
+            g,
+            arc,
+            axis,
+            Surface::Sphere(Sphere::new(frame, radius)),
+            |point| Point2::new(point.y, FRAC_PI_2 - std::f64::consts::PI * point.x),
+        )?;
         let seam = g.face_unchecked(face).outer_loop().dart;
 
         g.add_sheet(SheetAttr::new(seam, P::Sheet::default()));

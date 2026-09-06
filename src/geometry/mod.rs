@@ -34,7 +34,7 @@ pub use dim3::nurbs::{
     NurbsSurface,
 };
 pub use dim3::surfaces::{
-    Cylinder, Plane, RuledSurface, Surface, SurfaceOfRevolution, SurfacePeriodicity,
+    Cone, Cylinder, Plane, RuledSurface, Sphere, Surface, SurfaceOfRevolution, SurfacePeriodicity,
 };
 pub use dim3::utils::{IntoUnit, Point3, PointCoincidence};
 pub use interval::Interval;

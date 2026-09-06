@@ -15,7 +15,7 @@
 //! `Identical`; a genuinely reparameterized curved pair is left alone rather
 //! than approximated.
 
-use crate::geometry::{Cylinder, Plane, Surface};
+use crate::geometry::{Cone, Cylinder, Plane, Sphere, Surface};
 use crate::topology::orientation::Orientation;
 
 /// How two support surfaces relate.
@@ -40,6 +40,12 @@ pub fn surfaces_match(
         }
         (Surface::Cylinder(first), Surface::Cylinder(second)) => {
             cylinders_identical(first, second, linear, angular).then_some(SurfaceMatch::Identical)
+        }
+        (Surface::Sphere(first), Surface::Sphere(second)) => {
+            spheres_identical(first, second, linear, angular).then_some(SurfaceMatch::Identical)
+        }
+        (Surface::Cone(first), Surface::Cone(second)) => {
+            cones_identical(first, second, linear, angular).then_some(SurfaceMatch::Identical)
         }
         _ => None,
     }
@@ -86,6 +92,37 @@ fn cylinders_identical(first: &Cylinder, second: &Cylinder, linear: f64, angular
             (first.frame.x_dir, second.frame.x_dir),
             (first.frame.y_dir, second.frame.y_dir),
             (first.frame.z_dir, second.frame.z_dir),
+        ]
+        .into_iter()
+        .all(|(a, b)| {
+            directions_match(a.into_inner(), b.into_inner(), angular) == Some(Orientation::Same)
+        })
+}
+
+/// Reports whether two spheres share one longitude/latitude parameterization.
+fn spheres_identical(first: &Sphere, second: &Sphere, linear: f64, angular: f64) -> bool {
+    (first.radius() - second.radius()).abs() <= linear
+        && (second.frame().origin - first.frame().origin).norm() <= linear
+        && [
+            (first.frame().x_dir, second.frame().x_dir),
+            (first.frame().y_dir, second.frame().y_dir),
+            (first.frame().z_dir, second.frame().z_dir),
+        ]
+        .into_iter()
+        .all(|(a, b)| {
+            directions_match(a.into_inner(), b.into_inner(), angular) == Some(Orientation::Same)
+        })
+}
+
+/// Reports whether two cones share one longitude/generatrix parameterization.
+fn cones_identical(first: &Cone, second: &Cone, linear: f64, angular: f64) -> bool {
+    (first.reference_radius() - second.reference_radius()).abs() <= linear
+        && (first.half_angle() - second.half_angle()).abs() <= angular
+        && (second.frame().origin - first.frame().origin).norm() <= linear
+        && [
+            (first.frame().x_dir, second.frame().x_dir),
+            (first.frame().y_dir, second.frame().y_dir),
+            (first.frame().z_dir, second.frame().z_dir),
         ]
         .into_iter()
         .all(|(a, b)| {

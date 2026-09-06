@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-use crate::geometry::{Cylinder, Plane, RuledSurface, SurfaceOfRevolution};
+use crate::geometry::{Cone, Cylinder, Plane, RuledSurface, Sphere, SurfaceOfRevolution};
 
 use super::{PyPoint3, PyVector3, curve_to_py, point, unit_vector, vector};
 
@@ -83,6 +83,102 @@ impl PyCylinder {
 
     fn __repr__(&self) -> String {
         format!("Cylinder(radius={})", self.cylinder.radius)
+    }
+}
+
+#[pyclass(name = "Sphere", module = "ngk")]
+#[derive(Clone)]
+pub(crate) struct PySphere {
+    pub(super) sphere: Sphere,
+}
+
+#[pymethods]
+impl PySphere {
+    #[getter]
+    fn origin(&self) -> PyPoint3 {
+        point(self.sphere.frame().origin)
+    }
+
+    #[getter]
+    fn x_dir(&self) -> PyVector3 {
+        unit_vector(self.sphere.frame().x_dir)
+    }
+
+    #[getter]
+    fn axis(&self) -> PyVector3 {
+        unit_vector(self.sphere.frame().z_dir)
+    }
+
+    #[getter]
+    fn radius(&self) -> f64 {
+        self.sphere.radius()
+    }
+
+    fn point_at(&self, u: f64, v: f64) -> PyPoint3 {
+        point(self.sphere.point_at(u, v))
+    }
+
+    fn normal_at(&self, u: f64, v: f64) -> PyVector3 {
+        unit_vector(self.sphere.normal_at(u, v))
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Sphere(radius={})", self.sphere.radius())
+    }
+}
+
+#[pyclass(name = "Cone", module = "ngk")]
+#[derive(Clone)]
+pub(crate) struct PyCone {
+    pub(super) cone: Cone,
+}
+
+#[pymethods]
+impl PyCone {
+    #[getter]
+    fn origin(&self) -> PyPoint3 {
+        point(self.cone.frame().origin)
+    }
+
+    #[getter]
+    fn x_dir(&self) -> PyVector3 {
+        unit_vector(self.cone.frame().x_dir)
+    }
+
+    #[getter]
+    fn axis(&self) -> PyVector3 {
+        unit_vector(self.cone.frame().z_dir)
+    }
+
+    #[getter]
+    fn reference_radius(&self) -> f64 {
+        self.cone.reference_radius()
+    }
+
+    #[getter]
+    fn half_angle(&self) -> f64 {
+        self.cone.half_angle()
+    }
+
+    #[getter]
+    fn apex_parameter(&self) -> Option<f64> {
+        self.cone.apex_parameter()
+    }
+
+    fn point_at(&self, u: f64, v: f64) -> PyPoint3 {
+        point(self.cone.point_at(u, v))
+    }
+
+    fn normal_at(&self, u: f64, v: f64) -> PyVector3 {
+        unit_vector(self.cone.normal_at(u, v))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Cone(reference_radius={}, half_angle={})",
+            self.cone.reference_radius(),
+            self.cone.half_angle()
+        )
     }
 }
 

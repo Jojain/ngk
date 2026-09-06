@@ -1,4 +1,6 @@
-use ngk::geometry::{Curve, Interval, LINEAR_TOLERANCE, Plane, Point3, Surface};
+use ngk::geometry::{
+    Cone, Curve, Frame, Interval, LINEAR_TOLERANCE, Plane, Point3, Sphere, Surface,
+};
 use ngk::healing::predicates::{SurfaceMatch, join_curves, surfaces_match};
 use std::f64::consts::FRAC_PI_2;
 
@@ -108,6 +110,24 @@ fn a_doubling_back_pair_does_not_rejoin() {
 #[test]
 fn one_plane_matches_itself_identically() {
     let surface = Surface::Plane(Plane::xy());
+    assert_eq!(
+        surfaces_match(&surface, &surface, LINEAR_TOLERANCE, ANGULAR),
+        Some(SurfaceMatch::Identical)
+    );
+}
+
+#[test]
+fn one_sphere_matches_itself_identically() {
+    let surface = Surface::Sphere(Sphere::new(Frame::xyz(), 2.0));
+    assert_eq!(
+        surfaces_match(&surface, &surface, LINEAR_TOLERANCE, ANGULAR),
+        Some(SurfaceMatch::Identical)
+    );
+}
+
+#[test]
+fn one_cone_matches_itself_identically() {
+    let surface = Surface::Cone(Cone::new(Frame::xyz(), 2.0, FRAC_PI_2 / 3.0));
     assert_eq!(
         surfaces_match(&surface, &surface, LINEAR_TOLERANCE, ANGULAR),
         Some(SurfaceMatch::Identical)

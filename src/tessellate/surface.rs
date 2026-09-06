@@ -38,12 +38,26 @@ pub fn tessellate_surface_patch(
     let stride = nu + 1;
     let mut indices = Vec::with_capacity(nu * nv * 6);
     for j in 0..nv {
+        let v0 = lerp(v_range.0, v_range.1, j as f64 / nv as f64);
+        let v1 = lerp(v_range.0, v_range.1, (j + 1) as f64 / nv as f64);
         for i in 0..nu {
             let i00 = (j * stride + i) as u32;
             let i10 = i00 + 1;
             let i01 = i00 + stride as u32;
             let i11 = i01 + 1;
-            indices.extend_from_slice(&[i00, i10, i11, i00, i11, i01]);
+            let u0 = lerp(u_range.0, u_range.1, i as f64 / nu as f64);
+            let u1 = lerp(u_range.0, u_range.1, (i + 1) as f64 / nu as f64);
+            let bottom_collapsed =
+                surface.is_degenerate_at(u0, v0) && surface.is_degenerate_at(u1, v0);
+            let top_collapsed =
+                surface.is_degenerate_at(u0, v1) && surface.is_degenerate_at(u1, v1);
+
+            if !bottom_collapsed {
+                indices.extend_from_slice(&[i00, i10, i11]);
+            }
+            if !top_collapsed {
+                indices.extend_from_slice(&[i00, i11, i01]);
+            }
         }
     }
 

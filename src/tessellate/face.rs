@@ -53,7 +53,7 @@ pub fn tessellate_face<P: Payload>(
     let ccw = signed_outer_area > 0.0;
 
     Some(match face.surface() {
-        Surface::Cylinder(_) | Surface::Ruled(_) => {
+        Surface::Cylinder(_) | Surface::Sphere(_) | Surface::Cone(_) | Surface::Ruled(_) => {
             surface_grid(face.surface(), &outer_uv, ccw, opts)
         }
         Surface::Revolution(surface) => {

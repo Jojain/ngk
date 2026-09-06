@@ -1,7 +1,9 @@
 mod bbox;
+mod cone;
 mod conics;
 mod curves;
 mod frame;
 mod intersections;
 mod nurbs;
+mod sphere;
 mod surfaces;

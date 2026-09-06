@@ -970,6 +970,24 @@ fn periodic_boundary_curve(
             ),
             cylinder.radius,
         )),
+        Surface::Sphere(sphere) => {
+            let latitude = start_uv.y;
+            let center =
+                sphere.frame().origin + *sphere.frame().z_dir * (sphere.radius() * latitude.sin());
+            Curve::Circle(Circle::new(
+                Plane::from_xy(center, sphere.frame().x_dir, sphere.frame().y_dir),
+                sphere.radius() * latitude.cos(),
+            ))
+        }
+        Surface::Cone(cone) => {
+            let parameter_v = start_uv.y;
+            let center =
+                cone.frame().origin + *cone.frame().z_dir * (parameter_v * cone.half_angle().cos());
+            Curve::Circle(Circle::new(
+                Plane::from_xy(center, cone.frame().x_dir, cone.frame().y_dir),
+                cone.radius_at(parameter_v).abs(),
+            ))
+        }
         _ => {
             return Err(FaceImprintSplitError::PeriodicMergeFailed {
                 face,
