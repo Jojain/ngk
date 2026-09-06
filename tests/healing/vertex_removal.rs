@@ -32,7 +32,8 @@ fn splitting_an_edge_then_healing_restores_a_single_edge() {
     assert_eq!(map.iter_edges().count(), edges + 1);
     assert_eq!(map.iter_vertices().count(), vertices + 1);
 
-    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default())
+        .expect("healing should succeed");
 
     assert_eq!(
         report.removed_vertices.len(),
@@ -94,7 +95,8 @@ fn healing_preserves_shell_euler_characteristic() {
 #[test]
 fn a_corner_vertex_between_two_directions_is_preserved() {
     let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
-    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default())
+        .expect("healing should succeed");
 
     assert!(
         report.is_empty(),

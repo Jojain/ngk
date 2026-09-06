@@ -741,6 +741,7 @@ fn imprint_sections_retain_source_indices_and_directed_intervals() {
         .map(|pair| planar_imprint(Curve2::Line(Line2::new(pair[0], pair[1]))))
         .collect::<Vec<_>>();
     let splits = split_face_by_imprints(&mut g, face, &imprints).unwrap();
+
     let sections = &splits[0].sections;
     assert_eq!(sections.len(), 4);
     let mut indices = sections

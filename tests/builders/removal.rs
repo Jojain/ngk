@@ -1,7 +1,8 @@
+use nalgebra::Vector2;
 use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
-use ngk::builders::faces::{FaceImprint, split_face_by_imprints, split_face_edge};
+use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints, split_face_edge};
 use ngk::builders::removal::{MergedCell, is_removable, remove_cell_staged};
-use ngk::geometry::{Curve, Curve2, Frame, Line2, Plane, Point2, Point3, Surface};
+use ngk::geometry::{Circle2, Curve, Curve2, Frame, Line2, Plane, Point2, Point3, Surface};
 use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
 use ngk::modeling::{faces, solids};
 use ngk::topology::gmap::{Dim, GMap};
@@ -323,4 +324,103 @@ fn redundant_faces_of_boolean_fuse_are_deleted() {
             .any(|(_, attr)| (attr.point - Point3::origin()).norm() <= BOOLEAN_TOLERANCE),
         "the vertex at the origin becomes isolated and must go with its edges"
     );
+}
+
+fn planar_imprint(pcurve: Curve2) -> FaceImprint {
+    let points = pcurve
+        .sample(32)
+        .into_iter()
+        .map(|point| Point3::new(point.x, point.y, 0.0))
+        .collect::<Vec<_>>();
+    let curve = match &pcurve {
+        Curve2::Line(_) => Curve::line(points[0], *points.last().unwrap()),
+        Curve2::Circle(_) | Curve2::Nurbs(_) => Curve::Nurbs(
+            ngk::geometry::NurbsCurve::interpolate(&points)
+                .expect("sampled planar pcurve should interpolate in 3D"),
+        ),
+    };
+    FaceImprint::new(curve, pcurve)
+}
+/// Returns a rectangle partitioned by a closed square imprint.
+fn rectangle_with_filled_inner_loop() -> (GMap<StandardPayload>, FaceKey) {
+    let mut g = GMap::<StandardPayload>::new();
+    let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
+    let points = [
+        Point2::new(1.0, 1.0),
+        Point2::new(3.0, 1.0),
+        Point2::new(3.0, 3.0),
+        Point2::new(1.0, 3.0),
+        Point2::new(1.0, 1.0),
+    ];
+    let imprints = points
+        .windows(2)
+        .map(|pair| planar_imprint(Curve2::Line(Line2::new(pair[0], pair[1]))))
+        .collect::<Vec<_>>();
+    let splits = split_face_by_imprints(&mut g, face, &imprints).unwrap();
+    assert_eq!(splits.len(), 1, "the closed imprint creates one island");
+    assert_eq!(g.iter_faces().count(), 2);
+    assert_eq!(g.face_unchecked(face).inner_loops().len(), 1);
+    (g, face)
+}
+
+#[test]
+fn imprinted_face_inner_loop_gets_removed() {
+    let (mut g, _) = rectangle_with_filled_inner_loop();
+
+    let result = remove_redundant_cells(&mut g, HealingOptions::default()).unwrap();
+    assert_eq!(
+        g.iter_faces().count(),
+        1,
+        "the island must fuse into its surrounding face; skips were {:?}",
+        result.skipped
+    );
+    let healed = g.iter_faces().next().unwrap().0;
+    assert!(
+        g.face_unchecked(healed).inner_loops().is_empty(),
+        "the filled inner loop must disappear"
+    );
+    assert_eq!(g.iter_edges().count(), 4, "only the rectangle remains");
+    assert_eq!(result.fused_faces.len(), 1);
+}
+
+#[test]
+fn filled_inner_loop_removal_can_be_disabled() {
+    let (mut g, face) = rectangle_with_filled_inner_loop();
+
+    let result = remove_redundant_cells(
+        &mut g,
+        HealingOptions {
+            remove_filled_inner_loops: false,
+            ..HealingOptions::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(g.iter_faces().count(), 2);
+    assert_eq!(g.face_unchecked(face).inner_loops().len(), 1);
+    assert_eq!(g.iter_edges().count(), 8);
+    assert!(result.fused_faces.is_empty());
+}
+
+#[test]
+fn single_edge_filled_inner_loop_gets_removed() {
+    let mut g = GMap::<StandardPayload>::new();
+    let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
+    let circle = Curve2::Circle(Circle2::new(
+        Point2::new(2.0, 2.0),
+        Vector2::x(),
+        1.0,
+        std::f64::consts::TAU,
+    ));
+    let splits = split_face_by_imprints(&mut g, face, &[planar_imprint(circle)]).unwrap();
+    assert_eq!(splits.len(), 1);
+    assert_eq!(g.iter_edges().count(), 5);
+
+    let result = remove_redundant_cells(&mut g, HealingOptions::default()).unwrap();
+    show(&g);
+    assert_eq!(g.iter_faces().count(), 1);
+    let healed = g.iter_faces().next().unwrap().0;
+    assert!(g.face_unchecked(healed).inner_loops().is_empty());
+    assert_eq!(g.iter_edges().count(), 4);
+    assert_eq!(result.fused_faces.len(), 1);
 }

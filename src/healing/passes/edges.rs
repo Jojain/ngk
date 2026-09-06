@@ -9,7 +9,9 @@
 //! Either way the pass has to leave the face with a coherent set of parameter
 //! curves: it carries the consumed face's curves over unchanged when both
 //! faces shared one surface value, and otherwise rebuilds every curve of the
-//! surviving face in its own plane.
+//! surviving face in its own plane. A closed interface between an inner loop
+//! and the face filling it is removed as a sequence of 1-removals; the final
+//! removal also drops the exhausted inner-loop identity.
 
 use std::collections::HashMap;
 
@@ -81,6 +83,16 @@ fn plan<P: Payload>(
         [_] if bounds_a_free_side(g, dart) => return Err(SkipReason::NotBetweenTwoCells),
         [face] => (face, None),
         // Matches the survivor rule of `remove_cell_staged`.
+        [first, second]
+            if options.remove_filled_inner_loops && fills_inner_loop(g, dart, first, second) =>
+        {
+            (first, Some(second))
+        }
+        [first, second]
+            if options.remove_filled_inner_loops && fills_inner_loop(g, dart, second, first) =>
+        {
+            (second, Some(first))
+        }
         [first, second] if first <= second => (first, Some(second)),
         [first, second] => (second, Some(first)),
         _ => return Err(SkipReason::NotBetweenTwoCells),
@@ -100,10 +112,13 @@ fn plan<P: Payload>(
             SurfaceMatch::Identical
         }
         Some(consumed) => {
-            for face in [survivor, consumed] {
-                if !fuses_outer_loops(g, dart, face) {
-                    return Err(SkipReason::NotOuterLoop);
-                }
+            let both_outer = [survivor, consumed]
+                .into_iter()
+                .all(|face| fuses_outer_loop(g, dart, face));
+            let filled_inner_loop =
+                options.remove_filled_inner_loops && fills_inner_loop(g, dart, survivor, consumed);
+            if !both_outer && !filled_inner_loop {
+                return Err(SkipReason::NotOuterLoop);
             }
             let other = &g
                 .face_attr(consumed)
@@ -157,9 +172,9 @@ fn bounds_a_free_side<P: Payload>(g: &GMap<P>, dart: Dart) -> bool {
 
 /// Reports whether `face` carries the edge on its outer boundary.
 ///
-/// Fusing an outer boundary with a hole reshapes which loop is outer, which
-/// this pass does not model.
-fn fuses_outer_loops<P: Payload>(g: &GMap<P>, dart: Dart, face: FaceKey) -> bool {
+/// Ordinary face fusion uses outer loops on both faces; filled inner loops are
+/// recognized separately because their surrounding face must survive.
+fn fuses_outer_loop<P: Payload>(g: &GMap<P>, dart: Dart, face: FaceKey) -> bool {
     let Some(attr) = g.face_attr(face) else {
         return false;
     };
@@ -167,6 +182,64 @@ fn fuses_outer_loops<P: Payload>(g: &GMap<P>, dart: Dart, face: FaceKey) -> bool
         return false;
     };
     g.profile_key(incident).is_some() && g.profile_key(incident) == g.profile_key(attr.outer_loop)
+}
+
+/// Reports whether `consumed` completely fills one inner loop of `survivor`.
+///
+/// The low-level removal keeps the lower face key. Imprint splits preserve the
+/// source face as that survivor, so requiring this direction also prevents an
+/// island's outer loop from accidentally becoming the fused face's exterior.
+fn fills_inner_loop<P: Payload>(
+    g: &GMap<P>,
+    dart: Dart,
+    survivor: FaceKey,
+    consumed: FaceKey,
+) -> bool {
+    if fuses_outer_loop(g, dart, survivor) || !fuses_outer_loop(g, dart, consumed) {
+        return false;
+    }
+    let Some(incident) = edge_dart_in_face(g, dart, survivor) else {
+        return false;
+    };
+    let Some(profile) = g.profile_key(incident) else {
+        return false;
+    };
+    let Some(face) = g.face(survivor) else {
+        return false;
+    };
+    let inner_loops = face.inner_loops();
+    let Some(inner) = inner_loops
+        .iter()
+        .find(|boundary| g.profile_key(boundary.dart) == Some(profile))
+    else {
+        return false;
+    };
+    let Some(island) = g.face(consumed) else {
+        return false;
+    };
+    let inner_edges = inner.edges();
+    let mut inner_keys = inner_edges
+        .iter()
+        .map(|edge| edge.key())
+        .collect::<Vec<_>>();
+    let mut island_keys = island
+        .outer_loop()
+        .edges()
+        .iter()
+        .map(|edge| edge.key())
+        .collect::<Vec<_>>();
+    inner_keys.sort();
+    inner_keys.dedup();
+    island_keys.sort();
+    island_keys.dedup();
+    inner_keys == island_keys
+        && inner_edges.iter().all(|edge| {
+            let mut faces = incident_faces(g, edge.dart());
+            faces.sort();
+            let mut expected = [survivor, consumed];
+            expected.sort();
+            faces == expected
+        })
 }
 
 /// Reports whether every boundary edge of both faces carries the geometry a
@@ -215,6 +288,7 @@ fn apply<P: Payload>(
             ..
         } => (survivor, Some(consumed), orientation),
         MergedCell::Loops { face, .. } => (face, None, Orientation::Same),
+        MergedCell::BoundaryRemoved { face, .. } => (face, None, Orientation::Same),
         MergedCell::Edges { .. } => {
             return Err(TopologyEditError::MissingLineageAttribute {
                 key: crate::topology::EditKey::Face(fusion.survivor),

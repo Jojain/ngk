@@ -12,7 +12,8 @@
 //! one primitive in [`crate::builders::removal`]:
 //!
 //! 1. remove edges that separate two faces on one support surface, which fuses
-//!    those faces;
+//!    those faces, including closed interfaces where an island fills an inner
+//!    loop when [`HealingOptions::remove_filled_inner_loops`] is enabled;
 //! 2. remove vertices where two edges continue each other on one support
 //!    curve, which fuses those edges.
 //!

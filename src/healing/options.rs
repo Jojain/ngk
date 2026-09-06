@@ -31,6 +31,9 @@ pub struct HealingOptions {
     pub remove_redundant_vertices: bool,
     /// Fuse the two faces sharing a shape-free edge.
     pub remove_redundant_edges: bool,
+    /// Remove a closed redundant interface where an inner loop is completely
+    /// filled by another face on the same support surface.
+    pub remove_filled_inner_loops: bool,
     /// Distance below which two positions are treated as one.
     pub linear_tolerance: f64,
     /// Angle below which two directions are treated as one.
@@ -45,6 +48,7 @@ impl Default for HealingOptions {
             scope: HealingScope::WholeMap,
             remove_redundant_vertices: true,
             remove_redundant_edges: true,
+            remove_filled_inner_loops: true,
             linear_tolerance: LINEAR_TOLERANCE,
             angular_tolerance: ANGULAR_TOLERANCE,
             max_iterations: 16,

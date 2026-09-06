@@ -72,7 +72,8 @@ fn coplanar_faces_sharing_an_edge_fuse_into_one_face() {
     );
     assert_eq!(map.iter_faces().count(), 2);
 
-    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default())
+        .expect("healing should succeed");
 
     assert_eq!(
         map.iter_faces().count(),
@@ -97,7 +98,8 @@ fn imprinting_and_healing_a_block_face_restores_the_block() {
     );
     assert_eq!(map.iter_faces().count(), 7);
 
-    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default())
+        .expect("healing should succeed");
 
     assert_eq!(
         (
@@ -144,7 +146,8 @@ fn healing_an_imprinted_block_preserves_its_shell_euler_characteristic() {
 #[test]
 fn perpendicular_faces_of_a_block_are_not_fused() {
     let (mut map, _) = solids::block(1.0, 2.0, 3.0).expect("block").into_map();
-    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default())
+        .expect("healing should succeed");
 
     assert!(report.fused_faces.is_empty());
     assert_eq!(map.iter_faces().count(), 6);
@@ -156,7 +159,8 @@ fn a_cylinder_seam_edge_is_preserved() {
     let faces = map.iter_faces().count();
     let edges = map.iter_edges().count();
 
-    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default())
+        .expect("healing should succeed");
 
     assert!(
         report.fused_faces.is_empty(),
@@ -178,7 +182,8 @@ fn healing_is_idempotent() {
     );
 
     remove_redundant_cells(&mut map, HealingOptions::default()).expect("first run should succeed");
-    let second = remove_redundant_cells(&mut map, HealingOptions::default()).expect("second run should succeed");
+    let second = remove_redundant_cells(&mut map, HealingOptions::default())
+        .expect("second run should succeed");
 
     assert!(
         second.is_empty(),
