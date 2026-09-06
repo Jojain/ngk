@@ -57,18 +57,18 @@ use crate::topology::payload::Payload;
 /// Removes every cell in scope whose removal does not change the shape.
 ///
 /// The run is atomic: a failure restores the map exactly as it was.
-pub fn heal<P: Payload>(
+pub fn remove_redundant_cells<P: Payload>(
     g: &mut GMap<P>,
     options: HealingOptions,
 ) -> Result<HealingReport, HealingError> {
-    g.transaction(|edit| heal_staged(edit, &options))
+    g.transaction(|edit| remove_redundant_cells_staged(edit, &options))
 }
 
 /// Runs the healing passes inside an operation's own transaction.
 ///
 /// Use this from a builder that already knows which cells it created, so the
 /// run stays proportional to the edit instead of to the model.
-pub fn heal_staged<P: Payload>(
+pub fn remove_redundant_cells_staged<P: Payload>(
     g: &mut TopologyEdit<'_, P>,
     options: &HealingOptions,
 ) -> Result<HealingReport, HealingError> {

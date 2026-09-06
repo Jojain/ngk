@@ -1,7 +1,7 @@
 use ngk::builders::faces::{FaceImprint, split_face_by_imprints};
 use ngk::builders::profiles::plane_uv;
 use ngk::geometry::{Curve, Curve2, Line2, Plane, Point3, Surface};
-use ngk::healing::{HealingOptions, heal};
+use ngk::healing::{HealingOptions, remove_redundant_cells};
 use ngk::modeling::{faces, solids};
 use ngk::tessellate::TessellateOpts;
 use ngk::tessellate::face::tessellate_face_key;
@@ -72,7 +72,7 @@ fn coplanar_faces_sharing_an_edge_fuse_into_one_face() {
     );
     assert_eq!(map.iter_faces().count(), 2);
 
-    let report = heal(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     assert_eq!(
         map.iter_faces().count(),
@@ -97,7 +97,7 @@ fn imprinting_and_healing_a_block_face_restores_the_block() {
     );
     assert_eq!(map.iter_faces().count(), 7);
 
-    let report = heal(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     assert_eq!(
         (
@@ -136,7 +136,7 @@ fn healing_an_imprinted_block_preserves_its_shell_euler_characteristic() {
         Point3::new(1.0, 0.0, 0.0),
         Point3::new(1.0, 2.0, 0.0),
     );
-    heal(&mut map, HealingOptions::default()).expect("healing should succeed");
+    remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     assert_eq!(euler(&map), before);
 }
@@ -144,7 +144,7 @@ fn healing_an_imprinted_block_preserves_its_shell_euler_characteristic() {
 #[test]
 fn perpendicular_faces_of_a_block_are_not_fused() {
     let (mut map, _) = solids::block(1.0, 2.0, 3.0).expect("block").into_map();
-    let report = heal(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     assert!(report.fused_faces.is_empty());
     assert_eq!(map.iter_faces().count(), 6);
@@ -156,7 +156,7 @@ fn a_cylinder_seam_edge_is_preserved() {
     let faces = map.iter_faces().count();
     let edges = map.iter_edges().count();
 
-    let report = heal(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     assert!(
         report.fused_faces.is_empty(),
@@ -177,8 +177,8 @@ fn healing_is_idempotent() {
         Point3::new(1.0, 2.0, 0.0),
     );
 
-    heal(&mut map, HealingOptions::default()).expect("first run should succeed");
-    let second = heal(&mut map, HealingOptions::default()).expect("second run should succeed");
+    remove_redundant_cells(&mut map, HealingOptions::default()).expect("first run should succeed");
+    let second = remove_redundant_cells(&mut map, HealingOptions::default()).expect("second run should succeed");
 
     assert!(
         second.is_empty(),

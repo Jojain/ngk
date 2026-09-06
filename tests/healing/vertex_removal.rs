@@ -1,6 +1,6 @@
 use ngk::builders::faces::split_face_edge;
 use ngk::geometry::{Curve, Point3};
-use ngk::healing::{HealingOptions, HealingScope, heal};
+use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
 use ngk::modeling::solids;
 use ngk::tessellate::TessellateOpts;
 use ngk::tessellate::face::tessellate_face_key;
@@ -32,7 +32,7 @@ fn splitting_an_edge_then_healing_restores_a_single_edge() {
     assert_eq!(map.iter_edges().count(), edges + 1);
     assert_eq!(map.iter_vertices().count(), vertices + 1);
 
-    let report = heal(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     assert_eq!(
         report.removed_vertices.len(),
@@ -54,7 +54,7 @@ fn a_fused_edge_spans_its_two_original_endpoints() {
     let end = original.point_at(1.0);
 
     split_face_edge(&mut map, face, edge, 0.25).expect("splitting a block edge should succeed");
-    heal(&mut map, HealingOptions::default()).expect("healing should succeed");
+    remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     let fused = map
         .iter_edges()
@@ -87,14 +87,14 @@ fn healing_preserves_shell_euler_characteristic() {
     split_face_edge(&mut map, face, edge, 0.5).expect("splitting a block edge should succeed");
     assert_eq!(euler(&map), before, "splitting must not change the shell");
 
-    heal(&mut map, HealingOptions::default()).expect("healing should succeed");
+    remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
     assert_eq!(euler(&map), before, "healing must not change the shell");
 }
 
 #[test]
 fn a_corner_vertex_between_two_directions_is_preserved() {
     let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
-    let report = heal(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     assert!(
         report.is_empty(),
@@ -111,7 +111,7 @@ fn the_seam_vertex_of_a_closed_edge_is_preserved() {
     let vertices = map.iter_vertices().count();
     let edges = map.iter_edges().count();
 
-    heal(&mut map, HealingOptions::default()).expect("healing should succeed");
+    remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     assert_eq!(
         map.iter_vertices().count(),
@@ -126,7 +126,7 @@ fn a_healed_face_still_tessellates() {
     let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
     let (face, edge) = any_boundary_edge(&map);
     split_face_edge(&mut map, face, edge, 0.5).expect("splitting a block edge should succeed");
-    heal(&mut map, HealingOptions::default()).expect("healing should succeed");
+    remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     for (key, _) in map.iter_faces() {
         let mesh = tessellate_face_key(&map, key, TessellateOpts::default())
@@ -145,7 +145,7 @@ fn an_empty_scope_heals_nothing() {
     split_face_edge(&mut map, face, edge, 0.5).expect("splitting a block edge should succeed");
     let edges = map.iter_edges().count();
 
-    let report = heal(
+    let report = remove_redundant_cells(
         &mut map,
         HealingOptions::for_scope(HealingScope::Cells {
             vertices: Vec::new(),

@@ -2,7 +2,7 @@ use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
 use ngk::builders::faces::{FaceImprint, split_face_by_imprints, split_face_edge};
 use ngk::builders::removal::{MergedCell, is_removable, remove_cell_staged};
 use ngk::geometry::{Curve, Curve2, Frame, Line2, Plane, Point2, Point3, Surface};
-use ngk::healing::{HealingOptions, HealingScope, heal};
+use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
 use ngk::modeling::{faces, solids};
 use ngk::topology::gmap::{Dim, GMap};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
@@ -284,7 +284,7 @@ fn redundant_faces_of_boolean_fuse_are_deleted() {
         "splitting leaves the bottom plane tiled by three fragments"
     );
 
-    let report = heal(
+    let report = remove_redundant_cells(
         &mut map,
         HealingOptions {
             scope: HealingScope::Solid(solid),

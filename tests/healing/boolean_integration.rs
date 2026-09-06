@@ -1,7 +1,7 @@
 use ngk::StandardPayload;
 use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
 use ngk::geometry::Frame;
-use ngk::healing::{HealingOptions, HealingScope, heal};
+use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
 use ngk::modeling::solids;
 use ngk::topology::TopologyEditError;
 use ngk::topology::gmap::GMap;
@@ -65,7 +65,7 @@ fn evaluate(
 
 /// Heals a result that the Boolean already healed, to check it is a fixed point.
 fn reheal(map: &mut GMap<StandardPayload>, solid: SolidKey) -> ngk::healing::HealingReport {
-    heal(
+    remove_redundant_cells(
         map,
         HealingOptions {
             scope: HealingScope::Solid(solid),

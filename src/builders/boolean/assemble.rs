@@ -6,7 +6,7 @@ use super::{
 };
 use crate::builders::faces::reverse_face_winding;
 use crate::geometry::{Point3, PointCoincidence};
-use crate::healing::{HealingOptions, HealingScope, heal_staged};
+use crate::healing::{HealingOptions, HealingScope, remove_redundant_cells_staged};
 use crate::topology::{
     TopologyEdit,
     attributes::{SheetAttr, SolidAttr},
@@ -187,7 +187,7 @@ fn heal_result<P: Payload>(
     solid: SolidKey,
     prepared: &mut BooleanPreparation,
 ) -> Result<(), BooleanError> {
-    let report = heal_staged(
+    let report = remove_redundant_cells_staged(
         edit,
         &HealingOptions {
             scope: HealingScope::Solid(solid),
