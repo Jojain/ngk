@@ -393,7 +393,9 @@ fn intersect_edge_face<P: Payload>(
                 push_edge_point(plan, edge_key, point);
                 let tangent = curve.derivative_at(curve_u, 1);
                 let normal = face.surface().normal_at(surface_u, surface_v);
-                let kind = if tangent.dot(&normal).abs() <= options.intersections.linear_tolerance {
+                let kind = if tangent.dot(&normal).abs()
+                    <= options.intersections.angular_tolerance * tangent.norm() * normal.norm()
+                {
                     PointContactKind::Tangent
                 } else {
                     PointContactKind::Transverse
@@ -1086,19 +1088,26 @@ fn intersect_general_face_pair<P: Payload>(
             SurfaceSurfaceIntersection::Branch(branch) => {
                 plan.diagnostics.branches_found += 1;
                 plan.diagnostics.branches_uncertified += usize::from(!branch.quality.certified);
-                for [first_imprint, second_imprint] in clip_branch(
+                let face_imprints =
+                    if branch.kind == crate::geometry::SurfaceIntersectionBranchKind::Tangent {
+                        &mut plan.tangent_face_imprints
+                    } else {
+                        &mut plan.face_imprints
+                    };
+                let clipped = clip_branch(
                     branch,
                     (first.surface(), &first_trim),
                     (second.surface(), &second_trim),
                     &anchors,
                     plan.diagnostics.tolerances.graze,
                     options.intersections,
-                )? {
-                    plan.face_imprints
+                )?;
+                for [first_imprint, second_imprint] in clipped {
+                    face_imprints
                         .entry(first_key)
                         .or_default()
                         .push(first_imprint);
-                    plan.face_imprints
+                    face_imprints
                         .entry(second_key)
                         .or_default()
                         .push(second_imprint);

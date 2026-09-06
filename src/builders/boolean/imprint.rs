@@ -10,7 +10,7 @@ use crate::topology::{TopologyEdit, gmap::GMap, payload::Payload};
 
 use super::{
     BooleanCell, BooleanError, BooleanSide, IntersectionNetwork, IntersectionOrientation,
-    IntersectionSpanId, IntersectionSpanUse,
+    IntersectionSpanId, IntersectionSpanKind, IntersectionSpanUse,
 };
 
 /// A face imprint retaining its canonical network identity.
@@ -26,10 +26,19 @@ pub(crate) struct SpanImprint {
 /// Collects edge split points from canonical event incidences.
 pub(crate) fn edge_points(network: &IntersectionNetwork) -> HashMap<EdgeKey, Vec<Point3>> {
     let mut points = HashMap::<EdgeKey, Vec<Point3>>::new();
-    for event in network.events() {
+    for (event_index, event) in network.events().iter().enumerate() {
         for event_use in &event.uses {
             if let BooleanCell::Edge(edge) = event_use.cell {
-                points.entry(edge).or_default().push(event.point);
+                let bounds_non_tangent_section = network.spans().iter().any(|span| {
+                    span.kind != IntersectionSpanKind::Tangent
+                        && (span.start.0 == event_index || span.end.0 == event_index)
+                        && span.uses.iter().any(|span_use| {
+                            matches!(span_use, IntersectionSpanUse::Edge { edge: used, .. } if *used == edge)
+                        })
+                });
+                if event.kind != super::PointContactKind::Tangent || bounds_non_tangent_section {
+                    points.entry(edge).or_default().push(event.point);
+                }
             }
         }
     }
@@ -40,6 +49,9 @@ pub(crate) fn edge_points(network: &IntersectionNetwork) -> HashMap<EdgeKey, Vec
 pub(crate) fn face_imprints(network: &IntersectionNetwork) -> HashMap<FaceKey, Vec<SpanImprint>> {
     let mut imprints = HashMap::<FaceKey, Vec<SpanImprint>>::new();
     for (index, span) in network.spans().iter().enumerate() {
+        if span.kind == IntersectionSpanKind::Tangent {
+            continue;
+        }
         for span_use in &span.uses {
             let IntersectionSpanUse::Face {
                 face,

@@ -292,7 +292,11 @@ fn probe<P: Payload>(
         .collect::<Vec<_>>();
     triangles.sort_by(|a, b| b.0.total_cmp(&a.0));
     for (_, point) in triangles {
-        let uv = view.surface().closest_parameter(point)?;
+        let uv = periodic_uv(
+            view.surface().closest_parameter(point)?,
+            trim.chart_center(),
+            view.surface().periodicity(),
+        );
         if trim.contains(uv)
             && trim.boundary_distance(uv) > tolerances.probe_margin.max(trim.boundary_epsilon())
         {

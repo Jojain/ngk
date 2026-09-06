@@ -41,6 +41,8 @@ pub(crate) fn clip_branch(
     capture: f64,
     options: IntersectionOptions,
 ) -> Result<Vec<[FaceImprint; 2]>, BooleanError> {
+    let pcurve_a = periodic_pcurve_image(&branch.pcurve_a, first.0, first.1)?;
+    let pcurve_b = periodic_pcurve_image(&branch.pcurve_b, second.0, second.1)?;
     let curve_options = CurveIntersectionOptions {
         linear_tolerance: options.parameter_tolerance,
         parameter_tolerance: options.parameter_tolerance,
@@ -52,11 +54,19 @@ pub(crate) fn clip_branch(
     let mut crossings = Vec::new();
     first
         .1
-        .crossings(&branch.pcurve_a, curve_options, &mut crossings)?;
+        .crossings(&pcurve_a, curve_options, &mut crossings)?;
     second
         .1
-        .crossings(&branch.pcurve_b, curve_options, &mut crossings)?;
-    let nodes = branch_nodes(branch, first.0, second.0, anchors, capture, &crossings);
+        .crossings(&pcurve_b, curve_options, &mut crossings)?;
+    let nodes = branch_nodes(
+        branch,
+        first.0,
+        second.0,
+        [&pcurve_a, &pcurve_b],
+        anchors,
+        capture,
+        &crossings,
+    );
     let captured = |parameter: f64| {
         nodes
             .iter()
@@ -75,15 +85,15 @@ pub(crate) fn clip_branch(
     let mut fragments = Vec::new();
     for pair in parameters.windows(2) {
         let midpoint = (pair[0] + pair[1]) * 0.5;
-        if !first.1.contains(branch.pcurve_a.point_at(midpoint))
-            || !second.1.contains(branch.pcurve_b.point_at(midpoint))
+        if !first.1.contains(pcurve_a.point_at(midpoint))
+            || !second.1.contains(pcurve_b.point_at(midpoint))
         {
             continue;
         }
         let interval = Interval::new(pair[0], pair[1]);
         let mut curve = super::graph::normalized_subcurve(&branch.curve_3d, interval)?;
-        let mut pcurve_a = branch.pcurve_a.trimmed(interval)?;
-        let mut pcurve_b = branch.pcurve_b.trimmed(interval)?;
+        let mut pcurve_a = pcurve_a.trimmed(interval)?;
+        let mut pcurve_b = pcurve_b.trimmed(interval)?;
         for (index, at_start) in [(0usize, true), (1usize, false)] {
             let Some(node) = nodes
                 .iter()
@@ -115,6 +125,7 @@ fn branch_nodes(
     branch: &SurfaceIntersectionBranch,
     first: &Surface,
     second: &Surface,
+    pcurves: [&Curve2; 2],
     anchors: &[Point3],
     capture: f64,
     crossings: &[f64],
@@ -134,14 +145,13 @@ fn branch_nodes(
         }
         // The pcurves are fits of their own, so each carries a parameter-space
         // error the exact point settles independently of the 3D curve's.
-        let correction =
-            [(first, &branch.pcurve_a), (second, &branch.pcurve_b)].map(|(surface, pcurve)| {
-                let fitted_uv = pcurve.point_at(parameter);
-                let Ok(exact_uv) = surface.closest_parameter(anchor) else {
-                    return Vector2::zeros();
-                };
-                nearest_periodic_image(surface, exact_uv, fitted_uv) - fitted_uv
-            });
+        let correction = [(first, pcurves[0]), (second, pcurves[1])].map(|(surface, pcurve)| {
+            let fitted_uv = pcurve.point_at(parameter);
+            let Ok(exact_uv) = surface.closest_parameter(anchor) else {
+                return Vector2::zeros();
+            };
+            nearest_periodic_image(surface, exact_uv, fitted_uv) - fitted_uv
+        });
         if nodes
             .iter()
             .any(|node| (node.parameter - parameter).abs() <= f64::EPSILON)
@@ -155,6 +165,33 @@ fn branch_nodes(
         });
     }
     nodes
+}
+
+/// Moves a synchronized pcurve to the periodic image occupied by the face trim.
+fn periodic_pcurve_image(
+    curve: &Curve2,
+    surface: &Surface,
+    trim: &FaceTrimDomain,
+) -> Result<Curve2, NurbsError> {
+    let reference = curve.point_at(0.5);
+    let center = trim.chart_center();
+    let mut offset = Vector2::zeros();
+    let nearest_shift =
+        |value: f64, target: f64, period: f64| ((target - value) / period).round() * period;
+    match surface.periodicity() {
+        SurfacePeriodicity::UPeriodic(period) => {
+            offset.x = nearest_shift(reference.x, center.x, period)
+        }
+        SurfacePeriodicity::VPeriodic(period) => {
+            offset.y = nearest_shift(reference.y, center.y, period)
+        }
+        SurfacePeriodicity::UVPeriodic(u_period, v_period) => {
+            offset.x = nearest_shift(reference.x, center.x, u_period);
+            offset.y = nearest_shift(reference.y, center.y, v_period);
+        }
+        SurfacePeriodicity::None => {}
+    }
+    curve.translated(offset)
 }
 
 /// Shifts `uv` by whole periods until it is the image nearest `reference`.

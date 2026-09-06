@@ -188,6 +188,7 @@ struct IntersectionAccumulator {
     second_cells: OperandCells,
     edge_points: HashMap<EdgeKey, Vec<Point3>>,
     face_imprints: HashMap<FaceKey, Vec<FaceImprint>>,
+    tangent_face_imprints: HashMap<FaceKey, Vec<FaceImprint>>,
 }
 
 /// Computes all contacts between two operands without modifying the map.
@@ -216,6 +217,7 @@ pub fn compute_boolean_intersections<P: Payload>(
         second_cells,
         edge_points: HashMap::new(),
         face_imprints: HashMap::new(),
+        tangent_face_imprints: HashMap::new(),
     };
 
     compute_vertex_contacts(g, &mut observations, options)?;
@@ -335,29 +337,34 @@ fn build_intersection_network<P: Payload>(
         }
     }
 
-    let mut faces = plan.face_imprints.iter().collect::<Vec<_>>();
-    faces.sort_by_key(|(face, _)| face.data().as_ffi());
-    for (face, imprints) in faces {
-        let side = if plan.first_cells.faces.contains(face) {
-            BooleanSide::First
-        } else {
-            BooleanSide::Second
-        };
-        for imprint in imprints {
-            let start_uv = imprint.pcurve.point_at(0.0);
-            let end_uv = imprint.pcurve.point_at(1.0);
-            builder.record_span(
-                imprint.curve.clone(),
-                IntersectionSpanKind::Transverse,
-                [face_use(side, *face, start_uv)],
-                [face_use(side, *face, end_uv)],
-                [IntersectionSpanUse::Face {
-                    side,
-                    face: *face,
-                    pcurve: Box::new(imprint.pcurve.clone()),
-                    orientation: IntersectionOrientation::Forward,
-                }],
-            );
+    for (face_imprints, kind) in [
+        (&plan.face_imprints, IntersectionSpanKind::Transverse),
+        (&plan.tangent_face_imprints, IntersectionSpanKind::Tangent),
+    ] {
+        let mut faces = face_imprints.iter().collect::<Vec<_>>();
+        faces.sort_by_key(|(face, _)| face.data().as_ffi());
+        for (face, imprints) in faces {
+            let side = if plan.first_cells.faces.contains(face) {
+                BooleanSide::First
+            } else {
+                BooleanSide::Second
+            };
+            for imprint in imprints {
+                let start_uv = imprint.pcurve.point_at(0.0);
+                let end_uv = imprint.pcurve.point_at(1.0);
+                builder.record_span(
+                    imprint.curve.clone(),
+                    kind,
+                    [face_use(side, *face, start_uv)],
+                    [face_use(side, *face, end_uv)],
+                    [IntersectionSpanUse::Face {
+                        side,
+                        face: *face,
+                        pcurve: Box::new(imprint.pcurve.clone()),
+                        orientation: IntersectionOrientation::Forward,
+                    }],
+                );
+            }
         }
     }
 
@@ -586,10 +593,19 @@ fn split_edge_at_points<P: Payload>(
         .ok_or(BooleanError::MissingOperand {
             operand: BooleanOperand::Edge(source),
         })?;
-    points.sort_by(|a, b| {
+    let source_domain = {
+        let view = g.edge_unchecked(source);
         source_curve
-            .param_at(*a)
-            .total_cmp(&source_curve.param_at(*b))
+            .parameters_between(
+                *view.start().point().expect("edge start geometry"),
+                *view.end().point().expect("edge end geometry"),
+            )
+            .ordered()
+    };
+    points.sort_by(|a, b| {
+        periodic_parameter_in_domain(&source_curve, *a, source_domain).total_cmp(
+            &periodic_parameter_in_domain(&source_curve, *b, source_domain),
+        )
     });
     points.dedup_by(|a, b| a.coincides(*b, options.linear_tolerance));
 
@@ -602,8 +618,8 @@ fn split_edge_at_points<P: Payload>(
             };
             let start = *view.start().point().expect("edge start geometry");
             let end = *view.end().point().expect("edge end geometry");
-            let parameter = curve.param_at(point);
             let domain = curve.parameters_between(start, end).ordered();
+            let parameter = periodic_parameter_in_domain(curve, point, domain);
             domain.contains(parameter, options.parameter_tolerance)
                 && (parameter - domain.start).abs() > options.parameter_tolerance
                 && (parameter - domain.end).abs() > options.parameter_tolerance
@@ -612,10 +628,14 @@ fn split_edge_at_points<P: Payload>(
         };
 
         let view = g.edge_unchecked(fragment);
-        let parameter = view
-            .curve()
-            .expect("registered edge geometry")
-            .param_at(point);
+        let curve = view.curve().expect("registered edge geometry");
+        let domain = curve
+            .parameters_between(
+                *view.start().point().expect("edge start geometry"),
+                *view.end().point().expect("edge end geometry"),
+            )
+            .ordered();
+        let parameter = periodic_parameter_in_domain(curve, point, domain);
         let incident_face = view.faces().first().map(|face| face.key());
         let split = if let Some(face) = incident_face {
             split_face_edge_staged(g, face, fragment, parameter)?
@@ -625,4 +645,17 @@ fn split_edge_at_points<P: Payload>(
         fragments.push(split.second);
     }
     Ok(fragments)
+}
+
+fn periodic_parameter_in_domain(curve: &Curve, point: Point3, domain: Interval) -> f64 {
+    let mut parameter = curve.param_at(point);
+    if let crate::geometry::Periodicity::Periodic(period) = curve.periodicity() {
+        while parameter < domain.start {
+            parameter += period;
+        }
+        while parameter > domain.end {
+            parameter -= period;
+        }
+    }
+    parameter
 }

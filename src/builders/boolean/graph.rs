@@ -72,6 +72,7 @@ pub enum IntersectionSpanUse {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntersectionSpanKind {
     Transverse,
+    Tangent,
     Overlap,
 }
 
@@ -244,8 +245,14 @@ impl IntersectionNetworkBuilder {
         if start_point.coincides(end_point, self.tolerance) {
             return None;
         }
-        let start = self.record_event(start_point, PointContactKind::Transverse, start_uses);
-        let end = self.record_event(end_point, PointContactKind::Transverse, end_uses);
+        let point_kind = match kind {
+            IntersectionSpanKind::Tangent => PointContactKind::Tangent,
+            IntersectionSpanKind::Transverse | IntersectionSpanKind::Overlap => {
+                PointContactKind::Transverse
+            }
+        };
+        let start = self.record_event(start_point, point_kind, start_uses);
+        let end = self.record_event(end_point, point_kind, end_uses);
         let incoming_uses = uses.into_iter().collect::<Vec<_>>();
         if let Some((index, span)) = self.network.spans.iter_mut().enumerate().find(|(_, span)| {
             let same_direction = span.start == start && span.end == end;
@@ -801,6 +808,7 @@ pub fn validate_solid_network<P: Payload>(
                 valence[span.start.0] += 1;
                 valence[span.end.0] += 1;
             }
+            IntersectionSpanKind::Tangent => {}
             IntersectionSpanKind::Overlap => {
                 coincident[span.start.0] = true;
                 coincident[span.end.0] = true;

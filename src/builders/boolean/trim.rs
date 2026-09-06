@@ -89,6 +89,20 @@ impl FaceTrimDomain {
         self.chord.max(self.tolerance)
     }
 
+    /// Center of the active parameter-space image of this face's outer trim.
+    pub(crate) fn chart_center(&self) -> Point2 {
+        let Some(outer) = self.polygons.first() else {
+            return Point2::origin();
+        };
+        let mut min = Point2::new(f64::INFINITY, f64::INFINITY);
+        let mut max = Point2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for point in outer {
+            min = Point2::new(min.x.min(point.x), min.y.min(point.y));
+            max = Point2::new(max.x.max(point.x), max.y.max(point.y));
+        }
+        Point2::from((min.coords + max.coords) * 0.5)
+    }
+
     /// Distance to the nearest polyline segment; exact for admitted polygonal faces.
     pub(crate) fn boundary_distance(&self, point: Point2) -> f64 {
         self.polygons

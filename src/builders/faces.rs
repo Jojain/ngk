@@ -62,7 +62,7 @@ impl From<TopologyEditError> for FaceEdgeSplitError {
 pub enum FaceImprintSplitError {
     #[error("missing face for key {face:?}")]
     MissingFace { face: FaceKey },
-    #[error("face {face:?} has inner loops, which are not supported by this splitter yet")]
+    #[error("face {face:?} has an inner loop crossed or ambiguously divided by the split")]
     InnerLoopsNotSupported { face: FaceKey },
     #[error("face {face:?} has no pcurve for boundary dart {dart:?}")]
     MissingPcurve { face: FaceKey, dart: Dart },
@@ -1507,8 +1507,13 @@ fn split_boundary_at_uv<P: Payload>(
             parameter -= period;
         }
     }
-    split_face_edge_staged(g, face, target.edge, parameter)?;
-    Ok(())
+    match split_face_edge_staged(g, face, target.edge, parameter) {
+        Ok(_)
+        | Err(FaceEdgeSplitError::EdgeSplitFailed(EdgeSplitError::DegenerateSplit { .. })) => {
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn split_one_face_by_imprints<P: Payload>(
@@ -1524,10 +1529,6 @@ fn split_one_face_by_imprints<P: Payload>(
     let Some(cut) = FaceImprintCut::from_chain(imprints, &boundary)? else {
         return Ok(None);
     };
-
-    if !face_attr.inner_loops.is_empty() {
-        return Err(FaceImprintSplitError::InnerLoopsNotSupported { face });
-    }
 
     let old_face = face_attr.clone();
     let split = apply_outer_face_chord_split(g, face, old_face, &cut)?;
@@ -1896,11 +1897,40 @@ fn apply_outer_face_chord_split<P: Payload>(
         source_uses_start_loop, source_uses_end_loop,
         "exactly one split region must contain the source face root"
     );
-    let (source_loop, source_pcurves, created_loop, created_pcurves) = if source_uses_start_loop {
-        (start_dart, start_pcurves, end_dart, end_pcurves)
-    } else {
-        (end_dart, end_pcurves, start_dart, start_pcurves)
-    };
+    let (source_loop, mut source_pcurves, created_loop, mut created_pcurves) =
+        if source_uses_start_loop {
+            (start_dart, start_pcurves, end_dart, end_pcurves)
+        } else {
+            (end_dart, end_pcurves, start_dart, start_pcurves)
+        };
+    let (source_inner_loops, created_inner_loops) = partition_inner_loops(
+        g,
+        original_face,
+        &old_face.inner_loops,
+        &old_face.pcurves,
+        source_loop,
+        &source_pcurves,
+        created_loop,
+        &created_pcurves,
+    )?;
+    for &loop_dart in &source_inner_loops {
+        extend_loop_pcurves(
+            g,
+            original_face,
+            loop_dart,
+            &old_face.pcurves,
+            &mut source_pcurves,
+        )?;
+    }
+    for &loop_dart in &created_inner_loops {
+        extend_loop_pcurves(
+            g,
+            original_face,
+            loop_dart,
+            &old_face.pcurves,
+            &mut created_pcurves,
+        )?;
+    }
 
     let sections = cut
         .sections
@@ -1928,7 +1958,7 @@ fn apply_outer_face_chord_split<P: Payload>(
         .expect("source face must remain staged during a chord split");
     source_attr.surface = old_face.surface.clone();
     source_attr.outer_loop = source_loop;
-    source_attr.inner_loops.clear();
+    source_attr.inner_loops = source_inner_loops;
     source_attr.pcurves = source_pcurves;
 
     let second = g.add_face_split_from(
@@ -1937,7 +1967,7 @@ fn apply_outer_face_chord_split<P: Payload>(
             old_face.surface,
             P::F::default(),
             created_loop,
-            Vec::new(),
+            created_inner_loops,
             created_pcurves,
         ),
     );
@@ -1947,6 +1977,106 @@ fn apply_outer_face_chord_split<P: Payload>(
         second,
         sections,
     })
+}
+
+/// Assigns each existing hole to the one child region that contains its boundary.
+///
+/// A chord may touch a hole, but it must not cross one: crossing would require
+/// splitting that inner loop as part of the same edit. Sampling the complete
+/// loop rather than one seed point distinguishes a tangent touch from a crossing.
+#[allow(clippy::too_many_arguments)]
+fn partition_inner_loops<P: Payload>(
+    g: &TopologyEdit<'_, P>,
+    face: FaceKey,
+    inner_loops: &[Dart],
+    old_pcurves: &HashMap<Dart, Curve2>,
+    source_loop: Dart,
+    source_pcurves: &HashMap<Dart, Curve2>,
+    created_loop: Dart,
+    created_pcurves: &HashMap<Dart, Curve2>,
+) -> Result<(Vec<Dart>, Vec<Dart>), FaceImprintSplitError> {
+    let source_boundary = sampled_loop_uvs(g, face, source_loop, source_pcurves)?;
+    let created_boundary = sampled_loop_uvs(g, face, created_loop, created_pcurves)?;
+    let mut source = Vec::new();
+    let mut created = Vec::new();
+    for &inner_loop in inner_loops {
+        let samples = sampled_loop_uvs(g, face, inner_loop, old_pcurves)?;
+        let in_source = samples
+            .iter()
+            .all(|point| sampled_loop_contains(&source_boundary, *point));
+        let in_created = samples
+            .iter()
+            .all(|point| sampled_loop_contains(&created_boundary, *point));
+        match (in_source, in_created) {
+            (true, false) => source.push(inner_loop),
+            (false, true) => created.push(inner_loop),
+            _ => return Err(FaceImprintSplitError::InnerLoopsNotSupported { face }),
+        }
+    }
+    Ok((source, created))
+}
+
+fn sampled_loop_uvs<P: Payload>(
+    g: &TopologyEdit<'_, P>,
+    face: FaceKey,
+    loop_dart: Dart,
+    pcurves: &HashMap<Dart, Curve2>,
+) -> Result<Vec<Point2>, FaceImprintSplitError> {
+    let profile =
+        Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
+    let mut samples = Vec::new();
+    for dart in profile.darts().step_by(2) {
+        let pcurve = pcurves
+            .get(&dart)
+            .ok_or(FaceImprintSplitError::MissingPcurve { face, dart })?;
+        samples.extend(pcurve.sample(64).into_iter().take(64));
+    }
+    Ok(samples)
+}
+
+fn sampled_loop_contains(boundary: &[Point2], point: Point2) -> bool {
+    let mut inside = false;
+    for (&start, &end) in boundary
+        .iter()
+        .zip(boundary.iter().cycle().skip(1))
+        .take(boundary.len())
+    {
+        let segment = end - start;
+        let parameter = if segment.norm_squared() <= f64::EPSILON {
+            0.0
+        } else {
+            (point - start).dot(&segment) / segment.norm_squared()
+        }
+        .clamp(0.0, 1.0);
+        if (start + segment * parameter - point).norm() <= LINEAR_TOLERANCE {
+            return true;
+        }
+        if (start.y > point.y) != (end.y > point.y)
+            && point.x < start.x + (point.y - start.y) * (end.x - start.x) / (end.y - start.y)
+        {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+fn extend_loop_pcurves<P: Payload>(
+    g: &TopologyEdit<'_, P>,
+    face: FaceKey,
+    loop_dart: Dart,
+    old_pcurves: &HashMap<Dart, Curve2>,
+    destination: &mut HashMap<Dart, Curve2>,
+) -> Result<(), FaceImprintSplitError> {
+    let profile =
+        Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
+    for dart in profile.darts().step_by(2) {
+        let pcurve = old_pcurves
+            .get(&dart)
+            .cloned()
+            .ok_or(FaceImprintSplitError::MissingPcurve { face, dart })?;
+        destination.insert(dart, pcurve);
+    }
+    Ok(())
 }
 
 fn split_face_pcurves<P: Payload>(
