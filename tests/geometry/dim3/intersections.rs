@@ -2,10 +2,10 @@ use nalgebra::Vector3;
 use ngk::geometry::{
     Circle, ControlNet, ControlPolygon, Curve, Curve2, CurveCurveIntersection,
     CurveSurfaceIntersection, Cylinder, Degree, HPoint, IntersectionCoverage,
-    IntersectionIncompleteReason, IntersectionOptions, KnotVector, LINEAR_TOLERANCE, NurbsCurve,
-    NurbsSurface, Plane, Point3, PointCoincidence, PreparedCurve, PreparedSurface, Surface,
-    SurfaceIntersectionBranchKind, SurfaceSurfaceIntersection, intersect_prepared_curve_surface,
-    intersect_surfaces_with_options,
+    IntersectionIncompleteReason, IntersectionOptions, Interval, KnotVector, LINEAR_TOLERANCE,
+    NurbsCurve, NurbsSurface, Plane, Point3, PointCoincidence, PreparedCurve, PreparedSurface,
+    RuledSurface, Surface, SurfaceIntersectionBranchKind, SurfaceSurfaceIntersection,
+    intersect_prepared_curve_surface, intersect_prepared_surfaces, intersect_surfaces_with_options,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -556,6 +556,50 @@ fn a_plane_tangent_to_a_cylinder_yields_the_ruling_it_touches_along() {
             "tangency point {point:?} left the ruling"
         );
     }
+}
+
+#[test]
+fn surface_intersection_nurbs_fallback_compacts_dense_trace_samples() {
+    let plane = Surface::Plane(Plane::from_xy(
+        Point3::new(0.0, 0.0, 1.0),
+        Vector3::x(),
+        Vector3::y(),
+    ));
+    let ruled = Surface::Ruled(RuledSurface::new(
+        Curve::circle(Plane::xy(), 2.0),
+        Vector3::new(0.0, 0.0, 2.0),
+    ));
+    let prepared_plane =
+        PreparedSurface::over(&plane, Interval::new(-2.1, 2.1), Interval::new(0.5, 2.1)).unwrap();
+    let prepared_ruled = PreparedSurface::new(&ruled).unwrap();
+    let options = IntersectionOptions {
+        simplify_curves: false,
+        ..IntersectionOptions::default()
+    };
+
+    let results = intersect_prepared_surfaces(&prepared_plane, &prepared_ruled, options).unwrap();
+
+    let branches = results
+        .intersections()
+        .iter()
+        .filter_map(|intersection| match intersection {
+            SurfaceSurfaceIntersection::Branch(branch) => Some(branch),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(branches.len(), 1, "{results:?}");
+    let branch = branches[0];
+    assert!(branch.samples.len() > 64, "expected a dense trace");
+    let Curve::Nurbs(curve) = &branch.curve_3d else {
+        panic!("expected a NURBS fallback, got {:?}", branch.curve_3d);
+    };
+    assert!(
+        curve.control_points().len() <= 256,
+        "{} trace samples produced {} control points",
+        branch.samples.len(),
+        curve.control_points().len()
+    );
+    assert!(branch.quality.certified, "{:?}", branch.quality);
 }
 
 fn quadratic_curve(points: [Point3; 3]) -> NurbsCurve {

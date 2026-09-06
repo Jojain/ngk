@@ -1,11 +1,30 @@
 use super::super::IntersectionOptions;
 use super::simplification::{recognize_curve_3d, simplify_curve_2d};
 use super::tracer::TraceState;
+use crate::geometry::nurbs::basis::basis_functions;
 use crate::geometry::{
-    Curve, Curve2, IntersectionError, IntersectionQuality, NurbsCurve, NurbsCurve2, Point2,
-    Surface, SurfaceIntersectionBranch, SurfaceIntersectionBranchKind,
-    SurfaceIntersectionPointKind, SurfacePeriodicity,
+    ControlPolygon, ControlPolygon2, Curve, Curve2, Degree, IntersectionError, IntersectionQuality,
+    KnotVector, NurbsCurve, NurbsCurve2, Point2, Point3, Surface, SurfaceIntersectionBranch,
+    SurfaceIntersectionBranchKind, SurfaceIntersectionPointKind, SurfacePeriodicity,
 };
+use nalgebra::DMatrix;
+
+const INITIAL_FIT_CONTROL_POINTS: usize = 8;
+const MAX_FIT_CONTROL_POINTS: usize = 256;
+
+struct SynchronizedNurbsFit {
+    curve_3d: NurbsCurve,
+    pcurve_a: NurbsCurve2,
+    pcurve_b: NurbsCurve2,
+}
+
+struct BranchSamples<'a> {
+    points: &'a [Point3],
+    uv_a: &'a [Point2],
+    uv_b: &'a [Point2],
+    states: &'a [TraceState],
+    parameters: &'a [f64],
+}
 
 /// Fits synchronized 3D and parameter-space curves using one chord-length parameterization.
 pub(super) fn fit_branch(
@@ -36,33 +55,57 @@ pub(super) fn fit_branch(
         .map(|state| Point2::new(state.parameters.z, state.parameters.w))
         .collect::<Vec<_>>();
     let chord_parameters = NurbsCurve::chord_length_parameters(&points)?;
-    let chord_curve_3d = NurbsCurve::interpolate_with_parameters(&points, &chord_parameters)?;
-    let chord_pcurve_a = NurbsCurve2::interpolate_with_parameters(&uv_a, &chord_parameters)?;
-    let chord_pcurve_b = NurbsCurve2::interpolate_with_parameters(&uv_b, &chord_parameters)?;
+    let analytical = options
+        .simplify_curves
+        .then(|| recognize_curve_3d(&states, closed, options.fit_tolerance))
+        .flatten();
+    let parameters = analytical
+        .as_ref()
+        .map(|curve| curve.parameters.clone())
+        .unwrap_or(chord_parameters);
+    let fitted = if closed {
+        SynchronizedNurbsFit {
+            curve_3d: NurbsCurve::interpolate_with_parameters(&points, &parameters)?,
+            pcurve_a: NurbsCurve2::interpolate_with_parameters(&uv_a, &parameters)?,
+            pcurve_b: NurbsCurve2::interpolate_with_parameters(&uv_b, &parameters)?,
+        }
+    } else {
+        approximate_open_branch(
+            a,
+            b,
+            BranchSamples {
+                points: &points,
+                uv_a: &uv_a,
+                uv_b: &uv_b,
+                states: &states,
+                parameters: &parameters,
+            },
+            options,
+        )?
+    };
     let nurbs_fallback = || {
         (
-            Curve::Nurbs(chord_curve_3d.clone()),
-            Curve2::Nurbs(chord_pcurve_a.clone()),
-            Curve2::Nurbs(chord_pcurve_b.clone()),
-            chord_parameters.clone(),
+            Curve::Nurbs(fitted.curve_3d.clone()),
+            Curve2::Nurbs(fitted.pcurve_a.clone()),
+            Curve2::Nurbs(fitted.pcurve_b.clone()),
         )
     };
-    let (curve_3d, pcurve_a, pcurve_b, parameters) = if options.simplify_curves {
-        let analytical = recognize_curve_3d(&states, closed, options.fit_tolerance);
-        let parameters = analytical
-            .as_ref()
-            .map(|curve| curve.parameters.clone())
-            .unwrap_or_else(|| chord_parameters.clone());
-        let fitted_curve_3d = NurbsCurve::interpolate_with_parameters(&points, &parameters)?;
-        let fitted_pcurve_a = NurbsCurve2::interpolate_with_parameters(&uv_a, &parameters)?;
-        let fitted_pcurve_b = NurbsCurve2::interpolate_with_parameters(&uv_b, &parameters)?;
+    let (curve_3d, pcurve_a, pcurve_b) = if options.simplify_curves {
         let proposed_curve_3d = analytical
             .map(|curve| curve.curve)
-            .unwrap_or(Curve::Nurbs(fitted_curve_3d));
-        let proposed_pcurve_a =
-            simplify_curve_2d(fitted_pcurve_a, &uv_a, &parameters, options.fit_tolerance);
-        let proposed_pcurve_b =
-            simplify_curve_2d(fitted_pcurve_b, &uv_b, &parameters, options.fit_tolerance);
+            .unwrap_or_else(|| Curve::Nurbs(fitted.curve_3d.clone()));
+        let proposed_pcurve_a = simplify_curve_2d(
+            fitted.pcurve_a.clone(),
+            &uv_a,
+            &parameters,
+            options.fit_tolerance,
+        );
+        let proposed_pcurve_b = simplify_curve_2d(
+            fitted.pcurve_b.clone(),
+            &uv_b,
+            &parameters,
+            options.fit_tolerance,
+        );
         let proposed_error = validate_fit(
             a,
             b,
@@ -73,12 +116,7 @@ pub(super) fn fit_branch(
             &parameters,
         );
         if proposed_error <= options.fit_tolerance {
-            (
-                proposed_curve_3d,
-                proposed_pcurve_a,
-                proposed_pcurve_b,
-                parameters,
-            )
+            (proposed_curve_3d, proposed_pcurve_a, proposed_pcurve_b)
         } else {
             nurbs_fallback()
         }
@@ -110,6 +148,161 @@ pub(super) fn fit_branch(
             certified,
         },
     })
+}
+
+/// Approximates one open walking line with a compact synchronized spline triple.
+///
+/// Control count grows only until the 3D curve and both pcurves jointly meet the
+/// surface-intersection fit tolerance. Endpoints remain exact constraints.
+fn approximate_open_branch(
+    a: &Surface,
+    b: &Surface,
+    samples: BranchSamples<'_>,
+    options: IntersectionOptions,
+) -> Result<SynchronizedNurbsFit, IntersectionError> {
+    let maximum = samples.points.len().min(MAX_FIT_CONTROL_POINTS);
+    let mut control_count = samples.points.len().min(INITIAL_FIT_CONTROL_POINTS);
+    let target_tolerance = options.fit_tolerance.min(options.residual_tolerance);
+    loop {
+        let fitted = least_squares_synchronized(
+            samples.points,
+            samples.uv_a,
+            samples.uv_b,
+            samples.parameters,
+            control_count,
+        )?;
+        let error = validate_fit(
+            a,
+            b,
+            &Curve::Nurbs(fitted.curve_3d.clone()),
+            &Curve2::Nurbs(fitted.pcurve_a.clone()),
+            &Curve2::Nurbs(fitted.pcurve_b.clone()),
+            samples.states,
+            samples.parameters,
+        );
+        if error <= target_tolerance || control_count == maximum {
+            return Ok(fitted);
+        }
+        control_count = (control_count * 2).min(maximum);
+    }
+}
+
+/// Solves all seven synchronized coordinates against one shared B-spline basis.
+fn least_squares_synchronized(
+    points: &[Point3],
+    uv_a: &[Point2],
+    uv_b: &[Point2],
+    parameters: &[f64],
+    control_count: usize,
+) -> Result<SynchronizedNurbsFit, IntersectionError> {
+    if control_count == points.len() {
+        return Ok(SynchronizedNurbsFit {
+            curve_3d: NurbsCurve::interpolate_with_parameters(points, parameters)?,
+            pcurve_a: NurbsCurve2::interpolate_with_parameters(uv_a, parameters)?,
+            pcurve_b: NurbsCurve2::interpolate_with_parameters(uv_b, parameters)?,
+        });
+    }
+    let degree = Degree::new(3.min(control_count - 1))?;
+    let knots = KnotVector::uniform_clamped(control_count, degree);
+    let internal_count = control_count - 2;
+    let mut coefficients = DMatrix::zeros(points.len(), internal_count);
+    let mut right_hand_side = DMatrix::zeros(points.len(), 7);
+    let endpoints = [
+        synchronized_coordinates(points[0], uv_a[0], uv_b[0]),
+        synchronized_coordinates(
+            *points
+                .last()
+                .expect("an intersection branch has an endpoint"),
+            *uv_a
+                .last()
+                .expect("an intersection branch has a pcurve endpoint"),
+            *uv_b
+                .last()
+                .expect("an intersection branch has a pcurve endpoint"),
+        ),
+    ];
+    for (row, parameter) in parameters.iter().copied().enumerate() {
+        let sample = synchronized_coordinates(points[row], uv_a[row], uv_b[row]);
+        for coordinate in 0..7 {
+            right_hand_side[(row, coordinate)] = sample[coordinate];
+        }
+        let span = knots.find_span(control_count - 1, degree, parameter);
+        let basis = basis_functions(span, parameter, degree, &knots);
+        for (offset, value) in basis.into_iter().enumerate() {
+            let control = span - degree.get() + offset;
+            match control {
+                0 => subtract_endpoint(&mut right_hand_side, row, value, &endpoints[0]),
+                control if control + 1 == control_count => {
+                    subtract_endpoint(&mut right_hand_side, row, value, &endpoints[1]);
+                }
+                control => coefficients[(row, control - 1)] = value,
+            }
+        }
+    }
+    let transpose = coefficients.transpose();
+    let normal = &transpose * &coefficients;
+    let projected = transpose * right_hand_side;
+    let internal = normal
+        .lu()
+        .solve(&projected)
+        .ok_or(crate::geometry::NurbsError::SingularInterpolationSystem)?;
+    let coordinate = |control: usize, axis: usize| {
+        if control == 0 {
+            endpoints[0][axis]
+        } else if control + 1 == control_count {
+            endpoints[1][axis]
+        } else {
+            internal[(control - 1, axis)]
+        }
+    };
+    let points_3d = (0..control_count)
+        .map(|control| {
+            Point3::new(
+                coordinate(control, 0),
+                coordinate(control, 1),
+                coordinate(control, 2),
+            )
+        })
+        .collect();
+    let points_a = (0..control_count)
+        .map(|control| Point2::new(coordinate(control, 3), coordinate(control, 4)))
+        .collect();
+    let points_b = (0..control_count)
+        .map(|control| Point2::new(coordinate(control, 5), coordinate(control, 6)))
+        .collect();
+    let weights = vec![1.0; control_count];
+    Ok(SynchronizedNurbsFit {
+        curve_3d: NurbsCurve::new(
+            degree,
+            ControlPolygon::from_cartesian(points_3d, &weights)?,
+            knots.clone(),
+        )?,
+        pcurve_a: NurbsCurve2::new(
+            degree,
+            ControlPolygon2::from_cartesian(points_a, &weights)?,
+            knots.clone(),
+        )?,
+        pcurve_b: NurbsCurve2::new(
+            degree,
+            ControlPolygon2::from_cartesian(points_b, &weights)?,
+            knots,
+        )?,
+    })
+}
+
+fn synchronized_coordinates(point: Point3, uv_a: Point2, uv_b: Point2) -> [f64; 7] {
+    [point.x, point.y, point.z, uv_a.x, uv_a.y, uv_b.x, uv_b.y]
+}
+
+fn subtract_endpoint(
+    right_hand_side: &mut DMatrix<f64>,
+    row: usize,
+    basis: f64,
+    endpoint: &[f64; 7],
+) {
+    for coordinate in 0..7 {
+        right_hand_side[(row, coordinate)] -= basis * endpoint[coordinate];
+    }
 }
 
 fn unwrap_surface_parameters(
