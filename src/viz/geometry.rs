@@ -1,7 +1,5 @@
 //! Lightweight scene representations for standalone geometry debug values.
 
-use std::f64::consts::TAU;
-
 use nalgebra::Vector3;
 
 use crate::geometry::{Curve, Plane, Point3, Surface};
@@ -102,30 +100,19 @@ pub fn scene_from_surface(surface: &Surface) -> VizScene {
     tessellate_surface(surface, u, v, "#80b918", 0.58)
 }
 
+/// The debug window for a curve: its own domain, with an extent standing in
+/// for an unbounded one.
 fn curve_interval(curve: &Curve) -> (f64, f64) {
-    match curve {
-        Curve::Line(_) => (-DEBUG_EXTENT, DEBUG_EXTENT),
-        Curve::Circle(_) => (0.0, TAU),
-        Curve::Nurbs(curve) => {
-            let domain = curve.domain();
-            (domain.start, domain.end)
-        }
-        Curve::Bounded(_) => (0.0, 1.0),
-    }
+    let domain = curve.domain().or_extent(DEBUG_EXTENT);
+    (domain.start, domain.end)
 }
 
+/// The debug window for a surface, per parameter direction.
 fn surface_intervals(surface: &Surface) -> ((f64, f64), (f64, f64)) {
-    match surface {
-        Surface::Plane(_) => ((-DEBUG_EXTENT, DEBUG_EXTENT), (-DEBUG_EXTENT, DEBUG_EXTENT)),
-        Surface::Cylinder(_) => ((0.0, TAU), (-DEBUG_EXTENT, DEBUG_EXTENT)),
-        Surface::Ruled(surface) => (curve_interval(surface.curve()), (0.0, 1.0)),
-        Surface::Revolution(surface) => (curve_interval(surface.curve()), (0.0, TAU)),
-        Surface::Nurbs(surface) => {
-            let u = surface.domain_u();
-            let v = surface.domain_v();
-            ((u.start, u.end), (v.start, v.end))
-        }
-    }
+    let (u, v) = surface.domain();
+    let u = u.or_extent(DEBUG_EXTENT);
+    let v = v.or_extent(DEBUG_EXTENT);
+    ((u.start, u.end), (v.start, v.end))
 }
 
 fn tessellate_surface(

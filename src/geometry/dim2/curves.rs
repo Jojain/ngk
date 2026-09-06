@@ -12,6 +12,7 @@ use super::intersections::{
 };
 use super::nurbs::NurbsCurve2;
 use super::utils::Point2;
+use crate::geometry::traits::Curve2Geometry;
 
 /// A curve in a surface's 2D parameter space.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -25,14 +26,7 @@ impl Curve2 {
     /// Converts the curve to an exact 2D NURBS representation.
     pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
         match self {
-            Curve2::Line(line) => NurbsCurve2::new(
-                Degree::new(1)?,
-                ControlPolygon2::new(vec![
-                    HPoint2::from_cartesian(line.start, 1.0),
-                    HPoint2::from_cartesian(line.end, 1.0),
-                ])?,
-                KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
-            ),
+            Curve2::Line(line) => line.to_nurbs(),
             Curve2::Circle(circle) => circle.to_nurbs(),
             Curve2::Nurbs(curve) => Ok(curve.clone()),
         }
@@ -401,6 +395,23 @@ impl Line2 {
         let parameter = parameter.clamp(0.0, 1.0);
         ((self.point_at(parameter) - point).norm() <= tolerance).then_some(parameter)
     }
+
+    /// Converts the segment to an exact degree-1 NURBS curve over `[0, 1]`.
+    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        NurbsCurve2::new(
+            Degree::new(1)?,
+            ControlPolygon2::new(vec![
+                HPoint2::from_cartesian(self.start, 1.0),
+                HPoint2::from_cartesian(self.end, 1.0),
+            ])?,
+            KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
+        )
+    }
+
+    /// Returns an exact Cartesian translation of this segment.
+    pub fn translated(&self, offset: Vector2<f64>) -> Self {
+        Self::new(self.start + offset, self.end + offset)
+    }
 }
 
 fn native_parameter(domain: Interval, normalized: f64) -> f64 {
@@ -413,5 +424,101 @@ fn normalized_parameter(domain: Interval, native: f64) -> f64 {
         0.0
     } else {
         (native - domain.start) / length
+    }
+}
+
+impl Curve2Geometry for Line2 {
+    fn point_at(&self, parameter: f64) -> Point2 {
+        Line2::point_at(self, parameter)
+    }
+
+    /// A segment is exactly represented by its endpoints at any tolerance.
+    fn adaptive_samples(&self, _tolerance: f64, _max_depth: usize) -> Vec<(f64, Point2)> {
+        vec![(0.0, self.start), (1.0, self.end)]
+    }
+
+    fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
+        Line2::parameter_at(self, point, tolerance)
+    }
+
+    fn reversed(&self) -> Self {
+        Line2::reversed(self)
+    }
+
+    fn translated(&self, offset: Vector2<f64>) -> Result<Self, NurbsError> {
+        Ok(Line2::translated(self, offset))
+    }
+
+    fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
+        Ok(Line2::split_at(self, parameter))
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        Line2::to_nurbs(self)
+    }
+}
+
+impl Curve2Geometry for Circle2 {
+    fn point_at(&self, parameter: f64) -> Point2 {
+        Circle2::point_at(self, parameter)
+    }
+
+    fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
+        Circle2::adaptive_samples(self, tolerance, max_depth)
+    }
+
+    fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
+        Circle2::parameter_at(self, point, tolerance)
+    }
+
+    fn reversed(&self) -> Self {
+        Circle2::reversed(self)
+    }
+
+    fn translated(&self, offset: Vector2<f64>) -> Result<Self, NurbsError> {
+        Ok(Circle2::translated(self, offset))
+    }
+
+    fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
+        Ok(Circle2::split_at(self, parameter))
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        Circle2::to_nurbs(self)
+    }
+}
+
+/// Forwards to whichever variant the curve holds.
+///
+/// The inherent methods on [`Curve2`] shadow these, so call sites keep working
+/// without importing the trait; the impl exists so generic code can be written
+/// once over any parameter-space curve.
+impl Curve2Geometry for Curve2 {
+    fn point_at(&self, parameter: f64) -> Point2 {
+        Curve2::point_at(self, parameter)
+    }
+
+    fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
+        Curve2::adaptive_samples(self, tolerance, max_depth)
+    }
+
+    fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
+        Curve2::parameter_at(self, point, tolerance)
+    }
+
+    fn reversed(&self) -> Self {
+        Curve2::reversed(self)
+    }
+
+    fn translated(&self, offset: Vector2<f64>) -> Result<Self, NurbsError> {
+        Curve2::translated(self, offset)
+    }
+
+    fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
+        Curve2::split_at(self, parameter)
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        Curve2::to_nurbs(self)
     }
 }

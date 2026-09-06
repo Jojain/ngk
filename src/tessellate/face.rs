@@ -179,13 +179,10 @@ fn sample_all_pcurves<P: Payload>(face: &Face<'_, P>, opts: TessellateOpts) -> O
     (!points.is_empty()).then_some(points)
 }
 
+/// The curve's domain when it is bounded; `None` for an unbounded support.
 fn finite_curve_domain(curve: &Curve) -> Option<Interval> {
-    match curve {
-        Curve::Line(_) => None,
-        Curve::Circle(_) => Some(Interval::new(0.0, std::f64::consts::TAU)),
-        Curve::Nurbs(curve) => Some(curve.domain()),
-        Curve::Bounded(_) => Some(Interval::new(0.0, 1.0)),
-    }
+    let domain = curve.domain();
+    domain.is_finite().then_some(domain)
 }
 
 fn surface_grid_over_bounds(

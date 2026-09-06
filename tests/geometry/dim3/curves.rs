@@ -1,7 +1,7 @@
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
-    Bounded, Circle, Curve, Interval, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence,
+    Bounded, Circle, Curve, Interval, LINEAR_TOLERANCE, Line, Plane, Point3, PointCoincidence,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -55,6 +55,25 @@ fn circle_curve_converts_to_matching_rational_nurbs_curve() {
         std::f64::consts::TAU,
     ] {
         assert_point_near(nurbs.point_at(t), curve.point_at(t));
+    }
+}
+
+#[test]
+fn circle_nurbs_conversion_stays_on_the_circle_between_knots() {
+    let plane = Plane::new(Point3::new(1.0, 2.0, 3.0), Vector3::x(), Vector3::z());
+    let circle = Circle::new(plane, 2.5);
+    let nurbs = Curve::Circle(circle.clone()).to_nurbs().unwrap();
+
+    // The rational quadratic reproduces the circle as a point set, but its
+    // parameter is a projective — not linear — function of the angle, so the
+    // invariant that holds off-knot is membership, not `point_at` agreement.
+    // Every parameter here is deliberately neither a knot nor a span midpoint.
+    for t in [0.3, 0.9, 1.7, 2.9, 4.4, 5.8] {
+        let radius = (nurbs.point_at(t) - circle.plane().origin()).norm();
+        assert!(
+            (radius - 2.5).abs() <= 1.0e-9,
+            "point at {t} sits at radius {radius}, not on the circle"
+        );
     }
 }
 
@@ -160,4 +179,58 @@ fn rotated_curve_keeps_its_parameterisation() {
             "rotating must not re-parameterise the curve"
         );
     }
+}
+
+#[test]
+fn circle_curve_projects_onto_the_nearest_circle_point() {
+    let curve = Curve::Circle(Circle::new(
+        Plane::new(Point3::origin(), Vector3::x(), Vector3::z()),
+        2.5,
+    ));
+
+    assert_point_near(
+        curve.project(Point3::new(5.0, 0.0, 3.0)),
+        Point3::new(2.5, 0.0, 0.0),
+    );
+    // A point on the axis is equidistant from every point of the circle, so
+    // the plane's x direction is returned to keep the result deterministic.
+    assert_point_near(
+        curve.project(Point3::new(0.0, 0.0, 4.0)),
+        Point3::new(2.5, 0.0, 0.0),
+    );
+}
+
+#[test]
+fn nurbs_curve_projects_onto_the_nearest_curve_point() {
+    let circle = Circle::new(
+        Plane::new(Point3::origin(), Vector3::x(), Vector3::z()),
+        2.5,
+    );
+    let curve = Curve::Nurbs(circle.to_nurbs().unwrap());
+
+    // The NURBS projection is a sampled seed refined by Newton, so it converges
+    // to the analytic answer rather than reproducing it exactly.
+    assert_vector_near(
+        curve.project(Point3::new(5.0, 0.0, 3.0)).coords,
+        Point3::new(2.5, 0.0, 0.0).coords,
+        1.0e-7,
+    );
+}
+
+#[test]
+fn curve_domains_distinguish_bounded_from_unbounded_supports() {
+    let line = Curve::Line(Line::new(Axis3::new(Point3::origin(), Vector3::x())));
+    assert!(
+        !line.domain().is_finite(),
+        "an untrimmed line extends without bound"
+    );
+
+    let circle = Curve::Circle(Circle::new(
+        Plane::new(Point3::origin(), Vector3::x(), Vector3::z()),
+        1.0,
+    ));
+    assert_eq!(circle.domain(), Interval::new(0.0, std::f64::consts::TAU));
+
+    let segment = Curve::line(Point3::origin(), Point3::new(3.0, 0.0, 0.0));
+    assert_eq!(segment.domain(), Interval::new(0.0, 1.0));
 }

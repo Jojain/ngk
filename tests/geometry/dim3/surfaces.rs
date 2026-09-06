@@ -2,8 +2,8 @@ use std::f64::consts::FRAC_PI_2;
 
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::{
-    Circle, Curve, Cylinder, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence, RuledSurface,
-    Surface, SurfaceOfRevolution, SurfacePeriodicity, axis::Axis3,
+    Circle, Curve, Cylinder, Interval, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence,
+    RuledSurface, Surface, SurfaceOfRevolution, SurfacePeriodicity, axis::Axis3,
 };
 
 fn assert_point_near(actual: Point3, expected: Point3) {
@@ -158,6 +158,30 @@ fn cylinder_surface_converts_to_matching_rational_nurbs_patch() {
 }
 
 #[test]
+fn cylinder_nurbs_patch_spans_the_requested_height_interval() {
+    let surface = Surface::Cylinder(Cylinder::new(
+        Point3::new(0.0, 0.0, 0.0),
+        Vector3::x(),
+        Vector3::z(),
+        2.0,
+    ));
+    let nurbs = surface
+        .to_nurbs_over(
+            Interval::new(0.0, std::f64::consts::TAU),
+            Interval::new(0.0, 5.0),
+        )
+        .unwrap();
+
+    // `Cylinder::point_at` moves `v` units along the axis, so a face five units
+    // tall must still be five units tall after the conversion the intersection
+    // engine runs on. Sampling the height is what catches a truncated patch;
+    // sampling only the seam does not.
+    for v in [0.0, 1.0, 2.5, 5.0] {
+        assert_point_near(nurbs.point_at(0.0, v), surface.point_at(0.0, v));
+    }
+}
+
+#[test]
 fn ruled_surface_converts_to_matching_nurbs_patch() {
     let surface = Surface::Ruled(RuledSurface::new(
         Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
@@ -232,4 +256,24 @@ fn rotated_surface_keeps_its_parameterisation() {
             "rotating must not re-parameterise the surface"
         );
     }
+}
+
+#[test]
+fn surface_domains_report_unbounded_directions() {
+    let plane = Surface::Plane(Plane::new(Point3::origin(), Vector3::x(), Vector3::z()));
+    let (u, v) = plane.domain();
+    assert!(
+        !u.is_finite() && !v.is_finite(),
+        "a plane is unbounded in both directions"
+    );
+
+    let cylinder = Surface::Cylinder(Cylinder::new(
+        Point3::origin(),
+        Vector3::x(),
+        Vector3::z(),
+        1.0,
+    ));
+    let (u, v) = cylinder.domain();
+    assert_eq!(u, Interval::new(0.0, std::f64::consts::TAU));
+    assert!(!v.is_finite(), "a cylinder is unbounded along its axis");
 }

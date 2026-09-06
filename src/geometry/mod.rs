@@ -4,6 +4,7 @@ pub mod dim3;
 pub mod interval;
 pub mod nurbs;
 pub mod tolerance;
+pub mod traits;
 
 pub use dim2::curves::{Circle2, Curve2, Line2};
 pub use dim2::intersections::{
@@ -38,3 +39,4 @@ pub use dim3::utils::{IntoUnit, Point3, PointCoincidence};
 pub use interval::Interval;
 pub use nurbs::error::NurbsError;
 pub use tolerance::{ANGULAR_TOLERANCE, LINEAR_TOLERANCE};
+pub use traits::{Curve2Geometry, CurveGeometry, SurfaceGeometry};

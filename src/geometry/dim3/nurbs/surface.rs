@@ -154,7 +154,7 @@ impl BezierSurface {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NurbsSurface {
     degree_u: Degree,
     degree_v: Degree,

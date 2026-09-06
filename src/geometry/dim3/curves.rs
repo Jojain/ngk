@@ -11,6 +11,7 @@ use super::utils::{IntoUnit, Point3, PointCoincidence};
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::tolerance::{LINEAR_TOLERANCE_SQUARED, MAX_DISTANCE};
+use crate::geometry::traits::CurveGeometry;
 use crate::geometry::{ANGULAR_TOLERANCE, Interval, LINEAR_TOLERANCE};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 use serde::{Deserialize, Serialize};
@@ -203,12 +204,26 @@ impl Curve {
         intersect_curve_surface(self, surface)
     }
 
+    /// Returns the point on the curve nearest `point`.
     pub fn project(&self, point: Point3) -> Point3 {
         match self {
-            Curve::Line(l) => l.project(point),
-            Curve::Bounded(c) => c.project(point),
-            Curve::Circle(_c) => todo!(),
-            Curve::Nurbs(_n) => todo!(),
+            Curve::Line(curve) => curve.project(point),
+            Curve::Circle(curve) => curve.project(point),
+            Curve::Nurbs(curve) => curve.project(point),
+            Curve::Bounded(curve) => curve.project(point),
+        }
+    }
+
+    /// Returns the parameter range over which the curve is defined.
+    ///
+    /// Unbounded curves report [`Interval::unbounded`]; a caller that needs a
+    /// finite window clamps it with [`Interval::or_extent`].
+    pub fn domain(&self) -> Interval {
+        match self {
+            Curve::Line(curve) => CurveGeometry::domain(curve),
+            Curve::Circle(curve) => CurveGeometry::domain(curve),
+            Curve::Nurbs(curve) => CurveGeometry::domain(curve),
+            Curve::Bounded(curve) => CurveGeometry::domain(&**curve),
         }
     }
 
@@ -661,5 +676,277 @@ impl Circle {
             ControlPolygon::new(points)?,
             KnotVector::new(knots)?,
         )
+    }
+}
+
+impl CurveGeometry for Line {
+    fn domain(&self) -> Interval {
+        Interval::unbounded()
+    }
+
+    fn periodicity(&self) -> Periodicity {
+        Periodicity::None
+    }
+
+    fn point_at(&self, t: f64) -> Point3 {
+        Line::point_at(self, t)
+    }
+
+    fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
+        Line::derivative_at(self, t, order)
+    }
+
+    fn param_at(&self, point: Point3) -> f64 {
+        Line::param_at(self, point)
+    }
+
+    fn project(&self, point: Point3) -> Point3 {
+        Line::project(self, point)
+    }
+
+    fn length(&self, t0: f64, t1: f64) -> f64 {
+        Line::length(self, t0, t1)
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        Line::to_nurbs(self)
+    }
+
+    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
+        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
+        Ok(Line::new(Axis3::new(
+            axis.origin + rotation * (self.origin() - axis.origin),
+            rotation * *self.direction(),
+        )))
+    }
+
+    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
+        Ok(Line::translated(self, direction))
+    }
+}
+
+impl CurveGeometry for Circle {
+    fn domain(&self) -> Interval {
+        Interval::new(0.0, TAU)
+    }
+
+    fn periodicity(&self) -> Periodicity {
+        Periodicity::Periodic(TAU)
+    }
+
+    fn point_at(&self, t: f64) -> Point3 {
+        Circle::point_at(self, t)
+    }
+
+    fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
+        Circle::derivative_at(self, t, order)
+    }
+
+    fn param_at(&self, point: Point3) -> f64 {
+        Circle::param_at(self, point)
+    }
+
+    /// Projects onto the circle by dropping `point` to the circle's plane and
+    /// rescaling the radial component.
+    ///
+    /// A point on the axis is equidistant from every point of the circle; the
+    /// plane's `x_dir` is returned so the result stays deterministic.
+    fn project(&self, point: Point3) -> Point3 {
+        let origin = self.plane.origin();
+        let normal = self.plane.normal();
+        let offset = point - origin;
+        let radial = offset - *normal * offset.dot(&normal);
+        let distance = radial.norm();
+        if distance <= LINEAR_TOLERANCE {
+            return origin + *self.plane.x_dir() * self.radius;
+        }
+        origin + radial * (self.radius / distance)
+    }
+
+    fn length(&self, t0: f64, t1: f64) -> f64 {
+        Circle::length(self, t0, t1)
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        Circle::to_nurbs(self)
+    }
+
+    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
+        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
+        Ok(Circle::new(
+            Plane::new(
+                axis.origin + rotation * (self.plane.origin() - axis.origin),
+                rotation * *self.plane.x_dir(),
+                rotation * *self.plane.normal(),
+            ),
+            self.radius,
+        ))
+    }
+
+    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
+        Ok(Circle::new(
+            Plane::new(
+                self.plane.origin() + direction,
+                self.plane.x_dir(),
+                self.plane.normal(),
+            ),
+            self.radius,
+        ))
+    }
+}
+
+impl CurveGeometry for NurbsCurve {
+    fn domain(&self) -> Interval {
+        NurbsCurve::domain(self)
+    }
+
+    fn periodicity(&self) -> Periodicity {
+        Periodicity::None
+    }
+
+    fn point_at(&self, t: f64) -> Point3 {
+        NurbsCurve::point_at(self, t)
+    }
+
+    fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
+        NurbsCurve::derivative_at(self, t, order)
+    }
+
+    fn param_at(&self, point: Point3) -> f64 {
+        closest_sample_parameter(self, point)
+    }
+
+    fn project(&self, point: Point3) -> Point3 {
+        NurbsCurve::point_at(self, closest_sample_parameter(self, point))
+    }
+
+    fn length(&self, t0: f64, t1: f64) -> f64 {
+        NurbsCurve::length(self, t0, t1)
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        Ok(self.clone())
+    }
+
+    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
+        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
+        let points = self
+            .control_points()
+            .iter()
+            .map(|point| {
+                let rotated = axis.origin + rotation * (point.to_cartesian() - axis.origin);
+                HPoint::from_cartesian(rotated, point.weight())
+            })
+            .collect();
+        NurbsCurve::new(
+            self.degree(),
+            ControlPolygon::new(points)?,
+            self.knots().clone(),
+        )
+    }
+
+    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
+        let points = self
+            .control_points()
+            .iter()
+            .map(|point| HPoint::from_cartesian(point.to_cartesian() + direction, point.weight()))
+            .collect();
+        NurbsCurve::new(
+            self.degree(),
+            ControlPolygon::new(points)?,
+            self.knots().clone(),
+        )
+    }
+}
+
+impl CurveGeometry for Bounded<Curve> {
+    fn domain(&self) -> Interval {
+        Interval::new(0.0, 1.0)
+    }
+
+    fn periodicity(&self) -> Periodicity {
+        Periodicity::None
+    }
+
+    fn point_at(&self, t: f64) -> Point3 {
+        Bounded::<Curve>::point_at(self, t)
+    }
+
+    fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
+        Bounded::<Curve>::derivative_at(self, t, order)
+    }
+
+    fn param_at(&self, point: Point3) -> f64 {
+        Bounded::<Curve>::param_at(self, point)
+    }
+
+    fn project(&self, point: Point3) -> Point3 {
+        Bounded::<Curve>::project(self, point)
+    }
+
+    fn length(&self, t0: f64, t1: f64) -> f64 {
+        Bounded::<Curve>::length(self, t0, t1)
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        Bounded::<Curve>::to_nurbs(self)
+    }
+
+    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
+        Ok(Bounded::new(
+            self.inner().rotated(axis, angle)?,
+            self.bounds(),
+        ))
+    }
+
+    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
+        Bounded::<Curve>::translated(self, direction)
+    }
+}
+
+/// Forwards to whichever variant the curve holds.
+///
+/// The inherent methods on [`Curve`] shadow these, so call sites keep working
+/// without importing the trait; the impl exists so generic code can be written
+/// once over any curve.
+impl CurveGeometry for Curve {
+    fn domain(&self) -> Interval {
+        Curve::domain(self)
+    }
+
+    fn periodicity(&self) -> Periodicity {
+        Curve::periodicity(self)
+    }
+
+    fn point_at(&self, t: f64) -> Point3 {
+        Curve::point_at(self, t)
+    }
+
+    fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
+        Curve::derivative_at(self, t, order)
+    }
+
+    fn param_at(&self, point: Point3) -> f64 {
+        Curve::param_at(self, point)
+    }
+
+    fn project(&self, point: Point3) -> Point3 {
+        Curve::project(self, point)
+    }
+
+    fn length(&self, t0: f64, t1: f64) -> f64 {
+        Curve::length(self, t0, t1)
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        Curve::to_nurbs(self)
+    }
+
+    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
+        Curve::rotated(self, axis, angle)
+    }
+
+    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
+        Curve::translated(self, direction)
     }
 }

@@ -49,3 +49,28 @@ fn interval_intersection_with_tolerance_returns_degenerate_gap_midpoint() {
     assert_eq!(a.intersection(b, 0.1), Some(Interval::new(1.025, 1.025)));
     assert_eq!(a.intersection(b, 0.01), None);
 }
+
+#[test]
+fn or_extent_substitutes_only_infinite_endpoints() {
+    let bounded = Interval::new(0.0, std::f64::consts::TAU);
+    assert_eq!(
+        bounded.or_extent(1.0),
+        bounded,
+        "a finite domain keeps its real extent even when wider than the window"
+    );
+    assert_eq!(
+        Interval::unbounded().or_extent(3.0),
+        Interval::new(-3.0, 3.0)
+    );
+    assert_eq!(
+        Interval::new(2.0, f64::INFINITY).or_extent(5.0),
+        Interval::new(2.0, 5.0)
+    );
+}
+
+#[test]
+fn is_finite_distinguishes_bounded_domains() {
+    assert!(Interval::new(0.0, 1.0).is_finite());
+    assert!(!Interval::unbounded().is_finite());
+    assert!(!Interval::new(0.0, f64::INFINITY).is_finite());
+}

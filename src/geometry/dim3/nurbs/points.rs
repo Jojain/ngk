@@ -120,7 +120,7 @@ impl ControlPolygon {
 
 /// A 2D control grid for NURBS surfaces, stored flat in row-major order
 /// (u varies fastest). Has `nu * nv` entries.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ControlNet {
     points: Vec<HPoint>,
     nu: usize,
