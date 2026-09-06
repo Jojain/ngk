@@ -1,10 +1,12 @@
 use nalgebra::Vector3;
 use ngk::geometry::LINEAR_TOLERANCE;
-use ngk::modeling::solids::{PrimitiveError, block};
+use ngk::modeling::solids::{PrimitiveError, block, sphere};
 use ngk::tessellate::{TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
 use ngk::topology::gmap::Dim;
 use ngk::topology::sheet::Sheet;
+use ngk::topology::validation::validate_solid_manifold;
+use ngk::viz::debug_viewer::show;
 
 #[test]
 fn block_builds_closed_box_with_expected_cell_counts() {
@@ -147,4 +149,10 @@ fn block_error_message_names_the_invalid_axis_and_value() {
         error.to_string(),
         "block y size must be greater than 0, got -2"
     );
+}
+
+#[test]
+fn sphere_builds_a_well_formed_solid() {
+    let shape = sphere(2.0).expect("sphere primitive should build");
+    validate_solid_manifold(shape.map(), shape.key()).expect("sphere should be well formed");
 }

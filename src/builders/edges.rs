@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::builders::errors::{EdgeCreationError, TopologyEditFailure};
 use crate::geometry::{
-    Circle, Curve, Interval, LINEAR_TOLERANCE, NurbsError, Plane, Point3, PointCoincidence,
+    Curve, Interval, LINEAR_TOLERANCE, NurbsError, Plane, Point3, PointCoincidence,
 };
 use crate::topology::TopologyEdit;
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
@@ -459,7 +459,7 @@ pub fn add_arc<P: Payload>(
 }
 
 /// Validates and builds an arc inside the caller's active transaction.
-fn add_arc_staged<P: Payload>(
+pub(crate) fn add_arc_staged<P: Payload>(
     g: &mut TopologyEdit<'_, P>,
     plane: Plane,
     radius: f64,
@@ -470,9 +470,9 @@ fn add_arc_staged<P: Payload>(
     check_valid_angle("start", start_angle)?;
     check_valid_angle("end", end_angle)?;
 
-    let curve = Curve::Circle(Circle::new(plane, radius));
-    let start = curve.point_at(start_angle);
-    let end = curve.point_at(end_angle);
+    let curve = Curve::arc(plane, radius, Interval::new(start_angle, end_angle));
+    let start = curve.point_at(0.0);
+    let end = curve.point_at(1.0);
     add_edge_staged(g, start, end, curve)
 }
 

@@ -42,7 +42,8 @@ fn arc_returns_owned_open_circle_edge_shape() {
     assert!(!edge.is_closed());
     assert!(matches!(
         edge.curve(),
-        Some(Curve::Circle(circle)) if (circle.radius() - 2.0).abs() <= f64::EPSILON
+        Some(Curve::Bounded(arc))
+            if matches!(arc.inner(), Curve::Circle(circle) if (circle.radius() - 2.0).abs() <= f64::EPSILON)
     ));
 }
 

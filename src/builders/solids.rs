@@ -1,23 +1,62 @@
+use std::f64::consts::FRAC_PI_2;
+
 use nalgebra::Vector3;
+use radians::Rad64;
+use thiserror::Error;
 
 use crate::{
     Payload,
-    builders::errors::ExtrudeError,
     builders::faces::reverse_face_winding,
+    builders::{
+        edges::add_arc_staged,
+        errors::{EdgeCreationError, ExtrudeError},
+        revolve::{RevolveError, add_revolved_edge_staged},
+    },
     geometry::{
-        Curve, Curve2, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
+        Curve, Curve2, Frame, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Surface,
     },
     topology::{
         Dart, SheetAttr, SolidAttr, TopologyEdit,
         attributes::{EdgeAttr, FaceAttr, ProfileAttr},
         edge::Edge,
         face::Face,
-        gmap::{Cell2, Dim, GMap, MergeTopology},
+        gmap::{Cell2, Dim, GMap, MergeTopology, TopologyEditError},
         profile::Profile,
         shape::{FaceTag, Shape},
         shape_keys::{FaceKey, SolidKey},
     },
 };
+
+#[derive(Debug, Error)]
+pub enum SphereBuildError {
+    #[error("failed to create a sphere profile arc")]
+    Arc(#[from] EdgeCreationError),
+    #[error("failed to revolve a sphere profile arc")]
+    Revolve(#[from] RevolveError),
+    #[error("failed to commit sphere topology")]
+    TopologyEdit(#[from] TopologyEditError),
+}
+
+/// Adds a sphere by revolving a semicircular meridian around the frame z-axis.
+///
+/// The two coincident meridian boundary occurrences are sewn together, leaving
+/// one face with one pole-to-pole seam edge and two pole vertices.
+pub fn add_sphere<P: Payload>(
+    g: &mut GMap<P>,
+    frame: Frame,
+    radius: f64,
+) -> Result<SolidKey, SphereBuildError> {
+    g.transaction(|g| {
+        let meridian = Plane::from_xy(frame.origin, frame.x_dir, frame.z_dir);
+        let axis = frame.z_axis();
+        let arc = add_arc_staged(g, meridian, radius, FRAC_PI_2, -FRAC_PI_2)?;
+        let face = add_revolved_edge_staged(g, arc, axis, Rad64::FULL_TURN)?;
+        let seam = g.face_unchecked(face).outer_loop().dart;
+
+        g.add_sheet(SheetAttr::new(seam, P::Sheet::default()));
+        Ok(g.add_solid(SolidAttr::new(P::S::default(), seam, None)))
+    })
+}
 
 /// Returns an isolated copy of `face` translated by `direction`.
 ///

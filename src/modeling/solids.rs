@@ -2,10 +2,13 @@ use nalgebra::{Unit, Vector3};
 
 use crate::{
     StandardPayload,
-    builders::solids::add_extruded_face,
+    builders::solids::{add_extruded_face, add_sphere},
     geometry::{Frame, Plane},
     modeling::faces,
-    topology::shape::{FaceTag, Shape, SolidTag},
+    topology::{
+        gmap::GMap,
+        shape::{FaceTag, Shape, SolidTag},
+    },
 };
 
 pub use crate::modeling::errors::PrimitiveError;
@@ -70,6 +73,26 @@ pub fn cylinder(
     height: f64,
 ) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
     cylinder_at(Frame::xyz(), radius, height)
+}
+
+/// Creates a sphere centered at the given frame origin.
+///
+/// The frame's z-axis is the revolution axis and its x-axis fixes the
+/// generating circle arc's meridian.
+pub fn sphere_at(
+    frame: Frame,
+    radius: f64,
+) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
+    validate_length("radius", radius)?;
+    let mut g = GMap::new();
+    let solid_key =
+        add_sphere(&mut g, frame, radius).map_err(|_| PrimitiveError::SolidCreationFailed)?;
+    Ok(Shape::new(g, solid_key))
+}
+
+/// Creates a sphere centered at the origin.
+pub fn sphere(radius: f64) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
+    sphere_at(Frame::xyz(), radius)
 }
 
 /// Creates a solid by extruding the given face in the specified direction.

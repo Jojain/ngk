@@ -133,15 +133,23 @@ pub fn add_revolved_edge<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<FaceKey, RevolveError> {
-    g.transaction(|g| {
-        let source = RevolvedSourceEdge::from_key(g, edge)?;
-        let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
-        if is_full_turn(angle) {
-            return add_full_revolved_edge_face(g, &source, axis, angle);
-        }
+    g.transaction(|g| add_revolved_edge_staged(g, edge, axis, angle))
+}
 
-        add_partial_revolved_edge_face(g, &source, axis, angle)
-    })
+/// Revolves an edge inside the caller's active transaction.
+pub(crate) fn add_revolved_edge_staged<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    edge: EdgeKey,
+    axis: Axis3,
+    angle: Rad64,
+) -> Result<FaceKey, RevolveError> {
+    let source = RevolvedSourceEdge::from_key(g, edge)?;
+    let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
+    if is_full_turn(angle) {
+        return add_full_revolved_edge_face(g, &source, axis, angle);
+    }
+
+    add_partial_revolved_edge_face(g, &source, axis, angle)
 }
 
 fn add_partial_revolved_edge_face<P: Payload>(
@@ -251,7 +259,77 @@ fn add_full_revolved_edge_face<P: Payload>(
         return Err(RevolveError::BoundarylessFullRevolve { key: source.key });
     }
 
+    let start_on_axis = revolve_radius(axis, source.start.point) <= LINEAR_TOLERANCE;
+    let end_on_axis = revolve_radius(axis, source.end.point) <= LINEAR_TOLERANCE;
+    if start_on_axis && end_on_axis {
+        return add_full_revolved_apex_to_apex_face(g, source, axis, angle);
+    }
+
     add_full_revolved_open_edge_face(g, source, axis, angle)
+}
+
+/// Closes an apex-to-apex revolution by identifying its two meridian seams.
+///
+/// The face starts as a two-edge loop containing the source meridian and its
+/// full-turn copy. Sewing those occurrences in dimension two leaves one edge
+/// incident twice to one face while preserving the two pole vertices.
+fn add_full_revolved_apex_to_apex_face<P: Payload>(
+    g: &mut TopologyEdit<'_, P>,
+    source: &RevolvedSourceEdge,
+    axis: Axis3,
+    angle: Rad64,
+) -> Result<FaceKey, RevolveError> {
+    validate_consumable_source_edge(g, source)?;
+    let interval = source
+        .curve
+        .parameters_between(source.start.point, source.end.point);
+    let middle = source.curve.point_at(0.5 * (interval.start + interval.end));
+    if revolve_radius(axis, middle) <= LINEAR_TOLERANCE {
+        return Err(RevolveError::EdgeOnRevolutionAxis { key: source.key });
+    }
+
+    let seam_start = source.dart;
+    let seam_end = g.alpha(Dim::Zero, seam_start);
+    let opposite_end = g.add_dart();
+    let opposite_start = g.add_dart();
+    g.link(Dim::Zero, opposite_start, opposite_end)?;
+    g.link(Dim::One, seam_end, opposite_end)?;
+    g.link(Dim::One, opposite_start, seam_start)?;
+
+    g.add_edge(EdgeAttr::new(
+        opposite_start,
+        source.curve.clone(),
+        P::E::default(),
+    ));
+    if Profile::from_dart(g, seam_start).is_none() {
+        g.add_profile(ProfileAttr::new(seam_start, P::Profile::default()));
+    }
+
+    let mut pcurves = HashMap::with_capacity(2);
+    pcurves.insert(
+        seam_start,
+        Curve2::Line(Line2::new(
+            Point2::new(interval.start, 0.0),
+            Point2::new(interval.end, 0.0),
+        )),
+    );
+    pcurves.insert(
+        opposite_end,
+        Curve2::Line(Line2::new(
+            Point2::new(interval.end, angle.val()),
+            Point2::new(interval.start, angle.val()),
+        )),
+    );
+    let face = g.add_face(FaceAttr::with_pcurves(
+        Surface::Revolution(SurfaceOfRevolution::new(source.curve.clone(), axis)),
+        P::F::default(),
+        seam_start,
+        Vec::new(),
+        pcurves,
+    ));
+
+    sew_revolved_alpha2_edges(g, seam_start, opposite_start, seam_start, opposite_start)?;
+    Ok(face)
 }
 
 fn add_full_revolved_open_edge_face<P: Payload>(
@@ -665,7 +743,7 @@ fn sew_revolved_side_edges<P: Payload>(
     sew_revolved_alpha2_edges(g, survivor, removed, survivor, removed)
 }
 
-fn sew_revolved_alpha2_edges<P: Payload>(
+pub(crate) fn sew_revolved_alpha2_edges<P: Payload>(
     g: &mut TopologyEdit<'_, P>,
     first: Dart,
     second: Dart,
