@@ -294,7 +294,6 @@ fn redundant_faces_of_boolean_fuse_are_deleted() {
         },
     )
     .expect("healing the union should succeed");
-    show(&map);
 
     let bottom = bottom_faces(&map, solid);
     assert_eq!(
