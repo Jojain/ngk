@@ -5,8 +5,8 @@ use nalgebra::Vector2;
 use crate::builders::faces::FaceImprint;
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveIntersectionOptions, HPoint, HPoint2,
-    IntersectionOptions, Interval, Line2, NurbsCurve, NurbsCurve2, NurbsError, Point2, Point3,
-    Surface, SurfaceIntersectionBranch, SurfacePeriodicity,
+    IntersectionOptions, Interval, LINEAR_TOLERANCE, Line2, NurbsCurve, NurbsCurve2, NurbsError,
+    Point2, Point3, Surface, SurfaceIntersectionBranch, SurfacePeriodicity,
 };
 
 use super::{BooleanError, trim::FaceTrimDomain};
@@ -84,6 +84,12 @@ pub(crate) fn clip_branch(
     parameters.dedup_by(|a, b| (*a - *b).abs() <= options.parameter_tolerance);
     let mut fragments = Vec::new();
     for pair in parameters.windows(2) {
+        // Crossings are deduplicated at the parameter tolerance, which is far
+        // finer than a curve can be trimmed to; a window narrower than that
+        // carries no fragment and would only fail the trim.
+        if pair[1] - pair[0] <= LINEAR_TOLERANCE {
+            continue;
+        }
         let midpoint = (pair[0] + pair[1]) * 0.5;
         if !first.1.contains(pcurve_a.point_at(midpoint))
             || !second.1.contains(pcurve_b.point_at(midpoint))

@@ -178,7 +178,11 @@ impl<'g, P: Payload> Face<'g, P> {
             let mut uvs = Vec::new();
             for edge in boundary.edges() {
                 let curve = self.pcurve(edge.dart())?;
-                let count = if matches!(curve, Curve2::Line(_)) {
+                // A straight pcurve is a straight 3D segment only on a plane.
+                // Elsewhere -- a sphere's seam meridian, say -- one sample per
+                // edge leaves the loop with too few points to span a fan at
+                // all, and the face contributes no volume at all.
+                let count = if planar && matches!(curve, Curve2::Line(_)) {
                     1
                 } else {
                     32

@@ -85,8 +85,11 @@ it cannot provide the guarantees needed by a CAD Boolean:
 - parallel execution before deterministic correctness;
 - special analytical plane/cylinder/sphere optimizations.
 
-Direct analytical algorithms may be added later, but the first production path
-must remain NURBS-first.
+**Superseded.** `plan/boolean_analytic.md` put a closed-form pair table in front
+of this solver, so the first production path for a recognized pair is analytic
+and this solver is the fallback for everything else — and the oracle the
+analytic table is differentially tested against. The guarantees below still bind
+that fallback.
 
 ## 4. Required guarantees
 

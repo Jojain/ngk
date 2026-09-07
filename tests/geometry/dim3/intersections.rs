@@ -64,7 +64,7 @@ fn line_line_intersection_returns_point() {
 
     let results = a.intersect_curve(&b).unwrap();
 
-    let points = point_results(&results);
+    let points = point_results(results.as_slice());
     assert_eq!(points.len(), 1, "{results:?}");
     assert_point_near(points[0], Point3::new(0.5, 0.0, 0.0));
 }
@@ -107,7 +107,7 @@ fn tangent_line_circle_returns_single_point() {
 
     let results = line.intersect_curve(&circle).unwrap();
 
-    let points = unique_points(point_results(&results));
+    let points = unique_points(point_results(results.as_slice()));
     assert_eq!(points.len(), 1, "{results:?}");
     assert_point_near(points[0], Point3::new(0.0, 1.0, 0.0));
 }
@@ -119,7 +119,7 @@ fn secant_line_circle_returns_two_points() {
 
     let results = line.intersect_curve(&circle).unwrap();
 
-    let points = unique_points(point_results(&results));
+    let points = unique_points(point_results(results.as_slice()));
     assert_eq!(points.len(), 2, "{results:?}");
     assert!(
         points
@@ -154,7 +154,7 @@ fn identical_circles_return_bezier_span_overlaps() {
     let results = a.intersect_curve(&b).unwrap();
 
     assert!(
-        overlap_count(&results) >= 4,
+        overlap_count(results.as_slice()) >= 4,
         "expected at least 4 overlap spans, got {results:?}"
     );
 }
@@ -174,7 +174,7 @@ fn quadratic_nurbs_curves_return_crossing_point() {
 
     let results = Curve::Nurbs(a).intersect_curve(&Curve::Nurbs(b)).unwrap();
 
-    let points = unique_points(point_results(&results));
+    let points = unique_points(point_results(results.as_slice()));
     assert_eq!(points.len(), 1, "{results:?}");
     assert_point_near(points[0], Point3::new(1.0, 0.5, 0.0));
 }
@@ -838,12 +838,13 @@ fn plane_patch_covers_the_requested_parameter_box() {
     let curve = line(Point3::new(1.5, 1.5, -1.0), Point3::new(1.5, 1.5, 1.0));
     let options = IntersectionOptions::default();
 
-    // An unbounded plane converts to an arbitrary unit patch, which cannot see
-    // a crossing outside it.
+    // A plane is unbounded, and the closed-form entry answers it as such: the
+    // crossing is found wherever it falls, with no patch to fall outside of.
     let default = curve.intersect_surface(&surface).unwrap();
-    assert!(default.is_empty(), "{default:?}");
+    assert_eq!(default.len(), 1, "{default:?}");
 
-    // Given the trim box a face actually occupies, the same crossing is found.
+    // The prepared path realizes the plane over a patch instead, and finds the
+    // same crossing given the trim box a face actually occupies.
     let prepared = PreparedSurface::over(
         &surface,
         ngk::geometry::Interval::new(0.0, 2.0),

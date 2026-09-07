@@ -1,3 +1,4 @@
+mod analytic;
 mod bbox;
 mod cone;
 mod conics;

@@ -87,8 +87,22 @@ attribute create/remove/split/merge declarations).
 - Intersections: curve/curve, curve/surface, surface/surface with `IntersectionOptions`.
 - Tolerances: `LINEAR_TOLERANCE`, `ANGULAR_TOLERANCE`; point equality via
   `PointCoincidence::coincides`.
-- **NURBS-first policy**: analytical types stay, but new algorithms convert to
-  NURBS and operate there. Analytic fast paths are later optimizations only.
+- **Analytic-first dispatch, certified NURBS fallback** (`intersections/analytic/`):
+  a recognized pair is answered in closed form *before* anything is converted or
+  decomposed; everything else takes the NURBS solver, which is also the
+  differential-test oracle. `intersect_analytic_*` return `Option<Result<..>>`:
+  `None` declines the pair (fall back), `Ok(..Empty)` certifies disjointness.
+  A pair in the table that reaches a case the `Curve` types cannot carry also
+  declines. Covered today: surface/surface plane×{plane,sphere,cylinder} and
+  sphere×sphere; curve/surface line×{plane,sphere,cylinder,cone} and
+  circle×{plane,sphere}; curve/curve line×line, line×circle, circle×circle.
+  Not covered: anything involving a cone surface pair, cylinder×cylinder,
+  circle×{cylinder,cone}.
+- A section's 3D curve is exact; its **pcurve is exact only where a closed form
+  exists** (aligned sections) and is otherwise a measured fit —
+  `PcurveFidelity::Fitted { deviation }`. Sections are split at periodic seams
+  and at parameterization degeneracies (a sphere's poles) so every pcurve stays
+  inside one period and on one branch.
 
 ## Feature status (as of Sept 2026)
 

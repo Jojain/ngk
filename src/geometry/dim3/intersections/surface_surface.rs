@@ -9,14 +9,17 @@ use seeds::{pair_seeds, planar_seeds};
 use tracer::{TraceState, trace_from_seed};
 
 use super::PreparedSurface;
+use super::analytic::{AnalyticSection, AnalyticSurfaceIntersection, intersect_analytic_surfaces};
 use super::error::IntersectionError;
 use super::options::IntersectionOptions;
 use super::{
-    IntersectionCoverage, IntersectionIncompleteReason, SurfaceIntersectionBranch,
+    IntersectionCoverage, IntersectionIncompleteReason, IntersectionQuality,
+    SurfaceIntersectionBranch, SurfaceIntersectionBranchKind, SurfaceIntersectionPoint,
     SurfaceIntersectionPointKind, SurfaceOverlapCandidate, SurfaceSurfaceIntersection,
     SurfaceSurfaceIntersections,
 };
-use crate::geometry::{BBox, NurbsSurface, Surface};
+use crate::geometry::counters::count_surface_surface_call;
+use crate::geometry::{BBox, Curve, NurbsSurface, Point2, Surface};
 
 /// Intersects two surfaces with the default operation-scoped tolerances.
 pub fn intersect_surfaces(
@@ -36,9 +39,149 @@ pub fn intersect_surfaces_with_options(
         return Err(IntersectionError::InvalidOptions);
     }
 
+    // Ask the closed-form table before converting anything: the conversion and
+    // the search that follows it are the expensive part, and for a recognized
+    // pair both are avoidable entirely.
+    if let Some(analytic) = intersect_analytic_surfaces(a, b, options)
+        && let Some(intersections) = analytic_intersections(analytic?, a, b, options)
+    {
+        return Ok(intersections);
+    }
+
     let nurbs_a = a.to_nurbs()?;
     let nurbs_b = b.to_nurbs()?;
     intersect_nurbs_surfaces(a, b, &nurbs_a, &nurbs_b, options)
+}
+
+/// Presents a closed-form answer in the general solver's result vocabulary.
+///
+/// The branches this builds are marked certified: their curve is exact and
+/// each pcurve carries a measured deviation, which is a stronger guarantee
+/// than a traced branch can offer, not a weaker one.
+///
+/// Returns `None` for an answer the vocabulary cannot carry. A branch is
+/// normalized over `[0, 1]`, so an unbounded section -- two planes meeting in
+/// a line, a plane running along a cylinder -- would be silently truncated to
+/// whatever window it was written over. Those callers get the general solver,
+/// which realizes both supports over finite patches first; the closed form is
+/// still available directly from [`intersect_analytic_surfaces`].
+pub fn analytic_intersections(
+    analytic: AnalyticSurfaceIntersection,
+    a: &Surface,
+    b: &Surface,
+    options: IntersectionOptions,
+) -> Option<SurfaceSurfaceIntersections> {
+    if analytic
+        .sections()
+        .iter()
+        .any(|section| matches!(section.curve, Curve::Line(_)))
+    {
+        return None;
+    }
+    Some(match analytic {
+        AnalyticSurfaceIntersection::Empty => {
+            SurfaceSurfaceIntersections::new(Vec::new(), IntersectionCoverage::Complete)
+        }
+        AnalyticSurfaceIntersection::TangentPoint(point) => {
+            let uv_a = a.closest_parameter(point).unwrap_or(Point2::origin());
+            let uv_b = b.closest_parameter(point).unwrap_or(Point2::origin());
+            SurfaceSurfaceIntersections::new(
+                vec![SurfaceSurfaceIntersection::Point(
+                    SurfaceIntersectionPoint {
+                        point,
+                        uv_a,
+                        uv_b,
+                        kind: SurfaceIntersectionPointKind::Tangent,
+                        residual: 0.0,
+                    },
+                )],
+                IntersectionCoverage::Complete,
+            )
+        }
+        // Which part of two identical supports is shared is a trimming
+        // question, and answering it is no more in scope here than it is for
+        // the traced path.
+        AnalyticSurfaceIntersection::Coincident => SurfaceSurfaceIntersections::new(
+            vec![SurfaceSurfaceIntersection::OverlapCandidate(
+                overlap_candidate(a, b),
+            )],
+            IntersectionCoverage::Incomplete(vec![
+                IntersectionIncompleteReason::CoincidentRegionResolutionNotImplemented,
+            ]),
+        ),
+        AnalyticSurfaceIntersection::Sections(sections) => {
+            let mut branches = Vec::with_capacity(sections.len());
+            let mut reasons = Vec::new();
+            for section in sections {
+                let deviation = section.fidelity.deviation();
+                if deviation > options.fit_tolerance {
+                    push_reason(
+                        &mut reasons,
+                        IntersectionIncompleteReason::SynchronizedFitToleranceExceeded,
+                    );
+                }
+                branches.push(SurfaceSurfaceIntersection::Branch(analytic_branch(
+                    section, deviation, options,
+                )));
+            }
+            SurfaceSurfaceIntersections::new(
+                branches,
+                if reasons.is_empty() {
+                    IntersectionCoverage::Complete
+                } else {
+                    IntersectionCoverage::Incomplete(reasons)
+                },
+            )
+        }
+    })
+}
+
+/// Builds the branch record for one closed-form section.
+fn analytic_branch(
+    section: AnalyticSection,
+    deviation: f64,
+    options: IntersectionOptions,
+) -> SurfaceIntersectionBranch {
+    let samples = (0..=ANALYTIC_BRANCH_SAMPLES)
+        .map(|index| {
+            let parameter = index as f64 / ANALYTIC_BRANCH_SAMPLES as f64;
+            let point = section.curve.point_at(parameter);
+            SurfaceIntersectionPoint {
+                point,
+                uv_a: section.pcurve_a.point_at(parameter),
+                uv_b: section.pcurve_b.point_at(parameter),
+                kind: SurfaceIntersectionPointKind::Transverse,
+                residual: 0.0,
+            }
+        })
+        .collect::<Vec<_>>();
+    let closed = (section.curve.point_at(0.0) - section.curve.point_at(1.0)).norm()
+        <= options.linear_tolerance;
+    SurfaceIntersectionBranch {
+        curve_3d: section.curve,
+        pcurve_a: section.pcurve_a,
+        pcurve_b: section.pcurve_b,
+        samples,
+        closed,
+        kind: SurfaceIntersectionBranchKind::Transverse,
+        quality: IntersectionQuality {
+            max_residual: 0.0,
+            max_fit_error: deviation,
+            certified: deviation <= options.fit_tolerance,
+        },
+    }
+}
+
+/// Returns the whole-domain overlap candidate for two coincident supports.
+fn overlap_candidate(a: &Surface, b: &Surface) -> SurfaceOverlapCandidate {
+    let (a_u, a_v) = a.domain();
+    let (b_u, b_v) = b.domain();
+    SurfaceOverlapCandidate {
+        domain_a_u: a_u,
+        domain_a_v: a_v,
+        domain_b_u: b_u,
+        domain_b_v: b_v,
+    }
 }
 
 /// Intersects two surfaces already realized over operation-specific domains.
@@ -60,6 +203,7 @@ fn intersect_nurbs_surfaces(
     b: &NurbsSurface,
     options: IntersectionOptions,
 ) -> Result<SurfaceSurfaceIntersections, IntersectionError> {
+    count_surface_surface_call();
     if !has_supported_weights(a) || !has_supported_weights(b) {
         return Ok(SurfaceSurfaceIntersections::new(
             Vec::new(),
@@ -160,6 +304,12 @@ fn intersect_nurbs_surfaces(
 }
 
 /// How many times a branch that missed the fit tolerance is retraced.
+/// Samples recorded on a closed-form branch.
+///
+/// The curve is exact, so these exist only for callers that node a branch
+/// against its samples rather than against its curve.
+const ANALYTIC_BRANCH_SAMPLES: usize = 32;
+
 const MAX_FIT_REFINEMENTS: usize = 4;
 
 /// Sample count past which a denser trace costs more than the fit can gain.

@@ -1,3 +1,4 @@
+mod analytic;
 mod curve_curve;
 mod curve_surface;
 mod error;
@@ -8,6 +9,10 @@ use std::ops::Index;
 
 use crate::geometry::{Curve, Curve2, Interval, Point2, Point3};
 
+pub use analytic::{
+    AnalyticSection, AnalyticSurfaceIntersection, PcurveFidelity, intersect_analytic_curve_surface,
+    intersect_analytic_curves, intersect_analytic_surfaces, line_surface_is_analytic,
+};
 pub use curve_curve::{intersect_curves, intersect_curves_with_options};
 pub use curve_surface::{
     PreparedCurve, PreparedSurface, intersect_curve_surface, intersect_curve_surface_with_options,
@@ -16,10 +21,86 @@ pub use curve_surface::{
 pub use error::IntersectionError;
 pub use options::IntersectionOptions;
 pub use surface_surface::{
-    intersect_prepared_surfaces, intersect_surfaces, intersect_surfaces_with_options,
+    analytic_intersections as analytic_surface_intersections, intersect_prepared_surfaces,
+    intersect_surfaces, intersect_surfaces_with_options,
 };
 
-pub type CurveCurveIntersections = Vec<CurveCurveIntersection>;
+/// Curve/curve observations plus an explicit coverage statement.
+///
+/// The subdivision search is bounded, so an empty result means "nothing was
+/// found within the budget", not "the curves are disjoint". A caller that must
+/// not miss an intersection reads [`Self::coverage`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct CurveCurveIntersections {
+    intersections: Vec<CurveCurveIntersection>,
+    coverage: IntersectionCoverage,
+}
+
+impl CurveCurveIntersections {
+    /// Creates a result set with its coverage status.
+    pub fn new(intersections: Vec<CurveCurveIntersection>, coverage: IntersectionCoverage) -> Self {
+        Self {
+            intersections,
+            coverage,
+        }
+    }
+
+    /// Returns the ordered intersection observations.
+    pub fn intersections(&self) -> &[CurveCurveIntersection] {
+        &self.intersections
+    }
+
+    /// Returns the candidate-space coverage status.
+    pub fn coverage(&self) -> &IntersectionCoverage {
+        &self.coverage
+    }
+
+    /// Returns the number of intersection observations.
+    pub fn len(&self) -> usize {
+        self.intersections.len()
+    }
+
+    /// Returns whether no intersection observations were found.
+    pub fn is_empty(&self) -> bool {
+        self.intersections.is_empty()
+    }
+
+    /// Returns the observations as a slice.
+    pub fn as_slice(&self) -> &[CurveCurveIntersection] {
+        &self.intersections
+    }
+
+    /// Iterates over the observations by reference.
+    pub fn iter(&self) -> std::slice::Iter<'_, CurveCurveIntersection> {
+        self.intersections.iter()
+    }
+}
+
+impl Index<usize> for CurveCurveIntersections {
+    type Output = CurveCurveIntersection;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.intersections[index]
+    }
+}
+
+impl IntoIterator for CurveCurveIntersections {
+    type Item = CurveCurveIntersection;
+    type IntoIter = std::vec::IntoIter<CurveCurveIntersection>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.intersections.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a CurveCurveIntersections {
+    type Item = &'a CurveCurveIntersection;
+    type IntoIter = std::slice::Iter<'a, CurveCurveIntersection>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.intersections.iter()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CurveCurveIntersection {

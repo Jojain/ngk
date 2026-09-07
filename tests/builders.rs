@@ -2,6 +2,8 @@
 mod boolean;
 #[path = "builders/boolean_broad_phase.rs"]
 mod boolean_broad_phase;
+#[path = "builders/boolean_budget.rs"]
+mod boolean_budget;
 #[path = "builders/boolean_classify.rs"]
 mod boolean_classify;
 #[path = "builders/boolean_clip.rs"]

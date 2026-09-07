@@ -1,6 +1,7 @@
 use super::super::IntersectionOptions;
 use super::simplification::{recognize_curve_3d, simplify_curve_2d};
 use super::tracer::TraceState;
+use crate::geometry::counters::count_branch_fit;
 use crate::geometry::nurbs::basis::basis_functions;
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, Degree, IntersectionError, IntersectionQuality,
@@ -34,6 +35,7 @@ pub(super) fn fit_branch(
     closed: bool,
     options: IntersectionOptions,
 ) -> Result<SurfaceIntersectionBranch, IntersectionError> {
+    count_branch_fit();
     canonicalize_states(&mut states, closed);
     for state in &mut states {
         let uv_a = a.closest_parameter(state.point)?;

@@ -291,7 +291,7 @@ fn revolved_face_adds_surface_of_revolution_faces() {
 
     let revolved_faces = g
         .iter_faces()
-        .filter(|(_, attr)| matches!(attr.surface, Surface::Revolution(_)))
+        .filter(|(_, attr)| is_swept_support(&attr.surface))
         .collect::<Vec<_>>();
 
     assert_eq!(revolved_faces.len(), 3);
@@ -412,7 +412,7 @@ fn revolved_annular_wedge_walls_face_away_from_the_material() {
     // it, whatever the shell's centroid happens to be.
     let mut radial_signs = Vec::new();
     for (key, attr) in g.iter_faces() {
-        if !matches!(attr.surface, Surface::Revolution(_)) {
+        if !is_swept_support(&attr.surface) {
             continue;
         }
         let face = ngk::topology::face::Face::new(&g, key);
@@ -480,7 +480,7 @@ fn revolved_face_full_turn_closes_its_seam() {
     );
     assert!(
         g.iter_faces()
-            .all(|(_, attr)| matches!(attr.surface, Surface::Revolution(_))),
+            .all(|(_, attr)| is_swept_support(&attr.surface)),
         "a full turn has no caps, so no planar source face may survive"
     );
 
@@ -530,4 +530,16 @@ fn partially_revolving_an_edge_touching_the_axis_is_rejected() {
     .expect_err("a partial turn cannot build the apex yet");
 
     assert!(matches!(error, RevolveError::ApexRevolveUnsupported { .. }));
+}
+
+/// Whether a face's support is one a revolution sweeps out.
+///
+/// A straight profile edge parallel to the axis sweeps a cylinder and one
+/// meeting the axis at an angle sweeps a cone, so the walls of a revolution
+/// are not all `Surface::Revolution`.
+fn is_swept_support(surface: &Surface) -> bool {
+    matches!(
+        surface,
+        Surface::Revolution(_) | Surface::Cylinder(_) | Surface::Cone(_)
+    )
 }

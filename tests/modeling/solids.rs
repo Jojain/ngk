@@ -1,11 +1,13 @@
 use nalgebra::Vector3;
 use ngk::geometry::{LINEAR_TOLERANCE, PointCoincidence, Surface};
-use ngk::modeling::solids::{PrimitiveError, block, block_at, cut, fuse, intersect, sphere};
+use ngk::modeling::solids::{
+    PrimitiveError, block, block_at, cut, cylinder, fuse, intersect, sphere,
+};
 use ngk::tessellate::{TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
 use ngk::topology::gmap::Dim;
 use ngk::topology::sheet::Sheet;
-use ngk::topology::validation::validate_solid_manifold;
+use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
 use ngk::viz::debug_viewer::show;
 
 #[test]
@@ -248,4 +250,51 @@ fn solid_boolean_modeling_operations_accept_owned_shapes_and_return_closed_shape
             .expect("modeling Boolean result should be manifold");
         assert_eq!(result.solid().faces().len(), expected_faces);
     }
+}
+
+#[test]
+fn a_curved_shell_encloses_positive_signed_volume() {
+    // A sphere's only face is bounded by two straight pcurves along its seam.
+    // Straight in parameter space is not straight in space, so sampling those
+    // pcurves once per edge -- which is right on a plane -- leaves the loop
+    // with too few points to span a triangle fan, and the shell measures as
+    // enclosing nothing at all.
+    let shape = sphere(2.0).expect("sphere primitive should build");
+    validate_solid_orientation(shape.map(), shape.key())
+        .expect("a sphere shell should be outward oriented");
+}
+
+#[test]
+fn primitives_carry_their_canonical_analytic_supports() {
+    // Dispatching on a surface variant only works if the builders emit the
+    // variant the geometry actually is. Extruding a circle along its own
+    // normal is a cylinder, not a ruled surface that happens to be one.
+    let cylinder = cylinder(1.0, 2.0).expect("cylinder primitive should build");
+    let mut variants = cylinder
+        .solid()
+        .faces()
+        .iter()
+        .map(|face| match face.surface() {
+            Surface::Plane(_) => "plane",
+            Surface::Cylinder(_) => "cylinder",
+            other => panic!("unexpected cylinder support {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    variants.sort_unstable();
+    assert_eq!(variants, ["cylinder", "plane", "plane"]);
+
+    let sphere = sphere(1.0).expect("sphere primitive should build");
+    assert!(matches!(
+        sphere.solid().faces()[0].surface(),
+        Surface::Sphere(_)
+    ));
+
+    let block = block(1.0, 1.0, 1.0).expect("block primitive should build");
+    assert!(
+        block
+            .solid()
+            .faces()
+            .iter()
+            .all(|face| matches!(face.surface(), Surface::Plane(_)))
+    );
 }

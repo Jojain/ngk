@@ -33,3 +33,10 @@ thiserror = "2.0.18"
 opt-level = 3
 lto = true
 codegen-units = 1
+
+[dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "booleans"
+harness = false

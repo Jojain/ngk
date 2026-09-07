@@ -1,6 +1,7 @@
 use nalgebra::{Matrix2, Matrix3, Matrix4, Vector2, Vector4};
 
 use super::super::options::IntersectionOptions;
+use crate::geometry::counters::{count_newton_iterations, count_trace_step};
 use crate::geometry::{
     IntersectionIncompleteReason, Interval, NurbsSurface, Point2, Point3, SurfaceIntersectionPoint,
     SurfaceIntersectionPointKind,
@@ -122,6 +123,7 @@ fn trace_direction(
     let mut step = options.max_trace_step;
 
     for _ in 0..options.max_trace_steps {
+        count_trace_step();
         let mut current = *states.last().expect("a trace always contains its seed");
         let mut boundary_step = distance_to_boundary(current.parameters, tangent, domains, options);
         if boundary_step <= options.parameter_tolerance {
@@ -242,6 +244,7 @@ fn correct_boundary_state(
     };
 
     for _ in 0..options.newton_max_iterations {
+        count_newton_iterations(1);
         let point_a = a.point_at(parameters.x, parameters.y);
         let point_b = b.point_at(parameters.z, parameters.w);
         let residual = point_a - point_b;
@@ -338,6 +341,7 @@ fn correct_state(
 ) -> Option<TraceState> {
     let mut parameters = predicted;
     for _ in 0..options.newton_max_iterations {
+        count_newton_iterations(1);
         let point_a = a.point_at(parameters.x, parameters.y);
         let point_b = b.point_at(parameters.z, parameters.w);
         let residual = point_a - point_b;

@@ -460,6 +460,14 @@ pub(crate) struct SpanSubdivision {
 /// Bounded guard against tolerance thrash in the noding fixed point.
 const MAX_NODING_PASSES: usize = 8;
 
+/// Narrowest piece a span may be subdivided into, as a fraction of the span.
+///
+/// A curve refuses to be trimmed to less than the linear tolerance, so cutting
+/// finer than that produces a piece that cannot be realized at all. The margin
+/// above it keeps a piece from landing on the limit after the parameters are
+/// merged.
+const MIN_SPAN_PIECE: f64 = crate::geometry::LINEAR_TOLERANCE * 10.0;
+
 /// Nodes every span interior at compatible events, repeating until no pass adds an
 /// event. A pass can split a span at a point whose incidences only became
 /// compatible once an earlier pass merged them, so one pass is not a fixed point.
@@ -499,8 +507,12 @@ fn node_spans(
         let mut parameters = vec![0.0, 1.0];
         for event in events {
             let t = span.curve.param_at(event.point);
-            if t <= parameter
-                || t >= 1.0 - parameter
+            // Against the piece resolution, not the parameter tolerance: an
+            // event landing between the two would cut off a piece too narrow
+            // for the span or its pcurves to be trimmed to, and the whole
+            // Boolean would fail on a subdivision that carries no geometry.
+            if t <= MIN_SPAN_PIECE
+                || t >= 1.0 - MIN_SPAN_PIECE
                 || !span.curve.point_at(t).coincides(event.point, linear)
             {
                 continue;
@@ -511,7 +523,7 @@ fn node_spans(
             }
         }
         parameters.sort_by(f64::total_cmp);
-        parameters.dedup_by(|a, b| (*a - *b).abs() <= parameter);
+        parameters.dedup_by(|a, b| (*a - *b).abs() <= MIN_SPAN_PIECE);
         let mut pieces = Vec::new();
         for pair in parameters.windows(2) {
             let interval = Interval::new(pair[0], pair[1]);
@@ -595,7 +607,10 @@ fn span_event_uses(uses: &[IntersectionSpanUse], t: f64) -> Vec<IntersectionEven
 /// Restores a normalized parameter domain after exact NURBS trimming.
 pub(crate) fn normalized_subcurve(curve: &Curve, interval: Interval) -> Result<Curve, NurbsError> {
     if let Curve::Bounded(bounded) = curve
-        && matches!(bounded.inner(), Curve::Line(_) | Curve::Circle(_))
+        && matches!(
+            bounded.inner(),
+            Curve::Line(_) | Curve::Circle(_) | Curve::Ellipse(_)
+        )
     {
         let bounds = bounded.bounds();
         let parameter = |t: f64| bounds.start + (bounds.end - bounds.start) * t;

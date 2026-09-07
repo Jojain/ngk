@@ -38,10 +38,15 @@ That costs the kernel in three concrete places:
 
 ### Initially excluded
 
-- An analytic surface/surface intersection pair table (plane×sphere → circle, and so
-  on). The extension point is named — `CURVE_3_RECOGNIZERS` in
-  `src/geometry/dim3/intersections/surface_surface/simplification.rs` — but stays
-  unfilled. This keeps the NURBS-first policy intact.
+- ~~An analytic surface/surface intersection pair table~~ — **done**, in
+  `src/geometry/dim3/intersections/analytic/`, and the NURBS-first policy is
+  retired with it (see `plan/boolean_analytic.md`). The table answers
+  plane×{plane,sphere,cylinder} and sphere×sphere in closed form, plus the
+  curve/surface and curve/curve pairs listed in `CLAUDE.md`. It **declines**
+  every cone surface pair, cylinder×cylinder, and circle×{cylinder,cone}, whose
+  sections are respectively unrepresentable in `Curve` (parabola, hyperbola) or
+  roots of a quartic trigonometric polynomial. Declining returns `None` and the
+  NURBS solver answers instead.
 - Offset curves and surfaces, explicit Bezier variants, `RectangularTrimmedSurface`.
 - Widening the boolean's "two validated closed solids" precondition.
 - Chamfer support for the new surfaces; it stays plane/ruled-only.

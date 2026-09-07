@@ -1,4 +1,5 @@
 pub mod axis;
+pub mod counters;
 pub mod dim2;
 pub mod dim3;
 pub mod interval;
@@ -7,6 +8,7 @@ pub mod reparam;
 pub mod tolerance;
 pub mod traits;
 
+pub use counters::SolverCounters;
 pub use dim2::curves::{Circle2, Curve2, Ellipse2, Line2};
 pub use dim2::intersections::{
     CurveCurveIntersection2, CurveCurveIntersections2, CurveIntersectionError,
@@ -18,13 +20,15 @@ pub use dim3::bbox::BBox;
 pub use dim3::curves::{Bounded, Circle, Curve, Ellipse, Line, Periodicity};
 pub use dim3::frame::Frame;
 pub use dim3::intersections::{
-    CurveCurveIntersection, CurveCurveIntersections, CurveSurfaceIntersection,
-    CurveSurfaceIntersections, IntersectionCoverage, IntersectionError,
-    IntersectionIncompleteReason, IntersectionOptions, IntersectionQuality, PreparedCurve,
-    PreparedSurface, SurfaceIntersectionBranch, SurfaceIntersectionBranchKind,
+    AnalyticSection, AnalyticSurfaceIntersection, CurveCurveIntersection, CurveCurveIntersections,
+    CurveSurfaceIntersection, CurveSurfaceIntersections, IntersectionCoverage, IntersectionError,
+    IntersectionIncompleteReason, IntersectionOptions, IntersectionQuality, PcurveFidelity,
+    PreparedCurve, PreparedSurface, SurfaceIntersectionBranch, SurfaceIntersectionBranchKind,
     SurfaceIntersectionPoint, SurfaceIntersectionPointKind, SurfaceOverlapCandidate,
-    SurfaceSurfaceIntersection, SurfaceSurfaceIntersections, intersect_prepared_curve_surface,
-    intersect_prepared_surfaces, intersect_surfaces, intersect_surfaces_with_options,
+    SurfaceSurfaceIntersection, SurfaceSurfaceIntersections, analytic_surface_intersections,
+    intersect_analytic_curve_surface, intersect_analytic_curves, intersect_analytic_surfaces,
+    intersect_prepared_curve_surface, intersect_prepared_surfaces, intersect_surfaces,
+    intersect_surfaces_with_options, line_surface_is_analytic,
 };
 pub use dim3::nurbs::tessellate::{
     sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,

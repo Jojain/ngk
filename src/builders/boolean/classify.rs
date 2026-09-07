@@ -5,9 +5,11 @@ use super::{
     BooleanError, BooleanOperand, BooleanOptions, BooleanSide, BooleanTolerances,
     neighborhood::FragmentGraph, operand::operand_cells, trim::FaceTrimDomain,
 };
+use crate::geometry::axis::Axis3;
 use crate::geometry::{
-    Curve, CurveSurfaceIntersection, IntersectionCoverage, IntersectionOptions, Point2, Point3,
-    PreparedCurve, PreparedSurface, Surface, SurfacePeriodicity, intersect_prepared_curve_surface,
+    Curve, CurveSurfaceIntersection, IntersectionCoverage, IntersectionOptions, Line, Point2,
+    Point3, PreparedCurve, PreparedSurface, Surface, SurfacePeriodicity,
+    intersect_analytic_curve_surface, intersect_prepared_curve_surface, line_surface_is_analytic,
 };
 use crate::tessellate::{TessellateOpts, tessellate_face_key};
 use crate::topology::{
@@ -25,12 +27,25 @@ pub(crate) enum RelativeLocation {
     OnBoundaryOpposite,
 }
 
+/// How a ray is counted against one face's support.
+enum RayPredicate {
+    /// A plane, met exactly once, in closed form.
+    Planar,
+    /// A support the closed-form line table answers.
+    ///
+    /// No patch is realized and no search is run, which matters because a ray
+    /// cast builds its operands per ray, per face, per fragment.
+    Analytic,
+    /// Anything else: realized over the face's trim box and searched.
+    Prepared(Box<PreparedSurface>),
+}
+
 struct RayFace {
     key: FaceKey,
     origin: Point3,
     normal: Vector3<f64>,
     trim: FaceTrimDomain,
-    curved: Option<PreparedSurface>,
+    predicate: RayPredicate,
     uv_center: Point2,
 }
 
@@ -52,13 +67,21 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
         let mut faces = Vec::new();
         for key in keys {
             let face = map.face_unchecked(key);
-            let (origin, normal, curved) = if let Surface::Plane(plane) = face.surface() {
-                (plane.origin(), *plane.normal(), None)
+            let (origin, normal, predicate) = if let Surface::Plane(plane) = face.surface() {
+                (plane.origin(), *plane.normal(), RayPredicate::Planar)
+            } else if line_surface_is_analytic(face.surface()) {
+                // A quadric needs no realized patch and no trim box: the ray
+                // meets it at the roots of a quadratic.
+                (Point3::origin(), Vector3::zeros(), RayPredicate::Analytic)
             } else {
                 let (u, v) = face_uv_bounds(&face)
                     .ok_or(BooleanError::UncertifiedClassificationSurface { face: key })?;
                 let prepared = PreparedSurface::over(face.surface(), u, v)?;
-                (Point3::origin(), Vector3::zeros(), Some(prepared))
+                (
+                    Point3::origin(),
+                    Vector3::zeros(),
+                    RayPredicate::Prepared(Box::new(prepared)),
+                )
             };
             let trim = FaceTrimDomain::new(&face, tolerances.parameter)?;
             faces.push(RayFace {
@@ -66,7 +89,7 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
                 origin,
                 normal,
                 trim,
-                curved,
+                predicate,
                 uv_center: face_uv_bounds(&face)
                     .map(|(u, v)| Point2::new((u.start + u.end) * 0.5, (v.start + v.end) * 0.5))
                     .unwrap_or(Point2::origin()),
@@ -122,9 +145,16 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
     fn ray(&self, point: Point3, direction: Vector3<f64>) -> Option<bool> {
         let mut count = 0;
         for face in &self.faces {
-            if let Some(surface) = &face.curved {
-                count += self.curved_ray(face, surface, point, direction)?;
-                continue;
+            match &face.predicate {
+                RayPredicate::Prepared(surface) => {
+                    count += self.curved_ray(face, surface, point, direction)?;
+                    continue;
+                }
+                RayPredicate::Analytic => {
+                    count += self.analytic_ray(face, point, direction)?;
+                    continue;
+                }
+                RayPredicate::Planar => {}
             }
             let distance = face.normal.dot(&(face.origin - point));
             let incidence = face.normal.dot(&direction);
@@ -162,6 +192,67 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
             count += 1;
         }
         Some(count % 2 == 1)
+    }
+
+    /// Counts a ray's forward crossings of a quadric face in closed form.
+    ///
+    /// The same rejections as the searched path: a hit near the trim boundary,
+    /// or grazing the surface, leaves the parity undecidable and the ray is
+    /// abandoned for another direction rather than counted.
+    fn analytic_ray(
+        &self,
+        face: &RayFace,
+        point: Point3,
+        direction: Vector3<f64>,
+    ) -> Option<usize> {
+        let surface = self.map.face_unchecked(face.key);
+        let surface = surface.surface();
+        let ray = Curve::Line(Line::new(Axis3::new(point, direction)));
+        let options = IntersectionOptions {
+            linear_tolerance: self.tolerances.linear,
+            parameter_tolerance: self.tolerances.parameter,
+            ..IntersectionOptions::default()
+        };
+        let hits = intersect_analytic_curve_surface(&ray, surface, options)?.ok()?;
+        if !matches!(hits.coverage(), IntersectionCoverage::Complete) {
+            return None;
+        }
+        let mut count = 0;
+        for hit in hits {
+            let CurveSurfaceIntersection::Point { point: hit, .. } = hit else {
+                // A ray lying in the surface tells the parity nothing.
+                return None;
+            };
+            // The closed-form solve answers the whole line, both ways. A hit
+            // behind the origin is not on the ray at all, so it is dropped
+            // before it can veto the direction by sitting near a trim edge.
+            if (hit - point).dot(&direction) < -self.tolerances.linear {
+                continue;
+            }
+            let uv = periodic_uv(
+                surface.closest_parameter(hit).ok()?,
+                face.uv_center,
+                surface.periodicity(),
+            );
+            if face.trim.boundary_distance(uv)
+                <= face
+                    .trim
+                    .boundary_epsilon()
+                    .max(2.0 * self.tolerances.parameter)
+            {
+                return None;
+            }
+            if !face.trim.contains(uv) {
+                continue;
+            }
+            if (hit - point).dot(&direction) <= self.tolerances.linear
+                || surface.normal_at(uv.x, uv.y).dot(&direction).abs() <= self.tolerances.angular
+            {
+                return None;
+            }
+            count += 1;
+        }
+        Some(count)
     }
 
     /// Bounds a finite ray by the positive-weight control hull and rejects incomplete searches.
@@ -224,7 +315,7 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
     /// Detects coincidence on the other solid before attempting origin-sensitive rays.
     fn boundary(&self, point: Point3, normal: Vector3<f64>) -> Option<RelativeLocation> {
         for face in &self.faces {
-            if face.curved.is_none()
+            if matches!(face.predicate, RayPredicate::Planar)
                 && face.normal.dot(&(point - face.origin)).abs() > self.tolerances.linear
             {
                 continue;
@@ -303,7 +394,54 @@ fn probe<P: Payload>(
             return Ok((view.point_at(uv.x, uv.y), uv));
         }
     }
+    // The mesh is a triangulation of the face, and one can miss a fragment the
+    // trim domain still describes perfectly well -- a thin sliver, or a piece
+    // split across a seam. The trim always knows its own interior, so it is
+    // asked directly rather than the fragment being given up on.
+    if let Some(uv) = interior_parameter(&trim, tolerances) {
+        return Ok((view.point_at(uv.x, uv.y), uv));
+    }
     Err(BooleanError::MissingFragmentProbe { face })
+}
+
+/// Searches a trim domain's own parameter box for its most interior point.
+///
+/// A coarse grid locates the clearest cell and successive refinements sharpen
+/// it. Clearance is maximized rather than merely satisfied because the point
+/// seeds a ray cast, and a ray leaving from near a boundary is the one that
+/// comes back undecidable.
+fn interior_parameter(trim: &FaceTrimDomain, tolerances: BooleanTolerances) -> Option<Point2> {
+    const GRID: usize = 24;
+    const REFINEMENTS: usize = 4;
+
+    let (mut min, mut max) = trim.chart_bounds();
+    let required = tolerances.probe_margin.max(trim.boundary_epsilon());
+    let mut best: Option<(f64, Point2)> = None;
+    for _ in 0..REFINEMENTS {
+        let step = ((max - min) / GRID as f64).map(|extent| extent.max(f64::MIN_POSITIVE));
+        let mut round: Option<(f64, Point2)> = None;
+        for row in 0..=GRID {
+            for column in 0..=GRID {
+                let candidate =
+                    min + nalgebra::Vector2::new(step.x * column as f64, step.y * row as f64);
+                if !trim.contains(candidate) {
+                    continue;
+                }
+                let clearance = trim.boundary_distance(candidate);
+                if round.is_none_or(|(best, _)| clearance > best) {
+                    round = Some((clearance, candidate));
+                }
+            }
+        }
+        let (clearance, candidate) = round?;
+        if best.is_none_or(|(best, _)| clearance > best) {
+            best = Some((clearance, candidate));
+        }
+        min = candidate - step;
+        max = candidate + step;
+    }
+    best.filter(|(clearance, _)| *clearance > required)
+        .map(|(_, point)| point)
 }
 
 /// Classifies each fragment independently, avoiding propagation across an incomplete barrier graph.

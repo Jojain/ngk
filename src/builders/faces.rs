@@ -881,8 +881,14 @@ fn merge_periodic_boundary_edge<P: Payload>(
     pcurves: &mut HashMap<Dart, Curve2>,
     period: f64,
 ) -> Result<Option<Dart>, FaceImprintSplitError> {
+    // Reported rather than asserted: the loop reaching here can be one this
+    // splitting pass has just rebuilt, and a Boolean that cannot merge a seam
+    // has to roll back with a diagnostic instead of taking the process down.
     let edges = Profile::from_dart(g, loop_dart)
-        .expect("face loop must have a registered profile")
+        .ok_or(FaceImprintSplitError::PeriodicMergeFailed {
+            face,
+            reason: "the loop to merge across the seam has no registered profile",
+        })?
         .edges();
     let Some((first, second)) = edges
         .iter()

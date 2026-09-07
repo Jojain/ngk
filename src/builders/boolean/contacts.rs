@@ -358,10 +358,27 @@ fn intersect_edge_face<P: Payload>(
             _ => None,
         })
         .collect::<Vec<_>>();
-    let contacts = {
-        let prepared_curve = geometry.edge(g, edge_key)?.clone();
-        let prepared_face = geometry.face(g, face_key, options.intersections.linear_tolerance)?;
-        intersect_prepared_curve_surface(&prepared_curve, prepared_face, options.intersections)?
+    // A trimmed edge is the only shape whose closed-form answer arrives in the
+    // parameter the overlap handling below expects; anything else keeps the
+    // searched path, which decomposes both operands to say the same thing.
+    let analytic = matches!(curve, Curve::Bounded(_))
+        .then(|| {
+            crate::geometry::intersect_analytic_curve_surface(
+                curve,
+                face.surface(),
+                options.intersections,
+            )
+        })
+        .flatten();
+    let normalized = analytic.is_some();
+    let contacts = match analytic {
+        Some(contacts) => contacts?,
+        None => {
+            let prepared_curve = geometry.edge(g, edge_key)?.clone();
+            let prepared_face =
+                geometry.face(g, face_key, options.intersections.linear_tolerance)?;
+            intersect_prepared_curve_surface(&prepared_curve, prepared_face, options.intersections)?
+        }
     };
     merge_coverage(plan, contacts.coverage());
     for contact in contacts {
@@ -415,17 +432,23 @@ fn intersect_edge_face<P: Payload>(
             CurveSurfaceIntersection::Overlap { curve_interval } => {
                 // The edge rests on the surface over this interval, but only the
                 // part the face's own trim keeps is a contact of the two cells.
-                // The solver reports the interval in the curve's own NURBS
-                // parameters; subcurves are taken over normalized ones.
-                let native = curve.to_nurbs()?.domain();
-                let extent = native.end - native.start;
-                let section = graph::normalized_subcurve(
-                    curve,
+                // The searched path reports the interval in the curve's own
+                // NURBS parameters and the closed-form path in normalized ones;
+                // subcurves are taken over normalized ones.
+                let interval = if normalized {
+                    Interval::new(
+                        curve_interval.start.clamp(0.0, 1.0),
+                        curve_interval.end.clamp(0.0, 1.0),
+                    )
+                } else {
+                    let native = curve.to_nurbs()?.domain();
+                    let extent = native.end - native.start;
                     Interval::new(
                         ((curve_interval.start - native.start) / extent).clamp(0.0, 1.0),
                         ((curve_interval.end - native.start) / extent).clamp(0.0, 1.0),
-                    ),
-                )?;
+                    )
+                };
+                let section = graph::normalized_subcurve(curve, interval)?;
                 let Some(imprint) = section_imprint(&face, &section, options)? else {
                     continue;
                 };
@@ -644,6 +667,11 @@ fn clip_imprint_to_trim(
     parameters.dedup_by(|a, b| (*a - *b).abs() <= tolerance);
     let mut pieces = Vec::new();
     for pair in parameters.windows(2) {
+        // Crossings are merged at the caller's tolerance, which is finer than
+        // a curve can be trimmed to; a window below that carries no piece.
+        if pair[1] - pair[0] <= crate::geometry::LINEAR_TOLERANCE {
+            continue;
+        }
         let midpoint = 0.5 * (pair[0] + pair[1]);
         if !matches!(
             trim.classify(imprint.pcurve.point_at(midpoint)),
@@ -1047,15 +1075,43 @@ fn intersect_general_face_pair<P: Payload>(
 ) -> Result<(), BooleanError> {
     let first = g.face_unchecked(first_key);
     let second = g.face_unchecked(second_key);
+    // The table is asked before the trim domains and the Bezier decompositions
+    // are built, because building those is itself most of the cost of a face
+    // pair -- skipping only the search would leave that cost in place.
+    let analytic = match crate::geometry::intersect_analytic_surfaces(
+        first.surface(),
+        second.surface(),
+        options.intersections,
+    ) {
+        Some(analytic) => crate::geometry::analytic_surface_intersections(
+            analytic?,
+            first.surface(),
+            second.surface(),
+            options.intersections,
+        ),
+        None => None,
+    };
+    let contacts = match analytic {
+        Some(contacts) => contacts,
+        None => {
+            let prepared_first =
+                prepare_face_surface(&first, options.intersections.linear_tolerance)?;
+            let prepared_second =
+                prepare_face_surface(&second, options.intersections.linear_tolerance)?;
+            crate::geometry::intersect_prepared_surfaces(
+                &prepared_first,
+                &prepared_second,
+                options.intersections,
+            )?
+        }
+    };
+    if contacts.is_empty() && matches!(contacts.coverage(), IntersectionCoverage::Complete) {
+        // A certified empty answer needs no trim domain at all, which is the
+        // common case for a face pair whose supports simply do not meet.
+        return Ok(());
+    }
     let first_trim = FaceTrimDomain::new(&first, options.intersections.parameter_tolerance)?;
     let second_trim = FaceTrimDomain::new(&second, options.intersections.parameter_tolerance)?;
-    let prepared_first = prepare_face_surface(&first, options.intersections.linear_tolerance)?;
-    let prepared_second = prepare_face_surface(&second, options.intersections.linear_tolerance)?;
-    let contacts = crate::geometry::intersect_prepared_surfaces(
-        &prepared_first,
-        &prepared_second,
-        options.intersections,
-    )?;
     merge_coverage(plan, contacts.coverage());
     // Points both operands already located exactly. A branch is a fit, so where
     // it runs into one of these the exact point is the node, not the crossing

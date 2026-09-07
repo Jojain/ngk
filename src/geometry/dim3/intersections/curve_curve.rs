@@ -1,13 +1,26 @@
 use nalgebra::{Matrix2, Vector2};
 
+use super::analytic::intersect_analytic_curves;
 use super::error::IntersectionError;
 use super::options::IntersectionOptions;
-use super::{CurveCurveIntersection, CurveCurveIntersections};
+use super::{
+    CurveCurveIntersection, CurveCurveIntersections, IntersectionCoverage,
+    IntersectionIncompleteReason,
+};
+use crate::geometry::counters::{
+    count_curve_curve_call, count_newton_iterations, count_subdivision_node,
+};
 use crate::geometry::{Bezier, Curve, Interval, LINEAR_TOLERANCE, Point3, PointCoincidence};
 
 const OVERLAP_SAMPLES: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
 const OVERLAP_TANGENT_DOT_TOLERANCE: f64 = 1.0e-6;
 const EARLY_REFINEMENT_DEPTH: usize = 8;
+
+/// Node visits allowed per query before the search reports itself incomplete.
+///
+/// Transverse candidates isolate within a few dozen nodes; only contacts this
+/// solver cannot resolve approach the cap.
+const SEARCH_NODE_BUDGET: usize = 4_096;
 
 #[derive(Clone)]
 struct CurvePiece {
@@ -68,6 +81,10 @@ pub fn intersect_curves_with_options(
     if !options.validate() {
         return Err(IntersectionError::InvalidOptions);
     }
+    if let Some(analytic) = intersect_analytic_curves(a, b, options) {
+        return analytic;
+    }
+    count_curve_curve_call();
 
     let spans_a = a
         .to_nurbs()?
@@ -81,75 +98,112 @@ pub fn intersect_curves_with_options(
         .into_iter()
         .map(CurvePiece::new)
         .collect::<Vec<_>>();
-    let mut intersections = Vec::new();
+    let mut search = Search {
+        options,
+        intersections: Vec::new(),
+        reasons: Vec::new(),
+        budget: SEARCH_NODE_BUDGET,
+    };
 
     for span_a in &spans_a {
         for span_b in &spans_b {
-            intersect_pieces(span_a.clone(), span_b.clone(), options, &mut intersections);
+            search.visit(span_a.clone(), span_b.clone());
         }
     }
 
-    Ok(dedup_intersections(intersections, options))
+    Ok(CurveCurveIntersections::new(
+        dedup_intersections(search.intersections, options),
+        if search.reasons.is_empty() {
+            IntersectionCoverage::Complete
+        } else {
+            IntersectionCoverage::Incomplete(search.reasons)
+        },
+    ))
 }
 
-fn intersect_pieces(
-    a: CurvePiece,
-    b: CurvePiece,
+/// One bounded subdivision search over a single curve pair.
+struct Search {
     options: IntersectionOptions,
-    intersections: &mut CurveCurveIntersections,
-) {
-    if !a
-        .bezier
-        .bbox()
-        .expanded(options.bbox_tolerance)
-        .intersects(&b.bezier.bbox(), options.bbox_tolerance)
-    {
-        return;
-    }
+    intersections: Vec<CurveCurveIntersection>,
+    reasons: Vec<IntersectionIncompleteReason>,
+    /// Remaining node visits for this query.
+    ///
+    /// Bounding each side's depth separately admits the product of both
+    /// budgets, which a pair that keeps overlapping however far it is split --
+    /// two tangent or coincident curves -- never finishes. Running out is
+    /// reported rather than passed off as an empty result.
+    budget: usize,
+}
 
-    if let Some(overlap) = line_overlap(&a.bezier, &b.bezier, options) {
-        intersections.push(overlap);
-        return;
-    }
-    if let Some(overlap) = matching_bezier_overlap(&a.bezier, &b.bezier, options) {
-        intersections.push(overlap);
-        return;
-    }
-
-    if a.depth + b.depth >= EARLY_REFINEMENT_DEPTH
-        && let Some(point) = refine_point(&a.bezier, &b.bezier, options)
-    {
-        intersections.push(point);
-        return;
-    }
-
-    let leaf_a = a.diagonal_length() <= options.leaf_diagonal_tolerance;
-    let leaf_b = b.diagonal_length() <= options.leaf_diagonal_tolerance;
-    let max_depth =
-        a.depth >= options.max_subdivision_depth && b.depth >= options.max_subdivision_depth;
-    if (leaf_a && leaf_b) || max_depth {
-        if let Some(point) = refine_point(&a.bezier, &b.bezier, options) {
-            intersections.push(point);
+impl Search {
+    fn push_reason(&mut self, reason: IntersectionIncompleteReason) {
+        if !self.reasons.contains(&reason) {
+            self.reasons.push(reason);
         }
-        return;
     }
 
-    let split_a = (!leaf_a && a.depth < options.max_subdivision_depth)
-        && (leaf_b || a.diagonal_length() >= b.diagonal_length());
-    if split_a && let Some((left, right)) = a.split() {
-        intersect_pieces(left, b.clone(), options, intersections);
-        intersect_pieces(right, b, options, intersections);
-        return;
-    }
+    fn visit(&mut self, a: CurvePiece, b: CurvePiece) {
+        let options = self.options;
+        count_subdivision_node();
+        let Some(remaining) = self.budget.checked_sub(1) else {
+            self.push_reason(IntersectionIncompleteReason::SubdivisionBudgetExhausted);
+            return;
+        };
+        self.budget = remaining;
 
-    if !leaf_b
-        && b.depth < options.max_subdivision_depth
-        && let Some((left, right)) = b.split()
-    {
-        intersect_pieces(a.clone(), left, options, intersections);
-        intersect_pieces(a, right, options, intersections);
-    } else if let Some(point) = refine_point(&a.bezier, &b.bezier, options) {
-        intersections.push(point);
+        if !a
+            .bezier
+            .bbox()
+            .expanded(options.bbox_tolerance)
+            .intersects(&b.bezier.bbox(), options.bbox_tolerance)
+        {
+            return;
+        }
+
+        if let Some(overlap) = line_overlap(&a.bezier, &b.bezier, options) {
+            self.intersections.push(overlap);
+            return;
+        }
+        if let Some(overlap) = matching_bezier_overlap(&a.bezier, &b.bezier, options) {
+            self.intersections.push(overlap);
+            return;
+        }
+
+        if a.depth + b.depth >= EARLY_REFINEMENT_DEPTH
+            && let Some(point) = refine_point(&a.bezier, &b.bezier, options)
+        {
+            self.intersections.push(point);
+            return;
+        }
+
+        let leaf_a = a.diagonal_length() <= options.leaf_diagonal_tolerance;
+        let leaf_b = b.diagonal_length() <= options.leaf_diagonal_tolerance;
+        let max_depth =
+            a.depth >= options.max_subdivision_depth && b.depth >= options.max_subdivision_depth;
+        if (leaf_a && leaf_b) || max_depth {
+            if let Some(point) = refine_point(&a.bezier, &b.bezier, options) {
+                self.intersections.push(point);
+            }
+            return;
+        }
+
+        let split_a = (!leaf_a && a.depth < options.max_subdivision_depth)
+            && (leaf_b || a.diagonal_length() >= b.diagonal_length());
+        if split_a && let Some((left, right)) = a.split() {
+            self.visit(left, b.clone());
+            self.visit(right, b);
+            return;
+        }
+
+        if !leaf_b
+            && b.depth < options.max_subdivision_depth
+            && let Some((left, right)) = b.split()
+        {
+            self.visit(a.clone(), left);
+            self.visit(a, right);
+        } else if let Some(point) = refine_point(&a.bezier, &b.bezier, options) {
+            self.intersections.push(point);
+        }
     }
 }
 
@@ -282,6 +336,7 @@ fn refine_point(
     let mut v = 0.5 * (b.domain().start + b.domain().end);
 
     for _ in 0..options.newton_max_iterations {
+        count_newton_iterations(1);
         let point_a = a.point_at(u);
         let point_b = b.point_at(v);
         let residual = point_a - point_b;
@@ -327,9 +382,9 @@ fn midpoint(a: Point3, b: Point3) -> Point3 {
 }
 
 fn dedup_intersections(
-    intersections: CurveCurveIntersections,
+    intersections: Vec<CurveCurveIntersection>,
     options: IntersectionOptions,
-) -> CurveCurveIntersections {
+) -> Vec<CurveCurveIntersection> {
     let mut deduped = Vec::new();
     let mut counts = Vec::new();
     for intersection in intersections {

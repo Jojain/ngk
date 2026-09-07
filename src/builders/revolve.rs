@@ -8,8 +8,8 @@ use crate::builders::faces::reverse_face_winding;
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{
-    ANGULAR_TOLERANCE, Circle, Curve, Curve2, Interval, LINEAR_TOLERANCE, Line2, Plane, Point2,
-    Point3, Surface, SurfaceOfRevolution,
+    ANGULAR_TOLERANCE, Circle, Cone, Curve, Curve2, Cylinder, Frame, Interval, LINEAR_TOLERANCE,
+    Line2, Plane, Point2, Point3, Surface, SurfaceOfRevolution,
 };
 use crate::topology::IsolatedDart;
 use crate::topology::attributes::{
@@ -179,6 +179,110 @@ where
         surface,
         &map_pcurve_point,
     )
+}
+
+/// The support a revolution really has, with the map onto that support's own
+/// parameters.
+///
+/// The revolve builders parameterize a face by `(profile parameter, angle)`.
+/// Where the swept surface has a closed form, that form has a parameterization
+/// of its own -- a cylinder's is `(angle, height)`, transposed and rescaled --
+/// so adopting the closed form means rewriting every pcurve corner through
+/// [`Self::map_pcurve_point`].
+struct RevolvedSupport {
+    surface: Surface,
+    map_pcurve_point: Box<dyn Fn(Point2) -> Point2>,
+}
+
+impl RevolvedSupport {
+    /// Maps one revolution-space corner into the support's parameters.
+    fn corner(&self, profile: f64, angle: f64) -> Point2 {
+        (self.map_pcurve_point)(Point2::new(profile, angle))
+    }
+
+    /// The generic support, whose parameters are the revolution's own.
+    fn generic(curve: &Curve, axis: Axis3) -> Self {
+        Self {
+            surface: Surface::Revolution(SurfaceOfRevolution::new(curve.clone(), axis)),
+            map_pcurve_point: Box::new(|point| point),
+        }
+    }
+}
+
+/// Recognizes the closed-form support a revolved profile sweeps out.
+///
+/// Only supports whose reparameterization is affine are recognized, because
+/// every pcurve these builders write is a `Line2` between two mapped corners:
+/// an affine map keeps that line the exact image of the original one, and
+/// anything else would silently replace the boundary with a chord.
+///
+/// - a straight profile parallel to the axis sweeps a cylinder;
+/// - one meeting the axis at an angle sweeps a cone;
+/// - one perpendicular to the axis sweeps a planar annulus. Its closed form is
+///   a plane, whose parameters are Cartesian while the boundary loops are
+///   circles, so no `Line2` can express them and the generic support stays.
+///
+/// Everything else, a circular profile included, keeps the generic support:
+/// [`crate::builders::solids::add_sphere`] passes its sphere explicitly
+/// because it also knows the arc's normalized parameterization, which is not
+/// recoverable here.
+fn revolved_support(curve: &Curve, axis: Axis3) -> RevolvedSupport {
+    let Some((profile_origin, profile_direction)) = linear_profile(curve) else {
+        return RevolvedSupport::generic(curve, axis);
+    };
+    let radial = profile_origin - axis.project(profile_origin);
+    let start_radius = radial.norm();
+    if start_radius <= LINEAR_TOLERANCE {
+        return RevolvedSupport::generic(curve, axis);
+    }
+    let x_dir = radial / start_radius;
+    // The profile is straight, so both its distance from the axis and its
+    // height along it are affine in the profile parameter; these are the two
+    // rates.
+    let height_rate = profile_direction.dot(&axis.direction);
+    let radius_rate = profile_direction.dot(&x_dir);
+    let start_height = (profile_origin - axis.origin).dot(&axis.direction);
+
+    if radius_rate.abs() <= LINEAR_TOLERANCE {
+        let cylinder = Cylinder::new(axis.origin, x_dir, axis.direction, start_radius);
+        return RevolvedSupport {
+            surface: Surface::Cylinder(cylinder),
+            map_pcurve_point: Box::new(move |point| {
+                Point2::new(point.y, start_height + point.x * height_rate)
+            }),
+        };
+    }
+    if height_rate.abs() <= LINEAR_TOLERANCE {
+        return RevolvedSupport::generic(curve, axis);
+    }
+
+    // A generatrix advances `radius_rate` outward and `height_rate` along the
+    // axis per unit of profile parameter, so the cone's half angle is the angle
+    // between those two and `v` is profile parameter times generatrix speed.
+    let half_angle = radius_rate.atan2(height_rate);
+    let generatrix_rate = radius_rate.hypot(height_rate);
+    let frame = Frame::from_xz(
+        axis.origin + *axis.direction * start_height,
+        x_dir,
+        axis.direction,
+    );
+    RevolvedSupport {
+        surface: Surface::Cone(Cone::new(frame, start_radius, half_angle)),
+        map_pcurve_point: Box::new(move |point| Point2::new(point.y, point.x * generatrix_rate)),
+    }
+}
+
+/// Returns a straight profile's point and direction per unit of its own parameter.
+///
+/// `None` for anything whose `point_at` is not affine in its parameter.
+fn linear_profile(curve: &Curve) -> Option<(Point3, Vector3<f64>)> {
+    match curve.base() {
+        Curve::Line(_) => {
+            let origin = curve.point_at(0.0);
+            Some((origin, curve.point_at(1.0) - origin))
+        }
+        _ => None,
+    }
 }
 
 fn add_partial_revolved_edge_face<P: Payload>(
@@ -375,7 +479,8 @@ fn add_full_revolved_open_edge_face<P: Payload>(
     let interval = source
         .curve
         .parameters_between(source.start.point, source.end.point);
-    let surface = Surface::Revolution(SurfaceOfRevolution::new(source.curve.clone(), axis));
+    let support = revolved_support(&source.curve, axis);
+    let surface = support.surface.clone();
     let start_radius = revolve_radius(axis, source.start.point);
     let end_radius = revolve_radius(axis, source.end.point);
 
@@ -438,15 +543,18 @@ fn add_full_revolved_open_edge_face<P: Payload>(
     pcurves.insert(
         outer_loop,
         Curve2::Line(Line2::new(
-            Point2::new(outer_u, 0.0),
-            Point2::new(outer_u, angle.val()),
+            support.corner(outer_u, 0.0),
+            support.corner(outer_u, angle.val()),
         )),
     );
     let inner_loops = inner_loop
         .map(|(dart, u, _)| {
             pcurves.insert(
                 dart,
-                Curve2::Line(Line2::new(Point2::new(u, angle.val()), Point2::new(u, 0.0))),
+                Curve2::Line(Line2::new(
+                    support.corner(u, angle.val()),
+                    support.corner(u, 0.0),
+                )),
             );
             vec![dart]
         })
@@ -664,23 +772,24 @@ fn add_revolved_edge_face<P: Payload>(
     let start_arc = revolve_circle_curve(axis, start, angle);
     let end_arc = revolve_circle_curve(axis, end, angle);
     let interval = curve.parameters_between(start, end);
-    let surface = Surface::Revolution(SurfaceOfRevolution::new(curve.clone(), axis));
+    let support = revolved_support(&curve, axis);
+    let surface = support.surface.clone();
     let pcurves = [
         (
-            Point2::new(interval.start, 0.0),
-            Point2::new(interval.end, 0.0),
+            support.corner(interval.start, 0.0),
+            support.corner(interval.end, 0.0),
         ),
         (
-            Point2::new(interval.end, 0.0),
-            Point2::new(interval.end, angle.val()),
+            support.corner(interval.end, 0.0),
+            support.corner(interval.end, angle.val()),
         ),
         (
-            Point2::new(interval.end, angle.val()),
-            Point2::new(interval.start, angle.val()),
+            support.corner(interval.end, angle.val()),
+            support.corner(interval.start, angle.val()),
         ),
         (
-            Point2::new(interval.start, angle.val()),
-            Point2::new(interval.start, 0.0),
+            support.corner(interval.start, angle.val()),
+            support.corner(interval.start, 0.0),
         ),
     ];
 

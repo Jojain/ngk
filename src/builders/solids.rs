@@ -12,8 +12,8 @@ use crate::{
         revolve::{RevolveError, add_full_revolved_edge_staged_with_surface},
     },
     geometry::{
-        Curve, Curve2, Frame, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3, RuledSurface, Sphere,
-        Surface,
+        Curve, Curve2, Cylinder, Frame, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3,
+        RuledSurface, Sphere, Surface,
     },
     topology::{
         Dart, SheetAttr, SolidAttr, TopologyEdit,
@@ -386,10 +386,41 @@ fn lateral_face_surface(
         Curve::Bounded(_) if is_linear_curve(curve) => {
             Ok(Surface::Plane(lateral_plane(dart, start, end, direction)?))
         }
-        Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
-            Ok(Surface::Ruled(RuledSurface::new(curve.clone(), direction)))
-        }
+        _ => match extruded_cylinder(curve, direction) {
+            // Sweeping a circle along its own normal is a cylinder, and saying
+            // so here is what lets every later stage recognize the kernel's own
+            // cylinders instead of an opaque ruled surface over a circle.
+            Some(cylinder) => Ok(Surface::Cylinder(cylinder)),
+            None => Ok(Surface::Ruled(RuledSurface::new(curve.clone(), direction))),
+        },
     }
+}
+
+/// Returns the cylinder a circular `curve` sweeps along its own axis, if it does.
+///
+/// The cylinder shares the circle's origin, reference direction and normal, so
+/// the circle's own parameter is the cylinder's `u` with no correction: the
+/// sweep is the identity in `u` and a translation in `v`.
+fn extruded_cylinder(curve: &Curve, direction: Vector3<f64>) -> Option<Cylinder> {
+    let circle = match curve {
+        Curve::Circle(circle) => circle,
+        Curve::Bounded(bounded) => match bounded.inner() {
+            Curve::Circle(circle) => circle,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let normal = circle.plane().normal();
+    let length = direction.norm();
+    if length <= LINEAR_TOLERANCE || direction.cross(&normal).norm() > LINEAR_TOLERANCE * length {
+        return None;
+    }
+    Some(Cylinder::new(
+        circle.plane().origin(),
+        circle.plane().x_dir(),
+        normal,
+        circle.radius(),
+    ))
 }
 
 fn lateral_face_uv(
@@ -415,7 +446,20 @@ fn lateral_face_uv(
                 Point2::new(interval.start, 1.0),
             ]
         }
-        _ => unreachable!("lateral_face_surface only creates plane or ruled surfaces"),
+        // The cylinder was built on the circle's own frame, so `u` is the
+        // circle's parameter unchanged; `v` is a signed height along the axis
+        // rather than the ruled surface's normalized sweep fraction.
+        Surface::Cylinder(cylinder) => {
+            let interval = curve.parameters_between(start, end);
+            let height = direction.dot(&cylinder.axis());
+            [
+                Point2::new(interval.start, 0.0),
+                Point2::new(interval.end, 0.0),
+                Point2::new(interval.end, height),
+                Point2::new(interval.start, height),
+            ]
+        }
+        _ => unreachable!("lateral_face_surface only creates plane, cylinder or ruled surfaces"),
     }
 }
 

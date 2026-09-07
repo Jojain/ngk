@@ -9,7 +9,7 @@ mod diagnostics;
 mod errors;
 mod neighborhood;
 mod select;
-pub use diagnostics::BooleanDiagnostics;
+pub use diagnostics::{BooleanDiagnostics, BooleanStageTimings};
 mod graph;
 mod imprint;
 mod operand;
@@ -38,6 +38,7 @@ pub use result::{
 };
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use crate::builders::edges::split_edge_staged;
 use crate::builders::faces::{FaceImprint, split_face_by_imprints_staged, split_face_edge_staged};
@@ -45,7 +46,8 @@ use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveCurveIntersection,
     CurveSurfaceIntersection, Degree, HPoint, HPoint2, IntersectionOptions, Interval, KnotVector,
     Line2, NurbsCurve, NurbsCurve2, NurbsError, Point2, Point3, PointCoincidence, PreparedCurve,
-    PreparedSurface, Surface, SurfaceSurfaceIntersection, intersect_prepared_curve_surface,
+    PreparedSurface, SolverCounters, Surface, SurfaceSurfaceIntersection,
+    intersect_prepared_curve_surface,
 };
 use crate::topology::TopologyEdit;
 use crate::topology::gmap::GMap;
@@ -144,12 +146,20 @@ pub fn boolean<P: Payload>(
                 },
             });
         }
-        let plan = compute_boolean_intersections(
+        let solver_before = SolverCounters::snapshot();
+        let trim_domains_before = diagnostics::trim_domains_built();
+        let mut plan = compute_boolean_intersections(
             edit,
             BooleanOperand::Solid(first),
             BooleanOperand::Solid(second),
             context.options,
         )?;
+        // Coverage, uncertified branches and unresolved overlaps all abort, so
+        // the profile has to be attached before that happens or the failing
+        // case -- the one worth profiling -- is the one that reports nothing.
+        plan.diagnostics.solver = SolverCounters::snapshot().since(solver_before);
+        plan.diagnostics.trim_domains_built =
+            diagnostics::trim_domains_built() - trim_domains_before;
         if !plan.diagnostics.coverage.is_empty()
             || plan.diagnostics.branches_uncertified > 0
             || !plan.diagnostics.unresolved_overlaps.is_empty()
@@ -159,12 +169,20 @@ pub fn boolean<P: Payload>(
             });
         }
         validate_solid_network(edit, &plan.network, context.tolerances)?;
+        let mut stage = StageClock::start();
         let mut prepared = apply_boolean_splits_staged(edit, plan, false)?;
+        prepared.diagnostics.stages.splitting = stage.lap();
         let graph = neighborhood::FragmentGraph::build(edit, &prepared);
         let (classes, rays) = classify::run(edit, &graph, context.options, context.tolerances)?;
         prepared.diagnostics.classification_rays = rays;
+        prepared.diagnostics.stages.classification = stage.lap();
         let selection = select::run(operation, &graph, &classes);
-        assemble::run(edit, &context, &graph, prepared, selection)
+        let mut result = assemble::run(edit, &context, &graph, prepared, selection)?;
+        result.diagnostics.stages.assembly = stage.lap();
+        result.diagnostics.solver = SolverCounters::snapshot().since(solver_before);
+        result.diagnostics.trim_domains_built =
+            diagnostics::trim_domains_built() - trim_domains_before;
+        Ok(result)
     })
 }
 /// A non-mutating contact plan for two operands already in one map.
@@ -178,6 +196,27 @@ pub struct BooleanIntersectionPlan {
     face_imprints: HashMap<FaceKey, Vec<imprint::SpanImprint>>,
     first_cells: OperandCells,
     second_cells: OperandCells,
+}
+
+/// A stopwatch that reports each stage's own share rather than a running total.
+struct StageClock {
+    last: Instant,
+}
+
+impl StageClock {
+    fn start() -> Self {
+        Self {
+            last: Instant::now(),
+        }
+    }
+
+    /// Returns the time since the previous lap and restarts.
+    fn lap(&mut self) -> Duration {
+        let now = Instant::now();
+        let elapsed = now - self.last;
+        self.last = now;
+        elapsed
+    }
 }
 
 /// Mutable narrow-phase observations discarded after network canonicalization.
@@ -220,17 +259,24 @@ pub fn compute_boolean_intersections<P: Payload>(
         tangent_face_imprints: HashMap::new(),
     };
 
+    let mut stage = StageClock::start();
     compute_vertex_contacts(g, &mut observations, options)?;
+    observations.diagnostics.stages.vertex_contacts = stage.lap();
     compute_edge_contacts(g, &mut observations, options)?;
+    observations.diagnostics.stages.edge_contacts = stage.lap();
     compute_edge_face_contacts(g, &mut observations, options)?;
+    observations.diagnostics.stages.edge_face_contacts = stage.lap();
     compute_face_contacts(g, &mut observations, options)?;
+    observations.diagnostics.stages.face_contacts = stage.lap();
     reroute_boundary_imprints(g, &mut observations, options);
     normalize_face_imprint_chains(g, &mut observations, options)?;
+    observations.diagnostics.stages.imprint_normalization = stage.lap();
     let observed_network = build_intersection_network(g, &observations, options)?;
     let mut face_imprints = imprint::face_imprints(&observed_network);
     let (mut network, subdivision) =
         graph::finalize_network(&observed_network, tolerances.linear, tolerances.parameter)?;
     graph::close_regions(&mut network, g)?;
+    observations.diagnostics.stages.network = stage.lap();
     for imprint in face_imprints.values_mut().flatten() {
         imprint.pieces = subdivision[imprint.span.0].clone();
         if imprint.orientation == IntersectionOrientation::Reversed {

@@ -8,11 +8,16 @@
 
 use nalgebra::{Matrix3, Vector3};
 
+use super::analytic::intersect_analytic_curve_surface;
 use super::error::IntersectionError;
 use super::options::IntersectionOptions;
 use super::{
     CurveSurfaceIntersection, CurveSurfaceIntersections, IntersectionCoverage,
     IntersectionIncompleteReason,
+};
+use crate::geometry::counters::{
+    count_curve_surface_call, count_newton_iterations, count_prepared_curve,
+    count_prepared_surface, count_subdivision_node,
 };
 use crate::geometry::{
     Bezier, BezierSurface, Curve, Interval, NurbsCurve, NurbsSurface, Point3, PointCoincidence,
@@ -49,6 +54,7 @@ pub struct PreparedCurve {
 impl PreparedCurve {
     /// Decomposes `curve` into its exact rational Bézier spans.
     pub fn new(curve: &Curve) -> Result<Self, IntersectionError> {
+        count_prepared_curve();
         let nurbs = curve.to_nurbs()?;
         let spans = nurbs.bezier_spans()?;
         Ok(Self { nurbs, spans })
@@ -96,6 +102,7 @@ impl PreparedSurface {
     }
 
     fn from_nurbs(source: Surface, nurbs: NurbsSurface) -> Result<Self, IntersectionError> {
+        count_prepared_surface();
         let patches = nurbs.bezier_spans()?;
         Ok(Self {
             source,
@@ -140,6 +147,11 @@ pub fn intersect_curve_surface_with_options(
     if !options.validate() {
         return Err(IntersectionError::InvalidOptions);
     }
+    // Asked before either operand is decomposed: for a recognized pair the
+    // decomposition is most of the cost, not the search that follows it.
+    if let Some(analytic) = intersect_analytic_curve_surface(curve, surface, options) {
+        return analytic;
+    }
     let curve = PreparedCurve::new(curve)?;
     let surface = PreparedSurface::new(surface)?;
     intersect_prepared_curve_surface(&curve, &surface, options)
@@ -154,6 +166,7 @@ pub fn intersect_prepared_curve_surface(
     if !options.validate() {
         return Err(IntersectionError::InvalidOptions);
     }
+    count_curve_surface_call();
 
     // Control hulls bound their geometry only under positive weights, and every
     // rejection below is a hull test. Without that the search cannot claim to
@@ -290,6 +303,7 @@ struct Search<'a> {
 impl Search<'_> {
     fn visit(&mut self, curve: CurvePiece, surface: SurfacePiece) {
         let options = self.options;
+        count_subdivision_node();
         let Some(remaining) = self.budget.checked_sub(1) else {
             self.push_reason(IntersectionIncompleteReason::SubdivisionBudgetExhausted);
             return;
@@ -400,6 +414,7 @@ impl Search<'_> {
         let mut surface_v = 0.5 * (surface_domain_v.start + surface_domain_v.end);
 
         for _ in 0..options.newton_max_iterations {
+            count_newton_iterations(1);
             let curve_point = self.curve.point_at(curve_u);
             let surface_point = self.surface.point_at(surface_u, surface_v);
             let residual = curve_point - surface_point;

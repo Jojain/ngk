@@ -346,7 +346,7 @@ curved certification remain pending.
 
 | Concern | BOOLE | ngk now | Required direction |
 |---|---|---|---|
-| Surface representation | Trimmed rational Bézier patches | Analytic surfaces normalized to NURBS, faces with pcurves | Stay NURBS-first; decompose into Bézier spans internally where convex-hull bounds are useful |
+| Surface representation | Trimmed rational Bézier patches | Recognized pairs answered in closed form, everything else normalized to NURBS; faces with pcurves | Analytic-first dispatch with a certified NURBS fallback; decompose into Bézier spans internally where convex-hull bounds are useful |
 | Topology | Explicit face/edge/vertex adjacency graph | GMap cells, darts, involutions, typed views | Use GMap as the B-rep authority; do not duplicate its adjacency permanently |
 | Broad phase | Control-point AABB, then convex-hull LP | Deterministic BVH over planar trim and native NURBS Bézier hulls; unbounded fallback | Conservative per-face/per-span bounds and a BVH; optional hull-separation refinement |
 | Surface intersection | Complete symbolic-numeric tracing with loop/singularity detection | Synchronized branches with explicit certification and coverage status | Adaptive NURBS subdivision, seed isolation, analytic refinement, branch tracing, loop and singularity handling |

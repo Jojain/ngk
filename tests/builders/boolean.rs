@@ -17,6 +17,7 @@ use ngk::topology::gmap::{Dim, GMap};
 use ngk::topology::profile::Loop;
 use ngk::topology::shape_keys::{FaceKey, SolidKey, VertexKey};
 use ngk::topology::validation::{validate_gmap, validate_solid_manifold};
+use ngk::viz::debug_viewer::show;
 use std::f64::consts::PI;
 
 fn isolated_vertex(point: Point3) -> (GMap<ngk::StandardPayload>, VertexKey) {
@@ -1660,4 +1661,90 @@ fn block_fused_with_cylinder_tangent_to_block_faces() {
         1,
         "result should be a single solid"
     );
+}
+
+/// Builds a size-2 block at the origin together with a sphere on one face.
+///
+/// The sphere is centred on the block's top face, so it meets one plane in a
+/// circle and leaves the block's own boundary otherwise untouched.
+fn block_with_sphere(radius: f64) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+    let (tool, tool_sphere) = solids::sphere_at(
+        Frame::from_xy(Point3::new(1.0, 1.0, 2.0), Vector3::x(), Vector3::y()),
+        radius,
+    )
+    .expect("sphere")
+    .into_map();
+    let (mut map, block) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
+        .expect("block")
+        .into_map();
+    let sphere = map
+        .transaction(|edit| {
+            let dart = edit.merge(tool.solid_unchecked(tool_sphere));
+            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+        })
+        .unwrap();
+    (map, block, sphere)
+}
+
+#[test]
+fn boolean_union_of_a_block_and_a_sphere_closes_a_single_solid() {
+    // A sphere's only face is closed by a self-sewn seam and bounded by two
+    // degenerate poles, so its trim domain is the first one that is neither a
+    // simple polygon nor even closed in parameter space.
+    let (mut map, block, sphere) = block_with_sphere(0.8);
+
+    let result = boolean(
+        &mut map,
+        block,
+        sphere,
+        BooleanOperation::Union,
+        BooleanOptions::default(),
+    )
+    .expect("a block united with a sphere should be one solid");
+
+    assert_eq!(map.iter_solids().count(), 1);
+    validate_solid_manifold(&map, result.solid).expect("the union should be manifold");
+    assert_eq!(
+        result.diagnostics.solver.surface_surface_calls, 0,
+        "every plane/sphere pair should be answered in closed form"
+    );
+    assert!(result.diagnostics.solver.surface_surface_analytic_calls > 0);
+
+    for (point, expected) in [
+        (Point3::new(1.0, 1.0, 1.0), true),
+        (Point3::new(1.0, 1.0, 2.5), true),
+        (Point3::new(1.0, 1.0, 3.0), false),
+    ] {
+        assert_eq!(
+            solid_contains_point(&map, result.solid, point, BooleanOptions::default()).unwrap(),
+            expected,
+            "{point:?}"
+        );
+    }
+}
+
+#[test]
+fn boolean_difference_of_a_block_and_a_sphere_dishes_its_top_face() {
+    let (mut map, block, sphere) = block_with_sphere(0.8);
+    let result = boolean(
+        &mut map,
+        block,
+        sphere,
+        BooleanOperation::Difference,
+        BooleanOptions::default(),
+    )
+    .expect("a block cut by a sphere should be one solid");
+    assert_eq!(map.iter_solids().count(), 1);
+    validate_solid_manifold(&map, result.solid).expect("the difference should be manifold");
+    for (point, expected) in [
+        (Point3::new(1.0, 1.0, 0.5), true),
+        (Point3::new(1.0, 1.0, 1.9), false),
+        (Point3::new(0.1, 0.1, 1.9), true),
+    ] {
+        assert_eq!(
+            solid_contains_point(&map, result.solid, point, BooleanOptions::default()).unwrap(),
+            expected,
+            "{point:?}"
+        );
+    }
 }
