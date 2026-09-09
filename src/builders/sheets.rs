@@ -167,7 +167,7 @@ fn extruded_edge_surface(
             })
         }
         Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
-            let interval = curve.parameters_between(start, end);
+            let interval = curve.interval_between(start, end);
             let translated_curve = curve
                 .translated(direction)
                 .map_err(|source| ExtrudeError::CurveTranslationFailed { dart, source })?;

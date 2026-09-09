@@ -42,7 +42,7 @@ fn assert_sections_are_consistent(
             let t = index as f64 / 32.0;
             let point = section.curve.point_at(t);
             for surface in [a, b] {
-                let uv = surface.closest_parameter(point).expect("closest parameter");
+                let uv = surface.param_at(point).expect("closest parameter");
                 let distance = (surface.point_at(uv.x, uv.y) - point).norm();
                 assert!(
                     distance <= LINEAR_TOLERANCE * 10.0,

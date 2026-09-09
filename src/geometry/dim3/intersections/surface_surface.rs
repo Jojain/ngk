@@ -83,8 +83,8 @@ pub fn analytic_intersections(
             SurfaceSurfaceIntersections::new(Vec::new(), IntersectionCoverage::Complete)
         }
         AnalyticSurfaceIntersection::TangentPoint(point) => {
-            let uv_a = a.closest_parameter(point).unwrap_or(Point2::origin());
-            let uv_b = b.closest_parameter(point).unwrap_or(Point2::origin());
+            let uv_a = a.param_at(point).unwrap_or(Point2::origin());
+            let uv_b = b.param_at(point).unwrap_or(Point2::origin());
             SurfaceSurfaceIntersections::new(
                 vec![SurfaceSurfaceIntersection::Point(
                     SurfaceIntersectionPoint {

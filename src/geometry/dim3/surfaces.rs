@@ -157,7 +157,8 @@ impl Surface {
         }
     }
 
-    pub fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError> {
+    /// Returns the `(u, v)` parameters of the closest point on the surface to `point`.
+    pub fn param_at(&self, point: Point3) -> Result<Point2, NurbsError> {
         match self {
             Surface::Plane(surface) => surface.closest_parameter(point),
             Surface::Cylinder(surface) => SurfaceGeometry::closest_parameter(surface, point),
@@ -169,6 +170,7 @@ impl Surface {
         }
     }
 
+    /// Returns the outward normal at `(u, v)`.
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         match self {
             Surface::Plane(surface) => SurfaceGeometry::normal_at(surface, u, v),
@@ -253,7 +255,7 @@ impl SurfaceGeometry for Surface {
     }
 
     fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError> {
-        Surface::closest_parameter(self, point)
+        Surface::param_at(self, point)
     }
 
     fn to_nurbs(&self) -> Result<NurbsSurface, NurbsError> {

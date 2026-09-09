@@ -1368,7 +1368,7 @@ fn face_uv_extent(
     let mut max = Point2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
     for vertex in face.vertices() {
         let point = *vertex.point().expect("face geometry");
-        let uv = surface.closest_parameter(point).expect("planar parameter");
+        let uv = surface.param_at(point).expect("planar parameter");
         min = Point2::new(min.x.min(uv.x), min.y.min(uv.y));
         max = Point2::new(max.x.max(uv.x), max.y.max(uv.y));
     }
@@ -1746,5 +1746,93 @@ fn boolean_difference_of_a_block_and_a_sphere_dishes_its_top_face() {
             expected,
             "{point:?}"
         );
+    }
+}
+
+/// Every event use names a cell of the operand its side claims.
+///
+/// Contact computation asks a symmetric question -- whether two cells meet, and
+/// where -- so the two halves of a pair have to be put back into operand order
+/// when the contact is recorded. A pair whose halves come from opposite
+/// operands is the one that can get this wrong, and only when the geometric
+/// roles run opposite to the operand roles: the tool's edge against the
+/// target's face, say.
+///
+/// This is invisible in a face or fragment count, which is why it is asserted
+/// here on the network rather than on the finished solid: the result stays
+/// well-formed while every side label on it is a lie.
+#[test]
+fn every_event_use_names_a_cell_of_the_side_it_claims() {
+    fn assert_sides_are_honest(
+        name: &str,
+        build: fn() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey),
+        swapped: bool,
+    ) {
+        let (map, first, second) = build();
+        let (first, second) = if swapped {
+            (second, first)
+        } else {
+            (first, second)
+        };
+        let plan = compute_boolean_intersections(
+            &map,
+            BooleanOperand::Solid(first),
+            BooleanOperand::Solid(second),
+            BooleanOptions::default(),
+        )
+        .expect("contacts");
+
+        let owns = |solid: SolidKey, cell: BooleanCell| {
+            let solid = map.solid_unchecked(solid);
+            match cell {
+                BooleanCell::Vertex(key) => {
+                    solid.vertices().iter().any(|vertex| vertex.key() == key)
+                }
+                BooleanCell::Edge(key) => solid.edges().iter().any(|edge| edge.key() == key),
+                BooleanCell::Face(key) => solid.faces().iter().any(|face| face.key() == key),
+            }
+        };
+
+        let mut checked = 0;
+        for event in plan.network.events() {
+            for event_use in &event.uses {
+                let owner = match event_use.side {
+                    BooleanSide::First => first,
+                    BooleanSide::Second => second,
+                };
+                assert!(
+                    owns(owner, event_use.cell),
+                    "{name} (swapped={swapped}): an event at {:?} labels {:?} as {:?}, \
+                     but that cell belongs to the other operand",
+                    event.point,
+                    event_use.cell,
+                    event_use.side,
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked > 0,
+            "{name} (swapped={swapped}): no event uses to check, the case proves nothing"
+        );
+    }
+
+    // Blocks meet face-to-face; the cylinder case additionally puts a curved
+    // face against planar ones, so its events come from mixed-role pairs.
+    let cases: [(
+        &str,
+        fn() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey),
+    ); 2] = [
+        ("overlapping blocks", || {
+            two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 1.0), 2.0)
+        }),
+        ("block and through cylinder", || {
+            block_with_cylinder(0.5, -1.0, 4.0)
+        }),
+    ];
+    for (name, build) in cases {
+        for swapped in [false, true] {
+            assert_sides_are_honest(name, build, swapped);
+        }
     }
 }

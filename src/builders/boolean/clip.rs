@@ -153,7 +153,7 @@ fn branch_nodes(
         // error the exact point settles independently of the 3D curve's.
         let correction = [(first, pcurves[0]), (second, pcurves[1])].map(|(surface, pcurve)| {
             let fitted_uv = pcurve.point_at(parameter);
-            let Ok(exact_uv) = surface.closest_parameter(anchor) else {
+            let Ok(exact_uv) = surface.param_at(anchor) else {
                 return Vector2::zeros();
             };
             nearest_periodic_image(surface, exact_uv, fitted_uv) - fitted_uv

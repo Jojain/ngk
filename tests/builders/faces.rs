@@ -705,7 +705,7 @@ fn edge_mid_parameter(g: &GMap<StandardPayload>, edge: EdgeKey) -> f64 {
     let start = g.attribute_unchecked::<Cell0>(attr.dart).point;
     let end_dart = g.alpha(Dim::Zero, attr.dart);
     let end = g.attribute_unchecked::<Cell0>(end_dart).point;
-    let interval = attr.curve.parameters_between(start, end);
+    let interval = attr.curve.interval_between(start, end);
     0.5 * (interval.start + interval.end)
 }
 

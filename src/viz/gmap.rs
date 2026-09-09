@@ -73,7 +73,7 @@ fn build_dart<P: Payload>(
     let v1 = g.attribute::<Cell0>(other).map(|v| v.point)?;
 
     let curve = &edge_attr.curve;
-    let interval = curve.parameters_between(v0, v1);
+    let interval = curve.interval_between(v0, v1);
     let (t0, t1) = if v0.coincides(v1, LINEAR_TOLERANCE) {
         // A closed edge starts and ends at the same vertex: the two darts split
         // the period, so the non-reference one walks it backwards.

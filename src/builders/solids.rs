@@ -438,7 +438,7 @@ fn lateral_face_uv(
             plane_uv(plane, start + direction),
         ],
         Surface::Ruled(_) => {
-            let interval = curve.parameters_between(start, end);
+            let interval = curve.interval_between(start, end);
             [
                 Point2::new(interval.start, 0.0),
                 Point2::new(interval.end, 0.0),
@@ -450,7 +450,7 @@ fn lateral_face_uv(
         // circle's parameter unchanged; `v` is a signed height along the axis
         // rather than the ruled surface's normalized sweep fraction.
         Surface::Cylinder(cylinder) => {
-            let interval = curve.parameters_between(start, end);
+            let interval = curve.interval_between(start, end);
             let height = direction.dot(&cylinder.axis());
             [
                 Point2::new(interval.start, 0.0),

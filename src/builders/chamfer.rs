@@ -426,10 +426,10 @@ fn chamfer_curve_imprint<P: Payload>(
             .map_err(|_| ChamferError::UnsupportedSolidChamferGeometry { edge })?,
         Surface::Ruled(_) => {
             let start = surface
-                .closest_parameter(points[0])
+                .param_at(points[0])
                 .map_err(|_| ChamferError::UnsupportedSolidChamferGeometry { edge })?;
             let end = surface
-                .closest_parameter(points[1])
+                .param_at(points[1])
                 .map_err(|_| ChamferError::UnsupportedSolidChamferGeometry { edge })?;
             let pcurve = Curve2::Line(Line2::new(start, end));
             for parameter in [0.0, 0.25, 0.5, 0.75, 1.0] {
@@ -1193,7 +1193,7 @@ fn add_curved_chamfer_face<P: Payload>(
 
     let interval = geometry
         .base_curve
-        .parameters_between(corners[0], corners[1]);
+        .interval_between(corners[0], corners[1]);
     // The ruled surface uses the base-curve parameter as `u` and translation
     // fraction as `v`, so its four pcurves form a unit-height parameter strip.
     let uv = [

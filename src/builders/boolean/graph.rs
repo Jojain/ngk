@@ -713,10 +713,10 @@ fn cycle_signed_area<P: Payload>(
         };
         let start = view
             .surface()
-            .closest_parameter(network.events[start.0].point)?;
+            .param_at(network.events[start.0].point)?;
         let end = view
             .surface()
-            .closest_parameter(network.events[end.0].point)?;
+            .param_at(network.events[end.0].point)?;
         area += start.x * end.y - end.x * start.y;
     }
     Ok(area)
@@ -785,8 +785,8 @@ fn region_normals_agree<P: Payload>(
     let centroid = Point3::from(centroid / cycle.len() as f64);
     let first = map.face_unchecked(first_face);
     let second = map.face_unchecked(second_face);
-    let first_uv = first.surface().closest_parameter(centroid)?;
-    let second_uv = second.surface().closest_parameter(centroid)?;
+    let first_uv = first.surface().param_at(centroid)?;
+    let second_uv = second.surface().param_at(centroid)?;
     let first_normal = *first.normal_at(first_uv.x, first_uv.y);
     let second_normal = *second.normal_at(second_uv.x, second_uv.y);
     Ok(first_normal.dot(&second_normal) > 0.0)

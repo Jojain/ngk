@@ -112,11 +112,26 @@ attribute create/remove/split/merge declarations).
 - ✅ Tessellation + viz + debug viewer; wasm & Python bindings; script registry.
 - 🚧 **Booleans — active rewrite.** The old implementation was deleted
   ("start with a fresh implementation") and redesigned on branch `boolean`.
-  `src/builders/boolean/` now = broad_phase, contacts, graph (`IntersectionNetwork`
-  of events/spans/regions), imprint, operand, result (`BooleanPreparation`,
-  `BooleanLineage`, `BooleanSide`). Currently it computes **contacts + two-sided
-  B-Rep splitting**; region classification/assembly is the next step.
+  `src/builders/boolean/` now = broad_phase, pair, contacts, graph
+  (`IntersectionNetwork` of events/spans/regions), imprint, operand, result
+  (`BooleanPreparation`, `BooleanLineage`, `BooleanSide`). Currently it computes
+  **contacts + two-sided B-Rep splitting**; region classification/assembly is the
+  next step.
   Design refs: `docs/boole_paper_ngk_integration.md`, `docs/boolean_algorithm_guide_fr.md`.
+
+  **Narrow phase contract** (`pair.rs` + `contacts.rs`): a contact is a symmetric
+  relation, so the probes are pure functions of two cells' geometry and never
+  learn which operand a cell came from. `enumerate_pairs` emits one stream of
+  `PairKind`s in which **the first key always comes from the first operand** —
+  `VertexEdge`/`EdgeVertex` are the mirrored pair, answered by one probe via an
+  or-pattern, so nine variants still dispatch to six probes. Probes address
+  cells by geometric role (`ContactCell::Edge`, `::Face`), positionally only on
+  `EdgeEdge`/`FaceFace`; `pair::record` is the **only** place operand order is
+  applied, and it reads field order, not a flag.
+  `compute_contacts` runs in two phases —
+  find every point with no pair seeing another's result, then clip the deferred
+  sections against the complete point set — so the answer does not depend on the
+  order pairs were probed in. Don't reintroduce a side flag below `record`.
 - 🚧 **Shape healing** — `src/builders/removal.rs` (`i`-removal, Defs. 58–59 of the
   GMap book) plus `src/healing/` (two passes: fuse cosurfacial faces, then fuse
   cocurvilinear edges). Removing an edge the same face bounds twice rejoins that

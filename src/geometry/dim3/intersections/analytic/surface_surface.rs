@@ -450,7 +450,7 @@ impl SectionTrace {
             .collect::<Vec<_>>();
         let mut uv = Vec::with_capacity(parameters.len());
         for &parameter in &parameters {
-            uv.push(surface.closest_parameter(curve.point_at(parameter))?);
+            uv.push(surface.param_at(curve.point_at(parameter))?);
         }
         unwrap_periodic(&mut uv, period);
         let mut trace = Self {
@@ -579,7 +579,7 @@ impl SectionTrace {
     fn uv_at(&self, parameter: f64) -> Result<Point2, IntersectionError> {
         let raw = self
             .surface
-            .closest_parameter(self.curve.point_at(parameter))?;
+            .param_at(self.curve.point_at(parameter))?;
         let Some(period) = self.period else {
             return Ok(raw);
         };

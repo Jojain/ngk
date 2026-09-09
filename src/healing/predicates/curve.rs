@@ -26,7 +26,7 @@ pub const SUPPORT_SAMPLES: usize = 12;
 /// The span follows the curve's own parameterization, so the samples run from
 /// `start` to `end` whichever way the curve is stored.
 pub fn sample_between(curve: &Curve, start: Point3, end: Point3, segments: usize) -> Vec<Point3> {
-    let span = curve.parameters_between(start, end);
+    let span = curve.interval_between(start, end);
     let segments = segments.max(1);
     (0..=segments)
         .map(|index| {

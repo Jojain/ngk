@@ -129,7 +129,7 @@ impl Restriction {
                 continue;
             };
             let point = curve.point_at(reported);
-            let Ok(uv) = surface.closest_parameter(point) else {
+            let Ok(uv) = surface.param_at(point) else {
                 continue;
             };
             intersections.push(CurveSurfaceIntersection::Point {

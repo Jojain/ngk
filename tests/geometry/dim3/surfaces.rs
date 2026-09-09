@@ -112,7 +112,7 @@ fn plane_surface_converts_to_matching_nurbs_patch() {
 fn plane_closest_parameter_returns_frame_coordinates() {
     let plane = Plane::from_xy(Point3::new(1.0, 2.0, 3.0), Vector3::x(), Vector3::z());
     let uv = Surface::Plane(plane)
-        .closest_parameter(Point3::new(4.0, 2.0, 8.0))
+        .param_at(Point3::new(4.0, 2.0, 8.0))
         .expect("plane projection should not need NURBS conversion");
 
     assert!((uv.x - 3.0).abs() <= LINEAR_TOLERANCE);

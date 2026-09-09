@@ -38,8 +38,8 @@ pub(super) fn fit_branch(
     count_branch_fit();
     canonicalize_states(&mut states, closed);
     for state in &mut states {
-        let uv_a = a.closest_parameter(state.point)?;
-        let uv_b = b.closest_parameter(state.point)?;
+        let uv_a = a.param_at(state.point)?;
+        let uv_b = b.param_at(state.point)?;
         state.parameters.x = uv_a.x;
         state.parameters.y = uv_a.y;
         state.parameters.z = uv_b.x;

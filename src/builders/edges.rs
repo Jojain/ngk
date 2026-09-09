@@ -376,7 +376,7 @@ fn split_curve_at_parameter<P: Payload>(
         .attribute::<Cell0>(second_dart)
         .map(|vertex| vertex.point)
         .ok_or(EdgeSplitError::MissingEndpointGeometry { edge })?;
-    let interval = curve.parameters_between(start, end);
+    let interval = curve.interval_between(start, end);
     let fraction = (parameter - interval.start) / (interval.end - interval.start);
     let trim = |interval| {
         curve
@@ -421,7 +421,7 @@ fn check_split_parameter<P: Payload>(
         .attribute::<Cell0>(second_dart)
         .map(|vertex| vertex.point)
         .ok_or(EdgeSplitError::MissingEndpointGeometry { edge })?;
-    let domain = curve.parameters_between(start, end).ordered();
+    let domain = curve.interval_between(start, end).ordered();
 
     if !domain.contains(parameter, LINEAR_TOLERANCE) {
         return Err(EdgeSplitError::ParameterOutOfRange { parameter, domain });

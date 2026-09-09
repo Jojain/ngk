@@ -245,7 +245,7 @@ fn edge_planarity_points<P: Payload>(
     let mut points = edge_points(edge)?;
     if let Some(curve) = edge.curve() {
         let interval = match (edge.start().point(), edge.end().point()) {
-            (Some(start), Some(end)) => curve.parameters_between(*start, *end),
+            (Some(start), Some(end)) => curve.interval_between(*start, *end),
             _ => return Ok(points),
         };
         points.extend(
@@ -298,7 +298,7 @@ fn check_edge_curve<P: Payload>(
     };
 
     let interval = match (edge.start().point(), edge.end().point()) {
-        (Some(start), Some(end)) => curve.parameters_between(*start, *end),
+        (Some(start), Some(end)) => curve.interval_between(*start, *end),
         _ => return Ok(()),
     };
 

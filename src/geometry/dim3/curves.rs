@@ -116,6 +116,7 @@ impl Curve {
         }
     }
 
+    // / Returns the parameter of the point on the curve nearest `point`.
     pub fn param_at(&self, point: Point3) -> f64 {
         match self {
             Curve::Line(l) => l.param_at(point),
@@ -126,7 +127,7 @@ impl Curve {
         }
     }
 
-    pub fn parameters_between(&self, start: Point3, end: Point3) -> Interval {
+    pub fn interval_between(&self, start: Point3, end: Point3) -> Interval {
         match self {
             Curve::Bounded(_) => Interval::new(self.param_at(start), self.param_at(end)),
             Curve::Line(_) | Curve::Circle(_) | Curve::Ellipse(_) => {
@@ -588,7 +589,7 @@ mod tests {
             1.0,
         ));
 
-        let interval = curve.parameters_between(start, start);
+        let interval = curve.interval_between(start, start);
 
         assert!((interval.start - 0.0).abs() <= ANGULAR_TOLERANCE);
         assert!((interval.end - TAU).abs() <= ANGULAR_TOLERANCE);

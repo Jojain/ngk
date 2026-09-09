@@ -161,7 +161,7 @@ fn side_arc_midpoint(
     let curve = arc.curve().expect("side arc should have geometry");
     let start = *arc.start().point().expect("arc start should have geometry");
     let end = *arc.end().point().expect("arc end should have geometry");
-    let interval = curve.parameters_between(start, end);
+    let interval = curve.interval_between(start, end);
     curve.point_at(0.5 * (interval.start + interval.end))
 }
 

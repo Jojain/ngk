@@ -173,7 +173,7 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
                 .map
                 .face_unchecked(face.key)
                 .surface()
-                .closest_parameter(hit)
+                .param_at(hit)
                 .ok()?;
             if face.trim.boundary_distance(uv)
                 <= face
@@ -230,7 +230,7 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
                 continue;
             }
             let uv = periodic_uv(
-                surface.closest_parameter(hit).ok()?,
+                surface.param_at(hit).ok()?,
                 face.uv_center,
                 surface.periodicity(),
             );
@@ -286,7 +286,7 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
                 return None;
             };
             let uv = periodic_uv(
-                surface.source().closest_parameter(hit).ok()?,
+                surface.source().param_at(hit).ok()?,
                 face.uv_center,
                 surface.source().periodicity(),
             );
@@ -321,7 +321,7 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
                 continue;
             }
             let view = self.map.face_unchecked(face.key);
-            let Ok(uv) = view.surface().closest_parameter(point) else {
+            let Ok(uv) = view.surface().param_at(point) else {
                 continue;
             };
             let uv = periodic_uv(uv, face.uv_center, view.surface().periodicity());
@@ -384,7 +384,7 @@ fn probe<P: Payload>(
     triangles.sort_by(|a, b| b.0.total_cmp(&a.0));
     for (_, point) in triangles {
         let uv = periodic_uv(
-            view.surface().closest_parameter(point)?,
+            view.surface().param_at(point)?,
             trim.chart_center(),
             view.surface().periodicity(),
         );

@@ -151,7 +151,7 @@ fn arc_spanning_more_than_half_a_turn_reports_its_own_span() {
 
     let start = arc.point_at(0.0);
     let end = arc.point_at(1.0);
-    let interval = arc.parameters_between(start, end);
+    let interval = arc.interval_between(start, end);
 
     // The end sits at -90 degrees on the circle's own atan2 branch. Reading it
     // back there would describe the complementary quarter instead of this arc.

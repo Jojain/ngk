@@ -91,7 +91,11 @@ pub struct BooleanDiagnostics {
     pub spans: usize,
     pub events: usize,
     pub regions: usize,
-    /// Trim domains built, including the ones rebuilt for a face already seen.
+    /// Trim domains built.
+    ///
+    /// Contact computation builds one per face and reuses it, so a count above
+    /// the number of participating faces means a domain was built outside that
+    /// cache -- during splitting or classification, which hold no cache.
     pub trim_domains_built: u64,
     /// Solver work this Boolean is responsible for.
     pub solver: SolverCounters,

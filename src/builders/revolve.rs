@@ -298,7 +298,7 @@ fn add_partial_revolved_edge_face<P: Payload>(
     let rotated_start = rotate_point(axis, start, angle);
     let rotated_end = rotate_point(axis, end, angle);
     let rotated_curve = rotate_curve(source.dart, &source.curve, axis, angle)?;
-    let interval = source.curve.parameters_between(start, end);
+    let interval = source.curve.interval_between(start, end);
     let surface = Surface::Revolution(SurfaceOfRevolution::new(source.curve.clone(), axis));
 
     let bottom_start = source.dart;
@@ -420,7 +420,7 @@ fn add_full_revolved_apex_to_apex_face<P: Payload>(
     validate_consumable_source_edge(g, source)?;
     let interval = source
         .curve
-        .parameters_between(source.start.point, source.end.point);
+        .interval_between(source.start.point, source.end.point);
     let middle = source.curve.point_at(0.5 * (interval.start + interval.end));
     if revolve_radius(axis, middle) <= LINEAR_TOLERANCE {
         return Err(RevolveError::EdgeOnRevolutionAxis { key: source.key });
@@ -478,7 +478,7 @@ fn add_full_revolved_open_edge_face<P: Payload>(
 ) -> Result<FaceKey, RevolveError> {
     let interval = source
         .curve
-        .parameters_between(source.start.point, source.end.point);
+        .interval_between(source.start.point, source.end.point);
     let support = revolved_support(&source.curve, axis);
     let surface = support.surface.clone();
     let start_radius = revolve_radius(axis, source.start.point);
@@ -771,7 +771,7 @@ fn add_revolved_edge_face<P: Payload>(
     let rotated_curve = rotate_curve(source.dart, &curve, axis, angle)?;
     let start_arc = revolve_circle_curve(axis, start, angle);
     let end_arc = revolve_circle_curve(axis, end, angle);
-    let interval = curve.parameters_between(start, end);
+    let interval = curve.interval_between(start, end);
     let support = revolved_support(&curve, axis);
     let surface = support.surface.clone();
     let pcurves = [

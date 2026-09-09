@@ -1519,7 +1519,7 @@ fn split_boundary_at_uv<P: Payload>(
     let mut parameter = curve.param_at(surface.point_at(uv.x, uv.y));
     if let Periodicity::Periodic(period) = curve.periodicity() {
         let domain = curve
-            .parameters_between(vertex_point(edge.start())?, vertex_point(edge.end())?)
+            .interval_between(vertex_point(edge.start())?, vertex_point(edge.end())?)
             .ordered();
         while parameter < domain.start - LINEAR_TOLERANCE {
             parameter += period;
@@ -2299,7 +2299,7 @@ fn incident_face_pcurves<P: Payload>(
             let uv = periodic_image_near_pcurve(
                 surface,
                 &pcurve,
-                surface.closest_parameter(split_point)?,
+                surface.param_at(split_point)?,
             );
             let fraction = pcurve
                 .parameter_at(uv, LINEAR_TOLERANCE)

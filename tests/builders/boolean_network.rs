@@ -119,8 +119,8 @@ fn coplanar_overlap_regions_are_bounded_by_a_closed_counterclockwise_cycle() {
             );
             let start = plan.network.event(current.0).expect("event").point;
             let end = plan.network.event(current.1).expect("event").point;
-            let start_uv = surface.closest_parameter(start).expect("planar parameter");
-            let end_uv = surface.closest_parameter(end).expect("planar parameter");
+            let start_uv = surface.param_at(start).expect("planar parameter");
+            let end_uv = surface.param_at(end).expect("planar parameter");
             area += start_uv.x * end_uv.y - end_uv.x * start_uv.y;
         }
         assert!(

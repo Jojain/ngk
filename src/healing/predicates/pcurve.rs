@@ -28,7 +28,7 @@ pub fn boundary_pcurve(
     let samples = sample_between(curve, start, end, SUPPORT_SAMPLES);
     let parameters = samples
         .iter()
-        .map(|&point| surface.closest_parameter(point).ok())
+        .map(|&point| surface.param_at(point).ok())
         .collect::<Option<Vec<_>>>()?;
     let last = parameters.len() - 1;
 

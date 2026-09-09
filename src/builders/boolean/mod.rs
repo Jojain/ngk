@@ -13,16 +13,14 @@ pub use diagnostics::{BooleanDiagnostics, BooleanStageTimings};
 mod graph;
 mod imprint;
 mod operand;
+mod pair;
 mod result;
 mod tolerance;
 mod trim;
 pub use tolerance::{BooleanTolerancePolicy, BooleanTolerances};
 
 pub use classify::solid_contains_point;
-use contacts::{
-    compute_edge_contacts, compute_edge_face_contacts, compute_face_contacts,
-    compute_vertex_contacts, normalize_face_imprint_chains, reroute_boundary_imprints,
-};
+use contacts::{compute_contacts, normalize_face_imprint_chains, reroute_boundary_imprints};
 pub use errors::BooleanError;
 pub use graph::{
     IntersectionEvent, IntersectionEventId, IntersectionEventLocation, IntersectionEventUse,
@@ -260,14 +258,10 @@ pub fn compute_boolean_intersections<P: Payload>(
     };
 
     let mut stage = StageClock::start();
-    compute_vertex_contacts(g, &mut observations, options)?;
-    observations.diagnostics.stages.vertex_contacts = stage.lap();
-    compute_edge_contacts(g, &mut observations, options)?;
-    observations.diagnostics.stages.edge_contacts = stage.lap();
-    compute_edge_face_contacts(g, &mut observations, options)?;
-    observations.diagnostics.stages.edge_face_contacts = stage.lap();
-    compute_face_contacts(g, &mut observations, options)?;
-    observations.diagnostics.stages.face_contacts = stage.lap();
+    // Fills the four per-kind contact timings itself, since it walks one
+    // stream of pairs rather than one pass per kind.
+    compute_contacts(g, &mut observations, options)?;
+    stage.lap();
     reroute_boundary_imprints(g, &mut observations, options);
     normalize_face_imprint_chains(g, &mut observations, options)?;
     observations.diagnostics.stages.imprint_normalization = stage.lap();
@@ -437,7 +431,7 @@ fn event_use_for_cell<P: Payload>(
             let uv = g
                 .face_unchecked(face)
                 .surface()
-                .closest_parameter(point)
+                .param_at(point)
                 .expect("recorded face contact must project onto its face");
             face_use(side, face, uv)
         }
@@ -642,7 +636,7 @@ fn split_edge_at_points<P: Payload>(
     let source_domain = {
         let view = g.edge_unchecked(source);
         source_curve
-            .parameters_between(
+            .interval_between(
                 *view.start().point().expect("edge start geometry"),
                 *view.end().point().expect("edge end geometry"),
             )
@@ -664,7 +658,7 @@ fn split_edge_at_points<P: Payload>(
             };
             let start = *view.start().point().expect("edge start geometry");
             let end = *view.end().point().expect("edge end geometry");
-            let domain = curve.parameters_between(start, end).ordered();
+            let domain = curve.interval_between(start, end).ordered();
             let parameter = periodic_parameter_in_domain(curve, point, domain);
             domain.contains(parameter, options.parameter_tolerance)
                 && (parameter - domain.start).abs() > options.parameter_tolerance
@@ -676,7 +670,7 @@ fn split_edge_at_points<P: Payload>(
         let view = g.edge_unchecked(fragment);
         let curve = view.curve().expect("registered edge geometry");
         let domain = curve
-            .parameters_between(
+            .interval_between(
                 *view.start().point().expect("edge start geometry"),
                 *view.end().point().expect("edge end geometry"),
             )
