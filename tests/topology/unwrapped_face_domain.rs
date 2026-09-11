@@ -215,17 +215,25 @@ fn a_capped_face_closes_its_domain_against_the_degenerate_row() {
     let domain = UnwrappedFaceDomain::of_face(&face).expect("a cap should unwrap");
     let boundary = domain.loops().first().expect("a cap has one boundary");
 
-    // Two corners, both on the collapsed row: out to it, along it, and back.
+    // Three corners: the point the loop left off at, then out to the collapsed
+    // row and back along it. The first is there because every pcurve drops its
+    // final sample on the rule that the next one starts there — and here what
+    // follows is the walk to the row, so without it the boundary cuts the
+    // corner and the region loses a wedge.
     let corners = boundary
         .curves()
         .iter()
         .flat_map(|curve| curve.corners().iter().copied())
         .collect::<Vec<_>>();
-    assert_eq!(corners.len(), 2);
-    for corner in &corners {
+    assert_eq!(corners.len(), 3);
+    assert!(
+        !face.surface().is_degenerate_at(corners[0].x, corners[0].y),
+        "the first corner is where the loop ends, on the loop itself"
+    );
+    for corner in &corners[1..] {
         assert!(
             face.surface().is_degenerate_at(corner.x, corner.y),
-            "a cap's corners sit on the collapsed row, found {corner:?}"
+            "the other two sit on the collapsed row, found {corner:?}"
         );
     }
 

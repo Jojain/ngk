@@ -11,6 +11,7 @@ use super::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
 };
 use super::gmap::{Dim, GMap, MergeHandle, MergeTopology};
+use super::orientation::Orientation;
 use super::payload::Payload;
 use super::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use super::validation::{GMapValidationError, validate_gmap};
@@ -837,6 +838,57 @@ fn validate_required_domain_attributes<P: Payload>(g: &GMap<P>) -> Result<(), To
     Ok(())
 }
 
+/// Moves every face-rooted shell back onto a dart once its face has one.
+///
+/// This is what makes a key root self-eliminating: the moment a boundaryless
+/// face gains topology — split by a plane into two caps — there is an incidence
+/// to point at again, and the shell points at it. Nothing here can dangle,
+/// because a split keeps the source key and the shell is re-rooted in the same
+/// commit that created the darts.
+///
+/// The dart has to carry the shell's direction, which a face root spelled out
+/// and a dart root carries in itself, so a reversed shell re-roots at the
+/// `alpha0` partner of the face's seed.
+fn reroot_shells_at_darts<P: Payload>(g: &mut GMap<P>) {
+    let mut dart_for = HashMap::new();
+    for root in g
+        .sheets
+        .values()
+        .map(|attr| attr.root)
+        .chain(g.solids.values().flat_map(|attr| attr.shells()))
+    {
+        let ShellRoot::Face { face, sense } = root else {
+            continue;
+        };
+        let Some(seed) = g.face_attr(face).and_then(|attr| attr.seed()) else {
+            continue;
+        };
+        let dart = match sense {
+            Orientation::Same => seed,
+            Orientation::Reversed => g.alpha(Dim::Zero, seed),
+        };
+        dart_for.insert(root, ShellRoot::Dart(dart));
+    }
+    if dart_for.is_empty() {
+        return;
+    }
+    for attr in g.sheets.values_mut() {
+        if let Some(&root) = dart_for.get(&attr.root) {
+            attr.root = root;
+        }
+    }
+    for attr in g.solids.values_mut() {
+        for shell in
+            std::iter::once(&mut attr.outer_shell).chain(attr.inner_shells.iter_mut().flatten())
+        {
+            if let Some(&root) = dart_for.get(shell) {
+                *shell = root;
+            }
+        }
+    }
+    g.invalidate_derived_indexes();
+}
+
 /// Checks every stored shell root against the dart-preferred invariant.
 ///
 /// A root names a face only where there is no dart to point at, so a face root
@@ -877,6 +929,7 @@ where
     Q: EditPolicy<P>,
 {
     validate_gmap(g).map_err(TopologyEditError::InvalidTopology)?;
+    reroot_shells_at_darts(g);
     validate_required_domain_attributes(g)?;
     validate_edit_events(g, snapshot, events)?;
     let lineage = TransactionLineage::new(g, snapshot, events);

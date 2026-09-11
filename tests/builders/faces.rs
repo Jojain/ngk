@@ -15,6 +15,8 @@ use ngk::geometry::{
     TrimmedCurve2,
 };
 
+use ngk::modeling::solids;
+
 use super::removal::seamed_cylinder_wall;
 use ngk::topology::TopologyEditError;
 use ngk::topology::gmap::GMap;
@@ -816,6 +818,81 @@ fn imprint_sections_retain_source_indices_and_directed_intervals() {
                 .point()
                 .unwrap()
                 .coincides(source.point_at(section.interval.end), LINEAR_TOLERANCE)
+        );
+    }
+}
+
+/// A period-spanning imprint cuts a boundaryless face into two caps.
+///
+/// A sphere cut at its equator: neither half closes in parameter space, and
+/// neither is bounded on its far side by anything but a pole. Which copy of the
+/// imprint bounds which half follows from travel alone — a face's interior lies
+/// to the left of its boundary — so no sampling is needed and no vertex beyond
+/// the imprint's own is created.
+#[test]
+fn a_period_spanning_imprint_cuts_a_boundaryless_face_into_two_caps() {
+    use ngk::geometry::{Circle, Curve, DomainSide, Point3, TrimmedCurve2};
+    use ngk::topology::LoopKind;
+    use std::f64::consts::TAU;
+
+    let (mut g, solid) = solids::sphere(1.0).expect("sphere").into_map();
+    let face = g.solid_unchecked(solid).faces()[0].key();
+    assert!(g.face_unchecked(face).loops().is_empty());
+
+    let equator = Curve::Circle(Circle::new(Plane::xy(), 1.0));
+    let imprint = FaceImprint::new(
+        equator,
+        TrimmedCurve2::segment(Point2::origin(), Point2::new(TAU, 0.0)),
+    );
+
+    let splits = split_face_by_imprints(&mut g, face, &[imprint]).expect("the equator should cut");
+    assert_eq!(splits.len(), 1);
+    let split = &splits[0];
+
+    // One edge, walked once by each cap, and no new vertex beyond the closed
+    // edge's own.
+    assert_eq!(g.iter_faces().count(), 2);
+    assert_eq!(g.iter_edges().count(), 1);
+
+    let kinds = [split.first, split.second].map(|key| {
+        let face = g.face_unchecked(key);
+        assert_eq!(face.loops().len(), 1, "a cap has exactly one loop");
+        face.loops()[0].kind()
+    });
+    assert!(kinds.iter().any(|kind| matches!(
+        kind,
+        LoopKind::Capping {
+            side: DomainSide::High,
+            ..
+        }
+    )));
+    assert!(kinds.iter().any(|kind| matches!(
+        kind,
+        LoopKind::Capping {
+            side: DomainSide::Low,
+            ..
+        }
+    )));
+
+    // Each cap covers its own hemisphere, and its normal still points outward.
+    for key in [split.first, split.second] {
+        let face = g.face_unchecked(key);
+        let (min, max) = ngk::topology::unwrapped_face_domain::UnwrappedFaceDomain::of_face(&face)
+            .expect("a cap should unwrap")
+            .bounds();
+        assert!(
+            (max.x - min.x - TAU).abs() < LINEAR_TOLERANCE,
+            "spans a period"
+        );
+        assert!(
+            (max.y - min.y - std::f64::consts::FRAC_PI_2).abs() < LINEAR_TOLERANCE,
+            "reaches its pole"
+        );
+        let middle = Point2::new(0.5 * (min.x + max.x), 0.5 * (min.y + max.y));
+        let point = face.point_at(middle.x, middle.y);
+        assert!(
+            face.normal_at(middle.x, middle.y).dot(&point.coords) > 0.0,
+            "a cap of a sphere still faces outward"
         );
     }
 }

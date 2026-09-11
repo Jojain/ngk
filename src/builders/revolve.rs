@@ -198,6 +198,20 @@ pub(crate) fn add_revolved_edge_staged<P: Payload>(
 struct RevolvedSupport {
     surface: Surface,
     map_pcurve_point: Box<dyn Fn(Point2) -> Point2>,
+    sweep: SweptParameters,
+}
+
+/// What the sweep angle looks like in a support's own parameters.
+///
+/// This decides the shape of every pcurve a revolution writes for a swept
+/// circle, and nothing else about the support does.
+enum SweptParameters {
+    /// The sweep is one of the support's own parameter directions, so a swept
+    /// circle runs straight along it and the whole reparameterization is affine.
+    Linear,
+    /// The support's parameters are a plane's own Cartesian ones, where a swept
+    /// circle is still a circle about `center`.
+    Circular { center: Point2 },
 }
 
 impl RevolvedSupport {
@@ -206,48 +220,91 @@ impl RevolvedSupport {
         (self.map_pcurve_point)(Point2::new(profile, angle))
     }
 
+    /// The pcurve swept by the profile point at `profile`, from angle `from` to
+    /// angle `to`.
+    ///
+    /// This is the one place a plane support differs from every other. A
+    /// cylinder and a cone each put the sweep on a parameter axis of their own,
+    /// so the swept circle runs straight there and a segment is its exact image;
+    /// a plane's parameters are its own Cartesian ones, where the same circle is
+    /// still a circle and a segment would quietly replace it with a chord.
+    fn swept(&self, profile: f64, from: f64, to: f64) -> TrimmedCurve2 {
+        let start = self.corner(profile, from);
+        let SweptParameters::Circular { center } = self.sweep else {
+            return TrimmedCurve2::segment(start, self.corner(profile, to));
+        };
+        let radial = start - center;
+        // A profile point on the axis sweeps nothing, and names no circle.
+        if radial.norm() <= LINEAR_TOLERANCE {
+            return TrimmedCurve2::segment(start, self.corner(profile, to));
+        }
+        TrimmedCurve2::arc(center, radial, radial.norm(), to - from)
+    }
+
+    /// The pcurve of the profile itself at one angle, from `from` to `to`.
+    ///
+    /// A meridian is straight in every support recognized here, a plane's
+    /// radial section included, so this is always a segment.
+    fn meridian(&self, angle: f64, from: f64, to: f64) -> TrimmedCurve2 {
+        TrimmedCurve2::segment(self.corner(from, angle), self.corner(to, angle))
+    }
+
     /// The generic support, whose parameters are the revolution's own.
     fn generic(curve: &Curve, axis: Axis3) -> Self {
         Self {
             surface: Surface::Revolution(SurfaceOfRevolution::new(curve.clone(), axis)),
             map_pcurve_point: Box::new(|point| point),
+            sweep: SweptParameters::Linear,
         }
     }
 }
 
 /// Recognizes the closed-form support a revolved profile sweeps out.
 ///
-/// Only supports whose reparameterization is affine are recognized, because
-/// every pcurve these builders write is a `Line2` between two mapped corners:
-/// an affine map keeps that line the exact image of the original one, and
-/// anything else would silently replace the boundary with a chord.
-///
-/// - a straight profile parallel to the axis sweeps a cylinder;
-/// - one meeting the axis at an angle sweeps a cone;
-/// - one perpendicular to the axis sweeps a planar annulus. Its closed form is
-///   a plane, whose parameters are Cartesian while the boundary loops are
-///   circles, so no `Line2` can express them and the generic support stays.
+/// - a straight profile perpendicular to the axis keeps every point at its own
+///   height, so the whole sweep stays in one plane: a disk, or an annulus when
+///   the profile does not reach the axis;
+/// - one parallel to the axis sweeps a cylinder;
+/// - one meeting the axis at an angle sweeps a cone.
 ///
 /// Everything else, a circular profile included, keeps the generic support:
 /// [`crate::builders::solids::add_sphere`] passes its sphere explicitly
 /// because it also knows the arc's normalized parameterization, which is not
 /// recoverable here.
+///
+/// Each recognized support carries how its parameters see the sweep, because a
+/// plane's see it as a circle where the others see a straight run — see
+/// [`SweptParameters`].
 fn revolved_support(curve: &Curve, axis: Axis3) -> RevolvedSupport {
     let Some((profile_origin, profile_direction)) = linear_profile(curve) else {
         return RevolvedSupport::generic(curve, axis);
     };
     let radial = profile_origin - axis.project(profile_origin);
     let start_radius = radial.norm();
-    if start_radius <= LINEAR_TOLERANCE {
-        return RevolvedSupport::generic(curve, axis);
-    }
-    let x_dir = radial / start_radius;
     // The profile is straight, so both its distance from the axis and its
     // height along it are affine in the profile parameter; these are the two
     // rates.
     let height_rate = profile_direction.dot(&axis.direction);
-    let radius_rate = profile_direction.dot(&x_dir);
     let start_height = (profile_origin - axis.origin).dot(&axis.direction);
+
+    if height_rate.abs() <= LINEAR_TOLERANCE
+        && let Some(plane) = planar_revolved_support(
+            profile_origin,
+            profile_direction,
+            axis,
+            radial,
+            start_radius,
+            start_height,
+        )
+    {
+        return plane;
+    }
+
+    if start_radius <= LINEAR_TOLERANCE {
+        return RevolvedSupport::generic(curve, axis);
+    }
+    let x_dir = radial / start_radius;
+    let radius_rate = profile_direction.dot(&x_dir);
 
     if radius_rate.abs() <= LINEAR_TOLERANCE {
         let cylinder = Cylinder::new(axis.origin, x_dir, axis.direction, start_radius);
@@ -256,10 +313,8 @@ fn revolved_support(curve: &Curve, axis: Axis3) -> RevolvedSupport {
             map_pcurve_point: Box::new(move |point| {
                 Point2::new(point.y, start_height + point.x * height_rate)
             }),
+            sweep: SweptParameters::Linear,
         };
-    }
-    if height_rate.abs() <= LINEAR_TOLERANCE {
-        return RevolvedSupport::generic(curve, axis);
     }
 
     // A generatrix advances `radius_rate` outward and `height_rate` along the
@@ -275,7 +330,60 @@ fn revolved_support(curve: &Curve, axis: Axis3) -> RevolvedSupport {
     RevolvedSupport {
         surface: Surface::Cone(Cone::new(frame, start_radius, half_angle)),
         map_pcurve_point: Box::new(move |point| Point2::new(point.y, point.x * generatrix_rate)),
+        sweep: SweptParameters::Linear,
     }
+}
+
+/// The plane a profile perpendicular to the axis sweeps, when it sweeps one.
+///
+/// Perpendicular means every point keeps its height, so the sweep never leaves
+/// the plane at that height. The profile must also be *radial*: a perpendicular
+/// chord that misses the axis sweeps the same annulus, but its distance from the
+/// axis is not affine in its parameter, and every pcurve here is written from
+/// rates that assume it is. Such a profile keeps the generic support, which is
+/// exact for any profile at all.
+fn planar_revolved_support(
+    profile_origin: Point3,
+    profile_direction: Vector3<f64>,
+    axis: Axis3,
+    radial: Vector3<f64>,
+    start_radius: f64,
+    start_height: f64,
+) -> Option<RevolvedSupport> {
+    // On the axis the profile is radial by construction, and `radial` is too
+    // small to take a direction from; off it, the two must be parallel.
+    let x_dir = if start_radius > LINEAR_TOLERANCE {
+        let x_dir = radial / start_radius;
+        let off_meridian = profile_direction - x_dir * profile_direction.dot(&x_dir);
+        if off_meridian.norm() > LINEAR_TOLERANCE {
+            return None;
+        }
+        x_dir
+    } else {
+        let length = profile_direction.norm();
+        if length <= LINEAR_TOLERANCE {
+            return None;
+        }
+        profile_direction / length
+    };
+
+    // The plane is centred on the axis, so a swept circle is centred on its
+    // parameter origin and the radius is just the first coordinate.
+    let center = axis.origin + *axis.direction * start_height;
+    let y_dir = axis.direction.cross(&x_dir);
+    let start_offset = (profile_origin - center).dot(&x_dir);
+    let radius_rate = profile_direction.dot(&x_dir);
+
+    Some(RevolvedSupport {
+        surface: Surface::Plane(Plane::from_xy(center, x_dir, y_dir)),
+        map_pcurve_point: Box::new(move |point| {
+            let radius = start_offset + point.x * radius_rate;
+            Point2::new(radius * point.y.cos(), radius * point.y.sin())
+        }),
+        sweep: SweptParameters::Circular {
+            center: Point2::origin(),
+        },
+    })
 }
 
 /// Returns a straight profile's point and direction per unit of its own parameter.
@@ -546,19 +654,10 @@ fn add_full_revolved_open_edge_face<P: Payload>(
     };
 
     let mut pcurves = HashMap::with_capacity(1 + usize::from(inner_loop.is_some()));
-    pcurves.insert(
-        outer_loop,
-        TrimmedCurve2::segment(
-            support.corner(outer_u, 0.0),
-            support.corner(outer_u, angle.val()),
-        ),
-    );
+    pcurves.insert(outer_loop, support.swept(outer_u, 0.0, angle.val()));
     let inner_loops = inner_loop
         .map(|(dart, u, _)| {
-            pcurves.insert(
-                dart,
-                TrimmedCurve2::segment(support.corner(u, angle.val()), support.corner(u, 0.0)),
-            );
+            pcurves.insert(dart, support.swept(u, angle.val(), 0.0));
             vec![dart]
         })
         .unwrap_or_default();
@@ -855,23 +954,14 @@ fn add_revolved_edge_face<P: Payload>(
     let interval = curve.interval_between(start, end);
     let support = revolved_support(&curve, axis);
     let surface = support.surface.clone();
+    // The quad boundary in order: the profile at angle zero, the arc its far end
+    // sweeps, the profile back at the far angle, and the arc its near end sweeps
+    // in reverse.
     let pcurves = [
-        (
-            support.corner(interval.start, 0.0),
-            support.corner(interval.end, 0.0),
-        ),
-        (
-            support.corner(interval.end, 0.0),
-            support.corner(interval.end, angle.val()),
-        ),
-        (
-            support.corner(interval.end, angle.val()),
-            support.corner(interval.start, angle.val()),
-        ),
-        (
-            support.corner(interval.start, angle.val()),
-            support.corner(interval.start, 0.0),
-        ),
+        support.meridian(0.0, interval.start, interval.end),
+        support.swept(interval.end, 0.0, angle.val()),
+        support.meridian(angle.val(), interval.end, interval.start),
+        support.swept(interval.start, angle.val(), 0.0),
     ];
 
     // A whole turn brings the swept copy back onto its source, and a band whose
@@ -886,10 +976,7 @@ fn add_revolved_edge_face<P: Payload>(
     // The two swept circles, each traversed as the quad loop traverses its arc:
     // the end arc with the sweep, the start arc against it. Keeping those
     // directions is what leaves the ring wound the way the quad band was.
-    let ring_pcurves = [
-        TrimmedCurve2::segment(pcurves[3].0, pcurves[3].1),
-        TrimmedCurve2::segment(pcurves[1].0, pcurves[1].1),
-    ];
+    let ring_pcurves = [pcurves[3].clone(), pcurves[1].clone()];
     if is_full_turn(angle)
         && [start, end]
             .iter()
@@ -920,7 +1007,7 @@ fn add_revolved_quad_face<P: Payload>(
     corners: [Point3; 4],
     boundary_curves: [Curve; 4],
     surface: Surface,
-    pcurves: [(Point2, Point2); 4],
+    pcurves: [TrimmedCurve2; 4],
 ) -> Result<RevolvedFace, RevolveError> {
     let darts: Vec<Dart> = (0..8).map(|_| edit.add_dart()).collect();
 
@@ -1169,10 +1256,10 @@ fn revolve_radius(axis: Axis3, point: Point3) -> f64 {
     distance(&axis.project(point), &point)
 }
 
-fn quad_pcurves(uv: &[(Point2, Point2); 4], darts: &[Dart]) -> HashMap<Dart, TrimmedCurve2> {
+fn quad_pcurves(uv: &[TrimmedCurve2; 4], darts: &[Dart]) -> HashMap<Dart, TrimmedCurve2> {
     let mut pcurves = HashMap::with_capacity(4);
     for i in 0..4 {
-        pcurves.insert(darts[2 * i], TrimmedCurve2::segment(uv[i].0, uv[i].1));
+        pcurves.insert(darts[2 * i], uv[i].clone());
     }
     pcurves
 }

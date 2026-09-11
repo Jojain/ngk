@@ -7,7 +7,7 @@ use ngk::builders::edges::add_edge;
 use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::revolve::{RevolveError, add_revolved_edge, add_revolved_face};
 use ngk::geometry::axis::Axis3;
-use ngk::geometry::{Axis2, Curve, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface};
+use ngk::geometry::{Axis2, Curve, Curve2, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface};
 use ngk::tessellate::{TessellateOpts, tessellate_face_key};
 use ngk::topology::LoopKind;
 use ngk::topology::gmap::GMap;
@@ -287,14 +287,14 @@ fn revolve_edge_full_turn_with_an_end_on_the_axis_has_one_loop() {
         (boundary_edge_keys.len(), boundary_vertex_keys.len()),
         (1, 1)
     );
-    // In space this band is a flat disk — but so is a spherical cap, and what
-    // decides the kind is the support's parameterization, not the shape. The
-    // profile starts on the axis, so `revolved_support` cannot build a plane's
-    // frame from it and sweeps a surface of revolution instead: the rim runs a
-    // whole period of the sweep, and the disk's centre is a collapsed row rather
-    // than a boundary. That is a cap.
-    assert!(matches!(face.loops()[0].kind(), LoopKind::Capping { .. }));
-    assert!(face.outer_loop().is_none());
+    // A line meeting the axis at right angles keeps every point at its own
+    // height, so it sweeps a *plane*: the rim closes in that plane's own
+    // parameters, which makes it a genuine outer loop rather than a cap. What
+    // decides the kind is always the support's parameterization — a spherical
+    // cap is just as flat a disk in space, and is a cap because a sphere's
+    // parameters collapse at its centre.
+    assert!(matches!(face.surface(), Surface::Plane(_)));
+    assert!(matches!(face.loops()[0].kind(), LoopKind::Outer));
 }
 
 /// A slanted edge from the axis sweeps a cone, and its rim is that cone's cap.
@@ -673,18 +673,18 @@ fn is_swept_support(surface: &Surface) -> bool {
     )
 }
 
-/// A full turn wraps; it does not carve a hole.
+/// A full turn of a band whose support is periodic in the sweep wraps; it does
+/// not carve a hole.
 ///
-/// In the support's own parameters the swept band is a rectangle covering the
-/// whole turn, so neither boundary circle closes there and neither bounds the
-/// other. Which circle is the wider one in space is not a fact about the domain,
-/// and calling the narrower one a hole would put a winding test on a loop that
-/// has no inside.
+/// In such a support's own parameters the band is a rectangle covering the whole
+/// turn, so neither boundary circle closes there and neither bounds the other.
+/// Which circle is the wider one in space is not a fact about the domain, and
+/// calling the narrower one a hole would put a winding test on a loop that has
+/// no inside. A planar washer is the exception and gets its own test: its
+/// support is not periodic at all, and both circles close in its parameters.
 #[test]
 fn revolve_edge_full_turn_bounds_its_band_with_wrapping_loops() {
     for (start, end) in [
-        // A radial segment: a flat washer, still a ring in parameter space.
-        (Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
         // A segment parallel to the axis: a cylinder wall.
         (Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 0.0, 2.0)),
         // A slanted segment: a cone frustum.
@@ -715,5 +715,69 @@ fn revolve_edge_full_turn_bounds_its_band_with_wrapping_loops() {
             2,
             "{start:?} -> {end:?}: both swept circles wrap the turn"
         );
+    }
+}
+
+/// A segment perpendicular to the axis sweeps a plane, not a surface of
+/// revolution — so its two circles really do bound an annulus.
+///
+/// Every point of such a profile keeps its height, so the sweep never leaves the
+/// plane at that height. That plane is the honest support, and in its own
+/// Cartesian parameters the two swept circles are circles: closed, with the
+/// wider one outside the narrower. This is the one revolved band where a hole is
+/// the right answer, and it is the support's parameterization that says so.
+#[test]
+fn revolve_edge_full_turn_perpendicular_to_the_axis_sweeps_a_planar_annulus() {
+    let mut g = GMap::<StandardPayload>::new();
+    let (start, end) = (Point3::new(1.0, 0.0, 3.0), Point3::new(2.0, 0.0, 3.0));
+    let edge = add_edge(&mut g, start, end, Curve::line(start, end)).expect("edge should build");
+    let face_key = add_revolved_edge(
+        &mut g,
+        edge,
+        Axis3::new(Point3::origin(), Vector3::z()),
+        Rad64::FULL_TURN,
+    )
+    .expect("a full turn should build");
+    let face = g.face_unchecked(face_key);
+
+    assert!(matches!(face.surface(), Surface::Plane(_)));
+    assert_eq!(face.loops().len(), 2);
+    assert!(face.outer_loop().is_some(), "the wider circle bounds it");
+    assert_eq!(face.inner_loops().len(), 1, "the narrower circle is a hole");
+    assert_eq!(
+        face.loops()
+            .into_iter()
+            .filter_map(|loop_| loop_.wrapping_axis())
+            .count(),
+        0,
+        "a plane has no period for a loop to wrap"
+    );
+
+    // Both pcurves are circles, not chords. This is the whole reason a plane
+    // could not be recognized before: a segment between two mapped corners is
+    // the exact image of a swept circle in a cylinder's or a cone's parameters,
+    // and a chord across it in a plane's.
+    for edge in face.edges() {
+        let pcurve = face.pcurve(edge.dart()).expect("every edge carries one");
+        assert!(
+            matches!(pcurve.curve(), Curve2::Circle(_)),
+            "a swept circle stays a circle in a plane's parameters"
+        );
+    }
+
+    // The outer loop's pcurve tracks its edge all the way round, which a chord
+    // would fail at every fraction but the two ends.
+    let outer = face.outer_loop().expect("the annulus has an outer loop");
+    for edge in outer.edges() {
+        let pcurve = face.pcurve(edge.dart()).expect("every edge carries one");
+        let section = edge.trimmed_curve().expect("a boundary edge has a section");
+        for fraction in [0.0, 0.25, 0.5, 0.75] {
+            let uv = pcurve.point_at(fraction);
+            assert!(
+                face.point_at(uv.x, uv.y)
+                    .coincides(section.point_at(fraction), LINEAR_TOLERANCE),
+                "pcurve left its edge at {fraction}"
+            );
+        }
     }
 }

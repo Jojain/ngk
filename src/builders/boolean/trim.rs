@@ -43,6 +43,13 @@ pub(crate) struct FaceTrimDomain {
     tolerance: f64,
     /// Upper bound on how far `polygons` may stray from the domain's loops.
     chord: f64,
+    /// Corners of the support's own domain, set only for a face with no loops
+    /// at all.
+    ///
+    /// Such a face covers its whole support — a sphere — so every point of it is
+    /// inside, there is no boundary to be at a distance from, and the domain it
+    /// spans is the support's rather than any polygon's.
+    whole_support: Option<(Point2, Point2)>,
 }
 
 impl FaceTrimDomain {
@@ -63,11 +70,17 @@ impl FaceTrimDomain {
             .iter()
             .map(|boundary| boundary.adaptive_polyline(chord, 20))
             .collect();
+        let whole_support = face.loops().is_empty().then(|| {
+            let (u, v) = face.surface().domain();
+            let (u, v) = (u.ordered(), v.ordered());
+            (Point2::new(u.start, v.start), Point2::new(u.end, v.end))
+        });
         Ok(Self {
             domain,
             polygons,
             tolerance,
             chord,
+            whole_support,
         })
     }
 
@@ -98,6 +111,9 @@ impl FaceTrimDomain {
 
     /// Corner bounds of the active parameter-space image of the outer trim.
     pub(crate) fn domain_bounds(&self) -> (Point2, Point2) {
+        if let Some(bounds) = self.whole_support {
+            return bounds;
+        }
         let Some(outer) = self.polygons.first() else {
             return (Point2::origin(), Point2::origin());
         };
@@ -151,6 +167,13 @@ impl FaceTrimDomain {
     /// inside the trim answers for all of them, because they are one point on
     /// the surface.
     pub(crate) fn classify(&self, point: Point2) -> TrimLocation {
+        // A face with no loops has no boundary to be on, outside of, or near:
+        // it covers its whole support, so every point of it is interior.
+        if self.whole_support.is_some() {
+            return TrimLocation::Inside {
+                margin: f64::INFINITY,
+            };
+        }
         let images = self.domain.images(point);
         for image in &images {
             for (loop_index, boundary) in self.domain.loops().iter().enumerate() {
@@ -205,6 +228,13 @@ impl FaceTrimDomain {
         let direction_norm = direction.norm();
         if direction_norm <= self.tolerance {
             return Ok(Vec::new());
+        }
+        // Nothing bounds a face with no loops, so the line is inside over the
+        // whole stretch that stays on the support.
+        if let Some((min, max)) = self.whole_support {
+            return Ok(clip_to_box(origin, direction, min, max)
+                .into_iter()
+                .collect());
         }
         let mut projected = self
             .polygons
@@ -277,6 +307,33 @@ impl FaceTrimDomain {
         }
         Ok(())
     }
+}
+
+/// The stretch of a line that stays inside an axis-aligned parameter box.
+///
+/// The usual slab clip: each axis admits an interval of the line's parameter,
+/// and the line is in the box over their intersection. `None` when it misses the
+/// box, or runs along an axis outside its slab.
+fn clip_to_box(
+    origin: Point2,
+    direction: nalgebra::Vector2<f64>,
+    min: Point2,
+    max: Point2,
+) -> Option<Interval> {
+    let (mut entry, mut exit) = (f64::NEG_INFINITY, f64::INFINITY);
+    for axis in 0..2 {
+        if direction[axis].abs() <= f64::EPSILON {
+            if origin[axis] < min[axis] || origin[axis] > max[axis] {
+                return None;
+            }
+            continue;
+        }
+        let first = (min[axis] - origin[axis]) / direction[axis];
+        let second = (max[axis] - origin[axis]) / direction[axis];
+        entry = entry.max(first.min(second));
+        exit = exit.min(first.max(second));
+    }
+    (entry < exit).then(|| Interval::new(entry, exit))
 }
 
 /// Chord budget for flattening, scaled to the extent the domain's loops span.

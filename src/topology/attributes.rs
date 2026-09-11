@@ -96,7 +96,7 @@ pub enum LoopKind {
     /// is the band between the pair, whichever way round they are traversed.
     Wrapping { axis: Axis2 },
     /// A lone loop spanning one period of `axis`, with the transverse
-    /// direction closed on its far side by a parametric degeneracy at `end`.
+    /// direction closed on its far side by a parametric degeneracy on `side`.
     ///
     /// A spherical cap — what every sphere-plane cut produces. Unlike a
     /// [`Self::Wrapping`] pair there is no second loop to bound the other side,
@@ -104,7 +104,7 @@ pub enum LoopKind {
     /// flip the face's normal, so if it also chose the side it would move the
     /// face to the opposite pole. Which degeneracy closes the face is therefore
     /// said outright.
-    Capping { axis: Axis2, end: DomainSide },
+    Capping { axis: Axis2, side: DomainSide },
 }
 
 impl LoopKind {
@@ -120,9 +120,9 @@ impl LoopKind {
     }
 
     /// Returns the domain end whose degeneracy closes the face, if one does.
-    pub fn capped_end(self) -> Option<DomainSide> {
+    pub fn capped_side(self) -> Option<DomainSide> {
         match self {
-            LoopKind::Capping { end, .. } => Some(end),
+            LoopKind::Capping { side, .. } => Some(side),
             LoopKind::Outer | LoopKind::Inner | LoopKind::Wrapping { .. } => None,
         }
     }
@@ -143,11 +143,11 @@ pub enum LoopDefinition {
     /// One of a pair of loops each spanning one whole period of `axis`.
     Wrapping { seed: Dart, axis: Axis2 },
     /// A lone loop spanning one whole period of `axis`, the transverse
-    /// direction closed on its far side by the degeneracy at `end`.
+    /// direction closed on its far side by the degeneracy on `side`.
     Capping {
         seed: Dart,
         axis: Axis2,
-        end: DomainSide,
+        side: DomainSide,
     },
 }
 
@@ -157,7 +157,7 @@ impl LoopDefinition {
             LoopKind::Outer => Self::outer(seed),
             LoopKind::Inner => Self::inner(seed),
             LoopKind::Wrapping { axis } => Self::wrapping(seed, axis),
-            LoopKind::Capping { axis, end } => Self::capping(seed, axis, end),
+            LoopKind::Capping { axis, side } => Self::capping(seed, axis, side),
         }
     }
 
@@ -177,8 +177,8 @@ impl LoopDefinition {
     }
 
     /// Defines a lone period-spanning loop closed at `end` by a degeneracy.
-    pub fn capping(seed: Dart, axis: Axis2, end: DomainSide) -> Self {
-        Self::Capping { seed, axis, end }
+    pub fn capping(seed: Dart, axis: Axis2, side: DomainSide) -> Self {
+        Self::Capping { seed, axis, side }
     }
 
     /// Returns this definition's oriented traversal seed.
@@ -197,7 +197,7 @@ impl LoopDefinition {
             Self::Outer { .. } => LoopKind::Outer,
             Self::Inner { .. } => LoopKind::Inner,
             Self::Wrapping { axis, .. } => LoopKind::Wrapping { axis },
-            Self::Capping { axis, end, .. } => LoopKind::Capping { axis, end },
+            Self::Capping { axis, side, .. } => LoopKind::Capping { axis, side },
         }
     }
 

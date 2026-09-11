@@ -10,9 +10,9 @@ use crate::builders::profiles::{
     add_rectangle_staged as add_rectangle_profile_staged, profile_pcurves,
 };
 use crate::geometry::{
-    Axis2, Curve, CurveCurveIntersection2, CurveIntersectionError, Interval, LINEAR_TOLERANCE,
-    NurbsError, Periodicity, Plane, Point2, Point3, Surface, SurfacePeriodicity, TrimmedCurve,
-    TrimmedCurve2,
+    Axis2, Curve, CurveCurveIntersection2, CurveIntersectionError, DomainSide, Interval,
+    LINEAR_TOLERANCE, NurbsError, Periodicity, Plane, Point2, Point3, Surface, SurfacePeriodicity,
+    TrimmedCurve, TrimmedCurve2,
 };
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, VertexAttr,
@@ -763,6 +763,7 @@ fn reverse_imprint(imprint: &FaceImprint) -> Result<FaceImprint, NurbsError> {
 }
 
 /// One link of a wrapping chain: the imprint as travelled, and where it came from.
+#[derive(Clone)]
 struct ChainLink {
     imprint: FaceImprint,
     /// Index of the input imprint this link was cut from.
@@ -819,6 +820,25 @@ fn split_ring_face_by_wrapping_chains<P: Payload>(
     let Some(chains) = wrapping_chains(edit, face, imprints)? else {
         return Ok(Vec::new());
     };
+    // A face with no loops at all is cut into two caps rather than two rings:
+    // each half is bounded by one copy of the chain and closed on its far side
+    // by the degeneracy there. It has no existing loop to pair a copy with, so
+    // only the first chain can be taken this way — after it there are caps, not
+    // a boundaryless face.
+    if edit
+        .face_attr(face)
+        .ok_or(FaceImprintSplitError::MissingFace { face })?
+        .is_empty()
+    {
+        let [chain] = &chains[..] else {
+            return Ok(Vec::new());
+        };
+        return Ok(
+            split_boundaryless_face_by_wrapping_chain(edit, face, chain)?
+                .into_iter()
+                .collect(),
+        );
+    }
     let mut rings = vec![face];
     let mut splits = Vec::new();
     for chain in chains {
@@ -830,6 +850,96 @@ fn split_ring_face_by_wrapping_chains<P: Payload>(
         splits.push(split);
     }
     Ok(splits)
+}
+
+/// Cuts a boundaryless face in two along a chain that wraps a periodic
+/// direction.
+///
+/// A sphere cut by a plane: the chain is a latitude circle, and each half is a
+/// cap — bounded by one copy of it and closed on its far side by a pole. Which
+/// copy bounds which half follows from direction alone, and needs no sampling: a
+/// face's interior lies to the left of its boundary, so the copy travelling
+/// forward along the wrapped axis bounds the half above it and the reversed copy
+/// bounds the half below.
+///
+/// Returns `None` when the support names no degeneracy on one of the two sides,
+/// which would leave a half nothing closes.
+fn split_boundaryless_face_by_wrapping_chain<P: Payload>(
+    edit: &mut TopologyEdit<'_, P>,
+    face: FaceKey,
+    chain: &WrappingChain,
+) -> Result<Option<FaceImprintSplit>, FaceImprintSplitError> {
+    let old_face = edit
+        .face_attr(face)
+        .ok_or(FaceImprintSplitError::MissingFace { face })?
+        .clone();
+    let axis = chain.axis;
+    let transverse = axis.transverse();
+    let rows = old_face.surface.degenerate_rows(transverse);
+    let at = chain
+        .links
+        .first()
+        .map(|link| transverse.of(link.imprint.pcurve.point_at(0.0)))
+        .ok_or(FaceImprintSplitError::MissingFace { face })?;
+    if [DomainSide::Low, DomainSide::High]
+        .into_iter()
+        .any(|side| side.nearest(at, rows.iter().copied()).is_none())
+    {
+        return Ok(None);
+    }
+
+    let forward = chain.imprints();
+    let backward = reversed_imprint_loop(&forward)?;
+    let forward_loop = add_section_loop(edit, &old_face.surface, &forward);
+    let backward_loop = add_section_loop(edit, &old_face.surface, &backward);
+    let section_edges = sew_section_loops(edit, face, &forward_loop, &backward_loop)?;
+    for loop_ in [&forward_loop, &backward_loop] {
+        edit.add_profile(ProfileAttr::new(loop_.loop_dart, P::Profile::default()));
+    }
+
+    // The forward copy travels the chain's own direction; the reversed one
+    // travels against it.
+    let (high, low) = if chain.travel() > 0.0 {
+        (&forward_loop, &backward_loop)
+    } else {
+        (&backward_loop, &forward_loop)
+    };
+    let cap = |loop_: &SectionLoop, side: DomainSide| {
+        vec![LoopDefinition::from_kind(
+            loop_.loop_dart,
+            LoopKind::Capping { axis, side },
+        )]
+    };
+
+    let face_attr = edit
+        .face_attr_mut(face)
+        .expect("source face must remain staged during a cap split");
+    face_attr.loops = cap(high, DomainSide::High);
+    face_attr.pcurves = high.pcurves.clone();
+
+    let second = edit.add_face_split_from(
+        face,
+        FaceAttr::with_loops(
+            old_face.surface,
+            P::F::default(),
+            cap(low, DomainSide::Low),
+            low.pcurves.clone(),
+        ),
+    );
+
+    Ok(Some(FaceImprintSplit {
+        first: face,
+        second,
+        sections: section_edges
+            .into_iter()
+            .zip(&chain.links)
+            .map(|(edge, link)| FaceImprintSection {
+                edge,
+                imprint: link.source,
+                interval: link.interval,
+            })
+            .collect(),
+    }))
 }
 
 /// Reads the imprints as chains wrapping `face`'s periodic direction, if they all are.
@@ -844,37 +954,43 @@ fn wrapping_chains<P: Payload>(
     let attr = edit
         .face_attr(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
-    let wrapping = attr.wrapping().collect::<Vec<_>>();
-    let [(_, axis), (_, second_axis)] = wrapping[..] else {
-        return Ok(None);
-    };
-    if second_axis != axis || attr.loops.len() != 2 {
-        return Ok(None);
-    }
     let periods = match attr.surface.periodicity() {
         SurfacePeriodicity::None => return Ok(None),
         SurfacePeriodicity::UPeriodic(u) => [Some(u), None],
         SurfacePeriodicity::VPeriodic(v) => [None, Some(v)],
         SurfacePeriodicity::UVPeriodic(u, v) => [Some(u), Some(v)],
     };
-    let Some(period) = periods[axis.index()] else {
-        return Ok(None);
+    // A ring names the axis through the loops that wrap it. A boundaryless face
+    // has no loops to name one, so every periodic axis is a candidate and the
+    // chain's own travel picks the one it spans.
+    let candidates = match attr.wrapping().collect::<Vec<_>>()[..] {
+        [(_, axis), (_, second_axis)] if axis == second_axis && attr.loops.len() == 2 => {
+            vec![axis]
+        }
+        [] if attr.is_empty() => Axis2::ALL.into_iter().collect(),
+        _ => return Ok(None),
     };
 
-    let Some(chains) = chain_imprints(imprints) else {
+    let Some(links) = chain_imprints(imprints) else {
         return Ok(None);
     };
-    let chains = chains
-        .into_iter()
-        .map(|links| WrappingChain { axis, links })
-        .collect::<Vec<_>>();
-    if chains
-        .iter()
-        .any(|chain| (chain.travel().abs() - period).abs() > LINEAR_TOLERANCE)
-    {
-        return Ok(None);
+    for axis in candidates {
+        let Some(period) = periods[axis.index()] else {
+            continue;
+        };
+        let chains = links
+            .iter()
+            .cloned()
+            .map(|links| WrappingChain { axis, links })
+            .collect::<Vec<_>>();
+        if chains
+            .iter()
+            .all(|chain| (chain.travel().abs() - period).abs() <= LINEAR_TOLERANCE)
+        {
+            return Ok(Some(chains));
+        }
     }
-    Ok(Some(chains))
+    Ok(None)
 }
 
 /// Joins imprints end to end into walks, reversing any written backwards.

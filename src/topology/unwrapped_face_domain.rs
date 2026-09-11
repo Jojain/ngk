@@ -180,9 +180,9 @@ impl UnwrappedFaceDomain {
                 LoopKind::Outer | LoopKind::Wrapping { .. } => {
                     place_loop(face, &loop_, periods, &mut outer, &mut outer_offset)?;
                 }
-                LoopKind::Capping { axis, end } => {
+                LoopKind::Capping { axis, side } => {
                     place_loop(face, &loop_, periods, &mut outer, &mut outer_offset)?;
-                    capped = Some((axis, end));
+                    capped = Some((axis, side));
                 }
                 LoopKind::Inner => {
                     let mut curves = Vec::new();
@@ -194,7 +194,7 @@ impl UnwrappedFaceDomain {
             }
         }
         match capped {
-            Some((axis, end)) => close_capping_loop(face.surface(), axis, end, &mut outer),
+            Some((axis, side)) => close_capping_loop(face.surface(), axis, side, &mut outer),
             None => close_loop(&mut outer),
         }
 
@@ -402,10 +402,14 @@ fn close_capping_loop(
         point[transverse.index()] = row;
         point
     };
+    // `last` is here because every pcurve drops its final sample, on the rule
+    // that the next one starts there. A capping loop breaks that rule: what
+    // follows it is the walk out to the collapsed row, so the point it left off
+    // at has to be put back or the boundary cuts the corner.
     curves
         .first_mut()
         .expect("a loop with an end has a first curve")
-        .corners = vec![onto_row(last), onto_row(first)];
+        .corners = vec![last, onto_row(last), onto_row(first)];
 }
 
 /// Corner bounds of every loop as placed, sized from uniform pcurve samples.
