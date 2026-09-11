@@ -154,8 +154,13 @@ impl<'a, P: Payload> LoopCorner<'a, P> {
     }
 
     /// Returns the vertex at this loop occurrence.
+    ///
+    /// A corner is where the loop turns, so it is named by the dart the loop
+    /// leaves on rather than by either end of an edge — which is what lets a
+    /// one-edge loop still have one.
     pub fn vertex(&self) -> Vertex<'a, P> {
-        self.outgoing().start()
+        Vertex::from_dart(self.gmap, self.outgoing)
+            .expect("LoopCorner outgoing dart must have a vertex")
     }
 }
 

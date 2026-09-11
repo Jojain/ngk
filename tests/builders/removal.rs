@@ -1,11 +1,16 @@
-use nalgebra::Vector2;
+use std::collections::HashMap;
+
+use nalgebra::{Vector2, Vector3};
 use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
 use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints, split_face_edge};
-use ngk::builders::removal::{MergedCell, is_removable, remove_cell_staged};
-use ngk::geometry::{Curve, Curve2, Frame, Plane, Point2, Point3, Surface, TrimmedCurve2};
+use ngk::builders::removal::{MergedCell, is_removable, remove_cell, remove_cell_staged};
+use ngk::geometry::{
+    Axis2, Circle, Curve, Curve2, Cylinder, Frame, Plane, Point2, Point3, Surface, TrimmedCurve2,
+};
 use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
 use ngk::modeling::{faces, solids};
-use ngk::topology::gmap::{Dim, GMap};
+use ngk::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
+use ngk::topology::gmap::{Dart, Dim, GMap};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 use ngk::topology::{StandardPayload, TopologyEditError};
 
@@ -428,4 +433,154 @@ fn single_edge_filled_inner_loop_gets_removed() {
     assert!(g.face_unchecked(healed).inner_loops().is_empty());
     assert_eq!(g.iter_edges().count(), 4);
     assert_eq!(result.fused_faces.len(), 1);
+}
+
+/// An edge one face's boundary walks twice, with a dart on it.
+fn seam_of(g: &GMap<StandardPayload>, face: FaceKey) -> Option<(EdgeKey, Dart)> {
+    let view = g.face(face)?;
+    let edges = view
+        .loops()
+        .iter()
+        .flat_map(|l| l.edges())
+        .collect::<Vec<_>>();
+    edges
+        .iter()
+        .find(|edge| edges.iter().filter(|o| o.key() == edge.key()).count() == 2)
+        .map(|edge| (edge.key(), edge.dart()))
+}
+
+#[test]
+fn removing_a_seam_leaves_the_face_a_ring() {
+    let (mut g, wall) = seamed_cylinder_wall(1.0, 2.0);
+    let (seam, dart) = seam_of(&g, wall).expect("the wall was built with a seam");
+    assert_eq!(g.iter_edges().count(), 3, "two circles and the seam");
+
+    let removal = remove_cell(&mut g, dart, Dim::One).expect("a seam should be removable");
+
+    let MergedCell::Ring {
+        face,
+        survivor_loop,
+        added_loop,
+    } = removal.merged
+    else {
+        panic!("removing a seam leaves a ring, got {:?}", removal.merged);
+    };
+    assert_eq!(face, wall);
+    assert_ne!(survivor_loop, added_loop);
+    assert!(g.edge_attr(seam).is_none(), "the seam itself is gone");
+
+    let attr = g.face_attr_unchecked(wall);
+    assert_eq!(
+        attr.boundary.loops().len(),
+        2,
+        "the seam was hiding two loops, not one"
+    );
+    assert!(
+        attr.boundary.outer().is_none(),
+        "neither loop bounds a ring from outside"
+    );
+    assert_eq!(
+        attr.boundary
+            .wrapping()
+            .map(|(_, axis)| axis)
+            .collect::<Vec<_>>(),
+        vec![Axis2::U, Axis2::U],
+        "both loops span the closed direction"
+    );
+}
+
+/// Healing is the canonicalizer: a seamed model in, a seamless model out.
+#[test]
+fn healing_removes_the_seam_of_an_imported_wall() {
+    let (mut g, wall) = seamed_cylinder_wall(1.0, 2.0);
+
+    remove_redundant_cells(&mut g, HealingOptions::default()).expect("healing should commit");
+
+    assert_eq!(
+        g.iter_edges().count(),
+        2,
+        "the seam is gone and both circles remain"
+    );
+    let attr = g.face_attr_unchecked(wall);
+    assert_eq!(attr.boundary.loops().len(), 2);
+    assert!(attr.boundary.outer().is_none());
+}
+
+/// Builds a cylinder wall the way a seamed import carries one.
+///
+/// No builder in the tree makes this any more — a swept or revolved wall comes
+/// out as a ring — but STEP and every other B-Rep interchange format writes a
+/// periodic face with its parameterization cut open, so the canonicalizer has to
+/// be able to take one apart. The wall is one quad face whose two vertical sides
+/// are the same edge, sewn to itself: that self-sew is the seam.
+fn seamed_cylinder_wall(radius: f64, height: f64) -> (GMap<StandardPayload>, FaceKey) {
+    let mut g = GMap::<StandardPayload>::new();
+    let surface = Surface::Cylinder(Cylinder::new(
+        Point3::origin(),
+        Vector3::x(),
+        Vector3::z(),
+        radius,
+    ));
+    let turn = std::f64::consts::TAU;
+    let face = g
+        .transaction(|edit| {
+            // The quad boundary: bottom circle, seam up, top circle, seam down.
+            let d: [Dart; 8] = std::array::from_fn(|_| edit.add_dart());
+            for pair in 0..4 {
+                edit.link(Dim::Zero, d[2 * pair], d[2 * pair + 1])?;
+            }
+            for pair in 0..4 {
+                edit.link(Dim::One, d[2 * pair + 1], d[(2 * pair + 2) % 8])?;
+            }
+
+            let bottom = Point3::new(radius, 0.0, 0.0);
+            let top = Point3::new(radius, 0.0, height);
+            edit.add_vertex(VertexAttr::new(d[0], bottom, ()));
+            edit.add_vertex(VertexAttr::new(d[4], top, ()));
+
+            let circle = |z: f64| {
+                Curve::Circle(Circle::new(
+                    Plane::from_xy(Point3::new(0.0, 0.0, z), Vector3::x(), Vector3::y()),
+                    radius,
+                ))
+            };
+            edit.add_edge(EdgeAttr::new(d[0], circle(0.0), ()));
+            edit.add_edge(EdgeAttr::new(d[4], circle(height), ()));
+            // One edge for both vertical sides: that is what makes it a seam.
+            let seam = edit.add_edge(EdgeAttr::new(d[2], Curve::line(bottom, top), ()));
+            edit.add_profile(ProfileAttr::new(d[0], ()));
+
+            let pcurves = HashMap::from([
+                (
+                    d[0],
+                    TrimmedCurve2::segment(Point2::origin(), Point2::new(turn, 0.0)),
+                ),
+                (
+                    d[2],
+                    TrimmedCurve2::segment(Point2::new(turn, 0.0), Point2::new(turn, height)),
+                ),
+                (
+                    d[4],
+                    TrimmedCurve2::segment(Point2::new(turn, height), Point2::new(0.0, height)),
+                ),
+                (
+                    d[6],
+                    TrimmedCurve2::segment(Point2::new(0.0, height), Point2::origin()),
+                ),
+            ]);
+            let face = edit.add_face(FaceAttr::with_pcurves(
+                surface.clone(),
+                (),
+                d[0],
+                Vec::new(),
+                pcurves,
+            ));
+
+            // The two sides meet along the seam: bottom to bottom, top to top.
+            edit.sew(Dim::Two, d[2], d[7])?;
+            let _ = seam;
+            Ok::<_, TopologyEditError>(face)
+        })
+        .expect("a seamed wall should commit");
+    (g, face)
 }

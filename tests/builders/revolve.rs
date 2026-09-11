@@ -155,10 +155,15 @@ fn side_arc_midpoint(
         .into_iter()
         .find(|edge| {
             let start = *edge
+                .bounded_unchecked()
                 .start()
                 .point()
                 .expect("arc start should have geometry");
-            let end = *edge.end().point().expect("arc end should have geometry");
+            let end = *edge
+                .bounded_unchecked()
+                .end()
+                .point()
+                .expect("arc end should have geometry");
             matches!(edge.curve(), Some(Curve::Circle(_)))
                 && (start.coincides(origin, LINEAR_TOLERANCE)
                     || end.coincides(origin, LINEAR_TOLERANCE))
@@ -171,8 +176,13 @@ fn side_arc_midpoint(
     curve.point_at(interval.at(0.5))
 }
 
+/// A full turn of an off-axis edge sweeps two circles, and both bound the band.
+///
+/// Neither is a hole: in the support's parameters the band covers the whole turn,
+/// so both loops wrap it. `revolve_edge_full_turn_bounds_its_band_with_wrapping_loops`
+/// checks the kinds; this checks that the cells are shared rather than duplicated.
 #[test]
-fn revolve_edge_full_turn_creates_inner_loop() {
+fn revolve_edge_full_turn_sweeps_two_distinct_circles() {
     let mut g = GMap::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
@@ -222,8 +232,12 @@ fn revolve_edge_full_turn_creates_inner_loop() {
     );
 }
 
+/// An edge with one end on the axis sweeps only one circle.
+///
+/// The other end sweeps nothing, so that side of the band is closed by the
+/// degeneracy rather than by a loop, and the band has a single boundary.
 #[test]
-fn revolve_edge_full_turn_without_inner_loop() {
+fn revolve_edge_full_turn_with_an_end_on_the_axis_has_one_loop() {
     let mut g = GMap::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
@@ -454,7 +468,7 @@ fn revolved_annular_wedge_walls_face_away_from_the_material() {
 }
 
 #[test]
-fn revolved_face_full_turn_closes_its_seam() {
+fn revolved_face_full_turn_bands_are_rings() {
     let mut g = GMap::<StandardPayload>::new();
     let profile_key = add_polygon(
         &mut g,
@@ -474,7 +488,11 @@ fn revolved_face_full_turn_closes_its_seam() {
     )
     .unwrap();
 
-    // One lateral band per source edge, each closed onto itself at the seam.
+    // One lateral band per source edge, each a ring bounded by the two circles
+    // its endpoints swept — and by nothing else, since a whole turn brings the
+    // swept copy of the source edge back onto the source edge. There is no seam
+    // to sew, so the only edges are the three swept circles.
+    //
     // The source face and its wire are interior to the solid and must be gone.
     assert_eq!(
         (
@@ -482,12 +500,25 @@ fn revolved_face_full_turn_closes_its_seam() {
             g.iter_edges().count(),
             g.iter_faces().count()
         ),
-        (3, 6, 3)
+        (3, 3, 3)
     );
     assert!(
         g.iter_faces()
             .all(|(_, attr)| is_swept_support(&attr.surface)),
         "a full turn has no caps, so no planar source face may survive"
+    );
+    assert!(
+        g.iter_faces()
+            .all(|(_, attr)| attr.boundary.outer().is_none()
+                && attr.boundary.wrapping().count() == 2),
+        "every band is bounded by two wrapping loops and no outer loop"
+    );
+    // A torus, read with each band counted for what it is: an annulus, not a
+    // disk. Three vertices, three edges, three faces of Euler characteristic 0.
+    assert_eq!(
+        g.iter_vertices().count() as isize - g.iter_edges().count() as isize,
+        0,
+        "V - E + sum(chi) = 0, the characteristic of a torus"
     );
 
     validate_solid_manifold(&g, solid).expect("a full turn should close its shell");
@@ -548,4 +579,46 @@ fn is_swept_support(surface: &Surface) -> bool {
         surface,
         Surface::Revolution(_) | Surface::Cylinder(_) | Surface::Cone(_)
     )
+}
+
+/// A full turn wraps; it does not carve a hole.
+///
+/// In the support's own parameters the swept band is a rectangle covering the
+/// whole turn, so neither boundary circle closes there and neither bounds the
+/// other. Which circle is the wider one in space is not a fact about the domain,
+/// and calling the narrower one a hole would put a winding test on a loop that
+/// has no inside.
+#[test]
+fn revolve_edge_full_turn_bounds_its_band_with_wrapping_loops() {
+    for (start, end) in [
+        // A radial segment: a flat washer, still a ring in parameter space.
+        (Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
+        // A segment parallel to the axis: a cylinder wall.
+        (Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 0.0, 2.0)),
+        // A slanted segment: a cone frustum.
+        (Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 2.0)),
+    ] {
+        let mut g = GMap::<StandardPayload>::new();
+        let edge =
+            add_edge(&mut g, start, end, Curve::line(start, end)).expect("edge should build");
+        let face = add_revolved_edge(
+            &mut g,
+            edge,
+            Axis3::new(Point3::origin(), Vector3::z()),
+            Rad64::FULL_TURN,
+        )
+        .expect("a full turn should build");
+
+        let boundary = &g.face_attr_unchecked(face).boundary;
+        assert_eq!(boundary.loops().len(), 2, "{start:?} -> {end:?}");
+        assert!(
+            boundary.outer().is_none(),
+            "{start:?} -> {end:?} should have no outer loop"
+        );
+        assert_eq!(
+            boundary.wrapping().count(),
+            2,
+            "{start:?} -> {end:?}: both swept circles wrap the turn"
+        );
+    }
 }

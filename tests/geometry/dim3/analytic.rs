@@ -323,8 +323,17 @@ fn two_spheres_apart_or_nested_or_identical_are_answered_without_a_search() {
     assert!((point - Point3::new(1.0, 0.0, 0.0)).norm() <= LINEAR_TOLERANCE);
 }
 
+/// A section crossing the seam stays one section, and runs straight past it.
+///
+/// This used to assert the opposite — that such a section was cut in two so that
+/// every pcurve stayed inside `[0, 2pi]` — because a face trim classified in one
+/// period and dropped a loop that left it. A trim reads the quotient now, so the
+/// cut bought nothing and cost the caller a circle broken into two arcs meeting
+/// wherever the parameterization happened to be opened. What has to hold instead
+/// is that the pcurve is *continuous*: leaving the period is fine, jumping a
+/// whole period is not.
 #[test]
-fn a_section_crossing_a_seam_is_split_inside_one_period() {
+fn a_section_crossing_a_seam_stays_one_section() {
     // The plane's own x direction points away from the sphere's, so the
     // section starts mid-period and runs across longitude zero.
     let plane = Surface::Plane(Plane::from_xy(
@@ -335,13 +344,22 @@ fn a_section_crossing_a_seam_is_split_inside_one_period() {
     let sphere = unit_sphere_at(Point3::origin(), 1.0);
     let intersection = analytic(&plane, &sphere);
     assert_sections_are_consistent(&intersection, &plane, &sphere);
+    assert_eq!(
+        intersection.sections().len(),
+        1,
+        "a plane cuts a sphere in one circle, seam or no seam"
+    );
     for section in intersection.sections() {
-        for index in 0..=32 {
-            let u = section.pcurve_b.point_at(index as f64 / 32.0).x;
+        let samples = 64;
+        let mut previous = section.pcurve_b.point_at(0.0).x;
+        for index in 1..=samples {
+            let u = section.pcurve_b.point_at(index as f64 / samples as f64).x;
             assert!(
-                (-LINEAR_TOLERANCE..=TAU + LINEAR_TOLERANCE).contains(&u),
-                "a spherical pcurve left its period at u={u}"
+                (u - previous).abs() < TAU / 4.0,
+                "the spherical pcurve jumped from u={previous} to u={u}, \
+                 so it was written on two branches rather than one"
             );
+            previous = u;
         }
     }
 }

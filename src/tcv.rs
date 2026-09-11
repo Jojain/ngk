@@ -308,20 +308,17 @@ fn append_polyline(polyline: &Polyline3, shape: &mut TcvShape) {
 
 fn fallback_chord<P: Payload>(edge: &Edge<'_, P>) -> Polyline3 {
     let points = edge
-        .start()
-        .point()
-        .zip(edge.end().point())
-        .map(|(start, end)| vec![*start, *end])
+        .trimmed_curve()
+        .map(|section| vec![section.point_at(0.0), section.point_at(1.0)])
         .unwrap_or_default();
     Polyline3::new(points)
 }
 
 fn append_edge_vertices<P: Payload>(edge: &Edge<'_, P>, shape: &mut TcvShape) {
-    if let Some(point) = edge.start().point() {
-        push_point(&mut shape.obj_vertices, point);
-    }
-    if let Some(point) = edge.end().point() {
-        push_point(&mut shape.obj_vertices, point);
+    for vertex in edge.vertices() {
+        if let Some(point) = vertex.point() {
+            push_point(&mut shape.obj_vertices, point);
+        }
     }
 }
 

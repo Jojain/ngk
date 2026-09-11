@@ -9,12 +9,13 @@ use crate::builders::faces::reverse_face_winding;
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{
-    ANGULAR_TOLERANCE, Circle, Cone, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2,
-    Point3, Surface, SurfaceOfRevolution,
+    ANGULAR_TOLERANCE, Axis2, Circle, Cone, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane,
+    Point2, Point3, Surface, SurfaceOfRevolution, SurfacePeriodicity,
 };
 use crate::topology::IsolatedDart;
 use crate::topology::attributes::{
-    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
+    BoundaryLoop, EdgeAttr, FaceAttr, FaceBoundary, LoopKind, ProfileAttr, SheetAttr, SolidAttr,
+    VertexAttr,
 };
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
@@ -94,6 +95,24 @@ impl RevolvedSourceVertex {
     }
 }
 
+/// The vertices at the two ends of one edge occurrence.
+///
+/// A dart-level question rather than an endpoint one: a closed circle answers
+/// with the same vertex twice, which is exactly what an alpha2 merge of two such
+/// circles has to reconcile. Callers deciding what *section* an edge is want
+/// [`Edge::kind`] instead.
+fn edge_end_vertices<P: Payload>(
+    g: &GMap<P>,
+    dart: Dart,
+) -> Result<(VertexKey, VertexKey), RevolveError> {
+    let at = |dart: Dart| {
+        Vertex::from_dart(g, dart)
+            .map(|vertex| vertex.key())
+            .ok_or(RevolveError::MissingVertexPoint { dart })
+    };
+    Ok((at(dart)?, at(g.alpha(Dim::Zero, dart))?))
+}
+
 impl RevolvedSourceEdge {
     fn from_key<P: Payload>(g: &GMap<P>, key: EdgeKey) -> Result<Self, RevolveError> {
         let edge = g.edge(key).ok_or(RevolveError::MissingEdge { key })?;
@@ -103,8 +122,23 @@ impl RevolvedSourceEdge {
     fn from_edge<P: Payload>(edge: Edge<'_, P>) -> Result<Self, RevolveError> {
         let key = edge.key();
         let dart = edge.dart();
-        let start = RevolvedSourceVertex::from_vertex(edge.start())?;
-        let end = RevolvedSourceVertex::from_vertex(edge.end())?;
+        // A closed source edge is legitimate — revolving a circle sweeps a torus
+        // — and both its ends are the one vertex it has. The callers that cannot
+        // take a closed edge test `start.key == end.key` and refuse it by name,
+        // so the pair is kept rather than collapsed here.
+        let (start, end) = match edge {
+            Edge::Bounded(edge) => (
+                RevolvedSourceVertex::from_vertex(edge.start())?,
+                RevolvedSourceVertex::from_vertex(edge.end())?,
+            ),
+            Edge::Closed(edge) => {
+                let vertex = edge
+                    .vertex()
+                    .ok_or(RevolveError::MissingVertexPoint { dart })?;
+                let single = RevolvedSourceVertex::from_vertex(vertex)?;
+                (single.clone(), single)
+            }
+        };
         let curve = edge
             .curve()
             .ok_or(RevolveError::MissingEdgeCurve { dart })?
@@ -558,13 +592,55 @@ fn add_full_revolved_open_edge_face<P: Payload>(
         })
         .unwrap_or_default();
 
-    Ok(edit.add_face(FaceAttr::with_pcurves(
+    // Two loops that each run the whole turn bound a ring, not a disk with a
+    // hole: in the support's own parameters the face is a rectangle spanning the
+    // sweep entirely, and neither loop closes there. Which circle is the wider
+    // one is a fact about the shape in space, not about the domain, so it does
+    // not make one of them an outer loop.
+    let boundary = match inner_loops.first() {
+        Some(&inner) => match pcurves
+            .get(&outer_loop)
+            .zip(pcurves.get(&inner))
+            .and_then(|(outer, inner)| swept_period_axis(&surface, [outer, inner]))
+        {
+            Some(axis) => FaceBoundary::from_loops(vec![
+                BoundaryLoop::new(outer_loop, LoopKind::Wrapping { axis }),
+                BoundaryLoop::new(inner, LoopKind::Wrapping { axis }),
+            ]),
+            None => FaceBoundary::new(outer_loop, inner_loops),
+        },
+        None => FaceBoundary::new(outer_loop, inner_loops),
+    };
+
+    Ok(edit.add_face(FaceAttr::with_boundary(
         surface,
         P::F::default(),
-        outer_loop,
-        inner_loops,
+        boundary,
         pcurves,
     )))
+}
+
+/// The axis every given loop spans a whole period of, if they all span one.
+///
+/// Which parameter the sweep angle becomes depends on the support recognized for
+/// the profile: a cylinder's pcurves put it on `u`, a generic surface of
+/// revolution leaves it on `v`. Reading the travel back off the pcurves answers
+/// for either without the caller having to know which was chosen.
+fn swept_period_axis(surface: &Surface, pcurves: [&TrimmedCurve2; 2]) -> Option<Axis2> {
+    let periods = match surface.periodicity() {
+        SurfacePeriodicity::None => return None,
+        SurfacePeriodicity::UPeriodic(u) => [Some(u), None],
+        SurfacePeriodicity::VPeriodic(v) => [None, Some(v)],
+        SurfacePeriodicity::UVPeriodic(u, v) => [Some(u), Some(v)],
+    };
+    Axis2::ALL.into_iter().find(|axis| {
+        periods[axis.index()].is_some_and(|period| {
+            pcurves.iter().all(|pcurve| {
+                let span = axis.of(pcurve.point_at(1.0)) - axis.of(pcurve.point_at(0.0));
+                (span.abs() - period).abs() <= ANGULAR_TOLERANCE
+            })
+        })
+    })
 }
 
 fn validate_consumable_source_edge<P: Payload>(
@@ -708,14 +784,19 @@ struct RevolvedProfile {
 
 struct RevolvedFace {
     /// Dart of the un-rotated source edge, sitting at the source `start` vertex.
-    bottom_edge: Dart,
+    ///
+    /// `None` for a band swept through a whole turn, which has no copy of the
+    /// source edge on its boundary at all: the sweep closes on itself, so the
+    /// band is bounded by its two swept circles and nothing else.
+    bottom_edge: Option<Dart>,
     /// Dart of the rotated edge, sitting at the rotated `start` vertex.
     ///
     /// The quad loop traverses the rotated edge backwards (`rotated_end` to
     /// `rotated_start`), so this is the *second* dart of that edge rather than
     /// the loop-order one. Keeping it at `rotated_start` makes it line up with
-    /// the matching cap edge dart, which also sits at `rotated_start`.
-    top_edge: Dart,
+    /// the matching cap edge dart, which also sits at `rotated_start`. `None`
+    /// for a whole turn, for the same reason as `bottom_edge`.
+    top_edge: Option<Dart>,
     start_side: Dart,
     end_side: Dart,
     outer_loop: Dart,
@@ -747,8 +828,8 @@ fn add_revolved_profile_faces<P: Payload>(
     let swept_dart = faces.first().map_or(profile_dart, |face| face.outer_loop);
     Ok(RevolvedProfile {
         swept_dart,
-        bottom_edges: faces.iter().map(|face| face.bottom_edge).collect(),
-        top_edges: faces.iter().map(|face| face.top_edge).collect(),
+        bottom_edges: faces.iter().filter_map(|face| face.bottom_edge).collect(),
+        top_edges: faces.iter().filter_map(|face| face.top_edge).collect(),
         faces: faces.iter().map(|face| face.key).collect(),
     })
 }
@@ -790,6 +871,38 @@ fn add_revolved_edge_face<P: Payload>(
             support.corner(interval.start, 0.0),
         ),
     ];
+
+    // A whole turn brings the swept copy back onto its source, and a band whose
+    // two swept circles are both real is a ring: build it as one rather than
+    // building the copy and sewing it back.
+    //
+    // `validate_revolvable_radii` has already refused any edge touching the
+    // axis, so both radii are non-zero here today. The check is kept because it
+    // is the real precondition: a band with an end on the axis sweeps no circle
+    // there and is closed by that degeneracy instead, which is not a kind a loop
+    // can carry until boundaryless faces land.
+    // The two swept circles, each traversed as the quad loop traverses its arc:
+    // the end arc with the sweep, the start arc against it. Keeping those
+    // directions is what leaves the ring wound the way the quad band was.
+    let ring_pcurves = [
+        TrimmedCurve2::segment(pcurves[3].0, pcurves[3].1),
+        TrimmedCurve2::segment(pcurves[1].0, pcurves[1].1),
+    ];
+    if is_full_turn(angle)
+        && [start, end]
+            .iter()
+            .all(|point| revolve_radius(axis, *point) > LINEAR_TOLERANCE)
+        && let Some(period_axis) = swept_period_axis(&surface, [&ring_pcurves[0], &ring_pcurves[1]])
+    {
+        return add_full_revolved_ring_face(
+            edit,
+            [start, end],
+            [start_arc, end_arc],
+            surface,
+            ring_pcurves,
+            period_axis,
+        );
+    }
 
     add_revolved_quad_face(
         edit,
@@ -840,13 +953,76 @@ fn add_revolved_quad_face<P: Payload>(
     ));
 
     Ok(RevolvedFace {
-        bottom_edge: darts[0],
+        bottom_edge: Some(darts[0]),
         // darts[4] is at `rotated_end`; darts[5] is its alpha0 partner at
         // `rotated_start`, which is the vertex the cap edge dart carries.
-        top_edge: darts[5],
+        top_edge: Some(darts[5]),
         start_side: darts[7],
         end_side: darts[2],
         outer_loop: darts[0],
+        key,
+    })
+}
+
+/// Builds one band of a whole turn as a ring, with no seam to sew afterwards.
+///
+/// A quad band carries a copy of the source edge at each end of the sweep, and a
+/// whole turn then sews those two copies together — the seam. They are the same
+/// curve in the same place, so the honest answer is not to make them: the band is
+/// bounded by the two circles its endpoints sweep, each running the whole turn
+/// and closing only on the quotient. That is a ring, and the source edge appears
+/// on it nowhere.
+///
+/// Each circle is a closed one-edge loop, `alpha1` linking its dart pair onto
+/// itself exactly as a circular edge's own profile does, so the neighbouring band
+/// sews to it through the same side darts a quad band would have offered.
+fn add_full_revolved_ring_face<P: Payload>(
+    edit: &mut TopologyEdit<'_, P>,
+    ends: [Point3; 2],
+    circles: [Curve; 2],
+    surface: Surface,
+    pcurves: [TrimmedCurve2; 2],
+    axis: Axis2,
+) -> Result<RevolvedFace, RevolveError> {
+    let [start_first, start_second, end_first, end_second]: [Dart; 4] =
+        std::array::from_fn(|_| edit.add_dart());
+    for (first, second) in [(start_first, start_second), (end_first, end_second)] {
+        edit.link(Dim::Zero, first, second)?;
+        edit.link(Dim::One, first, second)?;
+    }
+
+    for (seed, point, curve) in [
+        (start_first, ends[0], &circles[0]),
+        (end_first, ends[1], &circles[1]),
+    ] {
+        edit.add_vertex(VertexAttr::new(seed, point, P::V::default()));
+        edit.add_edge(EdgeAttr::new(seed, curve.clone(), P::E::default()));
+        edit.add_profile(ProfileAttr::new(seed, P::Profile::default()));
+    }
+
+    let [start_pcurve, end_pcurve] = pcurves;
+    let key = edit.add_face(FaceAttr::with_boundary(
+        surface,
+        P::F::default(),
+        FaceBoundary::from_loops(vec![
+            BoundaryLoop::new(start_first, LoopKind::Wrapping { axis }),
+            BoundaryLoop::new(end_first, LoopKind::Wrapping { axis }),
+        ]),
+        HashMap::from([(start_first, start_pcurve), (end_first, end_pcurve)]),
+    ));
+
+    Ok(RevolvedFace {
+        bottom_edge: None,
+        top_edge: None,
+        // A neighbouring band must traverse the shared circle the other way
+        // round, so the sew has to land on the far dart of this loop rather than
+        // on its seed: `alpha2` of one seed then reaches the other seed through
+        // `alpha0`, which is what a consistently oriented shell means. The two
+        // ends are therefore offered asymmetrically, as a swept wrapping face
+        // offers its bottom and top.
+        start_side: start_second,
+        end_side: end_first,
+        outer_loop: start_first,
         key,
     })
 }
@@ -924,14 +1100,17 @@ fn alpha2_revolve_merge<P: Payload>(
     let second_edge =
         Edge::from_dart(g, second).ok_or(RevolveError::MissingEdgeCurve { dart: second })?;
 
+    let (first_start, first_end) = edge_end_vertices(g, first_edge.dart())?;
+    let (second_start, second_end) = edge_end_vertices(g, second_edge.dart())?;
+
     if survivor == first && removed == second {
         return Ok(Alpha2RevolveMerge {
             survivor_edge: first_edge.key(),
             removed_edge: second_edge.key(),
-            survivor_start: first_edge.start().key(),
-            removed_start: second_edge.start().key(),
-            survivor_end: first_edge.end().key(),
-            removed_end: second_edge.end().key(),
+            survivor_start: first_start,
+            removed_start: second_start,
+            survivor_end: first_end,
+            removed_end: second_end,
         });
     }
 
@@ -939,10 +1118,10 @@ fn alpha2_revolve_merge<P: Payload>(
         return Ok(Alpha2RevolveMerge {
             survivor_edge: second_edge.key(),
             removed_edge: first_edge.key(),
-            survivor_start: second_edge.start().key(),
-            removed_start: first_edge.start().key(),
-            survivor_end: second_edge.end().key(),
-            removed_end: first_edge.end().key(),
+            survivor_start: second_start,
+            removed_start: first_start,
+            survivor_end: second_end,
+            removed_end: first_end,
         });
     }
 
@@ -1079,7 +1258,8 @@ fn revolve_sweep_direction<P: Payload>(axis: Axis3, face: &Face<'_, P>) -> Vecto
     let point = face
         .edges()
         .first()
-        .and_then(|edge| edge.start().point().copied())
+        .and_then(|edge| edge.trimmed_curve())
+        .map(|section| section.point_at(0.0))
         .unwrap_or(axis.origin);
     axis.direction.cross(&(point - axis.project(point)))
 }
@@ -1126,7 +1306,6 @@ fn add_full_revolved_face<P: Payload>(
     let mut lateral_faces = Vec::new();
     for &loop_dart in &loops {
         let revolved = add_revolved_profile_faces(edit, loop_dart, axis, angle, true)?;
-        sew_full_revolved_seam(edit, &revolved)?;
         lateral_faces.extend(revolved.faces);
         shell.get_or_insert(revolved.swept_dart);
     }
@@ -1166,7 +1345,12 @@ fn consume_revolved_source_face<P: Payload>(
         let loop_darts = profile.darts().collect::<Vec<_>>();
         for dart in loop_darts.iter().copied().step_by(2) {
             if let Some(edge) = Edge::from_dart(edit, dart) {
-                let (edge_key, vertex_key) = (edge.key(), edge.start().key());
+                // Only the vertex this dart sits on: the loop removes vertices as
+                // it walks, so by now the far end of the edge may already be gone.
+                let vertex_key = Vertex::from_dart(edit, dart)
+                    .map(|vertex| vertex.key())
+                    .ok_or(RevolveError::MissingVertexPoint { dart })?;
+                let edge_key = edge.key();
                 edit.remove_edge(edge_key);
                 edit.remove_vertex(vertex_key);
             }
@@ -1186,19 +1370,6 @@ fn consume_revolved_source_face<P: Payload>(
     let isolated = darts.into_iter().map(IsolatedDart::new).collect();
     let remapped = edit.remove_isolated_darts(isolated);
     Ok(remapped.get(&shell).copied().unwrap_or(shell))
-}
-
-/// Sews the seam of a full turn, where the swept copy of each source edge lands
-/// back on the source edge itself.
-fn sew_full_revolved_seam<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
-    revolved: &RevolvedProfile,
-) -> Result<(), RevolveError> {
-    for (&bottom, &top) in revolved.bottom_edges.iter().zip(revolved.top_edges.iter()) {
-        sew_revolved_alpha2_edges(edit, bottom, top, bottom, top)?;
-    }
-
-    Ok(())
 }
 
 fn sew_revolved_loop_to_caps<P: Payload>(

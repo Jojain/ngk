@@ -25,7 +25,10 @@ fn failed_chamfer_builder_preserves_the_source_profile() {
         ],
     )
     .expect("profile should build");
-    let corner = g.profile_unchecked(profile).edges()[0].end().key();
+    let corner = g.profile_unchecked(profile).edges()[0]
+        .bounded_unchecked()
+        .end()
+        .key();
     let before_darts = g.dart_count();
     let before_edges = g.iter_edges().count();
     let before_vertices = g.iter_vertices().count();
@@ -53,7 +56,10 @@ fn profile_chamfer_mutates_in_place_without_returning_a_topology_handle() {
         ],
     )
     .expect("profile should build");
-    let corner = g.profile_unchecked(profile).edges()[0].end().key();
+    let corner = g.profile_unchecked(profile).edges()[0]
+        .bounded_unchecked()
+        .end()
+        .key();
 
     let result: Result<(), ChamferError> = chamfer(&mut g, corner, 0.25);
 
@@ -72,10 +78,15 @@ fn solid_edge_chamfer_replaces_a_block_edge_with_a_planar_face() {
         .into_iter()
         .find(|edge| {
             let start = *edge
+                .bounded_unchecked()
                 .start()
                 .point()
                 .expect("edge start should be geometric");
-            let end = *edge.end().point().expect("edge end should be geometric");
+            let end = *edge
+                .bounded_unchecked()
+                .end()
+                .point()
+                .expect("edge end should be geometric");
             (start.x - end.x).abs() < 1.0e-9
                 && (start.y - end.y).abs() < 1.0e-9
                 && (start.z - end.z).abs() > 3.9
@@ -143,10 +154,15 @@ fn several_disjoint_solid_edges_can_be_chamfered_in_one_transaction() {
         .into_iter()
         .filter(|edge| {
             let start = *edge
+                .bounded_unchecked()
                 .start()
                 .point()
                 .expect("edge start should be geometric");
-            let end = *edge.end().point().expect("edge end should be geometric");
+            let end = *edge
+                .bounded_unchecked()
+                .end()
+                .point()
+                .expect("edge end should be geometric");
             (start.x - end.x).abs() < 1.0e-9
                 && (start.y - end.y).abs() < 1.0e-9
                 && (start.z - end.z).abs() > 3.9
@@ -245,6 +261,7 @@ fn solid_edge_chamfer_supports_an_extruded_nurbs_profile_edge() {
         .find(|edge| {
             matches!(edge.curve(), Some(Curve::Nurbs(_)))
                 && edge
+                    .bounded_unchecked()
                     .start()
                     .point()
                     .is_some_and(|point| (point.z - 2.0).abs() < 1.0e-9)

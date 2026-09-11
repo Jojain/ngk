@@ -46,6 +46,7 @@ fn split_profile_edge_handles_isolated_edge() {
     let second = g.edge_unchecked(split.second);
     assert!(
         first
+            .bounded_unchecked()
             .start()
             .point()
             .unwrap()
@@ -53,6 +54,7 @@ fn split_profile_edge_handles_isolated_edge() {
     );
     assert!(
         first
+            .bounded_unchecked()
             .end()
             .point()
             .unwrap()
@@ -61,6 +63,7 @@ fn split_profile_edge_handles_isolated_edge() {
 
     assert!(
         second
+            .bounded_unchecked()
             .start()
             .point()
             .expect("second split edge start should have geometry")
@@ -69,6 +72,7 @@ fn split_profile_edge_handles_isolated_edge() {
     );
     assert!(
         second
+            .bounded_unchecked()
             .end()
             .point()
             .expect("second split edge end should have geometry")

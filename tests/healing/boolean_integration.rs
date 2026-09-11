@@ -95,14 +95,19 @@ fn healing_a_tangent_union_fuses_the_fragments_the_imprint_created() {
     let (_, _, raw) = evaluate(BooleanOperation::Union, false);
     let (mut map, solid, healed) = evaluate(BooleanOperation::Union, true);
 
-    assert_eq!(raw, (8, 14, 8), "splitting leaves eight fragments");
+    assert_eq!(raw, (8, 13, 8), "splitting leaves eight fragments");
     // The disc, the block's bottom square and the corner it pokes out with all
     // describe one plane, so the whole bottom comes back as a single face; the
     // block's top keeps only the corner, and the cylinder keeps its wall and
     // its far cap.
+    //
+    // The wall is a ring, so it carries no seam edge: the shell holds ten edges
+    // rather than eleven. That still closes, because Euler counts a face by what
+    // it is — 7 - 10 + (5 disks + 1 annulus) = 7 - 10 + 5 = 2, exactly what the
+    // seamed reading got as 7 - 11 + 6.
     assert_eq!(
         healed,
-        (6, 11, 7),
+        (6, 10, 7),
         "healing should fuse the union back to its six real faces"
     );
     assert_eq!(map.iter_solids().count(), 1);

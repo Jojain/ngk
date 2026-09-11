@@ -338,16 +338,19 @@ fn perpendicular_to(axis: UnitVector3<f64>) -> UnitVector3<f64> {
     UnitVector3::new_normalize(axis.cross(&reference))
 }
 
-/// Writes one section's pcurves on both supports, splitting it at any seam.
+/// Writes one section's pcurves on both supports, splitting it at any
+/// degeneracy.
 ///
 /// The section arrives with its own normalized domain. Each support is asked
 /// for a closed-form pcurve first; when none exists, or the candidate does not
 /// reproduce the section, the pcurve is interpolated from the section's own
 /// samples inverted through the support's closed-form projection.
 ///
-/// A pcurve whose periodic parameter leaves one period is split rather than
-/// wrapped, because a face trim classifies in `[0, 2pi]` and a loop that
-/// leaves it is dropped rather than understood.
+/// A pcurve whose periodic parameter leaves one period is **not** split: it runs
+/// on past the period, and the reader puts it back on its own branch. A plane
+/// cutting a cylinder yields one circular section, not two arcs meeting wherever
+/// the parameterization happened to be cut open. Only a parametric degeneracy
+/// still cuts a section, because there the support genuinely stops.
 fn sections_for(
     curve: Curve,
     interval: Interval,
@@ -361,13 +364,12 @@ fn sections_for(
     ];
     let mut cuts = vec![0.0_f64, 1.0];
     for trace in &traces {
-        cuts.extend(trace.seam_crossings());
         cuts.extend(trace.degeneracy_crossings());
     }
-    // Cuts arrive from two traces that can locate the same feature -- a
-    // section leaving a pole right at the seam -- a rounding error apart.
-    // Merging at the solver's parameter tolerance would keep both and leave a
-    // piece too narrow for either the section or its pcurves to be trimmed to.
+    // Cuts arrive from two traces that can locate the same feature a rounding
+    // error apart. Merging at the solver's parameter tolerance would keep both
+    // and leave a piece too narrow for either the section or its pcurves to be
+    // trimmed to.
     for cut in &mut cuts {
         if *cut < MIN_PIECE_SPAN {
             *cut = 0.0;
@@ -495,75 +497,6 @@ impl SectionTrace {
             .fold(0.0_f64, worst_distance)
     }
 
-    /// Section parameters at which the unwrapped `u` crosses a period boundary.
-    fn seam_crossings(&self) -> Vec<f64> {
-        let Some(period) = self.period else {
-            return Vec::new();
-        };
-        if self.exact.is_some() && self.within_one_period(period) {
-            return Vec::new();
-        }
-        let mut crossings = Vec::new();
-        for window in self.uv.windows(2).enumerate() {
-            let (index, pair) = window;
-            let (start, end) = (pair[0].x, pair[1].x);
-            let (low, high) = if start <= end {
-                (start, end)
-            } else {
-                (end, start)
-            };
-            // Half-open on purpose. A sample landing exactly on a boundary is
-            // the common case -- a section symmetric about the seam has one --
-            // and a closed test makes both neighbouring segments decline it,
-            // losing the crossing entirely.
-            let first = (low / period).floor() as i64 + 1;
-            let last = (high / period).floor() as i64;
-            for step in first..=last {
-                let boundary = step as f64 * period;
-                if (end - start).abs() <= f64::EPSILON {
-                    continue;
-                }
-                let fraction = (boundary - start) / (end - start);
-                if (0.0..=1.0).contains(&fraction) {
-                    let a = self.parameters[index];
-                    let b = self.parameters[index + 1];
-                    crossings.push(self.refined_crossing(a, b, a + (b - a) * fraction, boundary));
-                }
-            }
-        }
-        crossings
-    }
-
-    /// Sharpens a seam crossing located on the sampled polyline.
-    ///
-    /// The polyline puts the crossing within a sample spacing of the truth,
-    /// which is not close enough: a piece that starts slightly early carries a
-    /// pcurve that begins just outside the period, exactly the condition the
-    /// splitting exists to prevent. Bisecting on the inverted section closes
-    /// that gap without another inversion pass over the whole curve.
-    fn refined_crossing(&self, low: f64, high: f64, seed: f64, boundary: f64) -> f64 {
-        let Ok(seed_value) = self.uv_at(seed) else {
-            return seed;
-        };
-        let (mut low, mut high) = (low, high);
-        let increasing = self
-            .uv_at(high)
-            .map(|end| end.x >= seed_value.x)
-            .unwrap_or(true);
-        for _ in 0..40 {
-            let middle = 0.5 * (low + high);
-            let Ok(value) = self.uv_at(middle) else {
-                return middle;
-            };
-            if (value.x < boundary) == increasing {
-                low = middle;
-            } else {
-                high = middle;
-            }
-        }
-        0.5 * (low + high)
-    }
-
     /// Inverts the section at one parameter, on the trace's unwrapped branch.
     ///
     /// `closest_parameter` folds longitude back into one period, so the raw
@@ -650,17 +583,6 @@ impl SectionTrace {
             }
         }
         0.5 * (low + high)
-    }
-
-    /// Whether the whole trace already sits inside one period.
-    fn within_one_period(&self, period: f64) -> bool {
-        let (min, max) = self
-            .uv
-            .iter()
-            .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), point| {
-                (min.min(point.x), max.max(point.x))
-            });
-        min >= -f64::EPSILON && max <= period + f64::EPSILON
     }
 
     /// Writes this support's pcurve over one piece of the section.

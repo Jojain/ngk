@@ -667,15 +667,11 @@ fn split_edge_at_points<P: Payload>(
         .ok_or(BooleanError::MissingOperand {
             operand: BooleanOperand::Edge(source),
         })?;
-    let source_domain = {
-        let view = edit.edge_unchecked(source);
-        source_curve
-            .interval_between(
-                *view.start().point().expect("edge start geometry"),
-                *view.end().point().expect("edge end geometry"),
-            )
-            .ordered()
-    };
+    let source_domain = edit
+        .edge_unchecked(source)
+        .parameter_interval()
+        .expect("registered edge span")
+        .ordered();
     points.sort_by(|a, b| {
         periodic_parameter_in_domain(&source_curve, *a, source_domain).total_cmp(
             &periodic_parameter_in_domain(&source_curve, *b, source_domain),
@@ -690,9 +686,9 @@ fn split_edge_at_points<P: Payload>(
             let Some(curve) = view.curve() else {
                 return false;
             };
-            let start = *view.start().point().expect("edge start geometry");
-            let end = *view.end().point().expect("edge end geometry");
-            let domain = curve.interval_between(start, end).ordered();
+            let Some(domain) = view.parameter_interval().map(|span| span.ordered()) else {
+                return false;
+            };
             let parameter = periodic_parameter_in_domain(curve, point, domain);
             domain.contains(parameter, options.parameter_tolerance)
                 && (parameter - domain.start).abs() > options.parameter_tolerance
@@ -703,11 +699,9 @@ fn split_edge_at_points<P: Payload>(
 
         let view = edit.edge_unchecked(fragment);
         let curve = view.curve().expect("registered edge geometry");
-        let domain = curve
-            .interval_between(
-                *view.start().point().expect("edge start geometry"),
-                *view.end().point().expect("edge end geometry"),
-            )
+        let domain = view
+            .parameter_interval()
+            .expect("registered edge span")
             .ordered();
         let parameter = periodic_parameter_in_domain(curve, point, domain);
         let incident_face = view.faces().first().map(|face| face.key());

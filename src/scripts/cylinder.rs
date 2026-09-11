@@ -17,8 +17,11 @@ const HEIGHT: f64 = 1.5;
 pub fn run() -> Result<ScriptResult, String> {
     let arc = edges::arc(Plane::xy(), RADIUS, 0.0, std::f64::consts::FRAC_PI_2)
         .map_err(|err| format!("failed to build arc edge: {err:?}"))?;
-    let start = *arc.edge().start().point().ok_or("arc start is missing")?;
-    let end = *arc.edge().end().point().ok_or("arc end is missing")?;
+    let section = arc
+        .edge()
+        .trimmed_curve()
+        .ok_or("arc geometry is missing")?;
+    let (start, end) = (section.point_at(0.0), section.point_at(1.0));
     let closing_edge =
         edges::line(end, start).map_err(|err| format!("failed to build closing edge: {err:?}"))?;
     let mut profile = arc.into_profile();

@@ -1292,14 +1292,15 @@ fn boolean_union_of_a_block_and_a_protruding_cylinder_opens_one_inner_loop() {
 }
 
 #[test]
-#[ignore = "curved faces are not yet split across their parameter seam"]
+#[ignore = "cylinder/cylinder branches are not fitted tightly enough to certify"]
 fn boolean_difference_crosses_two_cylindrical_holes() {
-    // Both remaining gaps are the same one, in the trimming and face-splitting
-    // layers rather than in the solver. The bore wall's own seam sits at `u = 0`
-    // and one of the two wall/wall loops straddles it, so trim classification
-    // drops that loop; the wall/plane loops do reach the network, but realizing
-    // one on the crossing cylinder needs a chord that runs from the seam back to
-    // the seam, which `FaceImprintCut` cannot express yet.
+    // The seam this used to be blocked on is gone: a bore wall is a ring, so no
+    // loop straddles a cut and no chord has to run from a seam back to itself.
+    // What remains is in the solver. Cylinder/cylinder is not in the analytic
+    // table, so the pair goes to the NURBS tracer, and one of its four branches
+    // comes back uncertified with `SynchronizedFitToleranceExceeded` — the fitted
+    // pcurve and its 3D curve drift apart faster than the synchronized-fit
+    // tolerance allows.
     use ngk::builders::boolean::{BooleanOperation, boolean, solid_contains_point};
     let (mut map, block, upright) = block_with_cylinder(0.5, -1.0, 4.0);
     let drilled = boolean(
@@ -1655,7 +1656,6 @@ fn block_fused_with_cylinder_tangent_to_block_faces() {
         BooleanOptions::default(),
     );
     let result = result.expect("boolean union failed");
-
     assert_eq!(
         map.iter_solids().count(),
         1,

@@ -20,8 +20,14 @@ fn closed_profile_corners_pair_each_vertex_with_ordered_incident_edges() {
 
         assert_eq!(corner.incoming().dart(), edges[previous].dart());
         assert_eq!(corner.outgoing().dart(), edges[index].dart());
-        assert_eq!(corner.vertex().key(), edges[index].start().key());
-        assert_eq!(corner.vertex().key(), edges[previous].end().key());
+        assert_eq!(
+            corner.vertex().key(),
+            edges[index].bounded_unchecked().start().key()
+        );
+        assert_eq!(
+            corner.vertex().key(),
+            edges[previous].bounded_unchecked().end().key()
+        );
     }
 }
 
@@ -46,8 +52,8 @@ fn rectangle_profile_traverses_corners_and_edges_in_geometric_order() {
         .take(expected.len())
     {
         assert_eq!(
-            edge.end().key(),
-            next.start().key(),
+            edge.bounded_unchecked().end().key(),
+            next.bounded_unchecked().start().key(),
             "consecutive oriented edges should share end and start vertices"
         );
     }

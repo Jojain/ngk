@@ -190,6 +190,7 @@ fn sphere_builds_a_well_formed_solid() {
                 .point_at(pcurve.point_at(0.0).x, pcurve.point_at(0.0).y)
                 .coincides(
                     *edge
+                        .bounded_unchecked()
                         .start()
                         .point()
                         .expect("sphere pole should have geometry"),
@@ -201,6 +202,7 @@ fn sphere_builds_a_well_formed_solid() {
                 .point_at(pcurve.point_at(1.0).x, pcurve.point_at(1.0).y)
                 .coincides(
                     *edge
+                        .bounded_unchecked()
                         .end()
                         .point()
                         .expect("sphere pole should have geometry"),
@@ -301,4 +303,61 @@ fn primitives_carry_their_canonical_analytic_supports() {
             .iter()
             .all(|face| matches!(face.surface(), Surface::Plane(_)))
     );
+}
+
+/// A ring face's mesh closes over the chart's cut.
+///
+/// The wall spans its whole period in `u`, so the column at the cut and the
+/// column a period later are the same points on the surface. Emitting both would
+/// leave a crack that no assertion about triangle quality would notice, which is
+/// why this reads the mesh's own topology instead: a tube's only boundary is its
+/// two rims, and nothing in between may be open or duplicated.
+#[test]
+fn a_cylinder_wall_tessellates_into_a_closed_tube() {
+    let height = 2.0;
+    let shape = cylinder(1.0, height).expect("cylinder primitive should build");
+    let wall = shape
+        .solid()
+        .faces()
+        .into_iter()
+        .find(|face| matches!(face.surface(), Surface::Cylinder(_)))
+        .expect("a cylinder has a cylindrical wall");
+    assert!(
+        wall.outer_loop().is_none(),
+        "the wall is a ring, bounded by two wrapping loops and no outer loop"
+    );
+
+    let mesh = tessellate_face_key(shape.map(), wall.key(), TessellateOpts::default())
+        .expect("the wall should tessellate");
+
+    for (index, point) in mesh.positions.iter().enumerate() {
+        for (other, duplicate) in mesh.positions.iter().enumerate().skip(index + 1) {
+            assert!(
+                !point.coincides(*duplicate, LINEAR_TOLERANCE),
+                "vertices {index} and {other} share the point {point:?}, \
+                 so the cut was meshed as two columns rather than one"
+            );
+        }
+    }
+
+    let mut uses = std::collections::HashMap::<(u32, u32), usize>::new();
+    for triangle in mesh.indices.chunks_exact(3) {
+        for (from, to) in [(0, 1), (1, 2), (2, 0)] {
+            let (a, b) = (triangle[from], triangle[to]);
+            *uses.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    for (&(a, b), &count) in &uses {
+        assert!(count <= 2, "edge {a}-{b} is shared by {count} triangles");
+        if count == 2 {
+            continue;
+        }
+        for end in [a, b] {
+            let z = mesh.positions[end as usize].z;
+            assert!(
+                z.abs() <= LINEAR_TOLERANCE || (z - height).abs() <= LINEAR_TOLERANCE,
+                "edge {a}-{b} is open at z = {z}, away from either rim"
+            );
+        }
+    }
 }

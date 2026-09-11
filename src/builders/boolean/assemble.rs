@@ -261,12 +261,14 @@ fn sew_pair<P: Payload>(
     let b = edit.edge_unchecked(second);
     let da = a.dart();
     let mut db = b.dart();
-    let a0 = *a.start().point().expect("admitted geometry");
-    let a1 = *a.end().point().expect("admitted geometry");
-    let b0 = *b.start().point().expect("admitted geometry");
-    let b1 = *b.end().point().expect("admitted geometry");
-    let av = [a.start().key(), a.end().key()];
-    let mut bv = [b.start().key(), b.end().key()];
+    let (a_start, a_end) = a.bounded_unchecked().ends();
+    let (b_start, b_end) = b.bounded_unchecked().ends();
+    let a0 = *a_start.point().expect("admitted geometry");
+    let a1 = *a_end.point().expect("admitted geometry");
+    let b0 = *b_start.point().expect("admitted geometry");
+    let b1 = *b_end.point().expect("admitted geometry");
+    let av = [a_start.key(), a_end.key()];
+    let mut bv = [b_start.key(), b_end.key()];
     if a0.coincides(b1, tolerance) && a1.coincides(b0, tolerance) {
         db = edit.alpha(Dim::Zero, db);
         bv.swap(0, 1);
@@ -343,7 +345,11 @@ fn signed_volume<P: Payload>(map: &GMap<P>, faces: &[FaceKey]) -> f64 {
             let points = boundary
                 .edges()
                 .iter()
-                .map(|edge| *edge.start().point().expect("admitted geometry"))
+                .map(|edge| {
+                    edge.trimmed_curve()
+                        .expect("admitted geometry")
+                        .point_at(0.0)
+                })
                 .collect::<Vec<Point3>>();
             for pair in points[1..].windows(2) {
                 volume += (points[0] - reference)

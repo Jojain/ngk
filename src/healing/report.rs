@@ -23,9 +23,14 @@ pub enum SkipReason {
     /// Removing the edge would break one boundary loop into several, which
     /// leaves open which of them bounds the face from outside.
     LoopWouldSplit,
-    /// The edge is a seam: the face bounds it on both sides, and its surface is
-    /// periodic, so the seam is where the parameterization closes rather than a
-    /// slit the boundary can close over.
+    /// Removing the edge would leave one loop spanning a closed direction.
+    ///
+    /// A seam whose removal leaves two such loops is a ring, and that is
+    /// removed. This is the other case: one loop left, so the face is bounded by
+    /// a loop on one side and by a parametric degeneracy on the other — a
+    /// spherical cap — which no [`LoopKind`] can describe yet.
+    ///
+    /// [`LoopKind`]: crate::topology::attributes::LoopKind
     PeriodicSurface,
     /// The removal would fuse loops that are not both outer boundaries.
     NotOuterLoop,
@@ -35,8 +40,6 @@ pub enum SkipReason {
     CurvesNotJoinable,
     /// The two surfaces are neither coplanar nor the same parameterization.
     SurfacesNotJoinable,
-    /// The fused edge would close on itself, leaving a vertexless loop.
-    WouldCloseEdge,
     /// The fused boundary's parameter curve could not be rebuilt.
     PcurveNotJoinable,
     /// A cell involved in the removal has no registered identity.

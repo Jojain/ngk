@@ -20,6 +20,21 @@ fn closed_edge_darts_resolve_opposite_orientations() {
     assert_eq!(reversed_edge.key(), edge_key);
     assert_eq!(default_edge.dart(), default_dart);
     assert_eq!(reversed_edge.dart(), reversed_dart);
-    assert_eq!(default_edge.start().key(), reversed_edge.end().key());
-    assert_eq!(default_edge.end().key(), reversed_edge.start().key());
+    // Both darts report the edge closed, from either direction. This used to
+    // compare `start` against `end` across the two views, which a circle answers
+    // vacuously — its ends are one vertex, so either comparison held whatever
+    // the darts did. What the two views really disagree about is direction, and
+    // that is asserted above; what they agree on is that there is no arc here to
+    // name with endpoints.
+    assert!(matches!(default_edge, Edge::Closed(_)));
+    assert!(matches!(reversed_edge, Edge::Closed(_)));
+    assert!(
+        default_edge.bounded().is_none(),
+        "a closed edge has no endpoints to hand out"
+    );
+    assert_eq!(
+        default_edge.vertices().len(),
+        1,
+        "the circle's two ends meet at one vertex"
+    );
 }

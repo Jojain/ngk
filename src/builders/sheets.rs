@@ -12,6 +12,7 @@ use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, ProfileKey, SheetKey, VertexKey};
+use crate::topology::vertex::Vertex;
 
 /// Adds an extruded profile to the given GMap.
 ///
@@ -67,14 +68,12 @@ fn extrude_edge<P: Payload>(
 ) -> Result<ExtrudedFace, ExtrudeError> {
     let edge = Edge::from_dart(edit, edge_dart)
         .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
-    let start = *edge
-        .start()
-        .point()
+    // The ends of the section being swept. A closed edge sweeps a wall whose two
+    // ends are the same point, which is exactly the wrapping case.
+    let section = edge
+        .trimmed_curve()
         .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
-    let end = *edge
-        .end()
-        .point()
-        .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
+    let (start, end) = (section.point_at(0.0), section.point_at(1.0));
     let curve = edge
         .curve()
         .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
@@ -260,13 +259,20 @@ fn alpha2_sweep_merge<P: Payload>(
     let removed_edge =
         Edge::from_dart(g, removed).ok_or(ExtrudeError::MissingEdgeCurve { dart: removed })?;
 
+    // A dart-level lookup, not an endpoint one: sewing two closed circles gives
+    // the same vertex at both ends of each, and that is what has to reconcile.
+    let vertex_at = |dart: Dart| {
+        Vertex::from_dart(g, dart)
+            .map(|vertex| vertex.key())
+            .ok_or(ExtrudeError::MissingVertexPoint { dart })
+    };
     Ok(Alpha2SweepMerge {
         survivor_edge: survivor_edge.key(),
         removed_edge: removed_edge.key(),
-        survivor_start: survivor_edge.start().key(),
-        removed_start: removed_edge.start().key(),
-        survivor_end: survivor_edge.end().key(),
-        removed_end: removed_edge.end().key(),
+        survivor_start: vertex_at(survivor)?,
+        removed_start: vertex_at(removed)?,
+        survivor_end: vertex_at(g.alpha(Dim::Zero, survivor))?,
+        removed_end: vertex_at(g.alpha(Dim::Zero, removed))?,
     })
 }
 
@@ -384,12 +390,11 @@ mod tests {
         );
         let translated_edge = Edge::from_dart(&source, translated_dart)
             .expect("translated dart should belong to an edge");
-        let start = *translated_edge
-            .start()
+        let (translated_start, translated_end) = translated_edge.bounded_unchecked().vertices();
+        let start = *translated_start
             .point()
             .expect("translated edge start should have geometry");
-        let end = *translated_edge
-            .end()
+        let end = *translated_end
             .point()
             .expect("translated edge end should have geometry");
 

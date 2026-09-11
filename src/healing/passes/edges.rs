@@ -19,7 +19,7 @@ use crate::builders::profiles::curve_pcurve;
 use crate::builders::removal::{
     CellRemovalError, MergedCell, can_remove_cell, is_removable, remove_cell_staged,
 };
-use crate::geometry::{Plane, Surface, SurfacePeriodicity};
+use crate::geometry::{Plane, Surface};
 use crate::topology::attributes::LoopKind;
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::orientation::Orientation;
@@ -104,14 +104,12 @@ fn plan<P: Payload>(
         .ok_or(SkipReason::Unregistered)?
         .surface;
     let surfaces = match consumed {
-        None => {
-            // A seam is the parameterization's own boundary, not a slit: closing
-            // it over would leave the face with no way to express its trimming.
-            if !matches!(surface.periodicity(), SurfacePeriodicity::None) {
-                return Err(SkipReason::PeriodicSurface);
-            }
-            SurfaceMatch::Identical
-        }
+        // A seam is the parameterization's own cut, not a slit, so removing it
+        // does not close the boundary over — it lets the loop fall into the two
+        // wrapping loops the face really has. `remove_cell_staged` recognises
+        // that shape and refuses any other two-way split, so the decision is
+        // left to it rather than guarded by periodicity here.
+        None => SurfaceMatch::Identical,
         Some(consumed) => {
             let both_outer = [survivor, consumed]
                 .into_iter()
@@ -151,6 +149,7 @@ fn plan<P: Payload>(
     // candidate never disturbs the map.
     can_remove_cell(g, dart, Dim::One).map_err(|error| match error {
         CellRemovalError::LoopWouldSplit { .. } => SkipReason::LoopWouldSplit,
+        CellRemovalError::WouldLeaveWrappingLoop { .. } => SkipReason::PeriodicSurface,
         CellRemovalError::NotRemovable { .. } => SkipReason::NotRemovable,
         _ => SkipReason::Unregistered,
     })?;
@@ -263,11 +262,7 @@ fn has_rebuildable_boundary<P: Payload>(
             view.loops()
                 .iter()
                 .flat_map(|boundary| boundary.edges())
-                .all(|edge| {
-                    edge.curve().is_some()
-                        && edge.start().point().is_some()
-                        && edge.end().point().is_some()
-                })
+                .all(|edge| edge.trimmed_curve().is_some())
         })
     })
 }
@@ -297,6 +292,9 @@ fn apply<P: Payload>(
             ..
         } => (survivor, Some(consumed), orientation),
         MergedCell::Loops { face, .. } => (face, None, Orientation::Same),
+        // A seam removal reshapes one face's boundary into two wrapping loops,
+        // consuming nothing: the same rejoin bookkeeping applies.
+        MergedCell::Ring { face, .. } => (face, None, Orientation::Same),
         MergedCell::BoundaryRemoved { face, .. } => (face, None, Orientation::Same),
         MergedCell::Edges { .. } => {
             return Err(TopologyEditError::MissingLineageAttribute {
@@ -351,8 +349,11 @@ fn rebuild_pcurves<P: Payload>(
         for boundary in view.loops() {
             for edge in boundary.edges() {
                 let dart = edge.dart();
-                let start = *edge.start().point()?;
-                let end = *edge.end().point()?;
+                // The ends of the section the edge *is*, not of the vertices it
+                // happens to carry: a closed edge has one vertex or none, and
+                // still runs from somewhere to somewhere.
+                let section = edge.trimmed_curve()?;
+                let (start, end) = (section.point_at(0.0), section.point_at(1.0));
                 let stored = edge.curve()?;
                 let oriented = match edit.map().edge_orientation_at_dart(edge.key(), dart) {
                     Orientation::Same => stored.clone(),

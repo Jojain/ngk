@@ -11,8 +11,8 @@ fn line_returns_owned_line_edge_shape() {
     let shape = edges::line(start, end).expect("line should build");
     let edge = shape.edge();
 
-    assert_eq!(edge.start().point(), Some(&start));
-    assert_eq!(edge.end().point(), Some(&end));
+    assert_eq!(edge.bounded_unchecked().start().point(), Some(&start));
+    assert_eq!(edge.bounded_unchecked().end().point(), Some(&end));
     assert!(matches!(edge.curve(), Some(Curve::Line(_))));
 }
 

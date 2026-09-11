@@ -1,10 +1,11 @@
-use ngk::builders::faces::split_face_edge;
+use ngk::builders::faces::{add_circle, split_face_edge};
 use ngk::geometry::{Curve, Point3};
-use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
+use ngk::healing::{HealedCell, HealingOptions, HealingScope, SkipReason, remove_redundant_cells};
 use ngk::modeling::solids;
 use ngk::tessellate::TessellateOpts;
 use ngk::tessellate::face::tessellate_face_key;
 use ngk::topology::StandardPayload;
+use ngk::topology::edge::Edge;
 use ngk::topology::gmap::GMap;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 
@@ -107,19 +108,29 @@ fn a_corner_vertex_between_two_directions_is_preserved() {
     assert_eq!(map.iter_faces().count(), 6);
 }
 
+/// A closed edge keeps the one vertex it has.
+///
+/// A 0-removal fuses the two edges meeting at a vertex, and a cylinder's rim is
+/// a single closed edge — so its vertex has nothing to fuse and the pass declines
+/// it as `NotBetweenTwoCells`. The vertex survives because there is no operation
+/// that applies, not because a guard forbids one.
 #[test]
-fn the_seam_vertex_of_a_closed_edge_is_preserved() {
+fn the_lone_vertex_of_a_closed_edge_is_preserved() {
     let (mut map, _) = solids::cylinder(1.0, 2.0).expect("cylinder").into_map();
     let vertices = map.iter_vertices().count();
     let edges = map.iter_edges().count();
 
-    remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
+    let report = remove_redundant_cells(&mut map, HealingOptions::default())
+        .expect("healing should succeed");
 
-    assert_eq!(
-        map.iter_vertices().count(),
-        vertices,
-        "removing a seam vertex would leave a vertexless closed edge"
+    assert!(
+        report.skipped.iter().any(|skip| matches!(
+            (&skip.cell, &skip.reason),
+            (HealedCell::Vertex(_), SkipReason::NotBetweenTwoCells)
+        )),
+        "the rim vertex joins one edge to itself, so there is no pair to fuse"
     );
+    assert_eq!(map.iter_vertices().count(), vertices);
     assert_eq!(map.iter_edges().count(), edges);
 }
 
@@ -158,4 +169,48 @@ fn an_empty_scope_heals_nothing() {
 
     assert!(report.is_empty());
     assert_eq!(map.iter_edges().count(), edges);
+}
+
+/// Two arcs that close on each other fuse back into one closed edge.
+///
+/// This used to be refused as `WouldCloseEdge`: the fused edge's two ends are the
+/// same vertex, and an edge whose span was derived from its endpoints could say
+/// nothing about which arc it was. A closed edge *is* its support now, so the
+/// fusion is expressible and healing performs it — a disc split across its rim
+/// comes back with the single circular edge it started with.
+#[test]
+fn two_arcs_that_close_on_each_other_fuse_into_one_closed_edge() {
+    let mut map = GMap::<StandardPayload>::new();
+    let face = add_circle(&mut map, ngk::geometry::Plane::xy(), 1.0).expect("a disc");
+    let rim = map
+        .face_unchecked(face)
+        .edges()
+        .first()
+        .expect("the disc has a rim")
+        .key();
+    split_face_edge(&mut map, face, rim, 0.5).expect("splitting the rim should succeed");
+    assert_eq!(map.iter_edges().count(), 2, "the rim starts split in two");
+    assert_eq!(map.iter_vertices().count(), 2);
+
+    remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
+
+    assert_eq!(
+        map.iter_edges().count(),
+        1,
+        "the two arcs are one circle and must fuse"
+    );
+    let (edge, _) = map.iter_edges().next().expect("the fused rim");
+    let view = map.edge_unchecked(edge);
+    assert!(
+        matches!(view, Edge::Closed(_)),
+        "the fused rim closes on itself, so it has no endpoints to name"
+    );
+    let span = view
+        .parameter_interval()
+        .expect("a closed edge still spans");
+    assert!(
+        (span.end - span.start).abs() > std::f64::consts::PI,
+        "a closed edge spans its support's whole period, got {span:?}"
+    );
+    assert_eq!(map.iter_faces().count(), 1, "the disc is still one face");
 }

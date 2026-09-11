@@ -134,3 +134,21 @@ attribute create/remove/split/merge declarations).
   which constrains the support: a `Circle` spans its arc in angle, the rational
   quadratic its pcurve is fitted from does not, so an imprinted arc carries NURBS.
 - A section's 3D curve is exact; its **pcurve is exact only where a closed form
+
+## Working rules
+
+- **Deleting behaviour means deleting or adapting its tests.** A change is not
+  finished while a test still asserts, names, or explains the thing that was
+  removed. Grep for the concept by name, not just for compile errors: a test that
+  still passes can be testing nothing, and one whose name or comment describes the
+  old design is worse than no test, because it teaches the next reader something
+  false. Three outcomes, in order of preference — the test states a property that
+  survives, so keep it and fix the wording; the property moved to another shape,
+  so retarget it there; the property is genuinely gone, so delete the test. Never
+  leave the fourth. The same goes for doc comments, error-variant docs, `#[ignore]`
+  reasons, and plan files: an `#[ignore]` whose stated reason no longer applies
+  must be re-checked, since the test may now pass or fail for a new reason.
+- **Never `git checkout`, `git restore`, or `git stash` a file to undo your own
+  edit.** The working tree holds uncommitted work that is not recoverable. Undo
+  by making the inverse edit, and use a marker comment you can grep for when
+  adding temporary instrumentation.

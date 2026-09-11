@@ -56,7 +56,12 @@ pub fn tessellate_face<P: Payload>(
 
     Some(match face.surface() {
         Surface::Cylinder(_) | Surface::Sphere(_) | Surface::Cone(_) | Surface::Ruled(_) => {
-            surface_grid(face.surface(), &outer_uv, ccw, opts)
+            surface_grid_over_bounds(
+                face.surface(),
+                grid_bounds(&chart, face, &outer_uv),
+                ccw,
+                opts,
+            )
         }
         Surface::Revolution(surface) => {
             let boundary_uv = outer_uv
@@ -111,14 +116,28 @@ fn signed_area(poly: &[Point2]) -> f64 {
 
 // ---------- shortcuts ----------
 
-fn surface_grid(
-    surface: &Surface,
+/// The parameter rectangle to mesh: sampled where a loop bounds, whole where
+/// the face wraps.
+///
+/// A wrapping loop bounds the axis it is *transverse* to, never the axis it
+/// spans, so along a spanned axis the face covers its period entirely. Taking
+/// that range from the chart rather than from sampled points is what keeps the
+/// two ends of the period the same parameter to the last bit — and only then can
+/// the grid recognise them as one column and close the mesh over the cut.
+fn grid_bounds<P: Payload>(
+    chart: &Chart,
+    face: &Face<'_, P>,
     outer_uv: &[Point2],
-    ccw: bool,
-    opts: TessellateOpts,
-) -> IndexedMesh {
+) -> (f64, f64, f64, f64) {
     let (u_min, u_max, v_min, v_max) = uv_bbox(outer_uv);
-    surface_grid_over_bounds(surface, (u_min, u_max, v_min, v_max), ccw, opts)
+    let mut bounds = [(u_min, u_max), (v_min, v_max)];
+    for (_, axis) in face.boundary().wrapping() {
+        if let (Some(period), Some(cut)) = (chart.period(axis), chart.cut(axis)) {
+            bounds[axis.index()] = (cut, cut + period);
+        }
+    }
+    let [(u_min, u_max), (v_min, v_max)] = bounds;
+    (u_min, u_max, v_min, v_max)
 }
 
 fn revolution_surface_grid(

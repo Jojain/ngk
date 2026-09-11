@@ -513,16 +513,14 @@ fn probe_vertex_edge<P: Payload>(
     if !curve.point_at(parameter).coincides(point, tolerance) {
         return Vec::new();
     }
-    let start = *edge
-        .start()
-        .point()
-        .expect("registered edge start geometry");
-    let end = *edge.end().point().expect("registered edge end geometry");
-    if !curve
-        .interval_between(start, end)
-        .ordered()
-        .contains(parameter, tolerance)
-    {
+    // The span the edge actually occupies, which is what the probe must land in
+    // — derived from the edge itself rather than rebuilt from its endpoints, so
+    // a closed edge answers with its whole period instead of an empty interval.
+    let span = edge
+        .parameter_interval()
+        .expect("registered edge span")
+        .ordered();
+    if !span.contains(parameter, tolerance) {
         return Vec::new();
     }
     vec![
@@ -981,7 +979,7 @@ fn grazed_vertex<P: Payload, const N: usize>(
 ) -> Option<Point3> {
     edges
         .into_iter()
-        .flat_map(|edge| [edge.start(), edge.end()])
+        .flat_map(|edge| edge.vertices())
         .filter_map(|vertex| vertex.point().copied())
         .find(|vertex| {
             !vertex.coincides(point, tolerance)

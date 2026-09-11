@@ -72,9 +72,8 @@ pub fn build(distance: f64) -> Result<ScriptResult, String> {
         .find(|edge| {
             matches!(edge.curve(), Some(Curve::Nurbs(_)))
                 && edge
-                    .start()
-                    .point()
-                    .is_some_and(|point| (point.z - DEPTH).abs() < 1.0e-9)
+                    .trimmed_curve()
+                    .is_some_and(|section| (section.point_at(0.0).z - DEPTH).abs() < 1.0e-9)
         })
         .map(|edge| edge.key())
         .ok_or("extrusion did not expose its translated wavy edge")?;

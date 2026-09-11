@@ -119,10 +119,12 @@ fn block_face_pcurves_follow_oriented_boundary_edges() {
             let pcurve_start = face.point_at(start_uv.x, start_uv.y);
             let pcurve_end = face.point_at(end_uv.x, end_uv.y);
             let edge_start = *edge
+                .bounded_unchecked()
                 .start()
                 .point()
                 .expect("block edge start should have geometry");
             let edge_end = *edge
+                .bounded_unchecked()
                 .end()
                 .point()
                 .expect("block edge end should have geometry");

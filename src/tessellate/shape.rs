@@ -42,12 +42,8 @@ pub fn tessellate_edge<P: Payload>(
 ) -> Option<Polyline3> {
     let attr = g.edge_attr(key)?;
     let edge = attr.edge(g, key);
-    let v1 = edge.start();
-    let v2 = edge.end();
-    let p1 = v1.point()?;
-    let p2 = v2.point()?;
     let curve = &edge.curve()?;
-    let interval = curve.interval_between(*p1, *p2);
+    let interval = edge.parameter_interval()?;
     Some(tessellate_curve(
         curve,
         interval.start,

@@ -10,11 +10,11 @@ use ngk::builders::faces::{
 };
 use ngk::builders::profiles::add_polyline;
 use ngk::builders::sheets::add_extruded_profile;
-use ngk::builders::solids::add_extruded_face;
 use ngk::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, NurbsCurve2, Plane, Point2, Point3, PointCoincidence, Surface,
     TrimmedCurve2,
 };
+use ngk::modeling::solids;
 use ngk::topology::TopologyEditError;
 use ngk::topology::gmap::GMap;
 use ngk::topology::gmap::{Cell0, Dim};
@@ -63,11 +63,17 @@ fn two_semicircle_imprints_form_a_closed_inner_loop() {
     assert_eq!(g.face_unchecked(face).inner_loops().len(), 1);
 }
 
+/// A seam stores two pcurves for one edge, and a split must keep both honest.
+///
+/// `FaceAttr::pcurves` is keyed by boundary dart precisely so that an edge
+/// walked twice by one loop can carry a different parameter-space image each
+/// time. The subject is a sphere rather than a cylinder: a cylinder wall is a
+/// ring now, with two wrapping loops and no seam to split. A sphere's meridian
+/// runs pole to pole, so its band is closed by those degeneracies rather than by
+/// loops, and it is the last shape in the tree that still carries a seam.
 #[test]
-fn splitting_a_cylinder_seam_preserves_both_face_pcurves() {
-    let mut g = GMap::<StandardPayload>::new();
-    let cap = add_circle(&mut g, Plane::xy(), 1.0).unwrap();
-    let solid = add_extruded_face(&mut g, cap, Vector3::z() * 2.0).unwrap();
+fn splitting_a_sphere_seam_preserves_both_face_pcurves() {
+    let (mut g, solid) = solids::sphere(1.0).expect("sphere").into_map();
     let side = g
         .solid_unchecked(solid)
         .faces()
@@ -78,7 +84,7 @@ fn splitting_a_cylinder_seam_preserves_both_face_pcurves() {
     let edges = g
         .face_unchecked(side)
         .outer_loop()
-        .expect("face should have an outer loop")
+        .expect("a seamed periodic face still has an outer loop")
         .edges();
     let seam = edges
         .iter()
@@ -89,33 +95,37 @@ fn splitting_a_cylinder_seam_preserves_both_face_pcurves() {
                 .count()
                 == 2
         })
-        .unwrap()
+        .expect("the meridian is walked twice")
         .key();
+    let occurrences = edges.len();
     split_face_edge(&mut g, side, seam, 0.5).unwrap();
 
     let face = g.face_unchecked(side);
-    assert_eq!(
-        face.outer_loop()
-            .expect("face should have an outer loop")
-            .edges()
-            .len(),
-        6
-    );
-    for edge in face
+    let split_loop = face
         .outer_loop()
-        .expect("face should have an outer loop")
-        .edges()
-    {
+        .expect("splitting the seam leaves the loop in place");
+    assert_eq!(
+        split_loop.edges().len(),
+        occurrences + 2,
+        "splitting one edge walked twice adds an occurrence on each side"
+    );
+    for edge in split_loop.edges() {
         let pcurve = face
             .pcurve(edge.dart())
             .expect("every seam occurrence needs its own pcurve");
         assert!(
             face.point_at(pcurve.point_at(0.0).x, pcurve.point_at(0.0).y)
-                .coincides(*edge.start().point().unwrap(), LINEAR_TOLERANCE)
+                .coincides(
+                    *edge.bounded_unchecked().start().point().unwrap(),
+                    LINEAR_TOLERANCE
+                )
         );
         assert!(
             face.point_at(pcurve.point_at(1.0).x, pcurve.point_at(1.0).y)
-                .coincides(*edge.end().point().unwrap(), LINEAR_TOLERANCE)
+                .coincides(
+                    *edge.bounded_unchecked().end().point().unwrap(),
+                    LINEAR_TOLERANCE
+                )
         );
     }
 }
@@ -799,13 +809,15 @@ fn imprint_sections_retain_source_indices_and_directed_intervals() {
         let edge = g.edge_unchecked(section.edge);
         let source = &imprints[section.imprint].curve;
         assert!(
-            edge.start()
+            edge.bounded_unchecked()
+                .start()
                 .point()
                 .unwrap()
                 .coincides(source.point_at(section.interval.start), LINEAR_TOLERANCE)
         );
         assert!(
-            edge.end()
+            edge.bounded_unchecked()
+                .end()
                 .point()
                 .unwrap()
                 .coincides(source.point_at(section.interval.end), LINEAR_TOLERANCE)

@@ -154,7 +154,10 @@ pub(crate) fn realize_edge_spans<P: Payload>(
             };
             let fragment = fragments.iter().copied().find(|fragment| {
                 let view = map.edge_unchecked(*fragment);
-                let (start_vertex, end_vertex) = (view.start(), view.end());
+                let Some(view) = view.bounded() else {
+                    return false;
+                };
+                let (start_vertex, end_vertex) = view.vertices();
                 let (Some(a), Some(b)) = (start_vertex.point(), end_vertex.point()) else {
                     return false;
                 };

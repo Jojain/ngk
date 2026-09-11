@@ -9,6 +9,7 @@ use crate::builders::faces::{
 use crate::builders::profiles::curve_pcurve;
 use crate::geometry::{Curve, LINEAR_TOLERANCE, Point2, Point3, RuledSurface, Surface};
 use crate::topology::attributes::{FaceAttr, VertexAttr};
+use crate::topology::edge::Edge;
 use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, VertexKey};
@@ -282,7 +283,13 @@ fn prepare_solid_edge_chamfer<P: Payload>(
         return Err(ChamferError::UnsupportedSolidChamferGeometry { edge });
     }
 
-    let endpoints = [edge_view.start().key(), edge_view.end().key()];
+    // A chamfer walks out from each end of the edge onto the faces meeting
+    // there, so a closed edge has nothing for it to walk to.
+    let (edge_start, edge_end) = edge_view
+        .bounded()
+        .ok_or(ChamferError::UnsupportedSolidChamferGeometry { edge })?
+        .vertices();
+    let endpoints = [edge_start.key(), edge_end.key()];
     let incident_faces = [faces[0].key(), faces[1].key()];
     let mut endpoint_faces = [faces[0].key(); 2];
     let mut face_offsets = [[Point3::origin(); 2]; 2];
@@ -309,15 +316,21 @@ fn prepare_solid_edge_chamfer<P: Payload>(
                 .into_iter()
                 .find(|candidate| {
                     candidate.key() != edge
-                        && (candidate.start().key() == endpoint
-                            || candidate.end().key() == endpoint)
+                        && candidate
+                            .vertices()
+                            .iter()
+                            .any(|vertex| vertex.key() == endpoint)
                 })
                 .ok_or(ChamferError::UnsupportedSolidChamferGeometry { edge })?;
             let endpoint_point = endpoint_points[endpoint_index];
-            let neighbor = if adjacent.start().key() == endpoint {
-                adjacent.end()
+            let (adjacent_start, adjacent_end) = adjacent
+                .bounded()
+                .ok_or(ChamferError::UnsupportedSolidChamferGeometry { edge })?
+                .vertices();
+            let neighbor = if adjacent_start.key() == endpoint {
+                adjacent_end
             } else {
-                adjacent.start()
+                adjacent_start
             };
             let neighbor_point = *neighbor.point().ok_or(ChamferError::MissingVertexPoint {
                 dart: neighbor.dart,
@@ -496,15 +509,20 @@ fn chamfer_profile<P: Payload>(
         return chamfer_solid_profile(edit, profile, distance);
     }
 
+    let ends = |edge: &Edge<'_, P>| {
+        edge.bounded()
+            .map(|edge| (edge.start().key(), edge.end().key()))
+    };
     let closed = edges
         .first()
         .zip(edges.last())
-        .is_some_and(|(first, last)| first.start().key() == last.end().key());
+        .and_then(|(first, last)| Some((ends(first)?, ends(last)?)))
+        .is_some_and(|((first_start, _), (_, last_end))| first_start == last_end);
     let corner_vertices = edges
         .iter()
         .take(edges.len().saturating_sub((!closed) as usize))
-        .map(|edge| edge.end().key())
-        .collect::<Vec<_>>();
+        .map(|edge| Ok(ends(edge).ok_or(ChamferError::UnsupportedChamferTarget)?.1))
+        .collect::<Result<Vec<_>, ChamferError>>()?;
     for vertex in corner_vertices {
         chamfer_profile_corner(edit, vertex, distance)?;
     }
@@ -595,7 +613,10 @@ fn prepare_solid_profile_chamfer<P: Payload>(
         || profile_edges
             .last()
             .zip(profile_edges.first())
-            .is_none_or(|(last, first)| last.end().key() != first.start().key())
+            .is_none_or(|(last, first)| match (last.bounded(), first.bounded()) {
+                (Some(last), Some(first)) => last.end().key() != first.start().key(),
+                _ => true,
+            })
         || profile_edges
             .iter()
             .any(|edge| !is_linear_curve(edge.curve()))
@@ -656,7 +677,10 @@ fn prepare_solid_profile_chamfer<P: Payload>(
         side_normals.push(*g.face_unchecked(side_face_key).normal_at(0.0, 0.0));
         side_faces.push(side_face_key);
 
-        let vertex = edge.start();
+        let vertex = edge
+            .bounded()
+            .ok_or(ChamferError::UnsupportedSolidChamferGeometry { edge: edge.key() })?
+            .start();
         let point = *vertex
             .point()
             .ok_or(ChamferError::MissingVertexPoint { dart: vertex.dart })?;
@@ -674,10 +698,16 @@ fn prepare_solid_profile_chamfer<P: Payload>(
             });
         }
         let outside = &outside_edges[0];
-        let neighbor = if outside.start().key() == vertex.key() {
-            outside.end()
+        let (outside_start, outside_end) = outside
+            .bounded()
+            .ok_or(ChamferError::UnsupportedSolidVertexChamferGeometry {
+                vertex: vertex.key(),
+            })?
+            .vertices();
+        let neighbor = if outside_start.key() == vertex.key() {
+            outside_end
         } else {
-            outside.start()
+            outside_start
         };
         let neighbor_point = *neighbor.point().ok_or(ChamferError::MissingVertexPoint {
             dart: neighbor.dart,
@@ -905,10 +935,14 @@ fn chamfer_solid_vertex<P: Payload>(
     let face_keys = faces.iter().map(|face| face.key()).collect::<Vec<_>>();
     let mut offsets = HashMap::new();
     for edge in &edges {
-        let neighbor = if edge.start().key() == vertex {
-            edge.end()
+        let (edge_start, edge_end) = edge
+            .bounded()
+            .ok_or(ChamferError::UnsupportedSolidChamferGeometry { edge: edge.key() })?
+            .vertices();
+        let neighbor = if edge_start.key() == vertex {
+            edge_end
         } else {
-            edge.start()
+            edge_start
         };
         let neighbor_point = *neighbor.point().ok_or(ChamferError::MissingVertexPoint {
             dart: neighbor.dart,

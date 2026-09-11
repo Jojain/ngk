@@ -176,7 +176,10 @@ struct PointOnDart {
 }
 
 fn edge_points<P: Payload>(edge: &Edge<'_, P>) -> Result<Vec<PointOnDart>, PlanarityError> {
-    [edge.start(), edge.end()]
+    // The vertices the edge touches, however many that is: two for a bounded
+    // edge, one for a circle whose ends meet, none for one that has lost it.
+    // Planarity cares where the edge passes, not which end is which.
+    edge.vertices()
         .into_iter()
         .map(|vertex| {
             let point = *vertex
@@ -241,9 +244,8 @@ fn edge_planarity_points<P: Payload>(
 ) -> Result<Vec<PointOnDart>, PlanarityError> {
     let mut points = edge_points(edge)?;
     if let Some(curve) = edge.curve() {
-        let interval = match (edge.start().point(), edge.end().point()) {
-            (Some(start), Some(end)) => curve.interval_between(*start, *end),
-            _ => return Ok(points),
+        let Some(interval) = edge.parameter_interval() else {
+            return Ok(points);
         };
         points.extend(
             sampled_curve_points(curve, interval.start, interval.end)
@@ -294,9 +296,8 @@ fn check_edge_curve<P: Payload>(
         return Ok(());
     };
 
-    let interval = match (edge.start().point(), edge.end().point()) {
-        (Some(start), Some(end)) => curve.interval_between(*start, *end),
-        _ => return Ok(()),
+    let Some(interval) = edge.parameter_interval() else {
+        return Ok(());
     };
 
     for point in sampled_curve_points(curve, interval.start, interval.end) {

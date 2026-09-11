@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use crate::builders::removal::{MergedCell, is_removable, remove_cell_staged};
-use crate::geometry::{Curve, Point3, PointCoincidence, TrimmedCurve2};
+use crate::geometry::{Curve, Point3, TrimmedCurve2};
 use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
@@ -88,9 +88,13 @@ fn plan<P: Payload>(
     let consumed_dart = surviving_dart(g, consumed, &cell).ok_or(SkipReason::NotRemovable)?;
     let start = vertex_point(g, survivor_dart).ok_or(SkipReason::MissingGeometry)?;
     let end = vertex_point(g, consumed_dart).ok_or(SkipReason::MissingGeometry)?;
-    if start.coincides(end, options.linear_tolerance) {
-        return Err(SkipReason::WouldCloseEdge);
-    }
+    // Two edges whose far ends meet fuse into a closed edge — one whose two ends
+    // are the same vertex, because a pair of arcs that close on each other meet
+    // at one vertex cell on both sides. That is now a shape the kernel can state:
+    // `Edge::Closed` names it, and its span comes from the support's whole
+    // period rather than from endpoints that name no arc. It used to be refused
+    // here as `WouldCloseEdge`; what still refuses it is `join_curves` declining
+    // to build a support that actually closes.
 
     let survivor_curve = &g
         .edge_attr(survivor)

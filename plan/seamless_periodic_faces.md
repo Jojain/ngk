@@ -1,9 +1,17 @@
 # Seamless periodic faces
 
 Status: **In progress** — milestones 0 (`src/topology/attributes.rs`),
-1 (`src/topology/face.rs`) and 2 (`src/topology/chart.rs`) are implemented.
-Milestone 3 is **partly built**: see its row in §11 for what stands and what is
-left. Everything from milestone 4 on is designed but not built.
+1 (`src/topology/face.rs`), 2 (`src/topology/chart.rs`), 3, 4 and 5 are
+implemented. Milestones 6 and 7 are designed but not built.
+
+Nothing in the tree builds a seam any more: a swept or revolved wall comes out a
+ring, and an intersection crossing a closed direction stays one section. A seam
+now arrives only from outside, and healing takes it apart. §§11.1–11.3 record
+what landed; §11.4 records what was deliberately left to milestone 6.
+
+**Sections 1 and 8 describe the tree as it was before this work and are kept as
+the rationale, not as a report of the current state.** Where they say "today",
+read "before milestone 3".
 
 This document says what "no seam edge" means for NGK, what it costs, and in what
 order it can be built.
@@ -200,19 +208,21 @@ The face-level question — is this a disk, a ring, a closed surface? — become
 *derived query* over the vec rather than stored state, so it cannot drift out of
 sync with the loops themselves.
 
-### 4.2 `EdgeKind` — an enum, and no parallel `Option` API
+### 4.2 `Edge` — an enum, and no parallel `Option` API
 
 ```rust
-enum EdgeKind<'a, P: Payload> {
-    Bounded { start: Vertex<'a, P>, end: Vertex<'a, P> },
-    Closed,
+enum Edge<'a, P: Payload> {
+    Bounded(BoundedEdge<'a, P>),
+    Closed(ClosedEdge<'a, P>),
 }
 ```
 
-`Edge::start()`, `Edge::end()` and `Edge::vertices()` come **off** `Edge`
-entirely. Leaving them as `Option`-returning methods beside the enum is the
-failure mode: callers take the `is_none()` path and the type safety buys nothing.
-The only way to an endpoint is through the match.
+`Edge` **is** the enum — not a struct with a `kind()` beside it, which would be
+the same `Option` API wearing a hat. `start()` and `end()` come off it entirely
+and live on `BoundedEdge`, where they are *total*: holding that type is the proof
+the two ends exist and differ. Leaving `Option`-returning endpoints on `Edge` is
+the failure mode: callers take the `is_none()` path and the type safety buys
+nothing. The only way to an endpoint is through the narrowing.
 
 What stays **total**, because it never needed endpoints in the first place:
 `trimmed_curve()`, `parameter_interval()`, `length()`. `Bounded` derives its span
@@ -364,7 +374,7 @@ than letting it keep leaking.
 | `Face` view | carries a dart | carries a `sense: Orientation` (§5.5) |
 | Face trimming | closed UV polygon(s) | per-direction: whole period unless a loop or a degeneracy bounds it |
 | Loop | closed profile, closed in UV | closed profile; in UV closed *or* period-spanning |
-| Edge endpoints | `start()`/`end()`, infallible | `EdgeKind::{Bounded, Closed}`, no `Option` API |
+| Edge endpoints | `start()`/`end()` on `Edge`, infallible | `Edge::{Bounded, Closed}`; `start()`/`end()` only on `BoundedEdge` |
 | Edge span | from bounding vertices | from bounding vertices, or the whole period when closed |
 | `SheetAttr` / `SolidAttr` | rooted at a `Dart` | `ShellRoot`, dart preferred |
 | Shell validity | no alpha2-free dart | that, plus geometric closedness for a key-rooted shell |
@@ -380,7 +390,7 @@ than letting it keep leaking.
   `loops`, `reversed`, `normal_at` (signed area), `signed_volume_contribution`.
   `pcurve()` gets *simpler*: its alpha0/alpha2 candidate probing exists largely to
   find the right seam occurrence.
-- `edge.rs` — `EdgeKind`; `parameter_interval` and `length` stay total.
+- `edge.rs` — `Edge` as an enum; `parameter_interval` and `length` stay total.
 - `gmap.rs` — `build_derived_indexes` (face/sheet/solid registration),
   `logical_sheet_darts`, `face_orientation_at_dart`, `cell_orientation_from_seed`
   (no seed exists for a boundaryless face), dart remapping at `gmap.rs:723` and
@@ -408,9 +418,13 @@ Two changes:
   `seam_crossings()`; keep the split at `degeneracy_crossings()`. The comment
   justifying the seam split ("a loop that leaves `[0, 2pi]` is dropped") is
   exactly the premise being removed.
-- `surface_surface/tracer.rs:393-430` — the "move a state that reached a closed
+- ~~`surface_surface/tracer.rs:393-430` — the "move a state that reached a closed
   parameter boundary to the far seam edge" step can instead let `u` run past the
-  period, with the branch closing when it returns to the seed in the quotient.
+  period, with the branch closing when it returns to the seed in the quotient.~~
+  **Wrong, and unnecessary — see §11.2.** `NurbsSurface::point_at` clamps to its
+  domain, so a parameter running past the period would silently evaluate the wrong
+  point; and `fitting.rs::unwrap_parameter` already unwraps the finished trace, so
+  what reaches the fitter is continuous regardless.
 
 ### 8.3 `builders`
 
@@ -523,19 +537,25 @@ Each leaves the tree green.
 | **0** | **`FaceBoundary` / `LoopKind`** | Replace `outer_loop` + `inner_loops` with an ordered `Vec` of kinded loops. `Outer`/`Inner` only; today's semantics exactly. No behaviour change. **Done.** |
 | **1** | **`Face` sense** | Replace the `Face` view's dart with `sense: Orientation` (§5.5). Pure simplification; unblocks milestone 5. **Done.** |
 | **2** | **Chart synthesis** | One function: given a face and its loops, produce a cut position and a simply-connected UV chart. Route `FaceTrimDomain::new` and `tessellate_face` through it, still on seamed input. Proves the abstraction before anything depends on it. **Done** — `topology::chart::{Chart, ChartLoop, ChartCurve, Axis2}`. |
-| 3 | Ring faces | `LoopKind::Wrapping`, cylinder and full-revolve builders, per-direction trimming, tessellation wrap + watertightness test, seam 1-removal in `removal.rs`, Boolean trim on rings. Sphere still seamed. **Partly done** — see §11.1. |
-| 4 | Seamless intersections | Drop `seam_crossings()` splitting; period-spanning pcurves end to end through imprint and assembly. |
-| 5 | `EdgeKind` + vertexless closed edges | The enum and the whole-period span rule land together — today's circle edges carry a vertex, so the `Closed` variant cannot be honest before they lose it. 0-removal of the orphan vertex. |
+| 3 | Ring faces | `LoopKind::Wrapping`, cylinder and full-revolve builders, per-direction trimming, tessellation wrap + watertightness test, seam 1-removal in `removal.rs`, Boolean trim on rings. Sphere still seamed. **Done** — see §11.1. |
+| 4 | Seamless intersections | Drop `seam_crossings()` splitting; period-spanning pcurves end to end through imprint and assembly. **Done** — see §11.2. |
+| 5 | `Edge` as an enum + closed edges | The enum and the whole-period span rule land together. 0-removal of the vertex between two arcs that close on each other. **Done** — see §11.3. |
 | 6 | Boundaryless faces | `ShellRoot` and the dart-preferred invariant, degeneracy-closed directions, validation by surface for key-rooted shells, sphere and torus builders, pole-aware tessellation. |
 | 7 | Healing canonicalizer | `seam_removal` pass: a seamed model in, a seamless model out. |
 
 Milestones 0–4 deliver most of the practical benefit — Booleans on cylinders stop
-being seam-sensitive — without touching dart-rooted identity. Milestone 6 is
-separable and can be judged on its own once 0–5 are in.
+being seam-sensitive — without touching dart-rooted identity. That is now in, as
+is 5. Milestone 6 is separable and can be judged on its own; it is the one that
+changes the foundation, since a boundaryless face has no dart to root anything
+at (§5). Milestone 7 is partly delivered already: healing removes an imported
+seam (§11.1), and what remains is to separate that out as a named
+`seam_removal` pass — worth doing when there is a STEP importer to run it.
 
 ### 11.1 Milestone 3, as it stands
 
-Built, with the tree's cylinder tests green on it:
+Complete, with the whole suite green on it.
+
+Built first:
 
 - `LoopKind::Wrapping { axis: Axis2 }` (`Axis2` now lives in `geometry::dim2`),
   plus `FaceBoundary::{seed, wrapping, is_ring, retain_mapped}`. `darts()` now
@@ -561,30 +581,163 @@ Built, with the tree's cylinder tests green on it:
   carries kinded loops across; healing's `fuses_outer_loop` counts a wrapping
   loop as bounding from outside.
 
-Left to do, with the tests that currently fail on each:
+Built since, closing the milestone:
 
-1. **A chord across a ring** — an imprint running from one wrapping loop to the
-   other, which a tangent contact produces. One chord opens the ring into a
-   disk; two cut it into two disks. Neither is expressible by
-   `apply_outer_face_chord_split`, which needs an outer loop to chord across.
-   The shape of the fix is to open the ring at the first chord — splitting both
-   wrapping loops at its endpoints and walking the chord twice — and let the
-   existing chord machinery apply the rest. Fails:
-   `boolean::block_fused_with_cylinder_tangent_to_block_faces`,
-   `removal::redundant_faces_of_boolean_fuse_are_deleted`,
-   `boolean_integration::{a_block_intersected_with_a_tangent_cylinder_keeps_no_redundant_topology,
-   boolean_results_are_healed_by_default,
-   healing_a_tangent_union_fuses_the_fragments_the_imprint_created}`.
-2. **`faces::splitting_a_cylinder_seam_preserves_both_face_pcurves`** tests the
-   double pcurve bookkeeping a seam needs. A seamless cylinder has no seam to
-   split, so the test states an invariant this milestone removes; it should be
-   rewritten against a still-seamed periodic face (a sphere) or dropped with
-   milestone 4.
-3. **Tessellation wrap and the watertightness check** (§8.5) — `tessellate_face`
-   runs on rings through the chart, but nothing yet asserts the `u = 0` and
-   `u = 2pi` columns share mesh indices.
-4. **Seam 1-removal in `removal.rs`** and `SkipReason::PeriodicSurface`
-   (§8.4) — still a guard, so a seamed import cannot yet be canonicalized into
-   a ring.
-5. **`revolve.rs`** — a full revolution still sews its swept copy back onto its
-   source, so surfaces of revolution keep their seam.
+1. **A chord across a ring.** The tangent-contact case turned out not to be the
+   loop-to-loop chord this section first guessed at: a cylinder tangent to two of
+   a block's faces imprints a *staple* — up one tangent line, across the cap
+   plane, back down the other — whose two ends land on the **same** wrapping
+   loop. A chord between two corners of one loop is what the existing splitter
+   already does, so the fix was to stop assuming that loop is the outer one:
+   `split_one_face_by_imprints` now tries each bounding loop in turn, and
+   `apply_outer_face_chord_split` became `apply_face_chord_split`, taking the
+   chorded loop and its kind. The two halves are told apart by travel — one still
+   runs a whole period and stays `Wrapping`, the other closes and becomes
+   `Outer` — so a ring chorded once yields a ring and a disk, with no tolerance to
+   tune since one half travels a period and the other travels nothing. Every
+   other wrapping loop goes to the half that still wraps, which needs no sampling:
+   a period-spanning loop cannot sit inside a half bounded in that axis.
+2. **The double-pcurve test moved to a sphere**
+   (`faces::splitting_a_sphere_seam_preserves_both_face_pcurves`). The invariant
+   it guards — an edge a loop walks twice carries a different pcurve each time —
+   is still live for any seamed periodic face, and a sphere is still one.
+3. **Tessellation wrap** (§8.5). `grid_bounds` takes a wrapped axis's range from
+   the chart's cut and period rather than from sampled points, so the two ends of
+   the period are the same parameter to the last bit; `tessellate_surface_patch`
+   then drops the closing row of samples and indexes the quads that would reach it
+   back to index 0. `modeling::a_cylinder_wall_tessellates_into_a_closed_tube` is
+   the watertightness check §10.5 asks for — no two mesh vertices at one point,
+   and the only single-use edges are the tube's two rims. It was confirmed to fail
+   with the wrap disabled.
+4. **Seam 1-removal.** `MergePlan::Ring` reads a two-way boundary split as a ring
+   when both components wrap the same axis, keeping one profile identity and
+   splitting off a second — the face genuinely has two boundaries where it had
+   one. `SkipReason::PeriodicSurface` stopped being a blanket guard in healing and
+   became `CellRemovalError::WouldLeaveWrappingLoop`, raised by the removal
+   itself; see §11.2 for why the precise refusal is still needed.
+5. **`revolve.rs`.** `add_full_revolved_ring_face` builds a band of a whole turn
+   from the two circles its endpoints sweep, instead of building the swept copy of
+   the source edge and sewing it back. `RevolvedFace::{bottom_edge, top_edge}` are
+   `Option`, `None` on a ring band — which has no copy of the source edge on it at
+   all — and `Some` only on a partial turn, where the caps still need them.
+   `sew_full_revolved_seam` is **deleted**: `validate_revolvable_radii` already
+   refuses any edge touching the axis, so every band of a whole turn is now a ring
+   and the function had nothing left to sew. The band offers its two
+   side darts asymmetrically (`start_side` is the far dart of its loop, `end_side`
+   the seed) so that `alpha0(alpha2(seed))` reaches the neighbour's seed, which is
+   what `validate_oriented_shell_volume` means by a consistently oriented shell;
+   `sew_wrapping_lateral_face` does the same thing for the same reason.
+   `add_full_revolved_open_edge_face` was already seamless in topology and now
+   kinds its two loops `Wrapping` as well. A triangle revolved a full turn is
+   3 vertices, 3 edges, 3 faces — `V - E + sum(chi) = 0`, a torus.
+
+### 11.2 Milestone 4, as built
+
+**The seam split is gone.** `sections_for` no longer cuts a section at
+`seam_crossings()`; only `degeneracy_crossings()` still cuts one, because there
+the support genuinely stops. A plane cutting a sphere now yields *one* circular
+section whose pcurve runs continuously past longitude zero, rather than two arcs
+meeting wherever the parameterization happened to be opened.
+`seam_crossings`, `refined_crossing` and `within_one_period` went with it.
+
+**The tracer needed nothing.** §8.2's second bullet proposed letting the tracer's
+`u` run past the period instead of moving a state to the far seam edge. That
+would be a mistake as written: `NurbsSurface::point_at` *clamps* to its domain, so
+parameters running past it would silently evaluate the wrong point. It is also
+unnecessary — `fitting.rs::unwrap_parameter` already walks the finished trace and
+shifts each state by whole periods, so the branch handed to the fitter is
+continuous whatever the stepping did. The fold is an internal stepping detail, and
+the output was never the problem.
+
+**The periodic imprint path is deleted** — `periodic_seam_edge`,
+`split_periodic_face_by_imprints`, `merge_faces_across_edge`,
+`merge_periodic_boundary_edge`, `periodic_boundary_curve`,
+`rebuild_periodic_boundary_curves`, `unwrap_periodic_face_pcurves`,
+`periodic_offset`, `periodic_u_period`, `is_constant_u_imprint`, the orphaned
+`face_edge_dart_for_imprint`, and the three `Periodic*` error variants. 450 lines
+of `builders/faces.rs`. It was still reachable before this milestone: its trigger
+was *two constant-`u` imprints*, which is exactly what a seam-split section
+produced. Dropping the split removed its only supply.
+
+### 11.3 Milestone 5, as built
+
+**`Edge`** (`src/topology/edge.rs`) *is* the enum — `Bounded(BoundedEdge)` or
+`Closed(ClosedEdge)` — decided by the combinatorics, two ends that are the same
+vertex or none, and never stored. `Edge::start`/`Edge::end` are gone from `Edge`;
+they live on `BoundedEdge` and are **total** there, because a value of that type
+is the proof its two ends exist and differ. `Closeable for Edge` is now a
+`matches!` on the variant rather than a comparison of two points within a
+tolerance, so two *distinct* vertices that happen to coincide are a degenerate
+model rather than a circle.
+
+A first attempt kept `Edge` a struct with a `kind()` method beside it. That is the
+same `Option` API §4.2 warns about, one call deeper, and it was rejected.
+
+**Narrowing, and how the ~90 bounded-by-construction call sites read.**
+`Edge::bounded()` is the total form and `Edge::bounded_unchecked()` asserts — the
+same convention as `FaceBoundary::outer_unchecked` beside `outer()`. The point of
+returning a *type* rather than a tuple is that the check happens **once**: a
+function narrows at its top, and everything below holds a `BoundedEdge` and never
+asks again. The further step this enables, and the one to reach for when a
+function gains a second endpoint access, is to take `BoundedEdge` as the parameter
+type — pushing the decision out to the one caller that can actually do something
+about a closed edge. Everything that can genuinely meet one — healing, chamfer,
+revolve, the Boolean over imported geometry — matches on the two variants.
+
+**How the ~11 shape-independent methods stay written once.** `key`, `dart`,
+`darts`, `vertices`, `faces`, `sheets`, `curve`, `parameter_interval`,
+`trimmed_curve`, `length` and the orientation flip do not care what bounds an
+edge, and duplicating them across `Edge`, `BoundedEdge` and `ClosedEdge` would be
+three copies of each. They live on a single `EdgeCore` that all three `Deref` to,
+so they read identically on every one and narrowing costs nothing. `EdgeCore` is
+never named at a call site. `Clone`/`Copy` are written out rather than derived:
+`derive` would demand `P: Copy`, and a view never touches the payload.
+
+`parameter_interval` stays total without endpoints: a bounded edge derives its
+span from its vertices as before, and a closed one takes the support's whole
+domain. Call sites that only wanted a span moved onto `trimmed_curve()` /
+`parameter_interval()`, which is what they meant — that accounts for most of the
+migration and removed a good deal of hand-rolled `interval_between` at the call
+site.
+
+Three call sites wanted neither: an alpha2 merge of two closed circles needs *the
+vertex at this dart*, which for a closed edge is the same vertex twice.
+That is a dart-level question, so those read `Vertex::from_dart` directly rather
+than asking the edge about endpoints it does not have. `ClosedEdge::vertex()` is
+the view-level form of the same question, for a caller that has already narrowed.
+
+**0-removal of the vertex between two arcs that close on each other** is now
+supported; `SkipReason::WouldCloseEdge` is deleted. Lifting that guard exposed a
+second one underneath, in geometry rather than topology: `join_on_circle` refused
+a full sweep, and with the two ends coincident there were only two distinct points
+— which determine no circle. It now borrows a third from the samples (the one
+farthest from both, where the three-point fit is best conditioned) and returns the
+whole circle. A disc split across its rim heals back to the single closed edge it
+started with.
+
+### 11.4 What milestones 3–5 deliberately left alone
+
+**A lone wrapping loop is not a ring.** Removing a seam can leave *one*
+period-spanning component rather than two: that is a face bounded by a loop on one
+side and by a parametric degeneracy on the other — a spherical cap (§3.3), which
+every sphere-plane cut produces. Its loop is neither outer nor inner, and no
+`LoopKind` can say what it is until milestone 6. Lifting healing's periodicity
+guard without noticing this silently relabelled such caps `Outer`, which put a
+winding test on a loop with no inside and broke point membership on
+`boolean_union_of_a_block_and_a_sphere_closes_a_single_solid`. The guard is
+therefore not gone but sharpened: `WouldLeaveWrappingLoop` refuses exactly that
+configuration, and the decision lives in `remove_cell_staged` — where
+`can_remove_cell` can report it before anything is touched — rather than in
+healing.
+
+For the same reason `add_revolved_edge_face` builds a ring band only when neither
+endpoint sits on the axis. A band with an end on the axis sweeps no circle there
+and is closed by that degeneracy, so it keeps its seam until milestone 6, and the
+sphere keeps hers.
+
+**Seamed input is now import-only.** No builder makes a seam, so
+`tests/builders/removal.rs::seamed_cylinder_wall` constructs one by hand — one
+quad face whose two vertical sides are the same edge, sewn to itself. That is the
+honest fixture: STEP AP242 and every other interchange format writes periodic
+faces cut open (§10.7), so the canonicalizer's subject is an import, and the test
+should say so rather than lean on a builder that correctly refuses to produce one.

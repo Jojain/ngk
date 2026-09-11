@@ -158,14 +158,10 @@ pub fn profile_pcurves<P: Payload>(
 
     for edge in edges.iter() {
         let dart = edge.dart();
-        let start = *edge
-            .start()
-            .point()
+        let section = edge
+            .trimmed_curve()
             .ok_or(PolylineError::MissingVertexPoint { dart })?;
-        let end = *edge
-            .end()
-            .point()
-            .ok_or(PolylineError::MissingVertexPoint { dart })?;
+        let (start, end) = (section.point_at(0.0), section.point_at(1.0));
         let curve = edge
             .curve()
             .ok_or(PolylineError::MissingEdgeCurve { dart })?;

@@ -153,8 +153,14 @@ fn perpendicular_faces_of_a_block_are_not_fused() {
     assert_eq!(map.iter_faces().count(), 6);
 }
 
+/// A cylinder is already canonical, so healing has nothing to take off it.
+///
+/// It used to be kept by a guard: the wall carried a seam, and healing refused to
+/// remove it. The wall is a ring now and carries no seam, so what this checks is
+/// the stronger property — healing leaves a clean cylinder exactly as it is,
+/// rather than fusing its two real edges into the caps.
 #[test]
-fn a_cylinder_seam_edge_is_preserved() {
+fn healing_leaves_a_cylinder_untouched() {
     let (mut map, _) = solids::cylinder(1.0, 2.0).expect("cylinder").into_map();
     let faces = map.iter_faces().count();
     let edges = map.iter_edges().count();
@@ -164,7 +170,7 @@ fn a_cylinder_seam_edge_is_preserved() {
 
     assert!(
         report.fused_faces.is_empty(),
-        "the lateral face bounds its seam on both sides and must keep it"
+        "the wall and the caps sit on different surfaces and must not fuse"
     );
     assert_eq!(map.iter_faces().count(), faces);
     assert_eq!(map.iter_edges().count(), edges);

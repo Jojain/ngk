@@ -19,6 +19,8 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
+use crate::geometry::{Axis2, LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
+use crate::topology::attributes::{BoundaryLoop, FaceAttr, FaceBoundary, LoopKind, ProfileAttr};
 use crate::topology::gmap::{Cell1, Cell2, Dim, GMap};
 use crate::topology::orientation::Orientation;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
@@ -49,6 +51,13 @@ pub enum CellRemovalError {
     /// resulting loops bounds it from outside needs more than the combinatorics.
     #[error("removing the edge at dart {dart:?} would split its boundary into {loops} loops")]
     LoopWouldSplit { dart: Dart, loops: usize },
+    /// Removing the edge would leave one loop spanning a closed direction.
+    ///
+    /// The face would be bounded by a loop on one side and by a parametric
+    /// degeneracy on the other — a spherical cap. That loop is neither outer nor
+    /// inner, and no face can say so yet.
+    #[error("removing the edge at dart {dart:?} would leave a lone wrapping loop")]
+    WouldLeaveWrappingLoop { dart: Dart },
     /// Removing the cell would delete every dart of the map.
     #[error("removing the {dim:?}-cell at dart {dart:?} would empty the map")]
     WouldEmptyMap { dart: Dart, dim: Dim },
@@ -80,6 +89,20 @@ pub enum MergedCell {
         /// A second loop identity the rejoin absorbed, when the edge separated
         /// two of the face's loops.
         consumed_loop: Option<ProfileKey>,
+    },
+    /// A 1-removal removed a seam, leaving the face a ring.
+    ///
+    /// The edge was walked twice by one loop, and dropping it let that loop fall
+    /// into the two the face really has — each spanning a whole period of a
+    /// closed axis. Nothing is consumed: one identity is kept and one is added,
+    /// because the face now genuinely has two boundaries where it had one.
+    Ring {
+        /// The face that became a ring.
+        face: FaceKey,
+        /// Boundary loop identity kept by one of the two wrapping loops.
+        survivor_loop: ProfileKey,
+        /// Identity created for the other, split from `survivor_loop`.
+        added_loop: ProfileKey,
     },
     /// A 1-removal deleted the final edge of an inner boundary component.
     BoundaryRemoved {
@@ -302,6 +325,18 @@ enum MergePlan {
         face_aliases: Vec<FaceKey>,
         boundaries: Vec<Dart>,
     },
+    /// Removing a seam left the face bounded by two wrapping loops.
+    Ring {
+        face: FaceKey,
+        /// The loop identity the seam was walked on, kept by `seeds[0]`.
+        survivor_loop: ProfileKey,
+        /// The closed axis each of the two loops spans.
+        axis: Axis2,
+        /// The seed kept by `survivor_loop`, then the one needing its own.
+        seeds: [Dart; 2],
+        /// The face's other loops, which the removal does not touch.
+        untouched: Vec<BoundaryLoop>,
+    },
 }
 
 impl MergePlan {
@@ -408,11 +443,28 @@ impl MergePlan {
             });
         }
         let components = rejoined_components(g, &surviving, cell_set, dim, pairs);
-        if components != 1 {
+        if components.len() != 1 {
+            // Two components is not always undecidable. Removing a seam leaves
+            // exactly two, and neither bounds the face from outside: each runs a
+            // whole period and bounds the axis across it. That is a ring, and it
+            // is the one shape the combinatorics *can* answer for here.
+            if let Some(ring) =
+                Self::ring(g, face, attr, reference, &components, &boundaries, absorbed)?
+            {
+                return Ok(ring);
+            }
             return Err(CellRemovalError::LoopWouldSplit {
                 dart,
-                loops: components,
+                loops: components.len(),
             });
+        }
+        // One surviving component that still spans a whole period belongs to a
+        // face closed on its far side by a degeneracy rather than by a loop — a
+        // spherical cap. Its loop is neither outer nor inner, and calling it
+        // either would put a winding test on a loop that has no inside, so the
+        // removal declines until a face can say it is closed by a pole.
+        if wrapping_axis(attr, &components[0]).is_some() {
+            return Err(CellRemovalError::WouldLeaveWrappingLoop { dart });
         }
 
         // The seed carries the loop's traversal direction, so the replacement
@@ -445,6 +497,72 @@ impl MergePlan {
             seed,
             boundaries,
         })
+    }
+
+    /// Reads a two-way boundary split as a ring, when that is what it is.
+    ///
+    /// A seam is not part of the shape: it is where the parameterization was cut
+    /// open so a closed direction could be walked as a loop. Remove it and the
+    /// one loop falls into the two the face really has, each spanning a whole
+    /// period of the closed axis. Neither is outer or inner — the question does
+    /// not arise, because a period-spanning loop bounds the axis across it and
+    /// carries no inside.
+    ///
+    /// Returns `None` when the split is anything else, leaving the caller to
+    /// refuse it: two components that do not each wrap really are undecidable.
+    fn ring<P: Payload>(
+        g: &GMap<P>,
+        face: FaceKey,
+        attr: &FaceAttr<P::F>,
+        reference: Dart,
+        components: &[HashSet<Dart>],
+        boundaries: &[Dart],
+        absorbed: &[usize],
+    ) -> Result<Option<Self>, CellRemovalError> {
+        let [first, second] = components else {
+            return Ok(None);
+        };
+        // A rejoin that also absorbs another of the face's loops is a different
+        // edit; a seam removal touches the one loop it is walked on twice.
+        if !absorbed.is_empty() {
+            return Ok(None);
+        }
+        let Some(axis) = wrapping_axis(attr, first) else {
+            return Ok(None);
+        };
+        if wrapping_axis(attr, second) != Some(axis) {
+            return Ok(None);
+        }
+
+        let seed = |component: &HashSet<Dart>| {
+            component
+                .iter()
+                .copied()
+                .filter(|&d| {
+                    g.cell_orientation_from_seed(reference, d, Dim::Two) == Some(Orientation::Same)
+                })
+                .min()
+        };
+        let (Some(kept), Some(added)) = (seed(first), seed(second)) else {
+            return Ok(None);
+        };
+        let survivor_loop =
+            g.profile_key(reference)
+                .ok_or(CellRemovalError::UnregisteredIncidence {
+                    dart: reference,
+                    dim: Dim::One,
+                })?;
+        Ok(Some(MergePlan::Ring {
+            face,
+            survivor_loop,
+            axis,
+            seeds: [kept, added],
+            untouched: boundaries
+                .iter()
+                .filter(|&&seed| seed != reference)
+                .filter_map(|&seed| Some(BoundaryLoop::new(seed, attr.boundary.kind_of(seed)?)))
+                .collect(),
+        }))
     }
 
     /// Collects the loop bookkeeping for a face fusion.
@@ -548,6 +666,32 @@ impl MergePlan {
                     face,
                     survivor_loop,
                     consumed_loop,
+                }
+            }
+            MergePlan::Ring {
+                face,
+                survivor_loop,
+                axis,
+                seeds: [kept, added],
+                untouched,
+            } => {
+                edit.profile_attr_mut_unchecked(survivor_loop).dart = kept;
+                // The second loop is not a new boundary, it is the half of the
+                // old one the seam was hiding, so it descends from that identity.
+                let added_loop = edit.add_profile_split_from(
+                    survivor_loop,
+                    ProfileAttr::new(added, P::Profile::default()),
+                );
+                let mut loops = vec![
+                    BoundaryLoop::new(kept, LoopKind::Wrapping { axis }),
+                    BoundaryLoop::new(added, LoopKind::Wrapping { axis }),
+                ];
+                loops.extend(untouched);
+                edit.face_attr_mut_unchecked(face).boundary = FaceBoundary::from_loops(loops);
+                MergedCell::Ring {
+                    face,
+                    survivor_loop,
+                    added_loop,
                 }
             }
             MergePlan::BoundaryRemoved {
@@ -722,7 +866,7 @@ fn rejoined_components<P: Payload>(
     cell: &HashSet<Dart>,
     dim: Dim,
     pairs: &[(Dart, Dart)],
-) -> usize {
+) -> Vec<HashSet<Dart>> {
     let replacements = pairs
         .iter()
         .flat_map(|&(first, second)| [(first, second), (second, first)])
@@ -737,21 +881,52 @@ fn rejoined_components<P: Payload>(
     };
 
     let mut unvisited = surviving.clone();
-    let mut components = 0;
+    let mut components = Vec::new();
     while let Some(&start) = unvisited.iter().next() {
-        components += 1;
+        let mut component = HashSet::from([start]);
         let mut queue = vec![start];
         unvisited.remove(&start);
         while let Some(current) = queue.pop() {
             for along in [Dim::Zero, Dim::One] {
                 let next = step(current, along);
                 if unvisited.remove(&next) {
+                    component.insert(next);
                     queue.push(next);
                 }
             }
         }
+        components.push(component);
     }
     components
+}
+
+/// The support's periods, in parameter order.
+fn periods_of(surface: &Surface) -> [Option<f64>; 2] {
+    match surface.periodicity() {
+        SurfacePeriodicity::None => [None, None],
+        SurfacePeriodicity::UPeriodic(period) => [Some(period), None],
+        SurfacePeriodicity::VPeriodic(period) => [None, Some(period)],
+        SurfacePeriodicity::UVPeriodic(u, v) => [Some(u), Some(v)],
+    }
+}
+
+/// The closed axis a boundary component travels one whole period of, if any.
+///
+/// Only one dart per edge occurrence carries a pcurve, so summing over the
+/// component's stored pcurves counts each exactly once; travel is signed, and
+/// addition commutes, so the component need not be walked in order.
+fn wrapping_axis<D>(attr: &FaceAttr<D>, component: &HashSet<Dart>) -> Option<Axis2> {
+    let periods = periods_of(&attr.surface);
+    [Axis2::U, Axis2::V].into_iter().find(|axis| {
+        periods[axis.index()].is_some_and(|period| {
+            let travel = component
+                .iter()
+                .filter_map(|dart| attr.pcurves.get(dart))
+                .map(|pcurve| axis.of(pcurve.point_at(1.0)) - axis.of(pcurve.point_at(0.0)))
+                .sum::<f64>();
+            (travel.abs() - period).abs() <= LINEAR_TOLERANCE
+        })
+    })
 }
 
 /// Orders two identities so the survivor is deterministic across runs.

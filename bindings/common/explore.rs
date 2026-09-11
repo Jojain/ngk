@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::geometry::{Curve, Point3, Surface, TrimmedCurve2};
 use crate::topology::closed::{Closeable, Closed};
-use crate::topology::edge::Edge;
+use crate::topology::edge::{BoundedEdge, Edge};
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim, GMAP_INVOLUTION_COUNT, GMap};
 use crate::topology::payload::{Payload, StandardPayload};
@@ -476,19 +476,31 @@ impl<P: Payload> SharedEdge<P> {
     }
 
     /// Returns the oriented start vertex.
+    ///
+    /// Errors on a closed edge, which has no end to name — ask `vertices()`
+    /// instead for the one vertex it passes through.
     pub(crate) fn start(&self) -> Result<SharedVertex<P>, ExploreError> {
         Ok(SharedVertex::from_view(
             self.map.clone(),
-            self.view()?.start(),
+            self.bounded()?.start(),
         ))
     }
 
     /// Returns the oriented end vertex.
+    ///
+    /// Errors on a closed edge, for the same reason as [`Self::start`].
     pub(crate) fn end(&self) -> Result<SharedVertex<P>, ExploreError> {
         Ok(SharedVertex::from_view(
             self.map.clone(),
-            self.view()?.end(),
+            self.bounded()?.end(),
         ))
+    }
+
+    /// Resolves this edge as a bounded one, erroring when it closes on itself.
+    fn bounded(&self) -> Result<BoundedEdge<'_, P>, ExploreError> {
+        self.view()?
+            .bounded()
+            .ok_or_else(|| missing("bounded edge", self.dart.id()))
     }
 
     /// Returns distinct incident vertices.

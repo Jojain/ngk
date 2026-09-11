@@ -255,13 +255,15 @@ fn validate_oriented_shell_volume<P: Payload>(
             let mut points = Vec::new();
             for edge in boundary.edges() {
                 directed.insert(edge.dart());
-                points.push(edge.start().point().copied().ok_or(
-                    GMapValidationError::SolidFaceOrientationUnavailable {
-                        solid,
-                        shell,
-                        face: face.key(),
-                    },
-                )?);
+                points.push(
+                    edge.trimmed_curve()
+                        .map(|section| section.point_at(0.0))
+                        .ok_or(GMapValidationError::SolidFaceOrientationUnavailable {
+                            solid,
+                            shell,
+                            face: face.key(),
+                        })?,
+                );
             }
             for pair in points[1..].windows(2).filter(|_| planar) {
                 volume += (points[0] - reference)

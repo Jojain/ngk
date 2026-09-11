@@ -40,7 +40,10 @@ pub fn build(distance: f64) -> Result<ScriptResult, String> {
     );
     let vertex_profile = add_rectangle(&mut g, vertex_plane, X_SIZE, Y_SIZE)
         .map_err(|err| format!("failed to build single-vertex rectangle: {err:?}"))?;
-    let corner = g.profile_unchecked(vertex_profile).edges()[0].end().key();
+    let corner = g.profile_unchecked(vertex_profile).edges()[0]
+        .bounded_unchecked()
+        .end()
+        .key();
     let edges_before_vertex_chamfer = g.iter_edges().map(|(key, _)| key).collect::<HashSet<_>>();
     chamfer(&mut g, corner, distance)
         .map_err(|err| format!("failed to chamfer one rectangle vertex: {err:?}"))?;

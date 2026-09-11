@@ -99,7 +99,17 @@ fn join_on_circle(
     linear: f64,
     angular: f64,
 ) -> Option<Curve> {
-    let (center, normal, radius) = circle_through(start, through, end, linear)?;
+    // Two arcs that close on each other give only two distinct points — their
+    // shared ends and the vertex between them — and two points determine no
+    // circle. The third is borrowed from the samples: the one farthest from
+    // both, which is where the fit through three points is best conditioned.
+    let closes = (end - start).norm() <= linear;
+    let third = if closes {
+        farthest_from(samples, start, through)?
+    } else {
+        end
+    };
+    let (center, normal, radius) = circle_through(start, through, third, linear)?;
     if samples
         .iter()
         .any(|&sample| !on_circle(center, &normal, radius, sample, linear))
@@ -115,6 +125,16 @@ fn join_on_circle(
     let interior = angle(through);
     if interior.abs() <= angular {
         return None;
+    }
+    if closes {
+        // The pair sweeps the whole turn, in whichever direction it passed
+        // through the vanishing vertex.
+        let circle = Curve::circle(plane, radius);
+        return Some(if interior < 0.0 {
+            circle.reversed()
+        } else {
+            circle
+        });
     }
 
     let closing = angle(end);
@@ -138,6 +158,22 @@ fn join_on_circle(
     } else {
         circle
     })
+}
+
+/// The sample farthest from both `a` and `b`, by whichever it is nearer to.
+///
+/// Maximising the *smaller* of the two distances is what keeps the three points
+/// spread: a sample close to either one would leave the circle through them
+/// ill-conditioned however far it sits from the other.
+fn farthest_from(samples: &[Point3], a: Point3, b: Point3) -> Option<Point3> {
+    samples
+        .iter()
+        .copied()
+        .max_by(|first, second| {
+            let spread = |point: Point3| (point - a).norm().min((point - b).norm());
+            spread(*first).total_cmp(&spread(*second))
+        })
+        .filter(|point| (point - a).norm() > 0.0 && (point - b).norm() > 0.0)
 }
 
 /// Returns the circle through three points as `(center, normal, radius)`.
