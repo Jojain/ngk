@@ -611,7 +611,9 @@ fn prepare_solid_profile_chamfer<P: Payload>(
         .find(|face| face.loops().iter().any(|loop_| loop_.key() == profile))
         .ok_or(ChamferError::UnsupportedChamferTarget)?;
     if target_face.loops().len() != 1
-        || target_face.outer_loop().key() != profile
+        || target_face
+            .outer_loop()
+            .is_none_or(|outer| outer.key() != profile)
         || !matches!(target_face.surface(), Surface::Plane(_))
     {
         return Err(ChamferError::UnsupportedChamferTarget);
@@ -986,7 +988,9 @@ fn replace_face_patch<P: Payload>(
     let profile = add_polygon_staged(edit, corners);
     match curved_geometry {
         Some(geometry) => add_curved_chamfer_face(edit, profile, corners, geometry)?,
-        None => add_face_staged(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?,
+        None => {
+            add_face_staged(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?
+        }
     };
     let candidates = edit
         .profile_unchecked(profile)
@@ -1012,8 +1016,9 @@ fn remove_face_patch<P: Payload>(
     let patch_darts = patch_faces
         .iter()
         .flat_map(|face| {
-            let root = edit.face_attr_unchecked(*face).outer_loop;
-            edit.orbit(root, edit.orbit_indices(Dim::Two)).collect::<Vec<_>>()
+            let root = edit.face_attr_unchecked(*face).boundary.outer_unchecked();
+            edit.orbit(root, edit.orbit_indices(Dim::Two))
+                .collect::<Vec<_>>()
         })
         .collect::<HashSet<_>>();
     let mut boundary_darts = section_edges

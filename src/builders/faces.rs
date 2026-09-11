@@ -10,11 +10,13 @@ use crate::builders::profiles::{
     add_rectangle_staged as add_rectangle_profile_staged, profile_pcurves,
 };
 use crate::geometry::{
-    Circle, Curve, CurveCurveIntersection2, CurveIntersectionError, Interval, LINEAR_TOLERANCE,
-    NurbsError, Periodicity, Plane, Point2, Point3, Surface, SurfacePeriodicity, TrimmedCurve,
-    TrimmedCurve2,
+    Axis2, Circle, Curve, CurveCurveIntersection2, CurveIntersectionError, Interval,
+    LINEAR_TOLERANCE, NurbsError, Periodicity, Plane, Point2, Point3, Surface, SurfacePeriodicity,
+    TrimmedCurve, TrimmedCurve2,
 };
-use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
+use crate::topology::attributes::{
+    BoundaryLoop, EdgeAttr, FaceAttr, FaceBoundary, LoopKind, ProfileAttr, VertexAttr,
+};
 use crate::topology::closed::Closed;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Cell0, Cell1, Cell2, Dart, Dim, GMap};
@@ -661,6 +663,13 @@ pub fn split_face_by_imprints_staged<P: Payload>(
     {
         return split_periodic_face_by_imprints(edit, face, &open_imprints, seam, period);
     }
+    if closed_imprints.is_empty() {
+        let mut splits = split_ring_face_by_wrapping_chains(edit, face, &open_imprints)?;
+        if !splits.is_empty() {
+            remap_section_indices(&mut splits, &open_indices);
+            return Ok(splits);
+        }
+    }
 
     let pcurves = open_imprints
         .iter()
@@ -736,8 +745,12 @@ fn periodic_seam_edge<P: Payload>(
     let face = g
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
+    // A ring face has no seam edge to find: not having one is the point of it.
+    let Some(outer) = face.outer_loop() else {
+        return Ok(None);
+    };
     let mut counts = HashMap::<EdgeKey, usize>::new();
-    for edge in face.outer_loop().edges() {
+    for edge in outer.edges() {
         *counts
             .entry(boundary_edge_key(g, edge.dart())?)
             .or_default() += 1;
@@ -898,8 +911,8 @@ fn merge_faces_across_edge<P: Payload>(
         .face_attr_mut(survivor)
         .expect("periodic face merge survivor must remain staged");
     survivor_attr.surface = first_attr.surface;
-    survivor_attr.outer_loop = loop_dart;
-    survivor_attr.inner_loops.clear();
+    survivor_attr.boundary.set_outer(loop_dart);
+    survivor_attr.boundary.clear_inner();
     survivor_attr.pcurves = pcurves;
     edit.merge_faces_into(survivor, removed);
     Ok(survivor)
@@ -1088,7 +1101,6 @@ fn unwrap_periodic_face_pcurves<P: Payload>(
         (
             face_view.surface().periodicity(),
             face_view
-                .outer_loop()
                 .edges()
                 .into_iter()
                 .map(|edge| {
@@ -1151,12 +1163,13 @@ fn face_edge_dart_for_imprint<P: Payload>(
     let face_view = g
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
-    let profile_darts: Vec<Dart> = face_view.outer_loop().darts().step_by(2).collect();
-    profile_darts
+    face_view
+        .loops()
         .into_iter()
+        .flat_map(|boundary| boundary.darts().step_by(2).collect::<Vec<_>>())
         .find(|profile_dart| g.cell_key::<Cell1>(*profile_dart) == Some(edge))
         .ok_or(FaceImprintSplitError::MissingBoundaryEdge {
-            dart: face_view.outer_loop().dart,
+            dart: face_view.dart(),
         })
 }
 
@@ -1224,6 +1237,336 @@ fn add_closed_curve_imprint_loops<P: Payload>(
 
 fn reverse_imprint(imprint: &FaceImprint) -> Result<FaceImprint, NurbsError> {
     imprint.reversed()
+}
+
+/// One link of a wrapping chain: the imprint as travelled, and where it came from.
+struct ChainLink {
+    imprint: FaceImprint,
+    /// Index of the input imprint this link was cut from.
+    source: usize,
+    /// The part of that input used, backwards when the chain travels it so.
+    interval: Interval,
+}
+
+/// Imprints that together close on a face's periodic quotient.
+///
+/// Such a chain bounds no island: in parameter space it is a line one period
+/// long, not a closed polygon, so it cuts a ring face in two rather than
+/// carving a hole out of one.
+struct WrappingChain {
+    /// The axis the chain spans exactly one period of.
+    axis: Axis2,
+    links: Vec<ChainLink>,
+}
+
+impl WrappingChain {
+    /// The imprints in travel order.
+    fn imprints(&self) -> Vec<FaceImprint> {
+        self.links.iter().map(|link| link.imprint.clone()).collect()
+    }
+
+    /// How far the chain travels along its axis, signed.
+    fn travel(&self) -> f64 {
+        travel_along(self.axis, &self.imprints())
+    }
+}
+
+/// Signed travel of a chain of imprints along one parameter axis.
+fn travel_along(axis: Axis2, imprints: &[FaceImprint]) -> f64 {
+    imprints
+        .iter()
+        .map(|imprint| {
+            axis.of(imprint.pcurve.point_at(1.0)) - axis.of(imprint.pcurve.point_at(0.0))
+        })
+        .sum()
+}
+
+/// Cuts a ring face by every imprint chain that wraps its periodic direction.
+///
+/// Returns no splits — leaving the imprints to the planar paths — unless the
+/// face is a ring bounded by exactly two wrapping loops and *every* imprint
+/// belongs to a chain spanning one whole period of the wrapped axis. A chain
+/// that does not wrap is a chord or an island, which those paths already know
+/// how to apply.
+fn split_ring_face_by_wrapping_chains<P: Payload>(
+    edit: &mut TopologyEdit<'_, P>,
+    face: FaceKey,
+    imprints: &[FaceImprint],
+) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
+    let Some(chains) = wrapping_chains(edit, face, imprints)? else {
+        return Ok(Vec::new());
+    };
+    let mut rings = vec![face];
+    let mut splits = Vec::new();
+    for chain in chains {
+        let Some(target) = ring_face_for_chain(edit, &rings, &chain)? else {
+            return Ok(Vec::new());
+        };
+        let split = split_ring_face_by_wrapping_chain(edit, target, &chain)?;
+        rings.push(split.second);
+        splits.push(split);
+    }
+    Ok(splits)
+}
+
+/// Reads the imprints as chains wrapping `face`'s periodic direction, if they all are.
+fn wrapping_chains<P: Payload>(
+    edit: &TopologyEdit<'_, P>,
+    face: FaceKey,
+    imprints: &[FaceImprint],
+) -> Result<Option<Vec<WrappingChain>>, FaceImprintSplitError> {
+    if imprints.is_empty() {
+        return Ok(None);
+    }
+    let attr = edit
+        .face_attr(face)
+        .ok_or(FaceImprintSplitError::MissingFace { face })?;
+    let wrapping = attr.boundary.wrapping().collect::<Vec<_>>();
+    let [(_, axis), (_, second_axis)] = wrapping[..] else {
+        return Ok(None);
+    };
+    if second_axis != axis || attr.boundary.loops().len() != 2 {
+        return Ok(None);
+    }
+    let periods = match attr.surface.periodicity() {
+        SurfacePeriodicity::None => return Ok(None),
+        SurfacePeriodicity::UPeriodic(u) => [Some(u), None],
+        SurfacePeriodicity::VPeriodic(v) => [None, Some(v)],
+        SurfacePeriodicity::UVPeriodic(u, v) => [Some(u), Some(v)],
+    };
+    let Some(period) = periods[axis.index()] else {
+        return Ok(None);
+    };
+
+    let Some(chains) = chain_imprints(imprints) else {
+        return Ok(None);
+    };
+    let chains = chains
+        .into_iter()
+        .map(|links| WrappingChain { axis, links })
+        .collect::<Vec<_>>();
+    if chains
+        .iter()
+        .any(|chain| (chain.travel().abs() - period).abs() > LINEAR_TOLERANCE)
+    {
+        return Ok(None);
+    }
+    Ok(Some(chains))
+}
+
+/// Joins imprints end to end into walks, reversing any written backwards.
+///
+/// Returns `None` when an imprint joins nothing, which is the normal answer
+/// for a chord ending on the face's own boundary.
+fn chain_imprints(imprints: &[FaceImprint]) -> Option<Vec<Vec<ChainLink>>> {
+    let mut remaining = (0..imprints.len()).collect::<Vec<_>>();
+    let mut chains = Vec::new();
+    while !remaining.is_empty() {
+        let source = remaining.remove(0);
+        let mut links = vec![ChainLink {
+            imprint: imprints[source].clone(),
+            source,
+            interval: Interval::new(0.0, 1.0),
+        }];
+        loop {
+            let end = links.last()?.imprint.pcurve.point_at(1.0);
+            let meets = |index: &usize| {
+                let pcurve = &imprints[*index].pcurve;
+                [pcurve.point_at(0.0), pcurve.point_at(1.0)]
+                    .iter()
+                    .any(|point| (point - end).norm() <= LINEAR_TOLERANCE)
+            };
+            let Some(position) = remaining.iter().position(meets) else {
+                break;
+            };
+            let index = remaining.remove(position);
+            let backwards = (imprints[index].pcurve.point_at(0.0) - end).norm() > LINEAR_TOLERANCE;
+            links.push(ChainLink {
+                imprint: if backwards {
+                    imprints[index].reversed().ok()?
+                } else {
+                    imprints[index].clone()
+                },
+                source: index,
+                interval: if backwards {
+                    Interval::new(1.0, 0.0)
+                } else {
+                    Interval::new(0.0, 1.0)
+                },
+            });
+        }
+        chains.push(links);
+    }
+    Some(chains)
+}
+
+/// The ring among `rings` that `chain` runs across.
+///
+/// A wrapping chain spans its axis entirely, so what places it is the axis it
+/// is transverse to: the chain lies on the ring whose two wrapping loops it
+/// runs between.
+fn ring_face_for_chain<P: Payload>(
+    edit: &TopologyEdit<'_, P>,
+    rings: &[FaceKey],
+    chain: &WrappingChain,
+) -> Result<Option<FaceKey>, FaceImprintSplitError> {
+    let transverse = chain.axis.transverse();
+    let at = |pcurve: &TrimmedCurve2| transverse.of(pcurve.point_at(0.5));
+    let position = chain
+        .links
+        .iter()
+        .map(|link| at(&link.imprint.pcurve))
+        .sum::<f64>()
+        / chain.links.len() as f64;
+    for &face in rings {
+        let attr = edit
+            .face_attr(face)
+            .ok_or(FaceImprintSplitError::MissingFace { face })?;
+        let bounds = attr
+            .boundary
+            .wrapping()
+            .filter_map(|(seed, _)| attr.pcurves.get(&seed).map(at))
+            .collect::<Vec<_>>();
+        let [low, high] = bounds[..] else {
+            continue;
+        };
+        let (low, high) = (low.min(high), low.max(high));
+        if position > low + LINEAR_TOLERANCE && position < high - LINEAR_TOLERANCE {
+            return Ok(Some(face));
+        }
+    }
+    Ok(None)
+}
+
+/// Cuts a ring face in two along a chain that wraps its periodic direction.
+///
+/// Each half keeps one of the original wrapping loops and gains one copy of the
+/// chain. Which copy goes where follows from direction alone: a face's boundary
+/// runs one way round, so the new loop bounding a half must travel against the
+/// original loop it is paired with. No seam anchors anything, and no vertex is
+/// created beyond the chain's own junctions.
+fn split_ring_face_by_wrapping_chain<P: Payload>(
+    edit: &mut TopologyEdit<'_, P>,
+    face: FaceKey,
+    chain: &WrappingChain,
+) -> Result<FaceImprintSplit, FaceImprintSplitError> {
+    let old_face = edit
+        .face_attr(face)
+        .ok_or(FaceImprintSplitError::MissingFace { face })?
+        .clone();
+    let axis = chain.axis;
+    let forward = chain.imprints();
+    let backward = reversed_imprint_loop(&forward)?;
+
+    let forward_loop = add_section_loop(edit, &old_face.surface, &forward);
+    let backward_loop = add_section_loop(edit, &old_face.surface, &backward);
+    let section_edges = sew_section_loops(edit, face, &forward_loop, &backward_loop)?;
+    edit.add_profile(ProfileAttr::new(
+        forward_loop.loop_dart,
+        P::Profile::default(),
+    ));
+    edit.add_profile(ProfileAttr::new(
+        backward_loop.loop_dart,
+        P::Profile::default(),
+    ));
+
+    let seeds = old_face.boundary.wrapping().collect::<Vec<_>>();
+    let [(first_seed, _), (second_seed, _)] = seeds[..] else {
+        return Err(FaceImprintSplitError::MissingFace { face });
+    };
+    // The half keeping `first_seed` is bounded by whichever copy runs against it.
+    let first_travel = wrapping_loop_travel(edit, &old_face, first_seed, axis)?;
+    let (first_new, second_new) = if first_travel * chain.travel() < 0.0 {
+        (&forward_loop, &backward_loop)
+    } else {
+        (&backward_loop, &forward_loop)
+    };
+
+    let mut first_pcurves = wrapping_loop_pcurves(edit, face, &old_face.pcurves, first_seed)?;
+    first_pcurves.extend(first_new.pcurves.clone());
+    let mut second_pcurves = wrapping_loop_pcurves(edit, face, &old_face.pcurves, second_seed)?;
+    second_pcurves.extend(second_new.pcurves.clone());
+    let ring = |seed: Dart, added: Dart| {
+        FaceBoundary::from_loops(vec![
+            BoundaryLoop::new(seed, LoopKind::Wrapping { axis }),
+            BoundaryLoop::new(added, LoopKind::Wrapping { axis }),
+        ])
+    };
+    let second_boundary = ring(second_seed, second_new.loop_dart);
+    let first_boundary = ring(first_seed, first_new.loop_dart);
+
+    let face_attr = edit
+        .face_attr_mut(face)
+        .expect("source face must remain staged during a ring split");
+    face_attr.boundary = first_boundary;
+    face_attr.pcurves = first_pcurves;
+
+    let second = edit.add_face_split_from(
+        face,
+        FaceAttr::with_boundary(
+            old_face.surface,
+            P::F::default(),
+            second_boundary,
+            second_pcurves,
+        ),
+    );
+
+    Ok(FaceImprintSplit {
+        first: face,
+        second,
+        sections: section_edges
+            .into_iter()
+            .zip(&chain.links)
+            .map(|(edge, link)| FaceImprintSection {
+                edge,
+                imprint: link.source,
+                interval: link.interval,
+            })
+            .collect(),
+    })
+}
+
+/// Signed travel of one stored boundary loop along `axis`.
+fn wrapping_loop_travel<P: Payload>(
+    edit: &TopologyEdit<'_, P>,
+    old_face: &FaceAttr<P::F>,
+    seed: Dart,
+    axis: Axis2,
+) -> Result<f64, FaceImprintSplitError> {
+    let profile = Profile::from_dart(edit, seed).expect("face loop must have a registered profile");
+    Ok(profile
+        .darts()
+        .step_by(2)
+        .filter_map(|dart| old_face.pcurves.get(&dart))
+        .map(|pcurve| axis.of(pcurve.point_at(1.0)) - axis.of(pcurve.point_at(0.0)))
+        .sum())
+}
+
+/// The stored pcurves of one boundary loop, keyed by its own darts.
+fn wrapping_loop_pcurves<P: Payload>(
+    edit: &TopologyEdit<'_, P>,
+    face: FaceKey,
+    old_pcurves: &HashMap<Dart, TrimmedCurve2>,
+    seed: Dart,
+) -> Result<HashMap<Dart, TrimmedCurve2>, FaceImprintSplitError> {
+    let profile = Profile::from_dart(edit, seed).expect("face loop must have a registered profile");
+    profile
+        .darts()
+        .step_by(2)
+        .map(|dart| {
+            let candidates = [
+                dart,
+                edit.alpha(Dim::Zero, dart),
+                edit.alpha(Dim::Two, dart),
+            ];
+            candidates
+                .iter()
+                .find_map(|d| old_pcurves.get(d))
+                .cloned()
+                .map(|pcurve| (dart, pcurve))
+                .ok_or(FaceImprintSplitError::MissingPcurve { face, dart })
+        })
+        .collect()
 }
 
 fn split_face_by_closed_curve_imprint<P: Payload>(
@@ -1339,7 +1682,7 @@ fn finish_closed_imprint_split<P: Payload>(
     let face_attr = edit
         .face_attr_mut(face)
         .expect("source face must remain staged during a closed-loop split");
-    face_attr.inner_loops.push(outside_loop.loop_dart);
+    face_attr.boundary.push_inner(outside_loop.loop_dart);
     face_attr.pcurves.extend(outside_loop.pcurves);
 
     let second = edit.add_face_split_from(
@@ -1726,8 +2069,11 @@ fn face_boundary_edges<P: Payload>(
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
 
-    face_view
-        .outer_loop()
+    // A ring face has no outer loop to walk, and no corner to chord across.
+    let Some(outer) = face_view.outer_loop() else {
+        return Ok(Vec::new());
+    };
+    outer
         .corners()
         .iter()
         .map(|corner| {
@@ -1749,7 +2095,7 @@ fn boundary_edge_at_uv<P: Payload>(
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
 
-    for edge in face_view.outer_loop().edges() {
+    for edge in face_view.edges() {
         let pcurve = face_view
             .pcurve(edge.dart())
             .ok_or(FaceImprintSplitError::MissingPcurve {
@@ -1851,10 +2197,10 @@ fn apply_outer_face_chord_split<P: Payload>(
     cut: &FaceImprintCut,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
     let source_profile = edit
-        .profile_key(old_face.outer_loop)
+        .profile_key(old_face.boundary.outer_unchecked())
         .expect("face loop must have a registered profile");
     let loop_ = Closed::new_unchecked(
-        Profile::from_dart(edit, old_face.outer_loop)
+        Profile::from_dart(edit, old_face.boundary.outer_unchecked())
             .expect("face loop must have a registered profile"),
     );
     let corners = loop_.corners();
@@ -1867,7 +2213,14 @@ fn apply_outer_face_chord_split<P: Payload>(
     let darts = cut
         .sections
         .iter()
-        .map(|_| [edit.add_dart(), edit.add_dart(), edit.add_dart(), edit.add_dart()])
+        .map(|_| {
+            [
+                edit.add_dart(),
+                edit.add_dart(),
+                edit.add_dart(),
+                edit.add_dart(),
+            ]
+        })
         .collect::<Vec<_>>();
     for (index, (_, _, imprint)) in cut.sections.iter().enumerate() {
         let [a, b, c, d] = darts[index];
@@ -1959,7 +2312,7 @@ fn apply_outer_face_chord_split<P: Payload>(
     let (source_inner_loops, created_inner_loops) = partition_inner_loops(
         edit,
         original_face,
-        &old_face.inner_loops,
+        &old_face.boundary.inner_vec(),
         &old_face.pcurves,
         source_loop,
         &source_pcurves,
@@ -2010,8 +2363,8 @@ fn apply_outer_face_chord_split<P: Payload>(
         .face_attr_mut(original_face)
         .expect("source face must remain staged during a chord split");
     source_attr.surface = old_face.surface.clone();
-    source_attr.outer_loop = source_loop;
-    source_attr.inner_loops = source_inner_loops;
+    source_attr.boundary.set_outer(source_loop);
+    source_attr.boundary.set_inner(source_inner_loops);
     source_attr.pcurves = source_pcurves;
 
     let second = edit.add_face_split_from(
@@ -2233,8 +2586,9 @@ fn face_edge_dart<P: Payload>(
             EdgeSplitError::MissingEdge { edge },
         ))?;
     let edge_dart = g.cell_representative(edge_attr.dart, Dim::One);
-    let profile_darts: Vec<Dart> = std::iter::once(face_attr.outer_loop)
-        .chain(face_attr.inner_loops.iter().copied())
+    let profile_darts: Vec<Dart> = face_attr
+        .boundary
+        .darts()
         .flat_map(|loop_dart| {
             Profile::from_dart(g, loop_dart)
                 .expect("face loop must have a registered profile")
@@ -2415,8 +2769,8 @@ fn add_polygon_with_holes_staged(
     for hole in holes {
         let inner_profile = add_polygon_staged(edit, hole);
         let inner_loop = edit.profile_attr_unchecked(inner_profile).dart;
-        let inner_profile =
-            Profile::from_dart(edit, inner_loop).expect("inner loop must have a registered profile");
+        let inner_profile = Profile::from_dart(edit, inner_loop)
+            .expect("inner loop must have a registered profile");
         pcurves.extend(profile_pcurves(&inner_profile, &plane)?);
         inner_loops.push(inner_loop);
     }
@@ -2512,12 +2866,11 @@ pub fn reverse_face_winding<P: Payload>(edit: &mut TopologyEdit<'_, P>, face: Fa
         return;
     };
 
-    let outer_loop = edit.alpha(Dim::Zero, face_attr.outer_loop);
-    let inner_loops = face_attr
-        .inner_loops
-        .iter()
-        .map(|dart| edit.alpha(Dim::Zero, *dart))
-        .collect::<Vec<_>>();
+    // Reversing is atomic over the whole boundary: every loop seed becomes its
+    // `alpha0`, whatever that loop bounds, and every pcurve is reversed onto
+    // the dart that now carries it.
+    let mut boundary = face_attr.boundary.clone();
+    boundary.map_darts(|dart| edit.alpha(Dim::Zero, dart));
     let pcurves = face_attr
         .face(edit)
         .edges()
@@ -2531,8 +2884,7 @@ pub fn reverse_face_winding<P: Payload>(edit: &mut TopologyEdit<'_, P>, face: Fa
         .collect();
 
     if let Some(face) = edit.face_attr_mut(face) {
-        face.outer_loop = outer_loop;
-        face.inner_loops = inner_loops;
+        face.boundary = boundary;
         face.pcurves = pcurves;
     }
 }

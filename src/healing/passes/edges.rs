@@ -20,6 +20,7 @@ use crate::builders::removal::{
     CellRemovalError, MergedCell, can_remove_cell, is_removable, remove_cell_staged,
 };
 use crate::geometry::{Plane, Surface, SurfacePeriodicity};
+use crate::topology::attributes::LoopKind;
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
@@ -170,10 +171,12 @@ fn bounds_a_free_side<P: Payload>(g: &GMap<P>, dart: Dart) -> bool {
         .any(|d| g.is_free(d, Dim::Two))
 }
 
-/// Reports whether `face` carries the edge on its outer boundary.
+/// Reports whether `face` carries the edge on a loop that bounds it from outside.
 ///
-/// Ordinary face fusion uses outer loops on both faces; filled inner loops are
-/// recognized separately because their surrounding face must survive.
+/// That is its outer loop, or a wrapping loop, which bounds a ring face the
+/// same way without closing in parameter space. Inner loops are excluded:
+/// filled inner loops are recognized separately because their surrounding face
+/// must survive.
 fn fuses_outer_loop<P: Payload>(g: &GMap<P>, dart: Dart, face: FaceKey) -> bool {
     let Some(attr) = g.face_attr(face) else {
         return false;
@@ -181,7 +184,14 @@ fn fuses_outer_loop<P: Payload>(g: &GMap<P>, dart: Dart, face: FaceKey) -> bool 
     let Some(incident) = edge_dart_in_face(g, dart, face) else {
         return false;
     };
-    g.profile_key(incident).is_some() && g.profile_key(incident) == g.profile_key(attr.outer_loop)
+    let Some(profile) = g.profile_key(incident) else {
+        return false;
+    };
+    attr.boundary
+        .loops()
+        .iter()
+        .filter(|boundary| boundary.kind != LoopKind::Inner)
+        .any(|boundary| g.profile_key(boundary.dart) == Some(profile))
 }
 
 /// Reports whether `consumed` completely fills one inner loop of `survivor`.
@@ -222,9 +232,8 @@ fn fills_inner_loop<P: Payload>(
         .iter()
         .map(|edge| edge.key())
         .collect::<Vec<_>>();
-    let mut island_keys = island
-        .outer_loop()
-        .edges()
+    let island_edges = island.edges();
+    let mut island_keys = island_edges
         .iter()
         .map(|edge| edge.key())
         .collect::<Vec<_>>();

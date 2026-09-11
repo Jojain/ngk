@@ -158,10 +158,7 @@ impl<P: Payload> PlanarityCheck for Face<'_, P> {
             return Err(PlanarityError::NonPlanarSurface);
         };
 
-        let loops = std::iter::once(self.outer_loop())
-            .chain(self.inner_loops())
-            .collect::<Vec<_>>();
-        for loop_ in loops {
+        for loop_ in self.loops() {
             let points = profile_points(loop_.inner())?;
             check_points_on_plane(&points, plane, tolerance)?;
             for edge in loop_.edges() {

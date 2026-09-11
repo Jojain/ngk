@@ -9,23 +9,36 @@ use crate::geometry::Surface;
 use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
 use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
-use crate::topology::attributes::FaceAttr;
+use crate::topology::attributes::{FaceAttr, FaceBoundary};
+use crate::topology::chart::Chart;
 use crate::topology::shape_keys::FaceKey;
 use nalgebra::UnitVector3;
 
+/// Samples per pcurve used to read a boundary's winding.
+///
+/// The winding only needs a sign, never a measurement, so a handful of
+/// samples per pcurve settles it at any model scale.
+const BOUNDARY_WINDING_SAMPLES: usize = 8;
+
 /// A domain-level face view with stable identity and contextual orientation.
 ///
-/// A face is a surface region backed by a stored [`FaceAttr`]. It has one
-/// outer boundary loop and zero or more inner loops for holes.
+/// A face is a surface region backed by a stored [`FaceAttr`]. Its boundary is
+/// a list of kinded loops: usually an outer loop and holes, but a ring face —
+/// a cylinder wall — is bounded by two wrapping loops and has no outer loop.
 ///
-/// The view's dart records how the face was reached by the current traversal.
-/// Its orientation is derived relative to the default orientation defined by
-/// [`FaceAttr::outer_loop`]. Opposite volume-side uses of a sewn face therefore
-/// share one [`FaceKey`] while producing oppositely oriented views.
+/// The view carries a *sense* rather than a dart. A dart would record how the
+/// face was reached, but no use of it here locates anything: each one either
+/// asks which way round the view is, or flips a stored loop seed with `alpha0`.
+/// Resolving that question once at construction removes the locator, and lets a
+/// face be viewed whether or not it owns a dart to be reached by.
+///
+/// The sense is relative to the default orientation defined by the outer loop
+/// stored in [`FaceAttr::boundary`]. Opposite volume-side uses of a sewn face
+/// therefore share one [`FaceKey`] while producing oppositely oriented views.
 pub struct Face<'g, P: Payload = StandardPayload> {
     gmap: &'g GMap<P>,
     key: FaceKey,
-    dart: Dart,
+    sense: Orientation,
 }
 
 impl<'g, P: Payload> Clone for Face<'g, P> {
@@ -33,7 +46,7 @@ impl<'g, P: Payload> Clone for Face<'g, P> {
         Self {
             gmap: self.gmap,
             key: self.key,
-            dart: self.dart,
+            sense: self.sense,
         }
     }
 }
@@ -41,8 +54,11 @@ impl<'g, P: Payload> Clone for Face<'g, P> {
 impl<'g, P: Payload> Face<'g, P> {
     /// Creates a face view with the default (`Same`) orientation.
     pub fn new(gmap: &'g GMap<P>, key: FaceKey) -> Self {
-        let dart = gmap.face_attr_unchecked(key).outer_loop;
-        Self { gmap, key, dart }
+        Self {
+            gmap,
+            key,
+            sense: Orientation::Same,
+        }
     }
 
     /// Creates a face view from a dart, resolving the face key and orientation
@@ -51,7 +67,8 @@ impl<'g, P: Payload> Face<'g, P> {
     /// Returns `None` if the dart does not belong to a registered face.
     pub fn from_dart(gmap: &'g GMap<P>, dart: Dart) -> Option<Self> {
         let key = gmap.cell_key::<Cell2>(dart)?;
-        Some(Self { gmap, key, dart })
+        let sense = gmap.face_orientation_at_dart(key, dart);
+        Some(Self { gmap, key, sense })
     }
 
     /// Returns the stored face attribute.
@@ -68,9 +85,26 @@ impl<'g, P: Payload> Face<'g, P> {
         self.key
     }
 
-    /// Returns the dart carrying this face view's contextual orientation.
+    /// Returns this view's orientation relative to the face's stored default.
+    pub fn sense(&self) -> Orientation {
+        self.sense
+    }
+
+    /// Returns a boundary dart carrying this face view's contextual orientation.
+    ///
+    /// This is the face's seed loop — the outer loop when it has one, its first
+    /// loop otherwise — `alpha0`-flipped when the view is reversed, so it
+    /// round-trips through [`Self::from_dart`] to an identical view.
     pub fn dart(&self) -> Dart {
-        self.dart
+        self.oriented_seed(self.attr().boundary.seed_unchecked())
+    }
+
+    /// Returns the stored boundary of this face: its loop seeds and their kinds.
+    ///
+    /// The seeds are as stored, in the face's default orientation. Read one in
+    /// this view's orientation with [`Self::loop_from_seed`].
+    pub fn boundary(&self) -> &'g FaceBoundary {
+        &self.attr().boundary
     }
 
     /// Returns a new face view with the opposite orientation.
@@ -78,27 +112,40 @@ impl<'g, P: Payload> Face<'g, P> {
         Self {
             gmap: self.gmap,
             key: self.key,
-            dart: self.gmap.alpha(Dim::Zero, self.dart),
+            sense: self.sense.flip(),
         }
     }
 
-    /// Returns the outer boundary loop of the face.
+    /// Reads a stored loop seed in this view's orientation.
+    fn oriented_seed(&self, seed: Dart) -> Dart {
+        match self.sense {
+            Orientation::Same => seed,
+            Orientation::Reversed => self.gmap.alpha(Dim::Zero, seed),
+        }
+    }
+
+    /// Returns the loop seeded at `seed`, read in this view's orientation.
     ///
     /// The loop is trusted as closed because face attributes are created from
-    /// closed boundary profiles.
-    pub fn outer_loop(&self) -> Loop<'g, P> {
-        let d = self.outer_loop_dart();
+    /// closed boundary profiles. A wrapping loop is closed too — on the
+    /// periodic quotient rather than in parameter space.
+    pub fn loop_from_seed(&self, seed: Dart) -> Loop<'g, P> {
         Closed::new_unchecked(
-            Profile::from_dart(self.gmap, d).expect("face outer loop must have a profile"),
+            Profile::from_dart(self.gmap, self.oriented_seed(seed))
+                .expect("face loop must have a registered profile"),
         )
     }
 
-    fn outer_loop_dart(&self) -> Dart {
-        let attr = self.attr();
-        match self.gmap.face_orientation_at_dart(self.key, self.dart) {
-            Orientation::Same => attr.outer_loop,
-            Orientation::Reversed => self.gmap.alpha(Dim::Zero, attr.outer_loop),
-        }
+    /// Returns the outer boundary loop of the face, if it has one.
+    ///
+    /// A ring face — a cylinder wall — is bounded by wrapping loops and has no
+    /// outer loop at all, so a caller that needs the whole boundary should
+    /// reach for [`Self::loops`] rather than treat this as infallible.
+    pub fn outer_loop(&self) -> Option<Loop<'g, P>> {
+        self.attr()
+            .boundary
+            .outer()
+            .map(|seed| self.loop_from_seed(seed))
     }
 
     /// Returns every inner boundary loop of the face.
@@ -106,27 +153,20 @@ impl<'g, P: Payload> Face<'g, P> {
     /// Inner loops represent holes in the face region. The returned order is
     /// the storage order from the face attribute.
     pub fn inner_loops(&self) -> Vec<Loop<'g, P>> {
-        let attr = self.attr();
-        attr.inner_loops
-            .iter()
-            .map(|d| {
-                let dart = match self.gmap.face_orientation_at_dart(self.key, self.dart) {
-                    Orientation::Same => *d,
-                    Orientation::Reversed => self.gmap.alpha(Dim::Zero, *d),
-                };
-                Closed::new_unchecked(
-                    Profile::from_dart(self.gmap, dart)
-                        .expect("face loop must have a registered profile"),
-                )
-            })
+        self.attr()
+            .boundary
+            .inner()
+            .map(|seed| self.loop_from_seed(seed))
             .collect()
     }
 
-    /// Returns all boundary loops, outer first followed by inner loops.
+    /// Returns all boundary loops, outer first when there is one.
     pub fn loops(&self) -> Vec<Loop<'g, P>> {
-        let mut loops = vec![self.outer_loop()];
-        loops.extend(self.inner_loops());
-        loops
+        self.attr()
+            .boundary
+            .darts()
+            .map(|seed| self.loop_from_seed(seed))
+            .collect()
     }
 
     /// Returns all boundary edges of the face.
@@ -221,25 +261,23 @@ impl<'g, P: Payload> Face<'g, P> {
     /// this does not test whether `(u, v)` belongs to the trimmed face region.
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         let surface_normal = self.attr().surface.normal_at(u, v);
-        match self.outer_loop_signed_area() {
+        match self.boundary_signed_area() {
             Some(area) if area < -LINEAR_TOLERANCE => -surface_normal,
             _ => surface_normal,
         }
     }
 
-    fn outer_loop_signed_area(&self) -> Option<f64> {
-        let points = self.sample_loop_pcurves(&self.outer_loop())?;
-        Some(signed_area(&points))
-    }
-
-    fn sample_loop_pcurves(&self, loop_: &Loop<'_, P>) -> Option<Vec<Point2>> {
-        let mut points = Vec::new();
-        for edge in loop_.edges() {
-            let samples = self.pcurve(edge.dart())?.sample(8);
-            let n = samples.len();
-            points.extend(samples.into_iter().take(n.saturating_sub(1)));
-        }
-        (!points.is_empty()).then_some(points)
+    /// Signed area of the face's outer boundary, read on a synthesized chart.
+    ///
+    /// A ring face's loops carry no winding of their own — each is a line
+    /// exactly one period long — so the chart closes them across its own cut
+    /// and the winding is read from the closed result. That is the same
+    /// rectangle a stored seam used to spell out, computed rather than
+    /// recorded.
+    fn boundary_signed_area(&self) -> Option<f64> {
+        let chart = Chart::of_face(self).ok()?;
+        let points = chart.loops().first()?.polyline(BOUNDARY_WINDING_SAMPLES);
+        (!points.is_empty()).then(|| signed_area(&points))
     }
 
     /// Returns the user payload attached to this face.
@@ -262,12 +300,10 @@ impl<'g, P: Payload> Face<'g, P> {
         let g = self.gmap;
         let candidates = [dart, g.alpha(Dim::Zero, dart), g.alpha(Dim::Two, dart)];
         let cached = candidates.iter().find_map(|&d| attr.pcurves.get(&d));
-        cached.cloned().map(
-            |pc| match self.gmap.face_orientation_at_dart(self.key, self.dart) {
-                Orientation::Same => pc,
-                Orientation::Reversed => pc.reversed(),
-            },
-        )
+        cached.cloned().map(|pc| match self.sense {
+            Orientation::Same => pc,
+            Orientation::Reversed => pc.reversed(),
+        })
     }
 }
 
@@ -286,10 +322,10 @@ fn signed_area(points: &[Point2]) -> f64 {
 
 impl<P: Payload> MergeTopology<P> for Face<'_, P> {
     fn merge_topology(&self) -> TopologyMerge<'_, P> {
-        let mut darts = self.outer_loop().darts().collect::<Vec<_>>();
-        for loop_ in self.inner_loops() {
+        let mut darts = Vec::new();
+        for loop_ in self.loops() {
             darts.extend(loop_.darts());
         }
-        TopologyMerge::new(self.gmap, darts, self.outer_loop_dart())
+        TopologyMerge::new(self.gmap, darts, self.dart())
     }
 }

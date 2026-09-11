@@ -697,11 +697,15 @@ impl<P: Payload> SharedFace<P> {
     }
 
     /// Returns the outer boundary loop.
+    ///
+    /// A ring face — a cylinder wall — is bounded by wrapping loops and has
+    /// none; read its whole boundary with [`Self::loops`] instead.
     pub(crate) fn outer_loop(&self) -> Result<SharedLoop<P>, ExploreError> {
-        Ok(SharedLoop::from_view(
-            self.map.clone(),
-            self.view()?.outer_loop(),
-        ))
+        let outer = self
+            .view()?
+            .outer_loop()
+            .ok_or_else(|| missing("outer loop", self.dart.id()))?;
+        Ok(SharedLoop::from_view(self.map.clone(), outer))
     }
 
     /// Returns inner boundary loops.

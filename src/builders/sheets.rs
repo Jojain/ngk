@@ -65,8 +65,8 @@ fn extrude_edge<P: Payload>(
     edge_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<ExtrudedFace, ExtrudeError> {
-    let edge =
-        Edge::from_dart(edit, edge_dart).ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
+    let edge = Edge::from_dart(edit, edge_dart)
+        .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
     let start = *edge
         .start()
         .point()
@@ -427,7 +427,10 @@ mod tests {
 
         for (_, face) in g.iter_faces() {
             let loop_darts = g
-                .orbit(face.outer_loop, vec![Dim::Zero.index(), Dim::One.index()])
+                .orbit(
+                    face.boundary.outer_unchecked(),
+                    vec![Dim::Zero.index(), Dim::One.index()],
+                )
                 .collect::<Vec<_>>();
             assert_eq!(
                 loop_darts.len(),

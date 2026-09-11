@@ -3,8 +3,9 @@
 use crate::geometry::TrimmedCurve2;
 use crate::geometry::{
     CurveCurveIntersection2, CurveIntersectionError, CurveIntersectionOptions, IntersectionOptions,
-    Interval, Point2, Surface, SurfacePeriodicity,
+    Interval, Point2,
 };
+use crate::topology::chart::{Chart, ChartCurve, ChartError};
 use crate::topology::face::Face;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::EdgeKey;
@@ -29,20 +30,17 @@ pub(crate) enum TrimLocation {
 /// for roughly 157000 points, and every later query walks all of them.
 const TRIM_CHORD_RATIO: f64 = 1.0e-4;
 
-/// Cached oriented loops; polylines are used only for winding classification.
+/// A face's trim, read on one synthesized chart cut.
+///
+/// The [`Chart`] places the loops; the polylines flattened from it answer
+/// which side of the boundary a point falls on, and the loops' own pcurves
+/// answer where the boundary exactly runs.
 pub(crate) struct FaceTrimDomain {
-    loops: Vec<Vec<TrimmedCurve2>>,
+    chart: Chart,
     polygons: Vec<Vec<Point2>>,
     tolerance: f64,
-    /// Upper bound on how far `polygons` may stray from `loops`.
+    /// Upper bound on how far `polygons` may stray from the chart's loops.
     chord: f64,
-    /// The support's parameter periods, when it has any.
-    ///
-    /// A periodic parameter is a seam, not an edge: `u = 0` and `u = 2pi` name
-    /// the same points, so a query at one has to be judged against a loop
-    /// written at the other. Without this a loop straddling the seam is
-    /// classified outside its own face and dropped.
-    periods: [Option<f64>; 2],
 }
 
 impl FaceTrimDomain {
@@ -52,74 +50,32 @@ impl FaceTrimDomain {
         tolerance: f64,
     ) -> Result<Self, BooleanError> {
         super::diagnostics::count_trim_domain_built();
-        let mut loops = Vec::new();
-        for boundary in face.loops() {
-            let mut curves = Vec::new();
-            for edge in boundary.edges() {
-                curves.push(
-                    face.pcurve(edge.dart())
-                        .ok_or(BooleanError::MissingTrimCurve {
-                            face: face.key(),
-                            edge: edge.key(),
-                        })?,
-                );
+        let chart = Chart::of_face(face).map_err(|error| match error {
+            ChartError::MissingPcurve { face, edge } => {
+                BooleanError::MissingTrimCurve { face, edge }
             }
-            loops.push(curves);
-        }
-        let periods = match face.surface().periodicity() {
-            SurfacePeriodicity::None => [None, None],
-            SurfacePeriodicity::UPeriodic(period) => [Some(period), None],
-            SurfacePeriodicity::VPeriodic(period) => [None, Some(period)],
-            SurfacePeriodicity::UVPeriodic(u, v) => [Some(u), Some(v)],
-        };
-        let chord = chord_budget(&loops, tolerance);
-        let polygons = loops
+        })?;
+        let chord = chord_budget(&chart, tolerance);
+        let polygons = chart
+            .loops()
             .iter()
-            .map(|curves| {
-                let pieces = curves
-                    .iter()
-                    .map(|curve| {
-                        let mut points = curve.adaptive_samples(chord, 20);
-                        points.pop();
-                        (
-                            points.into_iter().map(|(_, point)| point).collect(),
-                            curve.point_at(1.0),
-                        )
-                    })
-                    .collect::<Vec<(Vec<_>, _)>>();
-                joined_polygon(pieces, periods, face.surface())
-            })
+            .map(|boundary| boundary.adaptive_polyline(chord, 20))
             .collect();
         Ok(Self {
-            loops,
+            chart,
             polygons,
             tolerance,
             chord,
-            periods,
         })
     }
 
-    /// The query point plus every whole-period translate of it.
-    ///
-    /// Classification happens in the periodic quotient, and the cheapest
-    /// faithful way to do that with a planar winding test is to ask the same
-    /// question once per branch the polygons could have been written on.
-    fn images(&self, point: Point2) -> Vec<Point2> {
-        let mut images = vec![point];
-        for (axis, period) in self.periods.iter().enumerate() {
-            let Some(period) = period else {
-                continue;
-            };
-            let existing = images.clone();
-            for shift in [-*period, *period] {
-                images.extend(existing.iter().map(|image| {
-                    let mut moved = *image;
-                    moved[axis] += shift;
-                    moved
-                }));
-            }
-        }
-        images
+    /// Every pcurve of the face's trim, as stored.
+    fn trim_curves(&self) -> impl Iterator<Item = &TrimmedCurve2> {
+        self.chart
+            .loops()
+            .iter()
+            .flat_map(|boundary| boundary.curves())
+            .map(ChartCurve::curve)
     }
 
     /// How close to the boundary [`Self::boundary_distance`] stops discriminating.
@@ -158,7 +114,8 @@ impl FaceTrimDomain {
     /// as close to a loop written at the other end of the period as it looks
     /// on the surface.
     pub(crate) fn boundary_distance(&self, point: Point2) -> f64 {
-        self.images(point)
+        self.chart
+            .images(point)
             .into_iter()
             .map(|image| self.planar_boundary_distance(image))
             .fold(f64::INFINITY, f64::min)
@@ -192,11 +149,12 @@ impl FaceTrimDomain {
     /// inside the trim answers for all of them, because they are one point on
     /// the surface.
     pub(crate) fn classify(&self, point: Point2) -> TrimLocation {
-        let images = self.images(point);
+        let images = self.chart.images(point);
         for image in &images {
-            for (loop_index, curves) in self.loops.iter().enumerate() {
-                for curve in curves {
-                    if let Some(parameter) = curve.try_parameter_at(*image, self.tolerance) {
+            for (loop_index, boundary) in self.chart.loops().iter().enumerate() {
+                for curve in boundary.curves() {
+                    if let Some(parameter) = curve.curve().try_parameter_at(*image, self.tolerance)
+                    {
                         return TrimLocation::OnBoundary {
                             loop_index,
                             parameter,
@@ -300,7 +258,7 @@ impl FaceTrimDomain {
         options: CurveIntersectionOptions,
         parameters: &mut Vec<f64>,
     ) -> Result<(), CurveIntersectionError> {
-        for boundary in self.loops.iter().flatten() {
+        for boundary in self.trim_curves() {
             for contact in span.intersect_curve_with_options(boundary, options)? {
                 match contact {
                     CurveCurveIntersection2::Point { u_a, .. } => {
@@ -319,24 +277,15 @@ impl FaceTrimDomain {
     }
 }
 
-/// Chord budget for flattening, scaled to the extent the loops actually span.
+/// Chord budget for flattening, scaled to the extent the chart's loops span.
 ///
-/// Five samples per pcurve only need to size the domain, not to bound it: the
+/// The chart's extent only needs to size the domain, not to bound it: the
 /// budget sets the polygons' resolution, and [`FaceTrimDomain::boundary_epsilon`]
 /// reports it so no caller reads the polygons finer than they were built. A
 /// domain with no measurable extent falls back to `floor`.
-fn chord_budget(loops: &[Vec<TrimmedCurve2>], floor: f64) -> f64 {
-    let mut min = Point2::new(f64::INFINITY, f64::INFINITY);
-    let mut max = Point2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
-    for curve in loops.iter().flatten() {
-        for step in 0..=4 {
-            let sample = curve.point_at(f64::from(step) / 4.0);
-            min = Point2::new(min.x.min(sample.x), min.y.min(sample.y));
-            max = Point2::new(max.x.max(sample.x), max.y.max(sample.y));
-        }
-    }
-    let diagonal = (max - min).norm();
-    if diagonal.is_finite() && diagonal > 0.0 {
+fn chord_budget(chart: &Chart, floor: f64) -> f64 {
+    let diagonal = chart.diagonal();
+    if diagonal > 0.0 {
         (diagonal * TRIM_CHORD_RATIO).max(floor)
     } else {
         floor
@@ -382,69 +331,4 @@ pub(crate) fn boundary_edge_for<P: Payload>(
             })
         })
         .map(|edge| edge.key())
-}
-
-/// Joins one loop's sampled pcurves into a polygon continuous across the seams.
-///
-/// A loop split at a seam arrives as pcurves that end at one edge of the period
-/// and resume at the other, and a winding test reads that gap as a chord
-/// straight across the domain. Each pcurve is therefore translated by whole
-/// periods to meet the one before it; the query side compensates by asking on
-/// every branch.
-///
-/// The shift is chosen per pcurve rather than per sample because a pcurve is
-/// continuous by construction, however far it travels: a cylinder wall's base
-/// runs a whole period in one straight pcurve, and a per-sample rule would fold
-/// that onto itself.
-fn joined_polygon(
-    pieces: Vec<(Vec<Point2>, Point2)>,
-    periods: [Option<f64>; 2],
-    surface: &Surface,
-) -> Vec<Point2> {
-    let mut polygon: Vec<Point2> = Vec::new();
-    let mut previous_end: Option<Point2> = None;
-    let mut carried = nalgebra::Vector2::<f64>::zeros();
-    for (samples, end) in pieces {
-        let Some(first) = samples.first().copied() else {
-            continue;
-        };
-        // Against the previous pcurve's *end*, not against the last sample
-        // kept: a pcurve spanning a whole period contributes one sample, so
-        // the last sample is that pcurve's start and comparing to it would
-        // read the pcurve's own extent as a seam jump and fold it away.
-        if let Some(previous) = previous_end {
-            if is_degenerate(surface, previous) && is_degenerate(surface, first + carried) {
-                // A whole row of the domain collapses to one point here -- a
-                // sphere's pole -- so the loop walks along it carrying no edge
-                // and no pcurve. The polygon still has to turn the corner, or
-                // it never closes and the face has no interior at all.
-                polygon.push(previous);
-            } else {
-                for (axis, period) in periods.iter().enumerate() {
-                    let Some(period) = period else {
-                        continue;
-                    };
-                    let gap = first[axis] + carried[axis] - previous[axis];
-                    carried[axis] -= (gap / period).round() * period;
-                }
-            }
-        }
-        polygon.extend(samples.into_iter().map(|point| point + carried));
-        previous_end = Some(end + carried);
-    }
-    // The loop closes back onto its own start, which may itself be across a
-    // degenerate row.
-    if let (Some(end), Some(start)) = (previous_end, polygon.first().copied())
-        && end != start
-        && is_degenerate(surface, end)
-        && is_degenerate(surface, start)
-    {
-        polygon.push(end);
-    }
-    polygon
-}
-
-/// Whether the support collapses at a parameter-space point.
-fn is_degenerate(surface: &Surface, point: Point2) -> bool {
-    surface.is_degenerate_at(point.x, point.y)
 }

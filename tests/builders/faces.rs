@@ -75,7 +75,11 @@ fn splitting_a_cylinder_seam_preserves_both_face_pcurves() {
         .find(|face| !matches!(face.surface(), Surface::Plane(_)))
         .unwrap()
         .key();
-    let edges = g.face_unchecked(side).outer_loop().edges();
+    let edges = g
+        .face_unchecked(side)
+        .outer_loop()
+        .expect("face should have an outer loop")
+        .edges();
     let seam = edges
         .iter()
         .find(|edge| {
@@ -90,8 +94,18 @@ fn splitting_a_cylinder_seam_preserves_both_face_pcurves() {
     split_face_edge(&mut g, side, seam, 0.5).unwrap();
 
     let face = g.face_unchecked(side);
-    assert_eq!(face.outer_loop().edges().len(), 6);
-    for edge in face.outer_loop().edges() {
+    assert_eq!(
+        face.outer_loop()
+            .expect("face should have an outer loop")
+            .edges()
+            .len(),
+        6
+    );
+    for edge in face
+        .outer_loop()
+        .expect("face should have an outer loop")
+        .edges()
+    {
         let pcurve = face
             .pcurve(edge.dart())
             .expect("every seam occurrence needs its own pcurve");
@@ -143,11 +157,14 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
     assert_eq!(g.iter_faces().count(), 1);
     assert_eq!(g.iter_edges().count(), 1);
     assert!(matches!(face.surface, Surface::Plane(_)));
-    assert_eq!(face.inner_loops.len(), 0);
+    assert_eq!(face.boundary.inner().count(), 0);
     assert_eq!(face.pcurves.len(), 1);
 
     let shape_face = face.face(&g);
-    let edges = shape_face.outer_loop().edges();
+    let edges = shape_face
+        .outer_loop()
+        .expect("face should have an outer loop")
+        .edges();
     let edge = &edges[0];
     let pcurve = shape_face
         .pcurve(edge.dart())
@@ -173,7 +190,7 @@ fn add_annulus_creates_planar_face_with_inner_circular_loop() {
     assert_eq!(g.iter_faces().count(), 1);
     assert_eq!(g.iter_edges().count(), 2);
     assert!(matches!(face.surface, Surface::Plane(_)));
-    assert_eq!(face.inner_loops.len(), 1);
+    assert_eq!(face.boundary.inner().count(), 1);
     assert_eq!(face.pcurves.len(), 2);
 }
 
@@ -187,7 +204,10 @@ fn split_face_edge_updates_boundary_and_pcurves() {
     let split = split_face_edge(&mut g, face_key, edge, parameter).expect("face edge should split");
     let face = g.face_attr_unchecked(face_key);
     let shape_face = face.face(&g);
-    let loop_edges = shape_face.outer_loop().edges();
+    let loop_edges = shape_face
+        .outer_loop()
+        .expect("face should have an outer loop")
+        .edges();
 
     assert_eq!(g.iter_edges().count(), 5);
     assert_eq!(loop_edges.len(), 5);
@@ -241,7 +261,14 @@ fn split_face_edge_uses_existing_pcurve_for_non_planar_surface_variant() {
         .expect("face edge split should use existing pcurve");
 
     let face = g.face_attr_unchecked(face_key);
-    assert_eq!(face.face(&g).outer_loop().edges().len(), 5);
+    assert_eq!(
+        face.face(&g)
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges()
+            .len(),
+        5
+    );
     assert_eq!(face.pcurves.len(), 5);
 }
 
@@ -284,7 +311,10 @@ fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
 
     for facekey in adjacent_faces {
         let face = g.face_unchecked(facekey);
-        let edges = face.outer_loop().edges();
+        let edges = face
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges();
         assert_eq!(edges.len(), 5);
         assert_eq!(g.face_attr_unchecked(facekey).pcurves.len(), 5);
         assert!(
@@ -315,7 +345,10 @@ fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
     for face in [splits[0].first, splits[0].second] {
         let attr = g.face_attr_unchecked(face);
         let shape_face = attr.face(&g);
-        let edges = shape_face.outer_loop().edges();
+        let edges = shape_face
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges();
         assert_eq!(edges.len(), 3);
         assert_eq!(attr.pcurves.len(), 3);
         assert!(
@@ -364,7 +397,10 @@ fn split_face_by_imprints_splits_boundary_edge_at_imprint_endpoint() {
 
     for (_, attr) in g.iter_faces() {
         let shape_face = attr.face(&g);
-        let edges = shape_face.outer_loop().edges();
+        let edges = shape_face
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges();
         assert_eq!(attr.pcurves.len(), edges.len());
         assert!(
             edges
@@ -406,7 +442,10 @@ fn split_face_by_imprints_applies_multiple_non_crossing_chords() {
 
     for (_, attr) in g.iter_faces() {
         let shape_face = attr.face(&g);
-        let edges = shape_face.outer_loop().edges();
+        let edges = shape_face
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges();
         assert_eq!(edges.len(), 3);
         assert_eq!(attr.pcurves.len(), 3);
         assert!(
@@ -473,7 +512,7 @@ fn split_face_by_imprints_adds_closed_interior_loop() {
     assert_eq!(g.cells(Dim::Zero).count(), 8);
 
     let face = g.face_attr_unchecked(face_key);
-    assert_eq!(face.inner_loops.len(), 1);
+    assert_eq!(face.boundary.inner().count(), 1);
     assert_eq!(face.pcurves.len(), 8);
 
     let shape_face = face.face(&g);
@@ -486,8 +525,16 @@ fn split_face_by_imprints_adds_closed_interior_loop() {
     );
 
     let island = g.face_attr_unchecked(splits[0].second);
-    assert!(island.inner_loops.is_empty());
-    assert_eq!(island.face(&g).outer_loop().edges().len(), 4);
+    assert!(island.boundary.inner().next().is_none());
+    assert_eq!(
+        island
+            .face(&g)
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges()
+            .len(),
+        4
+    );
     assert_eq!(island.pcurves.len(), 4);
 }
 
@@ -684,7 +731,10 @@ fn planar_imprint(pcurve: TrimmedCurve2) -> FaceImprint {
 
 fn first_outer_edge_key(g: &GMap<StandardPayload>, face_key: FaceKey) -> EdgeKey {
     let face = g.face_attr_unchecked(face_key).face(g);
-    face.outer_loop().edges()[0].key()
+    face.outer_loop()
+        .expect("face should have an outer loop")
+        .edges()[0]
+        .key()
 }
 
 fn incident_face_keys(g: &GMap<StandardPayload>, edge: EdgeKey) -> Vec<FaceKey> {

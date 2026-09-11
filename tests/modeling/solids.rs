@@ -165,7 +165,11 @@ fn sphere_builds_a_well_formed_solid() {
     );
 
     let face = &faces[0];
-    for edge in face.outer_loop().edges() {
+    for edge in face
+        .outer_loop()
+        .expect("face should have an outer loop")
+        .edges()
+    {
         let curve = edge
             .curve()
             .expect("sphere seam should carry its meridian curve");

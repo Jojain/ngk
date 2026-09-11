@@ -782,7 +782,7 @@ impl<P: Payload> Deref for TopologyEdit<'_, P> {
 
 fn validate_required_domain_attributes<P: Payload>(g: &GMap<P>) -> Result<(), TopologyEditError> {
     for (face, attr) in g.faces.iter() {
-        for dart in std::iter::once(attr.outer_loop).chain(attr.inner_loops.iter().copied()) {
+        for dart in attr.boundary.darts() {
             if g.profile_key(dart).is_none() {
                 return Err(TopologyEditError::MissingProfileRegistration { face, dart });
             }
@@ -1221,8 +1221,9 @@ fn reconcile_transaction_attributes<P: Payload>(
         .faces
         .iter()
         .map(|(key, attr)| {
-            let representatives = std::iter::once(attr.outer_loop)
-                .chain(attr.inner_loops.iter().copied())
+            let representatives = attr
+                .boundary
+                .darts()
                 .map(|dart| g.cell_representative(dart, Dim::Two))
                 .collect();
             (key, representatives)

@@ -98,7 +98,7 @@ pub(crate) fn face_uv_bounds<P: Payload>(face: &Face<'_, P>) -> Option<(Interval
 /// Positive rational trim control hulls bound the whole trimmed parameter domain.
 fn face_bounds<P: Payload>(face: Face<'_, P>, padding: f64) -> Option<Bounds> {
     let mut uv_points = Vec::<Point2>::new();
-    for edge in face.outer_loop().edges() {
+    for edge in face.edges() {
         let curve = face.pcurve(edge.dart())?.to_nurbs().ok()?;
         for point in curve.control_points().as_slice() {
             if !point.weight().is_finite() || point.weight() <= 0.0 {

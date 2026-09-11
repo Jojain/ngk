@@ -183,6 +183,7 @@ fn solid_face_profile_chamfer_replaces_the_complete_rim_with_a_bevel_ring() {
         })
         .expect("block should have a top face")
         .outer_loop()
+        .expect("face should have an outer loop")
         .key();
 
     chamfer(shape.map_mut(), top_profile, 0.25)

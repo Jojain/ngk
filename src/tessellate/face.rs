@@ -19,35 +19,37 @@ use nalgebra::UnitVector3;
 
 use super::{IndexedMesh, TessellateOpts, surface::tessellate_surface_patch};
 use crate::geometry::{Curve, Interval, LINEAR_TOLERANCE, Point2, PointCoincidence, Surface};
+use crate::topology::chart::Chart;
 use crate::topology::face::Face;
 use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
-use crate::topology::profile::Loop;
 use crate::topology::shape_keys::FaceKey;
 
 const EPS: f64 = LINEAR_TOLERANCE;
 
 /// Tessellates a trimmed face into an indexed triangle mesh.
 ///
-/// The face boundary is read from its outer loop and inner loops. Each loop
-/// must have one pcurve per boundary edge, expressed in the face surface's
-/// parameter space. Returns `None` when the boundary cannot be sampled into a
-/// valid UV polygon.
+/// The boundary is read on a synthesized [`Chart`], so a loop written across a
+/// periodic support's cut arrives as one continuous parameter-space polyline
+/// rather than as pieces a whole period apart. Each loop must have one pcurve
+/// per boundary edge. Returns `None` when the boundary cannot be sampled into
+/// a valid UV polygon.
 pub fn tessellate_face<P: Payload>(
     face: &Face<'_, P>,
     opts: TessellateOpts,
 ) -> Option<IndexedMesh> {
-    let outer_loop = face.outer_loop();
-    let outer_uv = sample_loop_pcurve(face, &outer_loop, opts)?;
+    let chart = Chart::of_face(face).ok()?;
+    let segments = opts.curve.segments.max(1);
+    let mut boundary = chart
+        .loops()
+        .iter()
+        .map(|boundary| boundary.polyline(segments));
+    let outer_uv = boundary.next()?;
     if outer_uv.len() < 3 {
         return None;
     }
 
-    let inner_uv: Vec<Vec<Point2>> = face
-        .inner_loops()
-        .iter()
-        .filter_map(|loop_| sample_loop_pcurve(face, loop_, opts))
-        .collect();
+    let inner_uv: Vec<Vec<Point2>> = boundary.filter(|loop_| !loop_.is_empty()).collect();
 
     let signed_outer_area = signed_area(&outer_uv);
     let ccw = signed_outer_area > 0.0;
@@ -57,7 +59,19 @@ pub fn tessellate_face<P: Payload>(
             surface_grid(face.surface(), &outer_uv, ccw, opts)
         }
         Surface::Revolution(surface) => {
-            revolution_surface_grid(face, surface.curve(), &outer_uv, signed_outer_area, opts)
+            let boundary_uv = outer_uv
+                .iter()
+                .chain(inner_uv.iter().flatten())
+                .copied()
+                .collect::<Vec<_>>();
+            revolution_surface_grid(
+                face.surface(),
+                surface.curve(),
+                &outer_uv,
+                &boundary_uv,
+                signed_outer_area,
+                opts,
+            )
         }
         Surface::Plane(_) => plane_polygon_with_holes(face.surface(), &outer_uv, &inner_uv, ccw),
         // TODO: real CDT for NURBS surfaces.
@@ -78,40 +92,6 @@ pub fn tessellate_face_key<P: Payload>(
     let attr = g.face_attr(key)?;
     let face = attr.face(g);
     tessellate_face(&face, opts)
-}
-
-// ---------- pcurve sampling ----------
-
-fn sample_loop_pcurve<P: Payload>(
-    face: &Face<'_, P>,
-    loop_: &Loop<'_, P>,
-    opts: TessellateOpts,
-) -> Option<Vec<Point2>> {
-    let edge_darts = loop_.darts().step_by(2).collect::<Vec<_>>();
-    if edge_darts.is_empty() {
-        return None;
-    }
-    let segments = opts.curve.segments.max(1);
-    let mut points = Vec::new();
-    for d in &edge_darts {
-        let curve = face.pcurve(*d)?;
-        let samples = curve.sample(segments);
-        if samples.is_empty() {
-            return None;
-        }
-        // Drop the last sample so it doesn't duplicate the next pcurve's
-        // first sample. The very last edge re-closes the loop, so its tail
-        // matches the first edge's head — also fine to drop.
-        let n = samples.len();
-        for s in samples.into_iter().take(n.saturating_sub(1)) {
-            points.push(s);
-        }
-    }
-    if points.is_empty() {
-        None
-    } else {
-        Some(points)
-    }
 }
 
 /// Shoelace signed area in UV. Positive ⇒ CCW.
@@ -141,15 +121,15 @@ fn surface_grid(
     surface_grid_over_bounds(surface, (u_min, u_max, v_min, v_max), ccw, opts)
 }
 
-fn revolution_surface_grid<P: Payload>(
-    face: &Face<'_, P>,
+fn revolution_surface_grid(
+    surface: &Surface,
     profile_curve: &Curve,
     outer_uv: &[Point2],
+    boundary_uv: &[Point2],
     signed_outer_area: f64,
     opts: TessellateOpts,
 ) -> IndexedMesh {
-    let parameter_samples = sample_all_pcurves(face, opts).unwrap_or_else(|| outer_uv.to_vec());
-    let (mut u_min, mut u_max, v_min, v_max) = uv_bbox(&parameter_samples);
+    let (mut u_min, mut u_max, v_min, v_max) = uv_bbox(boundary_uv);
     if (u_max - u_min).abs() <= EPS
         && let Some(domain) = finite_curve_domain(profile_curve)
     {
@@ -165,18 +145,7 @@ fn revolution_surface_grid<P: Payload>(
             .zip(outer_uv.last())
             .is_none_or(|(first, last)| last.y >= first.y)
     };
-    surface_grid_over_bounds(face.surface(), (u_min, u_max, v_min, v_max), ccw, opts)
-}
-
-fn sample_all_pcurves<P: Payload>(face: &Face<'_, P>, opts: TessellateOpts) -> Option<Vec<Point2>> {
-    let segments = opts.curve.segments.max(1);
-    let mut points = Vec::new();
-    for loop_ in face.loops() {
-        for dart in loop_.darts().step_by(2) {
-            points.extend(face.pcurve(dart)?.sample(segments));
-        }
-    }
-    (!points.is_empty()).then_some(points)
+    surface_grid_over_bounds(surface, (u_min, u_max, v_min, v_max), ccw, opts)
 }
 
 /// The curve's domain when it is bounded; `None` for an unbounded support.

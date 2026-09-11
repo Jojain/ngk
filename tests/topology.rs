@@ -1,3 +1,5 @@
+#[path = "topology/chart.rs"]
+mod chart;
 #[path = "topology/edge.rs"]
 mod edge;
 #[path = "topology/edge_split.rs"]

@@ -1027,9 +1027,11 @@ fn add_revolved_face_staged<P: Payload>(
         .face_attr(face_key)
         .map(|attr| attr.face(edit))
         .ok_or(RevolveError::MissingFace { key: face_key })?;
-    let mut loops = Vec::with_capacity(1 + face.inner_loops().len());
-    loops.push(face.outer_loop().dart);
-    loops.extend(face.inner_loops().into_iter().map(|loop_| loop_.dart));
+    let loops = face
+        .loops()
+        .into_iter()
+        .map(|loop_| loop_.dart)
+        .collect::<Vec<_>>();
 
     let sweep = revolve_sweep_direction(axis, &face);
     let cap_faces_sweep = face.normal_at(0.0, 0.0).dot(&sweep);
@@ -1042,9 +1044,9 @@ fn add_revolved_face_staged<P: Payload>(
     let top_face_dart = edit.merge(rotated_face.face());
     let top_face_key = *edit.attribute_unchecked::<Cell2>(top_face_dart);
     let top_face_attr = edit.face_attr_unchecked(top_face_key);
-    let mut top_loops = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
-    top_loops.push(top_face_attr.outer_loop);
-    top_loops.extend(top_face_attr.inner_loops.iter().copied());
+    let mut top_loops = Vec::with_capacity(1 + top_face_attr.boundary.inner().count());
+    top_loops.push(top_face_attr.boundary.outer_unchecked());
+    top_loops.extend(top_face_attr.boundary.inner());
 
     let mut lateral_faces = Vec::new();
     for (bottom_loop, top_loop) in loops.into_iter().zip(top_loops) {
@@ -1052,11 +1054,20 @@ fn add_revolved_face_staged<P: Payload>(
         lateral_faces.extend(revolved.faces);
     }
 
-    orient_revolved_shell(edit, face_key, top_face_key, &lateral_faces, cap_faces_sweep);
+    orient_revolved_shell(
+        edit,
+        face_key,
+        top_face_key,
+        &lateral_faces,
+        cap_faces_sweep,
+    );
 
     // Contextual, like the extruded shell: it must keep the outward
     // orientation just established for the source cap.
-    let shell = edit.face_attr_unchecked(face_key).outer_loop;
+    let shell = edit
+        .face_attr_unchecked(face_key)
+        .boundary
+        .outer_unchecked();
     if edit.sheet_key(shell).is_none() {
         edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
     }
@@ -1066,7 +1077,6 @@ fn add_revolved_face_staged<P: Payload>(
 /// Returns the direction the revolution sweeps a point of `face`, `axis x r`.
 fn revolve_sweep_direction<P: Payload>(axis: Axis3, face: &Face<'_, P>) -> Vector3<f64> {
     let point = face
-        .outer_loop()
         .edges()
         .first()
         .and_then(|edge| edge.start().point().copied())
@@ -1150,8 +1160,8 @@ fn consume_revolved_source_face<P: Payload>(
 
     let mut darts = Vec::new();
     for &loop_dart in loops {
-        let profile =
-            Profile::from_dart(edit, loop_dart).expect("source loop must have a registered profile");
+        let profile = Profile::from_dart(edit, loop_dart)
+            .expect("source loop must have a registered profile");
         let profile_key = profile.key();
         let loop_darts = profile.darts().collect::<Vec<_>>();
         for dart in loop_darts.iter().copied().step_by(2) {
@@ -1251,8 +1261,12 @@ fn rotate_face<P: Payload>(
         }
 
         let rotated_face = edit.face_attr_mut_unchecked(rotated_face_key);
-        rotated_face.surface =
-            rotate_surface(rotated_face.outer_loop, &rotated_face.surface, axis, angle)?;
+        rotated_face.surface = rotate_surface(
+            rotated_face.boundary.outer_unchecked(),
+            &rotated_face.surface,
+            axis,
+            angle,
+        )?;
         Ok::<_, RevolveError>(())
     })?;
 

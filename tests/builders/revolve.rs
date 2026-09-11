@@ -32,8 +32,14 @@ fn revolve_edge_partial_turn_creates_four_edge_face() {
     )
     .unwrap();
     let face = g.face_unchecked(face_key);
-    let boundary_edges = face.outer_loop().edges();
-    let boundary_vertices = face.outer_loop().vertices();
+    let boundary_edges = face
+        .outer_loop()
+        .expect("face should have an outer loop")
+        .edges();
+    let boundary_vertices = face
+        .outer_loop()
+        .expect("face should have an outer loop")
+        .vertices();
     let boundary_edge_keys = boundary_edges
         .iter()
         .map(|edge| edge.key())

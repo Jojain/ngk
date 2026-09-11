@@ -59,7 +59,7 @@ fn boundary_chord_split_preserves_source_face_and_applies_payload_policy() {
     let mut g = attributed_rectangle();
     let source = g.iter_faces().next().expect("face should exist").0;
     let source_profile = g
-        .profile_key(g.face_attr_unchecked(source).outer_loop)
+        .profile_key(g.face_attr_unchecked(source).boundary.outer_unchecked())
         .expect("source face should have a profile");
     let imprint = planar_line_imprint(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0));
     let mut policy = RecordFaceSplits::default();
@@ -130,7 +130,14 @@ fn late_face_policy_failure_restores_the_complete_source_face() {
     assert_eq!(g.iter_faces().count(), 1);
     assert_eq!(g.iter_edges().count(), 4);
     assert_eq!(g.face_attr_unchecked(source).data, "source");
-    assert_eq!(g.face_unchecked(source).outer_loop().edges().len(), 4);
+    assert_eq!(
+        g.face_unchecked(source)
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges()
+            .len(),
+        4
+    );
 }
 
 struct RejectFaceSplit;

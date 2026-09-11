@@ -148,8 +148,7 @@ impl<P: Payload> ToTcv for Shape<FaceTag, P> {
             .face_attr(self.handle())
             .ok_or(TcvError::MissingTopology)?;
         let face = attr.face(self.map());
-        append_profile(self.map(), &face.outer_loop(), opts.tessellate, &mut shape)?;
-        for loop_ in face.inner_loops() {
+        for loop_ in face.loops() {
             append_profile(self.map(), &loop_, opts.tessellate, &mut shape)?;
         }
         append_face_vertices(&face, &mut shape);
@@ -335,7 +334,7 @@ fn append_profile_vertices<P: Payload>(profile: &Profile<'_, P>, shape: &mut Tcv
 }
 
 fn append_face_vertices<P: Payload>(face: &Face<'_, P>, shape: &mut TcvShape) {
-    for vertex in face.outer_loop().vertices() {
+    for vertex in face.vertices() {
         if let Some(point) = vertex.point() {
             push_point(&mut shape.obj_vertices, point);
         }

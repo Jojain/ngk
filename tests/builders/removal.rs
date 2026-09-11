@@ -203,6 +203,7 @@ fn removing_a_shared_edge_fuses_its_two_faces_and_their_loops() {
         map.face(survivor)
             .expect("survivor")
             .outer_loop()
+            .expect("face should have an outer loop")
             .edges()
             .len(),
         6,
@@ -314,7 +315,10 @@ fn redundant_faces_of_boolean_fuse_are_deleted() {
         "the fused bottom face has no holes"
     );
     assert_eq!(
-        face.outer_loop().edges().len(),
+        face.outer_loop()
+            .expect("face should have an outer loop")
+            .edges()
+            .len(),
         3,
         "the fused boundary is the major arc and the two block edges"
     );

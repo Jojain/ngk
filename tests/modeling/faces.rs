@@ -7,7 +7,15 @@ fn rectangle_returns_owned_face_shape() {
     let shape = faces::rectangle(Plane::xy(), 2.0, 3.0).expect("face should build");
 
     assert_eq!(shape.map().iter_faces().count(), 1);
-    assert_eq!(shape.face().outer_loop().edges().len(), 4);
+    assert_eq!(
+        shape
+            .face()
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges()
+            .len(),
+        4
+    );
 }
 
 #[test]
@@ -15,7 +23,15 @@ fn circle_returns_owned_face_shape() {
     let shape = faces::circle(Plane::xy(), 2.0).expect("face should build");
 
     assert_eq!(shape.map().iter_faces().count(), 1);
-    assert_eq!(shape.face().outer_loop().edges().len(), 1);
+    assert_eq!(
+        shape
+            .face()
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges()
+            .len(),
+        1
+    );
     assert_eq!(shape.face().inner_loops().len(), 0);
 }
 
@@ -24,7 +40,15 @@ fn annulus_returns_owned_face_shape_with_circular_hole() {
     let shape = faces::annulus(Plane::xy(), 2.0, 1.0).expect("face should build");
 
     assert_eq!(shape.map().iter_faces().count(), 1);
-    assert_eq!(shape.face().outer_loop().edges().len(), 1);
+    assert_eq!(
+        shape
+            .face()
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges()
+            .len(),
+        1
+    );
     assert_eq!(shape.face().inner_loops().len(), 1);
 }
 
@@ -47,7 +71,15 @@ fn polygon_with_holes_returns_owned_face_shape() {
         faces::polygon_with_holes(Plane::xy(), &outer, &[&hole]).expect("face should build");
 
     assert_eq!(shape.map().iter_faces().count(), 1);
-    assert_eq!(shape.face().outer_loop().edges().len(), 4);
+    assert_eq!(
+        shape
+            .face()
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges()
+            .len(),
+        4
+    );
     assert_eq!(shape.face().inner_loops().len(), 1);
 }
 

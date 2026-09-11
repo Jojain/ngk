@@ -38,6 +38,7 @@ pub fn build(distance: f64) -> Result<ScriptResult, String> {
         })
         .ok_or("whole-profile block did not expose its top face")?
         .outer_loop()
+        .ok_or("the top face should have an outer loop")?
         .key();
     let profile_faces_before = g.iter_faces().map(|(key, _)| key).collect::<HashSet<_>>();
     chamfer(&mut g, profile, distance)

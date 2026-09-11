@@ -1,4 +1,5 @@
 use crate::geometry::TrimmedCurve2;
+use std::collections::HashMap;
 use std::f64::consts::FRAC_PI_2;
 
 use nalgebra::Vector3;
@@ -13,12 +14,12 @@ use crate::{
         revolve::{RevolveError, add_full_revolved_edge_staged_with_surface},
     },
     geometry::{
-        Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3, RuledSurface, Sphere,
-        Surface,
+        ANGULAR_TOLERANCE, Axis2, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3,
+        RuledSurface, Sphere, Surface, SurfacePeriodicity,
     },
     topology::{
         Dart, SheetAttr, SolidAttr, TopologyEdit,
-        attributes::{EdgeAttr, FaceAttr, ProfileAttr},
+        attributes::{BoundaryLoop, EdgeAttr, FaceAttr, FaceBoundary, LoopKind, ProfileAttr},
         edge::Edge,
         face::Face,
         gmap::{Cell2, Dim, GMap, MergeTopology, TopologyEditError},
@@ -58,7 +59,7 @@ pub fn add_sphere<P: Payload>(
             Surface::Sphere(Sphere::new(frame, radius)),
             |point| Point2::new(point.y, -point.x),
         )?;
-        let seam = edit.face_unchecked(face).outer_loop().dart;
+        let seam = edit.face_unchecked(face).dart();
 
         edit.add_sheet(SheetAttr::new(seam, P::Sheet::default()));
         Ok(edit.add_solid(SolidAttr::new(P::S::default(), seam, None)))
@@ -113,7 +114,7 @@ pub fn translate_face<P: Payload>(
                 .surface
                 .translated(direction)
                 .map_err(|source| ExtrudeError::SurfaceTranslationFailed {
-                    dart: translated_face.outer_loop,
+                    dart: translated_face.boundary.outer_unchecked(),
                     source,
                 })?;
         Ok::<_, ExtrudeError>(())
@@ -150,16 +151,18 @@ fn add_extruded_face_staged<P: Payload>(
         .map(|attr| attr.face(edit))
         .ok_or(ExtrudeError::MissingFace { dart: face_key })?;
     let top_face = translate_face(&bot_face, direction)?;
-    let mut bottom_loop_darts = Vec::with_capacity(1 + bot_face.inner_loops().len());
-    bottom_loop_darts.push(bot_face.outer_loop().dart);
-    bottom_loop_darts.extend(bot_face.inner_loops().into_iter().map(|loop_| loop_.dart));
+    let bottom_loop_darts = bot_face
+        .loops()
+        .into_iter()
+        .map(|loop_| loop_.dart)
+        .collect::<Vec<_>>();
 
     let top_face_dart = edit.merge(top_face.face());
     let top_face_key = *edit.attribute_unchecked::<Cell2>(top_face_dart);
     let top_face_attr = edit.face_attr_unchecked(top_face_key);
-    let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
-    top_loop_darts.push(top_face_attr.outer_loop);
-    top_loop_darts.extend(top_face_attr.inner_loops.iter().copied());
+    let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.boundary.inner().count());
+    top_loop_darts.push(top_face_attr.boundary.outer_unchecked());
+    top_loop_darts.extend(top_face_attr.boundary.inner());
 
     orient_extruded_caps(edit, face_key, top_face_key, direction);
 
@@ -169,7 +172,10 @@ fn add_extruded_face_staged<P: Payload>(
 
     // The shell dart is contextual: unlike a cell representative, it must retain
     // the outward orientation established for the bottom cap.
-    let outer_shell = edit.face_attr_unchecked(face_key).outer_loop;
+    let outer_shell = edit
+        .face_attr_unchecked(face_key)
+        .boundary
+        .outer_unchecked();
     if edit.sheet_key(outer_shell).is_none() {
         edit.add_sheet(SheetAttr::new(outer_shell, P::Sheet::default()));
     }
@@ -223,6 +229,12 @@ fn sew_extruded_loop<P: Payload>(
         .into_iter()
         .map(|edge| edge.dart())
         .collect::<Vec<_>>();
+    if let Some(representative) =
+        sew_wrapping_lateral_face(edit, &bottom_edges, &top_edges, direction)?
+    {
+        return Ok(edit.cell_representative(representative, Dim::Three));
+    }
+
     let laterals = bottom_edges
         .iter()
         .copied()
@@ -274,6 +286,84 @@ fn sew_extruded_loop<P: Payload>(
         .map(|lateral| lateral.topology.bottom_edge)
         .expect("a loop should have at least one lateral face");
     Ok(edit.cell_representative(representative, Dim::Three))
+}
+
+/// Builds the lateral face of a sweep that closes on itself, if this one does.
+///
+/// Sweeping a single closed edge produces a surface closed in the swept
+/// direction, so the face wraps: the swept edge bounds it at each end of the
+/// sweep, and nothing bounds it across the sweep. Building it as a quad
+/// instead needs two coincident vertical edges sewn to each other — the seam —
+/// which records where the parameter domain was cut open, not what the shape
+/// is.
+///
+/// Returns the new face's boundary dart, or `None` when the sweep does not
+/// close and the caller should build quads.
+fn sew_wrapping_lateral_face<P: Payload>(
+    edit: &mut TopologyEdit<'_, P>,
+    bottom_edges: &[Dart],
+    top_edges: &[Dart],
+    direction: Vector3<f64>,
+) -> Result<Option<Dart>, ExtrudeError> {
+    let ([bottom_edge], [top_edge]) = (bottom_edges, top_edges) else {
+        return Ok(None);
+    };
+    let prepared = prepare_lateral_face(edit, *bottom_edge, *top_edge, direction)?;
+    let Some(axis) = swept_period_axis(&prepared) else {
+        return Ok(None);
+    };
+
+    // Two closed one-edge loops: the swept edge at the start of the sweep and
+    // its image at the end. `alpha1` closes each onto itself, exactly as a
+    // circular edge's own profile does.
+    let [bottom_start, bottom_end, top_start, top_end]: [Dart; 4] =
+        std::array::from_fn(|_| edit.add_dart());
+    for (start, end) in [(bottom_start, bottom_end), (top_start, top_end)] {
+        edit.link(Dim::Zero, start, end)?;
+        edit.link(Dim::One, start, end)?;
+    }
+
+    edit.add_profile(ProfileAttr::new(bottom_start, P::Profile::default()));
+    edit.add_profile(ProfileAttr::new(top_start, P::Profile::default()));
+    let uv = prepared.uv;
+    edit.add_face(FaceAttr::with_boundary(
+        prepared.surface.clone(),
+        P::F::default(),
+        FaceBoundary::from_loops(vec![
+            BoundaryLoop::new(bottom_start, LoopKind::Wrapping { axis }),
+            BoundaryLoop::new(top_start, LoopKind::Wrapping { axis }),
+        ]),
+        HashMap::from([
+            (bottom_start, TrimmedCurve2::segment(uv[0], uv[1])),
+            (top_start, TrimmedCurve2::segment(uv[2], uv[3])),
+        ]),
+    ));
+
+    // The swept loop runs with the sweep at the bottom and against it at the
+    // top, so the top loop meets its cap through `alpha0`, as the quad path's
+    // top edge does.
+    sew(edit, Dim::Two, bottom_start, *bottom_edge)?;
+    sew(edit, Dim::Two, top_end, *top_edge)?;
+    Ok(Some(bottom_start))
+}
+
+/// The axis a prepared lateral face spans a whole period of, if it spans one.
+///
+/// The sweep closes exactly when the swept edge covers one full period of the
+/// surface it sweeps out — which is also the only case where the edge's two
+/// ends are the same vertex, since a shorter span would leave them apart.
+fn swept_period_axis(prepared: &PreparedLateralFace) -> Option<Axis2> {
+    let span = prepared.uv[1] - prepared.uv[0];
+    let periods = match prepared.surface.periodicity() {
+        SurfacePeriodicity::None => return None,
+        SurfacePeriodicity::UPeriodic(u) => [Some(u), None],
+        SurfacePeriodicity::VPeriodic(v) => [None, Some(v)],
+        SurfacePeriodicity::UVPeriodic(u, v) => [Some(u), Some(v)],
+    };
+    Axis2::ALL.into_iter().find(|axis| {
+        periods[axis.index()]
+            .is_some_and(|period| (span[axis.index()].abs() - period).abs() <= ANGULAR_TOLERANCE)
+    })
 }
 
 fn sew<P: Payload>(
