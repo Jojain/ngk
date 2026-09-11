@@ -261,8 +261,8 @@ fn sew_pair<P: Payload>(
     let b = edit.edge_unchecked(second);
     let da = a.dart();
     let mut db = b.dart();
-    let (a_start, a_end) = a.bounded_unchecked().ends();
-    let (b_start, b_end) = b.bounded_unchecked().ends();
+    let (a_start, a_end) = a.bounded_unchecked().vertices();
+    let (b_start, b_end) = b.bounded_unchecked().vertices();
     let a0 = *a_start.point().expect("admitted geometry");
     let a1 = *a_end.point().expect("admitted geometry");
     let b0 = *b_start.point().expect("admitted geometry");
