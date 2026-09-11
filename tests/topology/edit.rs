@@ -2,7 +2,7 @@ use std::convert::Infallible;
 
 use ngk::geometry::{Curve, Plane, Point3, Surface};
 use ngk::topology::Dart;
-use ngk::topology::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
+use ngk::topology::attributes::{EdgeAttr, FaceAttr, ShellRoot, SolidAttr, VertexAttr};
 use ngk::topology::gmap::{Cell1, Dim, EditPolicy, GMap, PreservePayload, TopologyEditError};
 use ngk::topology::payload::Payload;
 use ngk::topology::shape_keys::EdgeKey;
@@ -72,7 +72,7 @@ fn solid_registration_requires_registered_shell_sheets() {
     let mut g = GMap::<TestPayload>::new();
     let result = g.transaction(|edit| {
         let shell = edit.add_dart();
-        edit.add_solid(SolidAttr::new((), shell, None));
+        edit.add_solid(SolidAttr::new((), ShellRoot::Dart(shell), None));
         Ok::<_, TopologyEditError>(())
     });
 

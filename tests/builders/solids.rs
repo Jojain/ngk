@@ -89,7 +89,7 @@ fn extruded_face_with_a_hole_forms_one_complete_closed_shell() {
         2
     );
     for face in solid.faces() {
-        assert_eq!(g.sheet_key(face.dart()), Some(shell.key()));
-        assert_eq!(g.solid_key(face.dart()), Some(solid_key));
+        assert_eq!(g.sheet_key(face.dart_unchecked()), Some(shell.key()));
+        assert_eq!(g.solid_key(face.dart_unchecked()), Some(solid_key));
     }
 }

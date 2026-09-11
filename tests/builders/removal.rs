@@ -247,8 +247,8 @@ fn tangent_union() -> (GMap<StandardPayload>, ngk::topology::shape_keys::SolidKe
         .into_map();
     let cylinder = map
         .transaction(|edit| {
-            let dart = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+            let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
+            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
         })
         .expect("import cylinder");
 
@@ -513,7 +513,7 @@ fn healing_removes_the_seam_of_an_imported_wall() {
 /// periodic face with its parameterization cut open, so the canonicalizer has to
 /// be able to take one apart. The wall is one quad face whose two vertical sides
 /// are the same edge, sewn to itself: that self-sew is the seam.
-fn seamed_cylinder_wall(radius: f64, height: f64) -> (GMap<StandardPayload>, FaceKey) {
+pub(crate) fn seamed_cylinder_wall(radius: f64, height: f64) -> (GMap<StandardPayload>, FaceKey) {
     let mut g = GMap::<StandardPayload>::new();
     let surface = Surface::Cylinder(Cylinder::new(
         Point3::origin(),

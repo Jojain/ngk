@@ -31,8 +31,8 @@ fn merged(
     let (mut map, target_key) = target.into_map();
     let imported = map
         .transaction(|edit| {
-            let dart = edit.merge(tool_map.solid_unchecked(tool_key));
-            Ok::<_, TopologyEditError>(edit.solid_key(dart).expect("imported tool solid"))
+            let handle = edit.merge(tool_map.solid_unchecked(tool_key));
+            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).expect("imported tool solid"))
         })
         .expect("import tool operand");
     (map, target_key, imported)

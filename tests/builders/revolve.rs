@@ -9,6 +9,7 @@ use ngk::builders::revolve::{RevolveError, add_revolved_edge, add_revolved_face}
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{Curve, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface};
 use ngk::tessellate::{TessellateOpts, tessellate_face_key};
+use ngk::topology::LoopKind;
 use ngk::topology::gmap::GMap;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
@@ -286,6 +287,39 @@ fn revolve_edge_full_turn_with_an_end_on_the_axis_has_one_loop() {
         (boundary_edge_keys.len(), boundary_vertex_keys.len()),
         (1, 1)
     );
+    // This particular band is a *disk*: a line meeting the axis at right angles
+    // sweeps a plane, whose parameters the swept circle closes in perfectly
+    // well. It really is an outer loop, and not every one-loop band is.
+    assert!(matches!(face.loops()[0].kind(), LoopKind::Outer));
+}
+
+/// A slanted edge from the axis sweeps a band whose rim *is* a cap — and
+/// `LoopKind::Capping` cannot say so yet. This records why.
+///
+/// The kind names the domain **end** a degeneracy sits at, and the support here
+/// is a `SurfaceOfRevolution` whose profile direction is the source line's own
+/// domain: unbounded, with the apex somewhere inside it rather than at an end.
+/// A cone is the same. Only a support whose collapse really is a domain
+/// boundary — a sphere's poles — can be capped today, so this band keeps the
+/// `Outer` kinding it has always had.
+#[test]
+fn revolve_edge_full_turn_from_the_axis_cannot_yet_cap_a_cone() {
+    let mut g = GMap::<StandardPayload>::new();
+    let apex = Point3::origin();
+    let rim = Point3::new(1.0, 0.0, 2.0);
+    let edge_key = add_edge(&mut g, apex, rim, Curve::line(apex, rim)).expect("edge should build");
+
+    let face_key = add_revolved_edge(
+        &mut g,
+        edge_key,
+        Axis3::new(Point3::origin(), Vector3::z()),
+        Rad64::FULL_TURN,
+    )
+    .unwrap();
+    let face = g.face_unchecked(face_key);
+
+    assert_eq!(face.loops().len(), 1);
+    assert!(matches!(face.loops()[0].kind(), LoopKind::Outer));
 }
 
 #[test]
@@ -632,3 +666,4 @@ fn revolve_edge_full_turn_bounds_its_band_with_wrapping_loops() {
         );
     }
 }
+

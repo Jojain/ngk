@@ -8,7 +8,7 @@ use crate::builders::faces::{
 };
 use crate::builders::profiles::curve_pcurve;
 use crate::geometry::{Curve, LINEAR_TOLERANCE, Point2, Point3, RuledSurface, Surface};
-use crate::topology::attributes::{FaceAttr, VertexAttr};
+use crate::topology::attributes::{FaceAttr, ShellRoot, VertexAttr};
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
@@ -1129,26 +1129,23 @@ fn remove_face_patch<P: Payload>(
     // inside the removed patch to a survivor before compaction remaps darts.
     let sheet_roots = edit
         .iter_sheets()
-        .map(|(key, sheet)| (key, sheet.dart))
+        .filter_map(|(key, sheet)| Some((key, sheet.dart()?)))
         .collect::<Vec<_>>();
     for (key, dart) in sheet_roots {
         if patch_darts.contains(&dart) {
-            edit.sheet_attr_mut_unchecked(key).dart = survivor;
+            edit.sheet_attr_mut_unchecked(key).root = ShellRoot::Dart(survivor);
         }
     }
     let solid_keys = edit.iter_solids().map(|(key, _)| key).collect::<Vec<_>>();
     for solid in solid_keys {
         let attr = edit.solid_attr_mut_unchecked(solid);
-        if patch_darts.contains(&attr.outer_shell) {
-            attr.outer_shell = survivor;
-        }
-        if let Some(inner_shells) = &mut attr.inner_shells {
-            for shell in inner_shells {
-                if patch_darts.contains(shell) {
-                    *shell = survivor;
-                }
+        attr.map_shell_darts(|dart| {
+            if patch_darts.contains(&dart) {
+                survivor
+            } else {
+                dart
             }
-        }
+        });
     }
 
     for face in patch_faces {

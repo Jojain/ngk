@@ -9,12 +9,13 @@ use crate::builders::faces::reverse_face_winding;
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{
-    ANGULAR_TOLERANCE, Axis2, Circle, Cone, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane,
-    Point2, Point3, Surface, SurfaceOfRevolution, SurfacePeriodicity,
+    ANGULAR_TOLERANCE, Axis2, Circle, Cone, Curve, Cylinder, DomainEnd, Frame, LINEAR_TOLERANCE,
+    Plane, Point2, Point3, Surface, SurfaceOfRevolution, SurfacePeriodicity,
 };
 use crate::topology::IsolatedDart;
 use crate::topology::attributes::{
-    EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
+    EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, ShellRoot, SolidAttr,
+    VertexAttr,
 };
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
@@ -184,35 +185,6 @@ pub(crate) fn add_revolved_edge_staged<P: Payload>(
     }
 
     add_partial_revolved_edge_face(edit, &source, axis, angle)
-}
-
-/// Builds full-revolution topology while attaching an analytical support
-/// directly when that support has a more specific parameterization.
-pub(crate) fn add_full_revolved_edge_staged_with_surface<P, F>(
-    edit: &mut TopologyEdit<'_, P>,
-    edge: EdgeKey,
-    axis: Axis3,
-    surface: Surface,
-    map_pcurve_point: F,
-) -> Result<FaceKey, RevolveError>
-where
-    P: Payload,
-    F: Fn(Point2) -> Point2,
-{
-    let source = RevolvedSourceEdge::from_key(edit, edge)?;
-    let start_on_axis = revolve_radius(axis, source.start.point) <= LINEAR_TOLERANCE;
-    let end_on_axis = revolve_radius(axis, source.end.point) <= LINEAR_TOLERANCE;
-    if !start_on_axis || !end_on_axis {
-        return Err(RevolveError::ApexRevolveUnsupported { key: edge });
-    }
-    add_full_revolved_apex_to_apex_face(
-        edit,
-        &source,
-        axis,
-        Rad64::FULL_TURN,
-        surface,
-        &map_pcurve_point,
-    )
 }
 
 /// The support a revolution really has, with the map onto that support's own
@@ -610,9 +582,27 @@ fn add_full_revolved_open_edge_face<P: Payload>(
                 .chain(inner_loops.into_iter().map(LoopDefinition::inner))
                 .collect(),
         },
-        None => std::iter::once(LoopDefinition::outer(outer_loop))
-            .chain(inner_loops.into_iter().map(LoopDefinition::inner))
-            .collect(),
+        // One circle and nothing else: the other end of the profile sits on the
+        // axis and sweeps no circle at all, so that side of the band is closed
+        // by the degeneracy there. The loop still runs a whole turn, so it is no
+        // more an outer loop than a ring's are — it is a cap.
+        None => {
+            let degenerate_u = if outer_u == interval.start {
+                interval.end
+            } else {
+                interval.start
+            };
+            match pcurves
+                .get(&outer_loop)
+                .and_then(|pcurve| swept_period_axis(&surface, [pcurve, pcurve]))
+                .and_then(|axis| {
+                    degenerate_domain_end(&surface, axis.transverse(), degenerate_u)
+                        .map(|end| LoopDefinition::capping(outer_loop, axis, end))
+                }) {
+                Some(capping) => vec![capping],
+                None => vec![LoopDefinition::outer(outer_loop)],
+            }
+        }
     };
 
     Ok(edit.add_face(FaceAttr::with_loops(
@@ -621,6 +611,23 @@ fn add_full_revolved_open_edge_face<P: Payload>(
         loops,
         pcurves,
     )))
+}
+
+/// The end of `axis`' domain a degeneracy at `parameter` closes, if it is one.
+///
+/// A [`LoopKind::Capping`] names a domain *end*, so a collapsed row somewhere in
+/// the middle of the domain — a profile that crosses the axis and carries on —
+/// cannot be described by one. Answering `None` there leaves the caller to fall
+/// back rather than record a bound that is not where it says it is.
+fn degenerate_domain_end(surface: &Surface, axis: Axis2, parameter: f64) -> Option<DomainEnd> {
+    let (u, v) = surface.domain();
+    let domain = match axis {
+        Axis2::U => u,
+        Axis2::V => v,
+    };
+    [DomainEnd::Low, DomainEnd::High]
+        .into_iter()
+        .find(|end| (end.of(domain) - parameter).abs() <= LINEAR_TOLERANCE)
 }
 
 /// The axis every given loop spans a whole period of, if they all span one.
@@ -775,7 +782,7 @@ fn add_revolved_profile_from_dart_staged<P: Payload>(
     let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
     let close_ring = planar.inner().is_closed();
     let dart = add_revolved_profile_faces(edit, profile_dart, axis, angle, close_ring)?.swept_dart;
-    Ok(edit.add_sheet(SheetAttr::new(dart, P::Sheet::default())))
+    Ok(edit.add_sheet(SheetAttr::new(ShellRoot::Dart(dart), P::Sheet::default())))
 }
 
 struct RevolvedProfile {
@@ -1223,7 +1230,7 @@ fn add_revolved_face_staged<P: Payload>(
     }
 
     let rotated_face = rotate_face(&face, axis, angle)?;
-    let top_face_dart = edit.merge(rotated_face.face());
+    let top_face_dart = edit.merge(rotated_face.face()).dart_unchecked();
     let top_face_key = *edit.attribute_unchecked::<Cell2>(top_face_dart);
     let top_face_attr = edit.face_attr_unchecked(top_face_key);
     let mut top_loops = Vec::with_capacity(1 + top_face_attr.inner().count());
@@ -1248,9 +1255,13 @@ fn add_revolved_face_staged<P: Payload>(
     // orientation just established for the source cap.
     let shell = edit.face_attr_unchecked(face_key).outer_unchecked();
     if edit.sheet_key(shell).is_none() {
-        edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
+        edit.add_sheet(SheetAttr::new(ShellRoot::Dart(shell), P::Sheet::default()));
     }
-    Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
+    Ok(edit.add_solid(SolidAttr::new(
+        P::S::default(),
+        ShellRoot::Dart(shell),
+        None,
+    )))
 }
 
 /// Returns the direction the revolution sweeps a point of `face`, `axis x r`.
@@ -1319,9 +1330,13 @@ fn add_full_revolved_face<P: Payload>(
     let shell = shell.expect("a face should have at least one boundary loop");
     let shell = consume_revolved_source_face(edit, face_key, &loops, shell)?;
     if edit.sheet_key(shell).is_none() {
-        edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
+        edit.add_sheet(SheetAttr::new(ShellRoot::Dart(shell), P::Sheet::default()));
     }
-    Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
+    Ok(edit.add_solid(SolidAttr::new(
+        P::S::default(),
+        ShellRoot::Dart(shell),
+        None,
+    )))
 }
 
 /// Deletes the source face and its boundary wire after a full turn.
@@ -1413,6 +1428,7 @@ fn rotate_face<P: Payload>(
     angle: Rad64,
 ) -> Result<Shape<FaceTag, P>, RevolveError> {
     let (mut rotated, rotated_dart) = face.isolate();
+    let rotated_dart = rotated_dart.dart_unchecked();
 
     let vertex_keys = rotated
         .iter_vertices()

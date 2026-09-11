@@ -5,6 +5,8 @@ use thiserror::Error;
 use crate::geometry::Surface;
 use crate::topology::closed::Closed;
 
+use super::attributes::ShellRoot;
+use super::face::Face;
 use super::gmap::{Dart, Dim, GMap};
 use super::payload::Payload;
 use super::shape_keys::{FaceKey, SolidKey};
@@ -41,27 +43,37 @@ pub enum GMapValidationError {
     MissingSolid { solid: SolidKey },
 
     #[error("solid {solid:?} shell representative {shell:?} points outside the dart set")]
-    SolidShellOutOfBounds { solid: SolidKey, shell: Dart },
+    SolidShellOutOfBounds { solid: SolidKey, shell: ShellRoot },
 
     #[error("solid {solid:?} shell at {shell:?} is open: {dart:?} is alpha{dim}-free")]
     SolidShellOpen {
         solid: SolidKey,
-        shell: Dart,
+        shell: ShellRoot,
         dart: Dart,
         dim: usize,
+    },
+
+    #[error(
+        "solid {solid:?} shell at {shell:?} is the boundaryless face {face:?}, \
+         whose surface does not close on itself"
+    )]
+    SolidShellSurfaceOpen {
+        solid: SolidKey,
+        shell: ShellRoot,
+        face: FaceKey,
     },
 
     #[error("solid {solid:?} shell at {shell:?} face {face:?} has no usable orientation data")]
     SolidFaceOrientationUnavailable {
         solid: SolidKey,
-        shell: Dart,
+        shell: ShellRoot,
         face: FaceKey,
     },
 
     #[error("solid {solid:?} shell at {shell:?} face {face:?} normal does not point outward")]
     SolidFaceNormalNotOutward {
         solid: SolidKey,
-        shell: Dart,
+        shell: ShellRoot,
         face: FaceKey,
     },
 }
@@ -185,19 +197,33 @@ pub fn validate_all_solid_orientations<P: Payload>(g: &GMap<P>) -> Result<(), GM
 fn validate_shell<P: Payload>(
     g: &GMap<P>,
     solid: SolidKey,
-    shell: Dart,
+    shell: ShellRoot,
 ) -> Result<(), GMapValidationError> {
-    if shell.id() >= g.dart_count() {
-        return Err(GMapValidationError::SolidShellOutOfBounds { solid, shell });
+    match shell {
+        ShellRoot::Dart(dart) => {
+            if dart.id() >= g.dart_count() {
+                return Err(GMapValidationError::SolidShellOutOfBounds { solid, shell });
+            }
+            let sheet =
+                Sheet::from_dart(g, dart).expect("solid shell must have a registered sheet");
+            Closed::new(sheet).ok_or(GMapValidationError::SolidShellOpen {
+                solid,
+                shell,
+                dart,
+                dim: 2,
+            })?;
+        }
+        // A boundaryless shell has no free dart to find, because it has no
+        // darts; what has to close is the surface itself.
+        ShellRoot::Face { face, .. } => {
+            let attr = g
+                .face_attr(face)
+                .ok_or(GMapValidationError::SolidShellOutOfBounds { solid, shell })?;
+            if !attr.surface.is_closed() {
+                return Err(GMapValidationError::SolidShellSurfaceOpen { solid, shell, face });
+            }
+        }
     }
-
-    let sheet = Sheet::from_dart(g, shell).expect("solid shell must have a registered sheet");
-    Closed::new(sheet).ok_or(GMapValidationError::SolidShellOpen {
-        solid,
-        shell,
-        dart: shell,
-        dim: 2,
-    })?;
 
     Ok(())
 }
@@ -205,7 +231,7 @@ fn validate_shell<P: Payload>(
 fn validate_shell_orientation<P: Payload>(
     g: &GMap<P>,
     solid: SolidKey,
-    shell: Dart,
+    shell: ShellRoot,
     side: ShellSide,
 ) -> Result<(), GMapValidationError> {
     validate_oriented_shell_volume(g, solid, shell, side)
@@ -215,10 +241,11 @@ fn validate_shell_orientation<P: Payload>(
 fn validate_oriented_shell_volume<P: Payload>(
     g: &GMap<P>,
     solid: SolidKey,
-    shell: Dart,
+    shell: ShellRoot,
     side: ShellSide,
 ) -> Result<(), GMapValidationError> {
-    let faces = Sheet::from_dart(g, shell)
+    let faces = g
+        .shell_sheet(shell)
         .expect("validated shell")
         .faces()
         .into_iter()
@@ -226,13 +253,23 @@ fn validate_oriented_shell_volume<P: Payload>(
         .collect::<Vec<_>>();
     let mut directed = HashSet::new();
     let mut volume = 0.0;
-    let reference = faces[0].vertices()[0].point().copied().ok_or(
-        GMapValidationError::SolidFaceOrientationUnavailable {
-            solid,
-            shell,
-            face: faces[0].key(),
-        },
-    )?;
+    let unavailable = |face: &Face<'_, P>| GMapValidationError::SolidFaceOrientationUnavailable {
+        solid,
+        shell,
+        face: face.key(),
+    };
+    // A boundaryless face has no vertex to take a reference point from, so the
+    // point comes off the surface itself — anywhere will do, the divergence
+    // integral is reference-independent for a closed shell.
+    let reference = match faces[0].vertices().first() {
+        Some(vertex) => vertex
+            .point()
+            .copied()
+            .ok_or_else(|| unavailable(&faces[0]))?,
+        None => faces[0]
+            .domain_center()
+            .ok_or_else(|| unavailable(&faces[0]))?,
+    };
     for face in &faces {
         let planar = matches!(face.surface(), Surface::Plane(_))
             && face.edges().iter().all(|edge| {
@@ -272,6 +309,9 @@ fn validate_oriented_shell_volume<P: Payload>(
             }
         }
     }
+    // Consistent winding is a statement about neighbours across an edge. A
+    // boundaryless face has no neighbour and no edge, so it has nothing to
+    // agree with, and only the volume sign below decides which way it faces.
     for face in &faces {
         for boundary in face.loops() {
             for edge in boundary.edges() {

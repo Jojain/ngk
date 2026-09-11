@@ -178,7 +178,7 @@ macro_rules! impl_owned_shape_display {
                 objects: &mut Vec<SerializedDebugObject>,
             ) -> Result<(), serde_json::Error> {
                 let view = self.$view();
-                objects.push(serialize_topology(self.map(), $kind, Some($dart(&view)))?);
+                objects.push(serialize_topology(self.map(), $kind, $dart(&view))?);
                 Ok(())
             }
         }
@@ -189,26 +189,28 @@ impl_owned_shape_display!(
     VertexTag,
     DebugObjectKind::Vertex,
     vertex,
-    |view: &Vertex<'_, StandardPayload>| view.dart
+    |view: &Vertex<'_, StandardPayload>| Some(view.dart)
 );
 impl_owned_shape_display!(EdgeTag, DebugObjectKind::Edge, edge, |view: &Edge<
     '_,
     StandardPayload,
->| view.dart());
+>| Some(view.dart()));
 impl_owned_shape_display!(
     ProfileTag,
     DebugObjectKind::Profile,
     profile,
-    |view: &Profile<'_, StandardPayload>| view.dart
+    |view: &Profile<'_, StandardPayload>| Some(view.dart)
 );
 impl_owned_shape_display!(FaceTag, DebugObjectKind::Face, face, |view: &Face<
     '_,
     StandardPayload,
->| view.dart());
+>| Some(
+    view.dart_unchecked()
+));
 impl_owned_shape_display!(SheetTag, DebugObjectKind::Sheet, sheet, |view: &Sheet<
     '_,
     StandardPayload,
->| view.dart);
+>| view.dart());
 impl_owned_shape_display!(SolidTag, DebugObjectKind::Solid, solid, |view: &Solid<
     '_,
     StandardPayload,
@@ -374,8 +376,8 @@ fn append_isolated_topology<T>(
 where
     T: MergeTopology<StandardPayload>,
 {
-    let (gmap, primary_dart) = GMap::isolate(topology);
-    objects.push(serialize_topology(&gmap, kind, Some(primary_dart))?);
+    let (gmap, handle) = GMap::isolate(topology);
+    objects.push(serialize_topology(&gmap, kind, handle.dart())?);
     Ok(())
 }
 

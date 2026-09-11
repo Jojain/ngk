@@ -9,6 +9,7 @@ use super::nurbs::{ControlNet, Degree, HPoint, KnotVector, NurbsSurface};
 use super::utils::{IntoUnit, Point3};
 use crate::geometry::LINEAR_TOLERANCE;
 use crate::geometry::axis::Axis3;
+use crate::geometry::dim2::utils::Axis2;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::traits::SurfaceGeometry;
 use crate::geometry::{Interval, ParamMap, Point2, Reparam};
@@ -83,6 +84,56 @@ impl Surface {
             Surface::Revolution(surface) => surface.is_degenerate_at(u, v),
             Surface::Nurbs(surface) => surface.is_degenerate_at(u, v),
         }
+    }
+
+    /// Returns whether the surface closes on itself in both parameter
+    /// directions, leaving no boundary anywhere.
+    ///
+    /// A shell rooted at a boundaryless face has no free dart to test — the
+    /// combinatorial closedness check runs over darts, and that face has none —
+    /// so closedness must be asked of the geometry instead. A direction closes
+    /// either by periodicity or by collapsing to a point at both ends of its
+    /// domain: a sphere is periodic in `u` and pole-capped in `v`, a torus is
+    /// periodic in both, and a cylinder, open along its axis, is neither.
+    pub fn is_closed(&self) -> bool {
+        let (u, v) = self.domain();
+        let (u_periodic, v_periodic) = match self.periodicity() {
+            SurfacePeriodicity::None => (false, false),
+            SurfacePeriodicity::UPeriodic(_) => (true, false),
+            SurfacePeriodicity::VPeriodic(_) => (false, true),
+            SurfacePeriodicity::UVPeriodic(_, _) => (true, true),
+        };
+        let u_closed = u_periodic || self.collapses_at_both_ends(u, v, Axis2::U);
+        let v_closed = v_periodic || self.collapses_at_both_ends(v, u, Axis2::V);
+        u_closed && v_closed
+    }
+
+    /// Whether `span` collapses to a point at each of its ends, sampled across
+    /// `across`.
+    ///
+    /// An end is a whole row of the domain, so one sample cannot answer for it:
+    /// a cone collapses at its apex only, and a plane nowhere at all.
+    fn collapses_at_both_ends(&self, span: Interval, across: Interval, axis: Axis2) -> bool {
+        /// Samples per end row — enough to reject a row that collapses at one
+        /// parameter without collapsing along its length.
+        const SAMPLES: usize = 5;
+
+        if !span.is_finite() {
+            return false;
+        }
+        [span.ordered().at(0.0), span.ordered().at(1.0)]
+            .into_iter()
+            .all(|end| {
+                (0..=SAMPLES).all(|step| {
+                    let other = across
+                        .or_extent(1.0)
+                        .at(f64::from(step as u32) / SAMPLES as f64);
+                    match axis {
+                        Axis2::U => self.is_degenerate_at(end, other),
+                        Axis2::V => self.is_degenerate_at(other, end),
+                    }
+                })
+            })
     }
 
     pub fn to_nurbs(&self) -> Result<NurbsSurface, NurbsError> {

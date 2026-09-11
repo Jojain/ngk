@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use nalgebra::Vector3;
 use ngk::geometry::{LINEAR_TOLERANCE, PointCoincidence, Surface};
 use ngk::modeling::solids::{
@@ -19,7 +21,8 @@ fn block_builds_closed_box_with_expected_cell_counts() {
 
     assert!(
         Closed::new(
-            Sheet::from_dart(g, shell.dart).expect("solid shell should have a registered sheet"),
+            Sheet::from_dart(g, shell.dart_unchecked())
+                .expect("solid shell should have a registered sheet"),
         )
         .is_some(),
         "block outer shell should be closed"
@@ -153,77 +156,90 @@ fn block_error_message_names_the_invalid_axis_and_value() {
     );
 }
 
+/// A sphere has no boundary anywhere, so it carries no topology at all.
+///
+/// There is nothing for an edge or a vertex to be: the face covers its whole
+/// support, and the poles are parametric singularities of `Sphere` rather than
+/// cells. That leaves no dart for the shell to be rooted at either, which is
+/// what `ShellRoot::Face` is for.
 #[test]
-fn sphere_builds_a_well_formed_solid() {
+fn sphere_builds_a_well_formed_boundaryless_solid() {
     let shape = sphere(2.0).expect("sphere primitive should build");
-    validate_solid_manifold(shape.map(), shape.key()).expect("sphere should be well formed");
+    let g = shape.map();
+    validate_solid_manifold(g, shape.key()).expect("sphere should be well formed");
+
+    assert_eq!(
+        (
+            g.dart_count(),
+            g.iter_vertices().count(),
+            g.iter_edges().count(),
+            g.iter_faces().count()
+        ),
+        (0, 0, 0, 1),
+        "a sphere is one face and nothing else"
+    );
     let faces = shape.solid().faces();
     assert_eq!(faces.len(), 1);
+    let face = &faces[0];
     assert!(
-        matches!(faces[0].surface(), Surface::Sphere(surface) if surface.radius() == 2.0),
+        matches!(face.surface(), Surface::Sphere(surface) if surface.radius() == 2.0),
         "sphere primitive should preserve its analytical support"
     );
+    assert!(
+        face.loops().is_empty(),
+        "a sphere face has no boundary loop"
+    );
+    assert!(face.dart().is_none(), "a boundaryless face has no dart");
+    assert_eq!(
+        g.solid_attr_unchecked(shape.key()).outer_shell.face(),
+        Some(face.key()),
+        "the shell is rooted at the face, there being no dart to root at"
+    );
+}
 
-    let face = &faces[0];
-    for edge in face
-        .outer_loop()
-        .expect("face should have an outer loop")
-        .edges()
-    {
-        let curve = edge
-            .curve()
-            .expect("sphere seam should carry its meridian curve");
-        let pcurve = face
-            .pcurve(edge.dart())
-            .expect("sphere seam should carry a longitude/latitude pcurve");
-        for parameter in [0.0, 0.37, 1.0] {
-            let uv = pcurve.point_at(parameter);
-            let lifted = face.surface().point_at(uv.x, uv.y);
-            assert!(
-                lifted.coincides(curve.project(lifted), LINEAR_TOLERANCE),
-                "sphere pcurve at dart {:?}, t={parameter}, uv={uv:?} lifted off its seam curve",
-                edge.dart()
-            );
-        }
-        assert!(
-            face.surface()
-                .point_at(pcurve.point_at(0.0).x, pcurve.point_at(0.0).y)
-                .coincides(
-                    *edge
-                        .bounded_unchecked()
-                        .start()
-                        .point()
-                        .expect("sphere pole should have geometry"),
-                    LINEAR_TOLERANCE,
-                )
-        );
-        assert!(
-            face.surface()
-                .point_at(pcurve.point_at(1.0).x, pcurve.point_at(1.0).y)
-                .coincides(
-                    *edge
-                        .bounded_unchecked()
-                        .end()
-                        .point()
-                        .expect("sphere pole should have geometry"),
-                    LINEAR_TOLERANCE,
-                )
-        );
-    }
-
-    let mesh = tessellate_face_key(shape.map(), face.key(), TessellateOpts::default())
+/// Meshing a sphere leaves no crack at the pole and none at the cut.
+///
+/// Both used to be paid for in topology — a seam edge and two pole vertices —
+/// and are now the mesher's job: a collapsed row becomes a triangle fan, and a
+/// direction covering a whole period indexes its closing column back onto its
+/// opening one.
+#[test]
+fn a_sphere_tessellates_into_a_closed_ball() {
+    let shape = sphere(2.0).expect("sphere primitive should build");
+    let face = shape.solid().faces()[0].key();
+    let mesh = tessellate_face_key(shape.map(), face, TessellateOpts::default())
         .expect("sphere face should tessellate");
-    assert!(mesh.indices.chunks_exact(3).all(|triangle| {
-        let [a, b, c] = [
-            triangle[0] as usize,
-            triangle[1] as usize,
-            triangle[2] as usize,
-        ];
-        (mesh.positions[b] - mesh.positions[a])
-            .cross(&(mesh.positions[c] - mesh.positions[a]))
-            .norm()
-            > LINEAR_TOLERANCE * LINEAR_TOLERANCE
-    }));
+
+    assert!(
+        mesh.indices.chunks_exact(3).all(|triangle| {
+            let [a, b, c] = [
+                triangle[0] as usize,
+                triangle[1] as usize,
+                triangle[2] as usize,
+            ];
+            (mesh.positions[b] - mesh.positions[a])
+                .cross(&(mesh.positions[c] - mesh.positions[a]))
+                .norm()
+                > LINEAR_TOLERANCE * LINEAR_TOLERANCE
+        }),
+        "a pole must be fanned, not filled with collapsed quads"
+    );
+
+    let mut uses = HashMap::new();
+    for triangle in mesh.indices.chunks_exact(3) {
+        for pair in [
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ] {
+            let edge = (pair.0.min(pair.1), pair.0.max(pair.1));
+            *uses.entry(edge).or_insert(0) += 1;
+        }
+    }
+    assert!(
+        uses.values().all(|count| *count == 2),
+        "every mesh edge of a closed ball is shared by exactly two triangles"
+    );
 }
 
 #[test]
@@ -260,11 +276,10 @@ fn solid_boolean_modeling_operations_accept_owned_shapes_and_return_closed_shape
 
 #[test]
 fn a_curved_shell_encloses_positive_signed_volume() {
-    // A sphere's only face is bounded by two straight pcurves along its seam.
-    // Straight in parameter space is not straight in space, so sampling those
-    // pcurves once per edge -- which is right on a plane -- leaves the loop
-    // with too few points to span a triangle fan, and the shell measures as
-    // enclosing nothing at all.
+    // A sphere has no boundary loop to fan a volume from, so its shell is
+    // measured over the surface's own domain instead. Getting the sign right
+    // there is the whole outwardness check for a boundaryless face: there is no
+    // neighbour across an edge to agree with.
     let shape = sphere(2.0).expect("sphere primitive should build");
     validate_solid_orientation(shape.map(), shape.key())
         .expect("a sphere shell should be outward oriented");

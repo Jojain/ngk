@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::geometry::{Axis2, LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
-use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr};
+use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr, ShellRoot};
 use crate::topology::gmap::{Cell1, Cell2, Dim, GMap};
 use crate::topology::orientation::Orientation;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
@@ -1042,10 +1042,9 @@ fn reseed_attributes<P: Payload>(
     cell: &HashSet<Dart>,
     seeds: &HashMap<Dart, Option<Dart>>,
 ) {
-    let replace = |dart: &mut Dart| {
-        if let Some(Some(seed)) = seeds.get(dart) {
-            *dart = *seed;
-        }
+    let replaced = |dart: Dart| match seeds.get(&dart) {
+        Some(Some(seed)) => *seed,
+        _ => dart,
     };
 
     let vertices = reseeded(
@@ -1092,15 +1091,18 @@ fn reseed_attributes<P: Payload>(
     // A shell keeps every dart the removal does not delete, so a seed that has
     // no Def. 59 replacement can still be re-rooted anywhere in the same shell.
     let sheets = reseeded(
-        edit.map().iter_sheets().map(|(key, attr)| (key, attr.dart)),
+        edit.map()
+            .iter_sheets()
+            .filter_map(|(key, attr)| Some((key, attr.dart()?))),
         seeds,
     );
     for (key, dart) in sheets {
         let dart = dart.or_else(|| {
-            shell_fallback(edit.map(), cell, edit.map().sheet_attr_unchecked(key).dart)
+            let root = edit.map().sheet_attr_unchecked(key).dart()?;
+            shell_fallback(edit.map(), cell, root)
         });
         if let Some(dart) = dart {
-            edit.sheet_attr_mut_unchecked(key).dart = dart;
+            edit.sheet_attr_mut_unchecked(key).root = ShellRoot::Dart(dart);
         }
     }
 
@@ -1121,19 +1123,12 @@ fn reseed_attributes<P: Payload>(
     let solids = edit
         .map()
         .iter_solids()
-        .filter(|(_, attr)| {
-            std::iter::once(attr.outer_shell)
-                .chain(attr.inner_shells.iter().flatten().copied())
-                .any(|dart| seeds.contains_key(&dart))
-        })
+        .filter(|(_, attr)| attr.shell_darts().any(|dart| seeds.contains_key(&dart)))
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
     for key in solids {
         let attr = edit.solid_attr_mut_unchecked(key);
-        replace(&mut attr.outer_shell);
-        for dart in attr.inner_shells.iter_mut().flatten() {
-            replace(dart);
-        }
+        attr.map_shell_darts(|dart| replaced(dart));
     }
 }
 

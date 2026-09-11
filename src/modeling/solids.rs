@@ -148,9 +148,9 @@ fn combine_shapes<P: Payload>(
     let (mut map, target) = target.into_map();
     let (tool_map, tool) = tool.into_map();
     let tool = map.transaction(|edit| {
-        let dart = edit.merge(tool_map.solid_unchecked(tool));
+        let handle = edit.merge(tool_map.solid_unchecked(tool));
         Ok::<_, TopologyEditError>(
-            edit.solid_key(dart)
+            edit.solid_key_at(handle)
                 .expect("copied tool solid must retain its registration"),
         )
     })?;

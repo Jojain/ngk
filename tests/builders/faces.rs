@@ -14,7 +14,8 @@ use ngk::geometry::{
     Curve, Curve2, LINEAR_TOLERANCE, NurbsCurve2, Plane, Point2, Point3, PointCoincidence, Surface,
     TrimmedCurve2,
 };
-use ngk::modeling::solids;
+
+use super::removal::seamed_cylinder_wall;
 use ngk::topology::TopologyEditError;
 use ngk::topology::gmap::GMap;
 use ngk::topology::gmap::{Cell0, Dim};
@@ -67,20 +68,14 @@ fn two_semicircle_imprints_form_a_closed_inner_loop() {
 ///
 /// `FaceAttr::pcurves` is keyed by boundary dart precisely so that an edge
 /// walked twice by one loop can carry a different parameter-space image each
-/// time. The subject is a sphere rather than a cylinder: a cylinder wall is a
-/// ring now, with two wrapping loops and no seam to split. A sphere's meridian
-/// runs pole to pole, so its band is closed by those degeneracies rather than by
-/// loops, and it is the last shape in the tree that still carries a seam.
+/// time. No builder in the tree makes a seam any more — a cylinder wall is a
+/// ring, with two wrapping loops and nothing to split, and a sphere is one
+/// boundaryless face with no boundary at all — so the subject is the same
+/// hand-built import fixture the removal tests use. That is the honest one:
+/// a seam now only ever arrives from outside.
 #[test]
-fn splitting_a_sphere_seam_preserves_both_face_pcurves() {
-    let (mut g, solid) = solids::sphere(1.0).expect("sphere").into_map();
-    let side = g
-        .solid_unchecked(solid)
-        .faces()
-        .into_iter()
-        .find(|face| !matches!(face.surface(), Surface::Plane(_)))
-        .unwrap()
-        .key();
+fn splitting_a_seamed_wall_preserves_both_face_pcurves() {
+    let (mut g, side) = seamed_cylinder_wall(1.0, 2.0);
     let edges = g
         .face_unchecked(side)
         .outer_loop()
@@ -109,24 +104,24 @@ fn splitting_a_sphere_seam_preserves_both_face_pcurves() {
         occurrences + 2,
         "splitting one edge walked twice adds an occurrence on each side"
     );
+    // Each occurrence is checked against the section its own dart names, which
+    // is what a per-dart pcurve is for: the wall's rims are closed edges with no
+    // two endpoints to compare against, and the seam's two occurrences run in
+    // opposite directions.
     for edge in split_loop.edges() {
         let pcurve = face
             .pcurve(edge.dart())
             .expect("every seam occurrence needs its own pcurve");
-        assert!(
-            face.point_at(pcurve.point_at(0.0).x, pcurve.point_at(0.0).y)
-                .coincides(
-                    *edge.bounded_unchecked().start().point().unwrap(),
-                    LINEAR_TOLERANCE
-                )
-        );
-        assert!(
-            face.point_at(pcurve.point_at(1.0).x, pcurve.point_at(1.0).y)
-                .coincides(
-                    *edge.bounded_unchecked().end().point().unwrap(),
-                    LINEAR_TOLERANCE
-                )
-        );
+        let section = edge
+            .trimmed_curve()
+            .expect("a boundary edge should have a section");
+        for fraction in [0.0, 1.0] {
+            let uv = pcurve.point_at(fraction);
+            assert!(
+                face.point_at(uv.x, uv.y)
+                    .coincides(section.point_at(fraction), LINEAR_TOLERANCE)
+            );
+        }
     }
 }
 

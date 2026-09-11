@@ -35,3 +35,35 @@ impl Axis2 {
         point[self.index()]
     }
 }
+
+/// Which end of a parameter axis' domain is meant.
+///
+/// Named rather than signed, because the two ends of a domain are not
+/// interchangeable: a sphere's `v` runs from one pole to the other, and which
+/// one closes a face is the whole difference between its two caps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum DomainEnd {
+    /// The lower end of the domain interval.
+    Low,
+    /// The upper end of the domain interval.
+    High,
+}
+
+impl DomainEnd {
+    /// Returns the other end.
+    pub fn flip(self) -> Self {
+        match self {
+            Self::Low => Self::High,
+            Self::High => Self::Low,
+        }
+    }
+
+    /// Reads this end's parameter out of an ordered domain interval.
+    pub fn of(self, domain: crate::geometry::Interval) -> f64 {
+        let domain = domain.ordered();
+        match self {
+            Self::Low => domain.start,
+            Self::High => domain.end,
+        }
+    }
+}

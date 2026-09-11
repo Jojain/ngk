@@ -66,7 +66,7 @@ impl<P: Payload> Shape<ProfileTag, P> {
         }
 
         self.map_mut().transaction(|edit| {
-            let edge_dart = edit.merge(edge.edge());
+            let edge_dart = edit.merge(edge.edge()).dart_unchecked();
             let edge_key = edit.cell_key_unchecked::<Cell1>(edge_dart);
             append_edge_staged(edit, profile_key, edge_key)
         })

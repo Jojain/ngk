@@ -21,6 +21,7 @@ use super::{IndexedMesh, TessellateOpts, surface::tessellate_surface_patch};
 use crate::geometry::{Curve, Interval, LINEAR_TOLERANCE, Point2, PointCoincidence, Surface};
 use crate::topology::face::Face;
 use crate::topology::gmap::GMap;
+use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::FaceKey;
 use crate::topology::unwrapped_face_domain::UnwrappedFaceDomain;
@@ -38,6 +39,9 @@ pub fn tessellate_face<P: Payload>(
     face: &Face<'_, P>,
     opts: TessellateOpts,
 ) -> Option<IndexedMesh> {
+    if face.loops().is_empty() {
+        return tessellate_boundaryless_face(face, opts);
+    }
     let domain = UnwrappedFaceDomain::of_face(face).ok()?;
     let segments = opts.curve.segments.max(1);
     let mut boundary = domain
@@ -94,9 +98,29 @@ pub fn tessellate_face_key<P: Payload>(
     key: FaceKey,
     opts: TessellateOpts,
 ) -> Option<IndexedMesh> {
-    let attr = g.face_attr(key)?;
-    let face = attr.face(g);
+    let face = g.face(key)?;
     tessellate_face(&face, opts)
+}
+
+/// Meshes a face that covers its whole support, with no boundary to clip to.
+///
+/// There is no loop to read bounds or winding from: the surface's own domain is
+/// the region, and the face's sense is the winding. A row of that domain that
+/// collapses to a point — a sphere's pole — is already meshed as a fan by
+/// [`tessellate_surface_patch`], and a direction spanning a whole period is
+/// already closed there, so the two ends of the sphere and the seam that is no
+/// longer stored all come out watertight.
+fn tessellate_boundaryless_face<P: Payload>(
+    face: &Face<'_, P>,
+    opts: TessellateOpts,
+) -> Option<IndexedMesh> {
+    let (u, v) = face.surface().domain();
+    if !u.is_finite() || !v.is_finite() {
+        return None;
+    }
+    let bounds = (u.start, u.end, v.start, v.end);
+    let ccw = face.sense() == Orientation::Same;
+    Some(surface_grid_over_bounds(face.surface(), bounds, ccw, opts))
 }
 
 /// Shoelace signed area in UV. Positive ⇒ CCW.

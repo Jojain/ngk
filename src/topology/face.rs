@@ -150,8 +150,22 @@ impl<'g, P: Payload> Face<'g, P> {
     /// This is the face's seed loop — the outer loop when it has one, its first
     /// loop otherwise — `alpha0`-flipped when the view is reversed, so it
     /// round-trips through [`Self::from_dart`] to an identical view.
-    pub fn dart(&self) -> Dart {
-        self.oriented_seed(self.attr().seed_unchecked())
+    ///
+    /// A boundaryless face has no loop, therefore no dart: it covers a closed
+    /// support and touches nothing. Its orientation lives in [`Self::sense`]
+    /// alone.
+    pub fn dart(&self) -> Option<Dart> {
+        self.attr().seed().map(|seed| self.oriented_seed(seed))
+    }
+
+    /// Returns a boundary dart carrying this face view's contextual orientation.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a boundaryless face, which has no boundary dart to return.
+    pub fn dart_unchecked(&self) -> Dart {
+        self.dart()
+            .expect("dart-backed face should have a boundary dart")
     }
 
     /// Returns a new face view with the opposite orientation.
@@ -267,12 +281,26 @@ impl<'g, P: Payload> Face<'g, P> {
         self.attr().surface.point_at(u, v)
     }
 
+    /// Returns the support point at the middle of the surface's own domain.
+    ///
+    /// A boundaryless face has no vertex to name a point on it, so a caller
+    /// that only needs *some* point of the face reads one off the surface.
+    /// Returns `None` when the domain is unbounded in either direction, which
+    /// no closed surface is.
+    pub(crate) fn domain_center(&self) -> Option<Point3> {
+        let (u, v) = self.surface().domain();
+        (u.is_finite() && v.is_finite()).then(|| self.point_at(u.at(0.5), v.at(0.5)))
+    }
+
     /// Approximates this oriented face's signed tetrahedral volume contribution.
     ///
     /// Signed parameter-space triangle fans include concave boundaries and holes.
     /// Curved triangles are subdivided on the support surface; this is an
     /// orientation estimate, not a certified mass-property calculation.
     pub(crate) fn signed_volume_contribution(&self, reference: Point3) -> Option<f64> {
+        if self.attr().is_empty() {
+            return self.boundaryless_signed_volume(reference);
+        }
         let planar = matches!(self.surface(), Surface::Plane(_));
         let mut volume = 0.0;
         for boundary in self.loops() {
@@ -310,6 +338,47 @@ impl<'g, P: Payload> Face<'g, P> {
                 }
             }
         }
+        volume.is_finite().then_some(volume)
+    }
+
+    /// Signed tetrahedral volume of a face that covers its whole support.
+    ///
+    /// With no loops there is no boundary to fan from, and none is needed: the
+    /// surface's own domain *is* the region, so the integral runs over a grid
+    /// of it. The face's sense, which on a bounded face is carried by the
+    /// direction its pcurves run, has to be applied here explicitly — there are
+    /// no pcurves to carry it.
+    fn boundaryless_signed_volume(&self, reference: Point3) -> Option<f64> {
+        /// Grid cells per parameter direction. The integral converges on a
+        /// sign, not on a mass property, so a coarse grid is enough.
+        const STEPS: usize = 24;
+
+        let (u_span, v_span) = self.surface().domain();
+        if !u_span.is_finite() || !v_span.is_finite() {
+            return None;
+        }
+        let corner = |i: usize, j: usize| {
+            let u = u_span.at(i as f64 / STEPS as f64);
+            let v = v_span.at(j as f64 / STEPS as f64);
+            self.point_at(u, v) - reference
+        };
+        let mut volume = 0.0;
+        for i in 0..STEPS {
+            for j in 0..STEPS {
+                let (a, b, c, d) = (
+                    corner(i, j),
+                    corner(i + 1, j),
+                    corner(i + 1, j + 1),
+                    corner(i, j + 1),
+                );
+                volume += a.dot(&b.cross(&c)) / 6.0;
+                volume += a.dot(&c.cross(&d)) / 6.0;
+            }
+        }
+        let volume = match self.sense {
+            Orientation::Same => volume,
+            Orientation::Reversed => -volume,
+        };
         volume.is_finite().then_some(volume)
     }
 
@@ -386,6 +455,6 @@ impl<P: Payload> MergeTopology<P> for Face<'_, P> {
         for loop_ in self.loops() {
             darts.extend(loop_.darts());
         }
-        TopologyMerge::new(self.gmap, darts, self.dart())
+        TopologyMerge::new(self.gmap, darts, self.dart_unchecked())
     }
 }

@@ -9,7 +9,7 @@ use crate::geometry::{Point3, PointCoincidence};
 use crate::healing::{HealingOptions, HealingScope, remove_redundant_cells_staged};
 use crate::topology::{
     TopologyEdit,
-    attributes::{SheetAttr, SolidAttr},
+    attributes::{SheetAttr, ShellRoot, SolidAttr},
     closed::Closed,
     gmap::{Dim, GMap},
     payload::Payload,
@@ -100,8 +100,8 @@ pub(crate) fn run<P: Payload>(
     let mut outer = Vec::new();
     let mut inner = Vec::new();
     for component in components {
-        let root = edit.face_unchecked(component[0]).dart();
-        let sheet = edit.add_sheet(SheetAttr::new(root, P::Sheet::default()));
+        let root = edit.face_unchecked(component[0]).dart_unchecked();
+        let sheet = edit.add_sheet(SheetAttr::new(ShellRoot::Dart(root), P::Sheet::default()));
         if Closed::new(edit.sheet_unchecked(sheet)).is_none() {
             return Err(BooleanError::OpenResultShell { face: component[0] });
         }
@@ -110,9 +110,9 @@ pub(crate) fn run<P: Payload>(
             return Err(BooleanError::DegenerateResultShell { face: component[0] });
         }
         if volume > 0.0 {
-            outer.push(root);
+            outer.push(ShellRoot::Dart(root));
         } else {
-            inner.push(root);
+            inner.push(ShellRoot::Dart(root));
         }
     }
     if outer.is_empty() {

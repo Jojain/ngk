@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use super::closed::Closed;
 use super::edge::Edge;
 use super::face::Face;
-use super::gmap::{Dart, GMap, MergeTopology, TopologyMerge};
+use super::gmap::{Dart, GMap, MergeHandle, MergeTopology, TopologyMerge};
 use super::payload::{Payload, StandardPayload};
-use super::sheet::{Sheet, ShellRef};
+use super::sheet::ShellRef;
 use super::vertex::Vertex;
 use crate::topology::shape_keys::SolidKey;
 
@@ -14,10 +14,14 @@ use crate::topology::shape_keys::SolidKey;
 /// A solid is a bounded 3-dimensional region with one outer shell and zero or
 /// more inner shells for cavities. It is backed by a stored [`SolidAttr`] in a
 /// [`GMap`].
+///
+/// A solid whose outer shell is one boundaryless face — a sphere — has no dart
+/// anywhere, so [`Self::dart`] answers `None` and the solid is read through its
+/// shells instead.
 pub struct Solid<'g, P: Payload = StandardPayload> {
     gmap: &'g GMap<P>,
     key: SolidKey,
-    dart: Dart,
+    dart: Option<Dart>,
 }
 
 impl<'g, P: Payload> Clone for Solid<'g, P> {
@@ -31,16 +35,20 @@ impl<'g, P: Payload> Clone for Solid<'g, P> {
 }
 
 impl<'g, P: Payload> Solid<'g, P> {
-    /// Creates a solid view from its key using the outer shell reference dart.
+    /// Creates a solid view from its key using the outer shell's root.
     pub fn new(gmap: &'g GMap<P>, key: SolidKey) -> Self {
-        let dart = gmap.solid_attr_unchecked(key).outer_shell;
+        let dart = gmap.solid_attr_unchecked(key).outer_shell.dart();
         Self { gmap, key, dart }
     }
 
     /// Creates a solid view from a dart on one of its registered shells.
     pub fn from_dart(gmap: &'g GMap<P>, dart: Dart) -> Option<Self> {
         let key = gmap.solid_key(dart)?;
-        Some(Self { gmap, key, dart })
+        Some(Self {
+            gmap,
+            key,
+            dart: Some(dart),
+        })
     }
 
     /// Returns the stable key of this solid in the source map.
@@ -54,7 +62,9 @@ impl<'g, P: Payload> Solid<'g, P> {
     }
 
     /// Returns the dart through which this solid view was reached.
-    pub fn dart(&self) -> Dart {
+    ///
+    /// A solid bounded only by boundaryless faces has none.
+    pub fn dart(&self) -> Option<Dart> {
         self.dart
     }
 
@@ -65,9 +75,11 @@ impl<'g, P: Payload> Solid<'g, P> {
 
     /// Returns the outer closed shell of the solid.
     pub fn outer_shell(&self) -> ShellRef<'g, P> {
-        let d = self.gmap.solid_attr_unchecked(self.key).outer_shell;
+        let root = self.gmap.solid_attr_unchecked(self.key).outer_shell;
         Closed::new_unchecked(
-            Sheet::from_dart(self.gmap, d).expect("solid outer shell must have a sheet"),
+            self.gmap
+                .shell_sheet(root)
+                .expect("solid outer shell must have a sheet"),
         )
     }
 
@@ -83,9 +95,10 @@ impl<'g, P: Payload> Solid<'g, P> {
             .map(|inner| {
                 inner
                     .iter()
-                    .map(|d| {
+                    .map(|&root| {
                         Closed::new_unchecked(
-                            Sheet::from_dart(self.gmap, *d)
+                            self.gmap
+                                .shell_sheet(root)
                                 .expect("solid inner shell must have a sheet"),
                         )
                     })
@@ -158,9 +171,23 @@ impl<'g, P: Payload> Solid<'g, P> {
 impl<P: Payload> MergeTopology<P> for Solid<'_, P> {
     fn merge_topology(&self) -> TopologyMerge<'_, P> {
         let mut darts = Vec::new();
+        let mut faces = Vec::new();
         for shell in self.shells() {
             darts.extend(shell.darts());
+            faces.extend(shell.boundaryless_face());
         }
-        TopologyMerge::new(self.gmap, darts, self.dart)
+        // A solid made only of boundaryless faces has no dart to hand back, so
+        // the copy is named by its outer shell's face instead.
+        let handle = match self.dart {
+            Some(dart) => MergeHandle::Dart(dart),
+            None => MergeHandle::Face(
+                self.gmap
+                    .solid_attr_unchecked(self.key)
+                    .outer_shell
+                    .face()
+                    .expect("a solid with no dart is rooted at a face"),
+            ),
+        };
+        TopologyMerge::with_faces(self.gmap, darts, faces, handle)
     }
 }

@@ -658,8 +658,8 @@ fn two_blocks(
     .into_map();
     let second = map
         .transaction(|edit| {
-            let dart = edit.merge(tool.solid_unchecked(second));
-            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+            let handle = edit.merge(tool.solid_unchecked(second));
+            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     (map, first, second)
@@ -829,8 +829,8 @@ fn boolean_result_can_be_consumed_by_a_second_operation() {
     .into_map();
     let cavity = map
         .transaction(|edit| {
-            let dart = edit.merge(tool.solid_unchecked(cavity));
-            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+            let handle = edit.merge(tool.solid_unchecked(cavity));
+            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     let result = boolean(
@@ -1137,8 +1137,8 @@ fn block_with_cylinder(
         .into_map();
     let cylinder = map
         .transaction(|edit| {
-            let dart = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+            let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
+            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     (map, block, cylinder)
@@ -1323,8 +1323,8 @@ fn boolean_difference_crosses_two_cylindrical_holes() {
     .into_map();
     let lying = map
         .transaction(|edit| {
-            let dart = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+            let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
+            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
 
@@ -1530,8 +1530,8 @@ fn boolean_union_topology_is_stable_under_face_reparameterization() {
             let (tool, block) = &reparameterized;
             let second = map
                 .transaction(|edit| {
-                    let dart = edit.merge(tool.solid_unchecked(*block));
-                    Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+                    let handle = edit.merge(tool.solid_unchecked(*block));
+                    Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
                 })
                 .unwrap();
             (map, first, second)
@@ -1581,8 +1581,8 @@ fn boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps() {
     let (tool, slot) = box_between(Point3::new(1.0, 1.0, -1.0), Point3::new(2.0, 2.0, 4.0));
     let slot = map
         .transaction(|edit| {
-            let dart = edit.merge(tool.solid_unchecked(slot));
-            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+            let handle = edit.merge(tool.solid_unchecked(slot));
+            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
 
@@ -1642,8 +1642,8 @@ fn block_fused_with_cylinder_tangent_to_block_faces() {
         .into_map();
     let cylinder = map
         .transaction(|edit| {
-            let dart = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+            let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
+            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
         })
         .expect("import cylinder");
 
@@ -1678,8 +1678,8 @@ fn block_with_sphere(radius: f64) -> (GMap<ngk::StandardPayload>, SolidKey, Soli
         .into_map();
     let sphere = map
         .transaction(|edit| {
-            let dart = edit.merge(tool.solid_unchecked(tool_sphere));
-            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+            let handle = edit.merge(tool.solid_unchecked(tool_sphere));
+            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     (map, block, sphere)

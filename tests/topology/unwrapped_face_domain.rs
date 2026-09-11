@@ -1,9 +1,17 @@
-use std::f64::consts::PI;
+use std::f64::consts::{FRAC_PI_2, PI};
 
+use nalgebra::Vector3;
+use radians::Rad64;
+
+use ngk::builders::edges::add_arc;
+use ngk::builders::revolve::add_revolved_edge;
 use ngk::geometry::Axis2;
-use ngk::geometry::{LINEAR_TOLERANCE, Plane, Surface};
+use ngk::geometry::axis::Axis3;
+use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, Surface};
 use ngk::modeling::{faces, solids};
 use ngk::topology::LoopKind;
+use ngk::topology::gmap::GMap;
+use ngk::topology::payload::StandardPayload;
 use ngk::topology::unwrapped_face_domain::UnwrappedFaceDomain;
 
 /// A seam is a property of the unwrapped domain, so a planar face has none: no period,
@@ -91,32 +99,47 @@ fn an_unwrapped_loop_never_jumps_a_period() {
     }
 }
 
-/// A sphere's poles collapse a whole row of the domain to one point, so the
-/// loop walks along one carrying no pcurve. The unwrapped domain records the corner it
-/// turns through; without it the loop never closes.
+/// A pole collapses a whole row of the domain to one point, so a loop that
+/// reaches one walks along it carrying no pcurve. The unwrapped domain records
+/// the corner it turns through; without it the loop never closes.
+///
+/// The subject is a meridian revolved a full turn, not `solids::sphere`: a
+/// sphere is now one boundaryless face, with no loop to turn through anything.
+/// Revolving an arc whose two ends sit on the axis still sews a seam between
+/// two poles, and is the shape this corner exists for.
 #[test]
-fn a_sphere_unwraps_the_poles_its_loop_turns_through() {
-    let shape = solids::sphere(1.0).expect("sphere should build");
-    let face = shape
-        .solid()
-        .faces()
-        .into_iter()
-        .next()
-        .expect("sphere should have a face");
-    let domain = UnwrappedFaceDomain::of_face(&face).expect("sphere face should unwrap");
+fn a_revolved_meridian_unwraps_the_poles_its_loop_turns_through() {
+    let mut g = GMap::<StandardPayload>::new();
+    let meridian = add_arc(
+        &mut g,
+        Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::z()),
+        1.0,
+        FRAC_PI_2,
+        -FRAC_PI_2,
+    )
+    .expect("meridian arc should build");
+    let face_key = add_revolved_edge(
+        &mut g,
+        meridian,
+        Axis3::new(Point3::origin(), Vector3::z()),
+        Rad64::FULL_TURN,
+    )
+    .expect("a full revolution of the meridian should build");
+    let face = g.face_unchecked(face_key);
+    let domain = UnwrappedFaceDomain::of_face(&face).expect("the revolved face should unwrap");
     let boundary = domain
         .loops()
         .first()
-        .expect("sphere face should have a loop");
+        .expect("the revolved face should have a loop");
 
     let corners = boundary
         .curves()
         .iter()
-        .filter_map(|curve| curve.corner())
+        .flat_map(|curve| curve.corners().iter().copied())
         .collect::<Vec<_>>();
     assert!(
         !corners.is_empty(),
-        "the sphere's seam loop should turn through at least one pole"
+        "the revolved meridian's seam loop should turn through at least one pole"
     );
     for corner in corners {
         assert!(

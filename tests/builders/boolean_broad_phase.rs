@@ -30,8 +30,8 @@ fn two_blocks(
     .into_map();
     let second = map
         .transaction(|edit| {
-            let dart = edit.merge(tool.solid_unchecked(second));
-            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+            let handle = edit.merge(tool.solid_unchecked(second));
+            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     (map, first, second)
@@ -57,8 +57,8 @@ fn two_cylinders(
     .into_map();
     let second = map
         .transaction(|edit| {
-            let dart = edit.merge(tool.solid_unchecked(second));
-            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+            let handle = edit.merge(tool.solid_unchecked(second));
+            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     (map, first, second)

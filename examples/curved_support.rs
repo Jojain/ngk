@@ -78,9 +78,9 @@ fn web() -> Result<Shape<SolidTag>, Box<dyn Error>> {
 /// Copies `source` into `target` and returns the remapped solid key.
 fn import_solid(target: &mut GMap, source: &Shape<SolidTag>) -> Result<SolidKey, Box<dyn Error>> {
     let key = target.transaction(|edit| {
-        let dart = edit.merge(source.solid());
+        let handle = edit.merge(source.solid());
         Ok::<_, TopologyEditError>(
-            edit.solid_key(dart)
+            edit.solid_key_at(handle)
                 .expect("a merged solid should retain its registration"),
         )
     })?;

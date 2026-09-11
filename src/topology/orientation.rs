@@ -1,10 +1,11 @@
 use nalgebra::UnitVector3;
+use serde::{Deserialize, Serialize};
 
 /// A relative orientation flag used by topology views.
 ///
 /// When a traversal resolves a keyed entity inside a larger context, the local
 /// direction may match the entity's default direction or be opposite.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Orientation {
     /// The local traversal direction matches the entity's default orientation.
     Same,

@@ -17,7 +17,9 @@ use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
 use crate::topology::vertex::Vertex;
 
-use super::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr};
+use super::attributes::{
+    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
+};
 use super::payload::{Payload, StandardPayload};
 
 pub use super::dart::{Dart, IsolatedDart};
@@ -168,15 +170,74 @@ fn copied_cell_dart<P: Payload>(
 pub struct TopologyMerge<'a, P: Payload> {
     source: &'a GMap<P>,
     darts: Vec<Dart>,
-    handle: Dart,
+    faces: Vec<FaceKey>,
+    handle: MergeHandle,
+}
+
+/// What a copied topology is reached by in the map it was copied into.
+///
+/// A copy is normally located by a dart. A boundaryless face has none, so the
+/// copy names the new face key instead — the same distinction as
+/// [`ShellRoot`](super::attributes::ShellRoot), one layer up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MergeHandle {
+    /// A dart of the copy, in the target map's numbering.
+    Dart(Dart),
+    /// The copy is one boundaryless face, under its new key.
+    Face(FaceKey),
+}
+
+impl MergeHandle {
+    /// Returns the handle's dart, or `None` for a boundaryless copy.
+    pub fn dart(self) -> Option<Dart> {
+        match self {
+            Self::Dart(dart) => Some(dart),
+            Self::Face(_) => None,
+        }
+    }
+
+    /// Returns the handle's dart.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a boundaryless copy, which has no dart to return.
+    pub fn dart_unchecked(self) -> Dart {
+        self.dart()
+            .expect("a dart-backed copy should return a dart handle")
+    }
+
+    /// Returns the handle's face, or `None` for a dart-backed copy.
+    pub fn face(self) -> Option<FaceKey> {
+        match self {
+            Self::Face(face) => Some(face),
+            Self::Dart(_) => None,
+        }
+    }
 }
 
 impl<'a, P: Payload> TopologyMerge<'a, P> {
-    /// Creates a merge descriptor for a topology view.
+    /// Creates a merge descriptor for a dart-backed topology view.
     pub fn new(source: &'a GMap<P>, darts: Vec<Dart>, handle: Dart) -> Self {
         Self {
             source,
             darts,
+            faces: Vec::new(),
+            handle: MergeHandle::Dart(handle),
+        }
+    }
+
+    /// Creates a merge descriptor for topology that includes boundaryless
+    /// faces, which no dart can name.
+    pub fn with_faces(
+        source: &'a GMap<P>,
+        darts: Vec<Dart>,
+        faces: Vec<FaceKey>,
+        handle: MergeHandle,
+    ) -> Self {
+        Self {
+            source,
+            darts,
+            faces,
             handle,
         }
     }
@@ -192,15 +253,15 @@ pub trait MergeTopology<P: Payload> {
     ///
     /// Alpha links within the copied topology are preserved. Links leaving the
     /// copied dart set become free in the isolated map.
-    fn isolate(self) -> (GMap<P>, Dart)
+    fn isolate(self) -> (GMap<P>, MergeHandle)
     where
         Self: Sized,
     {
         let mut isolated = GMap::new();
-        let dart = isolated
+        let handle = isolated
             .transaction(|edit| Ok::<_, TopologyEditError>(edit.merge(self)))
             .expect("isolating valid topology should produce a valid map");
-        (isolated, dart)
+        (isolated, handle)
     }
 }
 
@@ -478,16 +539,21 @@ impl<P: Payload> GMap<P> {
                 self.insert_logical_key(&mut indexes.face, repr, key, EditKey::Face);
             }
         }
+        // A boundaryless shell has no dart to reach it from, so it registers
+        // nothing here. It is found through its key, or through the one face
+        // it holds, never by walking the map.
         for (key, attr) in self.sheets.iter() {
-            for dart in self.logical_sheet_darts(attr.dart, &indexes.face) {
+            for dart in attr
+                .dart()
+                .into_iter()
+                .flat_map(|root| self.logical_sheet_darts(root, &indexes.face))
+            {
                 let repr = self.cell_representative(dart, Dim::Three);
                 self.insert_logical_key(&mut indexes.sheet, repr, key, EditKey::Sheet);
             }
         }
         for (key, attr) in self.solids.iter() {
-            for dart in
-                std::iter::once(attr.outer_shell).chain(attr.inner_shells.iter().flatten().copied())
-            {
+            for dart in attr.shell_darts() {
                 for shell_dart in self.logical_sheet_darts(dart, &indexes.face) {
                     let repr = self.cell_representative(shell_dart, Dim::Three);
                     self.insert_logical_key(&mut indexes.solid, repr, key, EditKey::Solid);
@@ -726,15 +792,10 @@ impl<P: Payload> GMap<P> {
                 .collect();
         }
         for attr in self.sheets.values_mut() {
-            attr.dart = map_dart(attr.dart);
+            attr.root.map_dart(&map_dart);
         }
         for attr in self.solids.values_mut() {
-            attr.outer_shell = map_dart(attr.outer_shell);
-            if let Some(shells) = &mut attr.inner_shells {
-                for dart in shells {
-                    *dart = map_dart(*dart);
-                }
-            }
+            attr.map_shell_darts(&map_dart);
         }
         self.invalidate_derived_indexes();
         remap
@@ -1127,6 +1188,46 @@ impl<P: Payload> GMap<P> {
             .expect("sheet key should be in the map")
     }
 
+    /// Returns the sheet registered as exactly this boundaryless face.
+    ///
+    /// A boundaryless face registers no dart component, so it cannot be found
+    /// through [`Self::sheet_key`]; the stored roots are what name it.
+    pub fn sheet_key_at_face(&self, face: FaceKey) -> Option<SheetKey> {
+        self.sheets
+            .iter()
+            .find(|(_, attr)| attr.root.face() == Some(face))
+            .map(|(key, _)| key)
+    }
+
+    /// Returns the solid one of whose shells is exactly this boundaryless face.
+    ///
+    /// The dart-rooted counterpart is [`Self::solid_key`]; a boundaryless face
+    /// has no dart to ask with.
+    pub fn solid_key_at_face(&self, face: FaceKey) -> Option<SolidKey> {
+        self.solids
+            .iter()
+            .find(|(_, attr)| attr.shells().any(|shell| shell.face() == Some(face)))
+            .map(|(key, _)| key)
+    }
+
+    /// Returns the key of the solid a merge handle landed in, if any.
+    pub fn solid_key_at(&self, handle: MergeHandle) -> Option<SolidKey> {
+        match handle {
+            MergeHandle::Dart(dart) => self.solid_key(dart),
+            MergeHandle::Face(face) => self.solid_key_at_face(face),
+        }
+    }
+
+    /// Returns the sheet view a stored shell root names.
+    pub fn shell_sheet(&self, root: ShellRoot) -> Option<Sheet<'_, P>> {
+        match root {
+            ShellRoot::Dart(dart) => Sheet::from_dart(self, dart),
+            ShellRoot::Face { face, .. } => self
+                .sheet_key_at_face(face)
+                .map(|key| Sheet::new(self, key)),
+        }
+    }
+
     /// Returns the stored sheet attribute.
     pub fn sheet_attr(&self, key: SheetKey) -> Option<&SheetAttr<P::Sheet>> {
         self.sheets.get(key)
@@ -1231,7 +1332,7 @@ impl<P: Payload> GMap<P> {
     /// Copy a topological view into a fresh [`GMap`].
     ///
     /// This is the associated-function form of [`MergeTopology::isolate`].
-    pub fn isolate<T>(topology: T) -> (Self, Dart)
+    pub fn isolate<T>(topology: T) -> (Self, MergeHandle)
     where
         T: MergeTopology<P>,
     {
@@ -1245,13 +1346,14 @@ impl<P: Payload> GMap<P> {
     /// preserved; links leaving the view become free. Stored vertex, edge, face,
     /// and solid attributes whose representative darts are part of the view are
     /// cloned with embedded dart references remapped to the new dart ids.
-    pub(super) fn merge<T>(&mut self, topology: T) -> Dart
+    pub(super) fn merge<T>(&mut self, topology: T) -> MergeHandle
     where
         T: MergeTopology<P>,
     {
         let topology = topology.merge_topology();
         let source = topology.source;
         let handle = topology.handle;
+        let source_faces = topology.faces;
         let mut seen_darts = HashSet::new();
         let source_darts = topology
             .darts
@@ -1312,7 +1414,10 @@ impl<P: Payload> GMap<P> {
         }
 
         for (_, attr) in source.faces.iter() {
-            if !source_dart_set.contains(&attr.seed_unchecked()) {
+            let Some(seed) = attr.seed() else {
+                continue;
+            };
+            if !source_dart_set.contains(&seed) {
                 continue;
             }
             let mut attr = attr.clone();
@@ -1329,40 +1434,74 @@ impl<P: Payload> GMap<P> {
             self.record_created_attribute(EditKey::Face(new_key));
         }
 
-        for (_, attr) in source.sheets.iter() {
-            if !source
-                .orbit(attr.dart, vec![0, 1, 2])
-                .all(|dart| source_dart_set.contains(&dart))
-            {
+        // A merge is otherwise defined by the darts it copies, and a
+        // boundaryless face has none: it is named outright by the caller, and
+        // the map from its old key to its new one is what lets the shells that
+        // hold it come across too.
+        let mut face_map = HashMap::with_capacity(source_faces.len());
+        for old in source_faces {
+            let Some(attr) = source.faces.get(old) else {
                 continue;
-            }
+            };
+            let new_key = self.faces.insert(attr.clone());
+            self.record_created_attribute(EditKey::Face(new_key));
+            face_map.insert(old, new_key);
+        }
+
+        for (_, attr) in source.sheets.iter() {
+            let root = match attr.root {
+                ShellRoot::Dart(root) => {
+                    if !source
+                        .orbit(root, vec![0, 1, 2])
+                        .all(|dart| source_dart_set.contains(&dart))
+                    {
+                        continue;
+                    }
+                    ShellRoot::Dart(remap_dart(&dart_map, root))
+                }
+                ShellRoot::Face { face, sense } => match face_map.get(&face) {
+                    Some(&face) => ShellRoot::Face { face, sense },
+                    None => continue,
+                },
+            };
             let mut attr = attr.clone();
-            attr.dart = remap_dart(&dart_map, attr.dart);
+            attr.root = root;
             let new_key = self.sheets.insert(attr);
             self.record_created_attribute(EditKey::Sheet(new_key));
         }
 
-        for (_, attr) in source.solids.iter() {
-            if !source
-                .orbit(attr.outer_shell, vec![0, 1, 2])
+        let copied_shell = |shell: ShellRoot| match shell {
+            ShellRoot::Dart(dart) => source
+                .orbit(dart, vec![0, 1, 2])
                 .all(|dart| source_dart_set.contains(&dart))
-            {
+                .then(|| ShellRoot::Dart(remap_dart(&dart_map, dart))),
+            ShellRoot::Face { face, sense } => face_map
+                .get(&face)
+                .map(|&face| ShellRoot::Face { face, sense }),
+        };
+        for (_, attr) in source.solids.iter() {
+            let Some(outer_shell) = copied_shell(attr.outer_shell) else {
                 continue;
-            }
+            };
             let mut attr = attr.clone();
-            attr.outer_shell = remap_dart(&dart_map, attr.outer_shell);
-            attr.inner_shells = attr.inner_shells.map(|shells| {
-                shells
-                    .into_iter()
-                    .filter_map(|dart| dart_map.get(&dart).copied())
-                    .collect()
-            });
+            attr.outer_shell = outer_shell;
+            attr.inner_shells = attr
+                .inner_shells
+                .map(|shells| shells.into_iter().filter_map(copied_shell).collect());
             let new_key = self.solids.insert(attr);
             self.record_created_attribute(EditKey::Solid(new_key));
         }
 
         self.invalidate_derived_indexes();
-        remap_dart(&dart_map, handle)
+        match handle {
+            MergeHandle::Dart(dart) => MergeHandle::Dart(remap_dart(&dart_map, dart)),
+            MergeHandle::Face(face) => MergeHandle::Face(
+                face_map
+                    .get(&face)
+                    .copied()
+                    .expect("a face named as the merge handle should be copied"),
+            ),
+        }
     }
 
     /// Algorithm 19 of the book
@@ -1609,7 +1748,7 @@ mod tests {
     use crate::builders::profiles::add_rectangle;
     use crate::builders::sheets::add_extruded_profile;
     use crate::geometry::{Curve, Plane, Point2, Point3, Surface, TrimmedCurve2};
-    use crate::topology::attributes::{FaceAttr, SheetAttr, SolidAttr};
+    use crate::topology::attributes::{FaceAttr, SheetAttr, ShellRoot, SolidAttr};
     use crate::topology::edit::TopologyEditError;
     use crate::topology::payload::{Payload, StandardPayload};
     use crate::topology::planar::Planar;
@@ -1697,7 +1836,8 @@ mod tests {
         let edge = source.edge_unchecked(edge_key);
         let merged_dart = target
             .transaction(|edit| Ok::<_, TopologyEditError>(edit.merge(edge)))
-            .unwrap();
+            .unwrap()
+            .dart_unchecked();
         let merged_edge = target.attribute_unchecked::<Cell1>(merged_dart);
 
         assert_eq!(target.dart_count(), 2);
@@ -1756,7 +1896,8 @@ mod tests {
         let face = source.face_unchecked(face_key);
         let merged_dart = target
             .transaction(|edit| Ok::<_, TopologyEditError>(edit.merge(face)))
-            .unwrap();
+            .unwrap()
+            .dart_unchecked();
         let merged_key = *target.attribute_unchecked::<Cell2>(merged_dart);
         let merged_face = target.face_attr_unchecked(merged_key);
 
@@ -1791,12 +1932,14 @@ mod tests {
                 Ok::<_, TopologyEditError>(edit.merge(Profile::new(&source, profile_key)))
             })
             .unwrap();
-        assert_eq!(merged_profile, Dart::new(0));
+        assert_eq!(merged_profile.dart_unchecked(), Dart::new(0));
         assert_eq!(target.dart_count(), 6);
 
         let sheet_key = source
             .transaction(|edit| {
-                Ok::<_, TopologyEditError>(edit.add_sheet(SheetAttr::new(profile_dart, ())))
+                Ok::<_, TopologyEditError>(
+                    edit.add_sheet(SheetAttr::new(ShellRoot::Dart(profile_dart), ())),
+                )
             })
             .unwrap();
         let mut sheet_target = GMap::<StandardPayload>::new();
@@ -1805,12 +1948,16 @@ mod tests {
                 Ok::<_, TopologyEditError>(edit.merge(Sheet::new(&source, sheet_key)))
             })
             .unwrap();
-        assert_eq!(merged_sheet, Dart::new(0));
+        assert_eq!(merged_sheet.dart_unchecked(), Dart::new(0));
         assert_eq!(sheet_target.dart_count(), 6);
 
         let solid_key = source
             .transaction(|edit| {
-                Ok::<_, TopologyEditError>(edit.add_solid(SolidAttr::new((), profile_dart, None)))
+                Ok::<_, TopologyEditError>(edit.add_solid(SolidAttr::new(
+                    (),
+                    ShellRoot::Dart(profile_dart),
+                    None,
+                )))
             })
             .unwrap();
         let mut second_target = GMap::<StandardPayload>::new();
@@ -1818,7 +1965,7 @@ mod tests {
         let merged_solid = second_target
             .transaction(|edit| Ok::<_, TopologyEditError>(edit.merge(solid)))
             .unwrap();
-        assert_eq!(merged_solid, Dart::new(0));
+        assert_eq!(merged_solid.dart_unchecked(), Dart::new(0));
         assert_eq!(
             second_target
                 .iter_solids()
@@ -1826,7 +1973,7 @@ mod tests {
                 .expect("merged solid should exist")
                 .1
                 .outer_shell,
-            Dart::new(0)
+            ShellRoot::Dart(Dart::new(0))
         );
     }
 
@@ -1860,6 +2007,7 @@ mod tests {
         let face = source.face_unchecked(face_key);
 
         let (isolated, isolated_dart) = face.isolate();
+        let isolated_dart = isolated_dart.dart_unchecked();
 
         assert_eq!(isolated_dart, Dart::new(0));
         assert_eq!(isolated.dart_count(), 8);
@@ -1882,6 +2030,7 @@ mod tests {
         );
 
         let (isolated, isolated_dart) = GMap::isolate(source.profile_unchecked(profile_key));
+        let isolated_dart = isolated_dart.dart_unchecked();
 
         assert_eq!(isolated_dart, Dart::new(0));
         assert_eq!(isolated.dart_count(), 6);
@@ -1904,6 +2053,7 @@ mod tests {
         );
 
         let (isolated, isolated_dart) = planar.isolate();
+        let isolated_dart = isolated_dart.dart_unchecked();
 
         assert_eq!(isolated_dart, Dart::new(0));
         assert_eq!(isolated.dart_count(), 6);

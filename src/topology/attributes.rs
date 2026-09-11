@@ -3,13 +3,14 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
-use crate::geometry::{Axis2, Curve, Point3, Surface};
+use crate::geometry::{Axis2, Curve, DomainEnd, Point3, Surface};
 use crate::topology::dart::Dart;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Cell0, Cell2, GMap};
+use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
-use crate::topology::shape_keys::EdgeKey;
+use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use crate::topology::vertex::Vertex;
 
 /// Stored data for a keyed vertex 0-cell.
@@ -86,22 +87,43 @@ pub enum LoopKind {
     Outer,
     /// A loop that closes in parameter space and cuts a hole in the face.
     Inner,
-    /// A loop that spans exactly one period of `axis`, bounding the axis it is
-    /// transverse to.
+    /// One of a pair of loops that each span exactly one period of `axis`,
+    /// together bounding the axis they are transverse to.
     ///
     /// Such a loop closes on the periodic quotient, not in parameter space: a
     /// cylinder wall's base is a horizontal line one period long, never a
-    /// closed polygon. It carries no winding, so which side of it holds
-    /// material is read from its travel direction instead.
+    /// closed polygon. It carries no winding, and it does not need to: the face
+    /// is the band between the pair, whichever way round they are traversed.
     Wrapping { axis: Axis2 },
+    /// A lone loop spanning one period of `axis`, with the transverse
+    /// direction closed on its far side by a parametric degeneracy at `end`.
+    ///
+    /// A spherical cap — what every sphere-plane cut produces. Unlike a
+    /// [`Self::Wrapping`] pair there is no second loop to bound the other side,
+    /// and travel direction cannot stand in for one: reversing the loop has to
+    /// flip the face's normal, so if it also chose the side it would move the
+    /// face to the opposite pole. Which degeneracy closes the face is therefore
+    /// said outright.
+    Capping { axis: Axis2, end: DomainEnd },
 }
 
 impl LoopKind {
-    /// Returns the axis this loop spans, when it wraps one.
+    /// Returns the axis this loop spans, when it spans one.
+    ///
+    /// Both periodic kinds run a whole period; they differ only in what closes
+    /// the transverse direction on the far side.
     pub fn wrapped_axis(self) -> Option<Axis2> {
         match self {
-            LoopKind::Wrapping { axis } => Some(axis),
+            LoopKind::Wrapping { axis } | LoopKind::Capping { axis, .. } => Some(axis),
             LoopKind::Outer | LoopKind::Inner => None,
+        }
+    }
+
+    /// Returns the domain end whose degeneracy closes the face, if one does.
+    pub fn capped_end(self) -> Option<DomainEnd> {
+        match self {
+            LoopKind::Capping { end, .. } => Some(end),
+            LoopKind::Outer | LoopKind::Inner | LoopKind::Wrapping { .. } => None,
         }
     }
 }
@@ -118,8 +140,15 @@ pub enum LoopDefinition {
     Outer { seed: Dart },
     /// A loop that closes in parameter space and cuts a hole in the face.
     Inner { seed: Dart },
-    /// A loop that spans exactly one period of `axis`.
+    /// One of a pair of loops each spanning one whole period of `axis`.
     Wrapping { seed: Dart, axis: Axis2 },
+    /// A lone loop spanning one whole period of `axis`, the transverse
+    /// direction closed on its far side by the degeneracy at `end`.
+    Capping {
+        seed: Dart,
+        axis: Axis2,
+        end: DomainEnd,
+    },
 }
 
 impl LoopDefinition {
@@ -128,6 +157,7 @@ impl LoopDefinition {
             LoopKind::Outer => Self::outer(seed),
             LoopKind::Inner => Self::inner(seed),
             LoopKind::Wrapping { axis } => Self::wrapping(seed, axis),
+            LoopKind::Capping { axis, end } => Self::capping(seed, axis, end),
         }
     }
 
@@ -146,10 +176,18 @@ impl LoopDefinition {
         Self::Wrapping { seed, axis }
     }
 
+    /// Defines a lone period-spanning loop closed at `end` by a degeneracy.
+    pub fn capping(seed: Dart, axis: Axis2, end: DomainEnd) -> Self {
+        Self::Capping { seed, axis, end }
+    }
+
     /// Returns this definition's oriented traversal seed.
     pub fn seed(self) -> Dart {
         match self {
-            Self::Outer { seed } | Self::Inner { seed } | Self::Wrapping { seed, .. } => seed,
+            Self::Outer { seed }
+            | Self::Inner { seed }
+            | Self::Wrapping { seed, .. }
+            | Self::Capping { seed, .. } => seed,
         }
     }
 
@@ -159,6 +197,7 @@ impl LoopDefinition {
             Self::Outer { .. } => LoopKind::Outer,
             Self::Inner { .. } => LoopKind::Inner,
             Self::Wrapping { axis, .. } => LoopKind::Wrapping { axis },
+            Self::Capping { axis, end, .. } => LoopKind::Capping { axis, end },
         }
     }
 
@@ -167,7 +206,8 @@ impl LoopDefinition {
         match self {
             Self::Outer { seed: current }
             | Self::Inner { seed: current }
-            | Self::Wrapping { seed: current, .. } => *current = seed,
+            | Self::Wrapping { seed: current, .. }
+            | Self::Capping { seed: current, .. } => *current = seed,
         }
     }
 }
@@ -358,31 +398,131 @@ impl<T> FaceAttr<T> {
         })
     }
 
+    /// Returns an oriented seed locating this face, when it has a boundary.
+    ///
+    /// A boundaryless face has no loop and so no seed: nothing is incident to
+    /// it, and it is reached by key alone.
+    pub(crate) fn seed(&self) -> Option<Dart> {
+        self.outer_seed()
+            .or_else(|| self.loops.first().map(|loop_| loop_.seed()))
+    }
+
     /// Returns an oriented seed suitable for locating this dart-backed face.
     ///
     /// # Panics
     ///
     /// Panics if the face has no loops.
     pub(crate) fn seed_unchecked(&self) -> Dart {
-        self.outer_seed()
-            .or_else(|| self.loops.first().map(|loop_| loop_.seed()))
-            .expect("dart-backed face should have a loop")
+        self.seed().expect("dart-backed face should have a loop")
+    }
+}
+
+/// Where a sheet, or one of a solid's shells, is anchored.
+///
+/// A shell is normally located by one of its darts: its faces, its orientation
+/// and its extent all follow from walking the map from there. A boundaryless
+/// face has no darts at all, so a sheet holding one has no incidence to point
+/// at, and names the face instead.
+///
+/// > A root is a dart whenever any dart exists in the cell. It is a key only
+/// > when there is no dart to point at.
+///
+/// That invariant is what makes the key variant self-eliminating: the moment a
+/// sheet gains topology — a boundaryless face split by a plane — the commit
+/// re-roots it at a dart, so a stored key never outlives the face it names.
+/// A dart root carries its shell's direction in the dart itself; a face root
+/// has no dart to `alpha0`-flip, and no loop seeds either, so it spells the
+/// direction out. That is what lets a spherical cavity — an inner shell facing
+/// inward — be written at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ShellRoot {
+    /// An oriented dart of the shell, giving its default traversal direction.
+    Dart(Dart),
+    /// The shell is exactly one boundaryless face, read in this orientation.
+    Face {
+        /// The face that is the whole shell.
+        face: FaceKey,
+        /// How the shell faces relative to the support surface's own normal.
+        sense: Orientation,
+    },
+}
+
+impl ShellRoot {
+    /// Anchors a shell at a boundaryless face, facing as its support does.
+    pub fn at_face(face: FaceKey) -> Self {
+        Self::Face {
+            face,
+            sense: Orientation::Same,
+        }
+    }
+
+    /// Returns the anchoring dart, or `None` for a boundaryless shell.
+    pub fn dart(self) -> Option<Dart> {
+        match self {
+            Self::Dart(dart) => Some(dart),
+            Self::Face { .. } => None,
+        }
+    }
+
+    /// Returns the anchoring face, or `None` for a dart-rooted shell.
+    pub fn face(self) -> Option<FaceKey> {
+        match self {
+            Self::Face { face, .. } => Some(face),
+            Self::Dart(_) => None,
+        }
+    }
+
+    /// Returns the same root read in the opposite orientation.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a dart root, whose reversal needs the map to `alpha0` it.
+    pub fn reversed_face(self) -> Self {
+        match self {
+            Self::Face { face, sense } => Self::Face {
+                face,
+                sense: sense.flip(),
+            },
+            Self::Dart(_) => panic!("reversing a dart root needs the map it belongs to"),
+        }
+    }
+
+    /// Returns the anchoring dart of a dart-rooted shell.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a boundaryless shell, which has no dart to return.
+    pub fn dart_unchecked(self) -> Dart {
+        self.dart()
+            .expect("dart-rooted shell should have an anchoring dart")
+    }
+
+    /// Rewrites the anchoring dart through `map`, leaving a face root alone.
+    pub(crate) fn map_dart(&mut self, map: impl FnOnce(Dart) -> Dart) {
+        if let Self::Dart(dart) = self {
+            *dart = map(*dart);
+        }
     }
 }
 
 /// Stored data and default orientation for a sheet.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SheetAttr<T> {
-    /// Oriented dart used as the sheet's default traversal root.
-    pub dart: Dart,
+    /// Where the sheet is anchored, carrying its default traversal direction.
+    pub root: ShellRoot,
     /// User payload attached to the sheet.
     pub data: T,
 }
 
 impl<T> SheetAttr<T> {
-    /// Creates a sheet attribute rooted at the given oriented dart.
-    pub fn new(dart: Dart, data: T) -> Self {
-        Self { dart, data }
+    /// Creates a sheet attribute anchored at `root`.
+    pub fn new(root: ShellRoot, data: T) -> Self {
+        Self { root, data }
+    }
+
+    /// Returns the sheet's anchoring dart, or `None` when it is boundaryless.
+    pub fn dart(&self) -> Option<Dart> {
+        self.root.dart()
     }
 }
 
@@ -391,19 +531,37 @@ impl<T> SheetAttr<T> {
 pub struct SolidAttr<T> {
     /// User payload attached to the solid.
     pub data: T,
-    /// Representative dart of the outer shell.
-    pub outer_shell: Dart,
-    /// Representative darts of inner shells, when cavities are stored.
-    pub inner_shells: Option<Vec<Dart>>,
+    /// Anchor of the outer shell.
+    pub outer_shell: ShellRoot,
+    /// Anchors of inner shells, when cavities are stored.
+    pub inner_shells: Option<Vec<ShellRoot>>,
 }
 
 impl<T> SolidAttr<T> {
     /// Creates a solid attribute from an outer shell and optional inner shells.
-    pub fn new(data: T, outer_shell: Dart, inner_shells: Option<Vec<Dart>>) -> Self {
+    pub fn new(data: T, outer_shell: ShellRoot, inner_shells: Option<Vec<ShellRoot>>) -> Self {
         Self {
             data,
             outer_shell,
             inner_shells,
+        }
+    }
+
+    /// Returns every shell anchor, the outer shell first.
+    pub fn shells(&self) -> impl Iterator<Item = ShellRoot> + '_ {
+        std::iter::once(self.outer_shell).chain(self.inner_shells.iter().flatten().copied())
+    }
+
+    /// Returns the anchoring dart of every dart-rooted shell, outer first.
+    pub fn shell_darts(&self) -> impl Iterator<Item = Dart> + '_ {
+        self.shells().filter_map(ShellRoot::dart)
+    }
+
+    /// Rewrites every shell's anchoring dart through `map`.
+    pub(crate) fn map_shell_darts(&mut self, map: impl Fn(Dart) -> Dart) {
+        self.outer_shell.map_dart(&map);
+        for shell in self.inner_shells.iter_mut().flatten() {
+            shell.map_dart(&map);
         }
     }
 }

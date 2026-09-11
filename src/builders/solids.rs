@@ -1,24 +1,19 @@
 use crate::geometry::TrimmedCurve2;
 use std::collections::HashMap;
-use std::f64::consts::FRAC_PI_2;
 
 use nalgebra::Vector3;
 use thiserror::Error;
 
 use crate::{
     Payload,
+    builders::errors::ExtrudeError,
     builders::faces::reverse_face_winding,
-    builders::{
-        edges::add_arc_staged,
-        errors::{EdgeCreationError, ExtrudeError},
-        revolve::{RevolveError, add_full_revolved_edge_staged_with_surface},
-    },
     geometry::{
         ANGULAR_TOLERANCE, Axis2, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3,
         RuledSurface, Sphere, Surface, SurfacePeriodicity,
     },
     topology::{
-        Dart, SheetAttr, SolidAttr, TopologyEdit,
+        Dart, SheetAttr, ShellRoot, SolidAttr, TopologyEdit,
         attributes::{EdgeAttr, FaceAttr, LoopDefinition, ProfileAttr},
         edge::Edge,
         face::Face,
@@ -31,38 +26,35 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum SphereBuildError {
-    #[error("failed to create a sphere profile arc")]
-    Arc(#[from] EdgeCreationError),
-    #[error("failed to revolve a sphere profile arc")]
-    Revolve(#[from] RevolveError),
     #[error("failed to commit sphere topology")]
     TopologyEdit(#[from] TopologyEditError),
 }
 
-/// Adds a sphere by revolving a semicircular meridian around the frame z-axis.
+/// Adds a sphere as one boundaryless face on a spherical support.
 ///
-/// The two coincident meridian boundary occurrences are sewn together, leaving
-/// one face with one pole-to-pole seam edge and two pole vertices.
+/// A sphere has no boundary anywhere, so it needs no edges and no vertices: the
+/// face covers its whole support, and the shell and solid name that face rather
+/// than a dart there is none of. The poles stay parametric singularities of
+/// [`Sphere`] — where `normal_at` is degenerate — and are not topology.
+///
+/// The support's own parameterization already faces outward, so the face is
+/// stored unreversed.
 pub fn add_sphere<P: Payload>(
     g: &mut GMap<P>,
     frame: Frame,
     radius: f64,
 ) -> Result<SolidKey, SphereBuildError> {
     g.transaction(|edit| {
-        let meridian = Plane::from_xy(frame.origin, frame.x_dir, frame.z_dir);
-        let axis = frame.z_axis();
-        let arc = add_arc_staged(edit, meridian, radius, FRAC_PI_2, -FRAC_PI_2)?;
-        let face = add_full_revolved_edge_staged_with_surface(
-            edit,
-            arc,
-            axis,
-            Surface::Sphere(Sphere::new(frame, radius)),
-            |point| Point2::new(point.y, -point.x),
-        )?;
-        let seam = edit.face_unchecked(face).dart();
-
-        edit.add_sheet(SheetAttr::new(seam, P::Sheet::default()));
-        Ok(edit.add_solid(SolidAttr::new(P::S::default(), seam, None)))
+        let surface = Surface::Sphere(Sphere::new(frame, radius));
+        let face = edit.add_face(FaceAttr::with_loops(
+            surface,
+            P::F::default(),
+            Vec::new(),
+            HashMap::new(),
+        ));
+        let shell = ShellRoot::at_face(face);
+        edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
+        Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
     })
 }
 
@@ -83,6 +75,7 @@ pub fn translate_face<P: Payload>(
     }
 
     let (mut translated, translated_dart) = face.isolate();
+    let translated_dart = translated_dart.dart_unchecked();
 
     let vertex_keys = translated
         .iter_vertices()
@@ -157,7 +150,7 @@ fn add_extruded_face_staged<P: Payload>(
         .map(|loop_| loop_.dart)
         .collect::<Vec<_>>();
 
-    let top_face_dart = edit.merge(top_face.face());
+    let top_face_dart = edit.merge(top_face.face()).dart_unchecked();
     let top_face_key = *edit.attribute_unchecked::<Cell2>(top_face_dart);
     let top_face_attr = edit.face_attr_unchecked(top_face_key);
     let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.inner().count());
@@ -174,9 +167,16 @@ fn add_extruded_face_staged<P: Payload>(
     // the outward orientation established for the bottom cap.
     let outer_shell = edit.face_attr_unchecked(face_key).outer_unchecked();
     if edit.sheet_key(outer_shell).is_none() {
-        edit.add_sheet(SheetAttr::new(outer_shell, P::Sheet::default()));
+        edit.add_sheet(SheetAttr::new(
+            ShellRoot::Dart(outer_shell),
+            P::Sheet::default(),
+        ));
     }
-    let solid = edit.add_solid(SolidAttr::new(P::S::default(), outer_shell, None));
+    let solid = edit.add_solid(SolidAttr::new(
+        P::S::default(),
+        ShellRoot::Dart(outer_shell),
+        None,
+    ));
     Ok(solid)
 }
 

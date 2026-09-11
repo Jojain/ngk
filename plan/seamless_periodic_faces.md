@@ -2,12 +2,17 @@
 
 Status: **In progress** — milestones 0 (`src/topology/attributes.rs`),
 1 (`src/topology/face.rs`), 2 (`src/topology/unwrapped_face_domain.rs`), 3, 4 and 5 are
-implemented. Milestones 6 and 7 are designed but not built.
+implemented. Milestone 6 is half built: a boundaryless face and its key-rooted
+shell are in (§11.5); a direction closed by a *degeneracy* — a spherical cap —
+is plumbed but not yet produced by any builder, and §11.6 says what is still
+open there. Milestone 7 is designed but not
+built.
 
 Nothing in the tree builds a seam any more: a swept or revolved wall comes out a
-ring, and an intersection crossing a closed direction stays one section. A seam
-now arrives only from outside, and healing takes it apart. §§11.1–11.3 record
-what landed; §11.4 records what was deliberately left to milestone 6.
+ring, a sphere comes out one face with no boundary at all, and an intersection
+crossing a closed direction stays one section. A seam now arrives only from
+outside, and healing takes it apart. §§11.1–11.3 and §11.5 record what landed;
+§11.4 and §11.6 record what was deliberately left open.
 
 **Sections 1 and 8 describe the tree as it was before this work and are kept as
 the rationale, not as a report of the current state.** Where they say "today",
@@ -540,7 +545,7 @@ Each leaves the tree green.
 | 3 | Ring faces | `LoopKind::Wrapping`, cylinder and full-revolve builders, per-direction trimming, tessellation wrap + watertightness test, seam 1-removal in `removal.rs`, Boolean trim on rings. Sphere still seamed. **Done** — see §11.1. |
 | 4 | Seamless intersections | Drop `seam_crossings()` splitting; period-spanning pcurves end to end through imprint and assembly. **Done** — see §11.2. |
 | 5 | `Edge` as an enum + closed edges | The enum and the whole-period span rule land together. 0-removal of the vertex between two arcs that close on each other. **Done** — see §11.3. |
-| 6 | Boundaryless faces | `ShellRoot` and the dart-preferred invariant, degeneracy-closed directions, validation by surface for key-rooted shells, sphere and torus builders, pole-aware tessellation. |
+| 6 | Boundaryless faces | `ShellRoot` and the dart-preferred invariant, degeneracy-closed directions, validation by surface for key-rooted shells, sphere and torus builders, pole-aware tessellation. **Half done** — see §11.5 for what landed and §11.6 for what is open. |
 | 7 | Healing canonicalizer | `seam_removal` pass: a seamed model in, a seamless model out. |
 
 Milestones 0–4 deliver most of the practical benefit — Booleans on cylinders stop
@@ -741,3 +746,112 @@ quad face whose two vertical sides are the same edge, sewn to itself. That is th
 honest fixture: STEP AP242 and every other interchange format writes periodic
 faces cut open (§10.7), so the canonicalizer's subject is an import, and the test
 should say so rather than lean on a builder that correctly refuses to produce one.
+
+### 11.5 Milestone 6, the half that landed
+
+**A sphere is one face and nothing else.** `add_sphere` no longer revolves a
+meridian: it stores a `FaceAttr` carrying `Surface::Sphere` with an empty loop
+vec, and roots the sheet and the solid at that face. `sphere(2.0)` is 0 darts,
+0 vertices, 0 edges, 1 face — the numbers §3.4 predicts. The poles stay
+parametric singularities of `Sphere`; they are not topology.
+`add_full_revolved_edge_staged_with_surface`, which existed only to build the
+seamed sphere, is **deleted**; the apex-to-apex path it wrapped is still reached
+from the general revolve.
+
+**`ShellRoot`** (`src/topology/attributes.rs`) is `Dart(Dart)` or
+`Face { face, sense }`, on `SheetAttr::root` and on both of `SolidAttr`'s shell
+fields. It carries a `sense` that §5.2 did not foresee: a dart root spells its
+shell's direction in the dart, and a face root has neither a dart to `alpha0`
+nor a loop seed to reverse, so a spherical *cavity* — an inner shell facing
+inward — could not otherwise be written at all. Reversing a boundaryless face is
+therefore a property of the root, not of the face.
+
+`validate_shell_roots` at commit enforces §5.3's two rules: a face root must
+resolve, and the face it names must be boundaryless
+(`TopologyEditError::{DanglingShellRoot, ShellRootNotAtDart}`). Nothing else
+stores a key: profiles, edges, vertices and dart-backed faces are untouched.
+
+**Closedness became a geometry question**, as §10.1 warned. `Closeable for Sheet`
+answers a boundaryless sheet from `Surface::is_closed`, which asks whether each
+parameter direction closes either by periodicity or by collapsing to a point at
+both ends of its domain — a sphere both ways, a torus twice periodic, a cylinder
+neither. `validate_shell` routes a face root there and raises
+`SolidShellSurfaceOpen`. Outwardness keeps the volume sign only: a boundaryless
+face has no neighbour across an edge to agree with, and
+`Face::boundaryless_signed_volume` integrates over the surface's own domain
+rather than fanning from a boundary, applying the view's sense explicitly since
+there are no pcurves to carry it.
+
+**Views answer `None` rather than panicking.** `Face::dart`, `Sheet::dart` and
+`Solid::dart` return `Option<Dart>`, each with a `_unchecked` sibling — the same
+convention as `FaceBoundary::outer_unchecked`. `Sheet` carries an anchor rather
+than a dart field, so a boundaryless sheet is still readable in either
+orientation; `Sheet::faces` returns its one face, and every dart traversal is
+empty.
+
+**Merging needed a handle that is not a dart.** `GMap::merge` returns
+`MergeHandle::{Dart, Face}` and `TopologyMerge::with_faces` names the
+boundaryless faces to copy, since a merge is otherwise defined by the darts it
+copies and such a face has none. Callers that only wanted the copied solid's key
+now ask `GMap::solid_key_at`, which is what they meant.
+
+**Tessellation.** A face with no loops meshes over `Surface::domain()` directly.
+The pole handling §8.5 asks for was half there — `tessellate_surface_patch`
+already dropped the collapsed triangle of a quad on a degenerate row — and is now
+complete: a row that collapses across its whole length emits *one* vertex, so the
+fan around a pole is stitched from a single apex instead of a row of coincident
+copies. `modeling::a_sphere_tessellates_into_a_closed_ball` is the
+watertightness check: every mesh edge used by exactly two triangles, at the poles
+and across the cut alike.
+
+**Tests that named the old sphere moved rather than died.** The seam a sphere
+used to carry is still a real shape — a full revolution of an arc with both ends
+on the axis — so `unwrapped_face_domain::a_revolved_meridian_unwraps_the_poles_its_loop_turns_through`
+keeps the pole-corner property on that. The double-pcurve invariant moved to
+`tests/builders/removal.rs::seamed_cylinder_wall`, the hand-built import fixture
+of §11.4, which is now the honest subject for anything about seams.
+
+### 11.6 Milestone 6, the cap: plumbed, and one gap in the spelling
+
+**`LoopKind::Capping { axis, end }`** is in (`DomainEnd` lives in
+`geometry::dim2` beside `Axis2`). A lone period-spanning loop says outright which
+degeneracy closes the face, because travel direction cannot: reversing a face has
+to be a normal flip, and if direction also chose the side, reversing a cap would
+move it to the opposite pole. `UnwrappedFaceDomain::of_face` closes such a loop
+against the degenerate row the same way it closes a pair of wrapping loops
+against a synthesized cut — out to the row, along it for the period, and back —
+which is why `UnwrappedFaceDomainCurve` now carries a *list* of corners rather
+than one.
+
+**The gap: `DomainEnd` can only name a degeneracy that sits at a support's own
+domain boundary.** That is exactly a `Sphere`, whose `v` domain is
+`[-pi/2, pi/2]` with a pole at each end. It is *not*:
+
+- a `Cone`, whose `v` domain is unbounded and whose apex sits somewhere inside
+  it;
+- a `SurfaceOfRevolution`, whose profile direction is the profile *support's*
+  domain — a line's is unbounded — not the swept arc's span.
+
+So `add_full_revolved_open_edge_face` kinds a band with one end on the axis
+`Capping` only when the degenerate row really is a domain end, and falls back to
+`Outer` otherwise, which is the kinding it has always had.
+`revolve_edge_full_turn_from_the_axis_cannot_yet_cap_a_cone` records that, and
+`revolve_edge_full_turn_with_an_end_on_the_axis_has_one_loop` records the case
+that is genuinely an outer loop: a line meeting the axis at right angles sweeps a
+*plane*, whose parameters the rim closes in perfectly well.
+
+Closing the gap means one of:
+
+1. **Store the parameter** — `Capping { axis, at: f64 }`. Total for every
+   support. Costs `LoopKind`'s `Eq`/`Hash` derives, since `f64` has neither.
+2. **Keep `DomainEnd` as a side, and ask the geometry where the row is** — a new
+   `Surface` method answering "the parameter along this axis where you collapse,
+   on this side of here". Per-surface knowledge a cone and a revolution both
+   have; seven implementations.
+
+**Still to build, either way.** `FaceTrimDomain` must answer `Inside`
+unconditionally for a face with no loops at all (§8.6), and
+`split_face_by_imprints` must take a period-spanning imprint on a boundaryless
+face and produce two caps (§8.3). Those two are what
+`boolean_{union,difference}_of_a_block_and_a_sphere_*` fail on — the two
+remaining red tests, with the block-and-cylinder cases beside them passing.

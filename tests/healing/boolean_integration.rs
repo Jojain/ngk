@@ -15,9 +15,9 @@ const BOOLEAN_TOLERANCE: f64 = 1.0e-7;
 fn import(host: &mut GMap<StandardPayload>, tool: Shape<SolidTag>) -> SolidKey {
     let (map, key) = tool.into_map();
     host.transaction(|edit| {
-        let dart = edit.merge(map.solid_unchecked(key));
+        let handle = edit.merge(map.solid_unchecked(key));
         Ok::<_, TopologyEditError>(
-            edit.solid_key(dart)
+            edit.solid_key_at(handle)
                 .expect("imported solid should register"),
         )
     })

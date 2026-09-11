@@ -31,7 +31,10 @@ pub fn run() -> Result<ScriptResult, String> {
     let shape = extrude_profile(profile.profile(), Vector3::new(0.0, 0.0, HEIGHT))
         .map_err(|err| format!("arc extrusion failed: {err:?}"))?;
     let (g, sheet_key) = shape.into_map();
-    let arc_dart = g.sheet_attr_unchecked(sheet_key).dart;
+    let arc_dart = g
+        .sheet_attr_unchecked(sheet_key)
+        .dart()
+        .expect("an extruded sheet is dart-rooted");
 
     let mut hints = VizHints::new();
     for (key, attr) in g.iter_faces() {

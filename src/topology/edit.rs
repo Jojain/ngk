@@ -7,8 +7,10 @@ use std::ops::Deref;
 use thiserror::Error;
 
 use super::Dart;
-use super::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr};
-use super::gmap::{Dim, GMap, MergeTopology};
+use super::attributes::{
+    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
+};
+use super::gmap::{Dim, GMap, MergeHandle, MergeTopology};
 use super::payload::Payload;
 use super::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use super::validation::{GMapValidationError, validate_gmap};
@@ -208,6 +210,18 @@ pub enum TopologyEditError {
     /// A solid shell does not have a registered sheet identity.
     #[error("solid {solid:?} shell at {dart:?} has no registered sheet")]
     MissingSheetRegistration { solid: SolidKey, dart: Dart },
+    /// A shell names a face the map does not hold.
+    #[error("a shell is rooted at face {face:?}, which the map does not hold")]
+    DanglingShellRoot { face: FaceKey },
+    /// A shell names a face that has darts to be rooted at instead.
+    ///
+    /// A key root is the last resort, used only where there is no incidence to
+    /// point at; a face with a boundary must be reached through it.
+    #[error("a shell is rooted at face {face:?}, which has a boundary to root at")]
+    ShellRootNotAtDart { face: FaceKey },
+    /// A solid shell is rooted at a face that no sheet holds.
+    #[error("solid {solid:?} shell at face {face:?} has no registered sheet")]
+    MissingSheetRegistrationAtFace { solid: SolidKey, face: FaceKey },
     /// An involution cannot link a dart to itself.
     #[error("cannot link dart {dart:?} to itself")]
     SameDart { dart: Dart },
@@ -327,7 +341,7 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
     }
 
     /// Copies a topology view into the staged map and returns its remapped handle.
-    pub fn merge<T>(&mut self, topology: T) -> Dart
+    pub fn merge<T>(&mut self, topology: T) -> MergeHandle
     where
         T: MergeTopology<P>,
     {
@@ -576,11 +590,16 @@ impl<'g, P: Payload> TopologyEdit<'g, P> {
                 removed.extend(boundary.darts());
             }
         }
-        for root in self.gmap.iter_sheets().map(|(_, attr)| attr.dart).chain(
-            self.gmap.iter_solids().flat_map(|(_, attr)| {
-                std::iter::once(attr.outer_shell).chain(attr.inner_shells.iter().flatten().copied())
-            }),
-        ) {
+        for root in self
+            .gmap
+            .iter_sheets()
+            .filter_map(|(_, attr)| attr.dart())
+            .chain(
+                self.gmap
+                    .iter_solids()
+                    .flat_map(|(_, attr)| attr.shell_darts()),
+            )
+        {
             if removed.contains(&root) {
                 return Err(TopologyEditError::ReferencedDartDeletion { dart: root });
             }
@@ -790,12 +809,53 @@ fn validate_required_domain_attributes<P: Payload>(g: &GMap<P>) -> Result<(), To
     }
 
     for (solid, attr) in g.solids.iter() {
-        for dart in
-            std::iter::once(attr.outer_shell).chain(attr.inner_shells.iter().flatten().copied())
-        {
-            if g.sheet_key(dart).is_none() {
-                return Err(TopologyEditError::MissingSheetRegistration { solid, dart });
+        for shell in attr.shells() {
+            match shell {
+                ShellRoot::Dart(dart) => {
+                    if g.sheet_key(dart).is_none() {
+                        return Err(TopologyEditError::MissingSheetRegistration { solid, dart });
+                    }
+                }
+                ShellRoot::Face { face, .. } => {
+                    if !g
+                        .sheets
+                        .values()
+                        .any(|sheet| sheet.root.face() == Some(face))
+                    {
+                        return Err(TopologyEditError::MissingSheetRegistrationAtFace {
+                            solid,
+                            face,
+                        });
+                    }
+                }
             }
+        }
+    }
+
+    validate_shell_roots(g)?;
+
+    Ok(())
+}
+
+/// Checks every stored shell root against the dart-preferred invariant.
+///
+/// A root names a face only where there is no dart to point at, so a face root
+/// must resolve to a face the map holds, and that face must be boundaryless.
+/// Both are what keeps a key root self-eliminating: a sheet that gains topology
+/// stops being key-rooted, and a key that outlived its face is a commit error
+/// rather than a dangling reference discovered later.
+fn validate_shell_roots<P: Payload>(g: &GMap<P>) -> Result<(), TopologyEditError> {
+    let roots = g
+        .sheets
+        .values()
+        .map(|attr| attr.root)
+        .chain(g.solids.values().flat_map(|attr| attr.shells()));
+    for face in roots.filter_map(ShellRoot::face) {
+        let attr = g
+            .face_attr(face)
+            .ok_or(TopologyEditError::DanglingShellRoot { face })?;
+        if !attr.is_empty() {
+            return Err(TopologyEditError::ShellRootNotAtDart { face });
         }
     }
 
@@ -1237,10 +1297,19 @@ fn reconcile_transaction_attributes<P: Payload>(
         EditKey::Face,
     )?;
 
+    // A boundaryless shell shares no dart with anything, so it collides with
+    // nothing and contributes no representative to group by.
     let sheets = g
         .sheets
         .iter()
-        .map(|(key, attr)| (key, vec![g.cell_representative(attr.dart, Dim::Three)]))
+        .map(|(key, attr)| {
+            let representatives = attr
+                .dart()
+                .map(|dart| g.cell_representative(dart, Dim::Three))
+                .into_iter()
+                .collect();
+            (key, representatives)
+        })
         .collect();
     reconcile_components(
         g,
@@ -1255,8 +1324,8 @@ fn reconcile_transaction_attributes<P: Payload>(
         .solids
         .iter()
         .map(|(key, attr)| {
-            let representatives = std::iter::once(attr.outer_shell)
-                .chain(attr.inner_shells.iter().flatten().copied())
+            let representatives = attr
+                .shell_darts()
                 .map(|dart| g.cell_representative(dart, Dim::Three))
                 .collect();
             (key, representatives)

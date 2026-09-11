@@ -49,17 +49,42 @@ pub fn tessellate_surface_patch(
         )
     };
 
+    // A row that collapses to a single surface point — a sphere's pole — is one
+    // mesh vertex, not a row of coincident ones. Emitting the whole row would
+    // stitch the fan around the pole from distinct vertices, leaving the mesh
+    // open there even though the surface is not.
+    let collapsed = (0..rows)
+        .map(|j| {
+            (0..=columns).all(|i| {
+                let (u, v) = at(i, j);
+                surface.is_degenerate_at(u, v)
+            })
+        })
+        .collect::<Vec<_>>();
+
     let mut positions = Vec::with_capacity(columns * rows);
     let mut normals = Vec::with_capacity(columns * rows);
+    let mut row_start = Vec::with_capacity(rows);
     for j in 0..rows {
+        row_start.push(positions.len() as u32);
         for i in 0..columns {
             let (u, v) = at(i, j);
             positions.push(surface.point_at(u, v));
             normals.push(surface.normal_at(u, v));
+            if collapsed[j] {
+                break;
+            }
         }
     }
 
-    let index = |i: usize, j: usize| ((j % rows) * columns + (i % columns)) as u32;
+    let index = |i: usize, j: usize| {
+        let j = j % rows;
+        if collapsed[j] {
+            row_start[j]
+        } else {
+            row_start[j] + (i % columns) as u32
+        }
+    };
     let mut indices = Vec::with_capacity(nu * nv * 6);
     for j in 0..nv {
         for i in 0..nu {
