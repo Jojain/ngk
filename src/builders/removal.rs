@@ -156,11 +156,11 @@ pub fn is_removable<P: Payload>(g: &GMap<P>, dart: Dart, dim: Dim) -> bool {
 /// curve it had, which no longer spans the fused edge, and the fused boundary
 /// has no parameter curve until the caller supplies one.
 pub fn remove_cell_staged<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     dart: Dart,
     dim: Dim,
 ) -> Result<CellRemoval, CellRemovalError> {
-    let preflight = Preflight::resolve(g.map(), dart, dim)?;
+    let preflight = Preflight::resolve(edit.map(), dart, dim)?;
     let Preflight {
         cell,
         cell_set,
@@ -169,28 +169,28 @@ pub fn remove_cell_staged<P: Payload>(
         plan,
     } = preflight;
 
-    drop_removed_cell_attribute(g, &cell_set, dart, dim)?;
-    reseed_attributes(g, &cell_set, &seeds);
-    drop_pcurves(g, &cell_set);
+    drop_removed_cell_attribute(edit, &cell_set, dart, dim)?;
+    reseed_attributes(edit, &cell_set, &seeds);
+    drop_pcurves(edit, &cell_set);
 
     for &d in &cell {
         for dimension in [Dim::Zero, Dim::One, Dim::Two, Dim::Three] {
-            if !g.is_free(d, dimension) {
-                g.unlink(dimension, d)?;
+            if !edit.is_free(d, dimension) {
+                edit.unlink(dimension, d)?;
             }
         }
     }
     for (first, second) in pairs {
-        g.link(dim, first, second)?;
+        edit.link(dim, first, second)?;
     }
 
     // Identity bookkeeping runs on the rewired map but before dart ids are
     // compacted, so every dart the plan captured is still addressable.
-    let merged = plan.apply(g);
+    let merged = plan.apply(edit);
 
     let mut removed = cell;
     removed.sort_by_key(|d| d.id());
-    let remap = g.remove_isolated_darts(removed.iter().copied().map(IsolatedDart::new).collect());
+    let remap = edit.remove_isolated_darts(removed.iter().copied().map(IsolatedDart::new).collect());
     Ok(CellRemoval {
         removed,
         merged,
@@ -525,10 +525,10 @@ impl MergePlan {
     }
 
     /// Declares the merged identities and moves the consumed face's other loops.
-    fn apply<P: Payload>(self, g: &mut TopologyEdit<'_, P>) -> MergedCell {
+    fn apply<P: Payload>(self, edit: &mut TopologyEdit<'_, P>) -> MergedCell {
         match self {
             MergePlan::Edges { survivor, consumed } => {
-                g.merge_edges_into(survivor, consumed);
+                edit.merge_edges_into(survivor, consumed);
                 MergedCell::Edges { survivor, consumed }
             }
             MergePlan::Loops {
@@ -538,14 +538,14 @@ impl MergePlan {
                 seed,
                 boundaries,
             } => {
-                g.profile_attr_mut_unchecked(survivor_loop).dart = seed;
+                edit.profile_attr_mut_unchecked(survivor_loop).dart = seed;
                 if let Some(consumed) = consumed_loop {
                     // The absorbed identity is dropped at commit, but until then
                     // it must still name a dart the map holds.
-                    g.profile_attr_mut_unchecked(consumed).dart = seed;
-                    g.merge_profiles_into(survivor_loop, consumed);
+                    edit.profile_attr_mut_unchecked(consumed).dart = seed;
+                    edit.merge_profiles_into(survivor_loop, consumed);
                 }
-                let attr = g.face_attr_mut_unchecked(face);
+                let attr = edit.face_attr_mut_unchecked(face);
                 attr.outer_loop = boundaries[0];
                 attr.inner_loops = boundaries[1..].to_vec();
                 MergedCell::Loops {
@@ -562,13 +562,13 @@ impl MergePlan {
             } => {
                 let profile = profiles[0];
                 for key in profiles {
-                    g.remove_profile(key);
+                    edit.remove_profile(key);
                 }
-                let attr = g.face_attr_mut_unchecked(face);
+                let attr = edit.face_attr_mut_unchecked(face);
                 attr.outer_loop = boundaries[0];
                 attr.inner_loops = boundaries[1..].to_vec();
                 for alias in face_aliases.into_iter().filter(|key| *key != face) {
-                    let attr = g.face_attr_mut_unchecked(alias);
+                    let attr = edit.face_attr_mut_unchecked(alias);
                     attr.outer_loop = boundaries[0];
                     attr.inner_loops.clear();
                     attr.pcurves.clear();
@@ -585,9 +585,9 @@ impl MergePlan {
                 // The fused-loop seeds belonged to the removed cell, so the
                 // reseeded darts the two face attributes now carry are what
                 // relates the two faces' default orientations.
-                let survivor_reference = g.face_attr_unchecked(survivor).outer_loop;
-                let consumed_reference = g.face_attr_unchecked(consumed).outer_loop;
-                let orientation = g
+                let survivor_reference = edit.face_attr_unchecked(survivor).outer_loop;
+                let consumed_reference = edit.face_attr_unchecked(consumed).outer_loop;
+                let orientation = edit
                     .map()
                     .cell_orientation_from_seed(survivor_reference, consumed_reference, Dim::Two)
                     .unwrap_or(Orientation::Same);
@@ -596,15 +596,15 @@ impl MergePlan {
                     .into_iter()
                     .map(|seed| match orientation {
                         Orientation::Same => seed,
-                        Orientation::Reversed => g.alpha(Dim::Zero, seed),
+                        Orientation::Reversed => edit.alpha(Dim::Zero, seed),
                     })
                     .collect::<Vec<_>>();
-                g.face_attr_mut_unchecked(survivor)
+                edit.face_attr_mut_unchecked(survivor)
                     .inner_loops
                     .extend(moved);
 
-                g.merge_profiles_into(survivor_loop, consumed_loop);
-                g.merge_faces_into(survivor, consumed);
+                edit.merge_profiles_into(survivor_loop, consumed_loop);
+                edit.merge_faces_into(survivor, consumed);
                 MergedCell::Faces {
                     survivor,
                     consumed,
@@ -622,26 +622,26 @@ impl MergePlan {
                 mut remaining_inner,
                 transferred,
             } => {
-                let consumed_reference = g.face_attr_unchecked(consumed).outer_loop;
-                let orientation = g
+                let consumed_reference = edit.face_attr_unchecked(consumed).outer_loop;
+                let orientation = edit
                     .map()
                     .cell_orientation_from_seed(survivor_outer, consumed_reference, Dim::Two)
                     .unwrap_or(Orientation::Same);
                 remaining_inner.extend(transferred.into_iter().map(|seed| match orientation {
                     Orientation::Same => seed,
-                    Orientation::Reversed => g.alpha(Dim::Zero, seed),
+                    Orientation::Reversed => edit.alpha(Dim::Zero, seed),
                 }));
 
-                let survivor_attr = g.face_attr_mut_unchecked(survivor);
+                let survivor_attr = edit.face_attr_mut_unchecked(survivor);
                 survivor_attr.outer_loop = survivor_outer;
                 survivor_attr.inner_loops = remaining_inner;
-                let consumed_attr = g.face_attr_mut_unchecked(consumed);
+                let consumed_attr = edit.face_attr_mut_unchecked(consumed);
                 consumed_attr.outer_loop = survivor_outer;
                 consumed_attr.inner_loops.clear();
                 consumed_attr.pcurves.clear();
-                g.remove_profile(survivor_loop);
-                g.remove_profile(consumed_loop);
-                g.merge_faces_into(survivor, consumed);
+                edit.remove_profile(survivor_loop);
+                edit.remove_profile(consumed_loop);
+                edit.merge_faces_into(survivor, consumed);
                 MergedCell::Faces {
                     survivor,
                     consumed,
@@ -831,32 +831,32 @@ fn replacement_seeds<P: Payload>(
 /// until commit reconciles it. All of them go together, and commit treats the
 /// merge that named them as spent.
 fn drop_removed_cell_attribute<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     cell: &HashSet<Dart>,
     dart: Dart,
     dim: Dim,
 ) -> Result<(), CellRemovalError> {
     let dropped = match dim {
         Dim::Zero => {
-            let keys = g
+            let keys = edit
                 .map()
                 .iter_vertices()
                 .filter(|(_, attr)| cell.contains(&attr.dart))
                 .map(|(key, _)| key)
                 .collect::<Vec<_>>();
             keys.iter()
-                .filter(|&&key| g.remove_vertex(key).is_some())
+                .filter(|&&key| edit.remove_vertex(key).is_some())
                 .count()
         }
         _ => {
-            let keys = g
+            let keys = edit
                 .map()
                 .iter_edges()
                 .filter(|(_, attr)| cell.contains(&attr.dart))
                 .map(|(key, _)| key)
                 .collect::<Vec<_>>();
             keys.iter()
-                .filter(|&&key| g.remove_edge(key).is_some())
+                .filter(|&&key| edit.remove_edge(key).is_some())
                 .count()
         }
     };
@@ -873,7 +873,7 @@ fn drop_removed_cell_attribute<P: Payload>(
 /// with it; a loop or shell seed with none is left for [`MergePlan`], which is
 /// the only caller that can produce one and already knows the answer.
 fn reseed_attributes<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     cell: &HashSet<Dart>,
     seeds: &HashMap<Dart, Option<Dart>>,
 ) {
@@ -884,57 +884,57 @@ fn reseed_attributes<P: Payload>(
     };
 
     let vertices = reseeded(
-        g.map().iter_vertices().map(|(key, attr)| (key, attr.dart)),
+        edit.map().iter_vertices().map(|(key, attr)| (key, attr.dart)),
         seeds,
     );
     for (key, dart) in vertices {
         match dart {
-            Some(dart) => g.vertex_attr_mut_unchecked(key).dart = dart,
+            Some(dart) => edit.vertex_attr_mut_unchecked(key).dart = dart,
             None => {
-                g.remove_vertex(key);
+                edit.remove_vertex(key);
             }
         }
     }
 
     let edges = reseeded(
-        g.map().iter_edges().map(|(key, attr)| (key, attr.dart)),
+        edit.map().iter_edges().map(|(key, attr)| (key, attr.dart)),
         seeds,
     );
     for (key, dart) in edges {
         match dart {
-            Some(dart) => g.edge_attr_mut_unchecked(key).dart = dart,
+            Some(dart) => edit.edge_attr_mut_unchecked(key).dart = dart,
             None => {
-                g.remove_edge(key);
+                edit.remove_edge(key);
             }
         }
     }
 
     let profiles = reseeded(
-        g.map().iter_profiles().map(|(key, attr)| (key, attr.dart)),
+        edit.map().iter_profiles().map(|(key, attr)| (key, attr.dart)),
         seeds,
     );
     for (key, dart) in profiles
         .into_iter()
         .filter_map(|(key, dart)| Some((key, dart?)))
     {
-        g.profile_attr_mut_unchecked(key).dart = dart;
+        edit.profile_attr_mut_unchecked(key).dart = dart;
     }
 
     // A shell keeps every dart the removal does not delete, so a seed that has
     // no Def. 59 replacement can still be re-rooted anywhere in the same shell.
     let sheets = reseeded(
-        g.map().iter_sheets().map(|(key, attr)| (key, attr.dart)),
+        edit.map().iter_sheets().map(|(key, attr)| (key, attr.dart)),
         seeds,
     );
     for (key, dart) in sheets {
         let dart =
-            dart.or_else(|| shell_fallback(g.map(), cell, g.map().sheet_attr_unchecked(key).dart));
+            dart.or_else(|| shell_fallback(edit.map(), cell, edit.map().sheet_attr_unchecked(key).dart));
         if let Some(dart) = dart {
-            g.sheet_attr_mut_unchecked(key).dart = dart;
+            edit.sheet_attr_mut_unchecked(key).dart = dart;
         }
     }
 
-    let faces = g
+    let faces = edit
         .map()
         .iter_faces()
         .filter(|(_, attr)| {
@@ -945,14 +945,14 @@ fn reseed_attributes<P: Payload>(
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
     for key in faces {
-        let attr = g.face_attr_mut_unchecked(key);
+        let attr = edit.face_attr_mut_unchecked(key);
         replace(&mut attr.outer_loop);
         for dart in &mut attr.inner_loops {
             replace(dart);
         }
     }
 
-    let solids = g
+    let solids = edit
         .map()
         .iter_solids()
         .filter(|(_, attr)| {
@@ -963,7 +963,7 @@ fn reseed_attributes<P: Payload>(
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
     for key in solids {
-        let attr = g.solid_attr_mut_unchecked(key);
+        let attr = edit.solid_attr_mut_unchecked(key);
         replace(&mut attr.outer_shell);
         for dart in attr.inner_shells.iter_mut().flatten() {
             replace(dart);
@@ -992,15 +992,15 @@ fn reseeded<K>(
 /// A pcurve describes one boundary dart of one face. When that dart disappears
 /// the entry has no meaning left, and the caller re-inserts the fused
 /// boundary's pcurve after the removal.
-fn drop_pcurves<P: Payload>(g: &mut TopologyEdit<'_, P>, cell: &HashSet<Dart>) {
-    let faces = g
+fn drop_pcurves<P: Payload>(edit: &mut TopologyEdit<'_, P>, cell: &HashSet<Dart>) {
+    let faces = edit
         .map()
         .iter_faces()
         .filter(|(_, attr)| attr.pcurves.keys().any(|dart| cell.contains(dart)))
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
     for key in faces {
-        g.face_attr_mut_unchecked(key)
+        edit.face_attr_mut_unchecked(key)
             .pcurves
             .retain(|dart, _| !cell.contains(dart));
     }

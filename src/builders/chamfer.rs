@@ -47,20 +47,20 @@ pub fn chamfer<P: Payload, T: Into<ChamferTarget>>(
     target: T,
     distance: f64,
 ) -> Result<(), ChamferError> {
-    g.transaction(|g| {
+    g.transaction(|edit| {
         validate_distance(distance)?;
 
         match target.into() {
             ChamferTarget::Edges(edges) => {
                 for edge in edges {
-                    chamfer_solid_edge(g, edge, distance)?;
+                    chamfer_solid_edge(edit, edge, distance)?;
                 }
                 Ok(())
             }
-            ChamferTarget::Profile(profile) => chamfer_profile(g, profile, distance),
+            ChamferTarget::Profile(profile) => chamfer_profile(edit, profile, distance),
             ChamferTarget::Vertices(vertices) => {
                 for vertex in vertices {
-                    chamfer_vertex(g, vertex, distance)?;
+                    chamfer_vertex(edit, vertex, distance)?;
                 }
                 Ok(())
             }
@@ -71,58 +71,58 @@ pub fn chamfer<P: Payload, T: Into<ChamferTarget>>(
 /// Replaces one standalone-profile 0-cell with two offset vertices and a new
 /// edge between them.
 fn chamfer_profile_corner<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     vertex_key: VertexKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
-    let vertex_dart = g
+    let vertex_dart = edit
         .vertex(vertex_key)
         .ok_or(ChamferError::MissingChamferVertex { vertex: vertex_key })?
         .dart;
-    let (incoming_end, outgoing_start) = profile_corner_darts(g, vertex_dart)?;
-    let vertex = vertex_point(g, incoming_end)?;
-    let previous = vertex_point(g, g.alpha(Dim::Zero, incoming_end))?;
-    let next = vertex_point(g, g.alpha(Dim::Zero, outgoing_start))?;
+    let (incoming_end, outgoing_start) = profile_corner_darts(edit, vertex_dart)?;
+    let vertex = vertex_point(edit, incoming_end)?;
+    let previous = vertex_point(edit, edit.alpha(Dim::Zero, incoming_end))?;
+    let next = vertex_point(edit, edit.alpha(Dim::Zero, outgoing_start))?;
 
-    let incoming_edge = line_edge_dart(g, incoming_end)?;
-    let outgoing_edge = line_edge_dart(g, outgoing_start)?;
+    let incoming_edge = line_edge_dart(edit, incoming_end)?;
+    let outgoing_edge = line_edge_dart(edit, outgoing_start)?;
     let incoming_offset = offset_point(incoming_edge, vertex, previous, distance)?;
     let outgoing_offset = offset_point(outgoing_edge, vertex, next, distance)?;
     let corner_key = vertex_key;
 
     // Alpha1 joins the two edge-end occurrences into the original corner.
     // Unlinking it splits that 0-cell before the replacement edge is inserted.
-    g.unlink(Dim::One, incoming_end)
+    edit.unlink(Dim::One, incoming_end)
         .map_err(ChamferError::from)?;
-    g.vertex_attr_mut(corner_key)
+    edit.vertex_attr_mut(corner_key)
         .expect("validated chamfer vertex must remain registered")
         .dart = incoming_end;
-    let outgoing_key = g.add_vertex_split_from(
+    let outgoing_key = edit.add_vertex_split_from(
         corner_key,
         VertexAttr::new(outgoing_start, vertex, P::V::default()),
     );
-    g.vertex_attr_mut(corner_key)
+    edit.vertex_attr_mut(corner_key)
         .expect("validated chamfer vertex must remain registered")
         .point = incoming_offset;
-    g.vertex_attr_mut(outgoing_key)
+    edit.vertex_attr_mut(outgoing_key)
         .expect("validated chamfer vertex must remain registered")
         .point = outgoing_offset;
-    reset_line_edge(g, incoming_end)?;
-    reset_line_edge(g, outgoing_start)?;
+    reset_line_edge(edit, incoming_end)?;
+    reset_line_edge(edit, outgoing_start)?;
 
     // The new edge closes the gap by alpha1-sewing its two endpoints to the
     // now-distinct incoming and outgoing profile vertices.
     let chamfer_edge = add_edge_staged(
-        g,
+        edit,
         incoming_offset,
         outgoing_offset,
         Curve::line(incoming_offset, outgoing_offset),
     )
     .map_err(|_| ChamferError::ZeroLengthEdge { dart: incoming_end })?;
-    let chamfer_start = g.edge_attr_unchecked(chamfer_edge).dart;
-    let chamfer_end = g.alpha(Dim::Zero, chamfer_start);
-    sew(g, incoming_end, chamfer_start)?;
-    sew(g, chamfer_end, outgoing_start)?;
+    let chamfer_start = edit.edge_attr_unchecked(chamfer_edge).dart;
+    let chamfer_end = edit.alpha(Dim::Zero, chamfer_start);
+    sew(edit, incoming_end, chamfer_start)?;
+    sew(edit, chamfer_end, outgoing_start)?;
 
     Ok(())
 }
@@ -192,12 +192,12 @@ struct SolidEdgeChamfer {
 /// Removes the four face patches surrounding a manifold edge and replaces
 /// them with one planar or ruled chamfer face.
 fn chamfer_solid_edge<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     edge: EdgeKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
-    let mut prepared = prepare_solid_edge_chamfer(g, edge, distance)?;
-    orient_solid_edge_chamfer(g, &mut prepared);
+    let mut prepared = prepare_solid_edge_chamfer(edit, edge, distance)?;
+    orient_solid_edge_chamfer(edit, &mut prepared);
     let mut patch_faces = HashSet::new();
     let mut section_edges = Vec::with_capacity(4);
 
@@ -206,11 +206,11 @@ fn chamfer_solid_edge<P: Payload>(
         let face = prepared.incident_faces[face_index];
         let points = prepared.face_offsets[face_index];
         let imprint = if prepared.curved {
-            chamfer_curve_imprint(g, edge, face, &prepared.trim_curves[face_index], points)?
+            chamfer_curve_imprint(edit, edge, face, &prepared.trim_curves[face_index], points)?
         } else {
-            planar_line_imprint(g, edge, face, points)?
+            planar_line_imprint(edit, edge, face, points)?
         };
-        let (patch, section) = split_chamfer_face(g, face, imprint, |g, candidate| {
+        let (patch, section) = split_chamfer_face(edit, face, imprint, |g, candidate| {
             face_contains_edge(g, candidate, edge)
         })?;
         patch_faces.insert(patch);
@@ -226,8 +226,8 @@ fn chamfer_solid_edge<P: Payload>(
             prepared.face_offsets[1][endpoint_index],
         ];
         let endpoint = prepared.endpoints[endpoint_index];
-        let imprint = planar_line_imprint(g, edge, face, points)?;
-        let (patch, section) = split_chamfer_face(g, face, imprint, |g, candidate| {
+        let imprint = planar_line_imprint(edit, edge, face, points)?;
+        let (patch, section) = split_chamfer_face(edit, face, imprint, |g, candidate| {
             face_contains_vertex(g, candidate, endpoint)
         })?;
         patch_faces.insert(patch);
@@ -244,7 +244,7 @@ fn chamfer_solid_edge<P: Payload>(
         base_curve: prepared.trim_curves[0].clone(),
         direction: prepared.face_offsets[1][0] - prepared.face_offsets[0][0],
     });
-    replace_face_patch(g, &patch_faces, &section_edges, &corners, geometry)
+    replace_face_patch(edit, &patch_faces, &section_edges, &corners, geometry)
 }
 
 /// Validates a solid edge and computes every trim curve and offset point
@@ -360,12 +360,12 @@ fn prepare_solid_edge_chamfer<P: Payload>(
 /// Splits one face by an imprint and identifies both the patch to remove and
 /// the section edge that remains on the survivor.
 fn split_chamfer_face<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     imprint: FaceImprint,
     is_patch: impl Fn(&GMap<P>, FaceKey) -> bool,
 ) -> Result<(FaceKey, EdgeKey), ChamferError> {
-    let splits = split_face_by_imprints_staged(g, face, &[imprint])
+    let splits = split_face_by_imprints_staged(edit, face, &[imprint])
         .map_err(|_| ChamferError::ChamferFaceSplitFailed { face })?;
     let split = splits
         .into_iter()
@@ -373,7 +373,7 @@ fn split_chamfer_face<P: Payload>(
         .ok_or(ChamferError::ChamferFaceSplitFailed { face })?;
     let patch = [split.first, split.second]
         .into_iter()
-        .find(|candidate| is_patch(g, *candidate))
+        .find(|candidate| is_patch(edit, *candidate))
         .ok_or(ChamferError::ChamferFaceSplitFailed { face })?;
     let section = split
         .sections
@@ -484,16 +484,16 @@ fn orient_solid_edge_chamfer<P: Payload>(g: &GMap<P>, chamfer: &mut SolidEdgeCha
 /// Dispatches a profile to either the batched solid-rim algorithm or the
 /// sequential standalone-corner algorithm.
 fn chamfer_profile<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     profile: ProfileKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
-    let profile_view = g
+    let profile_view = edit
         .profile(profile)
         .ok_or(ChamferError::UnsupportedChamferTarget)?;
     let edges = profile_view.edges();
     if edges.iter().any(|edge| !edge.faces().is_empty()) {
-        return chamfer_solid_profile(g, profile, distance);
+        return chamfer_solid_profile(edit, profile, distance);
     }
 
     let closed = edges
@@ -506,7 +506,7 @@ fn chamfer_profile<P: Payload>(
         .map(|edge| edge.end().key())
         .collect::<Vec<_>>();
     for vertex in corner_vertices {
-        chamfer_profile_corner(g, vertex, distance)?;
+        chamfer_profile_corner(edit, vertex, distance)?;
     }
     Ok(())
 }
@@ -514,19 +514,19 @@ fn chamfer_profile<P: Payload>(
 /// Interprets a domain vertex by incidence: a vertex without faces is a 2D
 /// profile corner; a vertex with faces is a solid-boundary selection.
 fn chamfer_vertex<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     vertex: VertexKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
-    let is_standalone_profile_vertex = g
+    let is_standalone_profile_vertex = edit
         .vertex(vertex)
         .ok_or(ChamferError::MissingChamferVertex { vertex })?
         .faces()
         .is_empty();
     if is_standalone_profile_vertex {
-        chamfer_profile_corner(g, vertex, distance)
+        chamfer_profile_corner(edit, vertex, distance)
     } else {
-        chamfer_solid_vertex(g, vertex, distance)
+        chamfer_solid_vertex(edit, vertex, distance)
     }
 }
 
@@ -547,11 +547,11 @@ struct SolidProfileChamfer {
 /// Replaces a complete planar outer profile with an inset cap and one chamfer
 /// face per profile edge.
 fn chamfer_solid_profile<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     profile: ProfileKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
-    let prepared = prepare_solid_profile_chamfer(g, profile, distance)?;
+    let prepared = prepare_solid_profile_chamfer(edit, profile, distance)?;
     let mut patch_faces = HashSet::from([prepared.target_face]);
     let mut section_edges = Vec::with_capacity(prepared.edges.len());
 
@@ -562,8 +562,8 @@ fn chamfer_solid_profile<P: Payload>(
         let face = prepared.side_faces[index];
         let next = (index + 1) % prepared.edges.len();
         let points = [prepared.lower_corners[index], prepared.lower_corners[next]];
-        let imprint = planar_line_imprint(g, edge, face, points)?;
-        let (patch, section) = split_chamfer_face(g, face, imprint, |g, candidate| {
+        let imprint = planar_line_imprint(edit, edge, face, points)?;
+        let (patch, section) = split_chamfer_face(edit, face, imprint, |g, candidate| {
             face_contains_edge(g, candidate, edge)
         })?;
         patch_faces.insert(patch);
@@ -572,8 +572,8 @@ fn chamfer_solid_profile<P: Payload>(
 
     // Removing the complete patch before adding replacements avoids the
     // side-effects of sequentially chamfering adjacent GMap cells.
-    let boundary_darts = remove_face_patch(g, &patch_faces, &section_edges)?;
-    add_profile_chamfer_faces(g, &prepared, &boundary_darts)
+    let boundary_darts = remove_face_patch(edit, &patch_faces, &section_edges)?;
+    add_profile_chamfer_faces(edit, &prepared, &boundary_darts)
 }
 
 /// Validates the current first-pass solid-profile domain and computes its cap
@@ -771,13 +771,13 @@ fn cross2(first: nalgebra::Vector2<f64>, second: nalgebra::Vector2<f64>) -> f64 
 /// Adds the inset cap and bevel ring, then alpha2-sews every matching boundary
 /// into the surviving shell.
 fn add_profile_chamfer_faces<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     prepared: &SolidProfileChamfer,
     boundary_darts: &[Dart],
 ) -> Result<(), ChamferError> {
-    let top_profile = add_polygon_staged(g, &prepared.inset_corners);
-    add_face_staged(g, top_profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
-    let top_darts = g
+    let top_profile = add_polygon_staged(edit, &prepared.inset_corners);
+    add_face_staged(edit, top_profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
+    let top_darts = edit
         .profile_unchecked(top_profile)
         .darts()
         .step_by(2)
@@ -799,10 +799,10 @@ fn add_profile_chamfer_faces<P: Payload>(
         if candidate_normal.dot(&outward) < 0.0 {
             corners.reverse();
         }
-        let profile = add_polygon_staged(g, &corners);
-        add_face_staged(g, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
+        let profile = add_polygon_staged(edit, &corners);
+        add_face_staged(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
         chamfer_darts.push(
-            g.profile_unchecked(profile)
+            edit.profile_unchecked(profile)
                 .darts()
                 .step_by(2)
                 .collect::<Vec<_>>(),
@@ -812,16 +812,16 @@ fn add_profile_chamfer_faces<P: Payload>(
     // Each bevel quad is sewn to the lower survivor, the inset cap, and the
     // following bevel quad along its shared diagonal.
     for index in 0..prepared.edges.len() {
-        sew_matching_boundary(g, boundary_darts[index], &chamfer_darts[index])?;
-        sew_matching_boundary(g, top_darts[index], &chamfer_darts[index])?;
+        sew_matching_boundary(edit, boundary_darts[index], &chamfer_darts[index])?;
+        sew_matching_boundary(edit, top_darts[index], &chamfer_darts[index])?;
         let next = (index + 1) % prepared.edges.len();
         let diagonal = find_boundary_dart(
-            g,
+            edit,
             &chamfer_darts[index],
             prepared.inset_corners[next],
             prepared.lower_corners[next],
         )?;
-        sew_matching_boundary(g, diagonal, &chamfer_darts[next])?;
+        sew_matching_boundary(edit, diagonal, &chamfer_darts[next])?;
     }
     Ok(())
 }
@@ -829,20 +829,20 @@ fn add_profile_chamfer_faces<P: Payload>(
 /// Finds the geometrically coincident candidate edge, orients its dart to the
 /// boundary start vertex, and alpha2-sews the two face boundaries.
 fn sew_matching_boundary<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     boundary: Dart,
     candidates: &[Dart],
 ) -> Result<(), ChamferError> {
-    let start = vertex_point(g, boundary)?;
-    let end = vertex_point(g, g.alpha(Dim::Zero, boundary))?;
-    let candidate = find_boundary_dart(g, candidates, start, end)?;
-    let candidate_start = vertex_point(g, candidate)?;
+    let start = vertex_point(edit, boundary)?;
+    let end = vertex_point(edit, edit.alpha(Dim::Zero, boundary))?;
+    let candidate = find_boundary_dart(edit, candidates, start, end)?;
+    let candidate_start = vertex_point(edit, candidate)?;
     let oriented = if (candidate_start - start).norm() <= LINEAR_TOLERANCE {
         candidate
     } else {
-        g.alpha(Dim::Zero, candidate)
+        edit.alpha(Dim::Zero, candidate)
     };
-    g.sew(Dim::Two, oriented, boundary)
+    edit.sew(Dim::Two, oriented, boundary)
         .map_err(|_| ChamferError::SewFailed {
             dim: Dim::Two,
             first: oriented,
@@ -876,11 +876,11 @@ fn find_boundary_dart<P: Payload>(
 /// Removes the three corner patches around a trihedral vertex and replaces
 /// them with one outward-oriented triangular chamfer face.
 fn chamfer_solid_vertex<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     vertex: VertexKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
-    let vertex_view = g
+    let vertex_view = edit
         .vertex(vertex)
         .ok_or(ChamferError::MissingChamferVertex { vertex })?;
     let edges = vertex_view.edges();
@@ -920,7 +920,7 @@ fn chamfer_solid_vertex<P: Payload>(
     let mut patch_faces = HashSet::new();
     let mut section_edges = Vec::with_capacity(3);
     for face in face_keys.iter().copied() {
-        let face_edges = g
+        let face_edges = edit
             .face_unchecked(face)
             .edges()
             .into_iter()
@@ -932,8 +932,8 @@ fn chamfer_solid_vertex<P: Payload>(
         }
         let points = [offsets[&face_edges[0]], offsets[&face_edges[1]]];
         let reference_edge = face_edges[0];
-        let imprint = planar_line_imprint(g, reference_edge, face, points)?;
-        let (patch, section) = split_chamfer_face(g, face, imprint, |g, candidate| {
+        let imprint = planar_line_imprint(edit, reference_edge, face, points)?;
+        let (patch, section) = split_chamfer_face(edit, face, imprint, |g, candidate| {
             face_contains_vertex(g, candidate, vertex)
         })?;
         patch_faces.insert(patch);
@@ -946,7 +946,7 @@ fn chamfer_solid_vertex<P: Payload>(
         .collect::<Vec<_>>();
     let outward = face_keys
         .iter()
-        .filter_map(|face| g.face(*face))
+        .filter_map(|face| edit.face(*face))
         .map(|face| *face.normal_at(0.0, 0.0))
         .sum::<nalgebra::Vector3<f64>>();
     if (corners[1] - corners[0])
@@ -956,7 +956,7 @@ fn chamfer_solid_vertex<P: Payload>(
     {
         corners.reverse();
     }
-    replace_face_patch(g, &patch_faces, &section_edges, &corners, None)
+    replace_face_patch(edit, &patch_faces, &section_edges, &corners, None)
 }
 
 fn is_linear_curve(curve: Option<&Curve>) -> bool {
@@ -976,25 +976,25 @@ struct CurvedChamferFace {
 /// Removes a connected face patch, creates one replacement face, and sews it
 /// to every surviving section edge.
 fn replace_face_patch<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     patch_faces: &HashSet<FaceKey>,
     section_edges: &[EdgeKey],
     corners: &[Point3],
     curved_geometry: Option<CurvedChamferFace>,
 ) -> Result<(), ChamferError> {
-    let boundary_darts = remove_face_patch(g, patch_faces, section_edges)?;
-    let profile = add_polygon_staged(g, corners);
+    let boundary_darts = remove_face_patch(edit, patch_faces, section_edges)?;
+    let profile = add_polygon_staged(edit, corners);
     match curved_geometry {
-        Some(geometry) => add_curved_chamfer_face(g, profile, corners, geometry)?,
-        None => add_face_staged(g, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?,
+        Some(geometry) => add_curved_chamfer_face(edit, profile, corners, geometry)?,
+        None => add_face_staged(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?,
     };
-    let candidates = g
+    let candidates = edit
         .profile_unchecked(profile)
         .darts()
         .step_by(2)
         .collect::<Vec<_>>();
     for boundary in boundary_darts {
-        sew_matching_boundary(g, boundary, &candidates)?;
+        sew_matching_boundary(edit, boundary, &candidates)?;
     }
     Ok(())
 }
@@ -1005,24 +1005,24 @@ fn replace_face_patch<P: Payload>(
 /// The returned darts are remapped survivor-side representatives, ready for
 /// alpha2 sewing after compacting the removed isolated darts.
 fn remove_face_patch<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     patch_faces: &HashSet<FaceKey>,
     section_edges: &[EdgeKey],
 ) -> Result<Vec<Dart>, ChamferError> {
     let patch_darts = patch_faces
         .iter()
         .flat_map(|face| {
-            let root = g.face_attr_unchecked(*face).outer_loop;
-            g.orbit(root, g.orbit_indices(Dim::Two)).collect::<Vec<_>>()
+            let root = edit.face_attr_unchecked(*face).outer_loop;
+            edit.orbit(root, edit.orbit_indices(Dim::Two)).collect::<Vec<_>>()
         })
         .collect::<HashSet<_>>();
     let mut boundary_darts = section_edges
         .iter()
         .map(|edge| {
-            g.edge_unchecked(*edge)
+            edit.edge_unchecked(*edge)
                 .darts()
                 .find_map(|dart| {
-                    let opposite = g.alpha(Dim::Two, dart);
+                    let opposite = edit.alpha(Dim::Two, dart);
                     (patch_darts.contains(&dart) && !patch_darts.contains(&opposite))
                         .then_some(opposite)
                 })
@@ -1035,39 +1035,39 @@ fn remove_face_patch<P: Payload>(
 
     // A lower-dimensional cell is deleted only when its complete orbit lies in
     // the removed patch; section cells retain their existing domain identity.
-    let removed_edges = g
+    let removed_edges = edit
         .iter_edges()
         .filter_map(|(key, attr)| {
-            g.orbit(attr.dart, g.orbit_indices(Dim::One))
+            edit.orbit(attr.dart, edit.orbit_indices(Dim::One))
                 .all(|dart| patch_darts.contains(&dart))
                 .then_some(key)
         })
         .collect::<Vec<_>>();
-    let removed_vertices = g
+    let removed_vertices = edit
         .iter_vertices()
         .filter_map(|(key, attr)| {
-            g.orbit(attr.dart, g.orbit_indices(Dim::Zero))
+            edit.orbit(attr.dart, edit.orbit_indices(Dim::Zero))
                 .all(|dart| patch_darts.contains(&dart))
                 .then_some(key)
         })
         .collect::<Vec<_>>();
-    let removed_profiles = g
+    let removed_profiles = edit
         .iter_profiles()
         .filter_map(|(key, attr)| patch_darts.contains(&attr.dart).then_some(key))
         .collect::<Vec<_>>();
 
     let boundary_vertices = boundary_darts
         .iter()
-        .flat_map(|dart| [*dart, g.alpha(Dim::Zero, *dart)])
-        .filter_map(|dart| g.cell_key::<Cell0>(dart).map(|key| (key, dart)))
+        .flat_map(|dart| [*dart, edit.alpha(Dim::Zero, *dart)])
+        .filter_map(|dart| edit.cell_key::<Cell0>(dart).map(|key| (key, dart)))
         .collect::<HashMap<_, _>>();
 
     // Detach the patch from the survivor before removing any attributes or
     // darts, preserving valid representatives on the survivor side.
     for dart in patch_darts.iter().copied() {
-        let opposite = g.alpha(Dim::Two, dart);
+        let opposite = edit.alpha(Dim::Two, dart);
         if !patch_darts.contains(&opposite) && opposite != dart {
-            g.unlink(Dim::Two, dart).map_err(ChamferError::from)?;
+            edit.unlink(Dim::Two, dart).map_err(ChamferError::from)?;
         }
     }
 
@@ -1076,30 +1076,30 @@ fn remove_face_patch<P: Payload>(
         .copied()
         .zip(boundary_darts.iter().copied())
     {
-        g.edge_attr_mut(edge)
+        edit.edge_attr_mut(edge)
             .ok_or(ChamferError::MissingChamferEdge { edge })?
-            .dart = g.cell_representative(dart, Dim::One);
+            .dart = edit.cell_representative(dart, Dim::One);
     }
     for (vertex, dart) in boundary_vertices {
-        let representative = g.cell_representative(dart, Dim::Zero);
-        if let Some(attr) = g.vertex_attr_mut(vertex) {
+        let representative = edit.cell_representative(dart, Dim::Zero);
+        if let Some(attr) = edit.vertex_attr_mut(vertex) {
             attr.dart = representative;
         }
     }
     // Sheet and solid roots are arbitrary representative darts. Move any root
     // inside the removed patch to a survivor before compaction remaps darts.
-    let sheet_roots = g
+    let sheet_roots = edit
         .iter_sheets()
         .map(|(key, sheet)| (key, sheet.dart))
         .collect::<Vec<_>>();
     for (key, dart) in sheet_roots {
         if patch_darts.contains(&dart) {
-            g.sheet_attr_mut_unchecked(key).dart = survivor;
+            edit.sheet_attr_mut_unchecked(key).dart = survivor;
         }
     }
-    let solid_keys = g.iter_solids().map(|(key, _)| key).collect::<Vec<_>>();
+    let solid_keys = edit.iter_solids().map(|(key, _)| key).collect::<Vec<_>>();
     for solid in solid_keys {
-        let attr = g.solid_attr_mut_unchecked(solid);
+        let attr = edit.solid_attr_mut_unchecked(solid);
         if patch_darts.contains(&attr.outer_shell) {
             attr.outer_shell = survivor;
         }
@@ -1113,26 +1113,26 @@ fn remove_face_patch<P: Payload>(
     }
 
     for face in patch_faces {
-        g.remove_face(*face);
+        edit.remove_face(*face);
     }
     for profile in removed_profiles {
-        g.remove_profile(profile);
+        edit.remove_profile(profile);
     }
     for edge in removed_edges {
-        g.remove_edge(edge);
+        edit.remove_edge(edge);
     }
     for vertex in removed_vertices {
-        g.remove_vertex(vertex);
+        edit.remove_vertex(vertex);
     }
     for dart in patch_darts.iter().copied() {
         for dim in [Dim::Zero, Dim::One, Dim::Two, Dim::Three] {
-            if !g.is_free(dart, dim) {
-                g.unlink(dim, dart).map_err(ChamferError::from)?;
+            if !edit.is_free(dart, dim) {
+                edit.unlink(dim, dart).map_err(ChamferError::from)?;
             }
         }
     }
     let dart_remap =
-        g.remove_isolated_darts(patch_darts.into_iter().map(IsolatedDart::new).collect());
+        edit.remove_isolated_darts(patch_darts.into_iter().map(IsolatedDart::new).collect());
     for dart in &mut boundary_darts {
         *dart = dart_remap[dart];
     }
@@ -1142,12 +1142,12 @@ fn remove_face_patch<P: Payload>(
 /// Registers a four-edge ruled face whose opposite boundaries are translated
 /// copies of the selected NURBS edge.
 fn add_curved_chamfer_face<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     profile: ProfileKey,
     corners: &[Point3],
     geometry: CurvedChamferFace,
 ) -> Result<FaceKey, ChamferError> {
-    let edges = g
+    let edges = edit
         .profile_unchecked(profile)
         .edges()
         .into_iter()
@@ -1174,7 +1174,7 @@ fn add_curved_chamfer_face<P: Payload>(
         Curve::line(corners[3], corners[0]),
     ];
     for ((edge, _), curve) in edges.iter().zip(boundary_curves) {
-        g.edge_attr_mut(*edge)
+        edit.edge_attr_mut(*edge)
             .ok_or(ChamferError::MissingChamferEdge { edge: *edge })?
             .curve = curve;
     }
@@ -1205,8 +1205,8 @@ fn add_curved_chamfer_face<P: Payload>(
         .zip(uv)
         .map(|((_, dart), (start, end))| (*dart, TrimmedCurve2::segment(start, end)))
         .collect::<HashMap<_, _>>();
-    let loop_dart = g.profile_attr_unchecked(profile).dart;
-    Ok(g.add_face(FaceAttr::with_pcurves(
+    let loop_dart = edit.profile_attr_unchecked(profile).dart;
+    Ok(edit.add_face(FaceAttr::with_pcurves(
         Surface::Ruled(RuledSurface::new(geometry.base_curve, geometry.direction)),
         P::F::default(),
         loop_dart,
@@ -1292,16 +1292,16 @@ fn offset_point(
 
 /// Rebuilds a line curve after one of its endpoint vertex positions changed.
 fn reset_line_edge<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     dart: Dart,
 ) -> Result<(), ChamferError> {
-    let edge_dart = line_edge_dart(g, dart)?;
-    let start = vertex_point(g, edge_dart)?;
-    let end = vertex_point(g, g.alpha(Dim::Zero, edge_dart))?;
-    let edge_key = g
+    let edge_dart = line_edge_dart(edit, dart)?;
+    let start = vertex_point(edit, edge_dart)?;
+    let end = vertex_point(edit, edit.alpha(Dim::Zero, edge_dart))?;
+    let edge_key = edit
         .cell_key::<Cell1>(edge_dart)
         .ok_or(ChamferError::MissingEdgeCurve { dart: edge_dart })?;
-    let attr = g
+    let attr = edit
         .edge_attr_mut(edge_key)
         .expect("validated chamfer edge must remain registered");
     attr.curve = Curve::line(start, end);
@@ -1316,11 +1316,11 @@ fn vertex_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Point3, ChamferEr
 
 /// Alpha1-sews two standalone profile edge-end occurrences.
 fn sew<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     first: Dart,
     second: Dart,
 ) -> Result<(), ChamferError> {
-    g.sew(Dim::One, first, second)
+    edit.sew(Dim::One, first, second)
         .map_err(|_| ChamferError::SewFailed {
             dim: Dim::One,
             first,

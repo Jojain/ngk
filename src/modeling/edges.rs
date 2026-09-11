@@ -40,8 +40,8 @@ impl<P: Payload> Shape<EdgeTag, P> {
         let (mut g, edge_key) = self.into_map();
         let dart = g.edge_attr_unchecked(edge_key).dart;
         let profile_key = g
-            .transaction(|g| {
-                Ok::<_, TopologyEditError>(g.add_profile(
+            .transaction(|edit| {
+                Ok::<_, TopologyEditError>(edit.add_profile(
                     crate::topology::attributes::ProfileAttr::new(dart, P::Profile::default()),
                 ))
             })

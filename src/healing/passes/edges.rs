@@ -35,16 +35,16 @@ use super::{edge_dart_in_face, incident_faces};
 
 /// Offers every scoped edge to the 1-removal operation.
 pub(in crate::healing) fn run<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     options: &HealingOptions,
     report: &mut HealingReport,
 ) -> Result<(), HealingError> {
-    for key in super::scoped_edges(g.map(), options)? {
-        if g.map().edge_attr(key).is_none() {
+    for key in super::scoped_edges(edit.map(), options)? {
+        if edit.map().edge_attr(key).is_none() {
             continue;
         }
-        match plan(g.map(), key, options) {
-            Ok(fusion) => apply(g, fusion, report)?,
+        match plan(edit.map(), key, options) {
+            Ok(fusion) => apply(edit, fusion, report)?,
             Err(reason) => report.skip(HealedCell::Edge(key), reason),
         }
     }
@@ -265,12 +265,12 @@ fn has_rebuildable_boundary<P: Payload>(
 
 /// Removes the edge and restores the fused face's parameter curves.
 fn apply<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     fusion: FaceFusion,
     report: &mut HealingReport,
 ) -> Result<(), HealingError> {
     let carried = match (fusion.surfaces, fusion.consumed) {
-        (SurfaceMatch::Identical, Some(consumed)) => g
+        (SurfaceMatch::Identical, Some(consumed)) => edit
             .face_attr_unchecked(consumed)
             .pcurves
             .iter()
@@ -279,7 +279,7 @@ fn apply<P: Payload>(
         _ => Vec::new(),
     };
 
-    let removal = remove_cell_staged(g, fusion.dart, Dim::One)?;
+    let removal = remove_cell_staged(edit, fusion.dart, Dim::One)?;
     let (survivor, consumed, orientation) = match removal.merged {
         MergedCell::Faces {
             survivor,
@@ -306,14 +306,14 @@ fn apply<P: Payload>(
                 };
                 let (dart, pcurve) = match orientation {
                     Orientation::Same => (dart, pcurve),
-                    Orientation::Reversed => (g.alpha(Dim::Zero, dart), pcurve.reversed()),
+                    Orientation::Reversed => (edit.alpha(Dim::Zero, dart), pcurve.reversed()),
                 };
-                g.face_attr_mut_unchecked(survivor)
+                edit.face_attr_mut_unchecked(survivor)
                     .pcurves
                     .insert(dart, pcurve);
             }
         }
-        Some(plane) => rebuild_pcurves(g, survivor, &plane)
+        Some(plane) => rebuild_pcurves(edit, survivor, &plane)
             .ok_or(HealingError::PcurveRebuildFailed { face: survivor })?,
     }
 
@@ -332,20 +332,20 @@ fn apply<P: Payload>(
 /// stored direction of a shared edge does not leak into the face's own
 /// parameter space.
 fn rebuild_pcurves<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     face: FaceKey,
     plane: &Plane,
 ) -> Option<()> {
     let mut pcurves = HashMap::new();
     {
-        let view = g.map().face(face)?;
+        let view = edit.map().face(face)?;
         for boundary in view.loops() {
             for edge in boundary.edges() {
                 let dart = edge.dart();
                 let start = *edge.start().point()?;
                 let end = *edge.end().point()?;
                 let stored = edge.curve()?;
-                let oriented = match g.map().edge_orientation_at_dart(edge.key(), dart) {
+                let oriented = match edit.map().edge_orientation_at_dart(edge.key(), dart) {
                     Orientation::Same => stored.clone(),
                     Orientation::Reversed => reversed(stored)?,
                 };
@@ -353,6 +353,6 @@ fn rebuild_pcurves<P: Payload>(
             }
         }
     }
-    g.face_attr_mut_unchecked(face).pcurves = pcurves;
+    edit.face_attr_mut_unchecked(face).pcurves = pcurves;
     Some(())
 }

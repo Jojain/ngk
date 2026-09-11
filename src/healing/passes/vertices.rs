@@ -23,16 +23,16 @@ use super::{boundary_dart, edge_key, incident_faces};
 
 /// Offers every scoped vertex to the 0-removal operation.
 pub(in crate::healing) fn run<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     options: &HealingOptions,
     report: &mut HealingReport,
 ) -> Result<(), HealingError> {
-    for key in super::scoped_vertices(g.map(), options)? {
-        if g.map().vertex_attr(key).is_none() {
+    for key in super::scoped_vertices(edit.map(), options)? {
+        if edit.map().vertex_attr(key).is_none() {
             continue;
         }
-        match plan(g.map(), key, options) {
-            Ok(fusion) => apply(g, fusion, report)?,
+        match plan(edit.map(), key, options) {
+            Ok(fusion) => apply(edit, fusion, report)?,
             Err(reason) => report.skip(HealedCell::Vertex(key), reason),
         }
     }
@@ -185,11 +185,11 @@ fn fused_pcurves<P: Payload>(
 
 /// Removes the vertex and writes the fused geometry onto the surviving edge.
 fn apply<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     fusion: VertexFusion,
     report: &mut HealingReport,
 ) -> Result<(), HealingError> {
-    let removal = remove_cell_staged(g, fusion.dart, Dim::Zero)?;
+    let removal = remove_cell_staged(edit, fusion.dart, Dim::Zero)?;
     let MergedCell::Edges { survivor, consumed } = removal.merged else {
         return Err(TopologyEditError::MissingLineageAttribute {
             key: crate::topology::EditKey::Edge(fusion.survivor),
@@ -201,19 +201,19 @@ fn apply<P: Payload>(
     let dart = removal
         .remap(fusion.survivor_dart)
         .expect("a dart outside the removed vertex must survive");
-    let attr = g.edge_attr_mut_unchecked(survivor);
+    let attr = edit.edge_attr_mut_unchecked(survivor);
     attr.dart = dart;
     attr.curve = fusion.curve;
 
-    let fused = g
+    let fused = edit
         .map()
-        .orbit(dart, g.map().orbit_indices(Dim::One))
+        .orbit(dart, edit.map().orbit_indices(Dim::One))
         .collect::<HashSet<_>>();
     for (face, boundary, pcurve) in fusion.pcurves {
         let Some(boundary) = removal.remap(boundary) else {
             continue;
         };
-        let attr = g.face_attr_mut_unchecked(face);
+        let attr = edit.face_attr_mut_unchecked(face);
         attr.pcurves.retain(|dart, _| !fused.contains(dart));
         attr.pcurves.insert(boundary, pcurve);
     }

@@ -163,9 +163,9 @@ fn custom_outer_policy_observes_only_external_builder_lineage() {
     let mut g = GMap::<StandardPayload>::new();
     let mut policy = CountingPolicy::default();
 
-    g.transaction_with_policy(&mut policy, |g| {
+    g.transaction_with_policy(&mut policy, |edit| {
         add_polyline_staged(
-            g,
+            edit,
             &[
                 Point3::new(0.0, 0.0, 0.0),
                 Point3::new(1.0, 0.0, 0.0),

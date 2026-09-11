@@ -65,8 +65,8 @@ fn boundary_chord_split_preserves_source_face_and_applies_payload_policy() {
     let mut policy = RecordFaceSplits::default();
 
     let splits = g
-        .transaction_with_policy(&mut policy, |g| {
-            split_face_by_imprints_staged(g, source, &[imprint])
+        .transaction_with_policy(&mut policy, |edit| {
+            split_face_by_imprints_staged(edit, source, &[imprint])
         })
         .expect("face imprint split should commit");
 
@@ -101,8 +101,8 @@ fn closed_loop_split_declares_the_island_as_a_source_face_split() {
     let mut policy = RecordFaceSplits::default();
 
     let splits = g
-        .transaction_with_policy(&mut policy, |g| {
-            split_face_by_imprints_staged(g, source, &imprints)
+        .transaction_with_policy(&mut policy, |edit| {
+            split_face_by_imprints_staged(edit, source, &imprints)
         })
         .expect("closed face imprint split should commit");
 
@@ -121,8 +121,8 @@ fn late_face_policy_failure_restores_the_complete_source_face() {
     let original_dart_count = g.dart_count();
     let mut policy = RejectFaceSplit;
 
-    let result = g.transaction_with_policy(&mut policy, |g| {
-        split_face_by_imprints_staged(g, source, &[imprint])
+    let result = g.transaction_with_policy(&mut policy, |edit| {
+        split_face_by_imprints_staged(edit, source, &[imprint])
     });
 
     assert!(result.is_err());

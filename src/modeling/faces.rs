@@ -54,9 +54,9 @@ pub fn polygon(points: &[Point3]) -> Result<Shape<FaceTag, StandardPayload>, Fac
     }
 
     let mut g = GMap::new();
-    let face_key = g.transaction(|g| {
-        let profile_key = add_polygon_staged(g, points);
-        add_face_staged(g, profile_key)
+    let face_key = g.transaction(|edit| {
+        let profile_key = add_polygon_staged(edit, points);
+        add_face_staged(edit, profile_key)
     })?;
     Ok(Shape::new(g, face_key))
 }

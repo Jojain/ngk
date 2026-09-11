@@ -512,13 +512,13 @@ pub fn prepare_boolean_with_external_tool<P: Payload>(
 }
 
 fn apply_boolean_splits_staged<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     plan: BooleanIntersectionPlan,
     imported_second: bool,
 ) -> Result<BooleanPreparation, BooleanError> {
     // Revalidate source handles so applying an old plan fails atomically.
-    revalidate_plan_operand(g, plan.first)?;
-    revalidate_plan_operand(g, plan.second)?;
+    revalidate_plan_operand(edit, plan.first)?;
+    revalidate_plan_operand(edit, plan.second)?;
 
     let edge_points = imprint::edge_points(&plan.network);
     let mut edge_lineage = HashMap::new();
@@ -533,7 +533,7 @@ fn apply_boolean_splits_staged<P: Payload>(
         let points = edge_points.get(&source).cloned().unwrap_or_default();
         edge_lineage.insert(
             source,
-            split_edge_at_points(g, source, points, plan.options.intersections)?,
+            split_edge_at_points(edit, source, points, plan.options.intersections)?,
         );
     }
 
@@ -541,7 +541,7 @@ fn apply_boolean_splits_staged<P: Payload>(
     let mut face_lineage = HashMap::new();
     let mut span_sections = HashMap::<IntersectionSpanId, [Vec<(f64, EdgeKey)>; 2]>::new();
     for (span, side, edge) in imprint::realize_edge_spans(
-        g,
+        edit,
         &plan.network,
         &edge_lineage,
         plan.options.intersections.linear_tolerance,
@@ -565,7 +565,7 @@ fn apply_boolean_splits_staged<P: Payload>(
             .iter()
             .map(|imprint| imprint.imprint.clone())
             .collect::<Vec<_>>();
-        let splits = split_face_by_imprints_staged(g, source, &curves)?;
+        let splits = split_face_by_imprints_staged(edit, source, &curves)?;
         for section in splits.iter().flat_map(|split| &split.sections) {
             let imprint = &imprints[section.imprint];
             let side = match imprint.side {
@@ -573,7 +573,7 @@ fn apply_boolean_splits_staged<P: Payload>(
                 BooleanSide::Second => 1,
             };
             for (span, parameter, edge) in imprint::realize_section(
-                g,
+                edit,
                 imprint,
                 section,
                 plan.options.intersections.parameter_tolerance,
@@ -656,19 +656,19 @@ fn lineage_for(
 }
 
 fn split_edge_at_points<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     source: EdgeKey,
     mut points: Vec<Point3>,
     options: IntersectionOptions,
 ) -> Result<Vec<EdgeKey>, BooleanError> {
-    let source_curve = g
+    let source_curve = edit
         .edge(source)
         .and_then(|edge| edge.curve().cloned())
         .ok_or(BooleanError::MissingOperand {
             operand: BooleanOperand::Edge(source),
         })?;
     let source_domain = {
-        let view = g.edge_unchecked(source);
+        let view = edit.edge_unchecked(source);
         source_curve
             .interval_between(
                 *view.start().point().expect("edge start geometry"),
@@ -686,7 +686,7 @@ fn split_edge_at_points<P: Payload>(
     let mut fragments = vec![source];
     for point in points {
         let Some(fragment) = fragments.iter().copied().find(|edge| {
-            let view = g.edge_unchecked(*edge);
+            let view = edit.edge_unchecked(*edge);
             let Some(curve) = view.curve() else {
                 return false;
             };
@@ -701,7 +701,7 @@ fn split_edge_at_points<P: Payload>(
             continue;
         };
 
-        let view = g.edge_unchecked(fragment);
+        let view = edit.edge_unchecked(fragment);
         let curve = view.curve().expect("registered edge geometry");
         let domain = curve
             .interval_between(
@@ -712,9 +712,9 @@ fn split_edge_at_points<P: Payload>(
         let parameter = periodic_parameter_in_domain(curve, point, domain);
         let incident_face = view.faces().first().map(|face| face.key());
         let split = if let Some(face) = incident_face {
-            split_face_edge_staged(g, face, fragment, parameter)?
+            split_face_edge_staged(edit, face, fragment, parameter)?
         } else {
-            split_edge_staged(g, fragment, parameter)?
+            split_edge_staged(edit, fragment, parameter)?
         };
         fragments.push(split.second);
     }

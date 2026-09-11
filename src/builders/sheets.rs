@@ -26,12 +26,12 @@ pub fn add_extruded_profile<P: Payload>(
     profile_key: ProfileKey,
     direction: Vector3<f64>,
 ) -> Result<SheetKey, ExtrudeError> {
-    g.transaction(|g| {
+    g.transaction(|edit| {
         if direction.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
             return Err(ExtrudeError::ZeroDirection);
         }
 
-        let profile = g.profile_unchecked(profile_key);
+        let profile = edit.profile_unchecked(profile_key);
         let profile_dart = profile.dart;
         let is_closed = profile.is_closed();
         let edge_darts = profile
@@ -43,30 +43,30 @@ pub fn add_extruded_profile<P: Payload>(
         let mut translated_dart = None;
 
         for edge_dart in edge_darts {
-            let extruded_face = extrude_edge(g, edge_dart, direction)?;
+            let extruded_face = extrude_edge(edit, edge_dart, direction)?;
             if edge_dart == profile_dart {
                 translated_dart = Some(extruded_face.translated_start);
-            } else if g.alpha(Dim::Zero, edge_dart) == profile_dart {
+            } else if edit.alpha(Dim::Zero, edge_dart) == profile_dart {
                 translated_dart = Some(extruded_face.translated_end);
             }
             faces.push(extruded_face);
         }
 
-        sew_extruded_faces(g, &faces, is_closed)?;
+        sew_extruded_faces(edit, &faces, is_closed)?;
         let translated_dart =
             translated_dart.expect("profile dart must belong to one of its profile edges");
 
-        Ok(g.add_sheet(SheetAttr::new(translated_dart, P::Sheet::default())))
+        Ok(edit.add_sheet(SheetAttr::new(translated_dart, P::Sheet::default())))
     })
 }
 
 fn extrude_edge<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     edge_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<ExtrudedFace, ExtrudeError> {
     let edge =
-        Edge::from_dart(g, edge_dart).ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
+        Edge::from_dart(edit, edge_dart).ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
     let start = *edge
         .start()
         .point()
@@ -81,20 +81,20 @@ fn extrude_edge<P: Payload>(
 
     let corners = [start, end, end + direction, start + direction];
     let surface_data = extruded_edge_surface(edge.dart(), curve, start, end, direction)?;
-    add_extruded_edge_face(g, corners, surface_data)
+    add_extruded_edge_face(edit, corners, surface_data)
 }
 
 fn sew_extruded_faces<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     faces: &[ExtrudedFace],
     close_ring: bool,
 ) -> Result<(), ExtrudeError> {
     for i in 0..faces.len().saturating_sub(1) {
-        sew_adjacent_sweep_edges(g, faces[i].end_side, faces[i + 1].start_side)?;
+        sew_adjacent_sweep_edges(edit, faces[i].end_side, faces[i + 1].start_side)?;
     }
 
     if close_ring && !faces.is_empty() {
-        sew_adjacent_sweep_edges(g, faces[faces.len() - 1].end_side, faces[0].start_side)?;
+        sew_adjacent_sweep_edges(edit, faces[faces.len() - 1].end_side, faces[0].start_side)?;
     }
 
     Ok(())
@@ -168,18 +168,18 @@ fn extruded_edge_surface(
 }
 
 fn add_extruded_edge_face<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     corners: [Point3; 4],
     surface_data: ExtrudedSurface,
 ) -> Result<ExtrudedFace, ExtrudeError> {
-    let darts: Vec<Dart> = (0..8).map(|_| g.add_dart()).collect();
+    let darts: Vec<Dart> = (0..8).map(|_| edit.add_dart()).collect();
 
     for i in 0..4 {
-        sew(g, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
+        sew(edit, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
     }
     for i in 0..4 {
         sew(
-            g,
+            edit,
             Dim::One,
             darts[2 * i + 1],
             darts[(2 * i + 2) % darts.len()],
@@ -187,21 +187,21 @@ fn add_extruded_edge_face<P: Payload>(
     }
 
     for i in 0..4 {
-        let dart = g.cell_representative(darts[2 * i], Dim::Zero);
-        g.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
+        let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
+        edit.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
     }
 
     for i in 0..4 {
         let edge_dart = darts[2 * i];
-        g.add_edge(EdgeAttr::new(
+        edit.add_edge(EdgeAttr::new(
             edge_dart,
             surface_data.boundary_curves[i].clone(),
             P::E::default(),
         ));
     }
 
-    g.add_profile(ProfileAttr::new(darts[0], P::Profile::default()));
-    g.add_face(FaceAttr::with_pcurves(
+    edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default()));
+    edit.add_face(FaceAttr::with_pcurves(
         surface_data.surface,
         P::F::default(),
         darts[0],
@@ -218,25 +218,25 @@ fn add_extruded_edge_face<P: Payload>(
 }
 
 fn sew_adjacent_sweep_edges<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     survivor: Dart,
     removed: Dart,
 ) -> Result<(), ExtrudeError> {
-    let merge = alpha2_sweep_merge(g, survivor, removed)?;
-    g.sew(Dim::Two, survivor, removed)
+    let merge = alpha2_sweep_merge(edit, survivor, removed)?;
+    edit.sew(Dim::Two, survivor, removed)
         .map_err(|_| ExtrudeError::SewFailed {
             dim: Dim::Two,
             first: survivor,
             second: removed,
         })?;
     if merge.survivor_edge != merge.removed_edge {
-        g.merge_edges_into(merge.survivor_edge, merge.removed_edge);
+        edit.merge_edges_into(merge.survivor_edge, merge.removed_edge);
     }
     if merge.survivor_start != merge.removed_start {
-        g.merge_vertices_into(merge.survivor_start, merge.removed_start);
+        edit.merge_vertices_into(merge.survivor_start, merge.removed_start);
     }
     if merge.survivor_end != merge.removed_end {
-        g.merge_vertices_into(merge.survivor_end, merge.removed_end);
+        edit.merge_vertices_into(merge.survivor_end, merge.removed_end);
     }
     Ok(())
 }
@@ -271,12 +271,12 @@ fn alpha2_sweep_merge<P: Payload>(
 }
 
 fn sew<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     dim: Dim,
     first: Dart,
     second: Dart,
 ) -> Result<(), ExtrudeError> {
-    g.sew(dim, first, second)
+    edit.sew(dim, first, second)
         .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
 }
 

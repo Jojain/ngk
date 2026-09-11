@@ -17,8 +17,8 @@ fn transaction_commits_all_staged_edits() {
 fn failed_transaction_restores_the_complete_map() {
     let mut g = GMap::<StandardPayload>::new();
 
-    let result = g.transaction(|g| {
-        let dart = g.add_dart();
+    let result = g.transaction(|edit| {
+        let dart = edit.add_dart();
         Err::<(), _>(TopologyEditError::SameDart { dart })
     });
 
@@ -30,12 +30,12 @@ fn failed_transaction_restores_the_complete_map() {
 fn transaction_defers_validation_until_the_complete_operation() {
     let mut g = GMap::<StandardPayload>::new();
 
-    g.transaction(|g| {
-        let darts: [_; 4] = std::array::from_fn(|_| g.add_dart());
-        g.link(Dim::Zero, darts[0], darts[1])?;
-        g.link(Dim::Zero, darts[2], darts[3])?;
-        g.link(Dim::Two, darts[0], darts[2])?;
-        g.link(Dim::Two, darts[1], darts[3])?;
+    g.transaction(|edit| {
+        let darts: [_; 4] = std::array::from_fn(|_| edit.add_dart());
+        edit.link(Dim::Zero, darts[0], darts[1])?;
+        edit.link(Dim::Zero, darts[2], darts[3])?;
+        edit.link(Dim::Two, darts[0], darts[2])?;
+        edit.link(Dim::Two, darts[1], darts[3])?;
         Ok::<(), TopologyEditError>(())
     })
     .expect("only the complete outer topology should be validated");

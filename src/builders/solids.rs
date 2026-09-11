@@ -47,21 +47,21 @@ pub fn add_sphere<P: Payload>(
     frame: Frame,
     radius: f64,
 ) -> Result<SolidKey, SphereBuildError> {
-    g.transaction(|g| {
+    g.transaction(|edit| {
         let meridian = Plane::from_xy(frame.origin, frame.x_dir, frame.z_dir);
         let axis = frame.z_axis();
-        let arc = add_arc_staged(g, meridian, radius, FRAC_PI_2, -FRAC_PI_2)?;
+        let arc = add_arc_staged(edit, meridian, radius, FRAC_PI_2, -FRAC_PI_2)?;
         let face = add_full_revolved_edge_staged_with_surface(
-            g,
+            edit,
             arc,
             axis,
             Surface::Sphere(Sphere::new(frame, radius)),
             |point| Point2::new(point.y, -point.x),
         )?;
-        let seam = g.face_unchecked(face).outer_loop().dart;
+        let seam = edit.face_unchecked(face).outer_loop().dart;
 
-        g.add_sheet(SheetAttr::new(seam, P::Sheet::default()));
-        Ok(g.add_solid(SolidAttr::new(P::S::default(), seam, None)))
+        edit.add_sheet(SheetAttr::new(seam, P::Sheet::default()));
+        Ok(edit.add_solid(SolidAttr::new(P::S::default(), seam, None)))
     })
 }
 
@@ -136,64 +136,64 @@ pub fn add_extruded_face<P: Payload>(
     face_key: FaceKey,
     direction: Vector3<f64>,
 ) -> Result<SolidKey, ExtrudeError> {
-    g.transaction(|g| add_extruded_face_staged(g, face_key, direction))
+    g.transaction(|edit| add_extruded_face_staged(edit, face_key, direction))
 }
 
 /// Builds translated caps and lateral faces, then registers the staged solid.
 fn add_extruded_face_staged<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
 ) -> Result<SolidKey, ExtrudeError> {
-    let bot_face = g
+    let bot_face = edit
         .face_attr(face_key)
-        .map(|attr| attr.face(g))
+        .map(|attr| attr.face(edit))
         .ok_or(ExtrudeError::MissingFace { dart: face_key })?;
     let top_face = translate_face(&bot_face, direction)?;
     let mut bottom_loop_darts = Vec::with_capacity(1 + bot_face.inner_loops().len());
     bottom_loop_darts.push(bot_face.outer_loop().dart);
     bottom_loop_darts.extend(bot_face.inner_loops().into_iter().map(|loop_| loop_.dart));
 
-    let top_face_dart = g.merge(top_face.face());
-    let top_face_key = *g.attribute_unchecked::<Cell2>(top_face_dart);
-    let top_face_attr = g.face_attr_unchecked(top_face_key);
+    let top_face_dart = edit.merge(top_face.face());
+    let top_face_key = *edit.attribute_unchecked::<Cell2>(top_face_dart);
+    let top_face_attr = edit.face_attr_unchecked(top_face_key);
     let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.inner_loops.len());
     top_loop_darts.push(top_face_attr.outer_loop);
     top_loop_darts.extend(top_face_attr.inner_loops.iter().copied());
 
-    orient_extruded_caps(g, face_key, top_face_key, direction);
+    orient_extruded_caps(edit, face_key, top_face_key, direction);
 
     for (bottom_loop_dart, top_loop_dart) in bottom_loop_darts.into_iter().zip(top_loop_darts) {
-        sew_extruded_loop(g, bottom_loop_dart, top_loop_dart, direction)?;
+        sew_extruded_loop(edit, bottom_loop_dart, top_loop_dart, direction)?;
     }
 
     // The shell dart is contextual: unlike a cell representative, it must retain
     // the outward orientation established for the bottom cap.
-    let outer_shell = g.face_attr_unchecked(face_key).outer_loop;
-    if g.sheet_key(outer_shell).is_none() {
-        g.add_sheet(SheetAttr::new(outer_shell, P::Sheet::default()));
+    let outer_shell = edit.face_attr_unchecked(face_key).outer_loop;
+    if edit.sheet_key(outer_shell).is_none() {
+        edit.add_sheet(SheetAttr::new(outer_shell, P::Sheet::default()));
     }
-    let solid = g.add_solid(SolidAttr::new(P::S::default(), outer_shell, None));
+    let solid = edit.add_solid(SolidAttr::new(P::S::default(), outer_shell, None));
     Ok(solid)
 }
 
 fn orient_extruded_caps<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     bottom_face: FaceKey,
     top_face: FaceKey,
     direction: Vector3<f64>,
 ) {
-    let Some(bottom_normal_dot_direction) = g
+    let Some(bottom_normal_dot_direction) = edit
         .face_attr(bottom_face)
-        .map(|attr| face_normal_dot_direction(g, attr, direction))
+        .map(|attr| face_normal_dot_direction(edit, attr, direction))
     else {
         return;
     };
 
     if bottom_normal_dot_direction > LINEAR_TOLERANCE {
-        reverse_face_winding(g, bottom_face);
+        reverse_face_winding(edit, bottom_face);
     } else if bottom_normal_dot_direction < -LINEAR_TOLERANCE {
-        reverse_face_winding(g, top_face);
+        reverse_face_winding(edit, top_face);
     }
 }
 
@@ -206,18 +206,18 @@ fn face_normal_dot_direction<P: Payload>(
 }
 
 fn sew_extruded_loop<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     bottom_loop_dart: Dart,
     top_loop_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<Dart, ExtrudeError> {
-    let bottom_edges = Profile::from_dart(g, bottom_loop_dart)
+    let bottom_edges = Profile::from_dart(edit, bottom_loop_dart)
         .expect("bottom loop must have a registered profile")
         .edges()
         .into_iter()
         .map(|edge| edge.dart())
         .collect::<Vec<_>>();
-    let top_edges = Profile::from_dart(g, top_loop_dart)
+    let top_edges = Profile::from_dart(edit, top_loop_dart)
         .expect("top loop must have a registered profile")
         .edges()
         .into_iter()
@@ -228,9 +228,9 @@ fn sew_extruded_loop<P: Payload>(
         .copied()
         .zip(top_edges.iter().copied())
         .map(|(bottom_edge, top_edge)| {
-            let prepared = prepare_lateral_face(g, bottom_edge, top_edge, direction)?;
-            let topology = add_lateral_face_topology(g)?;
-            add_lateral_face_attributes(g, &topology, &prepared);
+            let prepared = prepare_lateral_face(edit, bottom_edge, top_edge, direction)?;
+            let topology = add_lateral_face_topology(edit)?;
+            add_lateral_face_attributes(edit, &topology, &prepared);
             Ok(ExtrudedFaceLateral {
                 topology,
                 vertical_start: prepared.end,
@@ -241,7 +241,7 @@ fn sew_extruded_loop<P: Payload>(
 
     for pair in laterals.windows(2) {
         sew(
-            g,
+            edit,
             Dim::Two,
             pair[0].topology.end_vertical,
             pair[1].topology.start_vertical,
@@ -249,7 +249,7 @@ fn sew_extruded_loop<P: Payload>(
     }
     if let (Some(first), Some(last)) = (laterals.first(), laterals.last()) {
         sew(
-            g,
+            edit,
             Dim::Two,
             last.topology.end_vertical,
             first.topology.start_vertical,
@@ -257,12 +257,12 @@ fn sew_extruded_loop<P: Payload>(
     }
 
     for ((bottom_edge, top_edge), lateral) in bottom_edges.iter().zip(top_edges).zip(&laterals) {
-        sew(g, Dim::Two, lateral.topology.bottom_edge, *bottom_edge)?;
-        sew(g, Dim::Two, lateral.topology.top_edge, top_edge)?;
+        sew(edit, Dim::Two, lateral.topology.bottom_edge, *bottom_edge)?;
+        sew(edit, Dim::Two, lateral.topology.top_edge, top_edge)?;
     }
 
     for lateral in &laterals {
-        g.add_edge(EdgeAttr::new(
+        edit.add_edge(EdgeAttr::new(
             lateral.topology.end_vertical,
             Curve::line(lateral.vertical_start, lateral.vertical_end),
             P::E::default(),
@@ -273,16 +273,16 @@ fn sew_extruded_loop<P: Payload>(
         .first()
         .map(|lateral| lateral.topology.bottom_edge)
         .expect("a loop should have at least one lateral face");
-    Ok(g.cell_representative(representative, Dim::Three))
+    Ok(edit.cell_representative(representative, Dim::Three))
 }
 
 fn sew<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     dim: Dim,
     first: Dart,
     second: Dart,
 ) -> Result<(), ExtrudeError> {
-    g.sew(dim, first, second)
+    edit.sew(dim, first, second)
         .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
 }
 
@@ -334,16 +334,16 @@ fn prepare_lateral_face<P: Payload>(
 }
 
 fn add_lateral_face_topology<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
 ) -> Result<LateralFaceTopology, ExtrudeError> {
-    let darts = std::array::from_fn(|_| g.add_dart());
+    let darts = std::array::from_fn(|_| edit.add_dart());
 
     for i in 0..4 {
-        sew(g, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
+        sew(edit, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
     }
     for i in 0..4 {
         sew(
-            g,
+            edit,
             Dim::One,
             darts[2 * i + 1],
             darts[(2 * i + 2) % darts.len()],
@@ -361,12 +361,12 @@ fn add_lateral_face_topology<P: Payload>(
 }
 
 fn add_lateral_face_attributes<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     topology: &LateralFaceTopology,
     prepared: &PreparedLateralFace,
 ) {
-    g.add_profile(ProfileAttr::new(topology.loop_dart, P::Profile::default()));
-    g.add_face(FaceAttr::with_pcurves(
+    edit.add_profile(ProfileAttr::new(topology.loop_dart, P::Profile::default()));
+    edit.add_face(FaceAttr::with_pcurves(
         prepared.surface.clone(),
         P::F::default(),
         topology.loop_dart,

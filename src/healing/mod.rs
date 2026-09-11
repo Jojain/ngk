@@ -70,7 +70,7 @@ pub fn remove_redundant_cells<P: Payload>(
 /// Use this from a builder that already knows which cells it created, so the
 /// run stays proportional to the edit instead of to the model.
 pub fn remove_redundant_cells_staged<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     options: &HealingOptions,
 ) -> Result<HealingReport, HealingError> {
     let mut report = HealingReport::default();
@@ -79,10 +79,10 @@ pub fn remove_redundant_cells_staged<P: Payload>(
         let before = report.changes();
         report.skipped.clear();
         if options.remove_redundant_edges {
-            passes::edges::run(g, options, &mut report)?;
+            passes::edges::run(edit, options, &mut report)?;
         }
         if options.remove_redundant_vertices {
-            passes::vertices::run(g, options, &mut report)?;
+            passes::vertices::run(edit, options, &mut report)?;
         }
         if report.changes() == before {
             return Ok(report);

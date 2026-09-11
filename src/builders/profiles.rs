@@ -26,12 +26,12 @@ pub fn add_polyline<P: Payload>(
     g: &mut GMap<P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
-    g.transaction(|g| add_polyline_staged(g, points))
+    g.transaction(|edit| add_polyline_staged(edit, points))
 }
 
 /// Builds all polyline edges and joins them into one staged profile.
 pub fn add_polyline_staged<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
     if points.len() < 2 {
@@ -42,7 +42,7 @@ pub fn add_polyline_staged<P: Payload>(
         .windows(2)
         .map(|pair| (pair[0], pair[1], Curve::line(pair[0], pair[1])))
         .collect::<Vec<_>>();
-    add_segments(g, &segments)
+    add_segments(edit, &segments)
 }
 
 /// Appends an existing edge to the open end of a profile.
@@ -56,16 +56,16 @@ pub fn append_edge<P: Payload>(
     profile_key: ProfileKey,
     edge_key: EdgeKey,
 ) -> Result<(), PolylineError> {
-    g.transaction(|g| append_edge_staged(g, profile_key, edge_key))
+    g.transaction(|edit| append_edge_staged(edit, profile_key, edge_key))
 }
 
 /// Connects an edge to a profile and records any resulting vertex merge lineage.
 pub(crate) fn append_edge_staged<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
 ) -> Result<(), PolylineError> {
-    let profile = g
+    let profile = edit
         .profile(profile_key)
         .ok_or(PolylineError::MissingProfile {
             profile: profile_key,
@@ -79,15 +79,15 @@ pub(crate) fn append_edge_staged<P: Payload>(
         .darts()
         .last()
         .expect("non-empty profile should have an end dart");
-    let profile_start_point = vertex_point(g, profile_start)?;
-    let profile_end_point = vertex_point(g, profile_end)?;
-    let default_edge_start = g
+    let profile_start_point = vertex_point(edit, profile_start)?;
+    let profile_end_point = vertex_point(edit, profile_end)?;
+    let default_edge_start = edit
         .edge_attr(edge_key)
         .ok_or(PolylineError::MissingEdge { edge: edge_key })?
         .dart;
-    let default_edge_end = g.alpha(Dim::Zero, default_edge_start);
-    let default_edge_start_point = vertex_point(g, default_edge_start)?;
-    let default_edge_end_point = vertex_point(g, default_edge_end)?;
+    let default_edge_end = edit.alpha(Dim::Zero, default_edge_start);
+    let default_edge_start_point = vertex_point(edit, default_edge_start)?;
+    let default_edge_end_point = vertex_point(edit, default_edge_end)?;
 
     let Some((edge_dart, edge_end, edge_end_point)) = append_orientation(
         profile_end_point,
@@ -103,26 +103,26 @@ pub(crate) fn append_edge_staged<P: Payload>(
     };
 
     let append_merge = VertexMerge {
-        survivor: vertex_key(g, profile_end)?,
-        removed: vertex_key(g, edge_dart)?,
+        survivor: vertex_key(edit, profile_end)?,
+        removed: vertex_key(edit, edge_dart)?,
     };
     let close_merge = edge_end_point
         .coincides(profile_start_point, LINEAR_TOLERANCE)
         .then(|| {
             Ok::<_, PolylineError>(VertexMerge {
-                survivor: vertex_key(g, profile_start)?,
-                removed: vertex_key(g, edge_end)?,
+                survivor: vertex_key(edit, profile_start)?,
+                removed: vertex_key(edit, edge_end)?,
             })
         })
         .transpose()?;
 
-    g.sew(Dim::One, profile_end, edge_dart)
+    edit.sew(Dim::One, profile_end, edge_dart)
         .map_err(polyline_edit_error)?;
-    g.merge_vertices_into(append_merge.survivor, append_merge.removed);
+    edit.merge_vertices_into(append_merge.survivor, append_merge.removed);
     if let Some(close_merge) = close_merge {
-        g.sew(Dim::One, edge_end, profile_start)
+        edit.sew(Dim::One, edge_end, profile_start)
             .map_err(polyline_edit_error)?;
-        g.merge_vertices_into(close_merge.survivor, close_merge.removed);
+        edit.merge_vertices_into(close_merge.survivor, close_merge.removed);
     }
     Ok(())
 }
@@ -236,12 +236,12 @@ pub fn add_rectangle<P: Payload>(
     x_size: f64,
     y_size: f64,
 ) -> Result<ProfileKey, PolylineError> {
-    g.transaction(|g| add_rectangle_staged(g, plane, x_size, y_size))
+    g.transaction(|edit| add_rectangle_staged(edit, plane, x_size, y_size))
 }
 
 /// Builds the four rectangle edges and profile inside one transaction.
 pub(crate) fn add_rectangle_staged<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     plane: Plane,
     x_size: f64,
     y_size: f64,
@@ -256,7 +256,7 @@ pub(crate) fn add_rectangle_staged<P: Payload>(
         plane.point_at(0.0, y_size),
         plane.point_at(0.0, 0.0),
     ];
-    add_polyline_staged(g, &corners)
+    add_polyline_staged(edit, &corners)
 }
 
 /// Adds a closed square profile on `plane`.
@@ -268,7 +268,7 @@ pub fn add_square<P: Payload>(
     plane: Plane,
     size: f64,
 ) -> Result<ProfileKey, PolylineError> {
-    g.transaction(|g| add_rectangle_staged(g, plane, size, size))
+    g.transaction(|edit| add_rectangle_staged(edit, plane, size, size))
 }
 
 fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), PolylineError> {
@@ -300,7 +300,7 @@ pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool
 }
 
 fn add_segments<P: Payload>(
-    g: &mut TopologyEdit<'_, P>,
+    edit: &mut TopologyEdit<'_, P>,
     segments: &[(Point3, Point3, Curve)],
 ) -> Result<ProfileKey, PolylineError> {
     let first_segment = segments.first().ok_or(PolylineError::EmptyPolyline)?;
@@ -309,12 +309,12 @@ fn add_segments<P: Payload>(
 
     let mut segment_topology = Vec::with_capacity(segments.len());
     for (start_point, _, curve) in segments {
-        let start_dart = g.add_dart();
-        let end_dart = g.add_dart();
-        g.link(Dim::Zero, start_dart, end_dart)
+        let start_dart = edit.add_dart();
+        let end_dart = edit.add_dart();
+        edit.link(Dim::Zero, start_dart, end_dart)
             .map_err(polyline_edit_error)?;
-        g.add_vertex(VertexAttr::new(start_dart, *start_point, P::V::default()));
-        g.add_edge(EdgeAttr::new(start_dart, curve.clone(), P::E::default()));
+        edit.add_vertex(VertexAttr::new(start_dart, *start_point, P::V::default()));
+        edit.add_edge(EdgeAttr::new(start_dart, curve.clone(), P::E::default()));
         segment_topology.push(SegmentTopology {
             start: start_dart,
             end: end_dart,
@@ -322,7 +322,7 @@ fn add_segments<P: Payload>(
     }
 
     for pair in segment_topology.windows(2) {
-        g.sew(Dim::One, pair[0].end, pair[1].start)
+        edit.sew(Dim::One, pair[0].end, pair[1].start)
             .map_err(polyline_edit_error)?;
     }
 
@@ -333,7 +333,7 @@ fn add_segments<P: Payload>(
         let last = segment_topology
             .last()
             .expect("non-empty segment list should have a last segment");
-        g.sew(Dim::One, last.end, first.start)
+        edit.sew(Dim::One, last.end, first.start)
             .map_err(polyline_edit_error)?;
     } else {
         let last_segment = segments
@@ -342,7 +342,7 @@ fn add_segments<P: Payload>(
         let last_topology = segment_topology
             .last()
             .expect("non-empty segment list should have a last segment");
-        g.add_vertex(VertexAttr::new(
+        edit.add_vertex(VertexAttr::new(
             last_topology.end,
             last_segment.1,
             P::V::default(),
@@ -350,7 +350,7 @@ fn add_segments<P: Payload>(
     }
 
     let first_start = segment_topology[0].start;
-    Ok(g.add_profile(ProfileAttr::new(first_start, P::Profile::default())))
+    Ok(edit.add_profile(ProfileAttr::new(first_start, P::Profile::default())))
 }
 
 #[derive(Clone, Copy)]
