@@ -36,21 +36,22 @@ impl Axis2 {
     }
 }
 
-/// Which end of a parameter axis' domain is meant.
+/// Which way along a parameter axis is meant.
 ///
-/// Named rather than signed, because the two ends of a domain are not
-/// interchangeable: a sphere's `v` runs from one pole to the other, and which
-/// one closes a face is the whole difference between its two caps.
+/// A *side*, not a position: "below here" or "above here". Named rather than
+/// signed because the two directions are not interchangeable — a sphere's `v`
+/// runs from one pole to the other, and which one closes a face is the whole
+/// difference between its two caps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum DomainEnd {
-    /// The lower end of the domain interval.
+pub enum DomainSide {
+    /// Toward decreasing parameter.
     Low,
-    /// The upper end of the domain interval.
+    /// Toward increasing parameter.
     High,
 }
 
-impl DomainEnd {
-    /// Returns the other end.
+impl DomainSide {
+    /// Returns the opposite side.
     pub fn flip(self) -> Self {
         match self {
             Self::Low => Self::High,
@@ -58,12 +59,28 @@ impl DomainEnd {
         }
     }
 
-    /// Reads this end's parameter out of an ordered domain interval.
-    pub fn of(self, domain: crate::geometry::Interval) -> f64 {
-        let domain = domain.ordered();
+    /// Returns which side of `from` the parameter `at` lies on.
+    pub fn of(from: f64, at: f64) -> Self {
+        if at < from { Self::Low } else { Self::High }
+    }
+
+    /// Returns whether `at` lies on this side of `from`.
+    pub fn holds(self, from: f64, at: f64) -> bool {
         match self {
-            Self::Low => domain.start,
-            Self::High => domain.end,
+            Self::Low => at < from,
+            Self::High => at > from,
         }
+    }
+
+    /// Returns the candidate on this side of `from` that is nearest to it.
+    ///
+    /// A surface can collapse more than once along one axis — a sphere does,
+    /// once at each pole — so a side alone does not name a row; the nearest one
+    /// on that side is what bounds the face.
+    pub fn nearest(self, from: f64, candidates: impl IntoIterator<Item = f64>) -> Option<f64> {
+        candidates
+            .into_iter()
+            .filter(|at| self.holds(from, *at))
+            .min_by(|a, b| (a - from).abs().total_cmp(&(b - from).abs()))
     }
 }

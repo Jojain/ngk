@@ -1,12 +1,11 @@
 # Seamless periodic faces
 
 Status: **In progress** — milestones 0 (`src/topology/attributes.rs`),
-1 (`src/topology/face.rs`), 2 (`src/topology/unwrapped_face_domain.rs`), 3, 4 and 5 are
-implemented. Milestone 6 is half built: a boundaryless face and its key-rooted
-shell are in (§11.5); a direction closed by a *degeneracy* — a spherical cap —
-is plumbed but not yet produced by any builder, and §11.6 says what is still
-open there. Milestone 7 is designed but not
-built.
+1 (`src/topology/face.rs`), 2 (`src/topology/unwrapped_face_domain.rs`), 3, 4 and 5
+are implemented. Milestone 6 is nearly complete: a boundaryless face and its
+key-rooted shell are in (§11.5), and so is a direction closed by a *degeneracy* —
+a spherical cap (§11.6). What is left is the Boolean path onto a boundaryless
+face. Milestone 7 is designed but not built.
 
 Nothing in the tree builds a seam any more: a swept or revolved wall comes out a
 ring, a sphere comes out one face with no boundary at all, and an intersection
@@ -545,7 +544,7 @@ Each leaves the tree green.
 | 3 | Ring faces | `LoopKind::Wrapping`, cylinder and full-revolve builders, per-direction trimming, tessellation wrap + watertightness test, seam 1-removal in `removal.rs`, Boolean trim on rings. Sphere still seamed. **Done** — see §11.1. |
 | 4 | Seamless intersections | Drop `seam_crossings()` splitting; period-spanning pcurves end to end through imprint and assembly. **Done** — see §11.2. |
 | 5 | `Edge` as an enum + closed edges | The enum and the whole-period span rule land together. 0-removal of the vertex between two arcs that close on each other. **Done** — see §11.3. |
-| 6 | Boundaryless faces | `ShellRoot` and the dart-preferred invariant, degeneracy-closed directions, validation by surface for key-rooted shells, sphere and torus builders, pole-aware tessellation. **Half done** — see §11.5 for what landed and §11.6 for what is open. |
+| 6 | Boundaryless faces | `ShellRoot` and the dart-preferred invariant, degeneracy-closed directions, validation by surface for key-rooted shells, sphere and torus builders, pole-aware tessellation. **Nearly done** — §11.5 and §11.6 record what landed; the Boolean path onto a boundaryless face is what is left. |
 | 7 | Healing canonicalizer | `seam_removal` pass: a seamed model in, a seamless model out. |
 
 Milestones 0–4 deliver most of the practical benefit — Booleans on cylinders stop
@@ -747,7 +746,7 @@ honest fixture: STEP AP242 and every other interchange format writes periodic
 faces cut open (§10.7), so the canonicalizer's subject is an import, and the test
 should say so rather than lean on a builder that correctly refuses to produce one.
 
-### 11.5 Milestone 6, the half that landed
+### 11.5 Milestone 6, boundaryless faces
 
 **A sphere is one face and nothing else.** `add_sphere` no longer revolves a
 meridian: it stores a `FaceAttr` carrying `Surface::Sphere` with an empty loop
@@ -810,48 +809,48 @@ on the axis — so `unwrapped_face_domain::a_revolved_meridian_unwraps_the_poles
 keeps the pole-corner property on that. The double-pcurve invariant moved to
 `tests/builders/removal.rs::seamed_cylinder_wall`, the hand-built import fixture
 of §11.4, which is now the honest subject for anything about seams.
+### 11.6 Milestone 6, the cap
 
-### 11.6 Milestone 6, the cap: plumbed, and one gap in the spelling
+**`LoopKind::Capping { axis, side }`** is in. A lone period-spanning loop says
+outright which side of itself the closing degeneracy lies on, because travel
+direction cannot: reversing a face has to be a normal flip, and if direction also
+chose the side, reversing a cap would move it to the opposite pole.
+`UnwrappedFaceDomain::of_face` closes such a loop against the degenerate row the
+way it already closes a pair of wrapping loops against a synthesized cut — out to
+the row, along it for the period, and back — which is why
+`UnwrappedFaceDomainCurve` now carries a *list* of corners rather than one: a cut
+takes one turning point, crossing a collapsed row takes two.
 
-**`LoopKind::Capping { axis, end }`** is in (`DomainEnd` lives in
-`geometry::dim2` beside `Axis2`). A lone period-spanning loop says outright which
-degeneracy closes the face, because travel direction cannot: reversing a face has
-to be a normal flip, and if direction also chose the side, reversing a cap would
-move it to the opposite pole. `UnwrappedFaceDomain::of_face` closes such a loop
-against the degenerate row the same way it closes a pair of wrapping loops
-against a synthesized cut — out to the row, along it for the period, and back —
-which is why `UnwrappedFaceDomainCurve` now carries a *list* of corners rather
-than one.
+**The loop stores a side; the surface says where.** `DomainSide::{Low, High}`
+(`geometry::dim2`, beside `Axis2`) is a direction along an axis, not a position,
+and `SurfaceGeometry::degenerate_rows(axis)` answers with the parameters at which
+a whole row collapses:
 
-**The gap: `DomainEnd` can only name a degeneracy that sits at a support's own
-domain boundary.** That is exactly a `Sphere`, whose `v` domain is
-`[-pi/2, pi/2]` with a pole at each end. It is *not*:
+| support | rows |
+|---|---|
+| `Sphere` | its two poles, the ends of the `v` domain |
+| `Cone` | its apex, from `apex_parameter` — *inside* an unbounded `v` domain |
+| `SurfaceOfRevolution` | where the profile meets the axis, by intersecting the two |
+| plane, cylinder, ruled, NURBS | none |
 
-- a `Cone`, whose `v` domain is unbounded and whose apex sits somewhere inside
-  it;
-- a `SurfaceOfRevolution`, whose profile direction is the profile *support's*
-  domain — a line's is unbounded — not the swept arc's span.
+This is what the first attempt got wrong. It spelled the bound as a *domain end*,
+which is exact for a sphere and useless for everything else: a cone's `v` domain
+is unbounded with the apex somewhere inside it, and a surface of revolution's
+profile direction is the profile *support's* domain, not the swept arc's span.
+Nor can a caller find the row by searching, because `is_degenerate_at` is a
+predicate and an unbounded domain gives no bracket to bisect. Only the surface
+knows, so the surface is asked — and nothing is stored that could drift from it.
 
-So `add_full_revolved_open_edge_face` kinds a band with one end on the axis
-`Capping` only when the degenerate row really is a domain end, and falls back to
-`Outer` otherwise, which is the kinding it has always had.
-`revolve_edge_full_turn_from_the_axis_cannot_yet_cap_a_cone` records that, and
-`revolve_edge_full_turn_with_an_end_on_the_axis_has_one_loop` records the case
-that is genuinely an outer loop: a line meeting the axis at right angles sweeps a
-*plane*, whose parameters the rim closes in perfectly well.
+**A cap is a disk in space.** `revolve_edge_full_turn_with_an_end_on_the_axis_has_one_loop`
+sweeps a line that meets the axis at right angles, which is flat — and it is
+still a cap, because `revolved_support` cannot build a plane's frame from a
+profile starting on the axis and sweeps a surface of revolution instead. What
+decides the kind is the parameterization, not the shape: the rim runs a whole
+period and the centre is a collapsed row. Only a support that closes the loop in
+its own parameters gives a genuine `Outer`.
 
-Closing the gap means one of:
-
-1. **Store the parameter** — `Capping { axis, at: f64 }`. Total for every
-   support. Costs `LoopKind`'s `Eq`/`Hash` derives, since `f64` has neither.
-2. **Keep `DomainEnd` as a side, and ask the geometry where the row is** — a new
-   `Surface` method answering "the parameter along this axis where you collapse,
-   on this side of here". Per-surface knowledge a cone and a revolution both
-   have; seven implementations.
-
-**Still to build, either way.** `FaceTrimDomain` must answer `Inside`
-unconditionally for a face with no loops at all (§8.6), and
-`split_face_by_imprints` must take a period-spanning imprint on a boundaryless
-face and produce two caps (§8.3). Those two are what
-`boolean_{union,difference}_of_a_block_and_a_sphere_*` fail on — the two
-remaining red tests, with the block-and-cylinder cases beside them passing.
+**Still to build.** `FaceTrimDomain` must answer `Inside` unconditionally for a
+face with no loops at all (§8.6), and `split_face_by_imprints` must take a
+period-spanning imprint on a boundaryless face and produce two caps (§8.3). Those
+two are what `boolean_{union,difference}_of_a_block_and_a_sphere_*` fail on — the
+two remaining red tests, with the block-and-cylinder cases beside them passing.

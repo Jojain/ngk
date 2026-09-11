@@ -18,7 +18,7 @@
 use thiserror::Error;
 
 use crate::geometry::{
-    Axis2, DomainEnd, Point2, Surface, SurfacePeriodicity, TrimmedCurve2, Vector2,
+    Axis2, DomainSide, Point2, Surface, SurfacePeriodicity, TrimmedCurve2, Vector2,
 };
 use crate::topology::attributes::LoopKind;
 use crate::topology::face::Face;
@@ -370,14 +370,18 @@ fn close_loop(curves: &mut [UnwrappedFaceDomainCurve]) {
 /// Closes a lone period-spanning loop against the degenerate row that bounds it.
 ///
 /// The loop leaves off one period along `axis` from where it started, and the
-/// face runs from it to the collapsed row at `end` of the transverse axis. The
-/// boundary is completed by travelling out to that row, along it for the period,
-/// and back — the path a stored model spells out as a seam up to a pole vertex,
-/// the pole itself, and a seam back down.
+/// face runs from it to the collapsed row on the `side` of the transverse axis
+/// the loop names. The boundary is completed by travelling out to that row,
+/// along it for the period, and back — the path a stored model spells out as a
+/// seam up to a pole vertex, the pole itself, and a seam back down.
+///
+/// The row's parameter comes from the surface, never from the loop: a side is
+/// stable under every edit, a number would have to be kept in step with the
+/// support.
 fn close_capping_loop(
     surface: &Surface,
     axis: Axis2,
-    end: DomainEnd,
+    side: DomainSide,
     curves: &mut [UnwrappedFaceDomainCurve],
 ) {
     let (Some(last), Some(first)) = (
@@ -387,11 +391,12 @@ fn close_capping_loop(
         return;
     };
     let transverse = axis.transverse();
-    let (u, v) = surface.domain();
-    let row = end.of(match transverse {
-        Axis2::U => u,
-        Axis2::V => v,
-    });
+    let Some(row) = side.nearest(transverse.of(first), surface.degenerate_rows(transverse)) else {
+        // The support names no collapse on that side, so there is no row to
+        // close against and the loop is left open rather than closed against a
+        // guess.
+        return;
+    };
     let onto_row = |point: Point2| {
         let mut point = point;
         point[transverse.index()] = row;

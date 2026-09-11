@@ -3,11 +3,11 @@ use std::f64::consts::{FRAC_PI_2, PI};
 use nalgebra::Vector3;
 use radians::Rad64;
 
-use ngk::builders::edges::add_arc;
+use ngk::builders::edges::{add_arc, add_edge};
 use ngk::builders::revolve::add_revolved_edge;
 use ngk::geometry::Axis2;
 use ngk::geometry::axis::Axis3;
-use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, Surface};
+use ngk::geometry::{Curve, LINEAR_TOLERANCE, Plane, Point3, Surface};
 use ngk::modeling::{faces, solids};
 use ngk::topology::LoopKind;
 use ngk::topology::gmap::GMap;
@@ -188,4 +188,50 @@ fn a_cylinder_wall_is_a_ring_face_with_no_seam() {
             .collect::<Vec<_>>(),
         vec![Axis2::U, Axis2::U]
     );
+}
+
+/// A cap closes against its degenerate row, and the result is a real rectangle.
+///
+/// The loop alone leaves off one period from where it started, so on its own it
+/// bounds nothing a winding test could read. Closing it out to the apex row and
+/// back is what recovers the polygon a stored seam-and-pole-vertex used to spell
+/// out — and the row's parameter comes from the support, not from the loop.
+#[test]
+fn a_capped_face_closes_its_domain_against_the_degenerate_row() {
+    let mut g = GMap::<StandardPayload>::new();
+    let apex = Point3::origin();
+    let rim = Point3::new(1.0, 0.0, 2.0);
+    let edge = add_edge(&mut g, rim, apex, Curve::line(rim, apex)).expect("edge should build");
+    let face_key = add_revolved_edge(
+        &mut g,
+        edge,
+        Axis3::new(Point3::origin(), Vector3::z()),
+        Rad64::FULL_TURN,
+    )
+    .expect("a cone should build");
+    let face = g.face_unchecked(face_key);
+    assert!(matches!(face.loops()[0].kind(), LoopKind::Capping { .. }));
+
+    let domain = UnwrappedFaceDomain::of_face(&face).expect("a cap should unwrap");
+    let boundary = domain.loops().first().expect("a cap has one boundary");
+
+    // Two corners, both on the collapsed row: out to it, along it, and back.
+    let corners = boundary
+        .curves()
+        .iter()
+        .flat_map(|curve| curve.corners().iter().copied())
+        .collect::<Vec<_>>();
+    assert_eq!(corners.len(), 2);
+    for corner in &corners {
+        assert!(
+            face.surface().is_degenerate_at(corner.x, corner.y),
+            "a cap's corners sit on the collapsed row, found {corner:?}"
+        );
+    }
+
+    // The closed boundary spans a whole period one way and reaches the apex the
+    // other: the rectangle [0, 2π] x [0, √5].
+    let (min, max) = domain.bounds();
+    assert!((max.x - min.x - 2.0 * PI).abs() < LINEAR_TOLERANCE);
+    assert!((max.y - min.y - 5.0_f64.sqrt()).abs() < LINEAR_TOLERANCE);
 }

@@ -2,8 +2,8 @@ use super::bbox::BBox;
 use super::curves::{Circle, Curve, Periodicity, circle_nurbs_control_points, circle_nurbs_knots};
 use super::frame::Frame;
 use super::intersections::{
-    IntersectionError, IntersectionOptions, SurfaceSurfaceIntersections, intersect_surfaces,
-    intersect_surfaces_with_options,
+    CurveCurveIntersection, IntersectionError, IntersectionOptions, SurfaceSurfaceIntersections,
+    intersect_curves, intersect_surfaces, intersect_surfaces_with_options,
 };
 use super::nurbs::{ControlNet, Degree, HPoint, KnotVector, NurbsSurface};
 use super::utils::{IntoUnit, Point3};
@@ -83,6 +83,24 @@ impl Surface {
             Surface::Ruled(surface) => surface.is_degenerate_at(u, v),
             Surface::Revolution(surface) => surface.is_degenerate_at(u, v),
             Surface::Nurbs(surface) => surface.is_degenerate_at(u, v),
+        }
+    }
+
+    /// Returns the parameters along `axis` where a whole row collapses to a
+    /// point.
+    ///
+    /// See [`SurfaceGeometry::degenerate_rows`]: this is what lets a face
+    /// bounded by a degeneracy find the row that bounds it, which no predicate
+    /// can locate on an unbounded domain.
+    pub fn degenerate_rows(&self, axis: Axis2) -> Vec<f64> {
+        match self {
+            Surface::Plane(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
+            Surface::Cylinder(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
+            Surface::Sphere(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
+            Surface::Cone(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
+            Surface::Ruled(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
+            Surface::Revolution(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
+            Surface::Nurbs(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
         }
     }
 
@@ -303,6 +321,10 @@ impl SurfaceGeometry for Surface {
 
     fn is_degenerate_at(&self, u: f64, v: f64) -> bool {
         Surface::is_degenerate_at(self, u, v)
+    }
+
+    fn degenerate_rows(&self, axis: Axis2) -> Vec<f64> {
+        Surface::degenerate_rows(self, axis)
     }
 
     fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError> {
@@ -1151,6 +1173,18 @@ impl SurfaceGeometry for Sphere {
         self.radius * v.cos().abs() <= LINEAR_TOLERANCE
     }
 
+    /// The two poles, where the latitude circles shrink to a point. They sit at
+    /// the ends of the `v` domain; `u` never collapses.
+    fn degenerate_rows(&self, axis: Axis2) -> Vec<f64> {
+        match axis {
+            Axis2::V => {
+                let (_, v) = SurfaceGeometry::domain(self);
+                vec![v.start, v.end]
+            }
+            Axis2::U => Vec::new(),
+        }
+    }
+
     fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError> {
         Ok(Sphere::closest_parameter(self, point))
     }
@@ -1234,6 +1268,16 @@ impl SurfaceGeometry for Cone {
 
     fn is_degenerate_at(&self, _u: f64, v: f64) -> bool {
         self.radius_at(v).abs() <= LINEAR_TOLERANCE
+    }
+
+    /// The apex, if the cone has one. It sits inside an unbounded `v` domain
+    /// rather than at an end of it, which is exactly why a caller cannot find
+    /// it by searching.
+    fn degenerate_rows(&self, axis: Axis2) -> Vec<f64> {
+        match axis {
+            Axis2::V => self.apex_parameter().into_iter().collect(),
+            Axis2::U => Vec::new(),
+        }
     }
 
     fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError> {
@@ -1398,6 +1442,27 @@ impl SurfaceGeometry for SurfaceOfRevolution {
     fn is_degenerate_at(&self, u: f64, v: f64) -> bool {
         let point = self.point_at(u, v);
         (point - self.axis.project(point)).norm() <= LINEAR_TOLERANCE
+    }
+
+    /// The profile parameters at which the profile meets the axis.
+    ///
+    /// `u` is the profile's own parameter here, so intersecting the profile
+    /// with the axis line answers directly. A profile lying *along* the axis
+    /// sweeps nothing at all and names no row.
+    fn degenerate_rows(&self, axis: Axis2) -> Vec<f64> {
+        let Axis2::U = axis else {
+            return Vec::new();
+        };
+        let line = Curve::line(self.axis.origin, self.axis.origin + *self.axis.direction);
+        let Ok(hits) = intersect_curves(&self.curve, &line) else {
+            return Vec::new();
+        };
+        hits.iter()
+            .filter_map(|hit| match hit {
+                CurveCurveIntersection::Point { u_a, .. } => Some(*u_a),
+                CurveCurveIntersection::Overlap { .. } => None,
+            })
+            .collect()
     }
 
     fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError> {

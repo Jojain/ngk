@@ -7,7 +7,7 @@ use ngk::builders::edges::add_edge;
 use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::revolve::{RevolveError, add_revolved_edge, add_revolved_face};
 use ngk::geometry::axis::Axis3;
-use ngk::geometry::{Curve, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface};
+use ngk::geometry::{Axis2, Curve, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface};
 use ngk::tessellate::{TessellateOpts, tessellate_face_key};
 use ngk::topology::LoopKind;
 use ngk::topology::gmap::GMap;
@@ -287,23 +287,65 @@ fn revolve_edge_full_turn_with_an_end_on_the_axis_has_one_loop() {
         (boundary_edge_keys.len(), boundary_vertex_keys.len()),
         (1, 1)
     );
-    // This particular band is a *disk*: a line meeting the axis at right angles
-    // sweeps a plane, whose parameters the swept circle closes in perfectly
-    // well. It really is an outer loop, and not every one-loop band is.
-    assert!(matches!(face.loops()[0].kind(), LoopKind::Outer));
+    // In space this band is a flat disk — but so is a spherical cap, and what
+    // decides the kind is the support's parameterization, not the shape. The
+    // profile starts on the axis, so `revolved_support` cannot build a plane's
+    // frame from it and sweeps a surface of revolution instead: the rim runs a
+    // whole period of the sweep, and the disk's centre is a collapsed row rather
+    // than a boundary. That is a cap.
+    assert!(matches!(face.loops()[0].kind(), LoopKind::Capping { .. }));
+    assert!(face.outer_loop().is_none());
 }
 
-/// A slanted edge from the axis sweeps a band whose rim *is* a cap — and
-/// `LoopKind::Capping` cannot say so yet. This records why.
+/// A slanted edge from the axis sweeps a cone, and its rim is that cone's cap.
 ///
-/// The kind names the domain **end** a degeneracy sits at, and the support here
-/// is a `SurfaceOfRevolution` whose profile direction is the source line's own
-/// domain: unbounded, with the apex somewhere inside it rather than at an end.
-/// A cone is the same. Only a support whose collapse really is a domain
-/// boundary — a sphere's poles — can be capped today, so this band keeps the
-/// `Outer` kinding it has always had.
+/// The support is periodic in the sweep, so the rim runs a whole period and
+/// closes only on the quotient — it has no inside of its own. What bounds the
+/// face on the far side is the apex, a parametric degeneracy rather than a loop.
+/// The apex sits *inside* an unbounded parameter direction rather than at an end
+/// of it, which is why the loop records only which side it is on and the support
+/// is asked where: `Cone::apex_parameter`, through `Surface::degenerate_rows`.
+///
+/// Written rim-first deliberately: `revolved_support` needs a non-degenerate
+/// start radius to build a cone's frame, so an apex-first line falls through to
+/// a generic surface of revolution. Both are capped, but only this one is a
+/// `Cone`.
 #[test]
-fn revolve_edge_full_turn_from_the_axis_cannot_yet_cap_a_cone() {
+fn revolve_edge_full_turn_from_the_axis_caps_a_cone() {
+    let mut g = GMap::<StandardPayload>::new();
+    let apex = Point3::origin();
+    let rim = Point3::new(1.0, 0.0, 2.0);
+    let edge_key = add_edge(&mut g, rim, apex, Curve::line(rim, apex)).expect("edge should build");
+
+    let face_key = add_revolved_edge(
+        &mut g,
+        edge_key,
+        Axis3::new(Point3::origin(), Vector3::z()),
+        Rad64::FULL_TURN,
+    )
+    .unwrap();
+    let face = g.face_unchecked(face_key);
+
+    assert!(matches!(face.surface(), Surface::Cone(_)));
+    assert_eq!(face.loops().len(), 1);
+    assert!(
+        matches!(face.loops()[0].kind(), LoopKind::Capping { .. }),
+        "a cone's rim is a cap, not an outer loop: {:?}",
+        face.loops()[0].kind()
+    );
+    assert!(face.outer_loop().is_none());
+
+    // The support locates the apex: one generatrix length from the rim, which
+    // sits at v = 0.
+    let rows = face.surface().degenerate_rows(Axis2::V);
+    assert_eq!(rows.len(), 1);
+    assert!((rows[0].abs() - 5.0_f64.sqrt()).abs() < LINEAR_TOLERANCE);
+}
+
+/// The same band written apex-first is a surface of revolution, and is capped
+/// too — there the row comes from intersecting the profile with the axis.
+#[test]
+fn revolve_edge_full_turn_from_the_axis_caps_a_surface_of_revolution() {
     let mut g = GMap::<StandardPayload>::new();
     let apex = Point3::origin();
     let rim = Point3::new(1.0, 0.0, 2.0);
@@ -318,8 +360,17 @@ fn revolve_edge_full_turn_from_the_axis_cannot_yet_cap_a_cone() {
     .unwrap();
     let face = g.face_unchecked(face_key);
 
-    assert_eq!(face.loops().len(), 1);
-    assert!(matches!(face.loops()[0].kind(), LoopKind::Outer));
+    assert!(matches!(face.surface(), Surface::Revolution(_)));
+    assert!(
+        matches!(face.loops()[0].kind(), LoopKind::Capping { .. }),
+        "the apex closes this band: {:?}",
+        face.loops()[0].kind()
+    );
+    // The profile meets the axis at its own parameter 0, which is this
+    // surface's `u`.
+    let rows = face.surface().degenerate_rows(Axis2::U);
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].abs() < LINEAR_TOLERANCE);
 }
 
 #[test]
@@ -666,4 +717,3 @@ fn revolve_edge_full_turn_bounds_its_band_with_wrapping_loops() {
         );
     }
 }
-

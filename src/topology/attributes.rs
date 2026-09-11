@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
-use crate::geometry::{Axis2, Curve, DomainEnd, Point3, Surface};
+use crate::geometry::{Axis2, Curve, DomainSide, Point3, Surface};
 use crate::topology::dart::Dart;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -104,7 +104,7 @@ pub enum LoopKind {
     /// flip the face's normal, so if it also chose the side it would move the
     /// face to the opposite pole. Which degeneracy closes the face is therefore
     /// said outright.
-    Capping { axis: Axis2, end: DomainEnd },
+    Capping { axis: Axis2, end: DomainSide },
 }
 
 impl LoopKind {
@@ -120,7 +120,7 @@ impl LoopKind {
     }
 
     /// Returns the domain end whose degeneracy closes the face, if one does.
-    pub fn capped_end(self) -> Option<DomainEnd> {
+    pub fn capped_end(self) -> Option<DomainSide> {
         match self {
             LoopKind::Capping { end, .. } => Some(end),
             LoopKind::Outer | LoopKind::Inner | LoopKind::Wrapping { .. } => None,
@@ -147,7 +147,7 @@ pub enum LoopDefinition {
     Capping {
         seed: Dart,
         axis: Axis2,
-        end: DomainEnd,
+        end: DomainSide,
     },
 }
 
@@ -177,7 +177,7 @@ impl LoopDefinition {
     }
 
     /// Defines a lone period-spanning loop closed at `end` by a degeneracy.
-    pub fn capping(seed: Dart, axis: Axis2, end: DomainEnd) -> Self {
+    pub fn capping(seed: Dart, axis: Axis2, end: DomainSide) -> Self {
         Self::Capping { seed, axis, end }
     }
 

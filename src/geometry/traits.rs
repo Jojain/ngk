@@ -22,7 +22,7 @@
 
 use crate::geometry::axis::Axis3;
 use crate::geometry::dim2::nurbs::NurbsCurve2;
-use crate::geometry::dim2::utils::Point2;
+use crate::geometry::dim2::utils::{Axis2, Point2};
 use crate::geometry::dim3::bbox::BBox;
 use crate::geometry::dim3::curves::Periodicity;
 use crate::geometry::dim3::nurbs::{NurbsCurve, NurbsSurface};
@@ -160,6 +160,21 @@ pub trait SurfaceGeometry: Sized {
 
     /// Whether the surface's parameterization collapses at `(u, v)`.
     fn is_degenerate_at(&self, u: f64, v: f64) -> bool;
+
+    /// The parameters along `axis` at which a whole row of the surface
+    /// collapses to a single point.
+    ///
+    /// [`Self::is_degenerate_at`] answers for one point, which is enough to
+    /// skip zero-area geometry but not to *locate* a collapse: it is a
+    /// predicate, and on an unbounded domain there is no bracket to search. A
+    /// face bounded on one side by a degeneracy rather than by a loop — a
+    /// spherical cap — has to be told where that row is, and only the surface
+    /// knows. A sphere answers its two poles for `v`, a cone its apex, and a
+    /// plane or a cylinder nothing at all.
+    fn degenerate_rows(&self, axis: Axis2) -> Vec<f64> {
+        let _ = axis;
+        Vec::new()
+    }
 
     /// The parameters of the surface point nearest `point`.
     fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError>;

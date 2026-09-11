@@ -9,7 +9,7 @@ use crate::builders::faces::reverse_face_winding;
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{
-    ANGULAR_TOLERANCE, Axis2, Circle, Cone, Curve, Cylinder, DomainEnd, Frame, LINEAR_TOLERANCE,
+    ANGULAR_TOLERANCE, Axis2, Circle, Cone, Curve, Cylinder, DomainSide, Frame, LINEAR_TOLERANCE,
     Plane, Point2, Point3, Surface, SurfaceOfRevolution, SurfacePeriodicity,
 };
 use crate::topology::IsolatedDart;
@@ -587,7 +587,7 @@ fn add_full_revolved_open_edge_face<P: Payload>(
         // by the degeneracy there. The loop still runs a whole turn, so it is no
         // more an outer loop than a ring's are — it is a cap.
         None => {
-            let degenerate_u = if outer_u == interval.start {
+            let degenerate_profile = if outer_u == interval.start {
                 interval.end
             } else {
                 interval.start
@@ -596,8 +596,17 @@ fn add_full_revolved_open_edge_face<P: Payload>(
                 .get(&outer_loop)
                 .and_then(|pcurve| swept_period_axis(&surface, [pcurve, pcurve]))
                 .and_then(|axis| {
-                    degenerate_domain_end(&surface, axis.transverse(), degenerate_u)
-                        .map(|end| LoopDefinition::capping(outer_loop, axis, end))
+                    // The loop and the collapse are both read in the support's
+                    // own parameters, which is where the pcurves already live.
+                    let transverse = axis.transverse();
+                    let loop_at = transverse.of(support.corner(outer_u, 0.0));
+                    let collapse_at = transverse.of(support.corner(degenerate_profile, 0.0));
+                    let side = DomainSide::of(loop_at, collapse_at);
+                    // The support has to agree that it collapses there, since it
+                    // is the support the chart will later ask for the row.
+                    side.nearest(loop_at, surface.degenerate_rows(transverse))
+                        .filter(|row| (row - collapse_at).abs() <= LINEAR_TOLERANCE)
+                        .map(|_| LoopDefinition::capping(outer_loop, axis, side))
                 }) {
                 Some(capping) => vec![capping],
                 None => vec![LoopDefinition::outer(outer_loop)],
@@ -611,23 +620,6 @@ fn add_full_revolved_open_edge_face<P: Payload>(
         loops,
         pcurves,
     )))
-}
-
-/// The end of `axis`' domain a degeneracy at `parameter` closes, if it is one.
-///
-/// A [`LoopKind::Capping`] names a domain *end*, so a collapsed row somewhere in
-/// the middle of the domain — a profile that crosses the axis and carries on —
-/// cannot be described by one. Answering `None` there leaves the caller to fall
-/// back rather than record a bound that is not where it says it is.
-fn degenerate_domain_end(surface: &Surface, axis: Axis2, parameter: f64) -> Option<DomainEnd> {
-    let (u, v) = surface.domain();
-    let domain = match axis {
-        Axis2::U => u,
-        Axis2::V => v,
-    };
-    [DomainEnd::Low, DomainEnd::High]
-        .into_iter()
-        .find(|end| (end.of(domain) - parameter).abs() <= LINEAR_TOLERANCE)
 }
 
 /// The axis every given loop spans a whole period of, if they all span one.
