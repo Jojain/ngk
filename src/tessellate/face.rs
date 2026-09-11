@@ -19,17 +19,17 @@ use nalgebra::UnitVector3;
 
 use super::{IndexedMesh, TessellateOpts, surface::tessellate_surface_patch};
 use crate::geometry::{Curve, Interval, LINEAR_TOLERANCE, Point2, PointCoincidence, Surface};
-use crate::topology::chart::Chart;
 use crate::topology::face::Face;
 use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::FaceKey;
+use crate::topology::unwrapped_face_domain::UnwrappedFaceDomain;
 
 const EPS: f64 = LINEAR_TOLERANCE;
 
 /// Tessellates a trimmed face into an indexed triangle mesh.
 ///
-/// The boundary is read on a synthesized [`Chart`], so a loop written across a
+/// The boundary is read on a synthesized [`UnwrappedFaceDomain`], so a loop written across a
 /// periodic support's cut arrives as one continuous parameter-space polyline
 /// rather than as pieces a whole period apart. Each loop must have one pcurve
 /// per boundary edge. Returns `None` when the boundary cannot be sampled into
@@ -38,9 +38,9 @@ pub fn tessellate_face<P: Payload>(
     face: &Face<'_, P>,
     opts: TessellateOpts,
 ) -> Option<IndexedMesh> {
-    let chart = Chart::of_face(face).ok()?;
+    let domain = UnwrappedFaceDomain::of_face(face).ok()?;
     let segments = opts.curve.segments.max(1);
-    let mut boundary = chart
+    let mut boundary = domain
         .loops()
         .iter()
         .map(|boundary| boundary.polyline(segments));
@@ -58,7 +58,7 @@ pub fn tessellate_face<P: Payload>(
         Surface::Cylinder(_) | Surface::Sphere(_) | Surface::Cone(_) | Surface::Ruled(_) => {
             surface_grid_over_bounds(
                 face.surface(),
-                grid_bounds(&chart, face, &outer_uv),
+                grid_bounds(&domain, face, &outer_uv),
                 ccw,
                 opts,
             )
@@ -121,18 +121,18 @@ fn signed_area(poly: &[Point2]) -> f64 {
 ///
 /// A wrapping loop bounds the axis it is *transverse* to, never the axis it
 /// spans, so along a spanned axis the face covers its period entirely. Taking
-/// that range from the chart rather than from sampled points is what keeps the
+/// that range from the domain rather than from sampled points is what keeps the
 /// two ends of the period the same parameter to the last bit — and only then can
 /// the grid recognise them as one column and close the mesh over the cut.
 fn grid_bounds<P: Payload>(
-    chart: &Chart,
+    domain: &UnwrappedFaceDomain,
     face: &Face<'_, P>,
     outer_uv: &[Point2],
 ) -> (f64, f64, f64, f64) {
     let (u_min, u_max, v_min, v_max) = uv_bbox(outer_uv);
     let mut bounds = [(u_min, u_max), (v_min, v_max)];
     for (_, axis) in face.boundary().wrapping() {
-        if let (Some(period), Some(cut)) = (chart.period(axis), chart.cut(axis)) {
+        if let (Some(period), Some(cut)) = (domain.period(axis), domain.cut(axis)) {
             bounds[axis.index()] = (cut, cut + period);
         }
     }

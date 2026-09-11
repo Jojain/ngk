@@ -184,7 +184,7 @@ fn periodic_pcurve_image(
     trim: &FaceTrimDomain,
 ) -> Result<TrimmedCurve2, NurbsError> {
     let reference = span.point_at(0.5);
-    let center = trim.chart_center();
+    let center = trim.domain_center();
     let mut offset = Vector2::zeros();
     let nearest_shift =
         |value: f64, target: f64, period: f64| ((target - value) / period).round() * period;

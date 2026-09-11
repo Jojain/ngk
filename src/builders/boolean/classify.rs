@@ -339,7 +339,7 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
     }
 }
 
-/// Chooses the equivalent periodic image in the face's trimming chart.
+/// Chooses the equivalent periodic image in the face's trimming unwrapped face domain.
 fn periodic_uv(mut uv: Point2, center: Point2, periodicity: SurfacePeriodicity) -> Point2 {
     let (u, v) = match periodicity {
         SurfacePeriodicity::None => (None, None),
@@ -385,7 +385,7 @@ fn probe<P: Payload>(
     for (_, point) in triangles {
         let uv = periodic_uv(
             view.surface().param_at(point)?,
-            trim.chart_center(),
+            trim.domain_center(),
             view.surface().periodicity(),
         );
         if trim.contains(uv)
@@ -414,7 +414,7 @@ fn interior_parameter(trim: &FaceTrimDomain, tolerances: BooleanTolerances) -> O
     const GRID: usize = 24;
     const REFINEMENTS: usize = 4;
 
-    let (mut min, mut max) = trim.chart_bounds();
+    let (mut min, mut max) = trim.domain_bounds();
     let required = tolerances.probe_margin.max(trim.boundary_epsilon());
     let mut best: Option<(f64, Point2)> = None;
     for _ in 0..REFINEMENTS {

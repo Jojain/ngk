@@ -320,7 +320,10 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
 /// *distinct* vertices that happen to sit at one point are a degenerate model,
 /// not a circle, and no tolerance can tell the difference the map already
 /// records exactly.
-fn vertices_at_dart<P: Payload>(gmap: &GMap<P>, dart: Dart) -> Option<(Vertex<'_, P>, Vertex<'_, P>)> {
+fn vertices_at_dart<P: Payload>(
+    gmap: &GMap<P>,
+    dart: Dart,
+) -> Option<(Vertex<'_, P>, Vertex<'_, P>)> {
     let start = Vertex::from_dart(gmap, dart)?;
     let end = Vertex::from_dart(gmap, gmap.alpha(Dim::Zero, dart))?;
     (start.key() != end.key()).then_some((start, end))

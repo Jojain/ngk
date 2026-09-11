@@ -1,7 +1,7 @@
 # Seamless periodic faces
 
 Status: **In progress** — milestones 0 (`src/topology/attributes.rs`),
-1 (`src/topology/face.rs`), 2 (`src/topology/chart.rs`), 3, 4 and 5 are
+1 (`src/topology/face.rs`), 2 (`src/topology/unwrapped_face_domain.rs`), 3, 4 and 5 are
 implemented. Milestones 6 and 7 are designed but not built.
 
 Nothing in the tree builds a seam any more: a swept or revolved wall comes out a
@@ -70,7 +70,7 @@ against.
 
 ## 2. The one idea
 
-> **A seam is a property of a chart, not of a shape.**
+> **A seam is a property of an unwrapped domain, not of a shape.**
 
 Cutting a closed parameter direction open is a legitimate and sometimes
 necessary *algorithmic* step — to run a planar winding test, to emit a NURBS
@@ -378,7 +378,7 @@ than letting it keep leaking.
 | Edge span | from bounding vertices | from bounding vertices, or the whole period when closed |
 | `SheetAttr` / `SolidAttr` | rooted at a `Dart` | `ShellRoot`, dart preferred |
 | Shell validity | no alpha2-free dart | that, plus geometric closedness for a key-rooted shell |
-| Seam | a stored `EdgeKey` | a chart cut computed on demand, stored nowhere |
+| Seam | a stored `EdgeKey` | an unwrapped-domain cut computed on demand, stored nowhere |
 
 ## 8. Work breakdown
 
@@ -473,11 +473,11 @@ free:
 
 - `trim.rs::FaceTrimDomain` — `polygons` presumes closed planar polygons. Keep the
   winding test, but build the polygon **in the universal cover by synthesizing a
-  chart cut** — reconstruct a virtual seam at query time, at a `u` away from the
+  unwrapped domain cut** — reconstruct a virtual seam at query time, at a `u` away from the
   loops. That confines the change to one constructor, keeps `images` intact, and
   is the concrete instance of §2. A boundaryless face answers `Inside`
   unconditionally.
-- `classify.rs` — `chart_center` / `chart_bounds` read `polygons.first()`; they
+- `classify.rs` — `domain_center` / `domain_bounds` read `polygons.first()`; they
   should read the surface domain when a direction is unbounded.
 - `imprint.rs` / `assemble.rs` — result faces must be emittable with `Wrapping`
   loops and with no loops at all.
@@ -536,7 +536,7 @@ Each leaves the tree green.
 |---|---|---|
 | **0** | **`FaceBoundary` / `LoopKind`** | Replace `outer_loop` + `inner_loops` with an ordered `Vec` of kinded loops. `Outer`/`Inner` only; today's semantics exactly. No behaviour change. **Done.** |
 | **1** | **`Face` sense** | Replace the `Face` view's dart with `sense: Orientation` (§5.5). Pure simplification; unblocks milestone 5. **Done.** |
-| **2** | **Chart synthesis** | One function: given a face and its loops, produce a cut position and a simply-connected UV chart. Route `FaceTrimDomain::new` and `tessellate_face` through it, still on seamed input. Proves the abstraction before anything depends on it. **Done** — `topology::chart::{Chart, ChartLoop, ChartCurve, Axis2}`. |
+| **2** | **Unwrapped face domain synthesis** | One function: given a face and its loops, produce a cut position and a simply-connected unwrapped UV domain. Route `FaceTrimDomain::new` and `tessellate_face` through it, still on seamed input. Proves the abstraction before anything depends on it. **Done** — `topology::unwrapped_face_domain::{UnwrappedFaceDomain, UnwrappedFaceDomainLoop, UnwrappedFaceDomainCurve, Axis2}`. |
 | 3 | Ring faces | `LoopKind::Wrapping`, cylinder and full-revolve builders, per-direction trimming, tessellation wrap + watertightness test, seam 1-removal in `removal.rs`, Boolean trim on rings. Sphere still seamed. **Done** — see §11.1. |
 | 4 | Seamless intersections | Drop `seam_crossings()` splitting; period-spanning pcurves end to end through imprint and assembly. **Done** — see §11.2. |
 | 5 | `Edge` as an enum + closed edges | The enum and the whole-period span rule land together. 0-removal of the vertex between two arcs that close on each other. **Done** — see §11.3. |
@@ -563,9 +563,9 @@ Built first:
 - `Face` no longer assumes an outer loop: `outer_loop()` returns `Option`,
   `dart()` reads the boundary's seed, `loops()` covers every kind, and
   `boundary()` exposes the stored kinds. `normal_at` reads its winding off the
-  chart rather than off the outer loop, which is what makes it answer for a
+  unwrapped domain rather than off the outer loop, which is what makes it answer for a
   ring at all.
-- `Chart` fuses wrapping loops into one closed chart boundary across a
+- `UnwrappedFaceDomain` fuses wrapping loops into one closed unwrapped domain boundary across a
   synthesized cut. The cut is the same mechanism as a pole corner — a point the
   loop travels through carrying no pcurve — so `FaceTrimDomain`'s winding test
   and `tessellate_face` work on rings unchanged.
@@ -602,7 +602,7 @@ Built since, closing the milestone:
    it guards — an edge a loop walks twice carries a different pcurve each time —
    is still live for any seamed periodic face, and a sphere is still one.
 3. **Tessellation wrap** (§8.5). `grid_bounds` takes a wrapped axis's range from
-   the chart's cut and period rather than from sampled points, so the two ends of
+   the unwrapped domain's cut and period rather than from sampled points, so the two ends of
    the period are the same parameter to the last bit; `tessellate_surface_patch`
    then drops the closing row of samples and indexes the quads that would reach it
    back to index 0. `modeling::a_cylinder_wall_tessellates_into_a_closed_tube` is

@@ -8,7 +8,7 @@ This directory contains implementation plans for substantial kernel work.
 | [Boolean evaluation](boolean_evaluation.md) | Proposed | Complete the regularized solid Boolean: clipping, network finalization, fragment classification, selection, and GMap assembly |
 | [Shape healing](shape_healing.md) | In progress | Remove redundant topology left by Booleans and imprints: `i`-removal of shape-free vertices and edges, fusing the cells they separate |
 | [Analytical curves and surfaces](analytical_geometry.md) | In progress | Add sphere, cone, torus, ellipse, hyperbola and parabola supports behind a stated geometry contract, and close the paths where an unrecognized support silently degrades |
-| [Seamless periodic faces](seamless_periodic_faces.md) | In progress | Stop storing a seam edge on periodic faces: ring faces, vertexless closed edges, boundaryless faces, and a chart cut synthesized on demand |
+| [Seamless periodic faces](seamless_periodic_faces.md) | In progress | Stop storing a seam edge on periodic faces: ring faces, vertexless closed edges, boundaryless faces, and an unwrapped-domain cut synthesized on demand |
 
 Statuses used by the plans:
 

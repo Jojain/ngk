@@ -16,7 +16,7 @@ use crate::geometry::{LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
 ///
 /// A range spanning a whole period is meshed closed: the quads that would reach
 /// its far edge index back to its near one instead, so a ring comes out
-/// watertight rather than cracked along the chart's cut.
+/// watertight rather than cracked along the unwrapped domain's cut.
 pub fn tessellate_surface_patch(
     surface: &Surface,
     u_range: (f64, f64),
@@ -28,7 +28,7 @@ pub fn tessellate_surface_patch(
 
     // A range covering a whole period closes on itself: its last row of samples
     // *is* its first, at the same surface points. Emitting both would leave the
-    // mesh split down whichever parameter the chart happened to cut, so the
+    // mesh split down whichever parameter the unwrapped domain happened to cut, so the
     // closing row is dropped and the quads that reach it wrap back to index 0.
     let [u_period, v_period] = periods_of(surface);
     let columns = if spans_period(u_period, u_range) {

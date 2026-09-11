@@ -5,10 +5,12 @@ use crate::geometry::{
     CurveCurveIntersection2, CurveIntersectionError, CurveIntersectionOptions, IntersectionOptions,
     Interval, Point2,
 };
-use crate::topology::chart::{Chart, ChartCurve, ChartError};
 use crate::topology::face::Face;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::EdgeKey;
+use crate::topology::unwrapped_face_domain::{
+    UnwrappedFaceDomain, UnwrappedFaceDomainCurve, UnwrappedFaceDomainError,
+};
 
 use super::BooleanError;
 
@@ -30,16 +32,16 @@ pub(crate) enum TrimLocation {
 /// for roughly 157000 points, and every later query walks all of them.
 const TRIM_CHORD_RATIO: f64 = 1.0e-4;
 
-/// A face's trim, read on one synthesized chart cut.
+/// A face's trim, read on one synthesized domain cut.
 ///
-/// The [`Chart`] places the loops; the polylines flattened from it answer
+/// The [`UnwrappedFaceDomain`] places the loops; the polylines flattened from it answer
 /// which side of the boundary a point falls on, and the loops' own pcurves
 /// answer where the boundary exactly runs.
 pub(crate) struct FaceTrimDomain {
-    chart: Chart,
+    domain: UnwrappedFaceDomain,
     polygons: Vec<Vec<Point2>>,
     tolerance: f64,
-    /// Upper bound on how far `polygons` may stray from the chart's loops.
+    /// Upper bound on how far `polygons` may stray from the domain's loops.
     chord: f64,
 }
 
@@ -50,19 +52,19 @@ impl FaceTrimDomain {
         tolerance: f64,
     ) -> Result<Self, BooleanError> {
         super::diagnostics::count_trim_domain_built();
-        let chart = Chart::of_face(face).map_err(|error| match error {
-            ChartError::MissingPcurve { face, edge } => {
+        let domain = UnwrappedFaceDomain::of_face(face).map_err(|error| match error {
+            UnwrappedFaceDomainError::MissingPcurve { face, edge } => {
                 BooleanError::MissingTrimCurve { face, edge }
             }
         })?;
-        let chord = chord_budget(&chart, tolerance);
-        let polygons = chart
+        let chord = chord_budget(&domain, tolerance);
+        let polygons = domain
             .loops()
             .iter()
             .map(|boundary| boundary.adaptive_polyline(chord, 20))
             .collect();
         Ok(Self {
-            chart,
+            domain,
             polygons,
             tolerance,
             chord,
@@ -71,11 +73,11 @@ impl FaceTrimDomain {
 
     /// Every pcurve of the face's trim, as stored.
     fn trim_curves(&self) -> impl Iterator<Item = &TrimmedCurve2> {
-        self.chart
+        self.domain
             .loops()
             .iter()
             .flat_map(|boundary| boundary.curves())
-            .map(ChartCurve::curve)
+            .map(UnwrappedFaceDomainCurve::curve)
     }
 
     /// How close to the boundary [`Self::boundary_distance`] stops discriminating.
@@ -89,13 +91,13 @@ impl FaceTrimDomain {
     }
 
     /// Center of the active parameter-space image of this face's outer trim.
-    pub(crate) fn chart_center(&self) -> Point2 {
-        let (min, max) = self.chart_bounds();
+    pub(crate) fn domain_center(&self) -> Point2 {
+        let (min, max) = self.domain_bounds();
         Point2::from((min.coords + max.coords) * 0.5)
     }
 
     /// Corner bounds of the active parameter-space image of the outer trim.
-    pub(crate) fn chart_bounds(&self) -> (Point2, Point2) {
+    pub(crate) fn domain_bounds(&self) -> (Point2, Point2) {
         let Some(outer) = self.polygons.first() else {
             return (Point2::origin(), Point2::origin());
         };
@@ -114,7 +116,7 @@ impl FaceTrimDomain {
     /// as close to a loop written at the other end of the period as it looks
     /// on the surface.
     pub(crate) fn boundary_distance(&self, point: Point2) -> f64 {
-        self.chart
+        self.domain
             .images(point)
             .into_iter()
             .map(|image| self.planar_boundary_distance(image))
@@ -149,9 +151,9 @@ impl FaceTrimDomain {
     /// inside the trim answers for all of them, because they are one point on
     /// the surface.
     pub(crate) fn classify(&self, point: Point2) -> TrimLocation {
-        let images = self.chart.images(point);
+        let images = self.domain.images(point);
         for image in &images {
-            for (loop_index, boundary) in self.chart.loops().iter().enumerate() {
+            for (loop_index, boundary) in self.domain.loops().iter().enumerate() {
                 for curve in boundary.curves() {
                     if let Some(parameter) = curve.curve().try_parameter_at(*image, self.tolerance)
                     {
@@ -277,14 +279,14 @@ impl FaceTrimDomain {
     }
 }
 
-/// Chord budget for flattening, scaled to the extent the chart's loops span.
+/// Chord budget for flattening, scaled to the extent the domain's loops span.
 ///
-/// The chart's extent only needs to size the domain, not to bound it: the
+/// The domain's extent only needs to size the domain, not to bound it: the
 /// budget sets the polygons' resolution, and [`FaceTrimDomain::boundary_epsilon`]
 /// reports it so no caller reads the polygons finer than they were built. A
 /// domain with no measurable extent falls back to `floor`.
-fn chord_budget(chart: &Chart, floor: f64) -> f64 {
-    let diagonal = chart.diagonal();
+fn chord_budget(domain: &UnwrappedFaceDomain, floor: f64) -> f64 {
+    let diagonal = domain.diagonal();
     if diagonal > 0.0 {
         (diagonal * TRIM_CHORD_RATIO).max(floor)
     } else {

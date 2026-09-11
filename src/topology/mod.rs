@@ -1,5 +1,4 @@
 pub mod attributes;
-pub mod chart;
 pub mod closed;
 pub mod dart;
 pub mod edge;
@@ -14,13 +13,17 @@ pub mod shape;
 pub mod shape_keys;
 pub mod sheet;
 pub mod solid;
+pub mod unwrapped_face_domain;
 pub mod validation;
 pub mod vertex;
 pub use attributes::{
     BoundaryLoop, FaceAttr, FaceBoundary, LoopKind, ProfileAttr, SheetAttr, SolidAttr,
 };
-pub use chart::{Chart, ChartCurve, ChartError, ChartLoop};
 pub use dart::{Dart, IsolatedDart};
 pub use edit::{EditKey, EditPolicy, PreservePayload, TopologyEdit, TopologyEditError};
 pub use orientation::Orientation;
 pub use payload::{Payload, StandardPayload};
+pub use unwrapped_face_domain::{
+    UnwrappedFaceDomain, UnwrappedFaceDomainCurve, UnwrappedFaceDomainError,
+    UnwrappedFaceDomainLoop,
+};

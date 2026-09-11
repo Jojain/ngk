@@ -1,18 +1,18 @@
-//! Chart synthesis: a simply-connected view of a face's parameter domain.
+//! Unwrapped face domains: simply-connected views of face parameter domains.
 //!
-//! A seam is a property of a chart, not of a shape. A periodic support has no
-//! distinguished place where its closed direction "starts"; an algorithm that
+//! A seam is a property of an unwrapped domain, not of a shape. A periodic
+//! support has no distinguished place where its closed direction "starts"; an algorithm that
 //! needs a planar domain — a winding test, a triangulation grid, a NURBS patch
 //! — cuts one open, and that cut belongs to the algorithm, not to the model.
 //!
-//! A [`Chart`] is that cut, made once and shared. It reads a face's boundary
-//! loops, places every pcurve of a loop so the chain runs continuously rather
+//! An [`UnwrappedFaceDomain`] is that cut, made once and shared. It reads a
+//! face's boundary loops, places every pcurve of a loop so the chain runs continuously rather
 //! than jumping a whole period whenever the stored loop crosses the cut, and
 //! records where the cut fell. Callers then work in ordinary planar parameter
-//! space, and translate a query back with [`Chart::images`].
+//! space, and translate a query back with [`UnwrappedFaceDomain::images`].
 //!
-//! Nothing here is stored on the map: a chart is derived from the face every
-//! time it is needed, which is what lets the same face be read on a different
+//! Nothing here is stored on the map: an unwrapped domain is derived from the
+//! face every time it is needed, which is what lets the same face be read on a different
 //! cut tomorrow.
 
 use thiserror::Error;
@@ -26,33 +26,33 @@ use crate::topology::shape_keys::{EdgeKey, FaceKey};
 
 /// Failure while cutting a face's parameter domain open.
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
-pub enum ChartError {
+pub enum UnwrappedFaceDomainError {
     /// A boundary edge carries no pcurve on the face, so its loop has no
     /// parameter-space image to place.
     #[error("face {face:?} has no pcurve for boundary edge {edge:?}")]
     MissingPcurve { face: FaceKey, edge: EdgeKey },
 }
 
-/// One pcurve of a boundary loop, placed in a chart.
+/// One pcurve of a boundary loop, placed in an unwrapped domain.
 ///
 /// The stored pcurve is kept as written on the face — it is the exact geometry
 /// every intersection answers against — with the whole-period translation that
-/// places it in the chart carried alongside, so that neither can drift from
+/// places it in the unwrapped domain carried alongside, so that neither can drift from
 /// the other.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ChartCurve {
+pub struct UnwrappedFaceDomainCurve {
     curve: TrimmedCurve2,
     offset: Vector2,
     corner: Option<Point2>,
 }
 
-impl ChartCurve {
+impl UnwrappedFaceDomainCurve {
     /// Returns the pcurve as stored on the face, in its own branch.
     pub fn curve(&self) -> &TrimmedCurve2 {
         &self.curve
     }
 
-    /// Returns the whole-period translation placing this pcurve in the chart.
+    /// Returns the whole-period translation placing this pcurve in the unwrapped domain.
     pub fn offset(&self) -> Vector2 {
         self.offset
     }
@@ -61,38 +61,38 @@ impl ChartCurve {
     ///
     /// Part of a face boundary can carry no pcurve at all, and the loop still
     /// travels it: a row of the domain that collapses to a single surface
-    /// point — a sphere's pole — or the chart's own cut, joining two wrapping
+    /// point — a sphere's pole — or the unwrapped domain's own cut, joining two wrapping
     /// loops that each close only on the quotient. The corner is where the
-    /// loop turns in that gap; without it the loop never closes in the chart.
+    /// loop turns in that gap; without it the loop never closes in the unwrapped domain.
     pub fn corner(&self) -> Option<Point2> {
         self.corner
     }
 
-    /// Evaluates this pcurve in the chart, at a fraction of its span.
+    /// Evaluates this pcurve in the unwrapped domain, at a fraction of its span.
     pub fn point_at(&self, fraction: f64) -> Point2 {
         self.curve.point_at(fraction) + self.offset
     }
 
-    /// Returns this pcurve's start in the chart.
+    /// Returns this pcurve's start in the unwrapped domain.
     pub fn start(&self) -> Point2 {
         self.point_at(0.0)
     }
 
-    /// Returns this pcurve's end in the chart.
+    /// Returns this pcurve's end in the unwrapped domain.
     pub fn end(&self) -> Point2 {
         self.point_at(1.0)
     }
 }
 
-/// One boundary loop of a face, placed in a chart.
+/// One boundary loop of a face, placed in an unwrapped domain.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ChartLoop {
-    curves: Vec<ChartCurve>,
+pub struct UnwrappedFaceDomainLoop {
+    curves: Vec<UnwrappedFaceDomainCurve>,
 }
 
-impl ChartLoop {
+impl UnwrappedFaceDomainLoop {
     /// Returns this loop's pcurves in boundary order.
-    pub fn curves(&self) -> &[ChartCurve] {
+    pub fn curves(&self) -> &[UnwrappedFaceDomainCurve] {
         &self.curves
     }
 
@@ -101,14 +101,14 @@ impl ChartLoop {
         self.curves.is_empty()
     }
 
-    /// Flattens the loop into a chart polyline with `segments` points per pcurve.
+    /// Flattens the loop into an unwrapped-domain polyline with `segments` points per pcurve.
     ///
     /// The polyline is cyclic: the final point does not repeat the first.
     pub fn polyline(&self, segments: usize) -> Vec<Point2> {
         self.flatten(|curve| curve.curve.sample(segments.max(1)))
     }
 
-    /// Flattens the loop into a chart polyline within `chord` of the pcurves.
+    /// Flattens the loop into an unwrapped-domain polyline within `chord` of the pcurves.
     ///
     /// The polyline is cyclic: the final point does not repeat the first.
     pub fn adaptive_polyline(&self, chord: f64, max_depth: usize) -> Vec<Point2> {
@@ -124,7 +124,7 @@ impl ChartLoop {
 
     /// Walks the loop, dropping each pcurve's last sample and inserting the
     /// degenerate corners the loop turns through.
-    fn flatten(&self, samples: impl Fn(&ChartCurve) -> Vec<Point2>) -> Vec<Point2> {
+    fn flatten(&self, samples: impl Fn(&UnwrappedFaceDomainCurve) -> Vec<Point2>) -> Vec<Point2> {
         let mut polyline = Vec::new();
         for curve in &self.curves {
             polyline.extend(curve.corner);
@@ -138,34 +138,34 @@ impl ChartLoop {
     }
 }
 
-/// A face's boundary loops placed in one simply-connected parameter chart.
+/// A face's boundary loops placed in one simply-connected parameter domain.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Chart {
-    loops: Vec<ChartLoop>,
+pub struct UnwrappedFaceDomain {
+    loops: Vec<UnwrappedFaceDomainLoop>,
     periods: [Option<f64>; 2],
     cut: [Option<f64>; 2],
     min: Point2,
     max: Point2,
 }
 
-impl Chart {
-    /// How many points per pcurve size the chart's extent.
+impl UnwrappedFaceDomain {
+    /// How many points per pcurve size the unwrapped domain's extent.
     ///
     /// The extent sizes things — a flattening budget, a probe point — rather
     /// than bounding them, so a handful of samples per pcurve is enough.
     const EXTENT_SAMPLES: usize = 4;
 
-    /// Cuts `face`'s parameter domain open and places its loops in the chart.
+    /// Cuts `face`'s parameter domain open and places its loops in the unwrapped domain.
     ///
-    /// Wrapping loops are fused into the chart's outer boundary: each runs one
+    /// Wrapping loops are fused into the unwrapped domain's outer boundary: each runs one
     /// whole period and closes only on the quotient, so joining them across a
     /// synthesized cut is what makes the boundary a closed polygon again. That
     /// polygon is exactly the one a stored seam used to spell out.
-    pub fn of_face<P: Payload>(face: &Face<'_, P>) -> Result<Self, ChartError> {
+    pub fn of_face<P: Payload>(face: &Face<'_, P>) -> Result<Self, UnwrappedFaceDomainError> {
         let periods = periods_of(face.surface());
-        let mut outer: Vec<ChartCurve> = Vec::new();
+        let mut outer: Vec<UnwrappedFaceDomainCurve> = Vec::new();
         let mut outer_offset = Vector2::zeros();
-        let mut holes: Vec<ChartLoop> = Vec::new();
+        let mut holes: Vec<UnwrappedFaceDomainLoop> = Vec::new();
         for boundary in face.boundary().loops() {
             let loop_ = face.loop_from_seed(boundary.dart);
             match boundary.kind {
@@ -177,14 +177,14 @@ impl Chart {
                     let mut offset = Vector2::zeros();
                     place_loop(face, &loop_, periods, &mut curves, &mut offset)?;
                     close_loop(&mut curves);
-                    holes.push(ChartLoop { curves });
+                    holes.push(UnwrappedFaceDomainLoop { curves });
                 }
             }
         }
         close_loop(&mut outer);
 
         let mut loops = Vec::with_capacity(1 + holes.len());
-        loops.push(ChartLoop { curves: outer });
+        loops.push(UnwrappedFaceDomainLoop { curves: outer });
         loops.extend(holes);
 
         let (min, max) = extent(&loops);
@@ -198,8 +198,8 @@ impl Chart {
         })
     }
 
-    /// Returns the face's boundary loops, outer first, placed in the chart.
-    pub fn loops(&self) -> &[ChartLoop] {
+    /// Returns the face's boundary loops, outer first, placed in the unwrapped domain.
+    pub fn loops(&self) -> &[UnwrappedFaceDomainLoop] {
         &self.loops
     }
 
@@ -213,17 +213,17 @@ impl Chart {
         self.periods
     }
 
-    /// Returns where this chart cuts `axis` open, if that axis is periodic.
+    /// Returns where this unwrapped domain cuts `axis` open, if that axis is periodic.
     ///
-    /// The chart spans `[cut, cut + period]` along a periodic axis, so the cut
-    /// is the one parameter value the chart does not cover twice. It is the
+    /// The unwrapped domain spans `[cut, cut + period]` along a periodic axis, so the cut
+    /// is the one parameter value the unwrapped domain does not cover twice. It is the
     /// synthesized seam: a fact about this reading of the face, not about the
     /// face.
     pub fn cut(&self, axis: Axis2) -> Option<f64> {
         self.cut[axis.index()]
     }
 
-    /// Returns the corner bounds of the loops as placed in this chart.
+    /// Returns the corner bounds of the loops as placed in this unwrapped domain.
     pub fn bounds(&self) -> (Point2, Point2) {
         (self.min, self.max)
     }
@@ -237,7 +237,7 @@ impl Chart {
     /// Returns `point` plus every whole-period translate of it.
     ///
     /// A query lives on the surface, where a periodic parameter names the same
-    /// point at either end of its period; the chart wrote the loops on one
+    /// point at either end of its period; the unwrapped domain wrote the loops on one
     /// branch. Asking the same question once per branch the loops could have
     /// been written on answers in the quotient without leaving planar
     /// arithmetic.
@@ -278,20 +278,23 @@ fn place_loop<P: Payload>(
     face: &Face<'_, P>,
     loop_: &Loop<'_, P>,
     periods: [Option<f64>; 2],
-    curves: &mut Vec<ChartCurve>,
+    curves: &mut Vec<UnwrappedFaceDomainCurve>,
     offset: &mut Vector2,
-) -> Result<(), ChartError> {
+) -> Result<(), UnwrappedFaceDomainError> {
     for edge in loop_.edges() {
-        let curve = face
-            .pcurve(edge.dart())
-            .ok_or_else(|| ChartError::MissingPcurve {
-                face: face.key(),
-                edge: edge.key(),
-            })?;
-        let corner = curves.last().map(ChartCurve::end).and_then(|previous| {
-            place_after(previous, curve.start(), face.surface(), periods, offset)
-        });
-        curves.push(ChartCurve {
+        let curve =
+            face.pcurve(edge.dart())
+                .ok_or_else(|| UnwrappedFaceDomainError::MissingPcurve {
+                    face: face.key(),
+                    edge: edge.key(),
+                })?;
+        let corner = curves
+            .last()
+            .map(UnwrappedFaceDomainCurve::end)
+            .and_then(|previous| {
+                place_after(previous, curve.start(), face.surface(), periods, offset)
+            });
+        curves.push(UnwrappedFaceDomainCurve {
             curve,
             offset: *offset,
             corner,
@@ -308,7 +311,7 @@ fn place_loop<P: Payload>(
 /// that onto itself.
 ///
 /// Returns the point the loop turns through when a gap remains after placement
-/// — see [`ChartCurve::corner`].
+/// — see [`UnwrappedFaceDomainCurve::corner`].
 fn place_after(
     previous: Point2,
     start: Point2,
@@ -334,10 +337,10 @@ fn place_after(
 ///
 /// The corner belongs before the first pcurve, which is where the loop reaches
 /// it after the last one.
-fn close_loop(curves: &mut [ChartCurve]) {
+fn close_loop(curves: &mut [UnwrappedFaceDomainCurve]) {
     let (Some(end), Some(start)) = (
-        curves.last().map(ChartCurve::end),
-        curves.first().map(ChartCurve::start),
+        curves.last().map(UnwrappedFaceDomainCurve::end),
+        curves.first().map(UnwrappedFaceDomainCurve::start),
     ) else {
         return;
     };
@@ -350,17 +353,19 @@ fn close_loop(curves: &mut [ChartCurve]) {
 }
 
 /// Corner bounds of every loop as placed, sized from uniform pcurve samples.
-fn extent(loops: &[ChartLoop]) -> (Point2, Point2) {
+fn extent(loops: &[UnwrappedFaceDomainLoop]) -> (Point2, Point2) {
     let mut min = Point2::new(f64::INFINITY, f64::INFINITY);
     let mut max = Point2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
     let mut grow = |point: Point2| {
         min = Point2::new(min.x.min(point.x), min.y.min(point.y));
         max = Point2::new(max.x.max(point.x), max.y.max(point.y));
     };
-    for curve in loops.iter().flat_map(ChartLoop::curves) {
+    for curve in loops.iter().flat_map(UnwrappedFaceDomainLoop::curves) {
         grow(curve.start());
-        for step in 1..=Chart::EXTENT_SAMPLES {
-            grow(curve.point_at(f64::from(step as u32) / Chart::EXTENT_SAMPLES as f64));
+        for step in 1..=UnwrappedFaceDomain::EXTENT_SAMPLES {
+            grow(
+                curve.point_at(f64::from(step as u32) / UnwrappedFaceDomain::EXTENT_SAMPLES as f64),
+            );
         }
         if let Some(corner) = curve.corner {
             grow(corner);

@@ -1,5 +1,3 @@
-#[path = "topology/chart.rs"]
-mod chart;
 #[path = "topology/edge.rs"]
 mod edge;
 #[path = "topology/edge_split.rs"]
@@ -20,5 +18,7 @@ mod serialization;
 mod sheet;
 #[path = "topology/transaction.rs"]
 mod transaction;
+#[path = "topology/unwrapped_face_domain.rs"]
+mod unwrapped_face_domain;
 #[path = "topology/validation.rs"]
 mod validation;

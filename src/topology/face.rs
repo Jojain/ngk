@@ -10,8 +10,8 @@ use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
 use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
 use crate::topology::attributes::{FaceAttr, FaceBoundary};
-use crate::topology::chart::Chart;
 use crate::topology::shape_keys::FaceKey;
+use crate::topology::unwrapped_face_domain::UnwrappedFaceDomain;
 use nalgebra::UnitVector3;
 
 /// Samples per pcurve used to read a boundary's winding.
@@ -267,16 +267,16 @@ impl<'g, P: Payload> Face<'g, P> {
         }
     }
 
-    /// Signed area of the face's outer boundary, read on a synthesized chart.
+    /// Signed area of the face's outer boundary, read on a synthesized domain.
     ///
     /// A ring face's loops carry no winding of their own — each is a line
-    /// exactly one period long — so the chart closes them across its own cut
+    /// exactly one period long — so the domain closes them across its own cut
     /// and the winding is read from the closed result. That is the same
     /// rectangle a stored seam used to spell out, computed rather than
     /// recorded.
     fn boundary_signed_area(&self) -> Option<f64> {
-        let chart = Chart::of_face(self).ok()?;
-        let points = chart.loops().first()?.polyline(BOUNDARY_WINDING_SAMPLES);
+        let domain = UnwrappedFaceDomain::of_face(self).ok()?;
+        let points = domain.loops().first()?.polyline(BOUNDARY_WINDING_SAMPLES);
         (!points.is_empty()).then(|| signed_area(&points))
     }
 

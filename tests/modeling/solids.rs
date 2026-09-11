@@ -305,7 +305,7 @@ fn primitives_carry_their_canonical_analytic_supports() {
     );
 }
 
-/// A ring face's mesh closes over the chart's cut.
+/// A ring face's mesh closes over the unwrapped domain's cut.
 ///
 /// The wall spans its whole period in `u`, so the column at the cut and the
 /// column a period later are the same points on the surface. Emitting both would
