@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 
-use crate::geometry::{Curve, LINEAR_TOLERANCE, PointCoincidence};
+use crate::geometry::{Curve, Interval, LINEAR_TOLERANCE, PointCoincidence, TrimmedCurve};
 use crate::topology::closed::Closeable;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Cell1, Cell2, Dim, MergeTopology, TopologyMerge};
+use crate::topology::orientation::Orientation;
 use crate::topology::shape_keys::EdgeKey;
 
 use super::gmap::{Dart, GMap};
@@ -114,6 +115,42 @@ impl<'a, P: Payload> Edge<'a, P> {
         self.gmap.edge_attr(self.key).map(|attr| &attr.curve)
     }
 
+    /// Returns the curve-parameter span followed by this oriented edge view.
+    ///
+    /// The reference span is recovered from the endpoints selected by the
+    /// edge's stored dart. A view reached in the opposite direction swaps that
+    /// span without applying periodic wrapping again, so it traverses the same
+    /// geometric section backward rather than its complement.
+    pub fn parameter_interval(&self) -> Option<Interval> {
+        let attr = self.gmap.edge_attr(self.key)?;
+        let start_vertex = Vertex::from_dart(self.gmap, attr.dart)?;
+        let end_vertex = Vertex::from_dart(self.gmap, self.gmap.alpha(Dim::Zero, attr.dart))?;
+        let start = start_vertex.point()?;
+        let end = end_vertex.point()?;
+        let reference = attr.curve.interval_between(*start, *end);
+        Some(
+            match self.gmap.edge_orientation_at_dart(self.key, self.dart) {
+                Orientation::Same => reference,
+                Orientation::Reversed => reference.reversed(),
+            },
+        )
+    }
+
+    /// Returns this edge's curve paired with the span its vertices bound.
+    ///
+    /// An edge stores only a support — a whole line, a whole circle — so this
+    /// is the value that says which part of it the edge actually is. The span
+    /// is *derived*, never stored: the bounding vertices give its ends and the
+    /// view's orientation gives its direction, which is why an edge needs no
+    /// interval in its attribute. Geometry that has no vertices to derive from,
+    /// such as a solver's section, must carry its span instead.
+    pub fn trimmed_curve(&self) -> Option<TrimmedCurve> {
+        Some(TrimmedCurve::new(
+            self.curve()?.clone(),
+            self.parameter_interval()?,
+        ))
+    }
+
     /// Returns the curve length between this edge view's oriented endpoints.
     ///
     /// The length is evaluated on the attached curve using the parameters of
@@ -124,19 +161,9 @@ impl<'a, P: Payload> Edge<'a, P> {
     /// Panics if the edge has no curve or either endpoint has no point
     /// geometry.
     pub fn length(&self) -> Option<f64> {
-        let t0 = self
-            .start()
-            .point()
-            .map(|p| self.curve().map(|c| c.param_at(*p)))
-            .unwrap()
-            .unwrap();
-        let t1 = self
-            .end()
-            .point()
-            .map(|p| self.curve().map(|c| c.param_at(*p)))
-            .unwrap()
-            .unwrap();
-        self.curve().map(|c| c.length(t0, t1))
+        let interval = self.parameter_interval()?;
+        self.curve()
+            .map(|curve| curve.length(interval.start, interval.end))
     }
 
     /// Returns a new edge view with the opposite orientation.

@@ -49,12 +49,12 @@ fn line(a: Point3, b: Point3) -> Curve {
     Curve::line(a, b)
 }
 
-fn is_bounded_line(curve: &Curve) -> bool {
-    matches!(curve, Curve::Bounded(curve) if matches!(curve.inner(), Curve::Line(_)))
+fn is_line(curve: &Curve) -> bool {
+    matches!(curve, Curve::Line(_))
 }
 
-fn is_bounded_circle(curve: &Curve) -> bool {
-    matches!(curve, Curve::Bounded(curve) if matches!(curve.inner(), Curve::Circle(_)))
+fn is_circle(curve: &Curve) -> bool {
+    matches!(curve, Curve::Circle(_))
 }
 
 #[test]
@@ -223,7 +223,7 @@ fn perpendicular_planes_return_surface_surface_curve() {
         );
     };
     assert!(branch.samples.len() >= 2, "{:?}", results.intersections());
-    assert!(is_bounded_line(&branch.curve_3d));
+    assert!(is_line(branch.curve_3d.curve()));
     assert!(matches!(branch.pcurve_a, Curve2::Line(_)));
     assert!(matches!(branch.pcurve_b, Curve2::Line(_)));
     assert!(
@@ -235,7 +235,7 @@ fn perpendicular_planes_return_surface_surface_curve() {
                 && sample.residual <= LINEAR_TOLERANCE)
     );
     for parameter in [0.0, 0.25, 0.5, 0.75, 1.0] {
-        let point = branch.curve_3d.point_at(parameter);
+        let point = branch.point_at(parameter);
         let uv_a = branch.pcurve_a.point_at(parameter);
         let uv_b = branch.pcurve_b.point_at(parameter);
         assert_point_near(point, a.point_at(uv_a.x, uv_a.y));
@@ -294,7 +294,7 @@ fn plane_cylinder_intersection_returns_closed_synchronized_branch() {
         [branch.samples.first(), branch.samples.last()]
     );
     assert!(branch.samples.len() > 16);
-    assert!(is_bounded_circle(&branch.curve_3d));
+    assert!(is_circle(branch.curve_3d.curve()));
     assert!(matches!(branch.pcurve_a, Curve2::Circle(_)));
     assert!(matches!(branch.pcurve_b, Curve2::Line(_)));
     assert!(
@@ -308,9 +308,9 @@ fn plane_cylinder_intersection_returns_closed_synchronized_branch() {
         branch.quality
     );
     assert!(branch.quality.certified);
-    assert_point_near(branch.curve_3d.point_at(0.0), branch.curve_3d.point_at(1.0));
+    assert_point_near(branch.point_at(0.0), branch.point_at(1.0));
     for parameter in [0.125, 0.375, 0.625, 0.875] {
-        let point = branch.curve_3d.point_at(parameter);
+        let point = branch.point_at(parameter);
         let uv_plane = branch.pcurve_a.point_at(parameter);
         let uv_cylinder = branch.pcurve_b.point_at(parameter);
         let fit_tolerance = IntersectionOptions::default().fit_tolerance;
@@ -319,7 +319,7 @@ fn plane_cylinder_intersection_returns_closed_synchronized_branch() {
     }
     for index in 0..=128 {
         let parameter = index as f64 / 128.0;
-        let point = branch.curve_3d.point_at(parameter);
+        let point = branch.point_at(parameter);
         let uv_plane = branch.pcurve_a.point_at(parameter);
         let uv_cylinder = branch.pcurve_b.point_at(parameter);
         let fit_tolerance = IntersectionOptions::default().fit_tolerance;
@@ -351,7 +351,7 @@ fn interior_paraboloid_plane_loop_is_found_with_complete_coverage() {
         .collect::<Vec<_>>();
     assert_eq!(branches.len(), 1, "{results:?}");
     assert!(branches[0].closed, "{results:?}");
-    assert!(is_bounded_circle(&branches[0].curve_3d), "{results:?}");
+    assert!(is_circle(branches[0].curve_3d.curve()), "{results:?}");
 }
 
 #[test]
@@ -368,7 +368,7 @@ fn surface_intersection_can_keep_synchronized_nurbs_curves() {
     let SurfaceSurfaceIntersection::Branch(branch) = &results[0] else {
         panic!("expected an intersection branch, got {results:?}");
     };
-    assert!(matches!(branch.curve_3d, Curve::Nurbs(_)));
+    assert!(matches!(branch.curve_3d.curve(), Curve::Nurbs(_)));
     assert!(matches!(branch.pcurve_a, Curve2::Nurbs(_)));
     assert!(matches!(branch.pcurve_b, Curve2::Nurbs(_)));
 }
@@ -550,7 +550,7 @@ fn a_plane_tangent_to_a_cylinder_yields_the_ruling_it_touches_along() {
     // The contact is the ruling the plane rests on, so every point of the
     // branch stays on both surfaces' shared line.
     for step in 0..=8 {
-        let point = branch.curve_3d.point_at(f64::from(step) / 8.0);
+        let point = branch.point_at(f64::from(step) / 8.0);
         assert!(
             (point.x - 1.0).abs() <= LINEAR_TOLERANCE && point.y.abs() <= LINEAR_TOLERANCE,
             "tangency point {point:?} left the ruling"
@@ -590,7 +590,7 @@ fn surface_intersection_nurbs_fallback_compacts_dense_trace_samples() {
     assert_eq!(branches.len(), 1, "{results:?}");
     let branch = branches[0];
     assert!(branch.samples.len() > 64, "expected a dense trace");
-    let Curve::Nurbs(curve) = &branch.curve_3d else {
+    let Curve::Nurbs(curve) = branch.curve_3d.curve() else {
         panic!("expected a NURBS fallback, got {:?}", branch.curve_3d);
     };
     assert!(
@@ -693,7 +693,7 @@ fn curve_crossing_a_plane_twice_returns_both_points() {
 
 #[test]
 fn curve_missing_a_plane_returns_complete_empty_coverage() {
-    let curve = line(Point3::new(0.2, 0.2, 1.0), Point3::new(0.8, 0.8, 2.0));
+    let curve = line(Point3::new(0.2, 0.2, 1.0), Point3::new(0.8, 0.8, 1.0));
     let surface = Surface::Plane(Plane::xy());
 
     let results = curve.intersect_surface(&surface).unwrap();
@@ -992,7 +992,7 @@ fn crossing_cylinders_return_two_interior_loops_with_complete_coverage() {
         assert!(branch.quality.certified, "{branch:?}");
         for index in 0..=64 {
             let parameter = index as f64 / 64.0;
-            let point = branch.curve_3d.point_at(parameter);
+            let point = branch.point_at(parameter);
             assert!(
                 (point.x * point.x + point.y * point.y - 0.09).abs() <= 1.0e-6,
                 "{point:?}"
@@ -1005,7 +1005,7 @@ fn crossing_cylinders_return_two_interior_loops_with_complete_coverage() {
     }
     // The two loops sit on opposite sides of the upright cylinder's axis.
     assert!(
-        branches[0].curve_3d.point_at(0.0).x * branches[1].curve_3d.point_at(0.0).x < 0.0,
+        branches[0].point_at(0.0).x * branches[1].point_at(0.0).x < 0.0,
         "{results:?}"
     );
 }

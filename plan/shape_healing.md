@@ -216,8 +216,8 @@ pub fn surface_supports_match(a: &Surface, b: &Surface, tol: f64) -> Option<Supp
 Implementation follows the repo's NURBS-first policy with cheap analytic fast
 paths first:
 
-1. **Structural fast path** — both `Curve::Bounded(inner, interval)` with the
-   same `inner` variant and matching analytic parameters (same `Line` axis, same
+1. **Structural fast path** — both curves the same analytic variant with
+   matching analytic parameters (same `Line` axis, same
    `Circle` plane + radius): exact, allocation-free, and precisely the case
    produced by `split_edge_staged`, which keeps the parent curve and only
    narrows the interval. Same idea for `Plane` / `Cylinder` / `Revolution`
@@ -396,8 +396,8 @@ Milestones 0–4 are implemented. Four things differ from the design above, all
 found while building it.
 
 **The structural fast path of §6.3 does not exist.** `Curve::trimmed` converts
-to NURBS, so splitting a `Bounded(Line, interval)` yields two degree-1 NURBS
-curves rather than two narrowed `Bounded` views of the parent. Comparing
+to NURBS, so splitting a line's edge yields two degree-1 NURBS curves rather
+than two narrower spans of the parent line. Comparing
 representations therefore misses the exact case healing exists for. The
 predicates in `src/healing/predicates/curve.rs` work on sampled geometry
 instead: both curves are sampled, one analytic support is fitted through

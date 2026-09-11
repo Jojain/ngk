@@ -4,7 +4,7 @@ use nalgebra::{Matrix3, SymmetricEigen, Vector3};
 
 use super::tracer::TraceState;
 use crate::geometry::{
-    Bounded, Circle, Circle2, Curve, Curve2, Interval, Line2, NurbsCurve2, Plane, Point2, Point3,
+    Circle, Circle2, Curve, Curve2, Interval, Line2, NurbsCurve2, Plane, Point2, Point3,
 };
 
 type Curve3Recognizer = fn(&[TraceState], bool, f64) -> Option<AnalyticalCurve3>;
@@ -16,6 +16,7 @@ const CURVE_2_RECOGNIZERS: [Curve2Recognizer; 2] = [recognize_line_2d, recognize
 /// An analytical 3D curve together with its normalized natural sample parameters.
 pub(super) struct AnalyticalCurve3 {
     pub curve: Curve,
+    pub interval: Interval,
     pub parameters: Vec<f64>,
 }
 
@@ -73,6 +74,7 @@ fn recognize_line_3d(
     }
     Some(AnalyticalCurve3 {
         curve: candidate,
+        interval: Interval::new(0.0, 1.0),
         parameters,
     })
 }
@@ -179,13 +181,15 @@ fn recognize_circle_3d(
     if !parameters_are_ordered(&parameters, tolerance / radius) {
         return None;
     }
-    let candidate = Curve::Bounded(Box::new(Bounded::new(
-        Curve::Circle(circle),
-        Interval::new(0.0, TAU),
-    )));
-    curve_3_matches_samples(&candidate, states, &parameters, tolerance).then_some(
+    let candidate = Curve::Circle(circle);
+    let native_parameters = parameters
+        .iter()
+        .map(|parameter| parameter * TAU)
+        .collect::<Vec<_>>();
+    curve_3_matches_samples(&candidate, states, &native_parameters, tolerance).then_some(
         AnalyticalCurve3 {
             curve: candidate,
+            interval: Interval::new(0.0, TAU),
             parameters,
         },
     )

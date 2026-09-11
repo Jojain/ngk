@@ -2,7 +2,7 @@
 //!
 //! Splitting an edge does not preserve its representation: `Curve::trimmed`
 //! converts to NURBS, so the two halves of a line are two degree-1 NURBS
-//! curves, not two `Bounded` views of the parent. Structural comparison
+//! curves, not two parameter-window views of the parent. Structural comparison
 //! therefore misses the very case healing exists for, and the tests here work
 //! on sampled geometry instead: both curves are sampled, one analytic support
 //! is fitted through the three interesting points, and the support is accepted
@@ -16,7 +16,7 @@ use std::f64::consts::TAU;
 
 use nalgebra::{UnitVector3, Vector3};
 
-use crate::geometry::{Curve, Interval, Plane, Point3};
+use crate::geometry::{Curve, Plane, Point3};
 
 /// Samples taken per curve when testing a candidate support.
 pub const SUPPORT_SAMPLES: usize = 12;
@@ -132,7 +132,12 @@ fn join_on_circle(
     if sweep.abs() <= angular || (sweep.abs() - TAU).abs() <= angular {
         return None;
     }
-    Some(Curve::arc(plane, radius, Interval::new(0.0, sweep)))
+    let circle = Curve::circle(plane, radius);
+    Some(if sweep < 0.0 {
+        circle.reversed()
+    } else {
+        circle
+    })
 }
 
 /// Returns the circle through three points as `(center, normal, radius)`.

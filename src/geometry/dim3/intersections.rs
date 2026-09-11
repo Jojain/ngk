@@ -7,7 +7,7 @@ mod surface_surface;
 
 use std::ops::Index;
 
-use crate::geometry::{Curve, Curve2, Interval, Point2, Point3};
+use crate::geometry::{Curve2, Interval, Point2, Point3, TrimmedCurve};
 
 pub use analytic::{
     AnalyticSection, AnalyticSurfaceIntersection, PcurveFidelity, intersect_analytic_curve_surface,
@@ -222,8 +222,12 @@ pub enum SurfaceIntersectionPointKind {
 /// One connected, ordered surface/surface intersection branch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SurfaceIntersectionBranch {
-    /// The normalized 3D branch curve, analytically simplified when requested and possible.
-    pub curve_3d: Curve,
+    /// The 3D support curve and the span of it this branch covers, analytically
+    /// simplified when requested and possible.
+    ///
+    /// Its normalized traversal is what the two pcurves are synchronized with:
+    /// the same fraction of the section and of either pcurve is the same point.
+    pub curve_3d: TrimmedCurve,
     /// The normalized parameter-space curve on surface A.
     pub pcurve_a: Curve2,
     /// The normalized parameter-space curve on surface B.
@@ -232,6 +236,18 @@ pub struct SurfaceIntersectionBranch {
     pub closed: bool,
     pub kind: SurfaceIntersectionBranchKind,
     pub quality: IntersectionQuality,
+}
+
+impl SurfaceIntersectionBranch {
+    /// Evaluates the 3D branch at a normalized traversal parameter.
+    pub fn point_at(&self, parameter: f64) -> Point3 {
+        self.curve_3d.point_at(parameter)
+    }
+
+    /// Projects a point to the branch's normalized traversal parameter.
+    pub fn parameter_at(&self, point: Point3) -> f64 {
+        self.curve_3d.parameter_at(point)
+    }
 }
 
 /// Classification shared by the regular samples of a branch.

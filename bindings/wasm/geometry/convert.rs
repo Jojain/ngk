@@ -9,10 +9,6 @@ use super::surfaces::{
     WasmCone, WasmCylinder, WasmPlane, WasmRuledSurface, WasmSphere, WasmSurfaceOfRevolution,
 };
 
-fn js_err(error: impl ToString) -> JsValue {
-    JsValue::from_str(&error.to_string())
-}
-
 /// Converts a polymorphic kernel curve to a concrete JavaScript class.
 pub(crate) fn curve_to_js(curve: Curve) -> Result<JsValue, JsValue> {
     match curve {
@@ -20,9 +16,6 @@ pub(crate) fn curve_to_js(curve: Curve) -> Result<JsValue, JsValue> {
         Curve::Circle(circle) => Ok(WasmCircle { inner: circle }.into()),
         Curve::Ellipse(ellipse) => Ok(WasmEllipse { inner: ellipse }.into()),
         Curve::Nurbs(curve) => Ok(WasmNurbsCurve::from_inner(curve).into()),
-        Curve::Bounded(curve) => {
-            Ok(WasmNurbsCurve::from_inner(curve.to_nurbs().map_err(js_err)?).into())
-        }
     }
 }
 

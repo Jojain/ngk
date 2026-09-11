@@ -11,11 +11,12 @@ use ngk::viz::{VizHints, scene_from_gmap};
 /// carrying either the analytic arc or its NURBS form.
 fn quarter_arc_edge(as_nurbs: bool) -> GMap<StandardPayload> {
     let plane = Plane::new(Point3::origin(), Vector3::x(), Vector3::z());
-    let arc = Curve::arc(plane, 1.0, Interval::new(0.0, FRAC_PI_2));
+    let arc = Curve::circle(plane, 1.0);
     let start = arc.point_at(0.0);
-    let end = arc.point_at(1.0);
+    let end = arc.point_at(FRAC_PI_2);
     let curve = if as_nurbs {
-        Curve::Nurbs(arc.to_nurbs().expect("arc as nurbs"))
+        arc.trimmed_native(Interval::new(0.0, FRAC_PI_2))
+            .expect("arc as nurbs")
     } else {
         arc
     };

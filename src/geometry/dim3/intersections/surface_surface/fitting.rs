@@ -5,8 +5,9 @@ use crate::geometry::counters::count_branch_fit;
 use crate::geometry::nurbs::basis::basis_functions;
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, Degree, IntersectionError, IntersectionQuality,
-    KnotVector, NurbsCurve, NurbsCurve2, Point2, Point3, Surface, SurfaceIntersectionBranch,
-    SurfaceIntersectionBranchKind, SurfaceIntersectionPointKind, SurfacePeriodicity,
+    Interval, KnotVector, NurbsCurve, NurbsCurve2, Point2, Point3, Surface,
+    SurfaceIntersectionBranch, SurfaceIntersectionBranchKind, SurfaceIntersectionPointKind,
+    SurfacePeriodicity, TrimmedCurve,
 };
 use nalgebra::DMatrix;
 
@@ -65,6 +66,10 @@ pub(super) fn fit_branch(
         .as_ref()
         .map(|curve| curve.parameters.clone())
         .unwrap_or(chord_parameters);
+    let curve_interval = analytical
+        .as_ref()
+        .map(|curve| curve.interval)
+        .unwrap_or(Interval::new(0.0, 1.0));
     let fitted = if closed {
         SynchronizedNurbsFit {
             curve_3d: NurbsCurve::interpolate_with_parameters(&points, &parameters)?,
@@ -87,15 +92,21 @@ pub(super) fn fit_branch(
     };
     let nurbs_fallback = || {
         (
-            Curve::Nurbs(fitted.curve_3d.clone()),
+            TrimmedCurve::new(
+                Curve::Nurbs(fitted.curve_3d.clone()),
+                Interval::new(0.0, 1.0),
+            ),
             Curve2::Nurbs(fitted.pcurve_a.clone()),
             Curve2::Nurbs(fitted.pcurve_b.clone()),
         )
     };
     let (curve_3d, pcurve_a, pcurve_b) = if options.simplify_curves {
-        let proposed_curve_3d = analytical
-            .map(|curve| curve.curve)
-            .unwrap_or_else(|| Curve::Nurbs(fitted.curve_3d.clone()));
+        let proposed_curve_3d = TrimmedCurve::new(
+            analytical
+                .map(|curve| curve.curve)
+                .unwrap_or_else(|| Curve::Nurbs(fitted.curve_3d.clone())),
+            curve_interval,
+        );
         let proposed_pcurve_a = simplify_curve_2d(
             fitted.pcurve_a.clone(),
             &uv_a,
@@ -176,7 +187,10 @@ fn approximate_open_branch(
         let error = validate_fit(
             a,
             b,
-            &Curve::Nurbs(fitted.curve_3d.clone()),
+            &TrimmedCurve::new(
+                Curve::Nurbs(fitted.curve_3d.clone()),
+                Interval::new(0.0, 1.0),
+            ),
             &Curve2::Nurbs(fitted.pcurve_a.clone()),
             &Curve2::Nurbs(fitted.pcurve_b.clone()),
             samples.states,
@@ -367,7 +381,7 @@ fn state_key(state: TraceState) -> f64 {
 fn validate_fit(
     a: &Surface,
     b: &Surface,
-    curve_3d: &Curve,
+    curve_3d: &TrimmedCurve,
     pcurve_a: &Curve2,
     pcurve_b: &Curve2,
     states: &[TraceState],

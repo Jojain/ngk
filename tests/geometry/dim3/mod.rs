@@ -8,3 +8,4 @@ mod intersections;
 mod nurbs;
 mod sphere;
 mod surfaces;
+mod trimmed;

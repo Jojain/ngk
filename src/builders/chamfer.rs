@@ -964,19 +964,11 @@ fn chamfer_solid_vertex<P: Payload>(
 }
 
 fn is_linear_curve(curve: Option<&Curve>) -> bool {
-    match curve {
-        Some(Curve::Line(_)) => true,
-        Some(Curve::Bounded(curve)) => matches!(curve.inner(), Curve::Line(_)),
-        _ => false,
-    }
+    matches!(curve, Some(Curve::Line(_)))
 }
 
 fn is_nurbs_curve(curve: &Curve) -> bool {
-    match curve {
-        Curve::Nurbs(_) => true,
-        Curve::Bounded(curve) => is_nurbs_curve(curve.inner()),
-        _ => false,
-    }
+    matches!(curve, Curve::Nurbs(_))
 }
 
 /// Geometry needed to build a ruled chamfer face from one NURBS boundary.
@@ -1191,9 +1183,7 @@ fn add_curved_chamfer_face<P: Payload>(
             .curve = curve;
     }
 
-    let interval = geometry
-        .base_curve
-        .interval_between(corners[0], corners[1]);
+    let interval = geometry.base_curve.interval_between(corners[0], corners[1]);
     // The ruled surface uses the base-curve parameter as `u` and translation
     // fraction as `v`, so its four pcurves form a unit-height parameter strip.
     let uv = [
@@ -1277,7 +1267,6 @@ fn line_edge_dart<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Dart, ChamferEr
         .ok_or(ChamferError::MissingEdgeCurve { dart })?;
     match &attr.curve {
         Curve::Line(_) => Ok(attr.dart),
-        Curve::Bounded(curve) if matches!(curve.inner(), Curve::Line(_)) => Ok(attr.dart),
         _ => Err(ChamferError::UnsupportedEdgeCurve { dart: attr.dart }),
     }
 }

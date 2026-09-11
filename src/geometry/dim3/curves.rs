@@ -13,9 +13,9 @@ use super::surfaces::{Plane, Surface};
 use super::utils::{IntoUnit, Point3, PointCoincidence};
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
-use crate::geometry::tolerance::{LINEAR_TOLERANCE_SQUARED, MAX_DISTANCE};
+use crate::geometry::tolerance::LINEAR_TOLERANCE_SQUARED;
 use crate::geometry::traits::CurveGeometry;
-use crate::geometry::{ANGULAR_TOLERANCE, Interval, LINEAR_TOLERANCE, Reparam};
+use crate::geometry::{Interval, LINEAR_TOLERANCE, Reparam};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -31,45 +31,15 @@ pub enum Curve {
     Circle(Circle),
     Ellipse(Ellipse),
     Nurbs(NurbsCurve),
-    Bounded(Box<Bounded<Curve>>),
 }
 
 impl Curve {
     pub fn line(start: Point3, end: Point3) -> Self {
-        let line = Line::new(Axis3::from_points(start, end));
-        let length = (end - start).norm();
-        Curve::Bounded(Box::new(Bounded::new(
-            Curve::Line(line),
-            Interval::new(0.0, length),
-        )))
+        let line = Line::through(start, end);
+        Curve::Line(line)
     }
     pub fn circle(plane: Plane, radius: f64) -> Self {
         Curve::Circle(Circle::new(plane, radius))
-    }
-
-    /// Returns the arc of a circle spanning `bounds` (radians, measured from
-    /// the plane's `x_dir`), parameterised over `[0, 1]`.
-    ///
-    /// Prefer this over [`Curve::circle`] for an edge that covers only part of
-    /// a turn: a whole circle carries the `atan2` range `(-pi, pi]`, so
-    /// [`Curve::parameters_between`] cannot express a span wider than half a
-    /// turn and silently returns the complementary arc instead.
-    pub fn arc(plane: Plane, radius: f64, bounds: Interval) -> Self {
-        Curve::Bounded(Box::new(Bounded::new(
-            Curve::Circle(Circle::new(plane, radius)),
-            bounds,
-        )))
-    }
-
-    /// Returns the innermost curve, unwrapping any [`Bounded`] trimming.
-    ///
-    /// Use it to ask what kind of geometry an edge carries — a trimmed arc is
-    /// a `Bounded` wrapper around a [`Curve::Circle`], not a `Curve::Circle`.
-    pub fn base(&self) -> &Curve {
-        match self {
-            Curve::Bounded(bounded) => bounded.inner().base(),
-            curve => curve,
-        }
     }
 
     pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
@@ -78,7 +48,6 @@ impl Curve {
             Curve::Circle(circle) => circle.to_nurbs(),
             Curve::Ellipse(ellipse) => ellipse.to_nurbs(),
             Curve::Nurbs(nurbs) => Ok(nurbs.clone()),
-            Curve::Bounded(curve) => curve.to_nurbs(),
         }
     }
 
@@ -88,7 +57,6 @@ impl Curve {
             Curve::Circle(_) => Periodicity::Periodic(TAU),
             Curve::Ellipse(_) => Periodicity::Periodic(TAU),
             Curve::Nurbs(_) => Periodicity::None,
-            Curve::Bounded(_) => Periodicity::None,
         }
     }
     pub fn point_at(&self, t: f64) -> Point3 {
@@ -97,13 +65,16 @@ impl Curve {
             Curve::Circle(c) => c.point_at(t),
             Curve::Ellipse(c) => c.point_at(t),
             Curve::Nurbs(n) => n.point_at(t),
-            Curve::Bounded(c) => c.point_at(t),
         }
     }
 
     /// Returns whether the curve is geometrically closed (start coincides with end).
     pub fn is_closed(&self) -> bool {
-        (self.point_at(0.0) - self.point_at(1.0)).norm() <= LINEAR_TOLERANCE
+        let domain = self.domain();
+        domain.is_finite()
+            && self
+                .point_at(domain.start)
+                .coincides(self.point_at(domain.end), LINEAR_TOLERANCE)
     }
 
     pub fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
@@ -112,7 +83,6 @@ impl Curve {
             Curve::Circle(c) => c.derivative_at(t, order),
             Curve::Ellipse(c) => c.derivative_at(t, order),
             Curve::Nurbs(n) => n.derivative_at(t, order),
-            Curve::Bounded(c) => c.derivative_at(t, order),
         }
     }
 
@@ -123,24 +93,22 @@ impl Curve {
             Curve::Circle(c) => c.param_at(point),
             Curve::Ellipse(c) => c.param_at(point),
             Curve::Nurbs(n) => closest_sample_parameter(n, point),
-            Curve::Bounded(c) => c.param_at(point),
         }
     }
 
     pub fn interval_between(&self, start: Point3, end: Point3) -> Interval {
-        match self {
-            Curve::Bounded(_) => Interval::new(self.param_at(start), self.param_at(end)),
-            Curve::Line(_) | Curve::Circle(_) | Curve::Ellipse(_) => {
-                let t0 = self.param_at(start);
-                let mut t1 = self.param_at(end);
-                if start.coincides(end, LINEAR_TOLERANCE)
-                    && let Periodicity::Periodic(period) = self.periodicity()
-                {
-                    t1 = t0 + period;
-                }
-                Interval::new(t0, t1)
+        let t0 = self.param_at(start);
+        let raw_t1 = self.param_at(end);
+        match self.periodicity() {
+            Periodicity::Periodic(period) => {
+                let delta = if start.coincides(end, LINEAR_TOLERANCE) {
+                    period
+                } else {
+                    (raw_t1 - t0).rem_euclid(period)
+                };
+                Interval::new(t0, t0 + delta)
             }
-            Curve::Nurbs(nurbs) => nurbs.domain(),
+            Periodicity::None => Interval::new(t0, raw_t1),
         }
     }
 
@@ -183,13 +151,52 @@ impl Curve {
         Ok(Curve::Nurbs(nurbs.trimmed(native(start), native(end))?))
     }
 
+    /// Returns an exact NURBS segment over an interval in this curve's native
+    /// parameterization, normalized back to `[0, 1]` for synchronized uses.
+    pub fn trimmed_native(&self, interval: Interval) -> Result<Self, NurbsError> {
+        let nurbs = match self {
+            Curve::Circle(circle) => conic_arc_nurbs(
+                interval.start,
+                interval.end,
+                FRAC_PI_2,
+                |parameter| circle.point_at(parameter),
+                |parameter| circle.derivative_at(parameter, 1),
+            )?,
+            Curve::Ellipse(ellipse) => conic_arc_nurbs(
+                interval.start,
+                interval.end,
+                FRAC_PI_2,
+                |parameter| ellipse.point_at(parameter),
+                |parameter| ellipse.derivative_at(parameter, 1),
+            )?,
+            Curve::Line(_) | Curve::Nurbs(_) => {
+                let nurbs = self.to_nurbs()?;
+                nurbs.trimmed(interval.start, interval.end)?
+            }
+        };
+        let domain = nurbs.domain();
+        let extent = domain.end - domain.start;
+        let knots = KnotVector::new(
+            nurbs
+                .knots()
+                .as_slice()
+                .iter()
+                .map(|knot| (knot - domain.start) / extent)
+                .collect(),
+        )?;
+        Ok(Curve::Nurbs(NurbsCurve::new(
+            nurbs.degree(),
+            nurbs.control_points().clone(),
+            knots,
+        )?))
+    }
+
     pub fn length(&self, t0: f64, t1: f64) -> f64 {
         match self {
             Curve::Line(l) => l.length(t0, t1),
             Curve::Circle(c) => c.length(t0, t1),
             Curve::Ellipse(c) => c.length(t0, t1),
             Curve::Nurbs(n) => n.length(t0, t1),
-            Curve::Bounded(c) => c.length(t0, t1),
         }
     }
 
@@ -222,7 +229,6 @@ impl Curve {
             Curve::Circle(curve) => curve.project(point),
             Curve::Ellipse(curve) => curve.project(point),
             Curve::Nurbs(curve) => curve.project(point),
-            Curve::Bounded(curve) => curve.project(point),
         }
     }
 
@@ -236,7 +242,6 @@ impl Curve {
             Curve::Circle(curve) => CurveGeometry::domain(curve),
             Curve::Ellipse(curve) => CurveGeometry::domain(curve),
             Curve::Nurbs(curve) => CurveGeometry::domain(curve),
-            Curve::Bounded(curve) => CurveGeometry::domain(&**curve),
         }
     }
 
@@ -247,7 +252,6 @@ impl Curve {
             Curve::Circle(curve) => curve.bbox_over(interval),
             Curve::Ellipse(curve) => curve.bbox_over(interval),
             Curve::Nurbs(curve) => curve.bbox_over(interval),
-            Curve::Bounded(curve) => curve.bbox_over(interval),
         }
     }
 
@@ -257,12 +261,6 @@ impl Curve {
             Curve::Circle(_) | Curve::Ellipse(_) => {
                 Reparam::conic_arc(self.domain(), self.domain())
             }
-            Curve::Bounded(curve) => match curve.inner().base() {
-                Curve::Circle(_) | Curve::Ellipse(_) => {
-                    Reparam::conic_arc(Interval::new(0.0, 1.0), curve.bounds())
-                }
-                _ => Reparam::Identity,
-            },
             _ => Reparam::Identity,
         }
     }
@@ -276,10 +274,10 @@ impl Curve {
         let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
         let rotate = |point: Point3| axis.origin + rotation * (point - axis.origin);
         match self {
-            Curve::Line(line) => Ok(Curve::Line(Line::new(Axis3::new(
-                rotate(line.origin()),
-                rotation * *line.direction(),
-            )))),
+            Curve::Line(line) => Ok(Curve::Line(Line::with_axis(
+                Axis3::new(rotate(line.origin()), rotation * *line.direction()),
+                line.scale,
+            ))),
             Curve::Circle(circle) => Ok(Curve::Circle(Circle::new(
                 Plane::new(
                     rotate(circle.plane().origin()),
@@ -289,10 +287,6 @@ impl Curve {
                 circle.radius(),
             ))),
             Curve::Ellipse(ellipse) => Ok(Curve::Ellipse(ellipse.rotated(axis, angle)?)),
-            Curve::Bounded(curve) => Ok(Curve::Bounded(Box::new(Bounded::new(
-                curve.inner().rotated(axis, angle)?,
-                curve.bounds(),
-            )))),
             Curve::Nurbs(nurbs) => {
                 let points = nurbs
                     .control_points()
@@ -313,7 +307,6 @@ impl Curve {
     pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
         match self {
             Curve::Line(line) => Ok(Curve::Line(line.translated(direction))),
-            Curve::Bounded(curve) => Ok(Curve::Bounded(Box::new(curve.translated(direction)?))),
             Curve::Circle(circle) => Ok(Curve::Circle(Circle::new(
                 Plane::new(
                     circle.plane.origin() + direction,
@@ -347,9 +340,10 @@ impl Curve {
     /// healing reverse orientation without degrading exact support identity.
     pub fn reversed(&self) -> Self {
         match self {
-            Curve::Line(line) => {
-                Curve::Line(Line::new(Axis3::new(line.origin(), -*line.direction())))
-            }
+            Curve::Line(line) => Curve::Line(Line::with_axis(
+                Axis3::new(line.origin(), -*line.direction()),
+                line.scale,
+            )),
             Curve::Circle(circle) => Curve::Circle(Circle::new(
                 Plane::new(
                     circle.plane().origin(),
@@ -368,119 +362,7 @@ impl Curve {
                 ellipse.minor_radius(),
             )),
             Curve::Nurbs(curve) => Curve::Nurbs(curve.reversed()),
-            Curve::Bounded(curve) => Curve::Bounded(Box::new(Bounded::new(
-                curve.inner().clone(),
-                Interval::new(curve.bounds().end, curve.bounds().start),
-            ))),
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Bounded<T> {
-    inner: T,
-    bounds: Interval,
-}
-
-impl<T> Bounded<T> {
-    pub fn new(inner: T, bounds: Interval) -> Self {
-        Self { inner, bounds }
-    }
-
-    pub fn inner(&self) -> &T {
-        &self.inner
-    }
-
-    pub fn bounds(&self) -> Interval {
-        self.bounds
-    }
-
-    fn global_parameter(&self, t: f64) -> f64 {
-        self.bounds.start + (self.bounds.end - self.bounds.start) * t
-    }
-
-    fn local_parameter(&self, t: f64) -> f64 {
-        let length = self.bounds.end - self.bounds.start;
-        if length.abs() <= LINEAR_TOLERANCE {
-            0.0
-        } else {
-            (t - self.bounds.start) / length
-        }
-    }
-}
-
-impl Bounded<Curve> {
-    pub fn point_at(&self, t: f64) -> Point3 {
-        self.inner.point_at(self.global_parameter(t))
-    }
-
-    pub fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
-        let derivative = self.inner.derivative_at(self.global_parameter(t), order);
-        if order == 1 {
-            derivative * (self.bounds.end - self.bounds.start)
-        } else {
-            derivative
-        }
-    }
-
-    /// Returns the normalised parameter of `point` on the trimmed curve.
-    ///
-    /// A periodic inner curve reports its parameter on one fixed branch — a
-    /// circle uses `atan2`, so `(-pi, pi]` — which need not be the branch this
-    /// trim lives on. The raw parameter is therefore shifted by whole periods
-    /// until it lands at or after the start of the bounds, so an arc spanning
-    /// more than half a turn reports its own span instead of the complementary
-    /// one.
-    pub fn param_at(&self, point: Point3) -> f64 {
-        let raw = self.inner.param_at(point);
-        let Periodicity::Periodic(period) = self.inner.periodicity() else {
-            return self.local_parameter(raw);
-        };
-
-        // The nudge keeps a point sitting exactly on the start of the bounds
-        // from wrapping to the far end when rounding puts it barely below.
-        let start = self.bounds.start.min(self.bounds.end) - ANGULAR_TOLERANCE;
-        self.local_parameter(start + (raw - start).rem_euclid(period))
-    }
-
-    pub fn length(&self, t0: f64, t1: f64) -> f64 {
-        self.inner
-            .length(self.global_parameter(t0), self.global_parameter(t1))
-    }
-
-    pub fn project(&self, point: Point3) -> Point3 {
-        self.inner.project(point)
-    }
-
-    pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(Self::new(self.inner.translated(direction)?, self.bounds))
-    }
-
-    pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
-        match self.inner() {
-            Curve::Line(_) => NurbsCurve::new(
-                Degree::new(1)?,
-                ControlPolygon::new(vec![
-                    HPoint::from_cartesian(self.point_at(0.0), 1.0),
-                    HPoint::from_cartesian(self.point_at(1.0), 1.0),
-                ])?,
-                KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
-            ),
-            Curve::Circle(circle) => circle.to_nurbs_between(self.bounds.start, self.bounds.end),
-            Curve::Ellipse(ellipse) => ellipse.to_nurbs_between(self.bounds.start, self.bounds.end),
-            _ => self
-                .inner
-                .to_nurbs()?
-                .trimmed(self.bounds.start, self.bounds.end),
-        }
-    }
-
-    /// Bounds a normalized portion of this trimmed curve.
-    pub fn bbox_over(&self, interval: Interval) -> Option<BBox> {
-        self.inner.bbox_over(Interval::new(
-            self.global_parameter(interval.start),
-            self.global_parameter(interval.end),
-        ))
     }
 }
 
@@ -599,11 +481,30 @@ mod tests {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Line {
     pub axis: Axis3,
+    #[serde(default = "unit_scale")]
+    scale: f64,
+}
+
+fn unit_scale() -> f64 {
+    1.0
 }
 
 impl Line {
     pub fn new(axis: Axis3) -> Self {
-        Self { axis }
+        Self { axis, scale: 1.0 }
+    }
+
+    /// Creates an infinite line whose affine parameter maps `0` to `start`
+    /// and `1` to `end`.
+    pub fn through(start: Point3, end: Point3) -> Self {
+        Self {
+            axis: Axis3::from_points(start, end),
+            scale: (end - start).norm(),
+        }
+    }
+
+    fn with_axis(axis: Axis3, scale: f64) -> Self {
+        Self { axis, scale }
     }
 
     pub fn origin(&self) -> Point3 {
@@ -615,13 +516,13 @@ impl Line {
     }
 
     pub fn point_at(&self, t: f64) -> Point3 {
-        self.axis.origin + *self.axis.direction * t
+        self.axis.origin + *self.axis.direction * (self.scale * t)
     }
 
     pub fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
         match order {
             0 => self.point_at(t).coords,
-            1 => *self.axis.direction,
+            1 => *self.axis.direction * self.scale,
             _ => Vector3::zeros(),
         }
     }
@@ -633,11 +534,11 @@ impl Line {
         if len_sq < LINEAR_TOLERANCE_SQUARED {
             return 0.0;
         }
-        (point - self.axis.origin).dot(&dir) / len_sq
+        (point - self.axis.origin).dot(&dir) / (len_sq * self.scale)
     }
     /// Arc length between `t0` and `t1` (in distance units).
     pub fn length(&self, t0: f64, t1: f64) -> f64 {
-        (t1 - t0).abs()
+        (t1 - t0).abs() * self.scale.abs()
     }
 
     pub fn project(&self, point: Point3) -> Point3 {
@@ -647,6 +548,7 @@ impl Line {
     pub fn translated(&self, direction: Vector3<f64>) -> Self {
         Self {
             axis: Axis3::new(self.axis.origin + direction, self.axis.direction),
+            scale: self.scale,
         }
     }
 
@@ -654,8 +556,8 @@ impl Line {
         NurbsCurve::new(
             Degree::new(1)?,
             ControlPolygon::new(vec![
-                HPoint::from_cartesian(self.axis.origin - *self.axis.direction * MAX_DISTANCE, 1.0),
-                HPoint::from_cartesian(self.axis.origin + *self.axis.direction * MAX_DISTANCE, 1.0),
+                HPoint::from_cartesian(self.point_at(0.0), 1.0),
+                HPoint::from_cartesian(self.point_at(1.0), 1.0),
             ])?,
             KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
         )
@@ -1149,55 +1051,6 @@ impl CurveGeometry for NurbsCurve {
             ControlPolygon::new(points)?,
             self.knots().clone(),
         )
-    }
-}
-
-impl CurveGeometry for Bounded<Curve> {
-    fn domain(&self) -> Interval {
-        Interval::new(0.0, 1.0)
-    }
-
-    fn periodicity(&self) -> Periodicity {
-        Periodicity::None
-    }
-
-    fn point_at(&self, t: f64) -> Point3 {
-        Bounded::<Curve>::point_at(self, t)
-    }
-
-    fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64> {
-        Bounded::<Curve>::derivative_at(self, t, order)
-    }
-
-    fn param_at(&self, point: Point3) -> f64 {
-        Bounded::<Curve>::param_at(self, point)
-    }
-
-    fn project(&self, point: Point3) -> Point3 {
-        Bounded::<Curve>::project(self, point)
-    }
-
-    fn length(&self, t0: f64, t1: f64) -> f64 {
-        Bounded::<Curve>::length(self, t0, t1)
-    }
-
-    fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
-        Bounded::<Curve>::to_nurbs(self)
-    }
-
-    fn bbox_over(&self, interval: Interval) -> Option<BBox> {
-        Bounded::<Curve>::bbox_over(self, interval)
-    }
-
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        Ok(Bounded::new(
-            self.inner().rotated(axis, angle)?,
-            self.bounds(),
-        ))
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Bounded::<Curve>::translated(self, direction)
     }
 }
 

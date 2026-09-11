@@ -145,7 +145,7 @@ support.
 
 - [x] `Interval::unbounded`, `is_finite`, `or_extent`.
 - [x] `CurveGeometry`, `Curve2Geometry`, `SurfaceGeometry` in `src/geometry/traits.rs`.
-- [x] Implemented for `Line`, `Circle`, `NurbsCurve`, `Bounded<Curve>`; `Line2`,
+- [x] Implemented for `Line`, `Circle`, `NurbsCurve`; `Line2`,
       `Circle2`; `Plane`, `Cylinder`, `RuledSurface`, `SurfaceOfRevolution`,
       `NurbsSurface`.
 - [x] `rotated`/`translated` moved out of the enum matches into the concrete types.

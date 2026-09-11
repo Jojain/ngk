@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use super::graph::SpanSubdivision;
 use crate::builders::faces::{FaceImprint, FaceImprintSection, split_face_edge_staged};
-use crate::geometry::{Curve, Point3, PointCoincidence};
+use crate::geometry::{Point3, PointCoincidence};
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use crate::topology::{TopologyEdit, gmap::GMap, payload::Payload};
 
@@ -65,21 +65,13 @@ pub(crate) fn face_imprints(network: &IntersectionNetwork) -> HashMap<FaceKey, V
             };
             let (curve, pcurve) = match orientation {
                 IntersectionOrientation::Forward => ((*span.curve).clone(), (**pcurve).clone()),
-                IntersectionOrientation::Reversed => (
-                    Curve::Nurbs(
-                        span.curve
-                            .to_nurbs()
-                            .expect("validated intersection curve")
-                            .reversed(),
-                    ),
-                    pcurve.reversed(),
-                ),
+                IntersectionOrientation::Reversed => (span.curve.reversed(), pcurve.reversed()),
             };
             imprints.entry(*face).or_default().push(SpanImprint {
                 span: IntersectionSpanId(index),
                 pieces: Vec::new(),
                 side: *side,
-                imprint: FaceImprint::new(curve, pcurve),
+                imprint: FaceImprint::with_section(curve, pcurve),
                 orientation: *orientation,
             });
         }
@@ -114,7 +106,7 @@ pub(crate) fn realize_section<P: Payload>(
     for (index, pair) in cuts.windows(2).enumerate() {
         let current = edge;
         if index + 2 < cuts.len() {
-            let point = imprint.imprint.curve.point_at(pair[1]);
+            let point = imprint.imprint.point_at(pair[1]);
             let view = edit.edge_unchecked(edge);
             let parameter = view.curve().expect("section geometry").param_at(point);
             let face = view.faces()[0].key();
@@ -151,8 +143,8 @@ pub(crate) fn realize_edge_spans<P: Payload>(
 ) -> Vec<(IntersectionSpanId, BooleanSide, EdgeKey)> {
     let mut realized = Vec::new();
     for (index, span) in network.spans().iter().enumerate() {
-        let start = span.curve.point_at(0.0);
-        let end = span.curve.point_at(1.0);
+        let start = span.point_at(0.0);
+        let end = span.point_at(1.0);
         for span_use in &span.uses {
             let IntersectionSpanUse::Edge { side, edge, .. } = span_use else {
                 continue;

@@ -8,8 +8,8 @@ use crate::builders::faces::reverse_face_winding;
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{
-    ANGULAR_TOLERANCE, Circle, Cone, Curve, Curve2, Cylinder, Frame, Interval, LINEAR_TOLERANCE,
-    Line2, Plane, Point2, Point3, Surface, SurfaceOfRevolution,
+    ANGULAR_TOLERANCE, Circle, Cone, Curve, Curve2, Cylinder, Frame, LINEAR_TOLERANCE, Line2,
+    Plane, Point2, Point3, Surface, SurfaceOfRevolution,
 };
 use crate::topology::IsolatedDart;
 use crate::topology::attributes::{
@@ -276,7 +276,7 @@ fn revolved_support(curve: &Curve, axis: Axis3) -> RevolvedSupport {
 ///
 /// `None` for anything whose `point_at` is not affine in its parameter.
 fn linear_profile(curve: &Curve) -> Option<(Point3, Vector3<f64>)> {
-    match curve.base() {
+    match curve {
         Curve::Line(_) => {
             let origin = curve.point_at(0.0);
             Some((origin, curve.point_at(1.0) - origin))
@@ -953,26 +953,24 @@ fn alpha2_revolve_merge<P: Payload>(
 
 /// Returns the trajectory swept by `point` turning `angle` around `axis`.
 ///
-/// A partial turn yields a bounded arc running from `point` at parameter `0`
-/// to its rotated image at parameter `1`. A full turn yields the closed circle
-/// itself, because a closed edge needs the periodic curve that
-/// [`Curve::parameters_between`] can span over a whole period.
+/// The circle parameterization follows the requested turn direction. Its edge
+/// endpoints select the swept section of that support.
 fn revolve_circle_curve(axis: Axis3, point: Point3, angle: Rad64) -> Curve {
     let projected = axis.project(point);
     let radius = distance(&projected, &point);
+    let direction = if angle.val() < 0.0 {
+        -axis.direction
+    } else {
+        axis.direction
+    };
     let plane = if radius <= LINEAR_TOLERANCE {
-        Circle::from_axis(Axis3::new(projected, axis.direction), radius)
+        Circle::from_axis(Axis3::new(projected, direction), radius)
             .plane()
             .clone()
     } else {
-        Plane::new(projected, point - projected, axis.direction)
+        Plane::new(projected, point - projected, direction)
     };
-
-    if is_full_turn(angle) {
-        return Curve::circle(plane, radius);
-    }
-
-    Curve::arc(plane, radius, Interval::new(0.0, angle.val()))
+    Curve::circle(plane, radius)
 }
 
 /// Rejects source edges that cannot sweep a well-formed face.

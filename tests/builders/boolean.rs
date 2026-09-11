@@ -493,7 +493,7 @@ fn nurbs_face_intersection_does_not_bridge_an_inner_loop() {
     assert!(!spans.is_empty());
     for span in spans {
         for i in 1..100 {
-            let point = span.curve.point_at(i as f64 / 100.0);
+            let point = span.point_at(i as f64 / 100.0);
             assert!(
                 point.x <= 0.4 + LINEAR_TOLERANCE || point.x >= 0.6 - LINEAR_TOLERANCE,
                 "intersection bridges the hole at {point:?}"

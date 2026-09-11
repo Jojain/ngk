@@ -463,9 +463,14 @@ pub(crate) fn add_arc_staged<P: Payload>(
     check_valid_angle("start", start_angle)?;
     check_valid_angle("end", end_angle)?;
 
-    let curve = Curve::arc(plane, radius, Interval::new(start_angle, end_angle));
-    let start = curve.point_at(0.0);
-    let end = curve.point_at(1.0);
+    let circle = Curve::circle(plane, radius);
+    let start = circle.point_at(start_angle);
+    let end = circle.point_at(end_angle);
+    let curve = if end_angle < start_angle {
+        circle.reversed()
+    } else {
+        circle
+    };
     add_edge_staged(g, start, end, curve)
 }
 

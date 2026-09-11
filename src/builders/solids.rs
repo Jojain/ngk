@@ -55,7 +55,7 @@ pub fn add_sphere<P: Payload>(
             arc,
             axis,
             Surface::Sphere(Sphere::new(frame, radius)),
-            |point| Point2::new(point.y, FRAC_PI_2 - std::f64::consts::PI * point.x),
+            |point| Point2::new(point.y, -point.x),
         )?;
         let seam = g.face_unchecked(face).outer_loop().dart;
 
@@ -383,9 +383,6 @@ fn lateral_face_surface(
 ) -> Result<Surface, ExtrudeError> {
     match curve {
         Curve::Line(_) => Ok(Surface::Plane(lateral_plane(dart, start, end, direction)?)),
-        Curve::Bounded(_) if is_linear_curve(curve) => {
-            Ok(Surface::Plane(lateral_plane(dart, start, end, direction)?))
-        }
         _ => match extruded_cylinder(curve, direction) {
             // Sweeping a circle along its own normal is a cylinder, and saying
             // so here is what lets every later stage recognize the kernel's own
@@ -402,13 +399,8 @@ fn lateral_face_surface(
 /// the circle's own parameter is the cylinder's `u` with no correction: the
 /// sweep is the identity in `u` and a translation in `v`.
 fn extruded_cylinder(curve: &Curve, direction: Vector3<f64>) -> Option<Cylinder> {
-    let circle = match curve {
-        Curve::Circle(circle) => circle,
-        Curve::Bounded(bounded) => match bounded.inner() {
-            Curve::Circle(circle) => circle,
-            _ => return None,
-        },
-        _ => return None,
+    let Curve::Circle(circle) = curve else {
+        return None;
     };
     let normal = circle.plane().normal();
     let length = direction.norm();
@@ -460,14 +452,6 @@ fn lateral_face_uv(
             ]
         }
         _ => unreachable!("lateral_face_surface only creates plane, cylinder or ruled surfaces"),
-    }
-}
-
-fn is_linear_curve(curve: &Curve) -> bool {
-    match curve {
-        Curve::Line(_) => true,
-        Curve::Bounded(bounded) => matches!(bounded.inner(), Curve::Line(_)),
-        _ => false,
     }
 }
 

@@ -49,13 +49,13 @@ fn a_section_leaving_and_re_entering_a_face_is_clipped_into_two_spans() {
         "the notch must not be bridged by a single span"
     );
     for span in plan.network.spans() {
-        let start = span.curve.point_at(0.0);
-        let end = span.curve.point_at(1.0);
+        let start = span.point_at(0.0);
+        let end = span.point_at(1.0);
         let inside_notch = |point: Point3| point.x > 1.0 + 1.0e-9 && point.x < 2.0 - 1.0e-9;
         assert!(
-            !inside_notch(span.curve.point_at(0.5)),
+            !inside_notch(span.point_at(0.5)),
             "a retained span must stay inside the face, got {:?}",
-            span.curve.point_at(0.5)
+            span.point_at(0.5)
         );
         assert!((start.y - 2.0).abs() < 1.0e-9 && (end.y - 2.0).abs() < 1.0e-9);
     }

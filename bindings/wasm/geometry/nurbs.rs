@@ -318,7 +318,7 @@ impl From<SurfaceSurfaceIntersection> for WasmSurfaceSurfaceIntersection {
                 residual: point.residual,
             },
             SurfaceSurfaceIntersection::Branch(branch) => {
-                let curve_representation = curve_representation(&branch.curve_3d);
+                let curve_representation = curve_representation(branch.curve_3d.curve());
                 let surface_a_curve_representation = pcurve_representation(&branch.pcurve_a);
                 let surface_b_curve_representation = pcurve_representation(&branch.pcurve_b);
                 Self::Branch {
@@ -363,7 +363,6 @@ fn curve_representation(curve: &Curve) -> &'static str {
         Curve::Circle(_) => "circle",
         Curve::Ellipse(_) => "ellipse",
         Curve::Nurbs(_) => "nurbs",
-        Curve::Bounded(curve) => curve_representation(curve.inner()),
     }
 }
 

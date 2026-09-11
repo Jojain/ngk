@@ -26,7 +26,7 @@ pub use curve_curve::intersect_analytic_curves;
 pub use curve_surface::{intersect_analytic_curve_surface, line_surface_is_analytic};
 pub use surface_surface::intersect_analytic_surfaces;
 
-use crate::geometry::{Curve, Curve2, Point3};
+use crate::geometry::{Curve2, Point3, TrimmedCurve};
 
 /// How faithfully a section's pcurve represents it in a support's parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -65,15 +65,27 @@ impl PcurveFidelity {
 
 /// One section computed in closed form from the supports' own parameterizations.
 ///
-/// The 3D curve and both pcurves share one parameterization by construction:
-/// each is written over the same normalized domain rather than matched up
-/// afterwards, so evaluating any of the three at `t` describes one point.
+/// The support retains its native parameterization; `curve` names the portion
+/// of it this section covers, and its normalized traversal is the one the two
+/// pcurves are synchronized with.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnalyticSection {
-    pub curve: Curve,
+    pub curve: TrimmedCurve,
     pub pcurve_a: Curve2,
     pub pcurve_b: Curve2,
     pub fidelity: PcurveFidelity,
+}
+
+impl AnalyticSection {
+    /// Evaluates the section at a normalized traversal parameter.
+    pub fn point_at(&self, parameter: f64) -> Point3 {
+        self.curve.point_at(parameter)
+    }
+
+    /// Projects a point to this section's normalized traversal parameter.
+    pub fn parameter_at(&self, point: Point3) -> f64 {
+        self.curve.parameter_at(point)
+    }
 }
 
 /// A closed-form answer for one surface pair.

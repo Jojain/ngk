@@ -32,7 +32,7 @@ pub fn intersect_analytic_curves(
     }
     let first = Window::of(a)?;
     let second = Window::of(b)?;
-    let solved = match (a.base(), b.base()) {
+    let solved = match (a, b) {
         (Curve::Line(first), Curve::Line(second)) => line_line(first, second, options),
         (Curve::Line(line), Curve::Circle(circle)) => line_circle(line, circle, options),
         (Curve::Circle(circle), Curve::Line(line)) => swapped(line_circle(line, circle, options)),
@@ -43,9 +43,7 @@ pub fn intersect_analytic_curves(
     // curve has: an unbounded support would give an unbounded region, and a
     // periodic one would need the interval to cross its own seam. Both decline
     // to the general solver rather than reporting something unusable.
-    if matches!(solved, Solved::Coincident)
-        && !(matches!(first, Window::Bounded { .. }) && matches!(second, Window::Bounded { .. }))
-    {
+    if matches!(solved, Solved::Coincident) {
         return None;
     }
     count_curve_curve_analytic_call();
@@ -73,10 +71,6 @@ fn swapped(solved: Option<Solved>) -> Option<Solved> {
 enum Window {
     Whole,
     Periodic(f64),
-    Bounded {
-        bounds: Interval,
-        period: Option<f64>,
-    },
 }
 
 impl Window {
@@ -84,47 +78,14 @@ impl Window {
         match curve {
             Curve::Line(_) => Some(Window::Whole),
             Curve::Circle(_) => Some(Window::Periodic(TAU)),
-            Curve::Bounded(bounded) => Some(Window::Bounded {
-                bounds: bounded.bounds(),
-                period: match bounded.inner().base() {
-                    Curve::Circle(_) => Some(TAU),
-                    _ => None,
-                },
-            }),
             _ => None,
         }
     }
 
-    fn domain(&self) -> Interval {
-        match self {
-            Window::Whole => Interval::unbounded(),
-            Window::Periodic(period) => Interval::new(0.0, *period),
-            Window::Bounded { .. } => Interval::new(0.0, 1.0),
-        }
-    }
-
-    fn report(&self, parameter: f64, options: IntersectionOptions) -> Option<f64> {
+    fn report(&self, parameter: f64, _options: IntersectionOptions) -> Option<f64> {
         match self {
             Window::Whole => Some(parameter),
             Window::Periodic(period) => Some(parameter.rem_euclid(*period)),
-            Window::Bounded { bounds, period } => {
-                let span = bounds.end - bounds.start;
-                if span.abs() <= options.parameter_tolerance {
-                    return None;
-                }
-                let parameter = match period {
-                    Some(period) => {
-                        let low = bounds.start.min(bounds.end) - options.parameter_tolerance;
-                        low + (parameter - low).rem_euclid(*period)
-                    }
-                    None => parameter,
-                };
-                let local = (parameter - bounds.start) / span;
-                let slack = options.parameter_tolerance / span.abs();
-                (-slack..=1.0 + slack)
-                    .contains(&local)
-                    .then(|| local.clamp(0.0, 1.0))
-            }
         }
     }
 }
@@ -203,11 +164,11 @@ fn shared_window(
 /// Two lines cross at one point, are collinear, or are skew or parallel.
 fn line_line(a: &Line, b: &Line, options: IntersectionOptions) -> Option<Solved> {
     let (p, q) = (a.origin(), b.origin());
-    let (u, v) = (*a.direction(), *b.direction());
+    let (u, v) = (a.derivative_at(0.0, 1), b.derivative_at(0.0, 1));
     let offset = q - p;
     let cross = u.cross(&v);
     let denominator = cross.norm_squared();
-    if denominator <= options.angular_tolerance * options.angular_tolerance {
+    if denominator <= options.angular_tolerance.powi(2) * u.norm_squared() * v.norm_squared() {
         // Parallel: collinear if one origin lies on the other line.
         return Some(if offset.cross(&u).norm() <= options.linear_tolerance {
             Solved::Coincident
@@ -230,10 +191,10 @@ fn line_line(a: &Line, b: &Line, options: IntersectionOptions) -> Option<Solved>
 fn line_circle(line: &Line, circle: &Circle, options: IntersectionOptions) -> Option<Solved> {
     let normal = *circle.plane().normal();
     let origin = line.origin();
-    let direction = *line.direction();
+    let direction = line.derivative_at(0.0, 1);
     let slope = direction.dot(&normal);
     let offset = (origin - circle.plane().origin()).dot(&normal);
-    let parameters = if slope.abs() <= options.angular_tolerance {
+    let parameters = if slope.abs() <= options.angular_tolerance * direction.norm() {
         if offset.abs() > options.linear_tolerance {
             return Some(Solved::Crossings(Vec::new()));
         }

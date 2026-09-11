@@ -13,7 +13,7 @@
 //! then field order rather than a flag something has to remember to apply.
 
 use crate::builders::faces::FaceImprint;
-use crate::geometry::{Curve, Interval, Point3};
+use crate::geometry::{Interval, Point3, TrimmedCurve};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
 
 use super::{BooleanCell, BooleanSide, IntersectionAccumulator, PointContactKind, RawIntersection};
@@ -144,8 +144,7 @@ pub(super) enum Contact {
     /// A contact section one cell's edge already realizes.
     EdgeSection {
         cell: ContactCell,
-        curve: Curve,
-        interval: Interval,
+        curve: TrimmedCurve,
     },
     /// A section to imprint on one cell's face.
     Imprint {
@@ -193,16 +192,11 @@ pub(super) fn record(
                     second_interval: b,
                 });
             }
-            Contact::EdgeSection {
-                cell,
-                curve,
-                interval,
-            } => {
+            Contact::EdgeSection { cell, curve } => {
                 plan.contacts.push(RawIntersection::EdgeSection {
                     side: pair.side(cell),
                     edge: pair.edge(cell),
                     curve,
-                    interval,
                 });
             }
             Contact::Imprint {

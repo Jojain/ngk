@@ -1,8 +1,8 @@
 //! Canonical intersection network shared by both Boolean operands.
 
 use crate::geometry::{
-    Bounded, Curve, Curve2, Interval, KnotVector, NurbsCurve, NurbsError, Point2, Point3,
-    PointCoincidence,
+    Curve, Curve2, Interval, KnotVector, NurbsCurve, NurbsError, Point2, Point3, PointCoincidence,
+    TrimmedCurve,
 };
 use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
@@ -81,9 +81,19 @@ pub enum IntersectionSpanKind {
 pub struct IntersectionSpan {
     pub start: IntersectionEventId,
     pub end: IntersectionEventId,
-    pub curve: Box<Curve>,
+    pub curve: Box<TrimmedCurve>,
     pub kind: IntersectionSpanKind,
     pub uses: Vec<IntersectionSpanUse>,
+}
+
+impl IntersectionSpan {
+    pub fn point_at(&self, parameter: f64) -> Point3 {
+        self.curve.point_at(parameter)
+    }
+
+    pub fn parameter_at(&self, point: Point3) -> f64 {
+        self.curve.parameter_at(point)
+    }
 }
 
 /// A two-dimensional overlap retained alongside the one-dimensional network.
@@ -167,8 +177,8 @@ impl IntersectionNetwork {
             if span.uses.is_empty() {
                 return Err(IntersectionNetworkValidationError::SpanWithoutUse { span: index });
             }
-            if !span.curve.point_at(0.0).coincides(start.point, tolerance)
-                || !span.curve.point_at(1.0).coincides(end.point, tolerance)
+            if !span.point_at(0.0).coincides(start.point, tolerance)
+                || !span.point_at(1.0).coincides(end.point, tolerance)
             {
                 return Err(IntersectionNetworkValidationError::SpanEndpointMismatch {
                     span: index,
@@ -234,14 +244,14 @@ impl IntersectionNetworkBuilder {
 
     pub(crate) fn record_span(
         &mut self,
-        curve: Curve,
+        curve: TrimmedCurve,
         kind: IntersectionSpanKind,
         start_uses: impl IntoIterator<Item = IntersectionEventUse>,
         end_uses: impl IntoIterator<Item = IntersectionEventUse>,
         uses: impl IntoIterator<Item = IntersectionSpanUse>,
     ) -> Option<IntersectionSpanId> {
-        let start_point = curve.point_at(0.0);
-        let end_point = curve.point_at(1.0);
+        let start_point = curve.start();
+        let end_point = curve.end();
         if start_point.coincides(end_point, self.tolerance) {
             return None;
         }
@@ -309,7 +319,12 @@ impl IntersectionNetworkBuilder {
     }
 }
 
-fn curves_coincide(left: &Curve, right: &Curve, right_is_reversed: bool, tolerance: f64) -> bool {
+fn curves_coincide(
+    left: &TrimmedCurve,
+    right: &TrimmedCurve,
+    right_is_reversed: bool,
+    tolerance: f64,
+) -> bool {
     [0.25, 0.5, 0.75].into_iter().all(|parameter| {
         let right_parameter = if right_is_reversed {
             1.0 - parameter
@@ -457,7 +472,7 @@ pub(crate) struct SpanSubdivision {
     pub(crate) reversed: bool,
 }
 
-/// Bounded guard against tolerance thrash in the noding fixed point.
+/// Finite guard against tolerance thrash in the noding fixed point.
 const MAX_NODING_PASSES: usize = 8;
 
 /// Narrowest piece a span may be subdivided into, as a fraction of the span.
@@ -474,11 +489,11 @@ const MIN_SPAN_PIECE: f64 = crate::geometry::LINEAR_TOLERANCE * 10.0;
 pub(crate) fn finalize_network(
     network: &IntersectionNetwork,
     linear: f64,
-    parameter: f64,
+    _parameter: f64,
 ) -> Result<(IntersectionNetwork, Vec<Vec<SpanSubdivision>>), BooleanError> {
     let mut events = network.events.clone();
     for _ in 0..MAX_NODING_PASSES {
-        let (builder, mapping) = node_spans(network, &events, linear, parameter)?;
+        let (builder, mapping) = node_spans(network, &events, linear)?;
         if builder.network.events.len() <= events.len() {
             return Ok((builder.finish()?, mapping));
         }
@@ -496,7 +511,6 @@ fn node_spans(
     network: &IntersectionNetwork,
     events: &[IntersectionEvent],
     linear: f64,
-    parameter: f64,
 ) -> Result<(IntersectionNetworkBuilder, Vec<Vec<SpanSubdivision>>), BooleanError> {
     let mut builder = IntersectionNetworkBuilder::new(linear);
     for event in events {
@@ -506,14 +520,14 @@ fn node_spans(
     for span in &network.spans {
         let mut parameters = vec![0.0, 1.0];
         for event in events {
-            let t = span.curve.param_at(event.point);
+            let t = span.parameter_at(event.point);
             // Against the piece resolution, not the parameter tolerance: an
             // event landing between the two would cut off a piece too narrow
             // for the span or its pcurves to be trimmed to, and the whole
             // Boolean would fail on a subdivision that carries no geometry.
             if t <= MIN_SPAN_PIECE
                 || t >= 1.0 - MIN_SPAN_PIECE
-                || !span.curve.point_at(t).coincides(event.point, linear)
+                || !span.point_at(t).coincides(event.point, linear)
             {
                 continue;
             }
@@ -527,8 +541,8 @@ fn node_spans(
         let mut pieces = Vec::new();
         for pair in parameters.windows(2) {
             let interval = Interval::new(pair[0], pair[1]);
-            let curve = normalized_subcurve(&span.curve, interval)?;
-            let start = curve.point_at(0.0);
+            let curve = span.curve.sub(interval);
+            let start = curve.start();
             let uses = span
                 .uses
                 .iter()
@@ -606,19 +620,6 @@ fn span_event_uses(uses: &[IntersectionSpanUse], t: f64) -> Vec<IntersectionEven
 
 /// Restores a normalized parameter domain after exact NURBS trimming.
 pub(crate) fn normalized_subcurve(curve: &Curve, interval: Interval) -> Result<Curve, NurbsError> {
-    if let Curve::Bounded(bounded) = curve
-        && matches!(
-            bounded.inner(),
-            Curve::Line(_) | Curve::Circle(_) | Curve::Ellipse(_)
-        )
-    {
-        let bounds = bounded.bounds();
-        let parameter = |t: f64| bounds.start + (bounds.end - bounds.start) * t;
-        return Ok(Curve::Bounded(Box::new(Bounded::new(
-            bounded.inner().clone(),
-            Interval::new(parameter(interval.start), parameter(interval.end)),
-        ))));
-    }
     let trimmed = curve.trimmed(interval)?.to_nurbs()?;
     let domain = trimmed.domain();
     let knots = KnotVector::new(
@@ -711,12 +712,8 @@ fn cycle_signed_area<P: Payload>(
             IntersectionOrientation::Forward => (span.start, span.end),
             IntersectionOrientation::Reversed => (span.end, span.start),
         };
-        let start = view
-            .surface()
-            .param_at(network.events[start.0].point)?;
-        let end = view
-            .surface()
-            .param_at(network.events[end.0].point)?;
+        let start = view.surface().param_at(network.events[start.0].point)?;
+        let end = view.surface().param_at(network.events[end.0].point)?;
         area += start.x * end.y - end.x * start.y;
     }
     Ok(area)
@@ -876,7 +873,7 @@ fn validate_span_pcurves<P: Payload>(
         for step in 0..=SAMPLES {
             let t = step as f64 / SAMPLES as f64;
             let uv = pcurve.point_at(t);
-            let residual = (view.point_at(uv.x, uv.y) - span.curve.point_at(t)).norm();
+            let residual = (view.point_at(uv.x, uv.y) - span.point_at(t)).norm();
             if residual > tolerances.section_fit {
                 return Err(BooleanError::PcurveDisagreesWithCurve {
                     span: index,

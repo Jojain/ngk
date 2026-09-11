@@ -153,16 +153,16 @@ fn side_arc_midpoint(
                 .point()
                 .expect("arc start should have geometry");
             let end = *edge.end().point().expect("arc end should have geometry");
-            matches!(edge.curve().map(Curve::base), Some(Curve::Circle(_)))
+            matches!(edge.curve(), Some(Curve::Circle(_)))
                 && (start.coincides(origin, LINEAR_TOLERANCE)
                     || end.coincides(origin, LINEAR_TOLERANCE))
         })
         .expect("revolve should create a circular side arc");
     let curve = arc.curve().expect("side arc should have geometry");
-    let start = *arc.start().point().expect("arc start should have geometry");
-    let end = *arc.end().point().expect("arc end should have geometry");
-    let interval = curve.interval_between(start, end);
-    curve.point_at(0.5 * (interval.start + interval.end))
+    let interval = arc
+        .parameter_interval()
+        .expect("side arc should have an oriented interval");
+    curve.point_at(interval.at(0.5))
 }
 
 #[test]

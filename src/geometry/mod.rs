@@ -17,7 +17,8 @@ pub use dim2::intersections::{
 pub use dim2::nurbs::{ControlPolygon2, HPoint2, NurbsCurve2};
 pub use dim2::utils::{Point2, Vector2};
 pub use dim3::bbox::BBox;
-pub use dim3::curves::{Bounded, Circle, Curve, Ellipse, Line, Periodicity};
+pub use dim3::curves::{Circle, Curve, Ellipse, Line, Periodicity};
+
 pub use dim3::frame::Frame;
 pub use dim3::intersections::{
     AnalyticSection, AnalyticSurfaceIntersection, CurveCurveIntersection, CurveCurveIntersections,
@@ -40,6 +41,7 @@ pub use dim3::nurbs::{
 pub use dim3::surfaces::{
     Cone, Cylinder, Plane, RuledSurface, Sphere, Surface, SurfaceOfRevolution, SurfacePeriodicity,
 };
+pub use dim3::trimmed::TrimmedCurve;
 pub use dim3::utils::{IntoUnit, Point3, PointCoincidence};
 pub use interval::Interval;
 pub use nurbs::error::NurbsError;

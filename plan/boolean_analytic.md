@@ -121,7 +121,7 @@ own cylinders**: `cylinder_at` (`src/modeling/solids.rs:60`) goes through the ge
 extrusion, and `lateral_face_surface` (`src/builders/solids.rs:377-393`) emits
 `Surface::Ruled(RuledSurface)` wrapping a `Circle` for anything non-linear.
 
-- `lateral_face_surface`: extruding a `Circle`/`Bounded(Circle)` whose plane normal is
+- `lateral_face_surface`: extruding a `Circle` whose plane normal is
   parallel to the extrusion direction now yields `Surface::Cylinder`.
 - The revolution builders (`src/builders/revolve.rs`) get the same treatment: a `Line`
   parallel to the axis → `Surface::Cylinder`, meeting the axis at an angle →

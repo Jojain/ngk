@@ -1,5 +1,5 @@
 use ngk::builders::errors::EdgeCreationError;
-use ngk::geometry::{Curve, Plane, Point3};
+use ngk::geometry::{Curve, Interval, Plane, Point3};
 use ngk::modeling::edges;
 use ngk::topology::closed::Closeable;
 
@@ -13,10 +13,7 @@ fn line_returns_owned_line_edge_shape() {
 
     assert_eq!(edge.start().point(), Some(&start));
     assert_eq!(edge.end().point(), Some(&end));
-    assert!(matches!(
-        edge.curve(),
-        Some(Curve::Bounded(curve)) if matches!(curve.inner(), Curve::Line(_))
-    ));
+    assert!(matches!(edge.curve(), Some(Curve::Line(_))));
 }
 
 #[test]
@@ -42,9 +39,35 @@ fn arc_returns_owned_open_circle_edge_shape() {
     assert!(!edge.is_closed());
     assert!(matches!(
         edge.curve(),
-        Some(Curve::Bounded(arc))
-            if matches!(arc.inner(), Curve::Circle(circle) if (circle.radius() - 2.0).abs() <= f64::EPSILON)
+        Some(Curve::Circle(circle)) if (circle.radius() - 2.0).abs() <= f64::EPSILON
     ));
+}
+
+#[test]
+fn reversed_arc_uses_the_same_span_with_a_negative_parameter_delta() {
+    let shape =
+        edges::arc(Plane::xy(), 2.0, 0.0, std::f64::consts::FRAC_PI_2).expect("arc should build");
+    let edge = shape.edge();
+
+    assert_eq!(
+        edge.parameter_interval(),
+        Some(Interval::new(0.0, std::f64::consts::FRAC_PI_2))
+    );
+    assert_eq!(
+        edge.reversed().parameter_interval(),
+        Some(Interval::new(std::f64::consts::FRAC_PI_2, 0.0))
+    );
+}
+
+#[test]
+fn circle_edge_vertices_recover_a_span_wider_than_half_a_turn() {
+    let span = 3.0 * std::f64::consts::FRAC_PI_2;
+    let shape = edges::arc(Plane::xy(), 1.0, 0.0, span).expect("arc should build");
+
+    assert_eq!(
+        shape.edge().parameter_interval(),
+        Some(Interval::new(0.0, span))
+    );
 }
 
 #[test]

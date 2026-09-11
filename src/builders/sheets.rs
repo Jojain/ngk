@@ -144,29 +144,7 @@ fn extruded_edge_surface(
                 ],
             })
         }
-        Curve::Bounded(_) if is_linear_curve(curve) => {
-            let surface = lateral_plane(dart, start, end, direction)?;
-            let translated_curve = curve
-                .translated(direction)
-                .map_err(|source| ExtrudeError::CurveTranslationFailed { dart, source })?;
-            let uv = [
-                plane_uv(&surface, start),
-                plane_uv(&surface, end),
-                plane_uv(&surface, end + direction),
-                plane_uv(&surface, start + direction),
-            ];
-            Ok(ExtrudedSurface {
-                surface: Surface::Plane(surface),
-                uv,
-                boundary_curves: [
-                    curve.clone(),
-                    Curve::line(end, end + direction),
-                    translated_curve,
-                    Curve::line(start + direction, start),
-                ],
-            })
-        }
-        Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) | Curve::Bounded(_) => {
+        Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) => {
             let interval = curve.interval_between(start, end);
             let translated_curve = curve
                 .translated(direction)
@@ -187,14 +165,6 @@ fn extruded_edge_surface(
                 ],
             })
         }
-    }
-}
-
-fn is_linear_curve(curve: &Curve) -> bool {
-    match curve {
-        Curve::Line(_) => true,
-        Curve::Bounded(bounded) => matches!(bounded.inner(), Curve::Line(_)),
-        _ => false,
     }
 }
 

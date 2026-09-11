@@ -84,7 +84,7 @@ fn planar_section_crosses_a_curved_trim_at_exact_pcurve_points() {
 
     assert_eq!(plan.network.spans().len(), 1);
     let span = &plan.network.spans()[0];
-    for point in [span.curve.point_at(0.0), span.curve.point_at(1.0)] {
+    for point in [span.point_at(0.0), span.point_at(1.0)] {
         assert!((point.coords.norm() - 2.0).abs() <= 1.0e-10, "{point:?}");
     }
 }

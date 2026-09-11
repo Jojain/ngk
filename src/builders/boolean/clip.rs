@@ -6,7 +6,7 @@ use crate::builders::faces::FaceImprint;
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveIntersectionOptions, HPoint, HPoint2,
     IntersectionOptions, Interval, LINEAR_TOLERANCE, Line2, NurbsCurve, NurbsCurve2, NurbsError,
-    Point2, Point3, Surface, SurfaceIntersectionBranch, SurfacePeriodicity,
+    Point2, Point3, Surface, SurfaceIntersectionBranch, SurfacePeriodicity, TrimmedCurve,
 };
 
 use super::{BooleanError, trim::FaceTrimDomain};
@@ -70,7 +70,7 @@ pub(crate) fn clip_branch(
     let captured = |parameter: f64| {
         nodes
             .iter()
-            .any(|node| (branch.curve_3d.point_at(parameter) - node.point).norm() <= capture)
+            .any(|node| (branch.point_at(parameter) - node.point).norm() <= capture)
     };
     crossings.retain(|parameter| !captured(*parameter));
     let mut parameters = vec![0.0, 1.0];
@@ -97,7 +97,7 @@ pub(crate) fn clip_branch(
             continue;
         }
         let interval = Interval::new(pair[0], pair[1]);
-        let mut curve = super::graph::normalized_subcurve(&branch.curve_3d, interval)?;
+        let mut curve = branch.curve_3d.sub(interval);
         let mut pcurve_a = pcurve_a.trimmed(interval)?;
         let mut pcurve_b = pcurve_b.trimmed(interval)?;
         for (index, at_start) in [(0usize, true), (1usize, false)] {
@@ -109,14 +109,17 @@ pub(crate) fn clip_branch(
             };
             let end = if at_start { 0.0 } else { 1.0 };
             if (curve.point_at(end) - node.point).norm() > options.linear_tolerance {
-                curve = snapped_curve(&curve, at_start, node.point)?;
+                // Moving an end off the support costs the analytic support:
+                // only a curve that *is* the section can be bent onto the node.
+                let snapped = snapped_curve(&curve.to_curve()?, at_start, node.point)?;
+                curve = TrimmedCurve::new(snapped, Interval::new(0.0, 1.0));
             }
             pcurve_a = snapped_pcurve(&pcurve_a, at_start, node.correction[0])?;
             pcurve_b = snapped_pcurve(&pcurve_b, at_start, node.correction[1])?;
         }
         fragments.push([
-            FaceImprint::new(curve.clone(), pcurve_a),
-            FaceImprint::new(curve, pcurve_b),
+            FaceImprint::with_section(curve.clone(), pcurve_a),
+            FaceImprint::with_section(curve, pcurve_b),
         ]);
     }
     Ok(fragments)
@@ -138,14 +141,14 @@ fn branch_nodes(
 ) -> Vec<BranchNode> {
     let mut nodes: Vec<BranchNode> = Vec::new();
     for anchor in anchors.iter().copied() {
-        let parameter = branch.curve_3d.param_at(anchor).clamp(0.0, 1.0);
-        let fitted = branch.curve_3d.point_at(parameter);
+        let parameter = branch.parameter_at(anchor).clamp(0.0, 1.0);
+        let fitted = branch.point_at(parameter);
         if (fitted - anchor).norm() > capture {
             continue;
         }
         if !crossings
             .iter()
-            .any(|crossing| (branch.curve_3d.point_at(*crossing) - anchor).norm() <= capture)
+            .any(|crossing| (branch.point_at(*crossing) - anchor).norm() <= capture)
         {
             continue;
         }

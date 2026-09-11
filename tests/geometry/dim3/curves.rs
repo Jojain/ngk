@@ -1,7 +1,7 @@
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
-    Bounded, Circle, Curve, Ellipse, Frame, Interval, LINEAR_TOLERANCE, Line, Plane, Point3,
+    Circle, Curve, Ellipse, Frame, Interval, LINEAR_TOLERANCE, Line, Plane, Point3,
     PointCoincidence,
 };
 
@@ -126,39 +126,36 @@ fn nurbs_circle_length_matches_analytic_circle_length() {
 }
 
 #[test]
-fn bounded_circle_converts_to_trimmed_nurbs_curve() {
+fn circle_native_interval_converts_to_normalized_nurbs_segment() {
     let circle = Curve::Circle(Circle::new(
         ngk::geometry::Plane::new(Point3::origin(), Vector3::x(), Vector3::z()),
         2.0,
     ));
-    let bounded = Curve::Bounded(Box::new(Bounded::new(
-        circle.clone(),
-        Interval::new(0.25, 1.75),
-    )));
+    let Curve::Nurbs(nurbs) = circle.trimmed_native(Interval::new(0.25, 1.75)).unwrap() else {
+        panic!("native trimming should produce a NURBS segment");
+    };
 
-    let nurbs = bounded.to_nurbs().unwrap();
-
-    assert_eq!(nurbs.domain(), Interval::new(0.25, 1.75));
-    assert_point_near(nurbs.point_at(0.25), circle.point_at(0.25));
-    assert_point_near(nurbs.point_at(1.75), circle.point_at(1.75));
+    assert_eq!(nurbs.domain(), Interval::new(0.0, 1.0));
+    assert_point_near(nurbs.point_at(0.0), circle.point_at(0.25));
+    assert_point_near(nurbs.point_at(1.0), circle.point_at(1.75));
 }
 
 #[test]
 fn arc_spanning_more_than_half_a_turn_reports_its_own_span() {
     let plane = Plane::new(Point3::origin(), Vector3::x(), Vector3::z());
     let span = 3.0 * std::f64::consts::FRAC_PI_2;
-    let arc = Curve::arc(plane, 1.0, Interval::new(0.0, span));
+    let arc = Curve::circle(plane, 1.0);
 
     let start = arc.point_at(0.0);
-    let end = arc.point_at(1.0);
+    let end = arc.point_at(span);
     let interval = arc.interval_between(start, end);
 
     // The end sits at -90 degrees on the circle's own atan2 branch. Reading it
     // back there would describe the complementary quarter instead of this arc.
     assert!((interval.start - 0.0).abs() <= 1.0e-9);
-    assert!((interval.end - 1.0).abs() <= 1.0e-9);
+    assert!((interval.end - span).abs() <= 1.0e-9);
 
-    let midpoint = arc.point_at(0.5);
+    let midpoint = arc.point_at(0.5 * span);
     let expected = 0.5 * span;
     assert!((midpoint.x - expected.cos()).abs() <= 1.0e-9);
     assert!((midpoint.y - expected.sin()).abs() <= 1.0e-9);
@@ -185,11 +182,8 @@ fn rotated_curve_keeps_its_parameterisation() {
 #[test]
 fn reversed_analytic_curve_preserves_support_and_flips_parameter_direction() {
     let curves = [
-        Curve::arc(Plane::xy(), 2.0, Interval::new(0.31, 4.72)),
-        Curve::Bounded(Box::new(Bounded::new(
-            Curve::Ellipse(Ellipse::new(Frame::xyz(), 3.0, 1.5)),
-            Interval::new(0.43, 2.81),
-        ))),
+        Curve::circle(Plane::xy(), 2.0),
+        Curve::Ellipse(Ellipse::new(Frame::xyz(), 3.0, 1.5)),
         Curve::line(Point3::new(-2.0, 1.0, 0.5), Point3::new(4.0, 3.0, 2.0)),
     ];
 
@@ -200,10 +194,7 @@ fn reversed_analytic_curve_preserves_support_and_flips_parameter_direction() {
             "reversing an analytic curve must not degrade it to NURBS"
         );
         for parameter in [0.0, 0.17, 0.63, 1.0] {
-            assert_point_near(
-                reversed.point_at(parameter),
-                curve.point_at(1.0 - parameter),
-            );
+            assert_point_near(reversed.point_at(parameter), curve.point_at(-parameter));
         }
     }
 }
@@ -259,5 +250,9 @@ fn curve_domains_distinguish_bounded_from_unbounded_supports() {
     assert_eq!(circle.domain(), Interval::new(0.0, std::f64::consts::TAU));
 
     let segment = Curve::line(Point3::origin(), Point3::new(3.0, 0.0, 0.0));
-    assert_eq!(segment.domain(), Interval::new(0.0, 1.0));
+    assert!(!segment.domain().is_finite());
+    assert_eq!(
+        segment.interval_between(Point3::origin(), Point3::new(3.0, 0.0, 0.0)),
+        Interval::new(0.0, 1.0)
+    );
 }

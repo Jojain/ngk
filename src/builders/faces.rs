@@ -12,7 +12,7 @@ use crate::builders::profiles::{
 use crate::geometry::{
     Circle, Curve, Curve2, CurveCurveIntersection2, CurveIntersectionError, Interval,
     LINEAR_TOLERANCE, Line2, NurbsError, Periodicity, Plane, Point2, Point3, Surface,
-    SurfacePeriodicity,
+    SurfacePeriodicity, TrimmedCurve,
 };
 use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closed;
@@ -155,28 +155,58 @@ pub struct FaceImprintSplit {
 }
 
 /// Paired model-space and face-parameter-space geometry for a face imprint.
+///
+/// The two halves are **synchronized**: the same normalized fraction of
+/// `curve` and of `pcurve` is the same point. That is a stronger requirement
+/// than each half merely being correct, and it constrains which support may be
+/// kept — a `Circle` spans its arc in angle while the rational quadratic its
+/// pcurve is fitted from does not, so an imprint of an arc carries the section
+/// as NURBS rather than as the circle it came from.
 #[derive(Clone)]
 pub struct FaceImprint {
-    pub curve: Curve,
+    pub curve: TrimmedCurve,
     pub pcurve: Curve2,
 }
 
 impl FaceImprint {
     /// Creates an imprint whose 3D curve and 2D pcurve share direction.
     pub fn new(curve: Curve, pcurve: Curve2) -> Self {
+        let interval = match &curve {
+            Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) => curve.domain(),
+            Curve::Line(_) => Interval::new(0.0, 1.0),
+        };
+        Self {
+            curve: TrimmedCurve::new(curve, interval),
+            pcurve,
+        }
+    }
+
+    /// Creates an imprint over an explicit span of its 3D support.
+    pub fn with_section(curve: TrimmedCurve, pcurve: Curve2) -> Self {
         Self { curve, pcurve }
+    }
+
+    pub fn point_at(&self, parameter: f64) -> Point3 {
+        self.curve.point_at(parameter)
+    }
+
+    pub fn parameter_at(&self, point: Point3) -> f64 {
+        self.curve.parameter_at(point)
     }
 
     /// Returns the exact synchronized fragment over a normalized interval.
     pub fn trimmed(&self, interval: Interval) -> Result<Self, NurbsError> {
-        Ok(Self::new(
-            self.curve.trimmed(interval)?,
+        Ok(Self::with_section(
+            self.curve.sub(interval),
             self.pcurve.trimmed(interval)?,
         ))
     }
 
     fn reversed(&self) -> Result<Self, NurbsError> {
-        Ok(Self::new(self.curve.reversed(), self.pcurve.reversed()))
+        Ok(Self::with_section(
+            self.curve.reversed(),
+            self.pcurve.reversed(),
+        ))
     }
 }
 
@@ -1387,7 +1417,7 @@ fn add_section_loop<P: Payload>(
                 dart: darts[2 * edge],
                 start_uv: imprint.pcurve.point_at(0.0),
                 end_uv: imprint.pcurve.point_at(1.0),
-                curve: imprint.curve.clone(),
+                curve: imprint.curve.curve().clone(),
                 pcurve: imprint.pcurve.clone(),
             }
         })
@@ -1960,7 +1990,7 @@ fn apply_outer_face_chord_split<P: Payload>(
         .map(|((index, reversed, imprint), darts)| {
             let edge = g.add_edge(EdgeAttr::new(
                 darts[0],
-                imprint.curve.clone(),
+                imprint.curve.curve().clone(),
                 P::E::default(),
             ));
             FaceImprintSection {
@@ -2296,11 +2326,7 @@ fn incident_face_pcurves<P: Payload>(
                 .pcurve(dart)
                 .ok_or(FaceEdgeSplitError::MissingPcurve { face, dart })?;
             let surface = face_view.surface();
-            let uv = periodic_image_near_pcurve(
-                surface,
-                &pcurve,
-                surface.param_at(split_point)?,
-            );
+            let uv = periodic_image_near_pcurve(surface, &pcurve, surface.param_at(split_point)?);
             let fraction = pcurve
                 .parameter_at(uv, LINEAR_TOLERANCE)
                 .ok_or(FaceEdgeSplitError::SplitPointNotOnPcurve { face, dart })?;

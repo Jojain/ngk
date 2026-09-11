@@ -40,7 +40,7 @@ fn assert_sections_are_consistent(
     for section in sections {
         for index in 0..=32 {
             let t = index as f64 / 32.0;
-            let point = section.curve.point_at(t);
+            let point = section.point_at(t);
             for surface in [a, b] {
                 let uv = surface.param_at(point).expect("closest parameter");
                 let distance = (surface.point_at(uv.x, uv.y) - point).norm();
@@ -72,7 +72,7 @@ fn solver_points(a: &Surface, b: &Surface) -> Vec<Point3> {
         match result {
             SurfaceSurfaceIntersection::Branch(branch) => {
                 for index in 0..=32 {
-                    points.push(branch.curve_3d.point_at(index as f64 / 32.0));
+                    points.push(branch.point_at(index as f64 / 32.0));
                 }
             }
             SurfaceSurfaceIntersection::Point(point) => points.push(point.point),
@@ -95,8 +95,8 @@ fn assert_solver_agrees(intersection: &AnalyticSurfaceIntersection, a: &Surface,
         let closest = sections
             .iter()
             .map(|section| {
-                let parameter = section.curve.param_at(point).clamp(0.0, 1.0);
-                (section.curve.point_at(parameter) - point).norm()
+                let parameter = section.parameter_at(point).clamp(0.0, 1.0);
+                (section.point_at(parameter) - point).norm()
             })
             .fold(f64::INFINITY, f64::min);
         assert!(
@@ -130,7 +130,7 @@ fn two_crossing_planes_meet_in_one_exact_line() {
     let sections = intersection.sections();
     assert_eq!(sections.len(), 1);
     assert_eq!(sections[0].fidelity, PcurveFidelity::Exact);
-    assert!(matches!(sections[0].curve, Curve::Line(_)));
+    assert!(matches!(sections[0].curve.curve(), Curve::Line(_)));
     assert_sections_are_consistent(&intersection, &a, &b);
 }
 
@@ -271,7 +271,7 @@ fn a_plane_along_a_cylinder_axis_cuts_two_rulings() {
         "a chord plane cuts a cylinder in two rulings"
     );
     for section in intersection.sections() {
-        assert!(matches!(section.curve, Curve::Line(_)));
+        assert!(matches!(section.curve.curve(), Curve::Line(_)));
         assert_eq!(section.fidelity, PcurveFidelity::Exact);
     }
     assert_sections_are_consistent(&intersection, &plane, &cylinder);

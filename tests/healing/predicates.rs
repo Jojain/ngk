@@ -43,11 +43,16 @@ fn the_two_halves_of_a_split_line_rejoin_into_the_original_span() {
 #[test]
 fn the_two_halves_of_a_split_arc_rejoin_onto_the_same_circle() {
     let plane = Plane::xy();
-    let arc = Curve::arc(plane, 2.0, Interval::new(0.0, FRAC_PI_2));
+    let arc = Curve::circle(plane, 2.0);
     let start = arc.point_at(0.0);
-    let through = arc.point_at(0.4);
-    let end = arc.point_at(1.0);
-    let (first, second) = split(&arc, 0.4);
+    let through = arc.point_at(0.4 * FRAC_PI_2);
+    let end = arc.point_at(FRAC_PI_2);
+    let first = arc
+        .trimmed_native(Interval::new(0.0, 0.4 * FRAC_PI_2))
+        .unwrap();
+    let second = arc
+        .trimmed_native(Interval::new(0.4 * FRAC_PI_2, FRAC_PI_2))
+        .unwrap();
 
     let joined = join_curves(&first, &second, start, through, end, 1.0e-7, 1.0e-7)
         .expect("halves of one arc should rejoin");

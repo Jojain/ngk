@@ -74,7 +74,7 @@ pub fn analytic_intersections(
     if analytic
         .sections()
         .iter()
-        .any(|section| matches!(section.curve, Curve::Line(_)))
+        .any(|section| matches!(section.curve.curve(), Curve::Line(_)))
     {
         return None;
     }
@@ -145,7 +145,7 @@ fn analytic_branch(
     let samples = (0..=ANALYTIC_BRANCH_SAMPLES)
         .map(|index| {
             let parameter = index as f64 / ANALYTIC_BRANCH_SAMPLES as f64;
-            let point = section.curve.point_at(parameter);
+            let point = section.point_at(parameter);
             SurfaceIntersectionPoint {
                 point,
                 uv_a: section.pcurve_a.point_at(parameter),
@@ -155,8 +155,7 @@ fn analytic_branch(
             }
         })
         .collect::<Vec<_>>();
-    let closed = (section.curve.point_at(0.0) - section.curve.point_at(1.0)).norm()
-        <= options.linear_tolerance;
+    let closed = (section.point_at(0.0) - section.point_at(1.0)).norm() <= options.linear_tolerance;
     SurfaceIntersectionBranch {
         curve_3d: section.curve,
         pcurve_a: section.pcurve_a,
@@ -373,8 +372,8 @@ fn branch_contains_seed(
         let SurfaceSurfaceIntersection::Branch(branch) = intersection else {
             return false;
         };
-        let parameter = branch.curve_3d.param_at(seed.point);
-        (branch.curve_3d.point_at(parameter) - seed.point).norm() <= options.fit_tolerance
+        let parameter = branch.parameter_at(seed.point);
+        (branch.point_at(parameter) - seed.point).norm() <= options.fit_tolerance
     })
 }
 

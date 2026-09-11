@@ -1,8 +1,9 @@
 use nalgebra::Vector3;
 use ngk::builders::boolean::{
-    BooleanError, BooleanOperand, BooleanOptions, IntersectionEventId, IntersectionNetwork,
-    IntersectionOrientation, IntersectionSpanId, IntersectionSpanUse,
-    compute_boolean_intersections, prepare_boolean_with_external_tool, validate_solid_network,
+    BooleanCell, BooleanError, BooleanOperand, BooleanOptions, IntersectionEventId,
+    IntersectionEventLocation, IntersectionNetwork, IntersectionOrientation, IntersectionSpanId,
+    IntersectionSpanUse, compute_boolean_intersections, prepare_boolean_with_external_tool,
+    validate_solid_network,
 };
 use ngk::geometry::{Frame, Plane, Point3, PointCoincidence};
 use ngk::modeling::{faces, solids};
@@ -66,12 +67,8 @@ fn canonical_spans_carry_no_event_in_their_interior() {
 
     for (index, span) in plan.network.spans().iter().enumerate() {
         for event in plan.network.events() {
-            let t = span.curve.param_at(event.point);
-            if !span
-                .curve
-                .point_at(t)
-                .coincides(event.point, tolerances.linear)
-            {
+            let t = span.parameter_at(event.point);
+            if !span.point_at(t).coincides(event.point, tolerances.linear) {
                 continue;
             }
             assert!(
@@ -182,4 +179,62 @@ fn an_open_intersection_loop_is_rejected_for_solid_evaluation() {
         matches!(error, BooleanError::OpenIntersectionLoop { .. }),
         "expected an open loop, got {error:?}"
     );
+}
+
+#[test]
+fn every_event_on_an_edge_lies_between_that_edge_s_own_vertices() {
+    // The block's bottom edges are tangent to the cylinder's bottom circle at
+    // (2,0,0) and (0,2,0). Their supports meet that circle twice more, at
+    // (-2,0,0) and (0,-2,0) — points on the infinite lines, far outside the
+    // edges resting on them. A curve is a support, never trimmed to its edge,
+    // so nothing but the edge's own parameter span rules those out.
+    let size = 2.0;
+    let (mut map, block) = solids::block_at(Frame::xyz(), size, size, size)
+        .expect("block")
+        .into_map();
+    let (tool, tool_cylinder) = solids::cylinder_at(Frame::xyz(), size, 2.0 * size)
+        .expect("cylinder")
+        .into_map();
+    let cylinder = map
+        .transaction(|edit| {
+            let dart = edit.merge(tool.solid_unchecked(tool_cylinder));
+            Ok::<_, TopologyEditError>(edit.solid_key(dart).unwrap())
+        })
+        .expect("import cylinder");
+
+    let plan = compute_boolean_intersections(
+        &map,
+        BooleanOperand::Solid(block),
+        BooleanOperand::Solid(cylinder),
+        BooleanOptions::default(),
+    )
+    .expect("the tangent pair intersects");
+
+    let tolerance = plan.diagnostics.tolerances.linear;
+    for (index, event) in plan.network.events().iter().enumerate() {
+        for event_use in &event.uses {
+            let (BooleanCell::Edge(key), IntersectionEventLocation::Edge { parameter }) =
+                (event_use.cell, event_use.location)
+            else {
+                continue;
+            };
+            let edge = map.edge(key).expect("an event names a live edge");
+            let interval = edge
+                .parameter_interval()
+                .expect("an attributed edge has a parameter interval");
+            assert!(
+                interval.contains(parameter, 1e-6),
+                "event {index} at {:?} sits at {parameter} on edge {key:?}, \
+                 whose own span is {interval:?}",
+                event.point
+            );
+            assert!(
+                edge.curve()
+                    .expect("registered edge geometry")
+                    .point_at(parameter)
+                    .coincides(event.point, tolerance),
+                "event {index}'s edge parameter must locate the event's own point"
+            );
+        }
+    }
 }

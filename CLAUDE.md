@@ -98,95 +98,24 @@ attribute create/remove/split/merge declarations).
   circle×{plane,sphere}; curve/curve line×line, line×circle, circle×circle.
   Not covered: anything involving a cone surface pair, cylinder×cylinder,
   circle×{cylinder,cone}.
+- **A `Curve` is an unbounded support, never trimmed to the cell carrying it.**
+  There is no `Curve::Bounded` variant: a line runs to infinity, a circle closes.
+  Which part is meant is said by **`TrimmedCurve`** (`geometry/dim3/trimmed.rs`)
+  — support + an `Interval` of its *native* parameters, kept as one value so the
+  halves cannot drift apart. It normalizes traversal (fraction 0 → 1 over the
+  span), unwraps periodic branches, and answers `contains` / `length` / `sub` /
+  `reversed`. `to_curve()` is the cut-down copy: exact, but NURBS, so reach for
+  it only when a curve that *is* the section is required (fitting a pcurve).
+- **The span is derived only on an edge.** `EdgeAttr` stores no interval;
+  `Edge::trimmed_curve()` derives it from the bounding vertices plus the view's
+  orientation. Everything without vertices — `AnalyticSection`,
+  `SurfaceIntersectionBranch`, `FaceImprint`, `IntersectionSpan` — must carry
+  it: the minor and major arc between two points share both endpoints, so
+  endpoints alone name neither, and direction is load-bearing besides.
+- **A solver answers for the support.** Clip its result to the cells' own spans
+  (`TrimmedCurve::contains`) before treating it as a contact, or an edge picks up
+  hits from the part of its line no edge occupies.
+- `FaceImprint`'s two halves are **synchronized** — same fraction, same point —
+  which constrains the support: a `Circle` spans its arc in angle, the rational
+  quadratic its pcurve is fitted from does not, so an imprinted arc carries NURBS.
 - A section's 3D curve is exact; its **pcurve is exact only where a closed form
-  exists** (aligned sections) and is otherwise a measured fit —
-  `PcurveFidelity::Fitted { deviation }`. Sections are split at periodic seams
-  and at parameterization degeneracies (a sphere's poles) so every pcurve stays
-  inside one period and on one branch.
-
-## Feature status (as of Sept 2026)
-
-- ✅ GMap core, transactional editing, identity/orientation model, validation.
-- ✅ Builders: profiles, faces, edges, sheets, solids, revolve, sweep, **chamfer**
-  (large, documented in `docs/chamfer_architecture.md`).
-- ✅ Tessellation + viz + debug viewer; wasm & Python bindings; script registry.
-- 🚧 **Booleans — active rewrite.** The old implementation was deleted
-  ("start with a fresh implementation") and redesigned on branch `boolean`.
-  `src/builders/boolean/` now = broad_phase, pair, contacts, graph
-  (`IntersectionNetwork` of events/spans/regions), imprint, operand, result
-  (`BooleanPreparation`, `BooleanLineage`, `BooleanSide`). Currently it computes
-  **contacts + two-sided B-Rep splitting**; region classification/assembly is the
-  next step.
-  Design refs: `docs/boole_paper_ngk_integration.md`, `docs/boolean_algorithm_guide_fr.md`.
-
-  **Narrow phase contract** (`pair.rs` + `contacts.rs`): a contact is a symmetric
-  relation, so the probes are pure functions of two cells' geometry and never
-  learn which operand a cell came from. `enumerate_pairs` emits one stream of
-  `PairKind`s in which **the first key always comes from the first operand** —
-  `VertexEdge`/`EdgeVertex` are the mirrored pair, answered by one probe via an
-  or-pattern, so nine variants still dispatch to six probes. Probes address
-  cells by geometric role (`ContactCell::Edge`, `::Face`), positionally only on
-  `EdgeEdge`/`FaceFace`; `pair::record` is the **only** place operand order is
-  applied, and it reads field order, not a flag.
-  `compute_contacts` runs in two phases —
-  find every point with no pair seeing another's result, then clip the deferred
-  sections against the complete point set — so the answer does not depend on the
-  order pairs were probed in. Don't reintroduce a side flag below `record`.
-- 🚧 **Shape healing** — `src/builders/removal.rs` (`i`-removal, Defs. 58–59 of the
-  GMap book) plus `src/healing/` (two passes: fuse cosurfacial faces, then fuse
-  cocurvilinear edges). Removing an edge the same face bounds twice rejoins that
-  face's boundary; a removal that would split it into two loops is refused.
-  Wired into `boolean` behind `BooleanOptions::heal` (opt-in — flipping the
-  default needs four raw-count tests updated). Plan: `plan/shape_healing.md`.
-- 🚧 `Model` API — design only (`docs/model_api.md`).
-- 🚧 Face tessellation uses per-surface shortcuts; real constrained Delaunay is
-  still `// TODO: real CDT` in `src/tessellate/face.rs`.
-
-## Conventions (from `skills/ngk-project`, `skills/test-first-workflow`)
-
-- **Break APIs freely.** Active development: migrate all call sites, no
-  compat shims, no deprecated aliases, no placeholder glue.
-- **Views over darts.** In builder code never touch GMap attributes directly;
-  if the typed view API can't express it, *propose the missing API* rather than
-  reaching down.
-- Top-level `use` imports, no long qualified paths inside function bodies.
-- `thiserror` for every error enum. Convenience constructors (`Curve::line(a,b)`).
-- Rustdoc `///` on every non-obvious public item; concise comments on private ones.
-- Keep nesting ≤ 3 levels where reasonable.
-- **Tests live in `tests/`, mirroring `src/`** (`src/topology/gmap.rs` →
-  `tests/topology/`). Integration-style, not inline `mod tests`.
-  No tests for `visualization/` or `src/scripts/`.
-- **Test-first**: assert the *desired* behavior, watch it go red, fix, go green.
-  Name tests after the stable invariant, never after the bug.
-- Adding a script ⇒ file in `src/scripts/` + `mod` decl + `SCRIPTS` entry
-  (and the matching `visualization/src/experiments/registry.ts` entry if it's
-  meant to show in the frontend).
-
-## Commands (PowerShell, repo root)
-
-```powershell
-cargo fmt
-cargo clippy --all-targets --all-features
-cargo test --all-targets --all-features
-```
-
-Frontend (`visualization/`): `npm install`, `npm run dev` (rebuilds wasm then Vite),
-`npm run build`, `npm run typecheck`.
-Python bindings: `.\build.ps1` (cargo build + uv venv + `maturin develop`).
-
-Environment notes: `rg` is blocked on this Windows setup — use `Get-ChildItem
--Recurse -File`, `Select-String`, `Get-Content`. Don't fight `npm run wasm:build`
-if Windows permissions block it; report and continue with non-wasm checks.
-
-## Reference material
-
-- `docs/chamfer_architecture.md` — chamfer pipeline, selection model, guarantees.
-- `docs/topology_orientation_refactor.md` — identity/orientation design (adopted).
-- `docs/model_api.md` — target `Model` / shape API (design note, not current code).
-- `docs/boole_paper_ngk_integration.md`, `docs/boolean_algorithm_guide_fr.md` — boolean design.
-- `src/topology/edit.md` — transaction & lineage contract.
-- `private_doc/Combinatorial_Maps_Book/Combinatorial_Maps_Book.md` — **authoritative
-  GMap theory**; read targeted chunks only (it is huge). Also `private_doc/`:
-  BOOLE.pdf, the NURBS Book, Hoffmann's solid modeling, OCCT BOPAlgo notes,
-  and internal architecture reviews.
-- `skills/` — project skills: `ngk-project`, `gmap-reference`, `test-first-workflow`.

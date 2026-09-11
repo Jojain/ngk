@@ -1,6 +1,16 @@
 use ngk::geometry::Interval;
 
 #[test]
+fn reversed_interval_preserves_signed_traversal() {
+    let interval = Interval::new(0.0, std::f64::consts::FRAC_PI_2);
+    let reversed = interval.reversed();
+
+    assert_eq!(reversed, Interval::new(std::f64::consts::FRAC_PI_2, 0.0));
+    assert_eq!(reversed.delta(), -std::f64::consts::FRAC_PI_2);
+    assert_eq!(reversed.at(0.5), std::f64::consts::FRAC_PI_4);
+}
+
+#[test]
 fn interval_orders_bounds_without_changing_original() {
     let interval = Interval::new(4.0, 1.0);
     let ordered = interval.ordered();

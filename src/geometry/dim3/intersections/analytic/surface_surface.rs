@@ -15,8 +15,8 @@ use crate::geometry::counters::count_surface_surface_analytic_call;
 use crate::geometry::dim3::intersections::error::IntersectionError;
 use crate::geometry::dim3::intersections::options::IntersectionOptions;
 use crate::geometry::{
-    Bounded, Circle2, Curve, Curve2, Cylinder, Ellipse, Ellipse2, Frame, Interval, Line, Line2,
-    NurbsCurve2, Plane, Point2, Point3, Sphere, Surface,
+    Circle2, Curve, Curve2, Cylinder, Ellipse, Ellipse2, Frame, Interval, Line, Line2, NurbsCurve2,
+    Plane, Point2, Point3, Sphere, Surface, TrimmedCurve,
 };
 
 /// Samples used for the first fitting attempt of one pcurve.
@@ -38,7 +38,7 @@ const MIN_PIECE_SPAN: f64 = 1.0e-6;
 
 /// The window every section is written over.
 ///
-/// Bounded sections are normalized to it. An unbounded ruling keeps its own
+/// Pcurves are normalized to it. An unbounded ruling keeps its own
 /// arc-length parameter and is merely *described* over one unit of it: both
 /// its pcurves are straight, and `Line2` extrapolates, so the description is
 /// exact everywhere rather than only inside the window.
@@ -127,7 +127,7 @@ fn plane_plane(
     };
     Ok(Some(AnalyticSurfaceIntersection::Sections(vec![
         AnalyticSection {
-            curve,
+            curve: TrimmedCurve::new(curve, SECTION_DOMAIN),
             pcurve_a: plane_line(a),
             pcurve_b: plane_line(b),
             fidelity: PcurveFidelity::Exact,
@@ -160,6 +160,7 @@ fn plane_sphere(
     let section = circle_section(section_centre, plane.x_dir(), plane.normal(), radius);
     Ok(Some(AnalyticSurfaceIntersection::Sections(sections_for(
         section,
+        Interval::new(0.0, TAU),
         supports(
             &Surface::Plane(plane.clone()),
             &Surface::Sphere(sphere.clone()),
@@ -208,6 +209,7 @@ fn sphere_sphere(
     let section = circle_section(centre, reference, axis, radius);
     Ok(Some(AnalyticSurfaceIntersection::Sections(sections_for(
         section,
+        Interval::new(0.0, TAU),
         [Surface::Sphere(a.clone()), Surface::Sphere(b.clone())],
         options,
     )?)))
@@ -244,6 +246,7 @@ fn plane_cylinder(
             let mut sections = Vec::new();
             sections.extend(sections_for(
                 ruling_section(foot, axis),
+                SECTION_DOMAIN,
                 supports.clone(),
                 options,
             )?);
@@ -256,6 +259,7 @@ fn plane_cylinder(
         for side in [1.0_f64, -1.0] {
             sections.extend(sections_for(
                 ruling_section(centre + *along * (side * half_chord), axis),
+                SECTION_DOMAIN,
                 supports.clone(),
                 options,
             )?);
@@ -270,7 +274,10 @@ fn plane_cylinder(
     if (alignment.abs() - 1.0).abs() <= options.angular_tolerance {
         let section = circle_section(centre, cylinder.x_dir(), axis, cylinder.radius);
         return Ok(Some(AnalyticSurfaceIntersection::Sections(sections_for(
-            section, supports, options,
+            section,
+            Interval::new(0.0, TAU),
+            supports,
+            options,
         )?)));
     }
 
@@ -283,36 +290,18 @@ fn plane_cylinder(
         cylinder.radius / alignment.abs(),
         cylinder.radius,
     );
-    let section = Curve::Bounded(Box::new(Bounded::new(
-        Curve::Ellipse(ellipse),
-        Interval::new(0.0, TAU),
-    )));
+    let section = Curve::Ellipse(ellipse);
     Ok(Some(AnalyticSurfaceIntersection::Sections(sections_for(
-        section, supports, options,
+        section,
+        Interval::new(0.0, TAU),
+        supports,
+        options,
     )?)))
 }
 
-/// Restricts a section to one window, keeping its analytic parameterization.
-///
-/// [`Curve::trimmed`] answers through NURBS, whose parameter is not the
-/// analytic one -- a rational quadratic circle's parameter is not its angle --
-/// so trimming that way would desynchronize the section from pcurves written
-/// against the analytic parameter. Reducing the bounds of a `Bounded` curve,
-/// or moving a line's origin, keeps the correspondence exact.
-fn trim_section(curve: &Curve, piece: Interval) -> Curve {
-    let global = |bounds: Interval, local: f64| bounds.start + (bounds.end - bounds.start) * local;
-    match curve {
-        Curve::Bounded(bounded) => {
-            let bounds = bounded.bounds();
-            Curve::Bounded(Box::new(Bounded::new(
-                bounded.inner().clone(),
-                Interval::new(global(bounds, piece.start), global(bounds, piece.end)),
-            )))
-        }
-        // A `Line` is unit speed by construction, so a sub-window cannot be
-        // another `Line`; bounding it keeps both the geometry and the window.
-        other => Curve::Bounded(Box::new(Bounded::new(other.clone(), piece))),
-    }
+/// Maps a normalized piece onto a support curve's native parameter interval.
+fn trim_section(interval: Interval, piece: Interval) -> Interval {
+    Interval::new(interval.at(piece.start), interval.at(piece.end))
 }
 
 /// Orders the two supports the way the caller passed them.
@@ -324,18 +313,14 @@ fn supports(first: &Surface, second: &Surface, swapped: bool) -> [Surface; 2] {
     }
 }
 
-/// Returns the full circle in a plane, parameterized over `[0, 1]`.
+/// Returns a full-circle support in a plane.
 fn circle_section(
     centre: Point3,
     x_dir: UnitVector3<f64>,
     normal: UnitVector3<f64>,
     radius: f64,
 ) -> Curve {
-    Curve::arc(
-        Plane::new(centre, x_dir, normal),
-        radius,
-        Interval::new(0.0, TAU),
-    )
+    Curve::circle(Plane::new(centre, x_dir, normal), radius)
 }
 
 /// Returns a cylinder ruling as an unbounded line through `point`.
@@ -365,13 +350,14 @@ fn perpendicular_to(axis: UnitVector3<f64>) -> UnitVector3<f64> {
 /// leaves it is dropped rather than understood.
 fn sections_for(
     curve: Curve,
+    interval: Interval,
     supports: [Surface; 2],
     options: IntersectionOptions,
 ) -> Result<Vec<AnalyticSection>, IntersectionError> {
     let domain = SECTION_DOMAIN;
     let traces = [
-        SectionTrace::build(&curve, &supports[0], domain, options)?,
-        SectionTrace::build(&curve, &supports[1], domain, options)?,
+        SectionTrace::build(&curve, interval, &supports[0], domain, options)?,
+        SectionTrace::build(&curve, interval, &supports[1], domain, options)?,
     ];
     let mut cuts = vec![0.0_f64, 1.0];
     for trace in &traces {
@@ -398,15 +384,15 @@ fn sections_for(
         if piece.end - piece.start <= MIN_PIECE_SPAN {
             continue;
         }
-        let curve_piece = if cuts.len() == 2 {
-            curve.clone()
+        let curve_interval = if cuts.len() == 2 {
+            interval
         } else {
-            trim_section(&curve, piece)
+            trim_section(interval, piece)
         };
         let pcurve_a = traces[0].pcurve_over(piece, options)?;
         let pcurve_b = traces[1].pcurve_over(piece, options)?;
         sections.push(AnalyticSection {
-            curve: curve_piece,
+            curve: TrimmedCurve::new(curve.clone(), curve_interval),
             pcurve_a: pcurve_a.0,
             pcurve_b: pcurve_b.0,
             fidelity: pcurve_a.1.combined(pcurve_b.1),
@@ -420,6 +406,8 @@ struct SectionTrace {
     surface: Surface,
     /// The whole section, kept so samples are inverted rather than interpolated.
     curve: Curve,
+    /// Native support interval corresponding to normalized parameters 0 and 1.
+    interval: Interval,
     /// Section parameters at which the support was sampled.
     parameters: Vec<f64>,
     /// Support parameters, with the periodic direction unwrapped to be continuous.
@@ -433,6 +421,7 @@ struct SectionTrace {
 impl SectionTrace {
     fn build(
         curve: &Curve,
+        interval: Interval,
         surface: &Surface,
         domain: Interval,
         options: IntersectionOptions,
@@ -450,19 +439,24 @@ impl SectionTrace {
             .collect::<Vec<_>>();
         let mut uv = Vec::with_capacity(parameters.len());
         for &parameter in &parameters {
-            uv.push(surface.param_at(curve.point_at(parameter))?);
+            uv.push(surface.param_at(curve.point_at(interval.at(parameter)))?);
         }
         unwrap_periodic(&mut uv, period);
         let mut trace = Self {
             surface: surface.clone(),
             curve: curve.clone(),
+            interval,
             parameters,
             uv,
             period,
             exact: None,
         };
-        trace.exact = trace.exact_candidate(curve, options);
+        trace.exact = trace.exact_candidate(options);
         Ok(trace)
+    }
+
+    fn point_at(&self, parameter: f64) -> Point3 {
+        self.curve.point_at(self.interval.at(parameter))
     }
 
     /// Returns a closed-form pcurve for the whole section, when one exists.
@@ -472,30 +466,29 @@ impl SectionTrace {
     /// rather than silently returned. Only a straight trace can be exact here:
     /// a section's image in a plane is already the section itself, and on a
     /// quadric only an aligned section keeps one parameter constant.
-    fn exact_candidate(&self, curve: &Curve, options: IntersectionOptions) -> Option<Curve2> {
+    fn exact_candidate(&self, options: IntersectionOptions) -> Option<Curve2> {
         if let Surface::Plane(plane) = &self.surface {
-            return plane_pcurve(plane, curve, options);
+            return plane_pcurve(plane, &self.curve, self.interval, options);
         }
         let first = *self.uv.first()?;
         let last = *self.uv.last()?;
         let candidate = Curve2::Line(Line2::new(first, last));
-        self.verifies(&candidate, curve, options)
-            .then_some(candidate)
+        self.verifies(&candidate, options).then_some(candidate)
     }
 
     /// Whether a candidate pcurve reproduces the section within tolerance.
-    fn verifies(&self, candidate: &Curve2, curve: &Curve, options: IntersectionOptions) -> bool {
-        self.deviation(candidate, curve, Interval::new(0.0, 1.0)) <= options.linear_tolerance
+    fn verifies(&self, candidate: &Curve2, options: IntersectionOptions) -> bool {
+        self.deviation(candidate, Interval::new(0.0, 1.0)) <= options.linear_tolerance
     }
 
     /// Largest distance between the section and a pcurve lifted back onto the support.
-    fn deviation(&self, pcurve: &Curve2, curve: &Curve, piece: Interval) -> f64 {
+    fn deviation(&self, pcurve: &Curve2, piece: Interval) -> f64 {
         let samples = 4 * INITIAL_FIT_SAMPLES;
         (0..=samples)
             .map(|index| {
                 let local = index as f64 / samples as f64;
                 let uv = pcurve.point_at(local);
-                let expected = curve.point_at(piece.start + (piece.end - piece.start) * local);
+                let expected = self.point_at(piece.at(local));
                 (self.surface.point_at(uv.x, uv.y) - expected).norm()
             })
             .fold(0.0_f64, f64::max)
@@ -577,9 +570,7 @@ impl SectionTrace {
     /// whole periods towards the trace keeps every sample on one branch while
     /// still being an exact inversion rather than an interpolation.
     fn uv_at(&self, parameter: f64) -> Result<Point2, IntersectionError> {
-        let raw = self
-            .surface
-            .param_at(self.curve.point_at(parameter))?;
+        let raw = self.surface.param_at(self.point_at(parameter))?;
         let Some(period) = self.period else {
             return Ok(raw);
         };
@@ -709,9 +700,9 @@ impl SectionTrace {
     /// whatever meridian reaches it -- which would place the line nowhere near
     /// the piece it is meant to describe.
     fn exact_piece(&self, piece: Interval, options: IntersectionOptions) -> Option<Curve2> {
-        let sub = trim_section(&self.curve, piece);
+        let sub_interval = trim_section(self.interval, piece);
         if let Surface::Plane(plane) = &self.surface {
-            return plane_pcurve(plane, &sub, options);
+            return plane_pcurve(plane, &self.curve, sub_interval, options);
         }
         let span = piece.end - piece.start;
         let first = self.uv_at(piece.start + span * 0.25).ok()?;
@@ -721,8 +712,7 @@ impl SectionTrace {
             first - direction * 0.25,
             second + direction * 0.25,
         ));
-        (self.deviation(&candidate, &sub, Interval::new(0.0, 1.0)) <= options.linear_tolerance)
-            .then_some(candidate)
+        (self.deviation(&candidate, piece) <= options.linear_tolerance).then_some(candidate)
     }
 
     /// Interpolates this support's pcurve over one piece of the section.
@@ -812,9 +802,7 @@ impl SectionTrace {
             .map(|index| {
                 let local = index as f64 / samples as f64;
                 let uv = pcurve.point_at(local);
-                let expected = self
-                    .curve
-                    .point_at(piece.start + (piece.end - piece.start) * local);
+                let expected = self.point_at(piece.at(local));
                 (self.surface.point_at(uv.x, uv.y) - expected).norm()
             })
             .fold(0.0_f64, f64::max)
@@ -846,39 +834,39 @@ fn shifted_into_period(curve: Curve2, period: Option<f64>) -> Curve2 {
 /// A plane's parameterization is an isometry, so a section's image is the
 /// section itself with the same parameterization -- a line stays a line, a
 /// circle a circle, an ellipse an ellipse.
-fn plane_pcurve(plane: &Plane, curve: &Curve, options: IntersectionOptions) -> Option<Curve2> {
+fn plane_pcurve(
+    plane: &Plane,
+    curve: &Curve,
+    interval: Interval,
+    options: IntersectionOptions,
+) -> Option<Curve2> {
     let project = |point: Point3| plane.parameter_at(point);
     let candidate = match curve {
         Curve::Line(line) => Curve2::Line(Line2::new(
-            project(line.point_at(0.0)),
-            project(line.point_at(1.0)),
+            project(line.point_at(interval.start)),
+            project(line.point_at(interval.end)),
         )),
-        Curve::Bounded(bounded) => match bounded.inner() {
-            Curve::Circle(circle) => {
-                let centre = project(circle.plane().origin());
-                let start = project(circle.point_at(bounded.bounds().start));
-                let sweep = bounded.bounds().end - bounded.bounds().start;
-                Curve2::Circle(Circle2::new(
-                    centre,
-                    start - centre,
-                    circle.radius(),
-                    signed_sweep(plane, circle.plane().normal(), sweep),
-                ))
-            }
-            Curve::Ellipse(ellipse) => {
-                let centre = project(ellipse.frame().origin);
-                let major = project(ellipse.frame().origin + *ellipse.frame().x_dir) - centre;
-                let sweep = bounded.bounds().end - bounded.bounds().start;
-                Curve2::Ellipse(Ellipse2::new(
-                    centre,
-                    major,
-                    ellipse.major_radius(),
-                    ellipse.minor_radius(),
-                    signed_sweep(plane, ellipse.frame().z_dir, sweep),
-                ))
-            }
-            _ => return None,
-        },
+        Curve::Circle(circle) => {
+            let centre = project(circle.plane().origin());
+            let start = project(circle.point_at(interval.start));
+            Curve2::Circle(Circle2::new(
+                centre,
+                start - centre,
+                circle.radius(),
+                signed_sweep(plane, circle.plane().normal(), interval.delta()),
+            ))
+        }
+        Curve::Ellipse(ellipse) => {
+            let centre = project(ellipse.frame().origin);
+            let start = project(ellipse.point_at(interval.start));
+            Curve2::Ellipse(Ellipse2::new(
+                centre,
+                start - centre,
+                ellipse.major_radius(),
+                ellipse.minor_radius(),
+                signed_sweep(plane, ellipse.frame().z_dir, interval.delta()),
+            ))
+        }
         _ => return None,
     };
     // A conic's sense in the plane's parameters follows whether the section's
@@ -889,7 +877,7 @@ fn plane_pcurve(plane: &Plane, curve: &Curve, options: IntersectionOptions) -> O
         .map(|index| {
             let local = index as f64 / samples as f64;
             let uv = candidate.point_at(local);
-            (plane.point_at(uv.x, uv.y) - curve.point_at(local)).norm()
+            (plane.point_at(uv.x, uv.y) - curve.point_at(interval.at(local))).norm()
         })
         .fold(0.0_f64, f64::max);
     (worst <= options.linear_tolerance).then_some(candidate)

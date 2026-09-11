@@ -5,4 +5,5 @@ pub mod frame;
 pub mod intersections;
 pub mod nurbs;
 pub mod surfaces;
+pub mod trimmed;
 pub mod utils;

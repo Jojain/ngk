@@ -10,8 +10,8 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::geometry::{
-    Bounded, Circle, Cone, Curve, Cylinder, Line, NurbsCurve, NurbsSurface, Plane, Point3,
-    RuledSurface, Sphere, Surface, SurfaceOfRevolution,
+    Circle, Cone, Curve, Cylinder, Line, NurbsCurve, NurbsSurface, Plane, Point3, RuledSurface,
+    Sphere, Surface, SurfaceOfRevolution,
 };
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -285,17 +285,6 @@ macro_rules! impl_curve_display {
 impl_curve_display!(Line, Line);
 impl_curve_display!(Circle, Circle);
 impl_curve_display!(NurbsCurve, Nurbs);
-
-impl DebugDisplay for Bounded<Curve> {
-    fn append_debug_objects(
-        &self,
-        objects: &mut Vec<SerializedDebugObject>,
-    ) -> Result<(), serde_json::Error> {
-        let curve = Curve::Bounded(Box::new(self.clone()));
-        objects.push(serialize_geometry(&curve, DebugObjectKind::Curve)?);
-        Ok(())
-    }
-}
 
 macro_rules! impl_surface_display {
     ($value:ty, $variant:ident) => {

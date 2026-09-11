@@ -11,6 +11,21 @@ impl Interval {
         Self { start, end }
     }
 
+    /// Returns the same parameter span traversed in the opposite direction.
+    pub fn reversed(self) -> Self {
+        Self::new(self.end, self.start)
+    }
+
+    /// Returns the signed change in parameter from start to end.
+    pub fn delta(self) -> f64 {
+        self.end - self.start
+    }
+
+    /// Maps a normalized traversal fraction onto this directed parameter span.
+    pub fn at(self, fraction: f64) -> f64 {
+        self.start + fraction * self.delta()
+    }
+
     pub fn ordered(self) -> Self {
         if self.start <= self.end {
             self

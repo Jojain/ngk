@@ -43,9 +43,9 @@ use crate::builders::faces::{FaceImprint, split_face_by_imprints_staged, split_f
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveCurveIntersection,
     CurveSurfaceIntersection, Degree, HPoint, HPoint2, IntersectionOptions, Interval, KnotVector,
-    Line2, NurbsCurve, NurbsCurve2, NurbsError, Point2, Point3, PointCoincidence, PreparedCurve,
-    PreparedSurface, SolverCounters, Surface, SurfaceSurfaceIntersection,
-    intersect_prepared_curve_surface,
+    Line2, NurbsCurve, NurbsCurve2, NurbsError, Periodicity, Point2, Point3, PointCoincidence,
+    PreparedCurve, PreparedSurface, SolverCounters, Surface, SurfaceSurfaceIntersection,
+    TrimmedCurve, intersect_prepared_curve_surface,
 };
 use crate::topology::TopologyEdit;
 use crate::topology::gmap::GMap;
@@ -77,8 +77,12 @@ enum RawIntersection {
     EdgeSection {
         side: BooleanSide,
         edge: EdgeKey,
-        curve: Curve,
-        interval: Interval,
+        /// The section in its own support's parameters, which need not be the
+        /// edge's: a clipped arc is carried as the exact NURBS its pcurve was
+        /// fitted to. Where the section sits *on the edge* is therefore
+        /// recovered from its points, the same rule that locates every other
+        /// event on that edge.
+        curve: TrimmedCurve,
     },
 }
 
@@ -326,7 +330,7 @@ fn build_intersection_network<P: Payload>(
                 let first_curve = first_edge_view.curve().expect("registered edge geometry");
                 let start = first_curve.point_at(first_interval.start);
                 let end = first_curve.point_at(first_interval.end);
-                let curve = Curve::line(start, end);
+                let curve = TrimmedCurve::new(Curve::line(start, end), Interval::new(0.0, 1.0));
                 builder.record_span(
                     curve,
                     IntersectionSpanKind::Overlap,
@@ -356,21 +360,19 @@ fn build_intersection_network<P: Payload>(
                 first_face,
                 second_face,
             } => builder.record_region(*first_face, *second_face),
-            RawIntersection::EdgeSection {
-                side,
-                edge,
-                curve,
-                interval,
-            } => {
+            RawIntersection::EdgeSection { side, edge, curve } => {
+                let edge_view = g.edge_unchecked(*edge);
+                let edge_curve = edge_view.curve().expect("registered edge geometry");
+                let edge_interval = edge_section_parameters(edge_curve, curve);
                 builder.record_span(
                     curve.clone(),
                     IntersectionSpanKind::Overlap,
-                    [edge_use(*side, *edge, interval.start)],
-                    [edge_use(*side, *edge, interval.end)],
+                    [edge_use(*side, *edge, edge_interval.start)],
+                    [edge_use(*side, *edge, edge_interval.end)],
                     [IntersectionSpanUse::Edge {
                         side: *side,
                         edge: *edge,
-                        interval: *interval,
+                        interval: edge_interval,
                     }],
                 );
             }
@@ -409,6 +411,38 @@ fn build_intersection_network<P: Payload>(
     }
 
     Ok(builder.finish()?)
+}
+
+/// Locates a section on the edge that already realizes it, in that edge curve's
+/// own native parameters.
+///
+/// The section carries its own support and parameterization — a clipped arc is
+/// an exact NURBS, not the edge's circle — so its interval says nothing about
+/// where the section sits on the edge. Only the points are shared, and
+/// [`event_use_for_cell`] locates every other event on that edge from its point
+/// by the same rule, so the two agree by construction.
+///
+/// A periodic edge reports its parameter on one fixed branch — a circle uses
+/// `atan2`, so `(-pi, pi]` — which the section may cross. Unwrapping through the
+/// section's midpoint keeps the returned interval monotone along the section's
+/// own sweep instead of folding it back over the branch cut.
+fn edge_section_parameters(edge_curve: &Curve, section: &TrimmedCurve) -> Interval {
+    let point_at = |parameter: f64| section.point_at(parameter);
+    let start = edge_curve.param_at(point_at(0.0));
+    let Periodicity::Periodic(period) = edge_curve.periodicity() else {
+        return Interval::new(start, edge_curve.param_at(point_at(1.0)));
+    };
+    let continued = |previous: f64, point: Point3| {
+        let offset = (edge_curve.param_at(point) - previous).rem_euclid(period);
+        let offset = if offset > 0.5 * period {
+            offset - period
+        } else {
+            offset
+        };
+        previous + offset
+    };
+    let middle = continued(start, point_at(0.5));
+    Interval::new(start, continued(middle, point_at(1.0)))
 }
 
 fn event_use_for_cell<P: Payload>(
@@ -689,7 +723,7 @@ fn split_edge_at_points<P: Payload>(
 
 fn periodic_parameter_in_domain(curve: &Curve, point: Point3, domain: Interval) -> f64 {
     let mut parameter = curve.param_at(point);
-    if let crate::geometry::Periodicity::Periodic(period) = curve.periodicity() {
+    if let Periodicity::Periodic(period) = curve.periodicity() {
         while parameter < domain.start {
             parameter += period;
         }

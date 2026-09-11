@@ -15,7 +15,7 @@ use crate::geometry::counters::{count_newton_iterations, count_subdivision_node}
 use crate::geometry::{
     BBox, BezierSurface, ControlNet, ControlPolygon, ControlPolygon2, Curve, Curve2, HPoint2,
     Interval, KnotVector, Line2, NurbsCurve, NurbsCurve2, NurbsError, NurbsSurface, Point2, Point3,
-    Surface,
+    Surface, TrimmedCurve,
 };
 
 const PLANAR_SEARCH_NODE_BUDGET: usize = 4_096;
@@ -492,7 +492,7 @@ impl<'a> PlanarSeedSearch<'a> {
             })
             .to_vec();
         Ok(SurfaceIntersectionBranch {
-            curve_3d,
+            curve_3d: TrimmedCurve::new(curve_3d, Interval::new(0.0, 1.0)),
             pcurve_a,
             pcurve_b,
             samples,

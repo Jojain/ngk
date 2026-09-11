@@ -4,7 +4,7 @@
 //!
 //! `curve_u` is reported in the **curve's own** parameterization -- the one
 //! [`Curve::point_at`] uses -- so a line reports arc length from its origin, a
-//! circle an angle, and a bounded curve its normalized `[0, 1]`. The general
+//! and a circle reports an angle. The general
 //! solver reports the parameter of the NURBS the curve converts to, which is
 //! not the same thing and, for a circle, not even monotone in it. Callers that
 //! feed `curve_u` back to [`Curve::derivative_at`] want this one.
@@ -53,7 +53,7 @@ pub fn intersect_analytic_curve_surface(
         return Some(Err(IntersectionError::InvalidOptions));
     }
     let restriction = Restriction::of(curve)?;
-    let solved = match curve.base() {
+    let solved = match curve {
         Curve::Line(line) => line_surface(line, surface, options)?,
         Curve::Circle(circle) => circle_surface(circle, surface, options)?,
         _ => return None,
@@ -81,11 +81,6 @@ enum Restriction {
     Whole,
     /// A curve periodic in its base parameter, reported folded into one period.
     Periodic(f64),
-    /// A trimmed curve, reported normalized over `[0, 1]`.
-    Bounded {
-        bounds: Interval,
-        period: Option<f64>,
-    },
 }
 
 impl Restriction {
@@ -93,13 +88,6 @@ impl Restriction {
         match curve {
             Curve::Line(_) => Some(Restriction::Whole),
             Curve::Circle(_) => Some(Restriction::Periodic(TAU)),
-            Curve::Bounded(bounded) => Some(Restriction::Bounded {
-                bounds: bounded.bounds(),
-                period: match bounded.inner().base() {
-                    Curve::Circle(_) => Some(TAU),
-                    _ => None,
-                },
-            }),
             _ => None,
         }
     }
@@ -147,37 +135,14 @@ impl Restriction {
         match self {
             Restriction::Whole => Interval::unbounded(),
             Restriction::Periodic(period) => Interval::new(0.0, *period),
-            Restriction::Bounded { .. } => Interval::new(0.0, 1.0),
         }
     }
 
     /// Converts one base parameter, or drops it as outside the window.
-    fn report(&self, parameter: f64, options: IntersectionOptions) -> Option<f64> {
+    fn report(&self, parameter: f64, _options: IntersectionOptions) -> Option<f64> {
         match self {
             Restriction::Whole => Some(parameter),
             Restriction::Periodic(period) => Some(parameter.rem_euclid(*period)),
-            Restriction::Bounded { bounds, period } => {
-                let span = bounds.end - bounds.start;
-                if span.abs() <= options.parameter_tolerance {
-                    return None;
-                }
-                // A periodic base curve reports one fixed branch, which need
-                // not be the branch this trim lives on, so the parameter is
-                // shifted by whole periods towards the bounds before it is
-                // judged to be outside them.
-                let parameter = match period {
-                    Some(period) => {
-                        let low = bounds.start.min(bounds.end) - options.parameter_tolerance;
-                        low + (parameter - low).rem_euclid(*period)
-                    }
-                    None => parameter,
-                };
-                let local = (parameter - bounds.start) / span;
-                let slack = options.parameter_tolerance / span.abs();
-                (-slack..=1.0 + slack)
-                    .contains(&local)
-                    .then(|| local.clamp(0.0, 1.0))
-            }
         }
     }
 }
@@ -185,7 +150,7 @@ impl Restriction {
 /// Solves a line against a recognized surface.
 fn line_surface(line: &Line, surface: &Surface, options: IntersectionOptions) -> Option<Solved> {
     let origin = line.origin();
-    let direction = *line.direction();
+    let direction = line.derivative_at(0.0, 1);
     match surface {
         Surface::Plane(plane) => {
             let normal = *plane.normal();

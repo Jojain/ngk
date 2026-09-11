@@ -1,4 +1,3 @@
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::geometry::{Curve, Surface};
@@ -14,12 +13,6 @@ pub(crate) fn curve_to_py(py: Python<'_>, curve: Curve) -> PyResult<PyObject> {
         Curve::Circle(circle) => Ok(Py::new(py, PyCircle { circle })?.into_py(py)),
         Curve::Ellipse(ellipse) => Ok(Py::new(py, PyEllipse { ellipse })?.into_py(py)),
         Curve::Nurbs(curve) => Ok(Py::new(py, PyNurbsCurve { curve })?.into_py(py)),
-        Curve::Bounded(curve) => {
-            let curve = curve.to_nurbs().map_err(|err| {
-                PyValueError::new_err(format!("failed to convert bounded curve to nurbs: {err}"))
-            })?;
-            Ok(Py::new(py, PyNurbsCurve { curve })?.into_py(py))
-        }
     }
 }
 

@@ -22,7 +22,7 @@ use super::{
     trim::{FaceTrimDomain, TrimLocation, boundary_edge_for},
 };
 use crate::geometry::{
-    CurveIntersectionOptions, IntersectionCoverage, IntersectionIncompleteReason,
+    CurveIntersectionOptions, IntersectionCoverage, IntersectionIncompleteReason, LINEAR_TOLERANCE,
     SurfaceIntersectionBranch,
 };
 
@@ -263,14 +263,11 @@ fn clip_deferred<P: Payload>(
     let mut contacts = Vec::new();
     match work {
         Deferred::EdgeOnFace { imprint } => {
-            let edge_key = pair.edge(ContactCell::Edge);
             let face_key = pair.face(ContactCell::Face);
-            let edge = g.edge_unchecked(edge_key);
-            let curve = edge.curve().expect("registered edge geometry");
             let trim = trims.get(g, face_key, tolerance)?;
             for piece in clip_imprint_to_trim(&trim, &imprint, anchors, graze, options)? {
-                let start = piece.curve.point_at(0.0);
-                let end = piece.curve.point_at(1.0);
+                let start = piece.point_at(0.0);
+                let end = piece.point_at(1.0);
                 contacts.push(Contact::EdgePoint {
                     cell: ContactCell::Edge,
                     point: start,
@@ -284,7 +281,6 @@ fn clip_deferred<P: Payload>(
                 contacts.push(Contact::EdgeSection {
                     cell: ContactCell::Edge,
                     curve: piece.curve.clone(),
-                    interval: Interval::new(curve.param_at(start), curve.param_at(end)),
                 });
                 contacts.push(Contact::Imprint {
                     cell: ContactCell::Face,
@@ -483,9 +479,7 @@ fn vertex_point<P: Payload>(g: &GMap<P>, key: VertexKey) -> Point3 {
 }
 
 fn edge_curve<P: Payload>(g: &GMap<P>, key: EdgeKey) -> &Curve {
-    g.edge_unchecked(key)
-        .curve()
-        .expect("registered edge geometry")
+    &g.edge_attr_unchecked(key).curve
 }
 
 fn probe_vertex_vertex<P: Payload>(
@@ -588,22 +582,23 @@ fn probe_edge_edge<P: Payload>(
     let a_curve = edge_curve(g, a_key);
     let b_edge = g.edge_unchecked(b_key);
     let b_curve = edge_curve(g, b_key);
+    // The solver answers for the supports, which run past the edges resting on
+    // them; every hit is measured against these before it is reported, so an
+    // intersection of two supports away from either edge is not a contact.
+    let a_section = edge_section(&a_edge);
+    let b_section = edge_section(&b_edge);
+    let linear = options.intersections.linear_tolerance;
+    let on_both_edges =
+        |point: Point3| a_section.contains(point, linear) && b_section.contains(point, linear);
     let mut contacts = Vec::new();
     for intersection in a_curve.intersect_curve_with_options(b_curve, options.intersections)? {
         match intersection {
             CurveCurveIntersection::Point { point, .. } => {
-                let point = grazed_vertex(
-                    [&a_edge, &b_edge],
-                    |candidate| {
-                        [a_curve, b_curve].iter().all(|curve| {
-                            lies_on_curve(curve, candidate, options.intersections.linear_tolerance)
-                        })
-                    },
-                    point,
-                    options.intersections.linear_tolerance,
-                    graze,
-                )
-                .unwrap_or(point);
+                let point = grazed_vertex([&a_edge, &b_edge], on_both_edges, point, linear, graze)
+                    .unwrap_or(point);
+                if !on_both_edges(point) {
+                    continue;
+                }
                 contacts.push(Contact::EdgePoint {
                     cell: ContactCell::First,
                     point,
@@ -621,6 +616,15 @@ fn probe_edge_edge<P: Payload>(
                 interval_a,
                 interval_b,
             } => {
+                // Two supports overlapping says nothing about how much of it
+                // the edges share; the shared part is what both spans keep.
+                let Some((interval_a, interval_b)) = clip_overlap_to_edges(
+                    (&a_section, interval_a),
+                    (&b_section, interval_b),
+                    linear,
+                ) else {
+                    continue;
+                };
                 for (cell, curve, interval) in [
                     (ContactCell::First, a_curve, interval_a),
                     (ContactCell::Second, b_curve, interval_b),
@@ -656,11 +660,11 @@ fn probe_edge_face<P: Payload>(
     let edge = g.edge_unchecked(edge_key);
     let face = g.face_unchecked(face_key);
     let curve = edge_curve(g, edge_key);
+    let edge_interval = edge
+        .parameter_interval()
+        .expect("an attributed edge with vertices has a parameter interval");
     let trim = trims.get(g, face_key, options.intersections.parameter_tolerance)?;
-    // A trimmed edge is the only shape whose closed-form answer arrives in the
-    // parameter the overlap handling below expects; anything else keeps the
-    // searched path, which decomposes both operands to say the same thing.
-    let analytic = matches!(curve, Curve::Bounded(_))
+    let analytic = matches!(curve, Curve::Line(_) | Curve::Circle(_))
         .then(|| {
             crate::geometry::intersect_analytic_curve_surface(
                 curve,
@@ -669,7 +673,7 @@ fn probe_edge_face<P: Payload>(
             )
         })
         .flatten();
-    let normalized = analytic.is_some();
+    let analytic_parameters = analytic.is_some();
     let intersections = match analytic {
         Some(contacts) => contacts?,
         None => {
@@ -689,10 +693,19 @@ fn probe_edge_face<P: Payload>(
         match intersection {
             CurveSurfaceIntersection::Point {
                 point,
-                curve_u,
+                mut curve_u,
                 surface_u,
                 surface_v,
             } => {
+                if analytic_parameters {
+                    if let Periodicity::Periodic(period) = curve.periodicity() {
+                        let midpoint = 0.5 * (edge_interval.start + edge_interval.end);
+                        curve_u += ((midpoint - curve_u) / period).round() * period;
+                    }
+                    if !edge_interval.contains(curve_u, options.intersections.parameter_tolerance) {
+                        continue;
+                    }
+                }
                 if !trim.contains(Point2::new(surface_u, surface_v)) {
                     continue;
                 }
@@ -727,25 +740,19 @@ fn probe_edge_face<P: Payload>(
                 probed.contacts.push(Contact::Point { point, kind });
             }
             CurveSurfaceIntersection::Overlap { curve_interval } => {
-                // The edge rests on the surface over this interval, but only the
-                // part the face's own trim keeps is a contact of the two cells.
-                // The searched path reports the interval in the curve's own
-                // NURBS parameters and the closed-form path in normalized ones;
-                // subcurves are taken over normalized ones.
-                let interval = if normalized {
-                    Interval::new(
-                        curve_interval.start.clamp(0.0, 1.0),
-                        curve_interval.end.clamp(0.0, 1.0),
-                    )
+                // The analytic solve covers the whole support; the edge's
+                // vertices select the part that belongs to this topological edge.
+                let section = if analytic_parameters {
+                    curve.trimmed_native(edge_interval)?
                 } else {
                     let native = curve.to_nurbs()?.domain();
                     let extent = native.end - native.start;
-                    Interval::new(
+                    let interval = Interval::new(
                         ((curve_interval.start - native.start) / extent).clamp(0.0, 1.0),
                         ((curve_interval.end - native.start) / extent).clamp(0.0, 1.0),
-                    )
+                    );
+                    graph::normalized_subcurve(curve, interval)?
                 };
-                let section = graph::normalized_subcurve(curve, interval)?;
                 let Some(imprint) = section_imprint(&face, &section, options)? else {
                     continue;
                 };
@@ -984,11 +991,72 @@ fn grazed_vertex<P: Payload, const N: usize>(
         })
 }
 
-/// Whether `point` sits on `curve` within `tolerance`.
-fn lies_on_curve(curve: &Curve, point: Point3, tolerance: f64) -> bool {
-    curve
-        .point_at(curve.param_at(point))
-        .coincides(point, tolerance)
+/// Narrows an overlap of two supports to the part both edges actually carry.
+///
+/// The solver answers for the supports, which run past the edges resting on
+/// them: two collinear segments report their whole shared line. The two
+/// returned intervals stay synchronized — the same fraction of each locates the
+/// same point — since that pairing is what lets the network treat the section
+/// as one. `None` means the edges share no section at all, only their supports.
+fn clip_overlap_to_edges(
+    first: (&TrimmedCurve, Interval),
+    second: (&TrimmedCurve, Interval),
+    tolerance: f64,
+) -> Option<(Interval, Interval)> {
+    let carried = |(edge, overlap): (&TrimmedCurve, Interval)| {
+        let overlap = aligned_with_edge(edge, overlap);
+        if overlap.delta().abs() <= f64::EPSILON {
+            return None;
+        }
+        let slack = edge.parameter_slack(tolerance);
+        let bounds = edge.interval().ordered();
+        let span = Interval::new(
+            (bounds.start - slack - overlap.start) / overlap.delta(),
+            (bounds.end + slack - overlap.start) / overlap.delta(),
+        )
+        .ordered();
+        Some((
+            overlap,
+            Interval::new(span.start.max(0.0), span.end.min(1.0)),
+        ))
+    };
+    let (first_overlap, first_span) = carried(first)?;
+    let (second_overlap, second_span) = carried(second)?;
+    let shared = first_span.intersection(second_span, 0.0)?;
+    // A shared span this thin is the two edges touching at an endpoint, which
+    // the point contacts already report; carrying it on would only hand the
+    // network a section with nothing between its ends.
+    let carried = TrimmedCurve::new(
+        first.0.curve().clone(),
+        Interval::new(first_overlap.at(shared.start), first_overlap.at(shared.end)),
+    );
+    if carried.length() <= tolerance {
+        return None;
+    }
+    Some((
+        carried.interval(),
+        Interval::new(
+            second_overlap.at(shared.start),
+            second_overlap.at(shared.end),
+        ),
+    ))
+}
+
+/// Shifts a periodic span by whole periods onto the branch its edge spans.
+fn aligned_with_edge(edge: &TrimmedCurve, span: Interval) -> Interval {
+    let Periodicity::Periodic(period) = edge.curve().periodicity() else {
+        return span;
+    };
+    let edge = edge.interval();
+    let offset = (0.5 * (edge.start + edge.end) - 0.5 * (span.start + span.end)) / period;
+    let shift = offset.round() * period;
+    Interval::new(span.start + shift, span.end + shift)
+}
+
+/// Returns an edge's curve paired with the span its vertices bound.
+fn edge_section<P: Payload>(edge: &crate::topology::edge::Edge<'_, P>) -> TrimmedCurve {
+    edge.trimmed_curve()
+        .expect("an attributed edge with vertices has a bounded curve")
 }
 
 /// Samples used to carry a section whose parameter image is not a straight line.
@@ -1069,18 +1137,18 @@ fn clip_imprint_to_trim(
     let nodes = crossings
         .iter()
         .filter_map(|crossing| {
-            let point = imprint.curve.point_at(*crossing);
+            let point = imprint.point_at(*crossing);
             anchors
                 .iter()
                 .find(|anchor| (point - **anchor).norm() <= graze)
         })
-        .map(|anchor| imprint.curve.param_at(*anchor).clamp(0.0, 1.0))
+        .map(|anchor| imprint.parameter_at(*anchor).clamp(0.0, 1.0))
         .collect::<Vec<_>>();
     crossings.retain(|crossing| {
-        let point = imprint.curve.point_at(*crossing);
+        let point = imprint.point_at(*crossing);
         !nodes
             .iter()
-            .any(|node| (point - imprint.curve.point_at(*node)).norm() <= graze)
+            .any(|node| (point - imprint.point_at(*node)).norm() <= graze)
     });
     let mut parameters = vec![0.0, 1.0];
     parameters.append(&mut crossings);
@@ -1091,7 +1159,7 @@ fn clip_imprint_to_trim(
     for pair in parameters.windows(2) {
         // Crossings are merged at the caller's tolerance, which is finer than
         // a curve can be trimmed to; a window below that carries no piece.
-        if pair[1] - pair[0] <= crate::geometry::LINEAR_TOLERANCE {
+        if pair[1] - pair[0] <= LINEAR_TOLERANCE {
             continue;
         }
         let midpoint = 0.5 * (pair[0] + pair[1]);
@@ -1139,15 +1207,10 @@ pub(super) fn reroute_boundary_imprints<P: Payload>(
                 retained.push(imprint);
                 continue;
             };
-            let edge_view = g.edge_unchecked(edge);
-            let curve = edge_view.curve().expect("registered edge geometry");
-            let start = curve.param_at(imprint.curve.point_at(0.0));
-            let end = curve.param_at(imprint.curve.point_at(1.0));
             plan.contacts.push(RawIntersection::EdgeSection {
                 side,
                 edge,
                 curve: imprint.curve.clone(),
-                interval: Interval::new(start, end),
             });
         }
         if !retained.is_empty() {
@@ -1205,7 +1268,7 @@ pub(super) fn normalize_face_imprint_chains<P: Payload>(
         if imprints.len() < 2
             || imprints
                 .iter()
-                .any(|imprint| !matches!(imprint.curve.base(), Curve::Line(_)))
+                .any(|imprint| !matches!(imprint.curve.curve(), Curve::Line(_)))
         {
             plan.face_imprints.insert(face_key, imprints);
             continue;
