@@ -123,12 +123,6 @@ impl<'a, P: Payload> Closeable for Profile<'a, P> {
     }
 }
 
-/// A closed profile used as a face boundary loop.
-///
-/// The closedness invariant is checked by [`Closed::new`] or trusted by
-/// [`Closed::new_unchecked`].
-pub type Loop<'a, P = StandardPayload> = Closed<Profile<'a, P>>;
-
 /// One vertex occurrence in an oriented closed profile.
 ///
 /// A corner keeps the two loop-oriented edges incident to the occurrence.

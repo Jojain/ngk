@@ -79,11 +79,7 @@ impl<T> ProfileAttr<T> {
     }
 }
 
-/// What one boundary loop bounds on its face.
-///
-/// The kind lives on each loop rather than on the boundary as a whole, so that
-/// configurations combine freely: a face may carry an outer loop and holes, or
-/// several wrapping loops and a hole, without a variant per combination.
+/// What one face loop bounds in its face's parameter domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LoopKind {
     /// A loop that closes in parameter space and bounds the face from outside.
@@ -110,218 +106,69 @@ impl LoopKind {
     }
 }
 
-/// One boundary loop of a face: its oriented seed dart and what it bounds.
+/// Stored definition of one loop on a face.
 ///
-/// The dart is an oriented seed, not an arbitrary representative of its loop
-/// cell. Traversing it determines the direction of the boundary; `alpha0` of it
-/// traverses the same loop backwards and reverses the face.
+/// A definition contains only the data a face attribute can persist: the
+/// oriented seed that locates a closed profile and its parameter-domain role.
+/// [`crate::topology::face::Loop`] resolves it into the face-facing topology
+/// view that offers traversal operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BoundaryLoop {
-    /// Oriented seed dart of this loop.
-    pub dart: Dart,
-    /// What this loop bounds.
-    pub kind: LoopKind,
+pub enum LoopDefinition {
+    /// A loop that closes in parameter space and bounds the face from outside.
+    Outer { seed: Dart },
+    /// A loop that closes in parameter space and cuts a hole in the face.
+    Inner { seed: Dart },
+    /// A loop that spans exactly one period of `axis`.
+    Wrapping { seed: Dart, axis: Axis2 },
 }
 
-impl BoundaryLoop {
-    /// Creates a boundary loop seeded at `dart`.
-    pub fn new(dart: Dart, kind: LoopKind) -> Self {
-        Self { dart, kind }
-    }
-}
-
-/// The boundary loops of one face, in storage order.
-///
-/// Order is preserved because callers index inner loops positionally, but the
-/// outer loop is found by kind rather than by position.
-///
-/// A face need not have an outer loop. A ring face — a cylinder wall — is
-/// bounded by two [`LoopKind::Wrapping`] loops and nothing else, so the
-/// face-level question "is this a disk or a ring" is answered by reading the
-/// kinds rather than by a stored flag that could disagree with them.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FaceBoundary {
-    loops: Vec<BoundaryLoop>,
-}
-
-impl FaceBoundary {
-    /// Creates a boundary from an outer loop seed and inner loop seeds.
-    pub fn new(outer: Dart, inner: Vec<Dart>) -> Self {
-        let mut loops = Vec::with_capacity(1 + inner.len());
-        loops.push(BoundaryLoop::new(outer, LoopKind::Outer));
-        loops.extend(
-            inner
-                .into_iter()
-                .map(|dart| BoundaryLoop::new(dart, LoopKind::Inner)),
-        );
-        Self { loops }
-    }
-
-    /// Creates a boundary from already-kinded loops.
-    pub fn from_loops(loops: Vec<BoundaryLoop>) -> Self {
-        Self { loops }
-    }
-
-    /// Returns every boundary loop in storage order.
-    pub fn loops(&self) -> &[BoundaryLoop] {
-        &self.loops
-    }
-
-    /// Returns the oriented seed dart of the outer loop, if the face has one.
-    pub fn outer(&self) -> Option<Dart> {
-        self.loops
-            .iter()
-            .find(|boundary| boundary.kind == LoopKind::Outer)
-            .map(|boundary| boundary.dart)
-    }
-
-    /// Returns an oriented seed dart of the face, preferring the outer loop.
-    ///
-    /// This is the face's representative: any code that only needs *a* dart of
-    /// the face — to resolve its key, to root a shell, to carry its
-    /// orientation — wants this rather than the outer loop, because a ring
-    /// face has no outer loop to give.
-    pub fn seed(&self) -> Option<Dart> {
-        self.outer().or_else(|| self.loops.first().map(|l| l.dart))
-    }
-
-    /// Returns an oriented seed dart of the face, preferring the outer loop.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the face has no boundary loops at all.
-    pub fn seed_unchecked(&self) -> Dart {
-        self.seed().expect("face should have a boundary loop")
-    }
-
-    /// Iterates the oriented seed darts of the wrapping loops, with their axes.
-    pub fn wrapping(&self) -> impl Iterator<Item = (Dart, Axis2)> + '_ {
-        self.loops
-            .iter()
-            .filter_map(|boundary| Some((boundary.dart, boundary.kind.wrapped_axis()?)))
-    }
-
-    /// Returns whether any loop wraps a periodic direction.
-    pub fn is_ring(&self) -> bool {
-        self.wrapping().next().is_some()
-    }
-
-    /// Returns the oriented seed dart of the outer loop.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the face has no outer loop.
-    pub fn outer_unchecked(&self) -> Dart {
-        self.outer().expect("face should have an outer loop")
-    }
-
-    /// Iterates the oriented seed darts of the inner loops, in storage order.
-    pub fn inner(&self) -> impl Iterator<Item = Dart> + '_ {
-        self.loops
-            .iter()
-            .filter(|boundary| boundary.kind == LoopKind::Inner)
-            .map(|boundary| boundary.dart)
-    }
-
-    /// Collects the oriented seed darts of the inner loops.
-    pub fn inner_vec(&self) -> Vec<Dart> {
-        self.inner().collect()
-    }
-
-    /// Iterates every loop's oriented seed dart, outer first when one exists.
-    ///
-    /// Storage order is preserved among the rest, so a ring face's wrapping
-    /// loops come back in the order they were registered.
-    pub fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
-        self.outer().into_iter().chain(
-            self.loops
-                .iter()
-                .filter(|boundary| boundary.kind != LoopKind::Outer)
-                .map(|boundary| boundary.dart),
-        )
-    }
-
-    /// Returns whether the face has no boundary loops at all.
-    pub fn is_empty(&self) -> bool {
-        self.loops.is_empty()
-    }
-
-    /// Returns the kind of the loop seeded at `dart`, if it is stored.
-    pub fn kind_of(&self, dart: Dart) -> Option<LoopKind> {
-        self.loops
-            .iter()
-            .find(|boundary| boundary.dart == dart)
-            .map(|boundary| boundary.kind)
-    }
-
-    /// Replaces the outer loop seed, adding one if the face had none.
-    pub fn set_outer(&mut self, dart: Dart) {
-        match self
-            .loops
-            .iter_mut()
-            .find(|boundary| boundary.kind == LoopKind::Outer)
-        {
-            Some(boundary) => boundary.dart = dart,
-            None => self
-                .loops
-                .insert(0, BoundaryLoop::new(dart, LoopKind::Outer)),
+impl LoopDefinition {
+    pub(crate) fn from_kind(seed: Dart, kind: LoopKind) -> Self {
+        match kind {
+            LoopKind::Outer => Self::outer(seed),
+            LoopKind::Inner => Self::inner(seed),
+            LoopKind::Wrapping { axis } => Self::wrapping(seed, axis),
         }
     }
 
-    /// Replaces every inner loop seed, keeping the outer loop untouched.
-    pub fn set_inner(&mut self, darts: Vec<Dart>) {
-        self.loops
-            .retain(|boundary| boundary.kind != LoopKind::Inner);
-        self.loops.extend(
-            darts
-                .into_iter()
-                .map(|dart| BoundaryLoop::new(dart, LoopKind::Inner)),
-        );
+    /// Defines a chart-closed exterior loop.
+    pub fn outer(seed: Dart) -> Self {
+        Self::Outer { seed }
     }
 
-    /// Appends one inner loop seed.
-    pub fn push_inner(&mut self, dart: Dart) {
-        self.loops.push(BoundaryLoop::new(dart, LoopKind::Inner));
+    /// Defines a chart-closed hole loop.
+    pub fn inner(seed: Dart) -> Self {
+        Self::Inner { seed }
     }
 
-    /// Appends several inner loop seeds.
-    pub fn extend_inner(&mut self, darts: impl IntoIterator<Item = Dart>) {
-        self.loops.extend(
-            darts
-                .into_iter()
-                .map(|dart| BoundaryLoop::new(dart, LoopKind::Inner)),
-        );
+    /// Defines a loop spanning one whole period of `axis`.
+    pub fn wrapping(seed: Dart, axis: Axis2) -> Self {
+        Self::Wrapping { seed, axis }
     }
 
-    /// Removes every inner loop, keeping the outer loop untouched.
-    pub fn clear_inner(&mut self) {
-        self.loops
-            .retain(|boundary| boundary.kind != LoopKind::Inner);
-    }
-
-    /// Rewrites every loop seed through `map`, preserving kinds and order.
-    ///
-    /// Used when an edit renumbers darts: the boundary structure is unchanged,
-    /// only the darts naming it.
-    pub fn map_darts(&mut self, map: impl Fn(Dart) -> Dart) {
-        for boundary in &mut self.loops {
-            boundary.dart = map(boundary.dart);
+    /// Returns this definition's oriented traversal seed.
+    pub fn seed(self) -> Dart {
+        match self {
+            Self::Outer { seed } | Self::Inner { seed } | Self::Wrapping { seed, .. } => seed,
         }
     }
 
-    /// Keeps only the loops `map` names, rewriting their seeds.
-    ///
-    /// A merge that brings part of a map across drops the loops whose darts
-    /// did not come with it; the survivors keep their kinds and order.
-    pub fn retain_mapped(&mut self, map: &HashMap<Dart, Dart>) {
-        self.loops
-            .retain_mut(|boundary| match map.get(&boundary.dart) {
-                Some(&dart) => {
-                    boundary.dart = dart;
-                    true
-                }
-                None => false,
-            });
+    /// Returns this definition's parameter-domain classification.
+    pub fn kind(self) -> LoopKind {
+        match self {
+            Self::Outer { .. } => LoopKind::Outer,
+            Self::Inner { .. } => LoopKind::Inner,
+            Self::Wrapping { axis, .. } => LoopKind::Wrapping { axis },
+        }
+    }
+
+    /// Replaces this definition's oriented traversal seed.
+    pub fn set_seed(&mut self, seed: Dart) {
+        match self {
+            Self::Outer { seed: current }
+            | Self::Inner { seed: current }
+            | Self::Wrapping { seed: current, .. } => *current = seed,
+        }
     }
 }
 
@@ -329,7 +176,7 @@ impl FaceBoundary {
 ///
 /// # Boundary orientation
 ///
-/// A [`FaceBoundary`] holds oriented boundary seeds, not arbitrary
+/// Face loop definitions hold oriented boundary seeds, not arbitrary
 /// representatives of their loop cells. Traversing a stored seed determines
 /// the direction of the corresponding boundary. Choosing `alpha0(seed)`
 /// traverses the same loop in the opposite direction and reverses the face.
@@ -343,7 +190,7 @@ impl FaceBoundary {
 /// - outer CW and inner CCW: the face opposes the support-surface orientation.
 ///
 /// Whether a loop is an outer boundary or a hole is determined structurally by
-/// its [`LoopKind`], not by winding alone.
+/// its [`LoopDefinition`], not by winding alone.
 ///
 /// Reversing a face is an atomic operation: replace every loop seed `d` with
 /// `alpha0(d)`, and replace each pcurve entry `(d, curve)` with
@@ -356,8 +203,8 @@ pub struct FaceAttr<T> {
     pub surface: Surface,
     /// User payload attached to the face.
     pub data: T,
-    /// Oriented seed darts of the face's boundary loops.
-    pub boundary: FaceBoundary,
+    /// Internal storage for this face's loop definitions.
+    pub(crate) loops: Vec<LoopDefinition>,
     /// Directed boundary pcurves keyed by their oriented boundary darts.
     pub pcurves: HashMap<Dart, TrimmedCurve2>,
 }
@@ -371,7 +218,9 @@ impl<T> FaceAttr<T> {
         Self {
             surface,
             data,
-            boundary: FaceBoundary::new(outer_loop, inner_loops),
+            loops: std::iter::once(LoopDefinition::outer(outer_loop))
+                .chain(inner_loops.into_iter().map(LoopDefinition::inner))
+                .collect(),
             pcurves: HashMap::new(),
         }
     }
@@ -390,25 +239,27 @@ impl<T> FaceAttr<T> {
         Self {
             surface,
             data,
-            boundary: FaceBoundary::new(outer_loop, inner_loops),
+            loops: std::iter::once(LoopDefinition::outer(outer_loop))
+                .chain(inner_loops.into_iter().map(LoopDefinition::inner))
+                .collect(),
             pcurves,
         }
     }
 
-    /// Creates a face attribute from already-kinded boundary loops.
+    /// Creates a face attribute from explicit loop definitions.
     ///
-    /// This is the constructor a face without an outer loop needs — a ring
-    /// face bounded only by [`LoopKind::Wrapping`] loops.
-    pub fn with_boundary(
+    /// This constructor supports faces with no outer loop, such as a ring
+    /// bounded only by [`LoopDefinition::Wrapping`] loops.
+    pub fn with_loops(
         surface: Surface,
         data: T,
-        boundary: FaceBoundary,
+        loops: Vec<LoopDefinition>,
         pcurves: HashMap<Dart, TrimmedCurve2>,
     ) -> Self {
         Self {
             surface,
             data,
-            boundary,
+            loops,
             pcurves,
         }
     }
@@ -416,9 +267,106 @@ impl<T> FaceAttr<T> {
     /// Returns a typed face view over this attribute in `gmap`.
     pub fn face<'a, P: Payload<F = T>>(&'a self, gmap: &'a GMap<P>) -> Face<'a, P> {
         let key = gmap
-            .cell_key::<Cell2>(self.boundary.seed_unchecked())
+            .cell_key::<Cell2>(self.seed_unchecked())
             .expect("FaceAttr must be registered to produce a Face view");
         Face::new(gmap, key)
+    }
+
+    pub(crate) fn wrapping(&self) -> impl Iterator<Item = (Dart, Axis2)> + '_ {
+        self.loops
+            .iter()
+            .filter_map(|loop_| loop_.kind().wrapped_axis().map(|axis| (loop_.seed(), axis)))
+    }
+    pub(crate) fn inner(&self) -> impl Iterator<Item = Dart> + '_ {
+        self.loops
+            .iter()
+            .filter(|loop_| loop_.kind() == LoopKind::Inner)
+            .map(|loop_| loop_.seed())
+    }
+    pub(crate) fn inner_vec(&self) -> Vec<Dart> {
+        self.inner().collect()
+    }
+    pub(crate) fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
+        self.outer_seed().into_iter().chain(
+            self.loops
+                .iter()
+                .filter(|loop_| loop_.kind() != LoopKind::Outer)
+                .map(|loop_| loop_.seed()),
+        )
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.loops.is_empty()
+    }
+    pub(crate) fn kind_of(&self, seed: Dart) -> Option<LoopKind> {
+        self.loop_definition(seed).map(|loop_| loop_.kind())
+    }
+    pub(crate) fn outer_unchecked(&self) -> Dart {
+        self.outer_seed().expect("face should have an outer loop")
+    }
+    pub(crate) fn set_outer(&mut self, seed: Dart) {
+        if let Some(loop_) = self
+            .loops
+            .iter_mut()
+            .find(|loop_| loop_.kind() == LoopKind::Outer)
+        {
+            loop_.set_seed(seed)
+        } else {
+            self.loops.insert(0, LoopDefinition::outer(seed));
+        }
+    }
+    pub(crate) fn set_inner(&mut self, seeds: Vec<Dart>) {
+        self.clear_inner();
+        self.extend_inner(seeds);
+    }
+    pub(crate) fn push_inner(&mut self, seed: Dart) {
+        self.loops.push(LoopDefinition::inner(seed));
+    }
+    pub(crate) fn extend_inner(&mut self, seeds: impl IntoIterator<Item = Dart>) {
+        self.loops
+            .extend(seeds.into_iter().map(LoopDefinition::inner));
+    }
+    pub(crate) fn clear_inner(&mut self) {
+        self.loops.retain(|loop_| loop_.kind() != LoopKind::Inner);
+    }
+    pub(crate) fn map_darts(&mut self, map: impl Fn(Dart) -> Dart) {
+        for loop_ in &mut self.loops {
+            loop_.set_seed(map(loop_.seed()));
+        }
+    }
+    pub(crate) fn retain_mapped(&mut self, map: &HashMap<Dart, Dart>) {
+        self.loops.retain_mut(|loop_| match map.get(&loop_.seed()) {
+            Some(&seed) => {
+                loop_.set_seed(seed);
+                true
+            }
+            None => false,
+        });
+    }
+    /// Returns the stored loop definition whose seed is seed.
+    pub(crate) fn loop_definition(&self, seed: Dart) -> Option<LoopDefinition> {
+        self.loops
+            .iter()
+            .copied()
+            .find(|loop_| loop_.seed() == seed)
+    }
+
+    /// Returns the seed of the chart-closed outer loop, if this face has one.
+    pub(crate) fn outer_seed(&self) -> Option<Dart> {
+        self.loops.iter().find_map(|loop_| match loop_ {
+            LoopDefinition::Outer { seed } => Some(*seed),
+            _ => None,
+        })
+    }
+
+    /// Returns an oriented seed suitable for locating this dart-backed face.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the face has no loops.
+    pub(crate) fn seed_unchecked(&self) -> Dart {
+        self.outer_seed()
+            .or_else(|| self.loops.first().map(|loop_| loop_.seed()))
+            .expect("dart-backed face should have a loop")
     }
 }
 
@@ -457,70 +405,5 @@ impl<T> SolidAttr<T> {
             outer_shell,
             inner_shells,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn darts(count: usize) -> Vec<Dart> {
-        (0..count).map(Dart::new).collect()
-    }
-
-    #[test]
-    fn a_boundary_reports_its_outer_loop_and_holes_separately() {
-        let d = darts(3);
-        let boundary = FaceBoundary::new(d[0], vec![d[1], d[2]]);
-
-        assert_eq!(boundary.outer(), Some(d[0]));
-        assert_eq!(boundary.inner_vec(), vec![d[1], d[2]]);
-        assert_eq!(boundary.darts().collect::<Vec<_>>(), vec![d[0], d[1], d[2]]);
-        assert_eq!(boundary.kind_of(d[0]), Some(LoopKind::Outer));
-        assert_eq!(boundary.kind_of(d[2]), Some(LoopKind::Inner));
-    }
-
-    #[test]
-    fn setting_inner_loops_leaves_the_outer_loop_in_place() {
-        let d = darts(4);
-        let mut boundary = FaceBoundary::new(d[0], vec![d[1]]);
-
-        boundary.set_inner(vec![d[2], d[3]]);
-
-        assert_eq!(boundary.outer(), Some(d[0]));
-        assert_eq!(boundary.inner_vec(), vec![d[2], d[3]]);
-
-        boundary.clear_inner();
-
-        assert_eq!(boundary.outer(), Some(d[0]));
-        assert!(boundary.inner_vec().is_empty());
-    }
-
-    /// A face with no loops is the boundaryless case seamless periodic faces
-    /// need; it must round-trip rather than be mistaken for a malformed one.
-    #[test]
-    fn an_empty_boundary_has_no_outer_loop_and_gains_one_on_demand() {
-        let d = darts(1);
-        let mut boundary = FaceBoundary::default();
-
-        assert!(boundary.is_empty());
-        assert_eq!(boundary.outer(), None);
-        assert_eq!(boundary.darts().count(), 0);
-
-        boundary.set_outer(d[0]);
-
-        assert_eq!(boundary.outer(), Some(d[0]));
-        assert_eq!(boundary.loops().len(), 1);
-    }
-
-    #[test]
-    fn remapping_darts_preserves_kinds_and_order() {
-        let d = darts(6);
-        let mut boundary = FaceBoundary::new(d[0], vec![d[1], d[2]]);
-
-        boundary.map_darts(|dart| Dart::new(dart.id() + 3));
-
-        assert_eq!(boundary.outer(), Some(d[3]));
-        assert_eq!(boundary.inner_vec(), vec![d[4], d[5]]);
     }
 }

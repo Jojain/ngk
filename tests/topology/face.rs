@@ -1,10 +1,22 @@
 use ngk::builders::faces::{add_annulus, add_circle};
-use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
+use ngk::geometry::{Axis2, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
 use ngk::modeling::{faces, solids};
-use ngk::topology::Orientation;
 use ngk::topology::face::Face;
-use ngk::topology::gmap::{Dim, GMap};
+use ngk::topology::gmap::{Dart, Dim, GMap};
 use ngk::topology::payload::StandardPayload;
+use ngk::topology::{LoopDefinition, LoopKind, Orientation};
+
+#[test]
+fn loop_definitions_make_their_kind_explicit() {
+    let seed = Dart::new(42);
+
+    assert_eq!(LoopDefinition::outer(seed).kind(), LoopKind::Outer);
+    assert_eq!(LoopDefinition::inner(seed).kind(), LoopKind::Inner);
+    assert_eq!(
+        LoopDefinition::wrapping(seed, Axis2::U).kind(),
+        LoopKind::Wrapping { axis: Axis2::U },
+    );
+}
 
 #[test]
 fn face_point_at_evaluates_its_support_surface() {
@@ -26,7 +38,7 @@ fn face_point_at_is_defined_inside_a_trimmed_hole() {
 fn face_views_from_opposite_darts_reverse_boundary_and_normal() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_circle(&mut g, Plane::xy(), 1.0).expect("circle face should build");
-    let default_dart = g.face_attr_unchecked(face_key).boundary.outer_unchecked();
+    let default_dart = g.face_unchecked(face_key).dart();
     let reversed_dart = g.alpha(Dim::Zero, default_dart);
     let default_face = Face::from_dart(&g, default_dart).expect("face should resolve");
     let reversed_face = Face::from_dart(&g, reversed_dart).expect("face should resolve");
@@ -60,10 +72,15 @@ fn face_views_from_opposite_darts_reverse_boundary_and_normal() {
 fn face_views_from_stored_loop_seeds_share_the_same_normal() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_annulus(&mut g, Plane::xy(), 2.0, 1.0).expect("annulus face should build");
-    let attr = g.face_attr_unchecked(face_key);
-    let outer = Face::from_dart(&g, attr.boundary.outer_unchecked())
-        .expect("outer loop should resolve its face");
-    let inner = Face::from_dart(&g, attr.boundary.inner_vec()[0])
+    let face = g.face_unchecked(face_key);
+    let outer = Face::from_dart(
+        &g,
+        face.outer_loop()
+            .expect("face should have an outer loop")
+            .dart,
+    )
+    .expect("outer loop should resolve its face");
+    let inner = Face::from_dart(&g, face.inner_loops()[0].dart)
         .expect("inner loop should resolve its face");
 
     assert!(
@@ -98,6 +115,18 @@ fn face_boundary_edges_preserve_their_exact_loop_darts() {
                 edge.key()
             );
         }
+    }
+}
+
+#[test]
+fn face_loops_carry_their_domain_kind_and_contextual_edges() {
+    let shape = solids::block(1.0, 2.0, 3.0).expect("block should build");
+
+    for face in shape.solid().faces() {
+        let loops = face.loops();
+        assert_eq!(loops.len(), 1);
+        assert_eq!(loops[0].kind(), LoopKind::Outer);
+        assert_eq!(loops[0].edges().len(), 4);
     }
 }
 
@@ -152,7 +181,7 @@ fn a_face_view_is_named_by_its_sense_not_by_the_dart_it_was_reached_from() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_annulus(&mut g, Plane::xy(), 2.0, 1.0).expect("annulus face should build");
     let face = g.face_unchecked(face_key);
-    let inner_seed = g.face_attr_unchecked(face_key).boundary.inner_vec()[0];
+    let inner_seed = g.face_unchecked(face_key).inner_loops()[0].dart;
     let from_inner = Face::from_dart(&g, inner_seed).expect("inner seed should resolve its face");
 
     assert_eq!(face.sense(), Orientation::Same);

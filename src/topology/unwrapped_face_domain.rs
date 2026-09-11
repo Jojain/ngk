@@ -20,8 +20,8 @@ use thiserror::Error;
 use crate::geometry::{Axis2, Point2, Surface, SurfacePeriodicity, TrimmedCurve2, Vector2};
 use crate::topology::attributes::LoopKind;
 use crate::topology::face::Face;
+use crate::topology::face::Loop;
 use crate::topology::payload::Payload;
-use crate::topology::profile::Loop;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 
 /// Failure while cutting a face's parameter domain open.
@@ -166,9 +166,8 @@ impl UnwrappedFaceDomain {
         let mut outer: Vec<UnwrappedFaceDomainCurve> = Vec::new();
         let mut outer_offset = Vector2::zeros();
         let mut holes: Vec<UnwrappedFaceDomainLoop> = Vec::new();
-        for boundary in face.boundary().loops() {
-            let loop_ = face.loop_from_seed(boundary.dart);
-            match boundary.kind {
+        for loop_ in face.loops() {
+            match loop_.kind() {
                 LoopKind::Outer | LoopKind::Wrapping { .. } => {
                     place_loop(face, &loop_, periods, &mut outer, &mut outer_offset)?;
                 }

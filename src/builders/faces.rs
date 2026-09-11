@@ -15,7 +15,7 @@ use crate::geometry::{
     TrimmedCurve2,
 };
 use crate::topology::attributes::{
-    BoundaryLoop, EdgeAttr, FaceAttr, FaceBoundary, LoopKind, ProfileAttr, VertexAttr,
+    EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, VertexAttr,
 };
 use crate::topology::closed::Closed;
 use crate::topology::edge::Edge;
@@ -844,11 +844,11 @@ fn wrapping_chains<P: Payload>(
     let attr = edit
         .face_attr(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
-    let wrapping = attr.boundary.wrapping().collect::<Vec<_>>();
+    let wrapping = attr.wrapping().collect::<Vec<_>>();
     let [(_, axis), (_, second_axis)] = wrapping[..] else {
         return Ok(None);
     };
-    if second_axis != axis || attr.boundary.loops().len() != 2 {
+    if second_axis != axis || attr.loops.len() != 2 {
         return Ok(None);
     }
     let periods = match attr.surface.periodicity() {
@@ -946,7 +946,6 @@ fn ring_face_for_chain<P: Payload>(
             .face_attr(face)
             .ok_or(FaceImprintSplitError::MissingFace { face })?;
         let bounds = attr
-            .boundary
             .wrapping()
             .filter_map(|(seed, _)| attr.pcurves.get(&seed).map(at))
             .collect::<Vec<_>>();
@@ -993,7 +992,7 @@ fn split_ring_face_by_wrapping_chain<P: Payload>(
         P::Profile::default(),
     ));
 
-    let seeds = old_face.boundary.wrapping().collect::<Vec<_>>();
+    let seeds = old_face.wrapping().collect::<Vec<_>>();
     let [(first_seed, _), (second_seed, _)] = seeds[..] else {
         return Err(FaceImprintSplitError::MissingFace { face });
     };
@@ -1010,10 +1009,10 @@ fn split_ring_face_by_wrapping_chain<P: Payload>(
     let mut second_pcurves = wrapping_loop_pcurves(edit, face, &old_face.pcurves, second_seed)?;
     second_pcurves.extend(second_new.pcurves.clone());
     let ring = |seed: Dart, added: Dart| {
-        FaceBoundary::from_loops(vec![
-            BoundaryLoop::new(seed, LoopKind::Wrapping { axis }),
-            BoundaryLoop::new(added, LoopKind::Wrapping { axis }),
-        ])
+        vec![
+            LoopDefinition::from_kind(seed, LoopKind::Wrapping { axis }),
+            LoopDefinition::from_kind(added, LoopKind::Wrapping { axis }),
+        ]
     };
     let second_boundary = ring(second_seed, second_new.loop_dart);
     let first_boundary = ring(first_seed, first_new.loop_dart);
@@ -1021,12 +1020,12 @@ fn split_ring_face_by_wrapping_chain<P: Payload>(
     let face_attr = edit
         .face_attr_mut(face)
         .expect("source face must remain staged during a ring split");
-    face_attr.boundary = first_boundary;
+    face_attr.loops = first_boundary;
     face_attr.pcurves = first_pcurves;
 
     let second = edit.add_face_split_from(
         face,
-        FaceAttr::with_boundary(
+        FaceAttr::with_loops(
             old_face.surface,
             P::F::default(),
             second_boundary,
@@ -1230,7 +1229,7 @@ fn finish_closed_imprint_split<P: Payload>(
     let face_attr = edit
         .face_attr_mut(face)
         .expect("source face must remain staged during a closed-loop split");
-    face_attr.boundary.push_inner(outside_loop.loop_dart);
+    face_attr.push_inner(outside_loop.loop_dart);
     face_attr.pcurves.extend(outside_loop.pcurves);
 
     let second = edit.add_face_split_from(
@@ -1473,9 +1472,9 @@ fn split_one_face_by_imprints<P: Payload>(
     let old_face = face_attr.clone();
     // A chord runs between two corners of one loop, so each bounding loop is
     // tried on its own: a ring has two, and the imprint chord lands on one.
-    let bounding = bounding_loops(&old_face.boundary);
+    let bounding = bounding_loops(&old_face.loops);
     for chorded in bounding {
-        let boundary = loop_boundary_edges(edit, face, chorded.dart)?;
+        let boundary = loop_boundary_edges(edit, face, chorded.seed())?;
         let Some(cut) = FaceImprintCut::from_chain(imprints, &boundary)? else {
             continue;
         };
@@ -1627,8 +1626,12 @@ fn face_boundary_edges<P: Payload>(
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
     let mut boundary = Vec::new();
-    for bounding in bounding_loops(face_view.boundary()) {
-        boundary.extend(loop_boundary_edges(g, face, bounding.dart)?);
+    for loop_ in face_view
+        .loops()
+        .into_iter()
+        .filter(|loop_| !loop_.is_inner())
+    {
+        boundary.extend(loop_boundary_edges(g, face, loop_.dart)?);
     }
     Ok(boundary)
 }
@@ -1657,11 +1660,10 @@ fn loop_boundary_edges<P: Payload>(
 }
 
 /// The loops bounding a face from outside: every loop that is not a hole.
-fn bounding_loops(boundary: &FaceBoundary) -> Vec<BoundaryLoop> {
+fn bounding_loops(boundary: &[LoopDefinition]) -> Vec<LoopDefinition> {
     boundary
-        .loops()
         .iter()
-        .filter(|loop_| loop_.kind != LoopKind::Inner)
+        .filter(|loop_| loop_.kind() != LoopKind::Inner)
         .copied()
         .collect()
 }
@@ -1781,14 +1783,14 @@ fn apply_face_chord_split<P: Payload>(
     edit: &mut TopologyEdit<'_, P>,
     original_face: FaceKey,
     mut old_face: FaceAttr<P::F>,
-    chorded: BoundaryLoop,
+    chorded: LoopDefinition,
     cut: &FaceImprintCut,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
     let source_profile = edit
-        .profile_key(chorded.dart)
+        .profile_key(chorded.seed())
         .expect("face loop must have a registered profile");
     let loop_ = Closed::new_unchecked(
-        Profile::from_dart(edit, chorded.dart).expect("face loop must have a registered profile"),
+        Profile::from_dart(edit, chorded.seed()).expect("face loop must have a registered profile"),
     );
     let corners = loop_.corners();
     let start = &corners[cut.start_corner];
@@ -1901,7 +1903,7 @@ fn apply_face_chord_split<P: Payload>(
     let (source_inner_loops, created_inner_loops) = partition_inner_loops(
         edit,
         original_face,
-        &old_face.boundary.inner_vec(),
+        &old_face.inner_vec(),
         &old_face.pcurves,
         source_loop,
         &source_pcurves,
@@ -1950,53 +1952,59 @@ fn apply_face_chord_split<P: Payload>(
         .collect();
     let (source_kind, created_kind) = chord_loop_kinds(
         edit,
-        chorded.kind,
+        chorded.kind(),
         (source_loop, &source_pcurves),
         (created_loop, &created_pcurves),
     )?;
-    let mut source_loops = vec![BoundaryLoop::new(source_loop, source_kind)];
-    let mut created_loops = vec![BoundaryLoop::new(created_loop, created_kind)];
+    let mut source_loops = vec![LoopDefinition::from_kind(source_loop, source_kind)];
+    let mut created_loops = vec![LoopDefinition::from_kind(created_loop, created_kind)];
 
     // A loop spanning a whole period cannot sit inside the half the chord
     // bounded in that axis, so every other wrapping loop belongs to the half
     // that still wraps. No sampling can answer this, and none needs to.
     let source_wraps = source_kind.wrapped_axis().is_some();
-    for other in bounding_loops(&old_face.boundary)
+    for other in bounding_loops(&old_face.loops)
         .into_iter()
-        .filter(|other| other.dart != chorded.dart)
+        .filter(|other| other.seed() != chorded.seed())
     {
         let (loops, pcurves) = if source_wraps {
             (&mut source_loops, &mut source_pcurves)
         } else {
             (&mut created_loops, &mut created_pcurves)
         };
-        extend_loop_pcurves(edit, original_face, other.dart, &old_face.pcurves, pcurves)?;
+        extend_loop_pcurves(
+            edit,
+            original_face,
+            other.seed(),
+            &old_face.pcurves,
+            pcurves,
+        )?;
         loops.push(other);
     }
     source_loops.extend(
         source_inner_loops
             .into_iter()
-            .map(|dart| BoundaryLoop::new(dart, LoopKind::Inner)),
+            .map(|dart| LoopDefinition::from_kind(dart, LoopKind::Inner)),
     );
     created_loops.extend(
         created_inner_loops
             .into_iter()
-            .map(|dart| BoundaryLoop::new(dart, LoopKind::Inner)),
+            .map(|dart| LoopDefinition::from_kind(dart, LoopKind::Inner)),
     );
 
     let source_attr = edit
         .face_attr_mut(original_face)
         .expect("source face must remain staged during a chord split");
     source_attr.surface = old_face.surface.clone();
-    source_attr.boundary = FaceBoundary::from_loops(source_loops);
+    source_attr.loops = source_loops;
     source_attr.pcurves = source_pcurves;
 
     let second = edit.add_face_split_from(
         original_face,
-        FaceAttr::with_boundary(
+        FaceAttr::with_loops(
             old_face.surface,
             P::F::default(),
-            FaceBoundary::from_loops(created_loops),
+            created_loops,
             created_pcurves,
         ),
     );
@@ -2215,7 +2223,6 @@ fn face_edge_dart<P: Payload>(
         ))?;
     let edge_dart = g.cell_representative(edge_attr.dart, Dim::One);
     let profile_darts: Vec<Dart> = face_attr
-        .boundary
         .darts()
         .flat_map(|loop_dart| {
             Profile::from_dart(g, loop_dart)
@@ -2498,8 +2505,10 @@ pub fn reverse_face_winding<P: Payload>(edit: &mut TopologyEdit<'_, P>, face: Fa
     // Reversing is atomic over the whole boundary: every loop seed becomes its
     // `alpha0`, whatever that loop bounds, and every pcurve is reversed onto
     // the dart that now carries it.
-    let mut boundary = face_attr.boundary.clone();
-    boundary.map_darts(|dart| edit.alpha(Dim::Zero, dart));
+    let mut loops = face_attr.loops.clone();
+    for loop_ in &mut loops {
+        loop_.set_seed(edit.alpha(Dim::Zero, loop_.seed()));
+    }
     let pcurves = face_attr
         .face(edit)
         .edges()
@@ -2513,7 +2522,7 @@ pub fn reverse_face_winding<P: Payload>(edit: &mut TopologyEdit<'_, P>, face: Fa
         .collect();
 
     if let Some(face) = edit.face_attr_mut(face) {
-        face.boundary = boundary;
+        face.loops = loops;
         face.pcurves = pcurves;
     }
 }

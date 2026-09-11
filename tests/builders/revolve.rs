@@ -508,9 +508,16 @@ fn revolved_face_full_turn_bands_are_rings() {
         "a full turn has no caps, so no planar source face may survive"
     );
     assert!(
-        g.iter_faces()
-            .all(|(_, attr)| attr.boundary.outer().is_none()
-                && attr.boundary.wrapping().count() == 2),
+        g.iter_faces().all(|(_, attr)| {
+            let face = attr.face(&g);
+            face.outer_loop().is_none()
+                && face
+                    .loops()
+                    .into_iter()
+                    .filter_map(|loop_| loop_.wrapping_axis())
+                    .count()
+                    == 2
+        }),
         "every band is bounded by two wrapping loops and no outer loop"
     );
     // A torus, read with each band counted for what it is: an annulus, not a
@@ -609,14 +616,17 @@ fn revolve_edge_full_turn_bounds_its_band_with_wrapping_loops() {
         )
         .expect("a full turn should build");
 
-        let boundary = &g.face_attr_unchecked(face).boundary;
-        assert_eq!(boundary.loops().len(), 2, "{start:?} -> {end:?}");
+        let face = g.face_unchecked(face);
+        assert_eq!(face.loops().len(), 2, "{start:?} -> {end:?}");
         assert!(
-            boundary.outer().is_none(),
+            face.outer_loop().is_none(),
             "{start:?} -> {end:?} should have no outer loop"
         );
         assert_eq!(
-            boundary.wrapping().count(),
+            face.loops()
+                .into_iter()
+                .filter_map(|loop_| loop_.wrapping_axis())
+                .count(),
             2,
             "{start:?} -> {end:?}: both swept circles wrap the turn"
         );

@@ -19,7 +19,7 @@ use crate::{
     },
     topology::{
         Dart, SheetAttr, SolidAttr, TopologyEdit,
-        attributes::{BoundaryLoop, EdgeAttr, FaceAttr, FaceBoundary, LoopKind, ProfileAttr},
+        attributes::{EdgeAttr, FaceAttr, LoopDefinition, ProfileAttr},
         edge::Edge,
         face::Face,
         gmap::{Cell2, Dim, GMap, MergeTopology, TopologyEditError},
@@ -114,7 +114,7 @@ pub fn translate_face<P: Payload>(
                 .surface
                 .translated(direction)
                 .map_err(|source| ExtrudeError::SurfaceTranslationFailed {
-                    dart: translated_face.boundary.outer_unchecked(),
+                    dart: translated_face.outer_unchecked(),
                     source,
                 })?;
         Ok::<_, ExtrudeError>(())
@@ -160,9 +160,9 @@ fn add_extruded_face_staged<P: Payload>(
     let top_face_dart = edit.merge(top_face.face());
     let top_face_key = *edit.attribute_unchecked::<Cell2>(top_face_dart);
     let top_face_attr = edit.face_attr_unchecked(top_face_key);
-    let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.boundary.inner().count());
-    top_loop_darts.push(top_face_attr.boundary.outer_unchecked());
-    top_loop_darts.extend(top_face_attr.boundary.inner());
+    let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.inner().count());
+    top_loop_darts.push(top_face_attr.outer_unchecked());
+    top_loop_darts.extend(top_face_attr.inner());
 
     orient_extruded_caps(edit, face_key, top_face_key, direction);
 
@@ -172,10 +172,7 @@ fn add_extruded_face_staged<P: Payload>(
 
     // The shell dart is contextual: unlike a cell representative, it must retain
     // the outward orientation established for the bottom cap.
-    let outer_shell = edit
-        .face_attr_unchecked(face_key)
-        .boundary
-        .outer_unchecked();
+    let outer_shell = edit.face_attr_unchecked(face_key).outer_unchecked();
     if edit.sheet_key(outer_shell).is_none() {
         edit.add_sheet(SheetAttr::new(outer_shell, P::Sheet::default()));
     }
@@ -326,13 +323,13 @@ fn sew_wrapping_lateral_face<P: Payload>(
     edit.add_profile(ProfileAttr::new(bottom_start, P::Profile::default()));
     edit.add_profile(ProfileAttr::new(top_start, P::Profile::default()));
     let uv = prepared.uv;
-    edit.add_face(FaceAttr::with_boundary(
+    edit.add_face(FaceAttr::with_loops(
         prepared.surface.clone(),
         P::F::default(),
-        FaceBoundary::from_loops(vec![
-            BoundaryLoop::new(bottom_start, LoopKind::Wrapping { axis }),
-            BoundaryLoop::new(top_start, LoopKind::Wrapping { axis }),
-        ]),
+        vec![
+            LoopDefinition::wrapping(bottom_start, axis),
+            LoopDefinition::wrapping(top_start, axis),
+        ],
         HashMap::from([
             (bottom_start, TrimmedCurve2::segment(uv[0], uv[1])),
             (top_start, TrimmedCurve2::segment(uv[2], uv[3])),

@@ -131,7 +131,11 @@ fn grid_bounds<P: Payload>(
 ) -> (f64, f64, f64, f64) {
     let (u_min, u_max, v_min, v_max) = uv_bbox(outer_uv);
     let mut bounds = [(u_min, u_max), (v_min, v_max)];
-    for (_, axis) in face.boundary().wrapping() {
+    for axis in face
+        .loops()
+        .into_iter()
+        .filter_map(|loop_| loop_.wrapping_axis())
+    {
         if let (Some(period), Some(cut)) = (domain.period(axis), domain.cut(axis)) {
             bounds[axis.index()] = (cut, cut + period);
         }

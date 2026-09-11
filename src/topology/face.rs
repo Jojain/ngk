@@ -3,16 +3,17 @@ use super::edge::Edge;
 use super::gmap::{Cell2, Dart, Dim, GMap, MergeTopology, TopologyMerge};
 use super::orientation::Orientation;
 use super::payload::{Payload, StandardPayload};
-use super::profile::{Loop, Profile};
+use super::profile::Profile;
 use super::vertex::Vertex;
 use crate::geometry::Surface;
 use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
 use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
-use crate::topology::attributes::{FaceAttr, FaceBoundary};
+use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind};
 use crate::topology::shape_keys::FaceKey;
 use crate::topology::unwrapped_face_domain::UnwrappedFaceDomain;
 use nalgebra::UnitVector3;
+use std::ops::Deref;
 
 /// Samples per pcurve used to read a boundary's winding.
 ///
@@ -20,9 +21,63 @@ use nalgebra::UnitVector3;
 /// samples per pcurve settles it at any model scale.
 const BOUNDARY_WINDING_SAMPLES: usize = 8;
 
+/// A closed profile as used by one face.
+///
+/// A loop combines the profile traversal with the face-domain role that gives
+/// that traversal meaning: a chart-closed exterior, a hole, or a periodic
+/// wrapping boundary. The role belongs here rather than on [`Profile`], because
+/// it depends on this face's support and parameterization.
+pub struct Loop<'a, P: Payload = StandardPayload> {
+    profile: Closed<Profile<'a, P>>,
+    kind: LoopKind,
+}
+
+impl<'a, P: Payload> Loop<'a, P> {
+    /// Creates a loop from a closed profile and its face-domain role.
+    fn new(profile: Closed<Profile<'a, P>>, kind: LoopKind) -> Self {
+        Self { profile, kind }
+    }
+
+    /// Returns how this loop bounds its face in parameter space.
+    pub fn kind(&self) -> LoopKind {
+        self.kind
+    }
+
+    /// Returns whether this loop bounds the face's outer region.
+    pub fn is_outer(&self) -> bool {
+        self.kind == LoopKind::Outer
+    }
+    /// Returns whether this loop bounds a hole.
+    pub fn is_inner(&self) -> bool {
+        self.kind == LoopKind::Inner
+    }
+    /// Returns whether this loop bounds a wrapping seam.
+    pub fn is_wrapping(&self) -> bool {
+        matches!(self.kind, LoopKind::Wrapping { .. })
+    }
+
+    /// Returns the periodic direction this loop spans, if any.
+    pub fn wrapping_axis(&self) -> Option<crate::geometry::Axis2> {
+        self.kind.wrapped_axis()
+    }
+
+    /// Returns the same face loop with the opposite traversal orientation.
+    pub fn reversed(&self) -> Self {
+        Self::new(self.profile.reversed(), self.kind)
+    }
+}
+
+impl<'a, P: Payload> Deref for Loop<'a, P> {
+    type Target = Closed<Profile<'a, P>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.profile
+    }
+}
+
 /// A domain-level face view with stable identity and contextual orientation.
 ///
-/// A face is a surface region backed by a stored [`FaceAttr`]. Its boundary is
+/// A face is a surface region backed by a stored [`FaceAttr`]. Its loops are
 /// a list of kinded loops: usually an outer loop and holes, but a ring face —
 /// a cylinder wall — is bounded by two wrapping loops and has no outer loop.
 ///
@@ -33,7 +88,7 @@ const BOUNDARY_WINDING_SAMPLES: usize = 8;
 /// face be viewed whether or not it owns a dart to be reached by.
 ///
 /// The sense is relative to the default orientation defined by the outer loop
-/// stored in [`FaceAttr::boundary`]. Opposite volume-side uses of a sewn face
+/// stored in [`FaceAttr`]. Opposite volume-side uses of a sewn face
 /// therefore share one [`FaceKey`] while producing oppositely oriented views.
 pub struct Face<'g, P: Payload = StandardPayload> {
     gmap: &'g GMap<P>,
@@ -96,15 +151,7 @@ impl<'g, P: Payload> Face<'g, P> {
     /// loop otherwise — `alpha0`-flipped when the view is reversed, so it
     /// round-trips through [`Self::from_dart`] to an identical view.
     pub fn dart(&self) -> Dart {
-        self.oriented_seed(self.attr().boundary.seed_unchecked())
-    }
-
-    /// Returns the stored boundary of this face: its loop seeds and their kinds.
-    ///
-    /// The seeds are as stored, in the face's default orientation. Read one in
-    /// this view's orientation with [`Self::loop_from_seed`].
-    pub fn boundary(&self) -> &'g FaceBoundary {
-        &self.attr().boundary
+        self.oriented_seed(self.attr().seed_unchecked())
     }
 
     /// Returns a new face view with the opposite orientation.
@@ -124,16 +171,26 @@ impl<'g, P: Payload> Face<'g, P> {
         }
     }
 
-    /// Returns the loop seeded at `seed`, read in this view's orientation.
+    /// Returns the face loop seeded at `seed`, read in this view's orientation.
     ///
     /// The loop is trusted as closed because face attributes are created from
     /// closed boundary profiles. A wrapping loop is closed too — on the
     /// periodic quotient rather than in parameter space.
     pub fn loop_from_seed(&self, seed: Dart) -> Loop<'g, P> {
-        Closed::new_unchecked(
-            Profile::from_dart(self.gmap, self.oriented_seed(seed))
+        let definition = self
+            .attr()
+            .loop_definition(seed)
+            .expect("face loop seed must be stored on its face");
+        self.loop_from_definition(definition)
+    }
+
+    /// Resolves one stored loop definition into this face's oriented loop view.
+    fn loop_from_definition(&self, definition: LoopDefinition) -> Loop<'g, P> {
+        let profile = Closed::new_unchecked(
+            Profile::from_dart(self.gmap, self.oriented_seed(definition.seed()))
                 .expect("face loop must have a registered profile"),
-        )
+        );
+        Loop::new(profile, definition.kind())
     }
 
     /// Returns the outer boundary loop of the face, if it has one.
@@ -143,8 +200,7 @@ impl<'g, P: Payload> Face<'g, P> {
     /// reach for [`Self::loops`] rather than treat this as infallible.
     pub fn outer_loop(&self) -> Option<Loop<'g, P>> {
         self.attr()
-            .boundary
-            .outer()
+            .outer_seed()
             .map(|seed| self.loop_from_seed(seed))
     }
 
@@ -153,20 +209,24 @@ impl<'g, P: Payload> Face<'g, P> {
     /// Inner loops represent holes in the face region. The returned order is
     /// the storage order from the face attribute.
     pub fn inner_loops(&self) -> Vec<Loop<'g, P>> {
-        self.attr()
-            .boundary
-            .inner()
-            .map(|seed| self.loop_from_seed(seed))
-            .collect()
+        self.loops().into_iter().filter(Loop::is_inner).collect()
     }
 
     /// Returns all boundary loops, outer first when there is one.
     pub fn loops(&self) -> Vec<Loop<'g, P>> {
-        self.attr()
-            .boundary
-            .darts()
-            .map(|seed| self.loop_from_seed(seed))
-            .collect()
+        let definitions = &self.attr().loops;
+        let mut loops = Vec::with_capacity(definitions.len());
+        if let Some(outer) = self.attr().outer_seed() {
+            loops.push(self.loop_from_seed(outer));
+        }
+        loops.extend(
+            definitions
+                .iter()
+                .copied()
+                .filter(|definition| definition.kind() != LoopKind::Outer)
+                .map(|definition| self.loop_from_definition(definition)),
+        );
+        loops
     }
 
     /// Returns all boundary edges of the face.

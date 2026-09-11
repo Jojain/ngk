@@ -473,7 +473,7 @@ impl<P: Payload> GMap<P> {
             self.insert_logical_key(&mut indexes.profile, repr, key, EditKey::Profile);
         }
         for (key, attr) in self.faces.iter() {
-            for dart in attr.boundary.darts() {
+            for dart in attr.darts() {
                 let repr = self.cell_representative(dart, Dim::Two);
                 self.insert_logical_key(&mut indexes.face, repr, key, EditKey::Face);
             }
@@ -521,7 +521,7 @@ impl<P: Payload> GMap<P> {
                     && seen_faces.insert(face_key)
                 {
                     let face = self.face_attr_unchecked(face_key);
-                    pending.extend(face.boundary.darts());
+                    pending.extend(face.darts());
                 }
             }
             darts.extend(self.orbit(seed, self.orbit_indices(Dim::Three)));
@@ -719,7 +719,7 @@ impl<P: Payload> GMap<P> {
             attr.dart = map_dart(attr.dart);
         }
         for attr in self.faces.values_mut() {
-            attr.boundary.map_darts(map_dart);
+            attr.map_darts(map_dart);
             attr.pcurves = std::mem::take(&mut attr.pcurves)
                 .into_iter()
                 .map(|(dart, pcurve)| (map_dart(dart), pcurve))
@@ -1012,8 +1012,7 @@ impl<P: Payload> GMap<P> {
     /// one of that face's boundary components.
     pub fn face_orientation_at_dart(&self, key: FaceKey, dart: Dart) -> Orientation {
         let attr = self.face_attr_unchecked(key);
-        attr.boundary
-            .darts()
+        attr.darts()
             .find_map(|seed| self.cell_orientation_from_seed(seed, dart, Dim::Two))
             .expect("face orientation requires dart to belong to face")
     }
@@ -1313,12 +1312,12 @@ impl<P: Payload> GMap<P> {
         }
 
         for (_, attr) in source.faces.iter() {
-            if !source_dart_set.contains(&attr.boundary.seed_unchecked()) {
+            if !source_dart_set.contains(&attr.seed_unchecked()) {
                 continue;
             }
             let mut attr = attr.clone();
-            attr.boundary.retain_mapped(&dart_map);
-            if attr.boundary.is_empty() {
+            attr.retain_mapped(&dart_map);
+            if attr.is_empty() {
                 continue;
             }
             attr.pcurves = attr
@@ -1762,11 +1761,11 @@ mod tests {
         let merged_face = target.face_attr_unchecked(merged_key);
 
         assert_eq!(target.dart_count(), 10);
-        assert_eq!(merged_face.boundary.outer_unchecked(), Dart::new(2));
+        assert_eq!(merged_face.outer_unchecked(), Dart::new(2));
         assert!(
             merged_face
                 .pcurves
-                .contains_key(&merged_face.boundary.outer_unchecked())
+                .contains_key(&merged_face.outer_unchecked())
         );
         assert!(!merged_face.pcurves.contains_key(&loop_dart));
         assert_eq!(target.alpha(Dim::Zero, Dart::new(2)), Dart::new(3));

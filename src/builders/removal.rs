@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::geometry::{Axis2, LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
-use crate::topology::attributes::{BoundaryLoop, FaceAttr, FaceBoundary, LoopKind, ProfileAttr};
+use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr};
 use crate::topology::gmap::{Cell1, Cell2, Dim, GMap};
 use crate::topology::orientation::Orientation;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
@@ -335,7 +335,7 @@ enum MergePlan {
         /// The seed kept by `survivor_loop`, then the one needing its own.
         seeds: [Dart; 2],
         /// The face's other loops, which the removal does not touch.
-        untouched: Vec<BoundaryLoop>,
+        untouched: Vec<LoopDefinition>,
     },
 }
 
@@ -391,7 +391,7 @@ impl MergePlan {
     ) -> Result<Self, CellRemovalError> {
         let missing = || CellRemovalError::UnregisteredIncidence { dart, dim };
         let attr = g.face_attr(face).ok_or_else(missing)?;
-        let boundaries = attr.boundary.darts().collect::<Vec<_>>();
+        let boundaries = attr.darts().collect::<Vec<_>>();
 
         let touched = cell
             .iter()
@@ -427,7 +427,7 @@ impl MergePlan {
             }
             let face_aliases = g
                 .iter_faces()
-                .filter(|(_, attr)| attr.boundary.darts().any(|seed| cell_set.contains(&seed)))
+                .filter(|(_, attr)| attr.darts().any(|seed| cell_set.contains(&seed)))
                 .map(|(key, _)| key)
                 .collect();
             let boundaries = boundaries
@@ -560,7 +560,7 @@ impl MergePlan {
             untouched: boundaries
                 .iter()
                 .filter(|&&seed| seed != reference)
-                .filter_map(|&seed| Some(BoundaryLoop::new(seed, attr.boundary.kind_of(seed)?)))
+                .filter_map(|&seed| Some(LoopDefinition::from_kind(seed, attr.kind_of(seed)?)))
                 .collect(),
         }))
     }
@@ -596,17 +596,14 @@ impl MergePlan {
             .face_attr(consumed)
             .ok_or(CellRemovalError::UnregisteredIncidence { dart, dim })?;
         let transferred = attr
-            .boundary
             .darts()
             .filter(|&seed| g.profile_key(seed) != Some(consumed_loop))
             .collect::<Vec<_>>();
 
         let survivor_loop_is_inner = survivor_attr
-            .boundary
             .inner()
             .any(|seed| g.profile_key(seed) == Some(survivor_loop));
-        let consumed_loop_is_outer =
-            g.profile_key(attr.boundary.outer_unchecked()) == Some(consumed_loop);
+        let consumed_loop_is_outer = g.profile_key(attr.outer_unchecked()) == Some(consumed_loop);
         let loop_disappears = [survivor_loop, consumed_loop].into_iter().all(|profile| {
             let seed = g.profile_attr_unchecked(profile).dart;
             g.orbit(seed, vec![0, 1])
@@ -614,7 +611,6 @@ impl MergePlan {
         });
         if survivor_loop_is_inner && consumed_loop_is_outer && loop_disappears {
             let remaining_inner = survivor_attr
-                .boundary
                 .inner()
                 .filter(|&seed| g.profile_key(seed) != Some(survivor_loop))
                 .collect();
@@ -623,7 +619,7 @@ impl MergePlan {
                 consumed,
                 survivor_loop,
                 consumed_loop,
-                survivor_outer: survivor_attr.boundary.outer_unchecked(),
+                survivor_outer: survivor_attr.outer_unchecked(),
                 remaining_inner,
                 transferred,
             });
@@ -660,8 +656,8 @@ impl MergePlan {
                     edit.merge_profiles_into(survivor_loop, consumed);
                 }
                 let attr = edit.face_attr_mut_unchecked(face);
-                attr.boundary.set_outer(boundaries[0]);
-                attr.boundary.set_inner(boundaries[1..].to_vec());
+                attr.set_outer(boundaries[0]);
+                attr.set_inner(boundaries[1..].to_vec());
                 MergedCell::Loops {
                     face,
                     survivor_loop,
@@ -683,11 +679,11 @@ impl MergePlan {
                     ProfileAttr::new(added, P::Profile::default()),
                 );
                 let mut loops = vec![
-                    BoundaryLoop::new(kept, LoopKind::Wrapping { axis }),
-                    BoundaryLoop::new(added, LoopKind::Wrapping { axis }),
+                    LoopDefinition::from_kind(kept, LoopKind::Wrapping { axis }),
+                    LoopDefinition::from_kind(added, LoopKind::Wrapping { axis }),
                 ];
                 loops.extend(untouched);
-                edit.face_attr_mut_unchecked(face).boundary = FaceBoundary::from_loops(loops);
+                edit.face_attr_mut_unchecked(face).loops = loops;
                 MergedCell::Ring {
                     face,
                     survivor_loop,
@@ -705,12 +701,12 @@ impl MergePlan {
                     edit.remove_profile(key);
                 }
                 let attr = edit.face_attr_mut_unchecked(face);
-                attr.boundary.set_outer(boundaries[0]);
-                attr.boundary.set_inner(boundaries[1..].to_vec());
+                attr.set_outer(boundaries[0]);
+                attr.set_inner(boundaries[1..].to_vec());
                 for alias in face_aliases.into_iter().filter(|key| *key != face) {
                     let attr = edit.face_attr_mut_unchecked(alias);
-                    attr.boundary.set_outer(boundaries[0]);
-                    attr.boundary.clear_inner();
+                    attr.set_outer(boundaries[0]);
+                    attr.clear_inner();
                     attr.pcurves.clear();
                 }
                 MergedCell::BoundaryRemoved { face, profile }
@@ -725,14 +721,8 @@ impl MergePlan {
                 // The fused-loop seeds belonged to the removed cell, so the
                 // reseeded darts the two face attributes now carry are what
                 // relates the two faces' default orientations.
-                let survivor_reference = edit
-                    .face_attr_unchecked(survivor)
-                    .boundary
-                    .outer_unchecked();
-                let consumed_reference = edit
-                    .face_attr_unchecked(consumed)
-                    .boundary
-                    .outer_unchecked();
+                let survivor_reference = edit.face_attr_unchecked(survivor).outer_unchecked();
+                let consumed_reference = edit.face_attr_unchecked(consumed).outer_unchecked();
                 let orientation = edit
                     .map()
                     .cell_orientation_from_seed(survivor_reference, consumed_reference, Dim::Two)
@@ -745,9 +735,7 @@ impl MergePlan {
                         Orientation::Reversed => edit.alpha(Dim::Zero, seed),
                     })
                     .collect::<Vec<_>>();
-                edit.face_attr_mut_unchecked(survivor)
-                    .boundary
-                    .extend_inner(moved);
+                edit.face_attr_mut_unchecked(survivor).extend_inner(moved);
 
                 edit.merge_profiles_into(survivor_loop, consumed_loop);
                 edit.merge_faces_into(survivor, consumed);
@@ -768,10 +756,7 @@ impl MergePlan {
                 mut remaining_inner,
                 transferred,
             } => {
-                let consumed_reference = edit
-                    .face_attr_unchecked(consumed)
-                    .boundary
-                    .outer_unchecked();
+                let consumed_reference = edit.face_attr_unchecked(consumed).outer_unchecked();
                 let orientation = edit
                     .map()
                     .cell_orientation_from_seed(survivor_outer, consumed_reference, Dim::Two)
@@ -782,11 +767,11 @@ impl MergePlan {
                 }));
 
                 let survivor_attr = edit.face_attr_mut_unchecked(survivor);
-                survivor_attr.boundary.set_outer(survivor_outer);
-                survivor_attr.boundary.set_inner(remaining_inner);
+                survivor_attr.set_outer(survivor_outer);
+                survivor_attr.set_inner(remaining_inner);
                 let consumed_attr = edit.face_attr_mut_unchecked(consumed);
-                consumed_attr.boundary.set_outer(survivor_outer);
-                consumed_attr.boundary.clear_inner();
+                consumed_attr.set_outer(survivor_outer);
+                consumed_attr.clear_inner();
                 consumed_attr.pcurves.clear();
                 edit.remove_profile(survivor_loop);
                 edit.remove_profile(consumed_loop);
@@ -811,7 +796,7 @@ fn incident_loop_is_outer<P: Payload>(g: &GMap<P>, cell: &[Dart], face: FaceKey)
         .filter(|&dart| g.cell_key::<Cell2>(dart) == Some(face))
         .find_map(|dart| g.profile_key(dart))?;
     let attr = g.face_attr(face)?;
-    Some(g.profile_key(attr.boundary.outer_unchecked()) == Some(profile))
+    Some(g.profile_key(attr.outer_unchecked()) == Some(profile))
 }
 
 /// Returns the two distinct `(dim + 1)`-cell identities incident to the cell.
@@ -1122,12 +1107,12 @@ fn reseed_attributes<P: Payload>(
     let faces = edit
         .map()
         .iter_faces()
-        .filter(|(_, attr)| attr.boundary.darts().any(|dart| seeds.contains_key(&dart)))
+        .filter(|(_, attr)| attr.darts().any(|dart| seeds.contains_key(&dart)))
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
     for key in faces {
         let attr = edit.face_attr_mut_unchecked(key);
-        attr.boundary.map_darts(|dart| match seeds.get(&dart) {
+        attr.map_darts(|dart| match seeds.get(&dart) {
             Some(Some(seed)) => *seed,
             _ => dart,
         });

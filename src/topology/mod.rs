@@ -16,9 +16,7 @@ pub mod solid;
 pub mod unwrapped_face_domain;
 pub mod validation;
 pub mod vertex;
-pub use attributes::{
-    BoundaryLoop, FaceAttr, FaceBoundary, LoopKind, ProfileAttr, SheetAttr, SolidAttr,
-};
+pub use attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, SolidAttr};
 pub use dart::{Dart, IsolatedDart};
 pub use edit::{EditKey, EditPolicy, PreservePayload, TopologyEdit, TopologyEditError};
 pub use orientation::Orientation;

@@ -14,8 +14,7 @@ use crate::geometry::{
 };
 use crate::topology::IsolatedDart;
 use crate::topology::attributes::{
-    BoundaryLoop, EdgeAttr, FaceAttr, FaceBoundary, LoopKind, ProfileAttr, SheetAttr, SolidAttr,
-    VertexAttr,
+    EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
 };
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
@@ -597,25 +596,29 @@ fn add_full_revolved_open_edge_face<P: Payload>(
     // sweep entirely, and neither loop closes there. Which circle is the wider
     // one is a fact about the shape in space, not about the domain, so it does
     // not make one of them an outer loop.
-    let boundary = match inner_loops.first() {
+    let loops = match inner_loops.first() {
         Some(&inner) => match pcurves
             .get(&outer_loop)
             .zip(pcurves.get(&inner))
             .and_then(|(outer, inner)| swept_period_axis(&surface, [outer, inner]))
         {
-            Some(axis) => FaceBoundary::from_loops(vec![
-                BoundaryLoop::new(outer_loop, LoopKind::Wrapping { axis }),
-                BoundaryLoop::new(inner, LoopKind::Wrapping { axis }),
-            ]),
-            None => FaceBoundary::new(outer_loop, inner_loops),
+            Some(axis) => vec![
+                LoopDefinition::wrapping(outer_loop, axis),
+                LoopDefinition::wrapping(inner, axis),
+            ],
+            None => std::iter::once(LoopDefinition::outer(outer_loop))
+                .chain(inner_loops.into_iter().map(LoopDefinition::inner))
+                .collect(),
         },
-        None => FaceBoundary::new(outer_loop, inner_loops),
+        None => std::iter::once(LoopDefinition::outer(outer_loop))
+            .chain(inner_loops.into_iter().map(LoopDefinition::inner))
+            .collect(),
     };
 
-    Ok(edit.add_face(FaceAttr::with_boundary(
+    Ok(edit.add_face(FaceAttr::with_loops(
         surface,
         P::F::default(),
-        boundary,
+        loops,
         pcurves,
     )))
 }
@@ -1001,13 +1004,13 @@ fn add_full_revolved_ring_face<P: Payload>(
     }
 
     let [start_pcurve, end_pcurve] = pcurves;
-    let key = edit.add_face(FaceAttr::with_boundary(
+    let key = edit.add_face(FaceAttr::with_loops(
         surface,
         P::F::default(),
-        FaceBoundary::from_loops(vec![
-            BoundaryLoop::new(start_first, LoopKind::Wrapping { axis }),
-            BoundaryLoop::new(end_first, LoopKind::Wrapping { axis }),
-        ]),
+        vec![
+            LoopDefinition::from_kind(start_first, LoopKind::Wrapping { axis }),
+            LoopDefinition::from_kind(end_first, LoopKind::Wrapping { axis }),
+        ],
         HashMap::from([(start_first, start_pcurve), (end_first, end_pcurve)]),
     ));
 
@@ -1223,9 +1226,9 @@ fn add_revolved_face_staged<P: Payload>(
     let top_face_dart = edit.merge(rotated_face.face());
     let top_face_key = *edit.attribute_unchecked::<Cell2>(top_face_dart);
     let top_face_attr = edit.face_attr_unchecked(top_face_key);
-    let mut top_loops = Vec::with_capacity(1 + top_face_attr.boundary.inner().count());
-    top_loops.push(top_face_attr.boundary.outer_unchecked());
-    top_loops.extend(top_face_attr.boundary.inner());
+    let mut top_loops = Vec::with_capacity(1 + top_face_attr.inner().count());
+    top_loops.push(top_face_attr.outer_unchecked());
+    top_loops.extend(top_face_attr.inner());
 
     let mut lateral_faces = Vec::new();
     for (bottom_loop, top_loop) in loops.into_iter().zip(top_loops) {
@@ -1243,10 +1246,7 @@ fn add_revolved_face_staged<P: Payload>(
 
     // Contextual, like the extruded shell: it must keep the outward
     // orientation just established for the source cap.
-    let shell = edit
-        .face_attr_unchecked(face_key)
-        .boundary
-        .outer_unchecked();
+    let shell = edit.face_attr_unchecked(face_key).outer_unchecked();
     if edit.sheet_key(shell).is_none() {
         edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
     }
@@ -1433,7 +1433,7 @@ fn rotate_face<P: Payload>(
 
         let rotated_face = edit.face_attr_mut_unchecked(rotated_face_key);
         rotated_face.surface = rotate_surface(
-            rotated_face.boundary.outer_unchecked(),
+            rotated_face.outer_unchecked(),
             &rotated_face.surface,
             axis,
             angle,

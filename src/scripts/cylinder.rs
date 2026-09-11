@@ -35,7 +35,7 @@ pub fn run() -> Result<ScriptResult, String> {
 
     let mut hints = VizHints::new();
     for (key, attr) in g.iter_faces() {
-        let style = if attr.boundary.outer_unchecked() == arc_dart {
+        let style = if attr.outer_unchecked() == arc_dart {
             Style::default()
                 .color("#7bd0ff")
                 .label("extruded arc")

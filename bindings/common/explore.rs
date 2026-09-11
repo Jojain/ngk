@@ -5,10 +5,10 @@ use thiserror::Error;
 use crate::geometry::{Curve, Point3, Surface, TrimmedCurve2};
 use crate::topology::closed::{Closeable, Closed};
 use crate::topology::edge::{BoundedEdge, Edge};
-use crate::topology::face::Face;
+use crate::topology::face::{Face, Loop};
 use crate::topology::gmap::{Dart, Dim, GMAP_INVOLUTION_COUNT, GMap};
 use crate::topology::payload::{Payload, StandardPayload};
-use crate::topology::profile::{Loop, Profile};
+use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::{Sheet, ShellRef};
 use crate::topology::solid::Solid;
@@ -646,10 +646,12 @@ impl<P: Payload> SharedLoop<P> {
     }
 
     fn view(&self) -> Result<Loop<'_, P>, ExploreError> {
-        let profile = Profile::from_dart(self.map.map(), self.dart)
-            .filter(|view| view.key() == self.key)
-            .ok_or_else(|| missing("loop", self.dart.id()))?;
-        Ok(Closed::new_unchecked(profile))
+        let face = Face::from_dart(self.map.map(), self.dart)
+            .ok_or_else(|| missing("loop face", self.dart.id()))?;
+        face.loops()
+            .into_iter()
+            .find(|loop_| loop_.key() == self.key && loop_.dart == self.dart)
+            .ok_or_else(|| missing("loop", self.dart.id()))
     }
 
     /// Returns traversal-order dart ids.

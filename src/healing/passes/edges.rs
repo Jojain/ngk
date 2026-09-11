@@ -186,11 +186,10 @@ fn fuses_outer_loop<P: Payload>(g: &GMap<P>, dart: Dart, face: FaceKey) -> bool 
     let Some(profile) = g.profile_key(incident) else {
         return false;
     };
-    attr.boundary
-        .loops()
+    attr.loops
         .iter()
-        .filter(|boundary| boundary.kind != LoopKind::Inner)
-        .any(|boundary| g.profile_key(boundary.dart) == Some(profile))
+        .filter(|boundary| boundary.kind() != LoopKind::Inner)
+        .any(|boundary| g.profile_key(boundary.seed()) == Some(profile))
 }
 
 /// Reports whether `consumed` completely fills one inner loop of `survivor`.

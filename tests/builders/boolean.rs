@@ -14,7 +14,6 @@ use ngk::topology::TopologyEditError;
 use ngk::topology::attributes::VertexAttr;
 use ngk::topology::edge::Edge;
 use ngk::topology::gmap::{Dim, GMap};
-use ngk::topology::profile::Loop;
 use ngk::topology::shape_keys::{FaceKey, SolidKey, VertexKey};
 use ngk::topology::validation::{validate_gmap, validate_solid_manifold};
 use ngk::viz::debug_viewer::show;

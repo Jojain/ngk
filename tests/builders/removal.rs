@@ -469,20 +469,20 @@ fn removing_a_seam_leaves_the_face_a_ring() {
     assert_ne!(survivor_loop, added_loop);
     assert!(g.edge_attr(seam).is_none(), "the seam itself is gone");
 
-    let attr = g.face_attr_unchecked(wall);
+    let face = g.face_unchecked(wall);
     assert_eq!(
-        attr.boundary.loops().len(),
+        face.loops().len(),
         2,
         "the seam was hiding two loops, not one"
     );
     assert!(
-        attr.boundary.outer().is_none(),
+        face.outer_loop().is_none(),
         "neither loop bounds a ring from outside"
     );
     assert_eq!(
-        attr.boundary
-            .wrapping()
-            .map(|(_, axis)| axis)
+        face.loops()
+            .into_iter()
+            .filter_map(|loop_| loop_.wrapping_axis())
             .collect::<Vec<_>>(),
         vec![Axis2::U, Axis2::U],
         "both loops span the closed direction"
@@ -501,9 +501,9 @@ fn healing_removes_the_seam_of_an_imported_wall() {
         2,
         "the seam is gone and both circles remain"
     );
-    let attr = g.face_attr_unchecked(wall);
-    assert_eq!(attr.boundary.loops().len(), 2);
-    assert!(attr.boundary.outer().is_none());
+    let face = g.face_unchecked(wall);
+    assert_eq!(face.loops().len(), 2);
+    assert!(face.outer_loop().is_none());
 }
 
 /// Builds a cylinder wall the way a seamed import carries one.

@@ -1050,7 +1050,7 @@ fn remove_face_patch<P: Payload>(
     let patch_darts = patch_faces
         .iter()
         .flat_map(|face| {
-            let root = edit.face_attr_unchecked(*face).boundary.outer_unchecked();
+            let root = edit.face_attr_unchecked(*face).outer_unchecked();
             edit.orbit(root, edit.orbit_indices(Dim::Two))
                 .collect::<Vec<_>>()
         })

@@ -433,7 +433,7 @@ mod tests {
         for (_, face) in g.iter_faces() {
             let loop_darts = g
                 .orbit(
-                    face.boundary.outer_unchecked(),
+                    face.outer_unchecked(),
                     vec![Dim::Zero.index(), Dim::One.index()],
                 )
                 .collect::<Vec<_>>();

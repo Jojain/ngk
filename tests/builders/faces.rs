@@ -167,7 +167,7 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
     assert_eq!(g.iter_faces().count(), 1);
     assert_eq!(g.iter_edges().count(), 1);
     assert!(matches!(face.surface, Surface::Plane(_)));
-    assert_eq!(face.boundary.inner().count(), 0);
+    assert!(face.face(&g).inner_loops().is_empty());
     assert_eq!(face.pcurves.len(), 1);
 
     let shape_face = face.face(&g);
@@ -200,7 +200,7 @@ fn add_annulus_creates_planar_face_with_inner_circular_loop() {
     assert_eq!(g.iter_faces().count(), 1);
     assert_eq!(g.iter_edges().count(), 2);
     assert!(matches!(face.surface, Surface::Plane(_)));
-    assert_eq!(face.boundary.inner().count(), 1);
+    assert_eq!(face.face(&g).inner_loops().len(), 1);
     assert_eq!(face.pcurves.len(), 2);
 }
 
@@ -522,7 +522,7 @@ fn split_face_by_imprints_adds_closed_interior_loop() {
     assert_eq!(g.cells(Dim::Zero).count(), 8);
 
     let face = g.face_attr_unchecked(face_key);
-    assert_eq!(face.boundary.inner().count(), 1);
+    assert_eq!(face.face(&g).inner_loops().len(), 1);
     assert_eq!(face.pcurves.len(), 8);
 
     let shape_face = face.face(&g);
@@ -535,7 +535,7 @@ fn split_face_by_imprints_adds_closed_interior_loop() {
     );
 
     let island = g.face_attr_unchecked(splits[0].second);
-    assert!(island.boundary.inner().next().is_none());
+    assert!(island.face(&g).inner_loops().is_empty());
     assert_eq!(
         island
             .face(&g)

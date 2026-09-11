@@ -59,7 +59,7 @@ fn boundary_chord_split_preserves_source_face_and_applies_payload_policy() {
     let mut g = attributed_rectangle();
     let source = g.iter_faces().next().expect("face should exist").0;
     let source_profile = g
-        .profile_key(g.face_attr_unchecked(source).boundary.outer_unchecked())
+        .profile_key(g.face_unchecked(source).dart())
         .expect("source face should have a profile");
     let imprint = planar_line_imprint(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0));
     let mut policy = RecordFaceSplits::default();

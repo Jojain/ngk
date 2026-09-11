@@ -3,6 +3,7 @@ use std::f64::consts::PI;
 use ngk::geometry::Axis2;
 use ngk::geometry::{LINEAR_TOLERANCE, Plane, Surface};
 use ngk::modeling::{faces, solids};
+use ngk::topology::LoopKind;
 use ngk::topology::unwrapped_face_domain::UnwrappedFaceDomain;
 
 /// A seam is a property of the unwrapped domain, so a planar face has none: no period,
@@ -146,14 +147,21 @@ fn a_cylinder_wall_is_a_ring_face_with_no_seam() {
         .into_iter()
         .find(|face| matches!(face.surface(), Surface::Cylinder(_)))
         .expect("cylinder should have a lateral face");
-    let boundary = wall.boundary();
-
-    assert_eq!(boundary.outer(), None, "a ring face has no outer loop");
-    assert!(boundary.is_ring());
+    assert!(wall.outer_loop().is_none(), "a ring face has no outer loop");
     assert_eq!(
-        boundary
-            .wrapping()
-            .map(|(_, axis)| axis)
+        wall.loops()
+            .into_iter()
+            .map(|loop_| loop_.kind())
+            .collect::<Vec<_>>(),
+        vec![
+            LoopKind::Wrapping { axis: Axis2::U },
+            LoopKind::Wrapping { axis: Axis2::U },
+        ]
+    );
+    assert_eq!(
+        wall.loops()
+            .into_iter()
+            .filter_map(|loop_| loop_.wrapping_axis())
             .collect::<Vec<_>>(),
         vec![Axis2::U, Axis2::U]
     );
