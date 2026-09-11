@@ -14,7 +14,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::curves::{Curve, Periodicity};
+use super::curves::{Circle, Curve, Ellipse, Periodicity};
+use super::frame::Frame;
+use super::surfaces::Plane;
 use super::utils::{Point3, PointCoincidence};
 use crate::geometry::Interval;
 use crate::geometry::nurbs::error::NurbsError;
@@ -55,6 +57,52 @@ impl TrimmedCurve {
     pub fn between(curve: Curve, start: Point3, end: Point3) -> Self {
         let interval = curve.interval_between(start, end);
         Self { curve, interval }
+    }
+
+    /// Returns the straight segment from `start` to `end`.
+    ///
+    /// The support is the infinite line through both points, and the span is
+    /// its `[0, 1]` window.
+    pub fn segment(start: Point3, end: Point3) -> Self {
+        Self::new(Curve::line(start, end), Interval::new(0.0, 1.0))
+    }
+
+    /// Returns the arc that starts along the plane's `x_dir` and sweeps `sweep`
+    /// radians around its normal.
+    ///
+    /// The support is the whole circle; `sweep` is the span over it, so its
+    /// sign chooses the direction and its magnitude may exceed a full turn.
+    /// Naming an arc between two known points is done by placing the plane's
+    /// `x_dir` on the first and stating the sweep, rather than by giving the far
+    /// endpoint: the two arcs joining those points share both ends.
+    pub fn arc(plane: Plane, radius: f64, sweep: f64) -> Self {
+        Self::new(
+            Curve::Circle(Circle::new(plane, radius)),
+            Interval::new(0.0, sweep),
+        )
+    }
+
+    /// Returns the elliptical arc that starts on the frame's X axis and sweeps
+    /// `sweep` radians of eccentric angle.
+    ///
+    /// As with [`arc`](Self::arc), the support is the whole ellipse and the
+    /// sweep is the span over it.
+    pub fn ellipse_arc(frame: Frame, major_radius: f64, minor_radius: f64, sweep: f64) -> Self {
+        Self::new(
+            Curve::Ellipse(Ellipse::new(frame, major_radius, minor_radius)),
+            Interval::new(0.0, sweep),
+        )
+    }
+
+    /// Returns the span covering the whole of a support's own domain.
+    ///
+    /// Meaningful only for a support that was built to *be* the section — an
+    /// interpolated NURBS curve, say — where its domain already is the span
+    /// that is meant. An unbounded support has no such domain, and the span
+    /// comes back unbounded with it.
+    pub fn whole(curve: Curve) -> Self {
+        let interval = curve.domain();
+        Self::new(curve, interval)
     }
 
     /// Returns the untrimmed support.

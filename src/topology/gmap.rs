@@ -1615,7 +1615,7 @@ mod tests {
     use crate::builders::faces::add_polygon;
     use crate::builders::profiles::add_rectangle;
     use crate::builders::sheets::add_extruded_profile;
-    use crate::geometry::{Curve, Curve2, Line2, Plane, Point2, Point3, Surface};
+    use crate::geometry::{Curve, Plane, Point2, Point3, Surface, TrimmedCurve2};
     use crate::topology::attributes::{FaceAttr, SheetAttr, SolidAttr};
     use crate::topology::edit::TopologyEditError;
     use crate::topology::payload::{Payload, StandardPayload};
@@ -1742,7 +1742,7 @@ mod tests {
         let mut pcurves = HashMap::new();
         pcurves.insert(
             loop_dart,
-            Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(1.0, 0.0))),
+            TrimmedCurve2::segment(Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
         );
         let face_key = source
             .transaction(|edit| {

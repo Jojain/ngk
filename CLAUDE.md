@@ -81,7 +81,8 @@ attribute create/remove/split/merge declarations).
 
 ## Geometry
 
-- 2D: `Curve2`, `Line2`, `NurbsCurve2`, 2D intersections (used for pcurves/imprints).
+- 2D: `Curve2` (`Line2`, `Circle2`, `Ellipse2`, `NurbsCurve2`), `TrimmedCurve2`,
+  2D intersections (used for pcurves/imprints).
 - 3D: `Curve` (`Line`, `Circle`, NURBS), `Surface` (`Plane`, `Cylinder`,
   `RuledSurface`, `SurfaceOfRevolution`, `NurbsSurface`), `BBox`, `Frame`, `Interval`.
 - Intersections: curve/curve, curve/surface, surface/surface with `IntersectionOptions`.
@@ -106,6 +107,20 @@ attribute create/remove/split/merge declarations).
   span), unwraps periodic branches, and answers `contains` / `length` / `sub` /
   `reversed`. `to_curve()` is the cut-down copy: exact, but NURBS, so reach for
   it only when a curve that *is* the section is required (fitting a pcurve).
+- **2D mirrors 3D exactly.** A `Curve2` is an unbounded support in a surface's
+  parameter space — `Line2` extrapolates, `Circle2` and `Ellipse2` close — with
+  *native* parameters (a line's affine, a conic's angle in radians, a NURBS
+  curve's own knot domain); nothing is renormalized to `[0, 1]`.
+  **`TrimmedCurve2`** (`geometry/dim2/trimmed.rs`) is support + `Interval`, with
+  the same API as `TrimmedCurve`. Both carry the same shorthand constructors —
+  `segment`, `arc`, `ellipse_arc` (each anchoring the support so the span is
+  just the sweep) and `whole` (a support that already *is* the section, such as
+  an interpolated NURBS) — so a common span is never spelled out as a support
+  and an interval side by side. **Every pcurve is a `TrimmedCurve2`**: unlike an edge, it has
+  no bounding vertices to derive a span from, since a face stores no 2D vertex
+  positions. 2D intersection takes two spans, not two supports — the
+  subdivision search needs control polygons, which an infinite support has none
+  of — and returns fractions of each span.
 - **The span is derived only on an edge.** `EdgeAttr` stores no interval;
   `Edge::trimmed_curve()` derives it from the bounding vertices plus the view's
   orientation. Everything without vertices — `AnalyticSection`,

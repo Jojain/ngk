@@ -5,7 +5,7 @@ use wasm_bindgen::prelude::*;
 use crate::geometry::{
     ControlNet, ControlPolygon, Curve, Curve2, CurveCurveIntersection, CurveSurfaceIntersection,
     Degree, IntersectionCoverage, KnotVector, NurbsCurve, NurbsSurface, Point3, Surface,
-    SurfaceSurfaceIntersection, sample_curve_uniform, tessellate_curve_adaptive,
+    SurfaceSurfaceIntersection, TrimmedCurve2, sample_curve_uniform, tessellate_curve_adaptive,
     tessellate_surface_grid,
 };
 
@@ -366,8 +366,8 @@ fn curve_representation(curve: &Curve) -> &'static str {
     }
 }
 
-fn pcurve_representation(curve: &Curve2) -> &'static str {
-    match curve {
+fn pcurve_representation(span: &TrimmedCurve2) -> &'static str {
+    match span.curve() {
         Curve2::Line(_) => "line",
         Curve2::Circle(_) => "circle",
         Curve2::Ellipse(_) => "ellipse",

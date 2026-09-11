@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use crate::builders::removal::{MergedCell, is_removable, remove_cell_staged};
-use crate::geometry::{Curve, Curve2, Point3, PointCoincidence};
+use crate::geometry::{Curve, Point3, PointCoincidence, TrimmedCurve2};
 use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
@@ -47,7 +47,7 @@ struct VertexFusion {
     survivor_dart: Dart,
     curve: Curve,
     /// Rebuilt parameter curves, keyed by their pre-removal boundary dart.
-    pcurves: Vec<(FaceKey, Dart, Curve2)>,
+    pcurves: Vec<(FaceKey, Dart, TrimmedCurve2)>,
 }
 
 /// Decides whether the vertex carries shape, and builds the fused geometry.
@@ -156,7 +156,7 @@ fn fused_pcurves<P: Payload>(
     cell: &HashSet<Dart>,
     fused: FusedBoundary<'_>,
     linear: f64,
-) -> Result<Vec<(FaceKey, Dart, Curve2)>, SkipReason> {
+) -> Result<Vec<(FaceKey, Dart, TrimmedCurve2)>, SkipReason> {
     let mut pcurves = Vec::new();
     for face in incident_faces(g, fused.survivor_dart) {
         let attr = g.face_attr(face).ok_or(SkipReason::Unregistered)?;

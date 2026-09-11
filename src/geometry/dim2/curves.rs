@@ -1,3 +1,17 @@
+//! Analytic support curves in a surface's 2D parameter space.
+//!
+//! A [`Curve2`] is a **support**, exactly like its 3D counterpart
+//! [`Curve`](crate::geometry::Curve): it is never cut down to the pcurve or
+//! section resting on it. A [`Line2`] runs to infinity, a [`Circle2`] closes.
+//! Saying *which part* is meant takes a second value — see
+//! [`TrimmedCurve2`](crate::geometry::TrimmedCurve2).
+//!
+//! Parameters here are **native**: a line's parameter is affine (`0` and `1`
+//! land on the two points it was built through), a circle's and an ellipse's is
+//! the angle in radians, a NURBS curve's is its own knot domain. Nothing is
+//! silently renormalized to `[0, 1]`; normalized traversal is what
+//! `TrimmedCurve2` provides, over a stated span.
+
 use std::f64::consts::{FRAC_PI_2, TAU};
 
 use crate::geometry::{
@@ -6,15 +20,13 @@ use crate::geometry::{
 use nalgebra::{UnitVector2, Vector2};
 use serde::{Deserialize, Serialize};
 
-use super::intersections::{
-    CurveCurveIntersections2, CurveIntersectionError, CurveIntersectionOptions, intersect_curves,
-    intersect_curves_with_options,
-};
+use super::conics::conic_arc_nurbs2;
 use super::nurbs::NurbsCurve2;
 use super::utils::Point2;
+use crate::geometry::dim3::curves::Periodicity;
 use crate::geometry::traits::Curve2Geometry;
 
-/// A curve in a surface's 2D parameter space.
+/// An unbounded support curve in a surface's 2D parameter space.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Curve2 {
     Line(Line2),
@@ -24,7 +36,21 @@ pub enum Curve2 {
 }
 
 impl Curve2 {
-    /// Converts the curve to an exact 2D NURBS representation.
+    /// Returns the infinite line whose parameter maps `0` to `start` and `1` to `end`.
+    pub fn line(start: Point2, end: Point2) -> Self {
+        Curve2::Line(Line2::new(start, end - start))
+    }
+
+    /// Returns the full circle centred on `center`, starting along `x_dir`.
+    pub fn circle(center: Point2, x_dir: Vector2<f64>, radius: f64) -> Self {
+        Curve2::Circle(Circle2::new(center, x_dir, radius))
+    }
+
+    /// Converts the support to an exact 2D NURBS representation.
+    ///
+    /// Unbounded supports are represented over their `[0, 1]` window, periodic
+    /// ones over a full period. The parameterization is **not** preserved — see
+    /// [`crate::geometry::traits`].
     pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
         match self {
             Curve2::Line(line) => line.to_nurbs(),
@@ -34,47 +60,137 @@ impl Curve2 {
         }
     }
 
-    /// Evaluates the curve using a normalized parameter in `[0, 1]`.
-    pub fn point_at(&self, parameter: f64) -> Point2 {
+    /// Returns whether the parameter wraps, and with what period.
+    pub fn periodicity(&self) -> Periodicity {
         match self {
-            Curve2::Line(line) => line.point_at(parameter),
-            Curve2::Circle(circle) => circle.point_at(parameter),
-            Curve2::Ellipse(ellipse) => ellipse.point_at(parameter),
-            Curve2::Nurbs(curve) => curve.point_at(native_parameter(curve.domain(), parameter)),
+            Curve2::Line(_) => Periodicity::None,
+            Curve2::Circle(_) => Periodicity::Periodic(TAU),
+            Curve2::Ellipse(_) => Periodicity::Periodic(TAU),
+            Curve2::Nurbs(_) => Periodicity::None,
         }
     }
 
-    /// Returns whether the curve is geometrically closed (start coincides with end).
-    pub fn is_closed(&self) -> bool {
-        (self.point_at(0.0) - self.point_at(1.0)).norm() <= LINEAR_TOLERANCE
-    }
-
-    /// Returns `segments + 1` uniformly parameterized points.
-    pub fn sample(&self, segments: usize) -> Vec<Point2> {
-        let segments = segments.max(1);
-        (0..=segments)
-            .map(|index| self.point_at(index as f64 / segments as f64))
-            .collect()
-    }
-
-    /// Samples the curve adaptively and returns normalized parameters.
-    pub fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
+    /// Returns the parameter range over which the support is defined.
+    ///
+    /// Unbounded supports report [`Interval::unbounded`]; a caller that needs a
+    /// finite window clamps it with [`Interval::or_extent`].
+    pub fn domain(&self) -> Interval {
         match self {
-            Curve2::Line(line) => vec![(0.0, line.start), (1.0, line.end)],
-            Curve2::Circle(circle) => circle.adaptive_samples(tolerance, max_depth),
-            Curve2::Ellipse(ellipse) => ellipse.adaptive_samples(tolerance, max_depth),
-            Curve2::Nurbs(curve) => {
-                let domain = curve.domain();
-                curve
-                    .adaptive_samples(tolerance, max_depth)
-                    .into_iter()
-                    .map(|(parameter, point)| (normalized_parameter(domain, parameter), point))
-                    .collect()
+            Curve2::Line(curve) => Curve2Geometry::domain(curve),
+            Curve2::Circle(curve) => Curve2Geometry::domain(curve),
+            Curve2::Ellipse(curve) => Curve2Geometry::domain(curve),
+            Curve2::Nurbs(curve) => curve.domain(),
+        }
+    }
+
+    /// Evaluates the support at a native parameter.
+    pub fn point_at(&self, t: f64) -> Point2 {
+        match self {
+            Curve2::Line(line) => line.point_at(t),
+            Curve2::Circle(circle) => circle.point_at(t),
+            Curve2::Ellipse(ellipse) => ellipse.point_at(t),
+            Curve2::Nurbs(curve) => curve.point_at(t),
+        }
+    }
+
+    /// Returns the `order`-th derivative at a native parameter.
+    pub fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+        match self {
+            Curve2::Line(line) => line.derivative_at(t, order),
+            Curve2::Circle(circle) => circle.derivative_at(t, order),
+            Curve2::Ellipse(ellipse) => ellipse.derivative_at(t, order),
+            Curve2::Nurbs(curve) => curve.derivative_at(t, order),
+        }
+    }
+
+    /// Returns the native parameter of the support point nearest `point`.
+    pub fn param_at(&self, point: Point2) -> f64 {
+        match self {
+            Curve2::Line(line) => line.param_at(point),
+            Curve2::Circle(circle) => circle.param_at(point),
+            Curve2::Ellipse(ellipse) => ellipse.param_at(point),
+            Curve2::Nurbs(curve) => closest_sample_parameter(curve, point),
+        }
+    }
+
+    /// Returns the point on the support nearest `point`.
+    pub fn project(&self, point: Point2) -> Point2 {
+        match self {
+            Curve2::Line(line) => line.project(point),
+            Curve2::Circle(circle) => circle.project(point),
+            Curve2::Ellipse(ellipse) => ellipse.project(point),
+            Curve2::Nurbs(curve) => curve.point_at(closest_sample_parameter(curve, point)),
+        }
+    }
+
+    /// Returns the arc length between two native parameters.
+    pub fn length(&self, t0: f64, t1: f64) -> f64 {
+        match self {
+            Curve2::Line(line) => line.length(t0, t1),
+            Curve2::Circle(circle) => circle.length(t0, t1),
+            Curve2::Ellipse(ellipse) => ellipse.length(t0, t1),
+            Curve2::Nurbs(curve) => polyline_length(|t| curve.point_at(t), t0, t1),
+        }
+    }
+
+    /// Returns the span running forward from `start` to `end`, in native parameters.
+    ///
+    /// On a periodic support only the arc reached by advancing from `start` is
+    /// expressible here; a section meaning the other one states its span
+    /// directly with [`TrimmedCurve2::new`](super::trimmed::TrimmedCurve2::new).
+    pub fn interval_between(&self, start: Point2, end: Point2) -> Interval {
+        let t0 = self.param_at(start);
+        let raw_t1 = self.param_at(end);
+        match self.periodicity() {
+            Periodicity::Periodic(period) => {
+                let delta = if (end - start).norm() <= LINEAR_TOLERANCE {
+                    period
+                } else {
+                    (raw_t1 - t0).rem_euclid(period)
+                };
+                Interval::new(t0, t0 + delta)
             }
+            Periodicity::None => Interval::new(t0, raw_t1),
         }
     }
 
-    /// Returns the same curve with reversed direction.
+    /// Returns an exact NURBS segment over an interval in this support's native
+    /// parameterization, renormalized to `[0, 1]` for synchronized uses.
+    pub fn trimmed_native(&self, interval: Interval) -> Result<Self, NurbsError> {
+        let nurbs = match self {
+            Curve2::Circle(circle) => conic_arc_nurbs2(
+                interval.start,
+                interval.end,
+                FRAC_PI_2,
+                |parameter| circle.point_at(parameter),
+                |parameter| circle.derivative_at(parameter, 1),
+            )?,
+            Curve2::Ellipse(ellipse) => conic_arc_nurbs2(
+                interval.start,
+                interval.end,
+                FRAC_PI_2,
+                |parameter| ellipse.point_at(parameter),
+                |parameter| ellipse.derivative_at(parameter, 1),
+            )?,
+            Curve2::Line(_) | Curve2::Nurbs(_) => {
+                if interval.end < interval.start {
+                    return Ok(Curve2::Nurbs(
+                        self.trimmed_native(interval.reversed())?
+                            .to_nurbs()?
+                            .reversed(),
+                    ));
+                }
+                self.to_nurbs()?.trimmed(interval.start, interval.end)?
+            }
+        };
+        Ok(Curve2::Nurbs(renormalized(nurbs)?))
+    }
+
+    /// Returns the same support traversed in the opposite direction.
+    ///
+    /// Analytic variants stay analytic, so reversing never degrades support
+    /// identity. The parameterization is **not** preserved: a parameter
+    /// computed on the source has to be recomputed on the result.
     pub fn reversed(&self) -> Self {
         match self {
             Curve2::Line(line) => Curve2::Line(line.reversed()),
@@ -84,310 +200,210 @@ impl Curve2 {
         }
     }
 
-    /// Returns an exact Cartesian translation of this curve.
+    /// Returns an exact Cartesian translation of this support.
+    ///
+    /// The parameterization is preserved, so a span computed on the source
+    /// stays valid on the result.
     pub fn translated(&self, offset: Vector2<f64>) -> Result<Self, NurbsError> {
         match self {
-            Curve2::Line(line) => Ok(Curve2::Line(Line2::new(
-                line.start + offset,
-                line.end + offset,
-            ))),
+            Curve2::Line(line) => Ok(Curve2::Line(line.translated(offset))),
             Curve2::Circle(circle) => Ok(Curve2::Circle(circle.translated(offset))),
             Curve2::Ellipse(ellipse) => Ok(Curve2::Ellipse(ellipse.translated(offset))),
             Curve2::Nurbs(curve) => Ok(Curve2::Nurbs(curve.translated(offset)?)),
         }
     }
+}
 
-    /// Splits the curve at an interior normalized parameter.
-    pub fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
-        if parameter <= LINEAR_TOLERANCE || parameter >= 1.0 - LINEAR_TOLERANCE {
-            return Err(NurbsError::DegenerateInterval {
-                start: 0.0,
-                end: parameter,
-            });
-        }
-        match self {
-            Curve2::Line(line) => {
-                let (first, second) = line.split_at(parameter);
-                Ok((Curve2::Line(first), Curve2::Line(second)))
-            }
-            Curve2::Circle(circle) => {
-                let (first, second) = circle.split_at(parameter);
-                Ok((Curve2::Circle(first), Curve2::Circle(second)))
-            }
-            Curve2::Ellipse(ellipse) => {
-                let (first, second) = ellipse.split_at(parameter);
-                Ok((Curve2::Ellipse(first), Curve2::Ellipse(second)))
-            }
-            Curve2::Nurbs(curve) => {
-                let (first, second) =
-                    curve.split_at(native_parameter(curve.domain(), parameter))?;
-                Ok((Curve2::Nurbs(first), Curve2::Nurbs(second)))
-            }
-        }
+/// Renormalizes a NURBS curve's knot vector onto `[0, 1]`.
+fn renormalized(nurbs: NurbsCurve2) -> Result<NurbsCurve2, NurbsError> {
+    let domain = nurbs.domain();
+    let extent = domain.end - domain.start;
+    let knots = KnotVector::new(
+        nurbs
+            .knots()
+            .as_slice()
+            .iter()
+            .map(|knot| (knot - domain.start) / extent)
+            .collect(),
+    )?;
+    NurbsCurve2::new(nurbs.degree(), nurbs.control_points().clone(), knots)
+}
+
+/// Samples used when a support has no closed-form arc length.
+const LENGTH_SAMPLES: usize = 64;
+
+/// Accumulates a polyline approximation of arc length between two parameters.
+fn polyline_length(point_at: impl Fn(f64) -> Point2, t0: f64, t1: f64) -> f64 {
+    let span = Interval::new(t0, t1);
+    (0..LENGTH_SAMPLES)
+        .map(|index| {
+            let a = point_at(span.at(index as f64 / LENGTH_SAMPLES as f64));
+            let b = point_at(span.at((index + 1) as f64 / LENGTH_SAMPLES as f64));
+            (b - a).norm()
+        })
+        .sum()
+}
+
+/// Samples used to seed the closest-point search on a NURBS curve.
+const CLOSEST_POINT_SAMPLES: usize = 64;
+
+/// Returns the native parameter of the NURBS point nearest `point`.
+fn closest_sample_parameter(curve: &NurbsCurve2, point: Point2) -> f64 {
+    if let Some(parameter) = curve.parameter_at(point, LINEAR_TOLERANCE) {
+        return parameter;
     }
+    let domain = curve.domain();
+    (0..=CLOSEST_POINT_SAMPLES)
+        .map(|index| domain.at(index as f64 / CLOSEST_POINT_SAMPLES as f64))
+        .map(|parameter| (parameter, (curve.point_at(parameter) - point).norm()))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(parameter, _)| parameter)
+        .unwrap_or(domain.start)
+}
 
-    /// Returns the exact subcurve over a normalized parameter interval.
-    pub fn trimmed(&self, interval: Interval) -> Result<Self, NurbsError> {
-        if (interval.end - interval.start).abs() <= LINEAR_TOLERANCE {
-            return Err(NurbsError::DegenerateInterval {
-                start: interval.start,
-                end: interval.end,
-            });
-        }
-        if interval.end < interval.start {
-            return Ok(self
-                .trimmed(Interval::new(interval.end, interval.start))?
-                .reversed());
-        }
-        if interval.start < -LINEAR_TOLERANCE || interval.end > 1.0 + LINEAR_TOLERANCE {
-            return Err(NurbsError::ParameterOutOfRange {
-                u: if interval.start < 0.0 {
-                    interval.start
-                } else {
-                    interval.end
-                },
-                min: 0.0,
-                max: 1.0,
-            });
-        }
+/// An infinite straight support in 2D parameter space.
+///
+/// The parameter is affine, not arc length: it counts the construction vector
+/// given to [`Line2::new`], so a line built from `end - start` places `0` at
+/// `start` and `1` at `end` while still extending past both in either
+/// direction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Line2 {
+    origin: Point2,
+    direction: UnitVector2<f64>,
+    scale: f64,
+}
 
-        let start = interval.start.clamp(0.0, 1.0);
-        let end = interval.end.clamp(0.0, 1.0);
-        if start <= LINEAR_TOLERANCE && end >= 1.0 - LINEAR_TOLERANCE {
-            return Ok(self.clone());
-        }
-
-        match self {
-            Curve2::Line(line) => Ok(Curve2::Line(Line2::new(
-                line.point_at(start),
-                line.point_at(end),
-            ))),
-            Curve2::Circle(circle) => Ok(Curve2::Circle(circle.trimmed(start, end))),
-            Curve2::Ellipse(ellipse) => Ok(Curve2::Ellipse(ellipse.trimmed(start, end))),
-            Curve2::Nurbs(curve) => {
-                let domain = curve.domain();
-                Ok(Curve2::Nurbs(curve.trimmed(
-                    native_parameter(domain, start),
-                    native_parameter(domain, end),
-                )?))
-            }
-        }
-    }
-
-    /// Recovers the normalized parameter of a coincident point.
-    pub fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
-        match self {
-            Curve2::Line(line) => line.parameter_at(point, tolerance),
-            Curve2::Circle(circle) => circle.parameter_at(point, tolerance),
-            Curve2::Ellipse(ellipse) => ellipse.parameter_at(point, tolerance),
-            Curve2::Nurbs(curve) => curve
-                .parameter_at(point, tolerance)
-                .map(|parameter| normalized_parameter(curve.domain(), parameter)),
-        }
-    }
-
-    /// Intersects this curve with another curve using default tolerances.
+impl Line2 {
+    /// Creates the infinite line through `origin` along `direction`.
     ///
-    /// Returned parameters and intervals are normalized to each `Curve2`'s
-    /// public `[0, 1]` parameter domain.
-    pub fn intersect_curve(
-        &self,
-        other: &Curve2,
-    ) -> Result<CurveCurveIntersections2, CurveIntersectionError> {
-        intersect_curves(self, other)
+    /// `direction` is the parameter's unit rather than a bare heading:
+    /// `point_at(1)` is `origin + direction`, so a line built from `end - start`
+    /// places `0` at `start` and `1` at `end`. The line still runs to infinity
+    /// both ways; the vector only says how fast the parameter travels.
+    ///
+    /// A zero vector names no line, so rather than normalize it into `NaN` —
+    /// which would quietly poison every later comparison — the result collapses
+    /// to the constant `origin`. A caller measuring a candidate against real
+    /// geometry then sees a plainly wrong curve instead of `NaN`, which is the
+    /// outcome it can actually act on.
+    pub fn new(origin: Point2, direction: Vector2<f64>) -> Self {
+        let scale = direction.norm();
+        if scale <= LINEAR_TOLERANCE {
+            return Self::with_scale(origin, UnitVector2::new_unchecked(Vector2::x()), 0.0);
+        }
+        Self {
+            origin,
+            direction: UnitVector2::new_unchecked(direction / scale),
+            scale,
+        }
     }
 
-    /// Intersects this curve with another curve using explicit tolerances.
-    ///
-    /// Returned parameters and intervals are normalized to each `Curve2`'s
-    /// public `[0, 1]` parameter domain.
-    pub fn intersect_curve_with_options(
-        &self,
-        other: &Curve2,
-        options: CurveIntersectionOptions,
-    ) -> Result<CurveCurveIntersections2, CurveIntersectionError> {
-        intersect_curves_with_options(self, other, options)
+    fn with_scale(origin: Point2, direction: UnitVector2<f64>, scale: f64) -> Self {
+        Self {
+            origin,
+            direction,
+            scale,
+        }
+    }
+
+    pub fn origin(&self) -> Point2 {
+        self.origin
+    }
+
+    pub fn direction(&self) -> UnitVector2<f64> {
+        self.direction
+    }
+
+    /// Evaluates the line at a native (affine) parameter.
+    pub fn point_at(&self, t: f64) -> Point2 {
+        self.origin + *self.direction * (self.scale * t)
+    }
+
+    pub fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+        match order {
+            0 => self.point_at(t).coords,
+            1 => *self.direction * self.scale,
+            _ => Vector2::zeros(),
+        }
+    }
+
+    /// Returns the parameter of the line point nearest `point`.
+    pub fn param_at(&self, point: Point2) -> f64 {
+        if self.scale.abs() <= LINEAR_TOLERANCE {
+            return 0.0;
+        }
+        (point - self.origin).dot(&self.direction) / self.scale
+    }
+
+    pub fn project(&self, point: Point2) -> Point2 {
+        self.point_at(self.param_at(point))
+    }
+
+    /// Returns the distance travelled between two parameters.
+    pub fn length(&self, t0: f64, t1: f64) -> f64 {
+        (t1 - t0).abs() * self.scale.abs()
+    }
+
+    /// Returns the same line traversed in the opposite direction.
+    pub fn reversed(&self) -> Self {
+        Self::with_scale(self.origin, -self.direction, self.scale)
+    }
+
+    pub fn translated(&self, offset: Vector2<f64>) -> Self {
+        Self::with_scale(self.origin + offset, self.direction, self.scale)
+    }
+
+    /// Converts the `[0, 1]` window of the line to an exact degree-1 NURBS curve.
+    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        NurbsCurve2::new(
+            Degree::new(1)?,
+            ControlPolygon2::new(vec![
+                HPoint2::from_cartesian(self.point_at(0.0), 1.0),
+                HPoint2::from_cartesian(self.point_at(1.0), 1.0),
+            ])?,
+            KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
+        )
     }
 }
 
-/// A bounded circular arc in 2D, evaluated over the normalized `[0, 1]` domain.
+/// A full circle in 2D parameter space, parameterized by angle in radians.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Circle2 {
     center: Point2,
     x_dir: UnitVector2<f64>,
+    /// The direction reached a quarter turn after `x_dir`.
+    ///
+    /// Stored rather than derived because it is what carries the circle's
+    /// sense: [`reversed`](Self::reversed) negates it, the 2D analogue of
+    /// flipping a 3D circle's plane normal.
+    y_dir: UnitVector2<f64>,
     radius: f64,
-    sweep: f64,
 }
 
 impl Circle2 {
-    /// Creates an arc starting along `x_dir` and rotating by `sweep` radians.
-    pub fn new(center: Point2, x_dir: Vector2<f64>, radius: f64, sweep: f64) -> Self {
+    /// Creates the counter-clockwise circle starting along `x_dir`.
+    pub fn new(center: Point2, x_dir: Vector2<f64>, radius: f64) -> Self {
+        let x_dir = UnitVector2::new_normalize(x_dir);
         Self {
             center,
-            x_dir: UnitVector2::new_normalize(x_dir),
+            y_dir: UnitVector2::new_unchecked(Vector2::new(-x_dir.y, x_dir.x)),
+            x_dir,
             radius,
-            sweep,
         }
     }
 
-    pub fn center(&self) -> Point2 {
-        self.center
-    }
-
-    pub fn radius(&self) -> f64 {
-        self.radius
-    }
-
-    pub fn sweep(&self) -> f64 {
-        self.sweep
-    }
-
-    /// Evaluates the arc using a normalized parameter.
-    pub fn point_at(&self, parameter: f64) -> Point2 {
-        let angle = self.sweep * parameter;
-        let y_dir = Vector2::new(-self.x_dir.y, self.x_dir.x);
-        self.center + self.radius * (angle.cos() * *self.x_dir + angle.sin() * y_dir)
-    }
-
-    /// Returns adaptive samples with a chord sag bounded by `tolerance`.
-    pub fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
-        let ratio = (1.0 - tolerance / self.radius.abs().max(tolerance)).clamp(-1.0, 1.0);
-        let angle_step = (2.0 * ratio.acos()).max(1.0e-6);
-        let depth_limit = 1usize.checked_shl(max_depth.min(20) as u32).unwrap_or(1);
-        let segments = ((self.sweep.abs() / angle_step).ceil() as usize)
-            .max(1)
-            .min(depth_limit);
-        (0..=segments)
-            .map(|index| {
-                let parameter = index as f64 / segments as f64;
-                (parameter, self.point_at(parameter))
-            })
-            .collect()
-    }
-
-    pub fn reversed(&self) -> Self {
-        Self::new(
-            self.center,
-            self.point_at(1.0) - self.center,
-            self.radius,
-            -self.sweep,
-        )
-    }
-
-    pub fn translated(&self, offset: Vector2<f64>) -> Self {
-        Self {
-            center: self.center + offset,
-            ..self.clone()
-        }
-    }
-
-    pub fn split_at(&self, parameter: f64) -> (Self, Self) {
-        let parameter = parameter.clamp(0.0, 1.0);
-        (self.trimmed(0.0, parameter), self.trimmed(parameter, 1.0))
-    }
-
-    pub fn trimmed(&self, start: f64, end: f64) -> Self {
-        Self::new(
-            self.center,
-            self.point_at(start) - self.center,
-            self.radius,
-            self.sweep * (end - start),
-        )
-    }
-
-    /// Recovers the normalized parameter of a coincident point on the arc.
-    pub fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
-        let radial = point - self.center;
-        if (radial.norm() - self.radius).abs() > tolerance {
-            return None;
-        }
-        let y_dir = Vector2::new(-self.x_dir.y, self.x_dir.x);
-        let mut angle = radial.dot(&y_dir).atan2(radial.dot(&self.x_dir));
-        if self.sweep > 0.0 {
-            while angle < 0.0 {
-                angle += TAU;
-            }
-        } else {
-            while angle > 0.0 {
-                angle -= TAU;
-            }
-        }
-        let parameter = angle / self.sweep;
-        if !(-tolerance..=1.0 + tolerance).contains(&parameter) {
-            return None;
-        }
-        let parameter = parameter.clamp(0.0, 1.0);
-        ((self.point_at(parameter) - point).norm() <= tolerance).then_some(parameter)
-    }
-
-    /// Converts the arc to an exact rational quadratic NURBS representation.
-    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
-        if self.sweep.abs() <= LINEAR_TOLERANCE {
-            return Err(NurbsError::DegenerateInterval {
-                start: 0.0,
-                end: self.sweep,
-            });
-        }
-        let segment_count = (self.sweep.abs() / FRAC_PI_2).ceil() as usize;
-        let segment_sweep = self.sweep / segment_count as f64;
-        let middle_weight = (0.5 * segment_sweep).cos();
-        let mut points = Vec::with_capacity(segment_count * 2 + 1);
-        let mut knots = vec![0.0; 3];
-        points.push(HPoint2::from_cartesian(self.point_at(0.0), 1.0));
-        for segment in 0..segment_count {
-            let middle = (segment as f64 + 0.5) / segment_count as f64;
-            let end = (segment + 1) as f64 / segment_count as f64;
-            let middle_point = self.center + (self.point_at(middle) - self.center) / middle_weight;
-            points.push(HPoint2::from_cartesian(middle_point, middle_weight));
-            points.push(HPoint2::from_cartesian(self.point_at(end), 1.0));
-            if segment + 1 < segment_count {
-                knots.extend([end, end]);
-            }
-        }
-        knots.extend([1.0, 1.0, 1.0]);
-        NurbsCurve2::new(
-            Degree::new(2)?,
-            ControlPolygon2::new(points)?,
-            KnotVector::new(knots)?,
-        )
-    }
-}
-
-/// A bounded elliptical arc in 2D, evaluated over the normalized `[0, 1]` domain.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Ellipse2 {
-    center: Point2,
-    x_dir: UnitVector2<f64>,
-    major_radius: f64,
-    minor_radius: f64,
-    start_angle: f64,
-    sweep: f64,
-}
-
-impl Ellipse2 {
-    /// Creates an arc starting on the major axis and rotating by `sweep` radians.
-    pub fn new(
+    fn with_dirs(
         center: Point2,
-        x_dir: Vector2<f64>,
-        major_radius: f64,
-        minor_radius: f64,
-        sweep: f64,
+        x_dir: UnitVector2<f64>,
+        y_dir: UnitVector2<f64>,
+        radius: f64,
     ) -> Self {
         Self {
             center,
-            x_dir: UnitVector2::new_normalize(x_dir),
-            major_radius,
-            minor_radius,
-            start_angle: 0.0,
-            sweep,
-        }
-    }
-
-    fn with_start_angle(&self, start_angle: f64, sweep: f64) -> Self {
-        Self {
-            start_angle,
-            sweep,
-            ..self.clone()
+            x_dir,
+            y_dir,
+            radius,
         }
     }
 
@@ -399,6 +415,127 @@ impl Ellipse2 {
         self.x_dir
     }
 
+    pub fn y_dir(&self) -> UnitVector2<f64> {
+        self.y_dir
+    }
+
+    pub fn radius(&self) -> f64 {
+        self.radius
+    }
+
+    /// Evaluates the circle at an angle in radians.
+    pub fn point_at(&self, t: f64) -> Point2 {
+        let (sin, cos) = t.sin_cos();
+        self.center + self.radius * (cos * *self.x_dir + sin * *self.y_dir)
+    }
+
+    pub fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+        if order == 0 {
+            return self.point_at(t).coords;
+        }
+        let (sin, cos) = t.sin_cos();
+        let x = *self.x_dir * self.radius;
+        let y = *self.y_dir * self.radius;
+        match order % 4 {
+            0 => x * cos + y * sin,
+            1 => -x * sin + y * cos,
+            2 => -x * cos - y * sin,
+            _ => x * sin - y * cos,
+        }
+    }
+
+    /// Returns the angle of the circle point nearest `point`, in `(-pi, pi]`.
+    pub fn param_at(&self, point: Point2) -> f64 {
+        let radial = point - self.center;
+        radial.dot(&self.y_dir).atan2(radial.dot(&self.x_dir))
+    }
+
+    pub fn project(&self, point: Point2) -> Point2 {
+        let radial = point - self.center;
+        if radial.norm() <= LINEAR_TOLERANCE {
+            return self.center + *self.x_dir * self.radius;
+        }
+        self.center + radial * (self.radius / radial.norm())
+    }
+
+    /// Returns the arc length swept between two angles.
+    pub fn length(&self, t0: f64, t1: f64) -> f64 {
+        (t1 - t0).abs() * self.radius.abs()
+    }
+
+    /// Returns the circle traversed in the opposite sense.
+    pub fn reversed(&self) -> Self {
+        Self::with_dirs(self.center, self.x_dir, -self.y_dir, self.radius)
+    }
+
+    pub fn translated(&self, offset: Vector2<f64>) -> Self {
+        Self::with_dirs(self.center + offset, self.x_dir, self.y_dir, self.radius)
+    }
+
+    /// Converts one full turn to an exact rational quadratic NURBS curve.
+    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        conic_arc_nurbs2(
+            0.0,
+            TAU,
+            FRAC_PI_2,
+            |parameter| self.point_at(parameter),
+            |parameter| self.derivative_at(parameter, 1),
+        )
+    }
+}
+
+/// A full ellipse in 2D parameter space, parameterized by angle in radians.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Ellipse2 {
+    center: Point2,
+    x_dir: UnitVector2<f64>,
+    /// The minor-axis direction; carries the ellipse's sense.
+    y_dir: UnitVector2<f64>,
+    major_radius: f64,
+    minor_radius: f64,
+}
+
+impl Ellipse2 {
+    /// Creates the counter-clockwise ellipse whose major axis lies along `x_dir`.
+    pub fn new(center: Point2, x_dir: Vector2<f64>, major_radius: f64, minor_radius: f64) -> Self {
+        let x_dir = UnitVector2::new_normalize(x_dir);
+        Self {
+            center,
+            y_dir: UnitVector2::new_unchecked(Vector2::new(-x_dir.y, x_dir.x)),
+            x_dir,
+            major_radius,
+            minor_radius,
+        }
+    }
+
+    fn with_dirs(
+        center: Point2,
+        x_dir: UnitVector2<f64>,
+        y_dir: UnitVector2<f64>,
+        major_radius: f64,
+        minor_radius: f64,
+    ) -> Self {
+        Self {
+            center,
+            x_dir,
+            y_dir,
+            major_radius,
+            minor_radius,
+        }
+    }
+
+    pub fn center(&self) -> Point2 {
+        self.center
+    }
+
+    pub fn x_dir(&self) -> UnitVector2<f64> {
+        self.x_dir
+    }
+
+    pub fn y_dir(&self) -> UnitVector2<f64> {
+        self.y_dir
+    }
+
     pub fn major_radius(&self) -> f64 {
         self.major_radius
     }
@@ -407,217 +544,109 @@ impl Ellipse2 {
         self.minor_radius
     }
 
-    pub fn sweep(&self) -> f64 {
-        self.sweep
-    }
-
-    pub fn point_at(&self, parameter: f64) -> Point2 {
-        let angle = self.start_angle + self.sweep * parameter;
-        let y_dir = Vector2::new(-self.x_dir.y, self.x_dir.x);
+    /// Evaluates the ellipse at an eccentric angle in radians.
+    pub fn point_at(&self, t: f64) -> Point2 {
+        let (sin, cos) = t.sin_cos();
         self.center
-            + *self.x_dir * (self.major_radius * angle.cos())
-            + y_dir * (self.minor_radius * angle.sin())
+            + *self.x_dir * (self.major_radius * cos)
+            + *self.y_dir * (self.minor_radius * sin)
     }
 
-    pub fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
-        let radius = self.major_radius.abs().max(self.minor_radius.abs());
-        let ratio = (1.0 - tolerance / radius.max(tolerance)).clamp(-1.0, 1.0);
-        let angle_step = (2.0 * ratio.acos()).max(1.0e-6);
-        let depth_limit = 1usize.checked_shl(max_depth.min(20) as u32).unwrap_or(1);
-        let segments = ((self.sweep.abs() / angle_step).ceil() as usize)
-            .max(1)
-            .min(depth_limit);
-        (0..=segments)
-            .map(|index| {
-                let parameter = index as f64 / segments as f64;
-                (parameter, self.point_at(parameter))
-            })
-            .collect()
-    }
-
-    pub fn reversed(&self) -> Self {
-        self.with_start_angle(self.start_angle + self.sweep, -self.sweep)
-    }
-
-    pub fn translated(&self, offset: Vector2<f64>) -> Self {
-        Self {
-            center: self.center + offset,
-            ..self.clone()
+    pub fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+        if order == 0 {
+            return self.point_at(t).coords;
+        }
+        let (sin, cos) = t.sin_cos();
+        let x = *self.x_dir * self.major_radius;
+        let y = *self.y_dir * self.minor_radius;
+        match order % 4 {
+            0 => x * cos + y * sin,
+            1 => -x * sin + y * cos,
+            2 => -x * cos - y * sin,
+            _ => x * sin - y * cos,
         }
     }
 
-    pub fn split_at(&self, parameter: f64) -> (Self, Self) {
-        let parameter = parameter.clamp(0.0, 1.0);
-        (self.trimmed(0.0, parameter), self.trimmed(parameter, 1.0))
-    }
-
-    pub fn trimmed(&self, start: f64, end: f64) -> Self {
-        self.with_start_angle(
-            self.start_angle + self.sweep * start,
-            self.sweep * (end - start),
-        )
-    }
-
-    pub fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
+    /// Returns the eccentric angle of the ellipse point matching `point`.
+    ///
+    /// This inverts the parameterization rather than minimizing distance: on
+    /// the ellipse the two agree, which is the case the kernel asks about.
+    pub fn param_at(&self, point: Point2) -> f64 {
         let offset = point - self.center;
-        let y_dir = Vector2::new(-self.x_dir.y, self.x_dir.x);
         let x = offset.dot(&self.x_dir) / self.major_radius;
-        let y = offset.dot(&y_dir) / self.minor_radius;
-        if (x * x + y * y - 1.0).abs() > tolerance * 2.0 {
-            return None;
-        }
-        let mut angle = y.atan2(x) - self.start_angle;
-        if self.sweep > 0.0 {
-            while angle < 0.0 {
-                angle += TAU;
-            }
-        } else {
-            while angle > 0.0 {
-                angle -= TAU;
-            }
-        }
-        let parameter = angle / self.sweep;
-        if !(-tolerance..=1.0 + tolerance).contains(&parameter) {
-            return None;
-        }
-        let parameter = parameter.clamp(0.0, 1.0);
-        ((self.point_at(parameter) - point).norm() <= tolerance).then_some(parameter)
+        let y = offset.dot(&self.y_dir) / self.minor_radius;
+        y.atan2(x)
     }
 
-    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
-        if self.sweep.abs() <= LINEAR_TOLERANCE {
-            return Err(NurbsError::DegenerateInterval {
-                start: 0.0,
-                end: self.sweep,
-            });
-        }
-        let segment_count = (self.sweep.abs() / FRAC_PI_2).ceil() as usize;
-        let segment_sweep = self.sweep / segment_count as f64;
-        let weight = (0.5 * segment_sweep).cos();
-        let y_dir = Vector2::new(-self.x_dir.y, self.x_dir.x);
-        let mut points = Vec::with_capacity(segment_count * 2 + 1);
-        let mut knots = vec![0.0; 3];
-        points.push(HPoint2::from_cartesian(self.point_at(0.0), 1.0));
-        for segment in 0..segment_count {
-            let middle = (segment as f64 + 0.5) / segment_count as f64;
-            let end = (segment + 1) as f64 / segment_count as f64;
-            let angle = self.start_angle + self.sweep * middle;
-            let middle_point = self.center
-                + *self.x_dir * (self.major_radius * angle.cos() / weight)
-                + y_dir * (self.minor_radius * angle.sin() / weight);
-            points.push(HPoint2::from_cartesian(middle_point, weight));
-            points.push(HPoint2::from_cartesian(self.point_at(end), 1.0));
-            if segment + 1 < segment_count {
-                knots.extend([end, end]);
-            }
-        }
-        knots.extend([1.0, 1.0, 1.0]);
-        NurbsCurve2::new(
-            Degree::new(2)?,
-            ControlPolygon2::new(points)?,
-            KnotVector::new(knots)?,
-        )
-    }
-}
-
-/// A bounded straight segment in 2D parameter space.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Line2 {
-    pub start: Point2,
-    pub end: Point2,
-}
-
-impl Line2 {
-    /// Creates a line segment from its endpoints.
-    pub fn new(start: Point2, end: Point2) -> Self {
-        Self { start, end }
+    pub fn project(&self, point: Point2) -> Point2 {
+        self.point_at(self.param_at(point))
     }
 
-    /// Evaluates the segment using a normalized parameter.
-    pub fn point_at(&self, parameter: f64) -> Point2 {
-        self.start + (self.end - self.start) * parameter
+    /// Approximates the arc length swept between two angles.
+    pub fn length(&self, t0: f64, t1: f64) -> f64 {
+        polyline_length(|t| self.point_at(t), t0, t1)
     }
 
-    /// Returns `segments + 1` uniformly spaced samples.
-    pub fn sample(&self, segments: usize) -> Vec<Point2> {
-        let segments = segments.max(1);
-        (0..=segments)
-            .map(|index| self.point_at(index as f64 / segments as f64))
-            .collect()
-    }
-
-    /// Returns the segment with reversed direction.
+    /// Returns the ellipse traversed in the opposite sense.
     pub fn reversed(&self) -> Self {
-        Self {
-            start: self.end,
-            end: self.start,
-        }
-    }
-
-    /// Splits the segment at a normalized parameter.
-    pub fn split_at(&self, parameter: f64) -> (Self, Self) {
-        let point = self.point_at(parameter.clamp(0.0, 1.0));
-        (Self::new(self.start, point), Self::new(point, self.end))
-    }
-
-    /// Recovers the normalized parameter of a coincident point.
-    pub fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
-        let direction = self.end - self.start;
-        let length_squared = direction.norm_squared();
-        if length_squared <= tolerance * tolerance {
-            return None;
-        }
-        let parameter = (point - self.start).dot(&direction) / length_squared;
-        if !(-tolerance..=1.0 + tolerance).contains(&parameter) {
-            return None;
-        }
-        let parameter = parameter.clamp(0.0, 1.0);
-        ((self.point_at(parameter) - point).norm() <= tolerance).then_some(parameter)
-    }
-
-    /// Converts the segment to an exact degree-1 NURBS curve over `[0, 1]`.
-    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
-        NurbsCurve2::new(
-            Degree::new(1)?,
-            ControlPolygon2::new(vec![
-                HPoint2::from_cartesian(self.start, 1.0),
-                HPoint2::from_cartesian(self.end, 1.0),
-            ])?,
-            KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
+        Self::with_dirs(
+            self.center,
+            self.x_dir,
+            -self.y_dir,
+            self.major_radius,
+            self.minor_radius,
         )
     }
 
-    /// Returns an exact Cartesian translation of this segment.
     pub fn translated(&self, offset: Vector2<f64>) -> Self {
-        Self::new(self.start + offset, self.end + offset)
+        Self::with_dirs(
+            self.center + offset,
+            self.x_dir,
+            self.y_dir,
+            self.major_radius,
+            self.minor_radius,
+        )
     }
-}
 
-fn native_parameter(domain: Interval, normalized: f64) -> f64 {
-    domain.start + (domain.end - domain.start) * normalized.clamp(0.0, 1.0)
-}
-
-fn normalized_parameter(domain: Interval, native: f64) -> f64 {
-    let length = domain.end - domain.start;
-    if length.abs() <= LINEAR_TOLERANCE {
-        0.0
-    } else {
-        (native - domain.start) / length
+    /// Converts one full turn to an exact rational quadratic NURBS curve.
+    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        conic_arc_nurbs2(
+            0.0,
+            TAU,
+            FRAC_PI_2,
+            |parameter| self.point_at(parameter),
+            |parameter| self.derivative_at(parameter, 1),
+        )
     }
 }
 
 impl Curve2Geometry for Line2 {
-    fn point_at(&self, parameter: f64) -> Point2 {
-        Line2::point_at(self, parameter)
+    fn domain(&self) -> Interval {
+        Interval::unbounded()
     }
 
-    /// A segment is exactly represented by its endpoints at any tolerance.
-    fn adaptive_samples(&self, _tolerance: f64, _max_depth: usize) -> Vec<(f64, Point2)> {
-        vec![(0.0, self.start), (1.0, self.end)]
+    fn periodicity(&self) -> Periodicity {
+        Periodicity::None
     }
 
-    fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
-        Line2::parameter_at(self, point, tolerance)
+    fn point_at(&self, t: f64) -> Point2 {
+        Line2::point_at(self, t)
+    }
+
+    fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+        Line2::derivative_at(self, t, order)
+    }
+
+    fn param_at(&self, point: Point2) -> f64 {
+        Line2::param_at(self, point)
+    }
+
+    fn project(&self, point: Point2) -> Point2 {
+        Line2::project(self, point)
+    }
+
+    fn length(&self, t0: f64, t1: f64) -> f64 {
+        Line2::length(self, t0, t1)
     }
 
     fn reversed(&self) -> Self {
@@ -628,26 +657,38 @@ impl Curve2Geometry for Line2 {
         Ok(Line2::translated(self, offset))
     }
 
-    fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
-        Ok(Line2::split_at(self, parameter))
-    }
-
     fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
         Line2::to_nurbs(self)
     }
 }
 
 impl Curve2Geometry for Circle2 {
-    fn point_at(&self, parameter: f64) -> Point2 {
-        Circle2::point_at(self, parameter)
+    fn domain(&self) -> Interval {
+        Interval::new(0.0, TAU)
     }
 
-    fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
-        Circle2::adaptive_samples(self, tolerance, max_depth)
+    fn periodicity(&self) -> Periodicity {
+        Periodicity::Periodic(TAU)
     }
 
-    fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
-        Circle2::parameter_at(self, point, tolerance)
+    fn point_at(&self, t: f64) -> Point2 {
+        Circle2::point_at(self, t)
+    }
+
+    fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+        Circle2::derivative_at(self, t, order)
+    }
+
+    fn param_at(&self, point: Point2) -> f64 {
+        Circle2::param_at(self, point)
+    }
+
+    fn project(&self, point: Point2) -> Point2 {
+        Circle2::project(self, point)
+    }
+
+    fn length(&self, t0: f64, t1: f64) -> f64 {
+        Circle2::length(self, t0, t1)
     }
 
     fn reversed(&self) -> Self {
@@ -658,26 +699,38 @@ impl Curve2Geometry for Circle2 {
         Ok(Circle2::translated(self, offset))
     }
 
-    fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
-        Ok(Circle2::split_at(self, parameter))
-    }
-
     fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
         Circle2::to_nurbs(self)
     }
 }
 
 impl Curve2Geometry for Ellipse2 {
-    fn point_at(&self, parameter: f64) -> Point2 {
-        Ellipse2::point_at(self, parameter)
+    fn domain(&self) -> Interval {
+        Interval::new(0.0, TAU)
     }
 
-    fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
-        Ellipse2::adaptive_samples(self, tolerance, max_depth)
+    fn periodicity(&self) -> Periodicity {
+        Periodicity::Periodic(TAU)
     }
 
-    fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
-        Ellipse2::parameter_at(self, point, tolerance)
+    fn point_at(&self, t: f64) -> Point2 {
+        Ellipse2::point_at(self, t)
+    }
+
+    fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+        Ellipse2::derivative_at(self, t, order)
+    }
+
+    fn param_at(&self, point: Point2) -> f64 {
+        Ellipse2::param_at(self, point)
+    }
+
+    fn project(&self, point: Point2) -> Point2 {
+        Ellipse2::project(self, point)
+    }
+
+    fn length(&self, t0: f64, t1: f64) -> f64 {
+        Ellipse2::length(self, t0, t1)
     }
 
     fn reversed(&self) -> Self {
@@ -688,31 +741,43 @@ impl Curve2Geometry for Ellipse2 {
         Ok(Ellipse2::translated(self, offset))
     }
 
-    fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
-        Ok(Ellipse2::split_at(self, parameter))
-    }
-
     fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
         Ellipse2::to_nurbs(self)
     }
 }
 
-/// Forwards to whichever variant the curve holds.
+/// Forwards to whichever variant the support holds.
 ///
 /// The inherent methods on [`Curve2`] shadow these, so call sites keep working
 /// without importing the trait; the impl exists so generic code can be written
-/// once over any parameter-space curve.
+/// once over any parameter-space support.
 impl Curve2Geometry for Curve2 {
-    fn point_at(&self, parameter: f64) -> Point2 {
-        Curve2::point_at(self, parameter)
+    fn domain(&self) -> Interval {
+        Curve2::domain(self)
     }
 
-    fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
-        Curve2::adaptive_samples(self, tolerance, max_depth)
+    fn periodicity(&self) -> Periodicity {
+        Curve2::periodicity(self)
     }
 
-    fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
-        Curve2::parameter_at(self, point, tolerance)
+    fn point_at(&self, t: f64) -> Point2 {
+        Curve2::point_at(self, t)
+    }
+
+    fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+        Curve2::derivative_at(self, t, order)
+    }
+
+    fn param_at(&self, point: Point2) -> f64 {
+        Curve2::param_at(self, point)
+    }
+
+    fn project(&self, point: Point2) -> Point2 {
+        Curve2::project(self, point)
+    }
+
+    fn length(&self, t0: f64, t1: f64) -> f64 {
+        Curve2::length(self, t0, t1)
     }
 
     fn reversed(&self) -> Self {
@@ -721,10 +786,6 @@ impl Curve2Geometry for Curve2 {
 
     fn translated(&self, offset: Vector2<f64>) -> Result<Self, NurbsError> {
         Curve2::translated(self, offset)
-    }
-
-    fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
-        Curve2::split_at(self, parameter)
     }
 
     fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {

@@ -1,3 +1,4 @@
+use crate::geometry::TrimmedCurve2;
 use std::collections::{HashMap, HashSet};
 
 use crate::builders::edges::add_edge_staged;
@@ -6,9 +7,7 @@ use crate::builders::faces::{
     FaceImprint, add_face_staged, add_polygon_staged, split_face_by_imprints_staged,
 };
 use crate::builders::profiles::curve_pcurve;
-use crate::geometry::{
-    Curve, Curve2, LINEAR_TOLERANCE, Line2, Point2, Point3, RuledSurface, Surface,
-};
+use crate::geometry::{Curve, LINEAR_TOLERANCE, Point2, Point3, RuledSurface, Surface};
 use crate::topology::attributes::{FaceAttr, VertexAttr};
 use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
 use crate::topology::payload::Payload;
@@ -398,10 +397,7 @@ fn planar_line_imprint<P: Payload>(
     };
     Ok(FaceImprint::new(
         Curve::line(points[0], points[1]),
-        Curve2::Line(Line2::new(
-            plane.parameter_at(points[0]),
-            plane.parameter_at(points[1]),
-        )),
+        TrimmedCurve2::segment(plane.parameter_at(points[0]), plane.parameter_at(points[1])),
     ))
 }
 
@@ -431,7 +427,7 @@ fn chamfer_curve_imprint<P: Payload>(
             let end = surface
                 .param_at(points[1])
                 .map_err(|_| ChamferError::UnsupportedSolidChamferGeometry { edge })?;
-            let pcurve = Curve2::Line(Line2::new(start, end));
+            let pcurve = TrimmedCurve2::segment(start, end);
             for parameter in [0.0, 0.25, 0.5, 0.75, 1.0] {
                 let uv = pcurve.point_at(parameter);
                 if (surface.point_at(uv.x, uv.y) - curve.point_at(parameter)).norm()
@@ -1207,7 +1203,7 @@ fn add_curved_chamfer_face<P: Payload>(
     let pcurves = edges
         .iter()
         .zip(uv)
-        .map(|((_, dart), (start, end))| (*dart, Curve2::Line(Line2::new(start, end))))
+        .map(|((_, dart), (start, end))| (*dart, TrimmedCurve2::segment(start, end)))
         .collect::<HashMap<_, _>>();
     let loop_dart = g.profile_attr_unchecked(profile).dart;
     Ok(g.add_face(FaceAttr::with_pcurves(

@@ -4,11 +4,11 @@ use nalgebra::{Matrix3, SymmetricEigen, Vector3};
 
 use super::tracer::TraceState;
 use crate::geometry::{
-    Circle, Circle2, Curve, Curve2, Interval, Line2, NurbsCurve2, Plane, Point2, Point3,
+    Circle, Circle2, Curve, Curve2, Interval, NurbsCurve2, Plane, Point2, Point3, TrimmedCurve2,
 };
 
 type Curve3Recognizer = fn(&[TraceState], bool, f64) -> Option<AnalyticalCurve3>;
-type Curve2Recognizer = fn(&[Point2], &[f64], f64) -> Option<Curve2>;
+type Curve2Recognizer = fn(&[Point2], &[f64], f64) -> Option<TrimmedCurve2>;
 
 const CURVE_3_RECOGNIZERS: [Curve3Recognizer; 2] = [recognize_line_3d, recognize_circle_3d];
 const CURVE_2_RECOGNIZERS: [Curve2Recognizer; 2] = [recognize_line_2d, recognize_circle_2d];
@@ -40,11 +40,14 @@ pub(super) fn simplify_curve_2d(
     points: &[Point2],
     parameters: &[f64],
     tolerance: f64,
-) -> Curve2 {
+) -> TrimmedCurve2 {
     CURVE_2_RECOGNIZERS
         .iter()
         .find_map(|recognizer| recognizer(points, parameters, tolerance))
-        .unwrap_or(Curve2::Nurbs(fallback))
+        .unwrap_or_else(|| {
+            let domain = fallback.domain();
+            TrimmedCurve2::new(Curve2::Nurbs(fallback), domain)
+        })
 }
 
 fn recognize_line_3d(
@@ -195,7 +198,11 @@ fn recognize_circle_3d(
     )
 }
 
-fn recognize_line_2d(points: &[Point2], parameters: &[f64], tolerance: f64) -> Option<Curve2> {
+fn recognize_line_2d(
+    points: &[Point2],
+    parameters: &[f64],
+    tolerance: f64,
+) -> Option<TrimmedCurve2> {
     if points.len() != parameters.len() {
         return None;
     }
@@ -204,7 +211,7 @@ fn recognize_line_2d(points: &[Point2], parameters: &[f64], tolerance: f64) -> O
     if (end - start).norm() <= tolerance {
         return None;
     }
-    let candidate = Curve2::Line(Line2::new(start, end));
+    let candidate = TrimmedCurve2::segment(start, end);
     points
         .iter()
         .zip(parameters)
@@ -212,7 +219,11 @@ fn recognize_line_2d(points: &[Point2], parameters: &[f64], tolerance: f64) -> O
         .then_some(candidate)
 }
 
-fn recognize_circle_2d(points: &[Point2], parameters: &[f64], tolerance: f64) -> Option<Curve2> {
+fn recognize_circle_2d(
+    points: &[Point2],
+    parameters: &[f64],
+    tolerance: f64,
+) -> Option<TrimmedCurve2> {
     if points.len() < 4
         || points.len() != parameters.len()
         || (points.first()? - points.last()?).norm() > tolerance * 10.0
@@ -242,8 +253,11 @@ fn recognize_circle_2d(points: &[Point2], parameters: &[f64], tolerance: f64) ->
         return None;
     }
     let start_direction = points.first()? - center;
+    // The support starts at the first sample, so its angle is zero there and
+    // the span states which way the branch runs round it.
+    let support = Curve2::Circle(Circle2::new(center, start_direction, radius));
     [TAU, -TAU].into_iter().find_map(|sweep| {
-        let candidate = Curve2::Circle(Circle2::new(center, start_direction, radius, sweep));
+        let candidate = TrimmedCurve2::new(support.clone(), Interval::new(0.0, sweep));
         points
             .iter()
             .zip(parameters)

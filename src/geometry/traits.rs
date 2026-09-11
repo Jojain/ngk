@@ -86,35 +86,53 @@ pub trait CurveGeometry: Sized {
 
 /// The behaviour every 2D support curve provides.
 ///
-/// 2D curves are always bounded and always normalized to `[0, 1]`, which is
-/// why this trait has no `domain` and why `trimmed`/`split_at` are meaningful
-/// here but not on [`CurveGeometry`].
+/// This mirrors [`CurveGeometry`] in a surface's parameter space: a 2D support
+/// is unbounded in exactly the same way a 3D one is, and the portion of it that
+/// is meant is stated by [`TrimmedCurve2`](crate::geometry::TrimmedCurve2)
+/// rather than baked into the support. Trimming and splitting therefore live on
+/// that type, not here.
 ///
 /// [`NurbsCurve2`] deliberately does not implement this trait: its own methods
-/// are expressed in its native knot domain, so making it an implementor would
-/// give it two parameter conventions under one name. The
-/// [`Curve2`](crate::geometry::Curve2) enum does that remapping in its `Nurbs`
-/// arm instead.
+/// already speak its native knot domain, so the
+/// [`Curve2`](crate::geometry::Curve2) enum forwards to them directly in its
+/// `Nurbs` arm.
 pub trait Curve2Geometry: Sized {
-    /// The point at normalized parameter `t`.
+    /// The parameter range over which the support is defined.
+    ///
+    /// Unbounded supports return [`Interval::unbounded`]; callers needing a
+    /// finite window clamp it with [`Interval::or_extent`].
+    fn domain(&self) -> Interval;
+
+    /// Whether the parameter wraps, and with what period.
+    fn periodicity(&self) -> Periodicity;
+
+    /// The point at native parameter `t`.
     fn point_at(&self, t: f64) -> Point2;
 
-    /// Points sampled densely enough to stay within `tolerance` of the curve.
-    fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)>;
+    /// The `order`-th derivative at native parameter `t`.
+    fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64>;
 
-    /// The parameter at `point`, or `None` when it is not on the curve.
-    fn parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64>;
+    /// The native parameter of the support point nearest `point`.
+    fn param_at(&self, point: Point2) -> f64;
 
-    /// The same curve traversed in the opposite direction.
+    /// The point on the support nearest `point`.
+    fn project(&self, point: Point2) -> Point2;
+
+    /// Arc length between two native parameters, in parameter-space units.
+    fn length(&self, t0: f64, t1: f64) -> f64;
+
+    /// The same support traversed in the opposite direction.
+    ///
+    /// The parameterization is **not** preserved.
     fn reversed(&self) -> Self;
 
-    /// The curve translated by `offset`.
+    /// The support translated by `offset`, preserving parameterization.
     fn translated(&self, offset: Vector2<f64>) -> Result<Self, NurbsError>;
 
-    /// The two halves of the curve either side of `t`.
-    fn split_at(&self, t: f64) -> Result<(Self, Self), NurbsError>;
-
-    /// An exact NURBS representation of the curve as a point set.
+    /// An exact NURBS representation of the support as a point set.
+    ///
+    /// The parameterization is **not** generally preserved — see the module
+    /// documentation.
     fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError>;
 }
 

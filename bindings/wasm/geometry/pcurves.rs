@@ -1,9 +1,18 @@
+//! Read-only JavaScript views of face pcurves.
+//!
+//! A pcurve is a [`TrimmedCurve2`]: an unbounded analytic support plus the span
+//! of it that is meant. Each class below exposes the support's own properties —
+//! a circle's centre and radius — alongside the span, and every evaluation is
+//! in the span's normalized traversal fraction, so `pointAt(0)` is the pcurve's
+//! start whichever way its span runs.
+
 use js_sys::{Array, Float64Array};
 use wasm_bindgen::prelude::*;
 
 use crate::geometry::Point2;
 use crate::geometry::dim2::curves::{Circle2, Curve2, Ellipse2, Line2};
 use crate::geometry::dim2::nurbs::NurbsCurve2;
+use crate::geometry::dim2::trimmed::TrimmedCurve2;
 
 fn point_array(point: Point2) -> Float64Array {
     let out = Float64Array::new_with_length(2);
@@ -28,15 +37,28 @@ fn f64_array(values: &[f64]) -> Float64Array {
     out
 }
 
-/// Read-only 2D line segment used to display face pcurves.
+/// Returns the span's native parameter interval as `[start, end]`.
+fn interval_array(span: &TrimmedCurve2) -> Float64Array {
+    let interval = span.interval();
+    f64_array(&[interval.start, interval.end])
+}
+
+/// Read-only straight 2D pcurve: an infinite line plus the span meant.
 #[wasm_bindgen(js_name = Line2)]
 pub struct WasmLine2 {
-    pub(crate) inner: Line2,
+    pub(crate) inner: TrimmedCurve2,
 }
 
 impl WasmLine2 {
-    pub(crate) fn from_inner(inner: Line2) -> Self {
+    pub(crate) fn from_inner(inner: TrimmedCurve2) -> Self {
         Self { inner }
+    }
+
+    fn support(&self) -> &Line2 {
+        match self.inner.curve() {
+            Curve2::Line(line) => line,
+            _ => unreachable!("WasmLine2 is only built from a Line2 support"),
+        }
     }
 }
 
@@ -48,56 +70,131 @@ impl WasmLine2 {
         "line".to_owned()
     }
 
-    /// Returns the start point.
+    /// Returns the first point of the span.
     #[wasm_bindgen(getter)]
     pub fn start(&self) -> Float64Array {
-        point_array(self.inner.start)
+        point_array(self.inner.start())
     }
 
-    /// Returns the end point.
+    /// Returns the last point of the span.
     #[wasm_bindgen(getter)]
     pub fn end(&self) -> Float64Array {
-        point_array(self.inner.end)
+        point_array(self.inner.end())
     }
 
-    /// Evaluates the segment.
+    /// Returns a point the support passes through, span or no span.
+    #[wasm_bindgen(getter)]
+    pub fn origin(&self) -> Float64Array {
+        point_array(self.support().origin())
+    }
+
+    /// Returns the span in the support's native parameters as `[start, end]`.
+    #[wasm_bindgen(getter)]
+    pub fn interval(&self) -> Float64Array {
+        interval_array(&self.inner)
+    }
+
+    /// Evaluates at a normalized traversal fraction of the span.
     #[wasm_bindgen(js_name = pointAt)]
-    pub fn point_at(&self, parameter: f64) -> Float64Array {
-        point_array(self.inner.point_at(parameter))
+    pub fn point_at(&self, fraction: f64) -> Float64Array {
+        point_array(self.inner.point_at(fraction))
     }
 
     /// Returns `segments + 1` uniform samples as a flattened `[u, v, ...]` array.
     pub fn sample(&self, segments: usize) -> Float64Array {
-        points_array(&Curve2::Line(self.inner.clone()).sample(segments))
+        points_array(&self.inner.sample(segments))
     }
 
-    /// Returns the same segment in opposite direction.
+    /// Returns the same geometry traversed in the opposite direction.
     pub fn reversed(&self) -> WasmLine2 {
         Self::from_inner(self.inner.reversed())
     }
 }
 
-/// Read-only 2D circular arc used to display face pcurves.
+/// Read-only circular 2D pcurve: a full circle plus the arc meant.
 #[wasm_bindgen(js_name = Circle2)]
 pub struct WasmCircle2 {
-    pub(crate) inner: Circle2,
+    pub(crate) inner: TrimmedCurve2,
 }
 
 impl WasmCircle2 {
-    pub(crate) fn from_inner(inner: Circle2) -> Self {
+    pub(crate) fn from_inner(inner: TrimmedCurve2) -> Self {
         Self { inner }
+    }
+
+    fn support(&self) -> &Circle2 {
+        match self.inner.curve() {
+            Curve2::Circle(circle) => circle,
+            _ => unreachable!("WasmCircle2 is only built from a Circle2 support"),
+        }
     }
 }
 
-/// Read-only 2D elliptical arc used to display face pcurves.
+#[wasm_bindgen]
+impl WasmCircle2 {
+    /// Returns the curve kind.
+    #[wasm_bindgen(getter)]
+    pub fn kind(&self) -> String {
+        "circle".to_owned()
+    }
+
+    /// Returns the circle's center.
+    #[wasm_bindgen(getter)]
+    pub fn center(&self) -> Float64Array {
+        point_array(self.support().center())
+    }
+
+    /// Returns the circle's radius.
+    #[wasm_bindgen(getter)]
+    pub fn radius(&self) -> f64 {
+        self.support().radius()
+    }
+
+    /// Returns the signed angle the span sweeps, in radians.
+    #[wasm_bindgen(getter)]
+    pub fn sweep(&self) -> f64 {
+        self.inner.interval().delta()
+    }
+
+    /// Returns the span in the support's native angles as `[start, end]`.
+    #[wasm_bindgen(getter)]
+    pub fn interval(&self) -> Float64Array {
+        interval_array(&self.inner)
+    }
+
+    /// Evaluates at a normalized traversal fraction of the span.
+    #[wasm_bindgen(js_name = pointAt)]
+    pub fn point_at(&self, fraction: f64) -> Float64Array {
+        point_array(self.inner.point_at(fraction))
+    }
+
+    /// Returns `segments + 1` uniform samples as a flattened `[u, v, ...]` array.
+    pub fn sample(&self, segments: usize) -> Float64Array {
+        points_array(&self.inner.sample(segments))
+    }
+
+    /// Returns the same arc traversed in the opposite direction.
+    pub fn reversed(&self) -> WasmCircle2 {
+        Self::from_inner(self.inner.reversed())
+    }
+}
+
+/// Read-only elliptical 2D pcurve: a full ellipse plus the arc meant.
 #[wasm_bindgen(js_name = Ellipse2)]
 pub struct WasmEllipse2 {
-    pub(crate) inner: Ellipse2,
+    pub(crate) inner: TrimmedCurve2,
 }
 
 impl WasmEllipse2 {
-    pub(crate) fn from_inner(inner: Ellipse2) -> Self {
+    pub(crate) fn from_inner(inner: TrimmedCurve2) -> Self {
         Self { inner }
+    }
+
+    fn support(&self) -> &Ellipse2 {
+        match self.inner.curve() {
+            Curve2::Ellipse(ellipse) => ellipse,
+            _ => unreachable!("WasmEllipse2 is only built from an Ellipse2 support"),
+        }
     }
 }
 
@@ -110,31 +207,38 @@ impl WasmEllipse2 {
 
     #[wasm_bindgen(getter)]
     pub fn center(&self) -> Float64Array {
-        point_array(self.inner.center())
+        point_array(self.support().center())
     }
 
     #[wasm_bindgen(getter, js_name = majorRadius)]
     pub fn major_radius(&self) -> f64 {
-        self.inner.major_radius()
+        self.support().major_radius()
     }
 
     #[wasm_bindgen(getter, js_name = minorRadius)]
     pub fn minor_radius(&self) -> f64 {
-        self.inner.minor_radius()
+        self.support().minor_radius()
     }
 
+    /// Returns the signed angle the span sweeps, in radians.
     #[wasm_bindgen(getter)]
     pub fn sweep(&self) -> f64 {
-        self.inner.sweep()
+        self.inner.interval().delta()
+    }
+
+    /// Returns the span in the support's native angles as `[start, end]`.
+    #[wasm_bindgen(getter)]
+    pub fn interval(&self) -> Float64Array {
+        interval_array(&self.inner)
     }
 
     #[wasm_bindgen(js_name = pointAt)]
-    pub fn point_at(&self, parameter: f64) -> Float64Array {
-        point_array(self.inner.point_at(parameter))
+    pub fn point_at(&self, fraction: f64) -> Float64Array {
+        point_array(self.inner.point_at(fraction))
     }
 
     pub fn sample(&self, segments: usize) -> Float64Array {
-        points_array(&Curve2::Ellipse(self.inner.clone()).sample(segments))
+        points_array(&self.inner.sample(segments))
     }
 
     pub fn reversed(&self) -> WasmEllipse2 {
@@ -142,58 +246,22 @@ impl WasmEllipse2 {
     }
 }
 
-#[wasm_bindgen]
-impl WasmCircle2 {
-    /// Returns the curve kind.
-    #[wasm_bindgen(getter)]
-    pub fn kind(&self) -> String {
-        "circle".to_owned()
-    }
-
-    /// Returns the arc center.
-    #[wasm_bindgen(getter)]
-    pub fn center(&self) -> Float64Array {
-        point_array(self.inner.center())
-    }
-
-    /// Returns the arc radius.
-    #[wasm_bindgen(getter)]
-    pub fn radius(&self) -> f64 {
-        self.inner.radius()
-    }
-
-    /// Returns the arc sweep angle in radians.
-    #[wasm_bindgen(getter)]
-    pub fn sweep(&self) -> f64 {
-        self.inner.sweep()
-    }
-
-    /// Evaluates the arc.
-    #[wasm_bindgen(js_name = pointAt)]
-    pub fn point_at(&self, parameter: f64) -> Float64Array {
-        point_array(self.inner.point_at(parameter))
-    }
-
-    /// Returns `segments + 1` uniform samples as a flattened `[u, v, ...]` array.
-    pub fn sample(&self, segments: usize) -> Float64Array {
-        points_array(&Curve2::Circle(self.inner.clone()).sample(segments))
-    }
-
-    /// Returns the same arc in opposite direction.
-    pub fn reversed(&self) -> WasmCircle2 {
-        Self::from_inner(self.inner.reversed())
-    }
-}
-
-/// Read-only 2D NURBS curve used to display face pcurves.
+/// Read-only 2D NURBS pcurve: a NURBS support plus the span meant.
 #[wasm_bindgen(js_name = NurbsCurve2)]
 pub struct WasmNurbsCurve2 {
-    pub(crate) inner: NurbsCurve2,
+    pub(crate) inner: TrimmedCurve2,
 }
 
 impl WasmNurbsCurve2 {
-    pub(crate) fn from_inner(inner: NurbsCurve2) -> Self {
+    pub(crate) fn from_inner(inner: TrimmedCurve2) -> Self {
         Self { inner }
+    }
+
+    fn support(&self) -> &NurbsCurve2 {
+        match self.inner.curve() {
+            Curve2::Nurbs(curve) => curve,
+            _ => unreachable!("WasmNurbsCurve2 is only built from a NurbsCurve2 support"),
+        }
     }
 }
 
@@ -208,21 +276,27 @@ impl WasmNurbsCurve2 {
     /// Returns the curve degree.
     #[wasm_bindgen(getter)]
     pub fn degree(&self) -> usize {
-        self.inner.degree().get()
+        self.support().degree().get()
     }
 
     /// Returns the native NURBS domain.
     #[wasm_bindgen(getter)]
     pub fn domain(&self) -> Float64Array {
-        let domain = self.inner.domain();
+        let domain = self.support().domain();
         f64_array(&[domain.start, domain.end])
+    }
+
+    /// Returns the span in the support's native parameters as `[start, end]`.
+    #[wasm_bindgen(getter)]
+    pub fn interval(&self) -> Float64Array {
+        interval_array(&self.inner)
     }
 
     /// Returns the control-point weights.
     #[wasm_bindgen(getter)]
     pub fn weights(&self) -> Float64Array {
         let weights = self
-            .inner
+            .support()
             .control_points()
             .as_slice()
             .iter()
@@ -235,7 +309,7 @@ impl WasmNurbsCurve2 {
     #[wasm_bindgen(getter, js_name = controlPoints)]
     pub fn control_points(&self) -> Array {
         let values = Array::new();
-        for control_point in self.inner.control_points().as_slice() {
+        for control_point in self.support().control_points().as_slice() {
             let pair = Array::new();
             pair.push(&point_array(control_point.to_cartesian()).into());
             pair.push(&JsValue::from_f64(control_point.weight()));
@@ -244,19 +318,18 @@ impl WasmNurbsCurve2 {
         values
     }
 
-    /// Evaluates the curve.
+    /// Evaluates at a normalized traversal fraction of the span.
     #[wasm_bindgen(js_name = pointAt)]
-    pub fn point_at(&self, parameter: f64) -> Float64Array {
-        point_array(Curve2::Nurbs(self.inner.clone()).point_at(parameter))
+    pub fn point_at(&self, fraction: f64) -> Float64Array {
+        point_array(self.inner.point_at(fraction))
     }
 
     /// Returns `segments + 1` uniform samples as a flattened `[u, v, ...]` array.
     pub fn sample(&self, segments: usize) -> Float64Array {
-        let samples = Curve2::Nurbs(self.inner.clone()).sample(segments);
-        points_array(&samples)
+        points_array(&self.inner.sample(segments))
     }
 
-    /// Returns the same curve with reversed direction.
+    /// Returns the same curve traversed in the opposite direction.
     pub fn reversed(&self) -> WasmNurbsCurve2 {
         Self::from_inner(self.inner.reversed())
     }

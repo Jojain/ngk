@@ -1,3 +1,4 @@
+use crate::geometry::TrimmedCurve2;
 use std::f64::consts::FRAC_PI_2;
 
 use nalgebra::Vector3;
@@ -12,8 +13,8 @@ use crate::{
         revolve::{RevolveError, add_full_revolved_edge_staged_with_surface},
     },
     geometry::{
-        Curve, Curve2, Cylinder, Frame, LINEAR_TOLERANCE, Line2, Plane, Point2, Point3,
-        RuledSurface, Sphere, Surface,
+        Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3, RuledSurface, Sphere,
+        Surface,
     },
     topology::{
         Dart, SheetAttr, SolidAttr, TopologyEdit,
@@ -476,12 +477,15 @@ fn plane_uv(surface: &Plane, point: Point3) -> Point2 {
     Point2::new(v.dot(&surface.x_dir()), v.dot(&surface.y_dir()))
 }
 
-fn quad_pcurves(uv: &[Point2; 4], darts: &[Dart; 8]) -> std::collections::HashMap<Dart, Curve2> {
+fn quad_pcurves(
+    uv: &[Point2; 4],
+    darts: &[Dart; 8],
+) -> std::collections::HashMap<Dart, TrimmedCurve2> {
     let mut pcurves = std::collections::HashMap::with_capacity(4);
     for i in 0..4 {
         pcurves.insert(
             darts[2 * i],
-            Curve2::Line(Line2::new(uv[i], uv[(i + 1) % uv.len()])),
+            TrimmedCurve2::segment(uv[i], uv[(i + 1) % uv.len()]),
         );
     }
     pcurves

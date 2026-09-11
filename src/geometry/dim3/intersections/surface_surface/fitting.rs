@@ -7,7 +7,7 @@ use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, Degree, IntersectionError, IntersectionQuality,
     Interval, KnotVector, NurbsCurve, NurbsCurve2, Point2, Point3, Surface,
     SurfaceIntersectionBranch, SurfaceIntersectionBranchKind, SurfaceIntersectionPointKind,
-    SurfacePeriodicity, TrimmedCurve,
+    SurfacePeriodicity, TrimmedCurve, TrimmedCurve2,
 };
 use nalgebra::DMatrix;
 
@@ -96,8 +96,8 @@ pub(super) fn fit_branch(
                 Curve::Nurbs(fitted.curve_3d.clone()),
                 Interval::new(0.0, 1.0),
             ),
-            Curve2::Nurbs(fitted.pcurve_a.clone()),
-            Curve2::Nurbs(fitted.pcurve_b.clone()),
+            TrimmedCurve2::whole(Curve2::Nurbs(fitted.pcurve_a.clone())),
+            TrimmedCurve2::whole(Curve2::Nurbs(fitted.pcurve_b.clone())),
         )
     };
     let (curve_3d, pcurve_a, pcurve_b) = if options.simplify_curves {
@@ -191,8 +191,8 @@ fn approximate_open_branch(
                 Curve::Nurbs(fitted.curve_3d.clone()),
                 Interval::new(0.0, 1.0),
             ),
-            &Curve2::Nurbs(fitted.pcurve_a.clone()),
-            &Curve2::Nurbs(fitted.pcurve_b.clone()),
+            &TrimmedCurve2::whole(Curve2::Nurbs(fitted.pcurve_a.clone())),
+            &TrimmedCurve2::whole(Curve2::Nurbs(fitted.pcurve_b.clone())),
             samples.states,
             samples.parameters,
         );
@@ -382,8 +382,8 @@ fn validate_fit(
     a: &Surface,
     b: &Surface,
     curve_3d: &TrimmedCurve,
-    pcurve_a: &Curve2,
-    pcurve_b: &Curve2,
+    pcurve_a: &TrimmedCurve2,
+    pcurve_b: &TrimmedCurve2,
     states: &[TraceState],
     parameters: &[f64],
 ) -> f64 {

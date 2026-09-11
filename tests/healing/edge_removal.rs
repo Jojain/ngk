@@ -1,6 +1,6 @@
 use ngk::builders::faces::{FaceImprint, split_face_by_imprints};
 use ngk::builders::profiles::plane_uv;
-use ngk::geometry::{Curve, Curve2, Line2, Plane, Point3, Surface};
+use ngk::geometry::{Curve, Plane, Point3, Surface, TrimmedCurve2};
 use ngk::healing::{HealingOptions, remove_redundant_cells};
 use ngk::modeling::{faces, solids};
 use ngk::tessellate::TessellateOpts;
@@ -48,7 +48,7 @@ fn imprint_segment(
     let plane = face_plane(g, face);
     let imprint = FaceImprint::new(
         Curve::line(start, end),
-        Curve2::Line(Line2::new(plane_uv(&plane, start), plane_uv(&plane, end))),
+        TrimmedCurve2::segment(plane_uv(&plane, start), plane_uv(&plane, end)),
     );
     split_face_by_imprints(g, face, &[imprint])
         .expect("a straight imprint across a face should split it")

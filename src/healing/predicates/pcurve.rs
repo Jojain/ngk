@@ -8,7 +8,9 @@
 //! units, which keeps it meaningful on a surface whose parameters are angles.
 
 use crate::builders::profiles::curve_pcurve;
-use crate::geometry::{Circle2, Curve, Curve2, Line2, Point2, Point3, Surface, Vector2};
+use crate::geometry::{
+    Circle2, Curve, Curve2, Interval, Point2, Point3, Surface, TrimmedCurve2, Vector2,
+};
 
 use super::curve::{SUPPORT_SAMPLES, sample_between};
 
@@ -20,7 +22,7 @@ pub fn boundary_pcurve(
     start: Point3,
     end: Point3,
     linear: f64,
-) -> Option<Curve2> {
+) -> Option<TrimmedCurve2> {
     if let Surface::Plane(plane) = surface {
         return curve_pcurve(curve, start, end, plane).ok();
     }
@@ -32,16 +34,16 @@ pub fn boundary_pcurve(
         .collect::<Option<Vec<_>>>()?;
     let last = parameters.len() - 1;
 
-    let straight = Curve2::Line(Line2::new(parameters[0], parameters[last]));
+    let straight = TrimmedCurve2::segment(parameters[0], parameters[last]);
     if traces(surface, &straight, &samples, linear) {
         return Some(straight);
     }
-    let curved = Curve2::Circle(circle2_through(
+    let curved = arc2_through(
         parameters[0],
         parameters[last / 2],
         parameters[last],
         linear,
-    )?);
+    )?;
     traces(surface, &curved, &samples, linear).then_some(curved)
 }
 
@@ -50,7 +52,7 @@ pub fn boundary_pcurve(
 /// The comparison is a two-sided polyline distance in model units: every lifted
 /// point must sit on the sampled edge and every sampled point must be reached
 /// by the lifted curve.
-fn traces(surface: &Surface, candidate: &Curve2, samples: &[Point3], linear: f64) -> bool {
+fn traces(surface: &Surface, candidate: &TrimmedCurve2, samples: &[Point3], linear: f64) -> bool {
     let lifted = candidate
         .sample(4 * SUPPORT_SAMPLES)
         .into_iter()
@@ -84,7 +86,17 @@ fn segment_distance(point: Point3, start: Point3, end: Point3) -> f64 {
 
 /// Returns the parameter-space arc through three points, sweeping from the
 /// first through the second to the third.
-fn circle2_through(first: Point2, second: Point2, third: Point2, linear: f64) -> Option<Circle2> {
+///
+/// The support is the full circle those three points determine, and the span
+/// states which way round it runs: the two arcs joining the first and third
+/// points share both endpoints, so only the sweep names the one through the
+/// second.
+fn arc2_through(
+    first: Point2,
+    second: Point2,
+    third: Point2,
+    linear: f64,
+) -> Option<TrimmedCurve2> {
     let determinant = 2.0
         * (first.x * (second.y - third.y)
             + second.x * (third.y - first.y)
@@ -131,5 +143,8 @@ fn circle2_through(first: Point2, second: Point2, third: Point2, linear: f64) ->
     } else {
         closing - std::f64::consts::TAU
     };
-    Some(Circle2::new(center, x_dir, radius, sweep))
+    Some(TrimmedCurve2::new(
+        Curve2::Circle(Circle2::new(center, x_dir, radius)),
+        Interval::new(0.0, sweep),
+    ))
 }

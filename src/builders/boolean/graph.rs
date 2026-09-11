@@ -1,8 +1,8 @@
 //! Canonical intersection network shared by both Boolean operands.
 
 use crate::geometry::{
-    Curve, Curve2, Interval, KnotVector, NurbsCurve, NurbsError, Point2, Point3, PointCoincidence,
-    TrimmedCurve,
+    Curve, Interval, KnotVector, NurbsCurve, NurbsError, Point2, Point3, PointCoincidence,
+    TrimmedCurve, TrimmedCurve2,
 };
 use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
@@ -63,7 +63,7 @@ pub enum IntersectionSpanUse {
     Face {
         side: BooleanSide,
         face: FaceKey,
-        pcurve: Box<Curve2>,
+        pcurve: Box<TrimmedCurve2>,
         orientation: IntersectionOrientation,
     },
 }
@@ -555,7 +555,7 @@ fn node_spans(
                     } => Ok(IntersectionSpanUse::Face {
                         side: *side,
                         face: *face,
-                        pcurve: Box::new(pcurve.trimmed(interval)?),
+                        pcurve: Box::new(pcurve.sub(interval)),
                         orientation: *orientation,
                     }),
                     IntersectionSpanUse::Edge {

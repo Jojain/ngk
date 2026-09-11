@@ -10,9 +10,9 @@ use crate::builders::profiles::{
     add_rectangle_staged as add_rectangle_profile_staged, profile_pcurves,
 };
 use crate::geometry::{
-    Circle, Curve, Curve2, CurveCurveIntersection2, CurveIntersectionError, Interval,
-    LINEAR_TOLERANCE, Line2, NurbsError, Periodicity, Plane, Point2, Point3, Surface,
-    SurfacePeriodicity, TrimmedCurve,
+    Circle, Curve, CurveCurveIntersection2, CurveIntersectionError, Interval, LINEAR_TOLERANCE,
+    NurbsError, Periodicity, Plane, Point2, Point3, Surface, SurfacePeriodicity, TrimmedCurve,
+    TrimmedCurve2,
 };
 use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closed;
@@ -165,12 +165,12 @@ pub struct FaceImprintSplit {
 #[derive(Clone)]
 pub struct FaceImprint {
     pub curve: TrimmedCurve,
-    pub pcurve: Curve2,
+    pub pcurve: TrimmedCurve2,
 }
 
 impl FaceImprint {
     /// Creates an imprint whose 3D curve and 2D pcurve share direction.
-    pub fn new(curve: Curve, pcurve: Curve2) -> Self {
+    pub fn new(curve: Curve, pcurve: TrimmedCurve2) -> Self {
         let interval = match &curve {
             Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) => curve.domain(),
             Curve::Line(_) => Interval::new(0.0, 1.0),
@@ -182,7 +182,7 @@ impl FaceImprint {
     }
 
     /// Creates an imprint over an explicit span of its 3D support.
-    pub fn with_section(curve: TrimmedCurve, pcurve: Curve2) -> Self {
+    pub fn with_section(curve: TrimmedCurve, pcurve: TrimmedCurve2) -> Self {
         Self { curve, pcurve }
     }
 
@@ -198,7 +198,7 @@ impl FaceImprint {
     pub fn trimmed(&self, interval: Interval) -> Result<Self, NurbsError> {
         Ok(Self::with_section(
             self.curve.sub(interval),
-            self.pcurve.trimmed(interval)?,
+            self.pcurve.sub(interval),
         ))
     }
 
@@ -233,7 +233,7 @@ pub struct FaceImprintGraph {
 
 impl FaceImprintGraph {
     /// Builds an imprint graph from 2D lines and NURBS curves.
-    pub fn from_curves(curves: &[Curve2]) -> Result<Self, CurveIntersectionError> {
+    pub fn from_curves(curves: &[TrimmedCurve2]) -> Result<Self, CurveIntersectionError> {
         let split_parameters = curve_split_parameters(curves)?;
         let mut vertices = Vec::<Point2>::new();
         let mut edges: Vec<FaceImprintGraphEdge> = Vec::new();
@@ -452,7 +452,9 @@ impl OrientedGraphEdge {
     }
 }
 
-fn curve_split_parameters(curves: &[Curve2]) -> Result<Vec<Vec<f64>>, CurveIntersectionError> {
+fn curve_split_parameters(
+    curves: &[TrimmedCurve2],
+) -> Result<Vec<Vec<f64>>, CurveIntersectionError> {
     let mut parameters = vec![vec![0.0, 1.0]; curves.len()];
 
     for i in 0..curves.len() {
@@ -504,7 +506,7 @@ fn ordered_edge_key(a: usize, b: usize) -> (usize, usize) {
 struct IncidentFacePcurve {
     face: FaceKey,
     dart: Dart,
-    pcurve: Curve2,
+    pcurve: TrimmedCurve2,
     fraction: f64,
 }
 
@@ -908,7 +910,7 @@ fn merge_periodic_boundary_edge<P: Payload>(
     face: FaceKey,
     loop_dart: Dart,
     surface: &Surface,
-    pcurves: &mut HashMap<Dart, Curve2>,
+    pcurves: &mut HashMap<Dart, TrimmedCurve2>,
     period: f64,
 ) -> Result<Option<Dart>, FaceImprintSplitError> {
     // Reported rather than asserted: the loop reaching here can be one this
@@ -981,7 +983,7 @@ fn merge_periodic_boundary_edge<P: Payload>(
     g.link(Dim::Zero, first, second_end)
         .expect("prepared periodic boundary merge must link the merged edge");
     g.add_edge(EdgeAttr::new(first, merged_curve, P::E::default()));
-    pcurves.insert(first, Curve2::Line(Line2::new(start_uv, end_uv)));
+    pcurves.insert(first, TrimmedCurve2::segment(start_uv, end_uv));
 
     Ok(Some(if loop_dart == second {
         first
@@ -1369,7 +1371,7 @@ fn finish_closed_imprint_split<P: Payload>(
 struct SectionLoop {
     loop_dart: Dart,
     edges: Vec<SectionLoopEdge>,
-    pcurves: HashMap<Dart, Curve2>,
+    pcurves: HashMap<Dart, TrimmedCurve2>,
 }
 
 #[derive(Clone)]
@@ -1378,7 +1380,7 @@ struct SectionLoopEdge {
     start_uv: Point2,
     end_uv: Point2,
     curve: Curve,
-    pcurve: Curve2,
+    pcurve: TrimmedCurve2,
 }
 
 fn add_section_loop<P: Payload>(
@@ -1631,7 +1633,7 @@ impl FaceImprintCut {
     /// Follows a nonbranching path from one boundary corner to another.
     fn from_chain(
         imprints: &[FaceImprint],
-        boundary: &[(Point2, Curve2)],
+        boundary: &[(Point2, TrimmedCurve2)],
     ) -> Result<Option<Self>, NurbsError> {
         for (index, imprint) in imprints.iter().enumerate() {
             for reversed in [false, true] {
@@ -1650,7 +1652,7 @@ impl FaceImprintCut {
     /// Stops at boundary vertices or ambiguous junctions rather than inventing a path.
     fn follow(
         imprints: &[FaceImprint],
-        boundary: &[(Point2, Curve2)],
+        boundary: &[(Point2, TrimmedCurve2)],
         start: usize,
         index: usize,
         reversed: bool,
@@ -1719,7 +1721,7 @@ fn face_boundary_uvs<P: Payload>(
 fn face_boundary_edges<P: Payload>(
     g: &GMap<P>,
     face: FaceKey,
-) -> Result<Vec<(Point2, Curve2)>, FaceImprintSplitError> {
+) -> Result<Vec<(Point2, TrimmedCurve2)>, FaceImprintSplitError> {
     let face_view = g
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
@@ -1769,8 +1771,8 @@ fn boundary_edge_at_uv<P: Payload>(
     Ok(None)
 }
 
-fn pcurve_fraction_at(pcurve: &Curve2, point: Point2) -> Option<f64> {
-    pcurve.parameter_at(point, LINEAR_TOLERANCE)
+fn pcurve_fraction_at(pcurve: &TrimmedCurve2, point: Point2) -> Option<f64> {
+    pcurve.try_parameter_at(point, LINEAR_TOLERANCE)
 }
 
 fn boundary_edge_key<P: Payload>(
@@ -1782,7 +1784,7 @@ fn boundary_edge_key<P: Payload>(
 }
 
 /// [`snap_boundary_corner`] over corners paired with their outgoing pcurves.
-fn snap_boundary_corner_in(boundary: &[(Point2, Curve2)], uv: Point2) -> Option<usize> {
+fn snap_boundary_corner_in(boundary: &[(Point2, TrimmedCurve2)], uv: Point2) -> Option<usize> {
     boundary
         .iter()
         .enumerate()
@@ -1817,7 +1819,7 @@ fn snap_boundary_corner(boundary_uvs: &[Point2], uv: Point2) -> Option<usize> {
 fn valid_chord(
     start: usize,
     end: usize,
-    boundary: &[(Point2, Curve2)],
+    boundary: &[(Point2, TrimmedCurve2)],
     sections: &[(usize, bool, FaceImprint)],
 ) -> bool {
     boundary.len() >= 2 && start != end && !retraces_boundary(boundary, sections)
@@ -1829,7 +1831,7 @@ fn valid_chord(
 /// boundary edges of both fragments, so the same chain is refused on everything
 /// it has already produced.
 fn retraces_boundary(
-    boundary: &[(Point2, Curve2)],
+    boundary: &[(Point2, TrimmedCurve2)],
     sections: &[(usize, bool, FaceImprint)],
 ) -> bool {
     sections.iter().all(|(_, _, imprint)| {
@@ -1837,7 +1839,7 @@ fn retraces_boundary(
             let uv = imprint.pcurve.point_at(*fraction);
             boundary
                 .iter()
-                .any(|(_, pcurve)| pcurve.parameter_at(uv, LINEAR_TOLERANCE).is_some())
+                .any(|(_, pcurve)| pcurve.try_parameter_at(uv, LINEAR_TOLERANCE).is_some())
         })
     })
 }
@@ -2040,11 +2042,11 @@ fn partition_inner_loops<P: Payload>(
     g: &TopologyEdit<'_, P>,
     face: FaceKey,
     inner_loops: &[Dart],
-    old_pcurves: &HashMap<Dart, Curve2>,
+    old_pcurves: &HashMap<Dart, TrimmedCurve2>,
     source_loop: Dart,
-    source_pcurves: &HashMap<Dart, Curve2>,
+    source_pcurves: &HashMap<Dart, TrimmedCurve2>,
     created_loop: Dart,
-    created_pcurves: &HashMap<Dart, Curve2>,
+    created_pcurves: &HashMap<Dart, TrimmedCurve2>,
 ) -> Result<(Vec<Dart>, Vec<Dart>), FaceImprintSplitError> {
     let source_boundary = sampled_loop_uvs(g, face, source_loop, source_pcurves)?;
     let created_boundary = sampled_loop_uvs(g, face, created_loop, created_pcurves)?;
@@ -2071,7 +2073,7 @@ fn sampled_loop_uvs<P: Payload>(
     g: &TopologyEdit<'_, P>,
     face: FaceKey,
     loop_dart: Dart,
-    pcurves: &HashMap<Dart, Curve2>,
+    pcurves: &HashMap<Dart, TrimmedCurve2>,
 ) -> Result<Vec<Point2>, FaceImprintSplitError> {
     let profile =
         Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
@@ -2115,8 +2117,8 @@ fn extend_loop_pcurves<P: Payload>(
     g: &TopologyEdit<'_, P>,
     face: FaceKey,
     loop_dart: Dart,
-    old_pcurves: &HashMap<Dart, Curve2>,
-    destination: &mut HashMap<Dart, Curve2>,
+    old_pcurves: &HashMap<Dart, TrimmedCurve2>,
+    destination: &mut HashMap<Dart, TrimmedCurve2>,
 ) -> Result<(), FaceImprintSplitError> {
     let profile =
         Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
@@ -2133,11 +2135,11 @@ fn extend_loop_pcurves<P: Payload>(
 fn split_face_pcurves<P: Payload>(
     g: &mut TopologyEdit<'_, P>,
     face: FaceKey,
-    old_pcurves: &HashMap<Dart, Curve2>,
+    old_pcurves: &HashMap<Dart, TrimmedCurve2>,
     loop_dart: Dart,
     section_dart: Dart,
-    section_pcurve: &Curve2,
-) -> Result<HashMap<Dart, Curve2>, FaceImprintSplitError> {
+    section_pcurve: &TrimmedCurve2,
+) -> Result<HashMap<Dart, TrimmedCurve2>, FaceImprintSplitError> {
     let mut pcurves = HashMap::new();
     let profile =
         Profile::from_dart(g, loop_dart).expect("face loop must have a registered profile");
@@ -2328,7 +2330,7 @@ fn incident_face_pcurves<P: Payload>(
             let surface = face_view.surface();
             let uv = periodic_image_near_pcurve(surface, &pcurve, surface.param_at(split_point)?);
             let fraction = pcurve
-                .parameter_at(uv, LINEAR_TOLERANCE)
+                .try_parameter_at(uv, LINEAR_TOLERANCE)
                 .ok_or(FaceEdgeSplitError::SplitPointNotOnPcurve { face, dart })?;
             Ok(IncidentFacePcurve {
                 face,
@@ -2340,7 +2342,7 @@ fn incident_face_pcurves<P: Payload>(
         .collect()
 }
 
-fn periodic_image_near_pcurve(surface: &Surface, pcurve: &Curve2, mut uv: Point2) -> Point2 {
+fn periodic_image_near_pcurve(surface: &Surface, pcurve: &TrimmedCurve2, mut uv: Point2) -> Point2 {
     let start = pcurve.point_at(0.0);
     let end = pcurve.point_at(1.0);
     let center = Point2::from((start.coords + end.coords) * 0.5);
@@ -2365,7 +2367,7 @@ fn assign_split_pcurves<P: Payload>(
     pcurve: IncidentFacePcurve,
 ) -> Result<(), FaceEdgeSplitError> {
     let second_dart = g.alpha(Dim::One, g.alpha(Dim::Zero, pcurve.dart));
-    let (first_pcurve, second_pcurve) = pcurve.pcurve.split_at(pcurve.fraction)?;
+    let (first_pcurve, second_pcurve) = pcurve.pcurve.split_at(pcurve.fraction);
     let face_attr = g
         .face_attr_mut(pcurve.face)
         .ok_or(FaceEdgeSplitError::MissingFace { face: pcurve.face })?;

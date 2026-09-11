@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::dim2::curves::Curve2;
+use crate::geometry::dim2::trimmed::TrimmedCurve2;
 use crate::geometry::{Curve, Point3, Surface};
 use crate::topology::dart::Dart;
 use crate::topology::edge::Edge;
@@ -115,7 +115,7 @@ pub struct FaceAttr<T> {
     /// Oriented seed darts of inner boundary loops.
     pub inner_loops: Vec<Dart>,
     /// Directed boundary pcurves keyed by their oriented boundary darts.
-    pub pcurves: HashMap<Dart, Curve2>,
+    pub pcurves: HashMap<Dart, TrimmedCurve2>,
 }
 
 impl<T> FaceAttr<T> {
@@ -142,7 +142,7 @@ impl<T> FaceAttr<T> {
         data: T,
         outer_loop: Dart,
         inner_loops: Vec<Dart>,
-        pcurves: HashMap<Dart, Curve2>,
+        pcurves: HashMap<Dart, TrimmedCurve2>,
     ) -> Self {
         Self {
             surface,

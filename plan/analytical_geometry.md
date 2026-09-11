@@ -101,10 +101,9 @@ trait, while generic code can still be written once over any support. The enums 
 concrete: `GMap` serialization, healing's value comparisons and cheap cloning all depend
 on the derived `Serialize`/`Deserialize`/`Clone`/`PartialEq`.
 
-`NurbsCurve2` deliberately does not implement `Curve2Geometry`: its own methods are
-expressed in its native knot domain, and `Curve2` is normalized to `[0, 1]`. Making it an
-implementor would give it two parameter conventions under one name, so the `Curve2::Nurbs`
-arm does the remapping instead.
+`NurbsCurve2` deliberately does not implement `Curve2Geometry`: its own methods already
+speak its native knot domain, which is exactly what the trait asks for, so the
+`Curve2::Nurbs` arm forwards to them directly rather than adapting them.
 
 `domain()` returns possibly-infinite `Interval`s. `Interval::or_extent(extent)` substitutes
 `±extent` for *infinite* endpoints only — a bounded domain keeps its real extent even when

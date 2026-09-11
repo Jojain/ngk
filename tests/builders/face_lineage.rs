@@ -2,7 +2,7 @@ use std::convert::Infallible;
 
 use ngk::builders::faces::{FaceImprint, add_face, split_face_by_imprints_staged};
 use ngk::builders::profiles::add_rectangle as add_rectangle_profile;
-use ngk::geometry::{Curve, Curve2, Line2, Plane, Point2, Point3};
+use ngk::geometry::{Curve, Plane, Point2, Point3, TrimmedCurve2};
 use ngk::topology::TopologyEditError;
 use ngk::topology::gmap::{EditPolicy, GMap};
 use ngk::topology::payload::Payload;
@@ -169,6 +169,6 @@ fn planar_line_imprint(start: Point2, end: Point2) -> FaceImprint {
             Point3::new(start.x, start.y, 0.0),
             Point3::new(end.x, end.y, 0.0),
         ),
-        Curve2::Line(Line2::new(start, end)),
+        TrimmedCurve2::segment(start, end),
     )
 }

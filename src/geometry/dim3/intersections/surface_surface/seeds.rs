@@ -1,3 +1,4 @@
+use crate::geometry::TrimmedCurve2;
 use nalgebra::{Vector3, Vector4};
 
 use super::super::curve_surface::{
@@ -14,7 +15,7 @@ use super::tracer::TraceState;
 use crate::geometry::counters::{count_newton_iterations, count_subdivision_node};
 use crate::geometry::{
     BBox, BezierSurface, ControlNet, ControlPolygon, ControlPolygon2, Curve, Curve2, HPoint2,
-    Interval, KnotVector, Line2, NurbsCurve, NurbsCurve2, NurbsError, NurbsSurface, Point2, Point3,
+    Interval, KnotVector, NurbsCurve, NurbsCurve2, NurbsError, NurbsSurface, Point2, Point3,
     Surface, TrimmedCurve,
 };
 
@@ -468,10 +469,10 @@ impl<'a> PlanarSeedSearch<'a> {
     ) -> Result<SurfaceIntersectionBranch, IntersectionError> {
         let curve = normalized_knots(boundary_curve(patch.surface(), edge.boundary())?)?;
         let varying = edge.varying(patch);
-        let pcurve_other = Curve2::Line(Line2::new(
+        let pcurve_other = TrimmedCurve2::segment(
             edge.parameters(patch, varying.start),
             edge.parameters(patch, varying.end),
-        ));
+        );
         let pcurve_planar = self.planar_pcurve(&curve)?;
         let (pcurve_a, pcurve_b) = if self.planar_is_a {
             (pcurve_planar, pcurve_other)
@@ -510,7 +511,7 @@ impl<'a> PlanarSeedSearch<'a> {
     ///
     /// A planar NURBS patch is a parallelogram, so its parameterization is
     /// affine and the control points carry over with their own weights.
-    fn planar_pcurve(&self, curve: &NurbsCurve) -> Result<Curve2, IntersectionError> {
+    fn planar_pcurve(&self, curve: &NurbsCurve) -> Result<TrimmedCurve2, IntersectionError> {
         let domain_u = self.planar.domain_u();
         let domain_v = self.planar.domain_v();
         let origin = self.planar.point_at(domain_u.start, domain_v.start);
@@ -548,11 +549,9 @@ impl<'a> PlanarSeedSearch<'a> {
                 })
                 .collect(),
         )?;
-        Ok(Curve2::Nurbs(NurbsCurve2::new(
-            curve.degree(),
-            control_points,
-            curve.knots().clone(),
-        )?))
+        let pcurve = NurbsCurve2::new(curve.degree(), control_points, curve.knots().clone())?;
+        let span = pcurve.domain();
+        Ok(TrimmedCurve2::new(Curve2::Nurbs(pcurve), span))
     }
 
     /// Confirms that a one-sided patch really meets the plane, and tangentially.

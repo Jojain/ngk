@@ -7,7 +7,7 @@ use ngk::builders::boolean::{
 
 use ngk::builders::edges::add_line;
 use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints};
-use ngk::geometry::{Curve, Curve2, Interval, Line2, Point2, Surface};
+use ngk::geometry::{Curve, Point2, Surface, TrimmedCurve2};
 use ngk::geometry::{Frame, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
 use ngk::modeling::{edges, faces, solids, sweep::extrude_face};
 use ngk::topology::TopologyEditError;
@@ -467,7 +467,7 @@ fn nurbs_face_intersection_does_not_bridge_an_inner_loop() {
                     Point3::new(pair[0].x, pair[0].y, 0.0),
                     Point3::new(pair[1].x, pair[1].y, 0.0),
                 ),
-                Curve2::Line(Line2::new(pair[0], pair[1])),
+                TrimmedCurve2::segment(pair[0], pair[1]),
             )
         })
         .collect::<Vec<_>>();

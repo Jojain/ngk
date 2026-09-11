@@ -3,6 +3,8 @@ use thiserror::Error;
 
 use super::bezier::Bezier2;
 use super::curves::Curve2;
+use super::nurbs::NurbsCurve2;
+use super::trimmed::TrimmedCurve2;
 use crate::geometry::counters::{
     count_curve_curve_2d_call, count_newton_iterations, count_subdivision_node,
 };
@@ -250,18 +252,22 @@ impl CurvePiece {
     }
 }
 
-/// Intersects two 2D curves using default tolerances.
+/// Intersects two 2D spans using default tolerances.
 pub fn intersect_curves(
-    a: &Curve2,
-    b: &Curve2,
+    a: &TrimmedCurve2,
+    b: &TrimmedCurve2,
 ) -> Result<CurveCurveIntersections2, CurveIntersectionError> {
     intersect_curves_with_options(a, b, CurveIntersectionOptions::default())
 }
 
-/// Intersects two 2D curves using explicit numerical controls.
+/// Intersects two 2D spans using explicit numerical controls.
+///
+/// Both operands are spans rather than supports because the search is a
+/// subdivision over control polygons: an unbounded support has none. Returned
+/// parameters are normalized traversal fractions of each span.
 pub fn intersect_curves_with_options(
-    a: &Curve2,
-    b: &Curve2,
+    a: &TrimmedCurve2,
+    b: &TrimmedCurve2,
     options: CurveIntersectionOptions,
 ) -> Result<CurveCurveIntersections2, CurveIntersectionError> {
     if !options.validate() {
@@ -300,6 +306,7 @@ pub fn intersect_curves_with_options(
         dedup_intersections(search.intersections, options)
             .into_iter()
             .map(|intersection| normalize_intersection(intersection, domain_a, domain_b))
+            .map(|intersection| onto_spans(intersection, a, b, &nurbs_a, &nurbs_b))
             .collect(),
         if search.reasons.is_empty() {
             IntersectionCoverage::Complete
@@ -705,4 +712,64 @@ fn normalize_intersection(
 
 fn normalize_parameter(domain: Interval, parameter: f64) -> f64 {
     (parameter - domain.start) / (domain.end - domain.start)
+}
+
+/// Re-expresses a result found on the fitted NURBS in each span's own fraction.
+///
+/// For a straight or NURBS support the fitted curve's parameter is affine in
+/// the span's, so the normalized value already *is* the span fraction. A conic
+/// is not a rational function of its angle, so there the two disagree
+/// everywhere but the knots, and the only quantity common to both
+/// parameterizations is the point — which is what the fraction is recovered
+/// from.
+fn onto_spans(
+    intersection: CurveCurveIntersection2,
+    span_a: &TrimmedCurve2,
+    span_b: &TrimmedCurve2,
+    nurbs_a: &NurbsCurve2,
+    nurbs_b: &NurbsCurve2,
+) -> CurveCurveIntersection2 {
+    match intersection {
+        CurveCurveIntersection2::Point { point, u_a, u_b } => CurveCurveIntersection2::Point {
+            point,
+            u_a: span_fraction(span_a, u_a, point),
+            u_b: span_fraction(span_b, u_b, point),
+        },
+        CurveCurveIntersection2::Overlap {
+            interval_a,
+            interval_b,
+        } => CurveCurveIntersection2::Overlap {
+            interval_a: span_interval(span_a, interval_a, nurbs_a),
+            interval_b: span_interval(span_b, interval_b, nurbs_b),
+        },
+    }
+}
+
+/// Whether a support's fitted NURBS shares its parameterization up to an
+/// affine map, which is what lets a normalized fraction carry straight over.
+fn nurbs_parameter_is_affine(span: &TrimmedCurve2) -> bool {
+    matches!(span.curve(), Curve2::Line(_) | Curve2::Nurbs(_))
+}
+
+fn span_fraction(span: &TrimmedCurve2, normalized: f64, point: Point2) -> f64 {
+    if nurbs_parameter_is_affine(span) {
+        normalized
+    } else {
+        span.parameter_at(point).clamp(0.0, 1.0)
+    }
+}
+
+fn span_interval(span: &TrimmedCurve2, normalized: Interval, nurbs: &NurbsCurve2) -> Interval {
+    if nurbs_parameter_is_affine(span) {
+        return normalized;
+    }
+    let domain = nurbs.domain();
+    let at = |fraction: f64| {
+        span_fraction(
+            span,
+            fraction,
+            nurbs.point_at(domain.at(fraction.clamp(0.0, 1.0))),
+        )
+    };
+    Interval::new(at(normalized.start), at(normalized.end))
 }

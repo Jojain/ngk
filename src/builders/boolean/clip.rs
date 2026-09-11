@@ -1,12 +1,13 @@
 //! Synchronized interval clipping; never reconnect filtered branch samples.
 
+use crate::geometry::TrimmedCurve2;
 use nalgebra::Vector2;
 
 use crate::builders::faces::FaceImprint;
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveIntersectionOptions, HPoint, HPoint2,
-    IntersectionOptions, Interval, LINEAR_TOLERANCE, Line2, NurbsCurve, NurbsCurve2, NurbsError,
-    Point2, Point3, Surface, SurfaceIntersectionBranch, SurfacePeriodicity, TrimmedCurve,
+    IntersectionOptions, Interval, LINEAR_TOLERANCE, NurbsCurve, NurbsCurve2, NurbsError, Point2,
+    Point3, Surface, SurfaceIntersectionBranch, SurfacePeriodicity, TrimmedCurve,
 };
 
 use super::{BooleanError, trim::FaceTrimDomain};
@@ -98,8 +99,8 @@ pub(crate) fn clip_branch(
         }
         let interval = Interval::new(pair[0], pair[1]);
         let mut curve = branch.curve_3d.sub(interval);
-        let mut pcurve_a = pcurve_a.trimmed(interval)?;
-        let mut pcurve_b = pcurve_b.trimmed(interval)?;
+        let mut pcurve_a = pcurve_a.sub(interval);
+        let mut pcurve_b = pcurve_b.sub(interval);
         for (index, at_start) in [(0usize, true), (1usize, false)] {
             let Some(node) = nodes
                 .iter()
@@ -134,7 +135,7 @@ fn branch_nodes(
     branch: &SurfaceIntersectionBranch,
     first: &Surface,
     second: &Surface,
-    pcurves: [&Curve2; 2],
+    pcurves: [&TrimmedCurve2; 2],
     anchors: &[Point3],
     capture: f64,
     crossings: &[f64],
@@ -178,11 +179,11 @@ fn branch_nodes(
 
 /// Moves a synchronized pcurve to the periodic image occupied by the face trim.
 fn periodic_pcurve_image(
-    curve: &Curve2,
+    span: &TrimmedCurve2,
     surface: &Surface,
     trim: &FaceTrimDomain,
-) -> Result<Curve2, NurbsError> {
-    let reference = curve.point_at(0.5);
+) -> Result<TrimmedCurve2, NurbsError> {
+    let reference = span.point_at(0.5);
     let center = trim.chart_center();
     let mut offset = Vector2::zeros();
     let nearest_shift =
@@ -200,7 +201,7 @@ fn periodic_pcurve_image(
         }
         SurfacePeriodicity::None => {}
     }
-    curve.translated(offset)
+    span.translated(offset)
 }
 
 /// Shifts `uv` by whole periods until it is the image nearest `reference`.
@@ -247,18 +248,18 @@ fn snapped_curve(curve: &Curve, at_start: bool, point: Point3) -> Result<Curve, 
 /// An analytic pcurve is exact wherever its curve is, so it is left alone for
 /// the same reason its curve is.
 fn snapped_pcurve(
-    curve: &Curve2,
+    span: &TrimmedCurve2,
     at_start: bool,
     correction: Vector2<f64>,
-) -> Result<Curve2, NurbsError> {
+) -> Result<TrimmedCurve2, NurbsError> {
     if correction.norm() == 0.0 {
-        return Ok(curve.clone());
+        return Ok(span.clone());
     }
-    match curve {
-        Curve2::Line(line) => {
-            let (mut start, mut end) = (line.point_at(0.0), line.point_at(1.0));
+    match span.curve() {
+        Curve2::Line(_) => {
+            let (mut start, mut end) = (span.start(), span.end());
             *(if at_start { &mut start } else { &mut end }) += correction;
-            Ok(Curve2::Line(Line2::new(start, end)))
+            Ok(TrimmedCurve2::segment(start, end))
         }
         Curve2::Nurbs(nurbs) => {
             let mut points = nurbs.control_points().as_slice().to_vec();
@@ -266,12 +267,14 @@ fn snapped_pcurve(
             let weight = points[index].weight();
             let moved: Point2 = points[index].to_cartesian() + correction;
             points[index] = HPoint2::from_cartesian(moved, weight);
-            Ok(Curve2::Nurbs(NurbsCurve2::new(
+            let moved = NurbsCurve2::new(
                 nurbs.degree(),
                 ControlPolygon2::new(points)?,
                 nurbs.knots().clone(),
-            )?))
+            )?;
+            let domain = moved.domain();
+            Ok(TrimmedCurve2::new(Curve2::Nurbs(moved), domain))
         }
-        Curve2::Circle(_) | Curve2::Ellipse(_) => Ok(curve.clone()),
+        Curve2::Circle(_) | Curve2::Ellipse(_) => Ok(span.clone()),
     }
 }

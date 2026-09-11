@@ -1,8 +1,9 @@
 //! Trim-domain queries and exact pcurve crossings for Boolean branches.
 
+use crate::geometry::TrimmedCurve2;
 use crate::geometry::{
-    Curve2, CurveCurveIntersection2, CurveIntersectionError, CurveIntersectionOptions,
-    IntersectionOptions, Interval, Line2, Point2, Surface, SurfacePeriodicity,
+    CurveCurveIntersection2, CurveIntersectionError, CurveIntersectionOptions, IntersectionOptions,
+    Interval, Point2, Surface, SurfacePeriodicity,
 };
 use crate::topology::face::Face;
 use crate::topology::payload::Payload;
@@ -30,7 +31,7 @@ const TRIM_CHORD_RATIO: f64 = 1.0e-4;
 
 /// Cached oriented loops; polylines are used only for winding classification.
 pub(crate) struct FaceTrimDomain {
-    loops: Vec<Vec<Curve2>>,
+    loops: Vec<Vec<TrimmedCurve2>>,
     polygons: Vec<Vec<Point2>>,
     tolerance: f64,
     /// Upper bound on how far `polygons` may stray from `loops`.
@@ -195,7 +196,7 @@ impl FaceTrimDomain {
         for image in &images {
             for (loop_index, curves) in self.loops.iter().enumerate() {
                 for curve in curves {
-                    if let Some(parameter) = curve.parameter_at(*image, self.tolerance) {
+                    if let Some(parameter) = curve.try_parameter_at(*image, self.tolerance) {
                         return TrimLocation::OnBoundary {
                             loop_index,
                             parameter,
@@ -264,10 +265,8 @@ impl FaceTrimDomain {
         start -= padding;
         end += padding;
 
-        let bounded_line = Curve2::Line(Line2::new(
-            origin + direction * start,
-            origin + direction * end,
-        ));
+        let bounded_line =
+            TrimmedCurve2::segment(origin + direction * start, origin + direction * end);
         let curve_options = CurveIntersectionOptions {
             linear_tolerance: options.parameter_tolerance,
             parameter_tolerance: options.parameter_tolerance,
@@ -297,12 +296,12 @@ impl FaceTrimDomain {
     /// Adds every exact trim crossing in the branch's normalized parameter space.
     pub(crate) fn crossings(
         &self,
-        curve: &Curve2,
+        span: &TrimmedCurve2,
         options: CurveIntersectionOptions,
         parameters: &mut Vec<f64>,
     ) -> Result<(), CurveIntersectionError> {
         for boundary in self.loops.iter().flatten() {
-            for contact in curve.intersect_curve_with_options(boundary, options)? {
+            for contact in span.intersect_curve_with_options(boundary, options)? {
                 match contact {
                     CurveCurveIntersection2::Point { u_a, .. } => {
                         parameters.push(u_a.clamp(0.0, 1.0))
@@ -326,7 +325,7 @@ impl FaceTrimDomain {
 /// budget sets the polygons' resolution, and [`FaceTrimDomain::boundary_epsilon`]
 /// reports it so no caller reads the polygons finer than they were built. A
 /// domain with no measurable extent falls back to `floor`.
-fn chord_budget(loops: &[Vec<Curve2>], floor: f64) -> f64 {
+fn chord_budget(loops: &[Vec<TrimmedCurve2>], floor: f64) -> f64 {
     let mut min = Point2::new(f64::INFINITY, f64::INFINITY);
     let mut max = Point2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
     for curve in loops.iter().flatten() {
@@ -369,7 +368,7 @@ fn winding_contains(polygon: &[Point2], point: Point2) -> bool {
 /// Such a section is realized on the existing edge instead.
 pub(crate) fn boundary_edge_for<P: Payload>(
     face: &Face<'_, P>,
-    pcurve: &Curve2,
+    pcurve: &TrimmedCurve2,
     tolerance: f64,
 ) -> Option<EdgeKey> {
     let samples = [0.0, 0.25, 0.5, 0.75, 1.0].map(|t| pcurve.point_at(t));
@@ -379,7 +378,7 @@ pub(crate) fn boundary_edge_for<P: Payload>(
             face.pcurve(edge.dart()).is_some_and(|boundary| {
                 samples
                     .iter()
-                    .all(|point| boundary.parameter_at(*point, tolerance).is_some())
+                    .all(|point| boundary.try_parameter_at(*point, tolerance).is_some())
             })
         })
         .map(|edge| edge.key())

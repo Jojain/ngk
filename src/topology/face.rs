@@ -7,6 +7,7 @@ use super::profile::{Loop, Profile};
 use super::vertex::Vertex;
 use crate::geometry::Surface;
 use crate::geometry::dim2::curves::Curve2;
+use crate::geometry::dim2::trimmed::TrimmedCurve2;
 use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
 use crate::topology::attributes::FaceAttr;
 use crate::topology::shape_keys::FaceKey;
@@ -182,7 +183,7 @@ impl<'g, P: Payload> Face<'g, P> {
                 // Elsewhere -- a sphere's seam meridian, say -- one sample per
                 // edge leaves the loop with too few points to span a fan at
                 // all, and the face contributes no volume at all.
-                let count = if planar && matches!(curve, Curve2::Line(_)) {
+                let count = if planar && matches!(curve.curve(), Curve2::Line(_)) {
                     1
                 } else {
                     32
@@ -256,7 +257,7 @@ impl<'g, P: Payload> Face<'g, P> {
     ///
     /// The returned pcurve respects the face's current orientation: if the
     /// face is reversed relative to default, the pcurve is reversed.
-    pub fn pcurve(&self, dart: Dart) -> Option<Curve2> {
+    pub fn pcurve(&self, dart: Dart) -> Option<TrimmedCurve2> {
         let attr = self.attr();
         let g = self.gmap;
         let candidates = [dart, g.alpha(Dim::Zero, dart), g.alpha(Dim::Two, dart)];

@@ -26,7 +26,7 @@ pub use curve_curve::intersect_analytic_curves;
 pub use curve_surface::{intersect_analytic_curve_surface, line_surface_is_analytic};
 pub use surface_surface::intersect_analytic_surfaces;
 
-use crate::geometry::{Curve2, Point3, TrimmedCurve};
+use crate::geometry::{Point3, TrimmedCurve, TrimmedCurve2};
 
 /// How faithfully a section's pcurve represents it in a support's parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -71,8 +71,8 @@ impl PcurveFidelity {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnalyticSection {
     pub curve: TrimmedCurve,
-    pub pcurve_a: Curve2,
-    pub pcurve_b: Curve2,
+    pub pcurve_a: TrimmedCurve2,
+    pub pcurve_b: TrimmedCurve2,
     pub fidelity: PcurveFidelity,
 }
 

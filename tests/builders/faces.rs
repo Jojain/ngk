@@ -12,8 +12,8 @@ use ngk::builders::profiles::add_polyline;
 use ngk::builders::sheets::add_extruded_profile;
 use ngk::builders::solids::add_extruded_face;
 use ngk::geometry::{
-    Curve, Curve2, LINEAR_TOLERANCE, Line2, NurbsCurve2, Plane, Point2, Point3, PointCoincidence,
-    Surface,
+    Curve, Curve2, LINEAR_TOLERANCE, NurbsCurve2, Plane, Point2, Point3, PointCoincidence, Surface,
+    TrimmedCurve2,
 };
 use ngk::topology::TopologyEditError;
 use ngk::topology::gmap::GMap;
@@ -26,14 +26,14 @@ fn connected_imprints_split_a_face_and_retain_each_section() {
     let mut g = GMap::<StandardPayload>::new();
     let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
     let imprints = [
-        planar_imprint(Curve2::Line(Line2::new(
+        planar_imprint(TrimmedCurve2::segment(
             Point2::new(0.0, 2.0),
             Point2::new(2.0, 2.0),
-        ))),
-        planar_imprint(Curve2::Line(Line2::new(
+        )),
+        planar_imprint(TrimmedCurve2::segment(
             Point2::new(2.0, 2.0),
             Point2::new(4.0, 2.0),
-        ))),
+        )),
     ];
     let splits = split_face_by_imprints(&mut g, face, &imprints).unwrap();
     assert_eq!(splits.len(), 1);
@@ -51,17 +51,10 @@ fn connected_imprints_split_a_face_and_retain_each_section() {
 #[test]
 fn two_semicircle_imprints_form_a_closed_inner_loop() {
     use nalgebra::Vector2;
-    use ngk::geometry::Circle2;
     let mut g = GMap::<StandardPayload>::new();
     let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
-    let curves = [Vector2::x(), -Vector2::x()].map(|axis| {
-        Curve2::Circle(Circle2::new(
-            Point2::new(2.0, 2.0),
-            axis,
-            1.0,
-            std::f64::consts::PI,
-        ))
-    });
+    let curves = [Vector2::x(), -Vector2::x()]
+        .map(|axis| TrimmedCurve2::arc(Point2::new(2.0, 2.0), axis, 1.0, std::f64::consts::PI));
     let graph = FaceImprintGraph::from_curves(&curves).unwrap();
     assert_eq!(graph.edges().len(), 2);
     assert_eq!(graph.closed_component_count(), 1);
@@ -159,7 +152,7 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
     let pcurve = shape_face
         .pcurve(edge.dart())
         .expect("circle edge should have a pcurve");
-    assert!(matches!(pcurve, Curve2::Nurbs(_)));
+    assert!(matches!(pcurve.curve(), Curve2::Nurbs(_)));
     for fraction in [0.0, 0.125, 0.25, 0.5, 0.875, 1.0] {
         let uv = pcurve.point_at(fraction);
         let surface_point = shape_face.point_at(uv.x, uv.y);
@@ -305,7 +298,7 @@ fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
 fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
-    let imprint = Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0)));
+    let imprint = TrimmedCurve2::segment(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0));
 
     let splits = split_face_by_imprints(&mut g, face_key, &[planar_imprint(imprint)])
         .expect("face imprint split should run");
@@ -338,8 +331,8 @@ fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
 fn split_face_by_imprints_deduplicates_reversed_boundary_chords() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
-    let first = Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0)));
-    let second = Curve2::Line(Line2::new(Point2::new(2.0, 2.0), Point2::new(0.0, 0.0)));
+    let first = TrimmedCurve2::segment(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0));
+    let second = TrimmedCurve2::segment(Point2::new(2.0, 2.0), Point2::new(0.0, 0.0));
 
     let splits = split_face_by_imprints(
         &mut g,
@@ -359,7 +352,7 @@ fn split_face_by_imprints_deduplicates_reversed_boundary_chords() {
 fn split_face_by_imprints_splits_boundary_edge_at_imprint_endpoint() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
-    let imprint = Curve2::Line(Line2::new(Point2::new(1.0, 0.0), Point2::new(2.0, 2.0)));
+    let imprint = TrimmedCurve2::segment(Point2::new(1.0, 0.0), Point2::new(2.0, 2.0));
 
     let splits = split_face_by_imprints(&mut g, face_key, &[planar_imprint(imprint)])
         .expect("face imprint split should split boundary endpoint first");
@@ -394,14 +387,14 @@ fn split_face_by_imprints_applies_multiple_non_crossing_chords() {
     let profile_key = add_polygon(&mut g, &points);
     let face_key = add_face(&mut g, profile_key).expect("polygon face should build");
     let imprints = vec![
-        planar_imprint(Curve2::Line(Line2::new(
+        planar_imprint(TrimmedCurve2::segment(
             Point2::new(0.0, 0.0),
             Point2::new(3.0, 1.0),
-        ))),
-        planar_imprint(Curve2::Line(Line2::new(
+        )),
+        planar_imprint(TrimmedCurve2::segment(
             Point2::new(0.0, 0.0),
             Point2::new(1.5, 2.0),
-        ))),
+        )),
     ];
 
     let splits = split_face_by_imprints(&mut g, face_key, &imprints)
@@ -429,14 +422,14 @@ fn split_face_by_imprints_ignores_crossing_chords_after_first_split() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
     let imprints = [
-        planar_imprint(Curve2::Line(Line2::new(
+        planar_imprint(TrimmedCurve2::segment(
             Point2::new(0.0, 0.0),
             Point2::new(2.0, 2.0),
-        ))),
-        planar_imprint(Curve2::Line(Line2::new(
+        )),
+        planar_imprint(TrimmedCurve2::segment(
             Point2::new(2.0, 0.0),
             Point2::new(0.0, 2.0),
-        ))),
+        )),
     ];
 
     let splits = split_face_by_imprints(&mut g, face_key, &imprints)
@@ -460,7 +453,7 @@ fn split_face_by_imprints_adds_closed_interior_loop() {
     ];
     let imprints = points
         .windows(2)
-        .map(|pair| planar_imprint(Curve2::Line(Line2::new(pair[0], pair[1]))))
+        .map(|pair| planar_imprint(TrimmedCurve2::segment(pair[0], pair[1])))
         .collect::<Vec<_>>();
 
     let splits = split_face_by_imprints(&mut g, face_key, &imprints)
@@ -501,8 +494,8 @@ fn split_face_by_imprints_adds_closed_interior_loop() {
 #[test]
 fn face_imprint_graph_splits_crossing_segments_at_interior_vertex() {
     let graph = FaceImprintGraph::from_curves(&[
-        Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0))),
-        Curve2::Line(Line2::new(Point2::new(2.0, 0.0), Point2::new(0.0, 2.0))),
+        TrimmedCurve2::segment(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0)),
+        TrimmedCurve2::segment(Point2::new(2.0, 0.0), Point2::new(0.0, 2.0)),
     ])
     .expect("imprint graph should build");
 
@@ -539,8 +532,8 @@ fn face_imprint_graph_splits_crossing_segments_at_interior_vertex() {
 #[test]
 fn face_imprint_graph_splits_t_junction_segments() {
     let graph = FaceImprintGraph::from_curves(&[
-        Curve2::Line(Line2::new(Point2::new(0.0, 0.0), Point2::new(2.0, 0.0))),
-        Curve2::Line(Line2::new(Point2::new(1.0, 1.0), Point2::new(1.0, 0.0))),
+        TrimmedCurve2::segment(Point2::new(0.0, 0.0), Point2::new(2.0, 0.0)),
+        TrimmedCurve2::segment(Point2::new(1.0, 1.0), Point2::new(1.0, 0.0)),
     ])
     .expect("imprint graph should build");
 
@@ -563,7 +556,7 @@ fn face_imprint_graph_detects_closed_loop_components() {
     ];
     let curves = points
         .windows(2)
-        .map(|pair| Curve2::Line(Line2::new(pair[0], pair[1])))
+        .map(|pair| TrimmedCurve2::segment(pair[0], pair[1]))
         .collect::<Vec<_>>();
     let graph = FaceImprintGraph::from_curves(&curves).expect("imprint graph should build");
 
@@ -577,7 +570,7 @@ fn face_imprint_graph_detects_closed_loop_components() {
 fn split_face_by_imprints_preserves_curved_section_edge_geometry() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).expect("face should build");
-    let pcurve = Curve2::Nurbs(
+    let pcurve = nurbs_span(
         NurbsCurve2::interpolate(&[
             Point2::new(0.0, 0.0),
             Point2::new(1.0, 2.0),
@@ -620,7 +613,7 @@ fn split_face_preserves_curved_loop() {
             Point2::new(1.0, 1.0),
         ],
     ]
-    .map(|points| Curve2::Nurbs(NurbsCurve2::interpolate(&points).unwrap()));
+    .map(|points| nurbs_span(NurbsCurve2::interpolate(&points).unwrap()));
     let imprints = pcurves.into_iter().map(planar_imprint).collect::<Vec<_>>();
 
     let splits =
@@ -640,7 +633,7 @@ fn split_face_preserves_curved_loop() {
 fn split_face_by_imprints_preserves_closed_nurbs_as_single_curved_edge() {
     let mut g = GMap::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).expect("face should build");
-    let pcurve = Curve2::Nurbs(
+    let pcurve = nurbs_span(
         NurbsCurve2::interpolate(&[
             Point2::new(1.0, 1.0),
             Point2::new(3.0, 1.0),
@@ -668,13 +661,18 @@ fn split_face_by_imprints_preserves_closed_nurbs_as_single_curved_edge() {
     );
 }
 
-fn planar_imprint(pcurve: Curve2) -> FaceImprint {
+/// Saves wrapping every NURBS test pcurve in its variant before spanning it.
+fn nurbs_span(curve: NurbsCurve2) -> TrimmedCurve2 {
+    TrimmedCurve2::whole(Curve2::Nurbs(curve))
+}
+
+fn planar_imprint(pcurve: TrimmedCurve2) -> FaceImprint {
     let points = pcurve
         .sample(32)
         .into_iter()
         .map(|point| Point3::new(point.x, point.y, 0.0))
         .collect::<Vec<_>>();
-    let curve = match &pcurve {
+    let curve = match pcurve.curve() {
         Curve2::Line(_) => Curve::line(points[0], *points.last().unwrap()),
         Curve2::Circle(_) | Curve2::Ellipse(_) | Curve2::Nurbs(_) => Curve::Nurbs(
             ngk::geometry::NurbsCurve::interpolate(&points)
@@ -735,7 +733,7 @@ fn imprint_sections_retain_source_indices_and_directed_intervals() {
     ];
     let imprints = points
         .windows(2)
-        .map(|pair| planar_imprint(Curve2::Line(Line2::new(pair[0], pair[1]))))
+        .map(|pair| planar_imprint(TrimmedCurve2::segment(pair[0], pair[1])))
         .collect::<Vec<_>>();
     let splits = split_face_by_imprints(&mut g, face, &imprints).unwrap();
 

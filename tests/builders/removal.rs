@@ -2,7 +2,7 @@ use nalgebra::Vector2;
 use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
 use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints, split_face_edge};
 use ngk::builders::removal::{MergedCell, is_removable, remove_cell_staged};
-use ngk::geometry::{Circle2, Curve, Curve2, Frame, Line2, Plane, Point2, Point3, Surface};
+use ngk::geometry::{Curve, Curve2, Frame, Plane, Point2, Point3, Surface, TrimmedCurve2};
 use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
 use ngk::modeling::{faces, solids};
 use ngk::topology::gmap::{Dim, GMap};
@@ -30,7 +30,7 @@ fn halved_rectangle() -> (GMap<StandardPayload>, EdgeKey) {
     let face = map.iter_faces().next().expect("map should have a face").0;
     let imprint = FaceImprint::new(
         Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 2.0, 0.0)),
-        Curve2::Line(Line2::new(Point2::new(1.0, 0.0), Point2::new(1.0, 2.0))),
+        TrimmedCurve2::segment(Point2::new(1.0, 0.0), Point2::new(1.0, 2.0)),
     );
     split_face_by_imprints(&mut map, face, &[imprint]).expect("a straight imprint should split");
     let shared = map
@@ -328,13 +328,13 @@ fn redundant_faces_of_boolean_fuse_are_deleted() {
     );
 }
 
-fn planar_imprint(pcurve: Curve2) -> FaceImprint {
+fn planar_imprint(pcurve: TrimmedCurve2) -> FaceImprint {
     let points = pcurve
         .sample(32)
         .into_iter()
         .map(|point| Point3::new(point.x, point.y, 0.0))
         .collect::<Vec<_>>();
-    let curve = match &pcurve {
+    let curve = match pcurve.curve() {
         Curve2::Line(_) => Curve::line(points[0], *points.last().unwrap()),
         Curve2::Circle(_) | Curve2::Ellipse(_) | Curve2::Nurbs(_) => Curve::Nurbs(
             ngk::geometry::NurbsCurve::interpolate(&points)
@@ -356,7 +356,7 @@ fn rectangle_with_filled_inner_loop() -> (GMap<StandardPayload>, FaceKey) {
     ];
     let imprints = points
         .windows(2)
-        .map(|pair| planar_imprint(Curve2::Line(Line2::new(pair[0], pair[1]))))
+        .map(|pair| planar_imprint(TrimmedCurve2::segment(pair[0], pair[1])))
         .collect::<Vec<_>>();
     let splits = split_face_by_imprints(&mut g, face, &imprints).unwrap();
     assert_eq!(splits.len(), 1, "the closed imprint creates one island");
@@ -408,12 +408,12 @@ fn filled_inner_loop_removal_can_be_disabled() {
 fn single_edge_filled_inner_loop_gets_removed() {
     let mut g = GMap::<StandardPayload>::new();
     let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
-    let circle = Curve2::Circle(Circle2::new(
+    let circle = TrimmedCurve2::arc(
         Point2::new(2.0, 2.0),
         Vector2::x(),
         1.0,
         std::f64::consts::TAU,
-    ));
+    );
     let splits = split_face_by_imprints(&mut g, face, &[planar_imprint(circle)]).unwrap();
     assert_eq!(splits.len(), 1);
     assert_eq!(g.iter_edges().count(), 5);

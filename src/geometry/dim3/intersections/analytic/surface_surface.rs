@@ -15,8 +15,8 @@ use crate::geometry::counters::count_surface_surface_analytic_call;
 use crate::geometry::dim3::intersections::error::IntersectionError;
 use crate::geometry::dim3::intersections::options::IntersectionOptions;
 use crate::geometry::{
-    Circle2, Curve, Curve2, Cylinder, Ellipse, Ellipse2, Frame, Interval, Line, Line2, NurbsCurve2,
-    Plane, Point2, Point3, Sphere, Surface, TrimmedCurve,
+    Curve, Curve2, Cylinder, Ellipse, Frame, Interval, Line, NurbsCurve2, Plane, Point2, Point3,
+    Sphere, Surface, TrimmedCurve, TrimmedCurve2,
 };
 
 /// Samples used for the first fitting attempt of one pcurve.
@@ -120,10 +120,10 @@ fn plane_plane(
     // `Line2` extrapolates: this pcurve is exact over the whole unbounded
     // section, not only over the unit window it is written from.
     let plane_line = |plane: &Plane| {
-        Curve2::Line(Line2::new(
+        TrimmedCurve2::segment(
             plane.parameter_at(origin),
             plane.parameter_at(origin + direction),
-        ))
+        )
     };
     Ok(Some(AnalyticSurfaceIntersection::Sections(vec![
         AnalyticSection {
@@ -415,7 +415,7 @@ struct SectionTrace {
     /// Period of the support's `u` direction, when it has one.
     period: Option<f64>,
     /// The exact pcurve, when the support admits one for this section.
-    exact: Option<Curve2>,
+    exact: Option<TrimmedCurve2>,
 }
 
 impl SectionTrace {
@@ -466,23 +466,24 @@ impl SectionTrace {
     /// rather than silently returned. Only a straight trace can be exact here:
     /// a section's image in a plane is already the section itself, and on a
     /// quadric only an aligned section keeps one parameter constant.
-    fn exact_candidate(&self, options: IntersectionOptions) -> Option<Curve2> {
+    fn exact_candidate(&self, options: IntersectionOptions) -> Option<TrimmedCurve2> {
         if let Surface::Plane(plane) = &self.surface {
             return plane_pcurve(plane, &self.curve, self.interval, options);
         }
         let first = *self.uv.first()?;
         let last = *self.uv.last()?;
-        let candidate = Curve2::Line(Line2::new(first, last));
+        let candidate = TrimmedCurve2::segment(first, last);
         self.verifies(&candidate, options).then_some(candidate)
     }
 
     /// Whether a candidate pcurve reproduces the section within tolerance.
-    fn verifies(&self, candidate: &Curve2, options: IntersectionOptions) -> bool {
+    fn verifies(&self, candidate: &TrimmedCurve2, options: IntersectionOptions) -> bool {
         self.deviation(candidate, Interval::new(0.0, 1.0)) <= options.linear_tolerance
     }
 
+    /// A non-finite sample counts as infinitely far — see [`worst_distance`].
     /// Largest distance between the section and a pcurve lifted back onto the support.
-    fn deviation(&self, pcurve: &Curve2, piece: Interval) -> f64 {
+    fn deviation(&self, pcurve: &TrimmedCurve2, piece: Interval) -> f64 {
         let samples = 4 * INITIAL_FIT_SAMPLES;
         (0..=samples)
             .map(|index| {
@@ -491,7 +492,7 @@ impl SectionTrace {
                 let expected = self.point_at(piece.at(local));
                 (self.surface.point_at(uv.x, uv.y) - expected).norm()
             })
-            .fold(0.0_f64, f64::max)
+            .fold(0.0_f64, worst_distance)
     }
 
     /// Section parameters at which the unwrapped `u` crosses a period boundary.
@@ -667,14 +668,14 @@ impl SectionTrace {
         &self,
         piece: Interval,
         options: IntersectionOptions,
-    ) -> Result<(Curve2, PcurveFidelity), IntersectionError> {
+    ) -> Result<(TrimmedCurve2, PcurveFidelity), IntersectionError> {
         if let Some(exact) = &self.exact {
             let trimmed = if piece.start <= options.parameter_tolerance
                 && piece.end >= 1.0 - options.parameter_tolerance
             {
                 exact.clone()
             } else {
-                exact.trimmed(piece)?
+                exact.sub(piece)
             };
             return Ok((
                 shifted_into_period(trimmed, self.period),
@@ -699,7 +700,7 @@ impl SectionTrace {
     /// endpoint may sit on a degeneracy -- a pole reports longitude zero
     /// whatever meridian reaches it -- which would place the line nowhere near
     /// the piece it is meant to describe.
-    fn exact_piece(&self, piece: Interval, options: IntersectionOptions) -> Option<Curve2> {
+    fn exact_piece(&self, piece: Interval, options: IntersectionOptions) -> Option<TrimmedCurve2> {
         let sub_interval = trim_section(self.interval, piece);
         if let Surface::Plane(plane) = &self.surface {
             return plane_pcurve(plane, &self.curve, sub_interval, options);
@@ -708,10 +709,7 @@ impl SectionTrace {
         let first = self.uv_at(piece.start + span * 0.25).ok()?;
         let second = self.uv_at(piece.start + span * 0.75).ok()?;
         let direction = (second - first) * 2.0;
-        let candidate = Curve2::Line(Line2::new(
-            first - direction * 0.25,
-            second + direction * 0.25,
-        ));
+        let candidate = TrimmedCurve2::segment(first - direction * 0.25, second + direction * 0.25);
         (self.deviation(&candidate, piece) <= options.linear_tolerance).then_some(candidate)
     }
 
@@ -720,15 +718,14 @@ impl SectionTrace {
         &self,
         piece: Interval,
         options: IntersectionOptions,
-    ) -> Result<(Curve2, PcurveFidelity), IntersectionError> {
+    ) -> Result<(TrimmedCurve2, PcurveFidelity), IntersectionError> {
         let mut samples = INITIAL_FIT_SAMPLES;
-        let mut best: Option<(Curve2, f64)> = None;
+        let mut best: Option<(TrimmedCurve2, f64)> = None;
         for _ in 0..MAX_FIT_REFINEMENTS {
             let (points, parameters) = self.resample(piece, samples)?;
-            let curve = Curve2::Nurbs(NurbsCurve2::interpolate_with_parameters(
-                &points,
-                &parameters,
-            )?);
+            let fitted = NurbsCurve2::interpolate_with_parameters(&points, &parameters)?;
+            let span = fitted.domain();
+            let curve = TrimmedCurve2::new(Curve2::Nurbs(fitted), span);
             // The measured error is against the section itself, in model units,
             // so it means the same thing as any other linear tolerance here.
             let deviation = self.fit_deviation(&curve, piece);
@@ -796,7 +793,7 @@ impl SectionTrace {
     /// Measured after lifting the pcurve back onto the support, so the number
     /// is a distance in the model rather than in a parameter space whose scale
     /// varies across the surface.
-    fn fit_deviation(&self, pcurve: &Curve2, piece: Interval) -> f64 {
+    fn fit_deviation(&self, pcurve: &TrimmedCurve2, piece: Interval) -> f64 {
         let samples = 4 * INITIAL_FIT_SAMPLES;
         (0..=samples)
             .map(|index| {
@@ -805,7 +802,21 @@ impl SectionTrace {
                 let expected = self.point_at(piece.at(local));
                 (self.surface.point_at(uv.x, uv.y) - expected).norm()
             })
-            .fold(0.0_f64, f64::max)
+            .fold(0.0_f64, worst_distance)
+    }
+}
+
+/// Folds sampled distances into the worst one, treating a non-finite sample as
+/// infinitely far.
+///
+/// `f64::max` ignores `NaN`, so folding with it alone would report a candidate
+/// that evaluates nowhere -- a straight pcurve proposed for a trace that closes
+/// on itself, say -- as a perfect match and let it through verification.
+fn worst_distance(worst: f64, distance: f64) -> f64 {
+    if distance.is_finite() {
+        worst.max(distance)
+    } else {
+        f64::INFINITY
     }
 }
 
@@ -816,7 +827,7 @@ impl SectionTrace {
 /// that it spans no boundary, so its midpoint names the band it belongs to --
 /// its endpoints do not, since one of them may sit exactly on a boundary and
 /// name the wrong side.
-fn shifted_into_period(curve: Curve2, period: Option<f64>) -> Curve2 {
+fn shifted_into_period(curve: TrimmedCurve2, period: Option<f64>) -> TrimmedCurve2 {
     let Some(period) = period else {
         return curve;
     };
@@ -839,33 +850,35 @@ fn plane_pcurve(
     curve: &Curve,
     interval: Interval,
     options: IntersectionOptions,
-) -> Option<Curve2> {
+) -> Option<TrimmedCurve2> {
     let project = |point: Point3| plane.parameter_at(point);
     let candidate = match curve {
-        Curve::Line(line) => Curve2::Line(Line2::new(
+        Curve::Line(line) => TrimmedCurve2::segment(
             project(line.point_at(interval.start)),
             project(line.point_at(interval.end)),
-        )),
+        ),
         Curve::Circle(circle) => {
             let centre = project(circle.plane().origin());
             let start = project(circle.point_at(interval.start));
-            Curve2::Circle(Circle2::new(
+            // Anchoring the support on the section's own start puts its angle
+            // at zero there, so the span is just the signed sweep from it.
+            TrimmedCurve2::arc(
                 centre,
                 start - centre,
                 circle.radius(),
                 signed_sweep(plane, circle.plane().normal(), interval.delta()),
-            ))
+            )
         }
         Curve::Ellipse(ellipse) => {
             let centre = project(ellipse.frame().origin);
             let start = project(ellipse.point_at(interval.start));
-            Curve2::Ellipse(Ellipse2::new(
+            TrimmedCurve2::ellipse_arc(
                 centre,
                 start - centre,
                 ellipse.major_radius(),
                 ellipse.minor_radius(),
                 signed_sweep(plane, ellipse.frame().z_dir, interval.delta()),
-            ))
+            )
         }
         _ => return None,
     };

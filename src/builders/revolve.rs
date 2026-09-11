@@ -1,3 +1,4 @@
+use crate::geometry::TrimmedCurve2;
 use std::collections::HashMap;
 
 use nalgebra::{Rotation3, Vector3, distance};
@@ -8,8 +9,8 @@ use crate::builders::faces::reverse_face_winding;
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{
-    ANGULAR_TOLERANCE, Circle, Cone, Curve, Curve2, Cylinder, Frame, LINEAR_TOLERANCE, Line2,
-    Plane, Point2, Point3, Surface, SurfaceOfRevolution,
+    ANGULAR_TOLERANCE, Circle, Cone, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2,
+    Point3, Surface, SurfaceOfRevolution,
 };
 use crate::topology::IsolatedDart;
 use crate::topology::attributes::{
@@ -345,31 +346,31 @@ fn add_partial_revolved_edge_face<P: Payload>(
     let mut pcurves = HashMap::with_capacity(4);
     pcurves.insert(
         bottom_start,
-        Curve2::Line(Line2::new(
+        TrimmedCurve2::segment(
             Point2::new(interval.start, 0.0),
             Point2::new(interval.end, 0.0),
-        )),
+        ),
     );
     pcurves.insert(
         end_arc_start,
-        Curve2::Line(Line2::new(
+        TrimmedCurve2::segment(
             Point2::new(interval.end, 0.0),
             Point2::new(interval.end, angle.val()),
-        )),
+        ),
     );
     pcurves.insert(
         rotated_start_dart,
-        Curve2::Line(Line2::new(
+        TrimmedCurve2::segment(
             Point2::new(interval.end, angle.val()),
             Point2::new(interval.start, angle.val()),
-        )),
+        ),
     );
     pcurves.insert(
         start_arc_start,
-        Curve2::Line(Line2::new(
+        TrimmedCurve2::segment(
             Point2::new(interval.start, angle.val()),
             Point2::new(interval.start, 0.0),
-        )),
+        ),
     );
 
     g.add_profile(ProfileAttr::new(bottom_start, P::Profile::default()));
@@ -446,17 +447,17 @@ fn add_full_revolved_apex_to_apex_face<P: Payload>(
     let mut pcurves = HashMap::with_capacity(2);
     pcurves.insert(
         seam_start,
-        Curve2::Line(Line2::new(
+        TrimmedCurve2::segment(
             map_pcurve_point(Point2::new(interval.start, 0.0)),
             map_pcurve_point(Point2::new(interval.end, 0.0)),
-        )),
+        ),
     );
     pcurves.insert(
         opposite_end,
-        Curve2::Line(Line2::new(
+        TrimmedCurve2::segment(
             map_pcurve_point(Point2::new(interval.end, angle.val())),
             map_pcurve_point(Point2::new(interval.start, angle.val())),
-        )),
+        ),
     );
     let face = g.add_face(FaceAttr::with_pcurves(
         surface,
@@ -542,19 +543,16 @@ fn add_full_revolved_open_edge_face<P: Payload>(
     let mut pcurves = HashMap::with_capacity(1 + usize::from(inner_loop.is_some()));
     pcurves.insert(
         outer_loop,
-        Curve2::Line(Line2::new(
+        TrimmedCurve2::segment(
             support.corner(outer_u, 0.0),
             support.corner(outer_u, angle.val()),
-        )),
+        ),
     );
     let inner_loops = inner_loop
         .map(|(dart, u, _)| {
             pcurves.insert(
                 dart,
-                Curve2::Line(Line2::new(
-                    support.corner(u, angle.val()),
-                    support.corner(u, 0.0),
-                )),
+                TrimmedCurve2::segment(support.corner(u, angle.val()), support.corner(u, 0.0)),
             );
             vec![dart]
         })
@@ -990,10 +988,10 @@ fn revolve_radius(axis: Axis3, point: Point3) -> f64 {
     distance(&axis.project(point), &point)
 }
 
-fn quad_pcurves(uv: &[(Point2, Point2); 4], darts: &[Dart]) -> HashMap<Dart, Curve2> {
+fn quad_pcurves(uv: &[(Point2, Point2); 4], darts: &[Dart]) -> HashMap<Dart, TrimmedCurve2> {
     let mut pcurves = HashMap::with_capacity(4);
     for i in 0..4 {
-        pcurves.insert(darts[2 * i], Curve2::Line(Line2::new(uv[i].0, uv[i].1)));
+        pcurves.insert(darts[2 * i], TrimmedCurve2::segment(uv[i].0, uv[i].1));
     }
     pcurves
 }

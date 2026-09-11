@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 
-use crate::geometry::{Curve, Curve2, Surface};
+use crate::geometry::{Curve, Curve2, Surface, TrimmedCurve2};
 
 use super::curves::{WasmCircle, WasmEllipse, WasmLine};
 use super::nurbs::{WasmNurbsCurve, WasmNurbsSurface};
@@ -19,13 +19,13 @@ pub(crate) fn curve_to_js(curve: Curve) -> Result<JsValue, JsValue> {
     }
 }
 
-/// Converts a polymorphic 2D curve to its concrete JavaScript class.
-pub(crate) fn curve2_to_js(curve: Curve2) -> JsValue {
-    match curve {
-        Curve2::Line(line) => WasmLine2::from_inner(line).into(),
-        Curve2::Circle(circle) => WasmCircle2::from_inner(circle).into(),
-        Curve2::Ellipse(ellipse) => WasmEllipse2::from_inner(ellipse).into(),
-        Curve2::Nurbs(curve) => WasmNurbsCurve2::from_inner(curve).into(),
+/// Converts a 2D span to the JavaScript class of the support it rests on.
+pub(crate) fn curve2_to_js(span: TrimmedCurve2) -> JsValue {
+    match span.curve() {
+        Curve2::Line(_) => WasmLine2::from_inner(span).into(),
+        Curve2::Circle(_) => WasmCircle2::from_inner(span).into(),
+        Curve2::Ellipse(_) => WasmEllipse2::from_inner(span).into(),
+        Curve2::Nurbs(_) => WasmNurbsCurve2::from_inner(span).into(),
     }
 }
 

@@ -224,8 +224,8 @@ fn perpendicular_planes_return_surface_surface_curve() {
     };
     assert!(branch.samples.len() >= 2, "{:?}", results.intersections());
     assert!(is_line(branch.curve_3d.curve()));
-    assert!(matches!(branch.pcurve_a, Curve2::Line(_)));
-    assert!(matches!(branch.pcurve_b, Curve2::Line(_)));
+    assert!(matches!(branch.pcurve_a.curve(), Curve2::Line(_)));
+    assert!(matches!(branch.pcurve_b.curve(), Curve2::Line(_)));
     assert!(
         branch
             .samples
@@ -295,8 +295,8 @@ fn plane_cylinder_intersection_returns_closed_synchronized_branch() {
     );
     assert!(branch.samples.len() > 16);
     assert!(is_circle(branch.curve_3d.curve()));
-    assert!(matches!(branch.pcurve_a, Curve2::Circle(_)));
-    assert!(matches!(branch.pcurve_b, Curve2::Line(_)));
+    assert!(matches!(branch.pcurve_a.curve(), Curve2::Circle(_)));
+    assert!(matches!(branch.pcurve_b.curve(), Curve2::Line(_)));
     assert!(
         branch.quality.max_residual <= LINEAR_TOLERANCE,
         "{:?}",
@@ -369,8 +369,8 @@ fn surface_intersection_can_keep_synchronized_nurbs_curves() {
         panic!("expected an intersection branch, got {results:?}");
     };
     assert!(matches!(branch.curve_3d.curve(), Curve::Nurbs(_)));
-    assert!(matches!(branch.pcurve_a, Curve2::Nurbs(_)));
-    assert!(matches!(branch.pcurve_b, Curve2::Nurbs(_)));
+    assert!(matches!(branch.pcurve_a.curve(), Curve2::Nurbs(_)));
+    assert!(matches!(branch.pcurve_b.curve(), Curve2::Nurbs(_)));
 }
 
 #[test]

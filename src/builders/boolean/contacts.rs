@@ -12,6 +12,7 @@
 //! its halves, with a flag threaded down to say which was which; that mirror is
 //! now a second [`PairKind`] variant that the same probe answers.
 
+use crate::geometry::TrimmedCurve2;
 use std::collections::hash_map::Entry;
 use std::rc::Rc;
 
@@ -830,10 +831,8 @@ fn probe_face_face<P: Payload>(
                 (ContactCell::First, a_plane),
                 (ContactCell::Second, b_plane),
             ] {
-                let pcurve = Curve2::Line(Line2::new(
-                    plane.parameter_at(start),
-                    plane.parameter_at(end),
-                ));
+                let pcurve =
+                    TrimmedCurve2::segment(plane.parameter_at(start), plane.parameter_at(end));
                 contacts.push(Contact::Imprint {
                     cell,
                     imprint: FaceImprint::new(curve.clone(), pcurve),
@@ -1102,7 +1101,7 @@ fn section_imprint<P: Payload>(
     if collinear {
         return Ok(Some(FaceImprint::new(
             section.clone(),
-            Curve2::Line(Line2::new(uv_points[0], uv_points[SECTION_SAMPLE_COUNT])),
+            TrimmedCurve2::segment(uv_points[0], uv_points[SECTION_SAMPLE_COUNT]),
         )));
     }
     Ok(Some(polyline_imprint(&points, &uv_points)?))
@@ -1239,7 +1238,7 @@ fn dedup_face_imprints(imprints: &mut Vec<FaceImprint>, tolerance: f64) {
 }
 
 /// Whether two pcurves trace the same section, in either direction.
-fn same_section(left: &Curve2, right: &Curve2, tolerance: f64) -> bool {
+fn same_section(left: &TrimmedCurve2, right: &TrimmedCurve2, tolerance: f64) -> bool {
     let samples = [0.0, 0.25, 0.5, 0.75, 1.0];
     let forward = samples
         .iter()
@@ -1404,7 +1403,7 @@ fn point_on_face_boundary<P: Payload>(
 ) -> bool {
     face.edges().into_iter().any(|edge| {
         face.pcurve(edge.dart())
-            .and_then(|pcurve| pcurve.parameter_at(point, tolerance))
+            .and_then(|pcurve| pcurve.try_parameter_at(point, tolerance))
             .is_some()
     })
 }
@@ -1437,7 +1436,11 @@ fn polyline_imprint(points: &[Point3], uv_points: &[Point2]) -> Result<FaceImpri
         )?,
         knots,
     )?;
-    Ok(FaceImprint::new(Curve::Nurbs(curve), Curve2::Nurbs(pcurve)))
+    let span = pcurve.domain();
+    Ok(FaceImprint::new(
+        Curve::Nurbs(curve),
+        TrimmedCurve2::new(Curve2::Nurbs(pcurve), span),
+    ))
 }
 
 fn chord_parameters(points: &[Point3]) -> Vec<f64> {

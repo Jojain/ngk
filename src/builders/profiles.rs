@@ -1,8 +1,9 @@
+use crate::geometry::TrimmedCurve2;
 use std::collections::HashMap;
 
 use crate::geometry::{
-    ControlPolygon2, Curve, Curve2, HPoint2, LINEAR_TOLERANCE, Line2, NurbsCurve2, NurbsError,
-    Plane, Point2, Point3, PointCoincidence,
+    ControlPolygon2, Curve, Curve2, HPoint2, LINEAR_TOLERANCE, NurbsCurve2, NurbsError, Plane,
+    Point2, Point3, PointCoincidence,
 };
 use crate::topology::TopologyEdit;
 use crate::topology::attributes::{EdgeAttr, ProfileAttr, VertexAttr};
@@ -151,7 +152,7 @@ fn append_orientation(
 pub fn profile_pcurves<P: Payload>(
     profile: &Profile<'_, P>,
     plane: &Plane,
-) -> Result<HashMap<Dart, Curve2>, PolylineError> {
+) -> Result<HashMap<Dart, TrimmedCurve2>, PolylineError> {
     let edges = profile.edges();
     let mut pcurves = HashMap::with_capacity(edges.len());
 
@@ -184,12 +185,12 @@ pub(crate) fn curve_pcurve(
     start: Point3,
     end: Point3,
     plane: &Plane,
-) -> Result<Curve2, NurbsError> {
+) -> Result<TrimmedCurve2, NurbsError> {
     match curve {
-        Curve::Line(_) => Ok(Curve2::Line(Line2::new(
+        Curve::Line(_) => Ok(TrimmedCurve2::segment(
             plane_uv(plane, start),
             plane_uv(plane, end),
-        ))),
+        )),
         Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) => {
             let nurbs = curve.to_nurbs()?;
             let control_points = ControlPolygon2::new(
@@ -204,11 +205,9 @@ pub(crate) fn curve_pcurve(
                     })
                     .collect(),
             )?;
-            Ok(Curve2::Nurbs(NurbsCurve2::new(
-                nurbs.degree(),
-                control_points,
-                nurbs.knots().clone(),
-            )?))
+            let pcurve = NurbsCurve2::new(nurbs.degree(), control_points, nurbs.knots().clone())?;
+            let span = pcurve.domain();
+            Ok(TrimmedCurve2::new(Curve2::Nurbs(pcurve), span))
         }
     }
 }

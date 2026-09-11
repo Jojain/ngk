@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 
-use crate::geometry::{Curve, Curve2, Point3, Surface};
+use crate::geometry::{Curve, Point3, Surface, TrimmedCurve2};
 use crate::topology::closed::{Closeable, Closed};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -750,7 +750,7 @@ impl<P: Payload> SharedFace<P> {
     }
 
     /// Returns the pcurve assigned to a boundary dart, if present.
-    pub(crate) fn pcurve(&self, dart: usize) -> Result<Option<Curve2>, ExploreError> {
+    pub(crate) fn pcurve(&self, dart: usize) -> Result<Option<TrimmedCurve2>, ExploreError> {
         let dart = self.map.checked_dart(dart)?;
         Ok(self.view()?.pcurve(dart))
     }

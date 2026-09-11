@@ -7,7 +7,7 @@ mod surface_surface;
 
 use std::ops::Index;
 
-use crate::geometry::{Curve2, Interval, Point2, Point3, TrimmedCurve};
+use crate::geometry::{Interval, Point2, Point3, TrimmedCurve, TrimmedCurve2};
 
 pub use analytic::{
     AnalyticSection, AnalyticSurfaceIntersection, PcurveFidelity, intersect_analytic_curve_surface,
@@ -228,10 +228,10 @@ pub struct SurfaceIntersectionBranch {
     /// Its normalized traversal is what the two pcurves are synchronized with:
     /// the same fraction of the section and of either pcurve is the same point.
     pub curve_3d: TrimmedCurve,
-    /// The normalized parameter-space curve on surface A.
-    pub pcurve_a: Curve2,
-    /// The normalized parameter-space curve on surface B.
-    pub pcurve_b: Curve2,
+    /// The span of surface A's parameter space this branch traces.
+    pub pcurve_a: TrimmedCurve2,
+    /// The span of surface B's parameter space this branch traces.
+    pub pcurve_b: TrimmedCurve2,
     pub samples: Vec<SurfaceIntersectionPoint>,
     pub closed: bool,
     pub kind: SurfaceIntersectionBranchKind,

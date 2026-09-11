@@ -43,7 +43,7 @@ use crate::builders::faces::{FaceImprint, split_face_by_imprints_staged, split_f
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveCurveIntersection,
     CurveSurfaceIntersection, Degree, HPoint, HPoint2, IntersectionOptions, Interval, KnotVector,
-    Line2, NurbsCurve, NurbsCurve2, NurbsError, Periodicity, Point2, Point3, PointCoincidence,
+    NurbsCurve, NurbsCurve2, NurbsError, Periodicity, Point2, Point3, PointCoincidence,
     PreparedCurve, PreparedSurface, SolverCounters, Surface, SurfaceSurfaceIntersection,
     TrimmedCurve, intersect_prepared_curve_surface,
 };
@@ -330,7 +330,7 @@ fn build_intersection_network<P: Payload>(
                 let first_curve = first_edge_view.curve().expect("registered edge geometry");
                 let start = first_curve.point_at(first_interval.start);
                 let end = first_curve.point_at(first_interval.end);
-                let curve = TrimmedCurve::new(Curve::line(start, end), Interval::new(0.0, 1.0));
+                let curve = TrimmedCurve::segment(start, end);
                 builder.record_span(
                     curve,
                     IntersectionSpanKind::Overlap,
