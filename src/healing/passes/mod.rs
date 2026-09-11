@@ -1,10 +1,13 @@
 //! The healing passes and the shared lookups they need.
 //!
 //! Each pass proposes cells to one of the removal operations, in the order the
-//! driver in [`super`] runs them: edges first, so that faces fuse and expose
-//! newly shape-free vertices, then vertices.
+//! driver in [`super`] runs them: seams first, because a seam is not part of
+//! the shape at all and every later decision reads better on a face that has
+//! shed one; then edges, so that faces fuse and expose newly shape-free
+//! vertices; then vertices.
 
 pub(super) mod edges;
+pub(super) mod seams;
 pub(super) mod vertices;
 
 use crate::topology::gmap::{Cell1, Cell2, Dart, Dim, GMap};

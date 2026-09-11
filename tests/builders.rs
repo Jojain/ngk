@@ -1,3 +1,6 @@
+#[path = "fixtures/seamed.rs"]
+mod seamed;
+
 #[path = "builders/boolean.rs"]
 mod boolean;
 #[path = "builders/boolean_broad_phase.rs"]

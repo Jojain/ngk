@@ -3,7 +3,7 @@ use nalgebra::{Unit, Vector3};
 use crate::{
     StandardPayload,
     builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, boolean},
-    builders::solids::{add_extruded_face, add_sphere},
+    builders::solids::{add_extruded_face, add_sphere, add_torus},
     geometry::{Frame, Plane},
     modeling::faces,
     topology::{
@@ -99,6 +99,29 @@ pub fn sphere_at(
 /// Creates a sphere centered at the origin.
 pub fn sphere(radius: f64) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
     sphere_at(Frame::xyz(), radius)
+}
+
+/// Creates a torus centered at the given frame origin.
+///
+/// The frame's z-axis is the revolution axis and its x-axis fixes where the
+/// generating circle sits. `minor` is the tube's radius and `major` the distance
+/// from the axis out to the tube's centre, so `minor` must stay under `major`.
+pub fn torus_at(
+    frame: Frame,
+    major: f64,
+    minor: f64,
+) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
+    validate_length("major", major)?;
+    validate_length("minor", minor)?;
+    let mut g = GMap::new();
+    let solid_key =
+        add_torus(&mut g, frame, major, minor).map_err(|_| PrimitiveError::SolidCreationFailed)?;
+    Ok(Shape::new(g, solid_key))
+}
+
+/// Creates a torus centered at the origin.
+pub fn torus(major: f64, minor: f64) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
+    torus_at(Frame::xyz(), major, minor)
 }
 
 /// Creates a solid by extruding the given face in the specified direction.

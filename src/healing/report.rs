@@ -23,15 +23,24 @@ pub enum SkipReason {
     /// Removing the edge would break one boundary loop into several, which
     /// leaves open which of them bounds the face from outside.
     LoopWouldSplit,
-    /// Removing the edge would leave one loop spanning a closed direction.
+    /// Removing the edge would leave one loop spanning a closed direction with
+    /// nothing closing the other side.
     ///
-    /// A seam whose removal leaves two such loops is a ring, and that is
-    /// removed. This is the other case: one loop left, so the face is bounded by
-    /// a loop on one side and by a parametric degeneracy on the other — a
-    /// spherical cap — which no [`LoopKind`] can describe yet.
+    /// Two such loops are a ring and one is a cap ([`LoopKind::Capping`] names
+    /// the degeneracy that closes it); both are removed. This is what is left
+    /// over: a lone period-spanning loop whose support names no degenerate row
+    /// on the side the face lies, which would leave the face unbounded there.
     ///
-    /// [`LoopKind`]: crate::topology::attributes::LoopKind
+    /// [`LoopKind::Capping`]: crate::topology::attributes::LoopKind::Capping
     PeriodicSurface,
+    /// Removing the edge would leave the face with no boundary at all, on a
+    /// support that does not close.
+    ///
+    /// Only a support closed in every direction — a sphere, a torus — can bound
+    /// a face with no loops. A disk's rim is its whole boundary, and a plane
+    /// closes nowhere, so taking the rim off would leave the face running off
+    /// the edge of its domain.
+    WouldUnboundFace,
     /// The removal would fuse loops that are not both outer boundaries.
     NotOuterLoop,
     /// A cell involved in the removal has no stored geometry.
@@ -64,6 +73,12 @@ pub struct HealingReport {
     pub fused_edges: Vec<(EdgeKey, EdgeKey)>,
     /// Edges removed by the 1-removal pass.
     pub removed_edges: Vec<EdgeKey>,
+    /// Seam edges removed by the seam pass.
+    ///
+    /// Kept apart from [`Self::removed_edges`] because the two answer different
+    /// questions: how much redundancy a model carried, and how much of its
+    /// topology was only a cut in a parameterization.
+    pub removed_seams: Vec<EdgeKey>,
     /// Faces fused by the 1-removal pass, as `(survivor, consumed)`.
     pub fused_faces: Vec<(FaceKey, FaceKey)>,
     /// Faces whose own boundary the 1-removal pass rejoined, because one face
@@ -78,7 +93,7 @@ pub struct HealingReport {
 impl HealingReport {
     /// Returns the number of cells the run removed.
     pub fn changes(&self) -> usize {
-        self.removed_vertices.len() + self.removed_edges.len()
+        self.removed_vertices.len() + self.removed_edges.len() + self.removed_seams.len()
     }
 
     /// Returns whether the run left the map unchanged.

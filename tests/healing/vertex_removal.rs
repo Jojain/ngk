@@ -178,10 +178,16 @@ fn an_empty_scope_heals_nothing() {
 /// nothing about which arc it was. A closed edge *is* its support now, so the
 /// fusion is expressible and healing performs it — a disc split across its rim
 /// comes back with the single circular edge it started with.
+///
+/// Fusing a boundary must also leave the face it bounds facing the way it did:
+/// the loop is rebuilt from a curve fitted through sampled points, and a fit
+/// that came back running the other way would reverse the loop and with it the
+/// face. The normal is checked either side of the fusion for that.
 #[test]
 fn two_arcs_that_close_on_each_other_fuse_into_one_closed_edge() {
     let mut map = GMap::<StandardPayload>::new();
     let face = add_circle(&mut map, ngk::geometry::Plane::xy(), 1.0).expect("a disc");
+    let normal_before = map.face_unchecked(face).normal_at(0.0, 0.0);
     let rim = map
         .face_unchecked(face)
         .edges()
@@ -193,6 +199,12 @@ fn two_arcs_that_close_on_each_other_fuse_into_one_closed_edge() {
     assert_eq!(map.iter_vertices().count(), 2);
 
     remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
+
+    assert_eq!(
+        map.face_unchecked(face).normal_at(0.0, 0.0),
+        normal_before,
+        "the fused rim must run the way the split arcs did"
+    );
 
     assert_eq!(
         map.iter_edges().count(),

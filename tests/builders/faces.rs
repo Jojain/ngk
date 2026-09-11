@@ -17,7 +17,7 @@ use ngk::geometry::{
 
 use ngk::modeling::solids;
 
-use super::removal::seamed_cylinder_wall;
+use super::seamed::seamed_cylinder_wall;
 use ngk::topology::TopologyEditError;
 use ngk::topology::gmap::GMap;
 use ngk::topology::gmap::{Cell0, Dim};

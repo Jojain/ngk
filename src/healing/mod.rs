@@ -8,19 +8,26 @@
 //! There is only one operation underneath. Damiand & Lienhardt's `i`-removal
 //! deletes an `i`-cell and merges the two `(i + 1)`-cells that were incident to
 //! it, so *fusing edges* is what 0-removal does to a vertex and *fusing faces*
-//! is what 1-removal does to an edge. Healing is therefore two passes over the
-//! one primitive in [`crate::builders::removal`]:
+//! is what 1-removal does to an edge. Healing is therefore three passes over
+//! the one primitive in [`crate::builders::removal`]:
 //!
-//! 1. remove edges that separate two faces on one support surface, which fuses
+//! 1. remove the seams a periodic parameterization was cut open along, which
+//!    leaves the face the cut was hiding — a ring, a cap, or a face with no
+//!    boundary at all;
+//! 2. remove edges that separate two faces on one support surface, which fuses
 //!    those faces, including closed interfaces where an island fills an inner
 //!    loop when [`HealingOptions::remove_filled_inner_loops`] is enabled;
-//! 2. remove vertices where two edges continue each other on one support
+//! 3. remove vertices where two edges continue each other on one support
 //!    curve, which fuses those edges.
 //!
-//! Edges go first, because fusing faces can leave a vertex with only two edges.
-//! The two passes then repeat until nothing changes. Every accepted removal
-//! deletes one cell of each of two adjacent dimensions, so `V - E + F` is
-//! unchanged and the run is guaranteed to terminate.
+//! Seams go first because a seam is not part of the shape at all. Edges go
+//! before vertices, because fusing faces can leave a vertex with only two
+//! edges. The passes then repeat until nothing changes.
+//!
+//! Only the seam pass changes the Euler characteristic, and it has to: it takes
+//! an edge away without taking a face with it, because the face was never two.
+//! Every other accepted removal deletes one cell of each of two adjacent
+//! dimensions, so `V - E + F` is unchanged and the run terminates either way.
 //!
 //! The whole run is one transaction, and every candidate is proposed only after
 //! its geometry has been rebuilt successfully, so a model that cannot be healed
@@ -30,13 +37,16 @@
 //!
 //! - Face fusion needs the two faces to be coplanar, or to share one surface
 //!   value; a reparameterized curved pair is reported as skipped.
-//! - An edge the same face bounds on both sides is removed only when the
-//!   boundary rejoins into a single loop. One that would fall into two — a
-//!   cylinder's seam, an annulus closing up — is reported as skipped, because
-//!   which of the two then bounds the face from outside is not a combinatorial
-//!   question. A seam on a periodic surface is refused outright.
+//! - An edge the same face bounds on both sides is removed when the boundary
+//!   rejoins into a single loop, and when the two it falls into are the two
+//!   wrapping loops of a ring. An annulus closing up is still reported as
+//!   skipped: which of the two loops then bounds the face from outside is not a
+//!   combinatorial question, where for a ring it does not arise.
 //! - Edge fusion rebuilds lines and arcs; a free-form pair is reported as
-//!   skipped rather than approximated.
+//!   skipped rather than approximated. It rebuilds a parameter curve only on a
+//!   plane: on a curved support the fit is checked against the fused edge by a
+//!   polyline distance that nothing passes, so such a pair is reported as
+//!   `PcurveNotJoinable` — see [`predicates::pcurve`].
 //!
 //! Every skip is recorded in [`HealingReport::skipped`] with its reason, which
 //! is the first thing to read when a model still looks redundant.
@@ -78,6 +88,9 @@ pub fn remove_redundant_cells_staged<P: Payload>(
         report.iterations = iteration;
         let before = report.changes();
         report.skipped.clear();
+        if options.remove_seams {
+            passes::seams::run(edit, options, &mut report)?;
+        }
         if options.remove_redundant_edges {
             passes::edges::run(edit, options, &mut report)?;
         }

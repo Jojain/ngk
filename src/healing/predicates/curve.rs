@@ -129,6 +129,15 @@ fn join_on_circle(
     if closes {
         // The pair sweeps the whole turn, in whichever direction it passed
         // through the vanishing vertex.
+        //
+        // Reading the direction off `through` is well conditioned only while the
+        // vertex sits within half a turn of `start`: past that its angle reads as
+        // the opposite sign, and at exactly half a turn it gives no sign at all.
+        // The samples carry the traversal and would answer for any vertex, but
+        // nothing in the tree can currently tell the two readings apart — the one
+        // place it showed was a rim fused on a cylinder, which
+        // `super::pcurve::traces` declines to rebuild at all. The two belong
+        // together; see the plan note on curved-support pcurve rebuilding.
         let circle = Curve::circle(plane, radius);
         return Some(if interior < 0.0 {
             circle.reversed()

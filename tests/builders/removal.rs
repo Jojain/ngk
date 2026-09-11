@@ -3,16 +3,24 @@ use std::collections::HashMap;
 use nalgebra::{Vector2, Vector3};
 use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
 use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints, split_face_edge};
-use ngk::builders::removal::{MergedCell, is_removable, remove_cell, remove_cell_staged};
+use ngk::builders::removal::{
+    CellRemovalError, MergedCell, is_removable, remove_cell, remove_cell_staged,
+};
 use ngk::geometry::{
-    Axis2, Circle, Curve, Curve2, Cylinder, Frame, Plane, Point2, Point3, Surface, TrimmedCurve2,
+    Axis2, Circle, Curve, Curve2, Cylinder, DomainSide, Frame, Plane, Point2, Point3, Sphere,
+    Surface, TrimmedCurve2,
 };
 use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
 use ngk::modeling::{faces, solids};
-use ngk::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
+use ngk::topology::attributes::{
+    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
+};
 use ngk::topology::gmap::{Dart, Dim, GMap};
-use ngk::topology::shape_keys::{EdgeKey, FaceKey};
+use ngk::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
+use ngk::topology::validation::validate_solid_manifold;
 use ngk::topology::{StandardPayload, TopologyEditError};
+
+use super::seamed::{seam_of, seamed_cylinder_wall, seamed_revolved_sphere, seamed_spherical_cap};
 
 /// Returns the first face of the map together with one of its boundary edges.
 fn any_boundary_edge(g: &GMap<StandardPayload>) -> (FaceKey, EdgeKey) {
@@ -435,20 +443,6 @@ fn single_edge_filled_inner_loop_gets_removed() {
     assert_eq!(result.fused_faces.len(), 1);
 }
 
-/// An edge one face's boundary walks twice, with a dart on it.
-fn seam_of(g: &GMap<StandardPayload>, face: FaceKey) -> Option<(EdgeKey, Dart)> {
-    let view = g.face(face)?;
-    let edges = view
-        .loops()
-        .iter()
-        .flat_map(|l| l.edges())
-        .collect::<Vec<_>>();
-    edges
-        .iter()
-        .find(|edge| edges.iter().filter(|o| o.key() == edge.key()).count() == 2)
-        .map(|edge| (edge.key(), edge.dart()))
-}
-
 #[test]
 fn removing_a_seam_leaves_the_face_a_ring() {
     let (mut g, wall) = seamed_cylinder_wall(1.0, 2.0);
@@ -506,81 +500,151 @@ fn healing_removes_the_seam_of_an_imported_wall() {
     assert!(face.outer_loop().is_none());
 }
 
-/// Builds a cylinder wall the way a seamed import carries one.
+/// A seam whose removal leaves no loop at all leaves a boundaryless face.
 ///
-/// No builder in the tree makes this any more — a swept or revolved wall comes
-/// out as a ring — but STEP and every other B-Rep interchange format writes a
-/// periodic face with its parameterization cut open, so the canonicalizer has to
-/// be able to take one apart. The wall is one quad face whose two vertical sides
-/// are the same edge, sewn to itself: that self-sew is the seam.
-pub(crate) fn seamed_cylinder_wall(radius: f64, height: f64) -> (GMap<StandardPayload>, FaceKey) {
-    let mut g = GMap::<StandardPayload>::new();
-    let surface = Surface::Cylinder(Cylinder::new(
-        Point3::origin(),
-        Vector3::x(),
-        Vector3::z(),
-        radius,
-    ));
-    let turn = std::f64::consts::TAU;
-    let face = g
-        .transaction(|edit| {
-            // The quad boundary: bottom circle, seam up, top circle, seam down.
-            let d: [Dart; 8] = std::array::from_fn(|_| edit.add_dart());
-            for pair in 0..4 {
-                edit.link(Dim::Zero, d[2 * pair], d[2 * pair + 1])?;
-            }
-            for pair in 0..4 {
-                edit.link(Dim::One, d[2 * pair + 1], d[(2 * pair + 2) % 8])?;
-            }
+/// A meridian revolved a whole turn is a sphere written the way an import
+/// carries one: its whole boundary is the seam, walked up one side and down the
+/// other between two pole vertices. Take the seam away and there is nothing
+/// left for a boundary to be — which is exactly what `solids::sphere` builds
+/// directly. The shell has no dart to be rooted at either, so it re-roots at
+/// the face, the dart-preferred invariant read the other way round.
+#[test]
+fn removing_a_seam_can_leave_the_face_boundaryless() {
+    let (mut g, sphere, solid) = seamed_revolved_sphere(1.0);
+    let (seam, dart) = seam_of(&g, sphere).expect("a revolved meridian carries a seam");
+    assert_eq!(g.iter_edges().count(), 1, "the meridian is the only edge");
 
-            let bottom = Point3::new(radius, 0.0, 0.0);
-            let top = Point3::new(radius, 0.0, height);
-            edit.add_vertex(VertexAttr::new(d[0], bottom, ()));
-            edit.add_vertex(VertexAttr::new(d[4], top, ()));
+    let removal = remove_cell(&mut g, dart, Dim::One).expect("a seam should be removable");
 
-            let circle = |z: f64| {
-                Curve::Circle(Circle::new(
-                    Plane::from_xy(Point3::new(0.0, 0.0, z), Vector3::x(), Vector3::y()),
-                    radius,
-                ))
-            };
-            edit.add_edge(EdgeAttr::new(d[0], circle(0.0), ()));
-            edit.add_edge(EdgeAttr::new(d[4], circle(height), ()));
-            // One edge for both vertical sides: that is what makes it a seam.
-            let seam = edit.add_edge(EdgeAttr::new(d[2], Curve::line(bottom, top), ()));
-            edit.add_profile(ProfileAttr::new(d[0], ()));
+    let MergedCell::Unbounded { face, .. } = removal.merged else {
+        panic!(
+            "removing a sphere's whole boundary leaves it unbounded, got {:?}",
+            removal.merged
+        );
+    };
+    assert_eq!(face, sphere);
+    assert!(g.edge_attr(seam).is_none(), "the seam itself is gone");
 
-            let pcurves = HashMap::from([
-                (
-                    d[0],
-                    TrimmedCurve2::segment(Point2::origin(), Point2::new(turn, 0.0)),
-                ),
-                (
-                    d[2],
-                    TrimmedCurve2::segment(Point2::new(turn, 0.0), Point2::new(turn, height)),
-                ),
-                (
-                    d[4],
-                    TrimmedCurve2::segment(Point2::new(turn, height), Point2::new(0.0, height)),
-                ),
-                (
-                    d[6],
-                    TrimmedCurve2::segment(Point2::new(0.0, height), Point2::origin()),
-                ),
-            ]);
-            let face = edit.add_face(FaceAttr::with_pcurves(
-                surface.clone(),
-                (),
-                d[0],
-                Vec::new(),
-                pcurves,
-            ));
+    assert_eq!(
+        (
+            g.dart_count(),
+            g.iter_vertices().count(),
+            g.iter_edges().count(),
+            g.iter_faces().count()
+        ),
+        (0, 0, 0, 1),
+        "what is left is one face covering its whole support"
+    );
+    let face = g.face_unchecked(sphere);
+    assert!(face.loops().is_empty(), "a boundaryless face has no loops");
+    assert!(face.dart().is_none());
+    assert_eq!(
+        g.solid_attr_unchecked(solid).outer_shell.face(),
+        Some(sphere),
+        "the shell re-roots at the face, there being no dart left to root at"
+    );
+    validate_solid_manifold(&g, solid).expect("the healed sphere should still be well formed");
+}
 
-            // The two sides meet along the seam: bottom to bottom, top to top.
-            edit.sew(Dim::Two, d[2], d[7])?;
-            let _ = seam;
-            Ok::<_, TopologyEditError>(face)
-        })
-        .expect("a seamed wall should commit");
-    (g, face)
+/// The same seam, taken apart by healing rather than by hand.
+#[test]
+fn healing_removes_the_seam_of_an_imported_sphere() {
+    let (mut g, sphere, solid) = seamed_revolved_sphere(1.0);
+
+    remove_redundant_cells(&mut g, HealingOptions::default()).expect("healing should commit");
+
+    assert_eq!(
+        g.dart_count(),
+        0,
+        "a seamed sphere heals into a seamless one"
+    );
+    assert!(g.face_unchecked(sphere).loops().is_empty());
+    assert_eq!(
+        g.solid_attr_unchecked(solid).outer_shell.face(),
+        Some(sphere)
+    );
+    validate_solid_manifold(&g, solid).expect("the healed sphere should still be well formed");
+}
+
+/// Only a closed support can carry a face with no boundary.
+///
+/// A disk's rim is its whole boundary, so removing it would leave the face
+/// covering its whole domain — the entire plane. The support is what decides,
+/// and a plane closes in neither direction, so the removal declines instead of
+/// producing a face nothing bounds.
+#[test]
+fn removing_the_only_boundary_of_an_open_support_is_refused() {
+    let shape = faces::circle(Plane::xy(), 1.0).expect("a circular face should build");
+    let (mut g, disk) = shape.into_map();
+    let rim = g
+        .face(disk)
+        .expect("the disk is registered")
+        .edges()
+        .first()
+        .expect("a disk has a rim")
+        .dart();
+
+    assert!(
+        matches!(
+            remove_cell(&mut g, rim, Dim::One),
+            Err(CellRemovalError::WouldUnboundFace { .. })
+        ),
+        "a plane cannot bound a face with no loops"
+    );
+}
+
+/// A seam whose removal leaves one loop rather than two leaves a cap.
+///
+/// The far side of a spherical cap is closed by the pole, not by a boundary, so
+/// there is no second loop for the removal to fall into. Which pole closes it
+/// follows from the loop's own travel: the face lies to the left of its
+/// boundary, and this one runs forward along `u`, so the face is the part above
+/// the latitude and the degeneracy that closes it is the domain's high end.
+#[test]
+fn removing_a_seam_leaves_the_face_a_cap() {
+    let (mut g, cap) = seamed_spherical_cap(1.0, 0.5);
+    let (seam, dart) = seam_of(&g, cap).expect("the cap was built with a seam");
+    assert_eq!(g.iter_edges().count(), 2, "one latitude and the seam");
+
+    let removal = remove_cell(&mut g, dart, Dim::One).expect("a seam should be removable");
+
+    let MergedCell::Cap {
+        face,
+        side,
+        survivor_loop: _,
+    } = removal.merged
+    else {
+        panic!("removing this seam leaves a cap, got {:?}", removal.merged);
+    };
+    assert_eq!(face, cap);
+    assert_eq!(side, DomainSide::High, "the north pole closes it");
+    assert!(g.edge_attr(seam).is_none(), "the seam itself is gone");
+
+    let face = g.face_unchecked(cap);
+    assert_eq!(face.loops().len(), 1, "one latitude circle bounds it");
+    assert!(
+        face.outer_loop().is_none(),
+        "a period-spanning loop bounds no inside"
+    );
+    let kind = face.loops()[0].kind();
+    assert_eq!(kind.wrapped_axis(), Some(Axis2::U));
+    assert_eq!(kind.capped_side(), Some(DomainSide::High));
+    assert_eq!(
+        g.iter_vertices().count(),
+        1,
+        "the pole the seam ran up to is gone; the latitude keeps its own vertex"
+    );
+}
+
+/// Healing takes an imported cap apart the same way it takes a wall apart.
+#[test]
+fn healing_removes_the_seam_of_an_imported_cap() {
+    let (mut g, cap) = seamed_spherical_cap(1.0, 0.5);
+
+    remove_redundant_cells(&mut g, HealingOptions::default()).expect("healing should commit");
+
+    assert_eq!(g.iter_edges().count(), 1, "only the latitude remains");
+    let face = g.face_unchecked(cap);
+    assert_eq!(face.loops().len(), 1);
+    assert_eq!(face.loops()[0].kind().capped_side(), Some(DomainSide::High));
 }

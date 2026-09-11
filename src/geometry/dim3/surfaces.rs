@@ -1425,8 +1425,20 @@ impl SurfaceGeometry for SurfaceOfRevolution {
         )
     }
 
+    /// The sweep is always periodic; the profile direction is periodic too when
+    /// the profile itself closes.
+    ///
+    /// Revolving a circle sweeps a torus, which has no boundary in either
+    /// direction, and a shell made of one such face is closed only if the
+    /// support says so — [`Surface::is_closed`] reads exactly this. The period is
+    /// the profile's own domain, `u` being the profile's own parameter.
     fn periodicity(&self) -> SurfacePeriodicity {
-        SurfacePeriodicity::VPeriodic(std::f64::consts::TAU)
+        let turn = std::f64::consts::TAU;
+        let profile = self.curve.domain();
+        match self.curve.is_closed() && profile.is_finite() {
+            true => SurfacePeriodicity::UVPeriodic(profile.length().abs(), turn),
+            false => SurfacePeriodicity::VPeriodic(turn),
+        }
     }
 
     fn point_at(&self, u: f64, v: f64) -> Point3 {

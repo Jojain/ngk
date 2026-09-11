@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
-use crate::geometry::{Axis2, LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
+use crate::geometry::{Axis2, DomainSide, LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
 use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr, ShellRoot};
 use crate::topology::gmap::{Cell1, Cell2, Dim, GMap};
 use crate::topology::orientation::Orientation;
@@ -51,13 +51,22 @@ pub enum CellRemovalError {
     /// resulting loops bounds it from outside needs more than the combinatorics.
     #[error("removing the edge at dart {dart:?} would split its boundary into {loops} loops")]
     LoopWouldSplit { dart: Dart, loops: usize },
-    /// Removing the edge would leave one loop spanning a closed direction.
+    /// Removing the edge would leave one loop spanning a closed direction with
+    /// nothing closing the other side.
     ///
-    /// The face would be bounded by a loop on one side and by a parametric
-    /// degeneracy on the other — a spherical cap. That loop is neither outer nor
-    /// inner, and no face can say so yet.
+    /// A lone period-spanning loop is a cap when the support collapses on the
+    /// far side — `LoopKind::Capping` says which side — and this is the case
+    /// where it does not, so the face would be left unbounded in that direction.
     #[error("removing the edge at dart {dart:?} would leave a lone wrapping loop")]
     WouldLeaveWrappingLoop { dart: Dart },
+    /// Removing the edge would leave the face with no boundary at all, on a
+    /// support that does not close.
+    ///
+    /// A face with no loops covers its whole support, which only a closed
+    /// support — a sphere, a torus — can bound. An open one would leave the
+    /// face running off the edge of its domain.
+    #[error("removing the edge at dart {dart:?} would unbound its face")]
+    WouldUnboundFace { dart: Dart },
     /// Removing the cell would delete every dart of the map.
     #[error("removing the {dim:?}-cell at dart {dart:?} would empty the map")]
     WouldEmptyMap { dart: Dart, dim: Dim },
@@ -103,6 +112,33 @@ pub enum MergedCell {
         survivor_loop: ProfileKey,
         /// Identity created for the other, split from `survivor_loop`.
         added_loop: ProfileKey,
+    },
+    /// A 1-removal removed a seam, leaving the face a cap.
+    ///
+    /// Like [`Self::Ring`] the edge was walked twice by one loop, but only one
+    /// period-spanning component came back rather than two: the face's other
+    /// side is closed by a parametric degeneracy — a pole — not by a boundary.
+    /// Nothing is consumed and nothing is added; the surviving loop keeps its
+    /// identity and gains the side its degeneracy sits on.
+    Cap {
+        /// The face that became a cap.
+        face: FaceKey,
+        /// Boundary loop identity kept by the capping loop.
+        survivor_loop: ProfileKey,
+        /// The domain end whose degeneracy now closes the face.
+        side: DomainSide,
+    },
+    /// A 1-removal deleted the final edge of the face's only boundary.
+    ///
+    /// The face is left covering its whole support with no loops at all — an
+    /// imported sphere losing the seam its parameterization was cut open along.
+    /// Only a support closed in every direction can bound such a face, and any
+    /// shell that had no dart left is re-rooted at the face itself.
+    Unbounded {
+        /// The face left with no boundary.
+        face: FaceKey,
+        /// One identity that described the removed boundary.
+        profile: ProfileKey,
     },
     /// A 1-removal deleted the final edge of an inner boundary component.
     BoundaryRemoved {
@@ -222,17 +258,63 @@ pub fn remove_cell_staged<P: Payload>(
     })
 }
 
-/// Reports whether [`remove_cell_staged`] would accept this cell.
+/// What a removal would do to the identities around a cell.
+///
+/// This is [`MergedCell`] without the identities themselves — the shape of the
+/// answer rather than the answer — because it is available before the removal
+/// runs. A caller that must choose between candidates, rather than merely
+/// accept or refuse one, reads it from [`planned_merge`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeKind {
+    /// Two edges fuse at the removed vertex.
+    Edges,
+    /// Two faces fuse along the removed edge.
+    Faces,
+    /// One face absorbs the island filling one of its inner loops.
+    FilledBoundaryFaces,
+    /// One face's own boundary rejoins over a slit.
+    Loops,
+    /// One of a face's inner boundaries disappears with its last edge.
+    BoundaryRemoved,
+    /// A seam goes and the face is left a ring, bounded by two wrapping loops.
+    Ring,
+    /// A seam goes and the face is left a cap, closed by a degeneracy.
+    Cap,
+    /// A seam goes and the face is left covering its whole support.
+    Unbounded,
+}
+
+impl MergeKind {
+    /// Whether this is a removal of a seam: the cut a periodic parameterization
+    /// was opened along, rather than an edge of the shape.
+    ///
+    /// All three answers reshape one face's boundary and consume nothing; they
+    /// differ only in what is left bounding the closed direction.
+    pub fn is_seam_removal(self) -> bool {
+        matches!(self, Self::Ring | Self::Cap | Self::Unbounded)
+    }
+}
+
+/// Reports what [`remove_cell_staged`] would do to this cell, without doing it.
 ///
 /// Every rejection the removal can raise is decided before it mutates
 /// anything, so a caller that must not disturb the map on refusal — a healing
 /// pass choosing candidates — asks here first.
+pub fn planned_merge<P: Payload>(
+    g: &GMap<P>,
+    dart: Dart,
+    dim: Dim,
+) -> Result<MergeKind, CellRemovalError> {
+    Preflight::resolve(g, dart, dim).map(|preflight| preflight.plan.kind())
+}
+
+/// Reports whether [`remove_cell_staged`] would accept this cell.
 pub fn can_remove_cell<P: Payload>(
     g: &GMap<P>,
     dart: Dart,
     dim: Dim,
 ) -> Result<(), CellRemovalError> {
-    Preflight::resolve(g, dart, dim).map(|_| ())
+    planned_merge(g, dart, dim).map(|_| ())
 }
 
 /// Everything the removal decides before it touches the map.
@@ -255,14 +337,18 @@ impl Preflight {
 
         let cell = g.orbit(dart, g.orbit_indices(dim)).collect::<Vec<_>>();
         let cell_set = cell.iter().copied().collect::<HashSet<_>>();
-        if cell_set.len() == g.dart_count() {
-            return Err(CellRemovalError::WouldEmptyMap { dart, dim });
-        }
 
         let pairs = removal_pairs(g, &cell, &cell_set, dim)
             .ok_or(CellRemovalError::NotRemovable { dart, dim })?;
         let seeds = replacement_seeds(g, &cell, &cell_set, dim);
         let plan = MergePlan::build(g, dart, dim, &cell, &cell_set, &pairs)?;
+        // A map with no darts is not a map with no shape: a boundaryless face
+        // covers its whole support and has nothing to be incident to. Every
+        // other removal that would take the last dart really does leave nothing
+        // behind, so the guard stands for all of them.
+        if cell_set.len() == g.dart_count() && !matches!(plan, MergePlan::Unbounded { .. }) {
+            return Err(CellRemovalError::WouldEmptyMap { dart, dim });
+        }
         Ok(Self {
             cell,
             cell_set,
@@ -325,6 +411,27 @@ enum MergePlan {
         face_aliases: Vec<FaceKey>,
         boundaries: Vec<Dart>,
     },
+    /// Removing a seam left the face covering its whole support, with no loops.
+    Unbounded {
+        face: FaceKey,
+        profiles: Vec<ProfileKey>,
+        face_aliases: Vec<FaceKey>,
+    },
+    /// Removing a seam left the face bounded by one period-spanning loop, with
+    /// a degeneracy closing its far side.
+    Cap {
+        face: FaceKey,
+        /// The loop identity the seam was walked on, reseeded at `seed`.
+        survivor_loop: ProfileKey,
+        /// The closed axis the surviving loop spans.
+        axis: Axis2,
+        /// The domain end of the transverse axis whose degeneracy closes it.
+        side: DomainSide,
+        /// The seed the surviving loop keeps, chosen for its orientation.
+        seed: Dart,
+        /// The face's other loops, which the removal does not touch.
+        untouched: Vec<LoopDefinition>,
+    },
     /// Removing a seam left the face bounded by two wrapping loops.
     Ring {
         face: FaceKey,
@@ -340,6 +447,20 @@ enum MergePlan {
 }
 
 impl MergePlan {
+    /// Returns the shape of this plan's answer, without its identities.
+    fn kind(&self) -> MergeKind {
+        match self {
+            MergePlan::Edges { .. } => MergeKind::Edges,
+            MergePlan::Faces { .. } => MergeKind::Faces,
+            MergePlan::FilledBoundaryFaces { .. } => MergeKind::FilledBoundaryFaces,
+            MergePlan::Loops { .. } => MergeKind::Loops,
+            MergePlan::BoundaryRemoved { .. } => MergeKind::BoundaryRemoved,
+            MergePlan::Unbounded { .. } => MergeKind::Unbounded,
+            MergePlan::Ring { .. } => MergeKind::Ring,
+            MergePlan::Cap { .. } => MergeKind::Cap,
+        }
+    }
+
     /// Resolves the identities the removal will fuse or rejoin.
     fn build<P: Payload>(
         g: &GMap<P>,
@@ -416,7 +537,7 @@ impl MergePlan {
             .flat_map(|&index| g.orbit(boundaries[index], vec![0, 1]))
             .filter(|d| !cell_set.contains(d))
             .collect::<HashSet<_>>();
-        if surviving.is_empty() && affected.len() == 1 && affected[0] != 0 {
+        if surviving.is_empty() && affected.len() == 1 {
             let profiles = g
                 .iter_profiles()
                 .filter(|(_, attr)| cell_set.contains(&attr.dart))
@@ -429,18 +550,39 @@ impl MergePlan {
                 .iter_faces()
                 .filter(|(_, attr)| attr.darts().any(|seed| cell_set.contains(&seed)))
                 .map(|(key, _)| key)
-                .collect();
-            let boundaries = boundaries
-                .into_iter()
+                .collect::<Vec<_>>();
+            let remaining = boundaries
+                .iter()
                 .enumerate()
-                .filter_map(|(index, seed)| (index != affected[0]).then_some(seed))
-                .collect();
-            return Ok(MergePlan::BoundaryRemoved {
-                face,
-                profiles,
-                face_aliases,
-                boundaries,
-            });
+                .filter_map(|(index, &seed)| (index != affected[0]).then_some(seed))
+                .collect::<Vec<_>>();
+            // The face's last boundary goes with it. That leaves the face
+            // covering its whole support — an imported sphere losing the seam
+            // its parameterization was cut open along — which only a support
+            // closed in every direction can bound. An open one would leave the
+            // face running off the edge of its domain, so the removal declines.
+            if remaining.is_empty() {
+                if !attr.surface.is_closed() {
+                    return Err(CellRemovalError::WouldUnboundFace { dart });
+                }
+                return Ok(MergePlan::Unbounded {
+                    face,
+                    profiles,
+                    face_aliases,
+                });
+            }
+            // An inner boundary going is the ordinary case; the outer one going
+            // while others remain would leave no loop bounding from outside,
+            // which the combinatorics cannot answer, so it falls through to the
+            // refusal below.
+            if affected[0] != 0 {
+                return Ok(MergePlan::BoundaryRemoved {
+                    face,
+                    profiles,
+                    face_aliases,
+                    boundaries: remaining,
+                });
+            }
         }
         let components = rejoined_components(g, &surviving, cell_set, dim, pairs);
         if components.len() != 1 {
@@ -460,11 +602,21 @@ impl MergePlan {
         }
         // One surviving component that still spans a whole period belongs to a
         // face closed on its far side by a degeneracy rather than by a loop — a
-        // spherical cap. Its loop is neither outer nor inner, and calling it
-        // either would put a winding test on a loop that has no inside, so the
-        // removal declines until a face can say it is closed by a pole.
-        if wrapping_axis(attr, &components[0]).is_some() {
-            return Err(CellRemovalError::WouldLeaveWrappingLoop { dart });
+        // spherical cap. Its loop is neither outer nor inner, and a `Capping`
+        // kind is what says so; the removal still declines when the support
+        // names no degeneracy to close that side, because then nothing does.
+        if let Some(axis) = wrapping_axis(attr, &components[0]) {
+            return Self::cap(
+                g,
+                face,
+                attr,
+                reference,
+                &components[0],
+                &boundaries,
+                absorbed,
+                axis,
+            )?
+            .ok_or(CellRemovalError::WouldLeaveWrappingLoop { dart });
         }
 
         // The seed carries the loop's traversal direction, so the replacement
@@ -497,6 +649,88 @@ impl MergePlan {
             seed,
             boundaries,
         })
+    }
+
+    /// Reads a lone surviving period-spanning component as a cap, when the
+    /// support closes its far side.
+    ///
+    /// Removing a seam from a face bounded on one side only leaves one loop
+    /// running a whole period, and what closes the other side is a degeneracy —
+    /// a sphere's pole. Which side that is follows from travel alone, with
+    /// nothing sampled: a face's interior lies to the left of its boundary, so a
+    /// loop travelling forward along the wrapped axis is closed above it and one
+    /// travelling back is closed below. `split_boundaryless_face_by_wrapping_chain`
+    /// reads a chain the same way.
+    ///
+    /// Returns `None` when the support names no degenerate row on that side.
+    /// Then nothing closes the face there, the removal is not a seam removal,
+    /// and the caller refuses it.
+    #[allow(clippy::too_many_arguments)]
+    fn cap<P: Payload>(
+        g: &GMap<P>,
+        face: FaceKey,
+        attr: &FaceAttr<P::F>,
+        reference: Dart,
+        component: &HashSet<Dart>,
+        boundaries: &[Dart],
+        absorbed: &[usize],
+        axis: Axis2,
+    ) -> Result<Option<Self>, CellRemovalError> {
+        // A rejoin that also absorbs another of the face's loops is a different
+        // edit; a seam removal touches the one loop it is walked on twice.
+        if !absorbed.is_empty() {
+            return Ok(None);
+        }
+        let transverse = axis.transverse();
+        let side = match travel_along(attr, component, axis) > 0.0 {
+            true => DomainSide::High,
+            false => DomainSide::Low,
+        };
+        // The support has to agree that it collapses on that side, since it is
+        // the support the unwrapped domain will later ask for the row.
+        let Some(at) = component
+            .iter()
+            .filter_map(|dart| attr.pcurves.get(dart))
+            .map(|pcurve| transverse.of(pcurve.point_at(0.0)))
+            .next()
+        else {
+            return Ok(None);
+        };
+        if side
+            .nearest(at, attr.surface.degenerate_rows(transverse))
+            .is_none()
+        {
+            return Ok(None);
+        }
+
+        let Some(seed) = component
+            .iter()
+            .copied()
+            .filter(|&d| {
+                g.cell_orientation_from_seed(reference, d, Dim::Two) == Some(Orientation::Same)
+            })
+            .min()
+        else {
+            return Ok(None);
+        };
+        let survivor_loop =
+            g.profile_key(reference)
+                .ok_or(CellRemovalError::UnregisteredIncidence {
+                    dart: reference,
+                    dim: Dim::One,
+                })?;
+        Ok(Some(MergePlan::Cap {
+            face,
+            survivor_loop,
+            axis,
+            side,
+            seed,
+            untouched: boundaries
+                .iter()
+                .filter(|&&seed| seed != reference)
+                .filter_map(|&seed| Some(LoopDefinition::from_kind(seed, attr.kind_of(seed)?)))
+                .collect(),
+        }))
     }
 
     /// Reads a two-way boundary split as a ring, when that is what it is.
@@ -664,6 +898,27 @@ impl MergePlan {
                     consumed_loop,
                 }
             }
+            MergePlan::Cap {
+                face,
+                survivor_loop,
+                axis,
+                side,
+                seed,
+                untouched,
+            } => {
+                edit.profile_attr_mut_unchecked(survivor_loop).dart = seed;
+                let mut loops = vec![LoopDefinition::from_kind(
+                    seed,
+                    LoopKind::Capping { axis, side },
+                )];
+                loops.extend(untouched);
+                edit.face_attr_mut_unchecked(face).loops = loops;
+                MergedCell::Cap {
+                    face,
+                    survivor_loop,
+                    side,
+                }
+            }
             MergePlan::Ring {
                 face,
                 survivor_loop,
@@ -689,6 +944,22 @@ impl MergePlan {
                     survivor_loop,
                     added_loop,
                 }
+            }
+            MergePlan::Unbounded {
+                face,
+                profiles,
+                face_aliases,
+            } => {
+                let profile = profiles[0];
+                for key in profiles {
+                    edit.remove_profile(key);
+                }
+                for key in std::iter::once(face).chain(face_aliases) {
+                    let attr = edit.face_attr_mut_unchecked(key);
+                    attr.loops.clear();
+                    attr.pcurves.clear();
+                }
+                MergedCell::Unbounded { face, profile }
             }
             MergePlan::BoundaryRemoved {
                 face,
@@ -904,14 +1175,21 @@ fn wrapping_axis<D>(attr: &FaceAttr<D>, component: &HashSet<Dart>) -> Option<Axi
     let periods = periods_of(&attr.surface);
     [Axis2::U, Axis2::V].into_iter().find(|axis| {
         periods[axis.index()].is_some_and(|period| {
-            let travel = component
-                .iter()
-                .filter_map(|dart| attr.pcurves.get(dart))
-                .map(|pcurve| axis.of(pcurve.point_at(1.0)) - axis.of(pcurve.point_at(0.0)))
-                .sum::<f64>();
-            (travel.abs() - period).abs() <= LINEAR_TOLERANCE
+            (travel_along(attr, component, *axis).abs() - period).abs() <= LINEAR_TOLERANCE
         })
     })
+}
+
+/// The signed distance a boundary component travels along `axis`.
+///
+/// The sign is what tells a lone period-spanning loop which side of itself the
+/// face lies on, so it is kept rather than taken absolute at the summation.
+fn travel_along<D>(attr: &FaceAttr<D>, component: &HashSet<Dart>, axis: Axis2) -> f64 {
+    component
+        .iter()
+        .filter_map(|dart| attr.pcurves.get(dart))
+        .map(|pcurve| axis.of(pcurve.point_at(1.0)) - axis.of(pcurve.point_at(0.0)))
+        .sum()
 }
 
 /// Orders two identities so the survivor is deterministic across runs.
@@ -1042,11 +1320,6 @@ fn reseed_attributes<P: Payload>(
     cell: &HashSet<Dart>,
     seeds: &HashMap<Dart, Option<Dart>>,
 ) {
-    let replaced = |dart: Dart| match seeds.get(&dart) {
-        Some(Some(seed)) => *seed,
-        _ => dart,
-    };
-
     let vertices = reseeded(
         edit.map()
             .iter_vertices()
@@ -1090,19 +1363,15 @@ fn reseed_attributes<P: Payload>(
 
     // A shell keeps every dart the removal does not delete, so a seed that has
     // no Def. 59 replacement can still be re-rooted anywhere in the same shell.
-    let sheets = reseeded(
-        edit.map()
-            .iter_sheets()
-            .filter_map(|(key, attr)| Some((key, attr.dart()?))),
-        seeds,
-    );
+    let sheets = edit
+        .map()
+        .iter_sheets()
+        .filter_map(|(key, attr)| Some((key, attr.dart()?)))
+        .filter(|(_, dart)| seeds.contains_key(dart))
+        .collect::<Vec<_>>();
     for (key, dart) in sheets {
-        let dart = dart.or_else(|| {
-            let root = edit.map().sheet_attr_unchecked(key).dart()?;
-            shell_fallback(edit.map(), cell, root)
-        });
-        if let Some(dart) = dart {
-            edit.sheet_attr_mut_unchecked(key).root = ShellRoot::Dart(dart);
+        if let Some(root) = rerooted_shell(edit.map(), cell, seeds, dart) {
+            edit.sheet_attr_mut_unchecked(key).root = root;
         }
     }
 
@@ -1124,12 +1393,57 @@ fn reseed_attributes<P: Payload>(
         .map()
         .iter_solids()
         .filter(|(_, attr)| attr.shell_darts().any(|dart| seeds.contains_key(&dart)))
-        .map(|(key, _)| key)
+        .map(|(key, attr)| {
+            let shells = attr
+                .shells()
+                .map(|shell| match shell.dart() {
+                    Some(dart) => rerooted_shell(edit.map(), cell, seeds, dart).unwrap_or(shell),
+                    None => shell,
+                })
+                .collect::<Vec<_>>();
+            (key, shells)
+        })
         .collect::<Vec<_>>();
-    for key in solids {
+    for (key, shells) in solids {
         let attr = edit.solid_attr_mut_unchecked(key);
-        attr.map_shell_darts(|dart| replaced(dart));
+        attr.outer_shell = shells[0];
+        if attr.inner_shells.is_some() {
+            attr.inner_shells = Some(shells[1..].to_vec());
+        }
     }
+}
+
+/// The root a shell anchored at `dart` keeps once the removal is done.
+///
+/// Three answers in order of preference, which is the dart-preferred invariant:
+/// the Def. 59 replacement, any other dart of the same shell, and only then the
+/// face. The last case is a removal that takes *every* dart of a shell — an
+/// imported sphere losing its seam — and what is left of the shell is the one
+/// face those darts bounded, now boundaryless. `reroot_shells_at_darts` reads
+/// the same invariant the other way round, moving a face root back onto a dart
+/// as soon as one exists, and the sense stored here is what it reads to put the
+/// shell back the way round it was.
+fn rerooted_shell<P: Payload>(
+    g: &GMap<P>,
+    cell: &HashSet<Dart>,
+    seeds: &HashMap<Dart, Option<Dart>>,
+    dart: Dart,
+) -> Option<ShellRoot> {
+    match seeds.get(&dart) {
+        None => return Some(ShellRoot::Dart(dart)),
+        Some(Some(seed)) => return Some(ShellRoot::Dart(*seed)),
+        Some(None) => {}
+    }
+    if let Some(dart) = shell_fallback(g, cell, dart) {
+        return Some(ShellRoot::Dart(dart));
+    }
+
+    let face = g.cell_key::<Cell2>(dart)?;
+    let seed = g.face_attr(face)?.seed()?;
+    Some(ShellRoot::Face {
+        face,
+        sense: g.cell_orientation_from_seed(seed, dart, Dim::Two)?,
+    })
 }
 
 /// Returns a surviving dart of the shell rooted at `dart`.

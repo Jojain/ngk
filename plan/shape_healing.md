@@ -92,6 +92,7 @@ src/healing/
     pcurve.rs             # join_pcurves (2D counterpart, for FaceAttr::pcurves)
   passes/
     mod.rs                # fixed-point driver
+    seams.rs              # 1-removal pass: drop a parameterization's own cut
     edges.rs              # 1-removal pass: fuse cosurfacial faces
     vertices.rs           # 0-removal pass: fuse cocurvilinear edges
 
@@ -171,10 +172,15 @@ map back wholesale — the existing `edit.md` contract carries all the safety.
    with a kink is rejected);
 5. `join_curves` succeeds.
 
-**Guards.** Never remove the last vertex of a closed edge (a circle needs a seam
-vertex). Never remove a vertex whose removal would collapse a one-edge profile
+**Guards.** Never remove a vertex whose removal would collapse a one-edge profile
 loop to nothing — a two-edge loop collapsing into a single closed edge is legal
 and desirable, a one-edge loop vanishing is not.
+
+*The closed-edge guard is gone.* This section originally also refused the last
+vertex of a closed edge, on the grounds that a circle needs a seam vertex to
+hang its span from. It does not: a closed edge *is* its support and spans the
+whole period, so the vertex is a cell like any other. See §11.3 of
+`seamless_periodic_faces.md`.
 
 ### 6.2 Redundant edge (1-removal)
 
@@ -192,13 +198,15 @@ and desirable, a one-edge loop vanishing is not.
 
 **Guards.**
 
-- *Seam edges.* A cylinder's lateral face has its seam edge with the **same**
-  face on both sides and, trivially, the same surface. Removing it destroys the
-  parameterization. Rule: when the two incident face darts resolve to the same
-  `FaceKey`, refuse unless the surface is non-periodic in the relevant direction
-  *and* the resulting loops are still closed and disjoint. This is the Fig. 6.16
-  loop case and the Fig. 6.15 dangling-edge case; both are legal GMap-wise and
-  both are wrong for us at this stage.
+- *Seam edges.* **This guard is inverted now.** It read: a cylinder's lateral
+  face has its seam edge with the same face on both sides, removing it destroys
+  the parameterization, so refuse whenever the surface is periodic in that
+  direction. The premise was that a seam is part of the face. It is not — it is
+  where the parameterization was cut open — and removing it is the whole point
+  of the `seams` pass. What is left is the face the cut was hiding: a ring, a
+  cap, or a face with no boundary at all. See §11.9 of
+  `seamless_periodic_faces.md`; only a lone period-spanning loop with nothing
+  closing its far side is still refused.
 - *Inner/outer merge.* Removing an edge that joins an outer loop to an inner
   loop is legal and correct (it fuses a hole into the outer boundary) but must
   reclassify the resulting single loop as the outer loop. Handle it explicitly
@@ -299,13 +307,16 @@ pub(crate) fn heal_staged<P: Payload>(g: &mut TopologyEdit<'_, P>, options: Heal
     -> Result<HealingReport, HealingError>;
 ```
 
-**Driver order** (`passes/mod.rs`): edges first, then vertices, iterated to a
-fixed point.
+**Driver order** (`passes/mod.rs`): seams, then edges, then vertices, iterated to
+a fixed point.
 
-1. 1-removal pass — fuses cosurfacial faces. Removing an edge can turn a
-   degree-3 vertex into a degree-2 vertex, so it must run first.
-2. 0-removal pass — fuses cocurvilinear edges.
-3. Repeat while the previous round removed anything, bounded by
+1. seam pass — drops the cut a periodic parameterization was opened along. A
+   seam is not part of the shape at all, so it goes before anything is decided
+   about the shape.
+2. 1-removal pass — fuses cosurfacial faces. Removing an edge can turn a
+   degree-3 vertex into a degree-2 vertex, so it must run before the vertices.
+3. 0-removal pass — fuses cocurvilinear edges.
+4. Repeat while the previous round removed anything, bounded by
    `max_iterations`; exceeding the bound is a `HealingError::NoConvergence` (it
    indicates a predicate that flip-flops, which is a bug worth surfacing).
 
@@ -334,10 +345,13 @@ Commit already runs `validate_gmap`, `validate_all_solid_manifolds` and
 `validate_all_solid_orientations`. Healing adds its own invariants, checked in
 debug builds and asserted in tests:
 
-- **Euler characteristic is preserved.** A 1-removal between two distinct faces
-  drops one edge and one face; a 0-removal of a degree-2 vertex drops one vertex
-  and one edge. `V − E + F` is unchanged in both. Any pass that changes it has
-  removed something it should not have.
+- **Euler characteristic is preserved by the fusing passes.** A 1-removal
+  between two distinct faces drops one edge and one face; a 0-removal of a
+  degree-2 vertex drops one vertex and one edge. `V − E + F` is unchanged in
+  both, and either of them changing it has removed something it should not have.
+  The seam pass is the exception and has to be: it takes an edge away without
+  taking a face with it, because the face was never two. A cylinder's
+  characteristic genuinely changes when it stops carrying a cut.
 - **Cell counts are monotone non-increasing**, and the fixed point is reached.
 - **Shape is preserved**: sampled points on the surviving faces still lie on the
   original surfaces within `linear_tolerance`.
@@ -364,13 +378,15 @@ stable invariant (per `skills/test-first-workflow`). Write them red first.
 
 - `splitting_an_edge_then_healing_restores_a_single_edge`
 - `a_corner_vertex_between_two_directions_is_preserved`
-- `the_seam_vertex_of_a_closed_edge_is_preserved`
+- `the_lone_vertex_of_a_closed_edge_is_preserved` — kept because a 0-removal
+  needs two edges to fuse and a closed edge offers one, not because a guard
+  forbids it
+- `two_arcs_that_close_on_each_other_fuse_into_one_closed_edge`
 
 `tests/healing/edge_removal.rs`:
 
 - `coplanar_faces_sharing_an_edge_fuse_into_one_face`
 - `two_edges_between_the_same_face_pair_both_disappear`
-- `a_cylinder_seam_edge_is_preserved`
 - `healing_preserves_shell_euler_characteristic`
 
 `tests/healing/boolean_integration.rs`:
@@ -388,7 +404,7 @@ stable invariant (per `skills/test-first-workflow`). Write them red first.
 | 3 | The two passes + fixed-point driver + report + guards (seam, closed edge, outer loop, shared-edge count). | **Done** — `tests/healing/{vertex,edge}_removal.rs` |
 | 4 | Boolean integration: `BooleanOptions::heal`, call site in `assemble::run`, lineage rewritten onto the surviving identities. | **Done, opt-in** — `tests/healing/boolean_integration.rs`; see §12 |
 | 5 | Loop-reshaping 1-removal (same face on both sides), up to a single rejoined loop. | **Done** — see §12 |
-| 6 | Splitting a rejoined boundary into two loops (annulus, cylinder seam), which needs outer/inner classification in parameter space; contraction (Defs. 63–64) for degenerate cells; optional `GeometrySupport` provenance tag; flipping `BooleanOptions::heal` on by default. | Outstanding |
+| 6 | Splitting a rejoined boundary into two loops (annulus, cylinder seam), which needs outer/inner classification in parameter space; contraction (Defs. 63–64) for degenerate cells; optional `GeometrySupport` provenance tag; flipping `BooleanOptions::heal` on by default. | **Partly done** — the periodic half of the split is in (`MergePlan::{Ring, Cap, Unbounded}`, §11.9 of `seamless_periodic_faces.md`), where no outer/inner question arises; an annulus closing up still needs one. `BooleanOptions::heal` defaults on. Contraction and the provenance tag are outstanding. |
 
 ## 12. What shipped
 
@@ -422,11 +438,12 @@ slit is exactly this case. `MergePlan::Loops` handles it: it counts the
 boundary components the removal would leave, using the replacement links
 computed for Def. 59 so the answer is known before anything is mutated. One
 component is rejoined, and the new seed is chosen from the surviving darts in
-the loop's own orientation class. Two components — a cylinder's seam, an
-annulus closing up — are refused with `CellRemovalError::LoopWouldSplit`,
-because which of them then bounds the face from outside is not a combinatorial
-question. A seam on a periodic surface is refused before that, on
-`Surface::periodicity`.
+the loop's own orientation class. Two components that are the two wrapping loops
+of a ring are read as such and kept (`MergePlan::Ring`); an annulus closing up is
+still refused with `CellRemovalError::LoopWouldSplit`, because which of the two
+then bounds the face from outside is not a combinatorial question, where for a
+ring it does not arise. The blanket refusal of a seam on a periodic surface is
+gone — see §11.9 of `seamless_periodic_faces.md`.
 
 Two consequences fell out of it. The Def. 59 path does not always leave the
 removed cell: at the vertex where a slit's two edges met, once both are gone,

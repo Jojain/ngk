@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use nalgebra::Vector3;
-use ngk::geometry::{LINEAR_TOLERANCE, PointCoincidence, Surface};
+use ngk::geometry::{LINEAR_TOLERANCE, PointCoincidence, Surface, SurfacePeriodicity};
 use ngk::modeling::solids::{
-    PrimitiveError, block, block_at, cut, cylinder, fuse, intersect, sphere,
+    PrimitiveError, block, block_at, cut, cylinder, fuse, intersect, sphere, torus,
 };
 use ngk::tessellate::{TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
@@ -239,6 +239,102 @@ fn a_sphere_tessellates_into_a_closed_ball() {
     assert!(
         uses.values().all(|count| *count == 2),
         "every mesh edge of a closed ball is shared by exactly two triangles"
+    );
+}
+
+/// A torus has no boundary either, and closes in *both* parameter directions.
+///
+/// A sphere closes in one direction by periodicity and in the other by
+/// collapsing at its poles; a torus is periodic twice over, which is the case
+/// `Surface::is_closed` has to answer for without any degenerate row to read.
+/// Nothing about the result is swept topology: the source circle is consumed,
+/// not reused as a boundary.
+#[test]
+fn torus_builds_a_well_formed_boundaryless_solid() {
+    let shape = torus(3.0, 1.0).expect("torus primitive should build");
+    let g = shape.map();
+    validate_solid_manifold(g, shape.key()).expect("torus should be well formed");
+
+    assert_eq!(
+        (
+            g.dart_count(),
+            g.iter_vertices().count(),
+            g.iter_edges().count(),
+            g.iter_faces().count()
+        ),
+        (0, 0, 0, 1),
+        "a torus is one face and nothing else: the profile circle is consumed"
+    );
+
+    let faces = shape.solid().faces();
+    let face = &faces[0];
+    assert!(face.loops().is_empty(), "a torus face has no boundary loop");
+    assert!(face.dart().is_none(), "a boundaryless face has no dart");
+    assert_eq!(
+        g.solid_attr_unchecked(shape.key()).outer_shell.face(),
+        Some(face.key()),
+        "the shell is rooted at the face, there being no dart to root at"
+    );
+    assert!(
+        matches!(
+            face.surface().periodicity(),
+            SurfacePeriodicity::UVPeriodic(_, _)
+        ),
+        "a revolved closed profile is periodic in the sweep and in the profile"
+    );
+    assert!(
+        face.surface().is_closed(),
+        "both directions close, so the shell this face alone makes is closed"
+    );
+}
+
+/// Meshing a torus leaves no crack where either direction closes on itself.
+///
+/// The sphere covers one wrapped direction against a pole; here both wrap, and
+/// neither is bounded by a loop or a degenerate row, so the mesh closes only if
+/// the last column *and* the last row index back onto the first.
+#[test]
+fn a_torus_tessellates_into_a_closed_tube() {
+    let shape = torus(3.0, 1.0).expect("torus primitive should build");
+    let face = shape.solid().faces()[0].key();
+    let mesh = tessellate_face_key(shape.map(), face, TessellateOpts::default())
+        .expect("torus face should tessellate");
+
+    let mut uses = HashMap::new();
+    for triangle in mesh.indices.chunks_exact(3) {
+        for pair in [
+            (triangle[0], triangle[1]),
+            (triangle[1], triangle[2]),
+            (triangle[2], triangle[0]),
+        ] {
+            let edge = (pair.0.min(pair.1), pair.0.max(pair.1));
+            *uses.entry(edge).or_insert(0) += 1;
+        }
+    }
+    assert!(
+        uses.values().all(|count| *count == 2),
+        "every mesh edge of a closed tube is shared by exactly two triangles"
+    );
+    assert!(
+        mesh.positions.iter().all(|point| {
+            let radial = (point.x * point.x + point.y * point.y).sqrt();
+            let offset = (radial - 3.0).hypot(point.z);
+            (offset - 1.0).abs() <= 1e-6
+        }),
+        "every mesh vertex sits on the tube"
+    );
+}
+
+/// A profile reaching the axis pinches the sweep, so it is not a torus.
+#[test]
+fn a_torus_whose_tube_reaches_the_axis_is_refused() {
+    assert!(
+        matches!(torus(1.0, 1.0), Err(PrimitiveError::SolidCreationFailed)),
+        "a tube as wide as its offset touches the axis"
+    );
+    assert!(
+        matches!(torus(1.0, 2.0), Err(PrimitiveError::SolidCreationFailed)),
+        "a tube wider than its offset sweeps through itself"
     );
 }
 

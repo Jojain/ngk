@@ -49,9 +49,6 @@ pub enum RevolveError {
     #[error("Edge {key:?} must be isolated before it can be consumed by a full revolution")]
     SourceEdgeNotIsolated { key: EdgeKey },
 
-    #[error("A full revolution of closed edge {key:?} has no boundary loops")]
-    BoundarylessFullRevolve { key: EdgeKey },
-
     #[error("Edge {key:?} lies on the revolution axis and sweeps no area")]
     EdgeOnRevolutionAxis { key: EdgeKey },
 
@@ -160,8 +157,9 @@ impl RevolvedSourceEdge {
 /// partial turn reuses the source edge and its vertices as one face boundary.
 /// A full turn consumes the isolated source topology and creates only the
 /// non-degenerate circular loops swept by endpoints away from the axis.
-/// Closed source edges cannot currently be fully revolved because the result
-/// has no boundary loop that can seed a face.
+/// A whole turn of a *closed* source edge is a torus: closed in the sweep and
+/// closed in the profile, so the source loop is consumed and the face that comes
+/// back has no boundary at all.
 pub fn add_revolved_edge<P: Payload>(
     g: &mut GMap<P>,
     edge: EdgeKey,
@@ -503,7 +501,7 @@ fn add_full_revolved_edge_face<P: Payload>(
     angle: Rad64,
 ) -> Result<FaceKey, RevolveError> {
     if source.start.key == source.end.key {
-        return Err(RevolveError::BoundarylessFullRevolve { key: source.key });
+        return add_full_revolved_closed_edge_face(edit, source, axis);
     }
 
     let start_on_axis = revolve_radius(axis, source.start.point) <= LINEAR_TOLERANCE;
@@ -516,6 +514,38 @@ fn add_full_revolved_edge_face<P: Payload>(
     }
 
     add_full_revolved_open_edge_face(edit, source, axis, angle)
+}
+
+/// Revolves a closed profile a whole turn into one boundaryless face.
+///
+/// A circle swept a whole turn is a torus: closed in the sweep and closed in the
+/// profile too, so it has no boundary anywhere and needs no edges and no
+/// vertices at all. The source loop is therefore consumed outright rather than
+/// reused as a boundary, leaving a face with no loops — the same shape
+/// [`crate::builders::solids::add_sphere`] registers, the difference being that
+/// here the support is swept rather than named.
+fn add_full_revolved_closed_edge_face<P: Payload>(
+    edit: &mut TopologyEdit<'_, P>,
+    source: &RevolvedSourceEdge,
+    axis: Axis3,
+) -> Result<FaceKey, RevolveError> {
+    let surface = Surface::Revolution(SurfaceOfRevolution::new(source.curve.clone(), axis));
+    // A profile crossing the axis pinches the sweep to a point there, which is
+    // not a torus: it leaves a degenerate row that no loop bounds and no
+    // `LoopKind` describes. The support is what knows where its own rows
+    // collapse, so it is asked rather than the axis re-intersected here.
+    if !surface.degenerate_rows(Axis2::U).is_empty() {
+        return Err(RevolveError::EdgeOnRevolutionAxis { key: source.key });
+    }
+
+    validate_consumable_closed_source_edge(edit, source)?;
+    consume_closed_source_edge(edit, source)?;
+    Ok(edit.add_face(FaceAttr::with_loops(
+        surface,
+        P::F::default(),
+        Vec::new(),
+        HashMap::new(),
+    )))
 }
 
 /// Closes an apex-to-apex revolution by identifying its two meridian seams.
@@ -606,13 +636,30 @@ fn add_full_revolved_open_edge_face<P: Payload>(
     } else if end_radius > LINEAR_TOLERANCE {
         source.end.point
     } else {
-        return Err(RevolveError::BoundarylessFullRevolve { key: source.key });
+        return Err(RevolveError::EdgeOnRevolutionAxis { key: source.key });
     };
+
+    // Two circles bound the sweep on opposite sides, so they have to travel in
+    // opposite directions for the face to lie to the left of both — the wider one
+    // forward, the narrower one back. That is what the reversed pcurve below
+    // says, whether the pair turns out to be a ring's two rims or an annulus and
+    // its hole, and the circle under that pcurve has to be swept backwards to
+    // match: `FaceAttr`'s contract is that a pcurve runs in its dart's direction,
+    // and `add_annulus` keeps it the same way, by reversing the hole's own 3D
+    // circle rather than its pcurve. Which circle is the narrower one is known
+    // from the radii alone, so it is settled before either is built.
+    let start_leads = start_radius >= end_radius;
+    let two_loops = start_radius > LINEAR_TOLERANCE && end_radius > LINEAR_TOLERANCE;
+    let sweep_of = |at_start: bool| match two_loops && at_start != start_leads {
+        true => Rad64::new(-angle.val()),
+        false => angle,
+    };
+
     let reused_loop = consume_source_edge_as_closed_loop(
         edit,
         source,
         reused_loop_point,
-        revolve_circle_curve(axis, reused_loop_point, angle),
+        revolve_circle_curve(axis, reused_loop_point, sweep_of(reuse_start)),
     )?;
 
     let start_loop = (start_radius > LINEAR_TOLERANCE)
@@ -623,7 +670,7 @@ fn add_full_revolved_open_edge_face<P: Payload>(
                 add_closed_revolve_boundary_loop(
                     edit,
                     source.start.point,
-                    revolve_circle_curve(axis, source.start.point, angle),
+                    revolve_circle_curve(axis, source.start.point, sweep_of(true)),
                 )
             }
         })
@@ -637,7 +684,7 @@ fn add_full_revolved_open_edge_face<P: Payload>(
                 add_closed_revolve_boundary_loop(
                     edit,
                     source.end.point,
-                    revolve_circle_curve(axis, source.end.point, angle),
+                    revolve_circle_curve(axis, source.end.point, sweep_of(false)),
                 )
             }
         })
@@ -649,7 +696,7 @@ fn add_full_revolved_open_edge_face<P: Payload>(
         (Some(start), Some(end)) => (end.0, end.1, Some(start)),
         (Some(boundary), None) | (None, Some(boundary)) => (boundary.0, boundary.1, None),
         (None, None) => {
-            return Err(RevolveError::BoundarylessFullRevolve { key: source.key });
+            return Err(RevolveError::EdgeOnRevolutionAxis { key: source.key });
         }
     };
 
@@ -759,6 +806,60 @@ fn validate_consumable_source_edge<P: Payload>(
         return Err(RevolveError::SourceEdgeNotIsolated { key: source.key });
     }
 
+    Ok(())
+}
+
+/// Checks that a closed source loop can be consumed by a full revolution.
+///
+/// A closed edge is a one-edge loop: its two darts are alpha0- *and* alpha1-linked
+/// to each other, and free above. That is a different isolation from
+/// [`validate_consumable_source_edge`]'s, which requires alpha1 free precisely
+/// because the loop it closes has yet to be built, so the two cannot share a
+/// check.
+fn validate_consumable_closed_source_edge<P: Payload>(
+    edit: &TopologyEdit<'_, P>,
+    source: &RevolvedSourceEdge,
+) -> Result<(), RevolveError> {
+    let start = source.dart;
+    let end = edit.alpha(Dim::Zero, start);
+    let edge = Edge::from_dart(edit, start).ok_or(RevolveError::MissingEdge { key: source.key })?;
+    let closes_on_itself = edit.alpha(Dim::One, start) == end;
+    let attached_to_face = !edge.faces().is_empty();
+    let has_other_links = [Dim::Two, Dim::Three]
+        .into_iter()
+        .any(|dim| !edit.is_free(start, dim) || !edit.is_free(end, dim));
+    if start == end || !closes_on_itself || attached_to_face || has_other_links {
+        return Err(RevolveError::SourceEdgeNotIsolated { key: source.key });
+    }
+
+    Ok(())
+}
+
+/// Deletes a closed source loop outright, leaving no topology behind.
+///
+/// Its two darts are the whole loop, so unlinking the two involutions that hold
+/// them together isolates both, and the result of the revolution has no
+/// boundary for either to become.
+fn consume_closed_source_edge<P: Payload>(
+    edit: &mut TopologyEdit<'_, P>,
+    source: &RevolvedSourceEdge,
+) -> Result<(), RevolveError> {
+    let start = source.dart;
+    let end = edit.alpha(Dim::Zero, start);
+
+    if let Some(profile) = Profile::from_dart(edit, start).map(|profile| profile.key()) {
+        edit.remove_profile(profile);
+    }
+    edit.remove_edge(source.key)
+        .expect("validated source edge should remain registered");
+    // Both ends of a closed edge are its one vertex, so it is removed once.
+    edit.remove_vertex(source.start.key)
+        .expect("validated source vertex should remain registered");
+
+    for dim in [Dim::Zero, Dim::One] {
+        edit.unlink(dim, start)?;
+    }
+    edit.remove_isolated_darts(vec![IsolatedDart::new(start), IsolatedDart::new(end)]);
     Ok(())
 }
 

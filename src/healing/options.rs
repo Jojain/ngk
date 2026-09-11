@@ -31,6 +31,8 @@ pub struct HealingOptions {
     pub remove_redundant_vertices: bool,
     /// Fuse the two faces sharing a shape-free edge.
     pub remove_redundant_edges: bool,
+    /// Remove the seams a periodic parameterization was cut open along.
+    pub remove_seams: bool,
     /// Remove a closed redundant interface where an inner loop is completely
     /// filled by another face on the same support surface.
     pub remove_filled_inner_loops: bool,
@@ -48,6 +50,7 @@ impl Default for HealingOptions {
             scope: HealingScope::WholeMap,
             remove_redundant_vertices: true,
             remove_redundant_edges: true,
+            remove_seams: true,
             remove_filled_inner_loops: true,
             linear_tolerance: LINEAR_TOLERANCE,
             angular_tolerance: ANGULAR_TOLERANCE,
@@ -57,6 +60,21 @@ impl Default for HealingOptions {
 }
 
 impl HealingOptions {
+    /// Returns options that canonicalize seams and change nothing else.
+    ///
+    /// This is what an importer runs. STEP AP242 and every other interchange
+    /// format writes a periodic face with its parameterization cut open, and
+    /// that cut is not part of the shape: it should come off on the way in,
+    /// whether or not the caller wants the rest of healing's fusions.
+    pub fn seams_only() -> Self {
+        Self {
+            remove_redundant_vertices: false,
+            remove_redundant_edges: false,
+            remove_filled_inner_loops: false,
+            ..Self::default()
+        }
+    }
+
     /// Returns the default options restricted to `scope`.
     pub fn for_scope(scope: HealingScope) -> Self {
         Self {

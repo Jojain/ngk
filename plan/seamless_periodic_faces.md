@@ -1,18 +1,18 @@
 # Seamless periodic faces
 
-Status: **In progress** — milestones 0 (`src/topology/attributes.rs`),
-1 (`src/topology/face.rs`), 2 (`src/topology/unwrapped_face_domain.rs`), 3, 4, 5
-and 6 are implemented: §11.5 records boundaryless faces and their key-rooted
-shells, §11.6 the spherical cap and the Boolean path onto a face with no loops.
-§11.7 records a related change to what a revolved line sweeps, and §11.8 the one
-item of milestone 6's scope still open: the torus builder. Milestone 7 is
-designed but not built.
+Status: **Complete** — every milestone is implemented. §11.5 records
+boundaryless faces and their key-rooted shells, §11.6 the spherical cap and the
+Boolean path onto a face with no loops, §11.7 a related change to what a
+revolved line sweeps, §11.8 the torus, and §11.9 the healing canonicalizer that
+closes milestone 7. §11.10 records the one thing found along the way and
+deliberately not done.
 
 Nothing in the tree builds a seam any more: a swept or revolved wall comes out a
-ring, a sphere comes out one face with no boundary at all, and an intersection
-crossing a closed direction stays one section. A seam now arrives only from
-outside, and healing takes it apart. §§11.1–11.3 and §11.5 record what landed;
-§11.4 and §11.6 record what was deliberately left open.
+ring, a sphere and a torus come out one face with no boundary at all, and an
+intersection crossing a closed direction stays one section. A seam now arrives
+only from outside, and the `seam_removal` pass takes it apart. §§11.1–11.3 and
+§11.5 record what landed; §11.4 records what was deliberately left open at the
+time.
 
 **Sections 1 and 8 describe the tree as it was before this work and are kept as
 the rationale, not as a report of the current state.** Where they say "today",
@@ -545,16 +545,15 @@ Each leaves the tree green.
 | 3 | Ring faces | `LoopKind::Wrapping`, cylinder and full-revolve builders, per-direction trimming, tessellation wrap + watertightness test, seam 1-removal in `removal.rs`, Boolean trim on rings. Sphere still seamed. **Done** — see §11.1. |
 | 4 | Seamless intersections | Drop `seam_crossings()` splitting; period-spanning pcurves end to end through imprint and assembly. **Done** — see §11.2. |
 | 5 | `Edge` as an enum + closed edges | The enum and the whole-period span rule land together. 0-removal of the vertex between two arcs that close on each other. **Done** — see §11.3. |
-| 6 | Boundaryless faces | `ShellRoot` and the dart-preferred invariant, degeneracy-closed directions, validation by surface for key-rooted shells, sphere and torus builders, pole-aware tessellation. **Done** — see §11.5 and §11.6, except the torus builder (§11.8). |
-| 7 | Healing canonicalizer | `seam_removal` pass: a seamed model in, a seamless model out. |
+| 6 | Boundaryless faces | `ShellRoot` and the dart-preferred invariant, degeneracy-closed directions, validation by surface for key-rooted shells, sphere and torus builders, pole-aware tessellation. **Done** — see §11.5, §11.6 and §11.8. |
+| 7 | Healing canonicalizer | `seam_removal` pass: a seamed model in, a seamless model out. **Done** — see §11.9. |
 
 Milestones 0–4 deliver most of the practical benefit — Booleans on cylinders stop
-being seam-sensitive — without touching dart-rooted identity. That is now in, as
-is 5. Milestone 6 is separable and can be judged on its own; it is the one that
-changes the foundation, since a boundaryless face has no dart to root anything
-at (§5). Milestone 7 is partly delivered already: healing removes an imported
-seam (§11.1), and what remains is to separate that out as a named
-`seam_removal` pass — worth doing when there is a STEP importer to run it.
+being seam-sensitive — without touching dart-rooted identity. Milestone 6 is the
+one that changed the foundation, since a boundaryless face has no dart to root
+anything at (§5). Milestone 7 makes the whole thing reversible from outside: a
+seamed import is now canonicalized on the way in, whichever of the three shapes
+the cut was hiding.
 
 ### 11.1 Milestone 3, as it stands
 
@@ -735,10 +734,12 @@ configuration, and the decision lives in `remove_cell_staged` — where
 `can_remove_cell` can report it before anything is touched — rather than in
 healing.
 
-For the same reason `add_revolved_edge_face` builds a ring band only when neither
-endpoint sits on the axis. A band with an end on the axis sweeps no circle there
-and is closed by that degeneracy, so it keeps its seam until milestone 6, and the
-sphere keeps hers.
+For the same reason `add_revolved_edge_face` built a ring band only when neither
+endpoint sat on the axis: a band with an end on the axis sweeps no circle there
+and is closed by that degeneracy, which no `LoopKind` could then describe. Both
+halves of that are closed now — `LoopKind::Capping` in §11.6 for the band, and
+`CellRemovalError::WouldLeaveWrappingLoop` narrowed in §11.9 to the case where
+the support names no degeneracy at all.
 
 **Seamed input is now import-only.** No builder makes a seam, so
 `tests/builders/removal.rs::seamed_cylinder_wall` constructs one by hand — one
@@ -909,26 +910,153 @@ What this changes:
 - a full turn of a segment reaching the axis is a planar **disk** with an outer
   loop, not a cap. The rim closes in the plane's own parameters.
 
-**Noticed but not changed.** `add_full_revolved_open_edge_face` writes the inner
-loop's pcurve *reversed* on a dart whose edge orientation is forward, to make the
-hole wind against the outer loop. `FaceAttr`'s contract says a pcurve's direction
-must match its dart, and `add_annulus` obeys it by reversing the inner circle's
-own 3D curve instead. The revolve builder's arrangement predates this work — a
-reversed segment between two corners is as invisible as a forward one — and only
-became legible once a plane's pcurves became arcs. The suite is green either way;
-worth reconciling when something depends on it.
+**Reconciled since.** `add_full_revolved_open_edge_face` used to write the second
+loop's pcurve *reversed* on a dart whose edge orientation was forward, so that
+the two loops wind against each other. `FaceAttr`'s contract says a pcurve runs
+in its dart's direction, and `add_annulus` keeps it by reversing the hole's own
+3D circle instead. The revolve builder now does the same: which of the two swept
+circles gets the reversed pcurve follows from the radii, so it is settled before
+either is built and `revolve_circle_curve` is handed a negative sweep for that
+one. It applies to a ring's two rims as much as to an annulus and its hole —
+what the reversed pcurve says is that the face lies to the left of both.
 
-### 11.8 What milestone 6 still does not build: the torus
+A reversed segment between two mapped corners was as invisible as a forward one,
+which is why this went unnoticed until a plane's pcurves became arcs. The test
+that holds it is `revolve_edge_full_turn_perpendicular_to_the_axis_sweeps_a_planar_annulus`,
+which now walks *every* loop rather than only the outer one, checking each
+pcurve against its edge at matching fractions; the hole's failed that at every
+fraction but the ends before the fix.
 
-A full revolution of a *closed* profile — a circle — is still refused as
-`RevolveError::BoundarylessFullRevolve`, "has no boundary loops". That is now the
-wrong reason to refuse: a torus is exactly a face with no boundary loops, and
-everything it needs is in place — `Surface::is_closed` answers true for a
-UV-periodic support, a shell roots at the face, and `tessellate_surface_patch`
-closes both periodic directions. What is missing is only the builder consuming
-the source circle and registering the face, in the way `add_sphere` does without
-revolving anything at all.
+### 11.8 Milestone 6, the torus
 
-A torus would also be the first shape to exercise `Axis2::V` wrapping and a
-`Capping`-free two-period face, so it is worth building before anything relies on
-either.
+A full revolution of a *closed* profile is no longer refused. `add_revolved_edge`
+routes a closed source edge to `add_full_revolved_closed_edge_face`, which
+consumes the source loop outright — a torus has no boundary for it to become —
+and registers a face with no loops on the swept support, the shape `add_sphere`
+registers without revolving anything at all. `RevolveError::BoundarylessFullRevolve`
+is **deleted**: its other two sites were defensive arms for a profile lying on
+the axis, which is what `EdgeOnRevolutionAxis` already says, and its real one is
+now supported.
+
+**The support had to learn it closes.** The old §11.8 claimed everything a torus
+needs was already in place, on the strength of `Surface::is_closed` answering
+true for a UV-periodic support. Nothing made a revolved circle UV-periodic:
+`SurfaceOfRevolution::periodicity` was a fixed `VPeriodic(TAU)`, so the profile
+direction read as open, `is_closed` answered false, and `validate_shell` would
+have rejected the shell as `SolidShellSurfaceOpen`. It now answers `UVPeriodic`
+when `Curve::is_closed` holds for the profile, with the profile's own domain as
+the period — `u` being the profile's own parameter. The branch is unreachable
+from every other shape, since a closed profile was refused everywhere before
+this.
+
+**What refuses a bad torus is the support.** A profile crossing the axis pinches
+the sweep to a point, leaving a degenerate row no loop bounds. Rather than
+re-intersect the axis, the builder asks `degenerate_rows(Axis2::U)` — the surface
+is what knows where its own rows collapse — and declines if it names one.
+`add_torus` and `modeling::solids::{torus, torus_at}` refuse `minor >= major` by
+name before getting that far.
+
+`torus(3.0, 1.0)` is 0 darts, 0 vertices, 0 edges, 1 face.
+`a_torus_tessellates_into_a_closed_tube` is the watertightness check, and is the
+first one where *both* parameter directions have to index their closing row back
+onto their opening one — a sphere only ever closed one that way, the other being
+a pole.
+
+Two of the old §11.8's expectations did not survive. A torus does not exercise
+`Axis2::V` wrapping: with no loops there is no `LoopKind` to wrap anything, and
+that arrives with the first *cut* torus rather than with this one. And nothing
+here needed a `Torus` surface type — a `SurfaceOfRevolution` over a circle is
+exact, and `plan/analytical_geometry.md` owns the recognized form.
+
+### 11.9 Milestone 7, the healing canonicalizer
+
+**`seam_removal` is a named pass** (`src/healing/passes/seams.rs`), run before
+the edge pass and the vertex pass, and switchable on its own through
+`HealingOptions::remove_seams`. `HealingOptions::seams_only()` is the importer's
+form: the cut comes off and nothing else does.
+
+The pass is the same 1-removal the edge pass uses, asked for on different
+grounds — the edge pass removes an edge because the faces on either side turn out
+to be one face, this one removes an edge that was never a boundary. Both ask
+`removal::planned_merge` what the removal *would* do and take the candidates that
+are theirs, so an edge belongs to exactly one pass and neither guesses.
+`planned_merge` is `can_remove_cell` with its answer kept rather than discarded:
+`MergeKind` is `MergedCell` without the identities, available before the removal
+runs. The removal itself and the pcurve bookkeeping stay in `edges.rs`; only the
+selection and the reporting split.
+
+**Two refusals became operations**, which is what gives the pass three shapes to
+produce rather than one:
+
+- **A cap.** `MergePlan::Cap` reads a lone surviving period-spanning component as
+  a face closed on its far side by a degeneracy. Which side follows from travel
+  alone, with nothing sampled — a face's interior lies to the left of its
+  boundary, so a loop running forward along the wrapped axis is closed above it —
+  which is the reading `split_boundaryless_face_by_wrapping_chain` already makes
+  of a chain. `CellRemovalError::WouldLeaveWrappingLoop` survives, narrowed to
+  the case §11.4 could not tell apart from a cap: the support names no degenerate
+  row on that side, so nothing closes the face there at all.
+- **No boundary at all.** `MergePlan::Unbounded` lets a face lose its *last*
+  loop. Only a support closed in every direction can bound such a face, so
+  `Surface::is_closed` decides and `CellRemovalError::WouldUnboundFace` is the
+  refusal — a disk's rim is its whole boundary, and taking it off would leave the
+  face covering the entire plane. `WouldEmptyMap` had to move after the plan is
+  built and now exempts this one case: a map with no darts is not a map with no
+  shape.
+
+**The key root turned out to need the other direction too.** §5.3 argued a face
+root is self-eliminating, and `reroot_shells_at_darts` (§11.6) is that argument
+in code. Nothing put a shell *back* on a face: every construction site writes
+`ShellRoot::Dart`, and a removal that took every dart of a shell left the root
+dangling. `rerooted_shell` in `removal.rs` is the missing half, and states the
+dart-preferred invariant as three answers in order — the Def. 59 replacement, any
+other dart of the same shell, then the face. The sense it stores is read straight
+back by `reroot_shells_at_darts` when the face next gains a dart.
+
+**The fixtures moved to `tests/fixtures/seamed.rs`**, shared by the builder and
+healing test binaries. All three are hand-built, because §11.4's point still
+holds and now has three cases: a wall keeps two rims and becomes a ring, a cap
+keeps one and is closed by a pole, and a sphere — a meridian revolved a whole
+turn — keeps none and becomes boundaryless, its solid re-rooted at the face and
+still passing `validate_solid_manifold`.
+
+### 11.10 Found, and deliberately not done: rebuilding a pcurve on a curved support
+
+Healing cannot rebuild a parameter curve on anything but a plane, and never
+could. `predicates::pcurve::boundary_pcurve` fits a segment or an arc through the
+lifted samples and accepts it only if `traces` agrees, and `traces` compares the
+*polyline through the lifted candidate* with the *polyline through the samples*.
+On a curved support every lifted point sits off the chords joining the samples by
+a sagitta of about `r(1 - cos(pi / n))` — 0.034 on a unit circle at twelve
+samples — orders of magnitude past `LINEAR_TOLERANCE`. Nothing passes. Every
+curved fusion is reported as `PcurveNotJoinable`, which is why a ring's rim,
+split and healed, does not come back as the one closed edge it started as.
+
+The comparison to make instead is pointwise at matching fractions, which is the
+synchronized-halves rule the rest of the kernel already states. Two further
+things are needed with it, and both were confirmed by building it:
+
+1. **The lifted parameters must be unwrapped first.** `param_at` answers inside
+   the surface's own domain, so a boundary crossing a closed direction comes back
+   folded. This part is in — `unwrap_parameters` in `pcurve.rs` — because it is
+   right on its own terms and inert without the rest.
+2. **`join_on_circle` must read its direction from the samples.** Its closed
+   branch reads the sweep direction off the vanishing vertex's angle, which is
+   well conditioned only while that vertex sits within half a turn of the start.
+   A Boolean tends to put it at exactly half a turn, where that angle is one half
+   turn and its sign is noise; the fused circle then comes back reversed, the
+   loop with it, and the face fails `validate_solid_orientation`.
+
+With both, `boolean_union_of_a_block_and_a_protruding_cylinder_opens_one_inner_loop`
+passes and a cylinder rim heals into one closed edge — §9's promise, delivered.
+What then fails is one layer further out: `boolean/trim.rs` flattens a face's
+loops into winding polygons, and a loop that is a single closed pcurve appears to
+flatten to a degenerate one, after which every classification ray is rejected
+near the boundary and `solid_contains_point` answers `AmbiguousClassification`.
+`boolean_difference_supports_a_cylindrical_through_hole` also asserts a rim of at
+least two arcs, which stops being true and would need retargeting.
+
+That is a third distinct piece of work in a path this plan does not own, so all
+of it is left for its own plan rather than smuggled in here. The tree is honest
+about the state: `traces` says in its doc comment that it is a weak test and why,
+and `join_on_circle` says which reading it makes and what it costs.

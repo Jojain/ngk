@@ -4,13 +4,17 @@ use std::collections::HashMap;
 use nalgebra::Vector3;
 use thiserror::Error;
 
+use radians::Rad64;
+
 use crate::{
     Payload,
-    builders::errors::ExtrudeError,
+    builders::edges::add_circle_staged,
+    builders::errors::{EdgeCreationError, ExtrudeError},
     builders::faces::reverse_face_winding,
+    builders::revolve::{RevolveError, add_revolved_edge_staged},
     geometry::{
         ANGULAR_TOLERANCE, Axis2, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3,
-        RuledSurface, Sphere, Surface, SurfacePeriodicity,
+        RuledSurface, Sphere, Surface, SurfacePeriodicity, axis::Axis3,
     },
     topology::{
         Dart, SheetAttr, ShellRoot, SolidAttr, TopologyEdit,
@@ -27,6 +31,21 @@ use crate::{
 #[derive(Debug, Error)]
 pub enum SphereBuildError {
     #[error("failed to commit sphere topology")]
+    TopologyEdit(#[from] TopologyEditError),
+}
+
+#[derive(Debug, Error)]
+pub enum TorusBuildError {
+    #[error("minor radius {minor} must be positive and smaller than major radius {major}")]
+    InvalidRadii { major: f64, minor: f64 },
+
+    #[error("failed to build the torus profile circle")]
+    ProfileCircle(#[from] EdgeCreationError),
+
+    #[error("failed to revolve the torus profile")]
+    Revolve(#[from] RevolveError),
+
+    #[error("failed to commit torus topology")]
     TopologyEdit(#[from] TopologyEditError),
 }
 
@@ -52,6 +71,45 @@ pub fn add_sphere<P: Payload>(
             Vec::new(),
             HashMap::new(),
         ));
+        let shell = ShellRoot::at_face(face);
+        edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
+        Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
+    })
+}
+
+/// Adds a torus as one boundaryless face on a swept support.
+///
+/// The frame's z-axis is the revolution axis; the profile circle of radius
+/// `minor` sits `major` out along the frame's x-axis, in the plane those two
+/// directions span. A whole turn closes the support in the sweep, and the
+/// profile closes it in the other direction, so the result has no boundary
+/// anywhere — no edges and no vertices, with the shell and the solid naming the
+/// face rather than a dart, exactly as [`add_sphere`] does.
+///
+/// `minor` must stay under `major`: a profile reaching the axis pinches the
+/// sweep, and one crossing it sweeps a surface through itself.
+pub fn add_torus<P: Payload>(
+    g: &mut GMap<P>,
+    frame: Frame,
+    major: f64,
+    minor: f64,
+) -> Result<SolidKey, TorusBuildError> {
+    if !major.is_finite() || !minor.is_finite() || minor <= 0.0 || minor >= major {
+        return Err(TorusBuildError::InvalidRadii { major, minor });
+    }
+
+    g.transaction(|edit| {
+        let center = frame.origin + major * *frame.x_dir;
+        // The profile plane holds the axis direction, so the revolution sweeps
+        // the circle around the axis rather than through itself.
+        let profile = Plane::new(center, frame.x_dir, frame.y_dir);
+        let circle = add_circle_staged(edit, profile, minor)?;
+        let face = add_revolved_edge_staged(
+            edit,
+            circle,
+            Axis3::new(frame.origin, *frame.z_dir),
+            Rad64::FULL_TURN,
+        )?;
         let shell = ShellRoot::at_face(face);
         edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
         Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))

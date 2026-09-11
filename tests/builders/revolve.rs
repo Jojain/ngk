@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use nalgebra::Vector3;
 use radians::Rad64;
 
-use ngk::builders::edges::add_edge;
+use ngk::builders::edges::{add_circle, add_edge};
 use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::revolve::{RevolveError, add_revolved_edge, add_revolved_face};
 use ngk::geometry::axis::Axis3;
@@ -175,6 +175,68 @@ fn side_arc_midpoint(
         .parameter_interval()
         .expect("side arc should have an oriented interval");
     curve.point_at(interval.at(0.5))
+}
+
+/// A full turn of a closed profile sweeps a torus: one face, and no topology.
+///
+/// The source circle is not reused as a boundary the way an open profile's ends
+/// are — a torus has no boundary for it to become — so it is consumed outright,
+/// leaving the map with a single face and nothing else in it.
+#[test]
+fn revolve_closed_edge_full_turn_sweeps_a_boundaryless_torus() {
+    let mut g = GMap::<StandardPayload>::new();
+    let profile = ngk::geometry::Plane::new(Point3::new(3.0, 0.0, 0.0), Vector3::x(), Vector3::y());
+    let circle = add_circle(&mut g, profile, 1.0).expect("profile circle should build");
+
+    let face_key = add_revolved_edge(
+        &mut g,
+        circle,
+        Axis3::new(Point3::origin(), Vector3::z()),
+        Rad64::FULL_TURN,
+    )
+    .expect("a circle off the axis should revolve into a torus");
+
+    assert_eq!(
+        (
+            g.dart_count(),
+            g.iter_vertices().count(),
+            g.iter_edges().count(),
+            g.iter_profiles().count(),
+            g.iter_faces().count()
+        ),
+        (0, 0, 0, 0, 1),
+        "the source loop is consumed, leaving one boundaryless face"
+    );
+    let face = g.face_unchecked(face_key);
+    assert!(face.loops().is_empty(), "a torus face has no boundary loop");
+    assert!(
+        matches!(face.surface(), Surface::Revolution(_)),
+        "a revolved circle keeps the swept support"
+    );
+}
+
+/// A closed profile crossing the axis pinches its sweep, and is refused.
+///
+/// The refusal is the support's own answer — it reports a row where its
+/// parameterization collapses — rather than a separate intersection here.
+#[test]
+fn revolve_closed_edge_crossing_the_axis_is_refused() {
+    let mut g = GMap::<StandardPayload>::new();
+    let profile = ngk::geometry::Plane::new(Point3::origin(), Vector3::x(), Vector3::y());
+    let circle = add_circle(&mut g, profile, 1.0).expect("profile circle should build");
+
+    assert!(
+        matches!(
+            add_revolved_edge(
+                &mut g,
+                circle,
+                Axis3::new(Point3::origin(), Vector3::z()),
+                Rad64::FULL_TURN,
+            ),
+            Err(RevolveError::EdgeOnRevolutionAxis { .. })
+        ),
+        "a profile straddling the axis sweeps no torus"
+    );
 }
 
 /// A full turn of an off-axis edge sweeps two circles, and both bound the band.
@@ -765,10 +827,12 @@ fn revolve_edge_full_turn_perpendicular_to_the_axis_sweeps_a_planar_annulus() {
         );
     }
 
-    // The outer loop's pcurve tracks its edge all the way round, which a chord
-    // would fail at every fraction but the two ends.
-    let outer = face.outer_loop().expect("the annulus has an outer loop");
-    for edge in outer.edges() {
+    // Every pcurve tracks its own edge all the way round, the hole's included.
+    // A chord would fail this at every fraction but the two ends, and so would a
+    // hole whose pcurve ran against its dart: the hole winds against the outer
+    // loop by sweeping its own 3D circle backwards, which is what keeps the two
+    // in step here.
+    for edge in face.edges() {
         let pcurve = face.pcurve(edge.dart()).expect("every edge carries one");
         let section = edge.trimmed_curve().expect("a boundary edge has a section");
         for fraction in [0.0, 0.25, 0.5, 0.75] {

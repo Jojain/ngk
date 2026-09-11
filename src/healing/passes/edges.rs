@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::builders::profiles::curve_pcurve;
 use crate::builders::removal::{
-    CellRemovalError, MergedCell, can_remove_cell, is_removable, remove_cell_staged,
+    CellRemovalError, MergeKind, MergedCell, is_removable, planned_merge, remove_cell_staged,
 };
 use crate::geometry::{Plane, Surface};
 use crate::topology::attributes::LoopKind;
@@ -34,17 +34,33 @@ use super::super::predicates::{SurfaceMatch, surfaces_match};
 use super::super::report::{HealedCell, HealingReport, SkipReason};
 use super::{edge_dart_in_face, incident_faces};
 
-/// Offers every scoped edge to the 1-removal operation.
+/// Offers every scoped edge that is not a seam to the 1-removal operation.
+///
+/// A seam is left to [`super::seams`]: it is not a redundant edge but a cut in
+/// a parameterization, and the two are worth asking for separately.
 pub(in crate::healing) fn run<P: Payload>(
     edit: &mut TopologyEdit<'_, P>,
     options: &HealingOptions,
     report: &mut HealingReport,
+) -> Result<(), HealingError> {
+    run_over(edit, options, report, |kind| !kind.is_seam_removal())
+}
+
+/// Offers every scoped edge whose planned removal `wanted` accepts.
+pub(in crate::healing::passes) fn run_over<P: Payload>(
+    edit: &mut TopologyEdit<'_, P>,
+    options: &HealingOptions,
+    report: &mut HealingReport,
+    wanted: impl Fn(MergeKind) -> bool,
 ) -> Result<(), HealingError> {
     for key in super::scoped_edges(edit.map(), options)? {
         if edit.map().edge_attr(key).is_none() {
             continue;
         }
         match plan(edit.map(), key, options) {
+            // The other pass's business, not a refusal: recording a skip here
+            // would report a cell as declined that is about to be removed.
+            Ok(fusion) if !wanted(fusion.kind) => continue,
             Ok(fusion) => apply(edit, fusion, report)?,
             Err(reason) => report.skip(HealedCell::Edge(key), reason),
         }
@@ -53,7 +69,7 @@ pub(in crate::healing) fn run<P: Payload>(
 }
 
 /// Everything the fusion needs, resolved before the topology changes.
-struct FaceFusion {
+pub(in crate::healing::passes) struct FaceFusion {
     edge: EdgeKey,
     dart: Dart,
     survivor: FaceKey,
@@ -63,10 +79,12 @@ struct FaceFusion {
     surfaces: SurfaceMatch,
     /// The survivor's plane, when the fused face's curves must be rebuilt.
     plane: Option<Plane>,
+    /// What the removal will do, which is also what decides whose pass this is.
+    kind: MergeKind,
 }
 
 /// Decides whether the edge carries shape.
-fn plan<P: Payload>(
+pub(in crate::healing::passes) fn plan<P: Payload>(
     g: &GMap<P>,
     edge: EdgeKey,
     options: &HealingOptions,
@@ -146,10 +164,12 @@ fn plan<P: Payload>(
 
     // Every other refusal the removal can raise — a boundary that would fall
     // into two loops, an unregistered incidence — is decided here so a declined
-    // candidate never disturbs the map.
-    can_remove_cell(g, dart, Dim::One).map_err(|error| match error {
+    // candidate never disturbs the map. The answer also says what the removal
+    // will be, which is what sorts the candidate into one pass or the other.
+    let kind = planned_merge(g, dart, Dim::One).map_err(|error| match error {
         CellRemovalError::LoopWouldSplit { .. } => SkipReason::LoopWouldSplit,
         CellRemovalError::WouldLeaveWrappingLoop { .. } => SkipReason::PeriodicSurface,
+        CellRemovalError::WouldUnboundFace { .. } => SkipReason::WouldUnboundFace,
         CellRemovalError::NotRemovable { .. } => SkipReason::NotRemovable,
         _ => SkipReason::Unregistered,
     })?;
@@ -161,6 +181,7 @@ fn plan<P: Payload>(
         consumed,
         surfaces,
         plane,
+        kind,
     })
 }
 
@@ -267,7 +288,7 @@ fn has_rebuildable_boundary<P: Payload>(
 }
 
 /// Removes the edge and restores the fused face's parameter curves.
-fn apply<P: Payload>(
+pub(in crate::healing::passes) fn apply<P: Payload>(
     edit: &mut TopologyEdit<'_, P>,
     fusion: FaceFusion,
     report: &mut HealingReport,
@@ -294,7 +315,11 @@ fn apply<P: Payload>(
         // A seam removal reshapes one face's boundary into two wrapping loops,
         // consuming nothing: the same rejoin bookkeeping applies.
         MergedCell::Ring { face, .. } => (face, None, Orientation::Same),
+        // And into one, when a degeneracy closes the face's far side.
+        MergedCell::Cap { face, .. } => (face, None, Orientation::Same),
         MergedCell::BoundaryRemoved { face, .. } => (face, None, Orientation::Same),
+        // And the face's last boundary going leaves it covering its support.
+        MergedCell::Unbounded { face, .. } => (face, None, Orientation::Same),
         MergedCell::Edges { .. } => {
             return Err(TopologyEditError::MissingLineageAttribute {
                 key: crate::topology::EditKey::Face(fusion.survivor),
@@ -323,7 +348,10 @@ fn apply<P: Payload>(
             .ok_or(HealingError::PcurveRebuildFailed { face: survivor })?,
     }
 
-    report.removed_edges.push(fusion.edge);
+    match fusion.kind.is_seam_removal() {
+        true => report.removed_seams.push(fusion.edge),
+        false => report.removed_edges.push(fusion.edge),
+    }
     match consumed {
         Some(consumed) => report.fused_faces.push((survivor, consumed)),
         None => report.rejoined_faces.push(survivor),
