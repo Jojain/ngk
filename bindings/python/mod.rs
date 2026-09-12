@@ -1,6 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(clippy::useless_conversion)]
 
+mod exchange;
 mod geometry;
 mod modeling;
 mod topology;
@@ -11,6 +12,7 @@ use pyo3::types::PyModule;
 
 #[pymodule]
 pub fn _ngk(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    exchange::register(m)?;
     geometry::register(m)?;
     modeling::register(m)?;
     topology::register(m)?;

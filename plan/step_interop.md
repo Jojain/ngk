@@ -761,6 +761,13 @@ depends on it.
   against the reader now keeps compiling when stage 3 fills the body in.
   `fs.rs` is `#[cfg(not(target_arch = "wasm32"))]` and compiled out rather than
   stubbed, so the wasm `cdylib` still builds.
+- **Writing is exposed through the Python binding**, so a shape can be handed
+  to another kernel from a REPL: `ngk.write_step(solid)` returns the path it
+  wrote (a temp file when none is named) and `ngk.step_to_string(solid)` returns
+  the text. Refusals arrive as exceptions — `ValueError` for geometry a stage
+  cannot yet write, `OSError` for the filesystem — so the stage boundaries stay
+  visible from Python rather than turning into a corrupt file.
+  `bindings/python/tests/test_step.py` round-trips through build123d directly.
 - **An external oracle is wired in and repeatable.** `cargo run --example
   step_export_fixtures` writes the shapes that
   `tests/fixtures/step/validate_ngk_export.py` reads back through OpenCascade,
