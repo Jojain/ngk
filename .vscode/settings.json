@@ -1,0 +1,14 @@
+{
+    "rust-analyzer.debug.engine": "vadimcn.vscode-lldb",
+    "rust-analyzer.runnables.extraEnv": {
+        "RUSTUP_TOOLCHAIN": "stable-x86_64-pc-windows-gnu",
+        "Path": "C:\\msys64\\ucrt64\\bin;C:\\Users\\romai\\.cargo\\bin;C:\\Windows\\System32;C:\\Windows"
+    },
+    "rust-analyzer.debug.engineSettings": {
+        "vadimcn.vscode-lldb": {
+            "expressions": "simple",
+            "sourceLanguages": ["rust"]
+        }
+    },
+    "lldb.script.lang.rust.toolchain": "stable-x86_64-pc-windows-gnu"
+}
