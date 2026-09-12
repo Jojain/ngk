@@ -27,6 +27,15 @@ do not `pip install` into the system Python. `.venv/Scripts/python.exe`
    are malformed enough that a real OCCT-based reader rejects them, which is
    a stronger check than ngk being able to re-read its own output.
 
+## Fixture naming convention
+
+When a fixture is checked in rather than generated on the fly in a test,
+keep the generating script beside the file it produces, under
+`tests/fixtures/step/`: `generate_<name>.py` produces `<name>.step`. This
+lets a fixture be regenerated or extended without reverse-engineering it
+from the STEP text. Keep the script itself uncommented — it's a few lines
+of straight-line build123d calls, not something that needs explaining.
+
 ## Building known-geometry fixtures
 
 ```python
