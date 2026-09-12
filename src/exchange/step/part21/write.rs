@@ -9,7 +9,7 @@ use std::io::Write;
 
 use thiserror::Error;
 
-use super::value::{StepExchange, Instance, Record, Value};
+use super::value::{Instance, Record, StepExchange, Value};
 
 /// A value with no Part 21 representation, or a failure of the sink.
 #[derive(Debug, Error)]

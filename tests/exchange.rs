@@ -6,3 +6,9 @@ mod part21_parse;
 mod part21_round_trip;
 #[path = "exchange/part21_write.rs"]
 mod part21_write;
+#[path = "exchange/step_builder.rs"]
+mod step_builder;
+#[path = "exchange/step_export.rs"]
+mod step_export;
+#[path = "exchange/step_fs.rs"]
+mod step_fs;

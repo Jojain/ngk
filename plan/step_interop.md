@@ -4,9 +4,10 @@
 > rationale, the extension points, and what lives where. Not line-level
 > implementation. Staging is §10.
 >
-> **Status: In progress.** Stage 1 is complete — `src/exchange/step/part21/`
-> reads and writes ISO 10303-21 on `winnow`, with zero kernel references.
-> Stage 2 (planar export) is the next entry point.
+> **Status: In progress.** Stages 1–2 are complete. `part21/` reads and writes
+> ISO 10303-21 on `winnow` with zero kernel references, and a planar solid now
+> exports to a file OpenCascade reads back as a valid solid of the right volume.
+> Stage 3 (planar import, closing the round trip) is the next entry point.
 
 ## Context
 
@@ -213,6 +214,14 @@ wrong — catching it at the face that caused it rather than at
 
 This is the "one conversion point per direction" rule that STEP round trips need, and
 the reason it is affordable.
+
+**Export takes the same idea the other way, and it is just as cheap.** Writing
+`same_sense` needs no new machinery either: `Face::normal_at` *is* the support
+normal flipped by the winding, so the flag is the sign of
+`face.normal_at(u,v) · surface.normal_at(u,v)` — STEP's definition of it, asked
+directly. Nothing is stored and no case analysis is written. A plane's normal is
+constant so any parameter answers; a curved support needs a `(u, v)` known to
+lie inside the trimmed region, which is a stage-4 concern.
 
 The dart-composition rule is separate and equally narrow:
 `forward = FACE_BOUND.orientation XOR ORIENTED_EDGE.orientation`.
@@ -698,15 +707,67 @@ pcurve reconstruction, and it gives the importer a generator of known-good input
 | # | Stage | Delivers | Explicitly not yet |
 |---|---|---|---|
 | **1** | ~~L1 Part 21 read/write on `winnow`~~ — **done** | text → table → text; `pub mod exchange` | any kernel reference at all — `part21` must compile knowing nothing of NGK |
-| **2** | Export, planar | `block(1,2,3)` opens in another CAD system; AP203 boilerplate | import, curved supports, seams, NURBS |
+| **2** | ~~Export, planar~~ — **done** | `block(1,2,3)` opens in another CAD system; AP214 boilerplate | import, curved supports, seams, NURBS |
 | **3** | Import, planar — the round trip closes | units, uncertainty, stitching (§6), pcurve path on planes | curved supports, seams |
 | **4** | Analytic curved supports, both ways, with seams | full `UvMap`; cylinder/cone/sphere/torus surfaces; circle/ellipse; the unwrapped-domain seam walk; `SEAM_CURVE` on write; `seams_only` healing on read; `SectionTrace` extracted and generalized to two periodic axes (D8) | boundaryless faces, NURBS |
 | **5** | Boundaryless faces and voids | **after D11's fixture passes**: sphere and torus out, `BREP_WITH_VOIDS` | NURBS |
 | **6** | NURBS | both B-spline entities, rational complex forms, knot RLE, net transposition, periodic→clamped, `SURFACE_OF_REVOLUTION`. Adds `NurbsSurface::is_rational()` — one new public method in `geometry` | — |
-| **7** | Robustness and assemblies | `fs.rs`; lenient vendor-file parsing; the document type (D13); AP242 | — |
+| **7** | Robustness and assemblies | lenient vendor-file parsing; the document type (D13); AP242 | — |
 
 Stages 1–3 prove the architecture against a real external kernel before anything
 depends on it.
+
+**What stage 2 settled.**
+
+- **The file is written as AP214 (`AUTOMOTIVE_DESIGN`), not AP203.** The entity
+  list is the one §5 names either way — only `FILE_SCHEMA` and the
+  application-context string differ — and AP214 is what OpenCascade writes by
+  default, so it is the spelling most readers are known to accept. `schema/`
+  still holds it all in one module, so the choice stays one file's worth of
+  change.
+- **Pcurves are omitted, and this is not a gap.** `SURFACE_CURVE` with a
+  `PCURVE` is optional (D8), so an `EDGE_CURVE` names its 3D curve directly.
+  A block is 123 instances against OpenCascade's 350 for the same shape, and
+  OCCT reads it back as a valid solid of volume 6000 — the pcurves it wrote for
+  its own file were not load-bearing.
+- **Boolean output is not yet exportable, for a reason that belongs to stage 6.**
+  Cutting one block with another yields 11 NURBS edges against 7 lines, so
+  `modeling::cut` results hit the `UnsupportedCurve` arm even though every
+  support involved is planar. The exportable set today is therefore primitives
+  and extrusions. Nothing about the walk changes when stage 6 lands the NURBS
+  writer; this is purely the L3 table being short.
+- **Instance sharing is exact, and its key must be uniquely decodable.**
+  `add_shared` collapses equal records into one instance — this is what stops a
+  file being dominated by repeated points (§5) — and the two ways it can go
+  wrong are not symmetric. Comparison is **bit-exact, never within a
+  tolerance**, so arithmetic error can only cost file size; a tolerance here
+  would merge entities that differ, which is the direction that corrupts. The
+  share table is keyed on a rendering of the record, and that rendering has to
+  be *injective*: with a plain separator, a string containing it spells what two
+  parameters spell, so `K('x\u{1},ty')` and `K('x','y')` collapse into one
+  instance. Length-prefixing every keyword, string and enumeration makes that
+  impossible rather than unlikely. Sharing is also confined to value-like
+  entities; anything with identity — `VERTEX_POINT`, `EDGE_CURVE`, the faces,
+  and a representation's own placement — is written under a name of its own, so
+  topological identity never depends on the share table at all.
+- **`fs.rs` and the read API landed early, on request.** `write_step_file` works;
+  `read_exchange_file` works and is genuinely useful already, since L1 is
+  complete — a vendor file can be opened and walked entity by entity long
+  before it can be imported. `read_step`/`read_step_file` are pinned but return
+  `StepError::NotImplemented { stage: 3 }`, having *first* run the Part 21
+  parse, so a malformed file is still diagnosed with a line number today rather
+  than hidden behind the missing stage. `StepReadOptions`, `StepImport` and
+  `ImportReport` are shaped from D6, D9, D10 and D12 so that code written
+  against the reader now keeps compiling when stage 3 fills the body in.
+  `fs.rs` is `#[cfg(not(target_arch = "wasm32"))]` and compiled out rather than
+  stubbed, so the wasm `cdylib` still builds.
+- **An external oracle is wired in and repeatable.** `cargo run --example
+  step_export_fixtures` writes the shapes that
+  `tests/fixtures/step/validate_ngk_export.py` reads back through OpenCascade,
+  asserting volume, area, bbox and cell counts. `cargo test` does not depend on
+  Python; the two are run together deliberately, because a file can satisfy
+  every structural invariant the Rust tests assert and still be refused by a
+  real reader.
 
 ---
 

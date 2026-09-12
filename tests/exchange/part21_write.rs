@@ -6,7 +6,7 @@
 //! this feature that corrupt without ever failing.
 
 use ngk::exchange::step::part21::{
-    EntityId, StepExchange, Instance, Record, Value, WriteError, encode_text, exchange_to_string,
+    EntityId, Instance, Record, StepExchange, Value, WriteError, encode_text, exchange_to_string,
     format_real, parse_exchange,
 };
 

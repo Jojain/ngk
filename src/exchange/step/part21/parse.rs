@@ -16,7 +16,7 @@ use winnow::stream::Location;
 use winnow::token::{one_of, take_until, take_while};
 use winnow::{LocatingSlice, ModalResult, Parser};
 
-use super::value::{DuplicateEntityId, EntityId, StepExchange, Instance, Record, Value};
+use super::value::{DuplicateEntityId, EntityId, Instance, Record, StepExchange, Value};
 
 /// The input stream: text, with byte offsets tracked so an error and every
 /// instance can name the line it sits on.

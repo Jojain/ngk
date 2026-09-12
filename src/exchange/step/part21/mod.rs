@@ -14,6 +14,6 @@ pub mod write;
 
 pub use parse::{SyntaxError, decode_text, parse_exchange};
 pub use value::{
-    DanglingReference, DuplicateEntityId, EntityId, StepExchange, Instance, Record, Value,
+    DanglingReference, DuplicateEntityId, EntityId, Instance, Record, StepExchange, Value,
 };
 pub use write::{WriteError, encode_text, exchange_to_string, format_real, write_exchange};
