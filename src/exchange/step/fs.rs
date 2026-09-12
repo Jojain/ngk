@@ -43,11 +43,13 @@ pub fn write_step_file<P: Payload>(
 
 /// Reads a STEP file into solids.
 ///
-/// **Not implemented yet.** A malformed file is still reported properly — the
-/// text is parsed as Part 21 before anything else — but a well-formed one
-/// returns [`StepError::NotImplemented`] until stage 3 of
-/// `plan/step_interop.md` lands. The signature is settled, so code written
-/// against it now keeps compiling when it does.
+/// ```no_run
+/// use ngk::exchange::step::{StepReadOptions, read_step_file};
+///
+/// let import = read_step_file("part.step", &StepReadOptions::default())?;
+/// println!("{} solid(s), {} skipped", import.shapes.len(), import.report.skipped.len());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn read_step_file(
     path: impl AsRef<Path>,
     options: &StepReadOptions,

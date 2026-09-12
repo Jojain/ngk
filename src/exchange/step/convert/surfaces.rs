@@ -10,12 +10,13 @@
 //! (a cone's `v`, a revolution's transposition) arrive in stage 4 with the
 //! `UvMap` that makes their sign reasoning mechanical.
 
-use crate::geometry::Surface;
+use crate::geometry::{Plane, Surface};
 
 use super::super::builder::InstanceBuilder;
-use super::super::error::GeometryError;
+use super::super::error::{GeometryError, StepError};
 use super::super::part21::{EntityId, Record, Value};
-use super::placement::write_placement;
+use super::super::schema::resolver::{Entity, Resolver};
+use super::placement::{read_placement, write_placement};
 
 /// Writes a surface, preferring its closed form.
 pub fn write_surface(
@@ -58,4 +59,48 @@ fn kind(surface: &Surface) -> &'static str {
         Surface::Revolution(_) => "Revolution",
         Surface::Nurbs(_) => "Nurbs",
     }
+}
+
+/// Reads a surface, preferring its closed form.
+///
+/// The same declining chain as [`write_surface`], read backwards: each reader
+/// returns `None` for an entity it does not recognize and the next one tries.
+/// Stage 6 appends the `B_SPLINE_SURFACE` reader and the certified NURBS
+/// conversion that never declines.
+pub fn read_surface(
+    resolver: &Resolver<'_>,
+    from: &Entity<'_>,
+    id: EntityId,
+) -> Result<Surface, StepError> {
+    let surface = resolver.follow(from, id)?;
+    if let Some(read) = read_plane(resolver, &surface) {
+        return read;
+    }
+    Err(GeometryError::UnreadableSurface {
+        keyword: surface.keyword().to_string(),
+        id: surface.id,
+        line: surface.line,
+    }
+    .into())
+}
+
+/// Reads a `PLANE`, or declines anything that is not one.
+///
+/// The mapping is an identity in geometry *and* in parameterization: STEP's
+/// `(u, v)` are distances along the placement's x and y, which is exactly what
+/// [`Plane::point_at`](crate::geometry::Plane::point_at) computes. That is why
+/// stage 3 needs no `UvMap` — a plane is the one surface that does not.
+fn read_plane(resolver: &Resolver<'_>, surface: &Entity<'_>) -> Option<Result<Surface, StepError>> {
+    if !surface.is("PLANE") {
+        return None;
+    }
+    Some(
+        surface
+            .reference(1)
+            .map_err(StepError::from)
+            .and_then(|position| {
+                let frame = read_placement(resolver, surface, position)?;
+                Ok(Surface::Plane(Plane::from_frame(frame)))
+            }),
+    )
 }

@@ -12,7 +12,8 @@ use thiserror::Error;
 use crate::topology::Dart;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 
-use super::part21::{SyntaxError, WriteError};
+use super::part21::{EntityId, SyntaxError, WriteError};
+use super::schema::resolver::SchemaError;
 
 /// Anything that can go wrong reading or writing a STEP file.
 #[derive(Debug, Error)]
@@ -24,6 +25,10 @@ pub enum StepError {
     /// **L1** — a value has no Part 21 spelling, or the sink failed.
     #[error("STEP output: {0}")]
     Output(#[from] WriteError),
+
+    /// **L2** — the entity model is not what the schema requires.
+    #[error("STEP schema: {0}")]
+    Schema(#[from] SchemaError),
 
     /// **L3** — geometry NGK holds that this stage cannot yet map.
     #[error("STEP geometry: {0}")]
@@ -44,20 +49,6 @@ pub enum StepError {
         /// What the filesystem said.
         #[source]
         source: std::io::Error,
-    },
-
-    /// A direction of the mapping that has not been built yet.
-    ///
-    /// Distinct from the `Unsupported*` variants below, which are geometry
-    /// *kinds* a working direction cannot yet carry. This one says the whole
-    /// direction is absent, and names the stage of `plan/step_interop.md` that
-    /// closes it so the message is a pointer rather than a dead end.
-    #[error("{what} is not implemented yet (stage {stage} of the STEP interop plan)")]
-    NotImplemented {
-        /// What was asked for.
-        what: &'static str,
-        /// The stage that delivers it.
-        stage: u8,
     },
 }
 
@@ -81,6 +72,43 @@ pub enum GeometryError {
     UnsupportedCurve {
         /// The `Curve` variant met.
         kind: &'static str,
+    },
+
+    /// A surface entity this stage does not read.
+    #[error("{id} on line {line}: surface entity `{keyword}` is not read yet")]
+    UnreadableSurface {
+        /// The entity keyword met, as the file spells it.
+        keyword: String,
+        /// The instance met.
+        id: EntityId,
+        /// Its line.
+        line: u32,
+    },
+
+    /// A curve entity this stage does not read.
+    #[error("{id} on line {line}: curve entity `{keyword}` is not read yet")]
+    UnreadableCurve {
+        /// The entity keyword met, as the file spells it.
+        keyword: String,
+        /// The instance met.
+        id: EntityId,
+        /// Its line.
+        line: u32,
+    },
+
+    /// A curve that would not project into its face's parameter space.
+    ///
+    /// Read-side only: a pcurve is rebuilt from the 3D curve rather than taken
+    /// from the file (D8), and on a plane that projection is exact — so this
+    /// fires only for geometry too degenerate to carry a control polygon.
+    #[error("{id} on line {line}: curve does not project onto the face's plane: {detail}")]
+    UnprojectableCurve {
+        /// The `EDGE_CURVE` met.
+        id: EntityId,
+        /// Its line.
+        line: u32,
+        /// What the conversion said.
+        detail: String,
     },
 
     /// A line whose direction vector has no length, which has no `VECTOR`.
@@ -150,6 +178,53 @@ pub enum TopologyError {
         solid: SolidKey,
         /// How many cavities it has.
         count: usize,
+    },
+
+    /// An edge used by more than two faces (§6.3).
+    ///
+    /// NGK is a 3-GMap and has no way to hold a non-manifold edge, so the
+    /// solid carrying it is refused by name rather than sewn into something
+    /// that is not the shape the file described (D9).
+    #[error("{brep} on line {line}: edge {edge} is used by more than two faces")]
+    NonManifoldShell {
+        /// The `MANIFOLD_SOLID_BREP` met.
+        brep: EntityId,
+        /// Its line.
+        line: u32,
+        /// The `EDGE_CURVE` with too many uses.
+        edge: EntityId,
+    },
+
+    /// An edge used by exactly one face, leaving the shell open (§6.3).
+    ///
+    /// Only an error under [`StepReadOptions::strict`]; a lenient read builds
+    /// the map anyway and records it, since an open shell is still most of a
+    /// shape.
+    ///
+    /// [`StepReadOptions::strict`]: super::options::StepReadOptions::strict
+    #[error("{brep} on line {line}: edge {edge} is used by only one face")]
+    OpenShell {
+        /// The `MANIFOLD_SOLID_BREP` met.
+        brep: EntityId,
+        /// Its line.
+        line: u32,
+        /// The `EDGE_CURVE` with one use.
+        edge: EntityId,
+    },
+
+    /// A shell whose faces would not sew into a map.
+    ///
+    /// The detail is the topology layer's own message: the sewing happens in
+    /// a transaction, which restores its snapshot on failure, so what reaches
+    /// here is a solid that was not built rather than a half-built one.
+    #[error("{brep} on line {line} could not be sewn: {detail}")]
+    UnsewableShell {
+        /// The `MANIFOLD_SOLID_BREP` met.
+        brep: EntityId,
+        /// Its line.
+        line: u32,
+        /// What the topology layer said.
+        detail: String,
     },
 
     /// A face whose orientation relative to its surface could not be read.

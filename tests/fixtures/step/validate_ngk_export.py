@@ -5,6 +5,10 @@ this reads. A clean import is itself the signal that matters — OCCT rejecting
 the file, or reading it as loose faces rather than one solid, is what the
 Rust-side structural tests cannot catch.
 
+Both directions are covered: the plain cases are shapes ngk built, and the
+`reexported_*` ones are OpenCascade's own fixtures that ngk read in and wrote
+back out, so the whole loop is checked by the kernel that started it.
+
     cargo run --example step_export_fixtures
     uv run python tests/fixtures/step/validate_ngk_export.py
 """
@@ -20,6 +24,12 @@ CASES = [
     # file, volume, area, (faces, edges, vertices), bbox
     ("block.step", 6000.0, 2200.0, (6, 12, 8), (10.0, 20.0, 30.0)),
     ("holed_slab.step", 33.0, 76.0, (10, 24, 16), (4.0, 3.0, 3.0)),
+    # The read direction. These are ngk's re-exports of the OpenCascade
+    # fixtures in this directory, so a passing case means the import
+    # understood what OCCT wrote rather than merely producing a map that
+    # satisfies ngk's own validators — which cell counts alone cannot show.
+    ("reexported_box.step", 6000.0, 2200.0, (6, 12, 8), (10.0, 20.0, 30.0)),
+    ("reexported_holed_slab.step", 33.0, 76.0, (10, 24, 16), (4.0, 3.0, 3.0)),
 ]
 
 TOLERANCE = 1e-6

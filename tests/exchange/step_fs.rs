@@ -75,9 +75,10 @@ fn a_read_that_fails_names_the_file_it_failed_on() {
 }
 
 #[test]
-fn a_foreign_file_can_be_opened_and_inspected_today() {
-    // L1 is complete, so a file written by another kernel can be read and
-    // walked entity by entity even though importing it into a map cannot.
+fn a_foreign_file_can_be_opened_and_inspected_without_being_imported() {
+    // The two entry points stay separate: answering "what is actually in
+    // this file?" needs L1 alone, and must not depend on every entity in it
+    // being one the mapping layers can carry.
     let exchange = read_exchange_file(BOX_STEP).expect("the fixture should parse");
 
     let solids: Vec<_> = exchange.instances_of("MANIFOLD_SOLID_BREP").collect();
@@ -87,23 +88,20 @@ fn a_foreign_file_can_be_opened_and_inspected_today() {
 }
 
 #[test]
-fn importing_a_well_formed_file_says_which_stage_delivers_it() {
-    // The stub must be unmistakable: a caller has to be able to tell "not
-    // built yet" from "your file is wrong".
-    let error = read_step_file(BOX_STEP, &StepReadOptions::default())
-        .expect_err("import is not implemented yet");
+fn importing_a_well_formed_file_yields_its_solids() {
+    // The path all the way from a path on disk to a sewn map, which is the
+    // only test here that crosses every layer at once.
+    let import =
+        read_step_file(BOX_STEP, &StepReadOptions::default()).expect("a planar file should import");
 
-    let StepError::NotImplemented { what, stage } = error else {
-        panic!("expected a not-implemented error, got {error}");
-    };
-    assert_eq!(stage, 3);
-    assert!(what.contains("import"));
+    assert_eq!(import.shapes.len(), 1);
+    assert_eq!(import.shapes[0].solid().faces().len(), 6);
 }
 
 #[test]
-fn importing_a_malformed_file_reports_the_syntax_error_rather_than_the_stub() {
-    // The part that *is* built still runs: a broken file is diagnosed with a
-    // line number today, rather than being hidden behind the missing stage.
+fn importing_a_malformed_file_reports_the_syntax_error_with_its_line() {
+    // A broken file is diagnosed where it broke rather than at whatever the
+    // next layer made of the wreckage.
     let error = read_step("this is not a STEP file\n", &StepReadOptions::default())
         .expect_err("malformed text should be refused");
 

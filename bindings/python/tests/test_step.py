@@ -86,3 +86,75 @@ def test_a_block_round_trips_through_build123d(tmp_path):
 
     size = solid.bounding_box().size
     assert (size.X, size.Y, size.Z) == pytest.approx((10.0, 20.0, 30.0))
+
+
+def test_read_step_reads_what_write_step_wrote(tmp_path):
+    path = str(tmp_path / "block.step")
+    ngk.write_step(ngk.block(10.0, 20.0, 30.0), path, name="BLOCK")
+
+    result = ngk.read_step(path)
+
+    assert len(result) == 1
+    assert result.skipped == []
+    solid = result.solids[0]
+    assert (len(solid.faces()), len(solid.edges()), len(solid.vertices())) == (6, 12, 8)
+
+
+def test_step_from_string_reads_no_file(tmp_path):
+    before = set(os.listdir(tmp_path))
+
+    text = ngk.step_to_string(ngk.block(1.0, 2.0, 3.0))
+    result = ngk.step_from_string(text)
+
+    assert len(result.solids) == 1
+    assert set(os.listdir(tmp_path)) == before
+
+
+def test_reading_a_file_that_is_not_there_raises_oserror(tmp_path):
+    with pytest.raises(OSError):
+        ngk.read_step(str(tmp_path / "absent.step"))
+
+
+def test_reading_malformed_text_raises_valueerror():
+    with pytest.raises(ValueError) as raised:
+        ngk.step_from_string("this is not a STEP file\n")
+
+    assert "line 1" in str(raised.value)
+
+
+@needs_build123d
+def test_a_build123d_box_imports_into_ngk(tmp_path):
+    # The direction the export tests cannot cover: another kernel's file read
+    # into an ngk map. A box written by OpenCascade carries entities ngk never
+    # writes — SURFACE_CURVE wrapping each line, PCURVEs we ignore, and plain
+    # FACE_BOUNDs where we would write FACE_OUTER_BOUND — so this is the test
+    # that the reader is lenient in the ways real files require.
+    path = str(tmp_path / "b3d_box.step")
+    _b3d.export_step(_b3d.Box(10, 20, 30), path)
+
+    result = ngk.read_step(path)
+
+    assert result.skipped == []
+    assert len(result.solids) == 1
+    solid = result.solids[0]
+    assert (len(solid.faces()), len(solid.edges()), len(solid.vertices())) == (6, 12, 8)
+
+
+@needs_build123d
+def test_a_build123d_solid_survives_a_trip_through_ngk(tmp_path):
+    # All the way round: build123d writes, ngk reads and writes again, and
+    # build123d reads the result back as the same solid. Each kernel only ever
+    # checks its own output otherwise.
+    first = str(tmp_path / "in.step")
+    second = str(tmp_path / "out.step")
+    _b3d.export_step(_b3d.Box(10, 20, 30), first)
+
+    result = ngk.read_step(first)
+    ngk.write_step(result.solids[0], second, name="ROUND_TRIP")
+
+    solid = _b3d.import_step(second).solids()[0]
+    assert solid.is_valid
+    assert solid.volume == pytest.approx(6000.0)
+    assert solid.area == pytest.approx(2200.0)
+    size = solid.bounding_box().size
+    assert (size.X, size.Y, size.Z) == pytest.approx((10.0, 20.0, 30.0))

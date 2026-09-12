@@ -12,3 +12,7 @@ mod step_builder;
 mod step_export;
 #[path = "exchange/step_fs.rs"]
 mod step_fs;
+#[path = "exchange/step_import.rs"]
+mod step_import;
+#[path = "exchange/step_round_trip.rs"]
+mod step_round_trip;

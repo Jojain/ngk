@@ -1,0 +1,303 @@
+//! Reading STEP text into solids.
+//!
+//! The subject here is the *stitching* (§6): STEP hands over loose faces that
+//! name shared edges by `#N`, and what must come back is one sewn 3-GMap. So
+//! these assert on the map — cell counts, then the three validators — rather
+//! than on anything about the text, which is `part21_parse`'s business.
+//!
+//! `step_round_trip` covers the other half: that what we write comes back as
+//! what we wrote. Both are needed, because a reader can be self-consistent
+//! with a writer and still disagree with every other kernel — which is why
+//! the box fixture below is one OpenCascade wrote, not one we did.
+
+use std::collections::HashSet;
+
+use ngk::exchange::step::{
+    ImportSkipReason, StepError, StepReadOptions, read_step, schema::units::Units,
+};
+use ngk::geometry::{LINEAR_TOLERANCE, PointCoincidence};
+use ngk::topology::validation::{
+    validate_all_solid_manifolds, validate_all_solid_orientations, validate_gmap,
+};
+
+/// A 10 × 20 × 30 box written by OpenCascade through build123d.
+///
+/// Regenerate with `uv run python tests/fixtures/step/generate_box.py`.
+const OCCT_BOX: &str = include_str!("../fixtures/step/box.step");
+
+fn read(text: &str) -> ngk::exchange::step::StepImport {
+    read_step(text, &StepReadOptions::default()).expect("a planar solid should import")
+}
+
+#[test]
+fn a_foreign_box_imports_as_one_solid() {
+    let import = read(OCCT_BOX);
+
+    assert_eq!(import.shapes.len(), 1);
+    assert!(
+        import.report.is_clean(),
+        "nothing should have been given up: {:?}",
+        import.report.skipped
+    );
+}
+
+#[test]
+fn a_foreign_box_imports_with_a_box_worth_of_cells() {
+    // The count that proves stitching happened: read without sewing, six
+    // quads carry 24 corners and 24 edges rather than 8 and 12.
+    let import = read(OCCT_BOX);
+    let shape = &import.shapes[0];
+    let solid = shape.solid();
+
+    assert_eq!(solid.faces().len(), 6);
+    assert_eq!(solid.edges().len(), 12);
+    assert_eq!(solid.vertices().len(), 8);
+}
+
+#[test]
+fn a_foreign_box_imports_as_a_valid_oriented_solid() {
+    // `validate_all_solid_orientations` does most of the work of this file:
+    // it checks per-edge winding agreement *and* the global signed-volume
+    // sign, which is exactly the pair a mis-sewn or inverted face violates.
+    let import = read(OCCT_BOX);
+    let map = import.shapes[0].map();
+
+    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    validate_all_solid_manifolds(map).expect("the shell should be closed");
+    validate_all_solid_orientations(map).expect("every face should point outward");
+}
+
+#[test]
+fn a_foreign_box_imports_at_its_own_corners() {
+    // build123d centres a `Box`, so the corners are at ±half each extent.
+    let import = read(OCCT_BOX);
+    let shape = &import.shapes[0];
+
+    let mut expected = HashSet::new();
+    for x in [-5.0_f64, 5.0] {
+        for y in [-10.0_f64, 10.0] {
+            for z in [-15.0_f64, 15.0] {
+                expected.insert((x.to_bits(), y.to_bits(), z.to_bits()));
+            }
+        }
+    }
+
+    for vertex in shape.solid().vertices() {
+        let point = vertex.point().expect("an imported vertex carries a point");
+        let found = expected.iter().any(|(x, y, z)| {
+            let corner = ngk::geometry::Point3::new(
+                f64::from_bits(*x),
+                f64::from_bits(*y),
+                f64::from_bits(*z),
+            );
+            point.coincides(&corner, LINEAR_TOLERANCE)
+        });
+        assert!(found, "{point:?} is not a corner of the box");
+    }
+}
+
+#[test]
+fn every_imported_face_carries_a_pcurve_per_boundary_dart() {
+    // `FaceAttr` requires one, and STEP does not have to supply it — so the
+    // importer rebuilds it by projection (D8). A missing one does not fail
+    // any validator; it surfaces much later as a face with no winding.
+    let import = read(OCCT_BOX);
+    let shape = &import.shapes[0];
+
+    for face in shape.solid().faces() {
+        for boundary in face.loops() {
+            for edge in boundary.edges() {
+                assert!(
+                    face.pcurve(edge.dart()).is_some(),
+                    "face {:?} has no pcurve at {:?}",
+                    face.key(),
+                    edge.dart()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_file_with_no_solids_imports_as_nothing() {
+    // Not an error: a STEP file is a document, and one holding only product
+    // structure is well formed and simply has no B-Rep in it.
+    let text = "\
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION((''),'2;1');
+FILE_NAME('','',(''),(''),'','','');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));
+ENDSEC;
+DATA;
+#1 = APPLICATION_CONTEXT('core data for automotive mechanical design processes');
+ENDSEC;
+END-ISO-10303-21;
+";
+    let import = read(text);
+    assert!(import.shapes.is_empty());
+    assert!(import.report.is_clean());
+}
+
+#[test]
+fn a_malformed_file_is_refused_with_a_line_number() {
+    let text = "\
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION((''),'2;1');
+ENDSEC;
+DATA;
+#1 = CARTESIAN_POINT('',(0.,0.,
+ENDSEC;
+END-ISO-10303-21;
+";
+    let error = read_step(text, &StepReadOptions::default()).expect_err("this is not parseable");
+    assert!(
+        matches!(error, StepError::Syntax(_)),
+        "expected a syntax error, got {error}"
+    );
+    assert!(
+        error.to_string().contains("line 6"),
+        "the message should name the bad line: {error}"
+    );
+}
+
+#[test]
+fn a_dangling_reference_names_both_ends() {
+    let text = box_with(&[("#33", "#999")]);
+    let import = read_step(&text, &StepReadOptions::default()).expect("the read itself succeeds");
+
+    // Best-effort: the face that could not be read is dropped and named, and
+    // the rest of the file still arrives (D9).
+    let detail = import
+        .report
+        .skipped
+        .iter()
+        .find_map(|skip| match &skip.reason {
+            ImportSkipReason::FaceNotConstructible { detail } => Some(detail.clone()),
+            _ => None,
+        })
+        .expect("the broken face should be reported");
+    assert!(
+        detail.contains("#999"),
+        "the message should name the missing entity: {detail}"
+    );
+}
+
+#[test]
+fn strict_mode_refuses_what_lenient_mode_reports() {
+    let text = box_with(&[("#33", "#999")]);
+    let error = read_step(&text, &StepReadOptions::strict()).expect_err("strict should refuse");
+    assert!(
+        matches!(error, StepError::Schema(_)),
+        "expected a schema error, got {error}"
+    );
+}
+
+#[test]
+fn a_file_in_inches_arrives_in_millimetres() {
+    // The unit block is the one place a file can lie about scale without any
+    // geometry looking wrong, so the conversion is asserted on a corner
+    // rather than on the declared scale.
+    let text = OCCT_BOX
+        .replace(
+            "#346 = ( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) );",
+            "#346 = ( CONVERSION_BASED_UNIT('INCH',#901) LENGTH_UNIT() NAMED_UNIT(#902) );\n\
+             #900 = ( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) );\n\
+             #901 = MEASURE_WITH_UNIT(LENGTH_MEASURE(25.4),#900);\n\
+             #902 = DIMENSIONAL_EXPONENTS(1.,0.,0.,0.,0.,0.,0.);",
+        )
+        .replace("LENGTH_MEASURE(1.E-07),#346", "LENGTH_MEASURE(1.E-07),#900");
+
+    let import = read(&text);
+    let shape = &import.shapes[0];
+    let furthest = shape
+        .solid()
+        .vertices()
+        .iter()
+        .filter_map(|vertex| vertex.point().map(|point| point.x.abs()))
+        .fold(0.0_f64, f64::max);
+
+    assert!(
+        (furthest - 5.0 * 25.4).abs() < 1.0e-9,
+        "an inch box should arrive 25.4 times larger, got {furthest}"
+    );
+}
+
+#[test]
+fn a_file_with_no_unit_block_is_read_as_millimetres() {
+    // Leniency by default: product structure is where vendor files diverge
+    // most, and a missing context should not cost the geometry.
+    let units = Units::default();
+    assert_eq!(units.to_mm(1.0), 1.0);
+    assert_eq!(units.to_radians(1.0), 1.0);
+}
+
+/// Returns the box fixture with some entity references rewritten.
+fn box_with(edits: &[(&str, &str)]) -> String {
+    let mut text = OCCT_BOX.to_string();
+    for (from, to) in edits {
+        // Only the definition site is rewritten — `#33 =` stays put and the
+        // *use* of it inside the plane becomes the dangling one.
+        text = text.replace(&format!("PLANE('',{from})"), &format!("PLANE('',{to})"));
+    }
+    text
+}
+
+/// A 4 × 3 × 3 slab bored through, written by OpenCascade through build123d.
+///
+/// Regenerate with `uv run python tests/fixtures/step/generate_holed_slab.py`.
+const OCCT_HOLED_SLAB: &str = include_str!("../fixtures/step/holed_slab.step");
+
+#[test]
+fn a_foreign_face_with_two_bounds_and_no_outer_one_picks_the_larger() {
+    // `FACE_OUTER_BOUND` is optional and OpenCascade writes none at all, so a
+    // pierced face arrives as two indistinguishable `FACE_BOUND`s. Taking the
+    // wrong one as the outer boundary inverts nothing a validator checks —
+    // both windings are legal — and yields a face that is the hole.
+    let import = read(OCCT_HOLED_SLAB);
+    assert_eq!(import.shapes.len(), 1);
+
+    let shape = &import.shapes[0];
+    let solid = shape.solid();
+    assert_eq!(solid.faces().len(), 10);
+    assert_eq!(solid.edges().len(), 24);
+    assert_eq!(solid.vertices().len(), 16);
+
+    let pierced = solid
+        .faces()
+        .iter()
+        .filter(|face| face.loops().len() == 2)
+        .count();
+    assert_eq!(pierced, 2, "both pierced faces should keep their hole");
+}
+
+#[test]
+fn a_foreign_slab_with_a_hole_is_a_valid_oriented_solid() {
+    let import = read(OCCT_HOLED_SLAB);
+    let map = import.shapes[0].map();
+
+    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    validate_all_solid_manifolds(map).expect("the shell should be closed");
+    validate_all_solid_orientations(map).expect("every face should point outward");
+}
+
+#[test]
+fn guessing_an_outer_bound_is_reported_rather_than_silent() {
+    // The guess is only as good as the winding, so it is said out loud —
+    // once per face that needed it, and never for a face with one bound.
+    let import = read(OCCT_HOLED_SLAB);
+
+    let guesses: Vec<_> = import
+        .report
+        .matching(|reason| matches!(reason, ImportSkipReason::GuessedOuterBound { .. }))
+        .collect();
+    assert_eq!(guesses.len(), 2, "got {:?}", import.report.skipped);
+    for guess in guesses {
+        assert!(matches!(
+            guess.reason,
+            ImportSkipReason::GuessedOuterBound { bounds: 2 }
+        ));
+        assert!(guess.entity.is_some(), "a guess should name its face");
+    }
+}

@@ -4,10 +4,13 @@
 > rationale, the extension points, and what lives where. Not line-level
 > implementation. Staging is §10.
 >
-> **Status: In progress.** Stages 1–2 are complete. `part21/` reads and writes
-> ISO 10303-21 on `winnow` with zero kernel references, and a planar solid now
-> exports to a file OpenCascade reads back as a valid solid of the right volume.
-> Stage 3 (planar import, closing the round trip) is the next entry point.
+> **Status: In progress.** Stages 1–3 are complete. `part21/` reads and writes
+> ISO 10303-21 on `winnow` with zero kernel references, and the planar round
+> trip now closes in both directions: a solid NGK writes is read back as the
+> same solid, and a file OpenCascade wrote imports into a sewn, correctly
+> oriented map that OpenCascade then reads back at the right volume.
+> Stage 4 (analytic curved supports and seams, both ways) is the next entry
+> point.
 
 ## Context
 
@@ -224,10 +227,15 @@ constant so any parameter answers; a curved support needs a `(u, v)` known to
 lie inside the trimmed region, which is a stage-4 concern.
 
 The dart-composition rule is separate and equally narrow:
-`forward = FACE_BOUND.orientation XOR ORIENTED_EDGE.orientation`.
+`forward = (FACE_BOUND.orientation == ORIENTED_EDGE.orientation)` — both flags mean
+*agrees*, so the walk runs forward when they agree and backwards when either one
+alone is `.F.`. A reversed bound also reverses the *order* of its oriented edges,
+not just each one's direction.
 `ADVANCED_FACE.same_sense` does **not** enter it — it describes the normal, not the
-walk. `EDGE_CURVE.same_sense` affects only which vertex the stored dart starts at,
-since `EdgeAttr` stores no interval.
+walk. Neither does `EDGE_CURVE.same_sense`: which corner the stored dart starts at
+is fixed by `edge_start`, and the flag says only how the *support* runs between the
+two vertices — which, since `EdgeAttr` stores no interval, NGK re-derives from the
+vertices themselves. So it is unread in both directions.
 
 ### D6 — Import is faithful; canonicalization is a separate, explicit stage
 
@@ -475,6 +483,7 @@ src/exchange/
 
     topology/     // L4
       stitch.rs  import.rs  export.rs  seam.rs  ids.rs
+                  // stitch.rs is still inside import.rs — §10, stage 3
 ```
 
 `part21`, `schema` and `convert` are **public**: tests are integration-only by project
@@ -708,7 +717,7 @@ pcurve reconstruction, and it gives the importer a generator of known-good input
 |---|---|---|---|
 | **1** | ~~L1 Part 21 read/write on `winnow`~~ — **done** | text → table → text; `pub mod exchange` | any kernel reference at all — `part21` must compile knowing nothing of NGK |
 | **2** | ~~Export, planar~~ — **done** | `block(1,2,3)` opens in another CAD system; AP214 boilerplate | import, curved supports, seams, NURBS |
-| **3** | Import, planar — the round trip closes | units, uncertainty, stitching (§6), pcurve path on planes | curved supports, seams |
+| **3** | ~~Import, planar — the round trip closes~~ — **done** | units, uncertainty, stitching (§6), pcurve path on planes | curved supports, seams |
 | **4** | Analytic curved supports, both ways, with seams | full `UvMap`; cylinder/cone/sphere/torus surfaces; circle/ellipse; the unwrapped-domain seam walk; `SEAM_CURVE` on write; `seams_only` healing on read; `SectionTrace` extracted and generalized to two periodic axes (D8) | boundaryless faces, NURBS |
 | **5** | Boundaryless faces and voids | **after D11's fixture passes**: sphere and torus out, `BREP_WITH_VOIDS` | NURBS |
 | **6** | NURBS | both B-spline entities, rational complex forms, knot RLE, net transposition, periodic→clamped, `SURFACE_OF_REVOLUTION`. Adds `NurbsSurface::is_rational()` — one new public method in `geometry` | — |
@@ -775,6 +784,63 @@ depends on it.
   Python; the two are run together deliberately, because a file can satisfy
   every structural invariant the Rust tests assert and still be refused by a
   real reader.
+
+**What stage 3 settled.**
+
+- **D5's composition rule is written the wrong way round, and it matters.**
+  The document says `forward = FACE_BOUND.orientation XOR
+  ORIENTED_EDGE.orientation`; both flags mean *agrees*, so the walk is forward
+  when they are **equal**, not when they differ. Inverting it fails nine of
+  the fourteen import tests rather than one, which is the reassuring part —
+  a reversed loop does not close, so most faces are refused outright instead
+  of arriving silently inside out.
+- **`EDGE_CURVE.same_sense` is read in neither direction, and D5 overstates
+  what it does.** It is not "which vertex the stored dart starts at" — that
+  is fixed by `edge_start`, an attribute rather than the flag. The flag
+  relates the *support* to that pair of vertices, and since `EdgeAttr` stores
+  no interval, NGK re-derives exactly that from the vertices. What the
+  importer does need is to root the `EdgeAttr` on a dart running the way the
+  `EDGE_CURVE` does, so the default orientation NGK derives is the one the
+  file declared and export writes the same flag back out.
+- **`FACE_OUTER_BOUND` is not optional in theory only: OpenCascade writes
+  none at all.** Risk #7's fallback is therefore a stage-3 requirement, not a
+  stage-7 leniency item — a pierced face arrives as two indistinguishable
+  `FACE_BOUND`s, and taking the wrong one as the outer boundary is a mistake
+  no validator catches, since both windings are legal. The rule implemented
+  is: a declared outer bound wins, a lone bound is outer, and otherwise the
+  one enclosing the most area is, reported as `GuessedOuterBound`.
+  `tests/fixtures/step/holed_slab.step` is the fixture that exercises it.
+- **The α2 pairing rule is one line, and it is the same statement the
+  orientation validator makes.** Two loops walking a shared edge in opposite
+  directions — which an orientable shell always does, seams included — sew
+  one's *start* against the other's *end*. That is precisely what makes
+  `α0 ∘ α2` land back in the boundary walk, which is what
+  `validate_oriented_shell_volume` tests, so the invariant and the
+  construction are the same fact written twice.
+- **Stitching did not become its own module.** §3 lists `topology/stitch.rs`;
+  it stayed inside `import.rs`, because the edge-use table is built from the
+  same planned faces the sewing consumes and splitting them would mean
+  publishing `PlannedFace` between two private modules for no reader's
+  benefit. Worth revisiting if stage 4's seam handling makes it grow.
+- **D10 is two lines of code and one asymmetry.** Scales are resolved once
+  when the `Resolver` is built; the length scale is then applied in
+  `read_point` and in a `VECTOR`'s magnitude, and *nowhere else*. A
+  `DIRECTION` is a ratio and must not be scaled — that is the whole of it,
+  and it is the one place a wrong answer would be uniform enough to look
+  right.
+- **`StepError::NotImplemented` is gone.** No direction of the mapping is
+  absent any more, and what remains are geometry *kinds*, which the
+  `Unsupported*` and `Unreadable*` variants already name. Leaving a public
+  variant nothing can construct would have been a match arm that never runs.
+- **The external oracle now runs both ways.** `step_export_fixtures` also
+  re-exports the two committed OpenCascade fixtures, so
+  `validate_ngk_export.py` checks the volume and area of what NGK's
+  *importer* produced — the one thing the Rust tests cannot say, since cell
+  counts and a valid orientation are satisfied by a map that is the right
+  shape's worth of wrong geometry. Reading is exposed through the Python
+  binding too (`ngk.read_step`, `ngk.step_from_string`, returning a
+  `StepImport` with `solids` and `skipped`), so the build123d loop closes
+  from a REPL.
 
 ---
 

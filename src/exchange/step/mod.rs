@@ -14,12 +14,19 @@
 //! Writing works on `impl Write` and reading on `&str`: nothing here touches a
 //! filesystem, so the whole stack builds for wasm.
 //!
-//! ## What is written so far
+//! ## What is carried so far
 //!
-//! Planar solids: `PLANE` supports, `LINE` edges, and the AP214 product
-//! structure. A curved support, a periodic face or a cavity is refused by name
-//! rather than approximated — see [`error::TopologyError`] and
-//! [`error::GeometryError`], whose variants each say which stage closes them.
+//! Planar solids, both ways: `PLANE` supports, `LINE` edges, and the AP214
+//! product structure. A curved support, a periodic face or a cavity is
+//! refused by name rather than approximated — see [`error::TopologyError`]
+//! and [`error::GeometryError`].
+//!
+//! The two directions are not symmetric in what they *have* to do. Writing
+//! walks topology that is already sewn; reading is handed loose faces that
+//! name shared edges by number, so it has to stitch them (§6) and rebuild
+//! the parameter curves the file need not carry. It is also best-effort by
+//! default — a face it cannot assemble is reported rather than thrown — since
+//! real files contain faces that do not close.
 
 pub mod builder;
 pub mod convert;
@@ -135,35 +142,44 @@ impl<P: Payload> std::fmt::Debug for StepImport<P> {
 
 /// Reads STEP text into solids.
 ///
-/// **Not implemented yet.** The text is parsed as Part 21 first, so a
-/// malformed file is reported properly today — with a line number — but a
-/// well-formed one then returns [`StepError::NotImplemented`] until stage 3 of
-/// `plan/step_interop.md` lands.
+/// Every `MANIFOLD_SOLID_BREP` in the file becomes one [`Shape`], found by
+/// sweeping for it rather than by walking down from
+/// `SHAPE_DEFINITION_REPRESENTATION`: product structure is where vendor files
+/// diverge most and none of it is needed to recover the geometry.
 ///
-/// The signature is settled, so code written against it now keeps compiling.
+/// Reading is best-effort by default (D9). A face that cannot be assembled is
+/// dropped and recorded in [`StepImport::report`] rather than costing the
+/// file; [`StepReadOptions::strict`] turns each of those into an error
+/// instead.
+///
 /// It is deliberately *not* generic over the payload: the importer can only
 /// produce `P::F: Default`, and an imported shape has to stay compatible with
 /// `modeling::fuse`, which is [`StandardPayload`] (D12).
 ///
-/// To inspect a file today, reach for [`part21::parse_exchange`] — or
-/// [`read_exchange_file`] — which is complete.
+/// ```
+/// use ngk::exchange::step::{StepReadOptions, StepWriteOptions, read_step, step_to_string};
+///
+/// let block = ngk::modeling::solids::block(10.0, 20.0, 30.0)?;
+/// let text = step_to_string(&block, &StepWriteOptions::named("BLOCK"))?;
+///
+/// let import = read_step(&text, &StepReadOptions::default())?;
+/// assert_eq!(import.shapes.len(), 1);
+/// assert!(import.report.is_clean());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn read_step(text: &str, options: &StepReadOptions) -> Result<StepImport, StepError> {
-    // Parsed rather than skipped, so that the errors this *can* answer today
-    // are answered rather than hidden behind the one it cannot.
     let exchange = parse_exchange(text)?;
     read_exchange(&exchange, options)
 }
 
 /// Reads an already-parsed exchange structure into solids.
 ///
-/// **Not implemented yet** — see [`read_step`].
+/// The split exists because L1 is complete on its own: a vendor file can be
+/// parsed once, inspected with [`part21::StepExchange`]'s own queries, and
+/// only then interpreted.
 pub fn read_exchange(
     exchange: &StepExchange,
     options: &StepReadOptions,
 ) -> Result<StepImport, StepError> {
-    let _ = (exchange, options);
-    Err(StepError::NotImplemented {
-        what: "STEP import",
-        stage: 3,
-    })
+    topology::import::read_solids(exchange, options)
 }

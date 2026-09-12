@@ -57,10 +57,8 @@ impl StepWriteOptions {
 /// Tunables for one STEP read.
 ///
 /// Every field here is a decision the exchange layer owns rather than one the
-/// file dictates. None of them is consulted yet — reading arrives in stage 3
-/// of `plan/step_interop.md` — but they are the knobs that plan already
-/// settled, pinned here so that code written against the reader now keeps
-/// compiling when it lands.
+/// file dictates: what the file says is not in question, only what should be
+/// done about it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StepReadOptions {
     /// Take the seam off a periodic face after building it.

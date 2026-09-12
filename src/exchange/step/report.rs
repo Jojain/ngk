@@ -81,6 +81,26 @@ pub enum ImportSkipReason {
         detail: String,
     },
 
+    /// A whole `MANIFOLD_SOLID_BREP` that could not be built (D9).
+    ///
+    /// One transaction per solid is what makes this survivable: the file's
+    /// other solids are unaffected.
+    SolidNotConstructible {
+        /// What went wrong, in the words of the layer that found out.
+        detail: String,
+    },
+
+    /// A face with several bounds and no `FACE_OUTER_BOUND` among them, whose
+    /// outer boundary had to be taken as the one enclosing the most area.
+    ///
+    /// `FACE_OUTER_BOUND` is optional and OpenCascade omits it entirely, so
+    /// this is a vendor deviation that is handled rather than refused — but
+    /// the guess is only as good as the winding, so it is said out loud.
+    GuessedOuterBound {
+        /// How many bounds the face carried.
+        bounds: usize,
+    },
+
     /// Geometry carried across exactly, but as NURBS rather than as the
     /// analytic type the file named (D3).
     ///
