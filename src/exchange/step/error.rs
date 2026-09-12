@@ -13,7 +13,7 @@ use crate::topology::Dart;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 
 use super::part21::{EntityId, SyntaxError, WriteError};
-use super::schema::resolver::SchemaError;
+use super::schema::resolver::{Origin, SchemaError};
 
 /// Anything that can go wrong reading or writing a STEP file.
 #[derive(Debug, Error)]
@@ -30,12 +30,12 @@ pub enum StepError {
     #[error("STEP schema: {0}")]
     Schema(#[from] SchemaError),
 
-    /// **L3** — geometry NGK holds that this stage cannot yet map.
+    /// **L3** — a curve or surface that does not reach an entity.
     #[error("STEP geometry: {0}")]
     Geometry(#[from] GeometryError),
 
-    /// **L4** — topology NGK holds that this stage cannot yet map, or that
-    /// STEP cannot represent at all.
+    /// **L4** — topology that does not reach a shell, or that STEP cannot
+    /// represent at all.
     #[error("STEP topology: {0}")]
     Topology(#[from] TopologyError),
 
@@ -53,60 +53,49 @@ pub enum StepError {
 }
 
 /// **L3** — a curve or surface that does not reach an entity.
-///
-/// Every variant here is a *gap*, not a corruption: the geometry is valid and
-/// the mapping for it simply has not landed yet. The NURBS fallback (D2)
-/// closes the two `Unsupported` variants once it exists, at which point these
-/// become unreachable for anything NGK can hold.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum GeometryError {
-    /// A surface kind this stage does not write.
-    #[error("surface kind `{kind}` is not written yet")]
+    /// A surface kind with no entry in the writer's dispatch.
+    #[error("surface kind `{kind}` has no STEP entity in this build")]
     UnsupportedSurface {
         /// The `Surface` variant met.
         kind: &'static str,
     },
 
-    /// A curve kind this stage does not write.
-    #[error("curve kind `{kind}` is not written yet")]
+    /// A curve kind with no entry in the writer's dispatch.
+    #[error("curve kind `{kind}` has no STEP entity in this build")]
     UnsupportedCurve {
         /// The `Curve` variant met.
         kind: &'static str,
     },
 
-    /// A surface entity this stage does not read.
-    #[error("{id} on line {line}: surface entity `{keyword}` is not read yet")]
+    /// A surface entity with no entry in the reader's dispatch.
+    #[error("{origin}: surface entity `{keyword}` has no mapping in this build")]
     UnreadableSurface {
         /// The entity keyword met, as the file spells it.
         keyword: String,
-        /// The instance met.
-        id: EntityId,
-        /// Its line.
-        line: u32,
+        /// Where it was.
+        origin: Origin,
     },
 
-    /// A curve entity this stage does not read.
-    #[error("{id} on line {line}: curve entity `{keyword}` is not read yet")]
+    /// A curve entity with no entry in the reader's dispatch.
+    #[error("{origin}: curve entity `{keyword}` has no mapping in this build")]
     UnreadableCurve {
         /// The entity keyword met, as the file spells it.
         keyword: String,
-        /// The instance met.
-        id: EntityId,
-        /// Its line.
-        line: u32,
+        /// Where it was.
+        origin: Origin,
     },
 
     /// A curve that would not project into its face's parameter space.
     ///
-    /// Read-side only: a pcurve is rebuilt from the 3D curve rather than taken
-    /// from the file (D8), and on a plane that projection is exact — so this
-    /// fires only for geometry too degenerate to carry a control polygon.
-    #[error("{id} on line {line}: curve does not project onto the face's plane: {detail}")]
+    /// A parameter curve is rebuilt from the 3D curve rather than taken from
+    /// the file, and on a plane that projection is exact — so this fires only
+    /// for geometry too degenerate to carry a control polygon.
+    #[error("{origin}: curve does not project onto the face's plane: {detail}")]
     UnprojectableCurve {
-        /// The `EDGE_CURVE` met.
-        id: EntityId,
-        /// Its line.
-        line: u32,
+        /// Where the `EDGE_CURVE` was.
+        origin: Origin,
         /// What the conversion said.
         detail: String,
     },
@@ -116,7 +105,8 @@ pub enum GeometryError {
     DegenerateLine,
 }
 
-/// **L4** — topology that does not reach a shell.
+/// **L4** — topology that does not reach a shell, or a shell that does not
+/// reach a map.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TopologyError {
     /// The map holds no solid under the key asked for.
@@ -133,8 +123,12 @@ pub enum TopologyError {
         dart: Dart,
     },
 
-    /// An edge closing on itself, which needs a seam to be written (stage 4).
-    #[error("edge {edge:?} closes on itself, which needs seam synthesis")]
+    /// An edge closing on itself.
+    ///
+    /// Such an edge has two uses on one face and no distinct end vertices, so
+    /// there is no `EDGE_CURVE` direction to write it under until the face's
+    /// parameterization is cut open along a synthesized seam.
+    #[error("edge {edge:?} closes on itself, so it has no directed STEP spelling")]
     ClosedEdge {
         /// The edge met.
         edge: EdgeKey,
@@ -154,16 +148,19 @@ pub enum TopologyError {
         vertex: VertexKey,
     },
 
-    /// A face with no loops at all: a whole sphere or torus (stage 5).
-    #[error("face {face:?} is boundaryless, which needs a synthesized seam")]
+    /// A face with no loops at all: a whole sphere or torus.
+    ///
+    /// STEP has no boundaryless face, so writing one means synthesizing a
+    /// boundary for it out of the surface's own domain.
+    #[error("face {face:?} is boundaryless, so it has no STEP bounds to write")]
     BoundarylessFace {
         /// The face met.
         face: FaceKey,
     },
 
     /// A loop that closes on the periodic quotient rather than in parameter
-    /// space, which STEP writes cut open along a seam (stage 4).
-    #[error("face {face:?} carries a {kind} loop, which needs seam synthesis")]
+    /// space, which STEP writes cut open along a seam.
+    #[error("face {face:?} carries a {kind} loop, which does not close in parameter space")]
     PeriodicLoop {
         /// The face met.
         face: FaceKey,
@@ -171,8 +168,8 @@ pub enum TopologyError {
         kind: &'static str,
     },
 
-    /// A solid with cavities, which needs `BREP_WITH_VOIDS` (stage 5).
-    #[error("solid {solid:?} has {count} inner shell(s), which need BREP_WITH_VOIDS")]
+    /// A solid with cavities, which needs `BREP_WITH_VOIDS`.
+    #[error("solid {solid:?} has {count} inner shell(s), which `MANIFOLD_SOLID_BREP` cannot carry")]
     InnerShells {
         /// The solid met.
         solid: SolidKey,
@@ -180,49 +177,43 @@ pub enum TopologyError {
         count: usize,
     },
 
-    /// An edge used by more than two faces (§6.3).
+    /// An edge used by more than two faces.
     ///
     /// NGK is a 3-GMap and has no way to hold a non-manifold edge, so the
     /// solid carrying it is refused by name rather than sewn into something
-    /// that is not the shape the file described (D9).
-    #[error("{brep} on line {line}: edge {edge} is used by more than two faces")]
+    /// that is not the shape the file described.
+    #[error("{brep}: edge {edge} is used by more than two faces")]
     NonManifoldShell {
-        /// The `MANIFOLD_SOLID_BREP` met.
-        brep: EntityId,
-        /// Its line.
-        line: u32,
+        /// Where the `MANIFOLD_SOLID_BREP` was.
+        brep: Origin,
         /// The `EDGE_CURVE` with too many uses.
         edge: EntityId,
     },
 
-    /// An edge used by exactly one face, leaving the shell open (§6.3).
+    /// An edge used by exactly one face, leaving the shell open.
     ///
     /// Only an error under [`StepReadOptions::strict`]; a lenient read builds
     /// the map anyway and records it, since an open shell is still most of a
     /// shape.
     ///
     /// [`StepReadOptions::strict`]: super::options::StepReadOptions::strict
-    #[error("{brep} on line {line}: edge {edge} is used by only one face")]
+    #[error("{brep}: edge {edge} is used by only one face")]
     OpenShell {
-        /// The `MANIFOLD_SOLID_BREP` met.
-        brep: EntityId,
-        /// Its line.
-        line: u32,
+        /// Where the `MANIFOLD_SOLID_BREP` was.
+        brep: Origin,
         /// The `EDGE_CURVE` with one use.
         edge: EntityId,
     },
 
     /// A shell whose faces would not sew into a map.
     ///
-    /// The detail is the topology layer's own message: the sewing happens in
+    /// The detail is the topology layer's own message. The sewing happens in
     /// a transaction, which restores its snapshot on failure, so what reaches
     /// here is a solid that was not built rather than a half-built one.
-    #[error("{brep} on line {line} could not be sewn: {detail}")]
+    #[error("{brep} could not be sewn: {detail}")]
     UnsewableShell {
-        /// The `MANIFOLD_SOLID_BREP` met.
-        brep: EntityId,
-        /// Its line.
-        line: u32,
+        /// Where the `MANIFOLD_SOLID_BREP` was.
+        brep: Origin,
         /// What the topology layer said.
         detail: String,
     },

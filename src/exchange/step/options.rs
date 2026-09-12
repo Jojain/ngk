@@ -66,7 +66,7 @@ pub struct StepReadOptions {
     /// STEP writes a cylinder or sphere with its parameterization cut open
     /// along a seam, and that cut is not part of the shape. Import builds the
     /// seamed form exactly as the file states it and then, as a separate step
-    /// this flag controls, runs `HealingOptions::seams_only()` over it (D6).
+    /// this flag controls, runs `HealingOptions::seams_only()` over it.
     ///
     /// Turn it off to inspect precisely what the file said.
     pub heal_seams: bool,
@@ -75,9 +75,9 @@ pub struct StepReadOptions {
     /// recording it and continuing.
     ///
     /// Off by default because real files contain faces that do not close, and
-    /// aborting the whole file on one of them is useless in practice (D9).
+    /// aborting the whole file on one of them is useless in practice.
     /// On, it also promotes a `same_sense` disagreement from a report entry to
-    /// an error (D5).
+    /// an error.
     pub strict: bool,
 
     /// Override the document's own `UNCERTAINTY_MEASURE_WITH_UNIT`.
@@ -86,7 +86,7 @@ pub struct StepReadOptions {
     /// another kernel means by "these two positions are the same". NGK's
     /// `LINEAR_TOLERANCE` is three orders tighter than the `1e-6`–`1e-7` such
     /// files carry, so this is what vertex merging, edge stitching and pcurve
-    /// fitting are measured against (D10).
+    /// fitting are measured against.
     pub uncertainty: Option<f64>,
 }
 

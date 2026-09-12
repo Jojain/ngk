@@ -98,10 +98,8 @@ fn unwrap_parameters(periodicity: SurfacePeriodicity, parameters: &mut [Point2])
 /// the synchronized-halves rule would ask for — is correct and does let a rim
 /// on a cylinder be rebuilt, but the fused rims that then reach the Boolean's
 /// trim domain flatten to degenerate polygons and its ray classification stops
-/// being able to place a point. That is its own piece of work
-/// (`plan/curved_support_pcurve_rebuild.md`); until it is done this stays as it
-/// is, and a fused boundary on a curved support is reported as
-/// `PcurveNotJoinable` rather than rebuilt wrongly.
+/// being able to place a point. So a fused boundary on a curved support is
+/// reported as `PcurveNotJoinable` rather than rebuilt wrongly.
 fn traces(surface: &Surface, candidate: &TrimmedCurve2, samples: &[Point3], linear: f64) -> bool {
     let lifted = candidate
         .sample(4 * SUPPORT_SAMPLES)

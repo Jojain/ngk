@@ -162,3 +162,16 @@ attribute create/remove/split/merge declarations).
   edit.** The working tree holds uncommitted work that is not recoverable. Undo
   by making the inverse edit, and use a marker comment you can grep for when
   adding temporary instrumentation.
+- **A comment describes the code as it is, never a plan for it.** Doc comments
+  and inline comments state what the thing does, why it is shaped that way, and
+  what it refuses — all in the present tense, all checkable against the code
+  next to them. They must not reference a plan document, a milestone, a stage
+  number, or a decision id (`plan/foo.md`, "stage 4", "D7", "arrives later",
+  "not implemented yet"), and must not describe behaviour that does not exist
+  yet. Keep the *reason* and drop the schedule: "a cylinder wall closes on
+  itself, which STEP cannot spell without a synthesized seam" is factual and
+  stays true; "…which needs seam synthesis (stage 4)" is a promise that rots the
+  moment the plan moves, and the reader cannot tell from the code whether it
+  still holds. Plans belong in `plan/`, which is where they can be revised in
+  one place. This applies to module docs, error-variant docs, test comments and
+  commit-adjacent prose alike.

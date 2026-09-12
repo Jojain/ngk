@@ -1,17 +1,18 @@
 //! Curves.
 //!
-//! Dispatch follows the crate's own analytic-first convention (D2): each
-//! writer returns `Option<Result<..>>`, where `None` *declines* the curve and
-//! lets the next writer try. Stage 6 appends a NURBS fallback that never
-//! declines, at which point `UnsupportedCurve` becomes unreachable for
-//! anything NGK can hold — and no call site here changes.
+//! Dispatch follows the crate's analytic-first convention: each reader and
+//! each writer returns `Option<Result<..>>`, where `None` *declines* the
+//! curve and lets the next one try. A kind no entry claims is refused by
+//! name rather than approximated, so a new curve type is one entry appended
+//! to a chain and no call site here changes.
 
 use crate::geometry::{Curve, Line};
 
 use super::super::builder::InstanceBuilder;
 use super::super::error::{GeometryError, StepError};
-use super::super::part21::{EntityId, Record, Value};
-use super::super::schema::resolver::{Entity, Resolver};
+use super::super::part21::EntityId;
+use super::super::schema::entities;
+use super::super::schema::resolver::{Attributes, Origin, Resolver};
 use super::placement::{read_direction, read_point, write_point, write_vector};
 
 /// Writes a curve, preferring its closed form.
@@ -46,40 +47,20 @@ fn write_line(
         return Some(Err(GeometryError::DegenerateLine));
     }
 
-    let point = write_point(builder, base);
-    let vector = write_vector(builder, line.direction(), magnitude);
-    Some(Ok(builder.add_shared(Record::new(
-        "LINE",
-        vec![
-            Value::Text(String::new()),
-            Value::Ref(point),
-            Value::Ref(vector),
-        ],
-    ))))
-}
-
-/// Names a curve variant for an error message.
-fn kind(curve: &Curve) -> &'static str {
-    match curve {
-        Curve::Line(_) => "Line",
-        Curve::Circle(_) => "Circle",
-        Curve::Ellipse(_) => "Ellipse",
-        Curve::Nurbs(_) => "Nurbs",
-    }
+    let pnt = write_point(builder, base);
+    let dir = write_vector(builder, line.direction(), magnitude);
+    Some(Ok(builder.add_shared_entity(&entities::Line { pnt, dir })))
 }
 
 /// Reads a curve, preferring its closed form.
 ///
-/// A `SURFACE_CURVE` or `SEAM_CURVE` is unwrapped first: both are a 3D curve
-/// with parameter curves hung off it, and the pcurves are not read here. On a
-/// plane they are redundant — the projection is exact and cheaper to redo than
-/// to resolve — and on a curved support they are stage 4's business.
-pub fn read_curve(
-    resolver: &Resolver<'_>,
-    from: &Entity<'_>,
-    id: EntityId,
-) -> Result<Curve, StepError> {
-    let curve = resolver.follow(from, id)?;
+/// A `SURFACE_CURVE` — or its `SEAM_CURVE` and `INTERSECTION_CURVE` subtypes
+/// — is unwrapped first: each is a 3D curve with parameter curves hung off
+/// it, and the parameter curves are not read here. On a plane they are
+/// redundant, since projecting the 3D curve is exact and cheaper than
+/// resolving them.
+pub fn read_curve(resolver: &Resolver<'_>, from: Origin, id: EntityId) -> Result<Curve, StepError> {
+    let curve = resolver.attributes(from, id)?;
     let curve = match unwrap_surface_curve(resolver, &curve)? {
         Some(unwrapped) => unwrapped,
         None => curve,
@@ -90,49 +71,50 @@ pub fn read_curve(
     }
     Err(GeometryError::UnreadableCurve {
         keyword: curve.keyword().to_string(),
-        id: curve.id,
-        line: curve.line,
+        origin: curve.origin,
     }
     .into())
 }
 
-/// Follows a `SURFACE_CURVE` down to the 3D curve it describes.
+/// Follows a curve-on-surface down to the 3D curve it describes.
 fn unwrap_surface_curve<'a>(
     resolver: &Resolver<'a>,
-    curve: &Entity<'a>,
-) -> Result<Option<Entity<'a>>, StepError> {
-    if !curve.is("SURFACE_CURVE") && !curve.is("SEAM_CURVE") && !curve.is("INTERSECTION_CURVE") {
+    curve: &Attributes<'a>,
+) -> Result<Option<Attributes<'a>>, StepError> {
+    let Some(surface_curve) = curve.decode::<entities::SurfaceCurve>() else {
         return Ok(None);
-    }
-    let geometry = curve.reference(1)?;
-    Ok(Some(resolver.follow(curve, geometry)?))
+    };
+    let surface_curve = surface_curve?;
+    Ok(Some(
+        resolver.attributes(curve.origin, surface_curve.curve_3d)?,
+    ))
 }
 
 /// Reads a `LINE`, or declines anything that is not one.
-///
-/// STEP's line is `pnt + magnitude · dir · t` and NGK's is
-/// `origin + direction · (scale · t)`, so the parameterizations agree exactly
-/// once `magnitude` becomes NGK's scale — which is what anchoring the line
-/// through `pnt` and `pnt + magnitude · dir` does, since
-/// [`Line::through`](crate::geometry::Line::through) puts `t = 1` at its end
-/// point.
-fn read_line(resolver: &Resolver<'_>, curve: &Entity<'_>) -> Option<Result<Curve, StepError>> {
-    if !curve.is("LINE") {
-        return None;
-    }
-    Some(read_line_inner(resolver, curve))
+fn read_line(resolver: &Resolver<'_>, curve: &Attributes<'_>) -> Option<Result<Curve, StepError>> {
+    let line = curve.decode::<entities::Line>()?;
+    Some(line.map_err(StepError::from).and_then(|line| {
+        let origin = curve.origin;
+        let base = read_point(resolver, origin, line.pnt)?;
+        let vector = resolver.read::<entities::Vector>(origin, line.dir)?;
+        let direction = read_direction(resolver, vector.origin, vector.orientation)?;
+        let magnitude = resolver.units().to_mm(vector.magnitude);
+        if magnitude == 0.0 {
+            return Err(GeometryError::DegenerateLine.into());
+        }
+        Ok(Curve::Line(Line::through(
+            base,
+            base + direction.into_inner() * magnitude,
+        )))
+    }))
 }
 
-fn read_line_inner(resolver: &Resolver<'_>, curve: &Entity<'_>) -> Result<Curve, StepError> {
-    let origin = read_point(resolver, curve, curve.reference(1)?)?;
-    let vector = resolver.follow_typed(curve, curve.reference(2)?, "VECTOR")?;
-    let direction = read_direction(resolver, &vector, vector.reference(1)?)?;
-    let magnitude = resolver.units().to_mm(vector.real(2)?);
-    if magnitude == 0.0 {
-        return Err(GeometryError::DegenerateLine.into());
+/// Names a curve variant for an error message.
+fn kind(curve: &Curve) -> &'static str {
+    match curve {
+        Curve::Line(_) => "Line",
+        Curve::Circle(_) => "Circle",
+        Curve::Ellipse(_) => "Ellipse",
+        Curve::Nurbs(_) => "Nurbs",
     }
-    Ok(Curve::Line(Line::through(
-        origin,
-        origin + direction.into_inner() * magnitude,
-    )))
 }

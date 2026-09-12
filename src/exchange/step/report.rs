@@ -1,6 +1,6 @@
 //! What a STEP read had to give up on.
 //!
-//! Import is best-effort (D9): real files contain faces that do not close,
+//! Import is best-effort: real files contain faces that do not close,
 //! loops with duplicated edges, and references into nothing, and aborting on
 //! the first bad face is useless in practice. So what could not be carried
 //! across is *reported* rather than thrown, in the same shape
@@ -51,37 +51,36 @@ pub struct ImportSkip {
 
 /// Why one entity did not survive a read intact.
 ///
-/// Marked non-exhaustive: the later stages of `plan/step_interop.md` add
-/// reasons as they add coverage, and a caller matching on this should not
-/// break when they do.
+/// Marked non-exhaustive: widening STEP coverage adds reasons, and a caller
+/// matching on this should keep compiling when it does.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ImportSkipReason {
     /// An entity NGK has no representation for, refused by name rather than
-    /// silently ignored: `VERTEX_LOOP`, `POLY_LOOP` and their like (D9).
+    /// silently ignored: `VERTEX_LOOP`, `POLY_LOOP` and their like.
     UnrepresentableEntity {
         /// The entity keyword, as the file spells it.
         keyword: String,
     },
 
     /// An edge used by more than two faces. NGK is a 3-GMap and cannot hold a
-    /// non-manifold edge, so the solid carrying it is rejected (§6.3).
+    /// non-manifold edge, so the solid carrying it is rejected.
     NonManifoldEdge {
         /// How many faces use it.
         uses: usize,
     },
 
-    /// An edge used by exactly one face, leaving the shell open (§6.3).
+    /// An edge used by exactly one face, leaving the shell open.
     OpenShell,
 
     /// A face whose geometry or loops could not be assembled. Recorded rather
-    /// than thrown so that one bad face does not cost the whole file (D9).
+    /// than thrown so that one bad face does not cost the whole file.
     FaceNotConstructible {
         /// What went wrong, in the words of the layer that found out.
         detail: String,
     },
 
-    /// A whole `MANIFOLD_SOLID_BREP` that could not be built (D9).
+    /// A whole `MANIFOLD_SOLID_BREP` that could not be built.
     ///
     /// One transaction per solid is what makes this survivable: the file's
     /// other solids are unaffected.
@@ -102,7 +101,7 @@ pub enum ImportSkipReason {
     },
 
     /// Geometry carried across exactly, but as NURBS rather than as the
-    /// analytic type the file named (D3).
+    /// analytic type the file named.
     ///
     /// The point set is preserved to tolerance; only the *type* is lost, and
     /// writing the file back out will spell it as a B-spline.
@@ -112,7 +111,7 @@ pub enum ImportSkipReason {
     },
 
     /// The file's `same_sense` disagreed with the winding NGK derives from the
-    /// boundary (D5).
+    /// boundary.
     ///
     /// The flag is redundant on import, so this is a free consistency check
     /// rather than a failure — but a disagreement means one of the two is
@@ -120,7 +119,7 @@ pub enum ImportSkipReason {
     SenseMismatch,
 
     /// A parameter curve the file did not carry, rebuilt by approximation
-    /// rather than in closed form (D8).
+    /// rather than in closed form.
     ApproximatedPcurve {
         /// The greatest distance found between the rebuilt pcurve and the
         /// 3D curve it must follow.

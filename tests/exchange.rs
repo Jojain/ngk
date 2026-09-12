@@ -8,6 +8,8 @@ mod part21_round_trip;
 mod part21_write;
 #[path = "exchange/step_builder.rs"]
 mod step_builder;
+#[path = "exchange/step_entities.rs"]
+mod step_entities;
 #[path = "exchange/step_export.rs"]
 mod step_export;
 #[path = "exchange/step_fs.rs"]

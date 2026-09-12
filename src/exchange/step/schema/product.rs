@@ -19,6 +19,7 @@ use super::super::builder::InstanceBuilder;
 use super::super::convert::placement::write_unshared_placement;
 use super::super::options::StepWriteOptions;
 use super::super::part21::{EntityId, Record, Value};
+use super::entities::{self, Entity};
 
 /// The AP214 schema name, as `FILE_SCHEMA` must spell it.
 const SCHEMA_NAME: &str = "AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }";
@@ -69,49 +70,47 @@ pub struct DocumentContext {
 /// Writes the unit block and the 3D representation context.
 ///
 /// Lengths are millimetres, matching the convention NGK's own models and its
-/// reference kernel both use. NGK holds no units of its own (D10), so this is
+/// reference kernel both use. NGK holds no units of its own, so this is
 /// a declaration about the file rather than a conversion of anything.
 pub fn write_context(builder: &mut InstanceBuilder, options: &StepWriteOptions) -> DocumentContext {
+    // `SI_UNIT` and `UNCERTAINTY_MEASURE_WITH_UNIT` go through the entity
+    // types because the reader reads them: the two directions state that
+    // attribute order once between them rather than twice. The rest of this
+    // module is written and never read, so it builds records directly.
     let length = builder.add_complex(vec![
         Record::new("LENGTH_UNIT", Vec::new()),
         Record::new("NAMED_UNIT", vec![Value::Derived]),
-        Record::new(
-            "SI_UNIT",
-            vec![
-                Value::Enum("MILLI".to_string()),
-                Value::Enum("METRE".to_string()),
-            ],
-        ),
+        entities::SiUnit {
+            prefix: Some("MILLI".to_string()),
+            name: "METRE".to_string(),
+        }
+        .record(),
     ]);
     let angle = builder.add_complex(vec![
         Record::new("NAMED_UNIT", vec![Value::Derived]),
         Record::new("PLANE_ANGLE_UNIT", Vec::new()),
-        Record::new(
-            "SI_UNIT",
-            vec![Value::Null, Value::Enum("RADIAN".to_string())],
-        ),
+        entities::SiUnit {
+            prefix: None,
+            name: "RADIAN".to_string(),
+        }
+        .record(),
     ]);
     let solid_angle = builder.add_complex(vec![
         Record::new("NAMED_UNIT", vec![Value::Derived]),
-        Record::new(
-            "SI_UNIT",
-            vec![Value::Null, Value::Enum("STERADIAN".to_string())],
-        ),
+        entities::SiUnit {
+            prefix: None,
+            name: "STERADIAN".to_string(),
+        }
+        .record(),
         Record::new("SOLID_ANGLE_UNIT", Vec::new()),
     ]);
 
-    let uncertainty = builder.add(Record::new(
-        "UNCERTAINTY_MEASURE_WITH_UNIT",
-        vec![
-            Value::Typed(Box::new(Record::new(
-                "LENGTH_MEASURE",
-                vec![Value::Real(options.uncertainty)],
-            ))),
-            Value::Ref(length),
-            Value::Text("distance_accuracy_value".to_string()),
-            Value::Text("confusion accuracy".to_string()),
-        ],
-    ));
+    let uncertainty = builder.add_entity(&entities::UncertaintyMeasureWithUnit {
+        value_component: entities::Measure::length(options.uncertainty),
+        unit_component: length,
+        name: "distance_accuracy_value".to_string(),
+        description: "confusion accuracy".to_string(),
+    });
 
     let context = builder.add_complex(vec![
         Record::new("GEOMETRIC_REPRESENTATION_CONTEXT", vec![Value::Integer(3)]),
@@ -142,8 +141,8 @@ pub fn write_context(builder: &mut InstanceBuilder, options: &StepWriteOptions) 
 /// Wraps already-written B-Rep roots in the product structure that names them.
 ///
 /// `breps` are the `MANIFOLD_SOLID_BREP` instances to publish; they are all
-/// placed in one product, which is as much assembly structure as a file
-/// without the neutral document type (D13) can carry.
+/// placed in one product, which is as much assembly structure as a single
+/// product can express.
 pub fn write_product(
     builder: &mut InstanceBuilder,
     options: &StepWriteOptions,

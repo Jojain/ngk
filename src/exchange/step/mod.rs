@@ -23,7 +23,7 @@
 //!
 //! The two directions are not symmetric in what they *have* to do. Writing
 //! walks topology that is already sewn; reading is handed loose faces that
-//! name shared edges by number, so it has to stitch them (§6) and rebuild
+//! name shared edges by number, so it has to stitch them and rebuild
 //! the parameter curves the file need not carry. It is also best-effort by
 //! default — a face it cannot assemble is reported rather than thrown — since
 //! real files contain faces that do not close.
@@ -70,7 +70,8 @@ pub fn solid_to_exchange<P: Payload>(
 /// Writes several solids from one map into a single exchange structure.
 ///
 /// They share one product and one document context, which is as much assembly
-/// structure as a file can carry before the neutral document type (D13) lands.
+/// structure as one product can express; a file holding an assembly of placed
+/// parts needs a document type this does not have.
 pub fn map_to_exchange<P: Payload>(
     gmap: &GMap<P>,
     solids: &[crate::topology::shape_keys::SolidKey],
@@ -147,14 +148,14 @@ impl<P: Payload> std::fmt::Debug for StepImport<P> {
 /// `SHAPE_DEFINITION_REPRESENTATION`: product structure is where vendor files
 /// diverge most and none of it is needed to recover the geometry.
 ///
-/// Reading is best-effort by default (D9). A face that cannot be assembled is
+/// Reading is best-effort by default. A face that cannot be assembled is
 /// dropped and recorded in [`StepImport::report`] rather than costing the
 /// file; [`StepReadOptions::strict`] turns each of those into an error
 /// instead.
 ///
 /// It is deliberately *not* generic over the payload: the importer can only
 /// produce `P::F: Default`, and an imported shape has to stay compatible with
-/// `modeling::fuse`, which is [`StandardPayload`] (D12).
+/// `modeling::fuse`, which is [`StandardPayload`].
 ///
 /// ```
 /// use ngk::exchange::step::{StepReadOptions, StepWriteOptions, read_step, step_to_string};

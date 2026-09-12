@@ -9,17 +9,17 @@
 //! transaction is atomic: any failure inside it restores the snapshot, so a
 //! single unreadable face would cost the whole solid. Every face is therefore
 //! *planned* first — geometry read, loops resolved, pcurves projected — with
-//! the ones that fail recorded and dropped (D9). Only a set of faces already
-//! known to be constructible enters [`GMap::transaction`], one transaction per
+//! the ones that fail recorded and dropped. Only a set of faces already known
+//! to be constructible enters [`GMap::transaction`], one transaction per
 //! solid, so one bad solid does not lose the file.
 //!
 //! **Orientation is not carried across; it is reproduced.** NGK derives a
 //! face's normal from its boundary winding, so walking each bound in the
 //! direction STEP composes and writing each pcurve in the surface's own chart
 //! gets the normal right on its own. `ADVANCED_FACE.same_sense` is then not
-//! state to store but a free consistency check (D5): it is compared against
-//! the winding we computed, and a disagreement is reported rather than
-//! silently resolved one way or the other.
+//! state to store but a free consistency check: it is compared against the
+//! winding we computed, and a disagreement is reported rather than silently
+//! resolved one way or the other.
 
 use std::collections::HashMap;
 
@@ -42,7 +42,8 @@ use super::super::error::{GeometryError, StepError, TopologyError};
 use super::super::options::StepReadOptions;
 use super::super::part21::{EntityId, StepExchange};
 use super::super::report::{ImportReport, ImportSkip, ImportSkipReason};
-use super::super::schema::resolver::{Entity, Resolver, SchemaError};
+use super::super::schema::entities;
+use super::super::schema::resolver::{Located, Origin, Resolver, SchemaError};
 
 /// How finely a pcurve is sampled when reading a loop's winding.
 ///
@@ -52,8 +53,8 @@ const WINDING_SAMPLES: usize = 8;
 
 /// Reads every `MANIFOLD_SOLID_BREP` in a file into its own shape.
 ///
-/// One map per B-Rep, per D13: a STEP file is a document holding several
-/// products, and `Shape` owns its map, so the solids cannot share one.
+/// One map per B-Rep: a STEP file is a document holding several products, and
+/// a `Shape` owns its map, so the solids cannot share one.
 pub fn read_solids(
     exchange: &StepExchange,
     options: &StepReadOptions,
@@ -62,14 +63,14 @@ pub fn read_solids(
     let mut import = StepImport::default();
 
     for instance in exchange.instances_of("MANIFOLD_SOLID_BREP") {
-        let brep = resolver.record(instance, "MANIFOLD_SOLID_BREP")?;
+        let brep = resolver.decode::<entities::ManifoldSolidBrep>(instance)?;
         match read_solid(&resolver, &brep, options, &mut import.report) {
             Ok(Some(shape)) => import.shapes.push(shape),
             Ok(None) => {}
             Err(error) if options.strict => return Err(error),
             Err(error) => import.report.skipped.push(ImportSkip {
-                entity: Some(brep.id),
-                line: brep.line,
+                entity: Some(brep.origin.id),
+                line: brep.origin.line,
                 reason: ImportSkipReason::SolidNotConstructible {
                     detail: error.to_string(),
                 },
@@ -83,21 +84,21 @@ pub fn read_solids(
 /// Reads one B-Rep, or `None` when nothing in it survived.
 fn read_solid(
     resolver: &Resolver<'_>,
-    brep: &Entity<'_>,
+    brep: &Located<entities::ManifoldSolidBrep>,
     options: &StepReadOptions,
     report: &mut ImportReport,
 ) -> Result<Option<Shape<SolidTag, StandardPayload>>, StepError> {
-    let shell = resolver.follow_typed(brep, brep.reference(1)?, "CLOSED_SHELL")?;
+    let shell = resolver.read::<entities::ClosedShell>(brep.origin, brep.outer)?;
 
     let mut planned = Vec::new();
-    for id in shell.references(1)? {
-        let face = resolver.follow_typed(&shell, id, "ADVANCED_FACE")?;
+    for id in &shell.cfs_faces {
+        let face = resolver.read::<entities::AdvancedFace>(shell.origin, *id)?;
         match plan_face(resolver, &face, report) {
             Ok(plan) => planned.push(plan),
             Err(error) if options.strict => return Err(error),
             Err(error) => report.skipped.push(ImportSkip {
-                entity: Some(face.id),
-                line: face.line,
+                entity: Some(face.origin.id),
+                line: face.origin.line,
                 reason: ImportSkipReason::FaceNotConstructible {
                     detail: error.to_string(),
                 },
@@ -109,27 +110,24 @@ fn read_solid(
         return Ok(None);
     }
 
-    check_edge_uses(&planned, brep, options, report)?;
+    check_edge_uses(&planned, brep.origin, options, report)?;
 
     let mut gmap = GMap::<StandardPayload>::new();
     let solid = gmap
         .transaction(|edit| sew_shell(edit, &planned))
         .map_err(|error| TopologyError::UnsewableShell {
-            brep: brep.id,
-            line: brep.line,
+            brep: brep.origin,
             detail: error.to_string(),
         })?;
 
     if options.heal_seams {
         // A seam is not part of the shape: STEP writes a periodic face with
-        // its parameterization cut open, and taking that cut off is a
-        // separate, disableable stage rather than something the sewing above
-        // is allowed to assume (D6). A planar solid has no seam to remove, so
-        // this is a no-op today and the wiring is what stage 4 needs.
+        // its parameterization cut open, and that cut comes off as a step of
+        // its own rather than as something the sewing above is allowed to
+        // assume. A planar solid has none, so this changes nothing for one.
         remove_redundant_cells(&mut gmap, HealingOptions::seams_only()).map_err(|error| {
             TopologyError::UnsewableShell {
-                brep: brep.id,
-                line: brep.line,
+                brep: brep.origin,
                 detail: error.to_string(),
             }
         })?;
@@ -179,41 +177,29 @@ struct PlannedFace {
 /// Reads one `ADVANCED_FACE` without touching a map.
 fn plan_face(
     resolver: &Resolver<'_>,
-    face: &Entity<'_>,
+    face: &Located<entities::AdvancedFace>,
     report: &mut ImportReport,
 ) -> Result<PlannedFace, StepError> {
-    let surface = read_surface(resolver, face, face.reference(2)?)?;
-    let same_sense = face.boolean(3)?;
+    let surface = read_surface(resolver, face.origin, face.face_geometry)?;
 
-    // Stage 3 reads planar supports only, and `read_surface` has already
-    // refused anything else — so this cannot fail. The plane is needed by
-    // value, because projecting a pcurve is what needs its chart.
+    // `read_surface` yields only a plane, so this cannot fail. The plane is
+    // needed by value, because projecting a parameter curve needs its chart.
     let Surface::Plane(plane) = &surface else {
-        unreachable!("read_surface only yields a plane in this stage");
+        unreachable!("read_surface yields only planar supports");
     };
 
-    let bound_ids = face.references(1)?;
-    let mut loops = Vec::with_capacity(bound_ids.len());
+    let mut loops = Vec::with_capacity(face.bounds.len());
     let mut declared_outer = None;
-    for (index, id) in bound_ids.iter().enumerate() {
-        let bound = resolver.follow(face, *id)?;
-        if !bound.is("FACE_BOUND") && !bound.is("FACE_OUTER_BOUND") {
-            return Err(SchemaError::WrongEntity {
-                id: bound.id,
-                line: bound.line,
-                expected: "FACE_BOUND",
-                found: bound.keyword().to_string(),
-            }
-            .into());
-        }
-        if bound.is("FACE_OUTER_BOUND") {
+    for (index, id) in face.bounds.iter().enumerate() {
+        let bound = resolver.read::<entities::FaceBound>(face.origin, *id)?;
+        if bound.outer {
             declared_outer = Some(index);
         }
         loops.push(plan_loop(resolver, &bound, plane)?);
     }
 
-    let outer = pick_outer(&loops, declared_outer, face, report)?;
-    check_sense(&loops[outer], same_sense, face, report);
+    let outer = pick_outer(&loops, declared_outer, face.origin, report)?;
+    check_sense(&loops[outer], face.same_sense, face.origin, report);
 
     Ok(PlannedFace {
         surface: surface.clone(),
@@ -224,52 +210,49 @@ fn plan_face(
 
 /// Reads one `FACE_BOUND` into the direction the face traverses it.
 ///
-/// Composition is the whole subtlety: `FACE_BOUND.orientation` of `.F.` means
-/// the loop runs backwards, which reverses both the *order* of the oriented
-/// edges and each one's own direction.
+/// Composition is the whole subtlety. Both orientation flags mean *agrees*,
+/// so the face walks an edge forwards exactly when the two are equal — and a
+/// bound whose own flag is `.F.` also reverses the *order* of its oriented
+/// edges, not just each one's direction.
 fn plan_loop(
     resolver: &Resolver<'_>,
-    bound: &Entity<'_>,
+    bound: &Located<entities::FaceBound>,
     plane: &Plane,
 ) -> Result<PlannedLoop, StepError> {
-    let orientation = bound.boolean(2)?;
-    let edge_loop = resolver.instance(bound, bound.reference(1)?)?;
-    // `VERTEX_LOOP` and `POLY_LOOP` are refused by name rather than skipped
-    // (D9): NGK can represent neither, and a face silently missing a boundary
-    // is worse than a face that says why it is missing.
-    let edge_loop = resolver.record(edge_loop, "EDGE_LOOP")?;
+    // `VERTEX_LOOP` and `POLY_LOOP` are refused by name rather than skipped:
+    // NGK can represent neither, and a face silently missing a boundary is
+    // worse than a face that says why it is missing.
+    let edge_loop = resolver.read::<entities::EdgeLoop>(bound.origin, bound.bound)?;
 
-    let mut oriented = edge_loop.references(1)?;
-    if !orientation {
-        oriented.reverse();
+    let mut walk = edge_loop.edge_list.clone();
+    if !bound.orientation {
+        walk.reverse();
     }
 
-    let mut uses = Vec::with_capacity(oriented.len());
-    for id in oriented {
-        let oriented_edge = resolver.follow_typed(&edge_loop, id, "ORIENTED_EDGE")?;
-        let forward = oriented_edge.boolean(4)? == orientation;
+    let mut uses = Vec::with_capacity(walk.len());
+    for id in walk {
+        let oriented = resolver.read::<entities::OrientedEdge>(edge_loop.origin, id)?;
+        let forward = oriented.orientation == bound.orientation;
 
-        let edge_id = oriented_edge.reference(3)?;
-        let edge = resolver.follow_typed(&oriented_edge, edge_id, "EDGE_CURVE")?;
-        let (first, second) = (edge.reference(1)?, edge.reference(2)?);
+        let edge = resolver.read::<entities::EdgeCurve>(oriented.origin, oriented.edge_element)?;
         let (start, end) = if forward {
-            (first, second)
+            (edge.edge_start, edge.edge_end)
         } else {
-            (second, first)
+            (edge.edge_end, edge.edge_start)
         };
 
-        // `EDGE_CURVE.same_sense` is not read: an `EdgeAttr` stores no
-        // interval, so which way the support runs between the two vertices is
-        // derived from the vertices themselves. The flag says the same thing
-        // the geometry already does, and export recomputes it the same way.
-        let curve = read_curve(resolver, &edge, edge.reference(3)?)?;
-        let start_point = read_vertex(resolver, &edge, start)?;
-        let end_point = read_vertex(resolver, &edge, end)?;
+        // `EDGE_CURVE.same_sense` is not read. Which corner the edge runs
+        // from is `edge_start`, and the flag says only how the support runs
+        // between the two — which, since an `EdgeAttr` stores no interval,
+        // is re-derived from the corners themselves.
+        let curve = read_curve(resolver, edge.origin, edge.edge_geometry)?;
+        let start_point = read_vertex(resolver, edge.origin, start)?;
+        let end_point = read_vertex(resolver, edge.origin, end)?;
         let pcurve = curve_pcurve(&curve, start_point, end_point, plane)
-            .map_err(|error| curve_error(&edge, error))?;
+            .map_err(|error| curve_error(edge.origin, error))?;
 
         uses.push(PlannedUse {
-            edge: edge_id,
+            edge: oriented.edge_element,
             start,
             end,
             forward,
@@ -281,29 +264,22 @@ fn plan_loop(
     }
 
     if uses.is_empty() {
-        return Err(SchemaError::BadAttribute {
-            id: edge_loop.id,
-            line: edge_loop.line,
-            keyword: edge_loop.keyword().to_string(),
-            index: 1,
-            expected: "a loop with at least one edge",
+        return Err(SchemaError::UnreadableUnit {
+            origin: edge_loop.origin,
+            detail: "an edge loop with no edges bounds nothing".to_string(),
         }
         .into());
     }
 
-    check_loop_closes(&uses, &edge_loop)?;
+    check_loop_closes(&uses, edge_loop.origin)?;
     let signed_area = signed_area(&uses);
     Ok(PlannedLoop { uses, signed_area })
 }
 
 /// Reads a `VERTEX_POINT`'s position.
-fn read_vertex(
-    resolver: &Resolver<'_>,
-    from: &Entity<'_>,
-    id: EntityId,
-) -> Result<Point3, StepError> {
-    let vertex = resolver.follow_typed(from, id, "VERTEX_POINT")?;
-    Ok(read_point(resolver, &vertex, vertex.reference(1)?)?)
+fn read_vertex(resolver: &Resolver<'_>, from: Origin, id: EntityId) -> Result<Point3, StepError> {
+    let vertex = resolver.read::<entities::VertexPoint>(from, id)?;
+    Ok(read_point(resolver, vertex.origin, vertex.vertex_geometry)?)
 }
 
 /// Refuses a loop whose consecutive edges do not meet at one vertex.
@@ -311,26 +287,29 @@ fn read_vertex(
 /// Caught here rather than at commit because a map sewn from it would be
 /// structurally valid and geometrically wrong — the darts would link, and the
 /// corner would simply be in two places.
-fn check_loop_closes(uses: &[PlannedUse], edge_loop: &Entity<'_>) -> Result<(), StepError> {
+fn check_loop_closes(uses: &[PlannedUse], edge_loop: Origin) -> Result<(), StepError> {
     for (position, pair) in uses.windows(2).enumerate() {
         if pair[0].end != pair[1].start {
-            return Err(SchemaError::BadAttribute {
-                id: edge_loop.id,
-                line: edge_loop.line,
-                keyword: edge_loop.keyword().to_string(),
-                index: position + 1,
-                expected: "an edge starting where the previous one ended",
+            return Err(SchemaError::UnreadableUnit {
+                origin: edge_loop,
+                detail: format!(
+                    "edge {} starts at {}, but the one before it ended at {}",
+                    position + 1,
+                    pair[1].start,
+                    pair[0].end
+                ),
             }
             .into());
         }
     }
     if uses.len() > 1 && uses[uses.len() - 1].end != uses[0].start {
-        return Err(SchemaError::BadAttribute {
-            id: edge_loop.id,
-            line: edge_loop.line,
-            keyword: edge_loop.keyword().to_string(),
-            index: 1,
-            expected: "a loop that closes",
+        return Err(SchemaError::UnreadableUnit {
+            origin: edge_loop,
+            detail: format!(
+                "the loop ends at {} but began at {}",
+                uses[uses.len() - 1].end,
+                uses[0].start
+            ),
         }
         .into());
     }
@@ -368,7 +347,7 @@ fn shoelace(points: &[Point2]) -> f64 {
 fn pick_outer(
     loops: &[PlannedLoop],
     declared: Option<usize>,
-    face: &Entity<'_>,
+    face: Origin,
     report: &mut ImportReport,
 ) -> Result<usize, StepError> {
     if let Some(declared) = declared {
@@ -382,12 +361,9 @@ fn pick_outer(
         .enumerate()
         .max_by(|(_, left), (_, right)| left.signed_area.abs().total_cmp(&right.signed_area.abs()))
         .map(|(index, _)| index)
-        .ok_or_else(|| SchemaError::BadAttribute {
-            id: face.id,
-            line: face.line,
-            keyword: face.keyword().to_string(),
-            index: 1,
-            expected: "at least one bound",
+        .ok_or_else(|| SchemaError::UnreadableUnit {
+            origin: face,
+            detail: "a face with no bounds encloses nothing".to_string(),
         })?;
     report.skipped.push(ImportSkip {
         entity: Some(face.id),
@@ -399,19 +375,14 @@ fn pick_outer(
     Ok(outer)
 }
 
-/// Compares the winding we built against the sense the file declared (D5).
+/// Compares the winding we built against the sense the file declared.
 ///
 /// Nothing is *done* with the answer: the face normal already follows from the
 /// winding, so agreeing costs nothing and disagreeing means one of the two is
 /// wrong. Saying which face raised it is the point — it catches a bad pcurve
 /// at the face that caused it, rather than as a failed orientation validation
 /// over the whole solid much later.
-fn check_sense(
-    outer: &PlannedLoop,
-    same_sense: bool,
-    face: &Entity<'_>,
-    report: &mut ImportReport,
-) {
+fn check_sense(outer: &PlannedLoop, same_sense: bool, face: Origin, report: &mut ImportReport) {
     if outer.signed_area == 0.0 {
         return;
     }
@@ -428,10 +399,10 @@ fn check_sense(
 ///
 /// Two uses is a closed manifold shell. One leaves the shell open, which is
 /// worth knowing but still yields a map. More than two is non-manifold, which
-/// a 3-GMap cannot represent at all, so the solid is refused by name (§6.3).
+/// a 3-GMap cannot represent at all, so the solid is refused by name.
 fn check_edge_uses(
     planned: &[PlannedFace],
-    brep: &Entity<'_>,
+    brep: Origin,
     options: &StepReadOptions,
     report: &mut ImportReport,
 ) -> Result<(), StepError> {
@@ -459,20 +430,10 @@ fn check_edge_uses(
             reason,
         });
         if non_manifold {
-            return Err(TopologyError::NonManifoldShell {
-                brep: brep.id,
-                line: brep.line,
-                edge,
-            }
-            .into());
+            return Err(TopologyError::NonManifoldShell { brep, edge }.into());
         }
         if options.strict {
-            return Err(TopologyError::OpenShell {
-                brep: brep.id,
-                line: brep.line,
-                edge,
-            }
-            .into());
+            return Err(TopologyError::OpenShell { brep, edge }.into());
         }
     }
     Ok(())
@@ -611,10 +572,9 @@ fn sew_shell(
 /// Only a NURBS conversion can fail here, and only on geometry too degenerate
 /// to carry a control polygon — so the message names the attribute rather than
 /// re-spelling the conversion's own wording, which says nothing about STEP.
-fn curve_error(edge: &Entity<'_>, error: NurbsError) -> StepError {
+fn curve_error(edge: Origin, error: NurbsError) -> StepError {
     GeometryError::UnprojectableCurve {
-        id: edge.id,
-        line: edge.line,
+        origin: edge,
         detail: error.to_string(),
     }
     .into()

@@ -114,7 +114,7 @@ fn importing_a_malformed_file_reports_the_syntax_error_with_its_line() {
 #[test]
 fn read_options_default_to_healing_seams_and_reporting_rather_than_failing() {
     // The defaults encode two decisions: an imported seam is not part of the
-    // shape and comes off (D6), and one bad face should not cost the file (D9).
+    // shape and comes off, and one bad face should not cost the file.
     let options = StepReadOptions::default();
     assert!(options.heal_seams);
     assert!(!options.strict);

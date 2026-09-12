@@ -18,7 +18,7 @@
 //! angle, so the rational quadratic's parameter is a projective — not linear —
 //! function of the angle, agreeing only at knots and span midpoints. Code that
 //! carries a parameter across the conversion must reparameterize; code that
-//! only needs points is safe. See `plan/analytical_geometry.md`.
+//! only needs points is safe.
 
 use crate::geometry::axis::Axis3;
 use crate::geometry::dim2::nurbs::NurbsCurve2;

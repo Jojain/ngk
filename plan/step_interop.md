@@ -8,7 +8,9 @@
 > ISO 10303-21 on `winnow` with zero kernel references, and the planar round
 > trip now closes in both directions: a solid NGK writes is read back as the
 > same solid, and a file OpenCascade wrote imports into a sewn, correctly
-> oriented map that OpenCascade then reads back at the right volume.
+> oriented map that OpenCascade then reads back at the right volume. The AP
+> entity model §1 always called for landed with it (D15), so every entity both
+> directions touch now states its attribute order once.
 > Stage 4 (analytic curved supports and seams, both ways) is the next entry
 > point.
 
@@ -454,6 +456,64 @@ on `&str` and `impl Write`; `read_step_file`/`write_step_file` are three functio
 behind `#[cfg(not(target_arch = "wasm32"))]` and the only place `std::fs` appears.
 This also makes every test operate on string literals rather than fixture files.
 
+### D15 — One Rust type per STEP entity, stating its attribute order once
+
+§1 called L2 "typed records" and §3 listed `schema/entities.rs`; stage 3 shipped
+without it, and the gap was not cosmetic. **A Part 21 file is positional and carries
+no field names** — `#21 = EDGE_CURVE('',#22,#24,#26,.T.);` says nothing about which
+reference is the start vertex — so something must turn a position into a meaning, and
+with only an untyped record accessor that something was *every caller*. 47 sites
+outside the product-structure boilerplate each knew an attribute order independently,
+and the read and write sides knew it in two unrelated notations: `EDGE_CURVE`'s layout
+was asserted in `topology/import.rs` and asserted again in `topology/export.rs`. They
+agreed, but nothing made them.
+
+`schema/entities.rs` holds one struct per entity, each with `read` and `record` a few
+lines apart, walking the same attributes in the same order. **The indices are gone
+entirely**: `Attributes` is a cursor, consumed in sequence, so the struct's field order
+*is* the schema rather than being restated as integers that can disagree with it. Three
+conventions carry that:
+
+- **Skips are named, never counted** — `a.name()?` for the decorative name every
+  geometric entity carries, `a.derived()?` for an `ORIENTED_EDGE`'s two `*` vertices.
+  A counted skip shifts everything after it when it is wrong.
+- **Bind with `let` before building `Self`.** Rust evaluates struct-literal fields in
+  the order *written*, so filling them inline would make the literal's source order
+  silently load-bearing — a hazard the indexed form does not have and the one real
+  cost of going sequential.
+- **The decorative name is not a field**, since NGK writes `''` and reads nothing from
+  it. It appears only where it identifies the entity, as `CONVERSION_BASED_UNIT`'s
+  `'INCH'` does.
+
+**What makes it trustworthy is a property, not the types.** `read(x.record()) == x`,
+once per entity, is a total check that the two directions agree — it catches a
+transposed pair, an attribute read from the wrong position, a miscounted skip, and a
+literal whose fields were reordered. Neither design prevents those by construction;
+the test is what proves them absent. `tests/exchange/step_entities.rs`.
+
+**Scope: every entity both directions touch, and no others.** Nineteen today —
+geometry, topology, and the four unit entities, `SI_UNIT` most of all, since its order
+is written in `schema/product.rs` and read in `schema/units.rs` and a mistake there
+rescales the whole model silently. The ~29 write-only product-structure records stay as
+raw `Record::new`: nothing reads them, so there is no second encoding to drift from,
+and each already sits adjacent to its own argument list. They earn types when D13's
+document reader gives them a second direction.
+
+`part21` is untouched and stays untyped. Its ignorance is what keeps the parser choice
+reversible, and the declining dispatch still needs an untyped view to ask "is this a
+`PLANE` or a `CYLINDRICAL_SURFACE`?" before it knows what to decode into — which
+`Attributes::decode` answers in the crate's own `Option<Result<..>>` convention:
+`None` declines the keyword, `Some(Err(..))` is a real failure.
+
+A **sequential cursor was chosen over indices** deliberately. The usual argument for
+indices — that inserting an attribute mid-list forces a renumber — assumes a schema
+that changes, and ISO 10303 entity attribute lists are frozen. The usual argument
+against a cursor — that complex instances have no single attribute stream — does not
+hold either: a cursor is *per record*, so a rational B-spline surface asks its instance
+for two or three of them by keyword and walks each. What settled it is that the write
+side was already sequential: `Record::new("EDGE_CURVE", vec![..])` has never had an
+index in it, so the integers were an artefact of only the reader having been written.
+
 ---
 
 ## 3. Module layout
@@ -475,7 +535,9 @@ src/exchange/
       write.rs    // ours regardless; incl. the real-formatting guard
 
     schema/       // L2
-      resolver.rs  entities.rs  units.rs  product.rs
+      resolver.rs     // Attributes cursor, Origin, Located, SchemaError
+      entities.rs     // one type per entity, both directions     (D15)
+      units.rs  product.rs
 
     convert/      // L3 — pure math, bidirectional, no GMap
       uv_map.rs       // the load-bearing type                 (D4)
@@ -817,6 +879,10 @@ depends on it.
   `α0 ∘ α2` land back in the boundary walk, which is what
   `validate_oriented_shell_volume` tests, so the invariant and the
   construction are the same fact written twice.
+- **The entity model landed with it, and §1 had been right to ask for it.**
+  Reading through a bare positional accessor left 47 sites each knowing an
+  attribute order, and the two directions knowing it separately — see D15 for
+  what replaced it and why the cursor won over indices.
 - **Stitching did not become its own module.** §3 lists `topology/stitch.rs`;
   it stayed inside `import.rs`, because the edge-use table is built from the
   same planned faces the sewing consumes and splitting them would mean

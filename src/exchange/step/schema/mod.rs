@@ -5,6 +5,7 @@
 //! application-protocol differences somebody else's problem: the layer above
 //! never learns which AP a file came from.
 
+pub mod entities;
 pub mod product;
 pub mod resolver;
 pub mod units;

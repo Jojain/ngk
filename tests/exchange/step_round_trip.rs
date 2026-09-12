@@ -3,7 +3,7 @@
 //! No snapshot framework exists in this crate and adding one would be a
 //! first, so a round trip is checked **by invariant, never by text diff** —
 //! the precedent is `tests/topology/serialization.rs`. What the contract
-//! promises (D3) is the point set of every curve and surface to within the
+//! promises is the point set of every curve and surface to within the
 //! document tolerance, the topology exactly, and the analytic *type* only
 //! where NGK has a matching representation; nothing about entity ids or the
 //! order they were written in.
@@ -107,7 +107,7 @@ fn assert_corners_match(before: &Solid, after: &Solid) {
     }
 }
 
-/// Asserts no support was demoted to a kind NGK did not start with (D3).
+/// Asserts no support was demoted to a kind NGK did not start with.
 fn assert_surface_kinds_match(before: &Solid, after: &Solid) {
     let kinds = |shape: &Solid| {
         let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();

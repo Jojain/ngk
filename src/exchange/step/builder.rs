@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use super::part21::{EntityId, Instance, Record, StepExchange, Value};
+use super::schema::entities::Entity;
 
 /// Allocates instance names and accumulates records in emission order.
 ///
@@ -63,6 +64,20 @@ impl InstanceBuilder {
         let id = self.push(vec![record]);
         self.shared.insert(key, id);
         id
+    }
+
+    /// Adds a typed entity under a fresh name, never shared.
+    ///
+    /// The [`add`](Self::add) / [`add_shared`](Self::add_shared) distinction
+    /// still applies and is still the caller's to make: the entity says what
+    /// it *is*, not whether two equal ones are the same thing.
+    pub fn add_entity(&mut self, entity: &impl Entity) -> EntityId {
+        self.add(entity.record())
+    }
+
+    /// Adds a typed entity, reusing an identical one already emitted.
+    pub fn add_shared_entity(&mut self, entity: &impl Entity) -> EntityId {
+        self.add_shared(entity.record())
     }
 
     /// Returns the name the next instance will be given.

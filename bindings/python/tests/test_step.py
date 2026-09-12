@@ -55,8 +55,8 @@ def test_step_to_string_writes_no_file(tmp_path):
 
 
 def test_geometry_that_cannot_be_written_raises_rather_than_writing_garbage():
-    # Curved supports arrive in stage 4 of the STEP interop plan. Until then a
-    # cylinder must refuse by name, not produce a file that is quietly wrong.
+    # A cylinder wall has no STEP spelling without a synthesized seam, so it
+    # must refuse by name rather than produce a file that is quietly wrong.
     with pytest.raises(ValueError) as raised:
         ngk.step_to_string(ngk.cut(ngk.block(8.0, 8.0, 8.0), ngk.block(2.0, 2.0, 20.0)))
 

@@ -1,6 +1,6 @@
 //! Reading STEP text into solids.
 //!
-//! The subject here is the *stitching* (§6): STEP hands over loose faces that
+//! The subject here is the *stitching*: STEP hands over loose faces that
 //! name shared edges by `#N`, and what must come back is one sewn 3-GMap. So
 //! these assert on the map — cell counts, then the three validators — rather
 //! than on anything about the text, which is `part21_parse`'s business.
@@ -99,7 +99,7 @@ fn a_foreign_box_imports_at_its_own_corners() {
 #[test]
 fn every_imported_face_carries_a_pcurve_per_boundary_dart() {
     // `FaceAttr` requires one, and STEP does not have to supply it — so the
-    // importer rebuilds it by projection (D8). A missing one does not fail
+    // importer rebuilds it by projection. A missing one does not fail
     // any validator; it surfaces much later as a face with no winding.
     let import = read(OCCT_BOX);
     let shape = &import.shapes[0];
@@ -168,7 +168,7 @@ fn a_dangling_reference_names_both_ends() {
     let import = read_step(&text, &StepReadOptions::default()).expect("the read itself succeeds");
 
     // Best-effort: the face that could not be read is dropped and named, and
-    // the rest of the file still arrives (D9).
+    // the rest of the file still arrives.
     let detail = import
         .report
         .skipped

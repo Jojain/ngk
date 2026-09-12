@@ -3,7 +3,7 @@
 //! STEP states its own units: metres with an SI prefix, or an inch defined as
 //! a conversion from millimetres; radians, or degrees defined the same way.
 //! NGK holds no units at all — a `Point3` is a length in whatever the caller
-//! meant — so the exchange layer picks one and converts at the boundary (D10).
+//! meant — so the exchange layer picks one and converts at the boundary.
 //!
 //! The one picked is **millimetres and radians**, matching what NGK's own
 //! models and its reference kernel both use, and what
@@ -13,8 +13,11 @@
 //! refused: product structure is where vendor files diverge most, and a
 //! missing context should not cost the geometry.
 
-use super::super::part21::{EntityId, Instance, Record, StepExchange, Value};
-use super::resolver::SchemaError;
+use super::super::part21::{Instance, StepExchange, Value};
+use super::entities::{
+    ConversionBasedUnit, Entity, MeasureWithUnit, SiUnit, UncertaintyMeasureWithUnit,
+};
+use super::resolver::{Attributes, Origin, SchemaError};
 
 /// What one document's numbers mean.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -58,34 +61,35 @@ impl Units {
 /// Reads the 3D representation context's units and uncertainty.
 ///
 /// The context is found by sweeping for it rather than by walking down from
-/// `SHAPE_DEFINITION_REPRESENTATION`, for the same reason the B-Rep roots are
-/// (§5): the path down differs between vendors and none of it is needed.
+/// `SHAPE_DEFINITION_REPRESENTATION`, for the same reason the B-Rep roots
+/// are: the path down differs between vendors and none of it is needed.
 pub fn read_units(exchange: &StepExchange) -> Result<Units, SchemaError> {
     let Some(instance) = geometric_context(exchange) else {
         return Ok(Units::default());
     };
 
     let mut units = Units::default();
-    if let Some(assigned) = instance.record("GLOBAL_UNIT_ASSIGNED_CONTEXT") {
-        for id in reference_list(assigned, 0) {
-            let Some(unit) = exchange.get(id) else {
-                continue;
-            };
-            if unit.is("LENGTH_UNIT") {
-                units.length = length_scale(exchange, unit)?;
-            } else if unit.is("PLANE_ANGLE_UNIT") {
-                units.angle = angle_scale(exchange, unit)?;
-            }
+    for id in assigned(instance, "GLOBAL_UNIT_ASSIGNED_CONTEXT") {
+        let Some(unit) = exchange.get(id) else {
+            continue;
+        };
+        if unit.is("LENGTH_UNIT") {
+            units.length = length_scale(exchange, unit)?;
+        } else if unit.is("PLANE_ANGLE_UNIT") {
+            units.angle = angle_scale(exchange, unit)?;
         }
     }
 
-    if let Some(assigned) = instance.record("GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT")
-        && let Some(id) = reference_list(assigned, 0).into_iter().next()
+    if let Some(id) = assigned(instance, "GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT")
+        .into_iter()
+        .next()
         && let Some(measure) = exchange.get(id)
-        && let Some(record) = measure.record("UNCERTAINTY_MEASURE_WITH_UNIT")
-        && let Some(value) = typed_value(record.param(0))
+        && let Some(attributes) = record_of::<UncertaintyMeasureWithUnit>(measure)
     {
-        units.uncertainty = value * units.length;
+        units.uncertainty = UncertaintyMeasureWithUnit::read(attributes)?
+            .value_component
+            .value
+            * units.length;
     }
 
     Ok(units)
@@ -107,76 +111,103 @@ fn geometric_context(exchange: &StepExchange) -> Option<&Instance> {
         })
 }
 
+/// Returns what one of the context's assignment records points at.
+fn assigned(instance: &Instance, keyword: &str) -> Vec<super::super::part21::EntityId> {
+    instance
+        .record(keyword)
+        .and_then(|record| record.param(0))
+        .and_then(Value::as_list)
+        .map(|values| values.iter().filter_map(Value::as_reference).collect())
+        .unwrap_or_default()
+}
+
 /// Returns how many millimetres one of this unit is.
 fn length_scale(exchange: &StepExchange, unit: &Instance) -> Result<f64, SchemaError> {
-    if let Some(si) = unit.record("SI_UNIT") {
+    if let Some(attributes) = record_of::<SiUnit>(unit) {
+        let si = SiUnit::read(attributes)?;
         // The base SI length is the metre, which is a thousand millimetres.
-        let name = enumeration(si.param(1));
-        if !name.is_some_and(|name| name.eq_ignore_ascii_case("METRE")) {
-            return Err(unreadable(unit, format!("{:?} is not a length", name)));
+        if !si.name.eq_ignore_ascii_case("METRE") {
+            return Err(unreadable(unit, format!("{} is not a length", si.name)));
         }
-        return Ok(1000.0 * prefix_factor(enumeration(si.param(0)))?);
+        return Ok(1000.0 * prefix_factor(si.prefix.as_deref()));
     }
     conversion_scale(exchange, unit)
 }
 
 /// Returns how many radians one of this unit is.
 fn angle_scale(exchange: &StepExchange, unit: &Instance) -> Result<f64, SchemaError> {
-    if let Some(si) = unit.record("SI_UNIT") {
-        let name = enumeration(si.param(1));
-        if !name.is_some_and(|name| name.eq_ignore_ascii_case("RADIAN")) {
-            return Err(unreadable(unit, format!("{:?} is not a plane angle", name)));
+    if let Some(attributes) = record_of::<SiUnit>(unit) {
+        let si = SiUnit::read(attributes)?;
+        if !si.name.eq_ignore_ascii_case("RADIAN") {
+            return Err(unreadable(
+                unit,
+                format!("{} is not a plane angle", si.name),
+            ));
         }
-        return prefix_factor(enumeration(si.param(0)));
+        return Ok(prefix_factor(si.prefix.as_deref()));
     }
     conversion_scale(exchange, unit)
 }
 
 /// Resolves a `CONVERSION_BASED_UNIT` — an inch, or a degree — to its base.
 ///
-/// The conversion factor is a `MEASURE_WITH_UNIT` naming both a number and the
-/// unit that number is in, so this recurses one level: a degree is `0.01745…`
-/// *radians*, and the radian's own scale still has to be applied.
+/// The conversion factor is a `MEASURE_WITH_UNIT` naming both a number and
+/// the unit that number is in, so this recurses one level: a degree is
+/// `0.01745…` *radians*, and the radian's own scale still has to be applied.
 fn conversion_scale(exchange: &StepExchange, unit: &Instance) -> Result<f64, SchemaError> {
-    let converted = unit.record("CONVERSION_BASED_UNIT").ok_or_else(|| {
+    let attributes = record_of::<ConversionBasedUnit>(unit).ok_or_else(|| {
         unreadable(
             unit,
             "neither an SI nor a conversion-based unit".to_string(),
         )
     })?;
-    let factor_id = converted
-        .param(1)
-        .and_then(Value::as_reference)
-        .ok_or_else(|| unreadable(unit, "conversion factor is not a reference".to_string()))?;
+    let converted = ConversionBasedUnit::read(attributes)?;
+
     let factor = exchange
-        .get(factor_id)
-        .and_then(|instance| instance.record("MEASURE_WITH_UNIT"))
+        .get(converted.conversion_factor)
+        .and_then(record_of::<MeasureWithUnit>)
         .ok_or_else(|| unreadable(unit, "conversion factor is not a measure".to_string()))?;
+    let factor = MeasureWithUnit::read(factor)?;
 
-    let value = typed_value(factor.param(0))
-        .ok_or_else(|| unreadable(unit, "conversion factor carries no number".to_string()))?;
-    let base_id = factor
-        .param(1)
-        .and_then(Value::as_reference)
-        .ok_or_else(|| unreadable(unit, "conversion factor names no unit".to_string()))?;
-    let base = exchange
-        .get(base_id)
-        .ok_or_else(|| unreadable(unit, format!("conversion factor names {base_id}")))?;
-
+    let base = exchange.get(factor.unit_component).ok_or_else(|| {
+        unreadable(
+            unit,
+            format!("conversion factor names {}", factor.unit_component),
+        )
+    })?;
     let base_scale = if base.is("PLANE_ANGLE_UNIT") {
         angle_scale(exchange, base)?
     } else {
         length_scale(exchange, base)?
     };
-    Ok(value * base_scale)
+    Ok(factor.value_component.value * base_scale)
+}
+
+/// Returns the record of `instance` that `T` reads, simple or complex alike.
+///
+/// A unit is nearly always a complex instance —
+/// `( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) )` — so this picks
+/// the one member that carries the data rather than requiring a simple one.
+fn record_of<T: Entity>(instance: &Instance) -> Option<Attributes<'_>> {
+    let origin = Origin {
+        id: instance.id,
+        line: instance.line,
+    };
+    T::KEYWORDS
+        .iter()
+        .find_map(|keyword| instance.record(keyword))
+        .map(|record| Attributes::new(origin, record))
 }
 
 /// Returns the multiplier an `SI_UNIT` prefix stands for.
-fn prefix_factor(prefix: Option<&str>) -> Result<f64, SchemaError> {
+///
+/// An unrecognized prefix counts as none, which keeps one unknown spelling
+/// from costing the whole document its units.
+fn prefix_factor(prefix: Option<&str>) -> f64 {
     let Some(prefix) = prefix else {
-        return Ok(1.0);
+        return 1.0;
     };
-    let factor = match prefix.to_ascii_uppercase().as_str() {
+    match prefix.to_ascii_uppercase().as_str() {
         "EXA" => 1.0e18,
         "PETA" => 1.0e15,
         "TERA" => 1.0e12,
@@ -193,36 +224,16 @@ fn prefix_factor(prefix: Option<&str>) -> Result<f64, SchemaError> {
         "PICO" => 1.0e-12,
         "FEMTO" => 1.0e-15,
         "ATTO" => 1.0e-18,
-        _ => return Ok(1.0),
-    };
-    Ok(factor)
-}
-
-/// Reads the number out of a `LENGTH_MEASURE(1.)`-style typed parameter.
-fn typed_value(param: Option<&Value>) -> Option<f64> {
-    let record = param?.as_typed()?;
-    let value = record.param(0)?;
-    value
-        .as_real()
-        .or_else(|| value.as_integer().map(|integer| integer as f64))
-}
-
-fn enumeration(param: Option<&Value>) -> Option<&str> {
-    param?.as_enum()
-}
-
-fn reference_list(record: &Record, index: usize) -> Vec<EntityId> {
-    record
-        .param(index)
-        .and_then(Value::as_list)
-        .map(|values| values.iter().filter_map(Value::as_reference).collect())
-        .unwrap_or_default()
+        _ => 1.0,
+    }
 }
 
 fn unreadable(unit: &Instance, detail: String) -> SchemaError {
     SchemaError::UnreadableUnit {
-        id: unit.id,
-        line: unit.line,
+        origin: Origin {
+            id: unit.id,
+            line: unit.line,
+        },
         detail,
     }
 }

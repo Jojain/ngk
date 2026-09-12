@@ -260,8 +260,8 @@ fn the_product_structure_names_the_model() {
 
 #[test]
 fn a_cylinder_is_refused_by_name_rather_than_approximated() {
-    // Its wall is one ring face whose circular edge closes on itself, which
-    // STEP can only carry once a seam has been synthesized for it.
+    // Its wall is one ring face whose circular edge closes on itself, so the
+    // edge has no two distinct corners to give an `EDGE_CURVE` a direction.
     let cylinder = solids::cylinder(5.0, 10.0).expect("a cylinder should build");
     let error = step_to_string(&cylinder, &StepWriteOptions::default())
         .expect_err("a periodic support should be refused");
@@ -270,13 +270,14 @@ fn a_cylinder_is_refused_by_name_rather_than_approximated() {
         matches!(error, StepError::Topology(TopologyError::ClosedEdge { .. })),
         "got {error}",
     );
-    assert!(error.to_string().contains("seam"), "got {error}");
+    // The message has to say *which* edge, or it is not actionable.
+    assert!(error.to_string().contains("EdgeKey"), "got {error}");
 }
 
 #[test]
 fn a_sphere_is_refused_by_name_rather_than_approximated() {
     // A sphere is one boundaryless face: zero loops, edges and vertices, so
-    // there is not even a boundary to walk until stage 5 synthesizes one.
+    // there is not even a boundary to walk.
     let sphere = solids::sphere(5.0).expect("a sphere should build");
     let error = step_to_string(&sphere, &StepWriteOptions::default())
         .expect_err("a boundaryless face should be refused");

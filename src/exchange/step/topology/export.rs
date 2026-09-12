@@ -28,7 +28,8 @@ use super::super::convert::curves::write_curve;
 use super::super::convert::placement::write_point;
 use super::super::convert::surfaces::write_surface;
 use super::super::error::{StepError, TopologyError};
-use super::super::part21::{EntityId, Record, Value};
+use super::super::part21::EntityId;
+use super::super::schema::entities;
 
 /// An `EDGE_CURVE` already written, and the corner it starts from.
 ///
@@ -69,20 +70,13 @@ pub fn write_solid<P: Payload>(
     }
 
     let mut cache = ExportCache::default();
-    let mut faces = Vec::new();
+    let mut cfs_faces = Vec::new();
     for face in solid.outer_shell().faces() {
-        faces.push(Value::Ref(write_face(builder, gmap, &face, &mut cache)?));
+        cfs_faces.push(write_face(builder, gmap, &face, &mut cache)?);
     }
 
-    let shell = builder.add(Record::new(
-        "CLOSED_SHELL",
-        vec![Value::Text(String::new()), Value::List(faces)],
-    ));
-
-    Ok(builder.add(Record::new(
-        "MANIFOLD_SOLID_BREP",
-        vec![Value::Text(String::new()), Value::Ref(shell)],
-    )))
+    let outer = builder.add_entity(&entities::ClosedShell { cfs_faces });
+    Ok(builder.add_entity(&entities::ManifoldSolidBrep { outer }))
 }
 
 fn write_face<P: Payload>(
@@ -105,8 +99,8 @@ fn write_face<P: Payload>(
         if !matches!(kind, LoopKind::Outer | LoopKind::Inner) {
             // A wrapping or capping loop closes on the periodic quotient, and
             // STEP has no way to say that: it wants the domain cut open along
-            // a seam. Synthesizing that cut is stage 4's work, and guessing at
-            // it here would emit a loop that does not close.
+            // a seam. Emitting the loop as it stands would produce a bound
+            // that does not close, so it is refused instead.
             return Err(TopologyError::PeriodicLoop {
                 face: face.key(),
                 kind: loop_kind_name(kind),
@@ -114,34 +108,22 @@ fn write_face<P: Payload>(
             .into());
         }
 
-        let edge_loop = write_edge_loop(builder, gmap, loop_, cache)?;
-        let keyword = if kind == LoopKind::Outer {
-            "FACE_OUTER_BOUND"
-        } else {
-            "FACE_BOUND"
-        };
-        bounds.push(Value::Ref(builder.add(Record::new(
-            keyword,
-            vec![
-                Value::Text(String::new()),
-                Value::Ref(edge_loop),
-                // The loop is already written in the face's own traversal
-                // direction, so the bound never needs to flip it; the walk
-                // direction lives entirely in each ORIENTED_EDGE.
-                Value::Enum("T".to_string()),
-            ],
-        ))));
+        let bound = write_edge_loop(builder, gmap, loop_, cache)?;
+        bounds.push(builder.add_entity(&entities::FaceBound {
+            bound,
+            // The loop is already written in the face's own traversal
+            // direction, so the bound never needs to flip it; the walk
+            // direction lives entirely in each ORIENTED_EDGE.
+            orientation: true,
+            outer: kind == LoopKind::Outer,
+        }));
     }
 
-    Ok(builder.add(Record::new(
-        "ADVANCED_FACE",
-        vec![
-            Value::Text(String::new()),
-            Value::List(bounds),
-            Value::Ref(surface),
-            Value::Enum(bool_enum(same_sense)),
-        ],
-    )))
+    Ok(builder.add_entity(&entities::AdvancedFace {
+        bounds,
+        face_geometry: surface,
+        same_sense,
+    }))
 }
 
 /// Reports whether the face's outward normal agrees with its surface's.
@@ -151,9 +133,9 @@ fn write_face<P: Payload>(
 /// flipped whenever the boundary winds the other way, so comparing the two is
 /// the same question asked twice.
 fn face_same_sense<P: Payload>(face: &Face<'_, P>) -> Result<bool, TopologyError> {
-    // A plane's normal is constant, so any parameter answers for it. A curved
-    // support will need a parameter known to lie inside the trimmed region,
-    // which arrives with stage 4.
+    // Every support written here is a plane, whose normal is constant, so any
+    // parameter answers for it. A curved support would need one known to lie
+    // inside the trimmed region.
     let (u, v) = (0.0, 0.0);
     let agreement = face.normal_at(u, v).dot(&face.surface().normal_at(u, v));
     if agreement == 0.0 || !agreement.is_finite() {
@@ -190,22 +172,15 @@ fn write_edge_loop<P: Payload>(
             .ok_or(TopologyError::ClosedEdge { edge: key })?;
         let forward = bounded.start().key() == written.start;
 
-        oriented.push(Value::Ref(builder.add(Record::new(
-            "ORIENTED_EDGE",
-            vec![
-                Value::Text(String::new()),
-                Value::Derived,
-                Value::Derived,
-                Value::Ref(written.curve),
-                Value::Enum(bool_enum(forward)),
-            ],
-        ))));
+        oriented.push(builder.add_entity(&entities::OrientedEdge {
+            edge_element: written.curve,
+            orientation: forward,
+        }));
     }
 
-    Ok(builder.add(Record::new(
-        "EDGE_LOOP",
-        vec![Value::Text(String::new()), Value::List(oriented)],
-    )))
+    Ok(builder.add_entity(&entities::EdgeLoop {
+        edge_list: oriented,
+    }))
 }
 
 /// Writes the `EDGE_CURVE` for an edge, in the edge's own default direction.
@@ -241,16 +216,12 @@ fn write_edge_curve<P: Payload>(
         .ok_or(TopologyError::MissingCurve { edge: key })?;
     let same_sense = interval.start <= interval.end;
 
-    let edge_curve = builder.add(Record::new(
-        "EDGE_CURVE",
-        vec![
-            Value::Text(String::new()),
-            Value::Ref(start_id),
-            Value::Ref(end_id),
-            Value::Ref(curve),
-            Value::Enum(bool_enum(same_sense)),
-        ],
-    ));
+    let edge_curve = builder.add_entity(&entities::EdgeCurve {
+        edge_start: start_id,
+        edge_end: end_id,
+        edge_geometry: curve,
+        same_sense,
+    });
 
     Ok(WrittenEdge {
         curve: edge_curve,
@@ -275,17 +246,10 @@ fn write_vertex<P: Payload>(
     let position = vertex
         .point()
         .ok_or(TopologyError::MissingVertexPoint { vertex: key })?;
-    let position = write_point(builder, *position);
-    let id = builder.add(Record::new(
-        "VERTEX_POINT",
-        vec![Value::Text(String::new()), Value::Ref(position)],
-    ));
+    let vertex_geometry = write_point(builder, *position);
+    let id = builder.add_entity(&entities::VertexPoint { vertex_geometry });
     cache.vertices.insert(key, id);
     Ok(id)
-}
-
-fn bool_enum(value: bool) -> String {
-    if value { "T" } else { "F" }.to_string()
 }
 
 fn loop_kind_name(kind: LoopKind) -> &'static str {
