@@ -44,11 +44,23 @@ fn main() {
 
     write("holed_slab.step", holed_slab());
 
+    // The seam case. Nothing in the map carries the cut its wall is written
+    // along, so only another kernel can say the cut came out on the surface
+    // and welded back together.
+    let cylinder = solids::cylinder(5.0, 10.0).expect("a cylinder should build");
+    write(
+        "cylinder.step",
+        step_to_string(&cylinder, &StepWriteOptions::named("CYLINDER"))
+            .expect("a cylinder should export"),
+    );
+
     // The read direction, checked the only way it can be from outside: take a
     // file OpenCascade wrote, import it, and write it back. If the volume
     // survives that, the import understood the file rather than merely
     // producing a map that satisfies our own validators.
     reexport("box.step", "reexported_box.step");
+    reexport("cylinder.step", "reexported_cylinder.step");
+    reexport("frustum.step", "reexported_frustum.step");
     reexport("holed_slab.step", "reexported_holed_slab.step");
 
     println!("wrote fixtures to {OUT_DIR}/");

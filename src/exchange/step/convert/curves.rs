@@ -6,14 +6,16 @@
 //! name rather than approximated, so a new curve type is one entry appended
 //! to a chain and no call site here changes.
 
-use crate::geometry::{Curve, Line};
+use crate::geometry::{Circle, Curve, Ellipse, Line, Plane};
 
 use super::super::builder::InstanceBuilder;
 use super::super::error::{GeometryError, StepError};
 use super::super::part21::EntityId;
 use super::super::schema::entities;
 use super::super::schema::resolver::{Attributes, Origin, Resolver};
-use super::placement::{read_direction, read_point, write_point, write_vector};
+use super::placement::{
+    read_direction, read_placement, read_point, write_placement, write_point, write_vector,
+};
 
 /// Writes a curve, preferring its closed form.
 pub fn write_curve(
@@ -21,6 +23,12 @@ pub fn write_curve(
     curve: &Curve,
 ) -> Result<EntityId, GeometryError> {
     if let Some(written) = write_line(builder, curve) {
+        return written;
+    }
+    if let Some(written) = write_circle(builder, curve) {
+        return written;
+    }
+    if let Some(written) = write_ellipse(builder, curve) {
         return written;
     }
     Err(GeometryError::UnsupportedCurve { kind: kind(curve) })
@@ -52,6 +60,48 @@ fn write_line(
     Some(Ok(builder.add_shared_entity(&entities::Line { pnt, dir })))
 }
 
+/// Writes a `CIRCLE`, or declines anything that is not one.
+///
+/// Both parameterizations are the angle swept from the placement's reference
+/// direction about its axis, counter-clockwise, so the parameter carries
+/// across untouched and an arc keeps its own interval.
+fn write_circle(
+    builder: &mut InstanceBuilder,
+    curve: &Curve,
+) -> Option<Result<EntityId, GeometryError>> {
+    let Curve::Circle(circle) = curve else {
+        return None;
+    };
+
+    let position = write_placement(builder, &circle.plane().frame);
+    Some(Ok(builder.add_shared_entity(&entities::Circle {
+        position,
+        radius: circle.radius(),
+    })))
+}
+
+/// Writes an `ELLIPSE`, or declines anything that is not one.
+///
+/// `semi_axis_1` is the radius along the placement's reference direction,
+/// which is NGK's `major_radius` whether or not it is the longer of the two —
+/// the schema orders the two axes by direction, not by size, so writing them
+/// by size would rotate the parameterization a quarter turn.
+fn write_ellipse(
+    builder: &mut InstanceBuilder,
+    curve: &Curve,
+) -> Option<Result<EntityId, GeometryError>> {
+    let Curve::Ellipse(ellipse) = curve else {
+        return None;
+    };
+
+    let position = write_placement(builder, ellipse.frame());
+    Some(Ok(builder.add_shared_entity(&entities::Ellipse {
+        position,
+        semi_axis_1: ellipse.major_radius(),
+        semi_axis_2: ellipse.minor_radius(),
+    })))
+}
+
 /// Reads a curve, preferring its closed form.
 ///
 /// A `SURFACE_CURVE` — or its `SEAM_CURVE` and `INTERSECTION_CURVE` subtypes
@@ -67,6 +117,12 @@ pub fn read_curve(resolver: &Resolver<'_>, from: Origin, id: EntityId) -> Result
     };
 
     if let Some(read) = read_line(resolver, &curve) {
+        return read;
+    }
+    if let Some(read) = read_circle(resolver, &curve) {
+        return read;
+    }
+    if let Some(read) = read_ellipse(resolver, &curve) {
         return read;
     }
     Err(GeometryError::UnreadableCurve {
@@ -105,6 +161,36 @@ fn read_line(resolver: &Resolver<'_>, curve: &Attributes<'_>) -> Option<Result<C
         Ok(Curve::Line(Line::through(
             base,
             base + direction.into_inner() * magnitude,
+        )))
+    }))
+}
+
+/// Reads a `CIRCLE`, or declines anything that is not one.
+fn read_circle(
+    resolver: &Resolver<'_>,
+    curve: &Attributes<'_>,
+) -> Option<Result<Curve, StepError>> {
+    let circle = curve.decode::<entities::Circle>()?;
+    Some(circle.map_err(StepError::from).and_then(|circle| {
+        let frame = read_placement(resolver, curve.origin, circle.position)?;
+        let radius = resolver.units().to_mm(circle.radius);
+        Ok(Curve::Circle(Circle::new(Plane::from_frame(frame), radius)))
+    }))
+}
+
+/// Reads an `ELLIPSE`, or declines anything that is not one.
+fn read_ellipse(
+    resolver: &Resolver<'_>,
+    curve: &Attributes<'_>,
+) -> Option<Result<Curve, StepError>> {
+    let ellipse = curve.decode::<entities::Ellipse>()?;
+    Some(ellipse.map_err(StepError::from).and_then(|ellipse| {
+        let frame = read_placement(resolver, curve.origin, ellipse.position)?;
+        let units = resolver.units();
+        Ok(Curve::Ellipse(Ellipse::new(
+            frame,
+            units.to_mm(ellipse.semi_axis_1),
+            units.to_mm(ellipse.semi_axis_2),
         )))
     }))
 }

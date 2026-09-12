@@ -301,3 +301,100 @@ fn guessing_an_outer_bound_is_reported_rather_than_silent() {
         assert!(guess.entity.is_some(), "a guess should name its face");
     }
 }
+
+/// A radius-5, height-10 cylinder written by OpenCascade through build123d.
+///
+/// Regenerate with `uv run python tests/fixtures/step/generate_cylinder.py`.
+const OCCT_CYLINDER: &str = include_str!("../fixtures/step/cylinder.step");
+
+#[test]
+fn a_foreign_cylinder_arrives_as_a_ring_face_between_two_caps() {
+    // The whole seam story read backwards. OpenCascade writes the wall with
+    // its domain cut open: a rim, a seam up, the other rim, the seam back
+    // down, over a `SEAM_CURVE` the same loop walks twice. NGK stores no seam,
+    // so the counts here are what say the cut was understood and then healed
+    // away rather than left in the map as a spurious edge.
+    let import = read(OCCT_CYLINDER);
+    let shape = &import.shapes[0];
+    let solid = shape.solid();
+
+    assert_eq!(solid.faces().len(), 3);
+    assert_eq!(solid.edges().len(), 2, "the seam should be gone");
+    assert_eq!(solid.vertices().len(), 2);
+}
+
+#[test]
+fn a_foreign_cylinder_keeps_its_analytic_supports() {
+    // The file names a `CYLINDRICAL_SURFACE` and two `PLANE`s, and each has a
+    // matching NGK type — so nothing here should arrive as NURBS.
+    let import = read(OCCT_CYLINDER);
+    let mut cylinders = 0;
+    let mut planes = 0;
+    for face in import.shapes[0].solid().faces() {
+        match face.surface() {
+            ngk::geometry::Surface::Cylinder(_) => cylinders += 1,
+            ngk::geometry::Surface::Plane(_) => planes += 1,
+            other => panic!("unexpected support {other:?}"),
+        }
+    }
+    assert_eq!((cylinders, planes), (1, 2));
+}
+
+#[test]
+fn a_foreign_cylinder_is_a_valid_oriented_solid() {
+    let import = read(OCCT_CYLINDER);
+    let map = import.shapes[0].map();
+
+    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    validate_all_solid_manifolds(map).expect("the shell should be closed");
+    validate_all_solid_orientations(map).expect("every face should point outward");
+}
+
+/// A truncated cone written by OpenCascade through build123d.
+///
+/// Regenerate with `uv run python tests/fixtures/step/generate_frustum.py`.
+const OCCT_FRUSTUM: &str = include_str!("../fixtures/step/frustum.step");
+
+#[test]
+fn a_foreign_cone_arrives_as_a_cone() {
+    // The cone is the one analytic support NGK parameterizes differently from
+    // STEP — `v` along the generatrix rather than along the axis — so reading
+    // one is where that difference either is handled or is quietly wrong. The
+    // shape being right is not enough to show it: the surface *type* has to
+    // survive too, or the difference was dodged by demoting to NURBS.
+    let import = read(OCCT_FRUSTUM);
+    let solid = import.shapes[0].solid();
+
+    assert_eq!(solid.faces().len(), 3);
+    assert_eq!(solid.edges().len(), 2, "the seam should be gone");
+    assert!(
+        solid
+            .faces()
+            .iter()
+            .any(|face| matches!(face.surface(), ngk::geometry::Surface::Cone(_))),
+        "the wall should still be a cone",
+    );
+}
+
+#[test]
+fn a_foreign_cones_sense_agrees_with_the_winding_rebuilt_for_it() {
+    // The D5 checksum, on the surface most likely to fail it. A wrong `v`
+    // scale, or parameter curves left folded into one period rather than
+    // placed on one branch, inverts the winding — and the file's own flag is
+    // what says so, at the face that caused it.
+    let import = read(OCCT_FRUSTUM);
+    assert_eq!(
+        import
+            .report
+            .matching(|reason| matches!(reason, ImportSkipReason::SenseMismatch))
+            .count(),
+        0,
+        "got {:?}",
+        import.report.skipped,
+    );
+
+    let map = import.shapes[0].map();
+    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    validate_all_solid_manifolds(map).expect("the shell should be closed");
+    validate_all_solid_orientations(map).expect("every face should point outward");
+}

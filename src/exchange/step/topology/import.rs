@@ -8,7 +8,7 @@
 //! **Two phases, in this order, because of the transaction rule.** A
 //! transaction is atomic: any failure inside it restores the snapshot, so a
 //! single unreadable face would cost the whole solid. Every face is therefore
-//! *planned* first — geometry read, loops resolved, pcurves projected — with
+//! *planned* first — geometry read, loops resolved, pcurves rebuilt — with
 //! the ones that fail recorded and dropped. Only a set of faces already known
 //! to be constructible enters [`GMap::transaction`], one transaction per
 //! solid, so one bad solid does not lose the file.
@@ -23,8 +23,9 @@
 
 use std::collections::HashMap;
 
-use crate::builders::profiles::curve_pcurve;
-use crate::geometry::{Curve, NurbsError, Plane, Point2, Point3, Surface, TrimmedCurve2};
+use crate::geometry::{
+    Curve, NurbsError, Point2, Point3, Surface, SurfacePeriodicity, TrimmedCurve2, Vector2,
+};
 use crate::healing::{HealingOptions, remove_redundant_cells};
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
@@ -36,6 +37,7 @@ use crate::topology::{StandardPayload, TopologyEdit, TopologyEditError};
 
 use super::super::StepImport;
 use super::super::convert::curves::read_curve;
+use super::super::convert::pcurve::lift_pcurve;
 use super::super::convert::placement::read_point;
 use super::super::convert::surfaces::read_surface;
 use super::super::error::{GeometryError, StepError, TopologyError};
@@ -145,7 +147,12 @@ struct PlannedUse {
     start: EntityId,
     /// The `VERTEX_POINT` it arrives at.
     end: EntityId,
-    /// Whether the walk agrees with the `EDGE_CURVE`'s own start → end.
+    /// Whether the walk runs the way the support itself does.
+    ///
+    /// Not the same question as whether it agrees with the `EDGE_CURVE`'s own
+    /// start → end: `same_sense` sits between the two. This is the composed
+    /// answer, which is what both the edge's reference dart and the α2 pairing
+    /// need.
     forward: bool,
     /// The support the edge lies on.
     curve: Curve,
@@ -180,13 +187,7 @@ fn plan_face(
     face: &Located<entities::AdvancedFace>,
     report: &mut ImportReport,
 ) -> Result<PlannedFace, StepError> {
-    let surface = read_surface(resolver, face.origin, face.face_geometry)?;
-
-    // `read_surface` yields only a plane, so this cannot fail. The plane is
-    // needed by value, because projecting a parameter curve needs its chart.
-    let Surface::Plane(plane) = &surface else {
-        unreachable!("read_surface yields only planar supports");
-    };
+    let mapped = read_surface(resolver, face.origin, face.face_geometry)?;
 
     let mut loops = Vec::with_capacity(face.bounds.len());
     let mut declared_outer = None;
@@ -195,14 +196,14 @@ fn plan_face(
         if bound.outer {
             declared_outer = Some(index);
         }
-        loops.push(plan_loop(resolver, &bound, plane)?);
+        loops.push(plan_loop(resolver, &bound, &mapped.surface, report)?);
     }
 
     let outer = pick_outer(&loops, declared_outer, face.origin, report)?;
     check_sense(&loops[outer], face.same_sense, face.origin, report);
 
     Ok(PlannedFace {
-        surface: surface.clone(),
+        surface: mapped.surface,
         loops,
         outer,
     })
@@ -217,7 +218,8 @@ fn plan_face(
 fn plan_loop(
     resolver: &Resolver<'_>,
     bound: &Located<entities::FaceBound>,
-    plane: &Plane,
+    surface: &Surface,
+    report: &mut ImportReport,
 ) -> Result<PlannedLoop, StepError> {
     // `VERTEX_LOOP` and `POLY_LOOP` are refused by name rather than skipped:
     // NGK can represent neither, and a face silently missing a boundary is
@@ -241,25 +243,42 @@ fn plan_loop(
             (edge.edge_end, edge.edge_start)
         };
 
-        // `EDGE_CURVE.same_sense` is not read. Which corner the edge runs
-        // from is `edge_start`, and the flag says only how the support runs
-        // between the two — which, since an `EdgeAttr` stores no interval,
-        // is re-derived from the corners themselves.
+        // `EDGE_CURVE.same_sense` says whether the support runs the way the
+        // edge does, and on a closed support that is not something the corners
+        // can re-derive: two arcs of one circle share both of them. So the
+        // walk's direction along the *curve* composes the two flags, and the
+        // edge is later rooted on a dart that runs that way — which is what
+        // makes NGK's derived span the arc the file meant rather than its
+        // complement.
+        let along_curve = forward == edge.same_sense;
         let curve = read_curve(resolver, edge.origin, edge.edge_geometry)?;
         let start_point = read_vertex(resolver, edge.origin, start)?;
         let end_point = read_vertex(resolver, edge.origin, end)?;
-        let pcurve = curve_pcurve(&curve, start_point, end_point, plane)
+
+        let span = if along_curve {
+            curve.interval_between(start_point, end_point)
+        } else {
+            curve.interval_between(end_point, start_point).reversed()
+        };
+        let lifted = lift_pcurve(surface, &curve, span, resolver.units().uncertainty)
             .map_err(|error| curve_error(edge.origin, error))?;
+        if let Some(deviation) = lifted.residual {
+            report.skipped.push(ImportSkip {
+                entity: Some(edge.origin.id),
+                line: edge.origin.line,
+                reason: ImportSkipReason::ApproximatedPcurve { deviation },
+            });
+        }
 
         uses.push(PlannedUse {
             edge: oriented.edge_element,
             start,
             end,
-            forward,
+            forward: along_curve,
             curve,
             start_point,
             end_point,
-            pcurve,
+            pcurve: lifted.pcurve,
         });
     }
 
@@ -272,7 +291,7 @@ fn plan_loop(
     }
 
     check_loop_closes(&uses, edge_loop.origin)?;
-    let signed_area = signed_area(&uses);
+    let signed_area = signed_area(&uses, surface);
     Ok(PlannedLoop { uses, signed_area })
 }
 
@@ -317,14 +336,59 @@ fn check_loop_closes(uses: &[PlannedUse], edge_loop: Origin) -> Result<(), StepE
 }
 
 /// Returns the area a loop's pcurves enclose, signed by their winding.
-fn signed_area(uses: &[PlannedUse]) -> f64 {
+///
+/// **Each pcurve is placed before it is sampled.** A pcurve is rebuilt by
+/// inverting its curve onto the support, and inversion answers within one
+/// period — so on a periodic support the two sides of a seam come back at the
+/// *same* parameter rather than a period apart, and the loop that was a
+/// rectangle in the file shoelaces as a triangle. Shifting each pcurve by whole
+/// periods so it continues from the one before is what closes the polygon
+/// again, and only then does its sign mean the winding.
+///
+/// Aligning across a collapsed row is skipped, because a pole is a genuine gap
+/// in the walk rather than a seam crossing: shifting there would carry the rest
+/// of the loop onto the wrong branch.
+fn signed_area(uses: &[PlannedUse], surface: &Surface) -> f64 {
+    let periods = periods_of(surface);
     let mut points = Vec::with_capacity(uses.len() * WINDING_SAMPLES);
+    let mut offset = Vector2::zeros();
+    let mut previous: Option<Point2> = None;
+
     for use_ in uses {
-        for sample in 0..WINDING_SAMPLES {
-            points.push(use_.pcurve.point_at(sample as f64 / WINDING_SAMPLES as f64));
+        let start = use_.pcurve.start();
+        if let Some(previous) = previous
+            && !(is_degenerate(surface, previous) && is_degenerate(surface, start + offset))
+        {
+            for (axis, period) in periods.iter().enumerate() {
+                let Some(period) = *period else {
+                    continue;
+                };
+                let gap = start[axis] + offset[axis] - previous[axis];
+                offset[axis] -= (gap / period).round() * period;
+            }
         }
+        for sample in 0..WINDING_SAMPLES {
+            let fraction = sample as f64 / WINDING_SAMPLES as f64;
+            points.push(use_.pcurve.point_at(fraction) + offset);
+        }
+        previous = Some(use_.pcurve.end() + offset);
     }
+
     shoelace(&points)
+}
+
+/// The support's periods, in parameter order.
+fn periods_of(surface: &Surface) -> [Option<f64>; 2] {
+    match surface.periodicity() {
+        SurfacePeriodicity::None => [None, None],
+        SurfacePeriodicity::UPeriodic(u) => [Some(u), None],
+        SurfacePeriodicity::VPeriodic(v) => [None, Some(v)],
+        SurfacePeriodicity::UVPeriodic(u, v) => [Some(u), Some(v)],
+    }
+}
+
+fn is_degenerate(surface: &Surface, point: Point2) -> bool {
+    surface.is_degenerate_at(point.x, point.y)
 }
 
 fn shoelace(points: &[Point2]) -> f64 {
@@ -518,10 +582,13 @@ fn sew_shell(
                 }
 
                 if edges.insert(use_.edge, ()).is_none() {
-                    // The reference dart must run the way the `EDGE_CURVE`
-                    // itself does, so that the default orientation NGK derives
-                    // for the edge is the one the file declared — and export
-                    // writes the same `same_sense` back out.
+                    // The reference dart must run the way the *support* does.
+                    // An `EdgeAttr` stores no interval, so NGK re-derives the
+                    // span as the one running forward along the curve from the
+                    // reference dart's corner — which is the arc the file named
+                    // only if the dart leaves from where the curve starts. On a
+                    // circle the other choice is the complementary arc, which
+                    // is a different edge of a different shape.
                     let reference = if use_.forward { start } else { end };
                     edit.add_edge(EdgeAttr::new(reference, use_.curve.clone(), ()));
                 }

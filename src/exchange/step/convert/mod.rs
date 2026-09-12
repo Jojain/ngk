@@ -9,5 +9,8 @@
 //! a pair of mappings that disagree.
 
 pub mod curves;
+pub mod iso_curve;
+pub mod pcurve;
 pub mod placement;
 pub mod surfaces;
+pub mod uv_map;

@@ -258,20 +258,86 @@ fn the_product_structure_names_the_model() {
     );
 }
 
-#[test]
-fn a_cylinder_is_refused_by_name_rather_than_approximated() {
-    // Its wall is one ring face whose circular edge closes on itself, so the
-    // edge has no two distinct corners to give an `EDGE_CURVE` a direction.
-    let cylinder = solids::cylinder(5.0, 10.0).expect("a cylinder should build");
-    let error = step_to_string(&cylinder, &StepWriteOptions::default())
-        .expect_err("a periodic support should be refused");
+/// Exports a cylinder of radius 5 and height 10.
+fn cylinder() -> Shape<SolidTag, StandardPayload> {
+    solids::cylinder(5.0, 10.0).expect("a cylinder should build")
+}
 
-    assert!(
-        matches!(error, StepError::Topology(TopologyError::ClosedEdge { .. })),
-        "got {error}",
-    );
-    // The message has to say *which* edge, or it is not actionable.
-    assert!(error.to_string().contains("EdgeKey"), "got {error}");
+#[test]
+fn a_cylinder_exports_as_two_caps_and_a_wall() {
+    // NGK stores the wall as one ring face with two wrapping loops and no
+    // seam. STEP has no such face, so the wall has to arrive with its domain
+    // cut open — as one `ADVANCED_FACE` all the same, which is what says the
+    // cut was synthesized rather than the wall split in two.
+    let exchange = exported(&cylinder());
+
+    assert_eq!(count(&exchange, "ADVANCED_FACE"), 3);
+    assert_eq!(count(&exchange, "CLOSED_SHELL"), 1);
+    assert_eq!(count(&exchange, "PLANE"), 2);
+    assert_eq!(count(&exchange, "CYLINDRICAL_SURFACE"), 1);
+}
+
+#[test]
+fn a_cylinders_rims_are_closed_edges_naming_one_corner_twice() {
+    // A full circle is one edge with one corner, and `EDGE_CURVE` spells that
+    // by naming the same `VERTEX_POINT` at both ends. Splitting it into two
+    // half-circles instead would be a different shape's worth of topology.
+    let exchange = exported(&cylinder());
+
+    assert_eq!(count(&exchange, "VERTEX_POINT"), 2);
+    assert_eq!(count(&exchange, "CIRCLE"), 2);
+
+    let closed = exchange
+        .instances_of("EDGE_CURVE")
+        .filter(|edge| {
+            let params = &record(edge).params;
+            params[1].as_reference() == params[2].as_reference()
+        })
+        .count();
+    assert_eq!(closed, 2, "both rims should close on one corner");
+}
+
+#[test]
+fn a_cylinders_seam_is_one_edge_the_wall_walks_both_ways() {
+    // The cut is reached from either side of the unwrapped domain, and both
+    // sides are the same edge of the shell. Writing two would leave the wall
+    // unsewn along its own seam, which no volume check downstream would catch
+    // — the shape would still measure right.
+    let exchange = exported(&cylinder());
+
+    let mut uses: HashMap<EntityId, Vec<&str>> = HashMap::new();
+    for oriented in exchange.instances_of("ORIENTED_EDGE") {
+        let params = &record(oriented).params;
+        let edge = params[3].as_reference().expect("an edge curve reference");
+        let sense = params[4].as_enum().expect("an orientation flag");
+        uses.entry(edge).or_default().push(sense);
+    }
+
+    assert_eq!(uses.len(), 3, "two rims and one seam");
+    for (edge, mut flags) in uses {
+        flags.sort_unstable();
+        assert_eq!(flags, ["F", "T"], "{edge} is walked the same way twice");
+    }
+
+    // The seam runs along the axis, so it is the one edge carrying a line.
+    assert_eq!(count(&exchange, "LINE"), 1);
+}
+
+#[test]
+fn a_cylinders_wall_is_bounded_by_four_oriented_edges() {
+    // Bottom rim, seam up, top rim, seam down: the rectangle the unwrapped
+    // domain closes, which is exactly what a stored seam used to spell out.
+    let exchange = exported(&cylinder());
+
+    let walls: Vec<_> = exchange
+        .instances_of("EDGE_LOOP")
+        .filter(|loop_| {
+            record(loop_).params[1]
+                .as_list()
+                .is_some_and(|edges| edges.len() == 4)
+        })
+        .collect();
+    assert_eq!(walls.len(), 1, "only the wall needs a cut");
 }
 
 #[test]

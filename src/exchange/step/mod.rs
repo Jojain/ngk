@@ -16,10 +16,15 @@
 //!
 //! ## What is carried so far
 //!
-//! Planar solids, both ways: `PLANE` supports, `LINE` edges, and the AP214
-//! product structure. A curved support, a periodic face or a cavity is
-//! refused by name rather than approximated — see [`error::TopologyError`]
-//! and [`error::GeometryError`].
+//! Solids on analytic supports, both ways: `PLANE`, `CYLINDRICAL_SURFACE`,
+//! `SPHERICAL_SURFACE`, `CONICAL_SURFACE` and `TOROIDAL_SURFACE`; `LINE`,
+//! `CIRCLE` and `ELLIPSE` edges; and the AP214 product structure. A face whose
+//! parameterization closes on itself is written along a cut synthesized from
+//! its domain, and read back by letting healing remove that cut again.
+//!
+//! A B-spline support, a face with no boundary at all — a whole sphere or
+//! torus — and a solid with cavities are refused by name rather than
+//! approximated; see [`error::TopologyError`] and [`error::GeometryError`].
 //!
 //! The two directions are not symmetric in what they *have* to do. Writing
 //! walks topology that is already sewn; reading is handed loose faces that

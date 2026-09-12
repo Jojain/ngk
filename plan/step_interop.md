@@ -4,15 +4,17 @@
 > rationale, the extension points, and what lives where. Not line-level
 > implementation. Staging is §10.
 >
-> **Status: In progress.** Stages 1–3 are complete. `part21/` reads and writes
-> ISO 10303-21 on `winnow` with zero kernel references, and the planar round
-> trip now closes in both directions: a solid NGK writes is read back as the
-> same solid, and a file OpenCascade wrote imports into a sewn, correctly
-> oriented map that OpenCascade then reads back at the right volume. The AP
-> entity model §1 always called for landed with it (D15), so every entity both
-> directions touch now states its attribute order once.
-> Stage 4 (analytic curved supports and seams, both ways) is the next entry
-> point.
+> **Status: In progress.** Stages 1–4 are complete. `part21/` reads and writes
+> ISO 10303-21 on `winnow` with zero kernel references; the AP entity model §1
+> always called for landed in stage 3 (D15), so every entity both directions
+> touch states its attribute order once; and the round trip now closes on
+> curved supports and seams as well as planes. A cylinder NGK writes comes back
+> as the same three-face solid with no seam edge in it, and a cylinder or a
+> cone OpenCascade wrote imports into a sewn, correctly oriented map that
+> OpenCascade then reads back at the right volume.
+> Stage 5 (boundaryless faces and voids) is the next entry point, and D11's
+> torus fixture is its hard prerequisite — importing an OpenCascade torus
+> already shows the convergence failure D11 predicted.
 
 ## Context
 
@@ -217,6 +219,13 @@ cheapest possible early warning that a `UvMap` entry or a reconstructed pcurve i
 wrong — catching it at the face that caused it rather than at
 `validate_all_solid_orientations` much later.
 
+**It earned that claim in stage 4.** The area has to be read from parameter curves
+*placed on one branch*, not from the ones inversion returns: a rebuilt pcurve comes
+back folded into a single period, so the two sides of a seam land on top of each other
+and the rectangle the file described shoelaces as a triangle. A cylinder survives that
+by luck; a cone does not, and the one thing that said so was this check reporting a
+single face of an otherwise perfectly valid oriented solid.
+
 This is the "one conversion point per direction" rule that STEP round trips need, and
 the reason it is affordable.
 
@@ -224,9 +233,11 @@ the reason it is affordable.
 `same_sense` needs no new machinery either: `Face::normal_at` *is* the support
 normal flipped by the winding, so the flag is the sign of
 `face.normal_at(u,v) · surface.normal_at(u,v)` — STEP's definition of it, asked
-directly. Nothing is stored and no case analysis is written. A plane's normal is
-constant so any parameter answers; a curved support needs a `(u, v)` known to
-lie inside the trimmed region, which is a stage-4 concern.
+directly. Nothing is stored and no case analysis is written. The worry that a curved
+support would need a `(u, v)` inside the trimmed region turned out to be unfounded:
+`Face::normal_at` applies the winding as a *sign*, and the winding belongs to the
+face rather than to a parameter — so any `(u, v)` where the support has a normal at
+all gives the same answer, and one where it has none is what the refusal is for.
 
 The dart-composition rule is separate and equally narrow:
 `forward = (FACE_BOUND.orientation == ORIENTED_EDGE.orientation)` — both flags mean
@@ -234,10 +245,17 @@ The dart-composition rule is separate and equally narrow:
 alone is `.F.`. A reversed bound also reverses the *order* of its oriented edges,
 not just each one's direction.
 `ADVANCED_FACE.same_sense` does **not** enter it — it describes the normal, not the
-walk. Neither does `EDGE_CURVE.same_sense`: which corner the stored dart starts at
-is fixed by `edge_start`, and the flag says only how the *support* runs between the
-two vertices — which, since `EdgeAttr` stores no interval, NGK re-derives from the
-vertices themselves. So it is unread in both directions.
+walk.
+
+`EDGE_CURVE.same_sense` is a separate composition again, and stage 4 corrected what
+this document first said about it. On a line the corners do re-derive everything the
+flag states, which is why planar import could ignore it. On a **closed** support they
+cannot: two complementary arcs of one circle share both corners, and NGK's derived
+span is always the one running *forward* along the support — so which arc an edge is
+depends entirely on which corner its reference dart leaves from. The walk's direction
+along the curve is therefore `forward == same_sense`, and that composed answer is what
+roots the `EdgeAttr` and what the α2 pairing compares. Read on the way in; written
+back out from the edge's own default span.
 
 ### D6 — Import is faithful; canonicalization is a separate, explicit stage
 
@@ -310,7 +328,7 @@ latitude circle plus meridian twice — `seamed_spherical_cap`'s 6 darts. A sphe
 yields `seamed_revolved_sphere`. **The torus has no such fixture and is the one
 unproven link** — see D11.
 
-### D8 — Pcurve reconstruction is extracting `SectionTrace`, not writing a projection module
+### D8 — Pcurve reconstruction is lifting, and the capability already exists to be copied from
 
 STEP does not require pcurves: `SURFACE_CURVE.associated_geometry` may carry a
 `PCURVE` or may not, and OpenCascade-written files usually omit them on analytic
@@ -374,6 +392,26 @@ harder, different problem. Import needs *lifting*, which is one-directional and 
 **Sequencing: this is a stage-4 need, not a prerequisite.** Planar import (stage 3)
 is served by `curve_pcurve`, and export never lifts at all — it reads pcurves that
 already exist on the face. Building this before stage 4 would be speculative.
+
+**Stage 4 kept the analysis and rejected the conclusion.** The list above is what
+lifting needs and `SectionTrace` does have all of it; what it *also* has is a great
+deal that belongs to intersection and nothing to import — splitting a section at
+degeneracy crossings, `IntersectionOptions`, combining fidelity across two supports —
+and an extraction that carried those along would have moved the coupling rather than
+removed it. So `convert/pcurve.rs` states the five steps directly, in one direction,
+in about a third of the code. The two-axis unwrap this decision identified is the part
+that mattered and it is written there, at the first caller that exercises it, rather
+than in the subtree where both arms are still dead.
+
+Two things were learned in the doing. A **plane is not a lift at all** but a
+projection — an isometry onto its own coordinates, so every support keeps its
+parameterization and no sampling happens; and `builders::profiles::curve_pcurve` could
+not serve for it, because it ignores the endpoints for anything but a line and returns
+the whole support, which is right for a builder whose curve already *is* the section
+and wrong for an arc read out of a file. And the **collapsed-row handling is not
+optional**: inversion at a pole returns an arbitrary longitude, so a sample there takes
+the parameter that pins the row and the other from its neighbour, which is the
+direction the curve was travelling when it arrived.
 
 ### D9 — Import is best-effort with a report, which constrains transaction ordering
 
@@ -541,10 +579,12 @@ src/exchange/
 
     convert/      // L3 — pure math, bidirectional, no GMap
       uv_map.rs       // the load-bearing type                 (D4)
-      curves.rs  surfaces.rs  nurbs.rs  placement.rs  pcurve.rs
+      iso_curve.rs    // the curve a cut runs along            (D7)
+      pcurve.rs       // projecting onto a plane, lifting onto a quadric (D8)
+      curves.rs  surfaces.rs  nurbs.rs  placement.rs
 
     topology/     // L4
-      stitch.rs  import.rs  export.rs  seam.rs  ids.rs
+      import.rs  export.rs  seam.rs  ids.rs
                   // stitch.rs is still inside import.rs — §10, stage 3
 ```
 
@@ -608,10 +648,10 @@ are bit-identical by construction.
 | `ADVANCED_FACE` | `FaceAttr::with_loops` + pcurves | `same_sense` is a checksum (D5) |
 | `FACE_OUTER_BOUND` / `FACE_BOUND` | `LoopDefinition::Outer` / `Inner` | never `Wrapping`/`Capping` — those are healing's output |
 | `EDGE_LOOP`, `ORIENTED_EDGE` | `Profile` + loop darts | `ProfileAttr` must be registered or commit fails |
-| `EDGE_CURVE` | `EdgeAttr` | no interval stored; derived from the vertices. `Edge` is an enum — handle `Closed` |
+| `EDGE_CURVE` | `EdgeAttr` | no interval stored; derived from the corners, so `same_sense` picks which arc (D5). A closed edge names one corner twice |
 | `VERTEX_POINT` | `VertexAttr` | one key per instance id; never merged by position |
 | `PCURVE`, `SURFACE_CURVE` | `FaceAttr.pcurves` | reconstructed when absent (D8) |
-| `SEAM_CURVE` | — | consumed by healing on in (D6); **required** on out for seam edges |
+| `SEAM_CURVE` | — | unwrapped to its 3D curve on in, then consumed by healing (D6). Not written: a plain `EDGE_CURVE` the loop walks twice is what identifies a seam |
 | `VERTEX_LOOP`, `POLY_LOOP` | — | rejected by name (D9) |
 
 Plus the unavoidable AP203 product-structure boilerplate — `APPLICATION_PROTOCOL_DEFINITION`,
@@ -780,7 +820,7 @@ pcurve reconstruction, and it gives the importer a generator of known-good input
 | **1** | ~~L1 Part 21 read/write on `winnow`~~ — **done** | text → table → text; `pub mod exchange` | any kernel reference at all — `part21` must compile knowing nothing of NGK |
 | **2** | ~~Export, planar~~ — **done** | `block(1,2,3)` opens in another CAD system; AP214 boilerplate | import, curved supports, seams, NURBS |
 | **3** | ~~Import, planar — the round trip closes~~ — **done** | units, uncertainty, stitching (§6), pcurve path on planes | curved supports, seams |
-| **4** | Analytic curved supports, both ways, with seams | full `UvMap`; cylinder/cone/sphere/torus surfaces; circle/ellipse; the unwrapped-domain seam walk; `SEAM_CURVE` on write; `seams_only` healing on read; `SectionTrace` extracted and generalized to two periodic axes (D8) | boundaryless faces, NURBS |
+| **4** | ~~Analytic curved supports, both ways, with seams~~ — **done** | full `UvMap`; cylinder/cone/sphere/torus surfaces; circle/ellipse; the unwrapped-domain seam walk; `seams_only` healing on read; pcurve rebuilding on two periodic axes (D8) | boundaryless faces, NURBS |
 | **5** | Boundaryless faces and voids | **after D11's fixture passes**: sphere and torus out, `BREP_WITH_VOIDS` | NURBS |
 | **6** | NURBS | both B-spline entities, rational complex forms, knot RLE, net transposition, periodic→clamped, `SURFACE_OF_REVOLUTION`. Adds `NurbsSurface::is_rational()` — one new public method in `geometry` | — |
 | **7** | Robustness and assemblies | lenient vendor-file parsing; the document type (D13); AP242 | — |
@@ -908,6 +948,98 @@ depends on it.
   `StepImport` with `solids` and `skipped`), so the build123d loop closes
   from a REPL.
 
+**What stage 4 settled.**
+
+- **The seam abstraction D7 asked for is `SeamedFace`, and it is thin,
+  because `UnwrappedFaceDomain` was already the hard half.** The domain
+  cuts the periodic parameter space open, joins the wrapping loops across
+  the cut and reports the corners the boundary turns through; what it does
+  *not* carry is identity, and a STEP shell is unusable without it. So
+  `topology/seam.rs` walks the face's loops in the same order the domain
+  placed them and pairs the two off positionally — one placed curve per
+  loop edge, as `place_loop` guarantees — leaving the gaps between them as
+  the synthesized part. The count is checked rather than trusted: a
+  mismatch means a pcurve would be attached to the wrong edge, which no
+  validator downstream catches.
+- **A cut always runs along a parameter line, which is what makes its curve
+  analytic.** `convert/iso_curve.rs` is the table: a line along a cylinder's
+  or a cone's axis, a latitude circle, a sphere's meridian, a torus's tube
+  circle. Each is anchored so its own parameter *is* the surface parameter
+  that varies, because an edge derives its span from its corners — a circle
+  anchored a quarter turn away would still pass through both ends and take
+  the wrong way round between them.
+- **A full circle is one `EDGE_CURVE` naming one `VERTEX_POINT` twice, and
+  the export had to learn that before any of the rest mattered.** A
+  cylinder's rims are closed edges, so `ClosedEdge` was being raised on the
+  planar *caps* long before the wall's seam came up. With one vertex at both
+  ends, the direction a loop walks such an edge is no longer a question the
+  corners can answer, so it is asked combinatorially —
+  `edge_orientation_at_dart` — for every edge rather than only for closed
+  ones.
+- **`SEAM_CURVE` is not written, and §5 was wrong to call it required.**
+  Writing one means writing the two `PCURVE`s it is defined by, which is the
+  machinery stage 2 deliberately skipped. What actually identifies a seam to
+  a reader is that one loop walks the same `EDGE_CURVE` twice, and that is
+  true of a plain one. OpenCascade reads NGK's cylinder back as a valid
+  three-face solid of the right volume.
+- **D8's extraction did not happen, and the reason is worth recording.**
+  `SectionTrace` carries a great deal that belongs to intersection — piece
+  splitting at degeneracy crossings, `IntersectionOptions`, fidelity
+  combination across two supports — and import needs none of it. What import
+  needs is one direction of one of its steps, so `convert/pcurve.rs` states
+  that directly: invert the curve at samples, resolve the collapsed rows,
+  unwrap **both** periodic axes, try a parameter line, fall back to a fit
+  measured in model units. The two-axis unwrap is the generalization D8
+  identified; it is now written where the first caller needed it rather than
+  in the intersection subtree, where both arms are still dead code.
+  `plan/curved_support_pcurve_rebuild.md` is unaffected either way.
+- **A plane is a projection, not a lift, and the projection keeps the
+  parameterization.** Plane parameters are Cartesian coordinates in the
+  plane, so the map is an isometry: a circle stays a circle at the same
+  angle, a B-spline keeps its knots, and the interval the corners bound
+  means the same thing on both sides. `builders::profiles::curve_pcurve`
+  could not be reused for this — it ignores the endpoints for anything but a
+  line and returns the whole support, which is right for a builder whose
+  curve is already the section and wrong for an arc read out of a file.
+- **`EDGE_CURVE.same_sense` *is* read, and stage 3's note that it is not no
+  longer holds.** The claim was that the corners re-derive everything the
+  flag says. On a line they do. On a circle they cannot: two complementary
+  arcs share both corners, and NGK's derived span is always the one running
+  forward along the support — so which arc an edge *is* depends on which
+  corner its reference dart leaves from, and only `same_sense` says which
+  that should be. The composition is one line —
+  `along_curve = orientation_agrees == same_sense` — and it feeds both the
+  reference dart and the α2 pairing.
+- **The winding must be read from *placed* parameter curves, and D5's
+  checksum is what found that.** Rebuilding a pcurve inverts its curve onto
+  the support, and inversion answers within one period — so the two sides of
+  a seam come back at the same parameter rather than a period apart, and the
+  rectangle the file described shoelaces as a triangle. The cylinder
+  survived that by luck; the cone did not, and reported one
+  `SenseMismatch` against an otherwise valid solid. Shifting each pcurve by
+  whole periods so it continues from the one before — the same rule
+  `place_after` uses — is the fix. This is precisely the early warning D5
+  was for: it named the face, not the solid, and not a failed validation
+  three stages later.
+- **No builder in the kernel makes a cone,** so the only way one reaches NGK
+  is through a file: `revolve` refuses any profile edge touching the axis
+  (`ApexRevolveUnsupported`). `tests/fixtures/step/frustum.step` is
+  therefore both the read fixture and, re-exported, the only cone the
+  external oracle can check — which it does, at the exact frustum volume.
+- **Two shapes are known not to survive, both of them stage 5's business.**
+  An OpenCascade sphere bounds its polar faces with `VERTEX_LOOP`, which D9
+  refuses by name; and an OpenCascade torus imports, sews and heals only one
+  of its two seams, arriving as a one-edge face with an inverted normal.
+  That second one is D11's predicted failure, observed rather than
+  anticipated — the fixture prerequisite stays, and it now has a concrete
+  symptom to aim at.
+- **A revolved annulus is an open shell in NGK, and that is not an exchange
+  bug.** Revolving a rectangle offset from the axis yields a tube whose caps
+  carry two distinct radial edges each, α2-free — `validate_all_solid_manifolds`
+  says so on the map itself, before any file is written. The exporter writes
+  what the map states and the importer reports `OpenShell`, which is the
+  honest behaviour on both sides.
+
 ---
 
 ## 11. Risks, ranked
@@ -919,16 +1051,21 @@ depends on it.
    by hand, and pinning it with a no-GMap test against the ISO formula. *`Surface::Torus`
    removed the most dangerous instance — a headline primitive — by making it an
    identity map.*
-2. **Generalizing `SectionTrace` to two periodic axes** (D8). The lifting machinery
-   exists but discards the `v` period and never unwraps `VPeriodic` at all; those arms
-   are dead code today, so STEP import is the first caller to exercise them and will
-   be the first to find what is wrong with them. Bounded, and dodged entirely by files
-   that supply their own pcurves — so build adoption first and treat lifting as the
-   fallback.
-3. **The torus boundaryless round trip** (D7/D11). Unproven that the seam pass
-   converges on the double unfolding. A hard fixture prerequisite; not a reason to
-   delay stages 1–4. Deferring it entirely leaves `sphere` and `torus` — two headline
-   primitives — unexportable, which is why it is stage 5 and not stage 8.
+   *Stage 4 discharged the cone half: a `CONICAL_SURFACE` OpenCascade wrote imports
+   with the right taper and comes back out at the exact frustum volume. The
+   transposing case is untouched, because `SURFACE_OF_REVOLUTION` is stage 6.*
+2. **The torus boundaryless round trip** (D7/D11). **No longer a prediction.** An
+   OpenCascade torus imports and sews, and the seam pass removes only one of its two
+   cuts: the result is a one-edge face whose normal points inward. The double
+   unfolding does not converge, exactly as D11 warned, and the fixture prerequisite is
+   now the way to find out whether that is a healing bug or an unfolding one. Blocks
+   `sphere` and `torus` — two headline primitives — in both directions, which is why
+   it is stage 5 and not stage 8.
+3. **Vendor spellings of a degenerate bound.** OpenCascade caps a sphere with a
+   `VERTEX_LOOP`, which D9 refuses by name, so a foreign sphere does not import at all
+   today. It is the right refusal — NGK has no loop with no edges — but it is also the
+   single most common shape a user will try, so stage 5 has to decide whether a
+   `VERTEX_LOOP` becomes a collapsed row rather than a rejection.
 4. **Silent NURBS parameterization corruption** (D2).
 5. **Tolerance mismatch** (D10). Expect foreign files whose vertices do not coincide by
    NGK's `1e-9`, and expect stitching (§6.3) to be where that surfaces.

@@ -97,8 +97,71 @@ fn a_line_round_trips() {
 }
 
 #[test]
+fn a_circle_round_trips() {
+    round_trip(&entities::Circle {
+        position: id(6),
+        radius: 12.5,
+    });
+}
+
+#[test]
+fn an_ellipse_round_trips_with_its_two_semi_axes_the_right_way_round() {
+    // Deliberately unequal, and deliberately *not* in descending order: the
+    // schema puts the axis along the reference direction first whether or not
+    // it is the longer one, so equal radii would hide a transposition.
+    let ellipse = round_trip(&entities::Ellipse {
+        position: id(6),
+        semi_axis_1: 3.0,
+        semi_axis_2: 7.0,
+    });
+    assert_eq!(ellipse.semi_axis_1, 3.0);
+    assert_eq!(ellipse.semi_axis_2, 7.0);
+}
+
+#[test]
 fn a_plane_round_trips() {
     round_trip(&entities::Plane { position: id(9) });
+}
+
+#[test]
+fn a_cylindrical_surface_round_trips() {
+    round_trip(&entities::CylindricalSurface {
+        position: id(9),
+        radius: 4.0,
+    });
+}
+
+#[test]
+fn a_spherical_surface_round_trips() {
+    round_trip(&entities::SphericalSurface {
+        position: id(9),
+        radius: 4.0,
+    });
+}
+
+#[test]
+fn a_conical_surface_round_trips_with_its_radius_before_its_angle() {
+    // Both are bare reals in adjacent positions, so a transposition parses
+    // cleanly and yields a cone of the wrong shape. Values that could not be
+    // each other are what catches it.
+    let cone = round_trip(&entities::ConicalSurface {
+        position: id(9),
+        radius: 20.0,
+        semi_angle: 0.5,
+    });
+    assert_eq!(cone.radius, 20.0);
+    assert_eq!(cone.semi_angle, 0.5);
+}
+
+#[test]
+fn a_toroidal_surface_round_trips_with_its_radii_the_right_way_round() {
+    let torus = round_trip(&entities::ToroidalSurface {
+        position: id(9),
+        major_radius: 10.0,
+        minor_radius: 2.0,
+    });
+    assert_eq!(torus.major_radius, 10.0);
+    assert_eq!(torus.minor_radius, 2.0);
 }
 
 #[test]

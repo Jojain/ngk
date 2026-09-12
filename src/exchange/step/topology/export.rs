@@ -12,41 +12,71 @@
 //! computed here rather than carried, by asking the face for its own normal
 //! and comparing against the support surface's — which is exactly what STEP's
 //! flag means.
+//!
+//! **The seam is synthesized, never stored either.** A face whose
+//! parameterization closes on itself — a cylinder wall, a revolved cap — has
+//! no seam edge in the map, because a seam belongs to a reading of the face
+//! rather than to the shape. [`SeamedFace`] derives one on the way out, and
+//! this module writes what it hands over without learning which kind of face
+//! it came from.
 
 use std::collections::HashMap;
 
-use crate::topology::LoopKind;
+use crate::geometry::{Axis2, LINEAR_TOLERANCE, Point2};
 use crate::topology::edge::Edge;
-use crate::topology::face::{Face, Loop};
-use crate::topology::gmap::GMap;
+use crate::topology::face::Face;
+use crate::topology::gmap::{Dart, GMap};
+use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, SolidKey, VertexKey};
 use crate::topology::vertex::Vertex;
 
 use super::super::builder::InstanceBuilder;
 use super::super::convert::curves::write_curve;
+use super::super::convert::iso_curve::iso_curve;
 use super::super::convert::placement::write_point;
 use super::super::convert::surfaces::write_surface;
 use super::super::error::{StepError, TopologyError};
 use super::super::part21::EntityId;
 use super::super::schema::entities;
-
-/// An `EDGE_CURVE` already written, and the corner it starts from.
-///
-/// The two travel together because neither answers the question alone: a loop
-/// meeting this edge must know both which instance to name *and* whether it is
-/// walking it forwards, and the start vertex is what settles the second.
-#[derive(Debug, Clone, Copy)]
-struct WrittenEdge {
-    curve: EntityId,
-    start: VertexKey,
-}
+use super::seam::{SeamedBound, SeamedEdge, SeamedFace};
 
 /// Instances already written, keyed by the cell they came from.
 #[derive(Debug, Default)]
 struct ExportCache {
     vertices: HashMap<VertexKey, EntityId>,
-    edges: HashMap<EdgeKey, WrittenEdge>,
+    edges: HashMap<EdgeKey, EntityId>,
+}
+
+/// A stretch of cut already written, and the corner it leaves from.
+///
+/// The two travel together because neither answers the question alone: the
+/// second walk to reach a cut must know both which instance to name *and*
+/// whether it is running the same way, and the corner is what settles that.
+#[derive(Debug, Clone, Copy)]
+struct WrittenSeam {
+    curve: EntityId,
+    start: EntityId,
+}
+
+/// A synthesized seam, named by what it runs between rather than by a cell.
+///
+/// A seam has no cell to be keyed on: it exists only in this reading of the
+/// face. What identifies it is the pair of corners it joins and the parameter
+/// direction it runs along — the same cut reached from either side of the
+/// domain gives the same key, which is what makes a wall's two stretches of
+/// cut one `EDGE_CURVE` used twice rather than two edges that never meet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SeamKey {
+    corners: (EntityId, EntityId),
+    along: Axis2,
+}
+
+impl SeamKey {
+    fn new(from: EntityId, to: EntityId, along: Axis2) -> Self {
+        let corners = if from <= to { (from, to) } else { (to, from) };
+        Self { corners, along }
+    }
 }
 
 /// Writes one solid, returning its `MANIFOLD_SOLID_BREP`.
@@ -85,37 +115,28 @@ fn write_face<P: Payload>(
     face: &Face<'_, P>,
     cache: &mut ExportCache,
 ) -> Result<EntityId, StepError> {
-    let loops = face.loops();
-    if loops.is_empty() {
+    if face.loops().is_empty() {
         return Err(TopologyError::BoundarylessFace { face: face.key() }.into());
     }
 
+    let seamed = SeamedFace::of_face(face)?;
     let same_sense = face_same_sense(face)?;
     let surface = write_surface(builder, face.surface())?;
 
-    let mut bounds = Vec::with_capacity(loops.len());
-    for loop_ in &loops {
-        let kind = loop_.kind();
-        if !matches!(kind, LoopKind::Outer | LoopKind::Inner) {
-            // A wrapping or capping loop closes on the periodic quotient, and
-            // STEP has no way to say that: it wants the domain cut open along
-            // a seam. Emitting the loop as it stands would produce a bound
-            // that does not close, so it is refused instead.
-            return Err(TopologyError::PeriodicLoop {
-                face: face.key(),
-                kind: loop_kind_name(kind),
-            }
-            .into());
-        }
-
-        let bound = write_edge_loop(builder, gmap, loop_, cache)?;
+    // Seams are shared within one face and never beyond it: the cut is a
+    // property of this face's own domain, so another face's cut is a different
+    // edge even where the two would land on the same corners.
+    let mut seams = HashMap::new();
+    let mut bounds = Vec::with_capacity(seamed.bounds.len());
+    for bound in &seamed.bounds {
+        let edge_loop = write_edge_loop(builder, gmap, face, bound, cache, &mut seams)?;
         bounds.push(builder.add_entity(&entities::FaceBound {
-            bound,
+            bound: edge_loop,
             // The loop is already written in the face's own traversal
             // direction, so the bound never needs to flip it; the walk
             // direction lives entirely in each ORIENTED_EDGE.
             orientation: true,
-            outer: kind == LoopKind::Outer,
+            outer: bound.outer,
         }));
     }
 
@@ -133,9 +154,10 @@ fn write_face<P: Payload>(
 /// flipped whenever the boundary winds the other way, so comparing the two is
 /// the same question asked twice.
 fn face_same_sense<P: Payload>(face: &Face<'_, P>) -> Result<bool, TopologyError> {
-    // Every support written here is a plane, whose normal is constant, so any
-    // parameter answers for it. A curved support would need one known to lie
-    // inside the trimmed region.
+    // The sign the comparison yields is the boundary's winding, which belongs
+    // to the face rather than to a parameter — so any `(u, v)` where the
+    // support has a normal at all answers for the whole face, and one that has
+    // none is what the refusal below is for.
     let (u, v) = (0.0, 0.0);
     let agreement = face.normal_at(u, v).dot(&face.surface().normal_at(u, v));
     if agreement == 0.0 || !agreement.is_finite() {
@@ -147,33 +169,29 @@ fn face_same_sense<P: Payload>(face: &Face<'_, P>) -> Result<bool, TopologyError
 fn write_edge_loop<P: Payload>(
     builder: &mut InstanceBuilder,
     gmap: &GMap<P>,
-    loop_: &Loop<'_, P>,
+    face: &Face<'_, P>,
+    bound: &SeamedBound,
     cache: &mut ExportCache,
+    seams: &mut HashMap<SeamKey, WrittenSeam>,
 ) -> Result<EntityId, StepError> {
-    let mut oriented = Vec::new();
-    // One dart per edge, in the loop's own traversal order — which is already
-    // the face view's orientation, since the loop was read through it.
-    for dart in loop_.darts().step_by(2) {
-        let edge = Edge::from_dart(gmap, dart).ok_or(TopologyError::UnregisteredEdge { dart })?;
-        let key = edge.key();
-        let written = match cache.edges.get(&key) {
-            Some(written) => *written,
-            None => {
-                let written = write_edge_curve(builder, gmap, key, cache)?;
-                cache.edges.insert(key, written);
-                written
-            }
+    let corners = bound_corners(builder, gmap, face, bound, cache)?;
+
+    let mut oriented = Vec::with_capacity(bound.edges.len());
+    for (index, element) in bound.edges.iter().enumerate() {
+        let (edge_element, forward) = match element {
+            SeamedEdge::Real { dart } => write_real_edge(builder, gmap, *dart, cache)?,
+            SeamedEdge::Synthetic { from, to } => write_seam(
+                builder,
+                face,
+                *from,
+                *to,
+                corners[index],
+                corners[(index + 1) % corners.len()],
+                seams,
+            )?,
         };
-
-        // The loop walks this edge forwards exactly when it leaves the same
-        // corner the EDGE_CURVE was written from.
-        let bounded = edge
-            .bounded()
-            .ok_or(TopologyError::ClosedEdge { edge: key })?;
-        let forward = bounded.start().key() == written.start;
-
         oriented.push(builder.add_entity(&entities::OrientedEdge {
-            edge_element: written.curve,
+            edge_element,
             orientation: forward,
         }));
     }
@@ -183,35 +201,117 @@ fn write_edge_loop<P: Payload>(
     }))
 }
 
-/// Writes the `EDGE_CURVE` for an edge, in the edge's own default direction.
+/// The `VERTEX_POINT` the walk stands on before each element of a bound.
 ///
-/// Writing it from the *default* orientation rather than from whichever face
-/// reached it first is what makes the instance shareable: both faces then
-/// describe the same directed curve and disagree only in their own
+/// A real edge names its own corner, so a stretch of cut that meets one takes
+/// the corner from it rather than from a position — which is what keeps a seam
+/// welded to the rim it actually ends on. Only a corner between two stretches
+/// of cut has nothing to take it from, and that is a place the map genuinely
+/// has no vertex for: it is written from the surface.
+fn bound_corners<P: Payload>(
+    builder: &mut InstanceBuilder,
+    gmap: &GMap<P>,
+    face: &Face<'_, P>,
+    bound: &SeamedBound,
+    cache: &mut ExportCache,
+) -> Result<Vec<EntityId>, StepError> {
+    let count = bound.edges.len();
+    let mut corners = Vec::with_capacity(count);
+    for (index, element) in bound.edges.iter().enumerate() {
+        let corner = match element {
+            SeamedEdge::Real { dart } => {
+                let (start, _) = edge_corners(gmap, *dart)?;
+                write_vertex(builder, &start, cache)?
+            }
+            SeamedEdge::Synthetic { from, .. } => match &bound.edges[(index + count - 1) % count] {
+                SeamedEdge::Real { dart } => {
+                    let (_, end) = edge_corners(gmap, *dart)?;
+                    write_vertex(builder, &end, cache)?
+                }
+                SeamedEdge::Synthetic { .. } => {
+                    let point = face.surface().point_at(from.x, from.y);
+                    let vertex_geometry = write_point(builder, point);
+                    builder.add_entity(&entities::VertexPoint { vertex_geometry })
+                }
+            },
+        };
+        corners.push(corner);
+    }
+    Ok(corners)
+}
+
+/// The corners an oriented edge view runs from and to.
+///
+/// An edge that closes on itself leaves and arrives at the one vertex it
+/// passes through, which `EDGE_CURVE` spells by naming that vertex twice.
+fn edge_corners<P: Payload>(
+    gmap: &GMap<P>,
+    dart: Dart,
+) -> Result<(Vertex<'_, P>, Vertex<'_, P>), TopologyError> {
+    let edge = Edge::from_dart(gmap, dart).ok_or(TopologyError::UnregisteredEdge { dart })?;
+    match edge {
+        Edge::Bounded(bounded) => Ok(bounded.vertices()),
+        Edge::Closed(closed) => {
+            let vertex = closed
+                .vertex()
+                .ok_or(TopologyError::ClosedEdge { edge: closed.key() })?;
+            Ok((vertex.clone(), vertex))
+        }
+    }
+}
+
+/// Writes the `EDGE_CURVE` for an edge of the map, shared by key.
+///
+/// The instance is written in the edge's *default* direction rather than from
+/// whichever face reached it first, which is what makes it shareable: both
+/// faces then describe the same directed curve and disagree only in their own
 /// `ORIENTED_EDGE.orientation`.
+fn write_real_edge<P: Payload>(
+    builder: &mut InstanceBuilder,
+    gmap: &GMap<P>,
+    dart: Dart,
+    cache: &mut ExportCache,
+) -> Result<(EntityId, bool), StepError> {
+    let edge = Edge::from_dart(gmap, dart).ok_or(TopologyError::UnregisteredEdge { dart })?;
+    let key = edge.key();
+
+    let edge_element = match cache.edges.get(&key) {
+        Some(&written) => written,
+        None => {
+            let written = write_edge_curve(builder, gmap, key, cache)?;
+            cache.edges.insert(key, written);
+            written
+        }
+    };
+
+    // Which way this loop walks the edge is a combinatorial fact, not a
+    // geometric one: comparing corners would say nothing about an edge that
+    // closes on itself, whose two ends are the same vertex.
+    let forward = gmap.edge_orientation_at_dart(key, dart) == Orientation::Same;
+    Ok((edge_element, forward))
+}
+
 fn write_edge_curve<P: Payload>(
     builder: &mut InstanceBuilder,
     gmap: &GMap<P>,
     key: EdgeKey,
     cache: &mut ExportCache,
-) -> Result<WrittenEdge, StepError> {
-    let bounded = Edge::new(gmap, key)
-        .bounded()
-        .ok_or(TopologyError::ClosedEdge { edge: key })?;
-    let (start, end) = bounded.vertices();
+) -> Result<EntityId, StepError> {
+    let edge = Edge::new(gmap, key);
+    let (start, end) = edge_corners(gmap, edge.dart())?;
 
     let start_id = write_vertex(builder, &start, cache)?;
     let end_id = write_vertex(builder, &end, cache)?;
 
-    let geometry = bounded
+    let geometry = edge
         .curve()
         .ok_or(TopologyError::MissingCurve { edge: key })?;
     let curve = write_curve(builder, geometry)?;
 
     // An edge stores no interval, so which way the support runs between the
-    // two vertices is derived: the span they bound increases exactly when the
+    // two corners is derived: the span they bound increases exactly when the
     // curve agrees with start → end.
-    let interval = bounded
+    let interval = edge
         .parameter_interval()
         .ok_or(TopologyError::MissingCurve { edge: key })?;
     let same_sense = interval.start <= interval.end;
@@ -223,10 +323,64 @@ fn write_edge_curve<P: Payload>(
         same_sense,
     });
 
-    Ok(WrittenEdge {
-        curve: edge_curve,
-        start: start.key(),
-    })
+    Ok(edge_curve)
+}
+
+/// Writes one stretch of a synthesized cut, shared with the other stretch that
+/// describes it.
+///
+/// A cut is walked from both sides of the domain, and both sides are the same
+/// edge of the shell — so the second one to arrive reuses the first's instance
+/// and only says that it runs the other way.
+fn write_seam<P: Payload>(
+    builder: &mut InstanceBuilder,
+    face: &Face<'_, P>,
+    from: Point2,
+    to: Point2,
+    start: EntityId,
+    end: EntityId,
+    seams: &mut HashMap<SeamKey, WrittenSeam>,
+) -> Result<(EntityId, bool), StepError> {
+    let along = varying_axis(from, to).ok_or(TopologyError::UnwritableSeam { face: face.key() })?;
+    let key = SeamKey::new(start, end, along);
+    if let Some(written) = seams.get(&key) {
+        return Ok((written.curve, written.start == start));
+    }
+
+    let surface = face.surface();
+    let curve =
+        iso_curve(surface, from, to).ok_or(TopologyError::UnwritableSeam { face: face.key() })?;
+    let geometry = write_curve(builder, &curve)?;
+    let span = curve.interval_between(
+        surface.point_at(from.x, from.y),
+        surface.point_at(to.x, to.y),
+    );
+
+    let edge_curve = builder.add_entity(&entities::EdgeCurve {
+        edge_start: start,
+        edge_end: end,
+        edge_geometry: geometry,
+        same_sense: span.start <= span.end,
+    });
+
+    seams.insert(
+        key,
+        WrittenSeam {
+            curve: edge_curve,
+            start,
+        },
+    );
+    Ok((edge_curve, true))
+}
+
+/// Which parameter a cut runs along, when exactly one of them varies.
+fn varying_axis(from: Point2, to: Point2) -> Option<Axis2> {
+    let (du, dv) = ((to.x - from.x).abs(), (to.y - from.y).abs());
+    match (du <= LINEAR_TOLERANCE, dv <= LINEAR_TOLERANCE) {
+        (true, true) | (false, false) => None,
+        (false, true) => Some(Axis2::U),
+        (true, false) => Some(Axis2::V),
+    }
 }
 
 /// Writes a `VERTEX_POINT`, shared by key.
@@ -250,13 +404,4 @@ fn write_vertex<P: Payload>(
     let id = builder.add_entity(&entities::VertexPoint { vertex_geometry });
     cache.vertices.insert(key, id);
     Ok(id)
-}
-
-fn loop_kind_name(kind: LoopKind) -> &'static str {
-    match kind {
-        LoopKind::Outer => "Outer",
-        LoopKind::Inner => "Inner",
-        LoopKind::Wrapping { .. } => "Wrapping",
-        LoopKind::Capping { .. } => "Capping",
-    }
 }

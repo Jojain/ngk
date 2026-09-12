@@ -103,6 +103,18 @@ pub enum GeometryError {
     /// A line whose direction vector has no length, which has no `VECTOR`.
     #[error("a line with no extent has no STEP representation")]
     DegenerateLine,
+
+    /// A cone whose generatrix runs along the axis or perpendicular to it.
+    ///
+    /// `CONICAL_SURFACE` requires a semi-angle strictly between zero and a
+    /// right angle. At zero the surface is a cylinder and at a right angle it
+    /// is a plane through the apex, and in both cases the substitution
+    /// relating STEP's axial `v` to NGK's generatrix `v` has no finite answer.
+    #[error("a cone of half angle {half_angle} radians is not a `CONICAL_SURFACE`")]
+    DegenerateCone {
+        /// The half angle met, in radians.
+        half_angle: f64,
+    },
 }
 
 /// **L4** — topology that does not reach a shell, or a shell that does not
@@ -158,14 +170,30 @@ pub enum TopologyError {
         face: FaceKey,
     },
 
-    /// A loop that closes on the periodic quotient rather than in parameter
-    /// space, which STEP writes cut open along a seam.
-    #[error("face {face:?} carries a {kind} loop, which does not close in parameter space")]
-    PeriodicLoop {
+    /// A face whose parameter domain could not be cut open.
+    ///
+    /// STEP bounds every face by loops that close in parameter space, so a
+    /// periodic face is written along a synthesized cut. Deriving that cut
+    /// reads the face's own parameter curves, and a face missing one — or
+    /// whose boundary the cut does not account for — has no seamed spelling.
+    #[error("face {face:?} has no seamed boundary: {detail}")]
+    UncuttableFace {
         /// The face met.
         face: FaceKey,
-        /// The loop kind met, named as `LoopKind` spells it.
-        kind: &'static str,
+        /// What the unwrapped domain said.
+        detail: String,
+    },
+
+    /// A cut this build has no analytic curve for.
+    ///
+    /// A synthesized seam runs along a parameter line, and on the supports
+    /// with a closed form for theirs it is a line or a circle. Anything else
+    /// would have to be approximated, which would put a boundary on the file
+    /// that is not quite on the surface — so the face is refused by name.
+    #[error("face {face:?} needs a seam its support has no analytic curve for")]
+    UnwritableSeam {
+        /// The face met.
+        face: FaceKey,
     },
 
     /// A solid with cavities, which needs `BREP_WITH_VOIDS`.

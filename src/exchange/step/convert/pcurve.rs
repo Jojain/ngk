@@ -1,0 +1,348 @@
+//! Rebuilding a parameter curve from the 3D curve that lies on the support.
+//!
+//! STEP does not require a file to carry parameter curves: `SURFACE_CURVE`'s
+//! associated geometry is optional, and a writer that thinks its 3D curves say
+//! everything omits them. `FaceAttr` requires one per boundary dart, so the
+//! importer has to rebuild what the file left out.
+//!
+//! On a plane that is a *projection*: an isometry onto the plane's own
+//! coordinates, exact for every support and leaving the parameterization where
+//! it was. Everywhere else it is a *lift*: invert the curve onto the support
+//! and find the image it traces through the support's parameters. Lifting is
+//! one-directional and every `Surface` can invert a point, so it needs no
+//! intersection machinery — what it needs is care about the two things
+//! inversion gets wrong on its own.
+//!
+//! **A periodic parameter folds.** Inversion answers within one period, so a
+//! curve crossing the fold comes back as a jump of a whole period rather than
+//! as a continuous walk. Both directions can fold — a torus folds in both at
+//! once — so the unwrapping runs per axis rather than on longitude alone.
+//!
+//! **A collapsed row loses a parameter.** Every longitude names a sphere's
+//! pole, so inversion there returns an arbitrary one and a curve arriving at a
+//! pole would swing sideways across the whole domain in its last step. A
+//! sample on a collapsed row therefore keeps the parameter that pins the row
+//! and takes the other from its neighbour, which is the direction the curve was
+//! actually travelling when it got there.
+
+use nalgebra::Vector3;
+
+use crate::geometry::{
+    Axis2, Circle2, ControlPolygon2, Curve, Curve2, Ellipse2, HPoint2, Interval, Line2,
+    NurbsCurve2, NurbsError, Plane, Point2, Point3, Surface, TrimmedCurve, TrimmedCurve2, Vector2,
+};
+
+/// How many points a lift inverts before it decides what it is looking at.
+///
+/// Enough to tell a parameter line from a curve that merely starts and ends on
+/// one, and to seed an interpolation that is then measured and refined.
+const SAMPLES: usize = 16;
+
+/// How many times a fitted lift is resampled while it is still too far out.
+const REFINEMENTS: usize = 4;
+
+/// A parameter curve rebuilt on a support, and how faithful it is.
+///
+/// The two travel together because a caller that reports its imports has to
+/// say which boundaries are exact and which were approximated, and a fidelity
+/// that arrived separately could be attached to the wrong curve.
+#[derive(Debug, Clone)]
+pub struct LiftedPcurve {
+    /// The image of the curve in the support's parameter space.
+    pub pcurve: TrimmedCurve2,
+    /// How far the image strays from the curve, when it was fitted.
+    ///
+    /// `None` where the image is a closed form — a projection onto a plane, or
+    /// a parameter line verified against the curve — and those are exact
+    /// rather than merely close, so there is no residual to state.
+    pub residual: Option<f64>,
+}
+
+/// Lifts the section of `curve` over `interval` onto `surface`.
+///
+/// The result runs in the same direction as `interval`, so a boundary walked
+/// backwards lifts to a parameter curve walked backwards, which is what makes
+/// the face's winding come out of the file rather than being reasoned about.
+pub fn lift_pcurve(
+    surface: &Surface,
+    curve: &Curve,
+    interval: Interval,
+    tolerance: f64,
+) -> Result<LiftedPcurve, NurbsError> {
+    if let Surface::Plane(plane) = surface {
+        return Ok(LiftedPcurve {
+            pcurve: TrimmedCurve2::new(project_onto_plane(plane, curve)?, interval),
+            residual: None,
+        });
+    }
+
+    let section = TrimmedCurve::new(curve.clone(), interval);
+    let fractions: Vec<f64> = (0..=SAMPLES)
+        .map(|index| index as f64 / SAMPLES as f64)
+        .collect();
+    let image = invert(surface, &section, &fractions)?;
+
+    if let Some(pcurve) = parameter_line(surface, &section, &image, tolerance) {
+        return Ok(LiftedPcurve {
+            pcurve,
+            residual: None,
+        });
+    }
+    fit(surface, &section, &image, tolerance)
+}
+
+/// Projects a support lying in a plane onto that plane's parameter space.
+///
+/// **The interval carries over untouched**, which is the whole reason this is
+/// a separate path rather than a lift. A plane's parameters are Cartesian
+/// coordinates in it, so projection is an isometry of the plane onto its own
+/// domain: it moves the support's *representation* and leaves its
+/// parameterization exactly where it was. A circle's angle stays that angle, a
+/// B-spline keeps its knots, and the span the edge's corners bound means the
+/// same thing in both.
+fn project_onto_plane(plane: &Plane, curve: &Curve) -> Result<Curve2, NurbsError> {
+    let origin = plane.origin();
+    let point = |point: Point3| {
+        let offset = point - origin;
+        Point2::new(offset.dot(&plane.x_dir()), offset.dot(&plane.y_dir()))
+    };
+    let direction =
+        |vector: Vector3<f64>| Vector2::new(vector.dot(&plane.x_dir()), vector.dot(&plane.y_dir()));
+
+    Ok(match curve {
+        Curve::Line(line) => Curve2::Line(Line2::new(
+            point(line.point_at(0.0)),
+            direction(line.point_at(1.0) - line.point_at(0.0)),
+        )),
+        Curve::Circle(circle) => {
+            let x = direction(circle.plane().x_dir().into_inner());
+            let y = direction(circle.plane().y_dir().into_inner());
+            let flat = Circle2::new(point(circle.plane().origin()), x, circle.radius());
+            Curve2::Circle(oriented(flat, x, y, Circle2::reversed))
+        }
+        Curve::Ellipse(ellipse) => {
+            let frame = ellipse.frame();
+            let x = direction(frame.x_dir.into_inner());
+            let y = direction(frame.y_dir.into_inner());
+            let flat = Ellipse2::new(
+                point(frame.origin),
+                x,
+                ellipse.major_radius(),
+                ellipse.minor_radius(),
+            );
+            Curve2::Ellipse(oriented(flat, x, y, Ellipse2::reversed))
+        }
+        // Projecting the homogeneous control polygon is exact because the
+        // projection is affine, and it leaves the degree, the weights and the
+        // knots alone — so the curve keeps its own parameter as well as its
+        // point set.
+        Curve::Nurbs(nurbs) => {
+            let control_points = ControlPolygon2::new(
+                nurbs
+                    .control_points()
+                    .iter()
+                    .map(|control| {
+                        HPoint2::from_cartesian(point(control.to_cartesian()), control.weight())
+                    })
+                    .collect(),
+            )?;
+            Curve2::Nurbs(NurbsCurve2::new(
+                nurbs.degree(),
+                control_points,
+                nurbs.knots().clone(),
+            )?)
+        }
+    })
+}
+
+/// Restores a conic's sense when the plane it lay in faces the other way.
+///
+/// A conic built from a centre, a start direction and a radius turns
+/// counter-clockwise by construction, so its quarter-turn direction is
+/// `perp(x)`. A circle whose own plane is the face's plane seen from behind
+/// projects with the opposite one, and saying so is what keeps its angular
+/// parameter — and so every span written on it — running the way it did in
+/// space.
+fn oriented<T>(conic: T, x: Vector2, y: Vector2, reverse: impl Fn(&T) -> T) -> T {
+    let turns_counter_clockwise = x.x * y.y - x.y * y.x;
+    if turns_counter_clockwise < 0.0 {
+        reverse(&conic)
+    } else {
+        conic
+    }
+}
+
+/// Inverts a section onto a support at the given fractions of its span.
+fn invert(
+    surface: &Surface,
+    section: &TrimmedCurve,
+    fractions: &[f64],
+) -> Result<Vec<Point2>, NurbsError> {
+    let mut image = Vec::with_capacity(fractions.len());
+    for &fraction in fractions {
+        image.push(surface.param_at(section.point_at(fraction))?);
+    }
+    resolve_collapsed_rows(surface, &mut image);
+    unwrap_periods(surface, &mut image);
+    Ok(image)
+}
+
+/// Replaces the parameter a collapsed row does not determine.
+///
+/// A row that collapses to a point carries every value of the parameter
+/// running along it, so inversion there returns whichever one its arithmetic
+/// happened to produce. The neighbouring sample knows which one the curve was
+/// heading for.
+fn resolve_collapsed_rows(surface: &Surface, image: &mut [Point2]) {
+    for index in 0..image.len() {
+        let point = image[index];
+        if !surface.is_degenerate_at(point.x, point.y) {
+            continue;
+        }
+        let Some(along) = collapsed_axis(surface, point) else {
+            continue;
+        };
+        let Some(neighbour) = nearest_defined(surface, image, index) else {
+            continue;
+        };
+        image[index][along.index()] = neighbour[along.index()];
+    }
+}
+
+/// Which parameter runs along the collapsed row through a point, if any.
+fn collapsed_axis(surface: &Surface, point: Point2) -> Option<Axis2> {
+    // A row listed along one axis is a value that axis holds fixed, so what
+    // varies freely along it is the *other* one.
+    for axis in [Axis2::U, Axis2::V] {
+        let held = point[axis.index()];
+        if surface
+            .degenerate_rows(axis)
+            .iter()
+            .any(|row| (row - held).abs() <= crate::geometry::ANGULAR_TOLERANCE)
+        {
+            return Some(axis.transverse());
+        }
+    }
+    None
+}
+
+/// The nearest sample the support does not collapse at.
+fn nearest_defined(surface: &Surface, image: &[Point2], from: usize) -> Option<Point2> {
+    (1..image.len()).find_map(|step| {
+        [from.checked_sub(step), from.checked_add(step)]
+            .into_iter()
+            .flatten()
+            .filter_map(|index| image.get(index).copied())
+            .find(|point| !surface.is_degenerate_at(point.x, point.y))
+    })
+}
+
+/// Lifts each periodic parameter onto one continuous branch.
+///
+/// Inversion folds a periodic parameter into one period, so a curve crossing
+/// the fold comes back with a jump of very nearly a whole period in it. Undoing
+/// that per sample, per axis, is what turns the samples back into a walk.
+fn unwrap_periods(surface: &Surface, image: &mut [Point2]) {
+    for (axis, period) in periods(surface).into_iter().enumerate() {
+        let Some(period) = period else {
+            continue;
+        };
+        for index in 1..image.len() {
+            let previous = image[index - 1][axis];
+            let jump = image[index][axis] - previous;
+            image[index][axis] -= (jump / period).round() * period;
+        }
+    }
+}
+
+/// The support's periods, in parameter order.
+fn periods(surface: &Surface) -> [Option<f64>; 2] {
+    use crate::geometry::SurfacePeriodicity::{
+        None as Aperiodic, UPeriodic, UVPeriodic, VPeriodic,
+    };
+    match surface.periodicity() {
+        Aperiodic => [None, None],
+        UPeriodic(u) => [Some(u), None],
+        VPeriodic(v) => [None, Some(v)],
+        UVPeriodic(u, v) => [Some(u), Some(v)],
+    }
+}
+
+/// Returns the straight parameter-space segment the samples lie on, if they do.
+///
+/// The candidate is proposed from the samples and then *verified* against the
+/// section itself, in model units — so a segment that happens to join the two
+/// ends of a curve that bulges away from it is rejected rather than silently
+/// returned. Most boundaries on an analytic support are parameter lines, which
+/// is why this is tried before anything is fitted.
+fn parameter_line(
+    surface: &Surface,
+    section: &TrimmedCurve,
+    image: &[Point2],
+    tolerance: f64,
+) -> Option<TrimmedCurve2> {
+    let (&first, &last) = (image.first()?, image.last()?);
+    let candidate = TrimmedCurve2::segment(first, last);
+    (deviation(surface, section, &candidate) <= tolerance).then_some(candidate)
+}
+
+/// Interpolates the samples, refining until the fit is within tolerance.
+///
+/// The error is measured by putting the parameter curve back on the surface
+/// and comparing against the section in model units, so it means the same
+/// thing as any other linear tolerance rather than being a parameter-space
+/// residual whose size depends on the support.
+fn fit(
+    surface: &Surface,
+    section: &TrimmedCurve,
+    image: &[Point2],
+    tolerance: f64,
+) -> Result<LiftedPcurve, NurbsError> {
+    let mut samples = image.len() - 1;
+    let mut best: Option<(TrimmedCurve2, f64)> = None;
+    for _ in 0..REFINEMENTS {
+        let fractions: Vec<f64> = (0..=samples)
+            .map(|index| index as f64 / samples as f64)
+            .collect();
+        let points = invert(surface, section, &fractions)?;
+        let fitted = NurbsCurve2::interpolate_with_parameters(&points, &fractions)?;
+        let span = fitted.domain();
+        let candidate = TrimmedCurve2::new(Curve2::Nurbs(fitted), span);
+
+        let error = deviation(surface, section, &candidate);
+        if best.as_ref().is_none_or(|(_, best)| error < *best) {
+            best = Some((candidate, error));
+        }
+        if error <= tolerance {
+            break;
+        }
+        samples *= 2;
+    }
+
+    let (pcurve, residual) = best.expect("at least one fit is attempted");
+    Ok(LiftedPcurve {
+        pcurve,
+        residual: Some(residual),
+    })
+}
+
+/// The furthest a parameter curve's image strays from the section.
+fn deviation(surface: &Surface, section: &TrimmedCurve, pcurve: &TrimmedCurve2) -> f64 {
+    /// Measured more finely than the lift was sampled, so a candidate cannot
+    /// be verified only at the points that proposed it.
+    const CHECKS: usize = 4 * SAMPLES;
+
+    (0..=CHECKS)
+        .map(|index| {
+            let fraction = index as f64 / CHECKS as f64;
+            let uv = pcurve.point_at(fraction);
+            (surface.point_at(uv.x, uv.y) - section.point_at(fraction)).norm()
+        })
+        .fold(0.0_f64, |worst, distance| {
+            if distance.is_finite() {
+                worst.max(distance)
+            } else {
+                f64::INFINITY
+            }
+        })
+}

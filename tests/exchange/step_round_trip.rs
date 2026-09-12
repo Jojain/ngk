@@ -224,3 +224,13 @@ fn holed_slab() -> Solid {
         add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 3.0)).expect("it should extrude");
     Shape::new(map, solid)
 }
+
+#[test]
+fn a_cylinder_survives_a_round_trip() {
+    // The seam case, and the strongest single statement in this file: the
+    // wall goes out with a synthesized cut in it and has to come back as one
+    // ring face with no seam edge, which only happens if the cut was written
+    // where the domain said, read back as a doubly-walked edge, and healed
+    // away again. A cell count that matches is what says all three happened.
+    round_trip(&solids::cylinder(5.0, 10.0).expect("a cylinder should build"));
+}

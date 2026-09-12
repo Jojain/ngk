@@ -256,6 +256,84 @@ impl Entity for Line {
     }
 }
 
+/// `CIRCLE(name, position, radius)`, parameterized by angle from the
+/// placement's reference direction.
+///
+/// The placement is an `axis2_placement`, which is 2D on a parameter curve
+/// and 3D in model space; which one it is follows from where the circle was
+/// reached, so the reference is carried without being resolved here.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Circle {
+    /// The `AXIS2_PLACEMENT_2D` or `_3D` the angle is measured in.
+    pub position: EntityId,
+    /// The radius, in the document's own length unit.
+    pub radius: f64,
+}
+
+impl Entity for Circle {
+    const KEYWORDS: &'static [&'static str] = &["CIRCLE"];
+
+    fn read(mut attributes: Attributes<'_>) -> Result<Self, SchemaError> {
+        attributes.name()?;
+        let position = attributes.reference()?;
+        let radius = attributes.real()?;
+        Ok(Self { position, radius })
+    }
+
+    fn record(&self) -> Record {
+        Record::new(
+            "CIRCLE",
+            vec![
+                unnamed(),
+                Value::Ref(self.position),
+                Value::Real(self.radius),
+            ],
+        )
+    }
+}
+
+/// `ELLIPSE(name, position, semi_axis_1, semi_axis_2)`.
+///
+/// The first semi-axis lies along the placement's reference direction, and
+/// the schema does not require it to be the longer of the two.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ellipse {
+    /// The `AXIS2_PLACEMENT_2D` or `_3D` the angle is measured in.
+    pub position: EntityId,
+    /// The semi-axis along the placement's reference direction.
+    pub semi_axis_1: f64,
+    /// The semi-axis perpendicular to it.
+    pub semi_axis_2: f64,
+}
+
+impl Entity for Ellipse {
+    const KEYWORDS: &'static [&'static str] = &["ELLIPSE"];
+
+    fn read(mut attributes: Attributes<'_>) -> Result<Self, SchemaError> {
+        attributes.name()?;
+        let position = attributes.reference()?;
+        let semi_axis_1 = attributes.real()?;
+        let semi_axis_2 = attributes.real()?;
+        Ok(Self {
+            position,
+            semi_axis_1,
+            semi_axis_2,
+        })
+    }
+
+    fn record(&self) -> Record {
+        Record::new(
+            "ELLIPSE",
+            vec![
+                unnamed(),
+                Value::Ref(self.position),
+                Value::Real(self.semi_axis_1),
+                Value::Real(self.semi_axis_2),
+            ],
+        )
+    }
+}
+
 /// `PLANE(name, position)`, whose `(u, v)` are distances along the
 /// placement's x and y.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -275,6 +353,154 @@ impl Entity for Plane {
 
     fn record(&self) -> Record {
         Record::new("PLANE", vec![unnamed(), Value::Ref(self.position)])
+    }
+}
+
+/// `CYLINDRICAL_SURFACE(name, position, radius)`, whose `u` is the angle
+/// about the placement's axis and whose `v` is the distance along it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CylindricalSurface {
+    /// The `AXIS2_PLACEMENT_3D` the surface is built on.
+    pub position: EntityId,
+    /// The radius, in the document's own length unit.
+    pub radius: f64,
+}
+
+impl Entity for CylindricalSurface {
+    const KEYWORDS: &'static [&'static str] = &["CYLINDRICAL_SURFACE"];
+
+    fn read(mut attributes: Attributes<'_>) -> Result<Self, SchemaError> {
+        attributes.name()?;
+        let position = attributes.reference()?;
+        let radius = attributes.real()?;
+        Ok(Self { position, radius })
+    }
+
+    fn record(&self) -> Record {
+        Record::new(
+            "CYLINDRICAL_SURFACE",
+            vec![
+                unnamed(),
+                Value::Ref(self.position),
+                Value::Real(self.radius),
+            ],
+        )
+    }
+}
+
+/// `SPHERICAL_SURFACE(name, position, radius)`, whose `u` is longitude about
+/// the placement's axis and whose `v` is latitude from its equator.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SphericalSurface {
+    /// The `AXIS2_PLACEMENT_3D` the surface is built on.
+    pub position: EntityId,
+    /// The radius, in the document's own length unit.
+    pub radius: f64,
+}
+
+impl Entity for SphericalSurface {
+    const KEYWORDS: &'static [&'static str] = &["SPHERICAL_SURFACE"];
+
+    fn read(mut attributes: Attributes<'_>) -> Result<Self, SchemaError> {
+        attributes.name()?;
+        let position = attributes.reference()?;
+        let radius = attributes.real()?;
+        Ok(Self { position, radius })
+    }
+
+    fn record(&self) -> Record {
+        Record::new(
+            "SPHERICAL_SURFACE",
+            vec![
+                unnamed(),
+                Value::Ref(self.position),
+                Value::Real(self.radius),
+            ],
+        )
+    }
+}
+
+/// `CONICAL_SURFACE(name, position, radius, semi_angle)`.
+///
+/// The placement's origin sits on the `v = 0` reference circle rather than at
+/// the apex, and `v` is measured along the axis — not along the generatrix,
+/// which is where this differs from NGK's own parameterization.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConicalSurface {
+    /// The `AXIS2_PLACEMENT_3D` the surface is built on.
+    pub position: EntityId,
+    /// The radius of the reference circle, in the document's length unit.
+    pub radius: f64,
+    /// The half-angle at the apex, in the document's plane-angle unit —
+    /// which is *degrees* in many files.
+    pub semi_angle: f64,
+}
+
+impl Entity for ConicalSurface {
+    const KEYWORDS: &'static [&'static str] = &["CONICAL_SURFACE"];
+
+    fn read(mut attributes: Attributes<'_>) -> Result<Self, SchemaError> {
+        attributes.name()?;
+        let position = attributes.reference()?;
+        let radius = attributes.real()?;
+        let semi_angle = attributes.real()?;
+        Ok(Self {
+            position,
+            radius,
+            semi_angle,
+        })
+    }
+
+    fn record(&self) -> Record {
+        Record::new(
+            "CONICAL_SURFACE",
+            vec![
+                unnamed(),
+                Value::Ref(self.position),
+                Value::Real(self.radius),
+                Value::Real(self.semi_angle),
+            ],
+        )
+    }
+}
+
+/// `TOROIDAL_SURFACE(name, position, major_radius, minor_radius)`, whose `u`
+/// walks the main circle and whose `v` walks the tube.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ToroidalSurface {
+    /// The `AXIS2_PLACEMENT_3D` the surface is built on.
+    pub position: EntityId,
+    /// The radius of the tube's centre circle.
+    pub major_radius: f64,
+    /// The radius of the tube itself.
+    pub minor_radius: f64,
+}
+
+impl Entity for ToroidalSurface {
+    const KEYWORDS: &'static [&'static str] = &["TOROIDAL_SURFACE"];
+
+    fn read(mut attributes: Attributes<'_>) -> Result<Self, SchemaError> {
+        attributes.name()?;
+        let position = attributes.reference()?;
+        let major_radius = attributes.real()?;
+        let minor_radius = attributes.real()?;
+        Ok(Self {
+            position,
+            major_radius,
+            minor_radius,
+        })
+    }
+
+    fn record(&self) -> Record {
+        Record::new(
+            "TOROIDAL_SURFACE",
+            vec![
+                unnamed(),
+                Value::Ref(self.position),
+                Value::Real(self.major_radius),
+                Value::Real(self.minor_radius),
+            ],
+        )
     }
 }
 

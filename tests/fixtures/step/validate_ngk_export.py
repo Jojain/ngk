@@ -13,6 +13,7 @@ back out, so the whole loop is checked by the kernel that started it.
     uv run python tests/fixtures/step/validate_ngk_export.py
 """
 
+import math
 import sys
 from pathlib import Path
 
@@ -24,11 +25,46 @@ CASES = [
     # file, volume, area, (faces, edges, vertices), bbox
     ("block.step", 6000.0, 2200.0, (6, 12, 8), (10.0, 20.0, 30.0)),
     ("holed_slab.step", 33.0, 76.0, (10, 24, 16), (4.0, 3.0, 3.0)),
+    # The seam case: ngk stores the wall as one ring face with no seam edge
+    # at all, so the cut in this file was synthesized on the way out. OCCT
+    # counting three faces and one closed solid of the right volume is what
+    # says the cut landed on the cylinder and sewed back up.
+    (
+        "cylinder.step",
+        math.pi * 25.0 * 10.0,
+        2.0 * math.pi * 25.0 + 2.0 * math.pi * 5.0 * 10.0,
+        (3, 3, 2),
+        (10.0, 10.0, 10.0),
+    ),
     # The read direction. These are ngk's re-exports of the OpenCascade
     # fixtures in this directory, so a passing case means the import
     # understood what OCCT wrote rather than merely producing a map that
     # satisfies ngk's own validators — which cell counts alone cannot show.
     ("reexported_box.step", 6000.0, 2200.0, (6, 12, 8), (10.0, 20.0, 30.0)),
+    # OpenCascade's own cylinder, read in and written back. Its wall arrives
+    # cut open along a SEAM_CURVE that ngk has no edge for, heals into a ring
+    # face, and is cut open again on the way out — so a matching volume here
+    # says both halves of the seam handling agree with the kernel that wrote
+    # the file.
+    # The cone, which only exists in ngk by way of a file: no builder makes
+    # one, so this is the only route by which a CONICAL_SURFACE is both read
+    # and written. Volume is the assertion that matters here, because the v
+    # parameterizations differ between the two kernels and a mishandled scale
+    # produces a cone of the wrong taper that is otherwise entirely plausible.
+    (
+        "reexported_frustum.step",
+        math.pi * 10.0 / 3.0 * (25.0 + 10.0 + 4.0),
+        math.pi * (25.0 + 4.0) + math.pi * 7.0 * math.hypot(3.0, 10.0),
+        (3, 3, 2),
+        (10.0, 10.0, 10.0),
+    ),
+    (
+        "reexported_cylinder.step",
+        math.pi * 25.0 * 10.0,
+        2.0 * math.pi * 25.0 + 2.0 * math.pi * 5.0 * 10.0,
+        (3, 3, 2),
+        (10.0, 10.0, 10.0),
+    ),
     ("reexported_holed_slab.step", 33.0, 76.0, (10, 24, 16), (4.0, 3.0, 3.0)),
 ]
 
