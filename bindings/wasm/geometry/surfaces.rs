@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 
-use crate::geometry::{Cone, Cylinder, Plane, RuledSurface, Sphere, SurfaceOfRevolution};
+use crate::geometry::{Cone, Cylinder, Plane, RuledSurface, Sphere, SurfaceOfRevolution, Torus};
 
 use super::convert::curve_to_js;
 use super::values::{WasmPoint3, WasmVector3, point, unit_vector, vector};
@@ -182,6 +182,57 @@ impl WasmCone {
         point(self.inner.point_at(u, v))
     }
 
+    #[wasm_bindgen(js_name = normalAt)]
+    pub fn normal_at(&self, u: f64, v: f64) -> WasmVector3 {
+        unit_vector(self.inner.normal_at(u, v))
+    }
+}
+
+/// Analytical torus surface.
+#[wasm_bindgen(js_name = Torus)]
+pub struct WasmTorus {
+    pub(crate) inner: Torus,
+}
+
+#[wasm_bindgen]
+impl WasmTorus {
+    /// Returns the torus centre.
+    #[wasm_bindgen(getter)]
+    pub fn origin(&self) -> WasmPoint3 {
+        point(self.inner.frame().origin)
+    }
+
+    /// Returns the local x direction through the tube's centre circle.
+    #[wasm_bindgen(getter, js_name = xDir)]
+    pub fn x_dir(&self) -> WasmVector3 {
+        unit_vector(self.inner.frame().x_dir)
+    }
+
+    /// Returns the main revolution axis.
+    #[wasm_bindgen(getter)]
+    pub fn axis(&self) -> WasmVector3 {
+        unit_vector(self.inner.frame().z_dir)
+    }
+
+    /// Returns the major radius.
+    #[wasm_bindgen(getter, js_name = majorRadius)]
+    pub fn major_radius(&self) -> f64 {
+        self.inner.major_radius()
+    }
+
+    /// Returns the minor radius.
+    #[wasm_bindgen(getter, js_name = minorRadius)]
+    pub fn minor_radius(&self) -> f64 {
+        self.inner.minor_radius()
+    }
+
+    /// Evaluates the torus at longitude and tube angle.
+    #[wasm_bindgen(js_name = pointAt)]
+    pub fn point_at(&self, u: f64, v: f64) -> WasmPoint3 {
+        point(self.inner.point_at(u, v))
+    }
+
+    /// Evaluates the outward torus normal.
     #[wasm_bindgen(js_name = normalAt)]
     pub fn normal_at(&self, u: f64, v: f64) -> WasmVector3 {
         unit_vector(self.inner.normal_at(u, v))

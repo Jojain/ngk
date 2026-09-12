@@ -41,6 +41,7 @@ pub use dim3::nurbs::{
 };
 pub use dim3::surfaces::{
     Cone, Cylinder, Plane, RuledSurface, Sphere, Surface, SurfaceOfRevolution, SurfacePeriodicity,
+    Torus,
 };
 pub use dim3::trimmed::TrimmedCurve;
 pub use dim3::utils::{IntoUnit, Point3, PointCoincidence};

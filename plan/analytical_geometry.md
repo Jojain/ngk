@@ -9,10 +9,10 @@ instead of failing.
 
 ## 2. Why this work is required
 
-Everything outside `Line`/`Circle`/`Plane`/`Cylinder`/`Ruled`/`Revolution` is approximated
-today. A sphere is a `SurfaceOfRevolution` of an arc (`src/builders/solids.rs:44`); there is
-no cone or torus at all; a plane section of a cylinder comes back as a sampled NURBS rather
-than an ellipse.
+Everything outside `Line`/`Circle`/`Plane`/`Cylinder`/`Ruled`/`Revolution` was approximated
+when this plan was written. `Sphere`, `Cone` and `Torus` are now native supports
+(`src/geometry/dim3/surfaces.rs`), and the sphere and torus primitives build them directly;
+a plane section of a cylinder still comes back as a sampled NURBS rather than an ellipse.
 
 That costs the kernel in three concrete places:
 
@@ -135,8 +135,9 @@ polynomial, so it converts exactly with unit weights over any `[t₀, t₁]`.
 rational Bézier is affine-invariant, so build the circle net in-frame and scale
 `(x, y) → (a·x, b·y)`.
 
-`Torus::new` rejects `minor >= major` — the self-intersecting inner torus is not a valid
-support.
+`Torus` refuses `minor >= major` at the builder — the self-intersecting inner torus is not a
+valid support — while the infallible `Torus::new` keeps the same construction pattern as
+`Sphere::new` and `Cone::new`.
 
 ## 7. Milestones
 
@@ -183,7 +184,7 @@ Establishes the full per-type checklist on the easiest type.
 - [x] Add the Milestone 1 `ParamMap` and `bbox_over` contracts, then cover those
       cross-cutting invariants for ellipse.
 
-### Milestone 3 — `Sphere`, `Cone`, `Torus`
+### Milestone 3 — `Sphere`, `Cone`, `Torus` ✅
 
 One per pass. Includes switching `builders/solids.rs::add_sphere` to `Surface::Sphere`
 (which moves raw dart/face counts in existing sphere tests) and extending
@@ -196,7 +197,10 @@ One per pass. Includes switching `builders/solids.rs::add_sphere` to `Surface::S
       rational quadratic/linear patches, apex degeneracy and tessellation,
       analytic closest parameters and bounds, periodic boundary reconstruction,
       healing identity, debug visualization, and Python/Wasm binding source.
-- [ ] `Torus`.
+- [x] `Torus`: longitude/tube support, exact rational biquadratic patch, double
+      periodicity and closedness, analytic closest parameters and bounds,
+      direct instantiation from `add_torus`, debug visualization, and
+      Python/Wasm binding source.
 
 ### Milestone 4 — `Hyperbola`, `Parabola` (3D and 2D)
 

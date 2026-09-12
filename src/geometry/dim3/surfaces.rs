@@ -22,6 +22,7 @@ pub enum Surface {
     Cylinder(Cylinder),
     Sphere(Sphere),
     Cone(Cone),
+    Torus(Torus),
     Ruled(RuledSurface),
     Revolution(SurfaceOfRevolution),
     Nurbs(NurbsSurface),
@@ -51,6 +52,7 @@ impl Surface {
             Surface::Cylinder(surface) => SurfaceGeometry::domain(surface),
             Surface::Sphere(surface) => SurfaceGeometry::domain(surface),
             Surface::Cone(surface) => SurfaceGeometry::domain(surface),
+            Surface::Torus(surface) => SurfaceGeometry::domain(surface),
             Surface::Ruled(surface) => SurfaceGeometry::domain(surface),
             Surface::Revolution(surface) => SurfaceGeometry::domain(surface),
             Surface::Nurbs(surface) => SurfaceGeometry::domain(surface),
@@ -64,6 +66,7 @@ impl Surface {
             Surface::Cylinder(surface) => SurfaceGeometry::periodicity(surface),
             Surface::Sphere(surface) => SurfaceGeometry::periodicity(surface),
             Surface::Cone(surface) => SurfaceGeometry::periodicity(surface),
+            Surface::Torus(surface) => SurfaceGeometry::periodicity(surface),
             Surface::Ruled(surface) => SurfaceGeometry::periodicity(surface),
             Surface::Revolution(surface) => SurfaceGeometry::periodicity(surface),
             Surface::Nurbs(surface) => SurfaceGeometry::periodicity(surface),
@@ -80,6 +83,7 @@ impl Surface {
             Surface::Cylinder(surface) => surface.is_degenerate_at(u, v),
             Surface::Sphere(surface) => surface.is_degenerate_at(u, v),
             Surface::Cone(surface) => surface.is_degenerate_at(u, v),
+            Surface::Torus(surface) => surface.is_degenerate_at(u, v),
             Surface::Ruled(surface) => surface.is_degenerate_at(u, v),
             Surface::Revolution(surface) => surface.is_degenerate_at(u, v),
             Surface::Nurbs(surface) => surface.is_degenerate_at(u, v),
@@ -98,6 +102,7 @@ impl Surface {
             Surface::Cylinder(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
             Surface::Sphere(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
             Surface::Cone(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
+            Surface::Torus(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
             Surface::Ruled(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
             Surface::Revolution(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
             Surface::Nurbs(surface) => SurfaceGeometry::degenerate_rows(surface, axis),
@@ -160,6 +165,7 @@ impl Surface {
             Surface::Cylinder(surface) => SurfaceGeometry::to_nurbs(surface),
             Surface::Sphere(surface) => SurfaceGeometry::to_nurbs(surface),
             Surface::Cone(surface) => SurfaceGeometry::to_nurbs(surface),
+            Surface::Torus(surface) => SurfaceGeometry::to_nurbs(surface),
             Surface::Ruled(surface) => SurfaceGeometry::to_nurbs(surface),
             Surface::Revolution(surface) => SurfaceGeometry::to_nurbs(surface),
             Surface::Nurbs(surface) => SurfaceGeometry::to_nurbs(surface),
@@ -182,6 +188,7 @@ impl Surface {
             Surface::Cylinder(surface) => surface.to_nurbs_over(u, v),
             Surface::Sphere(surface) => surface.to_nurbs_over(u, v),
             Surface::Cone(surface) => surface.to_nurbs_over(u, v),
+            Surface::Torus(surface) => surface.to_nurbs_over(u, v),
             Surface::Ruled(surface) => surface.to_nurbs_over(u, v),
             Surface::Revolution(surface) => surface.to_nurbs_over(u, v),
             Surface::Nurbs(surface) => surface.to_nurbs_over(u, v),
@@ -195,6 +202,7 @@ impl Surface {
             Surface::Cylinder(surface) => surface.param_map_over(u, v),
             Surface::Sphere(surface) => surface.param_map_over(u, v),
             Surface::Cone(surface) => surface.param_map_over(u, v),
+            Surface::Torus(surface) => surface.param_map_over(u, v),
             Surface::Ruled(surface) => surface.param_map_over(u, v),
             Surface::Revolution(surface) => surface.param_map_over(u, v),
             Surface::Nurbs(surface) => surface.param_map_over(u, v),
@@ -208,6 +216,7 @@ impl Surface {
             Surface::Cylinder(surface) => surface.bbox_over(u, v),
             Surface::Sphere(surface) => surface.bbox_over(u, v),
             Surface::Cone(surface) => surface.bbox_over(u, v),
+            Surface::Torus(surface) => surface.bbox_over(u, v),
             Surface::Ruled(surface) => surface.bbox_over(u, v),
             Surface::Revolution(surface) => surface.bbox_over(u, v),
             Surface::Nurbs(surface) => surface.bbox_over(u, v),
@@ -220,6 +229,7 @@ impl Surface {
             Surface::Cylinder(surface) => SurfaceGeometry::point_at(surface, u, v),
             Surface::Sphere(surface) => SurfaceGeometry::point_at(surface, u, v),
             Surface::Cone(surface) => SurfaceGeometry::point_at(surface, u, v),
+            Surface::Torus(surface) => SurfaceGeometry::point_at(surface, u, v),
             Surface::Ruled(surface) => SurfaceGeometry::point_at(surface, u, v),
             Surface::Revolution(surface) => SurfaceGeometry::point_at(surface, u, v),
             Surface::Nurbs(surface) => SurfaceGeometry::point_at(surface, u, v),
@@ -233,6 +243,7 @@ impl Surface {
             Surface::Cylinder(surface) => SurfaceGeometry::closest_parameter(surface, point),
             Surface::Sphere(surface) => SurfaceGeometry::closest_parameter(surface, point),
             Surface::Cone(surface) => SurfaceGeometry::closest_parameter(surface, point),
+            Surface::Torus(surface) => SurfaceGeometry::closest_parameter(surface, point),
             Surface::Ruled(surface) => SurfaceGeometry::closest_parameter(surface, point),
             Surface::Revolution(surface) => Ok(surface.closest_parameter(point)),
             Surface::Nurbs(surface) => SurfaceGeometry::closest_parameter(surface, point),
@@ -246,6 +257,7 @@ impl Surface {
             Surface::Cylinder(surface) => SurfaceGeometry::normal_at(surface, u, v),
             Surface::Sphere(surface) => SurfaceGeometry::normal_at(surface, u, v),
             Surface::Cone(surface) => SurfaceGeometry::normal_at(surface, u, v),
+            Surface::Torus(surface) => SurfaceGeometry::normal_at(surface, u, v),
             Surface::Ruled(surface) => SurfaceGeometry::normal_at(surface, u, v),
             Surface::Revolution(surface) => SurfaceGeometry::normal_at(surface, u, v),
             Surface::Nurbs(surface) => SurfaceGeometry::normal_at(surface, u, v),
@@ -278,6 +290,7 @@ impl Surface {
             Surface::Cylinder(surface) => Surface::Cylinder(surface.rotated(axis, angle)?),
             Surface::Sphere(surface) => Surface::Sphere(surface.rotated(axis, angle)?),
             Surface::Cone(surface) => Surface::Cone(surface.rotated(axis, angle)?),
+            Surface::Torus(surface) => Surface::Torus(surface.rotated(axis, angle)?),
             Surface::Ruled(surface) => Surface::Ruled(surface.rotated(axis, angle)?),
             Surface::Revolution(surface) => Surface::Revolution(surface.rotated(axis, angle)?),
             Surface::Nurbs(surface) => Surface::Nurbs(surface.rotated(axis, angle)?),
@@ -290,6 +303,7 @@ impl Surface {
             Surface::Cylinder(surface) => Surface::Cylinder(surface.translated(direction)?),
             Surface::Sphere(surface) => Surface::Sphere(surface.translated(direction)?),
             Surface::Cone(surface) => Surface::Cone(surface.translated(direction)?),
+            Surface::Torus(surface) => Surface::Torus(surface.translated(direction)?),
             Surface::Ruled(surface) => Surface::Ruled(surface.translated(direction)?),
             Surface::Revolution(surface) => Surface::Revolution(surface.translated(direction)?),
             Surface::Nurbs(surface) => Surface::Nurbs(surface.translated(direction)?),
@@ -1394,6 +1408,220 @@ impl SurfaceGeometry for Cone {
             ),
             self.reference_radius,
             self.half_angle,
+        ))
+    }
+}
+
+/// A torus parameterized by longitude `u` around the main axis and tube angle
+/// `v`.
+///
+/// The frame origin is the torus centre; the frame's z-axis is the main
+/// revolution axis and its x-axis points from the centre out through the tube's
+/// centre. `major_radius` is the distance from the axis to the tube's centre
+/// circle and `minor_radius` is the tube's own radius, which must stay below the
+/// major radius so the tube never reaches the axis.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Torus {
+    frame: Frame,
+    major_radius: f64,
+    minor_radius: f64,
+}
+
+impl Torus {
+    /// Creates a torus centred at `frame`'s origin.
+    pub fn new(frame: Frame, major_radius: f64, minor_radius: f64) -> Self {
+        Self {
+            frame,
+            major_radius,
+            minor_radius,
+        }
+    }
+
+    pub fn frame(&self) -> &Frame {
+        &self.frame
+    }
+
+    pub fn major_radius(&self) -> f64 {
+        self.major_radius
+    }
+
+    pub fn minor_radius(&self) -> f64 {
+        self.minor_radius
+    }
+
+    /// Evaluates the longitude/tube parameterization.
+    ///
+    /// `u` walks the main circle and `v` the tube, both in radians from the
+    /// frame's x-axis. The point is the tube's centre circle at `u` displaced by
+    /// the tube radius within the plane the radial direction and the main axis
+    /// span.
+    pub fn point_at(&self, u: f64, v: f64) -> Point3 {
+        let radial = *self.frame.x_dir * u.cos() + *self.frame.y_dir * u.sin();
+        self.frame.origin
+            + radial * (self.major_radius + self.minor_radius * v.cos())
+            + *self.frame.z_dir * (self.minor_radius * v.sin())
+    }
+
+    /// Returns the outward unit normal at `(u, v)`.
+    ///
+    /// It leaves the tube's centre circle along the radial direction at `u`,
+    /// tilted out of the equatorial plane by `v`.
+    pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
+        let radial = *self.frame.x_dir * u.cos() + *self.frame.y_dir * u.sin();
+        UnitVector3::new_normalize(radial * v.cos() + *self.frame.z_dir * v.sin())
+    }
+
+    /// Recovers longitude and tube angle of the nearest point.
+    ///
+    /// Longitude is undefined on the main axis, which the tube never reaches
+    /// while `minor_radius < major_radius`; zero is used there for safety.
+    pub fn closest_parameter(&self, point: Point3) -> Point2 {
+        let local = self.frame.coordinates_of(point);
+        let radial_distance = local.x.hypot(local.y);
+        let u = if radial_distance <= LINEAR_TOLERANCE {
+            0.0
+        } else {
+            local.y.atan2(local.x).rem_euclid(std::f64::consts::TAU)
+        };
+        let v = local
+            .z
+            .atan2(radial_distance - self.major_radius)
+            .rem_euclid(std::f64::consts::TAU);
+        Point2::new(u, v)
+    }
+
+    /// Converts the complete torus to an exact rational biquadratic surface.
+    pub fn to_nurbs(&self) -> Result<NurbsSurface, NurbsError> {
+        self.to_nurbs_over(
+            Interval::new(0.0, std::f64::consts::TAU),
+            Interval::new(0.0, std::f64::consts::TAU),
+        )
+    }
+
+    /// Converts a longitude/tube box to an exact rational NURBS patch.
+    ///
+    /// Both directions are conic arcs, so the patch is the tensor product of the
+    /// longitude arc with the tube arc and keeps the requested box as its knot
+    /// domain. A partial arc is as exact as a full turn, so a caller asking for
+    /// a patch of the torus gets that patch rather than the whole surface.
+    pub fn to_nurbs_over(&self, u: Interval, v: Interval) -> Result<NurbsSurface, NurbsError> {
+        let longitude = Circle::new(Plane::xy(), 1.0).to_nurbs_between(u.start, u.end)?;
+        let tube = Circle::new(
+            Plane::from_xy(
+                self.frame.origin + *self.frame.x_dir * self.major_radius,
+                self.frame.x_dir,
+                self.frame.z_dir,
+            ),
+            self.minor_radius,
+        )
+        .to_nurbs_between(v.start, v.end)?;
+
+        let nu = longitude.control_points().len();
+        let nv = tube.control_points().len();
+        let mut points = Vec::with_capacity(nu * nv);
+        for tube_point in tube.control_points().iter() {
+            // The tube lies in the frame's x-z plane, so its local coordinates
+            // are the distance from the main axis and the height along it.
+            let local = self.frame.coordinates_of(tube_point.to_cartesian());
+            let radial = local.x;
+            let height = local.z;
+            for longitude_point in longitude.control_points().iter() {
+                let direction = longitude_point.to_cartesian();
+                let point = self.frame.origin
+                    + *self.frame.x_dir * (radial * direction.x)
+                    + *self.frame.y_dir * (radial * direction.y)
+                    + *self.frame.z_dir * height;
+                points.push(HPoint::from_cartesian(
+                    point,
+                    tube_point.weight() * longitude_point.weight(),
+                ));
+            }
+        }
+
+        NurbsSurface::new(
+            longitude.degree(),
+            tube.degree(),
+            ControlNet::new(points, nu, nv)?,
+            longitude.knots().clone(),
+            tube.knots().clone(),
+        )
+    }
+}
+
+impl SurfaceGeometry for Torus {
+    fn domain(&self) -> (Interval, Interval) {
+        (
+            Interval::new(0.0, std::f64::consts::TAU),
+            Interval::new(0.0, std::f64::consts::TAU),
+        )
+    }
+
+    fn periodicity(&self) -> SurfacePeriodicity {
+        SurfacePeriodicity::UVPeriodic(std::f64::consts::TAU, std::f64::consts::TAU)
+    }
+
+    fn point_at(&self, u: f64, v: f64) -> Point3 {
+        Torus::point_at(self, u, v)
+    }
+
+    fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
+        Torus::normal_at(self, u, v)
+    }
+
+    fn is_degenerate_at(&self, _u: f64, _v: f64) -> bool {
+        false
+    }
+
+    fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError> {
+        Ok(Torus::closest_parameter(self, point))
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsSurface, NurbsError> {
+        Torus::to_nurbs(self)
+    }
+
+    fn to_nurbs_over(&self, u: Interval, v: Interval) -> Result<NurbsSurface, NurbsError> {
+        Torus::to_nurbs_over(self, u, v)
+    }
+
+    /// The torus parameterizes each direction as a true angle, so the map is the
+    /// conic reparameterization from the requested box to the patch knots.
+    fn param_map_over(&self, u: Interval, v: Interval) -> ParamMap {
+        ParamMap {
+            u: Reparam::conic_arc(u, u),
+            v: Reparam::conic_arc(v, v),
+        }
+    }
+
+    fn bbox_over(&self, u: Interval, v: Interval) -> Option<BBox> {
+        if !u.is_finite() || !v.is_finite() {
+            return None;
+        }
+        positive_surface_control_bounds(&self.to_nurbs_over(u, v).ok()?)
+    }
+
+    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
+        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
+        Ok(Torus::new(
+            Frame::from_xy(
+                axis.origin + rotation * (self.frame.origin - axis.origin),
+                rotation * *self.frame.x_dir,
+                rotation * *self.frame.y_dir,
+            ),
+            self.major_radius,
+            self.minor_radius,
+        ))
+    }
+
+    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
+        Ok(Torus::new(
+            Frame::from_xy(
+                self.frame.origin + direction,
+                self.frame.x_dir,
+                self.frame.y_dir,
+            ),
+            self.major_radius,
+            self.minor_radius,
         ))
     }
 }

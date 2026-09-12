@@ -11,7 +11,7 @@ pub(crate) use convert::{curve_to_py, surface_to_py};
 pub(crate) use curves::{PyCircle, PyEllipse, PyLine};
 pub(crate) use nurbs::{PyNurbsCurve, PyNurbsSurface};
 pub(crate) use surfaces::{
-    PyCone, PyCylinder, PyPlane, PyRuledSurface, PySphere, PySurfaceOfRevolution,
+    PyCone, PyCylinder, PyPlane, PyRuledSurface, PySphere, PySurfaceOfRevolution, PyTorus,
 };
 pub(crate) use values::{PyPoint3, PyVector3, point, unit_vector, vector};
 
@@ -26,6 +26,7 @@ pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCylinder>()?;
     m.add_class::<PySphere>()?;
     m.add_class::<PyCone>()?;
+    m.add_class::<PyTorus>()?;
     m.add_class::<PyRuledSurface>()?;
     m.add_class::<PySurfaceOfRevolution>()?;
     m.add_class::<PyNurbsSurface>()?;

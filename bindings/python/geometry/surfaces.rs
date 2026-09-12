@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-use crate::geometry::{Cone, Cylinder, Plane, RuledSurface, Sphere, SurfaceOfRevolution};
+use crate::geometry::{Cone, Cylinder, Plane, RuledSurface, Sphere, SurfaceOfRevolution, Torus};
 
 use super::{PyPoint3, PyVector3, curve_to_py, point, unit_vector, vector};
 
@@ -178,6 +178,56 @@ impl PyCone {
             "Cone(reference_radius={}, half_angle={})",
             self.cone.reference_radius(),
             self.cone.half_angle()
+        )
+    }
+}
+
+#[pyclass(name = "Torus", module = "ngk")]
+#[derive(Clone)]
+pub(crate) struct PyTorus {
+    pub(super) torus: Torus,
+}
+
+#[pymethods]
+impl PyTorus {
+    #[getter]
+    fn origin(&self) -> PyPoint3 {
+        point(self.torus.frame().origin)
+    }
+
+    #[getter]
+    fn x_dir(&self) -> PyVector3 {
+        unit_vector(self.torus.frame().x_dir)
+    }
+
+    #[getter]
+    fn axis(&self) -> PyVector3 {
+        unit_vector(self.torus.frame().z_dir)
+    }
+
+    #[getter]
+    fn major_radius(&self) -> f64 {
+        self.torus.major_radius()
+    }
+
+    #[getter]
+    fn minor_radius(&self) -> f64 {
+        self.torus.minor_radius()
+    }
+
+    fn point_at(&self, u: f64, v: f64) -> PyPoint3 {
+        point(self.torus.point_at(u, v))
+    }
+
+    fn normal_at(&self, u: f64, v: f64) -> PyVector3 {
+        unit_vector(self.torus.normal_at(u, v))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Torus(major_radius={}, minor_radius={})",
+            self.torus.major_radius(),
+            self.torus.minor_radius()
         )
     }
 }

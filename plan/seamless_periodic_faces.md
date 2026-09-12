@@ -964,9 +964,10 @@ a pole.
 
 Two of the old §11.8's expectations did not survive. A torus does not exercise
 `Axis2::V` wrapping: with no loops there is no `LoopKind` to wrap anything, and
-that arrives with the first *cut* torus rather than with this one. And nothing
-here needed a `Torus` surface type — a `SurfaceOfRevolution` over a circle is
-exact, and `plan/analytical_geometry.md` owns the recognized form.
+that arrives with the first *cut* torus rather than with this one. The support
+first stayed a `SurfaceOfRevolution` over a circle, but a dedicated `Torus`
+support now exists (`src/geometry/dim3/surfaces.rs`) and `add_torus` instantiates
+it directly; `plan/analytical_geometry.md` tracks that type.
 
 ### 11.9 Milestone 7, the healing canonicalizer
 

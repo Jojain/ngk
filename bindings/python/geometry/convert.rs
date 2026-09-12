@@ -4,7 +4,7 @@ use crate::geometry::{Curve, Surface};
 
 use super::{
     PyCircle, PyCone, PyCylinder, PyEllipse, PyLine, PyNurbsCurve, PyNurbsSurface, PyPlane,
-    PyRuledSurface, PySphere, PySurfaceOfRevolution,
+    PyRuledSurface, PySphere, PySurfaceOfRevolution, PyTorus,
 };
 
 pub(crate) fn curve_to_py(py: Python<'_>, curve: Curve) -> PyResult<PyObject> {
@@ -22,6 +22,7 @@ pub(crate) fn surface_to_py(py: Python<'_>, surface: Surface) -> PyResult<PyObje
         Surface::Cylinder(cylinder) => Ok(Py::new(py, PyCylinder { cylinder })?.into_py(py)),
         Surface::Sphere(sphere) => Ok(Py::new(py, PySphere { sphere })?.into_py(py)),
         Surface::Cone(cone) => Ok(Py::new(py, PyCone { cone })?.into_py(py)),
+        Surface::Torus(torus) => Ok(Py::new(py, PyTorus { torus })?.into_py(py)),
         Surface::Ruled(surface) => Ok(Py::new(py, PyRuledSurface { surface })?.into_py(py)),
         Surface::Revolution(surface) => {
             Ok(Py::new(py, PySurfaceOfRevolution { surface })?.into_py(py))

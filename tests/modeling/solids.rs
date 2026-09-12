@@ -246,8 +246,8 @@ fn a_sphere_tessellates_into_a_closed_ball() {
 /// A sphere closes in one direction by periodicity and in the other by
 /// collapsing at its poles; a torus is periodic twice over, which is the case
 /// `Surface::is_closed` has to answer for without any degenerate row to read.
-/// Nothing about the result is swept topology: the source circle is consumed,
-/// not reused as a boundary.
+/// The primitive builds a native [`Surface::Torus`] directly: there is no swept
+/// profile and nothing for the shape to reuse as a boundary.
 #[test]
 fn torus_builds_a_well_formed_boundaryless_solid() {
     let shape = torus(3.0, 1.0).expect("torus primitive should build");
@@ -262,11 +262,15 @@ fn torus_builds_a_well_formed_boundaryless_solid() {
             g.iter_faces().count()
         ),
         (0, 0, 0, 1),
-        "a torus is one face and nothing else: the profile circle is consumed"
+        "a torus is one face and nothing else"
     );
 
     let faces = shape.solid().faces();
     let face = &faces[0];
+    assert!(
+        matches!(face.surface(), Surface::Torus(_)),
+        "the primitive should instantiate a torus support directly"
+    );
     assert!(face.loops().is_empty(), "a torus face has no boundary loop");
     assert!(face.dart().is_none(), "a boundaryless face has no dart");
     assert_eq!(
@@ -279,7 +283,7 @@ fn torus_builds_a_well_formed_boundaryless_solid() {
             face.surface().periodicity(),
             SurfacePeriodicity::UVPeriodic(_, _)
         ),
-        "a revolved closed profile is periodic in the sweep and in the profile"
+        "a torus is periodic in both its longitude and its tube"
     );
     assert!(
         face.surface().is_closed(),
@@ -324,7 +328,7 @@ fn a_torus_tessellates_into_a_closed_tube() {
     );
 }
 
-/// A profile reaching the axis pinches the sweep, so it is not a torus.
+/// A tube as wide as its offset reaches the axis, so it is not a torus.
 #[test]
 fn a_torus_whose_tube_reaches_the_axis_is_refused() {
     assert!(

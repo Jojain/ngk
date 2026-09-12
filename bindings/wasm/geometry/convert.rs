@@ -7,6 +7,7 @@ use super::nurbs::{WasmNurbsCurve, WasmNurbsSurface};
 use super::pcurves::{WasmCircle2, WasmEllipse2, WasmLine2, WasmNurbsCurve2};
 use super::surfaces::{
     WasmCone, WasmCylinder, WasmPlane, WasmRuledSurface, WasmSphere, WasmSurfaceOfRevolution,
+    WasmTorus,
 };
 
 /// Converts a polymorphic kernel curve to a concrete JavaScript class.
@@ -36,6 +37,7 @@ pub(crate) fn surface_to_js(surface: Surface) -> JsValue {
         Surface::Cylinder(inner) => WasmCylinder { inner }.into(),
         Surface::Sphere(inner) => WasmSphere { inner }.into(),
         Surface::Cone(inner) => WasmCone { inner }.into(),
+        Surface::Torus(inner) => WasmTorus { inner }.into(),
         Surface::Ruled(inner) => WasmRuledSurface { inner }.into(),
         Surface::Revolution(inner) => WasmSurfaceOfRevolution { inner }.into(),
         Surface::Nurbs(inner) => WasmNurbsSurface::from_inner(inner).into(),
