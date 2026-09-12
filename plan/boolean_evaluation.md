@@ -970,15 +970,33 @@ Exit: the polyhedral vertical slice from
 ### Milestone 7 — Curved solids
 
 - [x] Consume certified `SurfaceIntersectionBranch` output for curved pairs.
-- [ ] Parameter-seam handling in trim classification and face splitting.
+- [x] Parameter-seam handling in trim classification and face splitting —
+      delivered by `plan/seamless_periodic_faces.md` by removing the subject: no
+      builder makes a seam, a wall is a ring, and trimming reads a closed
+      direction per-axis instead of by winding, so no loop straddles a cut.
 - [ ] Tangent-span policy in classification (barrier, no implied flip).
 - [ ] Coincident curved regions.
 - [ ] Cross-span propagation with sector analysis as a measured optimization,
       guarded by a debug assertion against the per-component ray result.
 
 Exit: box/cylinder, cylinder/cylinder, and through-hole subtraction pass.
-Box/cylinder and the through hole pass; cylinder/cylinder is blocked on the
-seam item above.
+Box/cylinder and the through hole pass. Cylinder/cylinder is no longer blocked
+on the seam — that item is delivered — but still fails, for a reason inside the
+solver and the classifier rather than in the representation:
+
+> Two crossing bores. `block_with_cylinder(0.5, -1.0, 4.0)` differenced, then a
+> second 0.3-radius cylinder differenced across it on
+> `Frame::from_xy(Point3::new(-1.0, 1.0, 1.0), Vector3::y(), Vector3::z())` —
+> the first operand pair with no planar face. The first difference succeeds; the
+> second returns `AmbiguousClassification` (all 16 ray directions rejected near
+> a bore wall). Cylinder/cylinder is not in the analytic table, so the pair goes
+> to the NURBS tracer, whose fitted branches are what classification then reads.
+
+`tests/builders/boolean.rs::boolean_difference_crosses_two_cylindrical_holes`
+asserted this and was carried `#[ignore]`d through the seamless work; it is
+deleted rather than left ignored, and comes back with this milestone
+(`git log -S boolean_difference_crosses_two_cylindrical_holes` recovers it
+verbatim).
 
 ### Milestone 8 — Regularization, degeneracies, performance
 

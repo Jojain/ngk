@@ -137,7 +137,7 @@ fn join_on_circle(
         // nothing in the tree can currently tell the two readings apart — the one
         // place it showed was a rim fused on a cylinder, which
         // `super::pcurve::traces` declines to rebuild at all. The two belong
-        // together; see the plan note on curved-support pcurve rebuilding.
+        // together; see `plan/curved_support_pcurve_rebuild.md`.
         let circle = Curve::circle(plane, radius);
         return Some(if interior < 0.0 {
             circle.reversed()

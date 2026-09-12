@@ -9,6 +9,7 @@ This directory contains implementation plans for substantial kernel work.
 | [Shape healing](shape_healing.md) | In progress | Remove redundant topology left by Booleans and imprints: `i`-removal of shape-free vertices and edges, fusing the cells they separate |
 | [Analytical curves and surfaces](analytical_geometry.md) | In progress | Add sphere, cone, torus, ellipse, hyperbola and parabola supports behind a stated geometry contract, and close the paths where an unrecognized support silently degrades |
 | [Seamless periodic faces](seamless_periodic_faces.md) | Complete | Stop storing a seam edge on periodic faces: ring faces, vertexless closed edges, boundaryless faces, an unwrapped-domain cut synthesized on demand, and a healing pass that takes an imported seam apart |
+| [Curved-support pcurve rebuild](curved_support_pcurve_rebuild.md) | Proposed | Let healing rebuild a parameter curve on a curved support, so a rim split by a Boolean heals back into the one closed edge it started as |
 
 Statuses used by the plans:
 

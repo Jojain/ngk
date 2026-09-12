@@ -10,7 +10,6 @@ use ngk::topology::closed::Closed;
 use ngk::topology::gmap::Dim;
 use ngk::topology::sheet::Sheet;
 use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
-use ngk::viz::debug_viewer::show;
 
 #[test]
 fn block_builds_closed_box_with_expected_cell_counts() {

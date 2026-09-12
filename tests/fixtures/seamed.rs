@@ -10,6 +10,10 @@
 //! The three shapes differ in what is left once the seam is gone: a wall keeps
 //! two rims and becomes a ring, a cap keeps one and is closed on its far side by
 //! a pole, and a sphere keeps none at all.
+//!
+//! Shared by the `builders` and `healing` test binaries, each of which uses a
+//! subset: the allow below is for the half the other binary needs.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 

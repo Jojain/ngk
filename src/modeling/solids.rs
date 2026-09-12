@@ -190,12 +190,12 @@ pub(crate) fn combine_views<P: Payload>(
 ) -> Result<Shape<SolidTag, P>, BooleanError> {
     let mut map = GMap::new();
     let (first, second) = map.transaction(|edit| {
-        let first_dart = edit.merge(first);
-        let second_dart = edit.merge(second);
+        let first_handle = edit.merge(first);
+        let second_handle = edit.merge(second);
         Ok::<_, TopologyEditError>((
-            edit.solid_key(first_dart)
+            edit.solid_key_at(first_handle)
                 .expect("copied first solid must retain its registration"),
-            edit.solid_key(second_dart)
+            edit.solid_key_at(second_handle)
                 .expect("copied second solid must retain its registration"),
         ))
     })?;

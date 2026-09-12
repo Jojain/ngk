@@ -1,22 +1,16 @@
-use std::collections::HashMap;
-
-use nalgebra::{Vector2, Vector3};
+use nalgebra::Vector2;
 use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
 use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints, split_face_edge};
 use ngk::builders::removal::{
     CellRemovalError, MergedCell, is_removable, remove_cell, remove_cell_staged,
 };
 use ngk::geometry::{
-    Axis2, Circle, Curve, Curve2, Cylinder, DomainSide, Frame, Plane, Point2, Point3, Sphere,
-    Surface, TrimmedCurve2,
+    Axis2, Curve, Curve2, DomainSide, Frame, Plane, Point2, Point3, Surface, TrimmedCurve2,
 };
 use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
 use ngk::modeling::{faces, solids};
-use ngk::topology::attributes::{
-    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
-};
-use ngk::topology::gmap::{Dart, Dim, GMap};
-use ngk::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
+use ngk::topology::gmap::{Dim, GMap};
+use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 use ngk::topology::validation::validate_solid_manifold;
 use ngk::topology::{StandardPayload, TopologyEditError};
 

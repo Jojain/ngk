@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use nalgebra::Vector3;
-use ngk::builders::edges::add_circle as add_circle_edge;
 use ngk::builders::edges::add_line;
 use ngk::builders::errors::{FaceCreationError, PolylineError};
 use ngk::builders::faces::{
@@ -831,7 +830,7 @@ fn imprint_sections_retain_source_indices_and_directed_intervals() {
 /// the imprint's own is created.
 #[test]
 fn a_period_spanning_imprint_cuts_a_boundaryless_face_into_two_caps() {
-    use ngk::geometry::{Circle, Curve, DomainSide, Point3, TrimmedCurve2};
+    use ngk::geometry::{Circle, Curve, DomainSide, TrimmedCurve2};
     use ngk::topology::LoopKind;
     use std::f64::consts::TAU;
 

@@ -1057,6 +1057,7 @@ near the boundary and `solid_contains_point` answers `AmbiguousClassification`.
 least two arcs, which stops being true and would need retargeting.
 
 That is a third distinct piece of work in a path this plan does not own, so all
-of it is left for its own plan rather than smuggled in here. The tree is honest
-about the state: `traces` says in its doc comment that it is a weak test and why,
-and `join_on_circle` says which reading it makes and what it costs.
+of it is left to `plan/curved_support_pcurve_rebuild.md` rather than smuggled in
+here. The tree is honest about the state: `traces` says in its doc comment that
+it is a weak test and why, and `join_on_circle` says which reading it makes and
+what it costs. Both now name that plan.
