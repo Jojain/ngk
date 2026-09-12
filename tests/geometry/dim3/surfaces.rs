@@ -363,3 +363,66 @@ fn surface_domains_report_unbounded_directions() {
     assert_eq!(u, Interval::new(0.0, std::f64::consts::TAU));
     assert!(!v.is_finite(), "a cylinder is unbounded along its axis");
 }
+
+/// A revolution's parameters come back as the ones it was evaluated at.
+///
+/// The surface reads `v` as a true sweep angle, but its exact NURBS form carries
+/// the sweep as a piecewise rational quadratic, whose parameter equals the angle
+/// only at the quarter-turn knots — and carries a conic profile in `u` the same
+/// way. Answering this by projecting onto that form returns the form's
+/// parameters, which name a *different point* everywhere between the knots: on a
+/// torus of tube radius 1 the miss reaches a twentieth of a unit, four orders
+/// above any tolerance a model is fitted to. The mid-span samples below are the
+/// whole point of the test; the knots agree either way.
+#[test]
+fn revolution_closest_parameter_inverts_its_own_evaluation() {
+    let profile = Plane::new(Point3::new(3.0, 0.0, 0.0), Vector3::x(), Vector3::y());
+    let torus = SurfaceOfRevolution::new(
+        Curve::Circle(Circle::new(profile, 1.0)),
+        Axis3::new(Point3::origin(), Vector3::z()),
+    );
+    let (u_domain, v_domain) = SurfaceGeometry::domain(&torus);
+
+    let mut worst: f64 = 0.0;
+    for i in 0..=12 {
+        for j in 0..=12 {
+            let (u, v) = (u_domain.at(i as f64 / 12.0), v_domain.at(j as f64 / 12.0));
+            let point = torus.point_at(u, v);
+            let uv = torus.closest_parameter(point);
+            worst = worst.max((torus.point_at(uv.x, uv.y) - point).norm());
+        }
+    }
+    assert!(
+        worst <= LINEAR_TOLERANCE,
+        "a revolution's parameters should name the point they were read from, missed by {worst:e}"
+    );
+}
+
+/// The inversion crosses the seam rather than stopping at it.
+///
+/// Both of a torus's directions wrap, so a point a hair before the domain's end
+/// is a hair away from one at its start. A projection clamped to the NURBS
+/// patch answers the boundary for everything past it, which is exactly where a
+/// traced intersection branch closes on itself.
+#[test]
+fn revolution_closest_parameter_reads_both_sides_of_the_seam() {
+    let torus = SurfaceOfRevolution::new(
+        Curve::Circle(Circle::new(
+            Plane::new(Point3::new(3.0, 0.0, 0.0), Vector3::x(), Vector3::y()),
+            1.0,
+        )),
+        Axis3::new(Point3::origin(), Vector3::z()),
+    );
+    let turn = std::f64::consts::TAU;
+
+    for offset in [1.0e-3, 1.0e-2, 0.1] {
+        for (u, v) in [(offset, 0.4), (turn - offset, 0.4), (0.4, turn - offset)] {
+            let point = torus.point_at(u, v);
+            let uv = torus.closest_parameter(point);
+            assert!(
+                (torus.point_at(uv.x, uv.y) - point).norm() <= LINEAR_TOLERANCE,
+                "({u}, {v}) came back as {uv:?}, which is a different point"
+            );
+        }
+    }
+}

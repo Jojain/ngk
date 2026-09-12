@@ -364,8 +364,10 @@ fn probe<P: Payload>(
 ) -> Result<(Point3, Point2), BooleanError> {
     let view = map.face_unchecked(face);
     let trim = FaceTrimDomain::new(&view, tolerances.parameter)?;
-    let mesh = tessellate_face_key(map, face, TessellateOpts::default())
-        .ok_or(BooleanError::MissingFragmentProbe { face })?;
+    // A mesh is a convenience here, not the answer: the trim below knows the
+    // fragment whether or not one could be built, and a fragment no mesher
+    // covers is exactly the kind this is asked about.
+    let mesh = tessellate_face_key(map, face, TessellateOpts::default()).unwrap_or_default();
     let mut triangles = mesh
         .indices
         .chunks_exact(3)

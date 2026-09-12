@@ -234,7 +234,7 @@ impl Surface {
             Surface::Sphere(surface) => SurfaceGeometry::closest_parameter(surface, point),
             Surface::Cone(surface) => SurfaceGeometry::closest_parameter(surface, point),
             Surface::Ruled(surface) => SurfaceGeometry::closest_parameter(surface, point),
-            Surface::Revolution(surface) => surface.closest_parameter(point),
+            Surface::Revolution(surface) => Ok(surface.closest_parameter(point)),
             Surface::Nurbs(surface) => SurfaceGeometry::closest_parameter(surface, point),
         }
     }
@@ -913,6 +913,63 @@ impl SurfaceOfRevolution {
         proj + (rot * radial)
     }
 
+    /// The parameters of the surface point nearest `point`, inverting
+    /// [`Self::point_at`].
+    ///
+    /// Projecting onto the exact NURBS form cannot answer this. That form
+    /// carries the sweep as a piecewise rational quadratic, whose parameter is
+    /// the angle only at the quarter-turn knots, and it clamps to its own
+    /// domain, so a point a hair past where the sweep wraps projects to the
+    /// seam instead of round the other side. Both errors land exactly where a
+    /// traced intersection branch closes.
+    ///
+    /// Undoing the generation is exact and has no seam. The sweep only rotates
+    /// the profile about the axis, so the angle from the profile's own meridian
+    /// half-plane to the point's radial direction *is* `v`; rotating the point
+    /// back by it lands on the profile, which inverts its own parameter.
+    pub fn closest_parameter(&self, point: Point3) -> Point2 {
+        let sweep = self.sweep_angle(point);
+        let rotation = Rotation3::from_axis_angle(&self.axis.direction, -sweep);
+        let unswept = self.axis.origin + rotation * (point - self.axis.origin);
+        Point2::new(self.curve.param_at(unswept), sweep)
+    }
+
+    /// The angle carrying the profile's half-plane onto `point`.
+    ///
+    /// A point on the axis has no radial direction to measure, and needs none:
+    /// every sweep names it, so zero is as good an answer as any.
+    fn sweep_angle(&self, point: Point3) -> f64 {
+        let radial = point - self.axis.project(point);
+        let Some(reference) = self.meridian_direction() else {
+            return 0.0;
+        };
+        let ordinate = self.axis.direction.cross(&reference).dot(&radial);
+        let abscissa = reference.dot(&radial);
+        ordinate.atan2(abscissa).rem_euclid(std::f64::consts::TAU)
+    }
+
+    /// The direction of the half-plane the profile is swept from.
+    ///
+    /// Any one profile point off the axis fixes it, so this reads the sampled
+    /// point furthest from the axis: sampling chooses *which* point answers,
+    /// never how exactly it answers. A profile lying along the axis sweeps
+    /// nothing and names no half-plane. A profile crossing the axis would name
+    /// two, but such a profile sweeps its solid twice and the builders refuse
+    /// it before it reaches a surface.
+    fn meridian_direction(&self) -> Option<Vector3<f64>> {
+        const MERIDIAN_SAMPLES: usize = 16;
+        let domain = self.curve.domain().or_extent(1.0);
+        (0..=MERIDIAN_SAMPLES)
+            .map(|index| {
+                let profile = self
+                    .curve
+                    .point_at(domain.at(index as f64 / MERIDIAN_SAMPLES as f64));
+                profile - self.axis.project(profile)
+            })
+            .max_by(|a, b| a.norm().total_cmp(&b.norm()))
+            .filter(|radial| radial.norm() > LINEAR_TOLERANCE)
+    }
+
     /// Returns the unit surface normal, `dS/du x dS/dv`.
     ///
     /// Degenerates on the axis, where `dS/dv` vanishes and the surface has an
@@ -1478,7 +1535,7 @@ impl SurfaceGeometry for SurfaceOfRevolution {
     }
 
     fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError> {
-        Ok(self.to_nurbs()?.closest_parameter(point))
+        Ok(SurfaceOfRevolution::closest_parameter(self, point))
     }
 
     fn to_nurbs(&self) -> Result<NurbsSurface, NurbsError> {

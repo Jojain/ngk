@@ -84,7 +84,7 @@ entity_methods!(PyEdge, SharedEdge<StandardPayload>, "edge", {
 
     fn __repr__(&self) -> String {
         format!(
-            "Edge(key={:?}, dart_id={})",
+            "Edge(key={:?}, dart_id={:?})",
             self.inner.key(),
             self.inner.dart_id()
         )

@@ -252,6 +252,7 @@ fn validate_oriented_shell_volume<P: Payload>(
         .map(|face| g.face_unchecked(face.key()))
         .collect::<Vec<_>>();
     let mut directed = HashSet::new();
+    let mut owner = std::collections::HashMap::<Dart, FaceKey>::new();
     let mut volume = 0.0;
     let unavailable = |face: &Face<'_, P>| GMapValidationError::SolidFaceOrientationUnavailable {
         solid,
@@ -292,6 +293,7 @@ fn validate_oriented_shell_volume<P: Payload>(
             let mut points = Vec::new();
             for edge in boundary.edges() {
                 directed.insert(edge.dart());
+                owner.insert(edge.dart(), face.key());
                 points.push(
                     edge.trimmed_curve()
                         .map(|section| section.point_at(0.0))

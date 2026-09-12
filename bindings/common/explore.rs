@@ -7,6 +7,7 @@ use crate::topology::closed::{Closeable, Closed};
 use crate::topology::edge::{BoundedEdge, Edge};
 use crate::topology::face::{Face, Loop};
 use crate::topology::gmap::{Dart, Dim, GMAP_INVOLUTION_COUNT, GMap};
+use crate::topology::orientation::Orientation;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
@@ -363,9 +364,9 @@ macro_rules! shared_identity {
                 self.key
             }
 
-            /// Returns its contextual dart id.
-            pub(crate) fn dart_id(&self) -> usize {
-                self.dart.id()
+            /// Returns its contextual dart id when this entity is dart-backed.
+            pub(crate) fn dart_id(&self) -> Option<usize> {
+                self.contextual_dart_id()
             }
 
             /// Returns whether both handles identify the same entity in the same map.
@@ -395,6 +396,10 @@ pub(crate) struct SharedVertex<P: Payload = StandardPayload> {
 shared_identity!(SharedVertex, VertexKey);
 
 impl<P: Payload> SharedVertex<P> {
+    fn contextual_dart_id(&self) -> Option<usize> {
+        Some(self.dart.id())
+    }
+
     fn from_view(map: SharedGMap<P>, view: Vertex<'_, P>) -> Self {
         Self {
             map,
@@ -456,6 +461,10 @@ pub(crate) struct SharedEdge<P: Payload = StandardPayload> {
 shared_identity!(SharedEdge, EdgeKey);
 
 impl<P: Payload> SharedEdge<P> {
+    fn contextual_dart_id(&self) -> Option<usize> {
+        Some(self.dart.id())
+    }
+
     fn from_view(map: SharedGMap<P>, view: Edge<'_, P>) -> Self {
         Self {
             map,
@@ -560,6 +569,10 @@ pub(crate) struct SharedProfile<P: Payload = StandardPayload> {
 shared_identity!(SharedProfile, ProfileKey);
 
 impl<P: Payload> SharedProfile<P> {
+    fn contextual_dart_id(&self) -> Option<usize> {
+        Some(self.dart.id())
+    }
+
     fn from_view(map: SharedGMap<P>, view: Profile<'_, P>) -> Self {
         Self {
             map,
@@ -637,6 +650,10 @@ pub(crate) struct SharedLoop<P: Payload = StandardPayload> {
 shared_identity!(SharedLoop, ProfileKey);
 
 impl<P: Payload> SharedLoop<P> {
+    fn contextual_dart_id(&self) -> Option<usize> {
+        Some(self.dart.id())
+    }
+
     fn from_view(map: SharedGMap<P>, view: Loop<'_, P>) -> Self {
         Self {
             map,
@@ -690,24 +707,41 @@ impl<P: Payload> SharedLoop<P> {
 pub(crate) struct SharedFace<P: Payload = StandardPayload> {
     map: SharedGMap<P>,
     key: FaceKey,
-    dart: Dart,
+    dart: Option<Dart>,
+    sense: Orientation,
 }
 
 shared_identity!(SharedFace, FaceKey);
 
 impl<P: Payload> SharedFace<P> {
+    fn contextual_dart_id(&self) -> Option<usize> {
+        self.dart.map(|dart| dart.id())
+    }
+
     fn from_view(map: SharedGMap<P>, view: Face<'_, P>) -> Self {
         Self {
             map,
             key: view.key(),
             dart: view.dart(),
+            sense: view.sense(),
         }
     }
 
     fn view(&self) -> Result<Face<'_, P>, ExploreError> {
-        Face::from_dart(self.map.map(), self.dart)
-            .filter(|view| view.key() == self.key)
-            .ok_or_else(|| missing("face", self.dart.id()))
+        let view = match self.dart {
+            Some(dart) => {
+                Face::from_dart(self.map.map(), dart).filter(|view| view.key() == self.key)
+            }
+            None => self.map.map().face(self.key),
+        }
+        .ok_or_else(|| missing("face", format!("{:?}", self.key)))?;
+        if self.dart.is_some() {
+            return Ok(view);
+        }
+        Ok(match self.sense {
+            Orientation::Same => view,
+            Orientation::Reversed => view.reversed(),
+        })
     }
 
     /// Returns the outer boundary loop.
@@ -718,7 +752,7 @@ impl<P: Payload> SharedFace<P> {
         let outer = self
             .view()?
             .outer_loop()
-            .ok_or_else(|| missing("outer loop", self.dart.id()))?;
+            .ok_or_else(|| missing("outer loop", format!("{:?}", self.key)))?;
         Ok(SharedLoop::from_view(self.map.clone(), outer))
     }
 
@@ -784,24 +818,49 @@ impl<P: Payload> SharedFace<P> {
 pub(crate) struct SharedSheet<P: Payload = StandardPayload> {
     map: SharedGMap<P>,
     key: SheetKey,
-    dart: Dart,
+    dart: Option<Dart>,
+    boundaryless_sense: Option<Orientation>,
 }
 
 shared_identity!(SharedSheet, SheetKey);
 
 impl<P: Payload> SharedSheet<P> {
+    fn contextual_dart_id(&self) -> Option<usize> {
+        self.dart.map(|dart| dart.id())
+    }
+
     fn from_view(map: SharedGMap<P>, view: Sheet<'_, P>) -> Self {
+        let dart = view.dart();
+        let boundaryless_sense = dart.is_none().then(|| {
+            view.faces()
+                .into_iter()
+                .next()
+                .expect("a boundaryless sheet has one face")
+                .sense()
+        });
         Self {
             map,
             key: view.key(),
-            dart: view.dart,
+            dart,
+            boundaryless_sense,
         }
     }
 
     fn view(&self) -> Result<Sheet<'_, P>, ExploreError> {
-        Sheet::from_dart(self.map.map(), self.dart)
-            .filter(|view| view.key() == self.key)
-            .ok_or_else(|| missing("sheet", self.dart.id()))
+        let view = match self.dart {
+            Some(dart) => {
+                Sheet::from_dart(self.map.map(), dart).filter(|view| view.key() == self.key)
+            }
+            None => self.map.map().sheet(self.key),
+        }
+        .ok_or_else(|| missing("sheet", format!("{:?}", self.key)))?;
+        if self.dart.is_some() {
+            return Ok(view);
+        }
+        Ok(match self.boundaryless_sense {
+            Some(Orientation::Reversed) => view.reversed(),
+            _ => view,
+        })
     }
 
     /// Returns all dart ids in this sheet.
@@ -855,24 +914,50 @@ impl<P: Payload> SharedSheet<P> {
 pub(crate) struct SharedShell<P: Payload = StandardPayload> {
     map: SharedGMap<P>,
     key: SheetKey,
-    dart: Dart,
+    dart: Option<Dart>,
+    boundaryless_sense: Option<Orientation>,
 }
 
 shared_identity!(SharedShell, SheetKey);
 
 impl<P: Payload> SharedShell<P> {
+    fn contextual_dart_id(&self) -> Option<usize> {
+        self.dart.map(|dart| dart.id())
+    }
+
     fn from_view(map: SharedGMap<P>, view: ShellRef<'_, P>) -> Self {
+        let dart = view.dart();
+        let boundaryless_sense = dart.is_none().then(|| {
+            view.faces()
+                .into_iter()
+                .next()
+                .expect("a boundaryless shell has one face")
+                .sense()
+        });
         Self {
             map,
             key: view.key(),
-            dart: view.dart,
+            dart,
+            boundaryless_sense,
         }
     }
 
     fn view(&self) -> Result<ShellRef<'_, P>, ExploreError> {
-        let sheet = Sheet::from_dart(self.map.map(), self.dart)
-            .filter(|view| view.key() == self.key)
-            .ok_or_else(|| missing("shell", self.dart.id()))?;
+        let sheet = match self.dart {
+            Some(dart) => {
+                Sheet::from_dart(self.map.map(), dart).filter(|view| view.key() == self.key)
+            }
+            None => self.map.map().sheet(self.key),
+        }
+        .ok_or_else(|| missing("shell", format!("{:?}", self.key)))?;
+        let sheet = if self.dart.is_some() {
+            sheet
+        } else {
+            match self.boundaryless_sense {
+                Some(Orientation::Reversed) => sheet.reversed(),
+                _ => sheet,
+            }
+        };
         Ok(Closed::new_unchecked(sheet))
     }
 
@@ -917,12 +1002,16 @@ impl<P: Payload> SharedShell<P> {
 pub(crate) struct SharedSolid<P: Payload = StandardPayload> {
     map: SharedGMap<P>,
     key: SolidKey,
-    dart: Dart,
+    dart: Option<Dart>,
 }
 
 shared_identity!(SharedSolid, SolidKey);
 
 impl<P: Payload> SharedSolid<P> {
+    fn contextual_dart_id(&self) -> Option<usize> {
+        self.dart.map(|dart| dart.id())
+    }
+
     fn from_view(map: SharedGMap<P>, view: Solid<'_, P>) -> Self {
         Self {
             map,
@@ -932,9 +1021,13 @@ impl<P: Payload> SharedSolid<P> {
     }
 
     pub(crate) fn view(&self) -> Result<Solid<'_, P>, ExploreError> {
-        Solid::from_dart(self.map.map(), self.dart)
-            .filter(|view| view.key() == self.key)
-            .ok_or_else(|| missing("solid", self.dart.id()))
+        match self.dart {
+            Some(dart) => {
+                Solid::from_dart(self.map.map(), dart).filter(|view| view.key() == self.key)
+            }
+            None => self.map.map().solid(self.key),
+        }
+        .ok_or_else(|| missing("solid", format!("{:?}", self.key)))
     }
 
     /// Returns the outer shell.

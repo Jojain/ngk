@@ -678,7 +678,7 @@ function formatScalar(value: number) {
   return String(Number(value.toPrecision(6)));
 }
 
-function EntityIdentity<T extends { key: string; dartId: number }>({
+function EntityIdentity<T extends { key: string; dartId?: number }>({
   kind,
   entry,
   dimension,
@@ -691,11 +691,13 @@ function EntityIdentity<T extends { key: string; dartId: number }>({
     <>
       <KeyValue label="kind" value={kind} />
       <KeyValue label="key" value={entry.value.key} />
-      <KeyValue label="dart" value={String(entry.value.dartId)} />
-      <KeyValue
-        label="cell darts"
-        value={Array.from(entry.gmap.cellDarts(entry.value.dartId, dimension)).join(", ")}
-      />
+      <KeyValue label="dart" value={entry.value.dartId?.toString() ?? "none"} />
+      {entry.value.dartId !== undefined && (
+        <KeyValue
+          label="cell darts"
+          value={Array.from(entry.gmap.cellDarts(entry.value.dartId, dimension)).join(", ")}
+        />
+      )}
     </>
   );
 }

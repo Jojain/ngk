@@ -73,8 +73,8 @@ pub(super) fn fit_branch(
     let fitted = if closed {
         SynchronizedNurbsFit {
             curve_3d: NurbsCurve::interpolate_with_parameters(&points, &parameters)?,
-            pcurve_a: NurbsCurve2::interpolate_with_parameters(&uv_a, &parameters)?,
-            pcurve_b: NurbsCurve2::interpolate_with_parameters(&uv_b, &parameters)?,
+            pcurve_a: interpolate_closed_pcurve(&uv_a, &parameters)?,
+            pcurve_b: interpolate_closed_pcurve(&uv_b, &parameters)?,
         }
     } else {
         approximate_open_branch(
@@ -161,6 +161,76 @@ pub(super) fn fit_branch(
             certified,
         },
     })
+}
+
+/// Interpolates a closed branch's pcurve so its seam carries no end condition.
+///
+/// A closed branch returns to its own start in space, but its parameter samples
+/// come back a period away: the trace leaves the domain through one edge and
+/// re-enters through the other, and unwrapping keeps that drift rather than
+/// folding it. Interpolated as an open curve, the seam would be fitted with a
+/// one-sided tangent while the 3D curve -- which does close, and gets the
+/// wrapped one -- is fitted with the true one, and the triple would stop
+/// agreeing over exactly the first span. Subtracting the drift closes the
+/// samples; adding it back afterwards is exact, a cubic reproducing a function
+/// linear in the parameter at its Greville abscissae.
+///
+/// A pcurve that already closes -- the other surface's, wherever the branch
+/// crosses no seam of its own -- has no drift, and this is the plain
+/// interpolation.
+fn interpolate_closed_pcurve(
+    uv: &[Point2],
+    parameters: &[f64],
+) -> Result<NurbsCurve2, IntersectionError> {
+    let (Some(first), Some(last)) = (uv.first(), uv.last()) else {
+        return Err(
+            crate::geometry::NurbsError::InsufficientInterpolationPoints {
+                minimum: 2,
+                got: uv.len(),
+            }
+            .into(),
+        );
+    };
+    let drift = last - first;
+    let closed = uv
+        .iter()
+        .zip(parameters)
+        .map(|(point, parameter)| point - drift * *parameter)
+        .collect::<Vec<_>>();
+    let curve = NurbsCurve2::interpolate_with_parameters(&closed, parameters)?;
+    let degree = curve.degree();
+    let knots = curve.knots().clone();
+    let weights = curve
+        .control_points()
+        .as_slice()
+        .iter()
+        .map(|point| point.weight())
+        .collect::<Vec<_>>();
+    let restored = curve
+        .control_points()
+        .as_slice()
+        .iter()
+        .enumerate()
+        .map(|(index, point)| point.to_cartesian() + drift * greville(&knots, degree, index))
+        .collect();
+    Ok(NurbsCurve2::new(
+        degree,
+        ControlPolygon2::from_cartesian(restored, &weights)?,
+        knots,
+    )?)
+}
+
+/// The parameter a control point pulls its curve towards.
+///
+/// Averaging the `degree` knots after a control point's own index is the
+/// standard abscissa, and it is what makes a spline reproduce a linear function
+/// exactly rather than approximately.
+fn greville(knots: &KnotVector, degree: Degree, control: usize) -> f64 {
+    let degree = degree.get();
+    (1..=degree)
+        .map(|offset| knots.get(control + offset))
+        .sum::<f64>()
+        / degree as f64
 }
 
 /// Approximates one open walking line with a compact synchronized spline triple.

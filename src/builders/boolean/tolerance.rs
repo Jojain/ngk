@@ -157,12 +157,20 @@ impl BooleanTolerances {
         Self::resolve(policy, if scale == 0.0 { 1.0 } else { scale })
     }
 
-    /// Applies geometric budgets while preserving the caller's iteration and fit controls.
+    /// Applies geometric budgets while preserving the caller's iteration controls.
+    ///
+    /// [`Self::section_fit`] is one of them: it is how far this operation lets a
+    /// fitted section sit from its own supporting surfaces, and the fitter is
+    /// what decides that. Leaving the fitter on an absolute default while the
+    /// budget reading its answer scales with the model holds a large model to a
+    /// promise no fit of it can keep — a section is then reported uncertified
+    /// for being exactly as close as this operation asked it to be.
     pub(crate) fn apply(self, options: &mut IntersectionOptions) {
         options.linear_tolerance = self.linear;
         options.residual_tolerance = self.residual;
         options.parameter_tolerance = self.parameter;
         options.angular_tolerance = self.angular;
         options.bbox_tolerance = self.bbox;
+        options.fit_tolerance = self.section_fit;
     }
 }

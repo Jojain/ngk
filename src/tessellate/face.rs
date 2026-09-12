@@ -18,7 +18,11 @@
 use nalgebra::UnitVector3;
 
 use super::{IndexedMesh, TessellateOpts, surface::tessellate_surface_patch};
-use crate::geometry::{Curve, Interval, LINEAR_TOLERANCE, Point2, PointCoincidence, Surface};
+use crate::geometry::{
+    Curve, Interval, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Surface,
+    SurfacePeriodicity,
+};
+use crate::topology::LoopKind;
 use crate::topology::face::Face;
 use crate::topology::gmap::GMap;
 use crate::topology::orientation::Orientation;
@@ -39,7 +43,14 @@ pub fn tessellate_face<P: Payload>(
     face: &Face<'_, P>,
     opts: TessellateOpts,
 ) -> Option<IndexedMesh> {
-    if face.loops().is_empty() {
+    // What a face runs out to is its enclosing loop, or — where it has none —
+    // the support's own domain. A bite taken out of a torus leaves a face of
+    // the second kind: still enclosed by nothing, now carrying a hole.
+    if !face
+        .loops()
+        .iter()
+        .any(|boundary| !matches!(boundary.kind(), LoopKind::Inner))
+    {
         return tessellate_boundaryless_face(face, opts);
     }
     let domain = UnwrappedFaceDomain::of_face(face).ok()?;
@@ -102,14 +113,21 @@ pub fn tessellate_face_key<P: Payload>(
     tessellate_face(&face, opts)
 }
 
-/// Meshes a face that covers its whole support, with no boundary to clip to.
+/// Meshes a face nothing bounds from outside, minus any holes it carries.
 ///
-/// There is no loop to read bounds or winding from: the surface's own domain is
-/// the region, and the face's sense is the winding. A row of that domain that
-/// collapses to a point — a sphere's pole — is already meshed as a fan by
-/// [`tessellate_surface_patch`], and a direction spanning a whole period is
-/// already closed there, so the two ends of the sphere and the seam that is no
-/// longer stored all come out watertight.
+/// There is no enclosing loop to read bounds or winding from: the surface's own
+/// domain is the region, and the face's sense is the winding. A row of that
+/// domain that collapses to a point — a sphere's pole — is already meshed as a
+/// fan by [`tessellate_surface_patch`], and a direction spanning a whole period
+/// is already closed there, so the two ends of the sphere and the seam that is
+/// no longer stored all come out watertight.
+///
+/// Holes are then dropped out of that grid by the triangle, so a bite taken out
+/// of a torus reads as a bite. The rim it leaves is stepped at the grid's
+/// resolution rather than cut along the hole's own pcurve — the curved meshers
+/// have no constrained triangulation to cut it with, which is the same reason
+/// the bounded ones fall back to a bbox quad. Meshing the hole over as though
+/// it were not there is the one answer that would be read as the truth.
 fn tessellate_boundaryless_face<P: Payload>(
     face: &Face<'_, P>,
     opts: TessellateOpts,
@@ -120,7 +138,83 @@ fn tessellate_boundaryless_face<P: Payload>(
     }
     let bounds = (u.start, u.end, v.start, v.end);
     let ccw = face.sense() == Orientation::Same;
-    Some(surface_grid_over_bounds(face.surface(), bounds, ccw, opts))
+    let mut mesh = surface_grid_over_bounds(face.surface(), bounds, ccw, opts);
+    if face.loops().is_empty() {
+        return Some(mesh);
+    }
+    let domain = UnwrappedFaceDomain::of_face(face).ok()?;
+    let holes = domain
+        .loops()
+        .iter()
+        .map(|boundary| boundary.polyline(opts.curve.segments.max(1)))
+        .collect::<Vec<_>>();
+    mesh.indices = cull_triangles_in_holes(face, &mesh, &holes);
+    Some(mesh)
+}
+
+/// Keeps the triangles whose centre is not in a hole.
+///
+/// A triangle is placed by projecting its own centroid back to the surface,
+/// which is exact for the supports that carry a hole like this, and folding the
+/// answer onto the image the hole is written in — the hole may straddle the
+/// domain's seam, and a centroid the other side of it is the same point.
+fn cull_triangles_in_holes<P: Payload>(
+    face: &Face<'_, P>,
+    mesh: &IndexedMesh,
+    holes: &[Vec<Point2>],
+) -> Vec<u32> {
+    let periods = match face.surface().periodicity() {
+        SurfacePeriodicity::None => [None, None],
+        SurfacePeriodicity::UPeriodic(u) => [Some(u), None],
+        SurfacePeriodicity::VPeriodic(v) => [None, Some(v)],
+        SurfacePeriodicity::UVPeriodic(u, v) => [Some(u), Some(v)],
+    };
+    let mut kept = Vec::with_capacity(mesh.indices.len());
+    for triangle in mesh.indices.chunks_exact(3) {
+        let centroid = Point3::from(
+            triangle
+                .iter()
+                .map(|index| mesh.positions[*index as usize].coords)
+                .sum::<nalgebra::Vector3<f64>>()
+                / 3.0,
+        );
+        let Ok(uv) = face.surface().param_at(centroid) else {
+            kept.extend_from_slice(triangle);
+            continue;
+        };
+        let in_hole = holes.iter().any(|hole| {
+            let mut folded = uv;
+            for (axis, period) in periods.into_iter().enumerate() {
+                let Some(period) = period.filter(|period| *period > 0.0) else {
+                    continue;
+                };
+                let centre = hole.iter().map(|point| point[axis]).sum::<f64>() / hole.len() as f64;
+                folded[axis] += ((centre - folded[axis]) / period).round() * period;
+            }
+            point_in_polygon(hole, folded)
+        });
+        if !in_hole {
+            kept.extend_from_slice(triangle);
+        }
+    }
+    kept
+}
+
+/// Crossing-count membership for a closed parameter-space polygon.
+fn point_in_polygon(polygon: &[Point2], point: Point2) -> bool {
+    let mut inside = false;
+    for (a, b) in polygon
+        .iter()
+        .zip(polygon.iter().cycle().skip(1))
+        .take(polygon.len())
+    {
+        if (a.y > point.y) != (b.y > point.y)
+            && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x
+        {
+            inside = !inside;
+        }
+    }
+    inside
 }
 
 /// Shoelace signed area in UV. Positive ⇒ CCW.

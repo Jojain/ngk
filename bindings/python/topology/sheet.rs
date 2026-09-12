@@ -55,7 +55,7 @@ entity_methods!(PyShell, SharedShell<StandardPayload>, "shell", {
 
     fn __repr__(&self) -> String {
         format!(
-            "Shell(key={:?}, dart_id={})",
+            "Shell(key={:?}, dart_id={:?})",
             self.inner.key(),
             self.inner.dart_id()
         )

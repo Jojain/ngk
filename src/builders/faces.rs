@@ -12,7 +12,7 @@ use crate::builders::profiles::{
 use crate::geometry::{
     Axis2, Curve, CurveCurveIntersection2, CurveIntersectionError, DomainSide, Interval,
     LINEAR_TOLERANCE, NurbsError, Periodicity, Plane, Point2, Point3, Surface, SurfacePeriodicity,
-    TrimmedCurve, TrimmedCurve2,
+    TrimmedCurve, TrimmedCurve2, Vector2,
 };
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, VertexAttr,
@@ -636,6 +636,13 @@ pub fn split_face_by_imprints_staged<P: Payload>(
             (closed, open)
         },
     );
+    let open_imprints = imprints_on_one_periodic_image(
+        edit.face_attr(face)
+            .ok_or(FaceImprintSplitError::MissingFace { face })?
+            .surface
+            .periodicity(),
+        &open_imprints,
+    )?;
     if closed_imprints.is_empty() {
         let mut splits = split_ring_face_by_wrapping_chains(edit, face, &open_imprints)?;
         if !splits.is_empty() {
@@ -657,6 +664,84 @@ pub fn split_face_by_imprints_staged<P: Payload>(
     remap_section_indices(&mut open_splits, &open_indices);
     splits.extend(open_splits);
     Ok(splits)
+}
+
+/// Rewrites imprints onto one continuous image of a periodic face's domain.
+///
+/// Two parameter points a whole period apart name the same point of a periodic
+/// surface, so imprints written on different images still meet end to end on
+/// the face itself — an arc crossing the seam has to run past the domain's edge
+/// to stay continuous, and lands a period away from where the arc it meets was
+/// written. Joining them by position alone then finds no walk at all, and a
+/// face the walk should cut is left whole: this is the whole of why a torus
+/// survives a Boolean that any other support would be split by.
+///
+/// Only whole periods are ever added, so every imprint still names the points it
+/// named, and its 3D curve is left exactly as it was.
+fn imprints_on_one_periodic_image(
+    periodicity: SurfacePeriodicity,
+    imprints: &[FaceImprint],
+) -> Result<Vec<FaceImprint>, NurbsError> {
+    let periods = match periodicity {
+        SurfacePeriodicity::None => return Ok(imprints.to_vec()),
+        SurfacePeriodicity::UPeriodic(u) => [Some(u), None],
+        SurfacePeriodicity::VPeriodic(v) => [None, Some(v)],
+        SurfacePeriodicity::UVPeriodic(u, v) => [Some(u), Some(v)],
+    };
+    let mut placed = vec![None; imprints.len()];
+    for seed in 0..imprints.len() {
+        if placed[seed].is_some() {
+            continue;
+        }
+        // The seed anchors its own walk: which image that walk is written on is
+        // arbitrary, only that the walk agrees with itself matters.
+        let mut frontier = endpoints(&imprints[seed]).to_vec();
+        placed[seed] = Some(imprints[seed].clone());
+        while let Some(anchor) = frontier.pop() {
+            for index in 0..imprints.len() {
+                if placed[index].is_some() {
+                    continue;
+                }
+                let Some(offset) = endpoints(&imprints[index])
+                    .into_iter()
+                    .find_map(|end| period_offset(periods, anchor, end))
+                else {
+                    continue;
+                };
+                let moved = FaceImprint::with_section(
+                    imprints[index].curve.clone(),
+                    imprints[index].pcurve.translated(offset)?,
+                );
+                frontier.extend(endpoints(&moved));
+                placed[index] = Some(moved);
+            }
+        }
+    }
+    Ok(placed
+        .into_iter()
+        .map(|imprint| {
+            imprint.expect("every imprint is placed, by its own walk if by nothing else")
+        })
+        .collect())
+}
+
+fn endpoints(imprint: &FaceImprint) -> [Point2; 2] {
+    [imprint.pcurve.point_at(0.0), imprint.pcurve.point_at(1.0)]
+}
+
+/// The whole-period translation carrying `point` onto `anchor`, if one does.
+fn period_offset(periods: [Option<f64>; 2], anchor: Point2, point: Point2) -> Option<Vector2> {
+    let mut offset = Vector2::zeros();
+    for (axis, period) in periods.into_iter().enumerate() {
+        let Some(period) = period.filter(|period| period.is_finite() && *period > 0.0) else {
+            continue;
+        };
+        offset[axis] = ((anchor[axis] - point[axis]) / period).round() * period;
+    }
+    ((point + offset) - anchor)
+        .norm()
+        .le(&LINEAR_TOLERANCE)
+        .then_some(offset)
 }
 
 /// Restores original input indices after partitioning closed and open curves.
@@ -1254,7 +1339,6 @@ fn add_closed_imprint_loops<P: Payload>(
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
     let boundary_uvs = face_boundary_uvs(edit, face)?;
     let mut splits = Vec::new();
-
     for component in graph.closed_edge_components() {
         let mut loop_imprints = component
             .iter()
@@ -1495,6 +1579,17 @@ fn matching_reversed_loop_edge(
         .cloned()
 }
 
+/// Winds an imprint loop so it cuts a hole rather than bounding one.
+///
+/// A face's material lies to the left of its boundary, so a hole runs the
+/// opposite way round from whatever encloses the face. A bounded face says
+/// which way that is with its own boundary. A face nothing encloses has none to
+/// compare against and needs none: it covers the support's whole domain as the
+/// support is parameterized, so counter-clockwise is its material side and a
+/// hole in it is clockwise. Leaving that to whichever way the intersection
+/// chain happened to be walked instead makes the face's winding depend on which
+/// Boolean operand it belonged to — the same cut then sews up correctly one way
+/// round and inside-out the other.
 fn orient_imprint_loop_against_boundary(
     boundary_uvs: &[Point2],
     imprints: &mut Vec<FaceImprint>,
@@ -1506,9 +1601,13 @@ fn orient_imprint_loop_against_boundary(
         .collect::<Vec<_>>();
     let loop_area = signed_area(&loop_uvs);
 
-    if boundary_area.abs() <= LINEAR_TOLERANCE || loop_area.abs() <= LINEAR_TOLERANCE {
+    if loop_area.abs() <= LINEAR_TOLERANCE {
         return Ok(false);
     }
+    let boundary_area = match boundary_area.abs() <= LINEAR_TOLERANCE {
+        true => 1.0,
+        false => boundary_area,
+    };
 
     if boundary_area.signum() == loop_area.signum() {
         *imprints = reversed_imprint_loop(imprints)?;

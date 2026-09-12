@@ -76,7 +76,7 @@ entity_methods!(PyFace, SharedFace<StandardPayload>, "face", {
 
     fn __repr__(&self) -> String {
         format!(
-            "Face(key={:?}, dart_id={})",
+            "Face(key={:?}, dart_id={:?})",
             self.inner.key(),
             self.inner.dart_id()
         )

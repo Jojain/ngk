@@ -11,7 +11,7 @@ use crate::topology::{
     TopologyEdit,
     attributes::{SheetAttr, ShellRoot, SolidAttr},
     closed::Closed,
-    gmap::{Dim, GMap},
+    gmap::{Dart, Dim, GMap},
     payload::Payload,
     shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey},
     validation::{validate_gmap, validate_solid_manifold, validate_solid_orientation},
@@ -34,17 +34,17 @@ pub(crate) fn run<P: Payload>(
     let mut spans = prepared.span_edges.iter().collect::<Vec<_>>();
     spans.sort_by_key(|(span, _)| span.0);
     for (&span, sides) in spans {
+        // The one kept face is carried alongside its edge: it is what says
+        // which way the fragment runs, and looking it up again after the
+        // sewing has started would be asking a map that has moved on.
         let boundary = sides.each_ref().map(|side| {
             side.iter()
                 .copied()
-                .filter(|edge| {
-                    edit.edge(*edge).is_some_and(|edge| {
-                        edge.faces()
-                            .iter()
-                            .filter(|face| kept.contains(&face.key()))
-                            .count()
-                            == 1
-                    })
+                .filter_map(|edge| {
+                    let faces = edit.edge(edge)?.faces();
+                    let mut kept_faces = faces.iter().filter(|face| kept.contains(&face.key()));
+                    let face = kept_faces.next()?.key();
+                    kept_faces.next().is_none().then_some((edge, face))
                 })
                 .collect::<Vec<_>>()
         });
@@ -251,24 +251,24 @@ fn remap_keys<K: Copy + Eq + std::hash::Hash + Ord>(keys: &mut Vec<K>, merges: &
 fn sew_pair<P: Payload>(
     edit: &mut TopologyEdit<'_, P>,
     span: IntersectionSpanId,
-    first: EdgeKey,
-    second: EdgeKey,
+    first: (EdgeKey, FaceKey),
+    second: (EdgeKey, FaceKey),
     tolerance: f64,
     edge_merges: &mut HashMap<EdgeKey, EdgeKey>,
     vertex_merges: &mut HashMap<VertexKey, VertexKey>,
 ) -> Result<(), BooleanError> {
-    let a = edit.edge_unchecked(first);
-    let b = edit.edge_unchecked(second);
-    let da = a.dart();
-    let mut db = b.dart();
-    let (a_start, a_end) = a.bounded_unchecked().vertices();
-    let (b_start, b_end) = b.bounded_unchecked().vertices();
-    let a0 = *a_start.point().expect("admitted geometry");
-    let a1 = *a_end.point().expect("admitted geometry");
-    let b0 = *b_start.point().expect("admitted geometry");
-    let b1 = *b_end.point().expect("admitted geometry");
-    let av = [a_start.key(), a_end.key()];
-    let mut bv = [b_start.key(), b_end.key()];
+    let ((first, first_face), (second, second_face)) = (first, second);
+    // Which way each fragment runs is a question about the face that keeps it,
+    // not about the edge: an edge's own reference dart is whichever one it was
+    // built from, and a fragment copied in from the other operand's map need
+    // not have been built from the same side as one made here. Reading the
+    // direction off the edge instead of off the loop is then right exactly half
+    // the time — the half where the two happen to agree — and sews the second
+    // operand's faces on backwards whenever they disagree.
+    let (da, av, [a0, a1]) = loop_traversal(edit, first, first_face)
+        .ok_or(BooleanError::SpanEndpointMismatch { span })?;
+    let (mut db, mut bv, [b0, b1]) = loop_traversal(edit, second, second_face)
+        .ok_or(BooleanError::SpanEndpointMismatch { span })?;
     if a0.coincides(b1, tolerance) && a1.coincides(b0, tolerance) {
         db = edit.alpha(Dim::Zero, db);
         bv.swap(0, 1);
@@ -296,6 +296,27 @@ fn sew_pair<P: Payload>(
         }
     }
     Ok(())
+}
+
+/// The dart `face` traverses `edge` with, and the edge's ends in that order.
+fn loop_traversal<P: Payload>(
+    edit: &TopologyEdit<'_, P>,
+    edge: EdgeKey,
+    face: FaceKey,
+) -> Option<(Dart, [VertexKey; 2], [Point3; 2])> {
+    let traversed = edit
+        .face_unchecked(face)
+        .loops()
+        .into_iter()
+        .flat_map(|boundary| boundary.edges())
+        .find(|candidate| candidate.key() == edge)?;
+    let dart = traversed.dart();
+    let (start, end) = traversed.bounded_unchecked().vertices();
+    Some((
+        dart,
+        [start.key(), end.key()],
+        [*start.point()?, *end.point()?],
+    ))
 }
 
 /// Discovers connected face sets using current typed incidence after all compaction/sewing.

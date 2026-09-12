@@ -261,19 +261,28 @@ fn snapped_pcurve(
             *(if at_start { &mut start } else { &mut end }) += correction;
             Ok(TrimmedCurve2::segment(start, end))
         }
-        Curve2::Nurbs(nurbs) => {
-            let mut points = nurbs.control_points().as_slice().to_vec();
+        Curve2::Nurbs(_) => {
+            // A fragment is a window on the whole branch's pcurve, whose end
+            // control points sit at the *branch's* ends, not this fragment's.
+            // Cutting the span down first — the same step its curve takes
+            // through `to_curve` — is what makes the end being moved the end
+            // that needs moving, and keeps the pair reading the same fraction:
+            // rewriting the support without it would hand back the whole branch
+            // where a fragment was asked for.
+            let Curve2::Nurbs(section) = span.to_curve()? else {
+                return Ok(span.clone());
+            };
+            let mut points = section.control_points().as_slice().to_vec();
             let index = if at_start { 0 } else { points.len() - 1 };
             let weight = points[index].weight();
             let moved: Point2 = points[index].to_cartesian() + correction;
             points[index] = HPoint2::from_cartesian(moved, weight);
             let moved = NurbsCurve2::new(
-                nurbs.degree(),
+                section.degree(),
                 ControlPolygon2::new(points)?,
-                nurbs.knots().clone(),
+                section.knots().clone(),
             )?;
-            let domain = moved.domain();
-            Ok(TrimmedCurve2::new(Curve2::Nurbs(moved), domain))
+            Ok(TrimmedCurve2::whole(Curve2::Nurbs(moved)))
         }
         Curve2::Circle(_) | Curve2::Ellipse(_) => Ok(span.clone()),
     }

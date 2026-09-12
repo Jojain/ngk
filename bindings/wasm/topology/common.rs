@@ -34,9 +34,9 @@ macro_rules! entity_common {
                 format!("{:?}", self.inner.key())
             }
 
-            /// Returns the contextual dart id.
+            /// Returns the contextual dart id, or `undefined` for dart-less topology.
             #[wasm_bindgen(getter, js_name = dartId)]
-            pub fn dart_id(&self) -> usize {
+            pub fn dart_id(&self) -> Option<usize> {
                 self.inner.dart_id()
             }
 

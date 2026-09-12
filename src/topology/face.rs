@@ -298,11 +298,24 @@ impl<'g, P: Payload> Face<'g, P> {
     /// Curved triangles are subdivided on the support surface; this is an
     /// orientation estimate, not a certified mass-property calculation.
     pub(crate) fn signed_volume_contribution(&self, reference: Point3) -> Option<f64> {
+        // A face nothing encloses spans its whole support, and any loop it does
+        // carry is a hole in that. Fanning its loops alone would measure the
+        // bite taken out of a torus instead of what is left of it — and measure
+        // it with the wrong sign, a hole being wound against the face. Starting
+        // from the support and letting each hole's own fan take its region back
+        // off is the same statement the bounded case makes, from the other end.
+        let enclosed = self
+            .loops()
+            .iter()
+            .any(|boundary| !matches!(boundary.kind(), LoopKind::Inner));
+        let mut volume = match enclosed {
+            true => 0.0,
+            false => self.boundaryless_signed_volume(reference)?,
+        };
         if self.attr().is_empty() {
-            return self.boundaryless_signed_volume(reference);
+            return volume.is_finite().then_some(volume);
         }
         let planar = matches!(self.surface(), Surface::Plane(_));
-        let mut volume = 0.0;
         for boundary in self.loops() {
             let mut uvs = Vec::new();
             for edge in boundary.edges() {

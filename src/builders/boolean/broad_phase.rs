@@ -1,6 +1,7 @@
 //! Conservative trimmed-face bounds and deterministic BVH candidate generation.
 
 use crate::geometry::{Interval, Point2, Point3, Surface};
+use crate::topology::LoopKind;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::gmap::GMap;
@@ -73,7 +74,24 @@ fn edge_bounds<P: Payload>(edge: Edge<'_, P>, padding: f64) -> Option<Bounds> {
 ///
 /// Callers converting an unbounded analytic surface to NURBS need this so the
 /// patch they build actually covers the trimmed region.
+///
+/// A face nothing encloses covers the support's whole domain, and the pcurves
+/// it does carry are holes inside that — reading a box off *them* would return
+/// the hole rather than the face, and a patch built to it would cover only the
+/// part of the surface the face is missing. Only a surface that closes carries
+/// such a face, so the domain is finite; a support running to infinity under one
+/// would be a contradiction, and is declined rather than answered with an
+/// infinite box.
 pub(crate) fn face_uv_bounds<P: Payload>(face: &Face<'_, P>) -> Option<(Interval, Interval)> {
+    if !face
+        .loops()
+        .iter()
+        .any(|boundary| !matches!(boundary.kind(), LoopKind::Inner))
+    {
+        let (u, v) = face.surface().domain();
+        let (u, v) = (u.ordered(), v.ordered());
+        return (u.is_finite() && v.is_finite()).then_some((u, v));
+    }
     let mut u = (f64::INFINITY, f64::NEG_INFINITY);
     let mut v = (f64::INFINITY, f64::NEG_INFINITY);
     for boundary in face.loops() {

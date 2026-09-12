@@ -41,7 +41,7 @@ macro_rules! entity_methods {
             }
 
             #[getter]
-            fn dart_id(&self) -> usize {
+            fn dart_id(&self) -> Option<usize> {
                 self.inner.dart_id()
             }
 

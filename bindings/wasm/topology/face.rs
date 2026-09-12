@@ -100,7 +100,8 @@ impl WasmFace {
             self.inner.loops().map_err(js_err)?.into_iter().enumerate()
         {
             for edge in boundary_loop.edges().map_err(js_err)? {
-                let Some(pcurve) = self.inner.pcurve(edge.dart_id()).map_err(js_err)? else {
+                let dart_id = edge.dart_id().expect("an edge is always backed by a dart");
+                let Some(pcurve) = self.inner.pcurve(dart_id).map_err(js_err)? else {
                     continue;
                 };
                 let record = Object::new();
@@ -112,7 +113,7 @@ impl WasmFace {
                 Reflect::set(
                     record.as_ref(),
                     &JsValue::from_str("dartId"),
-                    &JsValue::from_f64(edge.dart_id() as f64),
+                    &JsValue::from_f64(dart_id as f64),
                 )?;
                 Reflect::set(
                     record.as_ref(),

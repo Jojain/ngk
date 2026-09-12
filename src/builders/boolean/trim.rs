@@ -5,6 +5,7 @@ use crate::geometry::{
     CurveCurveIntersection2, CurveIntersectionError, CurveIntersectionOptions, IntersectionOptions,
     Interval, Point2,
 };
+use crate::topology::LoopKind;
 use crate::topology::face::Face;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::EdgeKey;
@@ -43,12 +44,15 @@ pub(crate) struct FaceTrimDomain {
     tolerance: f64,
     /// Upper bound on how far `polygons` may stray from the domain's loops.
     chord: f64,
-    /// Corners of the support's own domain, set only for a face with no loops
-    /// at all.
+    /// Corners of the support's own domain, set for a face nothing bounds from
+    /// outside.
     ///
-    /// Such a face covers its whole support — a sphere — so every point of it is
-    /// inside, there is no boundary to be at a distance from, and the domain it
-    /// spans is the support's rather than any polygon's.
+    /// A sphere is the clear case: no loop at all, so every point of the support
+    /// is a point of the face. Cutting a hole in such a face does not give it an
+    /// outer boundary — a torus with a disk removed still runs to the support's
+    /// own edges, and its one loop is a hole. So this says what *encloses* the
+    /// face, not whether it is unbroken: when it is set the face spans the
+    /// support's domain, and every loop it does have is a hole in that.
     whole_support: Option<(Point2, Point2)>,
 }
 
@@ -70,7 +74,11 @@ impl FaceTrimDomain {
             .iter()
             .map(|boundary| boundary.adaptive_polyline(chord, 20))
             .collect();
-        let whole_support = face.loops().is_empty().then(|| {
+        let enclosed = face
+            .loops()
+            .iter()
+            .any(|boundary| !matches!(boundary.kind(), LoopKind::Inner));
+        let whole_support = (!enclosed).then(|| {
             let (u, v) = face.surface().domain();
             let (u, v) = (u.ordered(), v.ordered());
             (Point2::new(u.start, v.start), Point2::new(u.end, v.end))
@@ -167,13 +175,6 @@ impl FaceTrimDomain {
     /// inside the trim answers for all of them, because they are one point on
     /// the surface.
     pub(crate) fn classify(&self, point: Point2) -> TrimLocation {
-        // A face with no loops has no boundary to be on, outside of, or near:
-        // it covers its whole support, so every point of it is interior.
-        if self.whole_support.is_some() {
-            return TrimLocation::Inside {
-                margin: f64::INFINITY,
-            };
-        }
         let images = self.domain.images(point);
         for image in &images {
             for (loop_index, boundary) in self.domain.loops().iter().enumerate() {
@@ -189,15 +190,33 @@ impl FaceTrimDomain {
             }
         }
         let margin = self.boundary_distance(point);
-        let inside = images.iter().any(|image| self.planar_contains(*image));
-        if inside {
-            TrimLocation::Inside { margin }
-        } else {
-            TrimLocation::Outside { margin }
+        match self.contains_in_quotient(&images) {
+            true => TrimLocation::Inside { margin },
+            false => TrimLocation::Outside { margin },
         }
     }
 
-    /// Winding membership against the polygons as written, on one branch.
+    /// Winding membership across every image the query could occupy.
+    ///
+    /// Where a loop encloses the face, one image landing inside it settles the
+    /// question: the images are one point of the surface, and the face's holes
+    /// are written on the same image its outer loop is. Where the *support*
+    /// encloses the face there is no such anchor — every image is enclosed, so
+    /// asking `any` would let the images that do not carry the hole answer for
+    /// the one that does, and a point in a bite taken out of a torus would come
+    /// back as a point of it. A hole has to miss on all of them.
+    fn contains_in_quotient(&self, images: &[Point2]) -> bool {
+        match self.whole_support.is_some() {
+            true => !images.iter().any(|image| {
+                self.polygons
+                    .iter()
+                    .any(|hole| winding_contains(hole, *image))
+            }),
+            false => images.iter().any(|image| self.planar_contains(*image)),
+        }
+    }
+
+    /// Winding membership against an enclosing polygon and its holes, on one branch.
     fn planar_contains(&self, point: Point2) -> bool {
         self.polygons
             .first()
@@ -229,26 +248,35 @@ impl FaceTrimDomain {
         if direction_norm <= self.tolerance {
             return Ok(Vec::new());
         }
-        // Nothing bounds a face with no loops, so the line is inside over the
-        // whole stretch that stays on the support.
-        if let Some((min, max)) = self.whole_support {
-            return Ok(clip_to_box(origin, direction, min, max)
-                .into_iter()
-                .collect());
-        }
-        let mut projected = self
-            .polygons
-            .iter()
-            .flatten()
-            .map(|point| (point - origin).dot(&direction) / direction.norm_squared());
-        let Some(first) = projected.next() else {
-            return Ok(Vec::new());
+        // What bounds the line's finite stretch is what bounds the face: the
+        // support's own box where nothing else does, the trim's extent
+        // otherwise. Either way the crossings below are taken against the exact
+        // pcurves, so a hole punched in a whole-support face still cuts the
+        // line the same way a hole anywhere else does.
+        let (mut start, mut end) = match self.whole_support {
+            Some((min, max)) => {
+                let Some(span) = clip_to_box(origin, direction, min, max) else {
+                    return Ok(Vec::new());
+                };
+                (span.start, span.end)
+            }
+            None => {
+                let mut projected = self
+                    .polygons
+                    .iter()
+                    .flatten()
+                    .map(|point| (point - origin).dot(&direction) / direction.norm_squared());
+                let Some(first) = projected.next() else {
+                    return Ok(Vec::new());
+                };
+                let (mut start, mut end) = (first, first);
+                for parameter in projected {
+                    start = start.min(parameter);
+                    end = end.max(parameter);
+                }
+                (start, end)
+            }
         };
-        let (mut start, mut end) = (first, first);
-        for parameter in projected {
-            start = start.min(parameter);
-            end = end.max(parameter);
-        }
         let parameter_tolerance = self.tolerance / direction_norm;
         let padding =
             2.0 * parameter_tolerance + 64.0 * f64::EPSILON * start.abs().max(end.abs()).max(1.0);
