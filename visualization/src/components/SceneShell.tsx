@@ -1,7 +1,7 @@
 import { Canvas } from "@react-three/fiber";
-import { GizmoHelper, GizmoViewport, OrbitControls } from "@react-three/drei";
-import * as THREE from "three";
+import { GizmoHelper, GizmoViewport } from "@react-three/drei";
 import type { PropsWithChildren } from "react";
+import CadControlsView from "./CadControlsView";
 
 export default function SceneShell({ children }: PropsWithChildren) {
   return (
@@ -13,15 +13,11 @@ export default function SceneShell({ children }: PropsWithChildren) {
       <color attach="background" args={["#0f0f12"]} />
       <ambientLight intensity={0.6} />
       <directionalLight position={[8, 10, 6]} intensity={1.1} />
-      <OrbitControls
+      <CadControlsView
         makeDefault
-        enableDamping
-        dampingFactor={0.15}
-        mouseButtons={{
-          LEFT: undefined as unknown as THREE.MOUSE,
-          MIDDLE: THREE.MOUSE.ROTATE,
-          RIGHT: THREE.MOUSE.PAN,
-        }}
+        showGizmos={false}
+        rotateSpeed={1.5}
+        scaleFactor={1.25}
       />
       <GizmoHelper alignment="bottom-left" margin={[80, 80]}>
         <GizmoViewport
