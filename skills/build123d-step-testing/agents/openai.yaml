@@ -1,0 +1,4 @@
+interface:
+  display_name: "build123d STEP Testing"
+  short_description: "Use build123d as an independent oracle for ngk STEP import/export"
+  default_prompt: "Use $build123d-step-testing when generating STEP fixtures or validating ngk's STEP import/export against build123d."
