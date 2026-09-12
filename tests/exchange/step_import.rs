@@ -482,3 +482,87 @@ fn a_foreign_sphere_is_a_valid_oriented_solid() {
     validate_all_solid_manifolds(map).expect("the shell should be closed");
     validate_all_solid_orientations(map).expect("the sphere should face outward");
 }
+
+/// A rectangle lofted to a circle, from OpenCascade.
+///
+/// Regenerate with `uv run python tests/fixtures/step/generate_nurbs.py`.
+const OCCT_LOFTED: &str = include_str!("../fixtures/step/lofted.step");
+
+/// A circle swept along a spline, from OpenCascade.
+const OCCT_SWEPT_CIRCLE: &str = include_str!("../fixtures/step/swept_circle.step");
+
+#[test]
+fn foreign_splines_import_as_valid_oriented_solids() {
+    for text in [OCCT_LOFTED, OCCT_SWEPT_CIRCLE] {
+        let import = read(text);
+        let map = import.shapes[0].map();
+        validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+        validate_all_solid_manifolds(map).expect("the shell should be closed");
+        validate_all_solid_orientations(map).expect("every face should point outward");
+    }
+}
+
+#[test]
+fn a_foreign_loft_arrives_on_spline_supports() {
+    // The simple spelling: a polynomial B-spline is a leaf type, so each of
+    // these is one record carrying its inherited attributes as well as its
+    // own — a different attribute layout from the rational form under the
+    // very same keyword.
+    let import = read(OCCT_LOFTED);
+    let solid = import.shapes[0].solid();
+
+    assert!(
+        import.report.is_clean(),
+        "nothing should have been given up: {:?}",
+        import.report.skipped
+    );
+    let splines = solid
+        .faces()
+        .iter()
+        .filter(|face| matches!(face.surface(), ngk::geometry::Surface::Nurbs(_)))
+        .count();
+    assert!(splines > 0, "a loft is walled with spline patches");
+
+    let spline_edges = solid
+        .edges()
+        .iter()
+        .filter(|edge| matches!(edge.curve(), Some(ngk::geometry::Curve::Nurbs(_))))
+        .count();
+    assert!(spline_edges > 0, "and bounded by spline edges");
+}
+
+#[test]
+fn a_foreign_swept_surface_arrives_as_one_clamped_spline_wall() {
+    // The complex spelling, and the awkward one: the surface's two degrees
+    // differ, so a transposed control net is visible rather than merely wrong,
+    // and its u knots are unclamped, so it evaluates over its own domain only
+    // after being clamped. The wall is periodic too, so it arrives cut open
+    // and has to heal back to one ring face.
+    let import = read(OCCT_SWEPT_CIRCLE);
+    let solid = import.shapes[0].solid();
+
+    assert!(
+        import.report.is_clean(),
+        "nothing should have been given up: {:?}",
+        import.report.skipped
+    );
+    assert_eq!(solid.faces().len(), 3, "a wall between two caps");
+
+    let wall = solid
+        .faces()
+        .iter()
+        .find_map(|face| match face.surface() {
+            ngk::geometry::Surface::Nurbs(surface) => Some(surface.clone()),
+            _ => None,
+        })
+        .expect("the swept wall should arrive as a NURBS surface");
+    assert_ne!(
+        wall.degree_u().get(),
+        wall.degree_v().get(),
+        "the two degrees differ, which is what makes a transposed net visible",
+    );
+    assert!(
+        wall.knots_u().is_clamped(wall.degree_u()) && wall.knots_v().is_clamped(wall.degree_v()),
+        "an unclamped patch should be clamped on the way in",
+    );
+}

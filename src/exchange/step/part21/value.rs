@@ -196,6 +196,19 @@ impl Instance {
     pub fn is(&self, keyword: &str) -> bool {
         self.record(keyword).is_some()
     }
+
+    /// The keywords this instance is spelled with, for a message about it.
+    ///
+    /// One for a simple instance. A complex one is the intersection of every
+    /// type it names, so naming only the first would describe a different
+    /// entity — usually a supertype carrying no attributes at all.
+    pub fn spelling(&self) -> String {
+        self.records
+            .iter()
+            .map(|record| record.keyword.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 /// Two instances in one exchange structure claim the same name.

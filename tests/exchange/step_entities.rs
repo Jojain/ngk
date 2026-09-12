@@ -89,6 +89,31 @@ fn an_axis_placement_round_trips_with_and_without_its_optional_directions() {
 }
 
 #[test]
+fn an_axis1_placement_round_trips_with_and_without_its_optional_direction() {
+    round_trip(&entities::Axis1Placement {
+        location: id(1),
+        axis: Some(id(2)),
+    });
+    round_trip(&entities::Axis1Placement {
+        location: id(1),
+        axis: None,
+    });
+}
+
+#[test]
+fn a_surface_of_revolution_round_trips_with_its_curve_before_its_axis() {
+    // Two adjacent references of different kinds that the type system cannot
+    // tell apart: transposed, the profile becomes the axis and the surface is
+    // a different shape entirely.
+    let revolution = round_trip(&entities::SurfaceOfRevolution {
+        swept_curve: id(40),
+        axis_position: id(41),
+    });
+    assert_eq!(revolution.swept_curve, id(40));
+    assert_eq!(revolution.axis_position, id(41));
+}
+
+#[test]
 fn a_line_round_trips() {
     round_trip(&entities::Line {
         pnt: id(4),
@@ -427,4 +452,220 @@ fn reading_a_2d_point_as_a_3d_one_fails_on_its_arity() {
         "a 2D point must not read as a 3D one",
     );
     assert!(entities::CartesianPoint::<2>::read(attributes).is_ok());
+}
+
+// ------------------------------------------------------ B-splines, both spellings
+
+use ngk::exchange::step::part21::Instance;
+use ngk::exchange::step::schema::bspline::{
+    BSplineCurve, BSplineSurface, CurveKnots, CurveSpline, CurveWeights, SurfaceKnots,
+    SurfaceSpline, SurfaceWeights,
+};
+
+/// Writes a B-spline, reads the instance back, and returns what came back.
+///
+/// The same property the rest of this file asserts, on the two types that
+/// cannot be `Entity`: a rational B-spline is a complex instance, so what a
+/// round trip has to survive is a *set* of records rather than one.
+fn round_trip_curve(curve: &BSplineCurve) -> BSplineCurve {
+    let instance = Instance {
+        id: id(1),
+        records: curve.records(),
+        line: 1,
+    };
+    let read = BSplineCurve::read(origin(), &instance)
+        .expect("a written B-spline curve should be recognized")
+        .expect("it should read back");
+    assert_eq!(&read, curve, "round trip changed the curve");
+    read
+}
+
+fn round_trip_surface(surface: &BSplineSurface) -> BSplineSurface {
+    let instance = Instance {
+        id: id(1),
+        records: surface.records(),
+        line: 1,
+    };
+    let read = BSplineSurface::read(origin(), &instance)
+        .expect("a written B-spline surface should be recognized")
+        .expect("it should read back");
+    assert_eq!(&read, surface, "round trip changed the surface");
+    read
+}
+
+fn polynomial_curve() -> BSplineCurve {
+    BSplineCurve {
+        spline: CurveSpline {
+            degree: 3,
+            control_points: vec![id(8), id(9), id(10), id(11)],
+            closed: false,
+        },
+        knots: CurveKnots {
+            multiplicities: vec![4, 4],
+            knots: vec![0.0, 1.0],
+        },
+        weights: None,
+    }
+}
+
+#[test]
+fn a_polynomial_b_spline_curve_round_trips_as_one_record() {
+    let curve = polynomial_curve();
+    round_trip_curve(&curve);
+
+    let records = curve.records();
+    assert_eq!(records.len(), 1, "the leaf type is a simple instance");
+    assert!(records[0].is("B_SPLINE_CURVE_WITH_KNOTS"));
+}
+
+#[test]
+fn a_rational_b_spline_curve_round_trips_as_a_complex_instance() {
+    // The weights have nowhere to go in the simple record, so the same entity
+    // has to be written as the intersection of its supertypes instead.
+    let curve = BSplineCurve {
+        weights: Some(CurveWeights {
+            weights: vec![1.0, 0.8, 0.8, 1.0],
+        }),
+        ..polynomial_curve()
+    };
+    round_trip_curve(&curve);
+
+    let records = curve.records();
+    let keywords: Vec<&str> = records
+        .iter()
+        .map(|record| record.keyword.as_str())
+        .collect();
+    assert_eq!(
+        keywords,
+        [
+            "BOUNDED_CURVE",
+            "B_SPLINE_CURVE",
+            "B_SPLINE_CURVE_WITH_KNOTS",
+            "CURVE",
+            "GEOMETRIC_REPRESENTATION_ITEM",
+            "RATIONAL_B_SPLINE_CURVE",
+            "REPRESENTATION_ITEM",
+        ],
+        "Part 21 orders a complex instance's records by keyword",
+    );
+}
+
+fn polynomial_surface() -> BSplineSurface {
+    // Deliberately not square: a transposed control net is invisible when the
+    // two degrees and the two counts agree.
+    BSplineSurface {
+        spline: SurfaceSpline {
+            degree_u: 1,
+            degree_v: 2,
+            control_points: vec![vec![id(20), id(21), id(22)], vec![id(23), id(24), id(25)]],
+            closed_u: false,
+            closed_v: true,
+        },
+        knots: SurfaceKnots {
+            multiplicities_u: vec![2, 2],
+            multiplicities_v: vec![3, 3],
+            knots_u: vec![0.0, 1.0],
+            knots_v: vec![0.0, 2.0],
+        },
+        weights: None,
+    }
+}
+
+#[test]
+fn a_polynomial_b_spline_surface_round_trips_as_one_record() {
+    let surface = polynomial_surface();
+    round_trip_surface(&surface);
+
+    let records = surface.records();
+    assert_eq!(records.len(), 1);
+    assert!(records[0].is("B_SPLINE_SURFACE_WITH_KNOTS"));
+}
+
+#[test]
+fn a_rational_b_spline_surface_round_trips_as_a_complex_instance() {
+    let surface = BSplineSurface {
+        weights: Some(SurfaceWeights {
+            weights: vec![vec![1.0, 0.5, 1.0], vec![1.0, 0.5, 1.0]],
+        }),
+        ..polynomial_surface()
+    };
+    round_trip_surface(&surface);
+    assert_eq!(surface.records().len(), 7);
+}
+
+#[test]
+fn a_b_spline_declines_an_instance_that_is_not_one() {
+    let instance = Instance {
+        id: id(1),
+        records: vec![Record::new("CIRCLE", vec![Value::Text(String::new())])],
+        line: 1,
+    };
+    assert!(BSplineCurve::read(origin(), &instance).is_none());
+    assert!(BSplineSurface::read(origin(), &instance).is_none());
+}
+
+#[test]
+fn both_spellings_of_a_b_spline_write_the_same_attributes_in_the_same_order() {
+    // The property the whole shape of `bspline.rs` exists for. A leaf type's
+    // record is its name followed by every supertype's attributes end to end;
+    // a complex instance is the same attributes, each under the keyword of the
+    // supertype declaring it. If the two ever disagreed, one spelling would
+    // read back as a different curve from the other — and nothing downstream
+    // would notice, because each is well formed on its own.
+    let polynomial = polynomial_curve();
+    let rational = BSplineCurve {
+        weights: Some(CurveWeights {
+            weights: vec![1.0, 0.8, 0.8, 1.0],
+        }),
+        ..polynomial_curve()
+    };
+
+    let simple = polynomial.records();
+    let [leaf] = simple.as_slice() else {
+        panic!("a polynomial B-spline is one record");
+    };
+    let complex = rational.records();
+
+    let mut slices = Vec::new();
+    for keyword in ["B_SPLINE_CURVE", "B_SPLINE_CURVE_WITH_KNOTS"] {
+        let record = complex
+            .iter()
+            .find(|record| record.is(keyword))
+            .unwrap_or_else(|| panic!("a complex instance carries a {keyword} record"));
+        slices.extend(record.params.iter().cloned());
+    }
+
+    assert_eq!(
+        &leaf.params[1..],
+        slices.as_slice(),
+        "the leaf record past its name should be the complex instance's slices",
+    );
+}
+
+#[test]
+fn the_same_holds_for_a_b_spline_surface() {
+    let polynomial = polynomial_surface();
+    let rational = BSplineSurface {
+        weights: Some(SurfaceWeights {
+            weights: vec![vec![1.0, 0.5, 1.0], vec![1.0, 0.5, 1.0]],
+        }),
+        ..polynomial_surface()
+    };
+
+    let simple = polynomial.records();
+    let [leaf] = simple.as_slice() else {
+        panic!("a polynomial B-spline surface is one record");
+    };
+    let complex = rational.records();
+
+    let mut slices = Vec::new();
+    for keyword in ["B_SPLINE_SURFACE", "B_SPLINE_SURFACE_WITH_KNOTS"] {
+        let record = complex
+            .iter()
+            .find(|record| record.is(keyword))
+            .unwrap_or_else(|| panic!("a complex instance carries a {keyword} record"));
+        slices.extend(record.params.iter().cloned());
+    }
+
+    assert_eq!(&leaf.params[1..], slices.as_slice());
 }

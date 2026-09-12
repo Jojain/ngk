@@ -78,6 +78,19 @@ fn main() {
     // the wrong shape — so the volume is the assertion that matters.
     write("hollow_sphere.step", hollow_sphere(5.0, 2.0));
 
+    // The spline case, and the only shape here NGK cannot build any other
+    // way: cutting one block with another leaves every support planar and most
+    // of the edges free-form, because an imprint's section is fitted rather
+    // than recognized.
+    let block = solids::block(10.0, 10.0, 10.0).expect("a block should build");
+    let tool = solids::block(4.0, 4.0, 30.0).expect("a tool should build");
+    let cut = solids::cut(block, tool).expect("a through cut should build");
+    write(
+        "cut_block.step",
+        step_to_string(&cut, &StepWriteOptions::named("CUT_BLOCK"))
+            .expect("a spline-edged solid should export"),
+    );
+
     // The read direction, checked the only way it can be from outside: take a
     // file OpenCascade wrote, import it, and write it back. If the volume
     // survives that, the import understood the file rather than merely
@@ -87,6 +100,8 @@ fn main() {
     reexport("frustum.step", "reexported_frustum.step");
     reexport("sphere.step", "reexported_sphere.step");
     reexport("torus.step", "reexported_torus.step");
+    reexport("lofted.step", "reexported_lofted.step");
+    reexport("swept_circle.step", "reexported_swept_circle.step");
     reexport("holed_slab.step", "reexported_holed_slab.step");
 
     println!("wrote fixtures to {OUT_DIR}/");

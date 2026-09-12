@@ -1,5 +1,8 @@
 use nalgebra::Vector3;
-use ngk::geometry::{Cylinder, Point3, Surface};
+use ngk::geometry::{
+    ControlNet, Cylinder, Degree, HPoint, KnotVector, LINEAR_TOLERANCE, NurbsSurface, Point3,
+    Surface,
+};
 
 #[test]
 fn cylinder_decomposes_into_exact_rational_bezier_spans() {
@@ -92,4 +95,56 @@ fn bezier_patch_rejects_subdivision_outside_its_domain() {
 
     assert!(patch.subdivide_u(patch.domain_u().start).is_err());
     assert!(patch.subdivide_v(patch.domain_v().end).is_err());
+}
+
+/// An unclamped patch, unclamped in `u` only and deliberately not square.
+///
+/// A surface clamped one direction at a time can get the control net's stride
+/// wrong without any count disagreeing, and a square net hides that.
+fn unclamped_surface() -> NurbsSurface {
+    let (nu, nv) = (5, 4);
+    let points = (0..nv)
+        .flat_map(|v| (0..nu).map(move |u| (u, v)))
+        .map(|(u, v)| {
+            HPoint::from_cartesian(
+                Point3::new(u as f64, v as f64, (u as f64 * 0.7).sin() + v as f64 * 0.3),
+                1.0,
+            )
+        })
+        .collect();
+    NurbsSurface::new(
+        Degree::new(2).expect("degree 2"),
+        Degree::new(3).expect("degree 3"),
+        ControlNet::new(points, nu, nv).expect("a 5 by 4 net"),
+        KnotVector::new((0..8).map(|i| i as f64).collect()).expect("eight u knots"),
+        KnotVector::new(vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]).expect("eight v knots"),
+    )
+    .expect("5 + 2 + 1 and 4 + 3 + 1 knots")
+}
+
+#[test]
+fn clamping_keeps_the_surface_and_its_domain() {
+    let surface = unclamped_surface();
+    assert!(!surface.knots_u().is_clamped(surface.degree_u()));
+    assert!(surface.knots_v().is_clamped(surface.degree_v()));
+
+    let clamped = surface
+        .clamped()
+        .expect("an unclamped surface should clamp");
+    assert!(clamped.knots_u().is_clamped(clamped.degree_u()));
+    assert!(clamped.knots_v().is_clamped(clamped.degree_v()));
+    assert_eq!(clamped.domain_u(), surface.domain_u());
+    assert_eq!(clamped.domain_v(), surface.domain_v());
+
+    let (du, dv) = (surface.domain_u(), surface.domain_v());
+    for iu in 0..=12 {
+        for iv in 0..=12 {
+            let (u, v) = (du.at(f64::from(iu) / 12.0), dv.at(f64::from(iv) / 12.0));
+            let (before, after) = (surface.point_at(u, v), clamped.point_at(u, v));
+            assert!(
+                (before - after).norm() <= LINEAR_TOLERANCE,
+                "at ({u}, {v}): {before:?} became {after:?}",
+            );
+        }
+    }
 }

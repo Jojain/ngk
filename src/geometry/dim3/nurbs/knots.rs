@@ -86,6 +86,26 @@ impl KnotVector {
         mid
     }
 
+    /// The span a knot is inserted into: the last non-empty one starting at or
+    /// below `u`.
+    ///
+    /// Not the question [`Self::find_span`] answers. That one is for
+    /// *evaluation*, and returns the domain's last non-empty span as soon as
+    /// `u` reaches its end — right there, because a basis function at a closed
+    /// end has to be read from the span below it. Insertion needs the span `u`
+    /// actually falls in, and on a vector whose end is not clamped those differ:
+    /// the domain closes at `U[n+1]` with further spans above it, so evaluation
+    /// answers `n` where insertion must answer `n + 1`. Using the evaluation
+    /// span there blends the wrong pair of control points, which moves the
+    /// curve — the one thing knot insertion must never do.
+    pub fn insertion_span(&self, u: f64) -> usize {
+        let last = self.0.len() - 1;
+        (0..last)
+            .rev()
+            .find(|&index| self.0[index] <= u && self.0[index] < self.0[index + 1])
+            .unwrap_or(0)
+    }
+
     /// Number of times `u` appears as a knot.
     pub fn multiplicity(&self, u: f64) -> usize {
         self.0.iter().filter(|&&k| k == u).count()

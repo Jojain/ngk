@@ -12,6 +12,7 @@
 
 use nalgebra::{UnitVector3, Vector3};
 
+use crate::geometry::axis::Axis3;
 use crate::geometry::{Frame, Point3};
 
 use super::super::builder::InstanceBuilder;
@@ -127,6 +128,31 @@ pub fn read_placement(
     };
 
     Ok(Frame::from_xz(location, reference, axis))
+}
+
+/// Writes an `AXIS1_PLACEMENT` for an axis, shared by value.
+pub fn write_axis(builder: &mut InstanceBuilder, axis: &Axis3) -> EntityId {
+    let location = write_point(builder, axis.origin);
+    let direction = write_direction(builder, axis.direction);
+    builder.add_shared_entity(&entities::Axis1Placement {
+        location,
+        axis: Some(direction),
+    })
+}
+
+/// Reads an `AXIS1_PLACEMENT` as an axis.
+pub fn read_axis(
+    resolver: &Resolver<'_>,
+    from: Origin,
+    id: EntityId,
+) -> Result<Axis3, SchemaError> {
+    let placement = resolver.read::<entities::Axis1Placement>(from, id)?;
+    let location = read_point(resolver, placement.origin, placement.location)?;
+    let direction = match placement.axis {
+        Some(axis) => read_direction(resolver, placement.origin, axis)?,
+        None => Vector3::z_axis(),
+    };
+    Ok(Axis3::new(location, direction))
 }
 
 /// Returns some unit vector perpendicular to `axis`.

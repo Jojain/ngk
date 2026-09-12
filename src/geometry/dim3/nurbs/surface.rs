@@ -7,7 +7,7 @@ use super::knots::KnotVector;
 use super::points::{ControlNet, ControlPolygon, HPoint};
 use crate::geometry::nurbs::basis::{basis_function_derivatives, basis_functions};
 use crate::geometry::nurbs::error::NurbsError;
-use crate::geometry::{BBox, Interval, Point3};
+use crate::geometry::{BBox, Interval, LINEAR_TOLERANCE, Point3};
 
 /// One exact rational Bézier patch extracted from a parent NURBS surface.
 #[derive(Debug, Clone)]
@@ -227,6 +227,22 @@ impl NurbsSurface {
         self.knots_v.domain(self.degree_v)
     }
 
+    /// Whether any control point is weighted differently from the others.
+    ///
+    /// A net of equal weights describes the same surface as a net of ones, so
+    /// what this answers is whether the weights carry shape — which is the
+    /// question a writer asks before deciding whether they have to be written
+    /// at all. Mirrors [`NurbsCurve::is_rational`].
+    pub fn is_rational(&self) -> bool {
+        let points = self.control_points.as_slice();
+        let Some(first) = points.first().map(|point| point.weight()) else {
+            return false;
+        };
+        points
+            .iter()
+            .any(|point| (point.weight() - first).abs() > LINEAR_TOLERANCE)
+    }
+
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
         let domain_u = self.domain_u();
         let domain_v = self.domain_v();
@@ -433,6 +449,69 @@ impl NurbsSurface {
         Ok(())
     }
 
+    /// Returns the same surface over the same domain, clamped in both
+    /// directions.
+    ///
+    /// The knot vectors are clamped one direction at a time, for the reason
+    /// [`NurbsCurve::clamped`] gives: an unclamped end leaves control points
+    /// that influence only the surface outside its own domain, and anything
+    /// bounding the surface by its control net then answers about a larger one.
+    pub fn clamped(&self) -> Result<Self, NurbsError> {
+        let mut clamped = self.clone();
+        clamped.clamp_u()?;
+        clamped.clamp_v()?;
+        Ok(clamped)
+    }
+
+    fn clamp_u(&mut self) -> Result<(), NurbsError> {
+        if self.knots_u.is_clamped(self.degree_u) {
+            return Ok(());
+        }
+        let p = self.degree_u.get();
+        let domain = self.domain_u();
+        for end in [domain.start, domain.end] {
+            while self.knots_u.multiplicity(end) < p + 1 {
+                self.insert_knot_u(end)?;
+            }
+        }
+
+        let (first, last) = clamped_span(self.knots_u.as_slice(), domain)?;
+        let nv = self.control_points.nv();
+        let kept = first..=last - p - 1;
+        let points = (0..nv)
+            .flat_map(|v| kept.clone().map(move |u| (u, v)))
+            .map(|(u, v)| self.control_points.get(u, v))
+            .collect();
+        self.control_points = ControlNet::new(points, kept.count(), nv)?;
+        self.knots_u = KnotVector::new(self.knots_u.as_slice()[first..=last].to_vec())?;
+        Ok(())
+    }
+
+    fn clamp_v(&mut self) -> Result<(), NurbsError> {
+        if self.knots_v.is_clamped(self.degree_v) {
+            return Ok(());
+        }
+        let q = self.degree_v.get();
+        let domain = self.domain_v();
+        for end in [domain.start, domain.end] {
+            while self.knots_v.multiplicity(end) < q + 1 {
+                self.insert_knot_v(end)?;
+            }
+        }
+
+        let (first, last) = clamped_span(self.knots_v.as_slice(), domain)?;
+        let nu = self.control_points.nu();
+        let kept = first..=last - q - 1;
+        let points = kept
+            .clone()
+            .flat_map(|v| (0..nu).map(move |u| (u, v)))
+            .map(|(u, v)| self.control_points.get(u, v))
+            .collect();
+        self.control_points = ControlNet::new(points, nu, kept.count())?;
+        self.knots_v = KnotVector::new(self.knots_v.as_slice()[first..=last].to_vec())?;
+        Ok(())
+    }
+
     fn insert_knot_v(&mut self, knot: f64) -> Result<(), NurbsError> {
         let nu = self.control_points.nu();
         let old_nv = self.control_points.nv();
@@ -494,4 +573,19 @@ fn span_offsets(knots: &KnotVector, degree: Degree, breaks: &[f64]) -> Vec<usize
         offset += knots.multiplicity(end).min(degree.get() + 1);
     }
     offsets
+}
+
+/// The knot indices a clamped vector keeps, once both ends repeat enough.
+///
+/// Everything before the domain's first knot and after its last influences only
+/// the surface outside its own domain, so the clamped vector is the run between
+/// them.
+fn clamped_span(knots: &[f64], domain: Interval) -> Result<(usize, usize), NurbsError> {
+    let (Some(first), Some(last)) = (
+        knots.iter().position(|&knot| knot == domain.start),
+        knots.iter().rposition(|&knot| knot == domain.end),
+    ) else {
+        return Err(NurbsError::UnsortedKnots);
+    };
+    Ok((first, last))
 }

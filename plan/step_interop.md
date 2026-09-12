@@ -9,17 +9,21 @@
 > in particular are deferred to `Model` rather than solved here; see §12. Do not
 > start any of it without Romain saying so explicitly.
 >
-> **Status: In progress.** Stages 1–5 are complete. `part21/` reads and writes
-> ISO 10303-21 on `winnow` with zero kernel references; the AP entity model §1
-> always called for landed in stage 3 (D15), so every entity both directions
-> touch states its attribute order once; and the round trip now closes on
-> curved supports, seams, faces with no boundary at all, and cavities. Every
-> analytic primitive NGK builds — block, cylinder, sphere, torus — survives a
-> round trip, and OpenCascade reads each of them back at the right volume;
-> OpenCascade's own box, cylinder, cone, sphere and torus import into sewn,
-> correctly oriented maps that it then reads back unchanged.
-> Stage 6 (NURBS) is the next entry point, and the last one. When it lands this
-> plan is finished; what is left over is §12.
+> **Status: complete.** Stages 1–6 are done and this plan is finished; what is
+> left over is §12. `part21/` reads and writes ISO 10303-21 on `winnow` with
+> zero kernel references; the AP entity model §1 always called for landed in
+> stage 3 (D15), so every entity both directions touch states its attribute
+> order once; and the round trip closes on every support NGK has — planes,
+> cylinders, cones, spheres, tori, surfaces of revolution and B-splines — with
+> seams, faces with no boundary at all, and cavities.
+>
+> Every solid NGK can build survives a round trip and is read back by
+> OpenCascade at the right volume, boolean results included. OpenCascade's own
+> box, cylinder, cone, sphere, torus, loft and swept spline import into sewn,
+> correctly oriented maps that it then reads back unchanged. The external
+> oracle — `cargo run --example step_export_fixtures` then
+> `uv run python tests/fixtures/step/validate_ngk_export.py` — is what says so,
+> and it is the thing to run before believing any change here.
 
 ## Context
 
@@ -667,16 +671,16 @@ are bit-identical by construction.
 | `AXIS1_PLACEMENT` | `Axis3` | |
 | `LINE(p, VECTOR(d,m))` | `Line::through(p, p + m·d̂)` | affine param matches; `Line::with_axis` is private |
 | `CIRCLE`, `ELLIPSE` | `Circle`, `Ellipse` | angle param, exact both ways |
-| `HYPERBOLA`, `PARABOLA` | → NURBS | exact conic; **D3 demotion** |
-| `OFFSET_CURVE_3D`, `INTERSECTION_CURVE` | → NURBS | approximated; D3 demotion |
-| `TRIMMED_CURVE` | `TrimmedCurve` | interval direction carries `SENSE_AGREEMENT` |
+| `HYPERBOLA`, `PARABOLA` | → NURBS | exact conic; **D3 demotion**. **Not carried** — see below |
+| `OFFSET_CURVE_3D`, `INTERSECTION_CURVE` | → NURBS | approximated; D3 demotion. **Not carried** — see below |
+| `TRIMMED_CURVE` | `TrimmedCurve` | interval direction carries `SENSE_AGREEMENT`. **Not carried** — see below |
 | `PLANE`, `CYLINDRICAL_SURFACE`, `SPHERICAL_SURFACE` | identity `UvMap` | |
 | **`TOROIDAL_SURFACE`** | **`Surface::Torus`** | **identity, both ways** — verified against ISO 10303-42 |
 | `CONICAL_SURFACE` | `Cone` | **scale (1, 1/cos α)** |
-| `SURFACE_OF_REVOLUTION` | `SurfaceOfRevolution` | **swap** |
-| `SURFACE_OF_LINEAR_EXTRUSION` | `RuledSurface` | identity; STEP's magnitude baked into `direction` |
-| `B_SPLINE_CURVE/SURFACE_WITH_KNOTS` + rational complex forms | `Nurbs` | §4 |
-| `OFFSET_SURFACE`, `*_BOUNDED_SURFACE` | → NURBS | D3 demotion |
+| `SURFACE_OF_REVOLUTION` | `SurfaceOfRevolution` | **swap** — the only entity whose reader answers with anything but an identity map |
+| `SURFACE_OF_LINEAR_EXTRUSION` | `RuledSurface` | identity; STEP's magnitude baked into `direction`. **Not carried** — see below |
+| `B_SPLINE_CURVE/SURFACE_WITH_KNOTS` | `Nurbs` | both ways, in both Part 21 spellings: one record when polynomial, a complex instance when rational, because a rational B-spline has no keyword of its own. §4 |
+| `OFFSET_SURFACE`, `*_BOUNDED_SURFACE` | → NURBS | D3 demotion. **Not carried** — see below |
 | `MANIFOLD_SOLID_BREP` / `CLOSED_SHELL` | `SolidAttr` / `SheetAttr` | |
 | `BREP_WITH_VOIDS`, `ORIENTED_CLOSED_SHELL` | `SolidAttr.inner_shells` | both ways; a void faces into itself either side of the file, so the oriented shell is written `.T.` and a `.F.` one is turned on the way in |
 | `ADVANCED_FACE` | `FaceAttr::with_loops` + pcurves | `same_sense` is a checksum (D5) |
@@ -688,6 +692,18 @@ are bit-identical by construction.
 | `SEAM_CURVE` | — | unwrapped to its 3D curve on in, then consumed by healing (D6). Not written: a plain `EDGE_CURVE` the loop walks twice is what identifies a seam |
 | `VERTEX_LOOP` | a face with no loops | not a rejection: it is how a writer spells a face covering its whole support, so the bound is dropped and the face read as boundaryless. `same_sense` then states the sense, which nothing else can |
 | `POLY_LOOP` | — | rejected by name (D9) |
+
+**The rows marked "not carried" have no reader and no writer.** They are all
+entities NGK has a *mapping* for and no *occasion* to use: nothing in the kernel
+produces a hyperbola, an offset curve or a linear extrusion, so the exporter
+never meets one, and no fixture from any kernel has yet contained one, so the
+importer has never been handed one either. A file that does hold one is refused
+by name — `UnreadableCurve` or `UnreadableSurface`, naming the keyword — which
+is the honest answer and not a silent approximation. Writing the readers is
+mechanical when a file needs them; until then they would be code no test could
+reach. `TRIMMED_CURVE` is the same case with a different reason: every trim NGK
+needs is derived from an edge's corners (D5), so the entity carries nothing the
+importer is missing.
 
 Plus the unavoidable AP203 product-structure boilerplate — `APPLICATION_PROTOCOL_DEFINITION`,
 `PRODUCT`/`_DEFINITION_FORMATION`/`_DEFINITION`/`_DEFINITION_SHAPE`,
@@ -863,7 +879,7 @@ pcurve reconstruction, and it gives the importer a generator of known-good input
 | **3** | ~~Import, planar — the round trip closes~~ — **done** | units, uncertainty, stitching (§6), pcurve path on planes | curved supports, seams |
 | **4** | ~~Analytic curved supports, both ways, with seams~~ — **done** | full `UvMap`; cylinder/cone/sphere/torus surfaces; circle/ellipse; the unwrapped-domain seam walk; `seams_only` healing on read; pcurve rebuilding on two periodic axes (D8) | boundaryless faces, NURBS |
 | **5** | ~~Boundaryless faces and voids~~ — **done** | sphere and torus both ways, `VERTEX_LOOP` read as the boundaryless face it spells, `BREP_WITH_VOIDS` | NURBS |
-| **6** | NURBS — **the last stage in scope** | both B-spline entities, rational complex forms, knot RLE, net transposition, periodic→clamped, `SURFACE_OF_REVOLUTION`. Adds `NurbsSurface::is_rational()` — one new public method in `geometry` | everything in §12 |
+| **6** | ~~NURBS~~ — **done, and the last stage in scope** | both B-spline entities in both Part 21 spellings, knot RLE, net transposition, periodic→clamped, `SURFACE_OF_REVOLUTION` and its transposing map. Adds four public methods in `geometry`, not one | everything in §12 |
 | ~~**7**~~ | ~~Robustness and assemblies~~ — **parked, see §12** | — | — |
 
 Stages 1–3 prove the architecture against a real external kernel before anything
@@ -1143,6 +1159,77 @@ depends on it.
   seams. It is two concentric spheres: both shells are one boundaryless face,
   so the fixture states the shell orientation and nothing else.
 
+**What stage 6 settled.**
+
+- **D15 meets a subtype lattice, and a B-spline is where it does not
+  reach.** A rational B-spline has no keyword of its own: it is the
+  intersection of `B_SPLINE_CURVE_WITH_KNOTS` and `RATIONAL_B_SPLINE_CURVE`,
+  which Part 21 writes as a complex instance whose every record carries only
+  what its own supertype declares — while the polynomial case is a leaf type
+  and writes one record carrying the inherited attributes too. So the *same
+  keyword* heads a nine-attribute record in one spelling and a three-attribute
+  one in the other, and which it is is a property of the **instance**, not of
+  the record. An `Entity` reads one record and cannot tell. The two B-spline
+  types therefore live in `schema/bspline.rs` and are not `Entity`
+  implementors; what is kept from D15 is the property that mattered, each
+  stating its attribute order once *per spelling* with its reader and writer a
+  few lines apart. `read(records(x)) == x` still holds, for both spellings.
+- **The declining dispatch had to move up a level, and that is the only
+  structural change.** `read_curve` and `read_surface` resolved a reference
+  straight to a *record*, which refuses a complex instance by construction — so
+  a rational B-spline could not even be reached. They now resolve to the
+  instance, offer the analytic chain a record only when there is one, and hand
+  the whole instance to the B-spline reader. Nothing else in the chain changed.
+- **`insert_knot` was wrong on any unclamped knot vector, and had been all
+  along.** It took its span from `KnotVector::find_span`, which answers for
+  *evaluation*: at the domain's end it returns the last non-empty span of the
+  domain, which is right there and wrong for insertion, since on an unclamped
+  vector the domain closes at `U[n+1]` with further spans above it. The blend
+  then mixed the wrong pair of control points and **moved the curve** — 0.45
+  units on the first insertion of the fixture — which is the one thing knot
+  insertion must never do. `KnotVector::insertion_span` is the separate
+  question, and clamping was what needed it: nothing in the tree had inserted a
+  knot into an unclamped vector before, because nothing in the tree had built
+  one.
+- **Clamping belongs in `geometry`, not in the exchange layer.** A periodic
+  patch arrives with its ends unrepeated, describing a surface that runs on past
+  its own domain, and while that still *evaluates* correctly, everything that
+  takes a control net for a hull of the surface does not: a Bézier
+  decomposition or a subdivision bound computed from it is answering about a
+  larger surface, which is the whole certified-fallback intersection path. So
+  `NurbsCurve::clamped` and `NurbsSurface::clamped` are kernel operations that
+  any future importer needs, not a STEP detail. With `is_rational` on the
+  surface and `insertion_span` on the knot vector, stage 6 added four public
+  methods in `geometry` where the plan estimated one.
+- **`SURFACE_OF_REVOLUTION` cost almost nothing, because D4 had already paid
+  for it.** `UvMap::TRANSPOSED` existed and was documented in the table from
+  the start; the entity is two references and the reader states the map instead
+  of reasoning about a sign. That retires the transposing half of risk #1,
+  checked against the ISO formula at a spread of parameters with no map and no
+  topology anywhere — the form §4 asks for.
+- **Two fixtures, one per spelling, and the pairing was luck worth keeping.**
+  A loft comes out of OpenCascade polynomial throughout, so every spline in
+  `lofted.step` is a simple instance; a swept circle comes out rational
+  throughout, so every spline in `swept_circle.step` is a complex one — and it
+  is harder in three more ways: the surface's two degrees differ, so a
+  transposed net is visible rather than merely wrong; its u knots are
+  unclamped; and its wall is periodic, so it arrives cut open as well. A
+  filleted box was tried first and dropped: its only splines are *pcurves*,
+  which D8 rebuilds rather than reads, so it exercised nothing.
+- **A free-form re-export is checked against its source, not against a
+  constant.** A lofted or swept solid has no closed-form volume worth writing
+  down, and a number copied from one run would only ever assert that nothing
+  changed. `validate_ngk_export.py` grew a second check that reads both NGK's
+  re-export and the committed fixture through OpenCascade and compares them —
+  which is the actual claim, that the round trip returned the shape OCCT
+  started with.
+- **The exportable set is now everything NGK builds.** Stage 2 recorded that
+  `modeling::cut` results hit `UnsupportedCurve` even though every support
+  involved is planar, because an imprint's section is fitted rather than
+  recognized. That was purely the L3 table being short, exactly as it said:
+  the walk did not change, and a cut block now writes, reads back and comes out
+  of OpenCascade at the right volume.
+
 ---
 
 ## 11. Risks, ranked
@@ -1170,7 +1257,15 @@ depends on it.
    imports. What has no answer yet is a *vendor* degenerate edge — a zero-length
    `EDGE_CURVE` standing in for a pole — which is parked with the rest of the
    leniency work (§12).
-4. **Silent NURBS parameterization corruption** (D2).
+4. **Silent NURBS parameterization corruption** (D2). *Discharged in stage 6, and the
+   four hazards §4 named turned out to be the right four.* Knots are expanded from the
+   file's own multiplicities rather than rediscovered by comparison, which is what
+   keeps `KnotVector::multiplicity`'s exact `==` sound; weights are split out of the
+   homogeneous points and never scaled by the document's unit; the control net is
+   transposed back on both sides, pinned by a `2 × 3` patch where a square one would
+   agree either way round; and an unclamped vector is clamped on the way in. Reading a
+   *fifth* hazard out of that work: `insert_knot` itself was wrong on any unclamped
+   vector, which nothing had noticed because nothing had built one.
 5. **Tolerance mismatch** (D10). Expect foreign files whose vertices do not coincide by
    NGK's `1e-9`, and expect stitching (§6.3) to be where that surfaces.
 6. **Cone pcurves lose analytic identity** (D4). Correct but lossy; rarely fires.
@@ -1245,6 +1340,20 @@ trusts them:
 - **No foreign-kernel corpus** (risk #9). Every fixture is OpenCascade by way of
   build123d. A file from another kernel would be the first real test of the leniency
   above, which is part of why the leniency is parked rather than guessed at.
+
+### Geometry entities with a mapping and no occasion
+
+`HYPERBOLA`, `PARABOLA`, `OFFSET_CURVE_3D`, `INTERSECTION_CURVE`,
+`OFFSET_SURFACE`, `*_BOUNDED_SURFACE`, `SURFACE_OF_LINEAR_EXTRUSION` and
+`TRIMMED_CURVE` are in §5's table with the NGK type each maps to, and none has a
+reader or a writer. Nothing in the kernel produces one, and no fixture from any
+kernel has contained one, so each would be code no test could reach. A file
+holding one is refused by name today, which is the honest answer.
+
+When one is needed, the work is mechanical: an entity type in `entities.rs`, an
+entry appended to the declining chain in `convert/curves.rs` or
+`convert/surfaces.rs`, and a fixture that actually contains it. The dispatch was
+built so that adding one changes no call site — that part is already paid for.
 
 ### Deliberately not done, and not a gap
 

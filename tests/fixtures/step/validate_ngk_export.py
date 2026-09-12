@@ -64,6 +64,17 @@ CASES = [
         (2, 2, 4),
         (10.0, 10.0, 10.0),
     ),
+    # The spline case: a 4 x 4 channel cut through the corner of a 10-cube.
+    # Every support involved is planar, and most of the edges are still
+    # free-form — an imprint's section is fitted rather than recognized — so
+    # this is the shape that could not be written at all until B-splines could.
+    (
+        "cut_block.step",
+        1000.0 - 4.0 * 4.0 * 10.0,
+        2.0 * 100.0 + 2.0 * 60.0 + 2.0 * 84.0 + 2.0 * 40.0,
+        (8, 18, 12),
+        (10.0, 10.0, 10.0),
+    ),
     # The read direction. These are ngk's re-exports of the OpenCascade
     # fixtures in this directory, so a passing case means the import
     # understood what OCCT wrote rather than merely producing a map that
@@ -118,7 +129,28 @@ CASES = [
     ),
 ]
 
+# Free-form shapes, checked against the file they came from rather than
+# against a formula. A lofted or swept solid has no closed-form volume worth
+# writing down, and a constant copied from one run would only ever assert that
+# nothing changed — where what matters is that ngk's round trip returned the
+# shape OpenCascade started with. Both are ngk re-exports of a committed
+# fixture, so the comparison is between two files OCCT reads.
+AGAINST_SOURCE = [
+    # The simple spelling: a polynomial B-spline is one record per entity,
+    # carrying its inherited attributes as well as its own.
+    ("reexported_lofted.step", "lofted.step"),
+    # The complex spelling, and the awkward one: rational throughout, two
+    # differing degrees, unclamped u knots, and a periodic wall that arrives
+    # cut open along a seam.
+    ("reexported_swept_circle.step", "swept_circle.step"),
+]
+
 TOLERANCE = 1e-6
+
+# Free-form geometry goes through a fit on the way in and out, so the two sides
+# of a source comparison agree to a model-scale tolerance rather than to the
+# last bit.
+FREE_FORM_TOLERANCE = 1e-6
 
 
 def check(name, volume, area, counts, bbox):
@@ -151,10 +183,40 @@ def check(name, volume, area, counts, bbox):
     print(f"  {name}: volume {solid.volume}, area {solid.area}, {got} — ok")
 
 
+def check_against_source(name, source):
+    path = OUT_DIR / name
+    if not path.exists():
+        raise SystemExit(f"missing {path}; run the example first")
+    origin = Path(__file__).resolve().parent / source
+
+    written = bd.import_step(str(path)).solids()
+    original = bd.import_step(str(origin)).solids()
+    assert len(written) == 1, f"{name}: read {len(written)} solids, expected one"
+    written, original = written[0], original[0]
+
+    assert written.is_valid, f"{name}: OCCT reports an invalid solid"
+    for what, got, want in (
+        ("volume", written.volume, original.volume),
+        ("area", written.area, original.area),
+    ):
+        relative = abs(got - want) / max(abs(want), 1.0)
+        assert relative < FREE_FORM_TOLERANCE, (
+            f"{name}: {what} {got}, but {source} has {want}"
+        )
+
+    got = (len(written.faces()), len(written.edges()), len(written.vertices()))
+    want = (len(original.faces()), len(original.edges()), len(original.vertices()))
+    assert got == want, f"{name}: faces/edges/vertices {got}, but {source} has {want}"
+
+    print(f"  {name}: volume {written.volume}, area {written.area}, {got} — matches {source}")
+
+
 def main():
     print(f"validating ngk STEP output in {OUT_DIR}")
     for case in CASES:
         check(*case)
+    for case in AGAINST_SOURCE:
+        check_against_source(*case)
     print("all cases passed")
     return 0
 

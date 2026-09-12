@@ -455,3 +455,80 @@ fn a_cavity_faces_into_itself_and_the_outer_shell_away_from_the_material() {
         .expect("a hollow solid has a void");
     assert_eq!(record(void).params[3], Value::Enum("T".to_string()));
 }
+
+#[test]
+fn a_polynomial_spline_is_written_as_one_record_and_a_rational_one_as_seven() {
+    // The two spellings, distinguished the only way a file distinguishes
+    // them: a rational B-spline has no keyword of its own, so it is written as
+    // the intersection of its supertypes and a reader that only understands
+    // simple instances sees nothing it recognizes.
+    let cut = cut_block();
+    let exchange = exported(&cut);
+
+    let simple = exchange
+        .instances_of("B_SPLINE_CURVE_WITH_KNOTS")
+        .filter(|instance| instance.simple().is_some())
+        .count();
+    let complex = exchange
+        .instances_of("B_SPLINE_CURVE_WITH_KNOTS")
+        .filter(|instance| instance.simple().is_none())
+        .count();
+    assert!(
+        simple + complex > 0,
+        "a boolean result is bounded by spline edges",
+    );
+    for instance in exchange.instances_of("B_SPLINE_CURVE_WITH_KNOTS") {
+        match instance.simple() {
+            // The leaf type carries its inherited attributes too: name,
+            // degree, control points, form, closed, self-intersect, then the
+            // three its own supertype adds.
+            Some(record) => assert_eq!(record.params.len(), 9, "{}", instance.id),
+            None => {
+                assert!(instance.is("RATIONAL_B_SPLINE_CURVE"));
+                assert_eq!(
+                    instance
+                        .record("B_SPLINE_CURVE_WITH_KNOTS")
+                        .unwrap()
+                        .params
+                        .len(),
+                    3,
+                    "a complex instance's record carries only its own attributes",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_written_spline_names_one_control_point_per_weight() {
+    // The two lists are parallel and the schema does not say so anywhere a
+    // reader can check cheaply, so a writer that dropped or repeated one would
+    // produce a file that parses and describes a different curve.
+    let exchange = exported(&cut_block());
+
+    for instance in exchange.instances_of("B_SPLINE_CURVE_WITH_KNOTS") {
+        let Some(spline) = instance.record("B_SPLINE_CURVE") else {
+            continue;
+        };
+        let points = spline.params[1].as_list().expect("control points").len();
+        let weights = instance
+            .record("RATIONAL_B_SPLINE_CURVE")
+            .expect("a complex spline is rational")
+            .params[0]
+            .as_list()
+            .expect("weights")
+            .len();
+        assert_eq!(points, weights, "{}", instance.id);
+    }
+}
+
+/// A 4 × 4 channel cut through the corner of a 10-cube.
+///
+/// Every support in it is planar and most of its edges are still free-form:
+/// an imprint's section is fitted rather than recognized, so this is the
+/// smallest shape NGK builds that cannot be written without splines.
+fn cut_block() -> Shape<SolidTag, StandardPayload> {
+    let block = solids::block(10.0, 10.0, 10.0).expect("a block should build");
+    let tool = solids::block(4.0, 4.0, 30.0).expect("a tool should build");
+    solids::cut(block, tool).expect("a through cut should build")
+}

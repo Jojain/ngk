@@ -10,6 +10,7 @@
 
 pub mod curves;
 pub mod iso_curve;
+pub mod nurbs;
 pub mod pcurve;
 pub mod placement;
 pub mod surfaces;

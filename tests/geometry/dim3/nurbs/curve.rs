@@ -223,3 +223,63 @@ fn bezier_spans_extracts_four_quadratic_circle_arcs() {
         }
     }
 }
+
+/// An unclamped knot vector of the shape a periodic spline arrives in.
+///
+/// Degree 2, six control points, and knots that repeat nowhere: the curve runs
+/// on either side of its own domain, which is what clamping has to cut away
+/// without moving the part in between.
+fn unclamped_curve() -> NurbsCurve {
+    let points = (0..6)
+        .map(|i| {
+            let angle = i as f64 * std::f64::consts::FRAC_PI_3;
+            HPoint::from_cartesian(Point3::new(angle.cos(), angle.sin(), i as f64 * 0.25), 1.0)
+        })
+        .collect();
+    NurbsCurve::new(
+        Degree::new(2).expect("degree 2"),
+        ControlPolygon::new(points).expect("six control points"),
+        KnotVector::new((0..9).map(|i| i as f64).collect()).expect("nine knots"),
+    )
+    .expect("6 + 2 + 1 knots")
+}
+
+#[test]
+fn clamping_keeps_the_curve_and_its_domain() {
+    // The whole point set has to survive: knot insertion does not move a
+    // curve, and dropping the control points that only reach outside the
+    // domain does not either. A clamp that got the trim wrong slides the
+    // curve along itself, which looks plausible and is not the same shape.
+    let curve = unclamped_curve();
+    assert!(!curve.knots().is_clamped(curve.degree()));
+
+    let clamped = curve.clamped().expect("an unclamped curve should clamp");
+    assert!(clamped.knots().is_clamped(clamped.degree()));
+
+    let domain = curve.domain();
+    assert_eq!(clamped.domain(), domain);
+    for step in 0..=32 {
+        let u = domain.at(f64::from(step) / 32.0);
+        let (before, after) = (curve.point_at(u), clamped.point_at(u));
+        assert!(
+            (before - after).norm() <= LINEAR_TOLERANCE,
+            "at {u}: {before:?} became {after:?}",
+        );
+    }
+}
+
+#[test]
+fn clamping_an_already_clamped_curve_changes_nothing() {
+    let curve = NurbsCurve::with_uniform_knots(
+        Degree::new(3).expect("degree 3"),
+        ControlPolygon::new(
+            (0..5)
+                .map(|i| HPoint::from_cartesian(Point3::new(i as f64, 0.0, 0.0), 1.0))
+                .collect(),
+        )
+        .expect("five control points"),
+    )
+    .expect("a clamped uniform curve");
+
+    assert_eq!(curve.clamped().expect("already clamped"), curve);
+}

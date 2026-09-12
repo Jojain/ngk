@@ -268,3 +268,37 @@ fn a_hollow_sphere_keeps_its_cavity_as_a_void() {
     assert_eq!(voids.len(), 1);
     assert_eq!(solid.faces().len(), 2, "one shell each, one face each");
 }
+
+#[test]
+fn a_boolean_result_survives_a_round_trip() {
+    // The shape that needed the spline writer. Cutting one block with another
+    // leaves every support planar and yet most of the edges free-form, because
+    // an imprint's section is fitted rather than recognized — so this is a
+    // solid whose geometry is NGK's own NURBS rather than a file's.
+    let block = solids::block(10.0, 10.0, 10.0).expect("a block should build");
+    let tool = solids::block(4.0, 4.0, 30.0).expect("a tool should build");
+    let cut = solids::cut(block, tool).expect("a through cut should build");
+
+    let splines = cut
+        .solid()
+        .edges()
+        .iter()
+        .filter(|edge| matches!(edge.curve(), Some(ngk::geometry::Curve::Nurbs(_))))
+        .count();
+    assert!(splines > 0, "a cut leaves spline edges behind");
+
+    round_trip(&cut);
+}
+
+#[test]
+fn a_spline_solid_read_from_a_file_survives_being_written_back() {
+    // The other direction of the same claim, and the stronger one: this is
+    // OpenCascade's geometry, in the rational spelling, on a periodic patch
+    // with unclamped knots. Getting it back out means the knot run-length
+    // coding, the weight split and the control-net transposition all inverted.
+    let text = include_str!("../fixtures/step/swept_circle.step");
+    let import = read_step(text, &StepReadOptions::default()).expect("a foreign spline solid");
+    let shape = import.shapes.into_iter().next().expect("one solid");
+
+    round_trip(&shape);
+}

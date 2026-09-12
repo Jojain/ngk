@@ -104,6 +104,18 @@ pub enum GeometryError {
     #[error("a line with no extent has no STEP representation")]
     DegenerateLine,
 
+    /// A B-spline the file states but NGK's own types refuse to hold.
+    ///
+    /// Degree, knot count and control-point count are one equation between
+    /// three numbers, and a file that fails it describes no curve or surface at
+    /// all — so this names what the NURBS constructor objected to rather than
+    /// re-spelling the arithmetic.
+    #[error("a B-spline the NURBS types refuse: {detail}")]
+    UnreadableNurbs {
+        /// What the conversion said.
+        detail: String,
+    },
+
     /// A cone whose generatrix runs along the axis or perpendicular to it.
     ///
     /// `CONICAL_SURFACE` requires a semi-angle strictly between zero and a

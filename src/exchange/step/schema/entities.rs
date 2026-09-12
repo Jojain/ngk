@@ -229,6 +229,41 @@ impl Entity for Axis2Placement3d {
     }
 }
 
+/// `AXIS1_PLACEMENT(name, location, axis)`: a point and a direction.
+///
+/// The lesser of the two placements, and the one a revolution turns about. Its
+/// direction is optional and defaults to the local z, the same convention
+/// [`Axis2Placement3d`] uses.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Axis1Placement {
+    /// The point the axis passes through.
+    pub location: EntityId,
+    /// The direction, or `None` for the local z.
+    pub axis: Option<EntityId>,
+}
+
+impl Entity for Axis1Placement {
+    const KEYWORDS: &'static [&'static str] = &["AXIS1_PLACEMENT"];
+
+    fn read(mut attributes: Attributes<'_>) -> Result<Self, SchemaError> {
+        attributes.name()?;
+        let location = attributes.reference()?;
+        let axis = attributes.optional_reference()?;
+        Ok(Self { location, axis })
+    }
+
+    fn record(&self) -> Record {
+        Record::new(
+            "AXIS1_PLACEMENT",
+            vec![
+                unnamed(),
+                Value::Ref(self.location),
+                self.axis.map_or(Value::Null, Value::Ref),
+            ],
+        )
+    }
+}
+
 /// `LINE(name, pnt, dir)`, parameterized as `pnt + magnitude · dir · t`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Line {
@@ -813,6 +848,47 @@ impl Entity for ClosedShell {
 
     fn record(&self) -> Record {
         Record::new("CLOSED_SHELL", vec![unnamed(), references(&self.cfs_faces)])
+    }
+}
+
+/// `SURFACE_OF_REVOLUTION(name, swept_curve, axis_position)`.
+///
+/// The one surface whose two parameters are not NGK's own: STEP sweeps the
+/// curve with `u` the angle turned and `v` the curve's own parameter, and
+/// [`SurfaceOfRevolution`](crate::geometry::SurfaceOfRevolution) has them the
+/// other way round. Nothing here says so — a parameterization is the
+/// converter's business, not the record's — but it is why this entity's reader
+/// is the only one that does not answer with an identity map.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SurfaceOfRevolution {
+    /// The profile turned about the axis.
+    pub swept_curve: EntityId,
+    /// The `AXIS1_PLACEMENT` it turns about.
+    pub axis_position: EntityId,
+}
+
+impl Entity for SurfaceOfRevolution {
+    const KEYWORDS: &'static [&'static str] = &["SURFACE_OF_REVOLUTION"];
+
+    fn read(mut attributes: Attributes<'_>) -> Result<Self, SchemaError> {
+        attributes.name()?;
+        let swept_curve = attributes.reference()?;
+        let axis_position = attributes.reference()?;
+        Ok(Self {
+            swept_curve,
+            axis_position,
+        })
+    }
+
+    fn record(&self) -> Record {
+        Record::new(
+            "SURFACE_OF_REVOLUTION",
+            vec![
+                unnamed(),
+                Value::Ref(self.swept_curve),
+                Value::Ref(self.axis_position),
+            ],
+        )
     }
 }
 

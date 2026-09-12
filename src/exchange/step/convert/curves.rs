@@ -10,9 +10,10 @@ use crate::geometry::{Circle, Curve, Ellipse, Line, Plane};
 
 use super::super::builder::InstanceBuilder;
 use super::super::error::{GeometryError, StepError};
-use super::super::part21::EntityId;
+use super::super::part21::{EntityId, Instance};
 use super::super::schema::entities;
 use super::super::schema::resolver::{Attributes, Origin, Resolver};
+use super::nurbs::{read_bspline_curve, write_bspline_curve};
 use super::placement::{
     read_direction, read_placement, read_point, write_placement, write_point, write_vector,
 };
@@ -30,6 +31,9 @@ pub fn write_curve(
     }
     if let Some(written) = write_ellipse(builder, curve) {
         return written;
+    }
+    if let Curve::Nurbs(nurbs) = curve {
+        return Ok(write_bspline_curve(builder, nurbs));
     }
     Err(GeometryError::UnsupportedCurve { kind: kind(curve) })
 }
@@ -110,40 +114,50 @@ fn write_ellipse(
 /// redundant, since projecting the 3D curve is exact and cheaper than
 /// resolving them.
 pub fn read_curve(resolver: &Resolver<'_>, from: Origin, id: EntityId) -> Result<Curve, StepError> {
-    let curve = resolver.attributes(from, id)?;
-    let curve = match unwrap_surface_curve(resolver, &curve)? {
-        Some(unwrapped) => unwrapped,
-        None => curve,
-    };
+    let instance = resolver.instance(from, id)?;
+    let instance = unwrap_surface_curve(resolver, instance)?;
+    let origin = Origin::of(instance);
 
-    if let Some(read) = read_line(resolver, &curve) {
-        return read;
+    // The analytic entities are simple instances, one record each. A rational
+    // B-spline is not: it is the intersection of its supertypes, so it has to
+    // be offered the whole instance rather than a record of it.
+    if let Some(record) = instance.simple() {
+        let curve = Attributes::new(origin, record);
+        if let Some(read) = read_line(resolver, &curve) {
+            return read;
+        }
+        if let Some(read) = read_circle(resolver, &curve) {
+            return read;
+        }
+        if let Some(read) = read_ellipse(resolver, &curve) {
+            return read;
+        }
     }
-    if let Some(read) = read_circle(resolver, &curve) {
-        return read;
-    }
-    if let Some(read) = read_ellipse(resolver, &curve) {
+    if let Some(read) = read_bspline_curve(resolver, origin, instance) {
         return read;
     }
     Err(GeometryError::UnreadableCurve {
-        keyword: curve.keyword().to_string(),
-        origin: curve.origin,
+        keyword: instance.spelling(),
+        origin,
     }
     .into())
 }
 
-/// Follows a curve-on-surface down to the 3D curve it describes.
+/// Follows a curve-on-surface down to the 3D curve it describes, or leaves an
+/// ordinary curve where it is.
 fn unwrap_surface_curve<'a>(
     resolver: &Resolver<'a>,
-    curve: &Attributes<'a>,
-) -> Result<Option<Attributes<'a>>, StepError> {
-    let Some(surface_curve) = curve.decode::<entities::SurfaceCurve>() else {
-        return Ok(None);
+    instance: &'a Instance,
+) -> Result<&'a Instance, StepError> {
+    let Some(record) = instance.simple() else {
+        return Ok(instance);
     };
-    let surface_curve = surface_curve?;
-    Ok(Some(
-        resolver.attributes(curve.origin, surface_curve.curve_3d)?,
-    ))
+    let origin = Origin::of(instance);
+    let Some(surface_curve) = Attributes::new(origin, record).decode::<entities::SurfaceCurve>()
+    else {
+        return Ok(instance);
+    };
+    Ok(resolver.instance(origin, surface_curve?.curve_3d)?)
 }
 
 /// Reads a `LINE`, or declines anything that is not one.

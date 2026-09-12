@@ -256,7 +256,7 @@ impl NurbsCurve {
         let p = self.degree.get();
         let n = self.control_points.len() - 1;
         let u = self.clamp_parameter(u);
-        let k = self.knots.find_span(n, self.degree, u);
+        let k = self.knots.insertion_span(u);
         let r = self.knots.multiplicity(u);
 
         let old = self.control_points.clone();
@@ -388,6 +388,47 @@ impl NurbsCurve {
             Self::new(refined.degree, left_points, KnotVector::new(left_knots)?)?,
             Self::new(refined.degree, right_points, KnotVector::new(right_knots)?)?,
         ))
+    }
+
+    /// Returns the same curve over the same domain, with its ends clamped.
+    ///
+    /// A knot vector whose ends are not repeated `degree + 1` times describes a
+    /// curve that runs on past `[U[p], U[m-p]]` — the form a periodic spline
+    /// arrives in. The curve over its own domain is unchanged by clamping, but
+    /// everything that takes a control polygon for a hull of the curve is not:
+    /// the leading and trailing control points of an unclamped vector influence
+    /// only the parts outside the domain, so a Bézier decomposition or a
+    /// subdivision bound computed from them is answering about a longer curve.
+    ///
+    /// Raising each end's multiplicity to `degree + 1` and dropping what falls
+    /// outside is exact — knot insertion does not move the curve — so this
+    /// changes the representation and nothing else.
+    pub fn clamped(&self) -> Result<Self, NurbsError> {
+        if self.knots.is_clamped(self.degree) {
+            return Ok(self.clone());
+        }
+
+        let p = self.degree.get();
+        let domain = self.domain();
+        let mut refined = self.clone();
+        for end in [domain.start, domain.end] {
+            while refined.knots.multiplicity(end) < p + 1 {
+                refined.insert_knot(end);
+            }
+        }
+
+        let knots = refined.knots.as_slice();
+        let (Some(first), Some(last)) = (
+            knots.iter().position(|&knot| knot == domain.start),
+            knots.iter().rposition(|&knot| knot == domain.end),
+        ) else {
+            return Err(NurbsError::UnsortedKnots);
+        };
+        Self::new(
+            self.degree,
+            ControlPolygon::new(refined.control_points.as_slice()[first..=last - p - 1].to_vec())?,
+            KnotVector::new(knots[first..=last].to_vec())?,
+        )
     }
 
     /// Returns the exact subcurve over the requested native-domain interval.

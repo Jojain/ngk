@@ -506,3 +506,87 @@ fn a_rim_lifted_onto_a_cylinder_crosses_the_fold_without_jumping() {
         "the rim folded back on itself: {samples:?}",
     );
 }
+
+#[test]
+fn a_surface_of_revolution_is_the_iso_surface_with_its_parameters_transposed() {
+    // The one surface whose two parameters are not NGK's own: ISO 10303-42
+    // sweeps the profile with `u` the angle turned and `v` the profile's own
+    // parameter, and `SurfaceOfRevolution` has them the other way round. A
+    // transposition is orientation-reversing, so getting it wrong yields a
+    // surface of exactly the right shape whose every face points inward.
+    //
+    // The profile is a line *not* parallel to the axis and not meeting it, so
+    // the surface is a genuine cone rather than anything symmetric enough to
+    // hide a swap.
+    let mapped = surface(
+        "\
+#1 = SURFACE_OF_REVOLUTION('',#2,#5);
+#2 = LINE('',#3,#4);
+#3 = CARTESIAN_POINT('',(4.0,0.0,0.0));
+#4 = VECTOR('',#20,2.0);
+#20 = DIRECTION('',(0.5,0.0,1.0));
+#5 = AXIS1_PLACEMENT('',#6,#7);
+#6 = CARTESIAN_POINT('',(0.0,0.0,0.0));
+#7 = DIRECTION('',(0.0,0.0,1.0));
+",
+    );
+
+    assert_eq!(mapped.map, UvMap::TRANSPOSED);
+
+    // ISO: the point of the profile at `v`, turned about the axis by `u`.
+    let profile = |v: f64| {
+        let direction = Vector3::new(0.5, 0.0, 1.0).normalize() * 2.0;
+        Point3::new(4.0, 0.0, 0.0) + direction * v
+    };
+    agrees_with_iso(&mapped, &angular_and_linear(), |u, v| {
+        let point = profile(v);
+        let radial = Vector3::new(point.x, point.y, 0.0);
+        let turned = nalgebra::Rotation3::from_axis_angle(&Vector3::z_axis(), u) * radial;
+        Point3::new(turned.x, turned.y, point.z)
+    });
+}
+
+#[test]
+fn a_b_spline_surface_is_read_at_the_points_its_control_net_places() {
+    // A bilinear patch, so the surface is the bilinear interpolation of its
+    // four corners and the expected point is arithmetic rather than another
+    // NURBS evaluation. Deliberately `2 x 3`: the control net's outer list
+    // runs along `u` in the file and `u` varies fastest in NGK's flat storage,
+    // so a square patch would agree either way round.
+    let mapped = surface(
+        "\
+#1 = B_SPLINE_SURFACE_WITH_KNOTS('',1,1,((#30,#31,#32),(#33,#34,#35)),
+  .UNSPECIFIED.,.F.,.F.,.F.,(2,2),(2,1,2),(0.0,1.0),(0.0,0.5,1.0),
+  .UNSPECIFIED.);
+#30 = CARTESIAN_POINT('',(0.0,0.0,0.0));
+#31 = CARTESIAN_POINT('',(0.0,5.0,1.0));
+#32 = CARTESIAN_POINT('',(0.0,10.0,0.0));
+#33 = CARTESIAN_POINT('',(8.0,0.0,0.0));
+#34 = CARTESIAN_POINT('',(8.0,5.0,3.0));
+#35 = CARTESIAN_POINT('',(8.0,10.0,0.0));
+",
+    );
+
+    assert_eq!(mapped.map, UvMap::IDENTITY);
+    let Surface::Nurbs(patch) = &mapped.surface else {
+        panic!("a B_SPLINE_SURFACE should read as a NURBS surface");
+    };
+    assert_eq!(patch.control_points().nu(), 2, "two rows along u");
+    assert_eq!(patch.control_points().nv(), 3, "three along v");
+
+    // The file's `[u][v]` corners, which a transposed read would place on the
+    // wrong side of the patch.
+    for (u, v, expected) in [
+        (0.0, 0.0, Point3::new(0.0, 0.0, 0.0)),
+        (1.0, 0.0, Point3::new(8.0, 0.0, 0.0)),
+        (0.0, 1.0, Point3::new(0.0, 10.0, 0.0)),
+        (1.0, 1.0, Point3::new(8.0, 10.0, 0.0)),
+        (0.5, 0.5, Point3::new(4.0, 5.0, 2.0)),
+    ] {
+        let got = mapped.surface.point_at(u, v);
+        assert!(
+            (got - expected).norm() <= LINEAR_TOLERANCE,
+            "at ({u}, {v}): got {got:?}, expected {expected:?}",
+        );
+    }
+}

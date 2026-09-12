@@ -13,14 +13,18 @@
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use crate::geometry::{ANGULAR_TOLERANCE, Cone, Cylinder, Frame, Plane, Sphere, Surface, Torus};
+use crate::geometry::{
+    ANGULAR_TOLERANCE, Cone, Cylinder, Frame, Plane, Sphere, Surface, SurfaceOfRevolution, Torus,
+};
 
 use super::super::builder::InstanceBuilder;
 use super::super::error::{GeometryError, StepError};
 use super::super::part21::EntityId;
 use super::super::schema::entities;
 use super::super::schema::resolver::{Attributes, Origin, Resolver};
-use super::placement::{read_placement, write_placement};
+use super::curves::{read_curve, write_curve};
+use super::nurbs::{read_bspline_surface, write_bspline_surface};
+use super::placement::{read_axis, read_placement, write_axis, write_placement};
 use super::uv_map::UvMap;
 
 /// A surface and the change of parameters between its STEP spelling and it.
@@ -62,6 +66,12 @@ pub fn write_surface(
         if let Some(written) = writer(builder, surface) {
             return written;
         }
+    }
+    if let Some(written) = write_surface_of_revolution(builder, surface) {
+        return written;
+    }
+    if let Surface::Nurbs(nurbs) = surface {
+        return Ok(write_bspline_surface(builder, nurbs));
     }
     Err(GeometryError::UnsupportedSurface {
         kind: kind(surface),
@@ -191,30 +201,92 @@ fn write_conical_surface(
     })))
 }
 
+/// Writes a `SURFACE_OF_REVOLUTION`, or declines anything that is not one.
+///
+/// The profile goes out through the same writer any other curve does, so a
+/// revolution of a spline is written exactly when a spline can be. Nothing
+/// here mentions the parameter transposition: it is a property of the reading,
+/// and a writer that swapped anything would be swapping it twice.
+fn write_surface_of_revolution(
+    builder: &mut InstanceBuilder,
+    surface: &Surface,
+) -> Option<Result<EntityId, GeometryError>> {
+    let Surface::Revolution(revolution) = surface else {
+        return None;
+    };
+
+    let swept_curve = match write_curve(builder, revolution.curve()) {
+        Ok(curve) => curve,
+        Err(error) => return Some(Err(error)),
+    };
+    let axis_position = write_axis(builder, &revolution.axis);
+    Some(Ok(builder.add_shared_entity(
+        &entities::SurfaceOfRevolution {
+            swept_curve,
+            axis_position,
+        },
+    )))
+}
+
 /// Reads a surface, preferring its closed form.
 pub fn read_surface(
     resolver: &Resolver<'_>,
     from: Origin,
     id: EntityId,
 ) -> Result<MappedSurface, StepError> {
-    let surface = resolver.attributes(from, id)?;
-    let readers = [
-        read_plane,
-        read_cylindrical_surface,
-        read_spherical_surface,
-        read_conical_surface,
-        read_toroidal_surface,
-    ];
-    for reader in readers {
-        if let Some(read) = reader(resolver, &surface) {
-            return read;
+    let instance = resolver.instance(from, id)?;
+    let origin = Origin::of(instance);
+
+    // The analytic entities are simple instances, one record each. A rational
+    // B-spline is not: it is the intersection of its supertypes, so it has to
+    // be offered the whole instance rather than a record of it.
+    if let Some(record) = instance.simple() {
+        let surface = Attributes::new(origin, record);
+        let readers = [
+            read_plane,
+            read_cylindrical_surface,
+            read_spherical_surface,
+            read_conical_surface,
+            read_toroidal_surface,
+            read_surface_of_revolution,
+        ];
+        for reader in readers {
+            if let Some(read) = reader(resolver, &surface) {
+                return read;
+            }
         }
     }
+    if let Some(read) = read_bspline_surface(resolver, origin, instance) {
+        return read.map(MappedSurface::identical);
+    }
     Err(GeometryError::UnreadableSurface {
-        keyword: surface.keyword().to_string(),
-        origin: surface.origin,
+        keyword: instance.spelling(),
+        origin,
     }
     .into())
+}
+
+/// Reads a `SURFACE_OF_REVOLUTION`, or declines anything that is not one.
+///
+/// The one reader here that does not answer with an identity map. STEP sweeps
+/// the profile with `u` the angle turned and `v` the profile.s own parameter;
+/// `SurfaceOfRevolution` has them the other way round, so the two parameters
+/// exchange roles. A transposition is orientation-reversing, which is why it
+/// is stated as a map rather than applied by hand somewhere downstream.
+fn read_surface_of_revolution(
+    resolver: &Resolver<'_>,
+    surface: &Attributes<'_>,
+) -> Option<Result<MappedSurface, StepError>> {
+    let revolution = surface.decode::<entities::SurfaceOfRevolution>()?;
+    Some(revolution.map_err(StepError::from).and_then(|revolution| {
+        let origin = surface.origin;
+        let curve = read_curve(resolver, origin, revolution.swept_curve)?;
+        let axis = read_axis(resolver, origin, revolution.axis_position)?;
+        Ok(MappedSurface {
+            surface: Surface::Revolution(SurfaceOfRevolution::new(curve, axis)),
+            map: UvMap::TRANSPOSED,
+        })
+    }))
 }
 
 /// Reads a `PLANE`, or declines anything that is not one.

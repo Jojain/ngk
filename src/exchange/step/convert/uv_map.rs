@@ -14,7 +14,7 @@
 //!
 //! | surface | swap | scale |
 //! |---|---|---|
-//! | plane, cylinder, sphere, torus, linear extrusion, B-spline | no | `(1, 1)` |
+//! | plane, cylinder, sphere, torus, B-spline | no | `(1, 1)` |
 //! | cone(α) | no | `(1, 1/cos α)` |
 //! | surface of revolution | **yes** | `(1, 1)` |
 //!

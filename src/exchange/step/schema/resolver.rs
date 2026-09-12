@@ -31,6 +31,16 @@ pub struct Origin {
     pub line: u32,
 }
 
+impl Origin {
+    /// Where `instance` is, for an error that has to name a position.
+    pub fn of(instance: &Instance) -> Self {
+        Self {
+            id: instance.id,
+            line: instance.line,
+        }
+    }
+}
+
 impl fmt::Display for Origin {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{} on line {}", self.id, self.line)
@@ -264,6 +274,35 @@ impl<'a> Attributes<'a> {
             .collect()
     }
 
+    /// Reads the next attribute as a list of integers of any length.
+    ///
+    /// For a count per element, such as a knot's multiplicity, where the
+    /// length is whatever the entity it belongs to says it is.
+    pub fn integers(&mut self) -> Result<Vec<i64>, SchemaError> {
+        let index = self.next;
+        self.list()?
+            .iter()
+            .map(|value| {
+                value
+                    .as_integer()
+                    .ok_or_else(|| self.bad(index, "a list of integers"))
+            })
+            .collect()
+    }
+
+    /// Reads the next attribute as a list of reals of any length.
+    ///
+    /// Unlike [`Self::reals`] there is no arity to check: a knot vector or a
+    /// weight list is as long as its entity's other attributes make it, which
+    /// is a cross-attribute agreement the entity checks rather than the cursor.
+    pub fn real_list(&mut self) -> Result<Vec<f64>, SchemaError> {
+        let index = self.next;
+        self.list()?
+            .iter()
+            .map(|value| numeric(value).ok_or_else(|| self.bad(index, "a list of reals")))
+            .collect()
+    }
+
     /// Reads the next attribute as a list of reals of exactly `N` elements.
     ///
     /// Checking the arity here is what stops a 2D entity reaching a 3D reader
@@ -454,10 +493,7 @@ impl<'a> Resolver<'a> {
 }
 
 fn origin_of(instance: &Instance) -> Origin {
-    Origin {
-        id: instance.id,
-        line: instance.line,
-    }
+    Origin::of(instance)
 }
 
 /// Names the keywords an entity accepts, for a "wrong entity" message.

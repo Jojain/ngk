@@ -16,17 +16,23 @@
 //!
 //! ## What is carried so far
 //!
-//! Solids on analytic supports, both ways: `PLANE`, `CYLINDRICAL_SURFACE`,
-//! `SPHERICAL_SURFACE`, `CONICAL_SURFACE` and `TOROIDAL_SURFACE`; `LINE`,
-//! `CIRCLE` and `ELLIPSE` edges; and the AP214 product structure. A face whose
-//! parameterization closes on itself is written along a cut synthesized from
-//! its domain, and read back by letting healing remove that cut again — a
-//! whole sphere or torus included, which NGK stores as one face with no
-//! boundary at all and STEP has to be handed cut open. Solids with cavities go
-//! both ways as `BREP_WITH_VOIDS`.
+//! Solids, both ways, on every support NGK has: `PLANE`,
+//! `CYLINDRICAL_SURFACE`, `SPHERICAL_SURFACE`, `CONICAL_SURFACE`,
+//! `TOROIDAL_SURFACE`, `SURFACE_OF_REVOLUTION` and `B_SPLINE_SURFACE`; `LINE`,
+//! `CIRCLE`, `ELLIPSE` and `B_SPLINE_CURVE` edges; and the AP214 product
+//! structure. A face whose parameterization closes on itself is written along
+//! a cut synthesized from its domain, and read back by letting healing remove
+//! that cut again — a whole sphere or torus included, which NGK stores as one
+//! face with no boundary at all and STEP has to be handed cut open. Solids
+//! with cavities go both ways as `BREP_WITH_VOIDS`.
 //!
-//! A B-spline support is refused by name rather than approximated; see
-//! [`error::TopologyError`] and [`error::GeometryError`].
+//! A B-spline is written in whichever of Part 21's two spellings its weights
+//! call for: one record when polynomial, and a complex instance when rational,
+//! since a rational B-spline has no keyword of its own.
+//!
+//! What a file holds beyond one solid's geometry is read for the solids and
+//! dropped: an assembly's names, nesting and placements do not survive, and
+//! NGK cannot write one.
 //!
 //! The two directions are not symmetric in what they *have* to do. Writing
 //! walks topology that is already sewn; reading is handed loose faces that
