@@ -1,0 +1,744 @@
+# STEP interop architecture (ISO 10303-21 / AP203 / AP214 / AP242)
+
+> **Scope.** An *architectural* plan: the layer split, the decisions and their
+> rationale, the extension points, and what lives where. Not line-level
+> implementation. Staging is §10.
+>
+> **Status: In progress.** Stage 1 is complete — `src/exchange/step/part21/`
+> reads and writes ISO 10303-21 on `winnow`, with zero kernel references.
+> Stage 2 (planar export) is the next entry point.
+
+## Context
+
+NGK has no file I/O of any kind. `std::fs` appears nowhere in the crate; the only
+serialization is `serde_json` over a TCP socket to the debug viewers. A kernel that
+cannot read or write STEP cannot be used with anything else, cannot be differentially
+tested against a reference kernel, and cannot receive a bug report as a file.
+
+`src/exchange/step/` already exists as an empty directory, unregistered in
+`src/lib.rs`. This plan fills it.
+
+The requirement driving the design is that the mapping be **complete, bidirectional,
+and able to absorb geometry NGK does not have yet** — hyperbola, parabola, offset and
+intersection curves, bounded and offset surfaces — without reopening the dispatch,
+and to round-trip such geometry correctly meanwhile. `Surface::Torus` landing in
+`518654b` mid-design is the proof case: it collapsed one whole decision (§2, D4) and
+touched nothing else.
+
+Three properties of the kernel shape everything below.
+
+1. **NGK is NURBS-first by policy** (`skills/ngk-project/SKILL.md`), and every
+   `Curve`/`Surface` has `to_nurbs()`. Every STEP curve and surface type is
+   representable as NURBS. That makes the mapping a *total* function with a universal
+   fallback rather than a partial one that fails on an unknown entity.
+2. **NGK stores periodic faces seamlessly; STEP writes them cut open.** A cylinder
+   wall is one ring face with two `LoopKind::Wrapping` loops and no seam edge; a
+   sphere or torus is one *boundaryless* face with zero loops, edges and vertices,
+   rooted by `ShellRoot::Face`. This is the largest piece of real work and it is
+   asymmetric between the directions.
+3. **NGK does not store a face's sense; it derives it.** `Face::normal_at`
+   (`src/topology/face.rs:404-423`) flips the surface normal iff the boundary's signed
+   area in the unwrapped domain is negative. This makes STEP's `same_sense` flag
+   *redundant on import* — see D5, the most useful consequence in this document.
+
+---
+
+## 1. The central split: four layers, three seams
+
+The failure mode for STEP code is one 3000-line module that lexes, resolves,
+interprets units, builds geometry and sews topology in a single pass. The
+architecture is the refusal to do that.
+
+| # | Layer | Knows about | Does **not** know about |
+|---|---|---|---|
+| **L1** | **Part 21 syntax** — tokens, instance table, header | ISO 10303-**21** only | Any AP, any entity name, any NGK type |
+| **L2** | **AP entity model** — typed records, reference resolution, units | Entity names, attribute order, AP203/214/242 differences | NGK types |
+| **L3** | **Geometry mapping** — `CYLINDRICAL_SURFACE`↔`Surface::Cylinder`, and the parameter maps | `geometry::` | `topology::`, GMap, darts |
+| **L4** | **Topology mapping** — shells, faces, loops, edge stitching, seams | `topology::`, `builders::`, `healing::` | Part 21 text |
+
+**Why these seams:**
+
+- **L1/L2** is the dependency boundary. L1 is small, frozen by the standard, and
+  identical for every AP and even for IFC — the only part a third-party crate can
+  supply (§9). Putting the boundary here makes the parser choice *reversible*.
+- **L2/L3** makes AP differences someone else's problem. AP203/214/242 differ in
+  product-structure boilerplate and a few entity spellings, almost none of it
+  geometric. L3 never learns which AP it came from.
+- **L3/L4** mirrors the crate's own layering (`geometry` below `topology`). L3 is pure
+  math, exhaustively testable with no GMap at all — which matters, because that is
+  exactly where the parameterization bugs live (§4).
+
+L3 and L4 are each **bidirectional**: one table drives read and write. Keeping the
+directions adjacent is what stops them drifting into a pair of mappings that
+disagree — the classic round-trip failure.
+
+---
+
+## 2. Decision log
+
+### D1 — Module at `src/exchange/step/`, layered above `healing`
+
+`src/exchange/` is already staked out. Add `pub mod exchange;` to `src/lib.rs` — one
+line; there is no registry machinery. In the `CLAUDE.md` layering table `exchange`
+sits **above `healing`**: import must call healing to canonicalize a seamed file.
+Nothing in the kernel may depend on `exchange`.
+
+Named `exchange`, not `io`/`step`, because IGES, STL, glTF and a native `.ngk` format
+belong beside it later.
+
+It must live **in-crate**, not as a sibling crate: `FaceAttr.loops` is `pub(crate)`.
+
+### D2 — Analytic-first dispatch with a certified NURBS fallback, reusing the crate's own convention
+
+**This is the answer to "geometry we don't have yet".**
+
+`CLAUDE.md` already describes this pattern for intersections:
+
+> `intersect_analytic_*` return `Option<Result<..>>`: `None` declines the pair (fall
+> back)… A pair in the table that reaches a case the `Curve` types cannot carry also
+> declines.
+
+L3 uses the **same convention** in both directions: an ordered table of readers and
+writers per kind, each returning `Option<Result<..>>`, terminated by a fallback that
+never declines.
+
+- *Import*: `read_as_nurbs` handles `B_SPLINE_*` directly and converts anything else
+  — exactly where a closed form exists (a `HYPERBOLA` arc is a rational quadratic, a
+  `PARABOLA` arc a plain quadratic), by tolerance-driven approximation otherwise
+  (`OFFSET_CURVE_3D`, `INTERSECTION_CURVE`).
+- *Export*: `write_as_nurbs` via `Curve::to_nurbs()` / `Surface::to_nurbs_over(u, v)`
+  — the `_over` form matters, since a `Plane`'s domain is unbounded and the box has
+  to come from the face's unwrapped-domain bounds.
+
+**What this buys.** Adding `Curve::Hyperbola` later is: write one reader that stops
+declining, write one writer, delete nothing. No call site changes, and until then the
+file already round-trips correctly — just as NURBS. `Surface::Torus` arriving during
+this design is the worked example: it turned a two-paragraph workaround into one
+table row. A `match` over entity names instead forces every future geometry addition
+to touch the dispatch, and fails silently on the entity it has not met.
+
+**The guard this decision must carry.** `src/geometry/traits.rs:14-21`: `to_nurbs`
+reproduces a support *as a point set*, **not its parameterization** — a circle's angle
+is not a linear function of the rational quadratic's parameter. So **any fallback
+that also carries an interval must convert it through `Curve::nurbs_param_map()` /
+`Surface::param_map_over()`** (`src/geometry/reparam.rs`). A fallback that copies the
+analytic interval onto the converted NURBS produces a file that looks right and is
+wrong. This belongs in rustdoc on the fallback itself.
+
+### D3 — Round-trip preserves geometry to tolerance, not entity type
+
+A documented contract, or it gets reported as a bug:
+
+> A STEP round trip preserves the **point set** of every curve and surface to within
+> the document tolerance, the topology exactly, and the analytic *type* only where
+> NGK has a matching representation.
+
+`CIRCLE` → `Curve::Circle` → `CIRCLE` is stable; `HYPERBOLA` → `Curve::Nurbs` →
+`B_SPLINE_CURVE_WITH_KNOTS` is exact-but-retyped. Every demotion is recorded in the
+import report (§7) rather than being silent.
+
+### D4 — All parameter-space differences go through one `UvMap` value; no sign is reasoned about by hand
+
+Two of NGK's surfaces do not share STEP's parameterization, and both differences are
+orientation- or scale-bearing, so getting either wrong inverts the face normal and
+surfaces much later as `SolidFaceNormalNotOutward`.
+
+- **`SurfaceOfRevolution` is transposed.** `src/geometry/dim3/surfaces.rs:904` carries
+  the inline comment *"u walks the profile curve, v is the angle"*; `domain()` returns
+  `(curve.domain(), [0, TAU])` and `degenerate_rows` answers only for `Axis2::U`. ISO
+  10303-42's `surface_of_revolution` puts **u = the angle of revolution**. A
+  transposition is orientation-reversing in 2D, so it flips the boundary's signed area
+  *and* the surface normal together.
+- **`Cone` measures `v` along the generatrix**, STEP's `CONICAL_SURFACE` along the
+  **axis**, with `frame.origin` on the `v = 0` reference circle rather than at the apex
+  (`surfaces.rs:673-720`). Substituting `v_ngk = v_step / cos α` reproduces STEP's
+  `radius = R + v·tan α` and `height = v` exactly.
+
+Every such mapping is affine and axis-aligned, so **one value covers all of them**:
+
+```
+UvMap { swap: bool, scale: Vector2, offset: Vector2 }
+  apply / inverse
+  reverses_orientation() = swap XOR (scale.x * scale.y < 0)
+  map_pcurve(&TrimmedCurve2) -> TrimmedCurve2
+```
+
+and the orientation question stops being a case analysis and becomes the sign of a
+determinant.
+
+| surface | swap | scale |
+|---|---|---|
+| plane, cylinder, sphere, **torus**, linear extrusion, B-spline | no | (1, 1) |
+| **cone(α)** | no | **(1, 1/cos α)** |
+| **surface of revolution** | **yes** | (1, 1) |
+
+**`Surface::Torus` is an exact identity map** — verified term-for-term against ISO
+10303-42's `toroidal_surface`:
+`σ(u,v) = C + (R + r·cos v)·(cos u·x + sin u·y) + r·sin v·z`, with u the major
+angle and v the tube angle, against `Torus::point_at` at `surfaces.rs:1457-1462`.
+`Frame::from_xz(location, ref_direction, axis)` is the placement, and
+`add_torus` already stores `Surface::Torus` directly (`src/builders/solids.rs:91`).
+This is the decision `518654b` deleted: before the variant existed, a torus had to
+round-trip through `SurfaceOfRevolution` and inherit its transposition *plus* a
+profile-frame handedness mismatch against NGK's own builder. That is all gone.
+
+So the `UvMap` now carries exactly two non-identity cases. It still earns its place —
+the remaining two are the dangerous ones, it keeps the sign reasoning mechanical, and
+it is where a future `OFFSET_SURFACE` or reparameterized variant lands without
+touching anything else.
+
+**One consequence worth stating up front:** `map_pcurve` is exact for a `Line2` under
+every map and for `Circle2`/`Ellipse2` only when `|scale.x| == |scale.y|` — so a
+circular pcurve on a *cone* must demote to `Curve2::Nurbs` under D3, since a
+non-uniform scale turns a circle into an ellipse. In practice cone pcurves are almost
+always lines, so this rarely fires.
+
+Pinned by a test comparing `Surface::point_at(map.apply(p))` against the ISO formula
+at a dozen points per surface type, with no GMap involved.
+
+### D5 — Import does not store `same_sense`; it uses it as a checksum
+
+Because NGK *derives* the face normal from the boundary winding (property 3 above),
+an importer that (a) walks each bound in the STEP-composed traversal direction and
+(b) writes each pcurve in the NGK chart through the `UvMap` gets the correct face
+normal **automatically**. In the transposing case the two sign flips cancel: the
+transposition negates both the normal and the signed area, and NGK multiplies them.
+
+So `same_sense` is not state to carry — it is a **free consistency check**: compute
+the mapped outer bound's signed area, compare against the file's flag, and on
+disagreement either fail (strict mode) or record it. It costs one polyline and is the
+cheapest possible early warning that a `UvMap` entry or a reconstructed pcurve is
+wrong — catching it at the face that caused it rather than at
+`validate_all_solid_orientations` much later.
+
+This is the "one conversion point per direction" rule that STEP round trips need, and
+the reason it is affordable.
+
+The dart-composition rule is separate and equally narrow:
+`forward = FACE_BOUND.orientation XOR ORIENTED_EDGE.orientation`.
+`ADVANCED_FACE.same_sense` does **not** enter it — it describes the normal, not the
+walk. `EDGE_CURVE.same_sense` affects only which vertex the stored dart starts at,
+since `EdgeAttr` stores no interval.
+
+### D6 — Import is faithful; canonicalization is a separate, explicit stage
+
+The importer builds the **seamed** form exactly as the file states it, then — as a
+distinct step the caller can disable — runs
+`healing::remove_redundant_cells(&mut g, HealingOptions::seams_only())`.
+
+This is not new design; it is pre-built. `HealingOptions::seams_only()`
+(`src/healing/options.rs:69-76`) carries the rustdoc *"This is what an importer
+runs."* `tests/fixtures/seamed.rs` is a hand-built model of importer output and says
+so in its module doc. The seam pass is milestone 7 of
+`plan/seamless_periodic_faces.md`, status **Complete**.
+
+Separating the stages means a file that heals badly still imports, the healing report
+surfaces separately, and the importer is testable against the existing fixtures with
+healing out of the picture.
+
+### D7 — Export synthesizes seams in its own output; it never mutates the map
+
+The tempting design — "un-heal" the map by inserting seam edges, then export normally
+— is wrong twice: it mutates the user's model in order to serialize it, and it
+reintroduces exactly the arbitrary, rotation-dependent seam that
+`plan/seamless_periodic_faces.md` spent seven milestones removing.
+
+Instead export derives a **seamed view**. This is mostly built already:
+`UnwrappedFaceDomain::of_face` cuts a periodic face's domain open and returns closed
+UV polygons, with `cut(axis)` reporting where the cut fell and
+`UnwrappedFaceDomainCurve::corners()` — whose rustdoc is precisely the seam
+description: *"the unwrapped domain's own cut, joining two wrapping loops"*, or a
+degenerate row. Crucially, `place_loop` pushes **exactly one curve per
+`loop_.edges()` entry, in order**, so real edges keep their identity positionally and
+only the gaps are synthesized. `UnwrappedFaceDomain` is derived-on-demand by design
+(*"Nothing here is stored on the map"*).
+
+The abstraction to define — consumed by the STEP writer, which never learns which
+kind of face it came from:
+
+```
+SeamedFace = closed UV polygons
+           + per boundary: Real(EdgeKey, Orientation) | Synthetic(TrimmedCurve2)
+```
+
+Two producers implement it:
+
+- **Loop-bearing faces** — walk the unwrapped loop; a real pcurve emits an
+  `ORIENTED_EDGE` over the edge's existing `EDGE_CURVE`, a corner-gap emits a
+  synthesized `EDGE_CURVE` + `VERTEX_POINT` from `surface.point_at(u, v)`. A gap whose
+  two endpoints share a 3D image (a pole) emits **no edge** and reuses one vertex.
+  Seam curves are isoparametric and analytic in every case: a line on a cylinder or
+  cone, a great meridian circle on a sphere, a circle on a torus, the rotated profile
+  or a circle on a revolution.
+- **Boundaryless faces** (sphere, torus) — zero loops, so nothing to walk. The
+  boundary comes from `Surface::domain()`, `periodicity()` and `degenerate_rows(axis)`
+  (`surfaces.rs:48/61/95`) instead. Sense comes from `ShellRoot::Face{sense}`, which is
+  also what makes a spherical *cavity* come out right.
+  - A **sphere** is `UPeriodic` with degenerate rows at both poles: it cuts to one
+    meridian traversed twice plus two pole vertices.
+  - A **torus** is `UVPeriodic(TAU, TAU)` with `is_degenerate_at` always false and no
+    degenerate rows (`surfaces.rs:1551-1573`) — **no poles at all**, so it is the
+    *simpler* of the two: the standard `a·b·a⁻¹·b⁻¹` unfolding, four oriented edges
+    over two closed edges sharing one vertex, with no degeneracy special case.
+
+A `Surface::Nurbs` face is never periodic in NGK, so there is no seam to synthesize on
+one. That is not a gap.
+
+**The self-check that makes this trustworthy:** the loop-bearing outputs are exactly
+the existing fixtures read backwards. A cylinder wall yields bottom circle, seam up,
+top circle, seam down — `seamed_cylinder_wall`'s 8 darts. A spherical cap yields
+latitude circle plus meridian twice — `seamed_spherical_cap`'s 6 darts. A sphere
+yields `seamed_revolved_sphere`. **The torus has no such fixture and is the one
+unproven link** — see D11.
+
+### D8 — Pcurve reconstruction is extracting `SectionTrace`, not writing a projection module
+
+STEP does not require pcurves: `SURFACE_CURVE.associated_geometry` may carry a
+`PCURVE` or may not, and OpenCascade-written files usually omit them on analytic
+surfaces. `FaceAttr` **requires** a `TrimmedCurve2` per boundary dart. So the importer
+must reconstruct them — and the capability is nearly all present already, in a form
+that is merely private and mis-shaped.
+
+**What exists.** Three things go by this name, and only the third is a gap:
+
+1. **Projection onto a plane** — `builders::profiles::curve_pcurve`
+   (`src/builders/profiles.rs:179`, `pub(crate)`). Lines stay `Line2`; every other
+   variant converts to NURBS and has its homogeneous control polygon projected into
+   plane coordinates, which is exact because the projection is affine. Plane-only.
+2. **Synchronized fitting from intersection samples** —
+   `intersections::surface_surface::fitting::fit_branch`. `pub(super)`, and it takes
+   `Vec<TraceState>` from the tracer, so it cannot be called with a curve and a
+   surface.
+3. **Lifting an arbitrary 3D curve onto a curved support** — what import needs.
+
+**And (3) substantially exists as `SectionTrace`**
+(`src/geometry/dim3/intersections/analytic/surface_surface.rs:406`), whose
+constructor `build(curve, interval, surface, domain, options)` is close to the exact
+signature an importer wants. It already carries every step this plan previously
+described as new work:
+
+| step | `SectionTrace` member |
+|---|---|
+| closed-form pcurve when the support admits one | `exact`, `plane_pcurve` |
+| recognize a UV line from samples, accept on deviation | `exact_piece` (samples at 25% / 75%, tolerance-checked) |
+| NURBS interpolation fallback with refinement | `fitted_over` |
+| unwrap the periodic branch into a continuous chain | `unwrap_periodic`, `shifted_into_period` |
+| report exact vs approximated | `PcurveFidelity` |
+
+So the work is **extraction and generalization, not construction**: lift
+`SectionTrace` out of the analytic-intersection subtree into a public `geometry`
+facility keyed on `(Curve, Interval, Surface)`. It is already *in* `geometry` — this
+decision is about where it is reachable from, not about adding a layer. That also
+pays down `plan/curved_support_pcurve_rebuild.md`, which needs the same primitive.
+
+**The one real gap is narrow.** Period handling is u-only:
+
+```rust
+let period = match surface.periodicity() {
+    UPeriodic(p) | UVPeriodic(p, _) => Some(p),   // the v period is discarded
+    _ => None,                                     // VPeriodic gets nothing
+};
+```
+
+and `unwrap_periodic` unwraps only `.x`. A `Torus` is `UVPeriodic(TAU, TAU)` and a
+`SurfaceOfRevolution` is `VPeriodic`, so both are mishandled. **This is not a live
+bug:** the analytic table only reaches plane, sphere and cylinder, all u-periodic or
+aperiodic, so both arms are dead code today. STEP import is simply the first caller
+that exercises them, and generalizing `period` to `[Option<f64>; 2]` with a
+two-axis unwrap is the substantive change.
+
+**It is also not blocked on `plan/curved_support_pcurve_rebuild.md`** (status
+Proposed). That plan is about healing *fusing* two pcurves on a curved support — a
+harder, different problem. Import needs *lifting*, which is one-directional and has
+`Surface::closest_parameter` implemented for every variant, `Torus` included.
+
+**Sequencing: this is a stage-4 need, not a prerequisite.** Planar import (stage 3)
+is served by `curve_pcurve`, and export never lifts at all — it reads pcurves that
+already exist on the face. Building this before stage 4 would be speculative.
+
+### D9 — Import is best-effort with a report, which constrains transaction ordering
+
+Real files contain faces that do not close, loops with duplicated edges, and
+references into nothing. Aborting the file on the first bad face is useless in
+practice. This collides with the transaction rule (`src/topology/edit.md`): a
+transaction is atomic and any failure restores the snapshot. The resolution is an
+**ordering constraint**, which is why it is architectural:
+
+> Build and validate all geometry **outside** the transaction. Enter
+> `GMap::transaction` only with a set of faces already known to be constructible.
+> One transaction per solid, so one bad solid does not lose the file.
+
+Rejected faces are recorded with a reason, in the same shape as
+`HealingReport.skipped: Vec<HealingSkip>`. Entities NGK cannot represent at all —
+`VERTEX_LOOP`, `POLY_LOOP`, an edge with more than two uses (non-manifold) — are
+**rejected by name**, never silently skipped.
+
+### D10 — Units and tolerance are per-document, normalized at the L2/L3 boundary
+
+STEP carries units (`SI_UNIT`, `CONVERSION_BASED_UNIT` for inches, and **degrees for
+plane angle**, which reaches `CONICAL_SURFACE.semi_angle`) plus an
+`UNCERTAINTY_MEASURE_WITH_UNIT`, typically `1e-6`–`1e-7`. NGK's `LINEAR_TOLERANCE` is
+a compile-time `1e-9` — three orders tighter than the files it will read.
+
+L2 resolves the unit block and normalizes before L3 sees anything, so no NGK type ever
+holds an inch or a degree. The document uncertainty is carried in the import options
+and used for the decisions the exchange layer owns — vertex merging, edge stitching,
+pcurve fit residuals — and passed to `HealingOptions.linear_tolerance`, which is
+already a per-run field rather than the global const.
+
+What this does *not* solve: constructors and `PointCoincidence` inside `geometry::`
+still use the global const. Threading tolerance through the kernel is a much larger
+change, explicitly out of scope; the boundary is documented rather than blurred.
+
+### D11 — The torus round trip is proven by a fixture *before* the exporter depends on it
+
+D7's torus unfolding needs two successive seam removals to converge, and there is no
+`seamed_torus` fixture. **Hard prerequisite on the boundaryless stage:** add
+`seamed_torus(major, minor)` to `tests/fixtures/seamed.rs` and prove
+`remove_redundant_cells(&mut g, HealingOptions::seams_only())` reduces it to a
+boundaryless face first. If healing cannot, that is a healing bug to fix in its own
+right — `src/healing/mod.rs:16-21` claims exactly this capability — and must not be
+smuggled into the exporter. No `#[ignore]`: if the prerequisite fails it fails loudly
+and the stage does not start.
+
+### D12 — Provenance in the report by default; `Payload` is the escape hatch
+
+STEP entity ids, `PRODUCT` names, colours and layers have no home in a `GMap`.
+`Payload` (`src/topology/payload.rs`) is architecturally the right place for durable
+provenance — it rides inside the attributes and survives edits via `EditPolicy`. But
+the importer is generic over `P: Payload` and can only produce `P::F: Default`, so it
+cannot populate an arbitrary payload; and forcing a bespoke payload would make
+imported shapes incompatible with `modeling::fuse`, which is `StandardPayload`.
+
+Decision: importer generic with `P = StandardPayload` defaulted, provenance in the
+report (matching the `HealingReport` idiom); a caller needing provenance to survive
+later edits supplies a payload-filling hook.
+
+### D13 — A STEP file is a document, not a shape
+
+A STEP file holds several products in an assembly with placements and names.
+`Shape<SolidTag, P>` holds one solid and no transform. `Model<P>` is a 17-line embryo
+with no `insert`, and `docs/model_api.md` is unimplemented target design.
+
+Decision: `exchange` defines its **own neutral document type** — named nodes with
+placements, leaves carrying `Shape<SolidTag, P>` — rather than blocking on `Model` or
+flattening assemblies into a `Vec<Shape>` and losing structure the file contained. It
+lowers to `Vec<Shape>` today and to `Model` when `Model::insert` lands, and it is what
+the *exporter* consumes, keeping the directions symmetric. Reusable by glTF/STL later,
+so it lives in `src/exchange/mod.rs`.
+
+Build one `GMap` per `MANIFOLD_SOLID_BREP` so each `Shape` owns its map; geometry
+caching still works across solids because `Curve`/`Surface` are values.
+
+### D14 — `no_std`-shaped core, `std::fs` only at the rim
+
+The crate builds as a `cdylib` for wasm, where there is no filesystem. L1–L4 operate
+on `&str` and `impl Write`; `read_step_file`/`write_step_file` are three functions
+behind `#[cfg(not(target_arch = "wasm32"))]` and the only place `std::fs` appears.
+This also makes every test operate on string literals rather than fixture files.
+
+---
+
+## 3. Module layout
+
+```
+src/exchange/
+  mod.rs          // pub mod step; + the neutral document type (D13)
+  document.rs
+  step/
+    mod.rs        // read_step / write_step / *_file, options, reports
+    error.rs      // one thiserror enum per layer, nested
+    options.rs
+    report.rs
+    fs.rs         // the crate's only std::fs, cfg-gated       (D14)
+
+    part21/       // L1 — zero knowledge of the kernel
+      value.rs    // Value / Record / Instance
+      parse.rs    // winnow parsers                            (§9)
+      write.rs    // ours regardless; incl. the real-formatting guard
+
+    schema/       // L2
+      resolver.rs  entities.rs  units.rs  product.rs
+
+    convert/      // L3 — pure math, bidirectional, no GMap
+      uv_map.rs       // the load-bearing type                 (D4)
+      curves.rs  surfaces.rs  nurbs.rs  placement.rs  pcurve.rs
+
+    topology/     // L4
+      stitch.rs  import.rs  export.rs  seam.rs  ids.rs
+```
+
+`part21`, `schema` and `convert` are **public**: tests are integration-only by project
+convention, and `convert::uv_map` is the highest-risk unit in the feature. `import`
+and `export` are private, their entry points re-exported from `step/mod.rs`.
+
+---
+
+## 4. The three conversions that corrupt silently
+
+Isolated deliberately, because none of them crashes — they produce files that look
+correct.
+
+1. **The revolution transposition and the cone scale** (D4). Symptom appears as
+   `SolidFaceNormalNotOutward` far from the cause. Mitigated by making every parameter
+   go through one value, and by D5's checksum firing at the offending face.
+2. **NURBS parameterization under `to_nurbs`** (D2). Mitigated by making
+   `nurbs_param_map` mandatory on the fallback path and by testing the point set
+   rather than the parameters.
+3. **Real formatting on write.** `format!("{}", 1.0f64)` yields `"1"`, which is an
+   *integer* in Part 21 and changes the parsed type. `{:?}` gives shortest round-trip;
+   append `"."` when the result contains no `.` or exponent. One helper, one test table
+   of awkward values.
+
+The NURBS entity conversions sit just below these in risk — knot run-length coding
+against NGK's fully-expanded `KnotVector`; homogeneous `HPoint` (`x·w, y·w, z·w, w`)
+against STEP's Cartesian-points-plus-weights; **control-net transposition** (NGK is
+flat row-major with u fastest, STEP is `[i][j]` with i along u — only a test with
+`nu != nv` catches it); and periodic→clamped conversion, since NGK's NURBS types have
+no periodic flag and report `Periodicity::None` unconditionally.
+
+One hazard is *narrower* than it first appears: `KnotVector::multiplicity` compares
+with exact `==`, but the importer *expands* from the file's explicit
+`knot_multiplicities` rather than discovering multiplicity by comparison, so the values
+are bit-identical by construction.
+
+---
+
+## 5. Entity coverage
+
+| STEP | NGK | Note |
+|---|---|---|
+| `CARTESIAN_POINT`, `DIRECTION`, `VECTOR` | `Point3`/`Point2`, `UnitVector3` | dedup points on export — dominates file size |
+| `AXIS2_PLACEMENT_3D` | `Frame::from_xz(loc, ref_direction, axis)` | exact constructor match; `$` ref_direction → any ⟂ |
+| `AXIS1_PLACEMENT` | `Axis3` | |
+| `LINE(p, VECTOR(d,m))` | `Line::through(p, p + m·d̂)` | affine param matches; `Line::with_axis` is private |
+| `CIRCLE`, `ELLIPSE` | `Circle`, `Ellipse` | angle param, exact both ways |
+| `HYPERBOLA`, `PARABOLA` | → NURBS | exact conic; **D3 demotion** |
+| `OFFSET_CURVE_3D`, `INTERSECTION_CURVE` | → NURBS | approximated; D3 demotion |
+| `TRIMMED_CURVE` | `TrimmedCurve` | interval direction carries `SENSE_AGREEMENT` |
+| `PLANE`, `CYLINDRICAL_SURFACE`, `SPHERICAL_SURFACE` | identity `UvMap` | |
+| **`TOROIDAL_SURFACE`** | **`Surface::Torus`** | **identity, both ways** — verified against ISO 10303-42 |
+| `CONICAL_SURFACE` | `Cone` | **scale (1, 1/cos α)** |
+| `SURFACE_OF_REVOLUTION` | `SurfaceOfRevolution` | **swap** |
+| `SURFACE_OF_LINEAR_EXTRUSION` | `RuledSurface` | identity; STEP's magnitude baked into `direction` |
+| `B_SPLINE_CURVE/SURFACE_WITH_KNOTS` + rational complex forms | `Nurbs` | §4 |
+| `OFFSET_SURFACE`, `*_BOUNDED_SURFACE` | → NURBS | D3 demotion |
+| `MANIFOLD_SOLID_BREP` / `CLOSED_SHELL` | `SolidAttr` / `SheetAttr` | |
+| `BREP_WITH_VOIDS`, `ORIENTED_CLOSED_SHELL` | `SolidAttr.inner_shells` | already modelled |
+| `ADVANCED_FACE` | `FaceAttr::with_loops` + pcurves | `same_sense` is a checksum (D5) |
+| `FACE_OUTER_BOUND` / `FACE_BOUND` | `LoopDefinition::Outer` / `Inner` | never `Wrapping`/`Capping` — those are healing's output |
+| `EDGE_LOOP`, `ORIENTED_EDGE` | `Profile` + loop darts | `ProfileAttr` must be registered or commit fails |
+| `EDGE_CURVE` | `EdgeAttr` | no interval stored; derived from the vertices. `Edge` is an enum — handle `Closed` |
+| `VERTEX_POINT` | `VertexAttr` | one key per instance id; never merged by position |
+| `PCURVE`, `SURFACE_CURVE` | `FaceAttr.pcurves` | reconstructed when absent (D8) |
+| `SEAM_CURVE` | — | consumed by healing on in (D6); **required** on out for seam edges |
+| `VERTEX_LOOP`, `POLY_LOOP` | — | rejected by name (D9) |
+
+Plus the unavoidable AP203 product-structure boilerplate — `APPLICATION_PROTOCOL_DEFINITION`,
+`PRODUCT`/`_DEFINITION_FORMATION`/`_DEFINITION`/`_DEFINITION_SHAPE`,
+`SHAPE_DEFINITION_REPRESENTATION`, `ADVANCED_BREP_SHAPE_REPRESENTATION`, the unit
+block, and the `(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT
+GLOBAL_UNIT_ASSIGNED_CONTEXT REPRESENTATION_CONTEXT)` complex entity — all confined to
+`schema/product.rs`. The **read** side is deliberately lenient: find every
+`MANIFOLD_SOLID_BREP` directly rather than walking down from
+`SHAPE_DEFINITION_REPRESENTATION`, because product structure is where vendor files
+diverge most and we need none of it.
+
+---
+
+## 6. Stitching: the import step with no existing counterpart
+
+STEP gives faces whose loops reference shared `EDGE_CURVE`s by `#N`; NGK needs an
+α2-sewn 3-GMap. A distinct component, not a detail of import:
+
+1. Each `ORIENTED_EDGE` occurrence → two α0-linked darts; consecutive occurrences in a
+   loop → α1 sew.
+2. Build an **edge-use table** `EDGE_CURVE id → [(face, dart, direction)]`.
+3. Two uses → α2 sew, paired so both darts start at the same vertex — exactly the
+   invariant `validate_oriented_shell_volume` checks. **One** use → open shell
+   (report). **More than two** → non-manifold, which NGK cannot represent — reject
+   that solid by name (D9).
+4. Register a `ProfileAttr` per loop and a `SheetAttr` per shell, or the commit is
+   rejected (`MissingProfileRegistration` / `MissingSheetRegistration`).
+5. α3 stays free on a solid's boundary darts.
+
+A seam edge's two uses are on the *same* face; the rule handles it unchanged. Step 3
+is where real files fail, and the report must name the entity id.
+
+---
+
+## 7. Errors and reports
+
+`thiserror` throughout, **one enum per layer, nested** (`StepError::{Syntax, Schema,
+Geometry, Topology}`), so a message says which layer failed and a caller can match on
+the layer rather than on sixty variants. `NurbsError` and `TopologyEditError` wrapped
+with `#[from]`.
+
+**Every error that names a position carries the entity id and the source line.** A
+STEP error without `#1234` in it is not actionable — this is a requirement on L1 and a
+major input to §9.
+
+Reports mirror `HealingReport`: counts plus `skipped: Vec<Skip>` with a reason enum.
+D3 demotions, D5 sense mismatches, D8 reconstructed-and-approximated pcurves, and D9
+rejected faces all land here.
+
+---
+
+## 8. Verification
+
+No snapshot framework exists in the crate and adding one would be a first, so **round
+trips are checked by invariant, never by text diff**. The precedent is
+`tests/topology/serialization.rs`, which round-trips a `GMap` and compares
+structurally.
+
+Tests mirror `src/` per project convention: `tests/exchange.rs` as the harness root
+with `#[path]` mod declarations, including the shared
+`#[path = "fixtures/seamed.rs"] mod seamed;` that `tests/builders.rs` and
+`tests/healing.rs` already use.
+
+- **L1** — string literals: reals vs integers vs `.T.`, `''` escaping, `\X2\`,
+  `/* */`, `$`, `*`, complex instances, dangling refs, duplicate ids. Malformed input
+  must produce an error naming the line. Plus the real-formatting table (§4.3).
+- **L3** — pure geometry, no GMap: `UvMap` against the ISO formula at a dozen points
+  per surface; the D2 fallback asserted to preserve the point set under
+  `coincides(.., LINEAR_TOLERANCE)`; a NURBS surface with `nu != nv` for the
+  transposition; the cone v-parameter identity.
+- **D5** — the sense checksum, as a pure unit test with a deliberately inverted file.
+- **Import** — reproduce `seamed_cylinder_wall`, `seamed_spherical_cap` and
+  `seamed_revolved_sphere` from equivalent STEP text *before* healing (using `seam_of`
+  to find the doubly-walked edge), then assert the post-healing shape: a ring, a
+  `Capping` loop, a boundaryless face.
+- **Round trip** — one shared helper over each primitive: cell counts, then
+  `validate_gmap` + `validate_all_solid_manifolds` + `validate_all_solid_orientations`,
+  then vertex coincidence, then surface-kind identity, then an empty sense-mismatch
+  list. The orientation validator does most of the work — it checks per-edge winding
+  agreement *and* the global signed-volume sign, exactly the pair a broken sense
+  mapping violates.
+- **External conformance** — the check that actually matters: read a file written by
+  another kernel, and have another kernel read ours. Prefer generating fixtures from
+  NGK primitives plus a few small hand-written files; large real STEP files are often
+  encumbered and bloat the repo.
+- **Visual** — a `src/scripts/` scene loading a file, per the script registry
+  convention. Not a test (the project excludes `src/scripts/` from coverage).
+
+Project loop after each change: `cargo fmt`, `cargo clippy --all-targets
+--all-features`, `cargo test --all-targets --all-features`.
+
+---
+
+## 9. The parser — **decided: `winnow` for L1 reading, our own writer**
+
+**It is a smaller decision than it looks.** The boundary is L1/L2; L1 is ~10% of the
+work, and **no crate supplies Part 21 *writing*** — truck, the closest precedent,
+wrote its own output layer despite depending on `ruststep` for input. The writer is
+ours either way, and the reader is reversible behind one seam.
+
+| Option | Status | Assessment |
+|---|---|---|
+| **`winnow` 1.0.4** | **MIT** · July 2026 · 888M downloads · [crates.io](https://crates.io/crates/winnow) | **Chosen.** License matches NGK's MIT exactly. Every runtime dependency is *optional*, gated behind the `debug`/`simd` features — the default `std` feature pulls **nothing** transitively, so the wasm `cdylib` stays clean. 1.0 stable with six releases in 2026 (nom's last was Jan 2025). Decisively: it ships `ContextError` + `StrContext` and `LocatingSlice` **in-crate**, so §7's "every error names an entity id and a line" is close to free — with nom that needs `nom-supreme` + `nom-locate`, i.e. three dependencies to match one. |
+| **`nom` 8.0** | MIT · Jan 2025 · 714M downloads | The incumbent, and fine. But error context and span tracking are external crates, which is precisely the part of L1 that matters here. `winnow` is a fork of nom by the `toml_edit`/cargo maintainer, so the combinator style ports either way. |
+| **`ruststep` 0.4.0** | Apache-2.0 · Sep 2024 · [crates.io](https://crates.io/crates/ruststep) | The STEP-specific option. `ruststep::ast` is a schema-agnostic untyped AST — `Record`, `Parameter`, and `SubSuperRecord` for complex instances. Rejected on cost: pulls `nom` 7, `Inflector` (**unmaintained**), `derive_more` 0.99, `itertools` 0.10, and `thiserror` **1.0** against NGK's 2.0. Apache-2.0 into MIT adds a notice obligation. Read-only, and two years since release. **Its AST shape is borrowed wholesale anyway** — see below. |
+| **`iso-10303`** | [J-F-Liu/iso-10303](https://github.com/J-F-Liu/iso-10303) · ~38★ | EXPRESS→Rust codegen, read-only, early-stage. Heavier buy-in than `ruststep` for less. |
+| **`truck-stepio` 0.3.0** | Apache-2.0 · [crates.io](https://crates.io/crates/truck-stepio) | Not a dependency candidate — bound to truck's own geometry types. Valuable as **precedent**: a pure-Rust kernel that took `ruststep` for input and wrote its own output. Its README concedes shapes from set operations cannot be output yet — worth knowing about the difficulty of the export side. |
+| **OCCT bindings** | — | Would solve STEP completely and contradict the point of the project. |
+
+**Why a combinator library rather than hand-rolling**, given the grammar is only ~15
+productions: the grammar was never the cost. The cost is *error quality on malformed
+vendor files*, and that is exactly what `winnow` supplies in-crate. It also removes
+the hand-written lexer as a maintenance surface, which was the one piece of this plan
+with no test oracle other than files we do not have yet.
+
+**The one design point borrowed wholesale from `ruststep`**, because it is what makes
+complex entities a non-event rather than a special case:
+
+```
+Value    ::= Integer | Real | Text | Enum | Ref | Null | Derived | List | Typed
+Record   ::= { keyword, params: Vec<Value> }
+Instance ::= { id, records: Vec<Record> }   // len 1 = simple, len N = complex
+```
+
+`#5 = A(..);` and `#5 = (A(..) B(..) C(..));` are then the *same type*, and the whole
+complex-instance API is `Instance::record(keyword)` / `Instance::is(keyword)` — which
+covers both places AP203 requires one (the rational B-spline forms and the
+`GEOMETRIC_REPRESENTATION_CONTEXT` unit block).
+
+Two grammar rules carry most of the awkwardness and are worth stating now: a Part 21
+**real always contains `.` and an integer never does**, and `.T.` must not parse as a
+real — dispatch on `.` followed by an ASCII letter. String decoding (`''`,
+`\X2\`/`\X4\`/`\X\`/`\S\`, `\\`) should **pass unrecognized escapes through
+literally** rather than erroring: a malformed `\P?\` in a vendor file must not sink an
+otherwise-good import.
+
+Adding `winnow` makes it NGK's first parsing dependency; `Cargo.toml` gains one line
+under `[dependencies]`. It pulls **nothing** transitively, as predicted, and the wasm
+target still builds.
+
+**Two things stage 1 settled that the design above did not anticipate:**
+
+- **`cut_err` at the commit points is what makes §7's "every error names a line" true.**
+  Without it a malformed instance merely backtracks, the enclosing `repeat` swallows
+  the failure, and the message degrades to *"expected ENDSEC"* at column 1 of the bad
+  instance — naming neither the defect nor its column. Three places commit: past `#N =`
+  it can only be an instance, past `(` it can only be a parameter list, and past `'` it
+  can only be a string. Only the innermost context is rendered; the outer ones are the
+  enclosing constructs and listing them buries the useful one.
+- **`decode_text` and `encode_text` are exact inverses, and `''` belongs to *both*.**
+  Resolving the doubled quote in the parser instead — while it scans for the closing
+  quote — looks natural and silently breaks that property, since the writer doubles
+  quotes that the decoder then never collapses. The parser finds the literal's extent
+  and decodes nothing.
+
+---
+
+## 10. Staging
+
+Each stage leaves the tree green. **Export precedes import deliberately**: it needs no
+pcurve reconstruction, and it gives the importer a generator of known-good input.
+
+| # | Stage | Delivers | Explicitly not yet |
+|---|---|---|---|
+| **1** | ~~L1 Part 21 read/write on `winnow`~~ — **done** | text → table → text; `pub mod exchange` | any kernel reference at all — `part21` must compile knowing nothing of NGK |
+| **2** | Export, planar | `block(1,2,3)` opens in another CAD system; AP203 boilerplate | import, curved supports, seams, NURBS |
+| **3** | Import, planar — the round trip closes | units, uncertainty, stitching (§6), pcurve path on planes | curved supports, seams |
+| **4** | Analytic curved supports, both ways, with seams | full `UvMap`; cylinder/cone/sphere/torus surfaces; circle/ellipse; the unwrapped-domain seam walk; `SEAM_CURVE` on write; `seams_only` healing on read; `SectionTrace` extracted and generalized to two periodic axes (D8) | boundaryless faces, NURBS |
+| **5** | Boundaryless faces and voids | **after D11's fixture passes**: sphere and torus out, `BREP_WITH_VOIDS` | NURBS |
+| **6** | NURBS | both B-spline entities, rational complex forms, knot RLE, net transposition, periodic→clamped, `SURFACE_OF_REVOLUTION`. Adds `NurbsSurface::is_rational()` — one new public method in `geometry` | — |
+| **7** | Robustness and assemblies | `fs.rs`; lenient vendor-file parsing; the document type (D13); AP242 | — |
+
+Stages 1–3 prove the architecture against a real external kernel before anything
+depends on it.
+
+---
+
+## 11. Risks, ranked
+
+1. **The revolution transposition and the cone scale** (D4). Everything downstream
+   inverts together — pcurve direction, boundary winding, `same_sense`, the face
+   normal, and the symptom (`SolidFaceNormalNotOutward`) appears far from the cause.
+   Mitigated by routing every parameter through `UvMap`, never reasoning about signs
+   by hand, and pinning it with a no-GMap test against the ISO formula. *`Surface::Torus`
+   removed the most dangerous instance — a headline primitive — by making it an
+   identity map.*
+2. **Generalizing `SectionTrace` to two periodic axes** (D8). The lifting machinery
+   exists but discards the `v` period and never unwraps `VPeriodic` at all; those arms
+   are dead code today, so STEP import is the first caller to exercise them and will
+   be the first to find what is wrong with them. Bounded, and dodged entirely by files
+   that supply their own pcurves — so build adoption first and treat lifting as the
+   fallback.
+3. **The torus boundaryless round trip** (D7/D11). Unproven that the seam pass
+   converges on the double unfolding. A hard fixture prerequisite; not a reason to
+   delay stages 1–4. Deferring it entirely leaves `sphere` and `torus` — two headline
+   primitives — unexportable, which is why it is stage 5 and not stage 8.
+4. **Silent NURBS parameterization corruption** (D2).
+5. **Tolerance mismatch** (D10). Expect foreign files whose vertices do not coincide by
+   NGK's `1e-9`, and expect stitching (§6.3) to be where that surfaces.
+6. **Cone pcurves lose analytic identity** (D4). Correct but lossy; rarely fires.
+7. **Vendor-file deviations**: `ADVANCED_FACE` with no `FACE_OUTER_BOUND` (fall back to
+   the bound with the largest |UV signed area|, and report it); plane angles in
+   degrees; `$` ref_directions; unknown entities; malformed string escapes. Mitigation
+   is leniency by default — pass unrecognized escapes through, skip unknown entities,
+   report rather than fail — with strictness opt-in.
+8. **Non-manifold and open-shell input.** NGK is a 3-GMap; STEP files contain surface
+   models and non-manifold solids that cannot be represented. Rejecting by name is the
+   design, not a failure.
+9. **Test-corpus licensing and repo size.**
