@@ -7,9 +7,10 @@
 //! makes these hand-built maps the honest subject for anything about seams,
 //! rather than a builder that correctly refuses to produce one.
 //!
-//! The three shapes differ in what is left once the seam is gone: a wall keeps
-//! two rims and becomes a ring, a cap keeps one and is closed on its far side by
-//! a pole, and a sphere keeps none at all.
+//! The shapes differ in what is left once the cut is gone: a wall keeps two rims
+//! and becomes a ring, a cap keeps one and is closed on its far side by a pole,
+//! and a sphere keeps none at all. A torus is the one that carries two cuts, so
+//! the first removal leaves a face that still needs the second.
 //!
 //! Shared by the `builders` and `healing` test binaries, each of which uses a
 //! subset: the allow below is for the half the other binary needs.
@@ -19,7 +20,7 @@ use std::collections::HashMap;
 
 use nalgebra::Vector3;
 use ngk::geometry::{
-    Circle, Curve, Cylinder, Frame, Plane, Point2, Point3, Sphere, Surface, TrimmedCurve2,
+    Circle, Curve, Cylinder, Frame, Plane, Point2, Point3, Sphere, Surface, Torus, TrimmedCurve2,
 };
 use ngk::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
@@ -242,4 +243,104 @@ pub fn seamed_cylinder_wall(radius: f64, height: f64) -> (GMap<StandardPayload>,
         })
         .expect("a seamed wall should commit");
     (g, face)
+}
+
+/// Builds a torus the way a seamed import carries one.
+///
+/// A torus closes in both parameters, so cutting it open takes two cuts: the
+/// face is one quad whose bottom and top sides are the same outer-equator edge
+/// and whose left and right sides are the same tube-circle edge, with the single
+/// vertex at all four corners. That is two seams on one face — the shape that
+/// needs the removals to compose, since taking the first cut off leaves a face
+/// still carrying the second.
+pub fn seamed_torus(major: f64, minor: f64) -> (GMap<StandardPayload>, FaceKey, SolidKey) {
+    let mut g = GMap::<StandardPayload>::new();
+    let torus = Torus::new(Frame::xyz(), major, minor);
+    let surface = Surface::Torus(torus.clone());
+    let turn = std::f64::consts::TAU;
+
+    let face = g
+        .transaction(|edit| {
+            // The quad boundary: equator across, tube circle up, equator back,
+            // tube circle down.
+            let d: [Dart; 8] = std::array::from_fn(|_| edit.add_dart());
+            for pair in 0..4 {
+                edit.link(Dim::Zero, d[2 * pair], d[2 * pair + 1])?;
+            }
+            for pair in 0..4 {
+                edit.link(Dim::One, d[2 * pair + 1], d[(2 * pair + 2) % 8])?;
+            }
+
+            // Both cuts pass through `(u, v) = (0, 0)`, so the quad's four
+            // corners are one point.
+            let corner = torus.point_at(0.0, 0.0);
+            edit.add_vertex(VertexAttr::new(d[0], corner, ()));
+
+            // One edge for the bottom and top sides, one for the left and right:
+            // that is what makes each of them a seam.
+            edit.add_edge(EdgeAttr::new(
+                d[0],
+                Curve::Circle(Circle::new(
+                    Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::y()),
+                    major + minor,
+                )),
+                (),
+            ));
+            edit.add_edge(EdgeAttr::new(
+                d[2],
+                Curve::Circle(Circle::new(
+                    Plane::from_xy(Point3::new(major, 0.0, 0.0), Vector3::x(), Vector3::z()),
+                    minor,
+                )),
+                (),
+            ));
+            edit.add_profile(ProfileAttr::new(d[0], ()));
+
+            let pcurves = HashMap::from([
+                (
+                    d[0],
+                    TrimmedCurve2::segment(Point2::origin(), Point2::new(turn, 0.0)),
+                ),
+                (
+                    d[2],
+                    TrimmedCurve2::segment(Point2::new(turn, 0.0), Point2::new(turn, turn)),
+                ),
+                (
+                    d[4],
+                    TrimmedCurve2::segment(Point2::new(turn, turn), Point2::new(0.0, turn)),
+                ),
+                (
+                    d[6],
+                    TrimmedCurve2::segment(Point2::new(0.0, turn), Point2::origin()),
+                ),
+            ]);
+            let face = edit.add_face(FaceAttr::with_pcurves(
+                surface.clone(),
+                (),
+                d[0],
+                Vec::new(),
+                pcurves,
+            ));
+
+            // The equator's two occurrences meet along the tube cut, and the
+            // tube circle's two along the equator cut.
+            edit.sew(Dim::Two, d[0], d[5])?;
+            edit.sew(Dim::Two, d[2], d[7])?;
+            Ok::<_, TopologyEditError>(face)
+        })
+        .expect("a seamed torus should commit");
+
+    let solid = g
+        .transaction(|edit| {
+            let seed = edit
+                .face(face)
+                .expect("the torus face is registered")
+                .dart()
+                .expect("a seamed face has a boundary to root at");
+            let shell = ShellRoot::Dart(seed);
+            edit.add_sheet(SheetAttr::new(shell, ()));
+            Ok::<_, TopologyEditError>(edit.add_solid(SolidAttr::new((), shell, None)))
+        })
+        .expect("the seamed torus should close into a solid");
+    (g, face, solid)
 }

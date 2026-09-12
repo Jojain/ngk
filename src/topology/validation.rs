@@ -244,13 +244,21 @@ fn validate_oriented_shell_volume<P: Payload>(
     shell: ShellRoot,
     side: ShellSide,
 ) -> Result<(), GMapValidationError> {
-    let faces = g
-        .shell_sheet(shell)
-        .expect("validated shell")
-        .faces()
-        .into_iter()
-        .map(|face| g.face_unchecked(face.key()))
-        .collect::<Vec<_>>();
+    let sheet = g.shell_sheet(shell).expect("validated shell");
+    let faces = match sheet.boundaryless_face() {
+        // A shell that is one boundaryless face says which way it faces on its
+        // root and nowhere else — the face has no winding to carry the answer
+        // — so the shell's own reading of it is the only one there is.
+        Some(_) => sheet.faces(),
+        // Every other face states its sense in its boundary's winding, which
+        // is what the rest of this reads, and reading it as the shell reached
+        // it would state the same thing a second time.
+        None => sheet
+            .faces()
+            .into_iter()
+            .map(|face| g.face_unchecked(face.key()))
+            .collect(),
+    };
     let mut directed = HashSet::new();
     let mut owner = std::collections::HashMap::<Dart, FaceKey>::new();
     let mut volume = 0.0;

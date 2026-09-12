@@ -26,6 +26,8 @@ use ngk::topology::validation::{
     validate_all_solid_manifolds, validate_all_solid_orientations, validate_gmap,
 };
 
+use crate::hollow::hollow_sphere;
+
 type Solid = Shape<SolidTag, StandardPayload>;
 
 /// Writes `shape`, reads it back, and asserts everything the contract promises.
@@ -233,4 +235,36 @@ fn a_cylinder_survives_a_round_trip() {
     // where the domain said, read back as a doubly-walked edge, and healed
     // away again. A cell count that matches is what says all three happened.
     round_trip(&solids::cylinder(5.0, 10.0).expect("a cylinder should build"));
+}
+
+#[test]
+fn a_sphere_survives_a_round_trip() {
+    // The boundaryless case: a sphere has nothing in the map to write at all
+    // — no loop, no edge, no vertex — so the file is entirely synthesized, and
+    // coming back as one face with none of them again says the cut was read
+    // as the cut it was and healed away rather than kept.
+    round_trip(&solids::sphere(5.0).expect("a sphere should build"));
+}
+
+#[test]
+fn a_torus_survives_a_round_trip() {
+    // Two cuts on one face, which is what makes a torus different from a
+    // sphere rather than merely rounder: the file walks two edges twice each
+    // around one vertex, and both removals have to compose on the way back in
+    // for the face to come back boundaryless.
+    round_trip(&solids::torus(3.0, 1.0).expect("a torus should build"));
+}
+
+#[test]
+fn a_hollow_sphere_keeps_its_cavity_as_a_void() {
+    // The `BREP_WITH_VOIDS` path. A cavity that comes back as a second outer
+    // shell is a different shape — a ball with a ghost sphere inside it —
+    // and every structural validator accepts both, so the void has to be
+    // asserted by name.
+    let after = round_trip(&hollow_sphere(5.0, 2.0));
+
+    let solid = after.solid();
+    let voids = solid.inner_shells().expect("the cavity should come back");
+    assert_eq!(voids.len(), 1);
+    assert_eq!(solid.faces().len(), 2, "one shell each, one face each");
 }

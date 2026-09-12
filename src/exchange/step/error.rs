@@ -160,16 +160,6 @@ pub enum TopologyError {
         vertex: VertexKey,
     },
 
-    /// A face with no loops at all: a whole sphere or torus.
-    ///
-    /// STEP has no boundaryless face, so writing one means synthesizing a
-    /// boundary for it out of the surface's own domain.
-    #[error("face {face:?} is boundaryless, so it has no STEP bounds to write")]
-    BoundarylessFace {
-        /// The face met.
-        face: FaceKey,
-    },
-
     /// A face whose parameter domain could not be cut open.
     ///
     /// STEP bounds every face by loops that close in parameter space, so a
@@ -194,15 +184,6 @@ pub enum TopologyError {
     UnwritableSeam {
         /// The face met.
         face: FaceKey,
-    },
-
-    /// A solid with cavities, which needs `BREP_WITH_VOIDS`.
-    #[error("solid {solid:?} has {count} inner shell(s), which `MANIFOLD_SOLID_BREP` cannot carry")]
-    InnerShells {
-        /// The solid met.
-        solid: SolidKey,
-        /// How many cavities it has.
-        count: usize,
     },
 
     /// An edge used by more than two faces.

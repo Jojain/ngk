@@ -398,3 +398,87 @@ fn a_foreign_cones_sense_agrees_with_the_winding_rebuilt_for_it() {
     validate_all_solid_manifolds(map).expect("the shell should be closed");
     validate_all_solid_orientations(map).expect("every face should point outward");
 }
+
+/// A torus of major radius 3 and minor radius 1, written by OpenCascade.
+///
+/// Regenerate with `uv run python tests/fixtures/step/generate_torus.py`.
+const OCCT_TORUS: &str = include_str!("../fixtures/step/torus.step");
+
+#[test]
+fn a_foreign_torus_arrives_as_one_face_with_no_boundary() {
+    // Two cuts rather than one, which is what makes a torus the hard case:
+    // OpenCascade writes the face as a rectangle whose four sides are two
+    // `SEAM_CURVE`s walked twice each, meeting at a single vertex. Taking one
+    // cut off leaves a face that is still seamed, so a count of zero here is
+    // the statement that the removals composed.
+    let import = read(OCCT_TORUS);
+    let shape = &import.shapes[0];
+    let solid = shape.solid();
+
+    assert!(
+        import.report.is_clean(),
+        "nothing should have been given up: {:?}",
+        import.report.skipped
+    );
+    assert_eq!(solid.faces().len(), 1);
+    assert_eq!(solid.edges().len(), 0, "both cuts should be gone");
+    assert_eq!(solid.vertices().len(), 0);
+    assert!(matches!(
+        solid.faces()[0].surface(),
+        ngk::geometry::Surface::Torus(_)
+    ));
+}
+
+#[test]
+fn a_foreign_torus_is_a_valid_oriented_solid() {
+    let import = read(OCCT_TORUS);
+    let map = import.shapes[0].map();
+
+    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    validate_all_solid_manifolds(map).expect("the shell should be closed");
+    validate_all_solid_orientations(map).expect("the torus should face outward");
+}
+
+/// A sphere of radius 5, written by OpenCascade.
+///
+/// Regenerate with `uv run python tests/fixtures/step/generate_sphere.py`.
+const OCCT_SPHERE: &str = include_str!("../fixtures/step/sphere.step");
+
+#[test]
+fn a_foreign_sphere_arrives_as_one_face_with_no_boundary() {
+    // OpenCascade writes a whole sphere with no cut in it at all: the face's
+    // one `FACE_BOUND` holds a `VERTEX_LOOP`, which names a point on the face
+    // rather than a loop around it. That is a boundary only in the schema's
+    // sense, and taking it as one would put a vertex and a loop into the map
+    // where the shape has neither.
+    let import = read(OCCT_SPHERE);
+    let shape = &import.shapes[0];
+    let solid = shape.solid();
+
+    assert!(
+        import.report.is_clean(),
+        "nothing should have been given up: {:?}",
+        import.report.skipped
+    );
+    assert_eq!(solid.faces().len(), 1);
+    assert_eq!(solid.edges().len(), 0);
+    assert_eq!(solid.vertices().len(), 0);
+    assert!(matches!(
+        solid.faces()[0].surface(),
+        ngk::geometry::Surface::Sphere(_)
+    ));
+}
+
+#[test]
+fn a_foreign_sphere_is_a_valid_oriented_solid() {
+    // The one thing a boundaryless face cannot state for itself: with no
+    // winding to read, which way it points comes from the file's `same_sense`
+    // and lands on the shell's root. Getting that wrong yields a sphere of
+    // negative volume that every other check accepts.
+    let import = read(OCCT_SPHERE);
+    let map = import.shapes[0].map();
+
+    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    validate_all_solid_manifolds(map).expect("the shell should be closed");
+    validate_all_solid_orientations(map).expect("the sphere should face outward");
+}

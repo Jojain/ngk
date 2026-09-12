@@ -22,11 +22,16 @@
 //! order and pairing them off. What is left over — the gaps between placed
 //! curves — is the synthesized part, and it is synthesized *here* rather than
 //! in the writer, which never learns which kind of face it came from.
+//!
+//! A face with no boundary at all takes a shorter path: there is no loop to
+//! place and no identity to recover, so the cut is the edge of the support's
+//! own domain and every piece of the boundary is synthesized.
 
 use crate::geometry::{LINEAR_TOLERANCE, Point2};
 use crate::topology::attributes::LoopKind;
 use crate::topology::face::Face;
 use crate::topology::gmap::Dart;
+use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::unwrapped_face_domain::{
     UnwrappedFaceDomain, UnwrappedFaceDomainError, UnwrappedFaceDomainLoop,
@@ -81,6 +86,12 @@ impl SeamedFace {
     /// cut between them, which is the same rectangle a stored seam used to
     /// spell out.
     pub fn of_face<P: Payload>(face: &Face<'_, P>) -> Result<Self, TopologyError> {
+        if face.loops().is_empty() {
+            return Ok(Self {
+                bounds: vec![domain_bound(face)?],
+            });
+        }
+
         let domain = UnwrappedFaceDomain::of_face(face).map_err(|error| uncuttable(face, error))?;
 
         // `UnwrappedFaceDomain` fuses every non-hole loop into its first
@@ -110,6 +121,53 @@ impl SeamedFace {
 
         Ok(Self { bounds })
     }
+}
+
+/// Cuts a face with no boundary at all open along the edge of its domain.
+///
+/// Such a face covers a closed support — a whole sphere, a whole torus — so
+/// there is no loop to place and nothing to pair identities with: the entire
+/// boundary is cut. The cut is the domain rectangle itself, walked so the face
+/// lies to its left: counter-clockwise in parameter space when the face faces
+/// the way its support does, clockwise when it faces the other way. A side
+/// running along a collapsed row — a sphere's pole — bounds nothing and is
+/// dropped, which is what leaves a sphere with the two meridian walks and a
+/// pole at each end that a stored model spells out.
+fn domain_bound<P: Payload>(face: &Face<'_, P>) -> Result<SeamedBound, TopologyError> {
+    let (u, v) = face.surface().domain();
+    if !u.is_finite() || !v.is_finite() {
+        return Err(TopologyError::UncuttableFace {
+            face: face.key(),
+            detail: "a face with no boundary runs off the edge of its domain".to_string(),
+        });
+    }
+
+    let mut corners = [
+        Point2::new(u.start, v.start),
+        Point2::new(u.end, v.start),
+        Point2::new(u.end, v.end),
+        Point2::new(u.start, v.end),
+    ];
+    if face.sense() == Orientation::Reversed {
+        corners.reverse();
+    }
+
+    let mut edges = Vec::with_capacity(corners.len());
+    for index in 0..corners.len() {
+        let (from, to) = (corners[index], corners[(index + 1) % corners.len()]);
+        if collapses(face, from, to) {
+            continue;
+        }
+        edges.push(SeamedEdge::Synthetic { from, to });
+    }
+    if edges.is_empty() {
+        return Err(TopologyError::UncuttableFace {
+            face: face.key(),
+            detail: "every side of the domain collapses, leaving no cut to write".to_string(),
+        });
+    }
+
+    Ok(SeamedBound { outer: true, edges })
 }
 
 /// Pairs one placed boundary with the darts it was placed from.
@@ -168,12 +226,19 @@ fn seamed_bound<P: Payload>(
 /// row of parameters — which the boundary must travel *through* and cannot
 /// travel *along*. Dropping either joins the two neighbours at one corner,
 /// which is what a stored model spells out as a pole vertex.
+///
+/// The row is sampled in the middle as well as at the ends, because the ends
+/// alone do not tell the two cases apart: a sphere's domain rectangle runs one
+/// side from pole to pole, degenerate at both ends and a whole meridian in
+/// between.
 fn collapses<P: Payload>(face: &Face<'_, P>, from: Point2, to: Point2) -> bool {
     if (to - from).norm() <= LINEAR_TOLERANCE {
         return true;
     }
     let surface = face.surface();
-    surface.is_degenerate_at(from.x, from.y) && surface.is_degenerate_at(to.x, to.y)
+    [from, from.lerp(&to, 0.5), to]
+        .iter()
+        .all(|point| surface.is_degenerate_at(point.x, point.y))
 }
 
 fn uncuttable<P: Payload>(face: &Face<'_, P>, error: UnwrappedFaceDomainError) -> TopologyError {

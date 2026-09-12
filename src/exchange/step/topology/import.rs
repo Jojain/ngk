@@ -1,4 +1,4 @@
-//! Sewing a `MANIFOLD_SOLID_BREP` into a map.
+//! Sewing a B-Rep solid into a map.
 //!
 //! **Stitching is the whole job.** STEP hands over faces whose loops name
 //! shared `EDGE_CURVE`s by `#N`; NGK needs an α2-sewn 3-GMap. Nothing in the
@@ -20,17 +20,24 @@
 //! state to store but a free consistency check: it is compared against the
 //! winding we computed, and a disagreement is reported rather than silently
 //! resolved one way or the other.
+//!
+//! The one exception is a boundary that encloses no area — a whole sphere's
+//! cut, walked out and back along one meridian — where there is no winding to
+//! compare with and the flag is the only statement of the sense there is. See
+//! [`unfold_cut_walk`], which is where it is read rather than checked.
 
 use std::collections::HashMap;
 
 use crate::geometry::{
-    Curve, NurbsError, Point2, Point3, Surface, SurfacePeriodicity, TrimmedCurve2, Vector2,
+    Curve, LINEAR_TOLERANCE, NurbsError, Point2, Point3, Surface, SurfacePeriodicity,
+    TrimmedCurve2, Vector2,
 };
 use crate::healing::{HealingOptions, remove_redundant_cells};
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
 };
 use crate::topology::gmap::{Dart, Dim, GMap};
+use crate::topology::orientation::Orientation;
 use crate::topology::shape::{Shape, SolidTag};
 use crate::topology::shape_keys::SolidKey;
 use crate::topology::{StandardPayload, TopologyEdit, TopologyEditError};
@@ -53,10 +60,15 @@ use super::super::schema::resolver::{Located, Origin, Resolver, SchemaError};
 /// than this to get its *sign* right is degenerate for other reasons.
 const WINDING_SAMPLES: usize = 8;
 
-/// Reads every `MANIFOLD_SOLID_BREP` in a file into its own shape.
+/// Reads every B-Rep solid in a file into its own shape.
 ///
 /// One map per B-Rep: a STEP file is a document holding several products, and
 /// a `Shape` owns its map, so the solids cannot share one.
+///
+/// Both spellings are read. `BREP_WITH_VOIDS` is the `MANIFOLD_SOLID_BREP`
+/// subtype that adds cavities, and Part 21 writes a subtype under its own
+/// keyword, so a file whose solids are hollow has no instance of the supertype
+/// in it at all.
 pub fn read_solids(
     exchange: &StepExchange,
     options: &StepReadOptions,
@@ -66,31 +78,142 @@ pub fn read_solids(
 
     for instance in exchange.instances_of("MANIFOLD_SOLID_BREP") {
         let brep = resolver.decode::<entities::ManifoldSolidBrep>(instance)?;
-        match read_solid(&resolver, &brep, options, &mut import.report) {
-            Ok(Some(shape)) => import.shapes.push(shape),
-            Ok(None) => {}
-            Err(error) if options.strict => return Err(error),
-            Err(error) => import.report.skipped.push(ImportSkip {
-                entity: Some(brep.origin.id),
-                line: brep.origin.line,
-                reason: ImportSkipReason::SolidNotConstructible {
-                    detail: error.to_string(),
-                },
-            }),
-        }
+        let read = read_solid(
+            &resolver,
+            brep.origin,
+            brep.outer,
+            &[],
+            options,
+            &mut import.report,
+        );
+        collect(read, brep.origin, options, &mut import)?;
+    }
+
+    for instance in exchange.instances_of("BREP_WITH_VOIDS") {
+        let brep = resolver.decode::<entities::BrepWithVoids>(instance)?;
+        let read = read_solid(
+            &resolver,
+            brep.origin,
+            brep.outer,
+            &brep.voids,
+            options,
+            &mut import.report,
+        );
+        collect(read, brep.origin, options, &mut import)?;
     }
 
     Ok(import)
 }
 
+/// Files one B-Rep's outcome into the import, or reports why it was given up.
+fn collect(
+    read: Result<Option<Shape<SolidTag, StandardPayload>>, StepError>,
+    origin: Origin,
+    options: &StepReadOptions,
+    import: &mut StepImport,
+) -> Result<(), StepError> {
+    match read {
+        Ok(Some(shape)) => import.shapes.push(shape),
+        Ok(None) => {}
+        Err(error) if options.strict => return Err(error),
+        Err(error) => import.report.skipped.push(ImportSkip {
+            entity: Some(origin.id),
+            line: origin.line,
+            reason: ImportSkipReason::SolidNotConstructible {
+                detail: error.to_string(),
+            },
+        }),
+    }
+    Ok(())
+}
+
 /// Reads one B-Rep, or `None` when nothing in it survived.
 fn read_solid(
     resolver: &Resolver<'_>,
-    brep: &Located<entities::ManifoldSolidBrep>,
+    origin: Origin,
+    outer: EntityId,
+    voids: &[EntityId],
     options: &StepReadOptions,
     report: &mut ImportReport,
 ) -> Result<Option<Shape<SolidTag, StandardPayload>>, StepError> {
-    let shell = resolver.read::<entities::ClosedShell>(brep.origin, brep.outer)?;
+    let mut shells = vec![plan_shell(resolver, origin, outer, options, report)?];
+    for &id in voids {
+        // A void is named through an `ORIENTED_CLOSED_SHELL`, which may state
+        // that the shell is to be read the other way round. NGK stores every
+        // shell facing away from the material, so a shell declared reversed is
+        // turned here rather than carried as a flag no later reader would
+        // consult.
+        let oriented = resolver.read::<entities::OrientedClosedShell>(origin, id)?;
+        let mut shell = plan_shell(
+            resolver,
+            oriented.origin,
+            oriented.closed_shell_element,
+            options,
+            report,
+        )?;
+        if !oriented.orientation {
+            shell = shell.iter().map(PlannedFace::reversed).collect();
+        }
+        shells.push(shell);
+    }
+
+    shells.retain(|shell| !shell.is_empty());
+    if shells.is_empty() {
+        return Ok(None);
+    }
+
+    for shell in &shells {
+        // A face with no boundary covers a support closed in every direction,
+        // so it is a whole shell on its own: anything else in the same shell
+        // would have to meet it along an edge it does not have.
+        if shell.len() > 1
+            && shell
+                .iter()
+                .any(|face| matches!(face, PlannedFace::Boundaryless { .. }))
+        {
+            return Err(TopologyError::UnsewableShell {
+                brep: origin,
+                detail: "a shell holds a boundaryless face beside others".to_string(),
+            }
+            .into());
+        }
+        check_edge_uses(shell, origin, options, report)?;
+    }
+
+    let mut gmap = GMap::<StandardPayload>::new();
+    let solid = gmap
+        .transaction(|edit| sew_solid(edit, &shells))
+        .map_err(|error| TopologyError::UnsewableShell {
+            brep: origin,
+            detail: error.to_string(),
+        })?;
+
+    if options.heal_seams {
+        // A seam is not part of the shape: STEP writes a periodic face with
+        // its parameterization cut open, and that cut comes off as a step of
+        // its own rather than as something the sewing above is allowed to
+        // assume. A planar solid has none, so this changes nothing for one.
+        remove_redundant_cells(&mut gmap, HealingOptions::seams_only()).map_err(|error| {
+            TopologyError::UnsewableShell {
+                brep: origin,
+                detail: error.to_string(),
+            }
+        })?;
+    }
+
+    Ok(Some(Shape::new(gmap, solid)))
+}
+
+/// Plans every `ADVANCED_FACE` of one `CLOSED_SHELL`, dropping the ones that
+/// cannot be built.
+fn plan_shell(
+    resolver: &Resolver<'_>,
+    origin: Origin,
+    id: EntityId,
+    options: &StepReadOptions,
+    report: &mut ImportReport,
+) -> Result<Vec<PlannedFace>, StepError> {
+    let shell = resolver.read::<entities::ClosedShell>(origin, id)?;
 
     let mut planned = Vec::new();
     for id in &shell.cfs_faces {
@@ -107,35 +230,7 @@ fn read_solid(
             }),
         }
     }
-
-    if planned.is_empty() {
-        return Ok(None);
-    }
-
-    check_edge_uses(&planned, brep.origin, options, report)?;
-
-    let mut gmap = GMap::<StandardPayload>::new();
-    let solid = gmap
-        .transaction(|edit| sew_shell(edit, &planned))
-        .map_err(|error| TopologyError::UnsewableShell {
-            brep: brep.origin,
-            detail: error.to_string(),
-        })?;
-
-    if options.heal_seams {
-        // A seam is not part of the shape: STEP writes a periodic face with
-        // its parameterization cut open, and that cut comes off as a step of
-        // its own rather than as something the sewing above is allowed to
-        // assume. A planar solid has none, so this changes nothing for one.
-        remove_redundant_cells(&mut gmap, HealingOptions::seams_only()).map_err(|error| {
-            TopologyError::UnsewableShell {
-                brep: brep.origin,
-                detail: error.to_string(),
-            }
-        })?;
-    }
-
-    Ok(Some(Shape::new(gmap, solid)))
+    Ok(planned)
 }
 
 /// One use of an `EDGE_CURVE` by one loop, in the direction the loop walks it.
@@ -174,11 +269,82 @@ struct PlannedLoop {
 
 /// One `ADVANCED_FACE` known to be constructible.
 #[derive(Debug, Clone)]
-struct PlannedFace {
-    surface: Surface,
-    loops: Vec<PlannedLoop>,
-    /// Which of `loops` is the outer boundary.
-    outer: usize,
+enum PlannedFace {
+    /// A face STEP bounded with loops, which is nearly all of them.
+    Bounded {
+        surface: Surface,
+        loops: Vec<PlannedLoop>,
+        /// Which of `loops` is the outer boundary.
+        outer: usize,
+    },
+    /// A face covering its whole support, bounded by nothing that bounds.
+    ///
+    /// STEP has no boundaryless face, so a writer spells one as a `VERTEX_LOOP`
+    /// naming a point on it. With no boundary there is no winding, and the
+    /// sense the file declared is the only statement of which way it points.
+    Boundaryless {
+        surface: Surface,
+        sense: Orientation,
+    },
+}
+
+impl PlannedUse {
+    /// The same use walked the other way.
+    fn reversed(&self) -> Self {
+        Self {
+            edge: self.edge,
+            start: self.end,
+            end: self.start,
+            forward: !self.forward,
+            curve: self.curve.clone(),
+            start_point: self.end_point,
+            end_point: self.start_point,
+            pcurve: self.pcurve.reversed(),
+        }
+    }
+}
+
+impl PlannedFace {
+    /// The same face turned over, which is how a reversed shell is read.
+    ///
+    /// Turning a face over means walking every one of its boundaries the other
+    /// way: NGK derives a face's normal from that winding, so reversing the
+    /// walk is the whole of it and no flag is left behind. The loops keep their
+    /// positions, so whichever of them bounds the face from outside still does.
+    /// A face with no boundary carries its sense instead, and that is what
+    /// flips.
+    fn reversed(&self) -> Self {
+        match self {
+            Self::Bounded {
+                surface,
+                loops,
+                outer,
+            } => Self::Bounded {
+                surface: surface.clone(),
+                loops: loops
+                    .iter()
+                    .map(|loop_| PlannedLoop {
+                        uses: loop_.uses.iter().rev().map(PlannedUse::reversed).collect(),
+                        signed_area: -loop_.signed_area,
+                    })
+                    .collect(),
+                outer: *outer,
+            },
+            Self::Boundaryless { surface, sense } => Self::Boundaryless {
+                surface: surface.clone(),
+                sense: sense.flip(),
+            },
+        }
+    }
+
+    /// The boundaries the face carries, which a face covering its support has
+    /// none of.
+    fn loops(&self) -> &[PlannedLoop] {
+        match self {
+            Self::Bounded { loops, .. } => loops,
+            Self::Boundaryless { .. } => &[],
+        }
+    }
 }
 
 /// Reads one `ADVANCED_FACE` without touching a map.
@@ -191,21 +357,62 @@ fn plan_face(
 
     let mut loops = Vec::with_capacity(face.bounds.len());
     let mut declared_outer = None;
-    for (index, id) in face.bounds.iter().enumerate() {
+    for id in &face.bounds {
         let bound = resolver.read::<entities::FaceBound>(face.origin, *id)?;
+        // A `VERTEX_LOOP` bounds nothing: it names one point of a face that
+        // covers its whole support, which is how OpenCascade writes a sphere.
+        // NGK holds such a face with no boundary at all, so the bound is
+        // dropped rather than turned into topology that has no shape.
+        if resolver
+            .attributes(bound.origin, bound.bound)?
+            .is("VERTEX_LOOP")
+        {
+            continue;
+        }
         if bound.outer {
-            declared_outer = Some(index);
+            declared_outer = Some(loops.len());
         }
         loops.push(plan_loop(resolver, &bound, &mapped.surface, report)?);
     }
 
+    if loops.is_empty() {
+        return boundaryless_face(&mapped.surface, face);
+    }
+
     let outer = pick_outer(&loops, declared_outer, face.origin, report)?;
+    unfold_cut_walk(&mut loops[outer], &mapped.surface, face.same_sense);
     check_sense(&loops[outer], face.same_sense, face.origin, report);
 
-    Ok(PlannedFace {
+    Ok(PlannedFace::Bounded {
         surface: mapped.surface,
         loops,
         outer,
+    })
+}
+
+/// Plans a face whose every bound turned out to bound nothing.
+///
+/// The support has to close in both directions for such a face to be a face
+/// at all, and `same_sense` is the only statement of which way it points:
+/// there is no winding, and a closed support's two sides are alike until
+/// something says otherwise.
+fn boundaryless_face(
+    surface: &Surface,
+    face: &Located<entities::AdvancedFace>,
+) -> Result<PlannedFace, StepError> {
+    if !surface.is_closed() {
+        return Err(SchemaError::UnreadableUnit {
+            origin: face.origin,
+            detail: "a face bounded by nothing needs a support that closes".to_string(),
+        }
+        .into());
+    }
+    Ok(PlannedFace::Boundaryless {
+        surface: surface.clone(),
+        sense: match face.same_sense {
+            true => Orientation::Same,
+            false => Orientation::Reversed,
+        },
     })
 }
 
@@ -221,9 +428,9 @@ fn plan_loop(
     surface: &Surface,
     report: &mut ImportReport,
 ) -> Result<PlannedLoop, StepError> {
-    // `VERTEX_LOOP` and `POLY_LOOP` are refused by name rather than skipped:
-    // NGK can represent neither, and a face silently missing a boundary is
-    // worse than a face that says why it is missing.
+    // `POLY_LOOP` is refused by name rather than skipped: NGK has no
+    // representation for it, and a face silently missing a boundary is worse
+    // than a face that says why it is missing.
     let edge_loop = resolver.read::<entities::EdgeLoop>(bound.origin, bound.bound)?;
 
     let mut walk = edge_loop.edge_list.clone();
@@ -439,6 +646,72 @@ fn pick_outer(
     Ok(outer)
 }
 
+/// Places the return walk of a cut that encloses nothing one period away.
+///
+/// A boundary that shoelaces to zero states no winding, and a winding is what
+/// a face's normal is read from — so a face bounded that way arrives with its
+/// sense said nowhere but `ADVANCED_FACE.same_sense`. It happens where a cut
+/// is walked out and straight back along one parameter line: a whole sphere,
+/// cut open along a meridian and turning through a pole at either end, whose
+/// two walks invert to the same longitude because inversion answers within one
+/// period and a pole names every longitude at once.
+///
+/// Putting the return walk one period along the transverse axis makes the
+/// boundary the rectangle the domain really is. Which way that period runs is
+/// the one thing left for the file to say, and it is the one case where
+/// `same_sense` is read rather than merely checked — a rectangle and its
+/// mirror describe the same sphere and opposite normals, so there is nothing
+/// else to derive the choice from.
+fn unfold_cut_walk(loop_: &mut PlannedLoop, surface: &Surface, same_sense: bool) {
+    if loop_.signed_area.abs() > LINEAR_TOLERANCE {
+        return;
+    }
+    // The walk back is the second use of an edge the loop already walked, and
+    // everything after it belongs on the far side of the cut with it.
+    let Some(repeat) = loop_.uses.iter().enumerate().position(|(index, use_)| {
+        loop_.uses[..index]
+            .iter()
+            .any(|other| other.edge == use_.edge)
+    }) else {
+        return;
+    };
+
+    for (axis, period) in periods_of(surface).into_iter().enumerate() {
+        let Some(period) = period else {
+            continue;
+        };
+        for step in [period, -period] {
+            let mut shift = Vector2::zeros();
+            shift[axis] = step;
+            let Some(uses) = shifted(&loop_.uses, repeat, shift) else {
+                continue;
+            };
+            let area = signed_area(&uses, surface);
+            if area.abs() > LINEAR_TOLERANCE && (area > 0.0) == same_sense {
+                loop_.uses = uses;
+                loop_.signed_area = area;
+                return;
+            }
+        }
+    }
+}
+
+/// The loop's uses with everything from `from` onward moved by `shift`.
+fn shifted(uses: &[PlannedUse], from: usize, shift: Vector2) -> Option<Vec<PlannedUse>> {
+    uses.iter()
+        .enumerate()
+        .map(|(index, use_)| {
+            if index < from {
+                return Some(use_.clone());
+            }
+            Some(PlannedUse {
+                pcurve: use_.pcurve.translated(shift).ok()?,
+                ..use_.clone()
+            })
+        })
+        .collect()
+}
+
 /// Compares the winding we built against the sense the file declared.
 ///
 /// Nothing is *done* with the answer: the face normal already follows from the
@@ -472,7 +745,7 @@ fn check_edge_uses(
 ) -> Result<(), StepError> {
     let mut counts: HashMap<EntityId, usize> = HashMap::new();
     for face in planned {
-        for loop_ in &face.loops {
+        for loop_ in face.loops() {
             for use_ in &loop_.uses {
                 *counts.entry(use_.edge).or_default() += 1;
             }
@@ -511,19 +784,60 @@ struct DartUse {
     forward: bool,
 }
 
-/// Builds every planned face and sews them into one solid.
+/// Builds every shell of one B-Rep and registers the solid they bound.
+///
+/// The outer shell comes first and the voids after it, each sewn on its own:
+/// a void is disjoint from the material's outside, so nothing is shared
+/// between them and an `EDGE_CURVE` naming both would be an edge with four
+/// uses rather than a join.
+fn sew_solid(
+    edit: &mut TopologyEdit<'_, StandardPayload>,
+    shells: &[Vec<PlannedFace>],
+) -> Result<SolidKey, TopologyEditError> {
+    let mut roots = Vec::with_capacity(shells.len());
+    for planned in shells {
+        let root = sew_shell(edit, planned)?;
+        edit.add_sheet(SheetAttr::new(root, ()));
+        roots.push(root);
+    }
+
+    let [outer, voids @ ..] = roots.as_slice() else {
+        unreachable!("a planned solid has at least one shell");
+    };
+    let inner = (!voids.is_empty()).then(|| voids.to_vec());
+    Ok(edit.add_solid(SolidAttr::new((), *outer, inner)))
+}
+
+/// Builds every planned face of one shell and sews them together.
+///
+/// Returns the root the shell is anchored at: a boundary dart, or the face
+/// itself when the shell is one face covering a closed support and there is no
+/// dart to anchor at.
 fn sew_shell(
     edit: &mut TopologyEdit<'_, StandardPayload>,
     planned: &[PlannedFace],
-) -> Result<SolidKey, TopologyEditError> {
+) -> Result<ShellRoot, TopologyEditError> {
+    if let [PlannedFace::Boundaryless { surface, sense }] = planned {
+        let face = edit.add_face(FaceAttr::with_loops(
+            surface.clone(),
+            (),
+            Vec::new(),
+            HashMap::new(),
+        ));
+        return Ok(ShellRoot::Face {
+            face,
+            sense: *sense,
+        });
+    }
+
     // One entry per loop of every face, in the same order, so a face can find
     // the darts its own boundaries were built from.
     let mut loop_darts: Vec<Vec<Vec<Dart>>> = Vec::with_capacity(planned.len());
     let mut uses_by_edge: HashMap<EntityId, Vec<DartUse>> = HashMap::new();
 
     for face in planned {
-        let mut face_darts = Vec::with_capacity(face.loops.len());
-        for loop_ in &face.loops {
+        let mut face_darts = Vec::with_capacity(face.loops().len());
+        for loop_ in face.loops() {
             let count = loop_.uses.len();
             let darts: Vec<Dart> = (0..2 * count).map(|_| edit.add_dart()).collect();
             for pair in 0..count {
@@ -570,7 +884,15 @@ fn sew_shell(
     let mut shell_root = None;
 
     for (face, face_darts) in planned.iter().zip(&loop_darts) {
-        for (loop_, darts) in face.loops.iter().zip(face_darts) {
+        let PlannedFace::Bounded {
+            surface,
+            loops,
+            outer,
+        } = face
+        else {
+            continue;
+        };
+        for (loop_, darts) in loops.iter().zip(face_darts) {
             for (index, use_) in loop_.uses.iter().enumerate() {
                 let (start, end) = (darts[2 * index], darts[2 * index + 1]);
 
@@ -596,15 +918,14 @@ fn sew_shell(
             edit.add_profile(ProfileAttr::new(darts[0], ()));
         }
 
-        let outer_seed = face_darts[face.outer][0];
+        let outer_seed = face_darts[*outer][0];
         let inner_seeds: Vec<Dart> = face_darts
             .iter()
             .enumerate()
-            .filter(|(index, _)| *index != face.outer)
+            .filter(|(index, _)| index != outer)
             .map(|(_, darts)| darts[0])
             .collect();
-        let pcurves: HashMap<Dart, TrimmedCurve2> = face
-            .loops
+        let pcurves: HashMap<Dart, TrimmedCurve2> = loops
             .iter()
             .zip(face_darts)
             .flat_map(|(loop_, darts)| {
@@ -617,7 +938,7 @@ fn sew_shell(
             .collect();
 
         edit.add_face(FaceAttr::with_pcurves(
-            face.surface.clone(),
+            surface.clone(),
             (),
             outer_seed,
             inner_seeds,
@@ -628,10 +949,10 @@ fn sew_shell(
 
     // Any boundary dart names the whole shell, and every face was built in the
     // direction STEP composed, so the first face's outer seed already carries
-    // the outward side.
-    let root = ShellRoot::Dart(shell_root.expect("a planned solid has at least one face"));
-    edit.add_sheet(SheetAttr::new(root, ()));
-    Ok(edit.add_solid(SolidAttr::new((), root, None)))
+    // the side facing away from the material.
+    Ok(ShellRoot::Dart(
+        shell_root.expect("a planned shell has at least one bounded face"),
+    ))
 }
 
 /// Reports a curve that would not project into the face's plane.

@@ -816,6 +816,79 @@ impl Entity for ClosedShell {
     }
 }
 
+/// `ORIENTED_CLOSED_SHELL(name, cfs_faces, closed_shell_element, orientation)`.
+///
+/// A closed shell read in a stated direction. Its face set is derived from the
+/// shell it names, so the file writes `*` for it and the two attributes that
+/// carry information come after — which is why this entity, alone among the
+/// topological ones, skips an attribute it does not model.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrientedClosedShell {
+    /// The `CLOSED_SHELL` it orients.
+    pub closed_shell_element: EntityId,
+    /// Whether the shell is read in its own direction.
+    pub orientation: bool,
+}
+
+impl Entity for OrientedClosedShell {
+    const KEYWORDS: &'static [&'static str] = &["ORIENTED_CLOSED_SHELL"];
+
+    fn read(mut attributes: Attributes<'_>) -> Result<Self, SchemaError> {
+        attributes.name()?;
+        attributes.derived()?;
+        let closed_shell_element = attributes.reference()?;
+        let orientation = attributes.boolean()?;
+        Ok(Self {
+            closed_shell_element,
+            orientation,
+        })
+    }
+
+    fn record(&self) -> Record {
+        Record::new(
+            "ORIENTED_CLOSED_SHELL",
+            vec![
+                unnamed(),
+                Value::Derived,
+                Value::Ref(self.closed_shell_element),
+                boolean(self.orientation),
+            ],
+        )
+    }
+}
+
+/// `BREP_WITH_VOIDS(name, outer, voids)`: a solid with cavities inside it.
+///
+/// The `MANIFOLD_SOLID_BREP` subtype that adds enclosed voids. Every shell
+/// bounds the material from outside it, so a void's faces point *into* the
+/// void — away from the material, exactly as the outer shell's point away from
+/// it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BrepWithVoids {
+    /// The `CLOSED_SHELL` bounding it from outside.
+    pub outer: EntityId,
+    /// The `ORIENTED_CLOSED_SHELL`s bounding its cavities.
+    pub voids: Vec<EntityId>,
+}
+
+impl Entity for BrepWithVoids {
+    const KEYWORDS: &'static [&'static str] = &["BREP_WITH_VOIDS"];
+
+    fn read(mut attributes: Attributes<'_>) -> Result<Self, SchemaError> {
+        attributes.name()?;
+        let outer = attributes.reference()?;
+        let voids = attributes.references()?;
+        Ok(Self { outer, voids })
+    }
+
+    fn record(&self) -> Record {
+        Record::new(
+            "BREP_WITH_VOIDS",
+            vec![unnamed(), Value::Ref(self.outer), references(&self.voids)],
+        )
+    }
+}
+
 /// `MANIFOLD_SOLID_BREP(name, outer)`: a solid bounded by one closed shell.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ManifoldSolidBrep {

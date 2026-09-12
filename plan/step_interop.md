@@ -4,17 +4,22 @@
 > rationale, the extension points, and what lives where. Not line-level
 > implementation. Staging is §10.
 >
-> **Status: In progress.** Stages 1–4 are complete. `part21/` reads and writes
+> **Where this plan ends.** Stage 6 (NURBS) is the last stage in scope. Stage 7
+> — vendor leniency, the document type, AP242 — is **parked**, and assemblies
+> in particular are deferred to `Model` rather than solved here; see §12. Do not
+> start any of it without Romain saying so explicitly.
+>
+> **Status: In progress.** Stages 1–5 are complete. `part21/` reads and writes
 > ISO 10303-21 on `winnow` with zero kernel references; the AP entity model §1
 > always called for landed in stage 3 (D15), so every entity both directions
 > touch states its attribute order once; and the round trip now closes on
-> curved supports and seams as well as planes. A cylinder NGK writes comes back
-> as the same three-face solid with no seam edge in it, and a cylinder or a
-> cone OpenCascade wrote imports into a sewn, correctly oriented map that
-> OpenCascade then reads back at the right volume.
-> Stage 5 (boundaryless faces and voids) is the next entry point, and D11's
-> torus fixture is its hard prerequisite — importing an OpenCascade torus
-> already shows the convergence failure D11 predicted.
+> curved supports, seams, faces with no boundary at all, and cavities. Every
+> analytic primitive NGK builds — block, cylinder, sphere, torus — survives a
+> round trip, and OpenCascade reads each of them back at the right volume;
+> OpenCascade's own box, cylinder, cone, sphere and torus import into sewn,
+> correctly oriented maps that it then reads back unchanged.
+> Stage 6 (NURBS) is the next entry point, and the last one. When it lands this
+> plan is finished; what is left over is §12.
 
 ## Context
 
@@ -226,6 +231,17 @@ and the rectangle the file described shoelaces as a triangle. A cylinder survive
 by luck; a cone does not, and the one thing that said so was this check reporting a
 single face of an otherwise perfectly valid oriented solid.
 
+**Stage 5 found the one case where it is a datum rather than a check, and the
+exception is narrow enough to state.** A boundary that encloses no area has no
+winding to compare against, so there is nothing for the flag to check and nothing
+else for the sense to come from. That happens where a cut is walked out and straight
+back along one parameter line: a whole sphere's two meridian walks invert to the same
+longitude, because inversion answers within one period and a pole names every
+longitude at once. The return walk is placed one period along the transverse axis to
+make the boundary the rectangle it really is, and `same_sense` picks which of the two
+directions that period runs in — a rectangle and its mirror describe the same sphere
+and opposite normals. Everywhere else the rule above stands unchanged.
+
 This is the "one conversion point per direction" rule that STEP round trips need, and
 the reason it is affordable.
 
@@ -427,8 +443,10 @@ transaction is atomic and any failure restores the snapshot. The resolution is a
 
 Rejected faces are recorded with a reason, in the same shape as
 `HealingReport.skipped: Vec<HealingSkip>`. Entities NGK cannot represent at all —
-`VERTEX_LOOP`, `POLY_LOOP`, an edge with more than two uses (non-manifold) — are
-**rejected by name**, never silently skipped.
+`POLY_LOOP`, an edge with more than two uses (non-manifold) — are **rejected by
+name**, never silently skipped. `VERTEX_LOOP` is not one of them: it names a
+point on a face that covers its whole support, which is the face with no loops
+NGK already stores, so it is read rather than refused.
 
 ### D10 — Units and tolerance are per-document, normalized at the L2/L3 boundary
 
@@ -458,6 +476,11 @@ right — `src/healing/mod.rs:16-21` claims exactly this capability — and must
 smuggled into the exporter. No `#[ignore]`: if the prerequisite fails it fails loudly
 and the stage does not start.
 
+*It failed, and it was a healing bug — two of them, in `builders::removal`, both
+older than the exporter that would have depended on them. Writing the fixture
+first is what made them findable at all: one of the two showed up only about
+half the time, because the shell seed it turned on came out of a `HashSet`.*
+
 ### D12 — Provenance in the report by default; `Payload` is the escape hatch
 
 STEP entity ids, `PRODUCT` names, colours and layers have no home in a `GMap`.
@@ -471,21 +494,32 @@ Decision: importer generic with `P = StandardPayload` defaulted, provenance in t
 report (matching the `HealingReport` idiom); a caller needing provenance to survive
 later edits supplies a payload-filling hook.
 
-### D13 — A STEP file is a document, not a shape
+### D13 — A STEP file is a document, not a shape — *superseded: assemblies wait for `Model`*
 
 A STEP file holds several products in an assembly with placements and names.
 `Shape<SolidTag, P>` holds one solid and no transform. `Model<P>` is a 17-line embryo
 with no `insert`, and `docs/model_api.md` is unimplemented target design.
 
-Decision: `exchange` defines its **own neutral document type** — named nodes with
-placements, leaves carrying `Shape<SolidTag, P>` — rather than blocking on `Model` or
-flattening assemblies into a `Vec<Shape>` and losing structure the file contained. It
-lowers to `Vec<Shape>` today and to `Model` when `Model::insert` lands, and it is what
-the *exporter* consumes, keeping the directions symmetric. Reusable by glTF/STL later,
-so it lives in `src/exchange/mod.rs`.
+The decision was for `exchange` to define its **own neutral document type** — named
+nodes with placements, leaves carrying `Shape<SolidTag, P>` — rather than block on
+`Model` or flatten assemblies into a `Vec<Shape>` and lose structure the file
+contained.
 
-Build one `GMap` per `MANIFOLD_SOLID_BREP` so each `Shape` owns its map; geometry
-caching still works across solids because `Curve`/`Surface` are values.
+**That is reversed, and deliberately.** A second document type in `exchange` would be
+a shape hierarchy NGK maintains beside the one `Model` is meant to be, and the two
+would have to be kept in step for as long as both existed — for a structure no caller
+is asking for yet. Assemblies therefore wait for `Model` and arrive through it, not
+around it. Until then a file's product structure is read for its geometry and dropped,
+which is what `read_step` returning `Vec<Shape>` already says.
+
+What survives of D13 is the part that was never about the document type: **build one
+`GMap` per B-Rep**, so each `Shape` owns its map. Geometry caching still works across
+solids because `Curve`/`Surface` are values. The exporter takes solids one at a time
+for the same reason.
+
+The cost is stated rather than hidden: an assembly imports as loose solids in world
+coordinates with their names and nesting gone, and NGK cannot write one at all. §12
+carries it.
 
 ### D14 — `no_std`-shaped core, `std::fs` only at the rim
 
@@ -534,8 +568,8 @@ geometry, topology, and the four unit entities, `SI_UNIT` most of all, since its
 is written in `schema/product.rs` and read in `schema/units.rs` and a mistake there
 rescales the whole model silently. The ~29 write-only product-structure records stay as
 raw `Record::new`: nothing reads them, so there is no second encoding to drift from,
-and each already sits adjacent to its own argument list. They earn types when D13's
-document reader gives them a second direction.
+and each already sits adjacent to its own argument list. They earn types if a document
+reader ever gives them a second direction, which is parked (§12).
 
 `part21` is untouched and stays untyped. Its ignorance is what keeps the parser choice
 reversible, and the declining dispatch still needs an untyped view to ask "is this a
@@ -558,8 +592,8 @@ index in it, so the integers were an artefact of only the reader having been wri
 
 ```
 src/exchange/
-  mod.rs          // pub mod step; + the neutral document type (D13)
-  document.rs
+  mod.rs          // pub mod step;   — no document type: assemblies wait for
+                  //                   Model rather than for a second one (D13, §12)
   step/
     mod.rs        // read_step / write_step / *_file, options, reports
     error.rs      // one thiserror enum per layer, nested
@@ -644,7 +678,7 @@ are bit-identical by construction.
 | `B_SPLINE_CURVE/SURFACE_WITH_KNOTS` + rational complex forms | `Nurbs` | §4 |
 | `OFFSET_SURFACE`, `*_BOUNDED_SURFACE` | → NURBS | D3 demotion |
 | `MANIFOLD_SOLID_BREP` / `CLOSED_SHELL` | `SolidAttr` / `SheetAttr` | |
-| `BREP_WITH_VOIDS`, `ORIENTED_CLOSED_SHELL` | `SolidAttr.inner_shells` | already modelled |
+| `BREP_WITH_VOIDS`, `ORIENTED_CLOSED_SHELL` | `SolidAttr.inner_shells` | both ways; a void faces into itself either side of the file, so the oriented shell is written `.T.` and a `.F.` one is turned on the way in |
 | `ADVANCED_FACE` | `FaceAttr::with_loops` + pcurves | `same_sense` is a checksum (D5) |
 | `FACE_OUTER_BOUND` / `FACE_BOUND` | `LoopDefinition::Outer` / `Inner` | never `Wrapping`/`Capping` — those are healing's output |
 | `EDGE_LOOP`, `ORIENTED_EDGE` | `Profile` + loop darts | `ProfileAttr` must be registered or commit fails |
@@ -652,7 +686,8 @@ are bit-identical by construction.
 | `VERTEX_POINT` | `VertexAttr` | one key per instance id; never merged by position |
 | `PCURVE`, `SURFACE_CURVE` | `FaceAttr.pcurves` | reconstructed when absent (D8) |
 | `SEAM_CURVE` | — | unwrapped to its 3D curve on in, then consumed by healing (D6). Not written: a plain `EDGE_CURVE` the loop walks twice is what identifies a seam |
-| `VERTEX_LOOP`, `POLY_LOOP` | — | rejected by name (D9) |
+| `VERTEX_LOOP` | a face with no loops | not a rejection: it is how a writer spells a face covering its whole support, so the bound is dropped and the face read as boundaryless. `same_sense` then states the sense, which nothing else can |
+| `POLY_LOOP` | — | rejected by name (D9) |
 
 Plus the unavoidable AP203 product-structure boilerplate — `APPLICATION_PROTOCOL_DEFINITION`,
 `PRODUCT`/`_DEFINITION_FORMATION`/`_DEFINITION`/`_DEFINITION_SHAPE`,
@@ -684,6 +719,12 @@ STEP gives faces whose loops reference shared `EDGE_CURVE`s by `#N`; NGK needs a
 
 A seam edge's two uses are on the *same* face; the rule handles it unchanged. Step 3
 is where real files fail, and the report must name the entity id.
+
+The edge-use table is **per shell**, not per solid: a void is disjoint from the
+material's outside, so an `EDGE_CURVE` naming both would be an edge with four uses
+rather than a join. A shell that is one face covering a closed support has no step 1
+to do at all — it has no edge, so its `SheetAttr` is rooted at the face rather than
+at a dart.
 
 ---
 
@@ -821,9 +862,9 @@ pcurve reconstruction, and it gives the importer a generator of known-good input
 | **2** | ~~Export, planar~~ — **done** | `block(1,2,3)` opens in another CAD system; AP214 boilerplate | import, curved supports, seams, NURBS |
 | **3** | ~~Import, planar — the round trip closes~~ — **done** | units, uncertainty, stitching (§6), pcurve path on planes | curved supports, seams |
 | **4** | ~~Analytic curved supports, both ways, with seams~~ — **done** | full `UvMap`; cylinder/cone/sphere/torus surfaces; circle/ellipse; the unwrapped-domain seam walk; `seams_only` healing on read; pcurve rebuilding on two periodic axes (D8) | boundaryless faces, NURBS |
-| **5** | Boundaryless faces and voids | **after D11's fixture passes**: sphere and torus out, `BREP_WITH_VOIDS` | NURBS |
-| **6** | NURBS | both B-spline entities, rational complex forms, knot RLE, net transposition, periodic→clamped, `SURFACE_OF_REVOLUTION`. Adds `NurbsSurface::is_rational()` — one new public method in `geometry` | — |
-| **7** | Robustness and assemblies | lenient vendor-file parsing; the document type (D13); AP242 | — |
+| **5** | ~~Boundaryless faces and voids~~ — **done** | sphere and torus both ways, `VERTEX_LOOP` read as the boundaryless face it spells, `BREP_WITH_VOIDS` | NURBS |
+| **6** | NURBS — **the last stage in scope** | both B-spline entities, rational complex forms, knot RLE, net transposition, periodic→clamped, `SURFACE_OF_REVOLUTION`. Adds `NurbsSurface::is_rational()` — one new public method in `geometry` | everything in §12 |
+| ~~**7**~~ | ~~Robustness and assemblies~~ — **parked, see §12** | — | — |
 
 Stages 1–3 prove the architecture against a real external kernel before anything
 depends on it.
@@ -1027,18 +1068,80 @@ depends on it.
   therefore both the read fixture and, re-exported, the only cone the
   external oracle can check — which it does, at the exact frustum volume.
 - **Two shapes are known not to survive, both of them stage 5's business.**
-  An OpenCascade sphere bounds its polar faces with `VERTEX_LOOP`, which D9
+  An OpenCascade sphere bounds its face with a `VERTEX_LOOP`, which D9
   refuses by name; and an OpenCascade torus imports, sews and heals only one
   of its two seams, arriving as a one-edge face with an inverted normal.
   That second one is D11's predicted failure, observed rather than
   anticipated — the fixture prerequisite stays, and it now has a concrete
-  symptom to aim at.
+  symptom to aim at. *Both are fixed in stage 5; the refusal turned out to be
+  the wrong reading of `VERTEX_LOOP` rather than a missing capability.*
 - **A revolved annulus is an open shell in NGK, and that is not an exchange
   bug.** Revolving a rectangle offset from the axis yields a tube whose caps
   carry two distinct radial edges each, α2-free — `validate_all_solid_manifolds`
   says so on the map itself, before any file is written. The exporter writes
   what the map states and the importer reports `OpenShell`, which is the
   honest behaviour on both sides.
+
+**What stage 5 settled.**
+
+- **D11's prerequisite found two healing bugs, not one, and both were
+  latent long before the exporter needed them.** `seamed_torus` is in
+  `tests/fixtures/seamed.rs` and the seams-only pass reduces it to a
+  boundaryless face, but only after `MergePlan::loops` stopped gating the
+  *unbounded* outcome on a single affected loop — a torus's second cut is
+  walked by both of the loops the first removal left — and after
+  `rerooted_shell` stopped reading a re-rooted shell's sense off the face's
+  first loop seed, which for a ring is an orbit the shell's dart need not be
+  in. The second showed up as a coin-flip: the seeds come out of a `HashSet`,
+  so the test failed on about half its runs.
+- **A boundaryless face's sense has exactly one home, and it is the shell
+  root.** A face states which way it points by the winding of its boundary,
+  and a face with no boundary states nothing — so `ShellRoot::Face { sense }`
+  is not a convenience for a face with no dart, it is the only place the
+  answer lives. Three places were reading past it: `Face::normal_at` returned
+  the support normal whatever the view said, `validate_oriented_shell_volume`
+  re-read each face by key and dropped the shell's own reading of it, and the
+  removal computed the sense *after* dropping the edge attribute the winding
+  is read through, so it always came back `Same`. The sense is now taken in
+  `Preflight`, before anything is touched.
+- **`VERTEX_LOOP` is not an entity NGK cannot represent; it is how STEP
+  spells the face NGK already had.** §5 listed it with `POLY_LOOP` as refused
+  by name under D9, and that was wrong: OpenCascade writes a whole sphere as
+  one `ADVANCED_FACE` with no cut at all, bounded by a `VERTEX_LOOP` naming a
+  point *on* the face. Dropping such a bound and reading the face as
+  boundaryless is the faithful mapping, and it is the only route by which a
+  sphere arrives from the most common kernel. D9's rule stands for what is
+  genuinely unrepresentable; this was not.
+- **`same_sense` is read rather than checked in exactly one case, and D5
+  needs that exception written down.** A cut walked out and straight back
+  along one parameter line encloses no area: a sphere's two meridian walks
+  invert to the same longitude, because inversion answers within one period
+  and a pole names every longitude at once. The boundary then shoelaces to
+  zero and states no winding at all. `unfold_cut_walk` puts the return walk
+  one period along the transverse axis, and which of the two directions that
+  period runs in is the one thing left for the file to say — a rectangle and
+  its mirror describe the same sphere and opposite normals.
+- **The cut's corners are shared by parameter position, and only within one
+  face.** A torus's domain rectangle has four corners that are one point of
+  the surface; writing four `VERTEX_POINT`s there leaves a file no reader can
+  sew. They are matched modulo the support's periods, which is precisely when
+  two corners are one point — and it is a statement about the cut, not about
+  the model, so real vertices are still shared by key and never by position.
+  For the same reason a cut's two stretches are matched by *direction* along
+  their parameter line rather than by which corner they leave: on a torus both
+  leave the same one.
+- **A void needs no flip in either direction.** Every shell bounds the
+  material from outside it — an outer shell faces away from the solid, a
+  cavity faces into itself — so NGK's inner shells are already oriented the
+  way `BREP_WITH_VOIDS` wants and the `ORIENTED_CLOSED_SHELL` is written
+  `.T.`. A file that says `.F.` is turned on the way in, by reversing each
+  planned face's walk, rather than by carrying a flag no later reader would
+  consult. OpenCascade reads a hollow sphere back at exactly the difference of
+  the two volumes.
+- **Nothing in the tree builds a hollow solid**, so `tests/fixtures/hollow.rs`
+  registers the cavity's shell by hand, the same way `seamed.rs` does for
+  seams. It is two concentric spheres: both shells are one boundaryless face,
+  so the fixture states the shell orientation and nothing else.
 
 ---
 
@@ -1054,28 +1157,97 @@ depends on it.
    *Stage 4 discharged the cone half: a `CONICAL_SURFACE` OpenCascade wrote imports
    with the right taper and comes back out at the exact frustum volume. The
    transposing case is untouched, because `SURFACE_OF_REVOLUTION` is stage 6.*
-2. **The torus boundaryless round trip** (D7/D11). **No longer a prediction.** An
-   OpenCascade torus imports and sews, and the seam pass removes only one of its two
-   cuts: the result is a one-edge face whose normal points inward. The double
-   unfolding does not converge, exactly as D11 warned, and the fixture prerequisite is
-   now the way to find out whether that is a healing bug or an unfolding one. Blocks
-   `sphere` and `torus` — two headline primitives — in both directions, which is why
-   it is stage 5 and not stage 8.
-3. **Vendor spellings of a degenerate bound.** OpenCascade caps a sphere with a
-   `VERTEX_LOOP`, which D9 refuses by name, so a foreign sphere does not import at all
-   today. It is the right refusal — NGK has no loop with no edges — but it is also the
-   single most common shape a user will try, so stage 5 has to decide whether a
-   `VERTEX_LOOP` becomes a collapsed row rather than a rejection.
+2. **The torus boundaryless round trip** (D7/D11). *Discharged in stage 5.* It was a
+   healing bug, exactly as D11 said it would have to be if the fixture failed: the
+   1-removal refused to leave a face unbounded when more than one of its loops was
+   walked on the cut, which is every torus. The fixture is
+   `tests/fixtures/seamed.rs::seamed_torus`, and OpenCascade reads NGK's torus back at
+   the right volume in both directions.
+3. **Vendor spellings of a degenerate bound.** *Discharged in stage 5, by changing the
+   reading rather than by adding a capability.* A `VERTEX_LOOP` is not a loop with no
+   edges: it names a point on a face that has no boundary, which is a face NGK already
+   stores. It is dropped and the face read as boundaryless, so an OpenCascade sphere
+   imports. What has no answer yet is a *vendor* degenerate edge — a zero-length
+   `EDGE_CURVE` standing in for a pole — which is parked with the rest of the
+   leniency work (§12).
 4. **Silent NURBS parameterization corruption** (D2).
 5. **Tolerance mismatch** (D10). Expect foreign files whose vertices do not coincide by
    NGK's `1e-9`, and expect stitching (§6.3) to be where that surfaces.
 6. **Cone pcurves lose analytic identity** (D4). Correct but lossy; rarely fires.
-7. **Vendor-file deviations**: `ADVANCED_FACE` with no `FACE_OUTER_BOUND` (fall back to
-   the bound with the largest |UV signed area|, and report it); plane angles in
-   degrees; `$` ref_directions; unknown entities; malformed string escapes. Mitigation
-   is leniency by default — pass unrecognized escapes through, skip unknown entities,
-   report rather than fail — with strictness opt-in.
+7. **Vendor-file deviations.** Three of the five are discharged: a missing
+   `FACE_OUTER_BOUND` falls back to the bound enclosing the most area and reports
+   `GuessedOuterBound` (stage 3); plane angles in degrees and lengths in inches are
+   normalized by the unit block (D10); a `$` ref_direction takes any perpendicular.
+   Unknown entities and malformed string escapes are not, and are parked (§12). The
+   mitigation stands where it is implemented: leniency by default, report rather than
+   fail, strictness opt-in.
 8. **Non-manifold and open-shell input.** NGK is a 3-GMap; STEP files contain surface
    models and non-manifold solids that cannot be represented. Rejecting by name is the
    design, not a failure.
 9. **Test-corpus licensing and repo size.**
+
+---
+
+## 12. Parked — not started without an explicit go-ahead
+
+Everything below was in scope when this plan was written and is not any more. It is
+recorded rather than deleted because each item is a *known* gap with a known shape:
+a future reader deserves to find out from here that NGK drops assembly structure on
+purpose, rather than discover it from a file that came back flattened.
+
+**None of this is to be picked up on a passing judgement that it looks small.** The
+plan is finished at stage 6; resuming any of it is Romain's call, said explicitly.
+
+### Assemblies and the document type (was D13, was stage 7)
+
+The largest one, and the one with a decided home. A STEP file holds several products
+with names, nesting and placements; NGK reads the solids out of it and drops the rest,
+and cannot write an assembly at all. The answer is `Model` — `src/model.rs` is a
+17-line embryo with no `insert`, and `docs/model_api.md` is its unimplemented target
+design — not a second hierarchy inside `exchange`. So this waits on `Model` landing
+first, and then becomes a thin lowering rather than a design problem.
+
+Concretely, when it resumes: read the product structure that `read_solids` currently
+sweeps past (`SHAPE_DEFINITION_REPRESENTATION` down through `PRODUCT_DEFINITION` and
+`REPRESENTATION_RELATIONSHIP`), carry `AXIS2_PLACEMENT_3D` transforms, and have the
+exporter consume a `Model` rather than one solid at a time. `schema/product.rs`
+already writes the boilerplate; it is the *reading* half and the transform plumbing
+that do not exist.
+
+### Vendor leniency (was stage 7)
+
+Three of risk #7's five items landed on the way through stages 3–5. What remains:
+
+- **Unknown entities.** L1 parses any record, so the gap is L3: an unrecognized
+  keyword in a position the walk needs is an error today rather than a reported skip.
+- **Malformed string escapes.** `decode_text` and `encode_text` are exact inverses
+  (stage 1); a vendor escape neither of them knows should pass through rather than
+  fail the file.
+- **A vendor degenerate edge** — a zero-length `EDGE_CURVE` standing in for a pole,
+  which is the other spelling of what `VERTEX_LOOP` says and which stage 5 now has
+  the boundaryless reading to absorb.
+
+### AP242 (was stage 7)
+
+Only `FILE_SCHEMA` and the application-context string differ from the AP214 NGK
+writes, both confined to `schema/product.rs`. Nothing reads or asserts either, so
+"AP242 support" today means "AP214 that AP242 readers accept".
+
+### Untested rather than unbuilt
+
+Two things exist but have never been exercised, which is worth knowing before anyone
+trusts them:
+
+- **Tolerance mismatch** (risk #5, D10). The document uncertainty is threaded into the
+  import options and `HealingOptions`, but no fixture has vertices that fail NGK's
+  `1e-9` while passing the file's `1e-6` — so the stitching path meant to absorb that
+  has never actually run.
+- **No foreign-kernel corpus** (risk #9). Every fixture is OpenCascade by way of
+  build123d. A file from another kernel would be the first real test of the leniency
+  above, which is part of why the leniency is parked rather than guessed at.
+
+### Deliberately not done, and not a gap
+
+`PCURVE` and `DEFINITIONAL_REPRESENTATION` are neither read nor written. D8 rebuilds
+parameter curves from the 3D curve instead, on the grounds that a file need not carry
+them at all. That is a decision with a stated reason, not an item waiting here.

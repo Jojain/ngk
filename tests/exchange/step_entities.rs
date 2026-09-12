@@ -293,6 +293,26 @@ fn a_manifold_solid_brep_round_trips() {
 }
 
 #[test]
+fn an_oriented_closed_shell_round_trips_over_its_derived_face_set() {
+    // The one topological entity whose file record carries an attribute it
+    // does not model: the face set is derived from the shell it names, so `*`
+    // stands in its place and everything after it is one position along from
+    // where a reader counting fields would look.
+    round_trip(&entities::OrientedClosedShell {
+        closed_shell_element: id(71),
+        orientation: false,
+    });
+}
+
+#[test]
+fn a_brep_with_voids_round_trips() {
+    round_trip(&entities::BrepWithVoids {
+        outer: id(72),
+        voids: vec![id(73), id(74)],
+    });
+}
+
+#[test]
 fn an_si_unit_round_trips_with_and_without_a_prefix() {
     // `SI_UNIT` is one of the few entities with no decorative name in front
     // of its data, so a read that skips one loses the prefix and silently

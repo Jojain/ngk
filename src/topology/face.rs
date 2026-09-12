@@ -401,11 +401,20 @@ impl<'g, P: Payload> Face<'g, P> {
     /// clockwise outer-loop pcurves flip it. If the winding cannot be sampled,
     /// the support-surface normal is returned unchanged. Like [`Self::point_at`],
     /// this does not test whether `(u, v)` belongs to the trimmed face region.
+    ///
+    /// A face with no boundary at all is not a winding that failed to sample:
+    /// it covers a closed support and has no loop to read, so which side is out
+    /// is what [`Self::sense`] says and nothing else does.
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         let surface_normal = self.attr().surface.normal_at(u, v);
-        match self.boundary_signed_area() {
-            Some(area) if area < -LINEAR_TOLERANCE => -surface_normal,
-            _ => surface_normal,
+        let flipped = match self.boundary_signed_area() {
+            Some(area) => area < -LINEAR_TOLERANCE,
+            None => self.attr().loops.is_empty() && self.sense == Orientation::Reversed,
+        };
+        if flipped {
+            -surface_normal
+        } else {
+            surface_normal
         }
     }
 

@@ -21,6 +21,7 @@ use thiserror::Error;
 
 use crate::geometry::{Axis2, DomainSide, LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
 use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr, ShellRoot};
+use crate::topology::face::Face;
 use crate::topology::gmap::{Cell1, Cell2, Dim, GMap};
 use crate::topology::orientation::Orientation;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
@@ -225,11 +226,12 @@ pub fn remove_cell_staged<P: Payload>(
         cell_set,
         pairs,
         seeds,
+        shell_senses,
         plan,
     } = preflight;
 
     drop_removed_cell_attribute(edit, &cell_set, dart, dim)?;
-    reseed_attributes(edit, &cell_set, &seeds);
+    reseed_attributes(edit, &cell_set, &seeds, &shell_senses);
     drop_pcurves(edit, &cell_set);
 
     for &d in &cell {
@@ -323,6 +325,9 @@ struct Preflight {
     cell_set: HashSet<Dart>,
     pairs: Vec<(Dart, Dart)>,
     seeds: HashMap<Dart, Option<Dart>>,
+    /// Which way each shell rooted inside the cell faces, read here because
+    /// this is the last moment its face still has the boundary that says so.
+    shell_senses: HashMap<Dart, Orientation>,
     plan: MergePlan,
 }
 
@@ -341,6 +346,7 @@ impl Preflight {
         let pairs = removal_pairs(g, &cell, &cell_set, dim)
             .ok_or(CellRemovalError::NotRemovable { dart, dim })?;
         let seeds = replacement_seeds(g, &cell, &cell_set, dim);
+        let shell_senses = shell_senses(g, &cell_set);
         let plan = MergePlan::build(g, dart, dim, &cell, &cell_set, &pairs)?;
         // A map with no darts is not a map with no shape: a boundaryless face
         // covers its whole support and has nothing to be incident to. Every
@@ -354,6 +360,7 @@ impl Preflight {
             cell_set,
             pairs,
             seeds,
+            shell_senses,
             plan,
         })
     }
@@ -537,7 +544,7 @@ impl MergePlan {
             .flat_map(|&index| g.orbit(boundaries[index], vec![0, 1]))
             .filter(|d| !cell_set.contains(d))
             .collect::<HashSet<_>>();
-        if surviving.is_empty() && affected.len() == 1 {
+        if surviving.is_empty() {
             let profiles = g
                 .iter_profiles()
                 .filter(|(_, attr)| cell_set.contains(&attr.dart))
@@ -554,13 +561,15 @@ impl MergePlan {
             let remaining = boundaries
                 .iter()
                 .enumerate()
-                .filter_map(|(index, &seed)| (index != affected[0]).then_some(seed))
+                .filter_map(|(index, &seed)| (!affected.contains(&index)).then_some(seed))
                 .collect::<Vec<_>>();
-            // The face's last boundary goes with it. That leaves the face
+            // The face's last boundaries go with it. That leaves the face
             // covering its whole support — an imported sphere losing the seam
-            // its parameterization was cut open along — which only a support
-            // closed in every direction can bound. An open one would leave the
-            // face running off the edge of its domain, so the removal declines.
+            // its parameterization was cut open along, or a torus losing the
+            // second of its two, which both of the loops the first removal left
+            // are walked on — which only a support closed in every direction can
+            // bound. An open one would leave the face running off the edge of
+            // its domain, so the removal declines.
             if remaining.is_empty() {
                 if !attr.surface.is_closed() {
                     return Err(CellRemovalError::WouldUnboundFace { dart });
@@ -574,8 +583,12 @@ impl MergePlan {
             // An inner boundary going is the ordinary case; the outer one going
             // while others remain would leave no loop bounding from outside,
             // which the combinatorics cannot answer, so it falls through to the
-            // refusal below.
-            if affected[0] != 0 {
+            // refusal below. So does more than one boundary going at once while
+            // others remain: which of the survivors then bounds from outside is
+            // the same unanswerable question.
+            if let [only] = affected.as_slice()
+                && *only != 0
+            {
                 return Ok(MergePlan::BoundaryRemoved {
                     face,
                     profiles,
@@ -1319,6 +1332,7 @@ fn reseed_attributes<P: Payload>(
     edit: &mut TopologyEdit<'_, P>,
     cell: &HashSet<Dart>,
     seeds: &HashMap<Dart, Option<Dart>>,
+    shell_senses: &HashMap<Dart, Orientation>,
 ) {
     let vertices = reseeded(
         edit.map()
@@ -1370,7 +1384,7 @@ fn reseed_attributes<P: Payload>(
         .filter(|(_, dart)| seeds.contains_key(dart))
         .collect::<Vec<_>>();
     for (key, dart) in sheets {
-        if let Some(root) = rerooted_shell(edit.map(), cell, seeds, dart) {
+        if let Some(root) = rerooted_shell(edit.map(), cell, seeds, shell_senses, dart) {
             edit.sheet_attr_mut_unchecked(key).root = root;
         }
     }
@@ -1394,13 +1408,14 @@ fn reseed_attributes<P: Payload>(
         .iter_solids()
         .filter(|(_, attr)| attr.shell_darts().any(|dart| seeds.contains_key(&dart)))
         .map(|(key, attr)| {
-            let shells = attr
-                .shells()
-                .map(|shell| match shell.dart() {
-                    Some(dart) => rerooted_shell(edit.map(), cell, seeds, dart).unwrap_or(shell),
-                    None => shell,
-                })
-                .collect::<Vec<_>>();
+            let shells =
+                attr.shells()
+                    .map(|shell| match shell.dart() {
+                        Some(dart) => rerooted_shell(edit.map(), cell, seeds, shell_senses, dart)
+                            .unwrap_or(shell),
+                        None => shell,
+                    })
+                    .collect::<Vec<_>>();
             (key, shells)
         })
         .collect::<Vec<_>>();
@@ -1427,6 +1442,7 @@ fn rerooted_shell<P: Payload>(
     g: &GMap<P>,
     cell: &HashSet<Dart>,
     seeds: &HashMap<Dart, Option<Dart>>,
+    shell_senses: &HashMap<Dart, Orientation>,
     dart: Dart,
 ) -> Option<ShellRoot> {
     match seeds.get(&dart) {
@@ -1439,10 +1455,56 @@ fn rerooted_shell<P: Payload>(
     }
 
     let face = g.cell_key::<Cell2>(dart)?;
-    let seed = g.face_attr(face)?.seed()?;
     Some(ShellRoot::Face {
         face,
-        sense: g.cell_orientation_from_seed(seed, dart, Dim::Two)?,
+        sense: *shell_senses.get(&dart)?,
+    })
+}
+
+/// Reads which way every shell rooted inside `cell` faces.
+///
+/// Only the roots the removal is about to invalidate are asked, because the
+/// answer is only needed where the shell may end up rooted at its face — and
+/// because reading it is not free.
+fn shell_senses<P: Payload>(g: &GMap<P>, cell: &HashSet<Dart>) -> HashMap<Dart, Orientation> {
+    let sheets = g.iter_sheets().filter_map(|(_, attr)| attr.root.dart());
+    let solids = g.iter_solids().flat_map(|(_, attr)| {
+        attr.shells()
+            .filter_map(ShellRoot::dart)
+            .collect::<Vec<_>>()
+    });
+    sheets
+        .chain(solids)
+        .filter(|dart| cell.contains(dart))
+        .filter_map(|dart| Some((dart, shell_sense(g, dart)?)))
+        .collect()
+}
+
+/// How the shell reached through `dart` faces, relative to the support's own
+/// normal.
+///
+/// That is what a face root stores, and it has to be read before the removal
+/// starts: a face keeps no sense of its own, only a boundary whose winding
+/// states one — so a face about to lose its last boundary is about to lose the
+/// answer with it.
+///
+/// Returns `None` where the support has no normal to compare against, which
+/// leaves the shell rooted as it was rather than turned by a guess.
+fn shell_sense<P: Payload>(g: &GMap<P>, dart: Dart) -> Option<Orientation> {
+    let face = Face::from_dart(g, dart)?;
+    let surface = face.surface();
+    // A face only becomes boundaryless on a support closed in both directions,
+    // so its domain is finite and the middle of it is a parameter the surface
+    // answers at.
+    let (u, v) = surface.domain();
+    let (u, v) = (u.at(0.5), v.at(0.5));
+    let agreement = face.normal_at(u, v).dot(&surface.normal_at(u, v));
+    if agreement == 0.0 || !agreement.is_finite() {
+        return None;
+    }
+    Some(match agreement > 0.0 {
+        true => Orientation::Same,
+        false => Orientation::Reversed,
     })
 }
 

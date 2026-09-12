@@ -11,14 +11,16 @@ use std::collections::HashMap;
 use nalgebra::Vector3;
 use ngk::builders::solids::add_extruded_face;
 use ngk::exchange::step::part21::{EntityId, Instance, StepExchange, Value, parse_exchange};
-use ngk::exchange::step::{
-    StepError, StepWriteOptions, TopologyError, map_to_exchange, solid_to_exchange, step_to_string,
-};
+use ngk::exchange::step::{StepWriteOptions, map_to_exchange, solid_to_exchange, step_to_string};
 use ngk::geometry::{Plane, Point3};
 use ngk::modeling::faces;
 use ngk::modeling::solids;
 use ngk::topology::StandardPayload;
 use ngk::topology::shape::{Shape, SolidTag};
+
+use ngk::topology::validation::{validate_all_solid_manifolds, validate_all_solid_orientations};
+
+use crate::hollow::hollow_sphere;
 
 /// Exports a 10 × 20 × 30 block.
 fn block() -> Shape<SolidTag, StandardPayload> {
@@ -341,18 +343,115 @@ fn a_cylinders_wall_is_bounded_by_four_oriented_edges() {
 }
 
 #[test]
-fn a_sphere_is_refused_by_name_rather_than_approximated() {
+fn a_sphere_is_cut_open_into_two_meridians_between_its_poles() {
     // A sphere is one boundaryless face: zero loops, edges and vertices, so
-    // there is not even a boundary to walk.
+    // every piece of the bound it is written with is synthesized. Cutting the
+    // domain rectangle open leaves the two polar sides collapsed and the two
+    // meridian sides standing, which is one edge walked both ways between the
+    // two poles.
     let sphere = solids::sphere(5.0).expect("a sphere should build");
-    let error = step_to_string(&sphere, &StepWriteOptions::default())
-        .expect_err("a boundaryless face should be refused");
+    let exchange = exported(&sphere);
 
-    assert!(
-        matches!(
-            error,
-            StepError::Topology(TopologyError::BoundarylessFace { .. })
-        ),
-        "got {error}",
-    );
+    assert_eq!(count(&exchange, "ADVANCED_FACE"), 1);
+    assert_eq!(count(&exchange, "SPHERICAL_SURFACE"), 1);
+    assert_eq!(count(&exchange, "EDGE_LOOP"), 1);
+    assert_eq!(count(&exchange, "EDGE_CURVE"), 1, "the cut is one edge");
+    assert_eq!(count(&exchange, "ORIENTED_EDGE"), 2, "walked both ways");
+    assert_eq!(count(&exchange, "VERTEX_POINT"), 2, "a pole at each end");
+}
+
+#[test]
+fn a_torus_is_cut_open_twice_and_meets_itself_at_one_corner() {
+    // A torus closes in both parameters, so the rectangle keeps all four of
+    // its sides: two edges, each walked both ways. All four corners are the
+    // same point of the surface, and writing them as four vertices would leave
+    // a reader unable to sew the shell back up.
+    let torus = solids::torus(3.0, 1.0).expect("a torus should build");
+    let exchange = exported(&torus);
+
+    assert_eq!(count(&exchange, "ADVANCED_FACE"), 1);
+    assert_eq!(count(&exchange, "TOROIDAL_SURFACE"), 1);
+    assert_eq!(count(&exchange, "EDGE_LOOP"), 1);
+    assert_eq!(count(&exchange, "EDGE_CURVE"), 2, "one cut per parameter");
+    assert_eq!(count(&exchange, "ORIENTED_EDGE"), 4);
+    assert_eq!(count(&exchange, "VERTEX_POINT"), 1, "the cuts meet at one");
+}
+
+#[test]
+fn a_boundaryless_bound_walks_each_of_its_cuts_once_each_way() {
+    // The same manifold invariant the block is checked against, asked of a
+    // shell whose every edge was synthesized: a cut walked twice the same way
+    // is a boundary that does not close.
+    let torus = solids::torus(3.0, 1.0).expect("a torus should build");
+    let exchange = exported(&torus);
+
+    let mut walks: HashMap<EntityId, Vec<bool>> = HashMap::new();
+    for oriented in exchange.instances_of("ORIENTED_EDGE") {
+        let params = &record(oriented).params;
+        let edge = params[3]
+            .as_reference()
+            .expect("an oriented edge should reference its edge curve");
+        let forward = params[4] == Value::Enum("T".to_string());
+        walks.entry(edge).or_default().push(forward);
+    }
+
+    assert_eq!(walks.len(), 2);
+    for (edge, mut directions) in walks {
+        directions.sort_unstable();
+        assert_eq!(
+            directions,
+            vec![false, true],
+            "{edge} is not walked both ways"
+        );
+    }
+}
+
+#[test]
+fn a_hollow_solid_is_well_formed_before_it_is_written() {
+    // The fixture is hand-built, so the round trip below would be comparing a
+    // file against a model no builder vouches for. The inner shell has to face
+    // into its own cavity for the validator to accept it, which is the same
+    // statement the export then has to carry.
+    let hollow = hollow_sphere(5.0, 2.0);
+    validate_all_solid_manifolds(hollow.map()).expect("both shells should be closed");
+    validate_all_solid_orientations(hollow.map()).expect("both shells should face outward");
+}
+
+#[test]
+fn a_cavity_is_written_as_a_void_rather_than_a_second_solid() {
+    // A void written as an outer shell of its own is a second solid sitting
+    // inside the first, which is a different shape and one no validator
+    // downstream distinguishes from this one.
+    let exchange = exported(&hollow_sphere(5.0, 2.0));
+
+    assert_eq!(count(&exchange, "MANIFOLD_SOLID_BREP"), 0);
+    assert_eq!(count(&exchange, "BREP_WITH_VOIDS"), 1);
+    assert_eq!(count(&exchange, "CLOSED_SHELL"), 2);
+    assert_eq!(count(&exchange, "ORIENTED_CLOSED_SHELL"), 1);
+    assert_eq!(count(&exchange, "ADVANCED_FACE"), 2);
+}
+
+#[test]
+fn a_cavity_faces_into_itself_and_the_outer_shell_away_from_the_material() {
+    // Both shells bound the material from outside it, which for a cavity means
+    // its face points inward — the opposite of the outer shell's, on the same
+    // kind of support. Writing both with the same flag is the mistake this
+    // catches, and it is one that leaves a perfectly readable file describing
+    // a solid ball with a ghost sphere in it.
+    let exchange = exported(&hollow_sphere(5.0, 2.0));
+
+    let senses: Vec<bool> = exchange
+        .instances_of("ADVANCED_FACE")
+        .map(|face| record(face).params[3] == Value::Enum("T".to_string()))
+        .collect();
+    assert_eq!(senses.len(), 2);
+    assert_ne!(senses[0], senses[1], "both shells face the same way");
+
+    // The void is named in its own direction, so the flag it carries states
+    // that nothing about the shell is to be flipped on the way in.
+    let void = exchange
+        .instances_of("ORIENTED_CLOSED_SHELL")
+        .next()
+        .expect("a hollow solid has a void");
+    assert_eq!(record(void).params[3], Value::Enum("T".to_string()));
 }

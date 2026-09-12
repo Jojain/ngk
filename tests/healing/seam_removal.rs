@@ -126,3 +126,27 @@ fn the_seam_pass_leaves_a_seamless_cylinder_alone() {
     );
     assert!(report.is_empty());
 }
+
+/// Two cuts on one face, taken off by one run.
+///
+/// A torus closes in both parameters, so it arrives cut open twice and the
+/// removals have to compose: taking the first cut off leaves a face that is
+/// still seamed, and only the second leaves the boundaryless face the torus
+/// actually is. Nothing else in the tree exercises that — a wall, a cap and a
+/// sphere each carry exactly one cut.
+#[test]
+fn the_seam_pass_takes_both_of_a_torus_cuts() {
+    use crate::seamed::seamed_torus;
+
+    let (mut g, torus, solid) = seamed_torus(3.0, 1.0);
+    let report = remove_redundant_cells(&mut g, HealingOptions::seams_only())
+        .expect("a seams-only run should commit");
+
+    assert_eq!(report.removed_seams.len(), 2, "a torus is cut open twice");
+    assert!(
+        g.face_unchecked(torus).loops().is_empty(),
+        "a torus has no boundary once both cuts are gone"
+    );
+    assert_eq!(g.dart_count(), 0);
+    validate_solid_manifold(&g, solid).expect("the healed torus is still well formed");
+}

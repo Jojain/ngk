@@ -1,4 +1,9 @@
-//! Walking a solid into a `MANIFOLD_SOLID_BREP`.
+//! Walking a solid into a `MANIFOLD_SOLID_BREP`, or a `BREP_WITH_VOIDS`.
+//!
+//! **Every shell bounds the material from outside it.** A solid's outer shell
+//! faces away from the material and so does each void's, which is what lets
+//! both be written the same way: one `CLOSED_SHELL` per shell, the voids named
+//! in their own direction rather than flipped.
 //!
 //! **Sharing is the whole job.** A STEP shell is not a list of independent
 //! faces: the two faces meeting along an edge must name *the same*
@@ -22,13 +27,14 @@
 
 use std::collections::HashMap;
 
-use crate::geometry::{Axis2, LINEAR_TOLERANCE, Point2};
+use crate::geometry::{Axis2, LINEAR_TOLERANCE, Point2, SurfacePeriodicity};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, GMap};
 use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, SolidKey, VertexKey};
+use crate::topology::sheet::ShellRef;
 use crate::topology::vertex::Vertex;
 
 use super::super::builder::InstanceBuilder;
@@ -48,15 +54,18 @@ struct ExportCache {
     edges: HashMap<EdgeKey, EntityId>,
 }
 
-/// A stretch of cut already written, and the corner it leaves from.
+/// A stretch of cut already written, and which way it runs.
 ///
 /// The two travel together because neither answers the question alone: the
 /// second walk to reach a cut must know both which instance to name *and*
-/// whether it is running the same way, and the corner is what settles that.
+/// whether it is running the same way. The direction is read off the parameter
+/// line rather than off the corners, because a cut can leave and arrive at the
+/// same corner — a torus's two cuts meet at one point of the surface, so its
+/// corners say nothing about direction at all.
 #[derive(Debug, Clone, Copy)]
 struct WrittenSeam {
     curve: EntityId,
-    start: EntityId,
+    increasing: bool,
 }
 
 /// A synthesized seam, named by what it runs between rather than by a cell.
@@ -79,6 +88,80 @@ impl SeamKey {
     }
 }
 
+/// What one face's synthesized cut has already written.
+///
+/// Both halves are confined to a single face because the cut is: another
+/// face's cut is a different edge of the shell even where the two would land
+/// on the same places.
+#[derive(Debug)]
+struct FaceCut {
+    /// The support's periods, which say when two cut corners are one point.
+    periods: [Option<f64>; 2],
+    /// Corners written so far, each with the parameter point it stands at.
+    corners: Vec<(Point2, EntityId)>,
+    /// Stretches of cut written so far.
+    seams: HashMap<SeamKey, WrittenSeam>,
+}
+
+impl FaceCut {
+    fn of_face<P: Payload>(face: &Face<'_, P>) -> Self {
+        let periods = match face.surface().periodicity() {
+            SurfacePeriodicity::None => [None, None],
+            SurfacePeriodicity::UPeriodic(u) => [Some(u), None],
+            SurfacePeriodicity::VPeriodic(v) => [None, Some(v)],
+            SurfacePeriodicity::UVPeriodic(u, v) => [Some(u), Some(v)],
+        };
+        Self {
+            periods,
+            corners: Vec::new(),
+            seams: HashMap::new(),
+        }
+    }
+
+    /// The `VERTEX_POINT` at a corner of the cut, shared by where it lands.
+    ///
+    /// A cut corner is not a cell, so there is no key to share it by — and it
+    /// has to be shared, or a torus's four rectangle corners become four
+    /// vertices where the shape has one and no reader sews the shell back up.
+    /// What identifies it is its parameter point modulo the support's periods,
+    /// which is exactly when two corners of the rectangle are one point of the
+    /// surface. That is a statement about this cut, not about the model: real
+    /// vertices are still shared by key and never by position.
+    fn corner<P: Payload>(
+        &mut self,
+        builder: &mut InstanceBuilder,
+        face: &Face<'_, P>,
+        at: Point2,
+    ) -> EntityId {
+        if let Some(&(_, written)) = self
+            .corners
+            .iter()
+            .find(|(existing, _)| self.same_corner(*existing, at))
+        {
+            return written;
+        }
+        let point = face.surface().point_at(at.x, at.y);
+        let vertex_geometry = write_point(builder, point);
+        let written = builder.add_entity(&entities::VertexPoint { vertex_geometry });
+        self.corners.push((at, written));
+        written
+    }
+
+    /// Whether two parameter points are the same point of the support.
+    fn same_corner(&self, first: Point2, second: Point2) -> bool {
+        (0..2).all(|axis| {
+            let gap = (second[axis] - first[axis]).abs();
+            match self.periods[axis] {
+                Some(period) => {
+                    let folded = gap % period;
+                    folded.min(period - folded) <= LINEAR_TOLERANCE
+                }
+                None => gap <= LINEAR_TOLERANCE,
+            }
+        })
+    }
+}
+
 /// Writes one solid, returning its `MANIFOLD_SOLID_BREP`.
 pub fn write_solid<P: Payload>(
     builder: &mut InstanceBuilder,
@@ -89,24 +172,46 @@ pub fn write_solid<P: Payload>(
         .solid(key)
         .ok_or(TopologyError::UnknownSolid { solid: key })?;
 
-    if let Some(inner) = solid.inner_shells()
-        && !inner.is_empty()
-    {
-        return Err(TopologyError::InnerShells {
-            solid: key,
-            count: inner.len(),
-        }
-        .into());
-    }
-
+    // One cache for the whole solid, not one per shell: a void's shell is
+    // disjoint from the outer one, but nothing says a later solid-wide edit
+    // keeps it that way, and sharing by key is correct either way.
     let mut cache = ExportCache::default();
-    let mut cfs_faces = Vec::new();
-    for face in solid.outer_shell().faces() {
-        cfs_faces.push(write_face(builder, gmap, &face, &mut cache)?);
+    let outer = write_shell(builder, gmap, &solid.outer_shell(), &mut cache)?;
+
+    let voids = solid.inner_shells().unwrap_or_default();
+    if voids.is_empty() {
+        return Ok(builder.add_entity(&entities::ManifoldSolidBrep { outer }));
     }
 
-    let outer = builder.add_entity(&entities::ClosedShell { cfs_faces });
-    Ok(builder.add_entity(&entities::ManifoldSolidBrep { outer }))
+    // A void's faces already point into it — away from the material, the same
+    // way the outer shell's point away from it — so the shell is named in its
+    // own direction and nothing is flipped on the way out.
+    let mut oriented = Vec::with_capacity(voids.len());
+    for shell in &voids {
+        let closed_shell_element = write_shell(builder, gmap, shell, &mut cache)?;
+        oriented.push(builder.add_entity(&entities::OrientedClosedShell {
+            closed_shell_element,
+            orientation: true,
+        }));
+    }
+    Ok(builder.add_entity(&entities::BrepWithVoids {
+        outer,
+        voids: oriented,
+    }))
+}
+
+/// Writes one shell of a solid as a `CLOSED_SHELL`.
+fn write_shell<P: Payload>(
+    builder: &mut InstanceBuilder,
+    gmap: &GMap<P>,
+    shell: &ShellRef<'_, P>,
+    cache: &mut ExportCache,
+) -> Result<EntityId, StepError> {
+    let mut cfs_faces = Vec::new();
+    for face in shell.faces() {
+        cfs_faces.push(write_face(builder, gmap, &face, cache)?);
+    }
+    Ok(builder.add_entity(&entities::ClosedShell { cfs_faces }))
 }
 
 fn write_face<P: Payload>(
@@ -115,21 +220,17 @@ fn write_face<P: Payload>(
     face: &Face<'_, P>,
     cache: &mut ExportCache,
 ) -> Result<EntityId, StepError> {
-    if face.loops().is_empty() {
-        return Err(TopologyError::BoundarylessFace { face: face.key() }.into());
-    }
-
     let seamed = SeamedFace::of_face(face)?;
     let same_sense = face_same_sense(face)?;
     let surface = write_surface(builder, face.surface())?;
 
-    // Seams are shared within one face and never beyond it: the cut is a
-    // property of this face's own domain, so another face's cut is a different
-    // edge even where the two would land on the same corners.
-    let mut seams = HashMap::new();
+    // The cut is shared within one face and never beyond it: it is a property
+    // of this face's own domain, so another face's cut is a different edge even
+    // where the two would land on the same corners.
+    let mut cut = FaceCut::of_face(face);
     let mut bounds = Vec::with_capacity(seamed.bounds.len());
     for bound in &seamed.bounds {
-        let edge_loop = write_edge_loop(builder, gmap, face, bound, cache, &mut seams)?;
+        let edge_loop = write_edge_loop(builder, gmap, face, bound, cache, &mut cut)?;
         bounds.push(builder.add_entity(&entities::FaceBound {
             bound: edge_loop,
             // The loop is already written in the face's own traversal
@@ -172,9 +273,9 @@ fn write_edge_loop<P: Payload>(
     face: &Face<'_, P>,
     bound: &SeamedBound,
     cache: &mut ExportCache,
-    seams: &mut HashMap<SeamKey, WrittenSeam>,
+    cut: &mut FaceCut,
 ) -> Result<EntityId, StepError> {
-    let corners = bound_corners(builder, gmap, face, bound, cache)?;
+    let corners = bound_corners(builder, gmap, face, bound, cache, cut)?;
 
     let mut oriented = Vec::with_capacity(bound.edges.len());
     for (index, element) in bound.edges.iter().enumerate() {
@@ -187,7 +288,7 @@ fn write_edge_loop<P: Payload>(
                 *to,
                 corners[index],
                 corners[(index + 1) % corners.len()],
-                seams,
+                cut,
             )?,
         };
         oriented.push(builder.add_entity(&entities::OrientedEdge {
@@ -214,6 +315,7 @@ fn bound_corners<P: Payload>(
     face: &Face<'_, P>,
     bound: &SeamedBound,
     cache: &mut ExportCache,
+    cut: &mut FaceCut,
 ) -> Result<Vec<EntityId>, StepError> {
     let count = bound.edges.len();
     let mut corners = Vec::with_capacity(count);
@@ -228,11 +330,7 @@ fn bound_corners<P: Payload>(
                     let (_, end) = edge_corners(gmap, *dart)?;
                     write_vertex(builder, &end, cache)?
                 }
-                SeamedEdge::Synthetic { .. } => {
-                    let point = face.surface().point_at(from.x, from.y);
-                    let vertex_geometry = write_point(builder, point);
-                    builder.add_entity(&entities::VertexPoint { vertex_geometry })
-                }
+                SeamedEdge::Synthetic { .. } => cut.corner(builder, face, *from),
             },
         };
         corners.push(corner);
@@ -339,12 +437,13 @@ fn write_seam<P: Payload>(
     to: Point2,
     start: EntityId,
     end: EntityId,
-    seams: &mut HashMap<SeamKey, WrittenSeam>,
+    cut: &mut FaceCut,
 ) -> Result<(EntityId, bool), StepError> {
     let along = varying_axis(from, to).ok_or(TopologyError::UnwritableSeam { face: face.key() })?;
     let key = SeamKey::new(start, end, along);
-    if let Some(written) = seams.get(&key) {
-        return Ok((written.curve, written.start == start));
+    let increasing = along.of(to) > along.of(from);
+    if let Some(written) = cut.seams.get(&key) {
+        return Ok((written.curve, written.increasing == increasing));
     }
 
     let surface = face.surface();
@@ -363,11 +462,11 @@ fn write_seam<P: Payload>(
         same_sense: span.start <= span.end,
     });
 
-    seams.insert(
+    cut.seams.insert(
         key,
         WrittenSeam {
             curve: edge_curve,
-            start,
+            increasing,
         },
     );
     Ok((edge_curve, true))

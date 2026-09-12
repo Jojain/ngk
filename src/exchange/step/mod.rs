@@ -20,11 +20,13 @@
 //! `SPHERICAL_SURFACE`, `CONICAL_SURFACE` and `TOROIDAL_SURFACE`; `LINE`,
 //! `CIRCLE` and `ELLIPSE` edges; and the AP214 product structure. A face whose
 //! parameterization closes on itself is written along a cut synthesized from
-//! its domain, and read back by letting healing remove that cut again.
+//! its domain, and read back by letting healing remove that cut again — a
+//! whole sphere or torus included, which NGK stores as one face with no
+//! boundary at all and STEP has to be handed cut open. Solids with cavities go
+//! both ways as `BREP_WITH_VOIDS`.
 //!
-//! A B-spline support, a face with no boundary at all — a whole sphere or
-//! torus — and a solid with cavities are refused by name rather than
-//! approximated; see [`error::TopologyError`] and [`error::GeometryError`].
+//! A B-spline support is refused by name rather than approximated; see
+//! [`error::TopologyError`] and [`error::GeometryError`].
 //!
 //! The two directions are not symmetric in what they *have* to do. Writing
 //! walks topology that is already sewn; reading is handed loose faces that
@@ -75,8 +77,9 @@ pub fn solid_to_exchange<P: Payload>(
 /// Writes several solids from one map into a single exchange structure.
 ///
 /// They share one product and one document context, which is as much assembly
-/// structure as one product can express; a file holding an assembly of placed
-/// parts needs a document type this does not have.
+/// structure as one product can express. A file holding an assembly of placed
+/// parts needs a hierarchy of named solids with transforms, which NGK has
+/// nowhere to hold.
 pub fn map_to_exchange<P: Payload>(
     gmap: &GMap<P>,
     solids: &[crate::topology::shape_keys::SolidKey],
@@ -148,8 +151,8 @@ impl<P: Payload> std::fmt::Debug for StepImport<P> {
 
 /// Reads STEP text into solids.
 ///
-/// Every `MANIFOLD_SOLID_BREP` in the file becomes one [`Shape`], found by
-/// sweeping for it rather than by walking down from
+/// Every `MANIFOLD_SOLID_BREP` and `BREP_WITH_VOIDS` in the file becomes one
+/// [`Shape`], found by sweeping for it rather than by walking down from
 /// `SHAPE_DEFINITION_REPRESENTATION`: product structure is where vendor files
 /// diverge most and none of it is needed to recover the geometry.
 ///

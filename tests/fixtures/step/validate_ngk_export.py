@@ -36,6 +36,34 @@ CASES = [
         (3, 3, 2),
         (10.0, 10.0, 10.0),
     ),
+    # The boundaryless cases. ngk stores a sphere and a torus as one face with
+    # no loop, edge or vertex at all, so every topological entity in these
+    # files was synthesized from the support's domain. A sphere's cut collapses
+    # at both poles and leaves one edge between two vertices; a torus closes in
+    # both parameters and leaves two edges meeting at one.
+    (
+        "sphere.step",
+        4.0 / 3.0 * math.pi * 125.0,
+        4.0 * math.pi * 25.0,
+        (1, 1, 2),
+        (10.0, 10.0, 10.0),
+    ),
+    (
+        "torus.step",
+        2.0 * math.pi**2 * 3.0 * 1.0,
+        4.0 * math.pi**2 * 3.0 * 1.0,
+        (1, 2, 1),
+        (8.0, 8.0, 2.0),
+    ),
+    # The void case, where the volume is the whole assertion: a cavity written
+    # as a second outer shell gives a valid file describing a solid ball.
+    (
+        "hollow_sphere.step",
+        4.0 / 3.0 * math.pi * (125.0 - 8.0),
+        4.0 * math.pi * (25.0 + 4.0),
+        (2, 2, 4),
+        (10.0, 10.0, 10.0),
+    ),
     # The read direction. These are ngk's re-exports of the OpenCascade
     # fixtures in this directory, so a passing case means the import
     # understood what OCCT wrote rather than merely producing a map that
@@ -66,6 +94,28 @@ CASES = [
         (10.0, 10.0, 10.0),
     ),
     ("reexported_holed_slab.step", 33.0, 76.0, (10, 24, 16), (4.0, 3.0, 3.0)),
+    # OpenCascade's own sphere, which it writes with no cut at all: one face
+    # whose only bound is a VERTEX_LOOP. ngk reads that as the face with no
+    # boundary it is, and writes it back cut open along a meridian — so a
+    # matching volume says the two spellings describe the same sphere.
+    (
+        "reexported_sphere.step",
+        4.0 / 3.0 * math.pi * 125.0,
+        4.0 * math.pi * 25.0,
+        (1, 1, 2),
+        (10.0, 10.0, 10.0),
+    ),
+    # OpenCascade.s own torus, read in and written back. Its face arrives cut
+    # open twice and has to lose both cuts to become the one boundaryless face
+    # ngk stores, then be cut open twice again on the way out — so a matching
+    # volume here says the two seams were understood in both directions.
+    (
+        "reexported_torus.step",
+        2.0 * math.pi**2 * 3.0 * 1.0,
+        4.0 * math.pi**2 * 3.0 * 1.0,
+        (1, 2, 1),
+        (8.0, 8.0, 2.0),
+    ),
 ]
 
 TOLERANCE = 1e-6

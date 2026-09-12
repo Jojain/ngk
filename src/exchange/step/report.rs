@@ -57,7 +57,7 @@ pub struct ImportSkip {
 #[non_exhaustive]
 pub enum ImportSkipReason {
     /// An entity NGK has no representation for, refused by name rather than
-    /// silently ignored: `VERTEX_LOOP`, `POLY_LOOP` and their like.
+    /// silently ignored: `POLY_LOOP` and its like.
     UnrepresentableEntity {
         /// The entity keyword, as the file spells it.
         keyword: String,

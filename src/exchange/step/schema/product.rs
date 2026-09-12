@@ -140,9 +140,9 @@ pub fn write_context(builder: &mut InstanceBuilder, options: &StepWriteOptions) 
 
 /// Wraps already-written B-Rep roots in the product structure that names them.
 ///
-/// `breps` are the `MANIFOLD_SOLID_BREP` instances to publish; they are all
-/// placed in one product, which is as much assembly structure as a single
-/// product can express.
+/// `breps` are the solid instances to publish, whichever `MANIFOLD_SOLID_BREP`
+/// subtype each was written as; they are all placed in one product, which is as
+/// much assembly structure as a single product can express.
 pub fn write_product(
     builder: &mut InstanceBuilder,
     options: &StepWriteOptions,
