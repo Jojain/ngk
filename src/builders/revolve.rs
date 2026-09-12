@@ -709,25 +709,20 @@ fn add_full_revolved_open_edge_face<P: Payload>(
         })
         .unwrap_or_default();
 
-    // Two loops that each run the whole turn bound a ring, not a disk with a
-    // hole: in the support's own parameters the face is a rectangle spanning the
-    // sweep entirely, and neither loop closes there. Which circle is the wider
-    // one is a fact about the shape in space, not about the domain, so it does
-    // not make one of them an outer loop.
     let loops = match inner_loops.first() {
-        Some(&inner) => match pcurves
-            .get(&outer_loop)
-            .zip(pcurves.get(&inner))
-            .and_then(|(outer, inner)| swept_period_axis(&surface, [outer, inner]))
-        {
-            Some(axis) => vec![
-                LoopDefinition::wrapping(outer_loop, axis),
-                LoopDefinition::wrapping(inner, axis),
-            ],
-            None => std::iter::once(LoopDefinition::outer(outer_loop))
-                .chain(inner_loops.into_iter().map(LoopDefinition::inner))
-                .collect(),
-        },
+        // `outer_loop` is the wider of the pair by construction, so the kinds
+        // come back in that order.
+        Some(&inner) => {
+            let kinds = pcurves
+                .get(&outer_loop)
+                .zip(pcurves.get(&inner))
+                .map(|(outer, inner)| revolved_band_loop_kinds(&surface, [outer, inner], true))
+                .expect("both loops were just given a pcurve");
+            vec![
+                LoopDefinition::from_kind(outer_loop, kinds[0]),
+                LoopDefinition::from_kind(inner, kinds[1]),
+            ]
+        }
         // One circle and nothing else: the other end of the profile sits on the
         // axis and sweeps no circle at all, so that side of the band is closed
         // by the degeneracy there. The loop still runs a whole turn, so it is no
@@ -1065,32 +1060,45 @@ fn add_revolved_edge_face<P: Payload>(
         support.swept(interval.start, angle.val(), 0.0),
     ];
 
-    // A whole turn brings the swept copy back onto its source, and a band whose
-    // two swept circles are both real is a ring: build it as one rather than
-    // building the copy and sewing it back.
+    // A whole turn brings the swept copy back onto its source, so the band
+    // closes on itself and is bounded by the two circles its endpoints swept and
+    // by nothing else: build it that way rather than building the copy and
+    // sewing it back on. What the two circles bound — a ring or an annulus —
+    // is the support's answer, not a reason to build the band differently.
     //
     // `validate_revolvable_radii` has already refused any edge touching the
     // axis, so both radii are non-zero here today. The check is kept because it
     // is the real precondition: a band with an end on the axis sweeps no circle
-    // there and is closed by that degeneracy instead, which is not a kind a loop
-    // can carry until boundaryless faces land.
-    // The two swept circles, each traversed as the quad loop traverses its arc:
-    // the end arc with the sweep, the start arc against it. Keeping those
-    // directions is what leaves the ring wound the way the quad band was.
-    let ring_pcurves = [pcurves[3].clone(), pcurves[1].clone()];
+    // there, and is closed by that degeneracy rather than by a second loop.
+    //
+    // The two swept circles are each traversed as the quad loop traverses its
+    // arc: the end arc with the sweep, the start arc against it, so that the
+    // band lies to the left of both. Neighbouring bands share a circle as one's
+    // end and the next one's start, so tying those directions to traversal order
+    // rather than to the radii is what makes the two agree across the sew that
+    // joins them. `FaceAttr`'s contract is that a pcurve runs in its dart's
+    // direction, so the backwards one gets its own 3D circle swept backwards to
+    // match, the way `add_annulus` reverses a hole's circle rather than its
+    // pcurve.
+    let band_pcurves = [pcurves[3].clone(), pcurves[1].clone()];
     if is_full_turn(angle)
         && [start, end]
             .iter()
             .all(|point| revolve_radius(axis, *point) > LINEAR_TOLERANCE)
-        && let Some(period_axis) = swept_period_axis(&surface, [&ring_pcurves[0], &ring_pcurves[1]])
     {
-        return add_full_revolved_ring_face(
+        let kinds = revolved_band_loop_kinds(
+            &surface,
+            [&band_pcurves[0], &band_pcurves[1]],
+            revolve_radius(axis, start) >= revolve_radius(axis, end),
+        );
+        let start_circle = revolve_circle_curve(axis, start, Rad64::new(-angle.val()));
+        return add_full_revolved_band_face(
             edit,
             [start, end],
-            [start_arc, end_arc],
+            [start_circle, end_arc],
             surface,
-            ring_pcurves,
-            period_axis,
+            band_pcurves,
+            kinds,
         );
     }
 
@@ -1154,25 +1162,51 @@ fn add_revolved_quad_face<P: Payload>(
     })
 }
 
-/// Builds one band of a whole turn as a ring, with no seam to sew afterwards.
+/// Classifies the two whole-turn circles bounding a band, in the order given.
+///
+/// Two loops that each run a whole period of the support bound a ring, not a
+/// disk with a hole: in the support's own parameters the band is a rectangle
+/// spanning the sweep entirely, and neither loop closes there. Which circle is
+/// the wider one is then a fact about the shape in space, not about the domain,
+/// so it does not make one of them an outer loop.
+///
+/// A plane has no period for either loop to wrap, and both circles close in its
+/// Cartesian parameters, so there the wider circle really does bound the band
+/// from outside and the narrower one really is a hole. `first_is_wider` says
+/// which of the two that is.
+fn revolved_band_loop_kinds(
+    surface: &Surface,
+    pcurves: [&TrimmedCurve2; 2],
+    first_is_wider: bool,
+) -> [LoopKind; 2] {
+    match swept_period_axis(surface, pcurves) {
+        Some(axis) => [LoopKind::Wrapping { axis }; 2],
+        None if first_is_wider => [LoopKind::Outer, LoopKind::Inner],
+        None => [LoopKind::Inner, LoopKind::Outer],
+    }
+}
+
+/// Builds one band of a whole turn from its two circles, with no seam to sew.
 ///
 /// A quad band carries a copy of the source edge at each end of the sweep, and a
 /// whole turn then sews those two copies together — the seam. They are the same
 /// curve in the same place, so the honest answer is not to make them: the band is
-/// bounded by the two circles its endpoints sweep, each running the whole turn
-/// and closing only on the quotient. That is a ring, and the source edge appears
-/// on it nowhere.
+/// bounded by the two circles its endpoints sweep, each running the whole turn,
+/// and the source edge appears on it nowhere. On a periodic support the circles
+/// close only on the quotient and the band is a ring; on a plane they close in
+/// the support's own parameters and it is an annulus. `kinds` carries which,
+/// decided by [`revolved_band_loop_kinds`].
 ///
 /// Each circle is a closed one-edge loop, `alpha1` linking its dart pair onto
 /// itself exactly as a circular edge's own profile does, so the neighbouring band
 /// sews to it through the same side darts a quad band would have offered.
-fn add_full_revolved_ring_face<P: Payload>(
+fn add_full_revolved_band_face<P: Payload>(
     edit: &mut TopologyEdit<'_, P>,
     ends: [Point3; 2],
     circles: [Curve; 2],
     surface: Surface,
     pcurves: [TrimmedCurve2; 2],
-    axis: Axis2,
+    kinds: [LoopKind; 2],
 ) -> Result<RevolvedFace, RevolveError> {
     let [start_first, start_second, end_first, end_second]: [Dart; 4] =
         std::array::from_fn(|_| edit.add_dart());
@@ -1195,8 +1229,8 @@ fn add_full_revolved_ring_face<P: Payload>(
         surface,
         P::F::default(),
         vec![
-            LoopDefinition::from_kind(start_first, LoopKind::Wrapping { axis }),
-            LoopDefinition::from_kind(end_first, LoopKind::Wrapping { axis }),
+            LoopDefinition::from_kind(start_first, kinds[0]),
+            LoopDefinition::from_kind(end_first, kinds[1]),
         ],
         HashMap::from([(start_first, start_pcurve), (end_first, end_pcurve)]),
     ));

@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use nalgebra::Vector3;
+use ngk::viz::debug_viewer::show;
 use radians::Rad64;
 
 use ngk::builders::edges::{add_circle, add_edge};
@@ -12,7 +13,10 @@ use ngk::tessellate::{TessellateOpts, tessellate_face_key};
 use ngk::topology::LoopKind;
 use ngk::topology::gmap::GMap;
 use ngk::topology::payload::StandardPayload;
-use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
+use ngk::topology::validation::{
+    validate_all_solid_manifolds, validate_gmap, validate_solid_manifold,
+    validate_solid_orientation,
+};
 
 #[test]
 fn revolve_edge_partial_turn_creates_four_edge_face() {
@@ -844,4 +848,88 @@ fn revolve_edge_full_turn_perpendicular_to_the_axis_sweeps_a_planar_annulus() {
             );
         }
     }
+}
+
+/// A rectangle offset from the axis sweeps a tube, and its two radial edges
+/// sweep planar annuli rather than slit disks.
+///
+/// A band whose swept support is periodic comes out a ring with no seam, but a
+/// radial edge sweeps a *plane*, which has no period, and the same band used to
+/// fall back to a quad: a copy of the source edge at each end of a whole turn,
+/// two distinct edges lying on the same segment and alpha2-free, leaving the
+/// shell open. The two swept circles bound the band on their own, exactly as
+/// they do for a single revolved edge.
+#[test]
+fn revolve_face_full_turn_of_an_offset_rectangle_closes_its_shell() {
+    let mut g = GMap::<StandardPayload>::new();
+    let profile_key = add_polygon(
+        &mut g,
+        &[
+            Point3::new(2.0, 0.0, 0.0),
+            Point3::new(5.0, 0.0, 0.0),
+            Point3::new(5.0, 0.0, 10.0),
+            Point3::new(2.0, 0.0, 10.0),
+        ],
+    );
+    let source_face = add_face(&mut g, profile_key).unwrap();
+
+    let solid = add_revolved_face(
+        &mut g,
+        source_face,
+        Axis3::new(Point3::origin(), Vector3::z()),
+        Rad64::FULL_TURN,
+    )
+    .expect("a full turn should build");
+    show(&g);
+
+    // Four bands, one per source edge, bounded by the four circles the corners
+    // swept — and by nothing else. A seam on either annulus would show up as a
+    // fifth edge and as vertices the circles do not need.
+    assert_eq!(
+        (
+            g.iter_vertices().count(),
+            g.iter_edges().count(),
+            g.iter_faces().count()
+        ),
+        (4, 4, 4)
+    );
+
+    // The two annuli are planar and each has a genuine hole; the two walls are
+    // cylindrical rings with no outer loop at all.
+    let annuli = g
+        .iter_faces()
+        .filter(|(_, attr)| matches!(attr.surface, Surface::Plane(_)))
+        .map(|(key, _)| key)
+        .collect::<Vec<_>>();
+    assert_eq!(annuli.len(), 2, "the two radial edges sweep planes");
+    for key in annuli {
+        let face = g.face_unchecked(key);
+        assert!(face.outer_loop().is_some(), "the wider circle bounds it");
+        assert_eq!(face.inner_loops().len(), 1, "the narrower circle is a hole");
+    }
+
+    // Every pcurve tracks its own edge all the way round, on the annuli and on
+    // the walls alike: a band's two circles run against each other so the face
+    // lies to the left of both, and the one wound backwards has its own 3D
+    // circle swept backwards to match.
+    for (key, _) in g.iter_faces() {
+        let face = g.face_unchecked(key);
+        for edge in face.edges() {
+            let pcurve = face.pcurve(edge.dart()).expect("every edge carries one");
+            let section = edge.trimmed_curve().expect("a boundary edge has a section");
+            for fraction in [0.0, 0.25, 0.5, 0.75] {
+                let uv = pcurve.point_at(fraction);
+                assert!(
+                    face.point_at(uv.x, uv.y)
+                        .coincides(section.point_at(fraction), LINEAR_TOLERANCE),
+                    "pcurve left its edge at {fraction}"
+                );
+            }
+        }
+    }
+
+    validate_gmap(&g).expect("a full turn should stay a valid map");
+    validate_all_solid_manifolds(&g).expect("a full turn should close its shell");
+    validate_solid_manifold(&g, solid).expect("a full turn should close its shell");
+    validate_solid_orientation(&g, solid).expect("a full turn should face outward");
 }
