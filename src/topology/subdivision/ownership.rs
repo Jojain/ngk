@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -39,14 +39,16 @@ impl EntityOwner {
     }
 }
 
-/// One raw cell's ownership, stored against a representative dart.
+/// One raw cell's ownership, read out of a [`Subdivision`].
 ///
-/// The representative locates the orbit; it is not the identity of anything.
-/// A refinement that destroys this dart re-anchors the record on a surviving
-/// dart of the same orbit rather than allocating a new record.
+/// This is a view assembled on the way out, not a stored row: the dimension is
+/// the shelf the entry sits on and the representative is its key. The
+/// representative locates the orbit; it is not the identity of anything. A
+/// refinement that destroys this dart re-anchors the entry on a surviving dart
+/// of the same orbit rather than allocating a second one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrbitOwnership {
-    /// Dimension of the raw cell this record labels.
+    /// Dimension of the raw cell this entry labels.
     pub dimension: Dim,
     /// A dart of the labelled orbit.
     pub representative: Dart,
@@ -56,13 +58,32 @@ pub struct OrbitOwnership {
 
 /// The authoritative classification of one map's raw cells.
 ///
-/// This holds one record per labelled orbit and nothing else. The set of darts
-/// an entity covers is not stored: it is recovered by walking the map, which is
-/// what keeps the classification valid across a refinement that the entity did
-/// not ask for.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// One entry per labelled orbit and nothing else. The set of darts an entity
+/// covers is not stored: it is recovered by walking the map, which is what
+/// keeps the classification valid across a refinement the entity did not ask
+/// for.
+///
+/// Entries live on one shelf per cell dimension, keyed by a representative
+/// dart, so a cell's dimension is where its entry is rather than a field that
+/// could disagree with it. Keying also makes labelling the same anchor twice a
+/// replacement instead of a second entry, which is what promoting a scaffold
+/// cell to a logical one does: an edge inside a face becoming an edge in its
+/// own right rewrites one entry.
+///
+/// `BTreeMap` rather than `HashMap`: entries come back in dart order, so
+/// enumeration and serialization are deterministic. Ordering here is a
+/// property callers are entitled to, not an accident of a hasher.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subdivision {
-    records: Vec<OrbitOwnership>,
+    cells: [BTreeMap<Dart, EntityOwner>; GMAP_INVOLUTION_COUNT],
+}
+
+impl Default for Subdivision {
+    fn default() -> Self {
+        Self {
+            cells: std::array::from_fn(|_| BTreeMap::new()),
+        }
+    }
 }
 
 impl Subdivision {
@@ -72,22 +93,50 @@ impl Subdivision {
     }
 
     /// Labels the raw `dimension`-cell containing `representative`.
+    ///
+    /// Labelling the same anchor again replaces what it said. Two entries that
+    /// reach one orbit by *different* anchors are still a contradiction, and
+    /// [`OwnershipIndex::build`] is where that is caught.
     pub fn own(&mut self, dimension: Dim, representative: Dart, owner: EntityOwner) {
-        self.records.push(OrbitOwnership {
-            dimension,
-            representative,
-            owner,
-        });
+        self.cells[dimension.index()].insert(representative, owner);
     }
 
-    /// Returns every stored record, in the order they were added.
-    pub fn records(&self) -> &[OrbitOwnership] {
-        &self.records
+    /// Returns what the entry anchored exactly at `representative` says.
+    ///
+    /// This is the stored entry, not the answer for the whole orbit: a dart of
+    /// the same cell that is not the anchor returns `None`. Ask
+    /// [`OwnershipIndex::owner`] for the orbit-wide answer.
+    pub fn owner_at(&self, dimension: Dim, representative: Dart) -> Option<EntityOwner> {
+        self.cells[dimension.index()].get(&representative).copied()
     }
 
-    /// Returns the records naming `owner`, in the order they were added.
-    pub fn records_of(&self, owner: EntityOwner) -> impl Iterator<Item = &OrbitOwnership> {
-        self.records.iter().filter(move |r| r.owner == owner)
+    /// Returns every entry, by ascending dimension and then by anchor.
+    pub fn records(&self) -> impl Iterator<Item = OrbitOwnership> + '_ {
+        self.cells.iter().enumerate().flat_map(|(index, shelf)| {
+            let dimension = Dim::from_index(index);
+            shelf
+                .iter()
+                .map(move |(&representative, &owner)| OrbitOwnership {
+                    dimension,
+                    representative,
+                    owner,
+                })
+        })
+    }
+
+    /// Returns the entries naming `owner`, in the same order as [`Self::records`].
+    pub fn records_of(&self, owner: EntityOwner) -> impl Iterator<Item = OrbitOwnership> + '_ {
+        self.records().filter(move |record| record.owner == owner)
+    }
+
+    /// Returns how many orbits are labelled.
+    pub fn len(&self) -> usize {
+        self.cells.iter().map(BTreeMap::len).sum()
+    }
+
+    /// Reports whether nothing is labelled.
+    pub fn is_empty(&self) -> bool {
+        self.cells.iter().all(BTreeMap::is_empty)
     }
 
     /// Expands every record into the dart lookup the walkers read.
@@ -98,19 +147,33 @@ impl Subdivision {
         OwnershipIndex::build(map, self)
     }
 
-    /// Rewrites every record's anchor through `map`.
+    /// Rewrites every entry's anchor through `map`.
     ///
-    /// A record names an orbit, not a dart, so renumbering the map moves the
-    /// anchor and changes nothing else about what the record says.
+    /// An entry names an orbit, not a dart, so renumbering the map moves the
+    /// anchor and changes nothing else about what the entry says.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `map` sends two anchors of one dimension to the same dart.
+    /// Renumbering is a bijection over retained darts, so that means the caller
+    /// handed over a mapping its own map does not agree with.
     pub(crate) fn map_darts(&mut self, map: impl Fn(Dart) -> Dart) {
-        for record in &mut self.records {
-            record.representative = map(record.representative);
+        for shelf in &mut self.cells {
+            let mut moved = BTreeMap::new();
+            for (representative, owner) in std::mem::take(shelf) {
+                let landed = map(representative);
+                assert!(
+                    moved.insert(landed, owner).is_none(),
+                    "renumbering should not land two ownership anchors on {landed:?}"
+                );
+            }
+            *shelf = moved;
         }
     }
 
-    /// Adds the records of `source` whose anchors were copied, remapped.
+    /// Adds the entries of `source` whose anchors were copied, remapped.
     ///
-    /// A record whose anchor did not come across is dropped: the cell it named
+    /// An entry whose anchor did not come across is dropped: the cell it named
     /// is not in this model, so nothing here is classified by it.
     pub(crate) fn extend_remapped(&mut self, source: &Subdivision, darts: &HashMap<Dart, Dart>) {
         for record in source.records() {
@@ -142,7 +205,7 @@ impl OwnershipIndex {
                 dimension,
                 representative,
                 owner,
-            } = *record;
+            } = record;
 
             if representative.id() >= map.dart_count() {
                 return Err(SubdivisionError::DanglingRecord {

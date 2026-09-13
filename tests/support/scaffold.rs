@@ -93,7 +93,6 @@ impl Scaffold {
         let labelled: HashSet<Dart> = self
             .staged
             .records()
-            .iter()
             .filter(|record| record.dimension == dimension)
             .flat_map(|record| {
                 self.map()

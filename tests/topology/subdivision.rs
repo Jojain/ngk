@@ -434,13 +434,48 @@ fn two_disconnected_patches_under_one_key_are_rejected() {
     assert!(matches!(failure, RegionError::Disconnected { .. }));
 }
 
+/// Promotion is a correction to one anchor, not a second opinion about it.
+///
+/// A seam edge inside a face that becomes an edge in its own right is the
+/// motivating case: the cell does not move and no second entry appears, the
+/// one entry anchored there simply says something else afterwards.
+#[test]
+fn relabelling_an_anchor_replaces_what_it_said() {
+    let mut scaffold = sphere();
+    let face = only(&scaffold, Dim::Two);
+    let promoted = scaffold.edge();
+    let seam = Dart::new(0);
+
+    let mut subdivision = Subdivision::new();
+    subdivision.own(Dim::One, seam, face);
+    subdivision.own(Dim::One, seam, promoted);
+
+    assert_eq!(
+        subdivision.owner_at(Dim::One, seam),
+        Some(promoted),
+        "the later label is the one that stands",
+    );
+    assert_eq!(
+        subdivision.records().count(),
+        1,
+        "and it replaced the earlier one rather than joining it",
+    );
+    subdivision
+        .index(scaffold.map())
+        .expect("a replaced label leaves nothing to contradict");
+}
+
 #[test]
 fn two_entities_cannot_own_one_raw_cell() {
     let mut scaffold = sphere();
     let face = only(&scaffold, Dim::Two);
     let intruder = scaffold.face();
     let mut contested = scaffold.relabelled(Dim::Two, Dart::new(0), face);
-    contested.own(Dim::Two, Dart::new(0), intruder);
+    // A second anchor on the same quad. Reusing dart 0 would replace the label
+    // rather than contest it: an anchor holds one answer, and it is two anchors
+    // meeting on one orbit that the index has to reject.
+    let same_quad = scaffold.map().alpha(Dim::Zero, Dart::new(0));
+    contested.own(Dim::Two, same_quad, intruder);
 
     let failure = contested
         .index(scaffold.map())

@@ -74,7 +74,7 @@ fn a_commit_carries_the_subdivision_with_the_map() {
         Some(EntityOwner::Edge(edge)),
         "the label is readable through the model's own index"
     );
-    assert_eq!(model.subdivision().records().len(), 1);
+    assert_eq!(model.subdivision().len(), 1);
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn a_rollback_restores_the_subdivision_as_well_as_the_map() {
 
     assert!(result.is_err());
     assert_eq!(
-        model.subdivision().records().len(),
+        model.subdivision().len(),
         1,
         "the rolled-back label is gone"
     );
@@ -111,11 +111,15 @@ fn a_rollback_restores_the_subdivision_as_well_as_the_map() {
 fn a_label_two_entities_disagree_about_is_rejected_at_commit() {
     let (mut model, edge) = one_edge();
     let anchor = model.edge_attr_unchecked(edge).dart;
+    // The far end of the same 1-cell. Labelling one anchor twice would be a
+    // correction, not a disagreement -- two entities only contradict each other
+    // when they reach the same orbit by anchors the commit has to reconcile.
+    let far_side = model.alpha(Dim::Zero, anchor);
     let intruder = EntityOwner::Face(FaceKey::default());
 
     let result = model.transaction(|edit| {
-        edit.own_cell(Dim::Zero, anchor, EntityOwner::Edge(edge));
-        edit.own_cell(Dim::Zero, anchor, intruder);
+        edit.own_cell(Dim::One, anchor, EntityOwner::Edge(edge));
+        edit.own_cell(Dim::One, far_side, intruder);
         Ok::<_, ModelEditError>(())
     });
 
@@ -123,7 +127,7 @@ fn a_label_two_entities_disagree_about_is_rejected_at_commit() {
         matches!(result, Err(ModelEditError::InvalidSubdivision(_))),
         "one raw cell cannot be inside two entities"
     );
-    assert!(model.subdivision().records().is_empty());
+    assert!(model.subdivision().is_empty());
 }
 
 #[test]
