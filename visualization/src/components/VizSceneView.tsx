@@ -502,6 +502,9 @@ function FaceMesh({
         roughness={0.55}
         metalness={0.08}
         side={face.doubleSided === false ? THREE.FrontSide : THREE.DoubleSide}
+        polygonOffset
+        polygonOffsetFactor={1}
+        polygonOffsetUnits={1}
       />
     </mesh>
   );

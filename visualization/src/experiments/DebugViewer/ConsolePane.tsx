@@ -74,7 +74,7 @@ export function ConsolePane({
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [completionIndex, setCompletionIndex] = useState(0);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [consoleHeight, setConsoleHeight] = useState(defaultConsoleHeight);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const outputRef = useRef<HTMLDivElement | null>(null);
@@ -272,7 +272,10 @@ export function ConsolePane({
           onPointerCancel={finishResize}
         />
       )}
-      <div className="debug-panel-header">
+      <div
+        className="debug-panel-header"
+        onDoubleClick={() => setCollapsed((value) => !value)}
+      >
         <h2>Object console</h2>
         <div className="debug-header-actions">
           <span>{dump ? `${dump.objects.length} object${dump.objects.length === 1 ? "" : "s"}` : "offline"}</span>
