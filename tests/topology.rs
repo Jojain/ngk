@@ -1,6 +1,9 @@
 #[path = "support/scaffold.rs"]
 mod scaffold;
 
+#[path = "topology/classification.rs"]
+mod classification;
+
 #[path = "topology/edge.rs"]
 mod edge;
 #[path = "topology/edge_split.rs"]

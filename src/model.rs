@@ -30,7 +30,9 @@ use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
-use crate::topology::subdivision::{EntityOwner, OwnershipIndex, Subdivision, SubdivisionError};
+use crate::topology::subdivision::{
+    EntityOwner, OwnerRemap, OwnershipIndex, Subdivision, SubdivisionError,
+};
 use crate::topology::vertex::Vertex;
 
 mod realization;
@@ -390,10 +392,42 @@ impl<P: Payload> Model<P> {
     /// rejects such a labelling, so a committed model always has one.
     pub fn ownership(&self) -> &OwnershipIndex {
         self.ownership.get_or_init(|| {
-            self.subdivision
-                .index(&self.topology)
+            self.build_ownership()
                 .expect("a committed model's labelling should describe its own map")
         })
+    }
+
+    /// Returns where each entity is anchored, as the classification reads it.
+    ///
+    /// This is the derived half of the subdivision: an entity contains the cell
+    /// its own anchor sits in, which its attribute already says. A solid is
+    /// anchored through its outer shell, whose dart lies in the volume the
+    /// solid is. A boundaryless face has no dart and contributes nothing --
+    /// the case that disappears once such a face carries a real scaffold.
+    fn entity_anchors(&self) -> impl Iterator<Item = (Dim, Dart, EntityOwner)> + '_ {
+        let vertices = self
+            .vertices
+            .iter()
+            .map(|(key, attr)| (Dim::Zero, attr.dart, EntityOwner::Vertex(key)));
+        let edges = self
+            .edges
+            .iter()
+            .map(|(key, attr)| (Dim::One, attr.dart, EntityOwner::Edge(key)));
+        let faces = self.faces.iter().filter_map(|(key, attr)| {
+            attr.seed()
+                .map(|seed| (Dim::Two, seed, EntityOwner::Face(key)))
+        });
+        let solids = self.solids.iter().filter_map(|(key, attr)| {
+            attr.outer_shell
+                .dart()
+                .map(|dart| (Dim::Three, dart, EntityOwner::Solid(key)))
+        });
+        vertices.chain(edges).chain(faces).chain(solids)
+    }
+
+    /// Builds the dart-to-owner lookup from the stored labels and the anchors.
+    fn build_ownership(&self) -> Result<OwnershipIndex, SubdivisionError> {
+        OwnershipIndex::build_with_anchors(&self.topology, &self.subdivision, self.entity_anchors())
     }
 
     /// Runs one atomic operation against this model.
@@ -516,7 +550,7 @@ impl<P: Payload> Model<P> {
 
     /// Checks that the subdivision describes this model's map.
     pub(crate) fn validate_subdivision(&self) -> Result<(), SubdivisionError> {
-        self.subdivision.index(&self.topology).map(|_| ())
+        self.build_ownership().map(|_| ())
     }
 
     /// Returns the cached indexes, rebuilding them from authoritative state if needed.
@@ -797,13 +831,64 @@ impl<P: Payload> Model<P> {
         self.subdivision.own(dimension, dart, owner);
     }
 
+    /// Drops every label naming `owner`, for an entity being removed.
+    pub(crate) fn disown_entity(&mut self, owner: EntityOwner) {
+        self.invalidate_derived_indexes();
+        self.subdivision.disown(owner);
+    }
+
+    /// Returns where `dart` sits in space, whether or not a vertex marks it.
+    ///
+    /// Most darts sit at a logical vertex and the answer is that vertex's
+    /// point. A whole circle with nothing marked on it has no vertex at all --
+    /// the place its parameterization closes is inside the edge, not a corner
+    /// anything meets at -- and the answer comes from the curve instead.
+    ///
+    /// Ask this whenever a position is wanted. Ask the vertex store only when
+    /// the identity of a logical vertex is what matters.
+    pub fn point_at_dart(&self, dart: Dart) -> Option<crate::geometry::Point3> {
+        if let Some(vertex) = self.attribute::<Cell0>(dart) {
+            return Some(vertex.point);
+        }
+        let edge = self.attribute::<Cell1>(dart)?;
+        Some(edge.curve.point_at(edge.curve.domain().start))
+    }
+
     /// Removes several isolated darts, renumbering every reference held here.
     pub(crate) fn remove_isolated_darts(
         &mut self,
         darts: Vec<IsolatedDart>,
     ) -> HashMap<Dart, Dart> {
         self.invalidate_derived_indexes();
+        // An entity attribute is guaranteed by its caller to reference only
+        // darts that survive, which is what lets the renumbering below expect a
+        // mapping for each. An ownership anchor carries no such guarantee: it
+        // names an orbit, and removing the particular dart it happens to sit on
+        // does not remove the cell. Pick each label's surviving dart here,
+        // while the orbits it names still exist.
+        let discarded: HashSet<Dart> = darts.iter().map(IsolatedDart::dart).collect();
+        let reanchored: Vec<(Dim, Dart, EntityOwner)> = self
+            .subdivision
+            .records()
+            .filter_map(|record| {
+                self.topology
+                    .orbit(
+                        record.representative,
+                        self.topology.orbit_indices(record.dimension),
+                    )
+                    .find(|dart| !discarded.contains(dart))
+                    .map(|survivor| (record.dimension, survivor, record.owner))
+            })
+            .collect();
+
         let remap = self.topology.compact(darts);
+        let follow = |dart: Dart| remap.get(&dart).copied().unwrap_or(dart);
+        let mut subdivision = Subdivision::new();
+        for (dimension, survivor, owner) in reanchored {
+            subdivision.own(dimension, follow(survivor), owner);
+        }
+        self.subdivision = subdivision;
+
         if remap.iter().all(|(old, new)| old == new) {
             return remap;
         }
@@ -835,7 +920,7 @@ impl<P: Payload> Model<P> {
         for attr in self.solids.values_mut() {
             attr.map_shell_darts(&map_dart);
         }
-        self.subdivision.map_darts(map_dart);
+
         remap
     }
 }
@@ -1335,7 +1420,8 @@ impl<P: Payload> Model<P> {
             }
         }
 
-        for (_, attr) in source.vertices.iter() {
+        let mut vertex_map = HashMap::new();
+        for (old, attr) in source.vertices.iter() {
             let Some(attribute_dart) =
                 copied_cell_dart(source, &source_dart_set, attr.dart, Dim::Zero)
             else {
@@ -1345,9 +1431,11 @@ impl<P: Payload> Model<P> {
             attr.dart = self.cell_representative(remap_dart(&dart_map, attribute_dart), Dim::Zero);
             let new_key = self.vertices.insert(attr);
             self.record_created_attribute(EditKey::Vertex(new_key));
+            vertex_map.insert(old, new_key);
         }
 
-        for (_, attr) in source.edges.iter() {
+        let mut edge_map = HashMap::new();
+        for (old, attr) in source.edges.iter() {
             let Some(attribute_dart) =
                 copied_cell_dart(source, &source_dart_set, attr.dart, Dim::One)
             else {
@@ -1357,6 +1445,7 @@ impl<P: Payload> Model<P> {
             attr.dart = remap_dart(&dart_map, attribute_dart);
             let new_key = self.edges.insert(attr);
             self.record_created_attribute(EditKey::Edge(new_key));
+            edge_map.insert(old, new_key);
         }
 
         for (_, attr) in source.profiles.iter() {
@@ -1372,7 +1461,8 @@ impl<P: Payload> Model<P> {
             self.record_created_attribute(EditKey::Profile(new_key));
         }
 
-        for (_, attr) in source.faces.iter() {
+        let mut face_map = HashMap::new();
+        for (old, attr) in source.faces.iter() {
             let Some(seed) = attr.seed() else {
                 continue;
             };
@@ -1391,13 +1481,14 @@ impl<P: Payload> Model<P> {
                 .collect();
             let new_key = self.faces.insert(attr);
             self.record_created_attribute(EditKey::Face(new_key));
+            face_map.insert(old, new_key);
         }
 
         // A merge is otherwise defined by the darts it copies, and a
         // boundaryless face has none: it is named outright by the caller, and
         // the map from its old key to its new one is what lets the shells that
         // hold it come across too.
-        let mut face_map = HashMap::with_capacity(source_faces.len());
+        face_map.reserve(source_faces.len());
         for old in source_faces {
             let Some(attr) = source.faces.get(old) else {
                 continue;
@@ -1438,7 +1529,8 @@ impl<P: Payload> Model<P> {
                 .get(&face)
                 .map(|&face| ShellRoot::Face { face, sense }),
         };
-        for (_, attr) in source.solids.iter() {
+        let mut solid_map = HashMap::new();
+        for (old, attr) in source.solids.iter() {
             let Some(outer_shell) = copied_shell(attr.outer_shell) else {
                 continue;
             };
@@ -1449,10 +1541,19 @@ impl<P: Payload> Model<P> {
                 .map(|shells| shells.into_iter().filter_map(copied_shell).collect());
             let new_key = self.solids.insert(attr);
             self.record_created_attribute(EditKey::Solid(new_key));
+            solid_map.insert(old, new_key);
         }
 
-        self.subdivision
-            .extend_remapped(&source.subdivision, &dart_map);
+        self.subdivision.extend_remapped(
+            &source.subdivision,
+            &dart_map,
+            &OwnerRemap {
+                vertices: &vertex_map,
+                edges: &edge_map,
+                faces: &face_map,
+                solids: &solid_map,
+            },
+        );
 
         self.invalidate_derived_indexes();
         match handle {

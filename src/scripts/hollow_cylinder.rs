@@ -58,7 +58,11 @@ mod tests {
     fn hollow_cylinder_script_emits_brep_scene() {
         let result = run().expect("hollow cylinder script should run");
         assert_eq!(result.scene.faces.len(), 4);
-        assert!(!result.scene.vertices.is_empty());
+        // No logical vertices, and that is the shape being right rather than
+        // the scene being empty: every rim is a whole circle, and the point
+        // where a circle's parameterization closes is inside the edge, not a
+        // corner anything meets at.
+        assert!(result.scene.vertices.is_empty());
         assert!(!result.scene.edges.is_empty());
         assert!(!result.scene.darts.is_empty());
         assert!(

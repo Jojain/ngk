@@ -280,18 +280,22 @@ fn validate_oriented_shell_volume<P: Payload>(
         shell,
         face: face.key(),
     };
-    // A boundaryless face has no vertex to take a reference point from, so the
-    // point comes off the surface itself — anywhere will do, the divergence
-    // integral is reference-independent for a closed shell.
-    let reference = match faces[0].vertices().first() {
-        Some(vertex) => vertex
-            .point()
-            .copied()
-            .ok_or_else(|| unavailable(&faces[0]))?,
-        None => faces[0]
-            .domain_center()
-            .ok_or_else(|| unavailable(&faces[0]))?,
-    };
+    // Anywhere on the shell will do: the divergence integral is
+    // reference-independent for a closed one. A vertex is the cheapest source.
+    // A face whose rim is a whole circle has no vertex at all -- the point
+    // where the circle closes is inside the edge -- so its rim's own curve
+    // answers instead. A boundaryless face has neither, and the surface does.
+    let reference = faces[0]
+        .vertices()
+        .first()
+        .and_then(|vertex| vertex.point().copied())
+        .or_else(|| {
+            let boundary = faces[0].loops().into_iter().next()?;
+            let edge = boundary.edges().into_iter().next()?;
+            edge.trimmed_curve().map(|section| section.point_at(0.0))
+        })
+        .or_else(|| faces[0].domain_center())
+        .ok_or_else(|| unavailable(&faces[0]))?;
     for face in &faces {
         let planar = matches!(face.surface(), Surface::Plane(_))
             && face.edges().iter().all(|edge| {

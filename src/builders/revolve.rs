@@ -66,9 +66,16 @@ pub enum RevolveError {
     ModelEditFailed(#[from] ModelEditError),
 }
 
+/// Where one end of a source edge is, and which logical vertex is there.
+///
+/// A whole circle with nothing marked on it has a position but no vertex: the
+/// point where it closes is inside the edge. Revolving such an edge a full turn
+/// consumes it outright, so there is nothing to remove and nothing to carry
+/// onto the result's boundary -- which is why the key is optional and the point
+/// is not.
 #[derive(Clone)]
 struct RevolvedSourceVertex {
-    key: VertexKey,
+    key: Option<VertexKey>,
     point: Point3,
 }
 
@@ -82,12 +89,12 @@ struct RevolvedSourceEdge {
 }
 
 impl RevolvedSourceVertex {
-    fn from_vertex<P: Payload>(vertex: Vertex<'_, P>) -> Result<Self, RevolveError> {
-        let point = *vertex
-            .point()
-            .ok_or(RevolveError::MissingVertexPoint { dart: vertex.dart })?;
+    fn at_dart<P: Payload>(g: &Model<P>, dart: Dart) -> Result<Self, RevolveError> {
+        let point = g
+            .point_at_dart(dart)
+            .ok_or(RevolveError::MissingVertexPoint { dart })?;
         Ok(Self {
-            key: vertex.key(),
+            key: Vertex::from_dart(g, dart).map(|vertex| vertex.key()),
             point,
         })
     }
@@ -114,26 +121,23 @@ fn edge_end_vertices<P: Payload>(
 impl RevolvedSourceEdge {
     fn from_key<P: Payload>(g: &Model<P>, key: EdgeKey) -> Result<Self, RevolveError> {
         let edge = g.edge(key).ok_or(RevolveError::MissingEdge { key })?;
-        Self::from_edge(edge)
+        Self::from_edge(g, edge)
     }
 
-    fn from_edge<P: Payload>(edge: Edge<'_, P>) -> Result<Self, RevolveError> {
+    fn from_edge<P: Payload>(g: &Model<P>, edge: Edge<'_, P>) -> Result<Self, RevolveError> {
         let key = edge.key();
         let dart = edge.dart();
         // A closed source edge is legitimate — revolving a circle sweeps a torus
-        // — and both its ends are the one vertex it has. The callers that cannot
-        // take a closed edge test `start.key == end.key` and refuse it by name,
-        // so the pair is kept rather than collapsed here.
+        // — and both its ends are the one place it closes. The callers that
+        // cannot take a closed edge test whether the two ends are the same and
+        // refuse it by name, so the pair is kept rather than collapsed here.
         let (start, end) = match edge {
-            Edge::Bounded(edge) => (
-                RevolvedSourceVertex::from_vertex(edge.start())?,
-                RevolvedSourceVertex::from_vertex(edge.end())?,
+            Edge::Bounded(_) => (
+                RevolvedSourceVertex::at_dart(g, dart)?,
+                RevolvedSourceVertex::at_dart(g, g.alpha(Dim::Zero, dart))?,
             ),
-            Edge::Closed(edge) => {
-                let vertex = edge
-                    .vertex()
-                    .ok_or(RevolveError::MissingVertexPoint { dart })?;
-                let single = RevolvedSourceVertex::from_vertex(vertex)?;
+            Edge::Closed(_) => {
+                let single = RevolvedSourceVertex::at_dart(g, dart)?;
                 (single.clone(), single)
             }
         };
@@ -848,9 +852,12 @@ fn consume_closed_source_edge<P: Payload>(
     }
     edit.remove_edge(source.key)
         .expect("validated source edge should remain registered");
-    // Both ends of a closed edge are its one vertex, so it is removed once.
-    edit.remove_vertex(source.start.key)
-        .expect("validated source vertex should remain registered");
+    // Both ends of a closed edge are its one vertex, so it is removed once --
+    // and a circle with nothing marked on it has none to remove at all.
+    if let Some(vertex) = source.start.key {
+        edit.remove_vertex(vertex)
+            .expect("validated source vertex should remain registered");
+    }
 
     for dim in [Dim::Zero, Dim::One] {
         edit.unlink(dim, start)?;
@@ -874,10 +881,10 @@ fn consume_source_edge_as_closed_loop<P: Payload>(
     }
     edit.remove_edge(source.key)
         .expect("validated source edge should remain registered");
-    edit.remove_vertex(source.start.key)
-        .expect("validated source start vertex should remain registered");
-    edit.remove_vertex(source.end.key)
-        .expect("validated source end vertex should remain registered");
+    for end in [source.start.key, source.end.key].into_iter().flatten() {
+        edit.remove_vertex(end)
+            .expect("validated source vertex should remain registered");
+    }
 
     edit.link(Dim::One, start, end)?;
     edit.add_vertex(VertexAttr::new(start, point, P::V::default()));
@@ -1009,12 +1016,13 @@ fn add_revolved_profile_faces<P: Payload>(
     close_ring: bool,
 ) -> Result<RevolvedProfile, RevolveError> {
     let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
-    let profile = Profile::from_dart(edit, profile_dart)
+    let model: &Model<P> = edit;
+    let profile = Profile::from_dart(model, profile_dart)
         .expect("profile dart must belong to a registered profile");
     let source_edges = profile
         .edges()
         .into_iter()
-        .map(RevolvedSourceEdge::from_edge)
+        .map(|edge| RevolvedSourceEdge::from_edge(model, edge))
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut faces = Vec::with_capacity(source_edges.len());

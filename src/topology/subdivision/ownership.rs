@@ -101,6 +101,19 @@ impl Subdivision {
         self.cells[dimension.index()].insert(representative, owner);
     }
 
+    /// Drops every entry naming `owner`, whatever dimension it labels.
+    ///
+    /// Removing a logical entity has to remove what it claimed, or the
+    /// classification would go on describing cells as being inside something
+    /// that no longer exists. Keyed by owner rather than by anchor on purpose:
+    /// an entity may own cells of several dimensions, and a caller holding a
+    /// deleted entity's attribute should not have to know which.
+    pub(crate) fn disown(&mut self, owner: EntityOwner) {
+        for shelf in &mut self.cells {
+            shelf.retain(|_, held| *held != owner);
+        }
+    }
+
     /// Returns what the entry anchored exactly at `representative` says.
     ///
     /// This is the stored entry, not the answer for the whole orbit: a dart of
@@ -147,39 +160,60 @@ impl Subdivision {
         OwnershipIndex::build(map, self)
     }
 
-    /// Rewrites every entry's anchor through `map`.
+    /// Adds the entries of `source` whose anchor *and* owner were copied.
     ///
-    /// An entry names an orbit, not a dart, so renumbering the map moves the
-    /// anchor and changes nothing else about what the entry says.
+    /// Both ends of an entry have to be translated. The anchor is a dart of
+    /// another map, and the owner is a key in another model's slotmaps — a
+    /// `VertexKey(1v1)` there names a different vertex here, or none at all.
+    /// Carrying an entry over with its original key would classify a cell as
+    /// being inside whatever happened to land on that key, which is how a copy
+    /// ends up with one entity claiming two unrelated cells.
     ///
-    /// # Panics
-    ///
-    /// Panics if `map` sends two anchors of one dimension to the same dart.
-    /// Renumbering is a bijection over retained darts, so that means the caller
-    /// handed over a mapping its own map does not agree with.
-    pub(crate) fn map_darts(&mut self, map: impl Fn(Dart) -> Dart) {
-        for shelf in &mut self.cells {
-            let mut moved = BTreeMap::new();
-            for (representative, owner) in std::mem::take(shelf) {
-                let landed = map(representative);
-                assert!(
-                    moved.insert(landed, owner).is_none(),
-                    "renumbering should not land two ownership anchors on {landed:?}"
-                );
-            }
-            *shelf = moved;
+    /// An entry missing either translation is dropped: the cell it named or the
+    /// entity it named is not in this model, so nothing here is classified
+    /// by it.
+    pub(crate) fn extend_remapped(
+        &mut self,
+        source: &Subdivision,
+        darts: &HashMap<Dart, Dart>,
+        owners: &OwnerRemap<'_>,
+    ) {
+        for record in source.records() {
+            let (Some(&representative), Some(owner)) = (
+                darts.get(&record.representative),
+                owners.translate(record.owner),
+            ) else {
+                continue;
+            };
+            self.own(record.dimension, representative, owner);
         }
     }
+}
 
-    /// Adds the entries of `source` whose anchors were copied, remapped.
-    ///
-    /// An entry whose anchor did not come across is dropped: the cell it named
-    /// is not in this model, so nothing here is classified by it.
-    pub(crate) fn extend_remapped(&mut self, source: &Subdivision, darts: &HashMap<Dart, Dart>) {
-        for record in source.records() {
-            if let Some(&representative) = darts.get(&record.representative) {
-                self.own(record.dimension, representative, record.owner);
-            }
+/// How one model's entity keys correspond to another's during a copy.
+///
+/// Held together rather than passed as four parallel maps: an ownership record
+/// names exactly one entity, and which slotmap that is follows from the record
+/// itself, not from the caller remembering to consult the matching map.
+pub(crate) struct OwnerRemap<'a> {
+    /// Source vertex key to destination vertex key.
+    pub vertices: &'a HashMap<VertexKey, VertexKey>,
+    /// Source edge key to destination edge key.
+    pub edges: &'a HashMap<EdgeKey, EdgeKey>,
+    /// Source face key to destination face key.
+    pub faces: &'a HashMap<FaceKey, FaceKey>,
+    /// Source solid key to destination solid key.
+    pub solids: &'a HashMap<SolidKey, SolidKey>,
+}
+
+impl OwnerRemap<'_> {
+    /// Returns `owner` as this model names it, or `None` if it was not copied.
+    pub(crate) fn translate(&self, owner: EntityOwner) -> Option<EntityOwner> {
+        match owner {
+            EntityOwner::Vertex(key) => self.vertices.get(&key).copied().map(EntityOwner::Vertex),
+            EntityOwner::Edge(key) => self.edges.get(&key).copied().map(EntityOwner::Edge),
+            EntityOwner::Face(key) => self.faces.get(&key).copied().map(EntityOwner::Face),
+            EntityOwner::Solid(key) => self.solids.get(&key).copied().map(EntityOwner::Solid),
         }
     }
 }
@@ -191,16 +225,44 @@ pub struct OwnershipIndex {
 }
 
 impl OwnershipIndex {
-    /// Expands every ownership record across its orbit.
+    /// Expands the stored records across their orbits.
     ///
     /// Rejects a record whose representative is not a dart of `map`, a record
     /// whose owner is of lower dimension than the cell it labels, and two
     /// records that disagree about one orbit.
     pub fn build(map: &GMap, subdivision: &Subdivision) -> Result<Self, SubdivisionError> {
+        Self::build_with_anchors(map, subdivision, std::iter::empty())
+    }
+
+    /// Expands the stored records *and* the cells entities are anchored at.
+    ///
+    /// The classification has two halves. An entity always contains the cell
+    /// its own anchor sits in; that half is read from the entity stores through
+    /// `anchors` and never written down, because a stored copy of it would be a
+    /// second record of where an entity is that has to be re-anchored in step
+    /// with the attribute every time an edit moves it -- and would silently
+    /// claim a foreign cell the first time it was not. The stored half is
+    /// everything else an entity contains: a closure point inside an edge, a
+    /// seam inside a face, a buried corner inside a solid.
+    ///
+    /// Anchors are applied first so a stored record that contradicts one is
+    /// reported as the conflict it is.
+    pub fn build_with_anchors(
+        map: &GMap,
+        subdivision: &Subdivision,
+        anchors: impl IntoIterator<Item = (Dim, Dart, EntityOwner)>,
+    ) -> Result<Self, SubdivisionError> {
         let mut owners: [HashMap<Dart, EntityOwner>; GMAP_INVOLUTION_COUNT] =
             std::array::from_fn(|_| HashMap::new());
 
-        for record in subdivision.records() {
+        let anchored = anchors
+            .into_iter()
+            .map(|(dimension, representative, owner)| OrbitOwnership {
+                dimension,
+                representative,
+                owner,
+            });
+        for record in anchored.chain(subdivision.records()) {
             let OrbitOwnership {
                 dimension,
                 representative,

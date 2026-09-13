@@ -268,15 +268,27 @@ fn sew_pair<P: Payload>(
     // direction off the edge instead of off the loop is then right exactly half
     // the time — the half where the two happen to agree — and sews the second
     // operand's faces on backwards whenever they disagree.
-    let (da, av, [a0, a1]) = loop_traversal(edit, first, first_face)
+    let (da, av, [a0, a1, aq]) = loop_traversal(edit, first, first_face)
         .ok_or(BooleanError::SpanEndpointMismatch { span })?;
-    let (mut db, mut bv, [b0, b1]) = loop_traversal(edit, second, second_face)
+    let (mut db, mut bv, [b0, b1, bq]) = loop_traversal(edit, second, second_face)
         .ok_or(BooleanError::SpanEndpointMismatch { span })?;
-    if a0.coincides(b1, tolerance) && a1.coincides(b0, tolerance) {
+    let reversed = if a0.coincides(a1, tolerance) {
+        // A closed span: its ends coincide, so only a point partway along can
+        // say whether the other side runs with it or against it.
+        if !aq.coincides(b0, tolerance) && !b0.coincides(a0, tolerance) {
+            return Err(BooleanError::SpanEndpointMismatch { span });
+        }
+        !aq.coincides(bq, tolerance)
+    } else if a0.coincides(b1, tolerance) && a1.coincides(b0, tolerance) {
+        true
+    } else if a0.coincides(b0, tolerance) && a1.coincides(b1, tolerance) {
+        false
+    } else {
+        return Err(BooleanError::SpanEndpointMismatch { span });
+    };
+    if reversed {
         db = edit.alpha(Dim::Zero, db);
         bv.swap(0, 1);
-    } else if !a0.coincides(b0, tolerance) || !a1.coincides(b1, tolerance) {
-        return Err(BooleanError::SpanEndpointMismatch { span });
     }
     if !edit.is_free(da, Dim::Two) || !edit.is_free(db, Dim::Two) {
         return Err(BooleanError::SpanEndpointMismatch { span });
@@ -285,8 +297,11 @@ fn sew_pair<P: Payload>(
     edit.merge_edges_into(first, second);
     edge_merges.insert(second, first);
     for (a, b) in av.into_iter().zip(bv) {
-        let mut a = a;
-        let mut b = b;
+        // Nothing to reconcile where an end carries no logical vertex: the two
+        // sides meet along the edge, not at a corner either of them has.
+        let (Some(mut a), Some(mut b)) = (a, b) else {
+            continue;
+        };
         while let Some(&next) = vertex_merges.get(&a) {
             a = next;
         }
@@ -302,11 +317,16 @@ fn sew_pair<P: Payload>(
 }
 
 /// The dart `face` traverses `edge` with, and the edge's ends in that order.
+///
+/// The points always exist; the vertex keys need not. A whole circle with
+/// nothing marked on it is bounded by no vertex at all, and both its ends are
+/// the one place it closes -- so there is a span to match the other side
+/// against, and nothing to merge.
 fn loop_traversal<P: Payload>(
     edit: &ModelEdit<'_, P>,
     edge: EdgeKey,
     face: FaceKey,
-) -> Option<(Dart, [VertexKey; 2], [Point3; 2])> {
+) -> Option<(Dart, [Option<VertexKey>; 2], [Point3; 3])> {
     let traversed = edit
         .face_unchecked(face)
         .loops()
@@ -314,12 +334,23 @@ fn loop_traversal<P: Payload>(
         .flat_map(|boundary| boundary.edges())
         .find(|candidate| candidate.key() == edge)?;
     let dart = traversed.dart();
-    let (start, end) = traversed.bounded_unchecked().vertices();
-    Some((
-        dart,
-        [start.key(), end.key()],
-        [*start.point()?, *end.point()?],
-    ))
+    let section = traversed.trimmed_curve()?;
+    // The quarter sample is what orients a closed edge. Its two ends are the
+    // same point, so they cannot say which way round the other side runs; a
+    // point partway along can, and agrees with the ends everywhere else.
+    let samples = [
+        section.point_at(0.0),
+        section.point_at(1.0),
+        section.point_at(0.25),
+    ];
+    let keys = match traversed.bounded() {
+        Some(bounded) => {
+            let (start, end) = bounded.vertices();
+            [Some(start.key()), Some(end.key())]
+        }
+        None => [None, None],
+    };
+    Some((dart, keys, samples))
 }
 
 /// Discovers connected face sets using current typed incidence after all compaction/sewing.

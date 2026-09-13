@@ -11,6 +11,7 @@ use crate::topology::edit::ModelEditError;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, VertexKey};
+use crate::topology::subdivision::EntityOwner;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -361,6 +362,29 @@ fn check_attached_edge<P: Payload>(
 
     Ok(())
 }
+/// Returns the span of `curve` that the edge between these darts occupies.
+///
+/// Vertices give the ends when the edge has them. A whole circle with nothing
+/// marked on it has none -- the point where it closes is inside the edge -- and
+/// its span is the curve's own domain, which is the same answer
+/// [`crate::topology::edge::Edge::parameter_interval`] gives.
+fn edge_reference_interval<P: Payload>(
+    g: &Model<P>,
+    edge: EdgeKey,
+    first_dart: Dart,
+    second_dart: Dart,
+    curve: &Curve,
+) -> Result<Interval, EdgeSplitError> {
+    let ends = g
+        .attribute::<Cell0>(first_dart)
+        .map(|vertex| vertex.point)
+        .zip(g.attribute::<Cell0>(second_dart).map(|vertex| vertex.point));
+    match ends {
+        Some((start, end)) => Ok(curve.interval_between(start, end)),
+        None if curve.is_closed() => Ok(curve.domain()),
+        None => Err(EdgeSplitError::MissingEndpointGeometry { edge }),
+    }
+}
 
 fn split_curve_at_parameter<P: Payload>(
     g: &Model<P>,
@@ -370,15 +394,7 @@ fn split_curve_at_parameter<P: Payload>(
     curve: &Curve,
     parameter: f64,
 ) -> Result<(Curve, Curve), EdgeSplitError> {
-    let start = g
-        .attribute::<Cell0>(first_dart)
-        .map(|vertex| vertex.point)
-        .ok_or(EdgeSplitError::MissingEndpointGeometry { edge })?;
-    let end = g
-        .attribute::<Cell0>(second_dart)
-        .map(|vertex| vertex.point)
-        .ok_or(EdgeSplitError::MissingEndpointGeometry { edge })?;
-    let interval = curve.interval_between(start, end);
+    let interval = edge_reference_interval(g, edge, first_dart, second_dart, curve)?;
     let fraction = (parameter - interval.start) / (interval.end - interval.start);
     let trim = |interval| {
         curve
@@ -415,15 +431,7 @@ fn check_split_parameter<P: Payload>(
     second_dart: Dart,
     curve: &Curve,
 ) -> Result<(), EdgeSplitError> {
-    let start = g
-        .attribute::<Cell0>(first_dart)
-        .map(|vertex| vertex.point)
-        .ok_or(EdgeSplitError::MissingEndpointGeometry { edge })?;
-    let end = g
-        .attribute::<Cell0>(second_dart)
-        .map(|vertex| vertex.point)
-        .ok_or(EdgeSplitError::MissingEndpointGeometry { edge })?;
-    let domain = curve.interval_between(start, end).ordered();
+    let domain = edge_reference_interval(g, edge, first_dart, second_dart, curve)?.ordered();
 
     if !domain.contains(parameter, LINEAR_TOLERANCE) {
         return Err(EdgeSplitError::ParameterOutOfRange { parameter, domain });
@@ -498,12 +506,16 @@ pub(crate) fn add_circle_staged<P: Payload>(
     check_valid_radius(radius)?;
     let d1 = edit.add_dart();
     let d2 = edit.add_dart();
-    let start = plane.point_at(radius, 0.0);
-    edit.add_vertex(VertexAttr::new(d1, start, P::V::default()));
     let curve = Curve::circle(plane, radius);
     edit.link(Dim::Zero, d1, d2)?;
     edit.link(Dim::One, d1, d2)?;
-    Ok(edit.add_edge(EdgeAttr::new(d1, curve, P::E::default())))
+    let key = edit.add_edge(EdgeAttr::new(d1, curve, P::E::default()));
+    // The point where the circle closes is a fact about how the map is drawn,
+    // not a feature of the shape: nothing meets there. It is classified inside
+    // the edge, which is what makes an unmarked circle a vertex-free logical
+    // edge. Marking it deliberately is a separate operation that promotes it.
+    edit.own_cell(Dim::Zero, d1, EntityOwner::Edge(key));
+    Ok(key)
 }
 
 fn check_non_coincident_points(start: Point3, end: Point3) -> Result<(), EdgeCreationError> {

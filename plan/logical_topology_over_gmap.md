@@ -1,6 +1,9 @@
 # Experiment: logical topology over a pure GMap subdivision
 
-Status: **In progress** — M0, M1 and M2 complete; M3 realization cache foundation implemented, logical traversal migration outstanding.
+Status: **In progress** — M0, M1 and M2 complete. M3 is roughly a fifth done:
+the realization cache is in, and everything in it that reads ownership is
+blocked behind a sequencing mistake this plan made. Nothing in the production
+kernel is classified yet; see [Ordering correction](#ordering-correction-classification-precedes-public-views).
 
 Implementation guide: section 1 fixes the architecture, section 2 defines the
 milestone gates, and section 5 supplies the implementation sequence, concrete
@@ -273,12 +276,23 @@ enum EntityOwner {
     Solid(SolidKey),
 }
 
-struct OrbitOwnership {
-    dimension: Dim,
-    representative: Dart,
-    owner: EntityOwner,
+struct Subdivision {
+    // One shelf per cell dimension, each keyed by a representative dart of the
+    // labelled orbit. The dimension is where an entry sits, not a field beside
+    // it that could disagree; keying by the anchor makes labelling it twice a
+    // correction rather than a second opinion, which is what promoting a
+    // scaffold cell to a logical one needs. `BTreeMap` because enumeration and
+    // serialization order are properties callers are entitled to.
+    cells: [BTreeMap<Dart, EntityOwner>; 4],
 }
 ```
+
+An owner's dimension is greater than **or equal to** the cell's, not exactly one
+above it. Ownership skips scaffold: only logical entities own, so a buried
+corner inside a solid has no intermediate raw edge or face to belong to and is
+labelled with the solid directly. A whole sphere over a cube scaffold owns its
+six quads, twelve edges and eight corners alike. The equal case is the majority
+of every labelling — a logical face owns its own raw quads.
 
 - Persist darts, logical slotmaps, ownership representatives, oriented logical
   use records, domain metadata, and necessary correspondence constraints.
@@ -296,20 +310,155 @@ struct OrbitOwnership {
   cannot occupy the same raw cell interior. Deliberate overlapping objects use
   separate subdivisions until a modeling operation reconciles them.
 
+#### Stored state this experiment removes
+
+Four fields in the current tree contradict "a logical entity does not know its
+neighbours". The experiment is not finished while any of them stands, and the
+list is short enough to audit by reading six struct definitions:
+
+| Field | Why it goes | Replaced by |
+|---|---|---|
+| `FaceAttr.loops` seed darts | an authoritative boundary list | `boundary_cycles`; `LoopKind` domain metadata stays |
+| `SolidAttr.inner_shells` | an authoritative cavity list | `boundary_shells` |
+| `ShellRoot::Face { face, sense }` | a stored logical→logical reference | nothing — see below |
+| `FaceAttr.pcurves` keyed by `Dart` | a key that dies on refinement | keyed by `EdgeUse` |
+
+`ShellRoot::Face` should disappear rather than move. It exists only because a
+boundaryless face currently has *no darts at all*, leaving a sheet nothing to
+point at. Under a real scaffold a whole sphere is six raw quads with darts like
+any other face, so the anchor becomes an ordinary dart. That is a falsifiable
+prediction: if the variant survives M4, the scaffold is wrong, not the
+prediction.
+
+When those four are gone, no `*Attr` holds another entity's key or any list of
+raw cells, and the only dart in any attribute is one anchor meaning "this way
+round".
+
+There is also a duplicate: `DerivedCellIndexes`/`CellKeyLookup` and
+`OwnershipIndex` are two dart→logical-key mechanisms. The first works only
+where a raw cell equals a logical cell, which makes it the degenerate case of
+the second. Delete it and reimplement `CellKeyLookup` on ownership — but only
+once builders label, since before that the ownership index is empty.
+
+#### Ordering correction: classification precedes public views
+
+This plan ordered M3 (public views) before M4 (construction). For everything
+that reads ownership, that is backwards, and the cost has already been paid
+once.
+
+`EntityOwner` appears in six files, all of them the subdivision layer and its
+`model.rs`/`edit.rs` plumbing. **No builder, no importer and no modeling
+function writes a single ownership label.** Every `Model` produced by real code
+carries an empty `Subdivision`. M1 proved the mechanism on hand-built test
+scaffolds; the production kernel is unclassified.
+
+So a public view derived from labels has nothing to derive from, and any
+attempt to write one must fall back to the old dart-keyed storage to return
+anything at all. That is exactly what happened: see the M3 record below.
+
+The correction is to stop sweeping M3 horizontally and drive one shape all the
+way through instead:
+
+1. **Plumbing slice — planar rectangle.** No scaffold at all; every raw cell is
+   logical. Proves builder → `ModelEdit::own_cell` → commit validation →
+   `OwnershipIndex` → walk, with no seam to confuse a failure.
+2. **First real slice — cylinder.** Seam edge owned by the wall, closure
+   vertices owned by their rim edges. The first case where logical differs from
+   raw in production, built by the real builder rather than by hand.
+3. Derive `Face::loops()` from `boundary_cycles` for those shapes and delete the
+   stored seeds. Migrate directly; do not build machinery to run the stored and
+   derived representations side by side. This is an experiment, and maintaining
+   two answers costs more than re-deriving one.
+4. Then the pcurve re-key, which by then has real labels underneath it.
+5. Then the refinement-invariance test below, as a standing gate.
+
+The remaining M3 items keep their contracts; only their position moves. M4's
+builder migration is no longer a later milestone that consumes M3's views — it
+is the thing M3's views wait on.
+
+#### The invariance test that makes a shadow graph impossible
+
+Promote this from a clause in the M3 gate to the guard rail the rest of the
+migration is written against, and add it before M4 rather than after:
+
+> Refine the scaffold everywhere — add computational vertices and cuts
+> throughout a model — and assert every logical query returns an identical
+> answer: same edges per face, same loop order modulo starting point, same
+> pcurves, same shells, same geometry.
+
+Any stored adjacency fails this the moment it is added, because refinement
+invalidates raw cells and a shadow graph cannot follow. A rule that is enforced
+only by remembering it is one that eventually stops being enforced.
+
 #### Oriented occurrences and boundary metadata
 
-An orbit identifies a cell, not every way a parent uses it. Keep an internal
-`EdgeUseKey` slotmap for logical edge occurrences. Each record identifies the
-logical edge, logical face, orientation, pcurve and a relocatable oriented
-subdivision anchor. A repeated edge on the same face has distinct use keys.
-Computational refinement preserves these keys and updates their anchors.
+An orbit identifies a cell, not every way a parent uses it. A dart *is* an
+oriented use of an edge by a face — that is what a dart in a 2-gmap means — and
+for as long as one logical edge is one raw edge, a dart is a faithful name for
+one. What breaks that is internal refinement: once a logical edge may contain
+vertices interior to it, one logical use spans a **run** of darts, and no single
+dart in the run names the whole thing. That, and only that, is why a use needs a
+name of its own.
+
+The name is a derived value, not an allocated identity:
+
+```rust
+/// One oriented occurrence of a logical edge on a face.
+/// Constructed from the walk; never allocated, never persisted as an identity.
+struct EdgeUse { edge: EdgeKey, sense: Orientation }
+```
+
+Do **not** introduce an `EdgeUseKey` slotmap. A generated key would need an
+anchor dart per record, re-anchoring on every refinement, and a reverse index to
+keep in sync — the exact cost this key has none of, since it mentions no raw
+cell at all. The earlier draft of this section prescribed that slotmap; it was
+tried, and the attempt is recorded under M3 below.
+
+Pcurves stay on `FaceAttr`, keyed by `EdgeUse`. The location was always right —
+a pcurve is expressed in that face's parameter space and is meaningless without
+`FaceAttr.surface`, face reversal touches surface and curves atomically, and
+deleting a face drops its pcurves with no cross-key sweep. Only the key changes:
+
+```rust
+pcurves: HashMap<Dart, TrimmedCurve2>       // was: dies on refinement
+pcurves: HashMap<EdgeUse, TrimmedCurve2>    // is: refinement cannot touch it
+```
+
+**`sense` is relative to the face's default boundary walk, not to the traversal
+in hand.** Getting this wrong gives a double-reversal bug that only appears on
+seams. An edge used once by a face has one entry; a reversed `Face` view looks
+up *the same key* and reverses the returned curve. An edge used twice by one
+face — a real seam edge, with two distinct UV images — has two entries,
+`(e, Same)` and `(e, Reversed)`, because a coherent boundary cycle necessarily
+runs the two sides opposite ways. Reversing a view never flips keys; it reverses
+curves and loop order. Storage and reading stay separate, which is what the dart
+key failed at.
+
+An occurrence index in walk order was considered instead of `sense` and
+rejected: it depends on where the walk starts, so re-anchoring a loop seed could
+silently renumber it. Sense depends only on two stored anchors — the edge's
+default dart and the face's default orientation — and is invariant to walk
+start.
+
+Two commit-time invariants keep this table an attribute rather than a second
+connectivity graph:
+
+1. every key corresponds to a use the default boundary walk produces — no orphans;
+2. every logical use the walk produces on a face whose support does not make the
+   pcurve exactly derivable has one — no gaps.
+
+Never expose an iterator over `pcurves` publicly; `pcurve_of(use)` only. What
+cannot be enumerated cannot be mistaken for adjacency. If a second insert under
+one `(edge, sense)` is ever attempted, reject it rather than choosing — that is
+the case which would prove an occurrence discriminator is genuinely needed.
 
 Store no authoritative ordered vector of uses on a face. Derive ordering and
 loop membership from the subdivision. Keep loop domain metadata (outer, inner,
-wrapping, capping) attached to a relocatable boundary occurrence; that metadata
-does not serve as an alternative connectivity graph. Closed boundaryless faces
-have no such records. A face reversal returns a view with flipped sense;
-it does not rewrite persistent pcurves as a side effect of reading.
+wrapping, capping): no walk can recover which axis a periodic loop spans or
+which degeneracy caps it, so that part of `LoopKind` is real persistent data.
+The loop **seed darts** beside it are not. Closed boundaryless faces have no
+such records. A face reversal returns a view with flipped sense; it does not
+rewrite persistent pcurves as a side effect of reading.
 
 For alpha3-shared logical faces, retain parent-side orientation separately
 from the face's default orientation. A face-use or shell traversal state must
@@ -484,11 +633,11 @@ measurement feature was added to record the baseline.
 | Capability | Baseline command/test | Baseline result | Owner milestone | Temporary exclusion | Replacement/equivalent assertion | Final evidence |
 |---|---|---|---|---|---|---|
 | Raw gmap axioms and orbits | `tests/topology.rs` `gmap`, `topology::gmap::tests` | 10 pass | M2 | none | same tests, on a `GMap` holding no logical stores | `validate_gmap` takes `&GMap`; the merge tests moved to `tests/topology/model.rs` |
-| Orbit ownership and region recovery | none — new capability | n/a | M1 | n/a | `tests/topology/subdivision.rs` | 23 tests pass; see the M1 result |
+| Orbit ownership and region recovery | none — new capability | n/a | M1 | n/a | `tests/topology/subdivision.rs` | 24 tests pass; see the M1 result and the M3 storage rework |
 | Transactions, lineage, rollback | `tests/topology.rs` `edit`, `transaction` | 24 pass | M2 | none | same tests retargeted at `ModelEdit` | 24 pass, plus 11 in `model_state.rs` |
 | Derived cell indexes | `tests/topology/indexes.rs` | 2 pass | M2 | none | ownership index rebuild tests | 2 pass; warm/cold and deserialize-rebuild cases added |
-| Typed views | `tests/topology.rs` `edge`, `face`, `profile`, `sheet` | 23 pass | M3 | none | same tests against `(&Model, key, sense)` views | |
-| Face loops, holes, periodic domains | `tests/topology/unwrapped_face_domain.rs`, `tests/topology/planar.rs` | 12 pass | M3 | none | frontier-walk loop extraction | |
+| Typed views | `tests/topology.rs` `edge`, `face`, `profile`, `sheet` | 23 pass | M3, after the M4 slices | none | same tests against `(&Model, key, sense)` views | |
+| Face loops, holes, periodic domains | `tests/topology/unwrapped_face_domain.rs`, `tests/topology/planar.rs` | 12 pass | M3, after the M4 slices | none | frontier-walk loop extraction | |
 | Serialization | `tests/topology/serialization.rs` | 2 pass | M7 | none | versioned Model layout round trip | |
 | Validation | `tests/topology/validation.rs` | 3 pass | M2 | none | raw checks on `GMap`, logical checks on `Model` | split into `GMapValidationError` and `ModelValidationError` |
 | Edge/profile/face/sheet construction | `tests/builders.rs` `faces`, `profiles`, `solids` | 58 pass | M4 | none | same builders on `ModelEdit` | |
@@ -759,6 +908,10 @@ as a design note predating this work, not a description of the tree.
 
 ### M3 implementation — public traversal and lazy geometry
 
+**Read [Ordering correction](#ordering-correction-classification-precedes-public-views)
+first.** Every item here that reads ownership waits on the two construction
+slices described there. The contracts below are unchanged; their position is.
+
 **Start with:** current edge/face/profile/sheet/solid views, pcurve lookup and
 `UnwrappedFaceDomain`. Keep the existing geometry utilities and tolerances.
 
@@ -767,11 +920,14 @@ context only where an occurrence needs it. Preserve narrowed bounded/closed
 edge behavior; a closed edge with a deliberate vertex is still closed. Public
 `vertices()` enumerates logical vertices, never computational closure points.
 
-Introduce internal use keys before migrating pcurve readers. Transfer every
-existing directed-dart pcurve to its distinct logical occurrence; keep the
-dart only as a relocatable private anchor. A raw split produces several raw
-pieces for one use; it must not allocate several logical use records unless
-the logical edge itself splits. Reconstruct loop order from the frontier walk.
+Re-key pcurves to `EdgeUse { edge, sense }` as described above, keeping the
+table on `FaceAttr`. Transfer every existing directed-dart pcurve to its logical
+occurrence; no dart survives in the key, so there is no anchor to relocate. A
+raw split produces several raw pieces for one use and must leave the stored
+pcurve untouched — `split_face_pcurves` survives, but stops firing for
+computational refinement and runs only on a real logical split, where a
+geometry-aware builder knows the split parameter. Reconstruct loop order from
+the frontier walk.
 
 Implement profile and sheet lookup without a second membership graph. A profile
 anchors an oriented logical chain; a sheet anchors an oriented connected face
@@ -832,12 +988,12 @@ support snapshots, missing-key errors, serialization/clone equivalence and
 concurrent cold reads. The first six were run before implementation and failed
 to compile because the realization API did not exist; they pass after it.
 
-This is **not the M3 gate**. EdgeUseKey storage, pcurve occurrence migration,
-frontier-based public traversal, aggregate views, and cut/refinement invariance
-remain outstanding. Realizations currently use the existing domain placement
-rules, with no configurable tolerance or cut; support-native default cuts and
-alternative-cut checks remain part of that work. No M4 migration or test
-exclusion was introduced.
+This is **not the M3 gate**. Pcurve occurrence migration, frontier-based public
+traversal, aggregate views, and cut/refinement invariance remain outstanding.
+Realizations currently use the existing domain placement rules, with no
+configurable tolerance or cut; support-native default cuts and alternative-cut
+checks remain part of that work. No M4 migration or test exclusion was
+introduced.
 
 Validation: `cargo test --all-targets --all-features` exits 0 with 725 passing,
 zero failing and zero ignored tests (716 inherited plus nine new tests).
@@ -848,7 +1004,63 @@ recorded baseline failures: `sphere_union_sphere` rejects its budget and
 Python was not rebuilt or rerun for this core checkpoint, and no frontend
 files changed. The Windows-blocked wasm/frontend builds remain skipped.
 
+#### M3 record — an abandoned `EdgeUseKey` migration, and the storage rework
+
+An attempt was made to implement the `EdgeUseKey` slotmap this plan used to
+prescribe. It is recorded here because the way it failed is the evidence behind
+the [ordering correction](#ordering-correction-classification-precedes-public-views),
+not merely an abandoned branch.
+
+The attempt wrote the consumer half — `Loop::edge_uses`, `Face::pcurve` rebuilt
+around occurrences, `pcurve_for_edge`, and the call sites in `builders/faces.rs`,
+`builders/sheets.rs` and three test files — against a `Model::edge_use_at` /
+`unique_edge_use` API and a `topology::edge_use` module that were never written.
+The tree did not compile.
+
+What is diagnostic is the shape of `Face::pcurve` as it was left: a four-tier
+fallback that tried the raw dart map across `alpha0`/`alpha2`, then an
+occurrence record, then a scan of the pcurve map filtered by logical edge, then
+a uniqueness check — with a debug `eprintln!` on the final miss. That is not
+carelessness. With no builder writing ownership labels, an occurrence lookup can
+never succeed on a real model, so every path had to end in the old dart-keyed
+map. The fallbacks were load-bearing.
+
+Two conclusions were drawn and are now in the contracts above: a use needs a
+name only because one logical use spans a run of darts, and that name should be
+a derived `EdgeUse { edge, sense }` rather than an allocated key; and no view
+derived from labels can be written before something writes labels.
+
+The attempt was reverted by inverse edit, leaving the six files identical to
+`af79a86`. `Subdivision` was then reworked: `Vec<OrbitOwnership>` became one
+`BTreeMap<Dart, EntityOwner>` per cell dimension, so the dimension is where an
+entry sits rather than a field beside it, enumeration and serialization are
+deterministic, and labelling one anchor twice is a replacement rather than a
+second entry — which is what scaffold-to-logical promotion needs and the old
+storage made impossible without a commit error. `ConflictingOwnership` now means
+only what it can still mean: two *different* anchors meeting on one orbit. Two
+tests that had asserted the conflict by labelling one anchor twice were
+rewritten to use two anchors, and `relabelling_an_anchor_replaces_what_it_said`
+was added for the promotion case.
+
+Per-dimension owner types — `EdgeOwner`, `FaceOwner`, `SolidKey` — were designed
+and deferred, not rejected. They would delete `SubdivisionError::OwnerBelowCell`
+outright by making the label unrepresentable. Revisit when M4 builders provide
+statically-known call sites; the ladder is `owner.dimension() >= cell.dimension()`,
+which is a `>=` and not a `+1`.
+
+Validation: `cargo test --all-targets --all-features` exits 0 with 726 passing,
+zero failing and zero ignored. `cargo clippy --all-targets --all-features` exits
+0 with the same 25 distinct warnings, none in changed files; `cargo fmt` and
+`git diff --check` pass. Python, benchmarks and the frontend were not rerun for
+this core-only checkpoint.
+
 ### M4 implementation — construction and arbitrary boundary ingestion
+
+**This milestone now starts before M3 finishes.** Its first two steps are the
+planar-rectangle and cylinder slices in the
+[ordering correction](#ordering-correction-classification-precedes-public-views);
+M3's derived views wait on them, not the other way round. Take the rest of this
+section in its existing order once those two shapes are classified end to end.
 
 Migrate bottom-up: edge/profile, face, sheet, extrusion/revolution/sweep, solid
 primitives, then shell-based import and result construction. Existing analytic
@@ -889,6 +1101,131 @@ cavities, a handle, and the existing primitive/frame matrix. The scaffold need
 not be a spatial volume mesh, but boundary geometry and material interpretation
 must remain available to existing containment algorithms. Raw internal volumes
 cannot be used as spatial classification regions without their own embedding.
+
+#### M4 slice 1 result — the classification is two halves, and one is derived
+
+The planar-rectangle slice is done, and it changed the design rather than just
+exercising it.
+
+The first attempt labelled each entity's own cell at `ModelEdit::add_vertex` /
+`add_edge` / `add_face`. That is wrong, and the tree said so in three distinct
+ways before the reason was clear:
+
+1. **Commit validated the classification too early.** `validate_subdivision`
+   ran before `reconcile_transaction_attributes`, and a builder that lays down
+   one vertex per face corner and lets commit merge the coincident ones is
+   holding several keys on one cell *on purpose*. Validation moved to after
+   reconciliation.
+2. **`extend_remapped` translated anchors but not owners.** A copied record kept
+   the source model's `VertexKey`, which names a different vertex in the
+   destination. It had never been exercised because nothing populated the
+   subdivision. Fixed by `OwnerRemap`, and the merge routine now keeps the
+   vertex/edge/face/solid key maps it had been discarding.
+3. **An anchor drifts from the attribute it duplicates.** `Face(7v1)` was
+   labelled at `Dart(49)` and, after its loops were rewritten mid-edit, had seed
+   `Dart(112)` — while `Dart(49)`'s 2-cell had become another face's. The stored
+   anchor was a second copy of where the face is, and nothing kept it in step.
+
+The third is the design finding. The classification has two halves:
+
+- **Derived.** An entity contains the cell its own anchor sits in. The
+  attribute already says where that is, so storing it again is a loose pair that
+  must be re-anchored on every edit and silently claims a foreign cell the first
+  time it is not. `Model::entity_anchors` reads it from the stores;
+  `OwnershipIndex::build_with_anchors` applies it before the stored records, so
+  a stored record contradicting one is reported as the conflict it is.
+- **Stored.** Everything *else* an entity contains: a closure point inside an
+  edge, a seam inside a face, a buried corner inside a solid. This is what
+  `Subdivision` holds, and it is genuinely authoritative.
+
+Consequences that fell out:
+
+- A shape with no scaffold stores **no labels at all** and is still fully
+  classified. A rectangle's `subdivision()` is empty and every raw cell has an
+  owner.
+- Removing darts now re-anchors labels onto a surviving dart of the same orbit,
+  chosen before the map changes. Entity attributes are guaranteed by their
+  callers to reference only surviving darts; an ownership anchor names an orbit
+  and carries no such guarantee.
+- Labelling a cell as interior to an edge while a logical vertex still sits
+  there is now rejected as `ConflictingOwnership`. That is a real contradiction
+  — a closure point has no `VertexKey` — and the old storage could not see it.
+  `tests/topology/model_state.rs` models the promotion properly: the vertex is
+  removed in the same breath as the label is written.
+
+Evidence: `tests/topology/classification.rs` asks a builder-produced rectangle
+the questions `subdivision.rs` asks hand-labelled fixtures — every raw cell
+names its entity, nothing is stored, and the frontier walk comes back with one
+cycle of four distinct logical edges that the model actually holds.
+`cargo test --all-targets --all-features` exits 0 with 729 passing, zero failing
+and zero ignored. `cargo clippy --all-targets --all-features` exits 0 with the
+same 25 distinct warnings, none in changed files. `cargo fmt` and
+`git diff --check` pass.
+
+Known gap, deliberately left: reconciliation removes merged-away entities
+directly from the stores, so a *stored* label naming one would be orphaned.
+Nothing writes stored labels in production yet, so nothing can hit it. Slice 2
+(the cylinder seam) is the first code that will, and transferring such labels to
+the merge survivor belongs there.
+
+#### M4 slice 2 result — vertex-free circles, and where the integration stops
+
+The cylinder slice went much further than expected, and stopped at one place
+worth naming precisely.
+
+**What the cylinder already was.** Probing it first was the single most useful
+step: a built cylinder is *already* 3 faces and 2 edges with **no seam edge at
+all**. The wall carries two `Wrapping` loops. The only deviation from this
+plan's contract was its **2 closure vertices**, one per rim circle. So the
+change was not "classify the seam" but "stop registering a vertex where a
+circle's parameterization closes".
+
+`add_circle_staged` now labels that point inside the edge instead of
+registering a `VertexKey`. A cylinder is 3 faces, 2 edges, **0 vertices**.
+
+**Five consumers had to be migrated**, each reading a vertex attribute for
+something that is not a vertex question:
+
+| Consumer | Was | Now |
+|---|---|---|
+| `viz::gmap::build_dart` | endpoints from vertex attrs, so a vertex-free edge emitted *no darts at all* | falls back to the curve's own domain |
+| `revolve::RevolvedSourceVertex` | required a `VertexKey` | key is `Option`; the point comes from `Model::point_at_dart` |
+| `validate_shell_orientation` | reference point from a vertex, else `domain_center` | a circular cap has neither, so the rim's own curve answers |
+| `edges::split_*` | span from vertex points | `edge_reference_interval`: vertices when present, the curve's domain otherwise |
+| `boolean::assemble::loop_traversal` | `bounded_unchecked`, which panics on a closed edge | keys are `Option`; nothing to merge where no vertex exists |
+
+`Model::point_at_dart` is the shared derivation: the vertex's point when one
+marks the dart, the curve's closure point otherwise. Ask it for a *position*;
+ask the vertex store only when the *identity* of a logical vertex matters.
+
+**Where it stops.** Two tests fail, both the same scenario — a block fused with
+a cylinder **tangent** to its faces (`heal: false`, so healing is not involved):
+
+- `builders::boolean::block_fused_with_cylinder_tangent_to_block_faces`
+- `builders::removal::redundant_faces_of_boolean_fuse_are_deleted`
+
+Diagnosis reached: the union's result fails the **winding** half of
+`validate_shell_orientation` — for a block face's edge, the neighbour across
+`alpha0(alpha2(dart))` is not in the shell. Not the volume-sign half; both
+*operand* shells validate with correct positive volumes. The closed-span branch
+added to `sew_pair` is never reached in this test, so span sewing is not the
+cause; the defect is upstream in fragment selection or face dropping.
+
+The likely cause is a promotion question this plan defers to M5: a tangency is a
+**retained result junction**, and the rim circle's closure point is exactly
+where that junction falls. Before this change the closure point happened to
+carry a `VertexKey`, so the junction existed by accident. It now has to be
+promoted deliberately — "promotion is operation intent, never `raw degree != 2`
+alone" — which is M5/M6 work, not something to guess at here.
+
+Do not read the two failures as an argument for restoring the vertex. They are
+the experiment working: the accidental junction is gone, and what replaces it
+has to be chosen rather than inherited.
+
+Evidence: `cargo test --all-targets --all-features` reports **727 passing, 2
+failing, 0 ignored** — the two named above. `cargo clippy --all-targets
+--all-features` holds at the same 25 distinct warnings; `cargo fmt` and
+`git diff --check` pass.
 
 ### M5 implementation — operation families and promotion rules
 

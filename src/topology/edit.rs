@@ -432,6 +432,12 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     }
 
     /// Stages a vertex attribute for reconciliation at commit.
+    ///
+    /// No ownership is recorded here. Every entity contains the cell its own
+    /// anchor sits in, so that part of the classification is read straight off
+    /// the attribute and cannot drift from it. [`Self::own_cell`] records the
+    /// rest -- the cells an entity contains *besides* its own, such as a
+    /// closure point inside an edge or a seam inside a face.
     pub fn add_vertex(&mut self, mut vertex: VertexAttr<P::V>) -> VertexKey {
         vertex.dart = self.model.cell_representative(vertex.dart, Dim::Zero);
         let key = self.model.vertices.insert(vertex);
@@ -455,6 +461,8 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     }
 
     /// Stages an edge attribute for reconciliation at commit.
+    ///
+    /// Its own 1-cell is derived, not recorded; see [`Self::add_vertex`].
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
         let key = self.model.edges.insert(edge);
         self.model.invalidate_derived_indexes();
@@ -495,6 +503,8 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     }
 
     /// Stages a face attribute for reconciliation at commit.
+    ///
+    /// Its own 2-cell is derived, not recorded; see [`Self::add_vertex`].
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
         let key = self.model.faces.insert(face);
         self.model.invalidate_derived_indexes();
@@ -685,16 +695,22 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         Ok(())
     }
     /// Removes a vertex attribute inside the transaction.
+    ///
+    /// Whatever the vertex claimed is unclassified with it: a label must not
+    /// outlive the entity it names.
     pub fn remove_vertex(&mut self, key: VertexKey) -> Option<VertexAttr<P::V>> {
         let removed = self.model.vertices.remove(key);
-        self.model.invalidate_derived_indexes();
+        self.model.disown_entity(EntityOwner::Vertex(key));
         removed
     }
 
     /// Removes an edge attribute inside the transaction.
+    ///
+    /// Whatever the edge claimed is unclassified with it, including any cell
+    /// interior to it such as a closure point.
     pub fn remove_edge(&mut self, key: EdgeKey) -> Option<EdgeAttr<P::E>> {
         let removed = self.model.edges.remove(key);
-        self.model.invalidate_derived_indexes();
+        self.model.disown_entity(EntityOwner::Edge(key));
         removed
     }
 
@@ -706,9 +722,12 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     }
 
     /// Removes a face attribute inside the transaction.
+    ///
+    /// Whatever the face claimed is unclassified with it, including any cell
+    /// interior to it such as a seam or a bridge.
     pub fn remove_face(&mut self, key: FaceKey) -> Option<FaceAttr<P::F>> {
         let removed = self.model.faces.remove(key);
-        self.model.invalidate_derived_indexes();
+        self.model.disown_entity(EntityOwner::Face(key));
         removed
     }
 
@@ -720,9 +739,12 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     }
 
     /// Removes a solid attribute inside the transaction.
+    ///
+    /// Whatever the solid claimed is unclassified with it, including buried
+    /// faces, edges and corners interior to it.
     pub fn remove_solid(&mut self, key: SolidKey) -> Option<SolidAttr<P::S>> {
         let removed = self.model.solids.remove(key);
-        self.model.invalidate_derived_indexes();
+        self.model.disown_entity(EntityOwner::Solid(key));
         removed
     }
 
@@ -939,14 +961,20 @@ where
     Q: EditPolicy<P>,
 {
     validate_gmap(g.topology()).map_err(ModelEditError::InvalidTopology)?;
-    g.validate_subdivision()
-        .map_err(ModelEditError::InvalidSubdivision)?;
     reroot_shells_at_darts(g);
     validate_required_domain_attributes(g)?;
     validate_edit_events(g, snapshot, events)?;
     let lineage = TransactionLineage::new(g, snapshot, events);
     reconcile_transaction_attributes(g, snapshot, events, &lineage)?;
     canonicalize_vertex_darts(g);
+    // The classification is checked *after* reconciliation, not before it.
+    // A builder that lays down one entity per face corner and lets commit merge
+    // the coincident ones is holding several keys on one cell on purpose, and
+    // that is exactly what an earlier check would reject. Only once
+    // reconciliation has settled which keys survived does a second owner for
+    // one orbit mean a contradiction rather than a pending merge.
+    g.validate_subdivision()
+        .map_err(ModelEditError::InvalidSubdivision)?;
     g.invalidate_derived_indexes();
     let policy_events = resolve_policy_events(g, snapshot, events, &lineage);
     apply_policy_events(g, snapshot, &policy_events, policy)?;

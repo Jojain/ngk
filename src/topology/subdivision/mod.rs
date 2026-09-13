@@ -29,6 +29,7 @@ pub use boundary::{
     BoundaryCycle, BoundaryError, BoundaryShell, LogicalEdgeUse, boundary_cycles, boundary_shells,
     boundary_vertices,
 };
+pub(crate) use ownership::OwnerRemap;
 pub use ownership::{EntityOwner, OrbitOwnership, OwnershipIndex, Subdivision, SubdivisionError};
 pub use region::{LogicalRegion, RegionError, recover_all_regions, recover_region};
 pub use walk::turn;

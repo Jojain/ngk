@@ -12,7 +12,7 @@ use nalgebra::Vector3;
 use super::brep::BrepIndex;
 use super::hints::VizHints;
 use super::scene::{VizAlphaLink, VizDart, VizScene};
-use crate::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
+use crate::geometry::{Curve, LINEAR_TOLERANCE, Point3, PointCoincidence};
 use crate::model::{Cell0, Cell1, Model};
 use crate::tessellate::{TessellateOpts, tessellate_curve};
 use crate::topology::gmap::{Dart, Dim};
@@ -69,11 +69,27 @@ fn build_dart<P: Payload>(
     let edge_key = *index.edge_key_by_dart.get(&(d.id() as u32))?;
     let edge_id = *index.edge_id_by_key.get(&edge_key)?;
 
-    let v0 = g.attribute::<Cell0>(d).map(|v| v.point)?;
-    let other = g.alpha(Dim::Zero, d);
-    let v1 = g.attribute::<Cell0>(other).map(|v| v.point)?;
-
     let curve = &edge_attr.curve;
+    let other = g.alpha(Dim::Zero, d);
+    let ends = g
+        .attribute::<Cell0>(d)
+        .map(|v| v.point)
+        .zip(g.attribute::<Cell0>(other).map(|v| v.point));
+
+    let Some((v0, v1)) = ends else {
+        // A whole circle with nothing marked on it has no logical vertex to
+        // read a start from, so the curve's own domain says where the dart
+        // begins. The two darts still split the period the same way a marked
+        // closed edge's do.
+        let domain = curve.domain();
+        let (t0, t1) = if d == edge_attr.dart {
+            (domain.start, domain.end)
+        } else {
+            (domain.end, domain.start)
+        };
+        return sampled_arrow(curve, edge_id, t0, t1, opts);
+    };
+
     let interval = curve.interval_between(v0, v1);
     let (t0, t1) = if v0.coincides(v1, LINEAR_TOLERANCE) {
         // A closed edge starts and ends at the same vertex: the two darts split
@@ -99,10 +115,24 @@ fn build_dart<P: Payload>(
         return chord_arrow(edge_id, v0, v1);
     }
 
+    sampled_arrow(curve, edge_id, t0, t1, opts).or_else(|| chord_arrow(edge_id, v0, v1))
+}
+
+/// Builds a dart arrow by sampling `curve` over the first part of `t0..t1`.
+///
+/// Returns `None` when the span is too short to sample, which leaves a caller
+/// holding endpoints free to fall back to a straight chord.
+fn sampled_arrow(
+    curve: &Curve,
+    edge_id: u32,
+    t0: f64,
+    t1: f64,
+    opts: TessellateOpts,
+) -> Option<DartArrow> {
     let t_tip = t0 + (t1 - t0) * DART_SHAFT_FRACTION;
     let polyline = tessellate_curve(curve, t0, t_tip, opts.curve);
     if polyline.points.len() < 2 {
-        return chord_arrow(edge_id, v0, v1);
+        return None;
     }
 
     let shaft: Vec<[f64; 3]> = polyline.points.iter().map(|p| [p.x, p.y, p.z]).collect();

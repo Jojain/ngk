@@ -8,11 +8,27 @@
 
 use ngk::builders::edges::add_edge;
 use ngk::geometry::{Curve, Point3};
-use ngk::model::Model;
+use ngk::model::{Cell0, Model};
 use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 use ngk::topology::subdivision::EntityOwner;
 use ngk::topology::{ModelEditError, StandardPayload};
+
+/// Labels the edge's start 0-cell as interior to the edge, the way a closure
+/// point is.
+///
+/// The logical vertex there stops existing in the same breath. A cell cannot be
+/// both a vertex in its own right and inside an edge, and the classification
+/// says so: leaving the vertex behind is a contradiction, not a label.
+fn absorb_start_vertex(
+    edit: &mut ngk::topology::ModelEdit<'_, StandardPayload>,
+    edge: EdgeKey,
+    anchor: Dart,
+) {
+    let vertex = edit.cell_key_unchecked::<Cell0>(anchor);
+    edit.remove_vertex(vertex);
+    edit.own_cell(Dim::Zero, anchor, EntityOwner::Edge(edge));
+}
 
 /// A model holding one edge between two points, and that edge's key.
 fn one_edge() -> (Model<StandardPayload>, EdgeKey) {
@@ -64,7 +80,7 @@ fn a_commit_carries_the_subdivision_with_the_map() {
 
     model
         .transaction(|edit| {
-            edit.own_cell(Dim::Zero, anchor, EntityOwner::Edge(edge));
+            absorb_start_vertex(edit, edge, anchor);
             Ok::<_, ModelEditError>(())
         })
         .expect("labelling the closure point commits");
@@ -83,7 +99,7 @@ fn a_rollback_restores_the_subdivision_as_well_as_the_map() {
     let anchor = model.edge_attr_unchecked(edge).dart;
     model
         .transaction(|edit| {
-            edit.own_cell(Dim::Zero, anchor, EntityOwner::Edge(edge));
+            absorb_start_vertex(edit, edge, anchor);
             Ok::<_, ModelEditError>(())
         })
         .expect("the first label commits");
@@ -188,7 +204,7 @@ fn a_warm_index_and_a_cold_one_answer_the_same_after_an_edit() {
 
     model
         .transaction(|edit| {
-            edit.own_cell(Dim::Zero, anchor, EntityOwner::Edge(edge));
+            absorb_start_vertex(edit, edge, anchor);
             Ok::<_, ModelEditError>(())
         })
         .expect("labelling commits");
@@ -209,7 +225,7 @@ fn a_rolled_back_model_still_serializes_to_the_state_it_kept() {
     let anchor = model.edge_attr_unchecked(edge).dart;
     model
         .transaction(|edit| {
-            edit.own_cell(Dim::Zero, anchor, EntityOwner::Edge(edge));
+            absorb_start_vertex(edit, edge, anchor);
             Ok::<_, ModelEditError>(())
         })
         .expect("labelling commits");
@@ -234,7 +250,7 @@ fn a_deserialized_model_rebuilds_its_derived_lookups() {
     let anchor = model.edge_attr_unchecked(edge).dart;
     model
         .transaction(|edit| {
-            edit.own_cell(Dim::Zero, anchor, EntityOwner::Edge(edge));
+            absorb_start_vertex(edit, edge, anchor);
             Ok::<_, ModelEditError>(())
         })
         .expect("labelling commits");
