@@ -1,0 +1,3 @@
+from .. import Face
+
+def rectangle(x_size: float, y_size: float) -> Face: ...

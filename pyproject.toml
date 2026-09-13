@@ -4,7 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "ngk"
-version = "0.1.0"
+authors = [{name = "Romain Ferru", email = "romain.ferru@gmail.com"}]
+version = "0.0.1"
 description = "Python bindings for the NGK geometry kernel"
 requires-python = ">=3.9"
 license = { text = "MIT" }

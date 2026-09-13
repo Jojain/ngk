@@ -1,5 +1,11 @@
 import json
 
+from .geometry import *
+from .modeling.edges import line
+from .modeling.faces import rectangle as rectangle_face
+from .modeling.profiles import rectangle as rectangle_profile
+from .modeling.solids import block, cut, fuse, intersect
+from .exchange.step import StepImport, read_step, step_from_string, step_to_string, write_step
 from ._ngk import *
 from ._ngk import _to_tcv_json
 

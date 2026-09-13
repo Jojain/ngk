@@ -1,0 +1,3 @@
+from .. import Edge
+
+def line(start: tuple[float, float, float], end: tuple[float, float, float]) -> Edge: ...

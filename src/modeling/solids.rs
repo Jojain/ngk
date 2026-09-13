@@ -14,7 +14,6 @@ use crate::{
     },
 };
 
-#[cfg(feature = "python")]
 use crate::topology::solid::Solid;
 
 pub use crate::modeling::errors::PrimitiveError;
@@ -182,7 +181,6 @@ fn combine_shapes<P: Payload>(
 }
 
 /// Copies two borrowed solid views for language bindings and evaluates a Boolean.
-#[cfg(feature = "python")]
 pub(crate) fn combine_views<P: Payload>(
     first: Solid<'_, P>,
     second: Solid<'_, P>,

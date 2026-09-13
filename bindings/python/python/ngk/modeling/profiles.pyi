@@ -1,0 +1,3 @@
+from .. import Profile
+
+def rectangle(x_size: float, y_size: float) -> Profile: ...
