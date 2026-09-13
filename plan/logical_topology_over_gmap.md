@@ -1,6 +1,6 @@
 # Experiment: logical topology over a pure GMap subdivision
 
-Status: **In progress** — M0, M1 and M2 complete.
+Status: **In progress** — M0, M1 and M2 complete; M3 realization cache foundation implemented, logical traversal migration outstanding.
 
 Implementation guide: section 1 fixes the architecture, section 2 defines the
 milestone gates, and section 5 supplies the implementation sequence, concrete
@@ -802,6 +802,51 @@ edge occurrences with different pcurves, marked and vertex-free circles,
 anchor relocation, cold/warm serialization equivalence, cut changes preserving
 3D points and normals. Check cyclic order modulo starting point when a scaffold
 change relocates an anchor; do not require arbitrary list index stability.
+
+#### M3 progress — revisioned geometry realization
+
+Work resumed from revision `af79a86` (`milestone 0 1 and 2`), where the prior
+milestones are already committed. The only pre-existing untracked path was
+`.claude/`; it was left untouched. This continuation makes no commit.
+
+`src/model/realization.rs` adds `Model::realize_edge` and `realize_face`, keyed
+by model revision, logical key, orientation and consumer purpose. Edge results
+are shared immutable `TrimmedCurve` values; face results own the support and
+the oriented `UnwrappedFaceDomain`. They reuse the existing span and domain
+algorithms, retaining chosen native edge intervals and persistent pcurves.
+Face-normal winding queries now use the cached face domain.
+
+The caches are outside GMap and omitted from serialization. Clone and load
+start cold. Every mutation discards cached geometry, including edits inside a
+transaction before revision advances. Commit clears staged results; rollback
+restores a cold snapshot. Callers may retain an `Arc` through later edits
+without its geometry changing. Computation runs outside the publication lock,
+with local traversal state; concurrent readers share the published result.
+The existing dart-to-key index initialization now uses `OnceLock::get_or_init`
+to remove its check-then-set race under concurrent cold reads.
+
+Nine tests in `tests/topology/realization.rs` cover cold/warm identity, reversed
+face domains and native arc sections, purpose isolation, repeated staged
+geometry edits, operation-error and commit-validation rollback, immutable
+support snapshots, missing-key errors, serialization/clone equivalence and
+concurrent cold reads. The first six were run before implementation and failed
+to compile because the realization API did not exist; they pass after it.
+
+This is **not the M3 gate**. EdgeUseKey storage, pcurve occurrence migration,
+frontier-based public traversal, aggregate views, and cut/refinement invariance
+remain outstanding. Realizations currently use the existing domain placement
+rules, with no configurable tolerance or cut; support-native default cuts and
+alternative-cut checks remain part of that work. No M4 migration or test
+exclusion was introduced.
+
+Validation: `cargo test --all-targets --all-features` exits 0 with 725 passing,
+zero failing and zero ignored tests (716 inherited plus nine new tests).
+`cargo clippy --all-targets --all-features` exits 0 with the same 25 warnings;
+formatting and diff checks pass. The benchmark harness still reports the two
+recorded baseline failures: `sphere_union_sphere` rejects its budget and
+`orthogonal_cylinders` rejects span-0 sewing endpoints (9.86 s in this run).
+Python was not rebuilt or rerun for this core checkpoint, and no frontend
+files changed. The Windows-blocked wasm/frontend builds remain skipped.
 
 ### M4 implementation — construction and arbitrary boundary ingestion
 

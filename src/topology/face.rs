@@ -9,10 +9,9 @@ use crate::geometry::Surface;
 use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
 use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
-use crate::model::{Cell2, MergeTopology, Model, TopologyMerge};
+use crate::model::{Cell2, MergeTopology, Model, RealizationPurpose, TopologyMerge};
 use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind};
 use crate::topology::shape_keys::FaceKey;
-use crate::topology::unwrapped_face_domain::UnwrappedFaceDomain;
 use nalgebra::UnitVector3;
 use std::ops::Deref;
 
@@ -427,8 +426,15 @@ impl<'g, P: Payload> Face<'g, P> {
     /// rectangle a stored seam used to spell out, computed rather than
     /// recorded.
     fn boundary_signed_area(&self) -> Option<f64> {
-        let domain = UnwrappedFaceDomain::of_face(self).ok()?;
-        let points = domain.loops().first()?.polyline(BOUNDARY_WINDING_SAMPLES);
+        let realization = self
+            .model
+            .realize_face(self.key, self.sense, RealizationPurpose::Geometry)
+            .ok()?;
+        let points = realization
+            .domain()
+            .loops()
+            .first()?
+            .polyline(BOUNDARY_WINDING_SAMPLES);
         (!points.is_empty()).then(|| signed_area(&points))
     }
 

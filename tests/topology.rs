@@ -19,6 +19,8 @@ mod model_state;
 mod planar;
 #[path = "topology/profile.rs"]
 mod profile;
+#[path = "topology/realization.rs"]
+mod realization;
 #[path = "topology/serialization.rs"]
 mod serialization;
 #[path = "topology/sheet.rs"]

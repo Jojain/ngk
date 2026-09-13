@@ -33,6 +33,10 @@ use crate::topology::solid::Solid;
 use crate::topology::subdivision::{EntityOwner, OwnershipIndex, Subdivision, SubdivisionError};
 use crate::topology::vertex::Vertex;
 
+mod realization;
+use realization::RealizationCache;
+pub use realization::{FaceRealization, RealizationError, RealizationPurpose};
+
 /// Type marker for vertex attributes.
 pub struct Cell0;
 /// Type marker for edge attributes.
@@ -290,6 +294,8 @@ pub struct Model<P: Payload = StandardPayload> {
     #[serde(skip)]
     ownership: OnceLock<OwnershipIndex>,
     #[serde(skip)]
+    realizations: RealizationCache,
+    #[serde(skip)]
     transaction: Option<Box<TransactionState<P>>>,
 }
 
@@ -322,6 +328,7 @@ impl<P: Payload> Clone for Model<P> {
             revision: self.revision,
             derived_indexes: OnceLock::new(),
             ownership: OnceLock::new(),
+            realizations: RealizationCache::default(),
             transaction: None,
         }
     }
@@ -348,6 +355,7 @@ impl<P: Payload> Model<P> {
             revision: 0,
             derived_indexes: OnceLock::new(),
             ownership: OnceLock::new(),
+            realizations: RealizationCache::default(),
             transaction: None,
         }
     }
@@ -362,8 +370,9 @@ impl<P: Payload> Model<P> {
 
     /// Returns how many times this model has been committed to.
     ///
-    /// A derived result computed against one revision stays valid until the
-    /// next, which is what a cache outside the model keys itself on.
+    /// External caches can use this to distinguish committed states. Staged
+    /// edits retain the revision until commit, so model-owned caches also
+    /// invalidate on every mutation.
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -469,6 +478,7 @@ impl<P: Payload> Model<P> {
         match commit_model_transaction(self, &transaction.snapshot, &transaction.events, policy) {
             Ok(()) => {
                 self.revision = transaction.snapshot.revision + 1;
+                self.realizations = RealizationCache::default();
                 Ok(())
             }
             Err(error) => {
@@ -496,6 +506,7 @@ impl<P: Payload> Model<P> {
     pub(crate) fn invalidate_derived_indexes(&mut self) {
         self.derived_indexes.take();
         self.ownership.take();
+        self.realizations = RealizationCache::default();
     }
 
     /// Forces the lazy indexes to be built, notably as the last commit check.
@@ -510,15 +521,8 @@ impl<P: Payload> Model<P> {
 
     /// Returns the cached indexes, rebuilding them from authoritative state if needed.
     fn derived_indexes(&self) -> &DerivedCellIndexes {
-        if self.derived_indexes.get().is_none() {
-            let indexes = self.build_derived_indexes();
-            self.derived_indexes
-                .set(indexes)
-                .expect("derived indexes are initialized only once");
-        }
         self.derived_indexes
-            .get()
-            .expect("derived indexes must be initialized")
+            .get_or_init(|| self.build_derived_indexes())
     }
 
     /// Reconstructs every dart-to-attribute index from current cells and attributes.
