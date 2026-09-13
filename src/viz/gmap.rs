@@ -1,4 +1,4 @@
-//! GMap debugging overlay: dart arrows + alpha-involution links.
+//! Gmap debugging overlay: dart arrows + alpha-involution links.
 //!
 //! Every dart that has both endpoints on a stored 1-cell becomes one
 //! [`VizDart`]. The arrow's shaft follows the edge's [`Curve`] from the dart's
@@ -13,8 +13,9 @@ use super::brep::BrepIndex;
 use super::hints::VizHints;
 use super::scene::{VizAlphaLink, VizDart, VizScene};
 use crate::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
+use crate::model::{Cell0, Cell1, Model};
 use crate::tessellate::{TessellateOpts, tessellate_curve};
-use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 
 const DART_SHAFT_FRACTION: f64 = 0.4;
@@ -22,7 +23,7 @@ const DART_SHAFT_FRACTION: f64 = 0.4;
 /// Emit [`VizDart`] entries for every dart that has a recoverable shaft, plus
 /// one [`VizAlphaLink`] per non-trivial alpha pair.
 pub fn emit_gmap_overlay<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     hints: &VizHints,
     index: &BrepIndex,
     opts: TessellateOpts,
@@ -59,7 +60,7 @@ struct DartArrow {
 }
 
 fn build_dart<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     d: Dart,
     index: &BrepIndex,
     opts: TessellateOpts,
@@ -146,7 +147,7 @@ fn tip_tangent(shaft: &[[f64; 3]]) -> [f64; 3] {
 }
 
 fn emit_alpha_links<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     shafts: &HashMap<u32, Vec<[f64; 3]>>,
     scene: &mut VizScene,
 ) {
@@ -200,20 +201,20 @@ mod tests {
 
     use crate::builders::edges::add_edge;
     use crate::geometry::{Circle, Curve, Plane, Point3};
+    use crate::model::Model;
     use crate::topology::StandardPayload;
-    use crate::topology::gmap::GMap;
-    use crate::viz::{VizHints, scene_from_gmap};
+    use crate::viz::{VizHints, scene_from_model};
 
     #[test]
     fn dart_on_circle_edge_has_curved_shaft() {
-        let mut g = GMap::<StandardPayload>::new();
+        let mut g = Model::<StandardPayload>::new();
         let plane = Plane::new(Point3::origin(), Vector3::x(), Vector3::z());
         let curve = Curve::Circle(Circle::new(plane, 1.0));
         let start = curve.point_at(0.0);
         let end = curve.point_at(FRAC_PI_2);
         let _ = add_edge(&mut g, start, end, curve);
 
-        let scene = scene_from_gmap(&g, &VizHints::new());
+        let scene = scene_from_model(&g, &VizHints::new());
         assert_eq!(scene.darts.len(), 2);
         for d in &scene.darts {
             assert!(
@@ -240,12 +241,12 @@ mod tests {
 
     #[test]
     fn dart_shaft_is_not_offset_from_edge_start() {
-        let mut g = GMap::<StandardPayload>::new();
+        let mut g = Model::<StandardPayload>::new();
         let start = Point3::new(1.0, 2.0, 3.0);
         let end = Point3::new(4.0, 2.0, 3.0);
         let _ = add_edge(&mut g, start, end, Curve::line(start, end));
 
-        let scene = scene_from_gmap(&g, &VizHints::new());
+        let scene = scene_from_model(&g, &VizHints::new());
         assert_eq!(scene.darts.len(), 2);
         let starts: Vec<[f64; 3]> = scene.darts.iter().map(|d| d.shaft[0]).collect();
         assert!(starts.contains(&[start.x, start.y, start.z]));

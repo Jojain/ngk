@@ -5,18 +5,19 @@ use nalgebra::Vector3;
 
 use crate::builders::errors::ExtrudeError;
 use crate::geometry::{Curve, LINEAR_TOLERANCE, Plane, Point2, Point3, RuledSurface, Surface};
-use crate::topology::TopologyEdit;
+use crate::model::Model;
+use crate::topology::ModelEdit;
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, VertexAttr,
 };
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
-use crate::topology::gmap::{Dart, Dim, GMap};
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, ProfileKey, SheetKey, VertexKey};
 use crate::topology::vertex::Vertex;
 
-/// Adds an extruded profile to the given GMap.
+/// Adds an extruded profile to the given model.
 ///
 /// Returns the generated sheet key. Its stored dart belongs to the translated
 /// copy of the input edge.
@@ -25,7 +26,7 @@ use crate::topology::vertex::Vertex;
 ///
 /// Panics if `profile_key` does not identify a registered profile.
 pub fn add_extruded_profile<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     profile_key: ProfileKey,
     direction: Vector3<f64>,
 ) -> Result<SheetKey, ExtrudeError> {
@@ -67,7 +68,7 @@ pub fn add_extruded_profile<P: Payload>(
 }
 
 fn extrude_edge<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     edge_dart: Dart,
     direction: Vector3<f64>,
 ) -> Result<ExtrudedFace, ExtrudeError> {
@@ -89,7 +90,7 @@ fn extrude_edge<P: Payload>(
 }
 
 fn sew_extruded_faces<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     faces: &[ExtrudedFace],
     close_ring: bool,
 ) -> Result<(), ExtrudeError> {
@@ -172,7 +173,7 @@ fn extruded_edge_surface(
 }
 
 fn add_extruded_edge_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     corners: [Point3; 4],
     surface_data: ExtrudedSurface,
 ) -> Result<ExtrudedFace, ExtrudeError> {
@@ -222,7 +223,7 @@ fn add_extruded_edge_face<P: Payload>(
 }
 
 fn sew_adjacent_sweep_edges<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     survivor: Dart,
     removed: Dart,
 ) -> Result<(), ExtrudeError> {
@@ -255,7 +256,7 @@ struct Alpha2SweepMerge {
 }
 
 fn alpha2_sweep_merge<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     survivor: Dart,
     removed: Dart,
 ) -> Result<Alpha2SweepMerge, ExtrudeError> {
@@ -282,7 +283,7 @@ fn alpha2_sweep_merge<P: Payload>(
 }
 
 fn sew<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     dim: Dim,
     first: Dart,
     second: Dart,
@@ -332,15 +333,15 @@ mod tests {
     use crate::builders::faces::add_polygon;
     use crate::builders::sheets::add_extruded_profile;
     use crate::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
+    use crate::model::{Cell0, Model};
     use crate::modeling::sweep::extrude_profile;
     use crate::tessellate::{TessellateOpts, face::tessellate_face_key};
     use crate::topology::StandardPayload;
     use crate::topology::edge::Edge;
-    use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
-
+    use crate::topology::gmap::{Dart, Dim};
     #[test]
     fn extrude_closed_profile_builds_one_lateral_face_per_edge() {
-        let mut source = GMap::<StandardPayload>::new();
+        let mut source = Model::<StandardPayload>::new();
         let profile_key = add_polygon(
             &mut source,
             &[
@@ -356,7 +357,7 @@ mod tests {
             Vector3::new(0.0, 0.0, 2.0),
         )
         .unwrap();
-        let (g, sheet_key) = shape.into_map();
+        let (g, sheet_key) = shape.into_model();
 
         assert!(g.sheet(sheet_key).is_some());
         assert_eq!(g.iter_faces().count(), 4);
@@ -374,7 +375,7 @@ mod tests {
 
     #[test]
     fn add_extruded_profile_key_uses_translated_edge_as_default_dart() {
-        let mut source = GMap::<StandardPayload>::new();
+        let mut source = Model::<StandardPayload>::new();
         let profile_key = add_polygon(
             &mut source,
             &[
@@ -412,7 +413,7 @@ mod tests {
 
     #[test]
     fn extrude_closed_square_preserves_gmap_and_corner_connectivity() {
-        let mut source = GMap::<StandardPayload>::new();
+        let mut source = Model::<StandardPayload>::new();
         let profile_key = add_polygon(
             &mut source,
             &[
@@ -430,7 +431,7 @@ mod tests {
         .unwrap();
         let sheet = shape.sheet();
         assert_eq!(sheet.darts().count(), 32);
-        let g = shape.map();
+        let g = shape.model();
 
         assert_valid_gmap(g);
         assert_orientable_gmap(g);
@@ -453,7 +454,7 @@ mod tests {
         }
     }
 
-    fn assert_square_sweep_alpha2_seams_are_not_twisted(g: &GMap<StandardPayload>) {
+    fn assert_square_sweep_alpha2_seams_are_not_twisted(g: &Model<StandardPayload>) {
         let expected_pairs = [
             (10, 23),
             (11, 22),
@@ -481,7 +482,7 @@ mod tests {
         }
     }
 
-    fn assert_orientable_gmap(g: &GMap<StandardPayload>) {
+    fn assert_orientable_gmap(g: &Model<StandardPayload>) {
         let mut colors = vec![None; g.dart_count()];
 
         for start in g.darts() {
@@ -517,7 +518,7 @@ mod tests {
         }
     }
 
-    fn assert_valid_gmap(g: &GMap<StandardPayload>) {
+    fn assert_valid_gmap(g: &Model<StandardPayload>) {
         for dart in g.darts() {
             for i in 0..g.dimension() {
                 let dim = Dim::from_index(i);
@@ -548,7 +549,7 @@ mod tests {
         }
     }
 
-    fn assert_alpha1_links_shared_corners(g: &GMap<StandardPayload>) {
+    fn assert_alpha1_links_shared_corners(g: &Model<StandardPayload>) {
         for id in 0..g.dart_count() {
             let dart = Dart::new(id);
             let linked = g.alpha(Dim::One, dart);
@@ -564,7 +565,7 @@ mod tests {
         }
     }
 
-    fn assert_alpha2_links_matching_edges(g: &GMap<StandardPayload>) {
+    fn assert_alpha2_links_matching_edges(g: &Model<StandardPayload>) {
         for id in 0..g.dart_count() {
             let dart = Dart::new(id);
             let linked = g.alpha(Dim::Two, dart);
@@ -580,14 +581,14 @@ mod tests {
         }
     }
 
-    fn edge_points(g: &GMap<StandardPayload>, dart: Dart) -> (Point3, Point3) {
+    fn edge_points(g: &Model<StandardPayload>, dart: Dart) -> (Point3, Point3) {
         (
             vertex_point(g, dart),
             vertex_point(g, g.alpha(Dim::Zero, dart)),
         )
     }
 
-    fn vertex_point(g: &GMap<StandardPayload>, dart: Dart) -> Point3 {
+    fn vertex_point(g: &Model<StandardPayload>, dart: Dart) -> Point3 {
         g.attribute_unchecked::<Cell0>(dart).point
     }
 

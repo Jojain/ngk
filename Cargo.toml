@@ -41,6 +41,7 @@ debug = 2
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+slotmap = "1.1.1"
 
 [[bench]]
 name = "booleans"

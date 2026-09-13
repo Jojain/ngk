@@ -8,14 +8,14 @@ use ngk::builders::faces::add_face;
 use ngk::builders::profiles::{add_polyline, append_edge};
 use ngk::builders::solids::add_extruded_face;
 use ngk::geometry::{Curve, NurbsCurve, Point3, Surface};
+use ngk::model::Model;
 use ngk::modeling::solids::block;
 use ngk::topology::StandardPayload;
-use ngk::topology::gmap::GMap;
 use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
 
 #[test]
 fn failed_chamfer_builder_preserves_the_source_profile() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile = add_polyline(
         &mut g,
         &[
@@ -46,7 +46,7 @@ fn failed_chamfer_builder_preserves_the_source_profile() {
 
 #[test]
 fn profile_chamfer_mutates_in_place_without_returning_a_topology_handle() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile = add_polyline(
         &mut g,
         &[
@@ -94,14 +94,14 @@ fn solid_edge_chamfer_replaces_a_block_edge_with_a_planar_face() {
         .expect("block should have a vertical edge")
         .key();
 
-    let result: Result<(), ChamferError> = chamfer(shape.map_mut(), edge, 0.25);
+    let result: Result<(), ChamferError> = chamfer(shape.model_mut(), edge, 0.25);
 
     result.expect("straight block edge should chamfer");
     assert_eq!(shape.solid().faces().len(), 7);
     assert_eq!(shape.solid().edges().len(), 15);
     assert_eq!(shape.solid().vertices().len(), 10);
-    validate_solid_manifold(shape.map(), solid).expect("chamfered block should remain manifold");
-    validate_solid_orientation(shape.map(), solid)
+    validate_solid_manifold(shape.model(), solid).expect("chamfered block should remain manifold");
+    validate_solid_orientation(shape.model(), solid)
         .expect("chamfered block faces should remain outward");
 }
 
@@ -120,20 +120,20 @@ fn solid_vertex_chamfer_replaces_a_block_corner_with_a_planar_face() {
         .expect("block should have an origin vertex")
         .key();
 
-    let result: Result<(), ChamferError> = chamfer(shape.map_mut(), vertex, 0.25);
+    let result: Result<(), ChamferError> = chamfer(shape.model_mut(), vertex, 0.25);
 
     result.expect("trihedral block vertex should chamfer");
     assert_eq!(shape.solid().faces().len(), 7);
     assert_eq!(shape.solid().edges().len(), 15);
     assert_eq!(shape.solid().vertices().len(), 10);
-    validate_solid_manifold(shape.map(), solid).expect("chamfered block should remain manifold");
-    validate_solid_orientation(shape.map(), solid)
+    validate_solid_manifold(shape.model(), solid).expect("chamfered block should remain manifold");
+    validate_solid_orientation(shape.model(), solid)
         .expect("chamfered block faces should remain outward");
 }
 
 #[test]
 fn profile_target_chamfers_every_corner_in_place() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile =
         ngk::builders::profiles::add_rectangle(&mut g, ngk::geometry::Plane::xy(), 2.0, 1.0)
             .expect("rectangle should build");
@@ -172,13 +172,13 @@ fn several_disjoint_solid_edges_can_be_chamfered_in_one_transaction() {
         .collect::<Vec<_>>();
     assert_eq!(edges.len(), 2);
 
-    chamfer(shape.map_mut(), edges, 0.2).expect("disjoint block edges should chamfer");
+    chamfer(shape.model_mut(), edges, 0.2).expect("disjoint block edges should chamfer");
 
     assert_eq!(shape.solid().faces().len(), 8);
     assert_eq!(shape.solid().edges().len(), 18);
     assert_eq!(shape.solid().vertices().len(), 12);
-    validate_solid_manifold(shape.map(), solid).expect("multi-chamfer should remain manifold");
-    validate_solid_orientation(shape.map(), solid)
+    validate_solid_manifold(shape.model(), solid).expect("multi-chamfer should remain manifold");
+    validate_solid_orientation(shape.model(), solid)
         .expect("multi-chamfer faces should remain outward");
 }
 
@@ -202,21 +202,21 @@ fn solid_face_profile_chamfer_replaces_the_complete_rim_with_a_bevel_ring() {
         .expect("face should have an outer loop")
         .key();
 
-    chamfer(shape.map_mut(), top_profile, 0.25)
+    chamfer(shape.model_mut(), top_profile, 0.25)
         .expect("complete top profile should chamfer as one solid operation");
 
     assert_eq!(shape.solid().faces().len(), 10);
     assert_eq!(shape.solid().edges().len(), 20);
     assert_eq!(shape.solid().vertices().len(), 12);
-    validate_solid_manifold(shape.map(), solid)
+    validate_solid_manifold(shape.model(), solid)
         .expect("profile-chamfered block should remain manifold");
-    validate_solid_orientation(shape.map(), solid)
+    validate_solid_orientation(shape.model(), solid)
         .expect("profile-chamfered block faces should remain outward");
 }
 
 #[test]
 fn solid_edge_chamfer_supports_an_extruded_nurbs_profile_edge() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile = add_polyline(
         &mut g,
         &[

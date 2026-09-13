@@ -200,7 +200,7 @@ pub enum TopologyError {
 
     /// An edge used by more than two faces.
     ///
-    /// NGK is a 3-GMap and has no way to hold a non-manifold edge, so the
+    /// NGK is a 3-gmap and has no way to hold a non-manifold edge, so the
     /// solid carrying it is refused by name rather than sewn into something
     /// that is not the shape the file described.
     #[error("{brep}: edge {edge} is used by more than two faces")]

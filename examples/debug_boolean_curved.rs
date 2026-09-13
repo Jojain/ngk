@@ -6,21 +6,21 @@ use ngk::builders::boolean::{BooleanOperand, BooleanOptions, prepare_boolean_wit
 use ngk::builders::edges::add_edge;
 use ngk::builders::solids::add_extruded_face;
 use ngk::geometry::{Curve, NurbsCurve, Plane, Point3};
+use ngk::model::Model;
 use ngk::modeling::{faces, sweep::extrude_profile};
-use ngk::topology::gmap::GMap;
 use ngk::topology::shape::{EdgeTag, Shape};
 use ngk::topology::shape_keys::{SheetKey, SolidKey};
 use ngk::viz::debug_viewer::{DebugViewerOptions, show_gmap_with_options};
 
-fn block_at(origin: Point3, size: f64) -> Result<(GMap, SolidKey), Box<dyn Error>> {
+fn block_at(origin: Point3, size: f64) -> Result<(Model, SolidKey), Box<dyn Error>> {
     let plane = Plane::from_xy(origin, Vector3::x(), Vector3::y());
     let base = faces::rectangle(plane, size, size)?;
-    let (mut map, face) = base.into_map();
+    let (mut map, face) = base.into_model();
     let solid = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, size))?;
     Ok((map, solid))
 }
 
-fn curved_sheet() -> Result<(GMap, SheetKey), Box<dyn Error>> {
+fn curved_sheet() -> Result<(Model, SheetKey), Box<dyn Error>> {
     let points = [
         Point3::new(-0.5, -0.5, 1.0),
         Point3::new(0.25, -0.5, 0.55),
@@ -29,13 +29,13 @@ fn curved_sheet() -> Result<(GMap, SheetKey), Box<dyn Error>> {
         Point3::new(2.5, -0.5, 1.0),
     ];
     let curve = Curve::Nurbs(NurbsCurve::interpolate(&points)?);
-    let mut map = GMap::new();
+    let mut map = Model::new();
     let edge = add_edge(&mut map, points[0], points[points.len() - 1], curve)?;
     let profile = Shape::<EdgeTag>::new(map, edge).into_profile();
-    Ok(extrude_profile(profile.profile(), Vector3::new(0.0, 3.0, 0.0))?.into_map())
+    Ok(extrude_profile(profile.profile(), Vector3::new(0.0, 3.0, 0.0))?.into_model())
 }
 
-fn show_named(name: &str, map: &GMap) -> Result<(), Box<dyn Error>> {
+fn show_named(name: &str, map: &Model) -> Result<(), Box<dyn Error>> {
     if env::var_os("NGK_SKIP_DEBUG_VIEWER").is_some() {
         return Ok(());
     }

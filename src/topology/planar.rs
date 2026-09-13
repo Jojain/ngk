@@ -8,9 +8,10 @@ use crate::topology::face::Face;
 
 use super::closed::Closed;
 use super::edge::Edge;
-use super::gmap::{Dart, MergeTopology, TopologyMerge};
+use super::gmap::Dart;
 use super::payload::Payload;
 use super::profile::Profile;
+use crate::model::{MergeTopology, TopologyMerge};
 
 /// Marker for topology views that can carry a verified support plane.
 pub trait PlanarGeometry {}

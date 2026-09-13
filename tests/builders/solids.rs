@@ -2,14 +2,14 @@ use nalgebra::Vector3;
 use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::solids::{add_extruded_face, translate_face};
 use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, Surface};
+use ngk::model::Model;
 use ngk::modeling::faces;
-use ngk::topology::gmap::GMap;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::validation::{validate_gmap, validate_solid_orientation};
 
 #[test]
 fn translate_face_copies_face_into_translated_map() {
-    let mut source = GMap::<StandardPayload>::new();
+    let mut source = Model::<StandardPayload>::new();
     let profile_key = add_polygon(
         &mut source,
         &[
@@ -24,11 +24,11 @@ fn translate_face_copies_face_into_translated_map() {
 
     let translated = translate_face(&face, Vector3::new(0.0, 0.0, 2.0)).unwrap();
 
-    assert_eq!(translated.map().dart_count(), 8);
-    assert_eq!(translated.map().iter_faces().count(), 1);
+    assert_eq!(translated.model().dart_count(), 8);
+    assert_eq!(translated.model().iter_faces().count(), 1);
     assert!(
         translated
-            .map()
+            .model()
             .iter_vertices()
             .all(|(_, attr)| (attr.point.z - 2.0).abs() <= LINEAR_TOLERANCE)
     );
@@ -62,12 +62,12 @@ fn extruded_face_with_a_hole_forms_one_complete_closed_shell() {
     ];
     let profile =
         faces::polygon_with_holes(Plane::xy(), &outer, &[&hole]).expect("holed face should build");
-    let (mut g, face) = profile.into_map();
+    let (mut g, face) = profile.into_model();
 
     let solid_key = add_extruded_face(&mut g, face, Vector3::new(0.0, 0.0, 3.0))
         .expect("holed face should extrude");
 
-    validate_gmap(&g).expect("extrusion should produce a valid map");
+    validate_gmap(g.topology()).expect("extrusion should produce a valid map");
     validate_solid_orientation(&g, solid_key)
         .expect("extrusion should produce an outward-oriented solid");
     let solid = g.solid_unchecked(solid_key);

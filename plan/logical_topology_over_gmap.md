@@ -1,6 +1,6 @@
 # Experiment: logical topology over a pure GMap subdivision
 
-Status: **Proposed**.
+Status: **In progress** — M0, M1 and M2 complete.
 
 Implementation guide: section 1 fixes the architecture, section 2 defines the
 milestone gates, and section 5 supplies the implementation sequence, concrete
@@ -363,9 +363,147 @@ not the completion labels in older plans.
    at M6/M8. Do not introduce unrelated optimization changes.
 6. Add the ledger below and populate it with actual test names and evidence.
 
+#### Recorded baseline
+
+Revision `6878266` on branch `topology`. The working tree at the time of
+recording held two staged files, both in `plan/`: a modified `README.md` and
+this new plan. No source, test or binding file was modified, and nothing was
+restored or stashed to obtain that state.
+
+Machine: AMD Ryzen 7 9700X (8C/16T), 31.2 GB RAM, Windows 11 Pro 10.0.26200.
+Toolchain: cargo 1.95.0, rustc 1.95.0. Profile: `dev` (`opt-level = 0`,
+`debug = 2`) for every timing below, because `--all-targets` builds the bench
+target in test mode.
+
+Commands, exactly as run from the repository root:
+
+```powershell
+cargo test --all-targets --all-features
+cargo clippy --all-targets --all-features
+powershell -NoProfile -ExecutionPolicy Bypass -File bindings\python\run.ps1
+.venv\Scripts\python.exe -m pytest bindings\python\tests -q
+cd visualization; npm run typecheck
+```
+
+`cargo test --all-targets --all-features` exits 0. 682 Rust tests pass, none
+fail and none are ignored — a repository-wide search for `#[ignore]` returns
+nothing, so there is no pre-existing exclusion to distinguish from an
+experiment-created one.
+
+| Target | Passing |
+|---|---|
+| `src/lib.rs` unit tests | 25 |
+| `tests/builders.rs` | 145 |
+| `tests/exchange.rs` | 188 |
+| `tests/geometry.rs` | 188 |
+| `tests/healing.rs` | 31 |
+| `tests/modeling.rs` | 30 |
+| `tests/scripts.rs` | 1 |
+| `tests/tcv.rs` | 4 |
+| `tests/tessellate.rs` | 2 |
+| `tests/topology.rs` | 63 |
+| `tests/viz.rs` | 5 |
+
+`cargo clippy --all-targets --all-features` exits 0 with 26 distinct warnings
+(22 on the lib, 1 on the `ngk` binary, 3 on the `builders` test target). Two of
+them name state this experiment removes: an unread `map` field on `Model<P>`,
+and two unused `Shape` inner accessors.
+
+`npm run typecheck` in `visualization/` passes. `npm run build` and
+`npm run wasm:build` were not run: the wasm build is blocked by Windows
+permissions on this machine and is the user's to run. Compilation under the
+`wasm` and `python` features is still covered, because `--all-features` builds
+both.
+
+The Python extension rebuilds and `bindings/python/examples/explore_block.py`
+runs. `pytest` itself was absent from `.venv` and was installed with
+`uv pip install pytest` to take this measurement.
+
+##### Known failures at baseline
+
+These fail before any experiment work. None may later be counted as a
+regression, and none may be counted as newly supported if it starts passing.
+
+1. `bindings/python/tests/test_block.py` fails at collection, not in a test:
+   the committed file ends with three stray lines that bind a `pathlib.Path`
+   and then evaluate `c.s`, raising `AttributeError` on import. The 7 tests in
+   that file are therefore unmeasured, not passing.
+2. `bindings/python/tests/test_step.py::test_geometry_that_cannot_be_written_raises_rather_than_writing_garbage`
+   fails with `DID NOT RAISE ValueError`. The assertion describes a kernel that
+   refuses to export a cylinder wall; export now synthesizes the seam, so the
+   test names behaviour the tree no longer has.
+3. `benches/booleans.rs` scene `sphere_union_sphere` fails its watchdog run with
+   `Boolean tolerance policy contains an invalid or non-finite budget`, and is
+   reported as not measured.
+4. `benches/booleans.rs` scene `orthogonal_cylinders` fails after 10.3 s with
+   `sewing endpoints disagree for span IntersectionSpanId(0)`, and is reported
+   as not measured.
+
+The remaining 23 Python tests, in `test_exploration.py`, `test_public_modules.py`,
+`test_step.py` and `test_tcv.py`, pass.
+
+##### Baseline timings
+
+Bench scenes under their own watchdogs, `dev` profile, one watchdog run each.
+These are the numbers M6 and M8 compare against; they are not release figures.
+
+| Scene | Ceiling | Wall clock | Profile total | Assembly stage | Solver calls |
+|---|---|---|---|---|---|
+| `block_union_block` | 5 s | 169.3 ms | 163.8 ms | dominant | 0 s/s, 0 c/s |
+| `block_union_cylinder` | 30 s | 241.4 ms | 188.7 ms | dominant | 0 s/s (2 analytic), 0 c/s (48 analytic) |
+| `block_difference_cylinder` | 30 s | 299.5 ms | 249.3 ms | 202.7 ms | 0 s/s (2 analytic), 0 c/s (48 analytic), 16 2D c/c |
+| `block_union_sphere` | 30 s | 73.5 ms | 70.0 ms | 56.0 ms | 0 s/s (6 analytic), 0 c/s (41 analytic), 6 2D c/c |
+| `sphere_union_sphere` | 30 s | fails in 2.2 ms | — | — | — |
+| `orthogonal_cylinders` | 30 s | fails in 10.31 s | — | — | — |
+
+Assembly dominates every scene that completes. That is the stage M4's scaffold
+builder and M6's assembly step replace, so it is the number to watch.
+
+##### Representative fixture inventory
+
+Fixtures that already exist and stand in for the shapes this plan names. No new
+measurement feature was added to record the baseline.
+
+| Shape | Where it comes from |
+|---|---|
+| Block | `ngk::modeling::solids::block` / `block_at` |
+| Cylinder | `ngk::modeling::solids::cylinder` / `cylinder_at` |
+| Sphere | `ngk::modeling::solids::sphere` / `sphere_at` |
+| Torus | `ngk::modeling::solids::torus` / `torus_at` |
+| Holed slab | `tests/exchange/foreign/files/holed_slab.step`, `ngk::modeling::faces::polygon_with_holes` |
+| Cavity | `tests/support/hollow.rs::hollow_sphere` |
+| Open wire | `ngk::modeling::profiles::polyline` |
+| Marked circle | `ngk::modeling::edges::circle` with `tests/topology/edge_split.rs` |
+| Seamed periodic faces | `tests/support/seamed.rs` |
+| Custom payloads | the payload-policy tests in `tests/topology/edit.rs` |
+| Boolean pairs | `benches/booleans.rs` scenes, `tests/builders/boolean.rs` |
+| STEP round trips | `tests/exchange/step_round_trip.rs`, `tests/exchange/foreign/files/*.step` |
+
+#### Migration ledger
+
 | Capability | Baseline command/test | Baseline result | Owner milestone | Temporary exclusion | Replacement/equivalent assertion | Final evidence |
 |---|---|---|---|---|---|---|
-| Populate during M0 | | | | | | |
+| Raw gmap axioms and orbits | `tests/topology.rs` `gmap`, `topology::gmap::tests` | 10 pass | M2 | none | same tests, on a `GMap` holding no logical stores | `validate_gmap` takes `&GMap`; the merge tests moved to `tests/topology/model.rs` |
+| Orbit ownership and region recovery | none — new capability | n/a | M1 | n/a | `tests/topology/subdivision.rs` | 23 tests pass; see the M1 result |
+| Transactions, lineage, rollback | `tests/topology.rs` `edit`, `transaction` | 24 pass | M2 | none | same tests retargeted at `ModelEdit` | 24 pass, plus 11 in `model_state.rs` |
+| Derived cell indexes | `tests/topology/indexes.rs` | 2 pass | M2 | none | ownership index rebuild tests | 2 pass; warm/cold and deserialize-rebuild cases added |
+| Typed views | `tests/topology.rs` `edge`, `face`, `profile`, `sheet` | 23 pass | M3 | none | same tests against `(&Model, key, sense)` views | |
+| Face loops, holes, periodic domains | `tests/topology/unwrapped_face_domain.rs`, `tests/topology/planar.rs` | 12 pass | M3 | none | frontier-walk loop extraction | |
+| Serialization | `tests/topology/serialization.rs` | 2 pass | M7 | none | versioned Model layout round trip | |
+| Validation | `tests/topology/validation.rs` | 3 pass | M2 | none | raw checks on `GMap`, logical checks on `Model` | split into `GMapValidationError` and `ModelValidationError` |
+| Edge/profile/face/sheet construction | `tests/builders.rs` `faces`, `profiles`, `solids` | 58 pass | M4 | none | same builders on `ModelEdit` | |
+| Extrusion, revolution, sweep | `tests/builders/revolve.rs`, `tests/modeling/*` | 49 pass | M4 | none | same tests, classified scaffolds | |
+| Edge splitting | `tests/topology/edge_split.rs` | 7 pass | M5 | none | logical versus computational split tests | |
+| Removal and chamfer | `tests/builders/removal.rs`, `tests/builders/chamfer.rs` | 28 pass | M5 | none | same tests | |
+| Healing | `tests/healing.rs` | 31 pass | M5 | none | same tests | |
+| Boolean pipeline | `tests/builders/boolean*.rs` | 55 pass | M6 | none | same tests plus seam-crossing and cut-invariance cases | |
+| Boolean timing ceilings | `benches/booleans.rs` | 4 of 6 scenes measured | M6 | none | same scenes, same ceilings | |
+| Tessellation | `tests/tessellate.rs`, `tests/tcv.rs` | 6 pass | M7 | none | same tests on logical geometry | |
+| STEP import/export/round trip | `tests/exchange.rs` | 188 pass | M7 | none | same tests | |
+| Visualization scene assembly | `tests/viz.rs` | 5 pass | M7 | none | same tests; viewers checked by execution | |
+| Scripts registry | `tests/scripts.rs`, `scripts::*::tests` | 11 pass | M7 | none | same tests | |
+| Python bindings | `pytest bindings/python/tests` | 23 pass, 1 fail, 7 uncollected | M7 | none | same tests after `maturin develop` | |
+| WASM bindings and frontend | `cargo clippy --features wasm`, `npm run typecheck` | both pass | M7 | none | same checks | |
 
 Retain small deterministic fixtures for block, cylinder, sphere, torus, holed
 slab, cavity, open wire, marked circle, custom payloads, representative working
@@ -427,6 +565,79 @@ walks, expected logical counts and boundary components. Drawings or a mocked
 `faces()` result are not a proof. M1 establishes feasibility of the mechanism;
 general shell ingestion is a separate M4 requirement.
 
+#### M1 result — the gate is met
+
+The prototype lives in `src/topology/subdivision/`, beside the existing GMap
+and built entirely on its `add_dart` / `link` / `sew` primitives. The fixtures
+are in `tests/support/scaffold.rs` and the proofs in
+`tests/topology/subdivision.rs`; every fixture registers no domain attribute at
+all, so nothing in these walks can be reading a stored loop seed or shell root.
+
+What the layer is:
+
+- `ownership.rs` — `EntityOwner` (vertex, edge, face, solid), `OrbitOwnership`
+  records anchored at a representative dart, the `Subdivision` that holds them,
+  and the `OwnershipIndex` derived from a subdivision plus the map it labels.
+- `walk.rs` — `turn`, the one traversal primitive. It steps to the next raw
+  cell around a shared boundary using the sewing involutions, passing over
+  cells a higher-dimensional entity owns. Every path it takes is an odd number
+  of alpha steps, which is what lets a caller track which way round it is
+  reading the map while it turns.
+- `region.rs` — `recover_region`, which walks an entity's whole extent out of
+  the labels, and records a sense per dart as it goes.
+- `boundary.rs` — `boundary_cycles` for a face's oriented loops,
+  `boundary_shells` for a solid's boundary components with their raw Euler
+  characteristic, `boundary_vertices` for an edge's ends, and
+  `BoundaryCycle::logical_uses` grouping consecutive raw pieces into logical
+  edge uses.
+
+What the fixtures prove:
+
+| Fixture | Result |
+|---|---|
+| Segment | one logical edge, two logical vertices, two boundary ends |
+| Circle | one logical edge, zero logical vertices, no boundary; reversing the anchor reverses every dart's sense |
+| Capped cylinder | three logical faces, two logical edges, zero logical vertices; the wall's two loops never emit the seam; each cap's rim use is the `alpha0`-`alpha2` partner of the wall's |
+| Face with one bridged hole | two cycles, the bridge never emitted |
+| Face with two bridged holes | three cycles, still one raw face |
+| Sphere (cube surface) | one logical face over six raw quads, no loop |
+| Torus (periodic square) | one logical face, no edge, no vertex, one raw vertex and two raw edges |
+| 3×3×3 minus centre | 26 material cells reached from one anchor through `alpha3`; two shells, of 54 and 6 raw faces, each with Euler characteristic 2 |
+| 3×3×1 ring | 8 material cells, one shell of 32 raw faces with Euler characteristic 0 |
+
+The volume fixtures are genuine combinatorial subdivisions: unit cubes sewn to
+their neighbours by `alpha3` at coincident faces, with every buried face, edge
+and corner classified in the solid and every free face left on its boundary.
+Nothing is coned to a point and no unrelated boundary faces are identified. The
+embedding is checked against the grid the cells were built from, independently
+of the traversal: the omitted centre is outside the material, a retained cell is
+inside, and a point beyond the block is outside.
+
+The wrong-label cases are rejected as the plan requires:
+
+- an interior label on an exterior face fails with `InteriorBoundaryNotShared`,
+  because nothing lies across it;
+- a label crossing a public boundary fails with `ForeignCell`, naming the
+  entity found on the far side;
+- two disconnected patches under one key fail with `Disconnected`;
+- two entities claiming one raw cell fail at index build with
+  `ConflictingOwnership`, an owner of lower dimension than its cell with
+  `OwnerBelowCell`, and a record anchored off the map with `DanglingRecord`.
+
+One correction the prototype forced, which the later milestones inherit: a
+boundary walk cannot seed itself from whichever frontier dart the region walk
+happened to reach first. Seeding a cylinder wall's two rims independently wound
+one of them backwards. The region walk therefore carries a sense — flipped by
+every involution step and by every crossing of an interior cut, which is always
+an odd number of steps — and only darts sharing the anchor's sense seed a loop.
+That is what `every_loop_of_a_face_is_wound_the_same_way` pins down.
+
+Evidence: `cargo test --all-targets --all-features` exits 0 with 705 passing,
+none failing and none ignored — the M0 baseline of 682 plus 23 new subdivision
+tests, with no existing test changed. `cargo clippy --all-targets --all-features`
+exits 0 with the same 26 warnings M0 recorded. `cargo fmt` and
+`git diff --check` are clean.
+
 ### M2 implementation — move ownership without losing transactions
 
 **Start with:** `gmap.rs` stores and `AttributeStore`/`CellDim`, `edit.rs`
@@ -469,6 +680,82 @@ valid reference to a different entity after normal deletion/reallocation.
 
 **Checkpoint:** the core imports no logical/geometry modules, foundational
 targets compile and pass, and no Model mutation bypasses the atomic boundary.
+
+#### M2 result — the gate is met
+
+`GMap` is now the pure core. Its whole import list is `std::collections`, `serde`
+and `super::dart`: no geometry, no `Payload`, no key type, no `Profile`, no
+`Sheet`, no `Model`. It is no longer generic — there is nothing left in it for a
+payload parameter to describe. What it holds is `alphas` and `free_slots`, and
+what it answers is orbits: `alpha`, `is_free`, `orbit`, `orbit_indices`,
+`cell_representative`, `incident_cells`, `cells`, `adjacent_cells`, plus the
+crate-internal `add_dart`, `remove_dart`, `compact`, `link_raw`, `unlink_raw`,
+`point_alpha` and `is_sewable`.
+
+`Model<P>` in `src/model.rs` owns everything else: the `GMap`, the six entity
+slotmaps, the `Subdivision`, a `revision` counter, and two lazy caches — the
+dart-to-key indexes and the dart-to-owner lookup. `Cell0`–`Cell3`, `CellDim`,
+`AttributeStore`, `CellKeyLookup`, `MergeHandle`, `MergeTopology` and
+`TopologyMerge` moved with it, which is what removes `Cell1::Key = EdgeKey` from
+the raw core: a raw cell no longer names a slotmap entry, the model does.
+
+`TopologyEdit` is `ModelEdit`, over `&mut Model<P>`, and `TopologyEditError` is
+`ModelEditError`. The snapshot strategy is the existing one, unchanged; panics
+are still not caught. `ModelEdit` gains one operation, `own_cell`, so a
+subdivision label is staged and rolled back exactly like everything else.
+
+There is no public `&mut GMap` anywhere. `Model::topology()` returns `&GMap`;
+the only public methods on `Model` that take `&mut self` are `transaction` and
+`transaction_with_policy`. `Shape<K, P>` owns a `Model<P>` and reads it through
+`model()`, `model_mut()` and `into_model()`.
+
+Commit order is now explicit, and each step restores the transaction-start
+snapshot whole on failure:
+
+1. the raw gmap axioms, checked on `Model::topology()` alone;
+2. the subdivision labels, which must describe that map;
+3. shell re-rooting and required profile/sheet registration;
+4. edit-event lineage, then identity reconciliation;
+5. payload policy on net externally-visible changes;
+6. `revision += 1` and cache invalidation.
+
+Validation is split to match. `validate_gmap(&GMap) -> Result<(), GMapValidationError>`
+reads no entity and no geometry, so it answers for a bare map;
+`validate_solid_manifold`, `validate_solid_orientation` and their `all_` forms
+take `&Model<P>` and return `ModelValidationError`, which carries the raw error
+as one of its variants rather than pretending to be it.
+
+Eleven tests in `tests/topology/model_state.rs` cover the gate:
+
+- a new model is at revision 0 and every commit advances it; a failed one does not;
+- a commit carries the subdivision with the map, and a rollback restores both;
+- a cell two entities disagree about is rejected at commit with
+  `InvalidSubdivision`, and so is a record anchored off the map;
+- a label survives the renumbering that removing darts causes — the record
+  follows the cell, not the number it had;
+- a warm index and a cold rebuild answer identically after an edit;
+- a rolled-back model serializes to exactly the state it kept;
+- a deserialized model rebuilds both derived lookups from its stores;
+- a key from a removed entity never resolves to the one that replaced it.
+
+The seven merge and isolate tests that lived inside `gmap.rs` moved to
+`tests/topology/model.rs`, where the behaviour now lives, rather than being
+deleted with the file.
+
+Evidence: `cargo test --all-targets --all-features` exits 0 with 716 passing,
+none failing and none ignored — the 705 after M1 plus these 11, with no existing
+test removed or weakened. `cargo clippy --all-targets --all-features` exits 0
+with 25 warnings against the baseline's 26: no new lint, and the unread `map`
+field on the old embryonic `Model<P>` is gone. `cargo fmt` and `git diff --check`
+are clean. `npm run typecheck` passes. The Python extension rebuilds and its
+suite is back to the M0 baseline exactly — 23 passing, the one recorded stale
+STEP assertion failing, `test_block.py` still uncollectable — after renaming the
+binding class from `GMap` to `Model` and the entity accessor from `.gmap` to
+`.model`, which the tests were updated for in the same change.
+
+`AGENTS.md` and `src/topology/edit.md` were rewritten where they described the
+old layout. `docs/model_api.md` is left alone and is now marked in `AGENTS.md`
+as a design note predating this work, not a description of the tree.
 
 ### M3 implementation — public traversal and lazy geometry
 

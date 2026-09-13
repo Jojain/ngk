@@ -6,7 +6,7 @@ use ngk::modeling::faces;
 fn rectangle_returns_owned_face_shape() {
     let shape = faces::rectangle(Plane::xy(), 2.0, 3.0).expect("face should build");
 
-    assert_eq!(shape.map().iter_faces().count(), 1);
+    assert_eq!(shape.model().iter_faces().count(), 1);
     assert_eq!(
         shape
             .face()
@@ -22,7 +22,7 @@ fn rectangle_returns_owned_face_shape() {
 fn circle_returns_owned_face_shape() {
     let shape = faces::circle(Plane::xy(), 2.0).expect("face should build");
 
-    assert_eq!(shape.map().iter_faces().count(), 1);
+    assert_eq!(shape.model().iter_faces().count(), 1);
     assert_eq!(
         shape
             .face()
@@ -39,7 +39,7 @@ fn circle_returns_owned_face_shape() {
 fn annulus_returns_owned_face_shape_with_circular_hole() {
     let shape = faces::annulus(Plane::xy(), 2.0, 1.0).expect("face should build");
 
-    assert_eq!(shape.map().iter_faces().count(), 1);
+    assert_eq!(shape.model().iter_faces().count(), 1);
     assert_eq!(
         shape
             .face()
@@ -70,7 +70,7 @@ fn polygon_with_holes_returns_owned_face_shape() {
     let shape =
         faces::polygon_with_holes(Plane::xy(), &outer, &[&hole]).expect("face should build");
 
-    assert_eq!(shape.map().iter_faces().count(), 1);
+    assert_eq!(shape.model().iter_faces().count(), 1);
     assert_eq!(
         shape
             .face()

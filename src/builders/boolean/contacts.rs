@@ -42,7 +42,7 @@ struct PreparedGeometry {
 impl PreparedGeometry {
     fn edge<P: Payload>(
         &mut self,
-        g: &GMap<P>,
+        g: &Model<P>,
         key: EdgeKey,
     ) -> Result<Rc<PreparedCurve>, BooleanError> {
         match self.edges.entry(key) {
@@ -61,7 +61,7 @@ impl PreparedGeometry {
     /// patch, which drops every contact outside it.
     fn face<P: Payload>(
         &mut self,
-        g: &GMap<P>,
+        g: &Model<P>,
         key: FaceKey,
         tolerance: f64,
     ) -> Result<Rc<PreparedSurface>, BooleanError> {
@@ -90,7 +90,7 @@ struct TrimCache {
 impl TrimCache {
     fn get<P: Payload>(
         &mut self,
-        g: &GMap<P>,
+        g: &Model<P>,
         key: FaceKey,
         tolerance: f64,
     ) -> Result<Rc<FaceTrimDomain>, BooleanError> {
@@ -169,7 +169,7 @@ impl Probed {
 /// probed in: a section's nodes are decided against all the exact points that
 /// exist, not against the ones that happened to be found first.
 pub(super) fn compute_contacts<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     plan: &mut IntersectionAccumulator,
     options: BooleanOptions,
 ) -> Result<(), BooleanError> {
@@ -252,7 +252,7 @@ impl StageTimer {
 
 /// Cuts one deferred section down to the region it really covers.
 fn clip_deferred<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     trims: &mut TrimCache,
     pair: PairKind,
     work: Deferred,
@@ -353,7 +353,7 @@ fn timing_slot(stages: &mut BooleanStageTimings, group: usize) -> &mut Duration 
 /// Nothing reachable from here can see another pair's result, which is what
 /// makes finding order-independent.
 fn probe<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     prepared: &mut PreparedGeometry,
     trims: &mut TrimCache,
     pair: PairKind,
@@ -386,7 +386,7 @@ fn probe<P: Payload>(
 /// bounds test on a point costs about as much as the coincidence test it would
 /// be replacing.
 fn enumerate_pairs<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     plan: &mut IntersectionAccumulator,
     options: BooleanOptions,
 ) -> Vec<PairKind> {
@@ -473,18 +473,18 @@ fn enumerate_pairs<P: Payload>(
     pairs
 }
 
-fn vertex_point<P: Payload>(g: &GMap<P>, key: VertexKey) -> Point3 {
+fn vertex_point<P: Payload>(g: &Model<P>, key: VertexKey) -> Point3 {
     *g.vertex_unchecked(key)
         .point()
         .expect("registered vertex geometry")
 }
 
-fn edge_curve<P: Payload>(g: &GMap<P>, key: EdgeKey) -> &Curve {
+fn edge_curve<P: Payload>(g: &Model<P>, key: EdgeKey) -> &Curve {
     &g.edge_attr_unchecked(key).curve
 }
 
 fn probe_vertex_vertex<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     a: VertexKey,
     b: VertexKey,
     tolerance: f64,
@@ -501,7 +501,7 @@ fn probe_vertex_vertex<P: Payload>(
 }
 
 fn probe_vertex_edge<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     vertex_key: VertexKey,
     edge_key: EdgeKey,
     tolerance: f64,
@@ -542,7 +542,7 @@ fn probe_vertex_edge<P: Payload>(
 /// most pairs never touch -- therefore costs one closest point and one surface
 /// evaluation, and never builds a domain.
 fn probe_vertex_face<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     trims: &mut TrimCache,
     vertex_key: VertexKey,
     face_key: FaceKey,
@@ -571,7 +571,7 @@ fn probe_vertex_face<P: Payload>(
 }
 
 fn probe_edge_edge<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     a_key: EdgeKey,
     b_key: EdgeKey,
     graze: f64,
@@ -648,7 +648,7 @@ fn probe_edge_edge<P: Payload>(
 }
 
 fn probe_edge_face<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     prepared: &mut PreparedGeometry,
     trims: &mut TrimCache,
     edge_key: EdgeKey,
@@ -763,7 +763,7 @@ fn probe_edge_face<P: Payload>(
 }
 
 fn probe_face_face<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     prepared: &mut PreparedGeometry,
     trims: &mut TrimCache,
     a_key: FaceKey,
@@ -843,7 +843,7 @@ fn probe_face_face<P: Payload>(
 }
 
 fn probe_general_face_pair<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     prepared: &mut PreparedGeometry,
     trims: &mut TrimCache,
     a_key: FaceKey,
@@ -1179,7 +1179,7 @@ fn clip_imprint_to_trim(
 /// realized on the fragment the edge split pass produces. Running this before
 /// chain normalization keeps boundary sections out of the chained polylines.
 pub(super) fn reroute_boundary_imprints<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     plan: &mut IntersectionAccumulator,
     options: BooleanOptions,
 ) {
@@ -1253,7 +1253,7 @@ fn same_section(left: &TrimmedCurve2, right: &TrimmedCurve2, tolerance: f64) -> 
 /// intersections naturally produce that curve as several face-pair branches,
 /// so normalization happens on the complete contact graph before mutation.
 pub(super) fn normalize_face_imprint_chains<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     plan: &mut IntersectionAccumulator,
     options: BooleanOptions,
 ) -> Result<(), BooleanError> {
@@ -1467,7 +1467,7 @@ fn coplanar_faces_share_area<P: Payload>(
     a: &crate::topology::face::Face<'_, P>,
     b: &crate::topology::face::Face<'_, P>,
     trims: &mut TrimCache,
-    g: &GMap<P>,
+    g: &Model<P>,
     keys: [FaceKey; 2],
     options: BooleanOptions,
 ) -> Result<bool, BooleanError> {

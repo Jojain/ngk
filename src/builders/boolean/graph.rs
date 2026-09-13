@@ -4,7 +4,7 @@ use crate::geometry::{
     Curve, Interval, KnotVector, NurbsCurve, NurbsError, Point2, Point3, PointCoincidence,
     TrimmedCurve, TrimmedCurve2,
 };
-use crate::topology::gmap::GMap;
+use crate::model::Model;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use nalgebra::Vector3;
@@ -638,7 +638,7 @@ pub(crate) fn normalized_subcurve(curve: &Curve, interval: Interval) -> Result<C
 }
 
 /// Edge keys bounding one face, used to recognize a section a face already carries.
-fn face_edge_keys<P: Payload>(map: &GMap<P>, face: FaceKey) -> HashSet<EdgeKey> {
+fn face_edge_keys<P: Payload>(map: &Model<P>, face: FaceKey) -> HashSet<EdgeKey> {
     map.face_unchecked(face)
         .edges()
         .into_iter()
@@ -699,7 +699,7 @@ fn walk_cycle(
 
 /// Signed area of the cycle in one face's parameter domain; positive is counterclockwise.
 fn cycle_signed_area<P: Payload>(
-    map: &GMap<P>,
+    map: &Model<P>,
     network: &IntersectionNetwork,
     face: FaceKey,
     cycle: &[(IntersectionSpanId, IntersectionOrientation)],
@@ -726,7 +726,7 @@ fn cycle_signed_area<P: Payload>(
 /// region with no oriented boundary is indistinguishable from an unresolved overlap.
 pub(crate) fn close_regions<P: Payload>(
     network: &mut IntersectionNetwork,
-    map: &GMap<P>,
+    map: &Model<P>,
 ) -> Result<(), BooleanError> {
     for index in 0..network.regions.len() {
         let first_face = network.regions[index].first_face;
@@ -764,7 +764,7 @@ pub(crate) fn close_regions<P: Payload>(
 
 /// Compares the two oriented face normals at the region's boundary centroid.
 fn region_normals_agree<P: Payload>(
-    map: &GMap<P>,
+    map: &Model<P>,
     network: &IntersectionNetwork,
     first_face: FaceKey,
     second_face: FaceKey,
@@ -796,7 +796,7 @@ fn region_normals_agree<P: Payload>(
 /// The general preparation facility deliberately admits open, one-sided contacts,
 /// so this is checked only where a closed result solid must follow.
 pub fn validate_solid_network<P: Payload>(
-    map: &GMap<P>,
+    map: &Model<P>,
     network: &IntersectionNetwork,
     tolerances: BooleanTolerances,
 ) -> Result<(), BooleanError> {
@@ -859,7 +859,7 @@ fn span_use_side(span_use: &IntersectionSpanUse) -> BooleanSide {
 
 /// Rejects a pcurve that does not evaluate onto the canonical section curve.
 fn validate_span_pcurves<P: Payload>(
-    map: &GMap<P>,
+    map: &Model<P>,
     span: &IntersectionSpan,
     index: usize,
     tolerances: BooleanTolerances,

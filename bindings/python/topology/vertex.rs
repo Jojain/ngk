@@ -3,8 +3,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use super::common::{entity_methods, hash_identity, py_err};
-use super::gmap::PyGMap;
-
+use super::model::PyModel;
 use crate::binding_common::explore::SharedVertex;
 use crate::topology::StandardPayload;
 

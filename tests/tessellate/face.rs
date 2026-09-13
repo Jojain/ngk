@@ -15,13 +15,14 @@ use std::collections::HashMap;
 use nalgebra::Vector3;
 use ngk::exchange::step::{StepReadOptions, read_step};
 use ngk::geometry::{Circle, Curve, Frame, Plane, Point2, Point3, Surface, Torus, TrimmedCurve2};
+use ngk::model::Model;
 use ngk::tessellate::{SurfaceOpts, TessellateOpts, face::tessellate_face_key};
 use ngk::topology::LoopKind;
 use ngk::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
-use ngk::topology::gmap::{Dart, Dim, GMap};
+use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::shape_keys::FaceKey;
 use ngk::topology::unwrapped_face_domain::UnwrappedFaceDomain;
-use ngk::topology::{StandardPayload, TopologyEditError};
+use ngk::topology::{ModelEditError, StandardPayload};
 
 /// The `ppp0104` angle bracket: a boss filleted into a plate, and the one
 /// fixture in the tree carrying a torus patch that is not a parameter rectangle.
@@ -34,8 +35,8 @@ const ANGLE_BRACKET: &str = include_str!("../exchange/foreign/files/ppp0104_angl
 /// `u = pi/2`, back at `v = pi/2`, down the tube at `u = 0`. Four distinct
 /// corners, four distinct edges, nothing sewn — an open patch, not a seamed
 /// ring.
-fn torus_patch(major: f64, minor: f64) -> (GMap<StandardPayload>, FaceKey) {
-    let mut g = GMap::<StandardPayload>::new();
+fn torus_patch(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey) {
+    let mut g = Model::<StandardPayload>::new();
     let torus = Torus::new(Frame::xyz(), major, minor);
     let surface = Surface::Torus(torus.clone());
     let quarter = std::f64::consts::FRAC_PI_2;
@@ -107,7 +108,7 @@ fn torus_patch(major: f64, minor: f64) -> (GMap<StandardPayload>, FaceKey) {
                 Vec::new(),
                 pcurves,
             ));
-            Ok::<_, TopologyEditError>(face)
+            Ok::<_, ModelEditError>(face)
         })
         .expect("an open torus patch should commit");
     (g, face)
@@ -211,7 +212,7 @@ fn a_face_bounded_by_more_than_a_rectangle_is_meshed_only_inside_it() {
         .expect("the bracket fixture should import");
     let mut checked = 0;
     for shape in &import.shapes {
-        let g = shape.map();
+        let g = shape.model();
         for (key, _) in g.iter_faces() {
             let face = g.face(key).expect("a listed face resolves");
             let Ok(domain) = UnwrappedFaceDomain::of_face(&face) else {

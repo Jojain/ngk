@@ -24,7 +24,7 @@ pub fn build(point_count: usize, extrusion: Vector3<f64>) -> Result<ScriptResult
         .map_err(|err| format!("failed to extrude interactive polygon: {err:?}"))?;
 
     let mut hints = VizHints::new();
-    for (key, _) in shape.map().iter_faces() {
+    for (key, _) in shape.model().iter_faces() {
         hints.face(
             key,
             Style::default()
@@ -34,7 +34,7 @@ pub fn build(point_count: usize, extrusion: Vector3<f64>) -> Result<ScriptResult
         );
     }
 
-    Ok(ScriptResult::from_gmap_with_hints(shape.map(), &hints))
+    Ok(ScriptResult::from_model_with_hints(shape.model(), &hints))
 }
 
 pub fn run() -> Result<ScriptResult, String> {

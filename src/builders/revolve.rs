@@ -12,6 +12,7 @@ use crate::geometry::{
     ANGULAR_TOLERANCE, Axis2, Circle, Cone, Curve, Cylinder, DomainSide, Frame, LINEAR_TOLERANCE,
     Plane, Point2, Point3, Surface, SurfaceOfRevolution, SurfacePeriodicity,
 };
+use crate::model::{Cell2, MergeTopology, Model};
 use crate::topology::IsolatedDart;
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, ShellRoot, SolidAttr,
@@ -19,9 +20,9 @@ use crate::topology::attributes::{
 };
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
-use crate::topology::edit::{TopologyEdit, TopologyEditError};
+use crate::topology::edit::{ModelEdit, ModelEditError};
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell2, Dart, Dim, GMap, MergeTopology};
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::planar::{Planar, PlanarityError};
 use crate::topology::profile::Profile;
@@ -62,7 +63,7 @@ pub enum RevolveError {
     SewFailed { dim: Dim, first: Dart, second: Dart },
 
     #[error("failed to create revolved face topology")]
-    TopologyEditFailed(#[from] TopologyEditError),
+    ModelEditFailed(#[from] ModelEditError),
 }
 
 #[derive(Clone)]
@@ -99,7 +100,7 @@ impl RevolvedSourceVertex {
 /// circles has to reconcile. Callers deciding what *section* an edge is want
 /// [`Edge::kind`] instead.
 fn edge_end_vertices<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     dart: Dart,
 ) -> Result<(VertexKey, VertexKey), RevolveError> {
     let at = |dart: Dart| {
@@ -111,7 +112,7 @@ fn edge_end_vertices<P: Payload>(
 }
 
 impl RevolvedSourceEdge {
-    fn from_key<P: Payload>(g: &GMap<P>, key: EdgeKey) -> Result<Self, RevolveError> {
+    fn from_key<P: Payload>(g: &Model<P>, key: EdgeKey) -> Result<Self, RevolveError> {
         let edge = g.edge(key).ok_or(RevolveError::MissingEdge { key })?;
         Self::from_edge(edge)
     }
@@ -161,7 +162,7 @@ impl RevolvedSourceEdge {
 /// closed in the profile, so the source loop is consumed and the face that comes
 /// back has no boundary at all.
 pub fn add_revolved_edge<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     edge: EdgeKey,
     axis: Axis3,
     angle: Rad64,
@@ -171,7 +172,7 @@ pub fn add_revolved_edge<P: Payload>(
 
 /// Revolves an edge inside the caller's active transaction.
 pub(crate) fn add_revolved_edge_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     axis: Axis3,
     angle: Rad64,
@@ -398,7 +399,7 @@ fn linear_profile(curve: &Curve) -> Option<(Point3, Vector3<f64>)> {
 }
 
 fn add_partial_revolved_edge_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
@@ -495,7 +496,7 @@ fn add_partial_revolved_edge_face<P: Payload>(
 }
 
 fn add_full_revolved_edge_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
@@ -525,7 +526,7 @@ fn add_full_revolved_edge_face<P: Payload>(
 /// [`crate::builders::solids::add_sphere`] registers, the difference being that
 /// here the support is swept rather than named.
 fn add_full_revolved_closed_edge_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
     axis: Axis3,
 ) -> Result<FaceKey, RevolveError> {
@@ -554,7 +555,7 @@ fn add_full_revolved_closed_edge_face<P: Payload>(
 /// full-turn copy. Sewing those occurrences in dimension two leaves one edge
 /// incident twice to one face while preserving the two pole vertices.
 fn add_full_revolved_apex_to_apex_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
@@ -615,7 +616,7 @@ fn add_full_revolved_apex_to_apex_face<P: Payload>(
 }
 
 fn add_full_revolved_open_edge_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
@@ -787,7 +788,7 @@ fn swept_period_axis(surface: &Surface, pcurves: [&TrimmedCurve2; 2]) -> Option<
 }
 
 fn validate_consumable_source_edge<P: Payload>(
-    edit: &TopologyEdit<'_, P>,
+    edit: &ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
 ) -> Result<(), RevolveError> {
     let start = source.dart;
@@ -812,7 +813,7 @@ fn validate_consumable_source_edge<P: Payload>(
 /// because the loop it closes has yet to be built, so the two cannot share a
 /// check.
 fn validate_consumable_closed_source_edge<P: Payload>(
-    edit: &TopologyEdit<'_, P>,
+    edit: &ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
 ) -> Result<(), RevolveError> {
     let start = source.dart;
@@ -836,7 +837,7 @@ fn validate_consumable_closed_source_edge<P: Payload>(
 /// them together isolates both, and the result of the revolution has no
 /// boundary for either to become.
 fn consume_closed_source_edge<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
 ) -> Result<(), RevolveError> {
     let start = source.dart;
@@ -859,7 +860,7 @@ fn consume_closed_source_edge<P: Payload>(
 }
 
 fn consume_source_edge_as_closed_loop<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
     point: Point3,
     curve: Curve,
@@ -886,10 +887,10 @@ fn consume_source_edge_as_closed_loop<P: Payload>(
 }
 
 fn add_closed_revolve_boundary_loop<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     point: Point3,
     curve: Curve,
-) -> Result<Dart, TopologyEditError> {
+) -> Result<Dart, ModelEditError> {
     let first = edit.add_dart();
     let second = edit.add_dart();
     edit.link(Dim::Zero, first, second)?;
@@ -939,7 +940,7 @@ fn is_full_turn(angle: Rad64) -> bool {
 ///
 /// Panics if `profile` does not identify a registered profile.
 pub fn add_revolved_profile<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     profile: ProfileKey,
     axis: Axis3,
     angle: Rad64,
@@ -950,7 +951,7 @@ pub fn add_revolved_profile<P: Payload>(
 
 /// Revolves a profile from an oriented traversal dart for internal callers.
 pub(crate) fn add_revolved_profile_from_dart<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     profile_dart: Dart,
     axis: Axis3,
     angle: Rad64,
@@ -959,7 +960,7 @@ pub(crate) fn add_revolved_profile_from_dart<P: Payload>(
 }
 
 fn add_revolved_profile_from_dart_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     profile_dart: Dart,
     axis: Axis3,
     angle: Rad64,
@@ -1001,7 +1002,7 @@ struct RevolvedFace {
 }
 
 fn add_revolved_profile_faces<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     profile_dart: Dart,
     axis: Axis3,
     angle: Rad64,
@@ -1032,7 +1033,7 @@ fn add_revolved_profile_faces<P: Payload>(
 }
 
 fn add_revolved_edge_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
@@ -1112,7 +1113,7 @@ fn add_revolved_edge_face<P: Payload>(
 }
 
 fn add_revolved_quad_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     corners: [Point3; 4],
     boundary_curves: [Curve; 4],
     surface: Surface,
@@ -1201,7 +1202,7 @@ fn revolved_band_loop_kinds(
 /// itself exactly as a circular edge's own profile does, so the neighbouring band
 /// sews to it through the same side darts a quad band would have offered.
 fn add_full_revolved_band_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     ends: [Point3; 2],
     circles: [Curve; 2],
     surface: Surface,
@@ -1252,7 +1253,7 @@ fn add_full_revolved_band_face<P: Payload>(
 }
 
 fn sew_revolved_faces<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     faces: &[RevolvedFace],
     close_ring: bool,
 ) -> Result<(), RevolveError> {
@@ -1277,7 +1278,7 @@ struct Alpha2RevolveMerge {
 }
 
 fn sew_revolved_side_edges<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     survivor: Dart,
     removed: Dart,
 ) -> Result<(), RevolveError> {
@@ -1285,7 +1286,7 @@ fn sew_revolved_side_edges<P: Payload>(
 }
 
 pub(crate) fn sew_revolved_alpha2_edges<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     first: Dart,
     second: Dart,
     survivor: Dart,
@@ -1313,7 +1314,7 @@ pub(crate) fn sew_revolved_alpha2_edges<P: Payload>(
 }
 
 fn alpha2_revolve_merge<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     first: Dart,
     second: Dart,
     survivor: Dart,
@@ -1410,7 +1411,7 @@ fn quad_pcurves(uv: &[TrimmedCurve2; 4], darts: &[Dart]) -> HashMap<Dart, Trimme
 /// partial turn uses an unsupported cap surface, or generated topology cannot
 /// be sewn.
 pub fn add_revolved_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     face_key: FaceKey,
     axis: Axis3,
     angle: Rad64,
@@ -1420,7 +1421,7 @@ pub fn add_revolved_face<P: Payload>(
 
 /// Builds caps and lateral sheets, then registers the resulting staged solid.
 fn add_revolved_face_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     axis: Axis3,
     angle: Rad64,
@@ -1496,7 +1497,7 @@ fn revolve_sweep_direction<P: Payload>(axis: Axis3, face: &Face<'_, P>) -> Vecto
 /// the inside of the swept region precisely when the source cap already faces
 /// against the sweep, so they flip together with the far cap.
 fn orient_revolved_shell<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     bottom_face: FaceKey,
     top_face: FaceKey,
     lateral_faces: &[FaceKey],
@@ -1520,7 +1521,7 @@ fn orient_revolved_shell<P: Payload>(
 /// source face is then dropped: it is interior to the solid, and its boundary
 /// wire survives only as the loops the lateral faces were built from.
 fn add_full_revolved_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     loops: Vec<Dart>,
     axis: Axis3,
@@ -1559,7 +1560,7 @@ fn add_full_revolved_face<P: Payload>(
 /// leftover face and dangling wire would be counted by every cell traversal.
 /// Removing darts compacts the map, so `shell` is returned remapped.
 fn consume_revolved_source_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     loops: &[Dart],
     shell: Dart,
@@ -1602,7 +1603,7 @@ fn consume_revolved_source_face<P: Payload>(
 }
 
 fn sew_revolved_loop_to_caps<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     bottom_loop: Dart,
     top_loop: Dart,
     axis: Axis3,
@@ -1688,6 +1689,6 @@ fn rotate_surface(
 }
 
 /// Returns the key of the face incident to `dart`, if the dart belongs to one.
-pub fn face_key_for_dart<P: Payload>(g: &GMap<P>, dart: Dart) -> Option<FaceKey> {
+pub fn face_key_for_dart<P: Payload>(g: &Model<P>, dart: Dart) -> Option<FaceKey> {
     g.attribute::<Cell2>(dart).copied()
 }

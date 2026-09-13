@@ -21,7 +21,7 @@ fn circle_returns_owned_closed_edge_shape() {
     let shape = edges::circle(Plane::xy(), 2.0).expect("circle should build");
     let edge = shape.edge();
 
-    assert_eq!(shape.map().iter_edges().count(), 1);
+    assert_eq!(shape.model().iter_edges().count(), 1);
     assert!(edge.is_closed());
     assert!(matches!(
         edge.curve(),
@@ -35,7 +35,7 @@ fn arc_returns_owned_open_circle_edge_shape() {
         edges::arc(Plane::xy(), 2.0, 0.0, std::f64::consts::FRAC_PI_2).expect("arc should build");
     let edge = shape.edge();
 
-    assert_eq!(shape.map().iter_edges().count(), 1);
+    assert_eq!(shape.model().iter_edges().count(), 1);
     assert!(!edge.is_closed());
     assert!(matches!(
         edge.curve(),

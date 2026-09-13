@@ -1,26 +1,14 @@
+//! The generalized map itself: darts, alpha involutions, and nothing else.
+//!
+//! This module knows no geometry, no payload, and no logical entity. A `GMap`
+//! is combinatorial connectivity and the operations that read or rewire it. The
+//! stores that give a cell a curve, a surface or a stable key live in
+//! [`Model`](crate::model::Model), one layer up, and so does every operation
+//! that has to keep them in step with an edit.
+
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
-use slotmap::SlotMap;
-
-use crate::topology::edge::Edge;
-use crate::topology::edit::{EditEvent, commit_topology_transaction};
-pub use crate::topology::edit::{
-    EditKey, EditPolicy, PreservePayload, TopologyEdit, TopologyEditError,
-};
-use crate::topology::face::Face;
-use crate::topology::orientation::Orientation;
-use crate::topology::profile::Profile;
-use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
-use crate::topology::sheet::Sheet;
-use crate::topology::solid::Solid;
-use crate::topology::vertex::Vertex;
-
-use super::attributes::{
-    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
-};
-use super::payload::{Payload, StandardPayload};
 
 pub use super::dart::{Dart, IsolatedDart};
 
@@ -28,7 +16,7 @@ pub use super::dart::{Dart, IsolatedDart};
 ///
 /// `Dim::Zero` corresponds to vertices and alpha0, `Dim::One` to edges and
 /// alpha1, and so on up to solids/sheets and alpha3.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Dim {
     /// Vertex dimension / alpha0.
     Zero,
@@ -69,614 +57,36 @@ impl Dim {
 
 /// Number of alpha involutions in this 3-gmap implementation.
 pub const GMAP_INVOLUTION_COUNT: usize = 4;
+
 /// Pairing map computed while checking whether two dart orbits can be sewn.
 pub struct SewableDarts {
-    pub(super) mapping: HashMap<Dart, Dart>,
+    pub(crate) mapping: HashMap<Dart, Dart>,
 }
 
-/// Type marker for vertex attributes.
-pub struct Cell0;
-/// Type marker for edge attributes.
-pub struct Cell1;
-/// Type marker for face attributes.
-pub struct Cell2;
-/// Type marker for solid attributes.
-pub struct Cell3;
-
-/// Compile-time mapping from a cell marker to its dimension and key type.
-pub trait CellDim {
-    /// Dimension represented by this cell marker.
-    const DIM: Dim;
-    /// Stable key type for this cell dimension.
-    type Key: Copy;
-}
-
-impl CellDim for Cell0 {
-    const DIM: Dim = Dim::Zero;
-    type Key = VertexKey;
-}
-impl CellDim for Cell1 {
-    const DIM: Dim = Dim::One;
-    type Key = EdgeKey;
-}
-impl CellDim for Cell2 {
-    const DIM: Dim = Dim::Two;
-    type Key = FaceKey;
-}
-impl CellDim for Cell3 {
-    const DIM: Dim = Dim::Three;
-    type Key = SolidKey;
-}
-
-/// Attribute lookup backend for a specific cell dimension.
+/// A 3-dimensional generalized map.
 ///
-/// Most callers should use [`GMap::attribute`] instead of calling this trait
-/// directly.
-pub trait AttributeStore<D: CellDim> {
-    /// Attribute type stored for this dimension.
-    type Attr;
-    /// Returns the attribute associated with canonical representative `repr`.
-    fn get(&self, repr: Dart) -> Option<&Self::Attr>;
-}
-
-/// Trait for looking up a cell key from a canonical representative dart.
-#[doc(hidden)]
-pub trait CellKeyLookup<D: CellDim> {
-    fn get_key(&self, repr: Dart) -> Option<D::Key>;
-}
-
-impl<P: Payload> CellKeyLookup<Cell0> for GMap<P> {
-    fn get_key(&self, repr: Dart) -> Option<VertexKey> {
-        self.derived_indexes().vertex.get(&repr).copied()
-    }
-}
-impl<P: Payload> CellKeyLookup<Cell1> for GMap<P> {
-    fn get_key(&self, repr: Dart) -> Option<EdgeKey> {
-        self.derived_indexes().edge.get(&repr).copied()
-    }
-}
-impl<P: Payload> CellKeyLookup<Cell2> for GMap<P> {
-    fn get_key(&self, repr: Dart) -> Option<FaceKey> {
-        self.derived_indexes().face.get(&repr).copied()
-    }
-}
-impl<P: Payload> CellKeyLookup<Cell3> for GMap<P> {
-    fn get_key(&self, repr: Dart) -> Option<SolidKey> {
-        self.derived_indexes().solid.get(&repr).copied()
-    }
-}
-
-fn remap_dart(dart_map: &HashMap<Dart, Dart>, dart: Dart) -> Dart {
-    *dart_map
-        .get(&dart)
-        .expect("merged dart reference must have a remapped dart")
-}
-
-fn copied_cell_dart<P: Payload>(
-    source: &GMap<P>,
-    copied_darts: &HashSet<Dart>,
-    dart: Dart,
-    dim: Dim,
-) -> Option<Dart> {
-    source
-        .orbit(dart, source.orbit_indices(dim))
-        .find(|candidate| copied_darts.contains(candidate))
-}
-
-/// Source topology selected for copying into another [`GMap`].
-///
-/// Construct this from a topology view's owning map, the darts to copy, and the
-/// representative dart that should be returned after remapping.
-pub struct TopologyMerge<'a, P: Payload> {
-    source: &'a GMap<P>,
-    darts: Vec<Dart>,
-    faces: Vec<FaceKey>,
-    handle: MergeHandle,
-}
-
-/// What a copied topology is reached by in the map it was copied into.
-///
-/// A copy is normally located by a dart. A boundaryless face has none, so the
-/// copy names the new face key instead — the same distinction as
-/// [`ShellRoot`](super::attributes::ShellRoot), one layer up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MergeHandle {
-    /// A dart of the copy, in the target map's numbering.
-    Dart(Dart),
-    /// The copy is one boundaryless face, under its new key.
-    Face(FaceKey),
-}
-
-impl MergeHandle {
-    /// Returns the handle's dart, or `None` for a boundaryless copy.
-    pub fn dart(self) -> Option<Dart> {
-        match self {
-            Self::Dart(dart) => Some(dart),
-            Self::Face(_) => None,
-        }
-    }
-
-    /// Returns the handle's dart.
-    ///
-    /// # Panics
-    ///
-    /// Panics on a boundaryless copy, which has no dart to return.
-    pub fn dart_unchecked(self) -> Dart {
-        self.dart()
-            .expect("a dart-backed copy should return a dart handle")
-    }
-
-    /// Returns the handle's face, or `None` for a dart-backed copy.
-    pub fn face(self) -> Option<FaceKey> {
-        match self {
-            Self::Face(face) => Some(face),
-            Self::Dart(_) => None,
-        }
-    }
-}
-
-impl<'a, P: Payload> TopologyMerge<'a, P> {
-    /// Creates a merge descriptor for a dart-backed topology view.
-    pub fn new(source: &'a GMap<P>, darts: Vec<Dart>, handle: Dart) -> Self {
-        Self {
-            source,
-            darts,
-            faces: Vec::new(),
-            handle: MergeHandle::Dart(handle),
-        }
-    }
-
-    /// Creates a merge descriptor for topology that includes boundaryless
-    /// faces, which no dart can name.
-    pub fn with_faces(
-        source: &'a GMap<P>,
-        darts: Vec<Dart>,
-        faces: Vec<FaceKey>,
-        handle: MergeHandle,
-    ) -> Self {
-        Self {
-            source,
-            darts,
-            faces,
-            handle,
-        }
-    }
-}
-
-/// Topological views that can be copied into another [`GMap`].
-pub trait MergeTopology<P: Payload> {
-    /// Returns the topology subset that should be copied.
-    fn merge_topology(&self) -> TopologyMerge<'_, P>;
-
-    /// Copy this topology into a fresh [`GMap`], returning the copied map and
-    /// this topology's representative dart rewritten to the new map.
-    ///
-    /// Alpha links within the copied topology are preserved. Links leaving the
-    /// copied dart set become free in the isolated map.
-    fn isolate(self) -> (GMap<P>, MergeHandle)
-    where
-        Self: Sized,
-    {
-        let mut isolated = GMap::new();
-        let handle = isolated
-            .transaction(|edit| Ok::<_, TopologyEditError>(edit.merge(self)))
-            .expect("isolating valid topology should produce a valid map");
-        (isolated, handle)
-    }
-}
-
-impl<P, T> MergeTopology<P> for &T
-where
-    P: Payload,
-    T: MergeTopology<P>,
-{
-    fn merge_topology(&self) -> TopologyMerge<'_, P> {
-        (*self).merge_topology()
-    }
-}
-
-impl<P: Payload> AttributeStore<Cell0> for GMap<P> {
-    type Attr = VertexAttr<P::V>;
-    fn get(&self, repr: Dart) -> Option<&VertexAttr<P::V>> {
-        let key = self.derived_indexes().vertex.get(&repr).copied()?;
-        self.vertices.get(key)
-    }
-}
-impl<P: Payload> AttributeStore<Cell1> for GMap<P> {
-    type Attr = EdgeAttr<P::E>;
-    fn get(&self, repr: Dart) -> Option<&EdgeAttr<P::E>> {
-        let key = self.derived_indexes().edge.get(&repr).copied()?;
-        self.edges.get(key)
-    }
-}
-impl<P: Payload> AttributeStore<Cell2> for GMap<P> {
-    type Attr = FaceKey;
-    fn get(&self, repr: Dart) -> Option<&FaceKey> {
-        self.derived_indexes().face.get(&repr)
-    }
-}
-impl<P: Payload> AttributeStore<Cell3> for GMap<P> {
-    type Attr = SolidKey;
-    fn get(&self, repr: Dart) -> Option<&SolidKey> {
-        self.derived_indexes().solid.get(&repr)
-    }
-}
-
-/// A 3-dimensional generalized map with typed attribute stores.
-///
-/// The map owns all darts, alpha involutions, and domain attributes. Prefer the
-/// typed view objects (`Vertex`, `Edge`, `Face`, `Sheet`, `Solid`) for routine
-/// traversal, and use `GMap` methods when implementing lower-level topology
-/// algorithms.
-#[derive(Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "P::V: Serialize, P::E: Serialize, P::Profile: Serialize, P::F: Serialize, P::Sheet: Serialize, P::S: Serialize",
-    deserialize = "P::V: Deserialize<'de>, P::E: Deserialize<'de>, P::Profile: Deserialize<'de>, P::F: Deserialize<'de>, P::Sheet: Deserialize<'de>, P::S: Deserialize<'de>"
-))]
-pub struct GMap<P: Payload = StandardPayload> {
+/// The map owns every dart and every alpha involution between them, and answers
+/// questions about orbits: which darts make up a cell, which cells are incident
+/// to which. Prefer the typed view objects for routine traversal, and reach for
+/// `GMap` when implementing a topology algorithm that genuinely needs alphas.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct GMap {
     alphas: [Vec<Dart>; GMAP_INVOLUTION_COUNT],
     free_slots: VecDeque<usize>,
-    #[serde(skip)]
-    derived_indexes: OnceLock<DerivedCellIndexes>,
-    pub(super) vertices: SlotMap<VertexKey, VertexAttr<P::V>>,
-    pub(super) edges: SlotMap<EdgeKey, EdgeAttr<P::E>>,
-    pub(super) profiles: SlotMap<ProfileKey, ProfileAttr<P::Profile>>,
-    pub(super) faces: SlotMap<FaceKey, FaceAttr<P::F>>,
-    pub(super) sheets: SlotMap<SheetKey, SheetAttr<P::Sheet>>,
-    pub(super) solids: SlotMap<SolidKey, SolidAttr<P::S>>,
-    #[serde(skip)]
-    transaction: Option<Box<TransactionState<P>>>,
 }
 
-#[derive(Debug, Clone, Default)]
-struct DerivedCellIndexes {
-    vertex: HashMap<Dart, VertexKey>,
-    edge: HashMap<Dart, EdgeKey>,
-    profile: HashMap<Dart, ProfileKey>,
-    face: HashMap<Dart, FaceKey>,
-    sheet: HashMap<Dart, SheetKey>,
-    solid: HashMap<Dart, SolidKey>,
-}
-
-struct TransactionState<P: Payload> {
-    snapshot: GMap<P>,
-    events: Vec<EditEvent>,
-}
-
-impl<P: Payload> Clone for GMap<P> {
-    fn clone(&self) -> Self {
-        Self {
-            alphas: self.alphas.clone(),
-            free_slots: self.free_slots.clone(),
-            derived_indexes: OnceLock::new(),
-            vertices: self.vertices.clone(),
-            edges: self.edges.clone(),
-            profiles: self.profiles.clone(),
-            sheets: self.sheets.clone(),
-            faces: self.faces.clone(),
-            solids: self.solids.clone(),
-            transaction: None,
-        }
-    }
-}
-
-impl<P: Payload> Default for GMap<P> {
+impl Default for GMap {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<P: Payload> GMap<P> {
-    /// Creates an empty map with no darts or attributes.
+impl GMap {
+    /// Creates an empty map with no darts.
     pub fn new() -> Self {
-        let alphas = std::array::from_fn(|_| Vec::new());
-        let free_slots = VecDeque::new();
-        let vertices = SlotMap::with_key();
-        let edges = SlotMap::with_key();
-        let profiles = SlotMap::with_key();
-        let sheets = SlotMap::with_key();
-        let faces = SlotMap::with_key();
-        let solids = SlotMap::with_key();
         Self {
-            alphas,
-            free_slots,
-            derived_indexes: OnceLock::new(),
-            vertices,
-            edges,
-            profiles,
-            sheets,
-            faces,
-            solids,
-            transaction: None,
-        }
-    }
-
-    /// Runs one atomic operation against this map.
-    ///
-    /// The operation receives the only capability that can mutate staged
-    /// topology. A returned error or failed commit restores the complete
-    /// starting snapshot. Panics are not handled by this API.
-    pub fn transaction<T, E, F>(&mut self, operation: F) -> Result<T, E>
-    where
-        E: From<TopologyEditError>,
-        F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, E>,
-    {
-        self.run_transaction(&mut PreservePayload, operation)
-    }
-
-    /// Runs one atomic operation with a caller-provided payload policy.
-    ///
-    /// Policy event application is performed only after the complete operation
-    /// has passed topology validation and identity reconciliation.
-    pub fn transaction_with_policy<Q, T, E, F>(
-        &mut self,
-        policy: &mut Q,
-        operation: F,
-    ) -> Result<T, E>
-    where
-        Q: EditPolicy<P>,
-        E: From<TopologyEditError>,
-        F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, E>,
-    {
-        self.run_transaction(policy, operation)
-    }
-
-    /// Owns the snapshot and commit for one transaction-scoped edit session.
-    fn run_transaction<Q, T, E, F>(&mut self, policy: &mut Q, operation: F) -> Result<T, E>
-    where
-        Q: EditPolicy<P>,
-        E: From<TopologyEditError>,
-        F: FnOnce(&mut TopologyEdit<'_, P>) -> Result<T, E>,
-    {
-        debug_assert!(self.transaction.is_none());
-
-        self.transaction = Some(Box::new(TransactionState {
-            snapshot: self.clone(),
-            events: Vec::new(),
-        }));
-
-        let result = operation(&mut TopologyEdit::new(self));
-        match result {
-            Ok(value) => match self.commit_active_transaction(policy) {
-                Ok(()) => {
-                    self.transaction = None;
-                    Ok(value)
-                }
-                Err(error) => {
-                    self.rollback_transaction();
-                    Err(E::from(error))
-                }
-            },
-            Err(error) => {
-                self.rollback_transaction();
-                Err(error)
-            }
-        }
-    }
-
-    /// Replaces all staged state with the snapshot owned by the transaction.
-    fn rollback_transaction(&mut self) {
-        if let Some(transaction) = self.transaction.take() {
-            *self = transaction.snapshot;
-        }
-    }
-
-    /// Finalizes the active transaction, restoring its snapshot if commit fails.
-    fn commit_active_transaction<Q>(&mut self, policy: &mut Q) -> Result<(), TopologyEditError>
-    where
-        Q: EditPolicy<P>,
-    {
-        let transaction = self
-            .transaction
-            .take()
-            .expect("an active transaction must exist while committing");
-        match commit_topology_transaction(self, &transaction.snapshot, &transaction.events, policy)
-        {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                *self = transaction.snapshot;
-                Err(error)
-            }
-        }
-    }
-
-    /// Records one semantic event in the active edit session.
-    pub(super) fn record_edit_event(&mut self, event: EditEvent) {
-        self.transaction
-            .as_mut()
-            .expect("topology events require an active transaction")
-            .events
-            .push(event);
-    }
-
-    /// Records attributes created by internal map-copying operations.
-    fn record_created_attribute(&mut self, key: EditKey) {
-        self.record_edit_event(EditEvent::Created { key });
-    }
-
-    /// Discards cached dart-to-cell mappings after topology or attributes change.
-    pub(super) fn invalidate_derived_indexes(&mut self) {
-        self.derived_indexes.take();
-    }
-
-    /// Forces the lazy indexes to be built, notably as the last commit check.
-    pub(super) fn materialize_derived_indexes(&self) {
-        let _ = self.derived_indexes();
-    }
-
-    /// Returns the cached indexes, rebuilding them from authoritative state if needed.
-    fn derived_indexes(&self) -> &DerivedCellIndexes {
-        if self.derived_indexes.get().is_none() {
-            let indexes = self.build_derived_indexes();
-            self.derived_indexes
-                .set(indexes)
-                .expect("derived indexes are initialized only once");
-        }
-        self.derived_indexes
-            .get()
-            .expect("derived indexes must be initialized")
-    }
-
-    /// Reconstructs every dart-to-attribute index from current cells and attributes.
-    fn build_derived_indexes(&self) -> DerivedCellIndexes {
-        let mut indexes = DerivedCellIndexes::default();
-
-        for (key, attr) in self.vertices.iter() {
-            let repr = self.cell_representative(attr.dart, Dim::Zero);
-            self.insert_logical_key(&mut indexes.vertex, repr, key, EditKey::Vertex);
-        }
-        for (key, attr) in self.edges.iter() {
-            let repr = self.cell_representative(attr.dart, Dim::One);
-            self.insert_logical_key(&mut indexes.edge, repr, key, EditKey::Edge);
-        }
-        for (key, attr) in self.profiles.iter() {
-            let repr = self.profile_representative(attr.dart);
-            self.insert_logical_key(&mut indexes.profile, repr, key, EditKey::Profile);
-        }
-        for (key, attr) in self.faces.iter() {
-            for dart in attr.darts() {
-                let repr = self.cell_representative(dart, Dim::Two);
-                self.insert_logical_key(&mut indexes.face, repr, key, EditKey::Face);
-            }
-        }
-        // A boundaryless shell has no dart to reach it from, so it registers
-        // nothing here. It is found through its key, or through the one face
-        // it holds, never by walking the map.
-        for (key, attr) in self.sheets.iter() {
-            for dart in attr
-                .dart()
-                .into_iter()
-                .flat_map(|root| self.logical_sheet_darts(root, &indexes.face))
-            {
-                let repr = self.cell_representative(dart, Dim::Three);
-                self.insert_logical_key(&mut indexes.sheet, repr, key, EditKey::Sheet);
-            }
-        }
-        for (key, attr) in self.solids.iter() {
-            for dart in attr.shell_darts() {
-                for shell_dart in self.logical_sheet_darts(dart, &indexes.face) {
-                    let repr = self.cell_representative(shell_dart, Dim::Three);
-                    self.insert_logical_key(&mut indexes.solid, repr, key, EditKey::Solid);
-                }
-            }
-        }
-
-        indexes
-    }
-
-    /// Collects every raw alpha0/alpha1/alpha2 component in a logical sheet.
-    ///
-    /// A face with holes is represented by several disconnected 2-cell orbits
-    /// tied to one face attribute. Crossing between those boundary components
-    /// makes the incident raw 3-cell components part of the same domain sheet.
-    fn logical_sheet_darts(&self, start: Dart, face_index: &HashMap<Dart, FaceKey>) -> Vec<Dart> {
-        let mut pending = VecDeque::from([start]);
-        let mut seen_components = HashSet::new();
-        let mut seen_faces = HashSet::new();
-        let mut darts = Vec::new();
-
-        while let Some(seed) = pending.pop_front() {
-            let component = self.cell_representative(seed, Dim::Three);
-            if !seen_components.insert(component) {
-                continue;
-            }
-
-            for dart in self.incident_cells(seed, Dim::Three, Dim::Two) {
-                let face_component = self.cell_representative(dart, Dim::Two);
-                if let Some(&face_key) = face_index.get(&face_component)
-                    && seen_faces.insert(face_key)
-                {
-                    let face = self.face_attr_unchecked(face_key);
-                    pending.extend(face.darts());
-                }
-            }
-            darts.extend(self.orbit(seed, self.orbit_indices(Dim::Three)));
-        }
-
-        darts
-    }
-
-    /// Returns all darts in the logical sheet containing `start`.
-    pub(crate) fn sheet_darts(&self, start: Dart) -> Vec<Dart> {
-        self.logical_sheet_darts(start, &self.derived_indexes().face)
-    }
-
-    /// Inserts one cell key, resolving staged duplicate identities consistently.
-    fn insert_logical_key<K: Copy>(
-        &self,
-        index: &mut HashMap<Dart, K>,
-        representative: Dart,
-        candidate: K,
-        wrap: fn(K) -> EditKey,
-    ) {
-        let Some(existing) = index.get(&representative).copied() else {
-            index.insert(representative, candidate);
-            return;
-        };
-        if self.prefer_transaction_key(wrap(existing), wrap(candidate)) == wrap(candidate) {
-            index.insert(representative, candidate);
-        }
-    }
-
-    /// Selects the identity a staged lookup should expose before final reconciliation.
-    ///
-    /// Explicit lineage wins first, then transaction-start identities, then the
-    /// earliest-created local identity. Commit uses the same ordering rules.
-    fn prefer_transaction_key(&self, first: EditKey, second: EditKey) -> EditKey {
-        let Some(transaction) = &self.transaction else {
-            return first;
-        };
-
-        let final_key = |mut key: EditKey| {
-            let mut visited = HashSet::new();
-            while visited.insert(key) {
-                let Some(next) = transaction.events.iter().find_map(|event| {
-                    event
-                        .merge_keys()
-                        .and_then(|(survivor, removed)| (removed == key).then_some(survivor))
-                }) else {
-                    break;
-                };
-                key = next;
-            }
-            key
-        };
-        let first_final = final_key(first);
-        let second_final = final_key(second);
-        if first_final == second {
-            return second;
-        }
-        if second_final == first {
-            return first;
-        }
-
-        let existed = |key| match key {
-            EditKey::Vertex(key) => transaction.snapshot.vertices.contains_key(key),
-            EditKey::Edge(key) => transaction.snapshot.edges.contains_key(key),
-            EditKey::Profile(key) => transaction.snapshot.profiles.contains_key(key),
-            EditKey::Face(key) => transaction.snapshot.faces.contains_key(key),
-            EditKey::Sheet(key) => transaction.snapshot.sheets.contains_key(key),
-            EditKey::Solid(key) => transaction.snapshot.solids.contains_key(key),
-        };
-        match (existed(first), existed(second)) {
-            (true, false) => return first,
-            (false, true) => return second,
-            _ => {}
-        }
-
-        let creation_order = |key| {
-            transaction
-                .events
-                .iter()
-                .position(
-                    |event| matches!(event, EditEvent::Created { key: created } if *created == key),
-                )
-                .unwrap_or(usize::MAX)
-        };
-        if creation_order(second) < creation_order(first) {
-            second
-        } else {
-            first
+            alphas: std::array::from_fn(|_| Vec::new()),
+            free_slots: VecDeque::new(),
         }
     }
 
@@ -703,114 +113,7 @@ impl<P: Payload> GMap<P> {
     ///
     /// Panics if `dart` does not address an existing dart slot.
     pub fn alpha(&self, d: Dim, dart: Dart) -> Dart {
-        let i = d.index();
-        self.alphas[i][dart.id()]
-    }
-
-    /// Adds one isolated dart and returns its identifier.
-    ///
-    /// All alpha involutions initially map the new dart to itself.
-    pub(super) fn add_dart(&mut self) -> Dart {
-        self.invalidate_derived_indexes();
-        let dart = if let Some(slot) = self.free_slots.pop_front() {
-            Dart::new(slot)
-        } else {
-            Dart::new(self.alphas[0].len())
-        };
-        for alphas in self.alphas.iter_mut() {
-            alphas.push(dart);
-        }
-        dart
-    }
-
-    /// Removes a dart that the caller has proven isolated.
-    ///
-    /// The [`IsolatedDart`] wrapper records the caller's proof obligation.
-    pub(super) fn remove_dart(&mut self, dart: IsolatedDart) {
-        self.invalidate_derived_indexes();
-        for alphas in self.alphas.iter_mut() {
-            alphas.remove(dart.id());
-        }
-        self.free_slots.push_back(dart.id());
-    }
-
-    /// Removes several isolated darts while atomically remapping every retained
-    /// dart reference. This avoids the index shifting inherent in repeated
-    /// single-dart removal.
-    pub(super) fn remove_isolated_darts(
-        &mut self,
-        darts: Vec<IsolatedDart>,
-    ) -> HashMap<Dart, Dart> {
-        if darts.is_empty() {
-            return self.darts().map(|dart| (dart, dart)).collect();
-        }
-        let removed = darts
-            .into_iter()
-            .map(|dart| dart.id())
-            .collect::<HashSet<_>>();
-        for &id in &removed {
-            let dart = Dart::new(id);
-            assert!(
-                (0..GMAP_INVOLUTION_COUNT).all(|dim| self.alphas[dim][id] == dart),
-                "bulk dart removal requires every removed dart to be isolated"
-            );
-        }
-
-        let mut remap = vec![None; self.dart_count()];
-        let mut next = 0;
-        for (old, slot) in remap.iter_mut().enumerate() {
-            if !removed.contains(&old) {
-                *slot = Some(Dart::new(next));
-                next += 1;
-            }
-        }
-        let map_dart = |dart: Dart| {
-            remap[dart.id()].expect("retained topology must not reference a removed dart")
-        };
-        self.alphas = std::array::from_fn(|dim| {
-            (0..remap.len())
-                .filter(|old| !removed.contains(old))
-                .map(|old| map_dart(self.alphas[dim][old]))
-                .collect()
-        });
-        self.free_slots.clear();
-
-        for attr in self.vertices.values_mut() {
-            attr.dart = map_dart(attr.dart);
-        }
-        for attr in self.edges.values_mut() {
-            attr.dart = map_dart(attr.dart);
-        }
-        for attr in self.profiles.values_mut() {
-            attr.dart = map_dart(attr.dart);
-        }
-        for attr in self.faces.values_mut() {
-            attr.map_darts(map_dart);
-            attr.pcurves = std::mem::take(&mut attr.pcurves)
-                .into_iter()
-                .map(|(dart, pcurve)| (map_dart(dart), pcurve))
-                .collect();
-        }
-        for attr in self.sheets.values_mut() {
-            attr.root.map_dart(&map_dart);
-        }
-        for attr in self.solids.values_mut() {
-            attr.map_shell_darts(&map_dart);
-        }
-        self.invalidate_derived_indexes();
-        remap
-            .into_iter()
-            .enumerate()
-            .filter_map(|(old, new)| new.map(|new| (Dart::new(old), new)))
-            .collect()
-    }
-
-    /// Iterates the orbit generated from `dart` by the given alpha indices.
-    ///
-    /// For cell traversals, prefer [`Self::orbit_indices`] and typed view
-    /// methods when possible.
-    pub fn orbit(&self, dart: Dart, involutions: Vec<usize>) -> OrbitIterator<'_, P> {
-        OrbitIterator::new(self, dart, involutions)
+        self.alphas[d.index()][dart.id()]
     }
 
     /// A dart is `i`-free when `αᵢ(d) = d`, i.e. not sewn along dimension `i`.
@@ -818,10 +121,12 @@ impl<P: Payload> GMap<P> {
         self.alphas[d.index()][dart.id()] == dart
     }
 
-    /// Returns the alpha indices used to compare sewing orbits.
-    fn sewing_orbit_indices(&self, d: Dim) -> impl Iterator<Item = usize> + '_ {
-        let i = d.index();
-        (0..self.dimension()).filter(move |&j| j + 2 <= i || j >= i + 2)
+    /// Iterates the orbit generated from `dart` by the given alpha indices.
+    ///
+    /// For cell traversals, prefer [`Self::orbit_indices`] and typed view
+    /// methods when possible.
+    pub fn orbit(&self, dart: Dart, involutions: Vec<usize>) -> OrbitIterator<'_> {
+        OrbitIterator::new(self, dart, involutions)
     }
 
     /// Returns the alpha indices that generate a cell orbit of dimension `d`.
@@ -831,707 +136,6 @@ impl<P: Payload> GMap<P> {
     pub fn orbit_indices(&self, d: Dim) -> Vec<usize> {
         let i = d.index();
         (0..self.dimension()).filter(|&idx| idx != i).collect()
-    }
-
-    /// Returns the typed vertex view registered under `key`.
-    pub fn vertex(&self, key: VertexKey) -> Option<Vertex<'_, P>> {
-        self.vertex_attr(key)?;
-        Some(Vertex::new(self, key))
-    }
-
-    /// Returns the typed vertex view registered under `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered vertex.
-    pub fn vertex_unchecked(&self, key: VertexKey) -> Vertex<'_, P> {
-        self.vertex(key).expect("vertex should be in the map")
-    }
-
-    /// Returns the vertex attribute for `key`, if it exists.
-    pub fn vertex_attr(&self, key: VertexKey) -> Option<&VertexAttr<P::V>> {
-        self.vertices.get(key)
-    }
-
-    /// Returns the vertex attribute for `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered vertex.
-    pub fn vertex_attr_unchecked(&self, key: VertexKey) -> &VertexAttr<P::V> {
-        self.vertex_attr(key)
-            .expect("vertex attribute should be in the map")
-    }
-
-    /// Returns the mutable vertex attribute for `key`, if it exists.
-    pub(super) fn vertex_attr_mut(&mut self, key: VertexKey) -> Option<&mut VertexAttr<P::V>> {
-        self.invalidate_derived_indexes();
-        self.vertices.get_mut(key)
-    }
-
-    /// Returns the mutable vertex attribute for `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered vertex.
-    pub(super) fn vertex_attr_mut_unchecked(&mut self, key: VertexKey) -> &mut VertexAttr<P::V> {
-        self.vertex_attr_mut(key)
-            .expect("vertex attribute should be in the map")
-    }
-
-    /// Iterate every stored 0-cell attribute paired with its slotmap key.
-    pub fn iter_vertices(&self) -> impl Iterator<Item = (VertexKey, &VertexAttr<P::V>)> {
-        self.vertices.iter()
-    }
-
-    /// Returns the typed edge view registered under `key` with default
-    /// (`Same`) orientation.
-    pub fn edge(&self, key: EdgeKey) -> Option<Edge<'_, P>> {
-        self.edge_attr(key)?;
-        Some(Edge::new(self, key))
-    }
-
-    /// Returns the typed edge view registered under `key` with default
-    /// (`Same`) orientation.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered edge.
-    pub fn edge_unchecked(&self, key: EdgeKey) -> Edge<'_, P> {
-        self.edge(key).expect("edge should be in the map")
-    }
-
-    /// Returns the key of the `D`-cell containing `dart`.
-    pub fn cell_key<D: CellDim>(&self, dart: Dart) -> Option<D::Key>
-    where
-        Self: CellKeyLookup<D>,
-    {
-        let repr = self.cell_representative(dart, D::DIM);
-        self.get_key(repr)
-    }
-
-    /// Returns the key of the `D`-cell containing `dart`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if no key is registered for the cell.
-    pub fn cell_key_unchecked<D: CellDim>(&self, dart: Dart) -> D::Key
-    where
-        Self: CellKeyLookup<D>,
-    {
-        self.cell_key::<D>(dart)
-            .expect("cell key should be in the map")
-    }
-
-    /// Returns the orientation of `dart` relative to the edge's default
-    /// direction.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered edge or `dart` does not belong to
-    /// that edge.
-    pub fn edge_orientation_at_dart(&self, key: EdgeKey, dart: Dart) -> Orientation {
-        let attr = self.edge_attr_unchecked(key);
-        self.cell_orientation_from_seed(attr.dart, dart, Dim::One)
-            .expect("edge orientation requires dart to belong to edge")
-    }
-
-    /// Returns the edge attribute for `key`, if it exists.
-    pub fn edge_attr(&self, key: EdgeKey) -> Option<&EdgeAttr<P::E>> {
-        self.edges.get(key)
-    }
-
-    /// Returns the edge attribute for `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered edge.
-    pub fn edge_attr_unchecked(&self, key: EdgeKey) -> &EdgeAttr<P::E> {
-        self.edge_attr(key)
-            .expect("edge attribute should be in the map")
-    }
-
-    /// Returns the mutable edge attribute for `key`, if it exists.
-    pub(super) fn edge_attr_mut(&mut self, key: EdgeKey) -> Option<&mut EdgeAttr<P::E>> {
-        self.invalidate_derived_indexes();
-        self.edges.get_mut(key)
-    }
-
-    /// Returns the mutable edge attribute for `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered edge.
-    pub(super) fn edge_attr_mut_unchecked(&mut self, key: EdgeKey) -> &mut EdgeAttr<P::E> {
-        self.edge_attr_mut(key)
-            .expect("edge attribute should be in the map")
-    }
-
-    /// Iterate every stored 1-cell attribute paired with its slotmap key.
-    pub fn iter_edges(&self) -> impl Iterator<Item = (EdgeKey, &EdgeAttr<P::E>)> {
-        self.edges.iter()
-    }
-
-    /// Returns the profile view registered under `key`.
-    pub fn profile(&self, key: ProfileKey) -> Option<Profile<'_, P>> {
-        self.profile_attr(key)?;
-        Some(Profile::new(self, key))
-    }
-
-    /// Returns the profile view registered under `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered profile.
-    pub fn profile_unchecked(&self, key: ProfileKey) -> Profile<'_, P> {
-        self.profile(key).expect("profile should be in the map")
-    }
-
-    /// Returns the profile key for the alpha0/alpha1 component containing `dart`.
-    pub fn profile_key(&self, dart: Dart) -> Option<ProfileKey> {
-        self.derived_indexes()
-            .profile
-            .get(&self.profile_representative(dart))
-            .copied()
-    }
-
-    /// Returns the profile key for the alpha0/alpha1 component containing `dart`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if no profile key is registered for the component.
-    pub fn profile_key_unchecked(&self, dart: Dart) -> ProfileKey {
-        self.profile_key(dart)
-            .expect("profile key should be in the map")
-    }
-
-    /// Returns the stored profile attribute.
-    pub fn profile_attr(&self, key: ProfileKey) -> Option<&ProfileAttr<P::Profile>> {
-        self.profiles.get(key)
-    }
-
-    /// Returns the stored profile attribute.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered profile.
-    pub fn profile_attr_unchecked(&self, key: ProfileKey) -> &ProfileAttr<P::Profile> {
-        self.profile_attr(key)
-            .expect("profile attribute should be in the map")
-    }
-
-    /// Returns the mutable profile attribute.
-    pub(super) fn profile_attr_mut(
-        &mut self,
-        key: ProfileKey,
-    ) -> Option<&mut ProfileAttr<P::Profile>> {
-        self.invalidate_derived_indexes();
-        self.profiles.get_mut(key)
-    }
-
-    /// Returns the mutable profile attribute.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered profile.
-    pub(super) fn profile_attr_mut_unchecked(
-        &mut self,
-        key: ProfileKey,
-    ) -> &mut ProfileAttr<P::Profile> {
-        self.profile_attr_mut(key)
-            .expect("profile attribute should be in the map")
-    }
-
-    /// Iterates all stored profiles.
-    pub fn iter_profiles(&self) -> impl Iterator<Item = (ProfileKey, &ProfileAttr<P::Profile>)> {
-        self.profiles.iter()
-    }
-
-    /// Returns the typed face view registered under `key` with default
-    /// (`Same`) orientation.
-    pub fn face(&self, key: FaceKey) -> Option<Face<'_, P>> {
-        self.face_attr(key)?;
-        Some(Face::new(self, key))
-    }
-
-    /// Returns the typed face view registered under `key` with default
-    /// (`Same`) orientation.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered face.
-    pub fn face_unchecked(&self, key: FaceKey) -> Face<'_, P> {
-        self.face(key).expect("face should be in the map")
-    }
-
-    /// Returns the face orientation at `dart` relative to the face's stored
-    /// default orientation.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered face or `dart` does not belong to
-    /// one of that face's boundary components.
-    pub fn face_orientation_at_dart(&self, key: FaceKey, dart: Dart) -> Orientation {
-        let attr = self.face_attr_unchecked(key);
-        attr.darts()
-            .find_map(|seed| self.cell_orientation_from_seed(seed, dart, Dim::Two))
-            .expect("face orientation requires dart to belong to face")
-    }
-
-    pub(crate) fn cell_orientation_from_seed(
-        &self,
-        seed: Dart,
-        target: Dart,
-        dim: Dim,
-    ) -> Option<Orientation> {
-        let mut orientations = vec![None; self.dart_count()];
-        let mut queue = VecDeque::from([seed]);
-        orientations[seed.id()] = Some(Orientation::Same);
-        let involutions = self.orbit_indices(dim);
-
-        while let Some(dart) = queue.pop_front() {
-            let orientation =
-                orientations[dart.id()].expect("queued dart must have an orientation");
-            if dart == target {
-                return Some(orientation);
-            }
-
-            for &index in &involutions {
-                let linked = self.alphas[index][dart.id()];
-                if linked == dart || orientations[linked.id()].is_some() {
-                    continue;
-                }
-                // Lower-dimensional flag changes reverse the cell. Higher-
-                // dimensional incidence changes preserve its intrinsic orientation.
-                let linked_orientation = if index < dim.index() {
-                    orientation.flip()
-                } else {
-                    orientation
-                };
-                orientations[linked.id()] = Some(linked_orientation);
-                queue.push_back(linked);
-            }
-        }
-
-        None
-    }
-
-    /// Returns the face attribute for `key`, if it exists.
-    pub fn face_attr(&self, key: FaceKey) -> Option<&FaceAttr<P::F>> {
-        self.faces.get(key)
-    }
-
-    /// Returns the face attribute for `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered face.
-    pub fn face_attr_unchecked(&self, key: FaceKey) -> &FaceAttr<P::F> {
-        self.face_attr(key)
-            .expect("face attribute should be in the map")
-    }
-
-    /// Returns the mutable face attribute for `key`, if it exists.
-    pub(super) fn face_attr_mut(&mut self, key: FaceKey) -> Option<&mut FaceAttr<P::F>> {
-        self.invalidate_derived_indexes();
-        self.faces.get_mut(key)
-    }
-
-    /// Returns the mutable face attribute for `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered face.
-    pub(super) fn face_attr_mut_unchecked(&mut self, key: FaceKey) -> &mut FaceAttr<P::F> {
-        self.face_attr_mut(key)
-            .expect("face attribute should be in the map")
-    }
-
-    /// Iterate every stored 2-cell attribute paired with its slotmap key.
-    pub fn iter_faces(&self) -> impl Iterator<Item = (FaceKey, &FaceAttr<P::F>)> {
-        self.faces.iter()
-    }
-
-    /// Returns the sheet view registered under `key`.
-    pub fn sheet(&self, key: SheetKey) -> Option<Sheet<'_, P>> {
-        self.sheet_attr(key)?;
-        Some(Sheet::new(self, key))
-    }
-
-    /// Returns the sheet view registered under `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered sheet.
-    pub fn sheet_unchecked(&self, key: SheetKey) -> Sheet<'_, P> {
-        self.sheet(key).expect("sheet should be in the map")
-    }
-
-    /// Returns the sheet key for the logical sheet containing `dart`.
-    ///
-    /// Logical sheets cross between the disconnected boundary components of a
-    /// multi-loop face through its stored face attribute.
-    pub fn sheet_key(&self, dart: Dart) -> Option<SheetKey> {
-        self.derived_indexes()
-            .sheet
-            .get(&self.cell_representative(dart, Dim::Three))
-            .copied()
-    }
-
-    /// Returns the sheet key for the logical sheet containing `dart`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if no sheet key is registered for the 3-cell.
-    pub fn sheet_key_unchecked(&self, dart: Dart) -> SheetKey {
-        self.sheet_key(dart)
-            .expect("sheet key should be in the map")
-    }
-
-    /// Returns the sheet registered as exactly this boundaryless face.
-    ///
-    /// A boundaryless face registers no dart component, so it cannot be found
-    /// through [`Self::sheet_key`]; the stored roots are what name it.
-    pub fn sheet_key_at_face(&self, face: FaceKey) -> Option<SheetKey> {
-        self.sheets
-            .iter()
-            .find(|(_, attr)| attr.root.face() == Some(face))
-            .map(|(key, _)| key)
-    }
-
-    /// Returns the solid one of whose shells is exactly this boundaryless face.
-    ///
-    /// The dart-rooted counterpart is [`Self::solid_key`]; a boundaryless face
-    /// has no dart to ask with.
-    pub fn solid_key_at_face(&self, face: FaceKey) -> Option<SolidKey> {
-        self.solids
-            .iter()
-            .find(|(_, attr)| attr.shells().any(|shell| shell.face() == Some(face)))
-            .map(|(key, _)| key)
-    }
-
-    /// Returns the key of the solid a merge handle landed in, if any.
-    pub fn solid_key_at(&self, handle: MergeHandle) -> Option<SolidKey> {
-        match handle {
-            MergeHandle::Dart(dart) => self.solid_key(dart),
-            MergeHandle::Face(face) => self.solid_key_at_face(face),
-        }
-    }
-
-    /// Returns the sheet view a stored shell root names.
-    pub fn shell_sheet(&self, root: ShellRoot) -> Option<Sheet<'_, P>> {
-        match root {
-            ShellRoot::Dart(dart) => Sheet::from_dart(self, dart),
-            ShellRoot::Face { face, .. } => self
-                .sheet_key_at_face(face)
-                .map(|key| Sheet::new(self, key)),
-        }
-    }
-
-    /// Returns the stored sheet attribute.
-    pub fn sheet_attr(&self, key: SheetKey) -> Option<&SheetAttr<P::Sheet>> {
-        self.sheets.get(key)
-    }
-
-    /// Returns the stored sheet attribute.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered sheet.
-    pub fn sheet_attr_unchecked(&self, key: SheetKey) -> &SheetAttr<P::Sheet> {
-        self.sheet_attr(key)
-            .expect("sheet attribute should be in the map")
-    }
-
-    /// Returns the mutable sheet attribute.
-    pub(super) fn sheet_attr_mut(&mut self, key: SheetKey) -> Option<&mut SheetAttr<P::Sheet>> {
-        self.invalidate_derived_indexes();
-        self.sheets.get_mut(key)
-    }
-
-    /// Returns the mutable sheet attribute.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered sheet.
-    pub(super) fn sheet_attr_mut_unchecked(&mut self, key: SheetKey) -> &mut SheetAttr<P::Sheet> {
-        self.sheet_attr_mut(key)
-            .expect("sheet attribute should be in the map")
-    }
-
-    /// Iterates all stored sheets.
-    pub fn iter_sheets(&self) -> impl Iterator<Item = (SheetKey, &SheetAttr<P::Sheet>)> {
-        self.sheets.iter()
-    }
-
-    /// Returns the typed solid view registered under `key`.
-    pub fn solid(&self, key: SolidKey) -> Option<Solid<'_, P>> {
-        self.solid_attr(key)?;
-        Some(Solid::new(self, key))
-    }
-
-    /// Returns the typed solid view registered under `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered solid.
-    pub fn solid_unchecked(&self, key: SolidKey) -> Solid<'_, P> {
-        self.solid(key).expect("solid should be in the map")
-    }
-
-    /// Returns the solid attribute for `key`, if it exists.
-    pub fn solid_attr(&self, key: SolidKey) -> Option<&SolidAttr<P::S>> {
-        self.solids.get(key)
-    }
-
-    /// Returns the solid attribute for `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered solid.
-    pub fn solid_attr_unchecked(&self, key: SolidKey) -> &SolidAttr<P::S> {
-        self.solid_attr(key)
-            .expect("solid attribute should be in the map")
-    }
-
-    /// Returns the mutable solid attribute for `key`, if it exists.
-    pub(super) fn solid_attr_mut(&mut self, key: SolidKey) -> Option<&mut SolidAttr<P::S>> {
-        self.invalidate_derived_indexes();
-        self.solids.get_mut(key)
-    }
-
-    /// Returns the mutable solid attribute for `key`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `key` is not a registered solid.
-    pub(super) fn solid_attr_mut_unchecked(&mut self, key: SolidKey) -> &mut SolidAttr<P::S> {
-        self.solid_attr_mut(key)
-            .expect("solid attribute should be in the map")
-    }
-
-    /// Returns the solid key for the registered logical shell containing `dart`.
-    pub fn solid_key(&self, dart: Dart) -> Option<SolidKey> {
-        self.derived_indexes()
-            .solid
-            .get(&self.cell_representative(dart, Dim::Three))
-            .copied()
-    }
-
-    /// Iterate every stored 3-cell attribute paired with its slotmap key.
-    pub fn iter_solids(&self) -> impl Iterator<Item = (SolidKey, &SolidAttr<P::S>)> {
-        self.solids.iter()
-    }
-
-    pub(super) fn profile_representative(&self, dart: Dart) -> Dart {
-        self.orbit(dart, vec![Dim::Zero.index(), Dim::One.index()])
-            .min()
-            .expect("profile orbit cannot be empty")
-    }
-
-    /// Copy a topological view into a fresh [`GMap`].
-    ///
-    /// This is the associated-function form of [`MergeTopology::isolate`].
-    pub fn isolate<T>(topology: T) -> (Self, MergeHandle)
-    where
-        T: MergeTopology<P>,
-    {
-        topology.isolate()
-    }
-
-    /// Merge a topological view into this map, returning the view's representative
-    /// dart rewritten to the destination map.
-    ///
-    /// All darts in the view are copied. Alpha links within those darts are
-    /// preserved; links leaving the view become free. Stored vertex, edge, face,
-    /// and solid attributes whose representative darts are part of the view are
-    /// cloned with embedded dart references remapped to the new dart ids.
-    pub(super) fn merge<T>(&mut self, topology: T) -> MergeHandle
-    where
-        T: MergeTopology<P>,
-    {
-        let topology = topology.merge_topology();
-        let source = topology.source;
-        let handle = topology.handle;
-        let source_faces = topology.faces;
-        let mut seen_darts = HashSet::new();
-        let source_darts = topology
-            .darts
-            .into_iter()
-            .filter(|dart| seen_darts.insert(*dart))
-            .collect::<Vec<_>>();
-        let source_dart_set = source_darts.iter().copied().collect::<HashSet<_>>();
-        let mut dart_map = HashMap::with_capacity(source_darts.len());
-
-        for old in source_darts.iter().copied() {
-            let new = self.add_dart();
-            dart_map.insert(old, new);
-        }
-
-        for old in source_darts.iter().copied() {
-            let new = remap_dart(&dart_map, old);
-            for i in 0..self.dimension() {
-                let old_link = source.alphas[i][old.id()];
-                self.alphas[i][new.id()] = dart_map.get(&old_link).copied().unwrap_or(new);
-            }
-        }
-
-        for (_, attr) in source.vertices.iter() {
-            let Some(attribute_dart) =
-                copied_cell_dart(source, &source_dart_set, attr.dart, Dim::Zero)
-            else {
-                continue;
-            };
-            let mut attr = attr.clone();
-            attr.dart = self.cell_representative(remap_dart(&dart_map, attribute_dart), Dim::Zero);
-            let new_key = self.vertices.insert(attr);
-            self.record_created_attribute(EditKey::Vertex(new_key));
-        }
-
-        for (_, attr) in source.edges.iter() {
-            let Some(attribute_dart) =
-                copied_cell_dart(source, &source_dart_set, attr.dart, Dim::One)
-            else {
-                continue;
-            };
-            let mut attr = attr.clone();
-            attr.dart = remap_dart(&dart_map, attribute_dart);
-            let new_key = self.edges.insert(attr);
-            self.record_created_attribute(EditKey::Edge(new_key));
-        }
-
-        for (_, attr) in source.profiles.iter() {
-            if !source
-                .orbit(attr.dart, vec![Dim::Zero.index(), Dim::One.index()])
-                .all(|dart| source_dart_set.contains(&dart))
-            {
-                continue;
-            }
-            let mut attr = attr.clone();
-            attr.dart = remap_dart(&dart_map, attr.dart);
-            let new_key = self.profiles.insert(attr);
-            self.record_created_attribute(EditKey::Profile(new_key));
-        }
-
-        for (_, attr) in source.faces.iter() {
-            let Some(seed) = attr.seed() else {
-                continue;
-            };
-            if !source_dart_set.contains(&seed) {
-                continue;
-            }
-            let mut attr = attr.clone();
-            attr.retain_mapped(&dart_map);
-            if attr.is_empty() {
-                continue;
-            }
-            attr.pcurves = attr
-                .pcurves
-                .into_iter()
-                .filter_map(|(dart, curve)| dart_map.get(&dart).copied().map(|d| (d, curve)))
-                .collect();
-            let new_key = self.faces.insert(attr);
-            self.record_created_attribute(EditKey::Face(new_key));
-        }
-
-        // A merge is otherwise defined by the darts it copies, and a
-        // boundaryless face has none: it is named outright by the caller, and
-        // the map from its old key to its new one is what lets the shells that
-        // hold it come across too.
-        let mut face_map = HashMap::with_capacity(source_faces.len());
-        for old in source_faces {
-            let Some(attr) = source.faces.get(old) else {
-                continue;
-            };
-            let new_key = self.faces.insert(attr.clone());
-            self.record_created_attribute(EditKey::Face(new_key));
-            face_map.insert(old, new_key);
-        }
-
-        for (_, attr) in source.sheets.iter() {
-            let root = match attr.root {
-                ShellRoot::Dart(root) => {
-                    if !source
-                        .orbit(root, vec![0, 1, 2])
-                        .all(|dart| source_dart_set.contains(&dart))
-                    {
-                        continue;
-                    }
-                    ShellRoot::Dart(remap_dart(&dart_map, root))
-                }
-                ShellRoot::Face { face, sense } => match face_map.get(&face) {
-                    Some(&face) => ShellRoot::Face { face, sense },
-                    None => continue,
-                },
-            };
-            let mut attr = attr.clone();
-            attr.root = root;
-            let new_key = self.sheets.insert(attr);
-            self.record_created_attribute(EditKey::Sheet(new_key));
-        }
-
-        let copied_shell = |shell: ShellRoot| match shell {
-            ShellRoot::Dart(dart) => source
-                .orbit(dart, vec![0, 1, 2])
-                .all(|dart| source_dart_set.contains(&dart))
-                .then(|| ShellRoot::Dart(remap_dart(&dart_map, dart))),
-            ShellRoot::Face { face, sense } => face_map
-                .get(&face)
-                .map(|&face| ShellRoot::Face { face, sense }),
-        };
-        for (_, attr) in source.solids.iter() {
-            let Some(outer_shell) = copied_shell(attr.outer_shell) else {
-                continue;
-            };
-            let mut attr = attr.clone();
-            attr.outer_shell = outer_shell;
-            attr.inner_shells = attr
-                .inner_shells
-                .map(|shells| shells.into_iter().filter_map(copied_shell).collect());
-            let new_key = self.solids.insert(attr);
-            self.record_created_attribute(EditKey::Solid(new_key));
-        }
-
-        self.invalidate_derived_indexes();
-        match handle {
-            MergeHandle::Dart(dart) => MergeHandle::Dart(remap_dart(&dart_map, dart)),
-            MergeHandle::Face(face) => MergeHandle::Face(
-                face_map
-                    .get(&face)
-                    .copied()
-                    .expect("a face named as the merge handle should be copied"),
-            ),
-        }
-    }
-
-    /// Algorithm 19 of the book
-    pub(super) fn is_sewable(&self, d0: Dart, d1: Dart, d: Dim) -> Option<SewableDarts> {
-        let i = d.index();
-        if i >= self.dimension() || d0 == d1 || !self.is_free(d0, d) || !self.is_free(d1, d) {
-            return None;
-        }
-
-        let inv: Vec<usize> = self.sewing_orbit_indices(d).collect();
-        let mut d0_iterator = self.orbit(d0, inv.clone());
-        let mut d1_iterator = self.orbit(d1, inv.clone());
-        let mut mapping: HashMap<Dart, Dart> = HashMap::new();
-
-        loop {
-            match (d0_iterator.next(), d1_iterator.next()) {
-                (Some(a), Some(b)) => {
-                    mapping.insert(a, b);
-                    if inv.iter().any(|j| {
-                        let a_aj = self.alphas[*j][a.id()];
-                        let b_aj = self.alphas[*j][b.id()];
-                        mapping.get(&a_aj).is_some_and(|&mapped| mapped != b_aj)
-                    }) {
-                        return None;
-                    }
-                }
-                (None, None) => return Some(SewableDarts { mapping }),
-                _ => return None,
-            }
-        }
     }
 
     /// Returns the canonical representative dart for the `dim`-cell of `dart`.
@@ -1581,28 +185,6 @@ impl<P: Payload> GMap<P> {
         })
     }
 
-    /// BFS-walks an orbit generated by `involutions` starting at `start`, using `marked`
-    /// as the shared visited set. Every dart visited is flagged in `marked`.
-    ///
-    /// The caller must guarantee that no dart of this orbit is already marked on
-    /// entry; our three cell iterators rely on the partition property of cells to
-    /// guarantee this (if any dart of cⁱ(start) were marked, then start itself
-    /// would be marked, which the outer loop checks beforehand).
-    fn mark_orbit(&self, start: Dart, involutions: &[usize], marked: &mut [bool]) {
-        let mut queue = VecDeque::new();
-        marked[start.id()] = true;
-        queue.push_back(start);
-        while let Some(d) = queue.pop_front() {
-            for &i in involutions {
-                let neighbor = self.alphas[i][d.id()];
-                if !marked[neighbor.id()] {
-                    marked[neighbor.id()] = true;
-                    queue.push_back(neighbor);
-                }
-            }
-        }
-    }
-
     /// Algorithm 8 (Damiand & Lienhardt): iterate one dart per `i`-cell of the whole n-Gmap.
     pub fn cells(&self, dimension: Dim) -> impl Iterator<Item = Dart> + '_ {
         let orbit_indices = self.orbit_indices(dimension);
@@ -1642,15 +224,152 @@ impl<P: Payload> GMap<P> {
         })
     }
 
-    pub(super) fn link_raw(&mut self, d: Dim, d0: Dart, d1: Dart) {
-        self.invalidate_derived_indexes();
+    /// BFS-walks an orbit generated by `involutions` starting at `start`, using `marked`
+    /// as the shared visited set. Every dart visited is flagged in `marked`.
+    ///
+    /// The caller must guarantee that no dart of this orbit is already marked on
+    /// entry; our three cell iterators rely on the partition property of cells to
+    /// guarantee this (if any dart of cⁱ(start) were marked, then start itself
+    /// would be marked, which the outer loop checks beforehand).
+    fn mark_orbit(&self, start: Dart, involutions: &[usize], marked: &mut [bool]) {
+        let mut queue = VecDeque::new();
+        marked[start.id()] = true;
+        queue.push_back(start);
+        while let Some(d) = queue.pop_front() {
+            for &i in involutions {
+                let neighbor = self.alphas[i][d.id()];
+                if !marked[neighbor.id()] {
+                    marked[neighbor.id()] = true;
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+    }
+
+    /// Returns the alpha indices used to compare sewing orbits.
+    fn sewing_orbit_indices(&self, d: Dim) -> impl Iterator<Item = usize> + '_ {
+        let i = d.index();
+        (0..self.dimension()).filter(move |&j| j + 2 <= i || j >= i + 2)
+    }
+
+    /// Algorithm 19 of the book: pairs two orbits for sewing along dimension `d`.
+    ///
+    /// Returns `None` when the two orbits are not isomorphic, or when either
+    /// dart is already sewn along that dimension.
+    pub(crate) fn is_sewable(&self, d0: Dart, d1: Dart, d: Dim) -> Option<SewableDarts> {
+        let i = d.index();
+        if i >= self.dimension() || d0 == d1 || !self.is_free(d0, d) || !self.is_free(d1, d) {
+            return None;
+        }
+
+        let inv: Vec<usize> = self.sewing_orbit_indices(d).collect();
+        let mut d0_iterator = self.orbit(d0, inv.clone());
+        let mut d1_iterator = self.orbit(d1, inv.clone());
+        let mut mapping: HashMap<Dart, Dart> = HashMap::new();
+
+        loop {
+            match (d0_iterator.next(), d1_iterator.next()) {
+                (Some(a), Some(b)) => {
+                    mapping.insert(a, b);
+                    if inv.iter().any(|j| {
+                        let a_aj = self.alphas[*j][a.id()];
+                        let b_aj = self.alphas[*j][b.id()];
+                        mapping.get(&a_aj).is_some_and(|&mapped| mapped != b_aj)
+                    }) {
+                        return None;
+                    }
+                }
+                (None, None) => return Some(SewableDarts { mapping }),
+                _ => return None,
+            }
+        }
+    }
+
+    /// Adds one isolated dart and returns its identifier.
+    ///
+    /// All alpha involutions initially map the new dart to itself.
+    pub(crate) fn add_dart(&mut self) -> Dart {
+        let dart = if let Some(slot) = self.free_slots.pop_front() {
+            Dart::new(slot)
+        } else {
+            Dart::new(self.alphas[0].len())
+        };
+        for alphas in self.alphas.iter_mut() {
+            alphas.push(dart);
+        }
+        dart
+    }
+
+    /// Removes a dart that the caller has proven isolated.
+    ///
+    /// The [`IsolatedDart`] wrapper records the caller's proof obligation.
+    pub(crate) fn remove_dart(&mut self, dart: IsolatedDart) {
+        for alphas in self.alphas.iter_mut() {
+            alphas.remove(dart.id());
+        }
+        self.free_slots.push_back(dart.id());
+    }
+
+    /// Removes several isolated darts and renumbers the rest in one pass.
+    ///
+    /// Returns the old-to-new dart mapping. Repeated single removals would shift
+    /// indexes under every reference held elsewhere; doing it once lets the
+    /// caller rewrite all of them against a single map.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any named dart is still linked by some alpha.
+    pub(crate) fn compact(&mut self, darts: Vec<IsolatedDart>) -> HashMap<Dart, Dart> {
+        if darts.is_empty() {
+            return self.darts().map(|dart| (dart, dart)).collect();
+        }
+        let removed = darts
+            .into_iter()
+            .map(|dart| dart.id())
+            .collect::<HashSet<_>>();
+        for &id in &removed {
+            let dart = Dart::new(id);
+            assert!(
+                (0..GMAP_INVOLUTION_COUNT).all(|dim| self.alphas[dim][id] == dart),
+                "bulk dart removal requires every removed dart to be isolated"
+            );
+        }
+
+        let mut remap = vec![None; self.dart_count()];
+        let mut next = 0;
+        for (old, slot) in remap.iter_mut().enumerate() {
+            if !removed.contains(&old) {
+                *slot = Some(Dart::new(next));
+                next += 1;
+            }
+        }
+        let map_dart = |dart: Dart| {
+            remap[dart.id()].expect("retained topology must not reference a removed dart")
+        };
+        self.alphas = std::array::from_fn(|dim| {
+            (0..remap.len())
+                .filter(|old| !removed.contains(old))
+                .map(|old| map_dart(self.alphas[dim][old]))
+                .collect()
+        });
+        self.free_slots.clear();
+
+        remap
+            .into_iter()
+            .enumerate()
+            .filter_map(|(old, new)| new.map(|new| (Dart::new(old), new)))
+            .collect()
+    }
+
+    /// Links two darts through alpha `d`, in both directions.
+    pub(crate) fn link_raw(&mut self, d: Dim, d0: Dart, d1: Dart) {
         let i = d.index();
         self.alphas[i][d0.id()] = d1;
         self.alphas[i][d1.id()] = d0;
     }
 
-    pub(super) fn unlink_raw(&mut self, d: Dim, dart: Dart) -> Dart {
-        self.invalidate_derived_indexes();
+    /// Unlinks the alpha `d` pair containing `dart`, returning its old partner.
+    pub(crate) fn unlink_raw(&mut self, d: Dim, dart: Dart) -> Dart {
         let i = d.index();
         let a_i = self.alphas[i][dart.id()];
         self.alphas[i][a_i.id()] = a_i;
@@ -1658,30 +377,14 @@ impl<P: Payload> GMap<P> {
         a_i
     }
 
-    /// Returns the attribute associated with the `D`-cell containing `dart`.
+    /// Writes one side of an alpha link, leaving the other side alone.
     ///
-    /// The lookup first canonicalizes `dart` to the representative of `D::DIM`.
-    pub fn attribute<D: CellDim>(&self, dart: Dart) -> Option<&<Self as AttributeStore<D>>::Attr>
-    where
-        Self: AttributeStore<D>,
-    {
-        let repr = self.cell_representative(dart, D::DIM);
-        self.get(repr)
-    }
-
-    /// Returns the attribute associated with the `D`-cell containing `dart`.
-    ///
-    /// The lookup first canonicalizes `dart` to the representative of `D::DIM`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if no attribute is registered for the cell.
-    pub fn attribute_unchecked<D: CellDim>(&self, dart: Dart) -> &<Self as AttributeStore<D>>::Attr
-    where
-        Self: AttributeStore<D>,
-    {
-        self.attribute::<D>(dart)
-            .expect("attribute should be in the map")
+    /// Copying a map writes each dart's links from its source in turn, so the
+    /// pairing is restored by the copy as a whole rather than by any one write.
+    /// Everything else should use [`Self::link_raw`], which cannot leave a
+    /// one-sided link behind.
+    pub(crate) fn point_alpha(&mut self, d: Dim, dart: Dart, target: Dart) {
+        self.alphas[d.index()][dart.id()] = target;
     }
 }
 
@@ -1689,18 +392,18 @@ impl<P: Payload> GMap<P> {
 ///
 /// The iterator starts at one dart and follows the configured alpha indices,
 /// yielding each reachable dart once.
-pub struct OrbitIterator<'a, P: Payload> {
-    gmap: &'a GMap<P>,
+pub struct OrbitIterator<'a> {
+    gmap: &'a GMap,
     involutions: Vec<usize>,
     visited: Vec<bool>,
     queue: VecDeque<Dart>,
 }
 
-impl<'a, P: Payload> OrbitIterator<'a, P> {
+impl<'a> OrbitIterator<'a> {
     /// Creates an orbit iterator rooted at `start`.
     ///
     /// `involutions` contains alpha indices, not [`Dim`] values.
-    pub fn new(gmap: &'a GMap<P>, start: Dart, involutions: Vec<usize>) -> Self {
+    pub fn new(gmap: &'a GMap, start: Dart, involutions: Vec<usize>) -> Self {
         let dart_count = gmap.dart_count();
         let mut visited = vec![false; dart_count];
         let mut queue = VecDeque::new();
@@ -1717,7 +420,7 @@ impl<'a, P: Payload> OrbitIterator<'a, P> {
     }
 }
 
-impl<'a, P: Payload> Iterator for OrbitIterator<'a, P> {
+impl Iterator for OrbitIterator<'_> {
     type Item = Dart;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1733,329 +436,5 @@ impl<'a, P: Payload> Iterator for OrbitIterator<'a, P> {
         }
 
         Some(dart)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-
-    use nalgebra::Vector3;
-
-    use super::{Cell0, Cell1, Cell2, Dart, Dim, GMap, MergeTopology};
-    use crate::builders::edges::add_edge;
-    use crate::builders::faces::add_polygon;
-    use crate::builders::profiles::add_rectangle;
-    use crate::builders::sheets::add_extruded_profile;
-    use crate::geometry::{Curve, Plane, Point2, Point3, Surface, TrimmedCurve2};
-    use crate::topology::attributes::{FaceAttr, SheetAttr, ShellRoot, SolidAttr};
-    use crate::topology::edit::TopologyEditError;
-    use crate::topology::payload::{Payload, StandardPayload};
-    use crate::topology::planar::Planar;
-    use crate::topology::profile::Profile;
-    use crate::topology::sheet::Sheet;
-
-    #[derive(Clone)]
-    struct DataPayload;
-
-    impl Payload for DataPayload {
-        type V = ();
-        type E = ();
-        type Profile = String;
-        type F = ();
-        type Sheet = String;
-        type S = ();
-    }
-
-    #[test]
-    fn profile_and_sheet_payloads_are_exposed_and_preserved_by_merge() {
-        let mut source = GMap::<DataPayload>::new();
-        let profile_key =
-            add_rectangle(&mut source, Plane::xy(), 2.0, 1.0).expect("profile should build");
-        source
-            .transaction(|edit| {
-                edit.profile_attr_mut_unchecked(profile_key).data = "profile".to_owned();
-                Ok::<_, TopologyEditError>(())
-            })
-            .unwrap();
-        let sheet_key = add_extruded_profile(&mut source, profile_key, Vector3::z())
-            .expect("sheet should build");
-        source
-            .transaction(|edit| {
-                edit.sheet_attr_mut_unchecked(sheet_key).data = "sheet".to_owned();
-                Ok::<_, TopologyEditError>(())
-            })
-            .unwrap();
-
-        assert_eq!(source.profile(profile_key).unwrap().data(), "profile");
-        assert_eq!(source.sheet(sheet_key).unwrap().data(), "sheet");
-
-        source
-            .transaction(|edit| {
-                edit.profile_attr_mut_unchecked(profile_key).data = "updated profile".to_owned();
-                edit.sheet_attr_mut_unchecked(sheet_key).data = "updated sheet".to_owned();
-                Ok::<_, TopologyEditError>(())
-            })
-            .unwrap();
-
-        let mut profile_target = GMap::<DataPayload>::new();
-        profile_target
-            .transaction(|edit| {
-                Ok::<_, TopologyEditError>(edit.merge(source.profile(profile_key).unwrap()))
-            })
-            .unwrap();
-        let mut sheet_target = GMap::<DataPayload>::new();
-        sheet_target
-            .transaction(|edit| {
-                Ok::<_, TopologyEditError>(edit.merge(source.sheet(sheet_key).unwrap()))
-            })
-            .unwrap();
-
-        assert_eq!(
-            profile_target.iter_profiles().next().unwrap().1.data,
-            "updated profile"
-        );
-        assert_eq!(
-            sheet_target.iter_sheets().next().unwrap().1.data,
-            "updated sheet"
-        );
-    }
-
-    #[test]
-    fn merge_edge_copies_topology_and_geometry() {
-        let mut target = GMap::<StandardPayload>::new();
-        let mut source = GMap::<StandardPayload>::new();
-        let edge_key = add_edge(
-            &mut source,
-            Point3::new(1.0, 0.0, 0.0),
-            Point3::new(2.0, 0.0, 0.0),
-            Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0)),
-        )
-        .expect("source edge should build");
-
-        let edge = source.edge_unchecked(edge_key);
-        let merged_dart = target
-            .transaction(|edit| Ok::<_, TopologyEditError>(edit.merge(edge)))
-            .unwrap()
-            .dart_unchecked();
-        let merged_edge = target.attribute_unchecked::<Cell1>(merged_dart);
-
-        assert_eq!(target.dart_count(), 2);
-        assert_eq!(merged_edge.dart, Dart::new(0));
-        assert_eq!(target.alpha(Dim::Zero, Dart::new(0)), Dart::new(1));
-        assert!(target.attribute::<Cell0>(Dart::new(0)).is_some());
-        assert!(target.attribute::<Cell0>(Dart::new(1)).is_some());
-    }
-
-    #[test]
-    fn merge_face_remaps_stored_darts_and_pcurves() {
-        let mut target = GMap::<StandardPayload>::new();
-        add_edge(
-            &mut target,
-            Point3::new(-1.0, 0.0, 0.0),
-            Point3::new(0.0, 0.0, 0.0),
-            Curve::line(Point3::new(-1.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
-        )
-        .expect("target edge should build");
-
-        let mut source = GMap::<StandardPayload>::new();
-        let profile_key = add_polygon(
-            &mut source,
-            &[
-                Point3::new(0.0, 0.0, 0.0),
-                Point3::new(1.0, 0.0, 0.0),
-                Point3::new(1.0, 1.0, 0.0),
-                Point3::new(0.0, 1.0, 0.0),
-            ],
-        );
-        let loop_dart = source
-            .profile_attr(profile_key)
-            .expect("polygon profile should exist")
-            .dart;
-        let mut pcurves = HashMap::new();
-        pcurves.insert(
-            loop_dart,
-            TrimmedCurve2::segment(Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
-        );
-        let face_key = source
-            .transaction(|edit| {
-                Ok::<_, TopologyEditError>(edit.add_face(FaceAttr::with_pcurves(
-                    Surface::Plane(Plane::from_xy(
-                        Point3::new(0.0, 0.0, 0.0),
-                        Vector3::x(),
-                        Vector3::y(),
-                    )),
-                    (),
-                    loop_dart,
-                    Vec::new(),
-                    pcurves,
-                )))
-            })
-            .unwrap();
-
-        let face = source.face_unchecked(face_key);
-        let merged_dart = target
-            .transaction(|edit| Ok::<_, TopologyEditError>(edit.merge(face)))
-            .unwrap()
-            .dart_unchecked();
-        let merged_key = *target.attribute_unchecked::<Cell2>(merged_dart);
-        let merged_face = target.face_attr_unchecked(merged_key);
-
-        assert_eq!(target.dart_count(), 10);
-        assert_eq!(merged_face.outer_unchecked(), Dart::new(2));
-        assert!(
-            merged_face
-                .pcurves
-                .contains_key(&merged_face.outer_unchecked())
-        );
-        assert!(!merged_face.pcurves.contains_key(&loop_dart));
-        assert_eq!(target.alpha(Dim::Zero, Dart::new(2)), Dart::new(3));
-        assert_eq!(target.alpha(Dim::One, Dart::new(3)), Dart::new(4));
-    }
-
-    #[test]
-    fn merge_profile_sheet_and_solid_return_remapped_darts() {
-        let mut source = GMap::<StandardPayload>::new();
-        let profile_key = add_polygon(
-            &mut source,
-            &[
-                Point3::new(0.0, 0.0, 0.0),
-                Point3::new(1.0, 0.0, 0.0),
-                Point3::new(0.0, 1.0, 0.0),
-            ],
-        );
-
-        let profile_dart = source.profile_attr_unchecked(profile_key).dart;
-        let mut target = GMap::<StandardPayload>::new();
-        let merged_profile = target
-            .transaction(|edit| {
-                Ok::<_, TopologyEditError>(edit.merge(Profile::new(&source, profile_key)))
-            })
-            .unwrap();
-        assert_eq!(merged_profile.dart_unchecked(), Dart::new(0));
-        assert_eq!(target.dart_count(), 6);
-
-        let sheet_key = source
-            .transaction(|edit| {
-                Ok::<_, TopologyEditError>(
-                    edit.add_sheet(SheetAttr::new(ShellRoot::Dart(profile_dart), ())),
-                )
-            })
-            .unwrap();
-        let mut sheet_target = GMap::<StandardPayload>::new();
-        let merged_sheet = sheet_target
-            .transaction(|edit| {
-                Ok::<_, TopologyEditError>(edit.merge(Sheet::new(&source, sheet_key)))
-            })
-            .unwrap();
-        assert_eq!(merged_sheet.dart_unchecked(), Dart::new(0));
-        assert_eq!(sheet_target.dart_count(), 6);
-
-        let solid_key = source
-            .transaction(|edit| {
-                Ok::<_, TopologyEditError>(edit.add_solid(SolidAttr::new(
-                    (),
-                    ShellRoot::Dart(profile_dart),
-                    None,
-                )))
-            })
-            .unwrap();
-        let mut second_target = GMap::<StandardPayload>::new();
-        let solid = source.solid_unchecked(solid_key);
-        let merged_solid = second_target
-            .transaction(|edit| Ok::<_, TopologyEditError>(edit.merge(solid)))
-            .unwrap();
-        assert_eq!(merged_solid.dart_unchecked(), Dart::new(0));
-        assert_eq!(
-            second_target
-                .iter_solids()
-                .next()
-                .expect("merged solid should exist")
-                .1
-                .outer_shell,
-            ShellRoot::Dart(Dart::new(0))
-        );
-    }
-
-    #[test]
-    fn isolate_face_copies_it_into_a_fresh_map() {
-        let mut source = GMap::<StandardPayload>::new();
-        let profile_key = add_polygon(
-            &mut source,
-            &[
-                Point3::new(0.0, 0.0, 0.0),
-                Point3::new(1.0, 0.0, 0.0),
-                Point3::new(1.0, 1.0, 0.0),
-                Point3::new(0.0, 1.0, 0.0),
-            ],
-        );
-        let loop_dart = source.profile_attr_unchecked(profile_key).dart;
-        let face_key = source
-            .transaction(|edit| {
-                Ok::<_, TopologyEditError>(edit.add_face(FaceAttr::new(
-                    Surface::Plane(Plane::from_xy(
-                        Point3::new(0.0, 0.0, 0.0),
-                        Vector3::x(),
-                        Vector3::y(),
-                    )),
-                    (),
-                    loop_dart,
-                    Vec::new(),
-                )))
-            })
-            .unwrap();
-        let face = source.face_unchecked(face_key);
-
-        let (isolated, isolated_dart) = face.isolate();
-        let isolated_dart = isolated_dart.dart_unchecked();
-
-        assert_eq!(isolated_dart, Dart::new(0));
-        assert_eq!(isolated.dart_count(), 8);
-        assert_eq!(isolated.iter_faces().count(), 1);
-        assert!(isolated.attribute::<Cell2>(isolated_dart).is_some());
-        assert_eq!(isolated.alpha(Dim::Zero, Dart::new(0)), Dart::new(1));
-        assert_eq!(isolated.alpha(Dim::One, Dart::new(1)), Dart::new(2));
-    }
-
-    #[test]
-    fn isolate_associated_function_accepts_any_merge_topology() {
-        let mut source = GMap::<StandardPayload>::new();
-        let profile_key = add_polygon(
-            &mut source,
-            &[
-                Point3::new(0.0, 0.0, 0.0),
-                Point3::new(1.0, 0.0, 0.0),
-                Point3::new(0.0, 1.0, 0.0),
-            ],
-        );
-
-        let (isolated, isolated_dart) = GMap::isolate(source.profile_unchecked(profile_key));
-        let isolated_dart = isolated_dart.dart_unchecked();
-
-        assert_eq!(isolated_dart, Dart::new(0));
-        assert_eq!(isolated.dart_count(), 6);
-    }
-
-    #[test]
-    fn isolate_planar_topology_forwards_to_inner_topology() {
-        let mut source = GMap::<StandardPayload>::new();
-        let profile_key = add_polygon(
-            &mut source,
-            &[
-                Point3::new(0.0, 0.0, 0.0),
-                Point3::new(1.0, 0.0, 0.0),
-                Point3::new(0.0, 1.0, 0.0),
-            ],
-        );
-        let planar = Planar::new_unchecked(
-            source.profile_unchecked(profile_key),
-            Plane::from_xy(Point3::new(0.0, 0.0, 0.0), Vector3::x(), Vector3::y()),
-        );
-
-        let (isolated, isolated_dart) = planar.isolate();
-        let isolated_dart = isolated_dart.dart_unchecked();
-
-        assert_eq!(isolated_dart, Dart::new(0));
-        assert_eq!(isolated.dart_count(), 6);
     }
 }

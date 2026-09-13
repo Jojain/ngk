@@ -20,12 +20,13 @@ use crate::builders::removal::{
     CellRemovalError, MergeKind, MergedCell, is_removable, planned_merge, remove_cell_staged,
 };
 use crate::geometry::{Plane, Surface};
+use crate::model::Model;
 use crate::topology::attributes::LoopKind;
-use crate::topology::gmap::{Dart, Dim, GMap};
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
-use crate::topology::{TopologyEdit, TopologyEditError};
+use crate::topology::{ModelEdit, ModelEditError};
 
 use super::super::errors::HealingError;
 use super::super::options::HealingOptions;
@@ -39,7 +40,7 @@ use super::{edge_dart_in_face, incident_faces};
 /// A seam is left to [`super::seams`]: it is not a redundant edge but a cut in
 /// a parameterization, and the two are worth asking for separately.
 pub(in crate::healing) fn run<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     options: &HealingOptions,
     report: &mut HealingReport,
 ) -> Result<(), HealingError> {
@@ -48,16 +49,16 @@ pub(in crate::healing) fn run<P: Payload>(
 
 /// Offers every scoped edge whose planned removal `wanted` accepts.
 pub(in crate::healing::passes) fn run_over<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     options: &HealingOptions,
     report: &mut HealingReport,
     wanted: impl Fn(MergeKind) -> bool,
 ) -> Result<(), HealingError> {
-    for key in super::scoped_edges(edit.map(), options)? {
-        if edit.map().edge_attr(key).is_none() {
+    for key in super::scoped_edges(edit.model(), options)? {
+        if edit.model().edge_attr(key).is_none() {
             continue;
         }
-        match plan(edit.map(), key, options) {
+        match plan(edit.model(), key, options) {
             // The other pass's business, not a refusal: recording a skip here
             // would report a cell as declined that is about to be removed.
             Ok(fusion) if !wanted(fusion.kind) => continue,
@@ -85,7 +86,7 @@ pub(in crate::healing::passes) struct FaceFusion {
 
 /// Decides whether the edge carries shape.
 pub(in crate::healing::passes) fn plan<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     edge: EdgeKey,
     options: &HealingOptions,
 ) -> Result<FaceFusion, SkipReason> {
@@ -186,7 +187,7 @@ pub(in crate::healing::passes) fn plan<P: Payload>(
 }
 
 /// Reports whether the edge at `dart` has a side no face bounds.
-fn bounds_a_free_side<P: Payload>(g: &GMap<P>, dart: Dart) -> bool {
+fn bounds_a_free_side<P: Payload>(g: &Model<P>, dart: Dart) -> bool {
     g.orbit(dart, g.orbit_indices(Dim::One))
         .any(|d| g.is_free(d, Dim::Two))
 }
@@ -197,7 +198,7 @@ fn bounds_a_free_side<P: Payload>(g: &GMap<P>, dart: Dart) -> bool {
 /// same way without closing in parameter space. Inner loops are excluded:
 /// filled inner loops are recognized separately because their surrounding face
 /// must survive.
-fn fuses_outer_loop<P: Payload>(g: &GMap<P>, dart: Dart, face: FaceKey) -> bool {
+fn fuses_outer_loop<P: Payload>(g: &Model<P>, dart: Dart, face: FaceKey) -> bool {
     let Some(attr) = g.face_attr(face) else {
         return false;
     };
@@ -219,7 +220,7 @@ fn fuses_outer_loop<P: Payload>(g: &GMap<P>, dart: Dart, face: FaceKey) -> bool 
 /// source face as that survivor, so requiring this direction also prevents an
 /// island's outer loop from accidentally becoming the fused face's exterior.
 fn fills_inner_loop<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     dart: Dart,
     survivor: FaceKey,
     consumed: FaceKey,
@@ -273,7 +274,7 @@ fn fills_inner_loop<P: Payload>(
 /// Reports whether every boundary edge of both faces carries the geometry a
 /// rebuild needs.
 fn has_rebuildable_boundary<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     survivor: FaceKey,
     consumed: Option<FaceKey>,
 ) -> bool {
@@ -289,7 +290,7 @@ fn has_rebuildable_boundary<P: Payload>(
 
 /// Removes the edge and restores the fused face's parameter curves.
 pub(in crate::healing::passes) fn apply<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     fusion: FaceFusion,
     report: &mut HealingReport,
 ) -> Result<(), HealingError> {
@@ -321,7 +322,7 @@ pub(in crate::healing::passes) fn apply<P: Payload>(
         // And the face's last boundary going leaves it covering its support.
         MergedCell::Unbounded { face, .. } => (face, None, Orientation::Same),
         MergedCell::Edges { .. } => {
-            return Err(TopologyEditError::MissingLineageAttribute {
+            return Err(ModelEditError::MissingLineageAttribute {
                 key: crate::topology::EditKey::Face(fusion.survivor),
             }
             .into());
@@ -366,13 +367,13 @@ pub(in crate::healing::passes) fn apply<P: Payload>(
 /// stored direction of a shared edge does not leak into the face's own
 /// parameter space.
 fn rebuild_pcurves<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     plane: &Plane,
 ) -> Option<()> {
     let mut pcurves = HashMap::new();
     {
-        let view = edit.map().face(face)?;
+        let view = edit.model().face(face)?;
         for boundary in view.loops() {
             for edge in boundary.edges() {
                 let dart = edge.dart();
@@ -382,7 +383,7 @@ fn rebuild_pcurves<P: Payload>(
                 let section = edge.trimmed_curve()?;
                 let (start, end) = (section.point_at(0.0), section.point_at(1.0));
                 let stored = edge.curve()?;
-                let oriented = match edit.map().edge_orientation_at_dart(edge.key(), dart) {
+                let oriented = match edit.model().edge_orientation_at_dart(edge.key(), dart) {
                     Orientation::Same => stored.clone(),
                     Orientation::Reversed => reversed(stored)?,
                 };

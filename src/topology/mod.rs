@@ -13,6 +13,7 @@ pub mod shape;
 pub mod shape_keys;
 pub mod sheet;
 pub mod solid;
+pub mod subdivision;
 pub mod unwrapped_face_domain;
 pub mod validation;
 pub mod vertex;
@@ -20,7 +21,7 @@ pub use attributes::{
     FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, ShellRoot, SolidAttr,
 };
 pub use dart::{Dart, IsolatedDart};
-pub use edit::{EditKey, EditPolicy, PreservePayload, TopologyEdit, TopologyEditError};
+pub use edit::{EditKey, EditPolicy, ModelEdit, ModelEditError, PreservePayload};
 pub use orientation::Orientation;
 pub use payload::{Payload, StandardPayload};
 pub use unwrapped_face_domain::{

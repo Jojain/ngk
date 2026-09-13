@@ -5,7 +5,7 @@ use crate::builders::edges::{
     EdgeSplit, EdgeSplitError, add_circle_staged as add_circle_edge_staged,
     split_face_boundary_edge,
 };
-use crate::builders::errors::{FaceCreationError, TopologyEditFailure};
+use crate::builders::errors::{FaceCreationError, ModelEditFailure};
 use crate::builders::profiles::{
     add_rectangle_staged as add_rectangle_profile_staged, profile_pcurves,
 };
@@ -14,18 +14,19 @@ use crate::geometry::{
     LINEAR_TOLERANCE, NurbsError, Periodicity, Plane, Point2, Point3, Surface, SurfacePeriodicity,
     TrimmedCurve, TrimmedCurve2, Vector2,
 };
+use crate::model::{Cell1, Cell2, Model};
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, VertexAttr,
 };
 use crate::topology::closed::Closed;
 use crate::topology::edge::Edge;
-use crate::topology::gmap::{Cell1, Cell2, Dart, Dim, GMap};
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
-use crate::topology::{TopologyEdit, TopologyEditError};
+use crate::topology::{ModelEdit, ModelEditError};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Error, PartialEq)]
@@ -48,13 +49,13 @@ pub enum FaceEdgeSplitError {
     SplitPointNotOnPcurve { face: FaceKey, dart: Dart },
     #[error("failed to split face pcurve")]
     PcurveSplitFailed(#[from] NurbsError),
-    #[error("face edge topology edit failed")]
-    TopologyEditFailed(#[source] TopologyEditFailure),
+    #[error("face edge model edit failed")]
+    ModelEditFailed(#[source] ModelEditFailure),
 }
 
-impl From<TopologyEditError> for FaceEdgeSplitError {
-    fn from(error: TopologyEditError) -> Self {
-        Self::TopologyEditFailed(TopologyEditFailure::new(error))
+impl From<ModelEditError> for FaceEdgeSplitError {
+    fn from(error: ModelEditError) -> Self {
+        Self::ModelEditFailed(ModelEditFailure::new(error))
     }
 }
 
@@ -76,14 +77,14 @@ pub enum FaceImprintSplitError {
     SectionLoopSewFailed {
         face: FaceKey,
         #[source]
-        source: TopologyEditError,
+        source: ModelEditError,
     },
     #[error("failed to convert imprint curve geometry")]
     ImprintCurveConversion(#[from] NurbsError),
     #[error("failed to intersect face imprint pcurves")]
     ImprintIntersection(#[from] CurveIntersectionError),
-    #[error("face imprint topology edit failed")]
-    TopologyEditFailed(#[from] TopologyEditError),
+    #[error("face imprint model edit failed")]
+    ModelEditFailed(#[from] ModelEditError),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -207,7 +208,7 @@ pub struct FaceImprintGraphEdge {
 /// Curves are split at intersections, coincident vertices and duplicate
 /// edges are merged within [`LINEAR_TOLERANCE`], and the resulting undirected
 /// graph can be inspected for branches and standalone closed loops. The graph is
-/// a temporary aid for face splitting and is not part of the [`GMap`] topology.
+/// a temporary aid for face splitting and is not part of the [`Model`] topology.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FaceImprintGraph {
     vertices: Vec<Point2>,
@@ -503,14 +504,14 @@ struct IncidentFacePcurve {
 ///
 /// Panics if `profile` does not identify a registered profile.
 pub fn add_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     profile: ProfileKey,
 ) -> Result<FaceKey, FaceCreationError> {
     g.transaction(|edit| add_face_staged(edit, profile))
 }
 
 pub(crate) fn add_face_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     profile: ProfileKey,
 ) -> Result<FaceKey, FaceCreationError> {
     let (loop_dart, plane, pcurves) = {
@@ -538,7 +539,7 @@ pub(crate) fn add_face_staged<P: Payload>(
 /// The sides follow the plane's positive x and y directions and have lengths
 /// `x_size` and `y_size`. Both sizes must be positive and finite.
 pub fn add_rectangle(
-    g: &mut GMap<StandardPayload>,
+    g: &mut Model<StandardPayload>,
     plane: Plane,
     x_size: f64,
     y_size: f64,
@@ -554,7 +555,7 @@ pub fn add_rectangle(
 /// The sides follow the plane's positive x and y directions. `size` must be
 /// positive and finite.
 pub fn add_square(
-    g: &mut GMap<StandardPayload>,
+    g: &mut Model<StandardPayload>,
     plane: Plane,
     size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
@@ -572,7 +573,7 @@ pub fn add_square(
 /// The returned [`EdgeSplit`] identifies both resulting edges and the inserted
 /// vertex; the original edge key is retained by the first segment.
 pub fn split_face_edge<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     face: FaceKey,
     edge: EdgeKey,
     parameter: f64,
@@ -582,7 +583,7 @@ pub fn split_face_edge<P: Payload>(
 
 /// Splits topology and all incident face pcurves in the same transaction.
 pub(crate) fn split_face_edge_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     edge: EdgeKey,
     parameter: f64,
@@ -610,7 +611,7 @@ pub(crate) fn split_face_edge_staged<P: Payload>(
 /// Imprints that do not define an applicable cut may produce no split rather
 /// than an error; invalid topology or missing geometry is reported as an error.
 pub fn split_face_by_imprints<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
@@ -619,7 +620,7 @@ pub fn split_face_by_imprints<P: Payload>(
 
 /// Applies every open and closed imprint before the outer transaction commits.
 pub fn split_face_by_imprints_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
@@ -752,7 +753,7 @@ fn remap_section_indices(splits: &mut [FaceImprintSplit], indices: &[usize]) {
 }
 
 fn split_open_imprints<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     mut active_faces: Vec<FaceKey>,
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
@@ -782,7 +783,7 @@ fn split_open_imprints<P: Payload>(
 }
 
 fn split_imprint_boundary_endpoints<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<(), FaceImprintSplitError> {
@@ -799,7 +800,7 @@ fn split_imprint_boundary_endpoints<P: Payload>(
 }
 
 fn add_closed_curve_imprint_loops<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     imprints: &[&FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
@@ -898,7 +899,7 @@ fn travel_along(axis: Axis2, imprints: &[FaceImprint]) -> f64 {
 /// that does not wrap is a chord or an island, which those paths already know
 /// how to apply.
 fn split_ring_face_by_wrapping_chains<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
@@ -950,7 +951,7 @@ fn split_ring_face_by_wrapping_chains<P: Payload>(
 /// Returns `None` when the support names no degeneracy on one of the two sides,
 /// which would leave a half nothing closes.
 fn split_boundaryless_face_by_wrapping_chain<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     chain: &WrappingChain,
 ) -> Result<Option<FaceImprintSplit>, FaceImprintSplitError> {
@@ -1029,7 +1030,7 @@ fn split_boundaryless_face_by_wrapping_chain<P: Payload>(
 
 /// Reads the imprints as chains wrapping `face`'s periodic direction, if they all are.
 fn wrapping_chains<P: Payload>(
-    edit: &TopologyEdit<'_, P>,
+    edit: &ModelEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<Option<Vec<WrappingChain>>, FaceImprintSplitError> {
@@ -1130,7 +1131,7 @@ fn chain_imprints(imprints: &[FaceImprint]) -> Option<Vec<Vec<ChainLink>>> {
 /// is transverse to: the chain lies on the ring whose two wrapping loops it
 /// runs between.
 fn ring_face_for_chain<P: Payload>(
-    edit: &TopologyEdit<'_, P>,
+    edit: &ModelEdit<'_, P>,
     rings: &[FaceKey],
     chain: &WrappingChain,
 ) -> Result<Option<FaceKey>, FaceImprintSplitError> {
@@ -1169,7 +1170,7 @@ fn ring_face_for_chain<P: Payload>(
 /// original loop it is paired with. No seam anchors anything, and no vertex is
 /// created beyond the chain's own junctions.
 fn split_ring_face_by_wrapping_chain<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     chain: &WrappingChain,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
@@ -1251,7 +1252,7 @@ fn split_ring_face_by_wrapping_chain<P: Payload>(
 
 /// Signed travel of one stored boundary loop along `axis`.
 fn loop_travel<P: Payload>(
-    edit: &TopologyEdit<'_, P>,
+    edit: &ModelEdit<'_, P>,
     pcurves: &HashMap<Dart, TrimmedCurve2>,
     seed: Dart,
     axis: Axis2,
@@ -1273,7 +1274,7 @@ fn loop_travel<P: Payload>(
 /// how far each travels — no tolerance to tune, since one runs a period and the
 /// other runs nothing.
 fn chord_loop_kinds<P: Payload>(
-    edit: &TopologyEdit<'_, P>,
+    edit: &ModelEdit<'_, P>,
     chorded: LoopKind,
     source: (Dart, &HashMap<Dart, TrimmedCurve2>),
     created: (Dart, &HashMap<Dart, TrimmedCurve2>),
@@ -1292,7 +1293,7 @@ fn chord_loop_kinds<P: Payload>(
 
 /// The stored pcurves of one boundary loop, keyed by its own darts.
 fn wrapping_loop_pcurves<P: Payload>(
-    edit: &TopologyEdit<'_, P>,
+    edit: &ModelEdit<'_, P>,
     face: FaceKey,
     old_pcurves: &HashMap<Dart, TrimmedCurve2>,
     seed: Dart,
@@ -1318,7 +1319,7 @@ fn wrapping_loop_pcurves<P: Payload>(
 }
 
 fn split_face_by_closed_curve_imprint<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     imprint: &FaceImprint,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
@@ -1332,7 +1333,7 @@ fn split_face_by_closed_curve_imprint<P: Payload>(
 }
 
 fn add_closed_imprint_loops<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     graph: &FaceImprintGraph,
     imprints: &[FaceImprint],
@@ -1394,7 +1395,7 @@ fn add_closed_imprint_loops<P: Payload>(
 }
 
 fn split_face_by_closed_imprint_loop<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
@@ -1410,7 +1411,7 @@ fn split_face_by_closed_imprint_loop<P: Payload>(
 }
 
 fn finish_closed_imprint_split<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     old_face: FaceAttr<P::F>,
     outside_loop: SectionLoop,
@@ -1474,7 +1475,7 @@ struct SectionLoopEdge {
 }
 
 fn add_section_loop<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     surface: &Surface,
     imprints: &[FaceImprint],
 ) -> SectionLoop {
@@ -1527,7 +1528,7 @@ fn add_section_loop<P: Payload>(
 }
 
 fn add_imprint_section_loop<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     surface: &Surface,
     imprint: &FaceImprint,
 ) -> SectionLoop {
@@ -1535,7 +1536,7 @@ fn add_imprint_section_loop<P: Payload>(
 }
 
 fn sew_section_loops<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     outside: &SectionLoop,
     island: &SectionLoop,
@@ -1634,7 +1635,7 @@ fn signed_area(uvs: &[Point2]) -> f64 {
 }
 
 fn split_boundary_at_uv<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     uv: Point2,
 ) -> Result<(), FaceImprintSplitError> {
@@ -1676,7 +1677,7 @@ fn split_boundary_at_uv<P: Payload>(
 }
 
 fn split_one_face_by_imprints<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<Option<FaceImprintSplit>, FaceImprintSplitError> {
@@ -1704,7 +1705,7 @@ fn split_one_face_by_imprints<P: Payload>(
 /// The circle is centered at `plane.origin()` and uses the plane orientation.
 /// `radius` must be positive and finite.
 pub fn add_circle(
-    g: &mut GMap<StandardPayload>,
+    g: &mut Model<StandardPayload>,
     plane: Plane,
     radius: f64,
 ) -> Result<FaceKey, FaceCreationError> {
@@ -1713,7 +1714,7 @@ pub fn add_circle(
 
 /// Builds a circular boundary and its face within one staged operation.
 fn add_circle_staged(
-    edit: &mut TopologyEdit<'_, StandardPayload>,
+    edit: &mut ModelEdit<'_, StandardPayload>,
     plane: Plane,
     radius: f64,
 ) -> Result<FaceKey, FaceCreationError> {
@@ -1819,7 +1820,7 @@ struct BoundaryEdgeTarget {
 }
 
 fn face_boundary_uvs<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     face: FaceKey,
 ) -> Result<Vec<Point2>, FaceImprintSplitError> {
     Ok(face_boundary_edges(g, face)?
@@ -1834,7 +1835,7 @@ fn face_boundary_uvs<P: Payload>(
 /// asking whether a parameter point sits on the boundary must see both. Only
 /// holes are left out, which is what the callers mean by "the boundary".
 fn face_boundary_edges<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     face: FaceKey,
 ) -> Result<Vec<(Point2, TrimmedCurve2)>, FaceImprintSplitError> {
     let face_view = g
@@ -1853,7 +1854,7 @@ fn face_boundary_edges<P: Payload>(
 
 /// Each corner of the loop seeded at `loop_dart`, with the pcurve leaving it.
 fn loop_boundary_edges<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     face: FaceKey,
     loop_dart: Dart,
 ) -> Result<Vec<(Point2, TrimmedCurve2)>, FaceImprintSplitError> {
@@ -1884,7 +1885,7 @@ fn bounding_loops(boundary: &[LoopDefinition]) -> Vec<LoopDefinition> {
 }
 
 fn boundary_edge_at_uv<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     face: FaceKey,
     uv: Point2,
 ) -> Result<Option<BoundaryEdgeTarget>, FaceImprintSplitError> {
@@ -1919,7 +1920,7 @@ fn pcurve_fraction_at(pcurve: &TrimmedCurve2, point: Point2) -> Option<f64> {
 }
 
 fn boundary_edge_key<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     dart: Dart,
 ) -> Result<EdgeKey, FaceImprintSplitError> {
     g.cell_key::<Cell1>(dart)
@@ -1995,7 +1996,7 @@ fn retraces_boundary(
 /// stays a ring and the other becomes a disk — which is what an imprint chording
 /// a cylinder wall produces, with no seam anywhere in the answer.
 fn apply_face_chord_split<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     original_face: FaceKey,
     mut old_face: FaceAttr<P::F>,
     chorded: LoopDefinition,
@@ -2238,7 +2239,7 @@ fn apply_face_chord_split<P: Payload>(
 /// loop rather than one seed point distinguishes a tangent touch from a crossing.
 #[allow(clippy::too_many_arguments)]
 fn partition_inner_loops<P: Payload>(
-    edit: &TopologyEdit<'_, P>,
+    edit: &ModelEdit<'_, P>,
     face: FaceKey,
     inner_loops: &[Dart],
     old_pcurves: &HashMap<Dart, TrimmedCurve2>,
@@ -2274,7 +2275,7 @@ fn partition_inner_loops<P: Payload>(
 }
 
 fn sampled_loop_uvs<P: Payload>(
-    edit: &TopologyEdit<'_, P>,
+    edit: &ModelEdit<'_, P>,
     face: FaceKey,
     loop_dart: Dart,
     pcurves: &HashMap<Dart, TrimmedCurve2>,
@@ -2318,7 +2319,7 @@ fn sampled_loop_contains(boundary: &[Point2], point: Point2) -> bool {
 }
 
 fn extend_loop_pcurves<P: Payload>(
-    edit: &TopologyEdit<'_, P>,
+    edit: &ModelEdit<'_, P>,
     face: FaceKey,
     loop_dart: Dart,
     old_pcurves: &HashMap<Dart, TrimmedCurve2>,
@@ -2337,7 +2338,7 @@ fn extend_loop_pcurves<P: Payload>(
 }
 
 fn split_face_pcurves<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     old_pcurves: &HashMap<Dart, TrimmedCurve2>,
     loop_dart: Dart,
@@ -2376,7 +2377,7 @@ fn split_face_pcurves<P: Payload>(
 /// represent a hole. Both radii must be positive and finite, and `outer_radius`
 /// must be greater than `inner_radius`.
 pub fn add_annulus(
-    g: &mut GMap<StandardPayload>,
+    g: &mut Model<StandardPayload>,
     plane: Plane,
     outer_radius: f64,
     inner_radius: f64,
@@ -2386,7 +2387,7 @@ pub fn add_annulus(
 
 /// Builds both annulus boundaries and registers their shared face atomically.
 fn add_annulus_staged(
-    edit: &mut TopologyEdit<'_, StandardPayload>,
+    edit: &mut ModelEdit<'_, StandardPayload>,
     plane: Plane,
     outer_radius: f64,
     inner_radius: f64,
@@ -2424,7 +2425,7 @@ fn add_annulus_staged(
 }
 
 fn face_edge_dart<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     face: FaceKey,
     edge: EdgeKey,
 ) -> Result<Dart, FaceEdgeSplitError> {
@@ -2454,7 +2455,7 @@ fn face_edge_dart<P: Payload>(
 }
 
 fn closed_boundary_curve_reversed<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     face: FaceKey,
     edge: EdgeKey,
     dart: Dart,
@@ -2501,7 +2502,7 @@ fn closed_boundary_curve_reversed<P: Payload>(
 }
 
 fn incident_face_pcurves<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     edge: EdgeKey,
     parameter: f64,
 ) -> Result<Vec<IncidentFacePcurve>, FaceEdgeSplitError> {
@@ -2568,7 +2569,7 @@ fn periodic_image_near_pcurve(surface: &Surface, pcurve: &TrimmedCurve2, mut uv:
 }
 
 fn assign_split_pcurves<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     pcurve: IncidentFacePcurve,
 ) -> Result<(), FaceEdgeSplitError> {
     let second_dart = edit.alpha(Dim::One, edit.alpha(Dim::Zero, pcurve.dart));
@@ -2590,7 +2591,7 @@ fn assign_split_pcurves<P: Payload>(
 /// non-self-intersecting loops with suitable winding and containment; those
 /// geometric relationships are not validated here.
 pub fn add_polygon_with_holes(
-    g: &mut GMap<StandardPayload>,
+    g: &mut Model<StandardPayload>,
     plane: Plane,
     outer: &[Point3],
     holes: &[&[Point3]],
@@ -2600,7 +2601,7 @@ pub fn add_polygon_with_holes(
 
 /// Builds the outer polygon and all hole loops before registering the face.
 fn add_polygon_with_holes_staged(
-    edit: &mut TopologyEdit<'_, StandardPayload>,
+    edit: &mut ModelEdit<'_, StandardPayload>,
     plane: Plane,
     outer: &[Point3],
     holes: &[&[Point3]],
@@ -2656,16 +2657,16 @@ fn validate_polygon(points: &[Point3]) -> Result<(), FaceCreationError> {
 ///
 /// Returns the profile key whose stored dart defines the polygon's orientation.
 pub fn add_polygon<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     corners: &[Point3],
 ) -> crate::topology::shape_keys::ProfileKey {
-    g.transaction(|edit| Ok::<_, TopologyEditError>(add_polygon_staged(edit, corners)))
+    g.transaction(|edit| Ok::<_, ModelEditError>(add_polygon_staged(edit, corners)))
         .expect("fresh polygon operation must commit")
 }
 
 /// Creates and links polygon segments without opening another transaction scope.
 pub(crate) fn add_polygon_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     corners: &[Point3],
 ) -> crate::topology::shape_keys::ProfileKey {
     assert!(
@@ -2712,7 +2713,7 @@ pub(crate) fn add_polygon_staged<P: Payload>(
 /// face attribute changes — so darts captured for sewing stay valid.
 ///
 /// Does nothing when `face` is not a registered face.
-pub fn reverse_face_winding<P: Payload>(edit: &mut TopologyEdit<'_, P>, face: FaceKey) {
+pub fn reverse_face_winding<P: Payload>(edit: &mut ModelEdit<'_, P>, face: FaceKey) {
     let Some(face_attr) = edit.face_attr(face).cloned() else {
         return;
     };

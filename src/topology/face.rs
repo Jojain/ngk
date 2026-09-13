@@ -1,6 +1,6 @@
 use super::closed::Closed;
 use super::edge::Edge;
-use super::gmap::{Cell2, Dart, Dim, GMap, MergeTopology, TopologyMerge};
+use super::gmap::{Dart, Dim};
 use super::orientation::Orientation;
 use super::payload::{Payload, StandardPayload};
 use super::profile::Profile;
@@ -9,6 +9,7 @@ use crate::geometry::Surface;
 use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
 use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
+use crate::model::{Cell2, MergeTopology, Model, TopologyMerge};
 use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind};
 use crate::topology::shape_keys::FaceKey;
 use crate::topology::unwrapped_face_domain::UnwrappedFaceDomain;
@@ -91,7 +92,7 @@ impl<'a, P: Payload> Deref for Loop<'a, P> {
 /// stored in [`FaceAttr`]. Opposite volume-side uses of a sewn face
 /// therefore share one [`FaceKey`] while producing oppositely oriented views.
 pub struct Face<'g, P: Payload = StandardPayload> {
-    gmap: &'g GMap<P>,
+    model: &'g Model<P>,
     key: FaceKey,
     sense: Orientation,
 }
@@ -99,7 +100,7 @@ pub struct Face<'g, P: Payload = StandardPayload> {
 impl<'g, P: Payload> Clone for Face<'g, P> {
     fn clone(&self) -> Self {
         Self {
-            gmap: self.gmap,
+            model: self.model,
             key: self.key,
             sense: self.sense,
         }
@@ -108,9 +109,9 @@ impl<'g, P: Payload> Clone for Face<'g, P> {
 
 impl<'g, P: Payload> Face<'g, P> {
     /// Creates a face view with the default (`Same`) orientation.
-    pub fn new(gmap: &'g GMap<P>, key: FaceKey) -> Self {
+    pub fn new(model: &'g Model<P>, key: FaceKey) -> Self {
         Self {
-            gmap,
+            model,
             key,
             sense: Orientation::Same,
         }
@@ -120,10 +121,10 @@ impl<'g, P: Payload> Face<'g, P> {
     /// relative to the face's stored default direction.
     ///
     /// Returns `None` if the dart does not belong to a registered face.
-    pub fn from_dart(gmap: &'g GMap<P>, dart: Dart) -> Option<Self> {
-        let key = gmap.cell_key::<Cell2>(dart)?;
-        let sense = gmap.face_orientation_at_dart(key, dart);
-        Some(Self { gmap, key, sense })
+    pub fn from_dart(model: &'g Model<P>, dart: Dart) -> Option<Self> {
+        let key = model.cell_key::<Cell2>(dart)?;
+        let sense = model.face_orientation_at_dart(key, dart);
+        Some(Self { model, key, sense })
     }
 
     /// Returns the stored face attribute.
@@ -132,7 +133,7 @@ impl<'g, P: Payload> Face<'g, P> {
     ///
     /// Panics if the key is not present in the map.
     fn attr(&self) -> &'g FaceAttr<P::F> {
-        self.gmap.face_attr_unchecked(self.key)
+        self.model.face_attr_unchecked(self.key)
     }
 
     /// Returns the stable key of this face.
@@ -171,7 +172,7 @@ impl<'g, P: Payload> Face<'g, P> {
     /// Returns a new face view with the opposite orientation.
     pub fn reversed(&self) -> Self {
         Self {
-            gmap: self.gmap,
+            model: self.model,
             key: self.key,
             sense: self.sense.flip(),
         }
@@ -181,7 +182,7 @@ impl<'g, P: Payload> Face<'g, P> {
     fn oriented_seed(&self, seed: Dart) -> Dart {
         match self.sense {
             Orientation::Same => seed,
-            Orientation::Reversed => self.gmap.alpha(Dim::Zero, seed),
+            Orientation::Reversed => self.model.alpha(Dim::Zero, seed),
         }
     }
 
@@ -201,7 +202,7 @@ impl<'g, P: Payload> Face<'g, P> {
     /// Resolves one stored loop definition into this face's oriented loop view.
     fn loop_from_definition(&self, definition: LoopDefinition) -> Loop<'g, P> {
         let profile = Closed::new_unchecked(
-            Profile::from_dart(self.gmap, self.oriented_seed(definition.seed()))
+            Profile::from_dart(self.model, self.oriented_seed(definition.seed()))
                 .expect("face loop must have a registered profile"),
         );
         Loop::new(profile, definition.kind())
@@ -448,7 +449,7 @@ impl<'g, P: Payload> Face<'g, P> {
     /// face is reversed relative to default, the pcurve is reversed.
     pub fn pcurve(&self, dart: Dart) -> Option<TrimmedCurve2> {
         let attr = self.attr();
-        let g = self.gmap;
+        let g = self.model;
         let candidates = [dart, g.alpha(Dim::Zero, dart), g.alpha(Dim::Two, dart)];
         let cached = candidates.iter().find_map(|&d| attr.pcurves.get(&d));
         cached.cloned().map(|pc| match self.sense {
@@ -477,6 +478,6 @@ impl<P: Payload> MergeTopology<P> for Face<'_, P> {
         for loop_ in self.loops() {
             darts.extend(loop_.darts());
         }
-        TopologyMerge::new(self.gmap, darts, self.dart_unchecked())
+        TopologyMerge::new(self.model, darts, self.dart_unchecked())
     }
 }

@@ -1,7 +1,7 @@
 //! Reading STEP text into solids.
 //!
 //! The subject here is the *stitching*: STEP hands over loose faces that
-//! name shared edges by `#N`, and what must come back is one sewn 3-GMap. So
+//! name shared edges by `#N`, and what must come back is one sewn 3-gmap. So
 //! these assert on the map — cell counts, then the three validators — rather
 //! than on anything about the text, which is `part21_parse`'s business.
 //!
@@ -60,9 +60,9 @@ fn a_foreign_box_imports_as_a_valid_oriented_solid() {
     // it checks per-edge winding agreement *and* the global signed-volume
     // sign, which is exactly the pair a mis-sewn or inverted face violates.
     let import = read(OCCT_BOX);
-    let map = import.shapes[0].map();
+    let map = import.shapes[0].model();
 
-    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    validate_gmap(map.topology()).expect("the sewn map should satisfy the gmap axioms");
     validate_all_solid_manifolds(map).expect("the shell should be closed");
     validate_all_solid_orientations(map).expect("every face should point outward");
 }
@@ -275,9 +275,9 @@ fn a_foreign_face_with_two_bounds_and_no_outer_one_picks_the_larger() {
 #[test]
 fn a_foreign_slab_with_a_hole_is_a_valid_oriented_solid() {
     let import = read(OCCT_HOLED_SLAB);
-    let map = import.shapes[0].map();
+    let map = import.shapes[0].model();
 
-    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    validate_gmap(map.topology()).expect("the sewn map should satisfy the gmap axioms");
     validate_all_solid_manifolds(map).expect("the shell should be closed");
     validate_all_solid_orientations(map).expect("every face should point outward");
 }
@@ -343,9 +343,9 @@ fn a_foreign_cylinder_keeps_its_analytic_supports() {
 #[test]
 fn a_foreign_cylinder_is_a_valid_oriented_solid() {
     let import = read(OCCT_CYLINDER);
-    let map = import.shapes[0].map();
+    let map = import.shapes[0].model();
 
-    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    validate_gmap(map.topology()).expect("the sewn map should satisfy the gmap axioms");
     validate_all_solid_manifolds(map).expect("the shell should be closed");
     validate_all_solid_orientations(map).expect("every face should point outward");
 }
@@ -393,8 +393,8 @@ fn a_foreign_cones_sense_agrees_with_the_winding_rebuilt_for_it() {
         import.report.skipped,
     );
 
-    let map = import.shapes[0].map();
-    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    let map = import.shapes[0].model();
+    validate_gmap(map.topology()).expect("the sewn map should satisfy the gmap axioms");
     validate_all_solid_manifolds(map).expect("the shell should be closed");
     validate_all_solid_orientations(map).expect("every face should point outward");
 }
@@ -432,9 +432,9 @@ fn a_foreign_torus_arrives_as_one_face_with_no_boundary() {
 #[test]
 fn a_foreign_torus_is_a_valid_oriented_solid() {
     let import = read(OCCT_TORUS);
-    let map = import.shapes[0].map();
+    let map = import.shapes[0].model();
 
-    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    validate_gmap(map.topology()).expect("the sewn map should satisfy the gmap axioms");
     validate_all_solid_manifolds(map).expect("the shell should be closed");
     validate_all_solid_orientations(map).expect("the torus should face outward");
 }
@@ -476,9 +476,9 @@ fn a_foreign_sphere_is_a_valid_oriented_solid() {
     // and lands on the shell's root. Getting that wrong yields a sphere of
     // negative volume that every other check accepts.
     let import = read(OCCT_SPHERE);
-    let map = import.shapes[0].map();
+    let map = import.shapes[0].model();
 
-    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    validate_gmap(map.topology()).expect("the sewn map should satisfy the gmap axioms");
     validate_all_solid_manifolds(map).expect("the shell should be closed");
     validate_all_solid_orientations(map).expect("the sphere should face outward");
 }
@@ -495,8 +495,8 @@ const OCCT_SWEPT_CIRCLE: &str = include_str!("foreign/files/swept_circle.step");
 fn foreign_splines_import_as_valid_oriented_solids() {
     for text in [OCCT_LOFTED, OCCT_SWEPT_CIRCLE] {
         let import = read(text);
-        let map = import.shapes[0].map();
-        validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+        let map = import.shapes[0].model();
+        validate_gmap(map.topology()).expect("the sewn map should satisfy the gmap axioms");
         validate_all_solid_manifolds(map).expect("the shell should be closed");
         validate_all_solid_orientations(map).expect("every face should point outward");
     }

@@ -6,7 +6,7 @@ use ngk::modeling::solids;
 fn ray_parity_classifies_interior_and_exterior_points_of_a_block() {
     let (map, block) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
         .expect("block")
-        .into_map();
+        .into_model();
     for (point, expected) in [
         // The centre sends rays straight at the box corners and edges; those
         // rays must be rejected and retried, not counted.
@@ -26,7 +26,7 @@ fn ray_parity_classifies_interior_and_exterior_points_of_a_block() {
 fn a_point_on_the_boundary_is_reported_as_ambiguous_rather_than_guessed() {
     let (map, block) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
         .expect("block")
-        .into_map();
+        .into_model();
     let error = solid_contains_point(
         &map,
         block,

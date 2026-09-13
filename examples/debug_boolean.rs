@@ -4,20 +4,20 @@ use nalgebra::Vector3;
 use ngk::builders::boolean::{BooleanOperand, prepare_boolean_with_external_tool};
 use ngk::builders::solids::add_extruded_face;
 use ngk::geometry::{Plane, Point3};
+use ngk::model::Model;
 use ngk::modeling::faces;
-use ngk::topology::gmap::GMap;
 use ngk::topology::shape_keys::SolidKey;
 use ngk::viz::debug_viewer::{DebugViewerOptions, show_gmap_with_options};
 
-fn block_at(origin: Point3, size: f64) -> Result<(GMap, SolidKey), Box<dyn Error>> {
+fn block_at(origin: Point3, size: f64) -> Result<(Model, SolidKey), Box<dyn Error>> {
     let plane = Plane::from_xy(origin, Vector3::x(), Vector3::y());
     let base = faces::rectangle(plane, size, size)?;
-    let (mut map, face) = base.into_map();
+    let (mut map, face) = base.into_model();
     let solid = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, size))?;
     Ok((map, solid))
 }
 
-fn show_named(name: &str, map: &GMap) -> Result<(), Box<dyn Error>> {
+fn show_named(name: &str, map: &Model) -> Result<(), Box<dyn Error>> {
     show_gmap_with_options(
         map,
         &DebugViewerOptions {

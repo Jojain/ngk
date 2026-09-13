@@ -3,8 +3,7 @@ use js_sys::{Object, Reflect};
 use wasm_bindgen::prelude::*;
 
 use super::common::{entity_common, js_err, values};
-use super::gmap::WasmGMap;
-
+use super::model::WasmModel;
 use crate::binding_common::explore::SharedFace;
 use crate::topology::StandardPayload;
 

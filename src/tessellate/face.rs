@@ -29,9 +29,9 @@ use crate::geometry::{
     Curve, Interval, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Surface,
     SurfacePeriodicity,
 };
+use crate::model::Model;
 use crate::topology::LoopKind;
 use crate::topology::face::Face;
-use crate::topology::gmap::GMap;
 use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::FaceKey;
@@ -125,7 +125,7 @@ pub fn tessellate_face<P: Payload>(
 /// [`Face`] view. Prefer [`tessellate_face`] when a typed face view is already
 /// available.
 pub fn tessellate_face_key<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     key: FaceKey,
     opts: TessellateOpts,
 ) -> TessellateResult<IndexedMesh> {

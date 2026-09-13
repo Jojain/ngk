@@ -10,7 +10,8 @@ pub(super) mod edges;
 pub(super) mod seams;
 pub(super) mod vertices;
 
-use crate::topology::gmap::{Cell1, Cell2, Dart, Dim, GMap};
+use crate::model::{Cell1, Cell2, Model};
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
 
@@ -19,7 +20,7 @@ use super::options::{HealingOptions, HealingScope};
 
 /// Returns the vertices the 0-removal pass may consider, in a stable order.
 pub(super) fn scoped_vertices<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     options: &HealingOptions,
 ) -> Result<Vec<VertexKey>, HealingError> {
     Ok(match &options.scope {
@@ -37,7 +38,7 @@ pub(super) fn scoped_vertices<P: Payload>(
 
 /// Returns the edges the 1-removal pass may consider, in a stable order.
 pub(super) fn scoped_edges<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     options: &HealingOptions,
 ) -> Result<Vec<EdgeKey>, HealingError> {
     Ok(match &options.scope {
@@ -54,7 +55,7 @@ pub(super) fn scoped_edges<P: Payload>(
 }
 
 /// Returns the distinct faces carrying the edge orbit rooted at `dart`.
-pub(super) fn incident_faces<P: Payload>(g: &GMap<P>, dart: Dart) -> Vec<FaceKey> {
+pub(super) fn incident_faces<P: Payload>(g: &Model<P>, dart: Dart) -> Vec<FaceKey> {
     let mut faces = Vec::new();
     for d in g.orbit(dart, g.orbit_indices(Dim::One)) {
         if let Some(face) = g.cell_key::<Cell2>(d)
@@ -68,7 +69,7 @@ pub(super) fn incident_faces<P: Payload>(g: &GMap<P>, dart: Dart) -> Vec<FaceKey
 
 /// Returns one dart of the edge orbit rooted at `dart` that belongs to `face`.
 pub(super) fn edge_dart_in_face<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     dart: Dart,
     face: FaceKey,
 ) -> Option<Dart> {
@@ -80,7 +81,11 @@ pub(super) fn edge_dart_in_face<P: Payload>(
 ///
 /// This is the dart the profile builders key a parameter curve on, so a
 /// rebuilt curve must be keyed on it too.
-pub(super) fn boundary_dart<P: Payload>(g: &GMap<P>, face: FaceKey, edge: EdgeKey) -> Option<Dart> {
+pub(super) fn boundary_dart<P: Payload>(
+    g: &Model<P>,
+    face: FaceKey,
+    edge: EdgeKey,
+) -> Option<Dart> {
     let view = g.face(face)?;
     view.loops()
         .iter()
@@ -90,6 +95,6 @@ pub(super) fn boundary_dart<P: Payload>(g: &GMap<P>, face: FaceKey, edge: EdgeKe
 }
 
 /// Returns the key of the edge containing `dart`.
-pub(super) fn edge_key<P: Payload>(g: &GMap<P>, dart: Dart) -> Option<EdgeKey> {
+pub(super) fn edge_key<P: Payload>(g: &Model<P>, dart: Dart) -> Option<EdgeKey> {
     g.cell_key::<Cell1>(dart)
 }

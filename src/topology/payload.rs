@@ -1,4 +1,4 @@
-//! Type-level bundles of user data attached at each dimension of a [`GMap`](super::gmap::GMap).
+//! Type-level bundles of user data attached at each dimension of a [`Model`](crate::model::Model).
 
 use serde::{Deserialize, Serialize};
 

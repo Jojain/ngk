@@ -1,8 +1,8 @@
-//! Per-entity styling that scripts attach to a GMap before handing it to the
+//! Per-entity styling that scripts attach to a Model before handing it to the
 //! visualization orchestrator.
 //!
 //! Hints are pure presentation data — colors, labels, opacity. The
-//! tessellation pipeline never reads them; the BRep / GMap layers do, when
+//! tessellation pipeline never reads them; the BRep / gmap layers do, when
 //! emitting [`super::scene::VizScene`] entities. Scripts can leave them
 //! empty and get sensible defaults.
 
@@ -50,7 +50,7 @@ impl Style {
 }
 
 /// Bag of styles indexed by topology key / dart id. Scripts populate this and
-/// hand it to [`scene_from_gmap`](super::scene_from_gmap).
+/// hand it to [`scene_from_model`](super::scene_from_model).
 #[derive(Debug, Clone, Default)]
 pub struct VizHints {
     pub vertex_styles: HashMap<VertexKey, Style>,

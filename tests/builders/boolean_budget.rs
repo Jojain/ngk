@@ -12,27 +12,27 @@ use std::time::Duration;
 use nalgebra::Vector3;
 use ngk::builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, boolean};
 use ngk::geometry::{Frame, Point3};
+use ngk::model::Model;
 use ngk::modeling::solids;
-use ngk::topology::TopologyEditError;
-use ngk::topology::gmap::GMap;
+use ngk::topology::ModelEditError;
 use ngk::topology::shape::{Shape, SolidTag};
 use ngk::topology::shape_keys::SolidKey;
 
 /// Generous enough that only a non-terminating search trips it.
 const CEILING: Duration = Duration::from_secs(60);
 
-type Operands = (GMap<ngk::StandardPayload>, SolidKey, SolidKey);
+type Operands = (Model<ngk::StandardPayload>, SolidKey, SolidKey);
 
 fn merged(
     target: Shape<SolidTag, ngk::StandardPayload>,
     tool: Shape<SolidTag, ngk::StandardPayload>,
 ) -> Operands {
-    let (tool_map, tool_key) = tool.into_map();
-    let (mut map, target_key) = target.into_map();
+    let (tool_map, tool_key) = tool.into_model();
+    let (mut map, target_key) = target.into_model();
     let imported = map
         .transaction(|edit| {
             let handle = edit.merge(tool_map.solid_unchecked(tool_key));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).expect("imported tool solid"))
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).expect("imported tool solid"))
         })
         .expect("import tool operand");
     (map, target_key, imported)

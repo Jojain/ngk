@@ -7,20 +7,23 @@ use super::{
 use crate::builders::faces::reverse_face_winding;
 use crate::geometry::{Point3, PointCoincidence};
 use crate::healing::{HealingOptions, HealingScope, remove_redundant_cells_staged};
+use crate::model::Model;
 use crate::topology::{
-    TopologyEdit,
+    ModelEdit,
     attributes::{SheetAttr, ShellRoot, SolidAttr},
     closed::Closed,
-    gmap::{Dart, Dim, GMap},
+    gmap::{Dart, Dim},
     payload::Payload,
     shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey},
-    validation::{validate_gmap, validate_solid_manifold, validate_solid_orientation},
+    validation::{
+        ModelValidationError, validate_gmap, validate_solid_manifold, validate_solid_orientation,
+    },
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Forms result shells, requiring a complete positional pairing for every surviving span.
 pub(crate) fn run<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     context: &BooleanContext,
     graph: &FragmentGraph,
     mut prepared: BooleanPreparation,
@@ -125,7 +128,7 @@ pub(crate) fn run<P: Payload>(
     }
     let solid =
         edit.add_solid_split_from(context.first, SolidAttr::new(data, outer[0], Some(inner)));
-    validate_gmap(edit)?;
+    validate_gmap(edit.topology()).map_err(ModelValidationError::from)?;
     validate_solid_manifold(edit, solid)?;
     validate_solid_orientation(edit, solid)?;
     for lineage in [&mut prepared.first_lineage, &mut prepared.second_lineage] {
@@ -182,7 +185,7 @@ pub(crate) fn run<P: Payload>(
 /// intersection engine do not meet the kernel's default budget. Lineage is then
 /// rewritten onto the surviving identities.
 fn heal_result<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     context: &BooleanContext,
     solid: SolidKey,
     prepared: &mut BooleanPreparation,
@@ -222,7 +225,7 @@ fn heal_result<P: Payload>(
         }
     }
 
-    validate_gmap(edit)?;
+    validate_gmap(edit.topology()).map_err(ModelValidationError::from)?;
     validate_solid_manifold(edit, solid)?;
     validate_solid_orientation(edit, solid)?;
     Ok(())
@@ -249,7 +252,7 @@ fn remap_keys<K: Copy + Eq + std::hash::Hash + Ord>(keys: &mut Vec<K>, merges: &
 
 /// Aligns only the endpoints of an already identified canonical-span pair.
 fn sew_pair<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     span: IntersectionSpanId,
     first: (EdgeKey, FaceKey),
     second: (EdgeKey, FaceKey),
@@ -300,7 +303,7 @@ fn sew_pair<P: Payload>(
 
 /// The dart `face` traverses `edge` with, and the edge's ends in that order.
 fn loop_traversal<P: Payload>(
-    edit: &TopologyEdit<'_, P>,
+    edit: &ModelEdit<'_, P>,
     edge: EdgeKey,
     face: FaceKey,
 ) -> Option<(Dart, [VertexKey; 2], [Point3; 2])> {
@@ -320,7 +323,7 @@ fn loop_traversal<P: Payload>(
 }
 
 /// Discovers connected face sets using current typed incidence after all compaction/sewing.
-fn shell_components<P: Payload>(map: &GMap<P>, faces: &[FaceKey]) -> Vec<Vec<FaceKey>> {
+fn shell_components<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> Vec<Vec<FaceKey>> {
     let mut remaining = faces.iter().copied().collect::<BTreeSet<_>>();
     let mut result = Vec::new();
     while let Some(&seed) = remaining.first() {
@@ -341,7 +344,7 @@ fn shell_components<P: Payload>(map: &GMap<P>, faces: &[FaceKey]) -> Vec<Vec<Fac
 }
 
 /// Signed boundary integral for planar polygon loops, including concave loops and holes.
-fn signed_volume<P: Payload>(map: &GMap<P>, faces: &[FaceKey]) -> f64 {
+fn signed_volume<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> f64 {
     let reference = *map.face_unchecked(faces[0]).vertices()[0]
         .point()
         .expect("admitted geometry");

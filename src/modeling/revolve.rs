@@ -2,7 +2,7 @@ use radians::Rad64;
 
 use crate::builders::revolve::{RevolveError, add_revolved_face, add_revolved_profile_from_dart};
 use crate::geometry::axis::Axis3;
-use crate::topology::gmap::MergeTopology;
+use crate::model::MergeTopology;
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceTag, Shape, SheetTag, SolidTag};
@@ -23,7 +23,7 @@ pub fn revolve_face<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<Shape<SolidTag, P>, RevolveError> {
-    let (mut g, face_key) = face.into_map();
+    let (mut g, face_key) = face.into_model();
     let solid_key = add_revolved_face(&mut g, face_key, axis, angle)?;
     Ok(Shape::new(g, solid_key))
 }

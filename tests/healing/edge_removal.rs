@@ -2,15 +2,15 @@ use ngk::builders::faces::{FaceImprint, split_face_by_imprints};
 use ngk::builders::profiles::plane_uv;
 use ngk::geometry::{Curve, Plane, Point3, Surface, TrimmedCurve2};
 use ngk::healing::{HealingOptions, remove_redundant_cells};
+use ngk::model::Model;
 use ngk::modeling::{faces, solids};
 use ngk::tessellate::TessellateOpts;
 use ngk::tessellate::face::tessellate_face_key;
 use ngk::topology::StandardPayload;
-use ngk::topology::gmap::GMap;
 use ngk::topology::shape_keys::FaceKey;
 
 /// Returns the face whose vertices all sit at `height`.
-fn face_at_height(g: &GMap<StandardPayload>, height: f64) -> FaceKey {
+fn face_at_height(g: &Model<StandardPayload>, height: f64) -> FaceKey {
     g.iter_faces()
         .map(|(key, _)| key)
         .find(|&key| {
@@ -28,7 +28,7 @@ fn face_at_height(g: &GMap<StandardPayload>, height: f64) -> FaceKey {
 }
 
 /// Returns the plane a face sits on.
-fn face_plane(g: &GMap<StandardPayload>, face: FaceKey) -> Plane {
+fn face_plane(g: &Model<StandardPayload>, face: FaceKey) -> Plane {
     match &g.face_attr_unchecked(face).surface {
         Surface::Plane(plane) => plane.clone(),
         other => panic!(
@@ -40,7 +40,7 @@ fn face_plane(g: &GMap<StandardPayload>, face: FaceKey) -> Plane {
 
 /// Cuts `face` in two along the segment from `start` to `end`.
 fn imprint_segment(
-    g: &mut GMap<StandardPayload>,
+    g: &mut Model<StandardPayload>,
     face: FaceKey,
     start: Point3,
     end: Point3,
@@ -59,7 +59,7 @@ fn imprint_segment(
 fn coplanar_faces_sharing_an_edge_fuse_into_one_face() {
     let (mut map, _) = faces::rectangle(Plane::xy(), 2.0, 2.0)
         .expect("rectangle")
-        .into_map();
+        .into_model();
     let face = map.iter_faces().next().expect("map should have a face").0;
     assert_eq!(
         imprint_segment(
@@ -88,7 +88,7 @@ fn coplanar_faces_sharing_an_edge_fuse_into_one_face() {
 
 #[test]
 fn imprinting_and_healing_a_block_face_restores_the_block() {
-    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
+    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let base = face_at_height(&map, 0.0);
     imprint_segment(
         &mut map,
@@ -123,8 +123,8 @@ fn imprinting_and_healing_a_block_face_restores_the_block() {
 
 #[test]
 fn healing_an_imprinted_block_preserves_its_shell_euler_characteristic() {
-    let (mut map, solid) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
-    let euler = |g: &GMap<StandardPayload>| {
+    let (mut map, solid) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
+    let euler = |g: &Model<StandardPayload>| {
         let shell = &g.solid_unchecked(solid).shells()[0];
         shell.vertices().len() as isize - shell.edges().len() as isize
             + shell.faces().len() as isize
@@ -145,7 +145,7 @@ fn healing_an_imprinted_block_preserves_its_shell_euler_characteristic() {
 
 #[test]
 fn perpendicular_faces_of_a_block_are_not_fused() {
-    let (mut map, _) = solids::block(1.0, 2.0, 3.0).expect("block").into_map();
+    let (mut map, _) = solids::block(1.0, 2.0, 3.0).expect("block").into_model();
     let report = remove_redundant_cells(&mut map, HealingOptions::default())
         .expect("healing should succeed");
 
@@ -161,7 +161,7 @@ fn perpendicular_faces_of_a_block_are_not_fused() {
 /// rather than fusing its two real edges into the caps.
 #[test]
 fn healing_leaves_a_cylinder_untouched() {
-    let (mut map, _) = solids::cylinder(1.0, 2.0).expect("cylinder").into_map();
+    let (mut map, _) = solids::cylinder(1.0, 2.0).expect("cylinder").into_model();
     let faces = map.iter_faces().count();
     let edges = map.iter_edges().count();
 
@@ -178,7 +178,7 @@ fn healing_leaves_a_cylinder_untouched() {
 
 #[test]
 fn healing_is_idempotent() {
-    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
+    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let base = face_at_height(&map, 0.0);
     imprint_segment(
         &mut map,

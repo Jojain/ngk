@@ -1,12 +1,13 @@
 use ngk::builders::edges::add_circle;
 use ngk::geometry::Plane;
+use ngk::model::Model;
 use ngk::topology::edge::Edge;
-use ngk::topology::gmap::{Dim, GMap};
+use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
 
 #[test]
 fn closed_edge_darts_resolve_opposite_orientations() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let edge_key = add_circle(&mut g, Plane::xy(), 1.0).expect("circle edge should build");
     let default_dart = g.edge_attr_unchecked(edge_key).dart;
     let reversed_dart = g.alpha(Dim::Zero, default_dart);

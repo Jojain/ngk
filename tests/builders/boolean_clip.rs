@@ -3,10 +3,9 @@ use ngk::builders::boolean::{BooleanOperand, BooleanOptions, compute_boolean_int
 use ngk::builders::faces::{add_face, add_rectangle};
 use ngk::builders::profiles::add_polyline;
 use ngk::geometry::{Plane, Point3};
-use ngk::topology::gmap::GMap;
-
+use ngk::model::Model;
 /// A U-shaped face in the z = 0 plane, opening towards +y.
-fn u_shaped_face(map: &mut GMap<ngk::StandardPayload>) -> ngk::topology::shape_keys::FaceKey {
+fn u_shaped_face(map: &mut Model<ngk::StandardPayload>) -> ngk::topology::shape_keys::FaceKey {
     let points = [
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(3.0, 0.0, 0.0),
@@ -24,7 +23,7 @@ fn u_shaped_face(map: &mut GMap<ngk::StandardPayload>) -> ngk::topology::shape_k
 
 #[test]
 fn a_section_leaving_and_re_entering_a_face_is_clipped_into_two_spans() {
-    let mut map = GMap::<ngk::StandardPayload>::new();
+    let mut map = Model::<ngk::StandardPayload>::new();
     let first = u_shaped_face(&mut map);
     // A vertical face crossing the U at y = 2, where the notch splits the material.
     let second = add_rectangle(

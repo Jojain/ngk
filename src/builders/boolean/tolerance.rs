@@ -1,7 +1,7 @@
 //! One immutable tolerance budget for a Boolean operation.
 
 use crate::geometry::{IntersectionOptions, Point3, Surface};
-use crate::topology::gmap::GMap;
+use crate::model::Model;
 use crate::topology::payload::Payload;
 
 use super::{BooleanError, operand::OperandCells};
@@ -101,7 +101,7 @@ impl BooleanTolerances {
 
     /// Estimates combined model extent from geometric control hulls, never just vertices.
     pub(crate) fn from_cells<P: Payload>(
-        map: &GMap<P>,
+        map: &Model<P>,
         first: &OperandCells,
         second: &OperandCells,
         policy: BooleanTolerancePolicy,

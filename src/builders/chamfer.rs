@@ -8,12 +8,13 @@ use crate::builders::faces::{
 };
 use crate::builders::profiles::curve_pcurve;
 use crate::geometry::{Curve, LINEAR_TOLERANCE, Point2, Point3, RuledSurface, Surface};
+use crate::model::{Cell0, Cell1, Model};
 use crate::topology::attributes::{FaceAttr, ShellRoot, VertexAttr};
 use crate::topology::edge::Edge;
-use crate::topology::gmap::{Cell0, Cell1, Dart, Dim, GMap};
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, VertexKey};
-use crate::topology::{IsolatedDart, TopologyEdit};
+use crate::topology::{IsolatedDart, ModelEdit};
 
 /// Orientation of a dart relative to the directed edge that owns it.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -44,7 +45,7 @@ enum CornerRole {
 /// supported by the current geometry path, or the staged topology cannot be
 /// split and sewn consistently.
 pub fn chamfer<P: Payload, T: Into<ChamferTarget>>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     target: T,
     distance: f64,
 ) -> Result<(), ChamferError> {
@@ -72,7 +73,7 @@ pub fn chamfer<P: Payload, T: Into<ChamferTarget>>(
 /// Replaces one standalone-profile 0-cell with two offset vertices and a new
 /// edge between them.
 fn chamfer_profile_corner<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     vertex_key: VertexKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
@@ -193,7 +194,7 @@ struct SolidEdgeChamfer {
 /// Removes the four face patches surrounding a manifold edge and replaces
 /// them with one planar or ruled chamfer face.
 fn chamfer_solid_edge<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
@@ -251,7 +252,7 @@ fn chamfer_solid_edge<P: Payload>(
 /// Validates a solid edge and computes every trim curve and offset point
 /// without changing topology.
 fn prepare_solid_edge_chamfer<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     edge: EdgeKey,
     distance: f64,
 ) -> Result<SolidEdgeChamfer, ChamferError> {
@@ -373,10 +374,10 @@ fn prepare_solid_edge_chamfer<P: Payload>(
 /// Splits one face by an imprint and identifies both the patch to remove and
 /// the section edge that remains on the survivor.
 fn split_chamfer_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     imprint: FaceImprint,
-    is_patch: impl Fn(&GMap<P>, FaceKey) -> bool,
+    is_patch: impl Fn(&Model<P>, FaceKey) -> bool,
 ) -> Result<(FaceKey, EdgeKey), ChamferError> {
     let splits = split_face_by_imprints_staged(edit, face, &[imprint])
         .map_err(|_| ChamferError::ChamferFaceSplitFailed { face })?;
@@ -399,7 +400,7 @@ fn split_chamfer_face<P: Payload>(
 /// Builds synchronized model-space and UV-space line geometry for a planar
 /// face split.
 fn planar_line_imprint<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     edge: EdgeKey,
     face: FaceKey,
     points: [Point3; 2],
@@ -420,7 +421,7 @@ fn planar_line_imprint<P: Payload>(
 /// verify samples because the expected trim is an isoparametric straight line
 /// in that surface's parameter space.
 fn chamfer_curve_imprint<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     edge: EdgeKey,
     face: FaceKey,
     curve: &Curve,
@@ -456,12 +457,12 @@ fn chamfer_curve_imprint<P: Payload>(
     Ok(FaceImprint::new(curve.clone(), pcurve))
 }
 
-fn face_contains_edge<P: Payload>(g: &GMap<P>, face: FaceKey, edge: EdgeKey) -> bool {
+fn face_contains_edge<P: Payload>(g: &Model<P>, face: FaceKey, edge: EdgeKey) -> bool {
     g.face(face)
         .is_some_and(|face| face.edges().iter().any(|candidate| candidate.key() == edge))
 }
 
-fn face_contains_vertex<P: Payload>(g: &GMap<P>, face: FaceKey, vertex: VertexKey) -> bool {
+fn face_contains_vertex<P: Payload>(g: &Model<P>, face: FaceKey, vertex: VertexKey) -> bool {
     g.face(face).is_some_and(|face| {
         face.vertices()
             .iter()
@@ -471,7 +472,7 @@ fn face_contains_vertex<P: Payload>(g: &GMap<P>, face: FaceKey, vertex: VertexKe
 
 /// Orders the two incident-face trims so the replacement face points toward
 /// the sum of the original outward normals.
-fn orient_solid_edge_chamfer<P: Payload>(g: &GMap<P>, chamfer: &mut SolidEdgeChamfer) {
+fn orient_solid_edge_chamfer<P: Payload>(g: &Model<P>, chamfer: &mut SolidEdgeChamfer) {
     let corners = [
         chamfer.face_offsets[0][0],
         chamfer.face_offsets[0][1],
@@ -497,7 +498,7 @@ fn orient_solid_edge_chamfer<P: Payload>(g: &GMap<P>, chamfer: &mut SolidEdgeCha
 /// Dispatches a profile to either the batched solid-rim algorithm or the
 /// sequential standalone-corner algorithm.
 fn chamfer_profile<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     profile: ProfileKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
@@ -532,7 +533,7 @@ fn chamfer_profile<P: Payload>(
 /// Interprets a domain vertex by incidence: a vertex without faces is a 2D
 /// profile corner; a vertex with faces is a solid-boundary selection.
 fn chamfer_vertex<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     vertex: VertexKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
@@ -565,7 +566,7 @@ struct SolidProfileChamfer {
 /// Replaces a complete planar outer profile with an inset cap and one chamfer
 /// face per profile edge.
 fn chamfer_solid_profile<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     profile: ProfileKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
@@ -589,7 +590,7 @@ fn chamfer_solid_profile<P: Payload>(
     }
 
     // Removing the complete patch before adding replacements avoids the
-    // side-effects of sequentially chamfering adjacent GMap cells.
+    // side-effects of sequentially chamfering adjacent map cells.
     let boundary_darts = remove_face_patch(edit, &patch_faces, &section_edges)?;
     add_profile_chamfer_faces(edit, &prepared, &boundary_darts)
 }
@@ -601,7 +602,7 @@ fn chamfer_solid_profile<P: Payload>(
 /// a planar cap, with one planar side face and one outgoing solid edge at each
 /// rim vertex.
 fn prepare_solid_profile_chamfer<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     profile: ProfileKey,
     distance: f64,
 ) -> Result<SolidProfileChamfer, ChamferError> {
@@ -803,7 +804,7 @@ fn cross2(first: nalgebra::Vector2<f64>, second: nalgebra::Vector2<f64>) -> f64 
 /// Adds the inset cap and bevel ring, then alpha2-sews every matching boundary
 /// into the surviving shell.
 fn add_profile_chamfer_faces<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     prepared: &SolidProfileChamfer,
     boundary_darts: &[Dart],
 ) -> Result<(), ChamferError> {
@@ -861,7 +862,7 @@ fn add_profile_chamfer_faces<P: Payload>(
 /// Finds the geometrically coincident candidate edge, orients its dart to the
 /// boundary start vertex, and alpha2-sews the two face boundaries.
 fn sew_matching_boundary<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     boundary: Dart,
     candidates: &[Dart],
 ) -> Result<(), ChamferError> {
@@ -885,7 +886,7 @@ fn sew_matching_boundary<P: Payload>(
 /// Finds a candidate boundary dart whose unordered geometric endpoints match
 /// the requested segment within linear tolerance.
 fn find_boundary_dart<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     candidates: &[Dart],
     start: Point3,
     end: Point3,
@@ -908,7 +909,7 @@ fn find_boundary_dart<P: Payload>(
 /// Removes the three corner patches around a trihedral vertex and replaces
 /// them with one outward-oriented triangular chamfer face.
 fn chamfer_solid_vertex<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     vertex: VertexKey,
     distance: f64,
 ) -> Result<(), ChamferError> {
@@ -1012,7 +1013,7 @@ struct CurvedChamferFace {
 /// Removes a connected face patch, creates one replacement face, and sews it
 /// to every surviving section edge.
 fn replace_face_patch<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     patch_faces: &HashSet<FaceKey>,
     section_edges: &[EdgeKey],
     corners: &[Point3],
@@ -1043,7 +1044,7 @@ fn replace_face_patch<P: Payload>(
 /// The returned darts are remapped survivor-side representatives, ready for
 /// alpha2 sewing after compacting the removed isolated darts.
 fn remove_face_patch<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     patch_faces: &HashSet<FaceKey>,
     section_edges: &[EdgeKey],
 ) -> Result<Vec<Dart>, ChamferError> {
@@ -1178,7 +1179,7 @@ fn remove_face_patch<P: Payload>(
 /// Registers a four-edge ruled face whose opposite boundaries are translated
 /// copies of the selected NURBS edge.
 fn add_curved_chamfer_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     profile: ProfileKey,
     corners: &[Point3],
     geometry: CurvedChamferFace,
@@ -1262,7 +1263,7 @@ fn validate_distance(distance: f64) -> Result<(), ChamferError> {
 /// Resolves the two alpha1-linked dart occurrences of a profile vertex and
 /// returns them in incoming-then-outgoing order.
 fn profile_corner_darts<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     vertex_dart: Dart,
 ) -> Result<(Dart, Dart), ChamferError> {
     let linked = g.alpha(Dim::One, vertex_dart);
@@ -1281,7 +1282,7 @@ fn profile_corner_darts<P: Payload>(
 
 /// Classifies a profile vertex occurrence from its position on the directed
 /// edge attribute.
-fn corner_role<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<CornerRole, ChamferError> {
+fn corner_role<P: Payload>(g: &Model<P>, dart: Dart) -> Result<CornerRole, ChamferError> {
     let edge_dart = line_edge_dart(g, dart)?;
     if edge_dart == dart {
         Ok(CornerRole::OutgoingStart)
@@ -1293,7 +1294,7 @@ fn corner_role<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<CornerRole, Chamfe
 }
 
 /// Returns the stored orientation dart when `dart` belongs to a straight edge.
-fn line_edge_dart<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Dart, ChamferError> {
+fn line_edge_dart<P: Payload>(g: &Model<P>, dart: Dart) -> Result<Dart, ChamferError> {
     let attr = g
         .attribute::<Cell1>(dart)
         .ok_or(ChamferError::MissingEdgeCurve { dart })?;
@@ -1328,7 +1329,7 @@ fn offset_point(
 
 /// Rebuilds a line curve after one of its endpoint vertex positions changed.
 fn reset_line_edge<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     dart: Dart,
 ) -> Result<(), ChamferError> {
     let edge_dart = line_edge_dart(edit, dart)?;
@@ -1344,7 +1345,7 @@ fn reset_line_edge<P: Payload>(
     Ok(())
 }
 
-fn vertex_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Point3, ChamferError> {
+fn vertex_point<P: Payload>(g: &Model<P>, dart: Dart) -> Result<Point3, ChamferError> {
     g.attribute::<Cell0>(dart)
         .map(|attr| attr.point)
         .ok_or(ChamferError::MissingVertexPoint { dart })
@@ -1352,7 +1353,7 @@ fn vertex_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Point3, ChamferEr
 
 /// Alpha1-sews two standalone profile edge-end occurrences.
 fn sew<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     first: Dart,
     second: Dart,
 ) -> Result<(), ChamferError> {

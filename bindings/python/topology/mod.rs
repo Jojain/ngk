@@ -1,7 +1,7 @@
 mod common;
 mod edge;
 mod face;
-mod gmap;
+mod model;
 mod profile;
 mod sheet;
 mod solid;
@@ -12,14 +12,14 @@ use pyo3::types::PyModule;
 
 pub(crate) use edge::PyEdge;
 pub(crate) use face::PyFace;
-pub(crate) use gmap::PyGMap;
+pub(crate) use model::PyModel;
 pub(crate) use profile::{PyLoop, PyProfile};
 pub(crate) use sheet::{PySheet, PyShell};
 pub(crate) use solid::PySolid;
 pub(crate) use vertex::PyVertex;
 
 pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyGMap>()?;
+    m.add_class::<PyModel>()?;
     m.add_class::<PySolid>()?;
     m.add_class::<PyShell>()?;
     m.add_class::<PySheet>()?;

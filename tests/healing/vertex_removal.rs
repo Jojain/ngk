@@ -1,16 +1,16 @@
 use ngk::builders::faces::{add_circle, split_face_edge};
 use ngk::geometry::{Curve, Point3};
 use ngk::healing::{HealedCell, HealingOptions, HealingScope, SkipReason, remove_redundant_cells};
+use ngk::model::Model;
 use ngk::modeling::solids;
 use ngk::tessellate::TessellateOpts;
 use ngk::tessellate::face::tessellate_face_key;
 use ngk::topology::StandardPayload;
 use ngk::topology::edge::Edge;
-use ngk::topology::gmap::GMap;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 
 /// Returns a face of the map together with one of its boundary edges.
-fn any_boundary_edge(g: &GMap<StandardPayload>) -> (FaceKey, EdgeKey) {
+fn any_boundary_edge(g: &Model<StandardPayload>) -> (FaceKey, EdgeKey) {
     let face = g.iter_faces().next().expect("map should have a face").0;
     let edge = g
         .face(face)
@@ -24,7 +24,7 @@ fn any_boundary_edge(g: &GMap<StandardPayload>) -> (FaceKey, EdgeKey) {
 
 #[test]
 fn splitting_an_edge_then_healing_restores_a_single_edge() {
-    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
+    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let edges = map.iter_edges().count();
     let vertices = map.iter_vertices().count();
 
@@ -49,7 +49,7 @@ fn splitting_an_edge_then_healing_restores_a_single_edge() {
 
 #[test]
 fn a_fused_edge_spans_its_two_original_endpoints() {
-    let (mut map, _) = solids::block(2.0, 3.0, 4.0).expect("block").into_map();
+    let (mut map, _) = solids::block(2.0, 3.0, 4.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
     let original = map.edge_attr_unchecked(edge).curve.clone();
     let start = original.point_at(0.0);
@@ -77,8 +77,8 @@ fn endpoints_match(curve: &Curve, start: Point3, end: Point3) -> bool {
 
 #[test]
 fn healing_preserves_shell_euler_characteristic() {
-    let (mut map, solid) = solids::block(1.0, 1.0, 1.0).expect("block").into_map();
-    let euler = |g: &GMap<StandardPayload>| {
+    let (mut map, solid) = solids::block(1.0, 1.0, 1.0).expect("block").into_model();
+    let euler = |g: &Model<StandardPayload>| {
         let shell = &g.solid_unchecked(solid).shells()[0];
         shell.vertices().len() as isize - shell.edges().len() as isize
             + shell.faces().len() as isize
@@ -95,7 +95,7 @@ fn healing_preserves_shell_euler_characteristic() {
 
 #[test]
 fn a_corner_vertex_between_two_directions_is_preserved() {
-    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
+    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let report = remove_redundant_cells(&mut map, HealingOptions::default())
         .expect("healing should succeed");
 
@@ -116,7 +116,7 @@ fn a_corner_vertex_between_two_directions_is_preserved() {
 /// that applies, not because a guard forbids one.
 #[test]
 fn the_lone_vertex_of_a_closed_edge_is_preserved() {
-    let (mut map, _) = solids::cylinder(1.0, 2.0).expect("cylinder").into_map();
+    let (mut map, _) = solids::cylinder(1.0, 2.0).expect("cylinder").into_model();
     let vertices = map.iter_vertices().count();
     let edges = map.iter_edges().count();
 
@@ -136,7 +136,7 @@ fn the_lone_vertex_of_a_closed_edge_is_preserved() {
 
 #[test]
 fn a_healed_face_still_tessellates() {
-    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
+    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
     split_face_edge(&mut map, face, edge, 0.5).expect("splitting a block edge should succeed");
     remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
@@ -153,7 +153,7 @@ fn a_healed_face_still_tessellates() {
 
 #[test]
 fn an_empty_scope_heals_nothing() {
-    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
+    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
     split_face_edge(&mut map, face, edge, 0.5).expect("splitting a block edge should succeed");
     let edges = map.iter_edges().count();
@@ -185,7 +185,7 @@ fn an_empty_scope_heals_nothing() {
 /// face. The normal is checked either side of the fusion for that.
 #[test]
 fn two_arcs_that_close_on_each_other_fuse_into_one_closed_edge() {
-    let mut map = GMap::<StandardPayload>::new();
+    let mut map = Model::<StandardPayload>::new();
     let face = add_circle(&mut map, ngk::geometry::Plane::xy(), 1.0).expect("a disc");
     let normal_before = map.face_unchecked(face).normal_at(0.0, 0.0);
     let rim = map

@@ -7,7 +7,7 @@
 //! "what does a new analytic type have to implement?" into a reviewable
 //! checklist instead of something you learn by reading a dozen `match` bodies.
 //!
-//! The enums stay concrete rather than becoming trait objects: `GMap`
+//! The enums stay concrete rather than becoming trait objects: `Model`
 //! serialization, healing's value comparisons and cheap cloning all depend on
 //! the derived `Serialize`/`Deserialize`/`Clone`/`PartialEq`.
 //!

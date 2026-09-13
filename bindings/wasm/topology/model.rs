@@ -4,23 +4,23 @@ use wasm_bindgen::prelude::*;
 use super::common::{Map, js_err, values};
 use super::{WasmEdge, WasmFace, WasmProfile, WasmSheet, WasmSolid, WasmVertex};
 
-#[wasm_bindgen(js_name = GMap)]
+#[wasm_bindgen(js_name = Model)]
 #[derive(Clone)]
-pub struct WasmGMap {
+pub struct WasmModel {
     pub(crate) inner: Map,
 }
 
-impl WasmGMap {
+impl WasmModel {
     pub(crate) fn from_inner(inner: Map) -> Self {
         Self { inner }
     }
 }
 
 #[wasm_bindgen]
-impl WasmGMap {
-    /// Deserializes a complete standard-payload GMap without validation.
+impl WasmModel {
+    /// Deserializes a complete standard-payload model without validation.
     #[wasm_bindgen(js_name = deserialize)]
-    pub fn deserialize(serialized: &str) -> Result<WasmGMap, JsValue> {
+    pub fn deserialize(serialized: &str) -> Result<WasmModel, JsValue> {
         Ok(Self::from_inner(
             Map::deserialize(serialized).map_err(js_err)?,
         ))
@@ -229,7 +229,7 @@ impl WasmGMap {
     }
 
     /// Tests whether two wrappers own the same in-memory map.
-    pub fn equals(&self, other: &WasmGMap) -> bool {
+    pub fn equals(&self, other: &WasmModel) -> bool {
         self.inner.ptr_eq(&other.inner)
     }
 }

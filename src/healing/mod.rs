@@ -61,15 +61,15 @@ pub use errors::HealingError;
 pub use options::{HealingOptions, HealingScope};
 pub use report::{HealedCell, HealingReport, HealingSkip, SkipReason};
 
-use crate::topology::TopologyEdit;
-use crate::topology::gmap::GMap;
+use crate::model::Model;
+use crate::topology::ModelEdit;
 use crate::topology::payload::Payload;
 
 /// Removes every cell in scope whose removal does not change the shape.
 ///
 /// The run is atomic: a failure restores the map exactly as it was.
 pub fn remove_redundant_cells<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     options: HealingOptions,
 ) -> Result<HealingReport, HealingError> {
     g.transaction(|edit| remove_redundant_cells_staged(edit, &options))
@@ -80,7 +80,7 @@ pub fn remove_redundant_cells<P: Payload>(
 /// Use this from a builder that already knows which cells it created, so the
 /// run stays proportional to the edit instead of to the model.
 pub fn remove_redundant_cells_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     options: &HealingOptions,
 ) -> Result<HealingReport, HealingError> {
     let mut report = HealingReport::default();

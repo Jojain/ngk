@@ -14,14 +14,14 @@ pub fn build(angle: Rad64) -> Result<ScriptResult, String> {
         .map_err(|err| format!("failed to revolve triangle face: {err:?}"))?;
 
     let mut hints = VizHints::new();
-    for (key, attr) in shape.map().iter_edges() {
+    for (key, attr) in shape.model().iter_edges() {
         let color = match &attr.curve {
             Curve::Circle(_) => "#ffb454",
             _ => "#76d7ea",
         };
         hints.edge(key, Style::default().color(color).width(5.0));
     }
-    for (key, _) in shape.map().iter_faces() {
+    for (key, _) in shape.model().iter_faces() {
         hints.face(
             key,
             Style::default()
@@ -31,7 +31,7 @@ pub fn build(angle: Rad64) -> Result<ScriptResult, String> {
         );
     }
 
-    Ok(ScriptResult::from_gmap_with_hints(shape.map(), &hints))
+    Ok(ScriptResult::from_model_with_hints(shape.model(), &hints))
 }
 
 pub fn run() -> Result<ScriptResult, String> {

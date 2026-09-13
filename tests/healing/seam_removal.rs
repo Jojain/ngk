@@ -83,7 +83,7 @@ fn seams_only_removes_the_cut_and_declines_everything_else() {
     assert_eq!(wall_map.iter_edges().count(), edges_before - 1);
     assert_eq!(wall_map.face_unchecked(wall).loops().len(), 2);
 
-    let (mut block_map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
+    let (mut block_map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let face = block_map.iter_faces().next().expect("a block has faces").0;
     let edge = block_map
         .face_unchecked(face)
@@ -116,7 +116,7 @@ fn seams_only_removes_the_cut_and_declines_everything_else() {
 fn the_seam_pass_leaves_a_seamless_cylinder_alone() {
     use ngk::modeling::solids;
 
-    let (mut g, _) = solids::cylinder(1.0, 2.0).expect("cylinder").into_map();
+    let (mut g, _) = solids::cylinder(1.0, 2.0).expect("cylinder").into_model();
     let report = remove_redundant_cells(&mut g, HealingOptions::seams_only())
         .expect("a seams-only run should commit");
 

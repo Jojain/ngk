@@ -2,7 +2,7 @@
 //!
 //! Lives below [`crate::viz`] and is the single entry point for turning
 //! parametric geometry (`Curve`, `Surface`) and BRep references (a `FaceKey`,
-//! `EdgeKey`, `VertexKey` into a [`GMap`](crate::topology::gmap::GMap)) into
+//! `EdgeKey`, `VertexKey` into a [`Model`](crate::model::Model)) into
 //! flat polylines and indexed meshes the renderer can consume.
 //!
 //! - [`tessellate_curve`]: [`Curve`](crate::geometry::Curve) → [`Polyline3`].
@@ -16,7 +16,7 @@
 //!   polygon where it is not, and a [`TessellateError`] naming the gap for
 //!   anything neither covers — see [`face`] for `// TODO: real CDT` markers.
 //! - [`tessellate_face_key`]: raw map/key bridge for callers that are still
-//!   iterating a [`GMap`](crate::topology::gmap::GMap) directly.
+//!   iterating a [`Model`](crate::model::Model) directly.
 //! - [`tessellate_shape`]: dispatch on a [`ShapeKey`](crate::topology::shape_keys::ShapeKey).
 
 pub mod curve;

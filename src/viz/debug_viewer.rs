@@ -13,9 +13,10 @@ use crate::geometry::{
     Circle, Cone, Curve, Cylinder, Line, NurbsCurve, NurbsSurface, Plane, Point3, RuledSurface,
     Sphere, Surface, SurfaceOfRevolution, Torus,
 };
+use crate::model::{MergeTopology, Model};
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Dart, GMap, MergeTopology};
+use crate::topology::gmap::Dart;
 use crate::topology::payload::StandardPayload;
 use crate::topology::profile::Profile;
 use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape, SheetTag, SolidTag, VertexTag};
@@ -94,7 +95,7 @@ pub struct SerializedDebugObject {
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DebugObjectKind {
-    GMap,
+    Model,
     Vertex,
     Edge,
     Profile,
@@ -160,12 +161,12 @@ impl<T: DebugDisplay, const N: usize> DebugDisplay for [T; N] {
     }
 }
 
-impl DebugDisplay for GMap<StandardPayload> {
+impl DebugDisplay for Model<StandardPayload> {
     fn append_debug_objects(
         &self,
         objects: &mut Vec<SerializedDebugObject>,
     ) -> Result<(), serde_json::Error> {
-        objects.push(serialize_topology(self, DebugObjectKind::GMap, None)?);
+        objects.push(serialize_topology(self, DebugObjectKind::Model, None)?);
         Ok(())
     }
 }
@@ -178,7 +179,7 @@ macro_rules! impl_owned_shape_display {
                 objects: &mut Vec<SerializedDebugObject>,
             ) -> Result<(), serde_json::Error> {
                 let view = self.$view();
-                objects.push(serialize_topology(self.map(), $kind, $dart(&view))?);
+                objects.push(serialize_topology(self.model(), $kind, $dart(&view))?);
                 Ok(())
             }
         }
@@ -326,13 +327,13 @@ pub fn show_with_options<T: DebugDisplay + ?Sized>(
 }
 
 /// Sends a complete standard-payload map to the debug viewer.
-pub fn show_gmap(gmap: &GMap<StandardPayload>) -> Result<(), DebugViewerError> {
+pub fn show_gmap(gmap: &Model<StandardPayload>) -> Result<(), DebugViewerError> {
     show_gmap_with_options(gmap, &DebugViewerOptions::default())
 }
 
 /// Sends a complete standard-payload map with explicit connection options.
 pub fn show_gmap_with_options(
-    gmap: &GMap<StandardPayload>,
+    gmap: &Model<StandardPayload>,
     options: &DebugViewerOptions,
 ) -> Result<(), DebugViewerError> {
     show_with_options(gmap, options)
@@ -354,7 +355,7 @@ pub fn payload_for_display<T: DebugDisplay + ?Sized>(
 
 /// Builds the serialized object envelope for a complete map without sending it.
 pub fn payload_for_gmap(
-    gmap: &GMap<StandardPayload>,
+    gmap: &Model<StandardPayload>,
     options: &DebugViewerOptions,
 ) -> Result<DebugViewerPayload, DebugViewerError> {
     payload_for_display(gmap, options)
@@ -377,13 +378,13 @@ fn append_isolated_topology<T>(
 where
     T: MergeTopology<StandardPayload>,
 {
-    let (gmap, handle) = GMap::isolate(topology);
+    let (gmap, handle) = Model::isolate(topology);
     objects.push(serialize_topology(&gmap, kind, handle.dart())?);
     Ok(())
 }
 
 fn serialize_topology(
-    gmap: &GMap<StandardPayload>,
+    gmap: &Model<StandardPayload>,
     kind: DebugObjectKind,
     primary_dart: Option<Dart>,
 ) -> Result<SerializedDebugObject, serde_json::Error> {

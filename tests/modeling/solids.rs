@@ -14,7 +14,7 @@ use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientat
 #[test]
 fn block_builds_closed_box_with_expected_cell_counts() {
     let shape = block(1.0, 2.0, 3.0).expect("block primitive should build");
-    let g = shape.map();
+    let g = shape.model();
     let solid = shape.solid();
     let shell = solid.outer_shell();
 
@@ -164,7 +164,7 @@ fn block_error_message_names_the_invalid_axis_and_value() {
 #[test]
 fn sphere_builds_a_well_formed_boundaryless_solid() {
     let shape = sphere(2.0).expect("sphere primitive should build");
-    let g = shape.map();
+    let g = shape.model();
     validate_solid_manifold(g, shape.key()).expect("sphere should be well formed");
 
     assert_eq!(
@@ -206,7 +206,7 @@ fn sphere_builds_a_well_formed_boundaryless_solid() {
 fn a_sphere_tessellates_into_a_closed_ball() {
     let shape = sphere(2.0).expect("sphere primitive should build");
     let face = shape.solid().faces()[0].key();
-    let mesh = tessellate_face_key(shape.map(), face, TessellateOpts::default())
+    let mesh = tessellate_face_key(shape.model(), face, TessellateOpts::default())
         .expect("sphere face should tessellate");
 
     assert!(
@@ -251,7 +251,7 @@ fn a_sphere_tessellates_into_a_closed_ball() {
 #[test]
 fn torus_builds_a_well_formed_boundaryless_solid() {
     let shape = torus(3.0, 1.0).expect("torus primitive should build");
-    let g = shape.map();
+    let g = shape.model();
     validate_solid_manifold(g, shape.key()).expect("torus should be well formed");
 
     assert_eq!(
@@ -300,7 +300,7 @@ fn torus_builds_a_well_formed_boundaryless_solid() {
 fn a_torus_tessellates_into_a_closed_tube() {
     let shape = torus(3.0, 1.0).expect("torus primitive should build");
     let face = shape.solid().faces()[0].key();
-    let mesh = tessellate_face_key(shape.map(), face, TessellateOpts::default())
+    let mesh = tessellate_face_key(shape.model(), face, TessellateOpts::default())
         .expect("torus face should tessellate");
 
     let mut uses = HashMap::new();
@@ -367,7 +367,7 @@ fn solid_boolean_modeling_operations_accept_owned_shapes_and_return_closed_shape
         }
         .expect("Boolean should succeed");
 
-        validate_solid_manifold(result.map(), result.key())
+        validate_solid_manifold(result.model(), result.key())
             .expect("modeling Boolean result should be manifold");
         assert_eq!(result.solid().faces().len(), expected_faces);
     }
@@ -380,7 +380,7 @@ fn a_curved_shell_encloses_positive_signed_volume() {
     // there is the whole outwardness check for a boundaryless face: there is no
     // neighbour across an edge to agree with.
     let shape = sphere(2.0).expect("sphere primitive should build");
-    validate_solid_orientation(shape.map(), shape.key())
+    validate_solid_orientation(shape.model(), shape.key())
         .expect("a sphere shell should be outward oriented");
 }
 
@@ -441,7 +441,7 @@ fn a_cylinder_wall_tessellates_into_a_closed_tube() {
         "the wall is a ring, bounded by two wrapping loops and no outer loop"
     );
 
-    let mesh = tessellate_face_key(shape.map(), wall.key(), TessellateOpts::default())
+    let mesh = tessellate_face_key(shape.model(), wall.key(), TessellateOpts::default())
         .expect("the wall should tessellate");
 
     for (index, point) in mesh.positions.iter().enumerate() {

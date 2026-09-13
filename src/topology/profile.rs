@@ -1,8 +1,9 @@
 use super::closed::{Closeable, Closed};
 use super::edge::Edge;
-use super::gmap::{Dart, Dim, GMap, MergeTopology, TopologyMerge};
+use super::gmap::{Dart, Dim};
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
+use crate::model::{MergeTopology, Model, TopologyMerge};
 use crate::topology::shape_keys::ProfileKey;
 
 /// A keyed 1-dimensional connected topology view with a contextual root dart.
@@ -12,7 +13,7 @@ use crate::topology::shape_keys::ProfileKey;
 /// vertices remain keyed, and the profile has its own stable [`ProfileKey`].
 /// The view's dart preserves its current traversal orientation.
 pub struct Profile<'a, P: Payload = StandardPayload> {
-    gmap: &'a GMap<P>,
+    model: &'a Model<P>,
     key: ProfileKey,
     /// A dart belonging to this profile's alpha0/alpha1 component.
     pub dart: Dart,
@@ -21,7 +22,7 @@ pub struct Profile<'a, P: Payload = StandardPayload> {
 impl<'a, P: Payload> Clone for Profile<'a, P> {
     fn clone(&self) -> Self {
         Self {
-            gmap: self.gmap,
+            model: self.model,
             key: self.key,
             dart: self.dart,
         }
@@ -30,15 +31,15 @@ impl<'a, P: Payload> Clone for Profile<'a, P> {
 
 impl<'a, P: Payload> Profile<'a, P> {
     /// Creates a profile view from its key using the attribute's reference dart.
-    pub fn new(gmap: &'a GMap<P>, key: ProfileKey) -> Self {
-        let dart = gmap.profile_attr_unchecked(key).dart;
-        Self { gmap, key, dart }
+    pub fn new(model: &'a Model<P>, key: ProfileKey) -> Self {
+        let dart = model.profile_attr_unchecked(key).dart;
+        Self { model, key, dart }
     }
 
     /// Creates a profile view from a dart in a registered profile component.
-    pub fn from_dart(gmap: &'a GMap<P>, dart: Dart) -> Option<Self> {
-        let key = gmap.profile_key(dart)?;
-        Some(Self { gmap, key, dart })
+    pub fn from_dart(model: &'a Model<P>, dart: Dart) -> Option<Self> {
+        let key = model.profile_key(dart)?;
+        Some(Self { model, key, dart })
     }
 
     /// Returns this profile's stable key.
@@ -49,15 +50,15 @@ impl<'a, P: Payload> Profile<'a, P> {
     /// Returns the same profile with the opposite traversal orientation.
     pub fn reversed(&self) -> Self {
         Self {
-            gmap: self.gmap,
+            model: self.model,
             key: self.key,
-            dart: self.gmap.alpha(Dim::Zero, self.dart),
+            dart: self.model.alpha(Dim::Zero, self.dart),
         }
     }
 
     /// Returns the user payload attached to this profile.
     pub fn data(&self) -> &P::Profile {
-        &self.gmap.profile_attr_unchecked(self.key).data
+        &self.model.profile_attr_unchecked(self.key).data
     }
 
     /// Iterates the darts of this profile in alternating alpha0/alpha1 order.
@@ -66,7 +67,7 @@ impl<'a, P: Payload> Profile<'a, P> {
     /// free. For closed profiles, iteration stops just before returning to the
     /// starting dart.
     pub fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
-        LoopIterator::new(self.gmap, self.dart)
+        LoopIterator::new(self.model, self.dart)
     }
 
     /// Returns the first vertex in this profile's traversal order.
@@ -96,7 +97,7 @@ impl<'a, P: Payload> Profile<'a, P> {
     pub fn edges(&self) -> Vec<Edge<'a, P>> {
         self.darts()
             .step_by(2)
-            .filter_map(|d| Edge::from_dart(self.gmap, d))
+            .filter_map(|d| Edge::from_dart(self.model, d))
             .collect()
     }
 
@@ -104,14 +105,14 @@ impl<'a, P: Payload> Profile<'a, P> {
     pub fn vertices(&self) -> Vec<Vertex<'a, P>> {
         self.darts()
             .step_by(2)
-            .filter_map(|d| Vertex::from_dart(self.gmap, d))
+            .filter_map(|d| Vertex::from_dart(self.model, d))
             .collect()
     }
 }
 
 impl<P: Payload> MergeTopology<P> for Profile<'_, P> {
     fn merge_topology(&self) -> TopologyMerge<'_, P> {
-        TopologyMerge::new(self.gmap, self.darts().collect(), self.dart)
+        TopologyMerge::new(self.model, self.darts().collect(), self.dart)
     }
 }
 
@@ -119,7 +120,7 @@ impl<'a, P: Payload> Closeable for Profile<'a, P> {
     /// A profile is closed when no dart in it is alpha0-free or alpha1-free.
     fn is_closed(&self) -> bool {
         self.darts()
-            .all(|d| !self.gmap.is_free(d, Dim::Zero) && !self.gmap.is_free(d, Dim::One))
+            .all(|d| !self.model.is_free(d, Dim::Zero) && !self.model.is_free(d, Dim::One))
     }
 }
 
@@ -129,7 +130,7 @@ impl<'a, P: Payload> Closeable for Profile<'a, P> {
 /// This distinguishes repeated occurrences of the same topological vertex in
 /// a non-simple loop.
 pub struct LoopCorner<'a, P: Payload = StandardPayload> {
-    gmap: &'a GMap<P>,
+    model: &'a Model<P>,
     incoming: Dart,
     outgoing: Dart,
 }
@@ -137,13 +138,13 @@ pub struct LoopCorner<'a, P: Payload = StandardPayload> {
 impl<'a, P: Payload> LoopCorner<'a, P> {
     /// Returns the edge arriving at this corner in loop traversal order.
     pub fn incoming(&self) -> Edge<'a, P> {
-        Edge::from_dart(self.gmap, self.incoming)
+        Edge::from_dart(self.model, self.incoming)
             .expect("LoopCorner incoming dart must have an edge")
     }
 
     /// Returns the edge leaving this corner in loop traversal order.
     pub fn outgoing(&self) -> Edge<'a, P> {
-        Edge::from_dart(self.gmap, self.outgoing)
+        Edge::from_dart(self.model, self.outgoing)
             .expect("LoopCorner outgoing dart must have an edge")
     }
 
@@ -153,7 +154,7 @@ impl<'a, P: Payload> LoopCorner<'a, P> {
     /// leaves on rather than by either end of an edge — which is what lets a
     /// one-edge loop still have one.
     pub fn vertex(&self) -> Vertex<'a, P> {
-        Vertex::from_dart(self.gmap, self.outgoing)
+        Vertex::from_dart(self.model, self.outgoing)
             .expect("LoopCorner outgoing dart must have a vertex")
     }
 }
@@ -178,7 +179,7 @@ impl<'a, P: Payload> Closed<Profile<'a, P>> {
             .iter()
             .enumerate()
             .map(|(index, outgoing_dart)| LoopCorner {
-                gmap: self.gmap,
+                model: self.model,
                 incoming: edge_darts[(index + count - 1) % count],
                 outgoing: *outgoing_dart,
             })
@@ -203,16 +204,16 @@ struct LoopIterator<'a, P: Payload = StandardPayload> {
     start: Dart,
     previous: Option<Dart>,
     inv: LoopInvolution,
-    gmap: &'a GMap<P>,
+    model: &'a Model<P>,
 }
 
 impl<'a, P: Payload> LoopIterator<'a, P> {
-    pub fn new(gmap: &'a GMap<P>, start: Dart) -> Self {
+    pub fn new(model: &'a Model<P>, start: Dart) -> Self {
         Self {
             start,
             previous: None,
             inv: LoopInvolution::A0,
-            gmap,
+            model,
         }
     }
 }
@@ -228,11 +229,11 @@ impl<'a, P: Payload> Iterator for LoopIterator<'a, P> {
                     LoopInvolution::A0 => Dim::Zero,
                     LoopInvolution::A1 => Dim::One,
                 };
-                if self.gmap.is_free(d, dim) {
+                if self.model.is_free(d, dim) {
                     return None;
                 }
                 self.inv = self.inv.next();
-                self.gmap.alpha(dim, d)
+                self.model.alpha(dim, d)
             }
         };
 

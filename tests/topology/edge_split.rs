@@ -1,10 +1,10 @@
 use ngk::builders::edges::{EdgeSplitError, add_line, split_edge};
 use ngk::builders::profiles::{add_polyline, add_rectangle};
 use ngk::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
+use ngk::model::Model;
 use ngk::modeling::faces;
-use ngk::topology::TopologyEditError;
+use ngk::topology::ModelEditError;
 use ngk::topology::closed::Closeable;
-use ngk::topology::gmap::GMap;
 use ngk::topology::payload::{Payload, StandardPayload};
 use ngk::topology::profile::Profile;
 use ngk::topology::shape_keys::EdgeKey;
@@ -23,7 +23,7 @@ impl Payload for EdgePayload {
 
 #[test]
 fn split_profile_edge_handles_isolated_edge() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let start = Point3::new(0.0, 0.0, 0.0);
     let end = Point3::new(1.0, 0.0, 0.0);
     let edge = add_line(&mut g, start, end).expect("line edge should build");
@@ -83,7 +83,7 @@ fn split_profile_edge_handles_isolated_edge() {
 
 #[test]
 fn split_isolated_edge_keeps_edge_profile_free() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let edge = add_line(
         &mut g,
         Point3::new(0.0, 0.0, 0.0),
@@ -99,7 +99,7 @@ fn split_isolated_edge_keeps_edge_profile_free() {
 
 #[test]
 fn split_edge_initializes_split_edge_payload_from_source() {
-    let mut g = GMap::<EdgePayload>::new();
+    let mut g = Model::<EdgePayload>::new();
     let edge = add_line(
         &mut g,
         Point3::new(0.0, 0.0, 0.0),
@@ -108,7 +108,7 @@ fn split_edge_initializes_split_edge_payload_from_source() {
     .expect("line edge should build");
     g.transaction(|edit| {
         edit.edge_attr_mut_unchecked(edge).data = "source".to_owned();
-        Ok::<_, TopologyEditError>(())
+        Ok::<_, ModelEditError>(())
     })
     .unwrap();
 
@@ -120,7 +120,7 @@ fn split_edge_initializes_split_edge_payload_from_source() {
 
 #[test]
 fn split_profile_edge_rejects_boundary_parameters() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let edge = add_line(
         &mut g,
         Point3::new(0.0, 0.0, 0.0),
@@ -143,21 +143,21 @@ fn split_profile_edge_rejects_face_boundary_edges() {
     let mut face = faces::rectangle(ngk::geometry::Plane::xy(), 1.0, 1.0)
         .expect("rectangle face should build");
     let edge = face
-        .map()
+        .model()
         .iter_edges()
         .next()
         .expect("rectangle should contain edges")
         .0;
 
     assert!(matches!(
-        split_edge(face.map_mut(), edge, 0.5),
+        split_edge(face.model_mut(), edge, 0.5),
         Err(EdgeSplitError::EdgeBelongsToFace { .. })
     ));
 }
 
 #[test]
 fn split_profile_edge_preserves_open_profile_order() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let p0 = Point3::new(0.0, 0.0, 0.0);
     let p1 = Point3::new(1.0, 0.0, 0.0);
     let p2 = Point3::new(2.0, 0.0, 0.0);
@@ -178,7 +178,7 @@ fn split_profile_edge_preserves_open_profile_order() {
 
 #[test]
 fn split_profile_edge_preserves_closed_profile() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile_key = add_rectangle(&mut g, ngk::geometry::Plane::xy(), 1.0, 1.0)
         .expect("rectangle profile should build");
     let first_edge_dart = g.profile_unchecked(profile_key).edges()[0].dart();
@@ -191,6 +191,6 @@ fn split_profile_edge_preserves_closed_profile() {
     assert_eq!(profile.edges().len(), 5);
 }
 
-fn edge_key_for_dart(g: &GMap<StandardPayload>, dart: ngk::topology::Dart) -> EdgeKey {
-    g.cell_key_unchecked::<ngk::topology::gmap::Cell1>(dart)
+fn edge_key_for_dart(g: &Model<StandardPayload>, dart: ngk::topology::Dart) -> EdgeKey {
+    g.cell_key_unchecked::<ngk::model::Cell1>(dart)
 }

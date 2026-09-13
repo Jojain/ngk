@@ -2,7 +2,7 @@
 //! parameter maps.
 //!
 //! Knows `geometry::` and Part 21 entity names; knows nothing of `topology::`,
-//! the GMap or darts. That makes it exhaustively testable with no map at all,
+//! the map or darts. That makes it exhaustively testable with no map at all,
 //! which matters because this is exactly where the parameterization bugs live.
 //!
 //! One table drives both directions, so that read and write cannot drift into

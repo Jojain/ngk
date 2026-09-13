@@ -3,8 +3,9 @@ use std::convert::Infallible;
 use ngk::builders::faces::{FaceImprint, add_face, split_face_by_imprints_staged};
 use ngk::builders::profiles::add_rectangle as add_rectangle_profile;
 use ngk::geometry::{Curve, Plane, Point2, Point3, TrimmedCurve2};
-use ngk::topology::TopologyEditError;
-use ngk::topology::gmap::{EditPolicy, GMap};
+use ngk::model::Model;
+use ngk::topology::ModelEditError;
+use ngk::topology::edit::EditPolicy;
 use ngk::topology::payload::Payload;
 use ngk::topology::shape_keys::{FaceKey, ProfileKey};
 
@@ -156,15 +157,15 @@ impl EditPolicy<FacePayload> for RejectFaceSplit {
     }
 }
 
-fn attributed_rectangle() -> GMap<FacePayload> {
-    let mut g = GMap::new();
+fn attributed_rectangle() -> Model<FacePayload> {
+    let mut g = Model::new();
     let profile = add_rectangle_profile(&mut g, Plane::xy(), 2.0, 2.0)
         .expect("rectangle profile should build");
     let face = add_face(&mut g, profile).expect("rectangle face should build");
     g.transaction(|edit| {
         edit.profile_attr_mut_unchecked(profile).data = "source profile".to_owned();
         edit.face_attr_mut_unchecked(face).data = "source".to_owned();
-        Ok::<_, TopologyEditError>(())
+        Ok::<_, ModelEditError>(())
     })
     .unwrap();
     g

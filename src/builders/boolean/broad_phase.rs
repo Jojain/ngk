@@ -1,10 +1,10 @@
 //! Conservative trimmed-face bounds and deterministic BVH candidate generation.
 
 use crate::geometry::{Interval, Point2, Point3, Surface};
+use crate::model::Model;
 use crate::topology::LoopKind;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use slotmap::Key;
@@ -254,7 +254,7 @@ pub(crate) struct EdgeFaceCandidateSet {
 /// pairs of two solids cannot touch, so rejecting them here is what keeps that
 /// cost proportional to the contacts that exist.
 pub(crate) fn candidate_edge_face_pairs<P: Payload>(
-    map: &GMap<P>,
+    map: &Model<P>,
     edges: &[EdgeKey],
     faces: &[FaceKey],
     padding: f64,
@@ -287,7 +287,7 @@ pub(crate) fn candidate_edge_face_pairs<P: Payload>(
 
 /// Keeps every unbounded face and every potentially overlapping bounded pair.
 pub(crate) fn candidate_face_pairs<P: Payload>(
-    map: &GMap<P>,
+    map: &Model<P>,
     first: &[FaceKey],
     second: &[FaceKey],
     padding: f64,

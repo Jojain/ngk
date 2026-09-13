@@ -1,12 +1,13 @@
-# GMap operation transactions
+# Model operation transactions
 
-`GMap::transaction` is the atomic boundary for a complete modeling operation.
-Its closure receives a `TopologyEdit`, which is the public mutation capability
-for the staged map. Returning an error, failing validation, failing identity
+`Model::transaction` is the atomic boundary for a complete modeling operation.
+Its closure receives a `ModelEdit`, which is the public mutation capability for
+the staged model. Returning an error, failing validation, failing identity
 reconciliation, or failing payload policy restores the complete
-transaction-start snapshot.
+transaction-start snapshot — the map, the entity stores, the subdivision
+labelling and the revision counter alike.
 
-`GMap::transaction_with_policy` uses the same boundary with a caller-provided
+`Model::transaction_with_policy` uses the same boundary with a caller-provided
 `EditPolicy`. Policy event application happens only after the complete staged
 operation passes topology validation and identity reconciliation.
 
@@ -15,19 +16,20 @@ for recoverable failure.
 
 ## Builder composition
 
-Each public builder accepts `&mut GMap` and starts one transaction. Its private
-staged helper accepts `&mut TopologyEdit` and performs the actual work. A
-composite builder calls other staged helpers with the same edit capability, so
-the whole modeling operation has one snapshot, one journal, and one commit.
+Each public builder accepts `&mut Model` and starts one transaction. Its private
+staged helper accepts `&mut ModelEdit` and performs the actual work. A composite
+builder calls other staged helpers with the same edit capability, so the whole
+modeling operation has one snapshot, one journal, and one commit.
 
-Raw `GMap` mutation is topology-internal. Builders can inspect the map through
-the immutable access exposed by `TopologyEdit`, but cannot bypass the
-transaction when adding darts, changing alpha links, or mutating attributes.
+Raw map mutation is model-internal. `Model::topology()` hands out `&GMap` and
+nothing hands out `&mut GMap`, so builders can inspect the map through the
+immutable access exposed by `ModelEdit` but cannot bypass the transaction when
+adding darts, changing alpha links, labelling cells, or mutating attributes.
 
-`TopologyEdit` owns no snapshot and has no independent commit. It provides the
+`ModelEdit` owns no snapshot and has no independent commit. It provides the
 checked alpha operations `add_dart`, `remove_dart`, `link`, `unlink`, and `sew`,
-plus topology-associated attribute creation, removal, mutation, split, and
-merge declarations.
+the subdivision label `own_cell`, plus attribute creation, removal, mutation,
+split, and merge declarations.
 
 Profile and sheet registration follows the same explicit model as edge and
 vertex registration. Adding a face does not synthesize profiles for its
@@ -67,11 +69,25 @@ Keys returned during an operation are stable only when they survive this
 reconciliation. A temporary local key may be removed at commit; staged typed
 lookups resolve the operation's logical survivor.
 
-## Derived cell indexes
+## Commit order
 
-The six dart-to-key maps are one lazy `DerivedCellIndexes` cache. Topology or
-topology-associated attribute mutation invalidates it. The first typed lookup
-or traversal rebuilds it, subsequent reads reuse it, and commit
-materializes it after reconciliation. Builders use typed APIs such as
-`cell_key`, `attribute`, and topology views rather than accessing indexes
-directly.
+1. the raw gmap axioms, on `Model::topology()` alone;
+2. the subdivision labels, which must describe that map: no record anchored off
+   it, no owner of lower dimension than the cell it claims, and no cell two
+   entities disagree about;
+3. shell re-rooting and the required profile/sheet registrations;
+4. edit-event lineage, then identity reconciliation;
+5. payload policy on net externally-visible changes;
+6. `revision += 1` and cache invalidation.
+
+A failure at any step restores the transaction-start snapshot whole.
+
+## Derived indexes
+
+The six dart-to-key maps are one lazy `DerivedCellIndexes` cache and the
+dart-to-owner lookup is a second one. Any mutation invalidates both; the first
+typed lookup or traversal rebuilds what it needs, subsequent reads reuse it, and
+commit materializes the cell indexes after reconciliation. Neither is
+serialized: a deserialized model rebuilds them from its authoritative stores.
+Builders use typed APIs such as `cell_key`, `attribute`, `ownership` and
+topology views rather than accessing indexes directly.

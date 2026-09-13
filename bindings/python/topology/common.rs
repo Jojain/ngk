@@ -4,10 +4,10 @@ use std::hash::{Hash, Hasher};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::binding_common::explore::{ExploreError, SharedGMap};
+use crate::binding_common::explore::{ExploreError, SharedModel};
 use crate::topology::StandardPayload;
 
-pub(crate) type Map = SharedGMap<StandardPayload>;
+pub(crate) type Map = SharedModel<StandardPayload>;
 
 pub(crate) fn py_err(error: ExploreError) -> PyErr {
     PyValueError::new_err(error.to_string())
@@ -31,8 +31,8 @@ macro_rules! entity_methods {
         #[pymethods]
         impl $type {
             #[getter]
-            fn gmap(&self) -> PyGMap {
-                PyGMap::from_inner(self.inner.gmap())
+            fn model(&self) -> PyModel {
+                PyModel::from_inner(self.inner.model())
             }
 
             #[getter]
@@ -57,7 +57,7 @@ macro_rules! entity_methods {
             }
 
             fn __hash__(&self) -> isize {
-                hash_identity(&self.inner.gmap(), self.inner.key())
+                hash_identity(&self.inner.model(), self.inner.key())
             }
 
             $($extra)*

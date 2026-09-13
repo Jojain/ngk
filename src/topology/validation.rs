@@ -11,7 +11,9 @@ use super::gmap::{Dart, Dim, GMap};
 use super::payload::Payload;
 use super::shape_keys::{FaceKey, SolidKey};
 use super::sheet::Sheet;
+use crate::model::Model;
 
+/// A map that is not a generalized map.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum GMapValidationError {
     #[error("alpha{dim}({dart:?}) points outside the dart set: {linked:?}")]
@@ -38,6 +40,14 @@ pub enum GMapValidationError {
         dart: Dart,
         back: Dart,
     },
+}
+
+/// What a model's entities claim, checked against the map beneath them.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ModelValidationError {
+    /// The map itself is not a generalized map.
+    #[error(transparent)]
+    Topology(#[from] GMapValidationError),
 
     #[error("solid {solid:?} does not exist")]
     MissingSolid { solid: SolidKey },
@@ -78,11 +88,12 @@ pub enum GMapValidationError {
     },
 }
 
-/// Validate the structural axioms of the stored n-GMap involutions.
+/// Validate the structural axioms of a generalized map's involutions.
 ///
 /// This checks the book definition used by this crate: every alpha is an
 /// involution, and every alpha_i o alpha_j is an involution when i + 2 <= j.
-pub fn validate_gmap<P: Payload>(g: &GMap<P>) -> Result<(), GMapValidationError> {
+/// It reads no entity and no geometry, so it answers for a bare map.
+pub fn validate_gmap(g: &GMap) -> Result<(), GMapValidationError> {
     let dart_count = g.dart_count();
 
     for i in 0..g.dimension() {
@@ -136,14 +147,14 @@ pub fn validate_gmap<P: Payload>(g: &GMap<P>) -> Result<(), GMapValidationError>
 /// optional closed inner 2-sheets; the surrounding alpha3 volume pairing is not
 /// required for this boundary-representation style.
 pub fn validate_solid_manifold<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     solid: SolidKey,
-) -> Result<(), GMapValidationError> {
-    validate_gmap(g)?;
+) -> Result<(), ModelValidationError> {
+    validate_gmap(g.topology())?;
 
     let attr = g
         .solid_attr(solid)
-        .ok_or(GMapValidationError::MissingSolid { solid })?;
+        .ok_or(ModelValidationError::MissingSolid { solid })?;
     validate_shell(g, solid, attr.outer_shell)?;
     if let Some(inner_shells) = &attr.inner_shells {
         for &shell in inner_shells {
@@ -155,8 +166,8 @@ pub fn validate_solid_manifold<P: Payload>(
 }
 
 /// Validate every registered solid in the map as a closed surface shell.
-pub fn validate_all_solid_manifolds<P: Payload>(g: &GMap<P>) -> Result<(), GMapValidationError> {
-    validate_gmap(g)?;
+pub fn validate_all_solid_manifolds<P: Payload>(g: &Model<P>) -> Result<(), ModelValidationError> {
+    validate_gmap(g.topology())?;
     for (solid, _) in g.iter_solids() {
         validate_solid_manifold(g, solid)?;
     }
@@ -165,14 +176,14 @@ pub fn validate_all_solid_manifolds<P: Payload>(g: &GMap<P>) -> Result<(), GMapV
 
 /// Validate that every face surface normal of one solid's shell points outside.
 pub fn validate_solid_orientation<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     solid: SolidKey,
-) -> Result<(), GMapValidationError> {
-    validate_gmap(g)?;
+) -> Result<(), ModelValidationError> {
+    validate_gmap(g.topology())?;
 
     let attr = g
         .solid_attr(solid)
-        .ok_or(GMapValidationError::MissingSolid { solid })?;
+        .ok_or(ModelValidationError::MissingSolid { solid })?;
     validate_shell(g, solid, attr.outer_shell)?;
     validate_shell_orientation(g, solid, attr.outer_shell, ShellSide::Outer)?;
     if let Some(inner_shells) = &attr.inner_shells {
@@ -186,8 +197,10 @@ pub fn validate_solid_orientation<P: Payload>(
 }
 
 /// Validate every registered solid's face surface normals.
-pub fn validate_all_solid_orientations<P: Payload>(g: &GMap<P>) -> Result<(), GMapValidationError> {
-    validate_gmap(g)?;
+pub fn validate_all_solid_orientations<P: Payload>(
+    g: &Model<P>,
+) -> Result<(), ModelValidationError> {
+    validate_gmap(g.topology())?;
     for (solid, _) in g.iter_solids() {
         validate_solid_orientation(g, solid)?;
     }
@@ -195,18 +208,18 @@ pub fn validate_all_solid_orientations<P: Payload>(g: &GMap<P>) -> Result<(), GM
 }
 
 fn validate_shell<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     solid: SolidKey,
     shell: ShellRoot,
-) -> Result<(), GMapValidationError> {
+) -> Result<(), ModelValidationError> {
     match shell {
         ShellRoot::Dart(dart) => {
             if dart.id() >= g.dart_count() {
-                return Err(GMapValidationError::SolidShellOutOfBounds { solid, shell });
+                return Err(ModelValidationError::SolidShellOutOfBounds { solid, shell });
             }
             let sheet =
                 Sheet::from_dart(g, dart).expect("solid shell must have a registered sheet");
-            Closed::new(sheet).ok_or(GMapValidationError::SolidShellOpen {
+            Closed::new(sheet).ok_or(ModelValidationError::SolidShellOpen {
                 solid,
                 shell,
                 dart,
@@ -218,9 +231,9 @@ fn validate_shell<P: Payload>(
         ShellRoot::Face { face, .. } => {
             let attr = g
                 .face_attr(face)
-                .ok_or(GMapValidationError::SolidShellOutOfBounds { solid, shell })?;
+                .ok_or(ModelValidationError::SolidShellOutOfBounds { solid, shell })?;
             if !attr.surface.is_closed() {
-                return Err(GMapValidationError::SolidShellSurfaceOpen { solid, shell, face });
+                return Err(ModelValidationError::SolidShellSurfaceOpen { solid, shell, face });
             }
         }
     }
@@ -229,21 +242,21 @@ fn validate_shell<P: Payload>(
 }
 
 fn validate_shell_orientation<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     solid: SolidKey,
     shell: ShellRoot,
     side: ShellSide,
-) -> Result<(), GMapValidationError> {
+) -> Result<(), ModelValidationError> {
     validate_oriented_shell_volume(g, solid, shell, side)
 }
 
 /// Checks local winding and global signed volume without a star-shaped-shell assumption.
 fn validate_oriented_shell_volume<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     solid: SolidKey,
     shell: ShellRoot,
     side: ShellSide,
-) -> Result<(), GMapValidationError> {
+) -> Result<(), ModelValidationError> {
     let sheet = g.shell_sheet(shell).expect("validated shell");
     let faces = match sheet.boundaryless_face() {
         // A shell that is one boundaryless face says which way it faces on its
@@ -262,7 +275,7 @@ fn validate_oriented_shell_volume<P: Payload>(
     let mut directed = HashSet::new();
     let mut owner = std::collections::HashMap::<Dart, FaceKey>::new();
     let mut volume = 0.0;
-    let unavailable = |face: &Face<'_, P>| GMapValidationError::SolidFaceOrientationUnavailable {
+    let unavailable = |face: &Face<'_, P>| ModelValidationError::SolidFaceOrientationUnavailable {
         solid,
         shell,
         face: face.key(),
@@ -290,7 +303,7 @@ fn validate_oriented_shell_volume<P: Payload>(
             });
         if !planar {
             volume += face.signed_volume_contribution(reference).ok_or(
-                GMapValidationError::SolidFaceOrientationUnavailable {
+                ModelValidationError::SolidFaceOrientationUnavailable {
                     solid,
                     shell,
                     face: face.key(),
@@ -305,7 +318,7 @@ fn validate_oriented_shell_volume<P: Payload>(
                 points.push(
                     edge.trimmed_curve()
                         .map(|section| section.point_at(0.0))
-                        .ok_or(GMapValidationError::SolidFaceOrientationUnavailable {
+                        .ok_or(ModelValidationError::SolidFaceOrientationUnavailable {
                             solid,
                             shell,
                             face: face.key(),
@@ -326,7 +339,7 @@ fn validate_oriented_shell_volume<P: Payload>(
         for boundary in face.loops() {
             for edge in boundary.edges() {
                 if !directed.contains(&g.alpha(Dim::Zero, g.alpha(Dim::Two, edge.dart()))) {
-                    return Err(GMapValidationError::SolidFaceNormalNotOutward {
+                    return Err(ModelValidationError::SolidFaceNormalNotOutward {
                         solid,
                         shell,
                         face: face.key(),
@@ -341,7 +354,7 @@ fn validate_oriented_shell_volume<P: Payload>(
             ShellSide::Inner => volume < 0.0,
         };
     if !valid {
-        return Err(GMapValidationError::SolidFaceNormalNotOutward {
+        return Err(ModelValidationError::SolidFaceNormalNotOutward {
             solid,
             shell,
             face: faces[0].key(),

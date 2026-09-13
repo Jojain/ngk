@@ -1,9 +1,9 @@
 use nalgebra::Vector3;
 use ngk::builders::boolean::{BooleanOperand, BooleanOptions, compute_boolean_intersections};
 use ngk::geometry::{Frame, Point3};
+use ngk::model::Model;
 use ngk::modeling::solids;
-use ngk::topology::TopologyEditError;
-use ngk::topology::gmap::GMap;
+use ngk::topology::ModelEditError;
 use ngk::topology::shape_keys::{FaceKey, SolidKey};
 
 fn two_blocks(
@@ -11,7 +11,7 @@ fn two_blocks(
     first_size: f64,
     second_origin: Point3,
     second_size: f64,
-) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+) -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     let (mut map, first) = solids::block_at(
         Frame::from_xy(first_origin, Vector3::x(), Vector3::y()),
         first_size,
@@ -19,7 +19,7 @@ fn two_blocks(
         first_size,
     )
     .expect("first block")
-    .into_map();
+    .into_model();
     let (tool, second) = solids::block_at(
         Frame::from_xy(second_origin, Vector3::x(), Vector3::y()),
         second_size,
@@ -27,11 +27,11 @@ fn two_blocks(
         second_size,
     )
     .expect("second block")
-    .into_map();
+    .into_model();
     let second = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(second));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     (map, first, second)
@@ -40,32 +40,32 @@ fn two_blocks(
 fn two_cylinders(
     first_origin: Point3,
     second_origin: Point3,
-) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+) -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     let (mut map, first) = solids::cylinder_at(
         Frame::from_xy(first_origin, Vector3::x(), Vector3::y()),
         1.0,
         2.0,
     )
     .expect("first cylinder")
-    .into_map();
+    .into_model();
     let (tool, second) = solids::cylinder_at(
         Frame::from_xy(second_origin, Vector3::x(), Vector3::y()),
         1.0,
         2.0,
     )
     .expect("second cylinder")
-    .into_map();
+    .into_model();
     let second = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(second));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     (map, first, second)
 }
 
 /// Axis-aligned extent of a face, from its own vertices.
-fn face_bounds(map: &GMap<ngk::StandardPayload>, face: FaceKey) -> (Point3, Point3) {
+fn face_bounds(map: &Model<ngk::StandardPayload>, face: FaceKey) -> (Point3, Point3) {
     let mut min = Point3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
     let mut max = Point3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
     for vertex in map.face_unchecked(face).vertices() {
@@ -79,7 +79,7 @@ fn face_bounds(map: &GMap<ngk::StandardPayload>, face: FaceKey) -> (Point3, Poin
 /// Brute-force count of face pairs whose extents overlap, which no broad phase
 /// may prune.
 fn overlapping_pair_count(
-    map: &GMap<ngk::StandardPayload>,
+    map: &Model<ngk::StandardPayload>,
     first: SolidKey,
     second: SolidKey,
 ) -> usize {

@@ -2,7 +2,7 @@
 
 use super::{IndexedMesh, Polyline3, TessellateOpts, tessellate_curve, tessellate_face_key};
 use crate::geometry::Point3;
-use crate::topology::gmap::GMap;
+use crate::model::Model;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, ShapeKey, VertexKey};
 
@@ -20,7 +20,7 @@ pub enum ShapeMesh {
 /// - `Edge` → polyline from start vertex's curve param to end vertex's.
 /// - `Face` → indexed mesh via [`tessellate_face_key`].
 pub fn tessellate_shape<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     key: ShapeKey,
     opts: TessellateOpts,
 ) -> Option<ShapeMesh> {
@@ -31,12 +31,12 @@ pub fn tessellate_shape<P: Payload>(
     }
 }
 
-pub fn tessellate_vertex<P: Payload>(g: &GMap<P>, key: VertexKey) -> Option<Point3> {
+pub fn tessellate_vertex<P: Payload>(g: &Model<P>, key: VertexKey) -> Option<Point3> {
     g.vertex_attr(key).map(|v| v.point)
 }
 
 pub fn tessellate_edge<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     key: EdgeKey,
     opts: TessellateOpts,
 ) -> Option<Polyline3> {

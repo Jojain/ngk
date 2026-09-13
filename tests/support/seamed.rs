@@ -22,15 +22,16 @@ use nalgebra::Vector3;
 use ngk::geometry::{
     Circle, Curve, Cylinder, Frame, Plane, Point2, Point3, Sphere, Surface, Torus, TrimmedCurve2,
 };
+use ngk::model::Model;
 use ngk::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
 };
-use ngk::topology::gmap::{Dart, Dim, GMap};
+use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
-use ngk::topology::{StandardPayload, TopologyEditError};
+use ngk::topology::{ModelEditError, StandardPayload};
 
 /// An edge one face's boundary walks twice, with a dart on it.
-pub fn seam_of(g: &GMap<StandardPayload>, face: FaceKey) -> Option<(EdgeKey, Dart)> {
+pub fn seam_of(g: &Model<StandardPayload>, face: FaceKey) -> Option<(EdgeKey, Dart)> {
     let view = g.face(face)?;
     let edges = view
         .loops()
@@ -49,13 +50,13 @@ pub fn seam_of(g: &GMap<StandardPayload>, face: FaceKey) -> Option<(EdgeKey, Dar
 /// copy is sewn back onto the arc, so the face's single loop walks the one
 /// meridian edge twice between two pole vertices. That is the shape STEP writes
 /// for a sphere, and the one `solids::sphere` no longer builds.
-pub fn seamed_revolved_sphere(radius: f64) -> (GMap<StandardPayload>, FaceKey, SolidKey) {
+pub fn seamed_revolved_sphere(radius: f64) -> (Model<StandardPayload>, FaceKey, SolidKey) {
     use ngk::builders::edges::add_arc;
     use ngk::builders::revolve::add_revolved_edge;
     use radians::Rad64;
     use std::f64::consts::FRAC_PI_2;
 
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let meridian = add_arc(
         &mut g,
         Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::z()),
@@ -80,7 +81,7 @@ pub fn seamed_revolved_sphere(radius: f64) -> (GMap<StandardPayload>, FaceKey, S
                 .expect("a seamed face has a boundary to root at");
             let shell = ShellRoot::Dart(seed);
             edit.add_sheet(SheetAttr::new(shell, ()));
-            Ok::<_, TopologyEditError>(edit.add_solid(SolidAttr::new((), shell, None)))
+            Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new((), shell, None)))
         })
         .expect("the revolved sphere should close into a solid");
     (g, face, solid)
@@ -92,8 +93,8 @@ pub fn seamed_revolved_sphere(radius: f64) -> (GMap<StandardPayload>, FaceKey, S
 /// from it up to the pole and back down, which is the seam. No builder makes
 /// this — `add_revolved_edge` writes the cap's loop as `Capping` outright — but
 /// a STEP face cut open along `u = 0` arrives exactly like this.
-pub fn seamed_spherical_cap(radius: f64, latitude: f64) -> (GMap<StandardPayload>, FaceKey) {
-    let mut g = GMap::<StandardPayload>::new();
+pub fn seamed_spherical_cap(radius: f64, latitude: f64) -> (Model<StandardPayload>, FaceKey) {
+    let mut g = Model::<StandardPayload>::new();
     let sphere = Sphere::new(Frame::xyz(), radius);
     let surface = Surface::Sphere(sphere.clone());
     let turn = std::f64::consts::TAU;
@@ -160,7 +161,7 @@ pub fn seamed_spherical_cap(radius: f64, latitude: f64) -> (GMap<StandardPayload
             // The two meridian sides meet along the seam: foot to foot, pole to
             // pole.
             edit.sew(Dim::Two, d[2], d[5])?;
-            Ok::<_, TopologyEditError>(face)
+            Ok::<_, ModelEditError>(face)
         })
         .expect("a seamed cap should commit");
     (g, face)
@@ -173,8 +174,8 @@ pub fn seamed_spherical_cap(radius: f64, latitude: f64) -> (GMap<StandardPayload
 /// periodic face with its parameterization cut open, so the canonicalizer has to
 /// be able to take one apart. The wall is one quad face whose two vertical sides
 /// are the same edge, sewn to itself: that self-sew is the seam.
-pub fn seamed_cylinder_wall(radius: f64, height: f64) -> (GMap<StandardPayload>, FaceKey) {
-    let mut g = GMap::<StandardPayload>::new();
+pub fn seamed_cylinder_wall(radius: f64, height: f64) -> (Model<StandardPayload>, FaceKey) {
+    let mut g = Model::<StandardPayload>::new();
     let surface = Surface::Cylinder(Cylinder::new(
         Point3::origin(),
         Vector3::x(),
@@ -239,7 +240,7 @@ pub fn seamed_cylinder_wall(radius: f64, height: f64) -> (GMap<StandardPayload>,
             // The two sides meet along the seam: bottom to bottom, top to top.
             edit.sew(Dim::Two, d[2], d[7])?;
             let _ = seam;
-            Ok::<_, TopologyEditError>(face)
+            Ok::<_, ModelEditError>(face)
         })
         .expect("a seamed wall should commit");
     (g, face)
@@ -253,8 +254,8 @@ pub fn seamed_cylinder_wall(radius: f64, height: f64) -> (GMap<StandardPayload>,
 /// vertex at all four corners. That is two seams on one face — the shape that
 /// needs the removals to compose, since taking the first cut off leaves a face
 /// still carrying the second.
-pub fn seamed_torus(major: f64, minor: f64) -> (GMap<StandardPayload>, FaceKey, SolidKey) {
-    let mut g = GMap::<StandardPayload>::new();
+pub fn seamed_torus(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey, SolidKey) {
+    let mut g = Model::<StandardPayload>::new();
     let torus = Torus::new(Frame::xyz(), major, minor);
     let surface = Surface::Torus(torus.clone());
     let turn = std::f64::consts::TAU;
@@ -326,7 +327,7 @@ pub fn seamed_torus(major: f64, minor: f64) -> (GMap<StandardPayload>, FaceKey, 
             // tube circle's two along the equator cut.
             edit.sew(Dim::Two, d[0], d[5])?;
             edit.sew(Dim::Two, d[2], d[7])?;
-            Ok::<_, TopologyEditError>(face)
+            Ok::<_, ModelEditError>(face)
         })
         .expect("a seamed torus should commit");
 
@@ -339,7 +340,7 @@ pub fn seamed_torus(major: f64, minor: f64) -> (GMap<StandardPayload>, FaceKey, 
                 .expect("a seamed face has a boundary to root at");
             let shell = ShellRoot::Dart(seed);
             edit.add_sheet(SheetAttr::new(shell, ()));
-            Ok::<_, TopologyEditError>(edit.add_solid(SolidAttr::new((), shell, None)))
+            Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new((), shell, None)))
         })
         .expect("the seamed torus should close into a solid");
     (g, face, solid)

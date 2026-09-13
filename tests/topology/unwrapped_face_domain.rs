@@ -11,10 +11,11 @@ use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
     Circle, Curve, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3, Sphere, Surface, TrimmedCurve2,
 };
+use ngk::model::Model;
 use ngk::modeling::{faces, solids};
 use ngk::topology::LoopKind;
 use ngk::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
-use ngk::topology::gmap::{Dart, Dim, GMap};
+use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::unwrapped_face_domain::UnwrappedFaceDomain;
 
@@ -113,7 +114,7 @@ fn an_unwrapped_loop_never_jumps_a_period() {
 /// two poles, and is the shape this corner exists for.
 #[test]
 fn a_revolved_meridian_unwraps_the_poles_its_loop_turns_through() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let meridian = add_arc(
         &mut g,
         Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::z()),
@@ -158,7 +159,7 @@ fn a_revolved_meridian_unwraps_the_poles_its_loop_turns_through() {
 #[test]
 fn a_cylinder_wall_is_a_ring_face_with_no_seam() {
     let shape = solids::cylinder(1.0, 2.0).expect("cylinder should build");
-    let map = shape.map();
+    let map = shape.model();
     let solid = shape.solid();
 
     assert_eq!(
@@ -202,7 +203,7 @@ fn a_cylinder_wall_is_a_ring_face_with_no_seam() {
 /// out — and the row's parameter comes from the support, not from the loop.
 #[test]
 fn a_capped_face_closes_its_domain_against_the_degenerate_row() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let apex = Point3::origin();
     let rim = Point3::new(1.0, 0.0, 2.0);
     let edge = add_edge(&mut g, rim, apex, Curve::line(rim, apex)).expect("edge should build");
@@ -272,7 +273,7 @@ fn a_cap_on_the_far_half_of_a_sphere_unwraps_onto_one_branch() {
     let sphere = Sphere::new(Frame::xyz(), radius);
     let surface = Surface::Sphere(sphere.clone());
 
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = g
         .transaction(|edit| {
             let d: [Dart; 6] = std::array::from_fn(|_| edit.add_dart());
@@ -344,7 +345,7 @@ fn a_cap_on_the_far_half_of_a_sphere_unwraps_onto_one_branch() {
                 Vec::new(),
                 pcurves,
             ));
-            Ok::<_, ngk::topology::TopologyEditError>(face)
+            Ok::<_, ngk::topology::ModelEditError>(face)
         })
         .expect("a half cap should commit");
 
@@ -390,7 +391,7 @@ fn a_cap_on_the_far_half_of_a_sphere_unwraps_onto_one_branch() {
 /// still bounds something afterwards.
 #[test]
 fn a_seamed_sphere_keeps_the_cut_its_loop_closes_across() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let meridian = add_arc(
         &mut g,
         Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::z()),

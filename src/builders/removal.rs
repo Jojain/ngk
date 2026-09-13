@@ -20,12 +20,13 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::geometry::{Axis2, DomainSide, LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
+use crate::model::{Cell1, Cell2, Model};
 use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr, ShellRoot};
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell1, Cell2, Dim, GMap};
+use crate::topology::gmap::Dim;
 use crate::topology::orientation::Orientation;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
-use crate::topology::{Dart, IsolatedDart, Payload, TopologyEdit, TopologyEditError};
+use crate::topology::{Dart, IsolatedDart, ModelEdit, ModelEditError, Payload};
 
 /// Failure raised while removing a cell from a staged map.
 #[derive(Debug, Error)]
@@ -73,7 +74,7 @@ pub enum CellRemovalError {
     WouldEmptyMap { dart: Dart, dim: Dim },
     /// A staged alpha edit was rejected.
     #[error(transparent)]
-    Topology(#[from] TopologyEditError),
+    Topology(#[from] ModelEditError),
 }
 
 /// The pair of identities fused by a removal.
@@ -194,7 +195,7 @@ impl CellRemoval {
 /// cell is removable when `alpha(i+1)` and `alpha(i+2)` commute on every one of
 /// its darts, which is what bounds the number of incident `(i + 1)`-cells to
 /// two.
-pub fn is_removable<P: Payload>(g: &GMap<P>, dart: Dart, dim: Dim) -> bool {
+pub fn is_removable<P: Payload>(g: &Model<P>, dart: Dart, dim: Dim) -> bool {
     match dim {
         Dim::Three => false,
         Dim::Two => true,
@@ -216,11 +217,11 @@ pub fn is_removable<P: Payload>(g: &GMap<P>, dart: Dart, dim: Dim) -> bool {
 /// curve it had, which no longer spans the fused edge, and the fused boundary
 /// has no parameter curve until the caller supplies one.
 pub fn remove_cell_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     dart: Dart,
     dim: Dim,
 ) -> Result<CellRemoval, CellRemovalError> {
-    let preflight = Preflight::resolve(edit.map(), dart, dim)?;
+    let preflight = Preflight::resolve(edit.model(), dart, dim)?;
     let Preflight {
         cell,
         cell_set,
@@ -303,7 +304,7 @@ impl MergeKind {
 /// anything, so a caller that must not disturb the map on refusal — a healing
 /// pass choosing candidates — asks here first.
 pub fn planned_merge<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     dart: Dart,
     dim: Dim,
 ) -> Result<MergeKind, CellRemovalError> {
@@ -312,7 +313,7 @@ pub fn planned_merge<P: Payload>(
 
 /// Reports whether [`remove_cell_staged`] would accept this cell.
 pub fn can_remove_cell<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     dart: Dart,
     dim: Dim,
 ) -> Result<(), CellRemovalError> {
@@ -332,7 +333,7 @@ struct Preflight {
 }
 
 impl Preflight {
-    fn resolve<P: Payload>(g: &GMap<P>, dart: Dart, dim: Dim) -> Result<Self, CellRemovalError> {
+    fn resolve<P: Payload>(g: &Model<P>, dart: Dart, dim: Dim) -> Result<Self, CellRemovalError> {
         if !matches!(dim, Dim::Zero | Dim::One) {
             return Err(CellRemovalError::UnsupportedDimension { dim });
         }
@@ -373,7 +374,7 @@ impl Preflight {
 /// stale geometry it leaves behind does not matter — most callers want the
 /// staged form inside a healing pass.
 pub fn remove_cell<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     dart: Dart,
     dim: Dim,
 ) -> Result<CellRemoval, CellRemovalError> {
@@ -470,7 +471,7 @@ impl MergePlan {
 
     /// Resolves the identities the removal will fuse or rejoin.
     fn build<P: Payload>(
-        g: &GMap<P>,
+        g: &Model<P>,
         dart: Dart,
         dim: Dim,
         cell: &[Dart],
@@ -509,7 +510,7 @@ impl MergePlan {
     /// leaves two would have to decide which of them bounds the face from
     /// outside, which the combinatorics alone cannot answer.
     fn loops<P: Payload>(
-        g: &GMap<P>,
+        g: &Model<P>,
         dart: Dart,
         dim: Dim,
         cell: &[Dart],
@@ -680,7 +681,7 @@ impl MergePlan {
     /// and the caller refuses it.
     #[allow(clippy::too_many_arguments)]
     fn cap<P: Payload>(
-        g: &GMap<P>,
+        g: &Model<P>,
         face: FaceKey,
         attr: &FaceAttr<P::F>,
         reference: Dart,
@@ -758,7 +759,7 @@ impl MergePlan {
     /// Returns `None` when the split is anything else, leaving the caller to
     /// refuse it: two components that do not each wrap really are undecidable.
     fn ring<P: Payload>(
-        g: &GMap<P>,
+        g: &Model<P>,
         face: FaceKey,
         attr: &FaceAttr<P::F>,
         reference: Dart,
@@ -814,7 +815,7 @@ impl MergePlan {
 
     /// Collects the loop bookkeeping for a face fusion.
     fn faces<P: Payload>(
-        g: &GMap<P>,
+        g: &Model<P>,
         dart: Dart,
         dim: Dim,
         cell: &[Dart],
@@ -882,7 +883,7 @@ impl MergePlan {
     }
 
     /// Declares the merged identities and moves the consumed face's other loops.
-    fn apply<P: Payload>(self, edit: &mut TopologyEdit<'_, P>) -> MergedCell {
+    fn apply<P: Payload>(self, edit: &mut ModelEdit<'_, P>) -> MergedCell {
         match self {
             MergePlan::Edges { survivor, consumed } => {
                 edit.merge_edges_into(survivor, consumed);
@@ -1008,7 +1009,7 @@ impl MergePlan {
                 let survivor_reference = edit.face_attr_unchecked(survivor).outer_unchecked();
                 let consumed_reference = edit.face_attr_unchecked(consumed).outer_unchecked();
                 let orientation = edit
-                    .map()
+                    .model()
                     .cell_orientation_from_seed(survivor_reference, consumed_reference, Dim::Two)
                     .unwrap_or(Orientation::Same);
 
@@ -1042,7 +1043,7 @@ impl MergePlan {
             } => {
                 let consumed_reference = edit.face_attr_unchecked(consumed).outer_unchecked();
                 let orientation = edit
-                    .map()
+                    .model()
                     .cell_orientation_from_seed(survivor_outer, consumed_reference, Dim::Two)
                     .unwrap_or(Orientation::Same);
                 remaining_inner.extend(transferred.into_iter().map(|seed| match orientation {
@@ -1073,7 +1074,7 @@ impl MergePlan {
 }
 
 /// Classifies the loop of `face` touched by `cell` as outer or inner.
-fn incident_loop_is_outer<P: Payload>(g: &GMap<P>, cell: &[Dart], face: FaceKey) -> Option<bool> {
+fn incident_loop_is_outer<P: Payload>(g: &Model<P>, cell: &[Dart], face: FaceKey) -> Option<bool> {
     let profile = cell
         .iter()
         .copied()
@@ -1085,7 +1086,7 @@ fn incident_loop_is_outer<P: Payload>(g: &GMap<P>, cell: &[Dart], face: FaceKey)
 
 /// Returns the two distinct `(dim + 1)`-cell identities incident to the cell.
 fn incident_pair<P, K, F>(
-    g: &GMap<P>,
+    g: &Model<P>,
     dart: Dart,
     dim: Dim,
     key_of: F,
@@ -1104,7 +1105,7 @@ where
 
 /// Returns the distinct `(dim + 1)`-cell identities incident to the cell.
 fn incident_keys<P, K, F>(
-    g: &GMap<P>,
+    g: &Model<P>,
     dart: Dart,
     dim: Dim,
     key_of: F,
@@ -1130,7 +1131,7 @@ where
 /// The rewiring is the only thing the removal changes, so the components can be
 /// counted on the map as it stands by substituting the replacement links.
 fn rejoined_components<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     surviving: &HashSet<Dart>,
     cell: &HashSet<Dart>,
     dim: Dim,
@@ -1222,7 +1223,7 @@ fn ordered<K: Ord>(first: K, second: K) -> (K, K) {
 /// about to disappear: it applies two involutions per step, so it preserves the
 /// dart's orientation class.
 fn removal_partner<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     cell: &HashSet<Dart>,
     dim: Dim,
     dart: Dart,
@@ -1244,7 +1245,7 @@ fn removal_partner<P: Payload>(
 /// so normalizing on dart id yields every unordered pair exactly once. A dart
 /// whose path returns to itself simply becomes `dim`-free.
 fn removal_pairs<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     cell: &[Dart],
     cell_set: &HashSet<Dart>,
     dim: Dim,
@@ -1270,7 +1271,7 @@ fn removal_pairs<P: Payload>(
 /// the vertex where a slit's two edges met, once both are gone — and the
 /// attribute seeded there has nothing left to describe.
 fn replacement_seeds<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     cell: &[Dart],
     cell_set: &HashSet<Dart>,
     dim: Dim,
@@ -1287,7 +1288,7 @@ fn replacement_seeds<P: Payload>(
 /// until commit reconciles it. All of them go together, and commit treats the
 /// merge that named them as spent.
 fn drop_removed_cell_attribute<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     cell: &HashSet<Dart>,
     dart: Dart,
     dim: Dim,
@@ -1295,7 +1296,7 @@ fn drop_removed_cell_attribute<P: Payload>(
     let dropped = match dim {
         Dim::Zero => {
             let keys = edit
-                .map()
+                .model()
                 .iter_vertices()
                 .filter(|(_, attr)| cell.contains(&attr.dart))
                 .map(|(key, _)| key)
@@ -1306,7 +1307,7 @@ fn drop_removed_cell_attribute<P: Payload>(
         }
         _ => {
             let keys = edit
-                .map()
+                .model()
                 .iter_edges()
                 .filter(|(_, attr)| cell.contains(&attr.dart))
                 .map(|(key, _)| key)
@@ -1329,13 +1330,13 @@ fn drop_removed_cell_attribute<P: Payload>(
 /// with it; a loop or shell seed with none is left for [`MergePlan`], which is
 /// the only caller that can produce one and already knows the answer.
 fn reseed_attributes<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     cell: &HashSet<Dart>,
     seeds: &HashMap<Dart, Option<Dart>>,
     shell_senses: &HashMap<Dart, Orientation>,
 ) {
     let vertices = reseeded(
-        edit.map()
+        edit.model()
             .iter_vertices()
             .map(|(key, attr)| (key, attr.dart)),
         seeds,
@@ -1350,7 +1351,9 @@ fn reseed_attributes<P: Payload>(
     }
 
     let edges = reseeded(
-        edit.map().iter_edges().map(|(key, attr)| (key, attr.dart)),
+        edit.model()
+            .iter_edges()
+            .map(|(key, attr)| (key, attr.dart)),
         seeds,
     );
     for (key, dart) in edges {
@@ -1363,7 +1366,7 @@ fn reseed_attributes<P: Payload>(
     }
 
     let profiles = reseeded(
-        edit.map()
+        edit.model()
             .iter_profiles()
             .map(|(key, attr)| (key, attr.dart)),
         seeds,
@@ -1378,19 +1381,19 @@ fn reseed_attributes<P: Payload>(
     // A shell keeps every dart the removal does not delete, so a seed that has
     // no Def. 59 replacement can still be re-rooted anywhere in the same shell.
     let sheets = edit
-        .map()
+        .model()
         .iter_sheets()
         .filter_map(|(key, attr)| Some((key, attr.dart()?)))
         .filter(|(_, dart)| seeds.contains_key(dart))
         .collect::<Vec<_>>();
     for (key, dart) in sheets {
-        if let Some(root) = rerooted_shell(edit.map(), cell, seeds, shell_senses, dart) {
+        if let Some(root) = rerooted_shell(edit.model(), cell, seeds, shell_senses, dart) {
             edit.sheet_attr_mut_unchecked(key).root = root;
         }
     }
 
     let faces = edit
-        .map()
+        .model()
         .iter_faces()
         .filter(|(_, attr)| attr.darts().any(|dart| seeds.contains_key(&dart)))
         .map(|(key, _)| key)
@@ -1404,18 +1407,18 @@ fn reseed_attributes<P: Payload>(
     }
 
     let solids = edit
-        .map()
+        .model()
         .iter_solids()
         .filter(|(_, attr)| attr.shell_darts().any(|dart| seeds.contains_key(&dart)))
         .map(|(key, attr)| {
-            let shells =
-                attr.shells()
-                    .map(|shell| match shell.dart() {
-                        Some(dart) => rerooted_shell(edit.map(), cell, seeds, shell_senses, dart)
-                            .unwrap_or(shell),
-                        None => shell,
-                    })
-                    .collect::<Vec<_>>();
+            let shells = attr
+                .shells()
+                .map(|shell| match shell.dart() {
+                    Some(dart) => rerooted_shell(edit.model(), cell, seeds, shell_senses, dart)
+                        .unwrap_or(shell),
+                    None => shell,
+                })
+                .collect::<Vec<_>>();
             (key, shells)
         })
         .collect::<Vec<_>>();
@@ -1439,7 +1442,7 @@ fn reseed_attributes<P: Payload>(
 /// as soon as one exists, and the sense stored here is what it reads to put the
 /// shell back the way round it was.
 fn rerooted_shell<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     cell: &HashSet<Dart>,
     seeds: &HashMap<Dart, Option<Dart>>,
     shell_senses: &HashMap<Dart, Orientation>,
@@ -1466,7 +1469,7 @@ fn rerooted_shell<P: Payload>(
 /// Only the roots the removal is about to invalidate are asked, because the
 /// answer is only needed where the shell may end up rooted at its face — and
 /// because reading it is not free.
-fn shell_senses<P: Payload>(g: &GMap<P>, cell: &HashSet<Dart>) -> HashMap<Dart, Orientation> {
+fn shell_senses<P: Payload>(g: &Model<P>, cell: &HashSet<Dart>) -> HashMap<Dart, Orientation> {
     let sheets = g.iter_sheets().filter_map(|(_, attr)| attr.root.dart());
     let solids = g.iter_solids().flat_map(|(_, attr)| {
         attr.shells()
@@ -1490,7 +1493,7 @@ fn shell_senses<P: Payload>(g: &GMap<P>, cell: &HashSet<Dart>) -> HashMap<Dart, 
 ///
 /// Returns `None` where the support has no normal to compare against, which
 /// leaves the shell rooted as it was rather than turned by a guess.
-fn shell_sense<P: Payload>(g: &GMap<P>, dart: Dart) -> Option<Orientation> {
+fn shell_sense<P: Payload>(g: &Model<P>, dart: Dart) -> Option<Orientation> {
     let face = Face::from_dart(g, dart)?;
     let surface = face.surface();
     // A face only becomes boundaryless on a support closed in both directions,
@@ -1509,7 +1512,7 @@ fn shell_sense<P: Payload>(g: &GMap<P>, dart: Dart) -> Option<Orientation> {
 }
 
 /// Returns a surviving dart of the shell rooted at `dart`.
-fn shell_fallback<P: Payload>(g: &GMap<P>, cell: &HashSet<Dart>, dart: Dart) -> Option<Dart> {
+fn shell_fallback<P: Payload>(g: &Model<P>, cell: &HashSet<Dart>, dart: Dart) -> Option<Dart> {
     g.orbit(dart, g.orbit_indices(Dim::Three))
         .find(|d| !cell.contains(d))
 }
@@ -1529,9 +1532,9 @@ fn reseeded<K>(
 /// A pcurve describes one boundary dart of one face. When that dart disappears
 /// the entry has no meaning left, and the caller re-inserts the fused
 /// boundary's pcurve after the removal.
-fn drop_pcurves<P: Payload>(edit: &mut TopologyEdit<'_, P>, cell: &HashSet<Dart>) {
+fn drop_pcurves<P: Payload>(edit: &mut ModelEdit<'_, P>, cell: &HashSet<Dart>) {
     let faces = edit
-        .map()
+        .model()
         .iter_faces()
         .filter(|(_, attr)| attr.pcurves.keys().any(|dart| cell.contains(dart)))
         .map(|(key, _)| key)

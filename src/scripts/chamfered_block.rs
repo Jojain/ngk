@@ -9,8 +9,8 @@ use crate::builders::faces::add_face;
 use crate::builders::profiles::add_rectangle;
 use crate::builders::solids::add_extruded_face;
 use crate::geometry::{Plane, Point3};
+use crate::model::Model;
 use crate::topology::StandardPayload;
-use crate::topology::gmap::GMap;
 use crate::viz::{ScriptResult, Style, VizHints};
 
 const X_SIZE: f64 = 2.4;
@@ -22,7 +22,7 @@ const GAP: f64 = 1.2;
 /// Builds two already-solid blocks: one with its complete top profile
 /// chamfered and one with only its lower-front-left vertex chamfered.
 pub fn build(distance: f64) -> Result<ScriptResult, String> {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
 
     let profile_solid = add_block(&mut g, Point3::origin(), "whole-profile chamfer block")?;
     let profile = g
@@ -102,12 +102,12 @@ pub fn build(distance: f64) -> Result<ScriptResult, String> {
         hints.face(face.key(), style.double_sided(true));
     }
 
-    Ok(ScriptResult::from_gmap_with_hints(&g, &hints))
+    Ok(ScriptResult::from_model_with_hints(&g, &hints))
 }
 
 /// Adds one translated rectangular prism to the shared comparison map.
 fn add_block(
-    g: &mut GMap<StandardPayload>,
+    g: &mut Model<StandardPayload>,
     origin: Point3,
     label: &str,
 ) -> Result<crate::topology::shape_keys::SolidKey, String> {

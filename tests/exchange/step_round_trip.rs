@@ -61,8 +61,8 @@ fn round_trip(shape: &Solid) -> Solid {
     );
 
     let returned = import.shapes.into_iter().next().expect("one solid");
-    let map = returned.map();
-    validate_gmap(map).expect("the sewn map should satisfy the GMap axioms");
+    let map = returned.model();
+    validate_gmap(map.topology()).expect("the sewn map should satisfy the gmap axioms");
     validate_all_solid_manifolds(map).expect("the shell should be closed");
     validate_all_solid_orientations(map).expect("every face should point outward");
 
@@ -178,7 +178,7 @@ fn an_extruded_triangle_survives_a_round_trip() {
         Point3::new(0.0, 3.0, 0.0),
     ])
     .expect("a triangle should build");
-    let (mut map, face) = triangle.into_map();
+    let (mut map, face) = triangle.into_model();
     let solid = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 2.0))
         .expect("a triangle should extrude");
 
@@ -221,7 +221,7 @@ fn holed_slab() -> Solid {
     ];
     let profile = faces::polygon_with_holes(Plane::xy(), &outer, &[&hole])
         .expect("a holed face should build");
-    let (mut map, face) = profile.into_map();
+    let (mut map, face) = profile.into_model();
     let solid =
         add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 3.0)).expect("it should extrude");
     Shape::new(map, solid)

@@ -8,7 +8,7 @@
 //! |---|---|---|
 //! | [`part21`] | ISO 10303-21 syntax only | any AP, any entity name, any NGK type |
 //! | [`schema`] | entity names, reference resolution, units | NGK types |
-//! | [`convert`] | geometry mapping and parameter maps | topology, the GMap, darts |
+//! | [`convert`] | geometry mapping and parameter maps | topology, the map, darts |
 //! | [`topology`] | shells, faces, loops, stitching, seams | Part 21 text |
 //!
 //! Writing works on `impl Write` and reading on `&str`: nothing here touches a
@@ -54,8 +54,8 @@ pub mod topology;
 
 use std::io::Write;
 
+use crate::model::Model;
 use crate::topology::StandardPayload;
-use crate::topology::gmap::GMap;
 use crate::topology::payload::Payload;
 use crate::topology::shape::{Shape, SolidTag};
 
@@ -77,7 +77,7 @@ pub fn solid_to_exchange<P: Payload>(
     shape: &Shape<SolidTag, P>,
     options: &StepWriteOptions,
 ) -> Result<StepExchange, StepError> {
-    map_to_exchange(shape.map(), &[shape.key()], options)
+    map_to_exchange(shape.model(), &[shape.key()], options)
 }
 
 /// Writes several solids from one map into a single exchange structure.
@@ -87,7 +87,7 @@ pub fn solid_to_exchange<P: Payload>(
 /// parts needs a hierarchy of named solids with transforms, which NGK has
 /// nowhere to hold.
 pub fn map_to_exchange<P: Payload>(
-    gmap: &GMap<P>,
+    gmap: &Model<P>,
     solids: &[crate::topology::shape_keys::SolidKey],
     options: &StepWriteOptions,
 ) -> Result<StepExchange, StepError> {
@@ -144,7 +144,7 @@ pub struct StepImport<P: Payload = StandardPayload> {
 impl<P: Payload> std::fmt::Debug for StepImport<P> {
     /// Reports what came back rather than what is in it.
     ///
-    /// A `Shape` owns a whole `GMap`, so printing the shapes themselves would
+    /// A `Shape` owns a whole `Model`, so printing the shapes themselves would
     /// bury the two numbers a reader of this actually wants.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

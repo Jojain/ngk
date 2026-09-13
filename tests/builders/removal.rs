@@ -8,16 +8,17 @@ use ngk::geometry::{
     Axis2, Curve, Curve2, DomainSide, Frame, Plane, Point2, Point3, Surface, TrimmedCurve2,
 };
 use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
+use ngk::model::Model;
 use ngk::modeling::{faces, solids};
-use ngk::topology::gmap::{Dim, GMap};
+use ngk::topology::gmap::Dim;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 use ngk::topology::validation::validate_solid_manifold;
-use ngk::topology::{StandardPayload, TopologyEditError};
+use ngk::topology::{ModelEditError, StandardPayload};
 
 use super::seamed::{seam_of, seamed_cylinder_wall, seamed_revolved_sphere, seamed_spherical_cap};
 
 /// Returns the first face of the map together with one of its boundary edges.
-fn any_boundary_edge(g: &GMap<StandardPayload>) -> (FaceKey, EdgeKey) {
+fn any_boundary_edge(g: &Model<StandardPayload>) -> (FaceKey, EdgeKey) {
     let face = g.iter_faces().next().expect("map should have a face").0;
     let edge = g
         .face(face)
@@ -30,10 +31,10 @@ fn any_boundary_edge(g: &GMap<StandardPayload>) -> (FaceKey, EdgeKey) {
 }
 
 /// Returns a rectangle cut in half, and the edge the two halves share.
-fn halved_rectangle() -> (GMap<StandardPayload>, EdgeKey) {
+fn halved_rectangle() -> (Model<StandardPayload>, EdgeKey) {
     let (mut map, _) = faces::rectangle(Plane::xy(), 2.0, 2.0)
         .expect("rectangle")
-        .into_map();
+        .into_model();
     let face = map.iter_faces().next().expect("map should have a face").0;
     let imprint = FaceImprint::new(
         Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 2.0, 0.0)),
@@ -50,7 +51,7 @@ fn halved_rectangle() -> (GMap<StandardPayload>, EdgeKey) {
 
 #[test]
 fn a_block_corner_is_not_removable() {
-    let (map, _) = solids::block(1.0, 1.0, 1.0).expect("block").into_map();
+    let (map, _) = solids::block(1.0, 1.0, 1.0).expect("block").into_model();
     for (_, attr) in map.iter_vertices() {
         assert!(
             !is_removable(&map, attr.dart, Dim::Zero),
@@ -61,7 +62,7 @@ fn a_block_corner_is_not_removable() {
 
 #[test]
 fn a_vertex_inserted_by_a_split_is_removable() {
-    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
+    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
     let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
 
@@ -71,7 +72,7 @@ fn a_vertex_inserted_by_a_split_is_removable() {
 
 #[test]
 fn removing_a_split_vertex_restores_the_original_dart_count() {
-    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
+    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let darts = map.dart_count();
     let (face, edge) = any_boundary_edge(&map);
     let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
@@ -90,7 +91,7 @@ fn removing_a_split_vertex_restores_the_original_dart_count() {
 
 #[test]
 fn a_vertex_removal_names_the_two_edges_it_fuses() {
-    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
+    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
     let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
     let dart = map.vertex_attr_unchecked(split.vertex).dart;
@@ -114,7 +115,7 @@ fn a_vertex_removal_names_the_two_edges_it_fuses() {
 
 #[test]
 fn removal_translates_every_dart_it_did_not_delete() {
-    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_map();
+    let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
     let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
     let dart = map.vertex_attr_unchecked(split.vertex).dart;
@@ -144,7 +145,7 @@ fn removal_translates_every_dart_it_did_not_delete() {
 
 #[test]
 fn removing_a_non_removable_cell_is_rejected_and_rolls_back() {
-    let (mut map, _) = solids::block(1.0, 1.0, 1.0).expect("block").into_map();
+    let (mut map, _) = solids::block(1.0, 1.0, 1.0).expect("block").into_model();
     let dart = map
         .iter_vertices()
         .next()
@@ -164,7 +165,7 @@ fn removing_a_non_removable_cell_is_rejected_and_rolls_back() {
 
 #[test]
 fn removing_a_dimension_three_cell_is_rejected() {
-    let (mut map, _) = solids::block(1.0, 1.0, 1.0).expect("block").into_map();
+    let (mut map, _) = solids::block(1.0, 1.0, 1.0).expect("block").into_model();
     let dart = map
         .iter_edges()
         .next()
@@ -239,18 +240,18 @@ const BOOLEAN_TOLERANCE: f64 = 1.0e-7;
 /// the quarter disc both operands cover, the rest of the disc, and the block
 /// corner that pokes out. All three describe one plane, so the union has a
 /// single bottom face once the redundant topology is gone.
-fn tangent_union() -> (GMap<StandardPayload>, ngk::topology::shape_keys::SolidKey) {
+fn tangent_union() -> (Model<StandardPayload>, ngk::topology::shape_keys::SolidKey) {
     let size = 2.0;
     let (mut map, block_key) = solids::block_at(Frame::xyz(), size, size, size)
         .expect("block")
-        .into_map();
+        .into_model();
     let (tool, tool_cylinder) = solids::cylinder_at(Frame::xyz(), size, 2.0 * size)
         .expect("cylinder")
-        .into_map();
+        .into_model();
     let cylinder = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .expect("import cylinder");
 
@@ -270,7 +271,7 @@ fn tangent_union() -> (GMap<StandardPayload>, ngk::topology::shape_keys::SolidKe
 
 /// Returns the solid's planar faces whose vertices all sit at `z = 0`.
 fn bottom_faces(
-    g: &GMap<StandardPayload>,
+    g: &Model<StandardPayload>,
     solid: ngk::topology::shape_keys::SolidKey,
 ) -> Vec<FaceKey> {
     g.solid_unchecked(solid)
@@ -355,8 +356,8 @@ fn planar_imprint(pcurve: TrimmedCurve2) -> FaceImprint {
     FaceImprint::new(curve, pcurve)
 }
 /// Returns a rectangle partitioned by a closed square imprint.
-fn rectangle_with_filled_inner_loop() -> (GMap<StandardPayload>, FaceKey) {
-    let mut g = GMap::<StandardPayload>::new();
+fn rectangle_with_filled_inner_loop() -> (Model<StandardPayload>, FaceKey) {
+    let mut g = Model::<StandardPayload>::new();
     let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
     let points = [
         Point2::new(1.0, 1.0),
@@ -417,7 +418,7 @@ fn filled_inner_loop_removal_can_be_disabled() {
 
 #[test]
 fn single_edge_filled_inner_loop_gets_removed() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
     let circle = TrimmedCurve2::arc(
         Point2::new(2.0, 2.0),
@@ -569,7 +570,7 @@ fn healing_removes_the_seam_of_an_imported_sphere() {
 #[test]
 fn removing_the_only_boundary_of_an_open_support_is_refused() {
     let shape = faces::circle(Plane::xy(), 1.0).expect("a circular face should build");
-    let (mut g, disk) = shape.into_map();
+    let (mut g, disk) = shape.into_model();
     let rim = g
         .face(disk)
         .expect("the disk is registered")

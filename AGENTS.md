@@ -34,9 +34,10 @@ parametric modeler. Operations mutate one map and return explicit handles.
 
 | Layer | Path | Role |
 |---|---|---|
-| `topology` | `src/topology/` | The GMap: darts, α0..α3, cells, keys, attributes, transactional editing |
+| `topology` | `src/topology/` | The pure GMap (darts, α0..α3, orbits), the subdivision classification over it, entity records and typed views |
+| `model` | `src/model.rs` | `Model<P>`: one GMap plus the entity stores, geometry, payloads, labels and derived indexes keyed against it; the transaction boundary |
 | `geometry` | `src/geometry/` | Pure math: points, curves, surfaces, NURBS, intersections, bbox, tolerance |
-| `builders` | `src/builders/` | Low-level topology construction (`&mut GMap`), one transaction each |
+| `builders` | `src/builders/` | Low-level topology construction (`&mut Model<P>`), one transaction each |
 | `modeling` | `src/modeling/` | Thin user-facing standalone shape builders (`block`, `revolve`, …) |
 | `healing` | `src/healing/` | Removes topology that carries no shape (`i`-removal passes over `builders::removal`) |
 | `tessellate` | `src/tessellate/` | Geometry/BRep → polylines + indexed meshes |
@@ -45,8 +46,14 @@ parametric modeler. Operations mutate one map and return explicit handles.
 | `bindings` | `bindings/{common,python,wasm}` | pyo3 + wasm-bindgen surfaces |
 | `visualization/` | React + R3F + Vite | Playground consuming the wasm build |
 
-`src/model.rs` holds an embryonic `Model<P>` (owns one persistent `GMap`) —
-the target design lives in `docs/model_api.md` and is **not implemented yet**.
+`Model<P>` owns everything a shape is: `topology: GMap`, the six entity
+slotmaps, the `Subdivision` labelling, a `revision` counter, and the derived
+lookups over all of it. `GMap` itself imports no geometry, no payload and no
+key type — it is darts and involutions. Nothing outside `model.rs` and
+`topology/edit.rs` can reach `&mut GMap`: `Model::topology()` is read-only and
+every mutation goes through a transaction. `docs/model_api.md` predates this
+and is a design note, not a description of the tree; `plan/logical_topology_over_gmap.md`
+is the live plan.
 
 ## Topology core — key concepts
 
@@ -64,22 +71,35 @@ the target design lives in `docs/model_api.md` and is **not implemented yet**.
   `contextual orientation = dart carried by the view`.
   `Orientation::{Same,Reversed}` composes and applies to vectors/scalars.
 - **Typed views** — `Vertex`, `Edge`, `Face`, `Profile`, `Sheet`, `Solid`, plus
-  `Shape<K, P>` (owned map + primary handle). *Traverse with these, not raw darts.*
+  `Shape<K, P>` (owned model + primary handle, read with `model()` /
+  `model_mut()` / `into_model()`). *Traverse with these, not raw darts.*
 - **`Payload` trait** — type-level bundle of user data per dimension;
   `StandardPayload` = `()` everywhere. Most types are generic over `P: Payload`.
 - **Profiles = face boundary loops; Sheets = solid shells.** They must be
   **registered explicitly** (`add_profile` / `add_sheet`); commit rejects faces
   or solids referencing unregistered components.
 
+### Subdivision (`src/topology/subdivision/`)
+
+Every raw cell is labelled with the logical entity whose **interior** contains
+it: a cylinder's seam edge belongs to its wall face, a circle's closure vertex
+belongs to the circle. Labels are one `OrbitOwnership` record per orbit, anchored
+at a representative dart; the darts an entity covers are never stored, they are
+walked out of the map by `recover_region`. `turn` is the one traversal
+primitive — it steps around a shared boundary cell with the sewing involutions,
+passing over cells a higher-dimensional entity owns. `boundary_cycles` gives a
+face its oriented loops and `boundary_shells` gives a solid its boundary
+components, both by turning across interior cuts rather than emitting them.
+
 ### Transactions (read `src/topology/edit.md` — short and essential)
 
-`GMap::transaction` / `transaction_with_policy` is the atomic boundary for a
-modeling operation. The closure receives a **`TopologyEdit`** — the only public
-mutation capability (`add_dart`, `remove_dart`, `link`, `unlink`, `sew`, plus
-attribute create/remove/split/merge declarations).
+`Model::transaction` / `transaction_with_policy` is the atomic boundary for a
+modeling operation. The closure receives a **`ModelEdit`** — the only public
+mutation capability (`add_dart`, `remove_dart`, `link`, `unlink`, `sew`,
+`own_cell`, plus attribute create/remove/split/merge declarations).
 
 - One public builder = one transaction; composite builders pass the same
-  `&mut TopologyEdit` down to private `*_staged` helpers.
+  `&mut ModelEdit` down to private `*_staged` helpers.
 - Any error, validation failure, identity-reconciliation failure or payload
   policy failure restores the full transaction-start snapshot. Panics are **not** caught.
 - **Lineage**: `add_*` (fresh) / `add_*_split_from` (derived) / `merge_*_into`
@@ -87,7 +107,10 @@ attribute create/remove/split/merge declarations).
   (e.g. `PreservePayload`) runs only on net externally-visible changes.
 - **Identity reconciliation** picks one surviving key per final cell;
   transaction-start keys beat transaction-local ones. Local keys may vanish at commit.
-- Derived dart→key maps are one lazy `DerivedCellIndexes` cache, invalidated on mutation.
+- Commit order: raw gmap axioms, subdivision labels, required registrations,
+  lineage, identity reconciliation, payload policy, then `revision += 1`.
+- Derived dart→key maps and the dart→owner index are lazy caches on `Model`,
+  invalidated on every mutation and never serialized.
 
 ## Geometry
 

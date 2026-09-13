@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         );
 
         show_gmap_with_options(
-            shape.map(),
+            shape.model(),
             &DebugViewerOptions {
                 name,
                 ..Default::default()

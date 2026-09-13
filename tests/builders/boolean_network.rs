@@ -6,9 +6,9 @@ use ngk::builders::boolean::{
     validate_solid_network,
 };
 use ngk::geometry::{Frame, Plane, Point3, PointCoincidence};
+use ngk::model::Model;
 use ngk::modeling::{faces, solids};
-use ngk::topology::TopologyEditError;
-use ngk::topology::gmap::GMap;
+use ngk::topology::ModelEditError;
 use ngk::topology::shape_keys::SolidKey;
 
 fn two_blocks(
@@ -16,7 +16,7 @@ fn two_blocks(
     first_size: f64,
     second_origin: Point3,
     second_size: f64,
-) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+) -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     let (mut map, first) = solids::block_at(
         Frame::from_xy(first_origin, Vector3::x(), Vector3::y()),
         first_size,
@@ -24,7 +24,7 @@ fn two_blocks(
         first_size,
     )
     .expect("first block")
-    .into_map();
+    .into_model();
     let (tool, second) = solids::block_at(
         Frame::from_xy(second_origin, Vector3::x(), Vector3::y()),
         second_size,
@@ -32,11 +32,11 @@ fn two_blocks(
         second_size,
     )
     .expect("second block")
-    .into_map();
+    .into_model();
     let second = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(second));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     (map, first, second)
@@ -157,8 +157,8 @@ fn an_open_intersection_loop_is_rejected_for_solid_evaluation() {
     let target = faces::rectangle(Plane::xy(), 1.0, 1.0).expect("target face");
     let tool_plane = Plane::from_xy(Point3::new(0.0, 0.5, -0.5), Vector3::x(), Vector3::z());
     let tool = faces::rectangle(tool_plane, 1.0, 1.0).expect("tool face");
-    let (mut target_map, target_face) = target.into_map();
-    let (tool_map, tool_face) = tool.into_map();
+    let (mut target_map, target_face) = target.into_model();
+    let (tool_map, tool_face) = tool.into_model();
 
     let prepared = prepare_boolean_with_external_tool(
         &mut target_map,
@@ -191,14 +191,14 @@ fn every_event_on_an_edge_lies_between_that_edge_s_own_vertices() {
     let size = 2.0;
     let (mut map, block) = solids::block_at(Frame::xyz(), size, size, size)
         .expect("block")
-        .into_map();
+        .into_model();
     let (tool, tool_cylinder) = solids::cylinder_at(Frame::xyz(), size, 2.0 * size)
         .expect("cylinder")
-        .into_map();
+        .into_model();
     let cylinder = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .expect("import cylinder");
 

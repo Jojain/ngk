@@ -19,7 +19,7 @@
 //! the removal would do, so an edge belongs to exactly one of them and neither
 //! has to guess.
 
-use crate::topology::TopologyEdit;
+use crate::topology::ModelEdit;
 use crate::topology::payload::Payload;
 
 use super::super::errors::HealingError;
@@ -28,7 +28,7 @@ use super::super::report::HealingReport;
 
 /// Offers every scoped seam edge to the 1-removal operation.
 pub(in crate::healing) fn run<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     options: &HealingOptions,
     report: &mut HealingReport,
 ) -> Result<(), HealingError> {

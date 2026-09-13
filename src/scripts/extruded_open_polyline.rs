@@ -17,8 +17,8 @@ pub fn run() -> Result<ScriptResult, String> {
     let shape = extrude_profile(profile.profile(), Vector3::new(0.0, 0.0, 1.0))
         .map_err(|err| format!("failed to extrude open polyline: {err:?}"))?;
 
-    Ok(ScriptResult::from_gmap_with_hints(
-        shape.map(),
+    Ok(ScriptResult::from_model_with_hints(
+        shape.model(),
         &VizHints::new(),
     ))
 }

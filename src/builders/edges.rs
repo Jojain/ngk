@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::builders::errors::{EdgeCreationError, TopologyEditFailure};
+use crate::builders::errors::{EdgeCreationError, ModelEditFailure};
 use crate::geometry::{
     Curve, Interval, LINEAR_TOLERANCE, NurbsError, Plane, Point3, PointCoincidence,
 };
-use crate::topology::TopologyEdit;
+use crate::model::{Cell0, Cell2, Model};
+use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
-use crate::topology::gmap::{Cell0, Cell2, Dart, Dim, GMap, TopologyEditError};
+use crate::topology::edit::ModelEditError;
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, VertexKey};
 use thiserror::Error;
@@ -41,13 +43,13 @@ pub enum EdgeSplitError {
         #[source]
         source: NurbsError,
     },
-    #[error("edge split topology edit failed")]
-    TopologyEditFailed(#[source] TopologyEditFailure),
+    #[error("edge split model edit failed")]
+    ModelEditFailed(#[source] ModelEditFailure),
 }
 
-impl From<TopologyEditError> for EdgeSplitError {
-    fn from(error: TopologyEditError) -> Self {
-        Self::TopologyEditFailed(TopologyEditFailure::new(error))
+impl From<ModelEditError> for EdgeSplitError {
+    fn from(error: ModelEditError) -> Self {
+        Self::ModelEditFailed(ModelEditFailure::new(error))
     }
 }
 
@@ -72,7 +74,7 @@ struct PreparedAttachedEdgeSplit {
 ///
 /// Returns an error when the endpoints coincide within [`LINEAR_TOLERANCE`].
 pub fn add_edge<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     start: Point3,
     end: Point3,
     curve: Curve,
@@ -82,7 +84,7 @@ pub fn add_edge<P: Payload>(
 
 /// Builds an open edge without introducing an independent transaction boundary.
 pub(crate) fn add_edge_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     start: Point3,
     end: Point3,
     curve: Curve,
@@ -100,7 +102,7 @@ pub(crate) fn add_edge_staged<P: Payload>(
 ///
 /// Returns an error when the endpoints coincide within [`LINEAR_TOLERANCE`].
 pub fn add_line<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     start: Point3,
     end: Point3,
 ) -> Result<EdgeKey, EdgeCreationError> {
@@ -117,7 +119,7 @@ pub fn add_line<P: Payload>(
 /// This operation rejects edges attached to faces; use
 /// [`crate::builders::faces::split_face_edge`] for face-boundary edges.
 pub fn split_edge<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     edge: EdgeKey,
     parameter: f64,
 ) -> Result<EdgeSplit, EdgeSplitError> {
@@ -126,7 +128,7 @@ pub fn split_edge<P: Payload>(
 
 /// Splits a profile-only edge inside an existing builder transaction.
 pub(crate) fn split_edge_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     parameter: f64,
 ) -> Result<EdgeSplit, EdgeSplitError> {
@@ -135,7 +137,7 @@ pub(crate) fn split_edge_staged<P: Payload>(
 }
 
 pub(crate) fn split_face_boundary_edge<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     parameter: f64,
     reversed: bool,
@@ -145,7 +147,7 @@ pub(crate) fn split_face_boundary_edge<P: Payload>(
 }
 
 fn split_edge_with_profile_links<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     parameter: f64,
     split: PreparedFreeEdgeSplit,
@@ -184,7 +186,7 @@ fn split_edge_with_profile_links<P: Payload>(
 }
 
 fn split_attached_edge_with_profile_links<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     parameter: f64,
     split: PreparedAttachedEdgeSplit,
@@ -255,7 +257,7 @@ fn reverse_split_curve(
 }
 
 fn prepare_profile_edge_split<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     edge: EdgeKey,
     parameter: f64,
 ) -> Result<PreparedFreeEdgeSplit, EdgeSplitError> {
@@ -280,7 +282,7 @@ fn prepare_profile_edge_split<P: Payload>(
 }
 
 fn prepare_attached_edge_split<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     edge: EdgeKey,
     parameter: f64,
 ) -> Result<PreparedAttachedEdgeSplit, EdgeSplitError> {
@@ -309,7 +311,7 @@ fn prepare_attached_edge_split<P: Payload>(
 }
 
 fn check_profile_edge<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     edge: EdgeKey,
     first_dart: Dart,
     second_dart: Dart,
@@ -340,7 +342,7 @@ fn check_profile_edge<P: Payload>(
 }
 
 fn check_attached_edge<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     edge: EdgeKey,
     first_dart: Dart,
     second_dart: Dart,
@@ -361,7 +363,7 @@ fn check_attached_edge<P: Payload>(
 }
 
 fn split_curve_at_parameter<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     edge: EdgeKey,
     first_dart: Dart,
     second_dart: Dart,
@@ -393,7 +395,7 @@ fn split_curve_at_parameter<P: Payload>(
     ))
 }
 
-fn alpha_pairs<P: Payload>(g: &GMap<P>, darts: &[Dart], dim: Dim) -> Vec<(Dart, Dart)> {
+fn alpha_pairs<P: Payload>(g: &Model<P>, darts: &[Dart], dim: Dim) -> Vec<(Dart, Dart)> {
     let dart_set = darts.iter().copied().collect::<HashSet<_>>();
     darts
         .iter()
@@ -406,7 +408,7 @@ fn alpha_pairs<P: Payload>(g: &GMap<P>, darts: &[Dart], dim: Dim) -> Vec<(Dart, 
 }
 
 fn check_split_parameter<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     edge: EdgeKey,
     parameter: f64,
     first_dart: Dart,
@@ -442,7 +444,7 @@ fn check_split_parameter<P: Payload>(
 /// `end_angle`. The radius must be positive and finite, both angles must be
 /// finite, and the resulting endpoints must not coincide.
 pub fn add_arc<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     plane: Plane,
     radius: f64,
     start_angle: f64,
@@ -453,7 +455,7 @@ pub fn add_arc<P: Payload>(
 
 /// Validates and builds an arc inside the caller's active transaction.
 pub(crate) fn add_arc_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     radius: f64,
     start_angle: f64,
@@ -480,7 +482,7 @@ pub(crate) fn add_arc_staged<P: Payload>(
 /// two darts are alpha-0- and alpha-1-linked to form a closed profile. `radius`
 /// must be positive and finite.
 pub fn add_circle<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     plane: Plane,
     radius: f64,
 ) -> Result<EdgeKey, EdgeCreationError> {
@@ -489,7 +491,7 @@ pub fn add_circle<P: Payload>(
 
 /// Builds a closed circular edge inside the caller's active transaction.
 pub(crate) fn add_circle_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     radius: f64,
 ) -> Result<EdgeKey, EdgeCreationError> {

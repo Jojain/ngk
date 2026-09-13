@@ -2,8 +2,7 @@ use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
 use super::common::{entity_common, js_err, values};
-use super::gmap::WasmGMap;
-
+use super::model::WasmModel;
 use crate::binding_common::explore::SharedSolid;
 use crate::topology::StandardPayload;
 

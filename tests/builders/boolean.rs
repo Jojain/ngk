@@ -9,19 +9,19 @@ use ngk::builders::edges::add_line;
 use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints};
 use ngk::geometry::{Curve, Point2, Surface, TrimmedCurve2};
 use ngk::geometry::{Frame, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
+use ngk::model::Model;
 use ngk::modeling::{edges, faces, solids};
-use ngk::topology::TopologyEditError;
+use ngk::topology::ModelEditError;
 use ngk::topology::attributes::VertexAttr;
-use ngk::topology::gmap::GMap;
 use ngk::topology::shape_keys::{SolidKey, VertexKey};
 use ngk::topology::validation::{validate_gmap, validate_solid_manifold};
 
-fn isolated_vertex(point: Point3) -> (GMap<ngk::StandardPayload>, VertexKey) {
-    let mut map = GMap::new();
+fn isolated_vertex(point: Point3) -> (Model<ngk::StandardPayload>, VertexKey) {
+    let mut map = Model::new();
     let key = map
         .transaction(|edit| {
             let dart = edit.add_dart();
-            Ok::<_, TopologyEditError>(edit.add_vertex(VertexAttr::new(dart, point, ())))
+            Ok::<_, ModelEditError>(edit.add_vertex(VertexAttr::new(dart, point, ())))
         })
         .expect("isolated vertex");
     (map, key)
@@ -33,8 +33,8 @@ fn external_crossing_edges_are_copied_and_split_on_both_sides() {
         edges::line(Point3::new(-1.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)).expect("target edge");
     let tool =
         edges::line(Point3::new(0.0, -1.0, 0.0), Point3::new(0.0, 1.0, 0.0)).expect("tool edge");
-    let (mut target_map, target_edge) = target.into_map();
-    let (tool_map, tool_edge) = tool.into_map();
+    let (mut target_map, target_edge) = target.into_model();
+    let (tool_map, tool_edge) = tool.into_model();
     let tool_edge_count = tool_map.iter_edges().count();
     let tool_vertex_count = tool_map.iter_vertices().count();
 
@@ -78,14 +78,14 @@ fn external_crossing_edges_are_copied_and_split_on_both_sides() {
             .point
             .coincides(Point3::origin(), LINEAR_TOLERANCE)
     );
-    validate_gmap(&target_map).expect("prepared edge map must remain valid");
+    validate_gmap(target_map.topology()).expect("prepared edge map must remain valid");
 }
 
 #[test]
 fn external_vertex_on_edge_splits_the_working_edge() {
     let target =
         edges::line(Point3::new(-1.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)).expect("target edge");
-    let (mut target_map, target_edge) = target.into_map();
+    let (mut target_map, target_edge) = target.into_model();
     let (tool_map, tool_vertex) = isolated_vertex(Point3::origin());
 
     let prepared = prepare_boolean_with_external_tool(
@@ -107,13 +107,13 @@ fn external_vertex_on_edge_splits_the_working_edge() {
     assert_eq!(prepared.network.events().len(), 1);
     assert!(prepared.network.spans().is_empty());
     assert_eq!(tool_map.iter_vertices().count(), 1);
-    validate_gmap(&target_map).expect("prepared vertex/edge map must remain valid");
+    validate_gmap(target_map.topology()).expect("prepared vertex/edge map must remain valid");
 }
 
 #[test]
 fn external_vertex_on_face_is_recorded_without_subdividing_the_face() {
     let target = faces::rectangle(Plane::xy(), 1.0, 1.0).expect("target face");
-    let (mut target_map, target_face) = target.into_map();
+    let (mut target_map, target_face) = target.into_model();
     let (tool_map, tool_vertex) = isolated_vertex(Point3::new(0.5, 0.5, 0.0));
 
     let prepared = prepare_boolean_with_external_tool(
@@ -133,7 +133,7 @@ fn external_vertex_on_face_is_recorded_without_subdividing_the_face() {
     );
     assert_eq!(prepared.network.events().len(), 1);
     assert!(prepared.network.spans().is_empty());
-    validate_gmap(&target_map).expect("prepared vertex/face map must remain valid");
+    validate_gmap(target_map.topology()).expect("prepared vertex/face map must remain valid");
 }
 
 #[test]
@@ -141,8 +141,8 @@ fn perpendicular_faces_are_split_on_both_sides() {
     let target = faces::rectangle(Plane::xy(), 1.0, 1.0).expect("target face");
     let tool_plane = Plane::from_xy(Point3::new(0.0, 0.5, -0.5), Vector3::x(), Vector3::z());
     let tool = faces::rectangle(tool_plane, 1.0, 1.0).expect("tool face");
-    let (mut target_map, target_face) = target.into_map();
-    let (tool_map, tool_face) = tool.into_map();
+    let (mut target_map, target_face) = target.into_model();
+    let (tool_map, tool_face) = tool.into_model();
 
     let prepared = prepare_boolean_with_external_tool(
         &mut target_map,
@@ -198,12 +198,12 @@ fn perpendicular_faces_are_split_on_both_sides() {
     assert!(prepared.network.spans().iter().all(|span| {
         prepared.network.event(span.start).is_some() && prepared.network.event(span.end).is_some()
     }));
-    validate_gmap(&target_map).expect("prepared face map must remain valid");
+    validate_gmap(target_map.topology()).expect("prepared face map must remain valid");
 }
 
 #[test]
 fn same_map_edges_are_split_without_duplication() {
-    let mut map = ngk::topology::gmap::GMap::<ngk::StandardPayload>::new();
+    let mut map = ngk::model::Model::<ngk::StandardPayload>::new();
     let first = add_line(
         &mut map,
         Point3::new(-1.0, 0.0, 0.0),
@@ -236,7 +236,7 @@ fn same_map_edges_are_split_without_duplication() {
 
 #[test]
 fn repeated_same_map_preparation_does_not_split_again() {
-    let mut map = ngk::topology::gmap::GMap::<ngk::StandardPayload>::new();
+    let mut map = ngk::model::Model::<ngk::StandardPayload>::new();
     let first = add_line(
         &mut map,
         Point3::new(-1.0, 0.0, 0.0),
@@ -284,8 +284,8 @@ fn repeated_same_map_preparation_does_not_split_again() {
 fn failed_external_preparation_rolls_back_the_imported_copy() {
     let target = edges::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)).expect("target");
     let tool = edges::line(Point3::origin(), Point3::new(0.0, 1.0, 0.0)).expect("tool");
-    let (mut target_map, target_edge) = target.into_map();
-    let (tool_map, tool_edge) = tool.into_map();
+    let (mut target_map, target_edge) = target.into_model();
+    let (tool_map, tool_edge) = tool.into_model();
     let counts = (
         target_map.dart_count(),
         target_map.iter_edges().count(),
@@ -311,7 +311,7 @@ fn failed_external_preparation_rolls_back_the_imported_copy() {
         ),
         counts
     );
-    validate_gmap(&target_map).expect("rollback must restore the target map");
+    validate_gmap(target_map.topology()).expect("rollback must restore the target map");
 }
 
 #[test]
@@ -319,8 +319,8 @@ fn edge_face_contact_splits_the_edge_and_records_the_face_contact() {
     let target =
         edges::line(Point3::new(0.5, 0.5, -1.0), Point3::new(0.5, 0.5, 1.0)).expect("target edge");
     let tool = faces::rectangle(Plane::xy(), 1.0, 1.0).expect("tool face");
-    let (mut target_map, target_edge) = target.into_map();
-    let (tool_map, tool_face) = tool.into_map();
+    let (mut target_map, target_edge) = target.into_model();
+    let (tool_map, tool_face) = tool.into_model();
 
     let prepared = prepare_boolean_with_external_tool(
         &mut target_map,
@@ -351,14 +351,14 @@ fn edge_face_contact_splits_the_edge_and_records_the_face_contact() {
             .point
             .coincides(Point3::new(0.5, 0.5, 0.0), LINEAR_TOLERANCE)
     }));
-    validate_gmap(&target_map).expect("edge-face preparation must remain valid");
+    validate_gmap(target_map.topology()).expect("edge-face preparation must remain valid");
 }
 
 #[test]
 fn overlapping_external_solids_are_imported_and_split_on_both_sides() {
     let (mut target_map, target_solid) = solids::block_at(Frame::xyz(), 1.0, 1.0, 1.0)
         .expect("target block")
-        .into_map();
+        .into_model();
     let (tool_map, tool_solid) = solids::block_at(
         Frame::from_xy(Point3::new(0.5, 0.5, 0.5), Vector3::x(), Vector3::y()),
         1.0,
@@ -366,7 +366,7 @@ fn overlapping_external_solids_are_imported_and_split_on_both_sides() {
         1.0,
     )
     .expect("tool block")
-    .into_map();
+    .into_model();
 
     let prepared = prepare_boolean_with_external_tool(
         &mut target_map,
@@ -413,8 +413,8 @@ fn coplanar_partial_overlap_imprints_the_region_boundary_on_both_faces() {
     let target = faces::rectangle(Plane::xy(), 2.0, 2.0).expect("target face");
     let tool_plane = Plane::from_xy(Point3::new(1.0, 1.0, 0.0), Vector3::x(), Vector3::y());
     let tool = faces::rectangle(tool_plane, 2.0, 2.0).expect("tool face");
-    let (mut target_map, target_face) = target.into_map();
-    let (tool_map, tool_face) = tool.into_map();
+    let (mut target_map, target_face) = target.into_model();
+    let (tool_map, tool_face) = tool.into_model();
 
     let prepared = prepare_boolean_with_external_tool(
         &mut target_map,
@@ -441,12 +441,12 @@ fn coplanar_partial_overlap_imprints_the_region_boundary_on_both_faces() {
             .len(),
         2
     );
-    validate_gmap(&target_map).expect("coplanar preparation must remain valid");
+    validate_gmap(target_map.topology()).expect("coplanar preparation must remain valid");
 }
 
 #[test]
 fn nurbs_face_intersection_does_not_bridge_an_inner_loop() {
-    let mut map = GMap::<ngk::StandardPayload>::new();
+    let mut map = Model::<ngk::StandardPayload>::new();
     let first = add_rectangle(&mut map, Plane::xy(), 1.0, 1.0).unwrap();
     let points = [
         Point2::new(0.4, 0.4),
@@ -475,7 +475,7 @@ fn nurbs_face_intersection_does_not_bridge_an_inner_loop() {
             let attr = edit.face_attr_mut(face).unwrap();
             attr.surface = Surface::Nurbs(attr.surface.to_nurbs().unwrap());
         }
-        Ok::<_, TopologyEditError>(())
+        Ok::<_, ModelEditError>(())
     })
     .unwrap();
     let plan = compute_boolean_intersections(
@@ -500,7 +500,7 @@ fn nurbs_face_intersection_does_not_bridge_an_inner_loop() {
 
 #[test]
 fn separated_faces_are_pruned_before_surface_intersection() {
-    let mut map = GMap::<ngk::StandardPayload>::new();
+    let mut map = Model::<ngk::StandardPayload>::new();
     let first = add_rectangle(&mut map, Plane::xy(), 1.0, 1.0).unwrap();
     let second = add_rectangle(
         &mut map,
@@ -522,7 +522,7 @@ fn separated_faces_are_pruned_before_surface_intersection() {
 
 #[test]
 fn intersecting_faces_retain_both_sides_of_span_lineage() {
-    let mut map = GMap::<ngk::StandardPayload>::new();
+    let mut map = Model::<ngk::StandardPayload>::new();
     let first = add_rectangle(&mut map, Plane::xy(), 1.0, 1.0).unwrap();
     let second = add_rectangle(
         &mut map,
@@ -550,7 +550,7 @@ fn intersecting_faces_retain_both_sides_of_span_lineage() {
 #[test]
 fn planar_face_bounds_keep_every_overlap_on_a_translation_grid() {
     for x in [-2.0, -0.5, 0.0, 0.5, 2.0] {
-        let mut map = GMap::<ngk::StandardPayload>::new();
+        let mut map = Model::<ngk::StandardPayload>::new();
         let first = add_rectangle(&mut map, Plane::xy(), 1.0, 1.0).unwrap();
         let second = add_rectangle(
             &mut map,
@@ -607,7 +607,7 @@ fn fixed_boolean_tolerances_survive_preparation_unchanged() {
     .unwrap();
     let mut options = BooleanOptions::default();
     options.tolerances = BooleanTolerancePolicy::Fixed(tolerances);
-    let mut map = GMap::<ngk::StandardPayload>::new();
+    let mut map = Model::<ngk::StandardPayload>::new();
     let first = add_line(
         &mut map,
         Point3::new(-1.0, 0.0, 0.0),
@@ -636,7 +636,7 @@ fn two_blocks(
     first_size: f64,
     second_origin: Point3,
     second_size: f64,
-) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+) -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     let (mut map, first) = solids::block_at(
         Frame::from_xy(first_origin, Vector3::x(), Vector3::y()),
         first_size,
@@ -644,7 +644,7 @@ fn two_blocks(
         first_size,
     )
     .expect("first block")
-    .into_map();
+    .into_model();
     let (tool, second) = solids::block_at(
         Frame::from_xy(second_origin, Vector3::x(), Vector3::y()),
         second_size,
@@ -652,11 +652,11 @@ fn two_blocks(
         second_size,
     )
     .expect("second block")
-    .into_map();
+    .into_model();
     let second = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(second));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     (map, first, second)
@@ -823,11 +823,11 @@ fn boolean_result_can_be_consumed_by_a_second_operation() {
         0.5,
     )
     .expect("cavity block")
-    .into_map();
+    .into_model();
     let cavity = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(cavity));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     let result = boolean(
@@ -1121,21 +1121,21 @@ fn block_with_cylinder(
     radius: f64,
     base: f64,
     height: f64,
-) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+) -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     let (tool, tool_cylinder) = solids::cylinder_at(
         Frame::from_xy(Point3::new(1.0, 1.0, base), Vector3::x(), Vector3::y()),
         radius,
         height,
     )
     .expect("cylinder")
-    .into_map();
+    .into_model();
     let (mut map, block) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
         .expect("block")
-        .into_map();
+        .into_model();
     let cylinder = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     (map, block, cylinder)
@@ -1446,7 +1446,7 @@ fn boolean_union_topology_is_stable_under_face_reparameterization() {
             2.0,
         )
         .expect("rotated block")
-        .into_map()
+        .into_model()
     };
 
     let mut counts = Vec::new();
@@ -1454,12 +1454,12 @@ fn boolean_union_topology_is_stable_under_face_reparameterization() {
         let (mut map, first, second) = if rotated {
             let (mut map, first) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
                 .expect("block")
-                .into_map();
+                .into_model();
             let (tool, block) = &reparameterized;
             let second = map
                 .transaction(|edit| {
                     let handle = edit.merge(tool.solid_unchecked(*block));
-                    Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+                    Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
                 })
                 .unwrap();
             (map, first, second)
@@ -1489,7 +1489,7 @@ fn boolean_union_topology_is_stable_under_face_reparameterization() {
 }
 
 /// An axis-aligned box spanning `min` to `max`.
-fn box_between(min: Point3, max: Point3) -> (GMap<ngk::StandardPayload>, SolidKey) {
+fn box_between(min: Point3, max: Point3) -> (Model<ngk::StandardPayload>, SolidKey) {
     solids::block_at(
         Frame::from_xy(min, Vector3::x(), Vector3::y()),
         max.x - min.x,
@@ -1497,7 +1497,7 @@ fn box_between(min: Point3, max: Point3) -> (GMap<ngk::StandardPayload>, SolidKe
         max.z - min.z,
     )
     .expect("box")
-    .into_map()
+    .into_model()
 }
 
 #[test]
@@ -1510,7 +1510,7 @@ fn boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps() {
     let slot = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(slot));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
 
@@ -1523,7 +1523,7 @@ fn boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps() {
     )
     .unwrap();
 
-    validate_gmap(&map).unwrap();
+    validate_gmap(map.topology()).unwrap();
     validate_solid_manifold(&map, result.solid).unwrap();
     ngk::topology::validation::validate_solid_orientation(&map, result.solid).unwrap();
     let solid = map.solid_unchecked(result.solid);
@@ -1564,14 +1564,14 @@ fn block_fused_with_cylinder_tangent_to_block_faces() {
     let size = 2.0;
     let (mut map, block_key) = solids::block_at(Frame::xyz(), size, size, size)
         .expect("block")
-        .into_map();
+        .into_model();
     let (tool, tool_cylinder) = solids::cylinder_at(Frame::xyz(), size, 2.0 * size)
         .expect("cylinder")
-        .into_map();
+        .into_model();
     let cylinder = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .expect("import cylinder");
 
@@ -1594,20 +1594,20 @@ fn block_fused_with_cylinder_tangent_to_block_faces() {
 ///
 /// The sphere is centred on the block's top face, so it meets one plane in a
 /// circle and leaves the block's own boundary otherwise untouched.
-fn block_with_sphere(radius: f64) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+fn block_with_sphere(radius: f64) -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     let (tool, tool_sphere) = solids::sphere_at(
         Frame::from_xy(Point3::new(1.0, 1.0, 2.0), Vector3::x(), Vector3::y()),
         radius,
     )
     .expect("sphere")
-    .into_map();
+    .into_model();
     let (mut map, block) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
         .expect("block")
-        .into_map();
+        .into_model();
     let sphere = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_sphere));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .unwrap();
     (map, block, sphere)
@@ -1692,7 +1692,7 @@ fn boolean_difference_of_a_block_and_a_sphere_dishes_its_top_face() {
 fn every_event_use_names_a_cell_of_the_side_it_claims() {
     fn assert_sides_are_honest(
         name: &str,
-        build: fn() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey),
+        build: fn() -> (Model<ngk::StandardPayload>, SolidKey, SolidKey),
         swapped: bool,
     ) {
         let (map, first, second) = build();
@@ -1748,7 +1748,7 @@ fn every_event_use_names_a_cell_of_the_side_it_claims() {
     // face against planar ones, so its events come from mixed-role pairs.
     let cases: [(
         &str,
-        fn() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey),
+        fn() -> (Model<ngk::StandardPayload>, SolidKey, SolidKey),
     ); 2] = [
         ("overlapping blocks", || {
             two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 1.0), 2.0)

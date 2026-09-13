@@ -1,12 +1,13 @@
 //! Derivation of topology-subdivision inputs from the intersection network.
 
+use crate::model::Model;
 use std::collections::HashMap;
 
 use super::graph::SpanSubdivision;
 use crate::builders::faces::{FaceImprint, FaceImprintSection, split_face_edge_staged};
 use crate::geometry::{Point3, PointCoincidence};
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
-use crate::topology::{TopologyEdit, gmap::GMap, payload::Payload};
+use crate::topology::{ModelEdit, payload::Payload};
 
 use super::{
     BooleanCell, BooleanError, BooleanSide, IntersectionNetwork, IntersectionOrientation,
@@ -81,7 +82,7 @@ pub(crate) fn face_imprints(network: &IntersectionNetwork) -> HashMap<FaceKey, V
 
 /// Splits a known section at canonical span boundaries, retaining its exact parent map.
 pub(crate) fn realize_section<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     imprint: &SpanImprint,
     section: &FaceImprintSection,
     tolerance: f64,
@@ -136,7 +137,7 @@ pub(crate) fn realize_section<P: Payload>(
 /// Spans with no matching fragment are left unrealized; assembly rejects the
 /// operation when a surviving span is then missing a side.
 pub(crate) fn realize_edge_spans<P: Payload>(
-    map: &GMap<P>,
+    map: &Model<P>,
     network: &IntersectionNetwork,
     lineage: &HashMap<EdgeKey, Vec<EdgeKey>>,
     tolerance: f64,

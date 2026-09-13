@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use crate::StandardPayload;
-use crate::binding_common::explore::SharedGMap;
+use crate::binding_common::explore::SharedModel;
 use crate::exchange::step::part21::exchange_to_string;
 use crate::exchange::step::{
     ImportSkip, StepError, StepReadOptions, StepWriteOptions, map_to_exchange,
@@ -53,8 +53,9 @@ fn step_text(solid: &PySolid, name: Option<String>) -> PyResult<String> {
         None => StepWriteOptions::default(),
     };
 
-    let map = solid.inner.gmap();
-    let exchange = map_to_exchange(map.map(), &[solid.inner.key()], &options).map_err(step_err)?;
+    let map = solid.inner.model();
+    let exchange =
+        map_to_exchange(map.model(), &[solid.inner.key()], &options).map_err(step_err)?;
     exchange_to_string(&exchange).map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
@@ -166,8 +167,8 @@ fn entity_name(skip: &ImportSkip) -> String {
 
 /// Wraps an imported shape in the shared map every Python view holds.
 fn py_solid(shape: Shape<SolidTag, StandardPayload>) -> PyResult<PySolid> {
-    let (map, key) = shape.into_map();
-    let map = SharedGMap::from_map(map);
+    let (map, key) = shape.into_model();
+    let map = SharedModel::from_model(map);
     let inner = map
         .solid_by_key(key)
         .ok_or_else(|| PyValueError::new_err(format!("missing solid {key:?}")))?;

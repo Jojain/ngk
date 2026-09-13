@@ -6,8 +6,8 @@ use crate::builders::chamfer::chamfer;
 use crate::builders::faces::add_face;
 use crate::builders::profiles::add_rectangle;
 use crate::geometry::{Plane, Point3};
+use crate::model::Model;
 use crate::topology::StandardPayload;
-use crate::topology::gmap::GMap;
 use crate::viz::{ScriptResult, Style, VizHints};
 use nalgebra::Vector3;
 
@@ -19,7 +19,7 @@ const GAP: f64 = 1.2;
 /// Builds two planar rectangles: one with every profile vertex chamfered and
 /// one with only its lower-right vertex chamfered.
 pub fn build(distance: f64) -> Result<ScriptResult, String> {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let whole_profile = add_rectangle(&mut g, Plane::xy(), X_SIZE, Y_SIZE)
         .map_err(|err| format!("failed to build whole-profile rectangle: {err:?}"))?;
     let original_edges = g.iter_edges().map(|(key, _)| key).collect::<HashSet<_>>();
@@ -87,7 +87,7 @@ pub fn build(distance: f64) -> Result<ScriptResult, String> {
             .width(9.0),
     );
 
-    Ok(ScriptResult::from_gmap_with_hints(&g, &hints))
+    Ok(ScriptResult::from_model_with_hints(&g, &hints))
 }
 
 /// Builds the default whole-profile versus single-vertex comparison.

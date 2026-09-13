@@ -2,15 +2,14 @@ use nalgebra::Vector3;
 use ngk::builders::boolean::{BooleanOperand, BooleanOptions, compute_boolean_intersections};
 use ngk::builders::faces::add_rectangle;
 use ngk::geometry::{Plane, Point3};
+use ngk::model::Model;
 use ngk::modeling::faces;
-use ngk::topology::TopologyEditError;
+use ngk::topology::ModelEditError;
 use ngk::topology::attributes::VertexAttr;
-use ngk::topology::gmap::GMap;
-
-fn add_isolated_vertex(map: &mut GMap<ngk::StandardPayload>, point: Point3) -> BooleanOperand {
+fn add_isolated_vertex(map: &mut Model<ngk::StandardPayload>, point: Point3) -> BooleanOperand {
     map.transaction(|edit| {
         let dart = edit.add_dart();
-        Ok::<_, TopologyEditError>(BooleanOperand::Vertex(edit.add_vertex(VertexAttr::new(
+        Ok::<_, ModelEditError>(BooleanOperand::Vertex(edit.add_vertex(VertexAttr::new(
             dart,
             point,
             (),
@@ -22,7 +21,7 @@ fn add_isolated_vertex(map: &mut GMap<ngk::StandardPayload>, point: Point3) -> B
 #[test]
 fn curved_outer_trim_admits_points_inside_the_exact_boundary() {
     let shape = faces::circle(Plane::xy(), 2.0).expect("circle face should build");
-    let (mut map, face) = shape.into_map();
+    let (mut map, face) = shape.into_model();
     let angle = std::f64::consts::PI / 16.0;
     let vertex = add_isolated_vertex(
         &mut map,
@@ -43,7 +42,7 @@ fn curved_outer_trim_admits_points_inside_the_exact_boundary() {
 #[test]
 fn curved_inner_trim_rejects_points_inside_the_exact_hole() {
     let shape = faces::annulus(Plane::xy(), 2.0, 1.0).expect("annular face should build");
-    let (mut map, face) = shape.into_map();
+    let (mut map, face) = shape.into_model();
     let angle = std::f64::consts::PI / 16.0;
     let vertex = add_isolated_vertex(
         &mut map,
@@ -64,7 +63,7 @@ fn curved_inner_trim_rejects_points_inside_the_exact_hole() {
 #[test]
 fn planar_section_crosses_a_curved_trim_at_exact_pcurve_points() {
     let shape = faces::circle(Plane::xy(), 2.0).expect("circle face should build");
-    let (mut map, circle) = shape.into_map();
+    let (mut map, circle) = shape.into_model();
     let y = 2.0 * (std::f64::consts::PI / 16.0).sin();
     let section = add_rectangle(
         &mut map,

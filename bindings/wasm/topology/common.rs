@@ -1,10 +1,10 @@
 use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
-use crate::binding_common::explore::SharedGMap;
+use crate::binding_common::explore::SharedModel;
 use crate::topology::StandardPayload;
 
-pub(crate) type Map = SharedGMap<StandardPayload>;
+pub(crate) type Map = SharedModel<StandardPayload>;
 
 pub(crate) fn js_err(error: impl ToString) -> JsValue {
     JsValue::from_str(&error.to_string())
@@ -22,10 +22,10 @@ macro_rules! entity_common {
     ($type:ident) => {
         #[wasm_bindgen]
         impl $type {
-            /// Returns the owning immutable GMap.
+            /// Returns the owning immutable model.
             #[wasm_bindgen(getter)]
-            pub fn gmap(&self) -> WasmGMap {
-                WasmGMap::from_inner(self.inner.gmap())
+            pub fn model(&self) -> WasmModel {
+                WasmModel::from_inner(self.inner.model())
             }
 
             /// Returns the opaque stable key.

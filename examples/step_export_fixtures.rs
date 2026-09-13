@@ -25,11 +25,11 @@ use ngk::exchange::step::{
     write_step_file,
 };
 use ngk::geometry::{Frame, Plane, Point3};
+use ngk::model::Model;
 use ngk::modeling::{faces, solids};
 use ngk::topology::attributes::ShellRoot;
-use ngk::topology::gmap::GMap;
 use ngk::topology::orientation::Orientation;
-use ngk::topology::{StandardPayload, TopologyEditError};
+use ngk::topology::{ModelEditError, StandardPayload};
 
 const OUT_DIR: &str = "target/step_export";
 
@@ -129,7 +129,7 @@ fn reexport(fixture: &str, name: &str) {
 /// other way round: every shell bounds the material from outside it, which for
 /// a cavity means facing into itself.
 fn hollow_sphere(outer: f64, inner: f64) -> String {
-    let mut map = GMap::<StandardPayload>::new();
+    let mut map = Model::<StandardPayload>::new();
     let solid = add_sphere(&mut map, Frame::xyz(), outer).expect("an outer sphere should build");
     let cavity = add_sphere(&mut map, Frame::xyz(), inner).expect("a cavity sphere should build");
     let cavity_face = map
@@ -148,12 +148,12 @@ fn hollow_sphere(outer: f64, inner: f64) -> String {
             sense: Orientation::Reversed,
         };
         let sheet = edit
-            .map()
+            .model()
             .sheet_key_at_face(cavity_face)
             .expect("the cavity's face is registered as a sheet");
         edit.sheet_attr_mut_unchecked(sheet).root = void;
         edit.solid_attr_mut_unchecked(solid).inner_shells = Some(vec![void]);
-        Ok::<_, TopologyEditError>(())
+        Ok::<_, ModelEditError>(())
     })
     .expect("a hollow sphere should commit");
 
@@ -178,7 +178,7 @@ fn holed_slab() -> String {
     ];
     let profile = faces::polygon_with_holes(Plane::xy(), &outer, &[&hole])
         .expect("a holed face should build");
-    let (mut map, face) = profile.into_map();
+    let (mut map, face) = profile.into_model();
     let solid =
         add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 3.0)).expect("it should extrude");
 

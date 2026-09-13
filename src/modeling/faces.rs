@@ -4,7 +4,7 @@ use crate::builders::faces::{
     add_rectangle, add_square,
 };
 use crate::geometry::{Plane, Point3};
-use crate::topology::gmap::GMap;
+use crate::model::Model;
 use crate::topology::payload::StandardPayload;
 use crate::topology::shape::{FaceTag, Shape};
 
@@ -13,7 +13,7 @@ pub fn rectangle(
     x_size: f64,
     y_size: f64,
 ) -> Result<Shape<FaceTag, StandardPayload>, FaceCreationError> {
-    let mut g = GMap::new();
+    let mut g = Model::new();
     let face_key = add_rectangle(&mut g, plane, x_size, y_size)?;
     Ok(Shape::new(g, face_key))
 }
@@ -22,7 +22,7 @@ pub fn square(
     plane: Plane,
     size: f64,
 ) -> Result<Shape<FaceTag, StandardPayload>, FaceCreationError> {
-    let mut g = GMap::new();
+    let mut g = Model::new();
     let handle = add_square(&mut g, plane, size)?;
     Ok(Shape::new(g, handle))
 }
@@ -31,7 +31,7 @@ pub fn circle(
     plane: Plane,
     radius: f64,
 ) -> Result<Shape<FaceTag, StandardPayload>, FaceCreationError> {
-    let mut g = GMap::new();
+    let mut g = Model::new();
     let face_key = add_circle(&mut g, plane, radius)?;
     Ok(Shape::new(g, face_key))
 }
@@ -41,7 +41,7 @@ pub fn annulus(
     outer_radius: f64,
     inner_radius: f64,
 ) -> Result<Shape<FaceTag, StandardPayload>, FaceCreationError> {
-    let mut g = GMap::new();
+    let mut g = Model::new();
     let face_key = add_annulus(&mut g, plane, outer_radius, inner_radius)?;
     Ok(Shape::new(g, face_key))
 }
@@ -53,7 +53,7 @@ pub fn polygon(points: &[Point3]) -> Result<Shape<FaceTag, StandardPayload>, Fac
         });
     }
 
-    let mut g = GMap::new();
+    let mut g = Model::new();
     let face_key = g.transaction(|edit| {
         let profile_key = add_polygon_staged(edit, points);
         add_face_staged(edit, profile_key)
@@ -66,7 +66,7 @@ pub fn polygon_with_holes(
     outer: &[Point3],
     holes: &[&[Point3]],
 ) -> Result<Shape<FaceTag, StandardPayload>, FaceCreationError> {
-    let mut g = GMap::new();
+    let mut g = Model::new();
     let face_key = add_polygon_with_holes(&mut g, plane, outer, holes)?;
     Ok(Shape::new(g, face_key))
 }

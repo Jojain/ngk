@@ -47,8 +47,8 @@ use crate::geometry::{
     PreparedCurve, PreparedSurface, SolverCounters, Surface, SurfaceSurfaceIntersection,
     TrimmedCurve, intersect_prepared_curve_surface,
 };
-use crate::topology::TopologyEdit;
-use crate::topology::gmap::GMap;
+use crate::model::Model;
+use crate::topology::ModelEdit;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 use nalgebra::Vector2;
@@ -120,7 +120,7 @@ impl Default for BooleanOptions {
 /// results, ambiguous classification, or incomplete geometric coverage roll back.
 /// The current certified classification path admits planar polygonal boundaries.
 pub fn boolean<P: Payload>(
-    map: &mut GMap<P>,
+    map: &mut Model<P>,
     first: SolidKey,
     second: SolidKey,
     operation: BooleanOperation,
@@ -234,7 +234,7 @@ struct IntersectionAccumulator {
 
 /// Computes all contacts between two operands without modifying the map.
 pub fn compute_boolean_intersections<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     first: BooleanOperand,
     second: BooleanOperand,
     options: BooleanOptions,
@@ -302,7 +302,7 @@ pub fn compute_boolean_intersections<P: Payload>(
 
 /// Canonicalizes the raw narrow-phase observations into the shared network.
 fn build_intersection_network<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     plan: &IntersectionAccumulator,
     options: BooleanOptions,
 ) -> Result<IntersectionNetwork, BooleanError> {
@@ -446,7 +446,7 @@ fn edge_section_parameters(edge_curve: &Curve, section: &TrimmedCurve) -> Interv
 }
 
 fn event_use_for_cell<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     side: BooleanSide,
     cell: BooleanCell,
     point: Point3,
@@ -474,7 +474,7 @@ fn event_use_for_cell<P: Payload>(
 
 /// Applies a previously computed plan in one topology transaction.
 pub fn apply_boolean_splits<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     plan: BooleanIntersectionPlan,
 ) -> Result<BooleanPreparation, BooleanError> {
     g.transaction(|edit| apply_boolean_splits_staged(edit, plan, false))
@@ -482,7 +482,7 @@ pub fn apply_boolean_splits<P: Payload>(
 
 /// Computes contacts and splits two operands already stored in the same map.
 pub fn prepare_boolean<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     first: BooleanOperand,
     second: BooleanOperand,
     options: BooleanOptions,
@@ -496,9 +496,9 @@ pub fn prepare_boolean<P: Payload>(
 /// The source `tool_map` is only read. Import, contact computation, and all
 /// splits share one target-map transaction, so any failure removes the copy.
 pub fn prepare_boolean_with_external_tool<P: Payload>(
-    target_map: &mut GMap<P>,
+    target_map: &mut Model<P>,
     target: BooleanOperand,
-    tool_map: &GMap<P>,
+    tool_map: &Model<P>,
     tool: BooleanOperand,
     options: BooleanOptions,
 ) -> Result<BooleanPreparation, BooleanError> {
@@ -512,7 +512,7 @@ pub fn prepare_boolean_with_external_tool<P: Payload>(
 }
 
 fn apply_boolean_splits_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     plan: BooleanIntersectionPlan,
     imported_second: bool,
 ) -> Result<BooleanPreparation, BooleanError> {
@@ -617,7 +617,7 @@ fn apply_boolean_splits_staged<P: Payload>(
 }
 
 fn revalidate_plan_operand<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     operand: BooleanOperand,
 ) -> Result<(), BooleanError> {
     operand_cells(g, operand)
@@ -656,7 +656,7 @@ fn lineage_for(
 }
 
 fn split_edge_at_points<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     source: EdgeKey,
     mut points: Vec<Point3>,
     options: IntersectionOptions,

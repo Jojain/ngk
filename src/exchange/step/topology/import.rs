@@ -1,7 +1,7 @@
 //! Sewing a B-Rep solid into a map.
 //!
 //! **Stitching is the whole job.** STEP hands over faces whose loops name
-//! shared `EDGE_CURVE`s by `#N`; NGK needs an α2-sewn 3-GMap. Nothing in the
+//! shared `EDGE_CURVE`s by `#N`; NGK needs an α2-sewn 3-gmap. Nothing in the
 //! kernel does that, because no builder ever receives topology as a heap of
 //! independent faces — every other producer sews as it goes.
 //!
@@ -10,7 +10,7 @@
 //! single unreadable face would cost the whole solid. Every face is therefore
 //! *planned* first — geometry read, loops resolved, pcurves rebuilt — with
 //! the ones that fail recorded and dropped. Only a set of faces already known
-//! to be constructible enters [`GMap::transaction`], one transaction per
+//! to be constructible enters [`Model::transaction`], one transaction per
 //! solid, so one bad solid does not lose the file.
 //!
 //! **Orientation is not carried across; it is reproduced.** NGK derives a
@@ -33,14 +33,15 @@ use crate::geometry::{
     TrimmedCurve2, Vector2,
 };
 use crate::healing::{HealingOptions, remove_redundant_cells};
+use crate::model::Model;
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
 };
-use crate::topology::gmap::{Dart, Dim, GMap};
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::orientation::Orientation;
 use crate::topology::shape::{Shape, SolidTag};
 use crate::topology::shape_keys::SolidKey;
-use crate::topology::{StandardPayload, TopologyEdit, TopologyEditError};
+use crate::topology::{ModelEdit, ModelEditError, StandardPayload};
 
 use super::super::StepImport;
 use super::super::convert::curves::read_curve;
@@ -180,7 +181,7 @@ fn read_solid(
         check_edge_uses(shell, origin, options, report)?;
     }
 
-    let mut gmap = GMap::<StandardPayload>::new();
+    let mut gmap = Model::<StandardPayload>::new();
     let solid = gmap
         .transaction(|edit| sew_solid(edit, &shells))
         .map_err(|error| TopologyError::UnsewableShell {
@@ -736,7 +737,7 @@ fn check_sense(outer: &PlannedLoop, same_sense: bool, face: Origin, report: &mut
 ///
 /// Two uses is a closed manifold shell. One leaves the shell open, which is
 /// worth knowing but still yields a map. More than two is non-manifold, which
-/// a 3-GMap cannot represent at all, so the solid is refused by name.
+/// a 3-gmap cannot represent at all, so the solid is refused by name.
 fn check_edge_uses(
     planned: &[PlannedFace],
     brep: Origin,
@@ -791,9 +792,9 @@ struct DartUse {
 /// between them and an `EDGE_CURVE` naming both would be an edge with four
 /// uses rather than a join.
 fn sew_solid(
-    edit: &mut TopologyEdit<'_, StandardPayload>,
+    edit: &mut ModelEdit<'_, StandardPayload>,
     shells: &[Vec<PlannedFace>],
-) -> Result<SolidKey, TopologyEditError> {
+) -> Result<SolidKey, ModelEditError> {
     let mut roots = Vec::with_capacity(shells.len());
     for planned in shells {
         let root = sew_shell(edit, planned)?;
@@ -814,9 +815,9 @@ fn sew_solid(
 /// itself when the shell is one face covering a closed support and there is no
 /// dart to anchor at.
 fn sew_shell(
-    edit: &mut TopologyEdit<'_, StandardPayload>,
+    edit: &mut ModelEdit<'_, StandardPayload>,
     planned: &[PlannedFace],
-) -> Result<ShellRoot, TopologyEditError> {
+) -> Result<ShellRoot, ModelEditError> {
     if let [PlannedFace::Boundaryless { surface, sense }] = planned {
         let face = edit.add_face(FaceAttr::with_loops(
             surface.clone(),

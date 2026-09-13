@@ -10,5 +10,5 @@ pub fn run() -> Result<ScriptResult, String> {
         .map_err(|err| format!("failed to build rectangle profile: {err:?}"))?;
     let shape = extrude_profile(profile.profile(), Vector3::new(0.0, 0.0, 1.0))
         .map_err(|err| format!("failed to extrude rectangle: {err:?}"))?;
-    Ok(ScriptResult::from_gmap(shape.map()))
+    Ok(ScriptResult::from_model(shape.model()))
 }

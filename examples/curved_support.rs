@@ -12,9 +12,9 @@ use std::error::Error;
 use nalgebra::Vector3;
 use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
 use ngk::geometry::{Plane, Point3};
+use ngk::model::Model;
 use ngk::modeling::{faces, sweep::extrude_face};
-use ngk::topology::TopologyEditError;
-use ngk::topology::gmap::GMap;
+use ngk::topology::ModelEditError;
 use ngk::topology::shape::{Shape, SolidTag};
 use ngk::topology::shape_keys::SolidKey;
 use ngk::topology::validation::{validate_gmap, validate_solid_manifold};
@@ -76,10 +76,10 @@ fn web() -> Result<Shape<SolidTag>, Box<dyn Error>> {
 }
 
 /// Copies `source` into `target` and returns the remapped solid key.
-fn import_solid(target: &mut GMap, source: &Shape<SolidTag>) -> Result<SolidKey, Box<dyn Error>> {
+fn import_solid(target: &mut Model, source: &Shape<SolidTag>) -> Result<SolidKey, Box<dyn Error>> {
     let key = target.transaction(|edit| {
         let handle = edit.merge(source.solid());
-        Ok::<_, TopologyEditError>(
+        Ok::<_, ModelEditError>(
             edit.solid_key_at(handle)
                 .expect("a merged solid should retain its registration"),
         )
@@ -88,7 +88,7 @@ fn import_solid(target: &mut GMap, source: &Shape<SolidTag>) -> Result<SolidKey,
 }
 
 /// Builds the three drawing components without claiming that they are fused.
-fn visual_assembly() -> Result<GMap, Box<dyn Error>> {
+fn visual_assembly() -> Result<Model, Box<dyn Error>> {
     let web = web()?;
     let large = boss(0.0, LARGE_OUTER_RADIUS, LARGE_INNER_RADIUS, LARGE_LENGTH)?;
     let small = boss(
@@ -98,14 +98,14 @@ fn visual_assembly() -> Result<GMap, Box<dyn Error>> {
         SMALL_LENGTH,
     )?;
 
-    let (mut map, _) = web.into_map();
+    let (mut map, _) = web.into_model();
     import_solid(&mut map, &large)?;
     import_solid(&mut map, &small)?;
     Ok(map)
 }
 
 /// Attempts to turn the three components into one regularized solid.
-fn fused_support() -> Result<(GMap, SolidKey), Box<dyn Error>> {
+fn fused_support() -> Result<(Model, SolidKey), Box<dyn Error>> {
     let web = web()?;
     let large = boss(0.0, LARGE_OUTER_RADIUS, LARGE_INNER_RADIUS, LARGE_LENGTH)?;
     let small = boss(
@@ -115,7 +115,7 @@ fn fused_support() -> Result<(GMap, SolidKey), Box<dyn Error>> {
         SMALL_LENGTH,
     )?;
 
-    let (mut map, web_key) = web.into_map();
+    let (mut map, web_key) = web.into_model();
     let large_key = import_solid(&mut map, &large)?;
     let first_union = boolean(
         &mut map,
@@ -140,7 +140,7 @@ fn fused_support() -> Result<(GMap, SolidKey), Box<dyn Error>> {
     Ok((map, second_union.solid))
 }
 
-fn show(name: &str, map: &GMap) -> Result<(), Box<dyn Error>> {
+fn show(name: &str, map: &Model) -> Result<(), Box<dyn Error>> {
     if env::var_os("NGK_SKIP_DEBUG_VIEWER").is_some() {
         return Ok(());
     }
@@ -154,7 +154,7 @@ fn show(name: &str, map: &GMap) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn print_counts(label: &str, map: &GMap) {
+fn print_counts(label: &str, map: &Model) {
     println!(
         "{label}: {} solid(s), {} face(s), {} edge(s), {} vertex/vertices, {} dart(s)",
         map.iter_solids().count(),
@@ -170,7 +170,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if try_fusion {
         match fused_support() {
             Ok((map, solid)) => {
-                validate_gmap(&map)?;
+                validate_gmap(map.topology())?;
                 validate_solid_manifold(&map, solid)?;
                 print_counts("fused curved support", &map);
                 println!("Both curved Boolean unions succeeded; displaying one solid.");
@@ -192,7 +192,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 /// Validates and displays the unfused three-solid approximation.
 fn show_assembly() -> Result<(), Box<dyn Error>> {
     let map = visual_assembly()?;
-    validate_gmap(&map)?;
+    validate_gmap(map.topology())?;
     for (solid, _) in map.iter_solids() {
         validate_solid_manifold(&map, solid)?;
     }

@@ -11,9 +11,9 @@ use crate::geometry::{
     Point3, PreparedCurve, PreparedSurface, Surface, SurfacePeriodicity,
     intersect_analytic_curve_surface, intersect_prepared_curve_surface, line_surface_is_analytic,
 };
+use crate::model::Model;
 use crate::tessellate::{TessellateOpts, tessellate_face_key};
 use crate::topology::{
-    gmap::GMap,
     payload::Payload,
     shape_keys::{FaceKey, SolidKey},
 };
@@ -50,7 +50,7 @@ struct RayFace {
 }
 
 pub(crate) struct SolidRayCaster<'a, P: Payload> {
-    map: &'a GMap<P>,
+    map: &'a Model<P>,
     faces: Vec<RayFace>,
     tolerances: BooleanTolerances,
     max_rays: usize,
@@ -59,7 +59,7 @@ pub(crate) struct SolidRayCaster<'a, P: Payload> {
 impl<'a, P: Payload> SolidRayCaster<'a, P> {
     /// Builds a classifier only for surfaces with a complete ray/trim predicate.
     pub(crate) fn new(
-        map: &'a GMap<P>,
+        map: &'a Model<P>,
         keys: impl IntoIterator<Item = FaceKey>,
         options: BooleanOptions,
         tolerances: BooleanTolerances,
@@ -358,7 +358,7 @@ fn periodic_uv(mut uv: Point2, center: Point2, periodicity: SurfacePeriodicity) 
 
 /// Chooses a mesh-derived witness only after checking exact polygonal trim clearance.
 fn probe<P: Payload>(
-    map: &GMap<P>,
+    map: &Model<P>,
     face: FaceKey,
     tolerances: BooleanTolerances,
 ) -> Result<(Point3, Point2), BooleanError> {
@@ -448,7 +448,7 @@ fn interior_parameter(trim: &FaceTrimDomain, tolerances: BooleanTolerances) -> O
 
 /// Classifies each fragment independently, avoiding propagation across an incomplete barrier graph.
 pub(crate) fn run<P: Payload>(
-    map: &GMap<P>,
+    map: &Model<P>,
     graph: &FragmentGraph,
     options: BooleanOptions,
     tolerances: BooleanTolerances,
@@ -497,7 +497,7 @@ pub(crate) fn run<P: Payload>(
 /// A point on the boundary has no answer here: every ray from it is rejected,
 /// so the classification is reported as ambiguous rather than guessed.
 pub fn solid_contains_point<P: Payload>(
-    map: &GMap<P>,
+    map: &Model<P>,
     solid: SolidKey,
     point: Point3,
     options: BooleanOptions,

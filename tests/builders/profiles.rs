@@ -5,13 +5,15 @@ use ngk::builders::profiles::{
     PolylineError, add_polyline, add_polyline_staged, add_rectangle, append_edge,
 };
 use ngk::geometry::{Plane, Point3};
+use ngk::model::Model;
 use ngk::topology::closed::Closeable;
-use ngk::topology::gmap::{Dim, EditPolicy, GMap};
+use ngk::topology::edit::EditPolicy;
+use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
 
 #[test]
 fn add_rectangle_creates_closed_four_edge_profile() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let key = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("rectangle should build");
     let profile = g.profile_unchecked(key);
 
@@ -25,7 +27,7 @@ fn add_rectangle_creates_closed_four_edge_profile() {
 
 #[test]
 fn add_polyline_creates_valid_profile() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let points = [
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 0.0, 0.0),
@@ -44,7 +46,7 @@ fn add_polyline_creates_valid_profile() {
 
 #[test]
 fn append_edge_appends_contiguous_edge_without_duplicate_vertex() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile_key = add_polyline(
         &mut g,
         &[Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)],
@@ -69,7 +71,7 @@ fn append_edge_appends_contiguous_edge_without_duplicate_vertex() {
 
 #[test]
 fn append_edge_closes_profile_without_duplicate_vertices() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile_key = add_polyline(
         &mut g,
         &[
@@ -98,7 +100,7 @@ fn append_edge_closes_profile_without_duplicate_vertices() {
 
 #[test]
 fn append_edge_accepts_reversed_edge_orientation() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile_key = add_polyline(
         &mut g,
         &[Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)],
@@ -124,7 +126,7 @@ fn append_edge_accepts_reversed_edge_orientation() {
 #[test]
 fn add_rectangle_rejects_invalid_sizes() {
     assert_eq!(
-        add_rectangle(&mut GMap::<StandardPayload>::new(), Plane::xy(), 0.0, 1.0)
+        add_rectangle(&mut Model::<StandardPayload>::new(), Plane::xy(), 0.0, 1.0)
             .expect_err("zero x should fail"),
         PolylineError::InvalidRectangleSize {
             axis: "x",
@@ -132,7 +134,7 @@ fn add_rectangle_rejects_invalid_sizes() {
         }
     );
     assert!(matches!(
-        add_rectangle(&mut GMap::<StandardPayload>::new(), Plane::xy(), 1.0, f64::NAN),
+        add_rectangle(&mut Model::<StandardPayload>::new(), Plane::xy(), 1.0, f64::NAN),
         Err(PolylineError::InvalidRectangleSize { axis: "y", value }) if value.is_nan()
     ));
 }
@@ -160,7 +162,7 @@ impl EditPolicy<StandardPayload> for CountingPolicy {
 
 #[test]
 fn custom_outer_policy_observes_only_external_builder_lineage() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let mut policy = CountingPolicy::default();
 
     g.transaction_with_policy(&mut policy, |edit| {

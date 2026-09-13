@@ -4,8 +4,8 @@ use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::revolve::add_revolved_face;
 use ngk::geometry::Point3;
 use ngk::geometry::axis::Axis3;
+use ngk::model::Model;
 use ngk::modeling::solids::block;
-use ngk::topology::gmap::GMap;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::validation::{
     validate_all_solid_manifolds, validate_solid_manifold, validate_solid_orientation,
@@ -13,7 +13,7 @@ use ngk::topology::validation::{
 
 #[test]
 fn extruded_annulus_orientation_accepts_inward_facing_shaft_walls() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face =
         ngk::builders::faces::add_annulus(&mut g, ngk::geometry::Plane::xy(), 2.0, 1.0).unwrap();
     let solid =
@@ -27,14 +27,14 @@ fn extruded_annulus_orientation_accepts_inward_facing_shaft_walls() {
 fn block_solid_orientation_validation_requires_outward_face_normals() {
     let block = block(1.0, 2.0, 3.0).expect("block should build");
 
-    validate_all_solid_manifolds(block.map()).expect("block shell should be closed");
-    validate_solid_orientation(block.map(), block.key())
+    validate_all_solid_manifolds(block.model()).expect("block shell should be closed");
+    validate_solid_orientation(block.model(), block.key())
         .expect("block face normals should point outside the solid");
 }
 
 #[test]
 fn revolved_triangle_validates_as_closed_manifold_shell() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile_key = add_polygon(
         &mut g,
         &[

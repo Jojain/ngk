@@ -10,16 +10,16 @@ use crate::viz::{
 };
 
 use super::super::geometry::{WasmPlane, curve_to_js, point, surface_to_js, vector};
-use super::super::topology::WasmGMap;
+use super::super::topology::WasmModel;
 
 fn js_err(error: impl ToString) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
-/// Tessellates a deserialized browser-owned GMap for the debug viewer.
+/// Tessellates a deserialized browser-owned model for the debug viewer.
 #[wasm_bindgen(js_name = sceneFromGMap)]
-pub fn scene_from_gmap(gmap: &WasmGMap) -> Result<JsValue, JsValue> {
-    let scene = crate::viz::scene_from_gmap(gmap.inner.map(), &VizHints::new());
+pub fn scene_from_model(gmap: &WasmModel) -> Result<JsValue, JsValue> {
+    let scene = crate::viz::scene_from_model(gmap.inner.model(), &VizHints::new());
     serde_wasm_bindgen::to_value(&scene).map_err(js_err)
 }
 
@@ -75,7 +75,7 @@ pub fn block_scene(x_size: f64, y_size: f64, z_size: f64) -> Result<JsValue, JsV
     let shape = solids::block(x_size, y_size, z_size).map_err(js_err)?;
 
     let mut hints = VizHints::new();
-    for (key, _) in shape.map().iter_faces() {
+    for (key, _) in shape.model().iter_faces() {
         hints.face(
             key,
             Style::default()
@@ -85,6 +85,6 @@ pub fn block_scene(x_size: f64, y_size: f64, z_size: f64) -> Result<JsValue, JsV
         );
     }
 
-    let result = ScriptResult::from_gmap_with_hints(shape.map(), &hints);
+    let result = ScriptResult::from_model_with_hints(shape.model(), &hints);
     serde_wasm_bindgen::to_value(&result).map_err(js_err)
 }

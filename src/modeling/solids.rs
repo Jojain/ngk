@@ -1,3 +1,4 @@
+use crate::model::Model;
 use nalgebra::{Unit, Vector3};
 
 use crate::{
@@ -7,8 +8,7 @@ use crate::{
     geometry::{Frame, Plane},
     modeling::faces,
     topology::{
-        TopologyEditError,
-        gmap::GMap,
+        ModelEditError,
         payload::Payload,
         shape::{FaceTag, Shape, SolidTag},
     },
@@ -40,7 +40,7 @@ pub fn block_at(
     let plane = Plane::from_frame(frame);
     let base =
         faces::rectangle(plane, x_size, y_size).map_err(|_| PrimitiveError::FaceCreationFailed)?;
-    let (mut g, face_key) = base.into_map();
+    let (mut g, face_key) = base.into_model();
     let solid_key = add_extruded_face(&mut g, face_key, direction)
         .map_err(|_| PrimitiveError::SolidCreationFailed)?;
     Ok(Shape::new(g, solid_key))
@@ -66,7 +66,7 @@ pub fn cylinder_at(
     let direction = frame.z_dir.into_inner() * height;
     let plane = Plane::from_frame(frame);
     let base = faces::circle(plane, radius).map_err(|_| PrimitiveError::FaceCreationFailed)?;
-    let (mut g, face_key) = base.into_map();
+    let (mut g, face_key) = base.into_model();
     let solid_key = add_extruded_face(&mut g, face_key, direction)
         .map_err(|_| PrimitiveError::SolidCreationFailed)?;
     Ok(Shape::new(g, solid_key))
@@ -89,7 +89,7 @@ pub fn sphere_at(
     radius: f64,
 ) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
     validate_length("radius", radius)?;
-    let mut g = GMap::new();
+    let mut g = Model::new();
     let solid_key =
         add_sphere(&mut g, frame, radius).map_err(|_| PrimitiveError::SolidCreationFailed)?;
     Ok(Shape::new(g, solid_key))
@@ -112,7 +112,7 @@ pub fn torus_at(
 ) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
     validate_length("major", major)?;
     validate_length("minor", minor)?;
-    let mut g = GMap::new();
+    let mut g = Model::new();
     let solid_key =
         add_torus(&mut g, frame, major, minor).map_err(|_| PrimitiveError::SolidCreationFailed)?;
     Ok(Shape::new(g, solid_key))
@@ -131,7 +131,7 @@ pub fn extruded(
 ) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
     validate_length("distance", distance)?;
     let direction = direction.into_inner() * distance;
-    let (mut g, face_key) = face.into_map();
+    let (mut g, face_key) = face.into_model();
     let solid_key = add_extruded_face(&mut g, face_key, direction)
         .map_err(|_| PrimitiveError::SolidCreationFailed)?;
     Ok(Shape::new(g, solid_key))
@@ -167,11 +167,11 @@ fn combine_shapes<P: Payload>(
     tool: Shape<SolidTag, P>,
     operation: BooleanOperation,
 ) -> Result<Shape<SolidTag, P>, BooleanError> {
-    let (mut map, target) = target.into_map();
-    let (tool_map, tool) = tool.into_map();
+    let (mut map, target) = target.into_model();
+    let (tool_map, tool) = tool.into_model();
     let tool = map.transaction(|edit| {
         let handle = edit.merge(tool_map.solid_unchecked(tool));
-        Ok::<_, TopologyEditError>(
+        Ok::<_, ModelEditError>(
             edit.solid_key_at(handle)
                 .expect("copied tool solid must retain its registration"),
         )
@@ -186,11 +186,11 @@ pub(crate) fn combine_views<P: Payload>(
     second: Solid<'_, P>,
     operation: BooleanOperation,
 ) -> Result<Shape<SolidTag, P>, BooleanError> {
-    let mut map = GMap::new();
+    let mut map = Model::new();
     let (first, second) = map.transaction(|edit| {
         let first_handle = edit.merge(first);
         let second_handle = edit.merge(second);
-        Ok::<_, TopologyEditError>((
+        Ok::<_, ModelEditError>((
             edit.solid_key_at(first_handle)
                 .expect("copied first solid must retain its registration"),
             edit.solid_key_at(second_handle)

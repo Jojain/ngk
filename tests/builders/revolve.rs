@@ -9,9 +9,9 @@ use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::revolve::{RevolveError, add_revolved_edge, add_revolved_face};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{Axis2, Curve, Curve2, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface};
+use ngk::model::Model;
 use ngk::tessellate::{TessellateOpts, tessellate_face_key};
 use ngk::topology::LoopKind;
-use ngk::topology::gmap::GMap;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::validation::{
     validate_all_solid_manifolds, validate_gmap, validate_solid_manifold,
@@ -20,7 +20,7 @@ use ngk::topology::validation::{
 
 #[test]
 fn revolve_edge_partial_turn_creates_four_edge_face() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
         Point3::new(1.0, 0.0, 0.0),
@@ -85,7 +85,7 @@ fn revolve_edge_partial_turn_creates_four_edge_face() {
 
 #[test]
 fn revolve_edge_partial_turn_uses_quarter_circle_sides() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
         Point3::new(1.0, 0.0, 0.0),
@@ -119,7 +119,7 @@ fn revolve_edge_partial_turn_uses_quarter_circle_sides() {
 
 #[test]
 fn revolve_edge_past_half_turn_sweeps_the_long_way() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
         Point3::new(1.0, 0.0, 0.0),
@@ -150,7 +150,7 @@ fn revolve_edge_past_half_turn_sweeps_the_long_way() {
 
 /// Returns the midpoint of the arc swept by `origin` on a revolved face.
 fn side_arc_midpoint(
-    g: &GMap<StandardPayload>,
+    g: &Model<StandardPayload>,
     face_key: ngk::topology::shape_keys::FaceKey,
     origin: Point3,
 ) -> Point3 {
@@ -188,7 +188,7 @@ fn side_arc_midpoint(
 /// leaving the map with a single face and nothing else in it.
 #[test]
 fn revolve_closed_edge_full_turn_sweeps_a_boundaryless_torus() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile = ngk::geometry::Plane::new(Point3::new(3.0, 0.0, 0.0), Vector3::x(), Vector3::y());
     let circle = add_circle(&mut g, profile, 1.0).expect("profile circle should build");
 
@@ -225,7 +225,7 @@ fn revolve_closed_edge_full_turn_sweeps_a_boundaryless_torus() {
 /// parameterization collapses — rather than a separate intersection here.
 #[test]
 fn revolve_closed_edge_crossing_the_axis_is_refused() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile = ngk::geometry::Plane::new(Point3::origin(), Vector3::x(), Vector3::y());
     let circle = add_circle(&mut g, profile, 1.0).expect("profile circle should build");
 
@@ -250,7 +250,7 @@ fn revolve_closed_edge_crossing_the_axis_is_refused() {
 /// checks the kinds; this checks that the cells are shared rather than duplicated.
 #[test]
 fn revolve_edge_full_turn_sweeps_two_distinct_circles() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
         Point3::new(1.0, 0.0, 0.0),
@@ -305,7 +305,7 @@ fn revolve_edge_full_turn_sweeps_two_distinct_circles() {
 /// degeneracy rather than by a loop, and the band has a single boundary.
 #[test]
 fn revolve_edge_full_turn_with_an_end_on_the_axis_has_one_loop() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
         Point3::origin(),
@@ -378,7 +378,7 @@ fn revolve_edge_full_turn_with_an_end_on_the_axis_has_one_loop() {
 /// `Cone`.
 #[test]
 fn revolve_edge_full_turn_from_the_axis_caps_a_cone() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let apex = Point3::origin();
     let rim = Point3::new(1.0, 0.0, 2.0);
     let edge_key = add_edge(&mut g, rim, apex, Curve::line(rim, apex)).expect("edge should build");
@@ -412,7 +412,7 @@ fn revolve_edge_full_turn_from_the_axis_caps_a_cone() {
 /// too — there the row comes from intersecting the profile with the axis.
 #[test]
 fn revolve_edge_full_turn_from_the_axis_caps_a_surface_of_revolution() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let apex = Point3::origin();
     let rim = Point3::new(1.0, 0.0, 2.0);
     let edge_key = add_edge(&mut g, apex, rim, Curve::line(apex, rim)).expect("edge should build");
@@ -441,7 +441,7 @@ fn revolve_edge_full_turn_from_the_axis_caps_a_surface_of_revolution() {
 
 #[test]
 fn revolved_face_adds_surface_of_revolution_faces() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile_key = add_polygon(
         &mut g,
         &[
@@ -477,7 +477,7 @@ fn revolved_face_adds_surface_of_revolution_faces() {
 
 #[test]
 fn revolved_triangle_partial_turn_has_wedge_topology() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile_key = add_polygon(
         &mut g,
         &[
@@ -539,7 +539,7 @@ fn revolved_wedge_faces_point_outward_for_either_profile_winding() {
             Point3::new(1.85, 0.0, -0.05),
             Point3::new(0.85, 0.0, 0.9),
         ];
-        let mut g = GMap::<StandardPayload>::new();
+        let mut g = Model::<StandardPayload>::new();
         let profile_key = add_polygon(&mut g, &winding.map(|index| corners[index]));
         let source_face = add_face(&mut g, profile_key).unwrap();
 
@@ -559,7 +559,7 @@ fn revolved_wedge_faces_point_outward_for_either_profile_winding() {
 
 #[test]
 fn revolved_annular_wedge_walls_face_away_from_the_material() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile_key = add_polygon(
         &mut g,
         &[
@@ -620,7 +620,7 @@ fn revolved_annular_wedge_walls_face_away_from_the_material() {
 
 #[test]
 fn revolved_face_full_turn_bands_are_rings() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile_key = add_polygon(
         &mut g,
         &[
@@ -685,7 +685,7 @@ fn revolved_face_full_turn_bands_are_rings() {
 
 #[test]
 fn revolving_an_edge_on_the_axis_is_rejected() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
         Point3::origin(),
@@ -707,7 +707,7 @@ fn revolving_an_edge_on_the_axis_is_rejected() {
 
 #[test]
 fn partially_revolving_an_edge_touching_the_axis_is_rejected() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let edge_key = add_edge(
         &mut g,
         Point3::origin(),
@@ -756,7 +756,7 @@ fn revolve_edge_full_turn_bounds_its_band_with_wrapping_loops() {
         // A slanted segment: a cone frustum.
         (Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 2.0)),
     ] {
-        let mut g = GMap::<StandardPayload>::new();
+        let mut g = Model::<StandardPayload>::new();
         let edge =
             add_edge(&mut g, start, end, Curve::line(start, end)).expect("edge should build");
         let face = add_revolved_edge(
@@ -794,7 +794,7 @@ fn revolve_edge_full_turn_bounds_its_band_with_wrapping_loops() {
 /// the right answer, and it is the support's parameterization that says so.
 #[test]
 fn revolve_edge_full_turn_perpendicular_to_the_axis_sweeps_a_planar_annulus() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let (start, end) = (Point3::new(1.0, 0.0, 3.0), Point3::new(2.0, 0.0, 3.0));
     let edge = add_edge(&mut g, start, end, Curve::line(start, end)).expect("edge should build");
     let face_key = add_revolved_edge(
@@ -861,7 +861,7 @@ fn revolve_edge_full_turn_perpendicular_to_the_axis_sweeps_a_planar_annulus() {
 /// they do for a single revolved edge.
 #[test]
 fn revolve_face_full_turn_of_an_offset_rectangle_closes_its_shell() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile_key = add_polygon(
         &mut g,
         &[
@@ -928,7 +928,7 @@ fn revolve_face_full_turn_of_an_offset_rectangle_closes_its_shell() {
         }
     }
 
-    validate_gmap(&g).expect("a full turn should stay a valid map");
+    validate_gmap(g.topology()).expect("a full turn should stay a valid map");
     validate_all_solid_manifolds(&g).expect("a full turn should close its shell");
     validate_solid_manifold(&g, solid).expect("a full turn should close its shell");
     validate_solid_orientation(&g, solid).expect("a full turn should face outward");

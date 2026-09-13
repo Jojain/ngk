@@ -69,7 +69,7 @@ fn a_block_exports_twelve_edges_and_eight_corners() {
 fn every_edge_curve_is_used_by_exactly_two_faces() {
     // The manifold invariant, and the single strongest statement that the
     // shell is sewn rather than a heap of loose faces: an edge used once
-    // leaves the shell open, and one used three times is not a 3-GMap at all.
+    // leaves the shell open, and one used three times is not a 3-gmap at all.
     let exchange = exported(&block());
 
     let mut uses: HashMap<EntityId, usize> = HashMap::new();
@@ -221,7 +221,7 @@ fn holed_solid() -> StepExchange {
     ];
     let profile = faces::polygon_with_holes(Plane::xy(), &outer, &[&hole])
         .expect("a holed face should build");
-    let (mut map, face) = profile.into_map();
+    let (mut map, face) = profile.into_model();
     let solid =
         add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 3.0)).expect("it should extrude");
 
@@ -411,8 +411,8 @@ fn a_hollow_solid_is_well_formed_before_it_is_written() {
     // into its own cavity for the validator to accept it, which is the same
     // statement the export then has to carry.
     let hollow = hollow_sphere(5.0, 2.0);
-    validate_all_solid_manifolds(hollow.map()).expect("both shells should be closed");
-    validate_all_solid_orientations(hollow.map()).expect("both shells should face outward");
+    validate_all_solid_manifolds(hollow.model()).expect("both shells should be closed");
+    validate_all_solid_orientations(hollow.model()).expect("both shells should face outward");
 }
 
 #[test]

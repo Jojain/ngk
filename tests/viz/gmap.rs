@@ -3,13 +3,13 @@ use std::f64::consts::FRAC_PI_2;
 use nalgebra::Vector3;
 use ngk::builders::edges::add_edge;
 use ngk::geometry::{Curve, Interval, LINEAR_TOLERANCE, Plane, Point3};
+use ngk::model::Model;
 use ngk::topology::StandardPayload;
-use ngk::topology::gmap::GMap;
-use ngk::viz::{VizHints, scene_from_gmap};
+use ngk::viz::{VizHints, scene_from_model};
 
 /// Builds a lone edge over a quarter circle of radius 1 centred on the origin,
 /// carrying either the analytic arc or its NURBS form.
-fn quarter_arc_edge(as_nurbs: bool) -> GMap<StandardPayload> {
+fn quarter_arc_edge(as_nurbs: bool) -> Model<StandardPayload> {
     let plane = Plane::new(Point3::origin(), Vector3::x(), Vector3::z());
     let arc = Curve::circle(plane, 1.0);
     let start = arc.point_at(0.0);
@@ -20,7 +20,7 @@ fn quarter_arc_edge(as_nurbs: bool) -> GMap<StandardPayload> {
     } else {
         arc
     };
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     add_edge(&mut g, start, end, curve).expect("arc edge");
     g
 }
@@ -31,7 +31,7 @@ fn quarter_arc_edge(as_nurbs: bool) -> GMap<StandardPayload> {
 fn dart_shafts_of_a_nurbs_edge_follow_the_curve() {
     for as_nurbs in [false, true] {
         let g = quarter_arc_edge(as_nurbs);
-        let scene = scene_from_gmap(&g, &VizHints::new());
+        let scene = scene_from_model(&g, &VizHints::new());
         assert_eq!(scene.darts.len(), 2);
         for dart in &scene.darts {
             assert!(
@@ -56,7 +56,7 @@ fn dart_shafts_of_a_nurbs_edge_follow_the_curve() {
 fn each_dart_shaft_starts_at_its_own_vertex() {
     for as_nurbs in [false, true] {
         let g = quarter_arc_edge(as_nurbs);
-        let scene = scene_from_gmap(&g, &VizHints::new());
+        let scene = scene_from_model(&g, &VizHints::new());
         let starts: Vec<[f64; 3]> = scene.darts.iter().map(|d| d.shaft[0]).collect();
         let on_x = starts
             .iter()
@@ -79,22 +79,22 @@ fn dart_shafts_stay_on_a_drilled_bore() {
     use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
     use ngk::geometry::Frame;
     use ngk::modeling::solids;
-    use ngk::topology::TopologyEditError;
+    use ngk::topology::ModelEditError;
 
     let (mut map, block) = solids::block_at(Frame::xyz(), 2.0, 2.0, 2.0)
         .expect("block")
-        .into_map();
+        .into_model();
     let (tool, tool_solid) = solids::cylinder_at(
         Frame::from_xy(Point3::new(1.0, 1.0, -1.0), Vector3::x(), Vector3::y()),
         0.5,
         4.0,
     )
     .expect("bore")
-    .into_map();
+    .into_model();
     let cylinder = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_solid));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
         })
         .expect("import bore");
     boolean(
@@ -106,7 +106,7 @@ fn dart_shafts_stay_on_a_drilled_bore() {
     )
     .expect("through hole");
 
-    let scene = scene_from_gmap(&map, &VizHints::new());
+    let scene = scene_from_model(&map, &VizHints::new());
     for dart in &scene.darts {
         for point in &dart.shaft {
             let radius = ((point[0] - 1.0).powi(2) + (point[1] - 1.0).powi(2)).sqrt();

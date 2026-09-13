@@ -3,9 +3,9 @@ use crate::builders::profiles::{
     PolylineError, add_polyline, add_rectangle, add_square, append_edge_staged,
 };
 use crate::geometry::{Plane, Point3};
+use crate::model::{Cell1, Model};
 use crate::modeling::edges;
 use crate::topology::closed::Closeable;
-use crate::topology::gmap::{Cell1, GMap};
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
 
@@ -14,7 +14,7 @@ pub fn rectangle(
     x_size: f64,
     y_size: f64,
 ) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {
-    let mut g = GMap::new();
+    let mut g = Model::new();
     let profile_dart = add_rectangle(&mut g, plane, x_size, y_size)?;
     Ok(Shape::new(g, profile_dart))
 }
@@ -23,13 +23,13 @@ pub fn square(
     plane: Plane,
     size: f64,
 ) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {
-    let mut g = GMap::new();
+    let mut g = Model::new();
     let handle = add_square(&mut g, plane, size)?;
     Ok(Shape::new(g, handle))
 }
 
 pub fn polyline(points: &[Point3]) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {
-    let mut g = GMap::new();
+    let mut g = Model::new();
     let profile_dart = add_polyline(&mut g, points)?;
     Ok(Shape::new(g, profile_dart))
 }
@@ -65,7 +65,7 @@ impl<P: Payload> Shape<ProfileTag, P> {
             return Err(PolylineError::ClosedProfile { dart: profile_dart });
         }
 
-        self.map_mut().transaction(|edit| {
+        self.model_mut().transaction(|edit| {
             let edge_dart = edit.merge(edge.edge()).dart_unchecked();
             let edge_key = edit.cell_key_unchecked::<Cell1>(edge_dart);
             append_edge_staged(edit, profile_key, edge_key)

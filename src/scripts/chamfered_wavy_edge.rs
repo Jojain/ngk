@@ -8,8 +8,8 @@ use crate::builders::faces::add_face;
 use crate::builders::profiles::{add_polyline, append_edge};
 use crate::builders::solids::add_extruded_face;
 use crate::geometry::{Curve, NurbsCurve, Point3, Surface};
+use crate::model::Model;
 use crate::topology::StandardPayload;
-use crate::topology::gmap::GMap;
 use crate::viz::{ScriptResult, Style, VizHints};
 
 const WIDTH: f64 = 4.0;
@@ -20,7 +20,7 @@ const CHAMFER_DISTANCE: f64 = 0.35;
 /// Builds an extruded rectangle-like solid and chamfers its translated wavy
 /// NURBS boundary edge by `distance`.
 pub fn build(distance: f64) -> Result<ScriptResult, String> {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let profile = add_polyline(
         &mut g,
         &[
@@ -108,7 +108,7 @@ pub fn build(distance: f64) -> Result<ScriptResult, String> {
             .double_sided(true),
     );
 
-    Ok(ScriptResult::from_gmap_with_hints(&g, &hints))
+    Ok(ScriptResult::from_model_with_hints(&g, &hints))
 }
 
 /// Builds the default wavy-edge chamfer experiment.

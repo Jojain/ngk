@@ -2,18 +2,20 @@ use std::collections::HashSet;
 use std::ops::Deref;
 
 use crate::geometry::{Curve, Interval, TrimmedCurve};
+use crate::model::{Cell1, Cell2, MergeTopology, TopologyMerge};
 use crate::topology::closed::Closeable;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell1, Cell2, Dim, MergeTopology, TopologyMerge};
+use crate::topology::gmap::Dim;
 use crate::topology::orientation::Orientation;
 use crate::topology::shape_keys::EdgeKey;
 
-use super::gmap::{Dart, GMap};
+use super::gmap::Dart;
 use super::payload::{Payload, StandardPayload};
 use super::sheet::Sheet;
 use super::vertex::Vertex;
+use crate::model::Model;
 
-/// A typed view over a 1-cell of a [`GMap`], in whichever of the two shapes an
+/// A typed view over a 1-cell of a [`Model`], in whichever of the two shapes an
 /// edge can have.
 ///
 /// An edge is closed exactly when its two ends are the same vertex — or when it
@@ -47,7 +49,7 @@ use super::vertex::Vertex;
 ///
 /// # Default orientation
 ///
-/// `GMap::edge(edge_key)` uses the dart stored in `EdgeAttr`. Traversals such as
+/// `Model::edge(edge_key)` uses the dart stored in `EdgeAttr`. Traversals such as
 /// [`Profile::edges`](crate::topology::profile::Profile::edges) or
 /// [`Face::edges`](crate::topology::face::Face::edges) preserve the exact dart
 /// reached in that traversal context.
@@ -60,18 +62,18 @@ pub enum Edge<'a, P: Payload = StandardPayload> {
 
 impl<'a, P: Payload> Edge<'a, P> {
     /// Creates an edge view with the default (`Same`) orientation.
-    pub fn new(gmap: &'a GMap<P>, key: EdgeKey) -> Self {
-        let dart = gmap.edge_attr_unchecked(key).dart;
-        EdgeCore { gmap, key, dart }.classify()
+    pub fn new(model: &'a Model<P>, key: EdgeKey) -> Self {
+        let dart = model.edge_attr_unchecked(key).dart;
+        EdgeCore { model, key, dart }.classify()
     }
 
     /// Creates an edge view from a dart, resolving the edge key and
     /// orientation relative to the stored default direction.
     ///
     /// Returns `None` if the dart does not belong to a registered edge.
-    pub fn from_dart(gmap: &'a GMap<P>, dart: Dart) -> Option<Self> {
-        let key = gmap.cell_key::<Cell1>(dart)?;
-        Some(EdgeCore { gmap, key, dart }.classify())
+    pub fn from_dart(model: &'a Model<P>, dart: Dart) -> Option<Self> {
+        let key = model.cell_key::<Cell1>(dart)?;
+        Some(EdgeCore { model, key, dart }.classify())
     }
 
     /// Returns this view as a bounded edge, or `None` when it closes on itself.
@@ -132,7 +134,7 @@ impl<'a, P: Payload> BoundedEdge<'a, P> {
 
     /// Returns both bounding vertices in this view's traversal order.
     pub fn vertices(&self) -> (Vertex<'a, P>, Vertex<'a, P>) {
-        vertices_at_dart(self.0.gmap, self.0.dart).expect("a bounded edge has two distinct ends")
+        vertices_at_dart(self.0.model, self.0.dart).expect("a bounded edge has two distinct ends")
     }
 
     /// Returns a new view of the same edge traversed the other way.
@@ -156,7 +158,7 @@ pub struct ClosedEdge<'a, P: Payload = StandardPayload>(EdgeCore<'a, P>);
 impl<'a, P: Payload> ClosedEdge<'a, P> {
     /// Returns the single vertex the edge passes through, if it still has one.
     pub fn vertex(&self) -> Option<Vertex<'a, P>> {
-        Vertex::from_dart(self.0.gmap, self.0.dart)
+        Vertex::from_dart(self.0.model, self.0.dart)
     }
 
     /// Returns a new view of the same edge traversed the other way.
@@ -177,7 +179,7 @@ impl<'a, P: Payload> ClosedEdge<'a, P> {
 /// at a call site; it exists so that narrowing an [`Edge`] costs nothing and
 /// gains only the endpoints.
 pub struct EdgeCore<'a, P: Payload = StandardPayload> {
-    gmap: &'a GMap<P>,
+    model: &'a Model<P>,
     key: EdgeKey,
     dart: Dart,
 }
@@ -185,7 +187,7 @@ pub struct EdgeCore<'a, P: Payload = StandardPayload> {
 impl<'a, P: Payload> EdgeCore<'a, P> {
     /// Sorts this view into the variant its combinatorics put it in.
     fn classify(self) -> Edge<'a, P> {
-        match vertices_at_dart(self.gmap, self.dart) {
+        match vertices_at_dart(self.model, self.dart) {
             Some(_) => Edge::Bounded(BoundedEdge(self)),
             None => Edge::Closed(ClosedEdge(self)),
         }
@@ -194,9 +196,9 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     /// Returns the same core traversed the other way.
     fn reversed(&self) -> Self {
         Self {
-            gmap: self.gmap,
+            model: self.model,
             key: self.key,
-            dart: self.gmap.alpha(Dim::Zero, self.dart),
+            dart: self.model.alpha(Dim::Zero, self.dart),
         }
     }
 
@@ -214,7 +216,7 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     /// Iterates every dart in this edge's 1-cell orbit.
     pub fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
         let dart = self.dart();
-        self.gmap.orbit(dart, self.gmap.orbit_indices(Dim::One))
+        self.model.orbit(dart, self.model.orbit_indices(Dim::One))
     }
 
     /// Returns the distinct vertices incident to this edge.
@@ -223,21 +225,21 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     /// that has lost it, two for a bounded edge. Narrow to a [`BoundedEdge`] to
     /// ask which end is which; this answers only what the edge touches.
     pub fn vertices(&self) -> Vec<Vertex<'a, P>> {
-        self.gmap
+        self.model
             .incident_cells(self.dart(), Dim::One, Dim::Zero)
-            .filter_map(|d| Vertex::from_dart(self.gmap, d))
+            .filter_map(|d| Vertex::from_dart(self.model, d))
             .collect()
     }
 
     /// Returns the distinct domain faces incident to this edge.
     pub fn faces(&self) -> Vec<Face<'a, P>> {
         let mut seen = HashSet::new();
-        self.gmap
+        self.model
             .incident_cells(self.dart(), Dim::One, Dim::Two)
             .filter_map(|dart| {
-                let key = self.gmap.cell_key::<Cell2>(dart)?;
+                let key = self.model.cell_key::<Cell2>(dart)?;
                 seen.insert(key)
-                    .then(|| Face::from_dart(self.gmap, dart))
+                    .then(|| Face::from_dart(self.model, dart))
                     .flatten()
             })
             .collect()
@@ -248,15 +250,15 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     /// Wrap a returned sheet with [`Closed::new`](super::closed::Closed::new)
     /// when the caller needs the stronger shell invariant.
     pub fn sheets(&self) -> Vec<Sheet<'a, P>> {
-        self.gmap
+        self.model
             .incident_cells(self.dart(), Dim::One, Dim::Three)
-            .filter_map(|d| Sheet::from_dart(self.gmap, d))
+            .filter_map(|d| Sheet::from_dart(self.model, d))
             .collect()
     }
 
     /// Returns the geometric curve attached to this edge, if it has one.
     pub fn curve(&self) -> Option<&'a Curve> {
-        self.gmap.edge_attr(self.key).map(|attr| &attr.curve)
+        self.model.edge_attr(self.key).map(|attr| &attr.curve)
     }
 
     /// Returns the curve-parameter span followed by this oriented edge view.
@@ -266,10 +268,10 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     /// span without applying periodic wrapping again, so it traverses the same
     /// geometric section backward rather than its complement.
     pub fn parameter_interval(&self) -> Option<Interval> {
-        let attr = self.gmap.edge_attr(self.key)?;
+        let attr = self.model.edge_attr(self.key)?;
         // The reference span belongs to the stored dart, not to this view: the
         // view's orientation is applied to it below.
-        let reference = match vertices_at_dart(self.gmap, attr.dart) {
+        let reference = match vertices_at_dart(self.model, attr.dart) {
             Some((start, end)) => attr.curve.interval_between(*start.point()?, *end.point()?),
             // A closed edge is its support. Where its ends still meet at a
             // vertex, `interval_between` answers the whole period anyway; where
@@ -278,7 +280,7 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
             None => attr.curve.domain(),
         };
         Some(
-            match self.gmap.edge_orientation_at_dart(self.key, self.dart) {
+            match self.model.edge_orientation_at_dart(self.key, self.dart) {
                 Orientation::Same => reference,
                 Orientation::Reversed => reference.reversed(),
             },
@@ -321,11 +323,11 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
 /// not a circle, and no tolerance can tell the difference the map already
 /// records exactly.
 fn vertices_at_dart<P: Payload>(
-    gmap: &GMap<P>,
+    model: &Model<P>,
     dart: Dart,
 ) -> Option<(Vertex<'_, P>, Vertex<'_, P>)> {
-    let start = Vertex::from_dart(gmap, dart)?;
-    let end = Vertex::from_dart(gmap, gmap.alpha(Dim::Zero, dart))?;
+    let start = Vertex::from_dart(model, dart)?;
+    let end = Vertex::from_dart(model, model.alpha(Dim::Zero, dart))?;
     (start.key() != end.key()).then_some((start, end))
 }
 
@@ -390,7 +392,7 @@ impl<'a, P: Payload> Deref for ClosedEdge<'a, P> {
 
 impl<P: Payload> MergeTopology<P> for EdgeCore<'_, P> {
     fn merge_topology(&self) -> TopologyMerge<'_, P> {
-        TopologyMerge::new(self.gmap, self.darts().collect(), self.dart())
+        TopologyMerge::new(self.model, self.darts().collect(), self.dart())
     }
 }
 

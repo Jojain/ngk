@@ -15,8 +15,8 @@ use std::time::Duration;
 use serde::Serialize;
 use thiserror::Error;
 
-use super::{VizScene, VizVertex, scene_from_gmap};
-use crate::topology::gmap::GMap;
+use super::{VizScene, VizVertex, scene_from_model};
+use crate::model::Model;
 use crate::topology::payload::Payload;
 use crate::topology::shape::{Shape, ShapeKind};
 
@@ -248,14 +248,14 @@ pub fn show_with_options<K: ShapeKind, P: Payload>(
     send_payload(&payload, options)
 }
 
-/// Serialize and send a raw GMap to a running OCP CAD Viewer.
-pub fn show_gmap<P: Payload>(g: &GMap<P>) -> Result<(), OcpVscodeError> {
+/// Serialize and send a raw model to a running OCP CAD Viewer.
+pub fn show_gmap<P: Payload>(g: &Model<P>) -> Result<(), OcpVscodeError> {
     show_gmap_with_options(g, &OcpViewerOptions::default())
 }
 
-/// Serialize and send a raw GMap using explicit viewer options.
+/// Serialize and send a raw model using explicit viewer options.
 pub fn show_gmap_with_options<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     options: &OcpViewerOptions,
 ) -> Result<(), OcpVscodeError> {
     let payload = payload_for_gmap(g, options)?;
@@ -267,16 +267,16 @@ pub fn payload_for_shape<K: ShapeKind, P: Payload>(
     shape: &Shape<K, P>,
     options: &OcpViewerOptions,
 ) -> Result<OcpViewerPayload, OcpVscodeError> {
-    payload_for_gmap(shape.map(), options)
+    payload_for_gmap(shape.model(), options)
 }
 
-/// Build the OCP viewer payload for a raw GMap without sending it.
+/// Build the OCP viewer payload for a raw model without sending it.
 pub fn payload_for_gmap<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     options: &OcpViewerOptions,
 ) -> Result<OcpViewerPayload, OcpVscodeError> {
     Ok(payload_for_scene(
-        &scene_from_gmap(g, &super::VizHints::new()),
+        &scene_from_model(g, &super::VizHints::new()),
         options,
     ))
 }

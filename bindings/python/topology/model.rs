@@ -5,21 +5,21 @@ use pyo3::prelude::*;
 use super::common::{Map, py_err};
 use super::{PyEdge, PyFace, PyProfile, PySheet, PySolid, PyVertex};
 
-/// Python wrapper for a complete immutable standard-payload GMap.
-#[pyclass(name = "GMap", module = "ngk")]
+/// Python wrapper for a complete immutable standard-payload model.
+#[pyclass(name = "Model", module = "ngk")]
 #[derive(Clone)]
-pub struct PyGMap {
+pub struct PyModel {
     pub(crate) inner: Map,
 }
 
-impl PyGMap {
+impl PyModel {
     pub(crate) fn from_inner(inner: Map) -> Self {
         Self { inner }
     }
 }
 
 #[pymethods]
-impl PyGMap {
+impl PyModel {
     #[staticmethod]
     fn deserialize(serialized: &str) -> PyResult<Self> {
         Ok(Self::from_inner(
@@ -187,12 +187,12 @@ impl PyGMap {
             .map(PySolid::from_inner))
     }
 
-    fn __richcmp__(&self, other: PyRef<'_, PyGMap>, op: CompareOp) -> PyResult<bool> {
+    fn __richcmp__(&self, other: PyRef<'_, PyModel>, op: CompareOp) -> PyResult<bool> {
         match op {
             CompareOp::Eq => Ok(self.inner.ptr_eq(&other.inner)),
             CompareOp::Ne => Ok(!self.inner.ptr_eq(&other.inner)),
             _ => Err(PyValueError::new_err(
-                "GMap ordering is not defined; use == or !=",
+                "Model ordering is not defined; use == or !=",
             )),
         }
     }
@@ -202,6 +202,6 @@ impl PyGMap {
     }
 
     fn __repr__(&self) -> String {
-        format!("GMap(darts={})", self.inner.dart_count())
+        format!("Model(darts={})", self.inner.dart_count())
     }
 }

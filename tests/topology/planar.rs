@@ -2,13 +2,13 @@ use nalgebra::Vector3;
 use ngk::builders::faces::add_polygon;
 use ngk::builders::profiles::add_polyline;
 use ngk::geometry::{LINEAR_TOLERANCE, Point3};
-use ngk::topology::gmap::GMap;
+use ngk::model::Model;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::planar::{Planar, PlanarityError};
 
 #[test]
 fn planar_new_wraps_planar_profile_and_infers_plane() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let key = add_polygon(
         &mut g,
         &[
@@ -26,7 +26,7 @@ fn planar_new_wraps_planar_profile_and_infers_plane() {
 
 #[test]
 fn planar_new_rejects_profile_with_off_plane_vertex() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let key = add_polygon(
         &mut g,
         &[
@@ -49,7 +49,7 @@ fn planar_new_rejects_profile_with_off_plane_vertex() {
 
 #[test]
 fn planar_new_accepts_collinear_profiles_with_fallback_plane() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let points = [
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 0.0, 0.0),

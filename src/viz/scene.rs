@@ -4,7 +4,7 @@
 //! vertices, edges, faces, darts and α-involution links — the same vocabulary
 //! the kernel uses. Each entity carries an id so the front-end can correlate
 //! geometry with the underlying topology (vertex/edge/face slot ids in the
-//! GMap; dart numbers for darts).
+//! gmap; dart numbers for darts).
 
 use serde::Serialize;
 

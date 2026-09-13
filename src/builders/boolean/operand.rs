@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
-use crate::topology::TopologyEdit;
-use crate::topology::gmap::{Cell0, Cell1, Cell2, GMap};
+use crate::model::{Cell0, Cell1, Cell2, Model};
+use crate::topology::ModelEdit;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
 
@@ -22,7 +22,7 @@ pub(crate) struct OperandCells {
 }
 
 pub(crate) fn operand_cells<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     operand: BooleanOperand,
 ) -> Result<OperandCells, BooleanError> {
     let cells = match operand {
@@ -107,8 +107,8 @@ pub(crate) fn operand_cells<P: Payload>(
 }
 
 pub(crate) fn import_operand<P: Payload>(
-    target: &mut TopologyEdit<'_, P>,
-    source: &GMap<P>,
+    target: &mut ModelEdit<'_, P>,
+    source: &Model<P>,
     operand: BooleanOperand,
 ) -> Result<BooleanOperand, BooleanError> {
     let imported = match operand {
@@ -181,7 +181,7 @@ pub(crate) struct BooleanContext {
 impl BooleanContext {
     /// Validates both closed oriented operands before any mutation and fixes the budget.
     pub(crate) fn admit<P: Payload>(
-        map: &GMap<P>,
+        map: &Model<P>,
         first: SolidKey,
         second: SolidKey,
         operation: BooleanOperation,

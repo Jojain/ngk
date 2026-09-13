@@ -1,4 +1,6 @@
 use crate::geometry::TrimmedCurve2;
+use crate::model::{Cell2, MergeTopology, Model};
+use crate::topology::ModelEditError;
 use std::collections::HashMap;
 
 use nalgebra::Vector3;
@@ -13,11 +15,11 @@ use crate::{
         RuledSurface, Sphere, Surface, SurfacePeriodicity, Torus,
     },
     topology::{
-        Dart, SheetAttr, ShellRoot, SolidAttr, TopologyEdit,
+        Dart, ModelEdit, SheetAttr, ShellRoot, SolidAttr,
         attributes::{EdgeAttr, FaceAttr, LoopDefinition, ProfileAttr},
         edge::Edge,
         face::Face,
-        gmap::{Cell2, Dim, GMap, MergeTopology, TopologyEditError},
+        gmap::Dim,
         profile::Profile,
         shape::{FaceTag, Shape},
         shape_keys::{FaceKey, SolidKey},
@@ -27,7 +29,7 @@ use crate::{
 #[derive(Debug, Error)]
 pub enum SphereBuildError {
     #[error("failed to commit sphere topology")]
-    TopologyEdit(#[from] TopologyEditError),
+    ModelEdit(#[from] ModelEditError),
 }
 
 #[derive(Debug, Error)]
@@ -36,7 +38,7 @@ pub enum TorusBuildError {
     InvalidRadii { major: f64, minor: f64 },
 
     #[error("failed to commit torus topology")]
-    TopologyEdit(#[from] TopologyEditError),
+    ModelEdit(#[from] ModelEditError),
 }
 
 /// Adds a sphere as one boundaryless face on a spherical support.
@@ -49,7 +51,7 @@ pub enum TorusBuildError {
 /// The support's own parameterization already faces outward, so the face is
 /// stored unreversed.
 pub fn add_sphere<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     frame: Frame,
     radius: f64,
 ) -> Result<SolidKey, SphereBuildError> {
@@ -78,7 +80,7 @@ pub fn add_sphere<P: Payload>(
 /// `minor` must stay under `major`: a tube as wide as its offset reaches the
 /// axis, and one wider sweeps through itself.
 pub fn add_torus<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     frame: Frame,
     major: f64,
     minor: f64,
@@ -169,7 +171,7 @@ pub fn translate_face<P: Payload>(
 /// boundary geometry is absent, or a lateral face is degenerate or cannot be
 /// sewn into the shell.
 pub fn add_extruded_face<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
 ) -> Result<SolidKey, ExtrudeError> {
@@ -178,7 +180,7 @@ pub fn add_extruded_face<P: Payload>(
 
 /// Builds translated caps and lateral faces, then registers the staged solid.
 fn add_extruded_face_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
 ) -> Result<SolidKey, ExtrudeError> {
@@ -224,7 +226,7 @@ fn add_extruded_face_staged<P: Payload>(
 }
 
 fn orient_extruded_caps<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     bottom_face: FaceKey,
     top_face: FaceKey,
     direction: Vector3<f64>,
@@ -244,7 +246,7 @@ fn orient_extruded_caps<P: Payload>(
 }
 
 fn face_normal_dot_direction<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     face: &FaceAttr<P::F>,
     direction: Vector3<f64>,
 ) -> f64 {
@@ -252,7 +254,7 @@ fn face_normal_dot_direction<P: Payload>(
 }
 
 fn sew_extruded_loop<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     bottom_loop_dart: Dart,
     top_loop_dart: Dart,
     direction: Vector3<f64>,
@@ -340,7 +342,7 @@ fn sew_extruded_loop<P: Payload>(
 /// Returns the new face's boundary dart, or `None` when the sweep does not
 /// close and the caller should build quads.
 fn sew_wrapping_lateral_face<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     bottom_edges: &[Dart],
     top_edges: &[Dart],
     direction: Vector3<f64>,
@@ -407,7 +409,7 @@ fn swept_period_axis(prepared: &PreparedLateralFace) -> Option<Axis2> {
 }
 
 fn sew<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     dim: Dim,
     first: Dart,
     second: Dart,
@@ -438,7 +440,7 @@ struct LateralFaceTopology {
 }
 
 fn prepare_lateral_face<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     bottom_edge: Dart,
     _top_edge: Dart,
     direction: Vector3<f64>,
@@ -462,7 +464,7 @@ fn prepare_lateral_face<P: Payload>(
 }
 
 fn add_lateral_face_topology<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
 ) -> Result<LateralFaceTopology, ExtrudeError> {
     let darts = std::array::from_fn(|_| edit.add_dart());
 
@@ -489,7 +491,7 @@ fn add_lateral_face_topology<P: Payload>(
 }
 
 fn add_lateral_face_attributes<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     topology: &LateralFaceTopology,
     prepared: &PreparedLateralFace,
 ) {

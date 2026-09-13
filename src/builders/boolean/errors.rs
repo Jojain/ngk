@@ -7,9 +7,9 @@ use crate::builders::edges::EdgeSplitError;
 use crate::builders::faces::{FaceEdgeSplitError, FaceImprintSplitError};
 use crate::geometry::Point3;
 use crate::geometry::{CurveIntersectionError, IntersectionError, NurbsError};
-use crate::topology::TopologyEditError;
+use crate::topology::ModelEditError;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
-use crate::topology::validation::GMapValidationError;
+use crate::topology::validation::ModelValidationError;
 
 use super::{BooleanCell, BooleanOperand, IntersectionNetworkValidationError};
 
@@ -31,7 +31,7 @@ pub enum BooleanError {
     #[error("solid {solid:?} is not a closed, consistently oriented operand")]
     InvalidOperand {
         solid: SolidKey,
-        source: GMapValidationError,
+        source: ModelValidationError,
     },
     #[error("distinct operands share registered boundary faces")]
     SharedOperandBoundary,
@@ -69,8 +69,8 @@ pub enum BooleanError {
     OpenResultShell { face: FaceKey },
     #[error("result shell containing face {face:?} has zero signed volume")]
     DegenerateResultShell { face: FaceKey },
-    #[error("Boolean result failed topology validation")]
-    InvalidResult(#[from] GMapValidationError),
+    #[error("Boolean result failed validation")]
+    InvalidResult(#[from] ModelValidationError),
     #[error("Boolean tolerance policy contains an invalid or non-finite budget")]
     InvalidTolerances,
     #[error("face {face:?} has no trim curve for edge {edge:?}")]
@@ -94,7 +94,7 @@ pub enum BooleanError {
     #[error("Boolean face imprint failed")]
     FaceSplit(#[from] FaceImprintSplitError),
     #[error("Boolean topology transaction failed")]
-    Topology(#[from] TopologyEditError),
+    Topology(#[from] ModelEditError),
     #[error("Boolean intersection network is inconsistent")]
     InvalidNetwork(#[from] IntersectionNetworkValidationError),
 }

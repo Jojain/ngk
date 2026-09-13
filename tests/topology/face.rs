@@ -1,8 +1,9 @@
 use ngk::builders::faces::{add_annulus, add_circle};
 use ngk::geometry::{Axis2, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
+use ngk::model::Model;
 use ngk::modeling::{faces, solids};
 use ngk::topology::face::Face;
-use ngk::topology::gmap::{Dart, Dim, GMap};
+use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::{LoopDefinition, LoopKind, Orientation};
 
@@ -36,7 +37,7 @@ fn face_point_at_is_defined_inside_a_trimmed_hole() {
 
 #[test]
 fn face_views_from_opposite_darts_reverse_boundary_and_normal() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_circle(&mut g, Plane::xy(), 1.0).expect("circle face should build");
     let default_dart = g.face_unchecked(face_key).dart_unchecked();
     let reversed_dart = g.alpha(Dim::Zero, default_dart);
@@ -70,7 +71,7 @@ fn face_views_from_opposite_darts_reverse_boundary_and_normal() {
 
 #[test]
 fn face_views_from_stored_loop_seeds_share_the_same_normal() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_annulus(&mut g, Plane::xy(), 2.0, 1.0).expect("annulus face should build");
     let face = g.face_unchecked(face_key);
     let outer = Face::from_dart(
@@ -178,7 +179,7 @@ fn block_face_pcurves_follow_oriented_boundary_edges() {
 /// names the same view, and the dart it hands back re-resolves to it.
 #[test]
 fn a_face_view_is_named_by_its_sense_not_by_the_dart_it_was_reached_from() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_annulus(&mut g, Plane::xy(), 2.0, 1.0).expect("annulus face should build");
     let face = g.face_unchecked(face_key);
     let inner_seed = g.face_unchecked(face_key).inner_loops()[0].dart;

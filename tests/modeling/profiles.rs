@@ -69,7 +69,7 @@ fn add_copies_an_edge_shape_into_the_profile() {
 
     assert!(profile.is_closed());
     assert_eq!(profile.edges().len(), 2);
-    assert_eq!(closing_edge.map().iter_edges().count(), 1);
+    assert_eq!(closing_edge.model().iter_edges().count(), 1);
 }
 
 #[test]
@@ -82,12 +82,12 @@ fn add_rejects_closed_profiles() {
     .expect("closed profile should build");
     let edge = edges::line(Point3::new(1.0, 1.0, 0.0), Point3::new(2.0, 1.0, 0.0))
         .expect("edge should build");
-    let edge_count = profile.map().iter_edges().count();
+    let edge_count = profile.model().iter_edges().count();
 
     let err = profile
         .add(&edge)
         .expect_err("closed profile should reject add");
 
     assert!(matches!(err, PolylineError::ClosedProfile { .. }));
-    assert_eq!(profile.map().iter_edges().count(), edge_count);
+    assert_eq!(profile.model().iter_edges().count(), edge_count);
 }

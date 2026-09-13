@@ -15,9 +15,9 @@ use ngk::builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, boo
 use ngk::geometry::{
     ControlNet, Degree, Frame, HPoint, KnotVector, NurbsSurface, Plane, Point3, Surface,
 };
+use ngk::model::Model;
 use ngk::modeling::solids;
-use ngk::topology::TopologyEditError;
-use ngk::topology::gmap::GMap;
+use ngk::topology::ModelEditError;
 use ngk::topology::shape_keys::SolidKey;
 
 /// Ceiling for a case expected to be answered without a traced branch.
@@ -33,7 +33,7 @@ const CURVED_CEILING: Duration = Duration::from_secs(30);
 struct Scene {
     name: &'static str,
     ceiling: Duration,
-    build: fn() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey),
+    build: fn() -> (Model<ngk::StandardPayload>, SolidKey, SolidKey),
     operation: BooleanOperation,
 }
 
@@ -196,19 +196,19 @@ fn free_form_surface_benches(criterion: &mut Criterion) {
 fn merged(
     target: ngk::topology::shape::Shape<ngk::topology::shape::SolidTag, ngk::StandardPayload>,
     tool: ngk::topology::shape::Shape<ngk::topology::shape::SolidTag, ngk::StandardPayload>,
-) -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
-    let (tool_map, tool_key) = tool.into_map();
-    let (mut map, target_key) = target.into_map();
+) -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
+    let (tool_map, tool_key) = tool.into_model();
+    let (mut map, target_key) = target.into_model();
     let imported = map
         .transaction(|edit| {
             let handle = edit.merge(tool_map.solid_unchecked(tool_key));
-            Ok::<_, TopologyEditError>(edit.solid_key_at(handle).expect("imported tool solid"))
+            Ok::<_, ModelEditError>(edit.solid_key_at(handle).expect("imported tool solid"))
         })
         .expect("import tool operand");
     (map, target_key, imported)
 }
 
-fn overlapping_blocks() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+fn overlapping_blocks() -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     merged(
         solids::block(2.0, 2.0, 2.0).expect("block"),
         solids::block_at(
@@ -221,7 +221,7 @@ fn overlapping_blocks() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
     )
 }
 
-fn block_and_protruding_cylinder() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+fn block_and_protruding_cylinder() -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     merged(
         solids::block(2.0, 2.0, 2.0).expect("block"),
         solids::cylinder_at(
@@ -233,7 +233,7 @@ fn block_and_protruding_cylinder() -> (GMap<ngk::StandardPayload>, SolidKey, Sol
     )
 }
 
-fn block_and_through_cylinder() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+fn block_and_through_cylinder() -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     merged(
         solids::block(2.0, 2.0, 2.0).expect("block"),
         solids::cylinder_at(
@@ -245,7 +245,7 @@ fn block_and_through_cylinder() -> (GMap<ngk::StandardPayload>, SolidKey, SolidK
     )
 }
 
-fn block_and_sphere() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+fn block_and_sphere() -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     merged(
         solids::block(2.0, 2.0, 2.0).expect("block"),
         solids::sphere_at(
@@ -256,7 +256,7 @@ fn block_and_sphere() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
     )
 }
 
-fn overlapping_spheres() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+fn overlapping_spheres() -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     merged(
         solids::sphere(1.0).expect("sphere"),
         solids::sphere_at(
@@ -267,7 +267,7 @@ fn overlapping_spheres() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
     )
 }
 
-fn orthogonal_cylinders() -> (GMap<ngk::StandardPayload>, SolidKey, SolidKey) {
+fn orthogonal_cylinders() -> (Model<ngk::StandardPayload>, SolidKey, SolidKey) {
     merged(
         solids::cylinder_at(
             Frame::from_xy(Point3::new(0.0, 0.0, -2.0), Vector3::x(), Vector3::y()),

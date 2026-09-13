@@ -5,10 +5,12 @@ use crate::geometry::{
     ControlPolygon2, Curve, Curve2, HPoint2, LINEAR_TOLERANCE, NurbsCurve2, NurbsError, Plane,
     Point2, Point3, PointCoincidence,
 };
-use crate::topology::TopologyEdit;
+use crate::model::{Cell0, Model};
+use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closeable;
-use crate::topology::gmap::{Cell0, Dart, Dim, GMap, TopologyEditError};
+use crate::topology::edit::ModelEditError;
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, ProfileKey, VertexKey};
@@ -23,7 +25,7 @@ pub use crate::builders::errors::PolylineError;
 ///
 /// At least two points are required.
 pub fn add_polyline<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
     g.transaction(|edit| add_polyline_staged(edit, points))
@@ -31,7 +33,7 @@ pub fn add_polyline<P: Payload>(
 
 /// Builds all polyline edges and joins them into one staged profile.
 pub fn add_polyline_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
     if points.len() < 2 {
@@ -52,7 +54,7 @@ pub fn add_polyline_staged<P: Payload>(
 /// end. If the appended edge's other endpoint coincides with the profile start,
 /// the profile is closed.
 pub fn append_edge<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
 ) -> Result<(), PolylineError> {
@@ -61,7 +63,7 @@ pub fn append_edge<P: Payload>(
 
 /// Connects an edge to a profile and records any resulting vertex merge lineage.
 pub(crate) fn append_edge_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
 ) -> Result<(), PolylineError> {
@@ -217,7 +219,7 @@ pub fn plane_uv(plane: &Plane, point: Point3) -> Point2 {
     Point2::new(v.dot(&plane.x_dir()), v.dot(&plane.y_dir()))
 }
 
-/// Adds a rectangular profile to the given GMap.
+/// Adds a rectangular profile to the given model.
 ///
 /// The corners are built on `plane` in the following order:
 /// 0-----1
@@ -227,7 +229,7 @@ pub fn plane_uv(plane: &Plane, point: Point3) -> Point2 {
 ///
 /// Returns the profile key whose stored dart starts at the first corner.
 pub fn add_rectangle<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     plane: Plane,
     x_size: f64,
     y_size: f64,
@@ -237,7 +239,7 @@ pub fn add_rectangle<P: Payload>(
 
 /// Builds the four rectangle edges and profile inside one transaction.
 pub(crate) fn add_rectangle_staged<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     x_size: f64,
     y_size: f64,
@@ -260,7 +262,7 @@ pub(crate) fn add_rectangle_staged<P: Payload>(
 /// The first corner is the plane origin and the sides follow its positive x and
 /// y directions. `size` must be positive and finite.
 pub fn add_square<P: Payload>(
-    g: &mut GMap<P>,
+    g: &mut Model<P>,
     plane: Plane,
     size: f64,
 ) -> Result<ProfileKey, PolylineError> {
@@ -276,7 +278,7 @@ fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), Polylin
 }
 
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
-pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool) -> ProfileKey {
+pub fn add_profile_darts<P: Payload>(g: &mut Model<P>, count: usize, closed: bool) -> ProfileKey {
     g.transaction(|edit| {
         let darts: Vec<Dart> = (0..count).map(|_| edit.add_dart()).collect();
         for i in 0..count {
@@ -288,15 +290,13 @@ pub fn add_profile_darts<P: Payload>(g: &mut GMap<P>, count: usize, closed: bool
         if closed {
             edit.sew(Dim::Zero, darts[count - 1], darts[0])?;
         }
-        Ok::<_, TopologyEditError>(
-            edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default())),
-        )
+        Ok::<_, ModelEditError>(edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default())))
     })
     .expect("fresh profile topology must commit")
 }
 
 fn add_segments<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     segments: &[(Point3, Point3, Curve)],
 ) -> Result<ProfileKey, PolylineError> {
     let first_segment = segments.first().ok_or(PolylineError::EmptyPolyline)?;
@@ -361,17 +361,17 @@ struct VertexMerge {
     removed: VertexKey,
 }
 
-fn polyline_edit_error(error: TopologyEditError) -> PolylineError {
+fn polyline_edit_error(error: ModelEditError) -> PolylineError {
     error.into()
 }
 
-fn vertex_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<Point3, PolylineError> {
+fn vertex_point<P: Payload>(g: &Model<P>, dart: Dart) -> Result<Point3, PolylineError> {
     g.attribute::<Cell0>(dart)
         .map(|attr| attr.point)
         .ok_or(PolylineError::MissingVertexPoint { dart })
 }
 
-fn vertex_key<P: Payload>(g: &GMap<P>, dart: Dart) -> Result<VertexKey, PolylineError> {
+fn vertex_key<P: Payload>(g: &Model<P>, dart: Dart) -> Result<VertexKey, PolylineError> {
     g.cell_key::<Cell0>(dart)
         .ok_or(PolylineError::MissingVertexPoint { dart })
 }

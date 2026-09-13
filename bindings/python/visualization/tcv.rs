@@ -28,30 +28,30 @@ fn _to_tcv_json(
     };
 
     if let Ok(edge) = obj.extract::<PyRef<'_, PyEdge>>() {
-        let map = edge.inner.gmap();
+        let map = edge.inner.model();
         return tcv_json(
-            &Shape::<EdgeTag, _>::new(map.map().clone(), edge.inner.key()),
+            &Shape::<EdgeTag, _>::new(map.model().clone(), edge.inner.key()),
             opts,
         );
     }
     if let Ok(profile) = obj.extract::<PyRef<'_, PyProfile>>() {
-        let map = profile.inner.gmap();
+        let map = profile.inner.model();
         return tcv_json(
-            &Shape::<ProfileTag, _>::new(map.map().clone(), profile.inner.key()),
+            &Shape::<ProfileTag, _>::new(map.model().clone(), profile.inner.key()),
             opts,
         );
     }
     if let Ok(face) = obj.extract::<PyRef<'_, PyFace>>() {
-        let map = face.inner.gmap();
+        let map = face.inner.model();
         return tcv_json(
-            &Shape::<FaceTag, _>::new(map.map().clone(), face.inner.key()),
+            &Shape::<FaceTag, _>::new(map.model().clone(), face.inner.key()),
             opts,
         );
     }
     if let Ok(solid) = obj.extract::<PyRef<'_, PySolid>>() {
-        let map = solid.inner.gmap();
+        let map = solid.inner.model();
         return tcv_json(
-            &Shape::<SolidTag, _>::new(map.map().clone(), solid.inner.key()),
+            &Shape::<SolidTag, _>::new(map.model().clone(), solid.inner.key()),
             opts,
         );
     }

@@ -9,10 +9,11 @@ use std::collections::HashSet;
 
 use crate::builders::removal::{MergedCell, is_removable, remove_cell_staged};
 use crate::geometry::{Curve, Point3, TrimmedCurve2};
-use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
+use crate::model::{Cell0, Model};
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
-use crate::topology::{TopologyEdit, TopologyEditError};
+use crate::topology::{ModelEdit, ModelEditError};
 
 use super::super::errors::HealingError;
 use super::super::options::HealingOptions;
@@ -23,15 +24,15 @@ use super::{boundary_dart, edge_key, incident_faces};
 
 /// Offers every scoped vertex to the 0-removal operation.
 pub(in crate::healing) fn run<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     options: &HealingOptions,
     report: &mut HealingReport,
 ) -> Result<(), HealingError> {
-    for key in super::scoped_vertices(edit.map(), options)? {
-        if edit.map().vertex_attr(key).is_none() {
+    for key in super::scoped_vertices(edit.model(), options)? {
+        if edit.model().vertex_attr(key).is_none() {
             continue;
         }
-        match plan(edit.map(), key, options) {
+        match plan(edit.model(), key, options) {
             Ok(fusion) => apply(edit, fusion, report)?,
             Err(reason) => report.skip(HealedCell::Vertex(key), reason),
         }
@@ -52,7 +53,7 @@ struct VertexFusion {
 
 /// Decides whether the vertex carries shape, and builds the fused geometry.
 fn plan<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     vertex: VertexKey,
     options: &HealingOptions,
 ) -> Result<VertexFusion, SkipReason> {
@@ -156,7 +157,7 @@ struct FusedBoundary<'a> {
 /// rebuilt curve is keyed on whichever dart carries that direction, matching
 /// the convention the profile builders use.
 fn fused_pcurves<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     cell: &HashSet<Dart>,
     fused: FusedBoundary<'_>,
     linear: f64,
@@ -189,13 +190,13 @@ fn fused_pcurves<P: Payload>(
 
 /// Removes the vertex and writes the fused geometry onto the surviving edge.
 fn apply<P: Payload>(
-    edit: &mut TopologyEdit<'_, P>,
+    edit: &mut ModelEdit<'_, P>,
     fusion: VertexFusion,
     report: &mut HealingReport,
 ) -> Result<(), HealingError> {
     let removal = remove_cell_staged(edit, fusion.dart, Dim::Zero)?;
     let MergedCell::Edges { survivor, consumed } = removal.merged else {
-        return Err(TopologyEditError::MissingLineageAttribute {
+        return Err(ModelEditError::MissingLineageAttribute {
             key: crate::topology::EditKey::Edge(fusion.survivor),
         }
         .into());
@@ -210,8 +211,8 @@ fn apply<P: Payload>(
     attr.curve = fusion.curve;
 
     let fused = edit
-        .map()
-        .orbit(dart, edit.map().orbit_indices(Dim::One))
+        .model()
+        .orbit(dart, edit.model().orbit_indices(Dim::One))
         .collect::<HashSet<_>>();
     for (face, boundary, pcurve) in fusion.pcurves {
         let Some(boundary) = removal.remap(boundary) else {
@@ -228,7 +229,7 @@ fn apply<P: Payload>(
 }
 
 /// Returns the lowest dart of `edge` that the vertex removal will keep.
-fn surviving_dart<P: Payload>(g: &GMap<P>, edge: EdgeKey, cell: &HashSet<Dart>) -> Option<Dart> {
+fn surviving_dart<P: Payload>(g: &Model<P>, edge: EdgeKey, cell: &HashSet<Dart>) -> Option<Dart> {
     let dart = g.edge_attr(edge)?.dart;
     g.orbit(dart, g.orbit_indices(Dim::One))
         .filter(|d| !cell.contains(d))
@@ -237,17 +238,16 @@ fn surviving_dart<P: Payload>(g: &GMap<P>, edge: EdgeKey, cell: &HashSet<Dart>) 
 
 /// Returns the surviving dart of an edge orbit that belongs to `face`.
 fn surviving_dart_in_face<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     dart: Dart,
     face: FaceKey,
     cell: &HashSet<Dart>,
 ) -> Option<Dart> {
-    g.orbit(dart, g.orbit_indices(Dim::One)).find(|&d| {
-        !cell.contains(&d) && g.cell_key::<crate::topology::gmap::Cell2>(d) == Some(face)
-    })
+    g.orbit(dart, g.orbit_indices(Dim::One))
+        .find(|&d| !cell.contains(&d) && g.cell_key::<crate::model::Cell2>(d) == Some(face))
 }
 
 /// Returns the position of the vertex containing `dart`.
-fn vertex_point<P: Payload>(g: &GMap<P>, dart: Dart) -> Option<Point3> {
+fn vertex_point<P: Payload>(g: &Model<P>, dart: Dart) -> Option<Point3> {
     g.attribute::<Cell0>(dart).map(|attr| attr.point)
 }

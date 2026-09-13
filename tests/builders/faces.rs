@@ -17,15 +17,16 @@ use ngk::geometry::{
 use ngk::modeling::solids;
 
 use super::seamed::seamed_cylinder_wall;
-use ngk::topology::TopologyEditError;
-use ngk::topology::gmap::GMap;
-use ngk::topology::gmap::{Cell0, Dim};
+use ngk::model::Cell0;
+use ngk::model::Model;
+use ngk::topology::ModelEditError;
+use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 
 #[test]
 fn connected_imprints_split_a_face_and_retain_each_section() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
     let imprints = [
         planar_imprint(TrimmedCurve2::segment(
@@ -53,7 +54,7 @@ fn connected_imprints_split_a_face_and_retain_each_section() {
 #[test]
 fn two_semicircle_imprints_form_a_closed_inner_loop() {
     use nalgebra::Vector2;
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
     let curves = [Vector2::x(), -Vector2::x()]
         .map(|axis| TrimmedCurve2::arc(Point2::new(2.0, 2.0), axis, 1.0, std::f64::consts::PI));
@@ -128,7 +129,7 @@ fn splitting_a_seamed_wall_preserves_both_face_pcurves() {
 
 #[test]
 fn add_rectangle_creates_single_planar_face_with_pcurves() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("face should build");
     let face = g.face_attr_unchecked(face_key);
 
@@ -139,7 +140,7 @@ fn add_rectangle_creates_single_planar_face_with_pcurves() {
 
 #[test]
 fn add_rectangle_reports_profile_creation_errors() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
 
     let result = add_rectangle(&mut g, Plane::xy(), 0.0, 3.0);
 
@@ -156,7 +157,7 @@ fn add_rectangle_reports_profile_creation_errors() {
 
 #[test]
 fn add_circle_creates_single_planar_face_with_circular_pcurve() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_circle(&mut g, Plane::xy(), 2.0).expect("circle face should build");
     let face = g.face_attr_unchecked(face_key);
 
@@ -189,7 +190,7 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
 
 #[test]
 fn add_annulus_creates_planar_face_with_inner_circular_loop() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_annulus(&mut g, Plane::xy(), 2.0, 1.0).expect("annulus face should build");
     let face = g.face_attr_unchecked(face_key);
 
@@ -202,7 +203,7 @@ fn add_annulus_creates_planar_face_with_inner_circular_loop() {
 
 #[test]
 fn split_face_edge_updates_boundary_and_pcurves() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 1.0).expect("face should build");
     let edge = first_outer_edge_key(&g, face_key);
     let parameter = edge_mid_parameter(&g, edge);
@@ -232,7 +233,7 @@ fn split_face_edge_updates_boundary_and_pcurves() {
 
 #[test]
 fn split_face_edge_rejects_edges_outside_the_face() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 1.0).expect("face should build");
     let edge = add_line(
         &mut g,
@@ -249,7 +250,7 @@ fn split_face_edge_rejects_edges_outside_the_face() {
 
 #[test]
 fn split_face_edge_uses_existing_pcurve_for_non_planar_surface_variant() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 1.0).expect("face should build");
     let surface = g
         .face_attr_unchecked(face_key)
@@ -258,7 +259,7 @@ fn split_face_edge_uses_existing_pcurve_for_non_planar_surface_variant() {
         .expect("face surface should convert to nurbs");
     g.transaction(|edit| {
         edit.face_attr_mut_unchecked(face_key).surface = Surface::Nurbs(surface);
-        Ok::<_, TopologyEditError>(())
+        Ok::<_, ModelEditError>(())
     })
     .unwrap();
     let edge = first_outer_edge_key(&g, face_key);
@@ -280,7 +281,7 @@ fn split_face_edge_uses_existing_pcurve_for_non_planar_surface_variant() {
 
 #[test]
 fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let points = [
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 0.0, 0.0),
@@ -332,7 +333,7 @@ fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
 
 #[test]
 fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
     let imprint = TrimmedCurve2::segment(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0));
 
@@ -368,7 +369,7 @@ fn split_face_by_imprints_splits_rectangle_with_boundary_chord() {
 
 #[test]
 fn split_face_by_imprints_deduplicates_reversed_boundary_chords() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
     let first = TrimmedCurve2::segment(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0));
     let second = TrimmedCurve2::segment(Point2::new(2.0, 2.0), Point2::new(0.0, 0.0));
@@ -389,7 +390,7 @@ fn split_face_by_imprints_deduplicates_reversed_boundary_chords() {
 
 #[test]
 fn split_face_by_imprints_splits_boundary_edge_at_imprint_endpoint() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
     let imprint = TrimmedCurve2::segment(Point2::new(1.0, 0.0), Point2::new(2.0, 2.0));
 
@@ -418,7 +419,7 @@ fn split_face_by_imprints_splits_boundary_edge_at_imprint_endpoint() {
 
 #[test]
 fn split_face_by_imprints_applies_multiple_non_crossing_chords() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let points = [
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(2.0, 0.0, 0.0),
@@ -464,7 +465,7 @@ fn split_face_by_imprints_applies_multiple_non_crossing_chords() {
 
 #[test]
 fn split_face_by_imprints_ignores_crossing_chords_after_first_split() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
     let imprints = [
         planar_imprint(TrimmedCurve2::segment(
@@ -487,7 +488,7 @@ fn split_face_by_imprints_ignores_crossing_chords_after_first_split() {
 
 #[test]
 fn split_face_by_imprints_adds_closed_interior_loop() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).expect("face should build");
     let points = [
         Point2::new(1.0, 1.0),
@@ -621,7 +622,7 @@ fn face_imprint_graph_detects_closed_loop_components() {
 
 #[test]
 fn split_face_by_imprints_preserves_curved_section_edge_geometry() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).expect("face should build");
     let pcurve = nurbs_span(
         NurbsCurve2::interpolate(&[
@@ -642,7 +643,7 @@ fn split_face_by_imprints_preserves_curved_section_edge_geometry() {
 
 #[test]
 fn split_face_preserves_curved_loop() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 6.0, 6.0).expect("face should build");
     let pcurves = [
         [
@@ -684,7 +685,7 @@ fn split_face_preserves_curved_loop() {
 
 #[test]
 fn split_face_by_imprints_preserves_closed_nurbs_as_single_curved_edge() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).expect("face should build");
     let pcurve = nurbs_span(
         NurbsCurve2::interpolate(&[
@@ -735,7 +736,7 @@ fn planar_imprint(pcurve: TrimmedCurve2) -> FaceImprint {
     FaceImprint::new(curve, pcurve)
 }
 
-fn first_outer_edge_key(g: &GMap<StandardPayload>, face_key: FaceKey) -> EdgeKey {
+fn first_outer_edge_key(g: &Model<StandardPayload>, face_key: FaceKey) -> EdgeKey {
     let face = g.face_attr_unchecked(face_key).face(g);
     face.outer_loop()
         .expect("face should have an outer loop")
@@ -743,7 +744,7 @@ fn first_outer_edge_key(g: &GMap<StandardPayload>, face_key: FaceKey) -> EdgeKey
         .key()
 }
 
-fn incident_face_keys(g: &GMap<StandardPayload>, edge: EdgeKey) -> Vec<FaceKey> {
+fn incident_face_keys(g: &Model<StandardPayload>, edge: EdgeKey) -> Vec<FaceKey> {
     let mut faces = g
         .edge_unchecked(edge)
         .faces()
@@ -754,7 +755,7 @@ fn incident_face_keys(g: &GMap<StandardPayload>, edge: EdgeKey) -> Vec<FaceKey> 
     faces
 }
 
-fn edge_mid_parameter(g: &GMap<StandardPayload>, edge: EdgeKey) -> f64 {
+fn edge_mid_parameter(g: &Model<StandardPayload>, edge: EdgeKey) -> f64 {
     let attr = g.edge_attr_unchecked(edge);
     let start = g.attribute_unchecked::<Cell0>(attr.dart).point;
     let end_dart = g.alpha(Dim::Zero, attr.dart);
@@ -763,7 +764,7 @@ fn edge_mid_parameter(g: &GMap<StandardPayload>, edge: EdgeKey) -> f64 {
     0.5 * (interval.start + interval.end)
 }
 
-fn edge_between_points(g: &GMap<StandardPayload>, first: Point3, second: Point3) -> EdgeKey {
+fn edge_between_points(g: &Model<StandardPayload>, first: Point3, second: Point3) -> EdgeKey {
     g.iter_edges()
         .find_map(|(key, edge)| {
             let start = g.attribute::<Cell0>(edge.dart)?.point;
@@ -778,7 +779,7 @@ fn edge_between_points(g: &GMap<StandardPayload>, first: Point3, second: Point3)
 
 #[test]
 fn imprint_sections_retain_source_indices_and_directed_intervals() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let face = add_rectangle(&mut g, Plane::xy(), 4.0, 4.0).unwrap();
     let points = [
         Point2::new(1.0, 1.0),
@@ -834,7 +835,7 @@ fn a_period_spanning_imprint_cuts_a_boundaryless_face_into_two_caps() {
     use ngk::topology::LoopKind;
     use std::f64::consts::TAU;
 
-    let (mut g, solid) = solids::sphere(1.0).expect("sphere").into_map();
+    let (mut g, solid) = solids::sphere(1.0).expect("sphere").into_model();
     let face = g.solid_unchecked(solid).faces()[0].key();
     assert!(g.face_unchecked(face).loops().is_empty());
 

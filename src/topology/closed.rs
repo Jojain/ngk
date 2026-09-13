@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
-use super::gmap::{MergeTopology, TopologyMerge};
 use super::payload::Payload;
+use crate::model::{MergeTopology, TopologyMerge};
 
 /// Trait for topology views that can report whether they are closed.
 ///

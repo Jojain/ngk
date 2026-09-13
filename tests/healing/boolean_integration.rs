@@ -2,9 +2,9 @@ use ngk::StandardPayload;
 use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
 use ngk::geometry::Frame;
 use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
+use ngk::model::Model;
 use ngk::modeling::solids;
-use ngk::topology::TopologyEditError;
-use ngk::topology::gmap::GMap;
+use ngk::topology::ModelEditError;
 use ngk::topology::shape::{Shape, SolidTag};
 use ngk::topology::shape_keys::SolidKey;
 
@@ -12,11 +12,11 @@ use ngk::topology::shape_keys::SolidKey;
 const BOOLEAN_TOLERANCE: f64 = 1.0e-7;
 
 /// Imports `tool` into `host`'s map and returns the imported solid's key.
-fn import(host: &mut GMap<StandardPayload>, tool: Shape<SolidTag>) -> SolidKey {
-    let (map, key) = tool.into_map();
+fn import(host: &mut Model<StandardPayload>, tool: Shape<SolidTag>) -> SolidKey {
+    let (map, key) = tool.into_model();
     host.transaction(|edit| {
         let handle = edit.merge(map.solid_unchecked(key));
-        Ok::<_, TopologyEditError>(
+        Ok::<_, ModelEditError>(
             edit.solid_key_at(handle)
                 .expect("imported solid should register"),
         )
@@ -32,11 +32,11 @@ fn import(host: &mut GMap<StandardPayload>, tool: Shape<SolidTag>) -> SolidKey {
 fn evaluate(
     operation: BooleanOperation,
     heal: bool,
-) -> (GMap<StandardPayload>, SolidKey, (usize, usize, usize)) {
+) -> (Model<StandardPayload>, SolidKey, (usize, usize, usize)) {
     let size = 2.0;
     let (mut map, block) = solids::block_at(Frame::xyz(), size, size, size)
         .expect("block")
-        .into_map();
+        .into_model();
     let cylinder = import(
         &mut map,
         solids::cylinder_at(Frame::xyz(), size, 2.0 * size).expect("cylinder"),
@@ -64,7 +64,7 @@ fn evaluate(
 }
 
 /// Heals a result that the Boolean already healed, to check it is a fixed point.
-fn reheal(map: &mut GMap<StandardPayload>, solid: SolidKey) -> ngk::healing::HealingReport {
+fn reheal(map: &mut Model<StandardPayload>, solid: SolidKey) -> ngk::healing::HealingReport {
     remove_redundant_cells(
         map,
         HealingOptions {
@@ -121,7 +121,7 @@ fn boolean_results_are_healed_by_default() {
         let size = 2.0;
         let (mut map, block) = solids::block_at(Frame::xyz(), size, size, size)
             .expect("block")
-            .into_map();
+            .into_model();
         let cylinder = import(
             &mut map,
             solids::cylinder_at(Frame::xyz(), size, 2.0 * size).expect("cylinder"),

@@ -21,7 +21,7 @@ pub fn run() -> Result<ScriptResult, String> {
     let solid = build_hollow_cylinder_solid()?;
 
     let mut hints = VizHints::new();
-    for (key, _) in solid.map().iter_faces() {
+    for (key, _) in solid.model().iter_faces() {
         hints.face(
             key,
             Style::default()
@@ -31,7 +31,7 @@ pub fn run() -> Result<ScriptResult, String> {
         );
     }
 
-    Ok(ScriptResult::from_gmap_with_hints(solid.map(), &hints))
+    Ok(ScriptResult::from_model_with_hints(solid.model(), &hints))
 }
 
 pub fn build_hollow_cylinder_solid() -> Result<Shape<SolidTag, StandardPayload>, String> {
@@ -82,7 +82,7 @@ mod tests {
             .expect("an extruded solid shell is dart-rooted");
         assert!(
             Closed::new(
-                Sheet::from_dart(solid.map(), shell_dart)
+                Sheet::from_dart(solid.model(), shell_dart)
                     .expect("solid shell must have a registered sheet"),
             )
             .is_some(),
@@ -122,7 +122,7 @@ mod tests {
 
         assert!(
             Closed::new(
-                Sheet::from_dart(solid.map(), shell_dart)
+                Sheet::from_dart(solid.model(), shell_dart)
                     .expect("solid shell must have a registered sheet"),
             )
             .is_some(),

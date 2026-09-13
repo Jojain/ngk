@@ -1,6 +1,6 @@
 //! BRep layer of the visualization pipeline.
 //!
-//! Walks a [`GMap`] and emits one [`VizVertex`] per stored 0-cell, one
+//! Walks a [`Model`] and emits one [`VizVertex`] per stored 0-cell, one
 //! [`VizEdge`] per stored 1-cell, one [`VizFace`] per stored 2-cell. The
 //! actual geometry comes from [`crate::tessellate`]; this module only does
 //! id-bookkeeping and applies styling from [`VizHints`].
@@ -17,13 +17,14 @@ use std::collections::HashMap;
 
 use super::hints::{Style, VizHints};
 use super::scene::{VizEdge, VizFace, VizScene, VizVertex};
+use crate::model::{Cell0, Model};
 use crate::tessellate::{TessellateOpts, tessellate_edge, tessellate_face_key};
 use crate::topology::attributes::EdgeAttr;
-use crate::topology::gmap::{Cell0, Dim, GMap};
+use crate::topology::gmap::Dim;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
 
-/// Lookup tables built while emitting the BRep layer. Lets the GMap overlay
+/// Lookup tables built while emitting the BRep layer. Lets the gmap overlay
 /// resolve "which edge does this dart belong to" without re-scanning.
 #[derive(Debug, Clone, Default)]
 pub struct BrepIndex {
@@ -36,7 +37,7 @@ pub struct BrepIndex {
 /// Tessellate every BRep entity in `g` and append it to `scene`. Returns an
 /// [`BrepIndex`] mapping topology keys to per-scene ids.
 pub fn emit_brep<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     hints: &VizHints,
     opts: TessellateOpts,
     scene: &mut VizScene,
@@ -49,7 +50,7 @@ pub fn emit_brep<P: Payload>(
 }
 
 fn emit_vertices<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     hints: &VizHints,
     scene: &mut VizScene,
     index: &mut BrepIndex,
@@ -69,7 +70,7 @@ fn emit_vertices<P: Payload>(
 }
 
 fn emit_edges<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     hints: &VizHints,
     opts: TessellateOpts,
     scene: &mut VizScene,
@@ -79,7 +80,7 @@ fn emit_edges<P: Payload>(
         let id = scene.edges.len() as u32;
         index.edge_id_by_key.insert(key, id);
 
-        // Map every dart in the 1-cell to this edge so the GMap layer can
+        // Map every dart in the 1-cell to this edge so the gmap layer can
         // find the curve from any dart.
         for d in g.orbit(attr.dart, g.orbit_indices(Dim::One)) {
             index.edge_key_by_dart.insert(d.id() as u32, key);
@@ -104,7 +105,7 @@ fn emit_edges<P: Payload>(
 }
 
 fn emit_faces<P: Payload>(
-    g: &GMap<P>,
+    g: &Model<P>,
     hints: &VizHints,
     opts: TessellateOpts,
     scene: &mut VizScene,
@@ -143,7 +144,7 @@ fn emit_faces<P: Payload>(
 /// vertex's stored point lies off the curve and `param_at` is broken). We
 /// still want to draw *something*, so fall back to the chord between the
 /// dart's two endpoints.
-fn fallback_chord<P: Payload>(g: &GMap<P>, attr: &EdgeAttr<P::E>) -> Vec<[f64; 3]> {
+fn fallback_chord<P: Payload>(g: &Model<P>, attr: &EdgeAttr<P::E>) -> Vec<[f64; 3]> {
     let dart = attr.dart;
     let other = g.alpha(Dim::Zero, dart);
     let p0 = g
@@ -159,7 +160,7 @@ fn fallback_chord<P: Payload>(g: &GMap<P>, attr: &EdgeAttr<P::E>) -> Vec<[f64; 3
 }
 
 /// Apply a `Style` override on top of an existing entity's optional fields,
-/// preferring the style. Used by the GMap overlay for darts.
+/// preferring the style. Used by the gmap overlay for darts.
 #[allow(dead_code)]
 pub(crate) fn merge_color(base: Option<String>, style: Option<&Style>) -> Option<String> {
     style.and_then(|s| s.color.clone()).or(base)

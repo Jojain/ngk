@@ -63,7 +63,7 @@ pub enum ImportSkipReason {
         keyword: String,
     },
 
-    /// An edge used by more than two faces. NGK is a 3-GMap and cannot hold a
+    /// An edge used by more than two faces. NGK is a 3-gmap and cannot hold a
     /// non-manifold edge, so the solid carrying it is rejected.
     NonManifoldEdge {
         /// How many faces use it.

@@ -12,12 +12,12 @@
 //! fixture states the shell orientation and nothing else.
 
 use ngk::geometry::Frame;
+use ngk::model::Model;
 use ngk::topology::attributes::ShellRoot;
-use ngk::topology::gmap::GMap;
 use ngk::topology::orientation::Orientation;
 use ngk::topology::shape::{Shape, SolidTag};
 use ngk::topology::shape_keys::FaceKey;
-use ngk::topology::{StandardPayload, TopologyEditError};
+use ngk::topology::{ModelEditError, StandardPayload};
 
 /// A sphere of radius `outer` with a concentric spherical cavity of radius
 /// `inner` in it.
@@ -28,7 +28,7 @@ use ngk::topology::{StandardPayload, TopologyEditError};
 pub fn hollow_sphere(outer: f64, inner: f64) -> Shape<SolidTag, StandardPayload> {
     use ngk::builders::solids::add_sphere;
 
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let outer_solid =
         add_sphere(&mut g, Frame::xyz(), outer).expect("an outer sphere should build");
     let cavity = add_sphere(&mut g, Frame::xyz(), inner).expect("a cavity sphere should build");
@@ -44,14 +44,14 @@ pub fn hollow_sphere(outer: f64, inner: f64) -> Shape<SolidTag, StandardPayload>
                 sense: Orientation::Reversed,
             };
             edit.sheet_attr_mut_unchecked(
-                edit.map()
+                edit.model()
                     .sheet_key_at_face(cavity_face)
                     .expect("the cavity's face is registered as a sheet"),
             )
             .root = void;
             let attr = edit.solid_attr_mut_unchecked(outer_solid);
             attr.inner_shells = Some(vec![void]);
-            Ok::<_, TopologyEditError>(outer_solid)
+            Ok::<_, ModelEditError>(outer_solid)
         })
         .expect("a hollow sphere should commit");
 
@@ -60,7 +60,7 @@ pub fn hollow_sphere(outer: f64, inner: f64) -> Shape<SolidTag, StandardPayload>
 
 /// The one face a boundaryless solid's outer shell is.
 fn boundaryless_face(
-    g: &GMap<StandardPayload>,
+    g: &Model<StandardPayload>,
     solid: ngk::topology::shape_keys::SolidKey,
 ) -> FaceKey {
     g.solid(solid)

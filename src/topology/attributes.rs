@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
 use crate::geometry::{Axis2, Curve, DomainSide, Point3, Surface};
+use crate::model::{Cell0, Cell2, Model};
 use crate::topology::dart::Dart;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Cell0, Cell2, GMap};
 use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
@@ -30,12 +30,12 @@ impl<T> VertexAttr<T> {
         Self { dart, point, data }
     }
 
-    /// Returns a typed vertex view over this attribute in `gmap`.
-    pub fn vertex<'a, P: Payload>(&self, gmap: &'a GMap<P>) -> Vertex<'a, P> {
-        let key = gmap
+    /// Returns a typed vertex view over this attribute in `model`.
+    pub fn vertex<'a, P: Payload>(&self, model: &'a Model<P>) -> Vertex<'a, P> {
+        let key = model
             .cell_key::<Cell0>(self.dart)
             .expect("VertexAttr must be registered to produce a Vertex view");
-        Vertex::new(gmap, key)
+        Vertex::new(model, key)
     }
 }
 
@@ -58,9 +58,9 @@ impl<T> EdgeAttr<T> {
         Self { dart, curve, data }
     }
 
-    /// Returns a typed edge view over this attribute in `gmap`.
-    pub fn edge<'a, P: Payload>(&self, gmap: &'a GMap<P>, key: EdgeKey) -> Edge<'a, P> {
-        Edge::new(gmap, key)
+    /// Returns a typed edge view over this attribute in `model`.
+    pub fn edge<'a, P: Payload>(&self, model: &'a Model<P>, key: EdgeKey) -> Edge<'a, P> {
+        Edge::new(model, key)
     }
 }
 
@@ -304,12 +304,12 @@ impl<T> FaceAttr<T> {
         }
     }
 
-    /// Returns a typed face view over this attribute in `gmap`.
-    pub fn face<'a, P: Payload<F = T>>(&'a self, gmap: &'a GMap<P>) -> Face<'a, P> {
-        let key = gmap
+    /// Returns a typed face view over this attribute in `model`.
+    pub fn face<'a, P: Payload<F = T>>(&'a self, model: &'a Model<P>) -> Face<'a, P> {
+        let key = model
             .cell_key::<Cell2>(self.seed_unchecked())
             .expect("FaceAttr must be registered to produce a Face view");
-        Face::new(gmap, key)
+        Face::new(model, key)
     }
 
     pub(crate) fn wrapping(&self) -> impl Iterator<Item = (Dart, Axis2)> + '_ {

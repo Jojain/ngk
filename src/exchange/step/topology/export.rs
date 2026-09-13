@@ -28,9 +28,10 @@
 use std::collections::HashMap;
 
 use crate::geometry::{Axis2, LINEAR_TOLERANCE, Point2, SurfacePeriodicity};
+use crate::model::Model;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::gmap::{Dart, GMap};
+use crate::topology::gmap::Dart;
 use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, SolidKey, VertexKey};
@@ -165,7 +166,7 @@ impl FaceCut {
 /// Writes one solid, returning its `MANIFOLD_SOLID_BREP`.
 pub fn write_solid<P: Payload>(
     builder: &mut InstanceBuilder,
-    gmap: &GMap<P>,
+    gmap: &Model<P>,
     key: SolidKey,
 ) -> Result<EntityId, StepError> {
     let solid = gmap
@@ -203,7 +204,7 @@ pub fn write_solid<P: Payload>(
 /// Writes one shell of a solid as a `CLOSED_SHELL`.
 fn write_shell<P: Payload>(
     builder: &mut InstanceBuilder,
-    gmap: &GMap<P>,
+    gmap: &Model<P>,
     shell: &ShellRef<'_, P>,
     cache: &mut ExportCache,
 ) -> Result<EntityId, StepError> {
@@ -216,7 +217,7 @@ fn write_shell<P: Payload>(
 
 fn write_face<P: Payload>(
     builder: &mut InstanceBuilder,
-    gmap: &GMap<P>,
+    gmap: &Model<P>,
     face: &Face<'_, P>,
     cache: &mut ExportCache,
 ) -> Result<EntityId, StepError> {
@@ -269,7 +270,7 @@ fn face_same_sense<P: Payload>(face: &Face<'_, P>) -> Result<bool, TopologyError
 
 fn write_edge_loop<P: Payload>(
     builder: &mut InstanceBuilder,
-    gmap: &GMap<P>,
+    gmap: &Model<P>,
     face: &Face<'_, P>,
     bound: &SeamedBound,
     cache: &mut ExportCache,
@@ -311,7 +312,7 @@ fn write_edge_loop<P: Payload>(
 /// has no vertex for: it is written from the surface.
 fn bound_corners<P: Payload>(
     builder: &mut InstanceBuilder,
-    gmap: &GMap<P>,
+    gmap: &Model<P>,
     face: &Face<'_, P>,
     bound: &SeamedBound,
     cache: &mut ExportCache,
@@ -343,7 +344,7 @@ fn bound_corners<P: Payload>(
 /// An edge that closes on itself leaves and arrives at the one vertex it
 /// passes through, which `EDGE_CURVE` spells by naming that vertex twice.
 fn edge_corners<P: Payload>(
-    gmap: &GMap<P>,
+    gmap: &Model<P>,
     dart: Dart,
 ) -> Result<(Vertex<'_, P>, Vertex<'_, P>), TopologyError> {
     let edge = Edge::from_dart(gmap, dart).ok_or(TopologyError::UnregisteredEdge { dart })?;
@@ -366,7 +367,7 @@ fn edge_corners<P: Payload>(
 /// `ORIENTED_EDGE.orientation`.
 fn write_real_edge<P: Payload>(
     builder: &mut InstanceBuilder,
-    gmap: &GMap<P>,
+    gmap: &Model<P>,
     dart: Dart,
     cache: &mut ExportCache,
 ) -> Result<(EntityId, bool), StepError> {
@@ -391,7 +392,7 @@ fn write_real_edge<P: Payload>(
 
 fn write_edge_curve<P: Payload>(
     builder: &mut InstanceBuilder,
-    gmap: &GMap<P>,
+    gmap: &Model<P>,
     key: EdgeKey,
     cache: &mut ExportCache,
 ) -> Result<EntityId, StepError> {

@@ -1,7 +1,7 @@
 //! Visualization pipeline.
 //!
 //! ```text
-//!   GMap + VizHints
+//!   Model + VizHints
 //!         │
 //!         ▼
 //!   viz::brep   (vertices, edges, faces — via crate::tessellate::*)
@@ -13,8 +13,8 @@
 //!   VizScene  ──►  wasm bridge  ──►  visualization/src/components/VizSceneView.tsx
 //! ```
 //!
-//! Scripts only build a [`GMap`] and an optional [`VizHints`] bag; the
-//! orchestrator [`scene_from_gmap`] does the rest. A [`ScriptResult`] also
+//! Scripts only build a [`Model`] and an optional [`VizHints`] bag; the
+//! orchestrator [`scene_from_model`] does the rest. A [`ScriptResult`] also
 //! ships an opaque [`GMapSnapshot`] so the front-end can drive an interactive
 //! console (`window.$gmap`).
 
@@ -34,8 +34,9 @@ pub use geometry::{
 pub use hints::{Style, VizHints};
 pub use scene::{VizAlphaLink, VizDart, VizEdge, VizFace, VizLabel, VizScene, VizVertex};
 
+use crate::model::{Cell0, Model};
 use crate::tessellate::{CurveOpts, SurfaceOpts, TessellateOpts};
-use crate::topology::gmap::{Cell0, Dart, Dim, GMap};
+use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 
 const VIEWER_TESSELLATION_OPTS: TessellateOpts = TessellateOpts {
@@ -43,19 +44,19 @@ const VIEWER_TESSELLATION_OPTS: TessellateOpts = TessellateOpts {
     surface: SurfaceOpts { nu: 64, nv: 32 },
 };
 
-/// Builds a viewer-quality tessellated scene from a `GMap`.
+/// Builds a viewer-quality tessellated scene from a `Model`.
 ///
 /// Curves use 64 segments and curved surfaces use a 64 × 32 grid. `hints`
 /// carries presentation overrides (colors, labels, opacity); pass
 /// [`VizHints::new`] when no overrides are needed. Lower-level tessellation
 /// consumers keep the lighter [`TessellateOpts::default`] preset.
-pub fn scene_from_gmap<P: Payload>(g: &GMap<P>, hints: &VizHints) -> VizScene {
-    scene_from_gmap_with_opts(g, hints, VIEWER_TESSELLATION_OPTS)
+pub fn scene_from_model<P: Payload>(g: &Model<P>, hints: &VizHints) -> VizScene {
+    scene_from_model_with_opts(g, hints, VIEWER_TESSELLATION_OPTS)
 }
 
-/// Same as [`scene_from_gmap`], with explicit tessellation knobs.
-pub fn scene_from_gmap_with_opts<P: Payload>(
-    g: &GMap<P>,
+/// Same as [`scene_from_model`], with explicit tessellation knobs.
+pub fn scene_from_model_with_opts<P: Payload>(
+    g: &Model<P>,
     hints: &VizHints,
     opts: TessellateOpts,
 ) -> VizScene {
@@ -65,7 +66,7 @@ pub fn scene_from_gmap_with_opts<P: Payload>(
     scene
 }
 
-/// A serializable dump of a `GMap`'s state, consumable from JS.
+/// A serializable dump of a `Model`'s state, consumable from JS.
 ///
 /// - `alphas[i][d]` = id of αᵢ(d). Free darts map to themselves.
 /// - `vertexPoints` is one entry per dart that carries a stamped position
@@ -88,7 +89,7 @@ pub struct VertexPointEntry {
 }
 
 /// Snapshot every involution table and per-dart vertex position.
-pub fn gmap_snapshot<P: Payload>(g: &GMap<P>) -> GMapSnapshot {
+pub fn gmap_snapshot<P: Payload>(g: &Model<P>) -> GMapSnapshot {
     let dim = g.dimension();
     let n = g.dart_count();
     let mut alphas: Vec<Vec<u32>> = (0..dim).map(|_| Vec::with_capacity(n)).collect();
@@ -127,19 +128,19 @@ pub struct ScriptResult {
 }
 
 impl ScriptResult {
-    /// Build a result from a `GMap` with default hints and no GMap snapshot.
-    pub fn from_gmap<P: Payload>(g: &GMap<P>) -> Self {
+    /// Build a result from a `Model` with default hints and no gmap snapshot.
+    pub fn from_model<P: Payload>(g: &Model<P>) -> Self {
         Self {
-            scene: scene_from_gmap(g, &VizHints::new()),
+            scene: scene_from_model(g, &VizHints::new()),
             gmap: None,
         }
     }
 
-    /// Build a result from a `GMap` + presentation hints, including the GMap
+    /// Build a result from a `Model` + presentation hints, including the gmap
     /// snapshot so the front-end can introspect the topology.
-    pub fn from_gmap_with_hints<P: Payload>(g: &GMap<P>, hints: &VizHints) -> Self {
+    pub fn from_model_with_hints<P: Payload>(g: &Model<P>, hints: &VizHints) -> Self {
         Self {
-            scene: scene_from_gmap(g, hints),
+            scene: scene_from_model(g, hints),
             gmap: Some(gmap_snapshot(g)),
         }
     }

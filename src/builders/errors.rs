@@ -1,3 +1,4 @@
+use crate::topology::ModelEditError;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
@@ -6,7 +7,7 @@ use crate::{
     geometry::{NurbsError, Point3},
     topology::{
         Dart,
-        gmap::{Dim, TopologyEditError},
+        gmap::Dim,
         planar::PlanarityError,
         shape_keys::{EdgeKey, FaceKey, ProfileKey},
     },
@@ -15,28 +16,28 @@ use thiserror::Error;
 
 /// Cloneable builder error wrapper that preserves a topology error as its source.
 #[derive(Debug, Clone)]
-pub struct TopologyEditFailure(Arc<TopologyEditError>);
+pub struct ModelEditFailure(Arc<ModelEditError>);
 
-impl TopologyEditFailure {
+impl ModelEditFailure {
     /// Wraps a topology error so builder errors can remain cloneable.
-    pub fn new(error: TopologyEditError) -> Self {
+    pub fn new(error: ModelEditError) -> Self {
         Self(Arc::new(error))
     }
 }
 
-impl fmt::Display for TopologyEditFailure {
+impl fmt::Display for ModelEditFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
     }
 }
 
-impl Error for TopologyEditFailure {
+impl Error for ModelEditFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         Some(self.0.as_ref())
     }
 }
 
-impl PartialEq for TopologyEditFailure {
+impl PartialEq for ModelEditFailure {
     fn eq(&self, other: &Self) -> bool {
         self.to_string() == other.to_string()
     }
@@ -53,8 +54,8 @@ pub enum EdgeCreationError {
     #[error("Invalid {name} angle: {angle}")]
     InvalidAngle { name: &'static str, angle: f64 },
 
-    #[error("edge topology edit failed")]
-    TopologyEditFailed(#[source] TopologyEditFailure),
+    #[error("edge model edit failed")]
+    ModelEditFailed(#[source] ModelEditFailure),
 }
 
 #[derive(Debug, Clone, Error, PartialEq)]
@@ -99,19 +100,19 @@ pub enum ChamferError {
     ChamferFaceSplitFailed { face: FaceKey },
     #[error("chamfer target is not implemented by the planar builder yet")]
     UnsupportedChamferTarget,
-    #[error("chamfer topology edit failed")]
-    TopologyEditFailed(#[source] TopologyEditFailure),
+    #[error("chamfer model edit failed")]
+    ModelEditFailed(#[source] ModelEditFailure),
 }
 
-impl From<TopologyEditError> for ChamferError {
-    fn from(error: TopologyEditError) -> Self {
-        Self::TopologyEditFailed(TopologyEditFailure::new(error))
+impl From<ModelEditError> for ChamferError {
+    fn from(error: ModelEditError) -> Self {
+        Self::ModelEditFailed(ModelEditFailure::new(error))
     }
 }
 
-impl From<TopologyEditError> for EdgeCreationError {
-    fn from(error: TopologyEditError) -> Self {
-        Self::TopologyEditFailed(TopologyEditFailure::new(error))
+impl From<ModelEditError> for EdgeCreationError {
+    fn from(error: ModelEditError) -> Self {
+        Self::ModelEditFailed(ModelEditFailure::new(error))
     }
 }
 
@@ -137,13 +138,13 @@ pub enum ExtrudeError {
     SurfaceTranslationFailed { dart: Dart, source: NurbsError },
     #[error("missing face for key {dart:?}")]
     MissingFace { dart: FaceKey },
-    #[error("extrusion topology edit failed")]
-    TopologyEditFailed(#[source] TopologyEditFailure),
+    #[error("extrusion model edit failed")]
+    ModelEditFailed(#[source] ModelEditFailure),
 }
 
-impl From<TopologyEditError> for ExtrudeError {
-    fn from(error: TopologyEditError) -> Self {
-        Self::TopologyEditFailed(TopologyEditFailure::new(error))
+impl From<ModelEditError> for ExtrudeError {
+    fn from(error: ModelEditError) -> Self {
+        Self::ModelEditFailed(ModelEditFailure::new(error))
     }
 }
 
@@ -178,21 +179,21 @@ pub enum PolylineError {
     InvalidRectangleSize { axis: &'static str, value: f64 },
     #[error("darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
     SewFailed { dim: Dim, first: Dart, second: Dart },
-    #[error("polyline topology edit failed")]
-    TopologyEditFailed(#[source] TopologyEditFailure),
+    #[error("polyline model edit failed")]
+    ModelEditFailed(#[source] ModelEditFailure),
     #[error("failed to create polyline edge")]
     EdgeCreationFailed(#[from] EdgeCreationError),
     #[error("failed to create profile pcurve")]
     Nurbs(#[from] NurbsError),
 }
 
-impl From<TopologyEditError> for PolylineError {
-    fn from(error: TopologyEditError) -> Self {
+impl From<ModelEditError> for PolylineError {
+    fn from(error: ModelEditError) -> Self {
         match error {
-            TopologyEditError::NotSewable { dim, first, second } => {
+            ModelEditError::NotSewable { dim, first, second } => {
                 Self::SewFailed { dim, first, second }
             }
-            error => Self::TopologyEditFailed(TopologyEditFailure::new(error)),
+            error => Self::ModelEditFailed(ModelEditFailure::new(error)),
         }
     }
 }
@@ -216,12 +217,12 @@ pub enum FaceCreationError {
         outer_radius: f64,
         inner_radius: f64,
     },
-    #[error("face topology edit failed")]
-    TopologyEditFailed(#[source] TopologyEditFailure),
+    #[error("face model edit failed")]
+    ModelEditFailed(#[source] ModelEditFailure),
 }
 
-impl From<TopologyEditError> for FaceCreationError {
-    fn from(error: TopologyEditError) -> Self {
-        Self::TopologyEditFailed(TopologyEditFailure::new(error))
+impl From<ModelEditError> for FaceCreationError {
+    fn from(error: ModelEditError) -> Self {
+        Self::ModelEditFailed(ModelEditFailure::new(error))
     }
 }

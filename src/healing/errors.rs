@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 use crate::builders::removal::CellRemovalError;
-use crate::topology::TopologyEditError;
+use crate::topology::ModelEditError;
 use crate::topology::shape_keys::{FaceKey, SolidKey};
 
 /// Failure raised while healing a map.
@@ -25,5 +25,5 @@ pub enum HealingError {
     Removal(#[from] CellRemovalError),
     /// A staged edit was rejected.
     #[error(transparent)]
-    Topology(#[from] TopologyEditError),
+    Topology(#[from] ModelEditError),
 }

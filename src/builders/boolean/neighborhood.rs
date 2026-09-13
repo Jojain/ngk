@@ -1,7 +1,8 @@
 //! Face-fragment identity and adjacency derived from the staged map.
 
 use super::{BooleanPreparation, BooleanSide};
-use crate::topology::{gmap::GMap, payload::Payload, shape_keys::FaceKey};
+use crate::model::Model;
+use crate::topology::{payload::Payload, shape_keys::FaceKey};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Copy)]
@@ -18,7 +19,7 @@ pub(crate) struct FragmentGraph {
 
 impl FragmentGraph {
     /// Builds same-operand components, treating every known intersection edge as a barrier.
-    pub(crate) fn build<P: Payload>(map: &GMap<P>, preparation: &BooleanPreparation) -> Self {
+    pub(crate) fn build<P: Payload>(map: &Model<P>, preparation: &BooleanPreparation) -> Self {
         let mut ordered = BTreeMap::new();
         for (side, lineage) in [
             (BooleanSide::First, &preparation.first_lineage),

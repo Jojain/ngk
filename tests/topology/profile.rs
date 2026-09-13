@@ -1,13 +1,14 @@
 use ngk::builders::profiles::add_rectangle;
 use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
+use ngk::model::Model;
 use ngk::topology::closed::Closed;
-use ngk::topology::gmap::{Dim, GMap};
+use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::profile::Profile;
 
 #[test]
 fn closed_profile_corners_pair_each_vertex_with_ordered_incident_edges() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let key = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("rectangle should build");
     let profile = Closed::new(g.profile_unchecked(key)).expect("rectangle should be closed");
     let edges = profile.edges();
@@ -33,7 +34,7 @@ fn closed_profile_corners_pair_each_vertex_with_ordered_incident_edges() {
 
 #[test]
 fn rectangle_profile_traverses_corners_and_edges_in_geometric_order() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let key = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("rectangle should build");
     let profile = g.profile_unchecked(key);
     let expected = [
@@ -61,7 +62,7 @@ fn rectangle_profile_traverses_corners_and_edges_in_geometric_order() {
 
 #[test]
 fn alpha0_of_rectangle_profile_seed_traverses_the_same_corners_in_reverse() {
-    let mut g = GMap::<StandardPayload>::new();
+    let mut g = Model::<StandardPayload>::new();
     let key = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("rectangle should build");
     let seed = g.profile_attr_unchecked(key).dart;
     let reversed = Profile::from_dart(&g, g.alpha(Dim::Zero, seed))
