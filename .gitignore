@@ -43,3 +43,6 @@ __pycache__/
 **/__pycache__/
 *.pyd
 
+# Foreign STEP fixtures: regenerate with tests/exchange/foreign/generate/, never tracked
+*.step
+

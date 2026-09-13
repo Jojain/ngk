@@ -29,12 +29,13 @@ do not `pip install` into the system Python. `.venv/Scripts/python.exe`
 
 ## Fixture naming convention
 
-When a fixture is checked in rather than generated on the fly in a test,
-keep the generating script beside the file it produces, under
-`tests/fixtures/step/`: `generate_<name>.py` produces `<name>.step`. This
-lets a fixture be regenerated or extended without reverse-engineering it
-from the STEP text. Keep the script itself uncommented — it's a few lines
-of straight-line build123d calls, not something that needs explaining.
+Foreign STEP fixtures live under `tests/exchange/foreign/`. The files
+themselves are in `files/`; the build123d scripts that produce them are in
+`generate/`: `generate_<name>.py` writes `../files/<name>.step`. One script
+may produce several files. This lets a fixture be regenerated or extended
+without reverse-engineering it from the STEP text. Keep the script itself
+uncommented — it's a few lines of straight-line build123d calls, not
+something that needs explaining.
 
 ## Building known-geometry fixtures
 
@@ -94,7 +95,7 @@ two different kernels.
 - Treat build123d scripts as throwaway test harnesses, not part of the
   `ngk` crate or its Python bindings (`bindings/python/`) — those bind
   *ngk's own* geometry, unrelated to build123d.
-- Rust-side STEP round-trip tests still belong under `tests/exchange/step/`
+- Rust-side STEP round-trip tests still belong under `tests/exchange/`
   per the project's normal test-location rule; build123d is the tool you
   reach for to *generate the fixture file* or *independently check* what
   those tests assert against, not a replacement for them.

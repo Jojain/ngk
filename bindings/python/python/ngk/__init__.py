@@ -8,6 +8,7 @@ from .modeling.solids import block, cut, fuse, intersect
 from .exchange.step import StepImport, read_step, step_from_string, step_to_string, write_step
 from ._ngk import *
 from ._ngk import _to_tcv_json
+from . import debug
 
 
 def to_tcv(obj, name=None, color="#e8b024", alpha=1.0):

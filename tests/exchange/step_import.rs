@@ -22,8 +22,8 @@ use ngk::topology::validation::{
 
 /// A 10 × 20 × 30 box written by OpenCascade through build123d.
 ///
-/// Regenerate with `uv run python tests/fixtures/step/generate_box.py`.
-const OCCT_BOX: &str = include_str!("../fixtures/step/box.step");
+/// Regenerate with `uv run python tests/exchange/foreign/generate/generate_box.py`.
+const OCCT_BOX: &str = include_str!("foreign/files/box.step");
 
 fn read(text: &str) -> ngk::exchange::step::StepImport {
     read_step(text, &StepReadOptions::default()).expect("a planar solid should import")
@@ -246,8 +246,8 @@ fn box_with(edits: &[(&str, &str)]) -> String {
 
 /// A 4 × 3 × 3 slab bored through, written by OpenCascade through build123d.
 ///
-/// Regenerate with `uv run python tests/fixtures/step/generate_holed_slab.py`.
-const OCCT_HOLED_SLAB: &str = include_str!("../fixtures/step/holed_slab.step");
+/// Regenerate with `uv run python tests/exchange/foreign/generate/generate_holed_slab.py`.
+const OCCT_HOLED_SLAB: &str = include_str!("foreign/files/holed_slab.step");
 
 #[test]
 fn a_foreign_face_with_two_bounds_and_no_outer_one_picks_the_larger() {
@@ -304,8 +304,8 @@ fn guessing_an_outer_bound_is_reported_rather_than_silent() {
 
 /// A radius-5, height-10 cylinder written by OpenCascade through build123d.
 ///
-/// Regenerate with `uv run python tests/fixtures/step/generate_cylinder.py`.
-const OCCT_CYLINDER: &str = include_str!("../fixtures/step/cylinder.step");
+/// Regenerate with `uv run python tests/exchange/foreign/generate/generate_cylinder.py`.
+const OCCT_CYLINDER: &str = include_str!("foreign/files/cylinder.step");
 
 #[test]
 fn a_foreign_cylinder_arrives_as_a_ring_face_between_two_caps() {
@@ -352,8 +352,8 @@ fn a_foreign_cylinder_is_a_valid_oriented_solid() {
 
 /// A truncated cone written by OpenCascade through build123d.
 ///
-/// Regenerate with `uv run python tests/fixtures/step/generate_frustum.py`.
-const OCCT_FRUSTUM: &str = include_str!("../fixtures/step/frustum.step");
+/// Regenerate with `uv run python tests/exchange/foreign/generate/generate_frustum.py`.
+const OCCT_FRUSTUM: &str = include_str!("foreign/files/frustum.step");
 
 #[test]
 fn a_foreign_cone_arrives_as_a_cone() {
@@ -401,8 +401,8 @@ fn a_foreign_cones_sense_agrees_with_the_winding_rebuilt_for_it() {
 
 /// A torus of major radius 3 and minor radius 1, written by OpenCascade.
 ///
-/// Regenerate with `uv run python tests/fixtures/step/generate_torus.py`.
-const OCCT_TORUS: &str = include_str!("../fixtures/step/torus.step");
+/// Regenerate with `uv run python tests/exchange/foreign/generate/generate_torus.py`.
+const OCCT_TORUS: &str = include_str!("foreign/files/torus.step");
 
 #[test]
 fn a_foreign_torus_arrives_as_one_face_with_no_boundary() {
@@ -441,8 +441,8 @@ fn a_foreign_torus_is_a_valid_oriented_solid() {
 
 /// A sphere of radius 5, written by OpenCascade.
 ///
-/// Regenerate with `uv run python tests/fixtures/step/generate_sphere.py`.
-const OCCT_SPHERE: &str = include_str!("../fixtures/step/sphere.step");
+/// Regenerate with `uv run python tests/exchange/foreign/generate/generate_sphere.py`.
+const OCCT_SPHERE: &str = include_str!("foreign/files/sphere.step");
 
 #[test]
 fn a_foreign_sphere_arrives_as_one_face_with_no_boundary() {
@@ -485,11 +485,11 @@ fn a_foreign_sphere_is_a_valid_oriented_solid() {
 
 /// A rectangle lofted to a circle, from OpenCascade.
 ///
-/// Regenerate with `uv run python tests/fixtures/step/generate_nurbs.py`.
-const OCCT_LOFTED: &str = include_str!("../fixtures/step/lofted.step");
+/// Regenerate with `uv run python tests/exchange/foreign/generate/generate_nurbs.py`.
+const OCCT_LOFTED: &str = include_str!("foreign/files/lofted.step");
 
 /// A circle swept along a spline, from OpenCascade.
-const OCCT_SWEPT_CIRCLE: &str = include_str!("../fixtures/step/swept_circle.step");
+const OCCT_SWEPT_CIRCLE: &str = include_str!("foreign/files/swept_circle.step");
 
 #[test]
 fn foreign_splines_import_as_valid_oriented_solids() {

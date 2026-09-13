@@ -1,10 +1,8 @@
 //! Writing a solid as STEP.
 //!
 //! These assert on the structure NGK emits. What they cannot assert is that
-//! another kernel accepts it — that check lives in
-//! `../fixtures/step/validate_ngk_export.py`, which reads these same shapes
-//! back through OpenCascade and compares volumes. Both are needed: a file can
-//! satisfy every invariant below and still be rejected by a real reader.
+//! another kernel accepts it. Both are needed: a file can satisfy every
+//! invariant below and still be rejected by a real reader.
 
 use std::collections::HashMap;
 

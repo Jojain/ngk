@@ -22,7 +22,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 /// The committed fixture written by OpenCascade, via build123d.
-const BOX_STEP: &str = "tests/fixtures/step/box.step";
+const BOX_STEP: &str = "tests/exchange/foreign/files/box.step";
 
 #[test]
 fn a_solid_written_to_a_file_reads_back_as_the_same_document() {

@@ -1,4 +1,4 @@
-#[path = "fixtures/hollow.rs"]
+#[path = "support/hollow.rs"]
 mod hollow;
 
 #[path = "exchange/part21_fixture_files.rs"]

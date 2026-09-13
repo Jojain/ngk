@@ -1,4 +1,4 @@
-#[path = "fixtures/seamed.rs"]
+#[path = "support/seamed.rs"]
 mod seamed;
 
 #[path = "builders/boolean.rs"]

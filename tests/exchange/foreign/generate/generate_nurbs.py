@@ -1,8 +1,8 @@
-"""Regenerates lofted.step and swept_circle.step in this directory.
+"""Regenerates lofted.step and swept_circle.step in the sibling `files/` dir.
 
-Run with `uv run python tests/fixtures/step/generate_nurbs.py` from the repo
-root. See skills/build123d-step-testing/SKILL.md for background on using
-build123d to produce STEP fixtures.
+Run with `uv run python tests/exchange/foreign/generate/generate_nurbs.py` from
+the repo root. See skills/build123d-step-testing/SKILL.md for background on
+using build123d to produce STEP fixtures.
 
 Two fixtures, one per spelling, because Part 21 writes a B-spline two ways and
 the two share no attribute layout at all.
@@ -26,7 +26,7 @@ with bd.BuildPart() as lofted:
     with bd.BuildSketch(bd.Plane.XY.offset(10)):
         bd.Circle(5)
     bd.loft()
-bd.export_step(lofted.part, "tests/fixtures/step/lofted.step")
+bd.export_step(lofted.part, "tests/exchange/foreign/files/lofted.step")
 
 with bd.BuildPart() as swept:
     with bd.BuildLine():
@@ -34,4 +34,4 @@ with bd.BuildPart() as swept:
     with bd.BuildSketch(bd.Plane(origin=(0, 0, 0), z_dir=(0.6, 0.36, 0.48))):
         bd.Circle(2)
     bd.sweep()
-bd.export_step(swept.part, "tests/fixtures/step/swept_circle.step")
+bd.export_step(swept.part, "tests/exchange/foreign/files/swept_circle.step")

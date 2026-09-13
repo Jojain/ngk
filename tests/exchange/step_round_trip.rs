@@ -296,7 +296,7 @@ fn a_spline_solid_read_from_a_file_survives_being_written_back() {
     // OpenCascade's geometry, in the rational spelling, on a periodic patch
     // with unclamped knots. Getting it back out means the knot run-length
     // coding, the weight split and the control-net transposition all inverted.
-    let text = include_str!("../fixtures/step/swept_circle.step");
+    let text = include_str!("foreign/files/swept_circle.step");
     let import = read_step(text, &StepReadOptions::default()).expect("a foreign spline solid");
     let shape = import.shapes.into_iter().next().expect("one solid");
 

@@ -1,19 +1,18 @@
-//! Writes the STEP files that `tests/fixtures/step/validate_ngk_export.py`
-//! checks against OpenCascade.
+//! Writes NGK's STEP output to `target/step_export/` for a foreign kernel to
+//! check.
 //!
 //! The Rust tests in `tests/exchange/step_export.rs` assert the structure NGK
-//! emits; they cannot assert that another kernel accepts it. Run this, then
-//! the Python script, to close that gap.
+//! emits; they cannot assert that another kernel accepts it. Run this and open
+//! the files in any OCCT-based tool to close that gap.
 //!
-//! Two of the files are *re-exports* of the OpenCascade fixtures under
-//! `tests/fixtures/step/`, which is how the read direction gets checked too:
-//! `tests/exchange/step_import.rs` can show that a foreign file yields a map
-//! with the right cells and a valid orientation, but only another kernel can
-//! say the result still has the right volume.
+//! Two of the files are *re-exports* of the foreign fixtures under
+//! `tests/exchange/foreign/files/`, which is how the read direction gets
+//! checked too: `tests/exchange/step_import.rs` can show that a foreign file
+//! yields a map with the right cells and a valid orientation, but only another
+//! kernel can say the result still has the right volume.
 //!
 //! ```text
 //! cargo run --example step_export_fixtures
-//! uv run python tests/fixtures/step/validate_ngk_export.py
 //! ```
 
 use std::fs;
@@ -110,7 +109,7 @@ fn main() {
 /// Imports a committed OpenCascade fixture and writes it out again.
 fn reexport(fixture: &str, name: &str) {
     let import = read_step_file(
-        format!("tests/fixtures/step/{fixture}"),
+        format!("tests/exchange/foreign/files/{fixture}"),
         &StepReadOptions::default(),
     )
     .unwrap_or_else(|error| panic!("{fixture} should import: {error}"));
