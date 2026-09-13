@@ -18,7 +18,8 @@
 use thiserror::Error;
 
 use crate::geometry::{
-    Axis2, DomainSide, Point2, Surface, SurfacePeriodicity, TrimmedCurve2, Vector2,
+    Axis2, DomainSide, LINEAR_TOLERANCE, Point2, Surface, SurfacePeriodicity, TrimmedCurve2,
+    Vector2,
 };
 use crate::topology::attributes::LoopKind;
 use crate::topology::face::Face;
@@ -188,6 +189,7 @@ impl UnwrappedFaceDomain {
                     let mut curves = Vec::new();
                     let mut offset = Vector2::zeros();
                     place_loop(face, &loop_, periods, &mut curves, &mut offset)?;
+                    rebranch_across_degenerate_row(face.surface(), &mut curves, periods);
                     close_loop(&mut curves);
                     holes.push(UnwrappedFaceDomainLoop { curves });
                 }
@@ -195,7 +197,10 @@ impl UnwrappedFaceDomain {
         }
         match capped {
             Some((axis, side)) => close_capping_loop(face.surface(), axis, side, &mut outer),
-            None => close_loop(&mut outer),
+            None => {
+                rebranch_across_degenerate_row(face.surface(), &mut outer, periods);
+                close_loop(&mut outer);
+            }
         }
 
         let mut loops = Vec::with_capacity(1 + holes.len());
@@ -346,6 +351,120 @@ fn place_after(
         }
     }
     (start + *offset != previous).then_some(previous)
+}
+
+/// Puts a loop that turned through a degenerate row back on the branch that
+/// closes it.
+///
+/// [`place_after`] refuses to align across a collapsed row, and it is right to:
+/// the row is one point on the surface, so the parameter it is written at says
+/// nothing, and aligning to it would drag the rest of the loop onto whichever
+/// branch that meaningless value happened to name. But refusing to align is not
+/// the same as being placed correctly — it leaves whatever offset the walk had
+/// accumulated before the row, and that offset was chosen for the pcurves
+/// *before* the pole, not the ones after it.
+///
+/// A half-cap on a sphere is where the two come apart. Its rim runs the far half
+/// of the domain, so the walk picks up a whole turn getting there; it climbs to
+/// the pole, and the meridian back down — stored on the near half, needing no
+/// turn at all — inherits that turn and lands a period away from where it
+/// started. The loop comes back as a sheared parallelogram twice the width of
+/// the cap, and the mesh drawn inside it hangs across the solid.
+///
+/// What the pole does not say, closure does: a loop written on one branch ends
+/// where it began. So a residue of whole periods between the two is the turn
+/// that was inherited by mistake, and taking it back off everything after the
+/// last collapsed row is what puts the loop back on one branch.
+///
+/// Except when the residue is the cut. A sphere written with a seam runs up one
+/// side of it and down the other, pole to pole, and those two sides *are* a
+/// period apart — that is what makes the boundary enclose the whole domain
+/// rather than nothing. Closure cannot tell the two apart, because both end a
+/// period from where they began. What tells them apart is what the correction
+/// would do: on the half cap it slides the return meridian back over the cap it
+/// belongs to, and the region survives; on the seam it lands the two sides on
+/// top of each other and the region collapses to a line. So the shift is made,
+/// and kept only if the loop still bounds something.
+fn rebranch_across_degenerate_row(
+    surface: &Surface,
+    curves: &mut [UnwrappedFaceDomainCurve],
+    periods: [Option<f64>; 2],
+) {
+    let (Some(first), Some(last)) = (curves.first(), curves.last()) else {
+        return;
+    };
+    let gap = first.start() - last.end();
+
+    // Only a residue that is whole periods is this mistake. A loop that ends
+    // somewhere else entirely is a different fact about the face, and shifting
+    // it would hide that rather than fix it.
+    let mut shift = Vector2::zeros();
+    for (axis, period) in periods.iter().enumerate() {
+        let Some(period) = period.filter(|period| *period > 0.0) else {
+            continue;
+        };
+        let turns = (gap[axis] / period).round();
+        if turns != 0.0 && (gap[axis] - turns * period).abs() <= LINEAR_TOLERANCE {
+            shift[axis] = turns * period;
+        }
+    }
+    if shift == Vector2::zeros() {
+        return;
+    }
+
+    // The last collapsed row is the one that could have carried the turn; rows
+    // before it were already answered for by the pcurves that followed them.
+    let Some(crossing) = (1..curves.len()).rev().find(|index| {
+        is_degenerate(surface, curves[index - 1].end())
+            && is_degenerate(surface, curves[*index].start())
+    }) else {
+        return;
+    };
+
+    slide_tail(curves, crossing, shift);
+
+    // The region has to survive the correction. Where it does not, the residue
+    // was the cut rather than an inherited turn, and the loop was right as it
+    // stood.
+    if placed_area(curves).abs() <= LINEAR_TOLERANCE {
+        slide_tail(curves, crossing, -shift);
+    }
+}
+
+/// Moves `curves[from..]` by `shift`, corners included.
+fn slide_tail(curves: &mut [UnwrappedFaceDomainCurve], from: usize, shift: Vector2) {
+    for (index, curve) in curves.iter_mut().enumerate().skip(from) {
+        curve.offset += shift;
+        // The corner at the crossing itself is the *previous* pcurve's end,
+        // which is staying put: the loop steps across the collapsed row there,
+        // which costs nothing because the row is one point. Corners after it
+        // belong to pcurves that moved, and move with them.
+        if index > from {
+            for corner in &mut curve.corners {
+                *corner += shift;
+            }
+        }
+    }
+}
+
+/// The signed area the placed pcurves enclose, sampled.
+///
+/// Only ever asked whether it is zero, so a handful of samples per pcurve is
+/// enough: a loop folded onto itself encloses nothing at any resolution.
+fn placed_area(curves: &[UnwrappedFaceDomainCurve]) -> f64 {
+    const SAMPLES: usize = 8;
+    let points = curves
+        .iter()
+        .flat_map(|curve| {
+            (0..SAMPLES).map(move |step| curve.point_at(step as f64 / SAMPLES as f64))
+        })
+        .collect::<Vec<_>>();
+    let mut area = 0.0;
+    for (index, point) in points.iter().enumerate() {
+        let next = points[(index + 1) % points.len()];
+        area += point.x * next.y - next.x * point.y;
+    }
+    0.5 * area
 }
 
 /// Records the point a loop turns through as it closes back onto its start.

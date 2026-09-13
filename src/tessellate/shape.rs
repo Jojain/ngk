@@ -27,7 +27,7 @@ pub fn tessellate_shape<P: Payload>(
     match key {
         ShapeKey::Vertex(v) => tessellate_vertex(g, v).map(ShapeMesh::Vertex),
         ShapeKey::Edge(e) => tessellate_edge(g, e, opts).map(ShapeMesh::Edge),
-        ShapeKey::Face(f) => tessellate_face_key(g, f, opts).map(ShapeMesh::Face),
+        ShapeKey::Face(f) => tessellate_face_key(g, f, opts).ok().map(ShapeMesh::Face),
     }
 }
 

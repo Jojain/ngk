@@ -246,7 +246,7 @@ fn append_face_mesh<P: Payload>(
     opts: TessellateOpts,
     shape: &mut TcvShape,
 ) -> Result<(), TcvError> {
-    let mesh = tessellate_face_key(g, key, opts).ok_or(TcvError::MissingTopology)?;
+    let mesh = tessellate_face_key(g, key, opts).map_err(|_| TcvError::MissingTopology)?;
     append_mesh(&mesh, shape);
     shape.face_types.push(0);
     Ok(())

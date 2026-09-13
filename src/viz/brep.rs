@@ -113,7 +113,11 @@ fn emit_faces<P: Payload>(
     for (key, _) in g.iter_faces() {
         let id = scene.faces.len() as u32;
         index.face_id_by_key.insert(key, id);
-        let Some(mesh) = tessellate_face_key(g, key, opts) else {
+        // A face the tessellator will not mesh is left out of the scene rather
+        // than drawn wrong. The scene carries no channel to say so; the callers
+        // that need to know which faces went missing ask the tessellator
+        // directly, which answers with a `TessellateError` naming the gap.
+        let Ok(mesh) = tessellate_face_key(g, key, opts) else {
             continue;
         };
         if mesh.is_empty() {

@@ -2,22 +2,29 @@
 //!
 //! Real plan: sample the face's pcurves into a UV polygon-with-holes, run a
 //! constrained Delaunay triangulation, lift back to 3D via
-//! `surface.point_at(u, v)`. That CDT is not in the tree yet — we currently
-//! ship a small set of per-surface shortcuts that handle the shapes the
-//! exploration scripts actually build:
+//! `surface.point_at(u, v)`. That CDT is not in the tree yet. What is here
+//! splits on the one question that decides whether a grid can be trusted:
 //!
-//! - **Cylinder**: uniform UV grid over the pcurve UV bbox. Triangle winding
-//!   matches the pcurve loop's signed area in UV.
-//! - **Plane, no inner loops**: triangle fan from the UV centroid of the
-//!   sampled outer pcurve, lifted to 3D.
-//! - **Plane, exactly one inner loop with matching sample count**: strip
-//!   between the outer and inner sampled rings (annulus shape).
-//! - Anything else falls back to a single quad over the pcurve UV bbox and is
-//!   tagged `// TODO: real CDT`.
+//! - **The boundary *is* the parameter rectangle** — a cylinder wall running
+//!   rim to rim, a whole-period wrapping loop — so there is nothing to trim.
+//!   Meshed as a uniform UV grid, which is what lets a direction covering a
+//!   whole period index its closing column back onto its opening one and come
+//!   out watertight.
+//! - **The boundary is anything else** — a fillet's slanted corners, a wall
+//!   notched where another face joins it. A grid over the bounding rectangle
+//!   would spill past the trim, so instead the sampled boundary is bridged
+//!   around its holes into one simple polygon, ear-clipped, and each triangle
+//!   then split until it follows the support's curvature. The trim is exact;
+//!   the seam-welding a grid gets for free is not available here.
+//! - **Neither** — a support with no `point_at` shortcut, a boundary that will
+//!   not reduce to a simple polygon — is refused with a [`TessellateError`]
+//!   naming the gap. A mesh that is not the face is worse than no mesh, because
+//!   it is read as the face.
 
-use nalgebra::UnitVector3;
-
-use super::{IndexedMesh, TessellateOpts, surface::tessellate_surface_patch};
+use super::{
+    IndexedMesh, TessellateError, TessellateOpts, TessellateResult,
+    surface::tessellate_surface_patch,
+};
 use crate::geometry::{
     Curve, Interval, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Surface,
     SurfacePeriodicity,
@@ -37,12 +44,16 @@ const EPS: f64 = LINEAR_TOLERANCE;
 /// The boundary is read on a synthesized [`UnwrappedFaceDomain`], so a loop written across a
 /// periodic support's cut arrives as one continuous parameter-space polyline
 /// rather than as pieces a whole period apart. Each loop must have one pcurve
-/// per boundary edge. Returns `None` when the boundary cannot be sampled into
-/// a valid UV polygon.
+/// per boundary edge.
+///
+/// Errors rather than meshing where the boundary cannot be read, where it will
+/// not reduce to a triangulable polygon, or where the support has no shortcut
+/// here — see [`TessellateError`]. A mesh that is not the face would be read as
+/// the face, so a gap is named rather than papered over.
 pub fn tessellate_face<P: Payload>(
     face: &Face<'_, P>,
     opts: TessellateOpts,
-) -> Option<IndexedMesh> {
+) -> TessellateResult<IndexedMesh> {
     // What a face runs out to is its enclosing loop, or — where it has none —
     // the support's own domain. A bite taken out of a torus leaves a face of
     // the second kind: still enclosed by nothing, now carrying a hole.
@@ -53,15 +64,16 @@ pub fn tessellate_face<P: Payload>(
     {
         return tessellate_boundaryless_face(face, opts);
     }
-    let domain = UnwrappedFaceDomain::of_face(face).ok()?;
+    let domain =
+        UnwrappedFaceDomain::of_face(face).map_err(|_| TessellateError::UnreadableBoundary)?;
     let segments = opts.curve.segments.max(1);
     let mut boundary = domain
         .loops()
         .iter()
         .map(|boundary| boundary.polyline(segments));
-    let outer_uv = boundary.next()?;
+    let outer_uv = boundary.next().ok_or(TessellateError::UnreadableBoundary)?;
     if outer_uv.len() < 3 {
-        return None;
+        return Err(TessellateError::UnreadableBoundary);
     }
 
     let inner_uv: Vec<Vec<Point2>> = boundary.filter(|loop_| !loop_.is_empty()).collect();
@@ -69,34 +81,42 @@ pub fn tessellate_face<P: Payload>(
     let signed_outer_area = signed_area(&outer_uv);
     let ccw = signed_outer_area > 0.0;
 
-    Some(match face.surface() {
-        Surface::Cylinder(_) | Surface::Sphere(_) | Surface::Cone(_) | Surface::Ruled(_) => {
-            surface_grid_over_bounds(
-                face.surface(),
-                grid_bounds(&domain, face, &outer_uv),
-                ccw,
-                opts,
-            )
+    // A grid covers the rectangle it is given, all of it. That is the answer
+    // only when the boundary *is* that rectangle; anywhere else the grid would
+    // spill past the trim — over a fillet's slanted corners, across the notch
+    // another face cuts in a wall — and the spill is read as surface that is
+    // there. So the rectangle is the special case and the polygon is the
+    // general one, rather than the other way round.
+    //
+    // A plane is absent from the rectangle case on purpose: it is flat, so a
+    // grid over it buys nothing but triangles. It takes the polygon path
+    // always, where it clips to its own boundary exactly and the curvature
+    // refinement finds nothing to split.
+    let bounds = grid_bounds(&domain, face, &outer_uv);
+    if inner_uv.is_empty() && boundary_fills_rectangle(&outer_uv, bounds) {
+        match face.surface() {
+            Surface::Cylinder(_)
+            | Surface::Sphere(_)
+            | Surface::Cone(_)
+            | Surface::Torus(_)
+            | Surface::Ruled(_) => {
+                return Ok(surface_grid_over_bounds(face.surface(), bounds, ccw, opts));
+            }
+            Surface::Revolution(surface) => {
+                return Ok(revolution_surface_grid(
+                    face.surface(),
+                    surface.curve(),
+                    &outer_uv,
+                    &outer_uv,
+                    signed_outer_area,
+                    opts,
+                ));
+            }
+            _ => {}
         }
-        Surface::Revolution(surface) => {
-            let boundary_uv = outer_uv
-                .iter()
-                .chain(inner_uv.iter().flatten())
-                .copied()
-                .collect::<Vec<_>>();
-            revolution_surface_grid(
-                face.surface(),
-                surface.curve(),
-                &outer_uv,
-                &boundary_uv,
-                signed_outer_area,
-                opts,
-            )
-        }
-        Surface::Plane(_) => plane_polygon_with_holes(face.surface(), &outer_uv, &inner_uv, ccw),
-        // TODO: real CDT for NURBS surfaces.
-        _ => uv_bbox_quad(face.surface(), &outer_uv, ccw),
-    })
+    }
+
+    trimmed_polygon_mesh(face.surface(), &outer_uv, &inner_uv, ccw, opts)
 }
 
 /// Tessellates the face stored at `key` in `g`.
@@ -108,8 +128,8 @@ pub fn tessellate_face_key<P: Payload>(
     g: &GMap<P>,
     key: FaceKey,
     opts: TessellateOpts,
-) -> Option<IndexedMesh> {
-    let face = g.face(key)?;
+) -> TessellateResult<IndexedMesh> {
+    let face = g.face(key).ok_or(TessellateError::UnreadableBoundary)?;
     tessellate_face(&face, opts)
 }
 
@@ -124,32 +144,33 @@ pub fn tessellate_face_key<P: Payload>(
 ///
 /// Holes are then dropped out of that grid by the triangle, so a bite taken out
 /// of a torus reads as a bite. The rim it leaves is stepped at the grid's
-/// resolution rather than cut along the hole's own pcurve — the curved meshers
-/// have no constrained triangulation to cut it with, which is the same reason
-/// the bounded ones fall back to a bbox quad. Meshing the hole over as though
-/// it were not there is the one answer that would be read as the truth.
+/// resolution rather than cut along the hole's own pcurve: the alternative is
+/// the polygon path, and that would give up the seam-welding that is the whole
+/// reason a boundaryless face is meshed as a grid. Meshing the hole over as
+/// though it were not there is the one answer that would be read as the truth.
 fn tessellate_boundaryless_face<P: Payload>(
     face: &Face<'_, P>,
     opts: TessellateOpts,
-) -> Option<IndexedMesh> {
+) -> TessellateResult<IndexedMesh> {
     let (u, v) = face.surface().domain();
     if !u.is_finite() || !v.is_finite() {
-        return None;
+        return Err(TessellateError::UnboundedDomain);
     }
     let bounds = (u.start, u.end, v.start, v.end);
     let ccw = face.sense() == Orientation::Same;
     let mut mesh = surface_grid_over_bounds(face.surface(), bounds, ccw, opts);
     if face.loops().is_empty() {
-        return Some(mesh);
+        return Ok(mesh);
     }
-    let domain = UnwrappedFaceDomain::of_face(face).ok()?;
+    let domain =
+        UnwrappedFaceDomain::of_face(face).map_err(|_| TessellateError::UnreadableBoundary)?;
     let holes = domain
         .loops()
         .iter()
         .map(|boundary| boundary.polyline(opts.curve.segments.max(1)))
         .collect::<Vec<_>>();
     mesh.indices = cull_triangles_in_holes(face, &mesh, &holes);
-    Some(mesh)
+    Ok(mesh)
 }
 
 /// Keeps the triangles whose centre is not in a hole.
@@ -312,43 +333,259 @@ fn surface_grid_over_bounds(
     mesh
 }
 
-fn plane_polygon_with_holes(
+/// Meshes the boundary exactly, then splits until the result follows the
+/// support.
+///
+/// Ear-clipping the sampled boundary — each hole bridged into it first — gives
+/// triangles that stop precisely where the face stops, which is the whole point
+/// of coming here rather than laying a grid over the bounding rectangle. What it
+/// does not give is curvature: those triangles are flat, and on a curved support
+/// a triangle spanning the patch cuts straight through it. So each one is then
+/// split about its edge midpoints until it hugs the surface, by
+/// [`refine_to_surface`].
+///
+/// Errors where the boundary will not reduce to a simple polygon, or will not
+/// clip: a self-intersecting loop, a hole no bridge reaches. Those are the cases
+/// a real CDT would carry and this shortcut cannot.
+fn trimmed_polygon_mesh(
     surface: &Surface,
     outer_uv: &[Point2],
     inner_uv: &[Vec<Point2>],
     ccw: bool,
-) -> IndexedMesh {
-    let Some(mut polygon) = build_simple_polygon(outer_uv, inner_uv) else {
-        return uv_bbox_quad(surface, outer_uv, ccw);
-    };
+    opts: TessellateOpts,
+) -> TessellateResult<IndexedMesh> {
+    // A boundary that encloses nothing is not a hard triangulation case, it is
+    // an absent boundary — every sample on one point, or all of them on one
+    // line, which is what a face whose pcurves did not survive its import looks
+    // like. Saying so separately keeps a broken import from reading as a gap in
+    // the mesher.
+    if signed_area(outer_uv).abs() <= EPS {
+        return Err(TessellateError::DegenerateBoundary);
+    }
+    // One tolerance serves both halves of this path: it decides which boundary
+    // samples carry curvature worth keeping, and then how far the interior may
+    // be split before it follows the surface closely enough. Reading it off the
+    // boundary rather than the finished polygon keeps it independent of what the
+    // cleaning below decides to drop.
+    let tolerance = grid_sag(surface, outer_uv, opts);
+    let mut polygon = build_simple_polygon(surface, outer_uv, inner_uv, tolerance)
+        .ok_or(TessellateError::UntriangulableBoundary)?;
 
     if signed_area(&polygon) < 0.0 {
         polygon.reverse();
     }
 
-    let normal = face_normal(surface, polygon[0].x, polygon[0].y, ccw);
-    let positions = polygon
-        .iter()
-        .map(|p| surface.point_at(p.x, p.y))
-        .collect::<Vec<_>>();
-    let normals = vec![normal; positions.len()];
-    let mut indices = ear_clip(&polygon).unwrap_or_default();
-    if !ccw {
-        flip_winding(&mut indices);
-    }
-    if indices.is_empty() {
-        return uv_bbox_quad(surface, outer_uv, ccw);
+    let clipped = ear_clip(&polygon).ok_or(TessellateError::UntriangulableBoundary)?;
+    if clipped.is_empty() {
+        return Err(TessellateError::UntriangulableBoundary);
     }
 
-    IndexedMesh {
-        positions,
-        normals,
-        indices,
+    let triangles = clipped
+        .chunks_exact(3)
+        .map(|triangle| {
+            [
+                polygon[triangle[0] as usize],
+                polygon[triangle[1] as usize],
+                polygon[triangle[2] as usize],
+            ]
+        })
+        .collect::<Vec<_>>();
+
+    let mut mesh = refine_to_surface(surface, &triangles, tolerance);
+    if !ccw {
+        flip_winding(&mut mesh.indices);
+        for normal in &mut mesh.normals {
+            *normal = -*normal;
+        }
     }
+    Ok(mesh)
 }
 
-fn build_simple_polygon(outer_uv: &[Point2], inner_uv: &[Vec<Point2>]) -> Option<Vec<Point2>> {
-    let mut polygon = clean_loop(outer_uv);
+/// How far off the surface one cell of the equivalent grid would have sat.
+///
+/// This is the tolerance the refinement below aims at, and taking it from the
+/// surface itself rather than from a constant is what makes it scale-free: the
+/// same number, whether the parameters are radians or millimetres, and whether
+/// the face is a fingernail or a bridge. A face meshed here then carries about
+/// the fidelity it would have carried had its boundary been a rectangle and a
+/// grid been laid over it — no visible change in quality with which path a face
+/// took.
+///
+/// Measured at several places, because one cell can lie along a direction the
+/// support happens not to bend in — a cylinder's ruling — and report flat for a
+/// surface that is not.
+fn grid_sag(surface: &Surface, polygon: &[Point2], opts: TessellateOpts) -> f64 {
+    let (u_min, u_max, v_min, v_max) = uv_bbox(polygon);
+    let du = (u_max - u_min) / opts.surface.nu.max(1) as f64;
+    let dv = (v_max - v_min) / opts.surface.nv.max(1) as f64;
+
+    let sag_at = |corner: Point2| {
+        let far = Point2::new(corner.x + du, corner.y + dv);
+        (nalgebra::center(
+            &surface.point_at(corner.x, corner.y),
+            &surface.point_at(far.x, far.y),
+        ) - surface.point_at(0.5 * (corner.x + far.x), 0.5 * (corner.y + far.y)))
+        .norm()
+    };
+
+    let centroid = Point2::from(
+        polygon
+            .iter()
+            .map(|p| p.coords)
+            .sum::<nalgebra::Vector2<f64>>()
+            / polygon.len() as f64,
+    );
+    let worst = std::iter::once(centroid)
+        .chain(polygon.iter().copied())
+        .map(sag_at)
+        .fold(0.0f64, f64::max);
+
+    // A plane never bends, so its sag is zero and nothing below ever splits —
+    // which is exactly right, and why a planar face comes back from here with
+    // the triangles ear-clip produced and no more.
+    worst.max(EPS)
+}
+
+/// Splits parameter-space triangles until they all lie on the surface.
+///
+/// The decision is made per *edge*, not per triangle: an edge is marked when the
+/// surface at its parameter midpoint is further than `tolerance` from the chord
+/// between its ends. Two triangles sharing an edge therefore always agree about
+/// it, which is what keeps the result conforming — a triangle split where its
+/// neighbour was not would leave a vertex partway along their shared edge that
+/// the neighbour's straight edge misses, and on a curved support that T-junction
+/// opens as a visible crack.
+///
+/// Agreeing about each edge is not quite enough on its own, because a triangle
+/// with two marked edges cannot be cut in two without hanging a node. So the
+/// marking is closed first — any triangle carrying two marked edges has its
+/// third marked as well — and afterwards every triangle has one marked edge and
+/// bisects, or three and quarters. That closure is what makes this adaptive
+/// rather than uniform: a long edge across the middle of a patch splits without
+/// dragging every triangle in the face down with it.
+///
+/// Midpoints are taken in parameter space, so two triangles meeting on an edge
+/// compute the same midpoint to the bit, and the dedupe below hands them one
+/// shared vertex.
+fn refine_to_surface(surface: &Surface, triangles: &[[Point2; 3]], tolerance: f64) -> IndexedMesh {
+    // A bound on the passes as well as the tolerance: a degenerate
+    // parameterization can report a deviation forever, and must not spin here.
+    const MAX_PASSES: u32 = 6;
+
+    type VertexKey = (u64, u64);
+    let vertex_key = |p: &Point2| (p.x.to_bits(), p.y.to_bits());
+    let edge_key = |a: &Point2, b: &Point2| -> (VertexKey, VertexKey) {
+        let (a, b) = (vertex_key(a), vertex_key(b));
+        if a <= b { (a, b) } else { (b, a) }
+    };
+    let off_surface = |a: Point2, b: Point2| {
+        (nalgebra::center(&surface.point_at(a.x, a.y), &surface.point_at(b.x, b.y))
+            - surface.point_at(0.5 * (a.x + b.x), 0.5 * (a.y + b.y)))
+        .norm()
+            > tolerance
+    };
+
+    let mut triangles = triangles.to_vec();
+    for _ in 0..MAX_PASSES {
+        let mut marked = triangles
+            .iter()
+            .flat_map(|t| (0..3).map(|e| (t[e], t[(e + 1) % 3])))
+            .filter(|(a, b)| off_surface(*a, *b))
+            .map(|(a, b)| edge_key(&a, &b))
+            .collect::<std::collections::HashSet<_>>();
+        if marked.is_empty() {
+            break;
+        }
+
+        // Close the marking: a triangle with two marked edges takes its third,
+        // so that every triangle below splits either in two or in four and none
+        // is left with a node hanging on an unsplit side.
+        loop {
+            let mut changed = false;
+            for triangle in &triangles {
+                let edges: [_; 3] =
+                    std::array::from_fn(|e| edge_key(&triangle[e], &triangle[(e + 1) % 3]));
+                if edges.iter().filter(|edge| marked.contains(*edge)).count() >= 2 {
+                    // Every edge, not the first that takes: short-circuiting
+                    // here would leave the third unmarked and the node hanging.
+                    for edge in edges {
+                        changed |= marked.insert(edge);
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        triangles = triangles
+            .iter()
+            .flat_map(|t| {
+                let split: [bool; 3] =
+                    std::array::from_fn(|e| marked.contains(&edge_key(&t[e], &t[(e + 1) % 3])));
+                match split.iter().filter(|s| **s).count() {
+                    0 => vec![*t],
+                    3 => {
+                        let ab = nalgebra::center(&t[0], &t[1]);
+                        let bc = nalgebra::center(&t[1], &t[2]);
+                        let ca = nalgebra::center(&t[2], &t[0]);
+                        vec![[t[0], ab, ca], [ab, t[1], bc], [ca, bc, t[2]], [ab, bc, ca]]
+                    }
+                    // Exactly one, the closure above having ruled out two: cut
+                    // from its midpoint to the opposite corner.
+                    _ => {
+                        let e = split.iter().position(|s| *s).expect("one edge is marked");
+                        let (from, to, opposite) = (t[e], t[(e + 1) % 3], t[(e + 2) % 3]);
+                        let mid = nalgebra::center(&from, &to);
+                        vec![[from, mid, opposite], [mid, to, opposite]]
+                    }
+                }
+            })
+            .collect();
+    }
+
+    let mut mesh = IndexedMesh::default();
+    let mut index_of = std::collections::HashMap::<(u64, u64), u32>::new();
+    for triangle in &triangles {
+        for uv in triangle {
+            let index = *index_of
+                .entry((uv.x.to_bits(), uv.y.to_bits()))
+                .or_insert_with(|| {
+                    mesh.positions.push(surface.point_at(uv.x, uv.y));
+                    mesh.normals.push(surface.normal_at(uv.x, uv.y));
+                    (mesh.positions.len() - 1) as u32
+                });
+            mesh.indices.push(index);
+        }
+    }
+    mesh
+}
+
+/// Whether the sampled boundary is the whole of `bounds` and nothing less.
+///
+/// Its area is the test. A boundary that traces the rectangle's four sides
+/// encloses exactly the rectangle's area; one that cuts a corner off, or is
+/// notched where another face joins it, encloses less. Comparing areas rather
+/// than checking that every sample sits on the border is what catches the notch
+/// in a wall whose samples all *do* sit on the border — the notch is interior.
+fn boundary_fills_rectangle(outer_uv: &[Point2], bounds: (f64, f64, f64, f64)) -> bool {
+    let (u_min, u_max, v_min, v_max) = bounds;
+    let rectangle = (u_max - u_min) * (v_max - v_min);
+    if rectangle <= EPS {
+        return false;
+    }
+    // Relative, because parameter spaces are not all the same size: an angle
+    // runs to a handful of radians where a length runs to hundreds.
+    (signed_area(outer_uv).abs() - rectangle).abs() / rectangle <= 1e-6
+}
+
+fn build_simple_polygon(
+    surface: &Surface,
+    outer_uv: &[Point2],
+    inner_uv: &[Vec<Point2>],
+    tolerance: f64,
+) -> Option<Vec<Point2>> {
+    let mut polygon = clean_loop(surface, outer_uv, tolerance);
     if polygon.len() < 3 {
         return None;
     }
@@ -357,7 +594,7 @@ fn build_simple_polygon(outer_uv: &[Point2], inner_uv: &[Vec<Point2>]) -> Option
     }
 
     for hole in inner_uv {
-        let mut hole = clean_loop(hole);
+        let mut hole = clean_loop(surface, hole, tolerance);
         if hole.len() < 3 {
             continue;
         }
@@ -370,7 +607,17 @@ fn build_simple_polygon(outer_uv: &[Point2], inner_uv: &[Vec<Point2>]) -> Option
     Some(polygon)
 }
 
-fn clean_loop(points: &[Point2]) -> Vec<Point2> {
+/// Drops the boundary samples that carry nothing, and only those.
+///
+/// A point repeating its predecessor carries nothing anywhere. A point straight
+/// between its neighbours in *parameter* space is the harder case: on a plane it
+/// carries nothing either, but on a curved support a straight run of parameters
+/// is a curved run of surface, and dropping those points throws the curvature
+/// away — leaving a boundary that cuts the corner and triangles so large that
+/// refinement has to rebuild from scratch what the sampling already knew. So the
+/// second test is not whether the point is straight in parameter space, but
+/// whether the 3D chord past it still follows the surface to `tolerance`.
+fn clean_loop(surface: &Surface, points: &[Point2], tolerance: f64) -> Vec<Point2> {
     let mut cleaned = Vec::new();
     for point in points {
         if cleaned
@@ -395,7 +642,8 @@ fn clean_loop(points: &[Point2]) -> Vec<Point2> {
             let after = cleaned[(i + 1) % n];
             let collinear = orient(prev, curr, after).abs() <= EPS;
             let between = (curr - prev).dot(&(after - curr)) >= -EPS;
-            if collinear && between {
+            if collinear && between && chord_follows_surface(surface, prev, curr, after, tolerance)
+            {
                 changed = true;
             } else {
                 next.push(curr);
@@ -405,6 +653,31 @@ fn clean_loop(points: &[Point2]) -> Vec<Point2> {
     }
 
     cleaned
+}
+
+/// Whether dropping `curr` would leave the boundary where the surface is.
+///
+/// The chord from `prev` to `after` is compared with the surface at `curr`'s own
+/// parameters, sampled along the chord at the fraction `curr` sits at. On a
+/// plane the two coincide exactly and the point goes; on anything that bends
+/// they separate and it stays.
+fn chord_follows_surface(
+    surface: &Surface,
+    prev: Point2,
+    curr: Point2,
+    after: Point2,
+    tolerance: f64,
+) -> bool {
+    let span = (after - prev).norm();
+    if span <= EPS {
+        return true;
+    }
+    let along = (curr - prev).norm() / span;
+    let chord = surface
+        .point_at(prev.x, prev.y)
+        .coords
+        .lerp(&surface.point_at(after.x, after.y).coords, along);
+    (surface.point_at(curr.x, curr.y).coords - chord).norm() <= tolerance
 }
 
 fn bridge_hole(polygon: &[Point2], hole: &[Point2]) -> Option<Vec<Point2>> {
@@ -576,30 +849,6 @@ fn orient(a: Point2, b: Point2, c: Point2) -> f64 {
     (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
 }
 
-/// TODO: real CDT. Until then, faces we can't trim collapse to a single quad
-/// covering the pcurve UV bbox so the user at least sees *something*.
-fn uv_bbox_quad(surface: &Surface, outer_uv: &[Point2], ccw: bool) -> IndexedMesh {
-    let (u_min, u_max, v_min, v_max) = uv_bbox(outer_uv);
-    let normal = face_normal(surface, 0.5 * (u_min + u_max), 0.5 * (v_min + v_max), ccw);
-    let positions = vec![
-        surface.point_at(u_min, v_min),
-        surface.point_at(u_max, v_min),
-        surface.point_at(u_max, v_max),
-        surface.point_at(u_min, v_max),
-    ];
-    let normals = vec![normal; 4];
-    let indices = if ccw {
-        vec![0, 1, 2, 0, 2, 3]
-    } else {
-        vec![0, 2, 1, 0, 3, 2]
-    };
-    IndexedMesh {
-        positions,
-        normals,
-        indices,
-    }
-}
-
 // ---------- helpers ----------
 
 fn uv_bbox(points: &[Point2]) -> (f64, f64, f64, f64) {
@@ -614,11 +863,6 @@ fn uv_bbox(points: &[Point2]) -> (f64, f64, f64, f64) {
         v_max = v_max.max(p.y);
     }
     (u_min, u_max, v_min, v_max)
-}
-
-fn face_normal(surface: &Surface, u: f64, v: f64, ccw: bool) -> UnitVector3<f64> {
-    let n = surface.normal_at(u, v);
-    if ccw { n } else { -n }
 }
 
 fn flip_winding(indices: &mut [u32]) {

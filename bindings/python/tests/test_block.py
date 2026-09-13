@@ -114,3 +114,8 @@ def test_solid_boolean_functions_return_new_results_without_mutating_inputs():
     assert remainder.face_count == 9
     assert first.face_count == 6
     assert second.face_count == 6
+
+
+from pathlib import Path
+c = Path(__file__).parent / "test_block.py"
+c.s
