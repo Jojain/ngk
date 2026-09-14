@@ -1,13 +1,26 @@
-use ngk::builders::edges::{EdgeSplitError, add_line, split_edge};
+use ngk::builders::edges::{EdgeSplit, EdgeSplitError, add_line, split_edge};
+use ngk::builders::faces::{add_circle as add_disc, split_face_edge};
 use ngk::builders::profiles::{add_polyline, add_rectangle};
-use ngk::geometry::{LINEAR_TOLERANCE, Point3, PointCoincidence};
+use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
 use ngk::model::Model;
 use ngk::modeling::faces;
 use ngk::topology::ModelEditError;
 use ngk::topology::closed::Closeable;
+use ngk::topology::edge::Edge;
+use ngk::topology::gmap::Dim;
 use ngk::topology::payload::{Payload, StandardPayload};
 use ngk::topology::profile::Profile;
 use ngk::topology::shape_keys::EdgeKey;
+use ngk::topology::shape_keys::FaceKey;
+
+/// Returns the single rim edge of a disc.
+fn rim_of(g: &Model<StandardPayload>, face: FaceKey) -> EdgeKey {
+    g.face_unchecked(face)
+        .edges()
+        .first()
+        .expect("a disc has a rim")
+        .key()
+}
 
 #[derive(Clone, Default)]
 struct EdgePayload;
@@ -34,7 +47,7 @@ fn split_profile_edge_handles_isolated_edge() {
     assert_eq!(g.iter_vertices().count(), 3);
 
     let midpoint = Point3::new(0.25, 0.0, 0.0);
-    let split_vertex = g.vertex_attr_unchecked(split.vertex).vertex(&g);
+    let split_vertex = g.vertex_attr_unchecked(split.vertex()).vertex(&g);
     assert!(
         split_vertex
             .point()
@@ -42,8 +55,11 @@ fn split_profile_edge_handles_isolated_edge() {
             .coincides(midpoint, LINEAR_TOLERANCE)
     );
 
-    let first = g.edge_unchecked(split.first);
-    let second = g.edge_unchecked(split.second);
+    let EdgeSplit::Separated { first, second, .. } = split else {
+        panic!("cutting a bounded edge separates it, got {split:?}");
+    };
+    let first = g.edge_unchecked(first);
+    let second = g.edge_unchecked(second);
     assert!(
         first
             .bounded_unchecked()
@@ -93,8 +109,9 @@ fn split_isolated_edge_keeps_edge_profile_free() {
 
     let split = split_edge(&mut g, edge, 0.5).expect("isolated edge should split");
 
-    assert!(Profile::from_dart(&g, g.edge_attr_unchecked(split.first).dart).is_none());
-    assert!(Profile::from_dart(&g, g.edge_attr_unchecked(split.second).dart).is_none());
+    for key in split.edges() {
+        assert!(Profile::from_dart(&g, g.edge_attr_unchecked(key).dart).is_none());
+    }
 }
 
 #[test]
@@ -114,8 +131,9 @@ fn split_edge_initializes_split_edge_payload_from_source() {
 
     let split = split_edge(&mut g, edge, 0.5).expect("edge should split");
 
-    assert_eq!(g.edge_attr_unchecked(split.first).data, "source");
-    assert_eq!(g.edge_attr_unchecked(split.second).data, "source");
+    for key in split.edges() {
+        assert_eq!(g.edge_attr_unchecked(key).data, "source");
+    }
 }
 
 #[test]
@@ -170,7 +188,7 @@ fn split_profile_edge_preserves_open_profile_order() {
 
     assert_eq!(profile.edges().len(), 3);
     assert!(
-        g.vertex_attr_unchecked(split.vertex)
+        g.vertex_attr_unchecked(split.vertex())
             .point
             .coincides(midpoint, LINEAR_TOLERANCE)
     );
@@ -193,4 +211,96 @@ fn split_profile_edge_preserves_closed_profile() {
 
 fn edge_key_for_dart(g: &Model<StandardPayload>, dart: ngk::topology::Dart) -> EdgeKey {
     g.cell_key_unchecked::<ngk::model::Cell1>(dart)
+}
+
+/// Cutting an unmarked edge marks it, and creates no edge.
+///
+/// An unmarked circle already holds the 0-cell its corner would sit on -- its
+/// two ends meet there -- so the cut materializes that cell rather than adding
+/// anything. One cut does not separate a circle: there is nothing yet to
+/// separate it from.
+#[test]
+fn cutting_an_unmarked_edge_marks_it() {
+    let mut g = Model::<StandardPayload>::new();
+    let face = add_disc(&mut g, Plane::xy(), 1.0).expect("a disc builds");
+    let rim = rim_of(&g, face);
+    let darts = g.cells(Dim::One).count();
+
+    let split = split_face_edge(&mut g, face, rim, 1.0).expect("the rim takes a corner");
+
+    let EdgeSplit::Marked { edge, vertex } = split else {
+        panic!("cutting an unmarked edge marks it, got {split:?}");
+    };
+    assert_eq!(edge, rim, "the edge keeps the key it had");
+    assert_eq!(g.iter_edges().count(), 1, "nothing was created");
+    assert_eq!(g.iter_vertices().count(), 1, "the corner asked for");
+    assert_eq!(
+        g.cells(Dim::One).count(),
+        darts,
+        "marking is a relabel, so the raw map gains no 1-cell",
+    );
+
+    let view = g.edge_unchecked(edge);
+    assert!(
+        matches!(view, Edge::Closed(_)),
+        "a closed edge with a deliberate corner is still closed",
+    );
+    assert_eq!(
+        view.closed()
+            .and_then(|closed| closed.vertex())
+            .map(|v| v.key()),
+        Some(vertex),
+        "and the corner it carries is the one the cut asked for",
+    );
+}
+
+/// A marked edge spans a whole period starting at its corner.
+///
+/// The corner is where the edge now begins and ends, so the span is derived
+/// from it rather than from wherever the support's own domain happens to start.
+#[test]
+fn a_marked_edge_spans_a_period_from_its_corner() {
+    let mut g = Model::<StandardPayload>::new();
+    let face = add_disc(&mut g, Plane::xy(), 1.0).expect("a disc builds");
+    let rim = rim_of(&g, face);
+
+    split_face_edge(&mut g, face, rim, 1.0).expect("the rim takes a corner");
+
+    let span = g
+        .edge_unchecked(rim)
+        .parameter_interval()
+        .expect("a marked edge still spans")
+        .ordered();
+    assert!(
+        (span.start - 1.0).abs() <= LINEAR_TOLERANCE,
+        "the span begins at the corner, got {span:?}",
+    );
+    assert!(
+        (span.end - span.start - std::f64::consts::TAU).abs() <= LINEAR_TOLERANCE,
+        "and runs a whole period, got {span:?}",
+    );
+}
+
+/// Cutting a marked edge separates it, which is the second cut on a circle.
+#[test]
+fn cutting_a_marked_edge_separates_it() {
+    let mut g = Model::<StandardPayload>::new();
+    let face = add_disc(&mut g, Plane::xy(), 1.0).expect("a disc builds");
+    let rim = rim_of(&g, face);
+    split_face_edge(&mut g, face, rim, 1.0).expect("the first cut marks");
+
+    let split = split_face_edge(&mut g, face, rim, 3.0).expect("the second cut separates");
+
+    let EdgeSplit::Separated { first, second, .. } = split else {
+        panic!("cutting a marked edge separates it, got {split:?}");
+    };
+    assert_eq!(first, rim, "the original key stays on the first piece");
+    assert_eq!(g.iter_edges().count(), 2, "two arcs where one circle was");
+    assert_eq!(g.iter_vertices().count(), 2, "meeting at two corners");
+    for key in [first, second] {
+        assert!(
+            matches!(g.edge_unchecked(key), Edge::Bounded(_)),
+            "each arc runs between two distinct corners",
+        );
+    }
 }

@@ -314,13 +314,23 @@ fn a_foreign_cylinder_arrives_as_a_ring_face_between_two_caps() {
     // down, over a `SEAM_CURVE` the same loop walks twice. NGK stores no seam,
     // so the counts here are what say the cut was understood and then healed
     // away rather than left in the map as a spurious edge.
+    //
+    // The corners go the same way. The file gives each rim a `VERTEX_POINT`
+    // because `EDGE_CURVE` names two ends and a circle has none to name; once
+    // the seam that also reached it is gone, nothing meets there and the point
+    // is classified inside the rim. An imported cylinder is then the same
+    // shape as a built one, down to the counts.
     let import = read(OCCT_CYLINDER);
     let shape = &import.shapes[0];
     let solid = shape.solid();
 
     assert_eq!(solid.faces().len(), 3);
     assert_eq!(solid.edges().len(), 2, "the seam should be gone");
-    assert_eq!(solid.vertices().len(), 2);
+    assert_eq!(
+        solid.vertices().len(),
+        0,
+        "the rims close on themselves, so there is no corner to keep"
+    );
 }
 
 #[test]

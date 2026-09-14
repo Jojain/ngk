@@ -66,7 +66,7 @@ fn a_vertex_inserted_by_a_split_is_removable() {
     let (face, edge) = any_boundary_edge(&map);
     let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
 
-    let dart = map.vertex_attr_unchecked(split.vertex).dart;
+    let dart = map.vertex_attr_unchecked(split.vertex()).dart;
     assert!(is_removable(&map, dart, Dim::Zero));
 }
 
@@ -78,12 +78,12 @@ fn removing_a_split_vertex_restores_the_original_dart_count() {
     let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
     assert!(map.dart_count() > darts);
 
-    let dart = map.vertex_attr_unchecked(split.vertex).dart;
+    let dart = map.vertex_attr_unchecked(split.vertex()).dart;
     map.transaction(|edit| remove_cell_staged(edit, dart, Dim::Zero))
         .expect("removing the inserted vertex should commit");
 
     assert_eq!(map.dart_count(), darts);
-    assert!(map.vertex_attr(split.vertex).is_none());
+    assert!(map.vertex_attr(split.vertex()).is_none());
     assert_eq!(map.iter_edges().count(), 12);
     assert_eq!(map.iter_vertices().count(), 8);
     assert_eq!(map.iter_faces().count(), 6);
@@ -94,7 +94,7 @@ fn a_vertex_removal_names_the_two_edges_it_fuses() {
     let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
     let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
-    let dart = map.vertex_attr_unchecked(split.vertex).dart;
+    let dart = map.vertex_attr_unchecked(split.vertex()).dart;
 
     let removal = map
         .transaction(|edit| remove_cell_staged(edit, dart, Dim::Zero))
@@ -104,8 +104,9 @@ fn a_vertex_removal_names_the_two_edges_it_fuses() {
         panic!("a 0-removal fuses edges");
     };
     assert!(survivor < consumed, "the lower key must survive");
+    let halves: Vec<_> = split.edges().collect();
     assert_eq!(
-        [survivor, consumed].map(|key| [split.first, split.second].contains(&key)),
+        [survivor, consumed].map(|key| halves.contains(&key)),
         [true, true],
         "the fused pair must be the two halves of the split edge"
     );
@@ -118,7 +119,7 @@ fn removal_translates_every_dart_it_did_not_delete() {
     let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
     let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
-    let dart = map.vertex_attr_unchecked(split.vertex).dart;
+    let dart = map.vertex_attr_unchecked(split.vertex()).dart;
     let before = map.dart_count();
 
     let removal = map
@@ -269,7 +270,12 @@ fn tangent_union() -> (Model<StandardPayload>, ngk::topology::shape_keys::SolidK
     (map, result.solid)
 }
 
-/// Returns the solid's planar faces whose vertices all sit at `z = 0`.
+/// Returns the solid's faces lying in the `z = 0` plane.
+///
+/// Selected by the support rather than by the corners: a face bounded by a
+/// whole circle has no corners at all, and "every corner sits at z = 0" is
+/// vacuously true of such a face wherever it actually is. The cylinder's far
+/// cap is exactly that face, and answering by its own plane keeps it out.
 fn bottom_faces(
     g: &Model<StandardPayload>,
     solid: ngk::topology::shape_keys::SolidKey,
@@ -277,11 +283,11 @@ fn bottom_faces(
     g.solid_unchecked(solid)
         .faces()
         .iter()
-        .filter(|face| matches!(face.surface(), Surface::Plane(_)))
-        .filter(|face| {
-            face.vertices()
-                .iter()
-                .all(|vertex| vertex.point().is_some_and(|point| point.z.abs() <= 1.0e-9))
+        .filter(|face| match face.surface() {
+            Surface::Plane(plane) => {
+                plane.origin().z.abs() <= 1.0e-9 && plane.normal().z.abs() >= 1.0 - 1.0e-9
+            }
+            _ => false,
         })
         .map(|face| face.key())
         .collect()

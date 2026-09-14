@@ -147,17 +147,6 @@ pub enum TopologyError {
         dart: Dart,
     },
 
-    /// An edge closing on itself.
-    ///
-    /// Such an edge has two uses on one face and no distinct end vertices, so
-    /// there is no `EDGE_CURVE` direction to write it under until the face's
-    /// parameterization is cut open along a synthesized seam.
-    #[error("edge {edge:?} closes on itself, so it has no directed STEP spelling")]
-    ClosedEdge {
-        /// The edge met.
-        edge: EdgeKey,
-    },
-
     /// An edge carrying no curve, which cannot become an `EDGE_CURVE`.
     #[error("edge {edge:?} carries no curve")]
     MissingCurve {

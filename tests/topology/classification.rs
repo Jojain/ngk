@@ -7,6 +7,8 @@
 //! contains the cell its own anchor sits in and the classification reads that
 //! off the entity stores rather than waiting to be told.
 
+use ngk::builders::edges::add_circle;
+use ngk::builders::faces::{add_circle as add_disc, split_face_edge};
 use ngk::geometry::Plane;
 use ngk::model::{Cell0, Cell1, Cell2, Model};
 use ngk::modeling::faces;
@@ -127,6 +129,60 @@ fn a_built_rectangle_walks_back_to_one_face_and_four_logical_edges() {
         assert!(
             model.edge_attr(edge).is_some(),
             "a walked edge key names an edge this model actually holds",
+        );
+    }
+}
+
+/// A built circle keeps the place it closes inside the edge.
+#[test]
+fn the_place_a_built_circle_closes_belongs_to_the_edge() {
+    let mut model = Model::<StandardPayload>::new();
+    let edge = add_circle(&mut model, Plane::xy(), 1.0).expect("a circle builds");
+
+    assert!(
+        model.iter_vertices().next().is_none(),
+        "a whole circle has no corner anything meets at",
+    );
+    let ownership = model.ownership();
+    for dart in model.cells(Dim::Zero) {
+        assert_eq!(
+            ownership.owner(Dim::Zero, dart),
+            Some(EntityOwner::Edge(edge)),
+            "the closure point is classified inside the circle",
+        );
+    }
+}
+
+/// Marking a circle hands its closing point over to a vertex.
+///
+/// The 0-cell does not move and no cell is created: the same orbit stops being
+/// interior to the edge and starts being a corner of its own. That is the whole
+/// of what a mark changes in the classification.
+#[test]
+fn marking_a_circle_hands_its_closing_point_to_a_vertex() {
+    let mut model = Model::<StandardPayload>::new();
+    let face = add_disc(&mut model, Plane::xy(), 1.0).expect("a disc builds");
+    let rim = model
+        .face_unchecked(face)
+        .edges()
+        .first()
+        .expect("the disc has a rim")
+        .key();
+    let cells = model.cells(Dim::Zero).count();
+
+    let split = split_face_edge(&mut model, face, rim, 0.5).expect("the rim takes a corner");
+
+    assert_eq!(
+        model.cells(Dim::Zero).count(),
+        cells,
+        "marking creates no 0-cell; it renames the one already there",
+    );
+    let ownership = model.ownership();
+    for dart in model.cells(Dim::Zero) {
+        assert_eq!(
+            ownership.owner(Dim::Zero, dart),
+            Some(EntityOwner::Vertex(split.vertex())),
+            "the closing point is the corner now, not interior to the edge",
         );
     }
 }

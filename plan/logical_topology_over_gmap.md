@@ -1,9 +1,13 @@
 # Experiment: logical topology over a pure GMap subdivision
 
-Status: **In progress** — M0, M1 and M2 complete. M3 is roughly a fifth done:
-the realization cache is in, and everything in it that reads ownership is
-blocked behind a sequencing mistake this plan made. Nothing in the production
-kernel is classified yet; see [Ordering correction](#ordering-correction-classification-precedes-public-views).
+Status: **In progress** — M0, M1 and M2 complete. M3 holds the realization
+cache; its label-derived views wait on construction, for the reason in
+[Ordering correction](#ordering-correction-classification-precedes-public-views).
+M4's two classification slices are complete: a built rectangle and a built
+cylinder are classified end to end, a circle is vertex-free through construction,
+splitting, healing and STEP in both directions, and the suite is green. Next is
+step 3 of the ordering correction — deriving `Face::loops()` from
+`boundary_cycles` and deleting the stored seeds.
 
 Implementation guide: section 1 fixes the architecture, section 2 defines the
 milestone gates, and section 5 supplies the implementation sequence, concrete
@@ -1198,34 +1202,98 @@ something that is not a vertex question:
 marks the dart, the curve's closure point otherwise. Ask it for a *position*;
 ask the vertex store only when the *identity* of a logical vertex matters.
 
-**Where it stops.** Two tests fail, both the same scenario — a block fused with
-a cylinder **tangent** to its faces (`heal: false`, so healing is not involved):
+**Where it stopped.** The union of a block with a cylinder **tangent** to its
+faces failed (`heal: false`, so healing is not involved). The result fails the
+**winding** half of `validate_shell_orientation` — for a block face's edge, the
+neighbour across `alpha0(alpha2(dart))` is not in the shell. Not the volume-sign
+half; both *operand* shells validate with correct positive volumes. The
+closed-span branch added to `sew_pair` is never reached in this test, so span
+sewing is not the cause.
 
-- `builders::boolean::block_fused_with_cylinder_tangent_to_block_faces`
-- `builders::removal::redundant_faces_of_boolean_fuse_are_deleted`
-
-Diagnosis reached: the union's result fails the **winding** half of
-`validate_shell_orientation` — for a block face's edge, the neighbour across
-`alpha0(alpha2(dart))` is not in the shell. Not the volume-sign half; both
-*operand* shells validate with correct positive volumes. The closed-span branch
-added to `sew_pair` is never reached in this test, so span sewing is not the
-cause; the defect is upstream in fragment selection or face dropping.
-
-The likely cause is a promotion question this plan defers to M5: a tangency is a
-**retained result junction**, and the rim circle's closure point is exactly
+The cause was read as a promotion question this plan defers to M5: a tangency is
+a **retained result junction**, and the rim circle's closure point is exactly
 where that junction falls. Before this change the closure point happened to
-carry a `VertexKey`, so the junction existed by accident. It now has to be
-promoted deliberately — "promotion is operation intent, never `raw degree != 2`
-alone" — which is M5/M6 work, not something to guess at here.
+carry a `VertexKey`, so the junction existed by accident. That much was right,
+and it is not an argument for restoring the vertex. *Where* the promotion
+belongs was wrong; the completion below says where it actually is.
 
-Do not read the two failures as an argument for restoring the vertex. They are
-the experiment working: the accidental junction is gone, and what replaces it
-has to be chosen rather than inherited.
+Evidence, **corrected**: this entry first recorded 727 passing and 2 failing.
+That count came from a run that stops at the first failing target. The real
+figure was **716 passing, 13 failing, 0 ignored**, and the eleven unrecorded
+failures were ordinary consumer migration rather than deferred design questions.
+`cargo clippy --all-targets --all-features` holds at the same 25 distinct
+warnings; `cargo fmt` and `git diff --check` pass.
 
-Evidence: `cargo test --all-targets --all-features` reports **727 passing, 2
-failing, 0 ignored** — the two named above. `cargo clippy --all-targets
---all-features` holds at the same 25 distinct warnings; `cargo fmt` and
-`git diff --check` pass.
+#### M4 slice 2 completion — the promotion belongs to the split
+
+The thirteen failures were three groups, and only the middle one was a design
+question at all.
+
+**A sixth consumer, missed.** The STEP exporter refused a vertex-free closed
+edge outright: `edge_corners` dealt in `Vertex` views, and a circle has none to
+hand over. A corner of an exported file is now a `Corner` — `Vertex(VertexKey)`
+or `Closure(EdgeKey)` — resolved and cached by the cell it stands for rather
+than by a key that may not exist. `TopologyError::ClosedEdge` is deleted: with
+the closure point written as a vertex of the file alone, the case it named is
+unrepresentable.
+
+The import side is the same fact read backwards. `EDGE_CURVE` names two ends, so
+a file has to give a circle somewhere to start, and reading that back as a
+logical vertex would make an imported cylinder a different shape from a built
+one. `demote_closure_vertices` runs after the seam pass and classifies inside
+its edge every vertex left alone on a single closed edge. A vertex any second
+edge reaches is a real junction and is left alone, which is what keeps a
+deliberately marked circle marked.
+
+**Where the promotion goes.** Splitting an edge at one parameter means "make two
+edges here", and two edges need two junctions between them. A whole circle
+offers only one — the cut — because the place its parameterization closes is
+interior to the edge. That place is the other junction, so **the split is the
+operation whose intent promotes it**. `promote_closure_point` does this in both
+split paths: `disown_cell` on the 0-cell, then a vertex at the point
+`Model::point_at_dart` derives. This is the M5 rule applied rather than
+deferred — promotion is operation intent, and a split states that intent
+completely.
+
+That one change fixed five of the thirteen failures, the tangent Boolean among
+them. The junction this plan said "has to be chosen rather than inherited" is
+chosen by the operation that creates the need for it, which is the only place
+that knows.
+
+`ModelEdit::disown_cell` is new, and is the counterpart `own_cell` had been
+missing: it unlabels one cell without touching anything else its owner claims.
+`Subdivision::disown_at` removes one anchor, and `Model::disown_cell` offers
+every dart of the orbit, since an entry sits on whichever dart the labeller
+happened to hand over.
+
+**Tests that named the deleted vertex.** Four, each retargeted rather than
+relaxed. `closed_edge_darts_resolve_opposite_orientations` and the foreign
+cylinder import now assert the absence.
+`the_lone_vertex_of_a_closed_edge_is_preserved` kept its property — a 0-removal
+declines a vertex with no pair to fuse — and moved to the shape that still has
+one: a split rim, healed back into one circle, leaves exactly that lone corner.
+The tangent union's counts lost one vertex, which is the far cap's rim closing
+with nothing meeting it; its Euler note adds that closure point back rather than
+counting it as a corner.
+
+One failure is worth naming on its own. `bottom_faces` in
+`tests/builders/removal.rs` selected planar faces whose vertices *all* sit at
+z = 0 — vacuously true of a face with no vertices, so the cylinder's far cap
+counted as a bottom face. It asks the support now. A predicate over a collection
+that is allowed to be empty is a standing hazard in a kernel where cells need
+not have corners.
+
+Two tests were added to `tests/topology/classification.rs`, where slice 1's
+evidence lives: a built circle classifies its closure point inside the edge, and
+splitting that circle promotes the point so that neither junction is interior to
+an edge any more.
+
+Evidence: `cargo test --all-targets --all-features` exits 0 with **731 passing,
+zero failing and zero ignored** (729 inherited plus the two new tests).
+`cargo clippy --all-targets --all-features` exits 0 with the same 25 distinct
+warnings, none in changed files. `cargo fmt` and `git diff --check` pass.
+Python, benchmarks and the frontend were not rerun for this core-only
+checkpoint.
 
 ### M5 implementation — operation families and promotion rules
 

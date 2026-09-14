@@ -114,6 +114,15 @@ impl Subdivision {
         }
     }
 
+    /// Drops the entry anchored exactly at `representative`, if there is one.
+    ///
+    /// Keyed by anchor rather than by owner, because this unlabels one cell and
+    /// leaves everything else the owner claims alone -- which is what promoting
+    /// a single interior cell to a logical entity of its own needs.
+    pub(crate) fn disown_at(&mut self, dimension: Dim, representative: Dart) {
+        self.cells[dimension.index()].remove(&representative);
+    }
+
     /// Returns what the entry anchored exactly at `representative` says.
     ///
     /// This is the stored entry, not the answer for the whole orbit: a dart of

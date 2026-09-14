@@ -225,7 +225,7 @@ fn split_face_edge_updates_boundary_and_pcurves() {
             .all(|edge| shape_face.pcurve(edge.dart()).is_some())
     );
     assert!(
-        g.vertex_attr_unchecked(split.vertex)
+        g.vertex_attr_unchecked(split.vertex())
             .point
             .coincides(Point3::new(1.0, 0.0, 0.0), LINEAR_TOLERANCE)
     );
@@ -309,12 +309,13 @@ fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
     assert_eq!(g.iter_edges().count(), edge_count + 1);
     assert_eq!(g.iter_vertices().count(), vertex_count + 1);
     assert!(
-        g.vertex_attr_unchecked(split.vertex)
+        g.vertex_attr_unchecked(split.vertex())
             .point
             .coincides(Point3::new(1.0, 0.0, 1.5), LINEAR_TOLERANCE)
     );
-    assert_eq!(incident_face_keys(&g, split.first), adjacent_faces);
-    assert_eq!(incident_face_keys(&g, split.second), adjacent_faces);
+    for key in split.edges() {
+        assert_eq!(incident_face_keys(&g, key), adjacent_faces);
+    }
 
     for facekey in adjacent_faces {
         let face = g.face_unchecked(facekey);

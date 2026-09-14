@@ -108,17 +108,28 @@ fn a_corner_vertex_between_two_directions_is_preserved() {
     assert_eq!(map.iter_faces().count(), 6);
 }
 
-/// A closed edge keeps the one vertex it has.
+/// A marked edge keeps the one corner it has.
 ///
-/// A 0-removal fuses the two edges meeting at a vertex, and a cylinder's rim is
-/// a single closed edge — so its vertex has nothing to fuse and the pass declines
-/// it as `NotBetweenTwoCells`. The vertex survives because there is no operation
-/// that applies, not because a guard forbids one.
+/// A 0-removal fuses the two edges meeting at a vertex, and a marked edge's
+/// corner joins that edge to itself -- there is no pair to fuse, so the pass
+/// declines it as `NotBetweenTwoCells`. The corner survives because no operation
+/// applies, not because a guard forbids one.
+///
+/// It takes a cut to reach this shape: a rim built fresh is unmarked, since the
+/// place a circle closes is classified inside the edge.
 #[test]
 fn the_lone_vertex_of_a_closed_edge_is_preserved() {
-    let (mut map, _) = solids::cylinder(1.0, 2.0).expect("cylinder").into_model();
-    let vertices = map.iter_vertices().count();
-    let edges = map.iter_edges().count();
+    let mut map = Model::<StandardPayload>::new();
+    let face = add_circle(&mut map, ngk::geometry::Plane::xy(), 1.0).expect("a disc");
+    let rim = map
+        .face_unchecked(face)
+        .edges()
+        .first()
+        .expect("the disc has a rim")
+        .key();
+    split_face_edge(&mut map, face, rim, 0.5).expect("the rim takes a corner");
+    assert_eq!(map.iter_edges().count(), 1, "marking separates nothing");
+    assert_eq!(map.iter_vertices().count(), 1, "and leaves one corner");
 
     let report = remove_redundant_cells(&mut map, HealingOptions::default())
         .expect("healing should succeed");
@@ -128,10 +139,10 @@ fn the_lone_vertex_of_a_closed_edge_is_preserved() {
             (&skip.cell, &skip.reason),
             (HealedCell::Vertex(_), SkipReason::NotBetweenTwoCells)
         )),
-        "the rim vertex joins one edge to itself, so there is no pair to fuse"
+        "the corner joins one edge to itself, so there is no pair to fuse"
     );
-    assert_eq!(map.iter_vertices().count(), vertices);
-    assert_eq!(map.iter_edges().count(), edges);
+    assert_eq!(map.iter_edges().count(), 1);
+    assert_eq!(map.iter_vertices().count(), 1, "the corner stays");
 }
 
 #[test]
@@ -194,7 +205,10 @@ fn two_arcs_that_close_on_each_other_fuse_into_one_closed_edge() {
         .first()
         .expect("the disc has a rim")
         .key();
-    split_face_edge(&mut map, face, rim, 0.5).expect("splitting the rim should succeed");
+    // Two cuts, because one only marks: a circle needs two corners before it
+    // is two arcs.
+    split_face_edge(&mut map, face, rim, 0.5).expect("the first cut marks the rim");
+    split_face_edge(&mut map, face, rim, 3.0).expect("the second cut separates it");
     assert_eq!(map.iter_edges().count(), 2, "the rim starts split in two");
     assert_eq!(map.iter_vertices().count(), 2);
 

@@ -148,11 +148,13 @@ impl<'a, P: Payload> BoundedEdge<'a, P> {
     }
 }
 
-/// An edge that closes on itself, and so *is* its support.
+/// An edge that closes on itself: its two ends are at the same place.
 ///
-/// It has no endpoints to offer: its two ends meet at one vertex — or at none,
-/// once that vertex has been healed away — and a pair of coincident ends names
-/// no arc. Ask [`vertex`](Self::vertex) for the point it passes through, if any.
+/// It has no endpoints to offer, because a pair of coincident ends names no
+/// arc. Two kinds sit under this one view — a **marked** edge, whose ends meet
+/// at one corner, and an **unmarked** edge, which has no corner at all because
+/// the place it closes is classified inside it. Ask
+/// [`vertex`](Self::vertex) which of the two this is.
 pub struct ClosedEdge<'a, P: Payload = StandardPayload>(EdgeCore<'a, P>);
 
 impl<'a, P: Payload> ClosedEdge<'a, P> {
@@ -261,22 +263,39 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
         self.model.edge_attr(self.key).map(|attr| &attr.curve)
     }
 
+    /// Reports whether this edge carries no corner at all.
+    ///
+    /// An unmarked edge is closed and passes through no logical vertex: the
+    /// place it closes is a raw cell classified inside the edge rather than a
+    /// corner anything meets at. Both a bounded edge and a marked one answer
+    /// `false`.
+    pub fn is_unmarked(&self) -> bool {
+        Vertex::from_dart(self.model, self.dart).is_none()
+    }
+
     /// Returns the curve-parameter span followed by this oriented edge view.
     ///
-    /// The reference span is recovered from the endpoints selected by the
-    /// edge's stored dart. A view reached in the opposite direction swaps that
-    /// span without applying periodic wrapping again, so it traverses the same
+    /// The reference span is recovered from the corners selected by the edge's
+    /// stored dart. A view reached in the opposite direction swaps that span
+    /// without applying periodic wrapping again, so it traverses the same
     /// geometric section backward rather than its complement.
     pub fn parameter_interval(&self) -> Option<Interval> {
         let attr = self.model.edge_attr(self.key)?;
         // The reference span belongs to the stored dart, not to this view: the
         // view's orientation is applied to it below.
-        let reference = match vertices_at_dart(self.model, attr.dart) {
+        //
+        // Asked of the corners directly rather than through `vertices_at_dart`,
+        // which folds a marked edge's coincident ends to `None`. A marked edge
+        // runs a whole period *from its corner*, which `interval_between`
+        // answers for two coincident points, and that corner is not in general
+        // where the support's own domain starts.
+        let ends = Vertex::from_dart(self.model, attr.dart).zip(Vertex::from_dart(
+            self.model,
+            self.model.alpha(Dim::Zero, attr.dart),
+        ));
+        let reference = match ends {
             Some((start, end)) => attr.curve.interval_between(*start.point()?, *end.point()?),
-            // A closed edge is its support. Where its ends still meet at a
-            // vertex, `interval_between` answers the whole period anyway; where
-            // the vertex is gone there is nothing to ask, and the support's own
-            // domain is the same answer.
+            // An unmarked edge is its support, and has no corner to ask.
             None => attr.curve.domain(),
         };
         Some(

@@ -26,6 +26,7 @@ use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
+use crate::topology::vertex::Vertex;
 use crate::topology::{ModelEdit, ModelEditError};
 use thiserror::Error;
 
@@ -590,7 +591,14 @@ pub(crate) fn split_face_edge_staged<P: Payload>(
 ) -> Result<EdgeSplit, FaceEdgeSplitError> {
     let boundary_dart = face_edge_dart(edit, face, edge)?;
     let reversed = closed_boundary_curve_reversed(edit, face, edge, boundary_dart)?;
-    let pcurves = incident_face_pcurves(edit, edge, parameter)?;
+    // Cutting an unmarked edge marks it and leaves one edge, so each face using
+    // it keeps one pcurve, untouched: a mark says where the edge now begins, and
+    // a pcurve says where the edge *is*, which the mark does not move.
+    let separates = !edit.edge_unchecked(edge).is_unmarked();
+    let pcurves = separates
+        .then(|| incident_face_pcurves(edit, edge, parameter))
+        .transpose()?
+        .unwrap_or_default();
 
     let split = split_face_boundary_edge(edit, edge, parameter, reversed)?;
     for pcurve in pcurves {
@@ -1867,10 +1875,21 @@ fn loop_boundary_edges<P: Payload>(
         .iter()
         .map(|corner| {
             let dart = corner.outgoing().dart();
-            face_view
+            let pcurve = face_view
                 .pcurve(dart)
-                .map(|pcurve| (pcurve.point_at(0.0), pcurve))
-                .ok_or(FaceImprintSplitError::MissingPcurve { face, dart })
+                .ok_or(FaceImprintSplitError::MissingPcurve { face, dart })?;
+            // Where the corner is, asked of the corner. A marked edge's corner
+            // need not sit where its pcurve starts -- marking says where a
+            // closed edge now begins, while the pcurve keeps its own anchoring
+            // -- so reading the pcurve would put the corner in the wrong place.
+            // An unmarked loop has no corner at all, and the pcurve's start is
+            // then the only place to begin the walk from.
+            let uv = Vertex::from_dart(g, dart)
+                .and_then(|vertex| vertex.point().copied())
+                .and_then(|point| face_view.surface().param_at(point).ok())
+                .map(|uv| periodic_image_near_pcurve(face_view.surface(), &pcurve, uv))
+                .unwrap_or_else(|| pcurve.point_at(0.0));
+            Ok((uv, pcurve))
         })
         .collect()
 }
@@ -1903,7 +1922,14 @@ fn boundary_edge_at_uv<P: Payload>(
         let Some(fraction) = pcurve_fraction_at(&pcurve, uv) else {
             continue;
         };
-        if fraction <= LINEAR_TOLERANCE || 1.0 - fraction <= LINEAR_TOLERANCE {
+        // Landing on an end of the pcurve means landing on an end of the edge
+        // only where the edge has ends. A closed edge's pcurve runs a whole
+        // loop, and where that loop happens to start says nothing about where
+        // the edge begins -- which is its corner, if it has one.
+        let ends_where_it_ends = matches!(edge, Edge::Bounded(_));
+        if ends_where_it_ends
+            && (fraction <= LINEAR_TOLERANCE || 1.0 - fraction <= LINEAR_TOLERANCE)
+        {
             continue;
         }
 

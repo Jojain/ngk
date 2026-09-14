@@ -79,13 +79,65 @@ is the live plan.
   **registered explicitly** (`add_profile` / `add_sheet`); commit rejects faces
   or solids referencing unregistered components.
 
+### Edges: bounded, marked, unmarked
+
+An edge's kind is decided by **how many distinct corners it has**, not by the
+shape of its curve. Three cases, and these are the words for them:
+
+| Term | Corners | Example | `Edge` variant |
+|---|---|---|---|
+| **bounded** | 2 distinct | a segment, an arc | `Edge::Bounded` |
+| **marked** | 1, which is both its start and its end | a circle someone put a vertex on | `Edge::Closed`, `vertex()` is `Some` |
+| **unmarked** | 0 | a circle as built | `Edge::Closed`, `vertex()` is `None` |
+
+**Marked and unmarked are both closed.** `Edge::Closed` is the umbrella: the
+edge's two ends are at the same place. What separates the two is only whether a
+logical vertex sits there. `vertices_at_dart` folds `start == end` to `None`, so
+narrowing a marked edge gives `Closed`, never `Bounded` — a closed edge with a
+deliberate vertex is still closed.
+
+An unmarked edge's closing point is not nothing: it is a raw 0-cell, classified
+as interior to the edge, and `point_at_dart` derives its position from the curve.
+It is simply not a corner anything meets at. **Ask `point_at_dart` for a
+position; ask the vertex store only when the identity of a logical vertex is
+what matters.**
+
+Cutting an edge adds a corner. Whether the edge *separates* depends on whether
+it already had one, which makes one rule cover all three:
+
+| cut a… | you get |
+|---|---|
+| bounded edge | two bounded edges |
+| **unmarked** edge | **one marked edge** — the 0-cell is materialized where the cut was asked for, and no edge is created |
+| marked edge | two bounded edges |
+
+Marking is a pure relabel of the map: an unmarked edge already has its 2 darts
+and its one 0-cell orbit, so materializing costs no darts and no links. Only the
+vertex's stored point says where it now sits, and the span derivation reads it —
+which is why a marked edge spans `[t, t + period]` from its corner rather than
+from the curve's own domain start.
+
+Two hazards follow from all this, and both have already bitten:
+
+- **Predicates over corners.** "Every vertex satisfies P" is vacuously true of an
+  edge or face that has none.
+- **The pcurve's start is not the edge's start.** A pcurve is a closed loop in
+  the face's parameter space, anchored wherever it was built; a marked edge
+  begins at its *corner*, which is somewhere else on that loop. Reading
+  `pcurve.point_at(0.0)` to find a boundary corner, or treating fraction 0 and 1
+  of a pcurve as the edge's ends, is only right for a bounded edge. Ask the
+  corner.
+
 ### Subdivision (`src/topology/subdivision/`)
 
 Every raw cell is labelled with the logical entity whose **interior** contains
-it: a cylinder's seam edge belongs to its wall face, a circle's closure vertex
-belongs to the circle. Labels are one `OrbitOwnership` record per orbit, anchored
-at a representative dart; the darts an entity covers are never stored, they are
-walked out of the map by `recover_region`. `turn` is the one traversal
+it: a cylinder's seam edge belongs to its wall face, and the 0-cell where a
+circle's parameterization closes belongs to the circle rather than being a
+logical vertex. Labels are one `OrbitOwnership` record per orbit, anchored at a
+representative dart; the darts an entity covers are never stored, they are
+walked out of the map by `recover_region`. An entity owns the cell its own
+anchor sits in without any record saying so, so a shape with no scaffold stores
+no labels and is still fully classified. `turn` is the one traversal
 primitive — it steps around a shared boundary cell with the sewing involutions,
 passing over cells a higher-dimensional entity owns. `boundary_cycles` gives a
 face its oriented loops and `boundary_shells` gives a solid its boundary

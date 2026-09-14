@@ -710,7 +710,12 @@ fn split_edge_at_points<P: Payload>(
         } else {
             split_edge_staged(edit, fragment, parameter)?
         };
-        fragments.push(split.second);
+        // A cut that only marked an unmarked edge created nothing: the edge
+        // still covers the whole of what it covered, and the next point cuts
+        // that same edge into the two arcs.
+        if let Some(created) = split.created() {
+            fragments.push(created);
+        }
     }
     Ok(fragments)
 }

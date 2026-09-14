@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use super::graph::SpanSubdivision;
 use crate::builders::faces::{FaceImprint, FaceImprintSection, split_face_edge_staged};
 use crate::geometry::{Point3, PointCoincidence};
+use crate::topology::edge::Edge;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use crate::topology::{ModelEdit, payload::Payload};
 
@@ -111,7 +112,7 @@ pub(crate) fn realize_section<P: Payload>(
             let view = edit.edge_unchecked(edge);
             let parameter = view.curve().expect("section geometry").param_at(point);
             let face = view.faces()[0].key();
-            edge = split_face_edge_staged(edit, face, edge, parameter)?.second;
+            edge = split_face_edge_staged(edit, face, edge, parameter)?.continuation();
         }
         let middle = (pair[0] + pair[1]) * 0.5;
         let piece = imprint
@@ -154,15 +155,23 @@ pub(crate) fn realize_edge_spans<P: Payload>(
                 continue;
             };
             let fragment = fragments.iter().copied().find(|fragment| {
-                let view = map.edge_unchecked(*fragment);
-                let Some(view) = view.bounded() else {
+                // Where the fragment's ends are. A marked edge leaves and
+                // arrives at its one corner, so it realizes a span whose two
+                // ends are that same point; an unmarked edge has no corner to
+                // match a span's ends against at all.
+                let ends = match map.edge_unchecked(*fragment) {
+                    Edge::Bounded(bounded) => {
+                        let (first, second) = bounded.vertices();
+                        first.point().copied().zip(second.point().copied())
+                    }
+                    Edge::Closed(closed) => closed
+                        .vertex()
+                        .and_then(|corner| corner.point().copied())
+                        .map(|point| (point, point)),
+                };
+                let Some((a, b)) = ends else {
                     return false;
                 };
-                let (start_vertex, end_vertex) = view.vertices();
-                let (Some(a), Some(b)) = (start_vertex.point(), end_vertex.point()) else {
-                    return false;
-                };
-                let (a, b) = (*a, *b);
                 (a.coincides(start, tolerance) && b.coincides(end, tolerance))
                     || (a.coincides(end, tolerance) && b.coincides(start, tolerance))
             });

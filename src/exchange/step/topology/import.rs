@@ -37,10 +37,12 @@ use crate::model::Model;
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
 };
+use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::orientation::Orientation;
 use crate::topology::shape::{Shape, SolidTag};
-use crate::topology::shape_keys::SolidKey;
+use crate::topology::shape_keys::{EdgeKey, SolidKey, VertexKey};
+use crate::topology::subdivision::EntityOwner;
 use crate::topology::{ModelEdit, ModelEditError, StandardPayload};
 
 use super::super::StepImport;
@@ -202,7 +204,48 @@ fn read_solid(
         })?;
     }
 
+    demote_closure_vertices(&mut gmap).map_err(|error| TopologyError::UnsewableShell {
+        brep: origin,
+        detail: error.to_string(),
+    })?;
+
     Ok(Some(Shape::new(gmap, solid)))
+}
+
+/// Classifies the corners STEP demanded but the shape does not have.
+///
+/// `EDGE_CURVE` names two ends, so a closed curve is written leaving from and
+/// arriving at a vertex even where nothing meets there -- a cylinder's rim is
+/// one circle, and the file has to give it somewhere to start. Such a vertex
+/// ends up alone on a single closed edge, and that is the tell: the point is
+/// where the edge's parameterization closes, not a corner of the shape, so it
+/// is classified inside the edge rather than standing as a logical vertex the
+/// shape never had. A vertex any second edge reaches is a real junction and is
+/// left alone, which is what keeps a circle someone deliberately marked marked.
+fn demote_closure_vertices(gmap: &mut Model<StandardPayload>) -> Result<(), ModelEditError> {
+    let closures: Vec<(VertexKey, Dart, EdgeKey)> = gmap
+        .iter_vertices()
+        .filter_map(|(key, attr)| {
+            let edges = gmap.vertex(key)?.edges();
+            let [edge] = edges.as_slice() else {
+                return None;
+            };
+            matches!(edge, Edge::Closed(_)).then(|| (key, attr.dart, edge.key()))
+        })
+        .collect();
+    if closures.is_empty() {
+        return Ok(());
+    }
+
+    gmap.transaction(|edit| {
+        for (vertex, dart, edge) in &closures {
+            // Both in one breath: the label says the cell is interior to the
+            // edge, which contradicts a logical vertex sitting on it.
+            edit.remove_vertex(*vertex);
+            edit.own_cell(Dim::Zero, *dart, EntityOwner::Edge(*edge));
+        }
+        Ok(())
+    })
 }
 
 /// Plans every `ADVANCED_FACE` of one `CLOSED_SHELL`, dropping the ones that

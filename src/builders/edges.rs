@@ -14,11 +14,73 @@ use crate::topology::shape_keys::{EdgeKey, VertexKey};
 use crate::topology::subdivision::EntityOwner;
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct EdgeSplit {
-    pub first: EdgeKey,
-    pub second: EdgeKey,
-    pub vertex: VertexKey,
+/// What cutting an edge left behind.
+///
+/// A cut always adds a corner. Whether the edge *separates* depends on whether
+/// it already had one: cutting an unmarked edge marks it and creates nothing,
+/// while every other cut leaves two edges meeting at the new corner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeSplit {
+    /// Two edges where there was one, meeting at `vertex`.
+    ///
+    /// `first` keeps the key the edge already had.
+    Separated {
+        /// The piece before the cut, under the original key.
+        first: EdgeKey,
+        /// The piece beyond the cut, under a key derived from the original.
+        second: EdgeKey,
+        /// The corner the two pieces meet at.
+        vertex: VertexKey,
+    },
+    /// One closed edge, now carrying the corner the cut asked for.
+    ///
+    /// Nothing was created: an unmarked edge already holds the orbit its corner
+    /// sits on, so marking it costs no darts and leaves no second edge.
+    Marked {
+        /// The edge, still under the key it had.
+        edge: EdgeKey,
+        /// The corner it now carries.
+        vertex: VertexKey,
+    },
+}
+
+impl EdgeSplit {
+    /// Returns the corner the cut added.
+    pub fn vertex(&self) -> VertexKey {
+        match *self {
+            Self::Separated { vertex, .. } | Self::Marked { vertex, .. } => vertex,
+        }
+    }
+
+    /// Returns the edge the cut created, or `None` where it created none.
+    pub fn created(&self) -> Option<EdgeKey> {
+        match *self {
+            Self::Separated { second, .. } => Some(second),
+            Self::Marked { .. } => None,
+        }
+    }
+
+    /// Returns the edge carrying what lies beyond the cut.
+    ///
+    /// A caller walking an edge and cutting as it goes continues here: the
+    /// created edge where the cut separated one, and the same edge where
+    /// marking left only one.
+    pub fn continuation(&self) -> EdgeKey {
+        match *self {
+            Self::Separated { second, .. } => second,
+            Self::Marked { edge, .. } => edge,
+        }
+    }
+
+    /// Returns every edge now covering what was cut.
+    pub fn edges(&self) -> impl Iterator<Item = EdgeKey> {
+        match *self {
+            Self::Separated { first, second, .. } => [Some(first), Some(second)],
+            Self::Marked { edge, .. } => [Some(edge), None],
+        }
+        .into_iter()
+        .flatten()
+    }
 }
 
 #[derive(Debug, Error, Clone, PartialEq)]
@@ -134,6 +196,15 @@ pub(crate) fn split_edge_staged<P: Payload>(
     parameter: f64,
 ) -> Result<EdgeSplit, EdgeSplitError> {
     let split = prepare_profile_edge_split(edit, edge, parameter)?;
+    if edit.attribute::<Cell0>(split.first_dart).is_none() {
+        return Ok(mark_closed_edge(
+            edit,
+            edge,
+            split.first_dart,
+            &split.curve,
+            parameter,
+        ));
+    }
     split_edge_with_profile_links(edit, edge, parameter, split)
 }
 
@@ -144,7 +215,43 @@ pub(crate) fn split_face_boundary_edge<P: Payload>(
     reversed: bool,
 ) -> Result<EdgeSplit, EdgeSplitError> {
     let split = prepare_attached_edge_split(edit, edge, parameter)?;
+    if edit.attribute::<Cell0>(split.first_dart).is_none() {
+        return Ok(mark_closed_edge(
+            edit,
+            edge,
+            split.first_dart,
+            &split.curve,
+            parameter,
+        ));
+    }
     split_attached_edge_with_profile_links(edit, edge, parameter, split, reversed)
+}
+
+/// Materializes an unmarked edge's own 0-cell as the corner a cut asked for.
+///
+/// An unmarked edge already holds the orbit the corner sits on -- its two ends
+/// meet there -- so this adds no darts and links nothing. One cut cannot
+/// separate such an edge, because there is no second corner to separate it
+/// from; it marks it instead, and a later cut on the marked edge is the one
+/// that leaves two arcs.
+///
+/// The cut is honoured by *where the corner is placed*, not by moving anything
+/// in the map: the curve is left alone, and the edge's span is derived from the
+/// corner afterwards rather than from the support's own domain.
+fn mark_closed_edge<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    edge: EdgeKey,
+    dart: Dart,
+    curve: &Curve,
+    parameter: f64,
+) -> EdgeSplit {
+    edit.disown_cell(Dim::Zero, dart);
+    let vertex = edit.add_vertex(VertexAttr::new(
+        dart,
+        curve.point_at(parameter),
+        P::V::default(),
+    ));
+    EdgeSplit::Marked { edge, vertex }
 }
 
 fn split_edge_with_profile_links<P: Payload>(
@@ -179,7 +286,7 @@ fn split_edge_with_profile_links<P: Payload>(
         EdgeAttr::new(second_mid, second_curve, P::E::default()),
     );
 
-    Ok(EdgeSplit {
+    Ok(EdgeSplit::Separated {
         first: edge,
         second,
         vertex,
@@ -242,7 +349,7 @@ fn split_attached_edge_with_profile_links<P: Payload>(
         EdgeAttr::new(mid_darts[&split.second_dart], second_curve, P::E::default()),
     );
 
-    Ok(EdgeSplit {
+    Ok(EdgeSplit::Separated {
         first: edge,
         second,
         vertex,

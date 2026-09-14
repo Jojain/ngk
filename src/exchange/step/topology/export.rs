@@ -27,7 +27,7 @@
 
 use std::collections::HashMap;
 
-use crate::geometry::{Axis2, LINEAR_TOLERANCE, Point2, SurfacePeriodicity};
+use crate::geometry::{Axis2, LINEAR_TOLERANCE, Point2, Point3, SurfacePeriodicity};
 use crate::model::Model;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -36,7 +36,6 @@ use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, SolidKey, VertexKey};
 use crate::topology::sheet::ShellRef;
-use crate::topology::vertex::Vertex;
 
 use super::super::builder::InstanceBuilder;
 use super::super::convert::curves::write_curve;
@@ -52,7 +51,23 @@ use super::seam::{SeamedBound, SeamedEdge, SeamedFace};
 #[derive(Debug, Default)]
 struct ExportCache {
     vertices: HashMap<VertexKey, EntityId>,
+    closures: HashMap<EdgeKey, EntityId>,
     edges: HashMap<EdgeKey, EntityId>,
+}
+
+/// Which cell the `VERTEX_POINT` at an end of an edge stands for.
+///
+/// Most edges end at logical vertices, and those are what the file shares: two
+/// edges meeting at a corner must name the same instance. An edge that closes
+/// on itself may pass through no vertex at all -- a whole circle's closure
+/// point is interior to the edge, not a corner anything meets at -- and
+/// `EDGE_CURVE` has no spelling without two ends, so the point the curve closes
+/// at is written as a vertex of the file alone. It is shared by the edge that
+/// closes there, which is the only thing that can arrive at it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Corner {
+    Vertex(VertexKey),
+    Closure(EdgeKey),
 }
 
 /// A stretch of cut already written, and which way it runs.
@@ -141,9 +156,7 @@ impl FaceCut {
         {
             return written;
         }
-        let point = face.surface().point_at(at.x, at.y);
-        let vertex_geometry = write_point(builder, point);
-        let written = builder.add_entity(&entities::VertexPoint { vertex_geometry });
+        let written = write_vertex_point(builder, face.surface().point_at(at.x, at.y));
         self.corners.push((at, written));
         written
     }
@@ -324,12 +337,12 @@ fn bound_corners<P: Payload>(
         let corner = match element {
             SeamedEdge::Real { dart } => {
                 let (start, _) = edge_corners(gmap, *dart)?;
-                write_vertex(builder, &start, cache)?
+                write_corner(builder, gmap, start, cache)?
             }
             SeamedEdge::Synthetic { from, .. } => match &bound.edges[(index + count - 1) % count] {
                 SeamedEdge::Real { dart } => {
                     let (_, end) = edge_corners(gmap, *dart)?;
-                    write_vertex(builder, &end, cache)?
+                    write_corner(builder, gmap, end, cache)?
                 }
                 SeamedEdge::Synthetic { .. } => cut.corner(builder, face, *from),
             },
@@ -341,20 +354,25 @@ fn bound_corners<P: Payload>(
 
 /// The corners an oriented edge view runs from and to.
 ///
-/// An edge that closes on itself leaves and arrives at the one vertex it
-/// passes through, which `EDGE_CURVE` spells by naming that vertex twice.
+/// An edge that closes on itself leaves and arrives at the same corner, which
+/// `EDGE_CURVE` spells by naming it twice -- whether that corner is a vertex
+/// the edge passes through or the place its own curve closes.
 fn edge_corners<P: Payload>(
     gmap: &Model<P>,
     dart: Dart,
-) -> Result<(Vertex<'_, P>, Vertex<'_, P>), TopologyError> {
+) -> Result<(Corner, Corner), TopologyError> {
     let edge = Edge::from_dart(gmap, dart).ok_or(TopologyError::UnregisteredEdge { dart })?;
     match edge {
-        Edge::Bounded(bounded) => Ok(bounded.vertices()),
+        Edge::Bounded(bounded) => {
+            let (start, end) = bounded.vertices();
+            Ok((Corner::Vertex(start.key()), Corner::Vertex(end.key())))
+        }
         Edge::Closed(closed) => {
-            let vertex = closed
-                .vertex()
-                .ok_or(TopologyError::ClosedEdge { edge: closed.key() })?;
-            Ok((vertex.clone(), vertex))
+            let corner = match closed.vertex() {
+                Some(vertex) => Corner::Vertex(vertex.key()),
+                None => Corner::Closure(closed.key()),
+            };
+            Ok((corner, corner))
         }
     }
 }
@@ -399,8 +417,8 @@ fn write_edge_curve<P: Payload>(
     let edge = Edge::new(gmap, key);
     let (start, end) = edge_corners(gmap, edge.dart())?;
 
-    let start_id = write_vertex(builder, &start, cache)?;
-    let end_id = write_vertex(builder, &end, cache)?;
+    let start_id = write_corner(builder, gmap, start, cache)?;
+    let end_id = write_corner(builder, gmap, end, cache)?;
 
     let geometry = edge
         .curve()
@@ -483,25 +501,47 @@ fn varying_axis(from: Point2, to: Point2) -> Option<Axis2> {
     }
 }
 
-/// Writes a `VERTEX_POINT`, shared by key.
+/// Writes a `VERTEX_POINT`, shared by the cell the corner stands for.
 ///
-/// Shared by *key*, never by position: two corners of a solid that happen to
+/// Shared by *cell*, never by position: two corners of a solid that happen to
 /// coincide are still two corners, and merging them would weld the shape.
-fn write_vertex<P: Payload>(
+fn write_corner<P: Payload>(
     builder: &mut InstanceBuilder,
-    vertex: &Vertex<'_, P>,
+    gmap: &Model<P>,
+    corner: Corner,
     cache: &mut ExportCache,
 ) -> Result<EntityId, TopologyError> {
-    let key = vertex.key();
-    if let Some(&existing) = cache.vertices.get(&key) {
-        return Ok(existing);
+    match corner {
+        Corner::Vertex(vertex) => {
+            if let Some(&existing) = cache.vertices.get(&vertex) {
+                return Ok(existing);
+            }
+            let position = gmap
+                .vertex_attr(vertex)
+                .map(|attr| attr.point)
+                .ok_or(TopologyError::MissingVertexPoint { vertex })?;
+            let id = write_vertex_point(builder, position);
+            cache.vertices.insert(vertex, id);
+            Ok(id)
+        }
+        Corner::Closure(edge) => {
+            if let Some(&existing) = cache.closures.get(&edge) {
+                return Ok(existing);
+            }
+            // Through `point_at_dart` rather than off the curve here, so that
+            // where a vertex-free edge closes is decided in one place.
+            let position = gmap
+                .point_at_dart(Edge::new(gmap, edge).dart())
+                .ok_or(TopologyError::MissingCurve { edge })?;
+            let id = write_vertex_point(builder, position);
+            cache.closures.insert(edge, id);
+            Ok(id)
+        }
     }
+}
 
-    let position = vertex
-        .point()
-        .ok_or(TopologyError::MissingVertexPoint { vertex: key })?;
-    let vertex_geometry = write_point(builder, *position);
-    let id = builder.add_entity(&entities::VertexPoint { vertex_geometry });
-    cache.vertices.insert(key, id);
-    Ok(id)
+/// Writes a `VERTEX_POINT` at `position`, sharing nothing.
+fn write_vertex_point(builder: &mut InstanceBuilder, position: Point3) -> EntityId {
+    let vertex_geometry = write_point(builder, position);
+    builder.add_entity(&entities::VertexPoint { vertex_geometry })
 }

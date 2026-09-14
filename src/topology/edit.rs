@@ -417,6 +417,15 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         self.model.own_cell(dimension, dart, owner);
     }
 
+    /// Unlabels the raw `dimension`-cell containing `dart`.
+    ///
+    /// The counterpart of [`Self::own_cell`], for a cell that stops being
+    /// interior to anything -- a closure point an operation promotes into a
+    /// corner of its own.
+    pub fn disown_cell(&mut self, dimension: Dim, dart: Dart) {
+        self.model.disown_cell(dimension, dart);
+    }
+
     /// Performs a complete sewing operation without exposing intermediate
     /// inconsistent indexes.
     pub fn sew(&mut self, dim: Dim, first: Dart, second: Dart) -> Result<(), ModelEditError> {

@@ -831,6 +831,22 @@ impl<P: Payload> Model<P> {
         self.subdivision.own(dimension, dart, owner);
     }
 
+    /// Unlabels the raw `dimension`-cell containing `dart`.
+    ///
+    /// An entry sits on whichever dart of the orbit the labeller happened to
+    /// hand over, so every dart of the cell is offered rather than only the one
+    /// asked about.
+    pub(crate) fn disown_cell(&mut self, dimension: Dim, dart: Dart) {
+        self.invalidate_derived_indexes();
+        let anchors: Vec<Dart> = self
+            .topology
+            .orbit(dart, self.topology.orbit_indices(dimension))
+            .collect();
+        for anchor in anchors {
+            self.subdivision.disown_at(dimension, anchor);
+        }
+    }
+
     /// Drops every label naming `owner`, for an entity being removed.
     pub(crate) fn disown_entity(&mut self, owner: EntityOwner) {
         self.invalidate_derived_indexes();
