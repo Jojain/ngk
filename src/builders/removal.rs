@@ -26,7 +26,9 @@ use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAtt
 use crate::topology::face::Face;
 use crate::topology::gmap::Dim;
 use crate::topology::orientation::Orientation;
+use crate::topology::profile::ProfileIterator;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
+use crate::topology::subdivision::is_scaffold_cell;
 use crate::topology::{Dart, IsolatedDart, ModelEdit, ModelEditError, Payload};
 
 /// Failure raised while removing a cell from a staged map.
@@ -413,6 +415,13 @@ enum MergePlan {
         seed: Dart,
         /// The face's complete loop list once the rejoin has happened.
         boundaries: Vec<Dart>,
+        /// Other keys naming this same 2-cell, with how each is turned relative
+        /// to `seed`.
+        ///
+        /// A fusion earlier in the same transaction leaves the consumed key in
+        /// place until commit reconciles it, and a key seeded in the cell this
+        /// removal deletes has to be moved off it like any other.
+        face_aliases: Vec<(FaceKey, Orientation)>,
     },
     BoundaryRemoved {
         face: FaceKey,
@@ -657,12 +666,25 @@ impl MergePlan {
             .map(|(index, seed_dart)| if index == *rejoined { seed } else { seed_dart })
             .collect();
 
+        let face_aliases = g
+            .iter_faces()
+            .filter(|(key, _)| *key != face)
+            .filter_map(|(key, alias)| {
+                let stale = alias.darts().find(|seed| cell_set.contains(seed))?;
+                let sense = g
+                    .cell_orientation_from_seed(reference, stale, Dim::Two)
+                    .unwrap_or(Orientation::Same);
+                Some((key, sense))
+            })
+            .collect::<Vec<_>>();
+
         Ok(MergePlan::Loops {
             face,
             survivor_loop,
             consumed_loop,
             seed,
             boundaries,
+            face_aliases,
         })
     }
 
@@ -703,11 +725,16 @@ impl MergePlan {
         };
         // The support has to agree that it collapses on that side, since it is
         // the support the unwrapped domain will later ask for the row.
+        // Any one of the component's pcurves answers where the loop sits across
+        // the axis, but *which* one has to be the same every run, or the side
+        // the cap closes on can come out differently on the same shape.
         let Some(at) = component
             .iter()
-            .filter_map(|dart| attr.pcurves.get(dart))
+            .copied()
+            .filter(|dart| attr.pcurves.contains_key(dart))
+            .min_by_key(Dart::id)
+            .and_then(|dart| attr.pcurves.get(&dart))
             .map(|pcurve| transverse.of(pcurve.point_at(0.0)))
-            .next()
         else {
             return Ok(None);
         };
@@ -896,6 +923,7 @@ impl MergePlan {
                 consumed_loop,
                 seed,
                 boundaries,
+                face_aliases,
             } => {
                 edit.profile_attr_mut_unchecked(survivor_loop).dart = seed;
                 if let Some(consumed) = consumed_loop {
@@ -907,6 +935,19 @@ impl MergePlan {
                 let attr = edit.face_attr_mut_unchecked(face);
                 attr.set_outer(boundaries[0]);
                 attr.set_inner(boundaries[1..].to_vec());
+                // An alias is a key commit will reconcile away, so all it owes
+                // until then is a dart the map still holds, turned the way the
+                // seed it lost was.
+                for (alias, sense) in face_aliases {
+                    let oriented = match sense {
+                        Orientation::Same => seed,
+                        Orientation::Reversed => edit.alpha(Dim::Zero, seed),
+                    };
+                    let attr = edit.face_attr_mut_unchecked(alias);
+                    attr.set_outer(oriented);
+                    attr.clear_inner();
+                    attr.pcurves.clear();
+                }
                 MergedCell::Loops {
                     face,
                     survivor_loop,
@@ -1156,12 +1197,20 @@ fn rejoined_components<P: Payload>(
         }
     };
 
+    // Which component comes out first decides which of a ring's two loops keeps
+    // the seam's identity and which gets a fresh one, so the order the starts
+    // are taken in is part of the answer, not an implementation detail. Taking
+    // them by dart id makes it the same answer every run.
+    let mut starts = surviving.iter().copied().collect::<Vec<_>>();
+    starts.sort_by_key(Dart::id);
     let mut unvisited = surviving.clone();
     let mut components = Vec::new();
-    while let Some(&start) = unvisited.iter().next() {
+    for start in starts {
+        if !unvisited.remove(&start) {
+            continue;
+        }
         let mut component = HashSet::from([start]);
         let mut queue = vec![start];
-        unvisited.remove(&start);
         while let Some(current) = queue.pop() {
             for along in [Dim::Zero, Dim::One] {
                 let next = step(current, along);
@@ -1377,11 +1426,28 @@ fn reseed_attributes<P: Payload>(
             .map(|(key, attr)| (key, attr.dart)),
         seeds,
     );
-    for (key, dart) in profiles
-        .into_iter()
-        .filter_map(|(key, dart)| Some((key, dart?)))
-    {
-        edit.profile_attr_mut_unchecked(key).dart = dart;
+    for (key, dart) in profiles {
+        // A profile is a chain, not a cell: the Def. 59 path steps across the
+        // faces around an edge, which is not where the rest of a chain lies. A
+        // seed it cannot replace therefore says nothing about whether the
+        // profile survives, and the profile's own walk has to be asked.
+        // A profile is a chain, not a cell: the Def. 59 path steps across the
+        // faces around an edge, which is not where the rest of a chain lies. A
+        // seed it cannot replace therefore says nothing about whether the
+        // profile survives, and the profile's own walk has to be asked.
+        let replacement = dart.or_else(|| {
+            surviving_profile_dart(
+                edit.model(),
+                cell,
+                edit.model().profile_attr_unchecked(key).dart,
+            )
+        });
+        match replacement {
+            Some(dart) => edit.profile_attr_mut_unchecked(key).dart = dart,
+            None => {
+                edit.remove_profile(key);
+            }
+        }
     }
 
     // A shell keeps every dart the removal does not delete, so a seed that has
@@ -1435,6 +1501,28 @@ fn reseed_attributes<P: Payload>(
             attr.inner_shells = Some(shells[1..].to_vec());
         }
     }
+}
+
+/// The dart a profile keeps when the removal deletes the one it was seeded on.
+///
+/// A profile's dart carries its traversal direction, and that direction is the
+/// orientation class its alternating `alpha0`/`alpha1` walk visits at every
+/// other step. Following that walk until it leaves the removed cell therefore
+/// lands on a dart of the same profile, read the same way round. `None` means
+/// the removal took the whole chain, and the profile goes with it.
+fn surviving_profile_dart<P: Payload>(
+    g: &Model<P>,
+    cell: &HashSet<Dart>,
+    dart: Dart,
+) -> Option<Dart> {
+    // Every other dart of the walk, which is the run of darts sharing this
+    // one's traversal direction. A bridge is never a seed for a profile: a walk
+    // started on one leaves along both of the loops it joins and reports them
+    // as a single profile.
+    ProfileIterator::new(g, dart).step_by(2).find(|walked| {
+        !cell.contains(walked)
+            && !is_scaffold_cell(g.topology(), g.subdivision(), Dim::One, *walked)
+    })
 }
 
 /// The root a shell anchored at `dart` keeps once the removal is done.

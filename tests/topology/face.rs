@@ -95,19 +95,19 @@ fn face_boundary_edges_preserve_their_exact_loop_darts() {
     let shape = solids::block(1.0, 2.0, 3.0).expect("block should build");
 
     for face in shape.solid().faces() {
-        let loop_darts = face
+        // One dart per oriented edge use, which is what the walk reports; the
+        // raw dart list underneath it lengthens with every refinement.
+        let occurrences = face
             .outer_loop()
             .expect("face should have an outer loop")
-            .darts()
-            .step_by(2)
-            .collect::<Vec<_>>();
+            .occurrences();
         let edges = face
             .outer_loop()
             .expect("face should have an outer loop")
             .edges();
 
-        assert_eq!(edges.len(), loop_darts.len());
-        for (edge, loop_dart) in edges.iter().zip(loop_darts) {
+        assert_eq!(edges.len(), occurrences.len());
+        for (edge, loop_dart) in edges.iter().zip(occurrences) {
             assert_eq!(
                 edge.dart(),
                 loop_dart,

@@ -1331,7 +1331,7 @@ fn reconcile_transaction_attributes<P: Payload>(
     events: &[EditEvent],
     lineage: &TransactionLineage,
 ) -> Result<(), ModelEditError> {
-    let spent = events
+    let mut spent = events
         .iter()
         .filter(|event| is_spent_merge(g, **event))
         .filter_map(|event| event.merge_keys())
@@ -1367,10 +1367,36 @@ fn reconcile_transaction_attributes<P: Payload>(
         EditKey::Edge,
     )?;
 
+    // A profile is a connected set of *edges*, so it is seeded on one. A
+    // boundary that loses its last edge leaves its key behind on the bridge
+    // that used to reach it, which is scaffold and belongs to no chain -- and a
+    // walk started there leaves along every loop that bridge joins, so the key
+    // reads as a second identity on a neighbouring profile. Dropping it here is
+    // the definition applied, not a repair.
+    let edgeless = g
+        .profiles
+        .iter()
+        .filter(|(_, attr)| g.cell_key::<crate::model::Cell1>(attr.dart).is_none())
+        .map(|(key, _)| key)
+        .collect::<Vec<_>>();
+    for key in edgeless {
+        g.profiles.remove(key);
+        // A merge declared into a key the definition says does not exist is
+        // spent, exactly like one whose identities a later pass consumed.
+        spent.insert(EditKey::Profile(key));
+    }
+
     let profiles = g
         .profiles
         .iter()
-        .map(|(key, attr)| (key, vec![g.profile_representative(attr.dart)]))
+        .map(|(key, attr)| {
+            (
+                key,
+                vec![crate::topology::profile::Profile::representative(
+                    g, attr.dart,
+                )],
+            )
+        })
         .collect();
     reconcile_components(
         g,

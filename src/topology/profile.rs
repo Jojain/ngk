@@ -5,6 +5,8 @@ use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 use crate::model::{MergeTopology, Model, TopologyMerge};
 use crate::topology::shape_keys::ProfileKey;
+use crate::topology::subdivision::{is_scaffold_cell, turn_where};
+use std::collections::HashSet;
 
 /// A keyed 1-dimensional connected topology view with a contextual root dart.
 ///
@@ -42,6 +44,22 @@ impl<'a, P: Payload> Profile<'a, P> {
         Some(Self { model, key, dart })
     }
 
+    /// Returns the canonical dart naming the profile containing `dart`.
+    ///
+    /// Takes a model rather than a profile because this is what *gives* a dart
+    /// its profile: it runs while the dart-to-key index is being built, before
+    /// any profile can be viewed.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a dart in no profile, which no dart of a map is.
+    pub(crate) fn representative(model: &Model<P>, dart: Dart) -> Dart {
+        ProfileIterator::component(model, dart)
+            .into_iter()
+            .min()
+            .expect("profile component cannot be empty")
+    }
+
     /// Returns this profile's stable key.
     pub fn key(&self) -> ProfileKey {
         self.key
@@ -67,7 +85,7 @@ impl<'a, P: Payload> Profile<'a, P> {
     /// free. For closed profiles, iteration stops just before returning to the
     /// starting dart.
     pub fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
-        LoopIterator::new(self.model, self.dart)
+        ProfileIterator::new(self.model, self.dart)
     }
 
     /// Returns the first vertex in this profile's traversal order.
@@ -119,8 +137,9 @@ impl<P: Payload> MergeTopology<P> for Profile<'_, P> {
 impl<'a, P: Payload> Closeable for Profile<'a, P> {
     /// A profile is closed when no dart in it is alpha0-free or alpha1-free.
     fn is_closed(&self) -> bool {
-        self.darts()
-            .all(|d| !self.model.is_free(d, Dim::Zero) && !self.model.is_free(d, Dim::One))
+        self.darts().all(|d| {
+            !self.model.is_free(d, Dim::Zero) && ProfileIterator::across(self.model, d).is_some()
+        })
     }
 }
 
@@ -196,61 +215,95 @@ impl<'a, P: Payload> Closed<Profile<'a, P>> {
     }
 }
 
-enum LoopInvolution {
-    A0,
-    A1,
-}
-impl LoopInvolution {
-    fn next(&self) -> Self {
-        match self {
-            LoopInvolution::A0 => LoopInvolution::A1,
-            LoopInvolution::A1 => LoopInvolution::A0,
-        }
-    }
-}
-
-struct LoopIterator<'a, P: Payload = StandardPayload> {
-    start: Dart,
-    previous: Option<Dart>,
-    inv: LoopInvolution,
+/// Walks a profile: along the current edge with `alpha0`, then across to the
+/// next edge, alternating.
+///
+/// "Across" is `alpha1` *turned over any raw edge a face owns* — a bridge to a
+/// hole, a periodic seam. That single difference is what separates a profile
+/// from the raw `alpha0`/`alpha1` component, and it lives here so that one
+/// place knows how a profile is walked.
+pub(crate) struct ProfileIterator<'a, P: Payload = StandardPayload> {
     model: &'a Model<P>,
+    previous: Option<Dart>,
+    /// Whether the next move runs along the current edge rather than across to
+    /// the next one.
+    along_edge: bool,
+    /// Every dart already yielded.
+    ///
+    /// Stopping at the dart the walk started from is not enough on its own. A
+    /// walk entered on a bridge leaves along a rim and comes back round to the
+    /// rim, never to the bridge, so the only reliable end is a dart repeating.
+    seen: HashSet<Dart>,
+    start: Dart,
 }
 
-impl<'a, P: Payload> LoopIterator<'a, P> {
-    pub fn new(model: &'a Model<P>, start: Dart) -> Self {
+impl<'a, P: Payload> ProfileIterator<'a, P> {
+    pub(crate) fn new(model: &'a Model<P>, start: Dart) -> Self {
         Self {
-            start,
-            previous: None,
-            inv: LoopInvolution::A0,
             model,
+            previous: None,
+            along_edge: true,
+            seen: HashSet::new(),
+            start,
         }
+    }
+
+    /// The next edge of the profile at `dart`: `alpha1`, turning across a raw
+    /// edge a face owns rather than onto it.
+    ///
+    /// `None` at a free end, and where the whole fan is scaffold.
+    pub(crate) fn across(model: &Model<P>, dart: Dart) -> Option<Dart> {
+        turn_where(model.topology(), Dim::One, dart, |at| {
+            is_scaffold_cell(model.topology(), model.subdivision(), Dim::One, at)
+        })
+    }
+
+    /// Every dart of the profile containing `dart`, in no particular order.
+    ///
+    /// Deliberately *not* [`Profile::darts`]. That walks forward from the
+    /// view's own dart, which is the order its edges and vertices come out in,
+    /// and on an open chain entered part way along it reaches only one end.
+    /// Identity must not depend on where a walk started, so this one runs both
+    /// ways and is the only thing a representative may be read from.
+    pub(crate) fn component(model: &Model<P>, dart: Dart) -> Vec<Dart> {
+        let mut seen = HashSet::new();
+        let mut darts = Vec::new();
+        // Forward from the dart reaches one end of an open chain, and forward
+        // from the far end of its own edge reaches the other. A closed chain
+        // comes back either way, so the second walk then adds nothing.
+        for from in [dart, model.alpha(Dim::Zero, dart)] {
+            for walked in ProfileIterator::new(model, from) {
+                if seen.insert(walked) {
+                    darts.push(walked);
+                }
+            }
+        }
+        darts
     }
 }
 
-impl<'a, P: Payload> Iterator for LoopIterator<'a, P> {
+impl<'a, P: Payload> Iterator for ProfileIterator<'a, P> {
     type Item = Dart;
 
     fn next(&mut self) -> Option<Self::Item> {
         let current = match self.previous {
             None => self.start,
-            Some(d) => {
-                let dim = match self.inv {
-                    LoopInvolution::A0 => Dim::Zero,
-                    LoopInvolution::A1 => Dim::One,
-                };
-                if self.model.is_free(d, dim) {
-                    return None;
-                }
-                self.inv = self.inv.next();
-                self.model.alpha(dim, d)
+            Some(previous) => {
+                let next = if self.along_edge {
+                    (!self.model.is_free(previous, Dim::Zero))
+                        .then(|| self.model.alpha(Dim::Zero, previous))
+                } else {
+                    Self::across(self.model, previous)
+                }?;
+                self.along_edge = !self.along_edge;
+                next
             }
         };
 
-        if self.previous.is_some() && current == self.start {
-            None
-        } else {
-            self.previous = Some(current);
-            Some(current)
+        if !self.seen.insert(current) {
+            return None;
         }
+        self.previous = Some(current);
+        Some(current)
     }
 }

@@ -162,10 +162,13 @@ fn a_cylinder_wall_is_a_ring_face_with_no_seam() {
     let map = shape.model();
     let solid = shape.solid();
 
+    // Two rims of two darts each, two caps of two, and the four of the cut the
+    // wall owns between its rims. The cut is what makes the wall one face
+    // without an edge standing in for a seam, so it is darts and not an edge.
     assert_eq!(
         map.dart_count(),
-        8,
-        "a seamless cylinder should have 8 darts"
+        12,
+        "a seamless cylinder should have 12 darts"
     );
     assert_eq!(solid.faces().len(), 3);
     assert_eq!(solid.edges().len(), 2, "the seam edge should be gone");

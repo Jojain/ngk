@@ -70,6 +70,8 @@ pub enum FaceImprintSplitError {
     InnerLoopsNotSupported { face: FaceKey },
     #[error("face {face:?} has no pcurve for boundary dart {dart:?}")]
     MissingPcurve { face: FaceKey, dart: Dart },
+    #[error("no boundary of face {face:?} runs along its stored loop seed {dart:?}")]
+    SeedNotOnBoundary { face: FaceKey, dart: Dart },
     #[error("missing vertex geometry at dart {dart:?}")]
     MissingVertexGeometry { dart: Dart },
     #[error("boundary edge at dart {dart:?} has no edge geometry")]
@@ -1885,8 +1887,16 @@ fn loop_boundary_edges<P: Payload>(
     let face_view = g
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
+    // Anchored at the seed, not at wherever the walk began: an imprint is
+    // located against this list by index, so a rotation moves every corner it
+    // can land on.
     face_view
         .loop_from_seed(loop_dart)
+        .starting_at(loop_dart)
+        .ok_or(FaceImprintSplitError::SeedNotOnBoundary {
+            face,
+            dart: loop_dart,
+        })?
         .corners()
         .iter()
         .map(|corner| {
@@ -2047,10 +2057,23 @@ fn apply_face_chord_split<P: Payload>(
     let source_profile = edit
         .profile_key(chorded.seed())
         .expect("face loop must have a registered profile");
-    let loop_ = Closed::new_unchecked(
-        Profile::from_dart(edit, chorded.seed()).expect("face loop must have a registered profile"),
-    );
-    let corners = loop_.corners();
+    // The same list `loop_boundary_edges` counted the cut's corner indices
+    // against: the face's boundary walk anchored at this seed. The raw chain
+    // cannot stand in for it, because a face that owns a cut carries all of its
+    // loops on one chain and the walk runs off this loop part way round.
+    let face_view = edit
+        .face(original_face)
+        .ok_or(FaceImprintSplitError::MissingFace {
+            face: original_face,
+        })?;
+    let corners = face_view
+        .loop_from_seed(chorded.seed())
+        .starting_at(chorded.seed())
+        .ok_or(FaceImprintSplitError::SeedNotOnBoundary {
+            face: original_face,
+            dart: chorded.seed(),
+        })?
+        .corners();
     let start = &corners[cut.start_corner];
     let end = &corners[cut.end_corner];
     let start_dart = start.outgoing().dart();

@@ -175,8 +175,31 @@ fn merge_face_remaps_stored_darts_and_pcurves() {
     assert_eq!(outer, Dart::new(2));
     assert!(merged_face.pcurve(outer).is_some());
     assert!(merged_face.pcurve(loop_dart).is_none());
-    assert_eq!(target.alpha(Dim::Zero, Dart::new(2)), Dart::new(3));
-    assert_eq!(target.alpha(Dim::One, Dart::new(3)), Dart::new(4));
+    // A copy takes the face's whole region, and the order that enumerates its
+    // darts in is not the order the source's chain ran in, so the ids are
+    // renumbered. What has to survive is the loop itself: the same edges, every
+    // copied dart wired into it.
+    assert_eq!(
+        merged_face
+            .outer_loop()
+            .expect("the merged face keeps its outer loop")
+            .edges()
+            .len(),
+        source
+            .face_unchecked(face_key)
+            .outer_loop()
+            .expect("the source face has an outer loop")
+            .edges()
+            .len()
+    );
+    assert_eq!(target.alpha(Dim::Zero, outer), Dart::new(3));
+    assert!(
+        (2..target.dart_count()).all(|id| {
+            let dart = Dart::new(id);
+            !target.is_free(dart, Dim::Zero) && !target.is_free(dart, Dim::One)
+        }),
+        "every copied dart should be wired into the copied loop"
+    );
 }
 
 #[test]
@@ -276,7 +299,15 @@ fn isolate_face_copies_it_into_a_fresh_map() {
     assert_eq!(isolated.iter_faces().count(), 1);
     assert!(isolated.attribute::<Cell2>(isolated_dart).is_some());
     assert_eq!(isolated.alpha(Dim::Zero, Dart::new(0)), Dart::new(1));
-    assert_eq!(isolated.alpha(Dim::One, Dart::new(1)), Dart::new(2));
+    // Isolating renumbers onto the face's region rather than its chain, so the
+    // loop's shape is what carries over, not particular dart ids.
+    assert!(
+        (0..isolated.dart_count()).all(|id| {
+            let dart = Dart::new(id);
+            !isolated.is_free(dart, Dim::Zero) && !isolated.is_free(dart, Dim::One)
+        }),
+        "every isolated dart should be wired into the isolated loop"
+    );
 }
 
 #[test]

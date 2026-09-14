@@ -199,19 +199,19 @@ fn bounds_a_free_side<P: Payload>(g: &Model<P>, dart: Dart) -> bool {
 /// filled inner loops are recognized separately because their surrounding face
 /// must survive.
 fn fuses_outer_loop<P: Payload>(g: &Model<P>, dart: Dart, face: FaceKey) -> bool {
-    let Some(attr) = g.face_attr(face) else {
+    let Some(incident) = edge_dart_in_face(g, dart, face) else {
         return false;
     };
-    let Some(incident) = edge_dart_in_face(g, dart, face) else {
+    let Some(view) = g.face(face) else {
         return false;
     };
     let Some(profile) = g.profile_key(incident) else {
         return false;
     };
-    attr.loops
+    view.loops()
         .iter()
         .filter(|boundary| boundary.kind() != LoopKind::Inner)
-        .any(|boundary| g.profile_key(boundary.seed()) == Some(profile))
+        .any(|boundary| boundary.profile_key() == Some(profile))
 }
 
 /// Reports whether `consumed` completely fills one inner loop of `survivor`.
@@ -231,10 +231,10 @@ fn fills_inner_loop<P: Payload>(
     let Some(incident) = edge_dart_in_face(g, dart, survivor) else {
         return false;
     };
-    let Some(profile) = g.profile_key(incident) else {
+    let Some(face) = g.face(survivor) else {
         return false;
     };
-    let Some(face) = g.face(survivor) else {
+    let Some(profile) = g.profile_key(incident) else {
         return false;
     };
     let inner_loops = face.inner_loops();

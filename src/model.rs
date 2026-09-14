@@ -572,7 +572,7 @@ impl<P: Payload> Model<P> {
             self.insert_logical_key(&mut indexes.edge, repr, key, EditKey::Edge);
         }
         for (key, attr) in self.profiles.iter() {
-            let repr = self.profile_representative(attr.dart);
+            let repr = Profile::representative(self, attr.dart);
             self.insert_logical_key(&mut indexes.profile, repr, key, EditKey::Profile);
         }
         for (key, attr) in self.faces.iter() {
@@ -791,12 +791,6 @@ impl<P: Payload> Model<P> {
     }
 
     /// Returns the canonical representative of the profile chain at `dart`.
-    pub(crate) fn profile_representative(&self, dart: Dart) -> Dart {
-        self.orbit(dart, vec![Dim::Zero.index(), Dim::One.index()])
-            .min()
-            .expect("profile orbit cannot be empty")
-    }
-
     /// Pairs two orbits for sewing along dimension `d`.
     pub(crate) fn is_sewable(&self, d0: Dart, d1: Dart, d: Dim) -> Option<SewableDarts> {
         self.topology.is_sewable(d0, d1, d)
@@ -1076,7 +1070,7 @@ impl<P: Payload> Model<P> {
 
     /// Returns the profile key of the chain containing `dart`, if registered.
     pub fn profile_key(&self, dart: Dart) -> Option<ProfileKey> {
-        let repr = self.profile_representative(dart);
+        let repr = Profile::representative(self, dart);
         self.derived_indexes().profile.get(&repr).copied()
     }
 

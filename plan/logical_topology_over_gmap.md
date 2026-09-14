@@ -8,8 +8,8 @@ cylinder are classified end to end, a circle is unmarked through construction,
 cutting, healing, Booleans and STEP in both directions, and the suite is green.
 M4 slice 3 is **in progress and the tree is not green**: the annulus is bridged,
 the cylinder wall is seamed, `Face::loops()` is derived from the map, and every
-single-cycle face passes. 33 tests remain, in the clusters listed below — 708 passing against a
-736-passing baseline.
+single-cycle face passes, as does extruding a face with a hole. 18 tests remain,
+in the three clusters listed below — 727 passing against a 736-passing baseline.
 See [M4 slice 3](#m4-slice-3--the-bridge-proven-on-an-annulus).
 
 Implementation guide: section 1 fixes the architecture, section 2 defines the
@@ -1612,6 +1612,205 @@ over *curved* solids (4) and its healing (3); `removal` (5); the boundaryless
 torus and sphere (4), which is still the `ShellRoot::Face` gap and needs the M4
 scaffold builder rather than a cut; and four dart-level tests in `model`, `face`
 and `gmap` that assert the old dart lists directly.
+
+#### Profiles and sheets are logical, and one entity owns one cell
+
+The rules are written down in `AGENTS.md` under **Boundaries: profile, loop,
+sheet, shell** and **One entity, one cell of its own dimension**. This records
+why, and what has been applied so far.
+
+**The bug, stated exactly.** `profile_representative` was the raw
+`alpha0`/`alpha1` orbit. In a **1**-Gmap that orbit is the connected component,
+which is what a profile should be; in a **2**-Gmap the very same orbit is the
+*face*. So the definition was the 1-Gmap formula evaluated inside a 2-Gmap, and
+a bridged face therefore carried every one of its loops on one profile. Probed
+on a real annulus: one `ProfileAttr` for eight darts, both loops reporting
+`ProfileKey(1v1)`, and `Profile::from_dart` on either loop's seed walking all
+eight darts and returning *both* edges. `add_annulus_staged` registers two
+profiles and `reconcile_components` was deleting one of them at commit.
+
+That is why `fuses_outer_loop` could not tell a hole from an outer boundary, and
+why `MergePlan`'s fifteen `ProfileKey` loop-identity fields were accidental.
+
+**The fix is `turn`, which already existed.** Turning across a cut is local: a
+step onto a scaffold cell is crossed with the involution above it and the walk
+resumes. `turn(map, index, Dim::One, dart)` is the profile step and
+`turn(..., Dim::Two, ...)` the sheet step -- the same primitive
+`recover_region` and `boundary_cycles` already use. Factored into `turn_where`,
+which takes the caller's own scaffold test, because `ownership()` validates the
+whole classification and panics on an inconsistent one -- right for a committed
+model, wrong during an edit. `subdivision::is_scaffold_cell` reads the stored
+records instead, sits next to `turn_where` where its only callers are, and
+treats an unlabelled cell as *not* scaffold so a half-built shape does not
+fragment.
+
+**The traversal belongs to `Profile`, not to `Model`.** `Profile::step`,
+`Profile::component` and `Profile::representative` are associated functions
+rather than methods, because this is the code that *finds* which profile a dart
+belongs to: it runs while the dart-to-key index is being built, before any
+profile can be viewed, so there is no profile yet to call a method on. `Model`
+keeps none of it -- it asks `Profile::representative` where it used to walk the
+orbit itself -- and `Sheet` should take the same shape one dimension up.
+
+Applied there, plus `LoopIterator` and `Profile::is_closed`. The annulus now
+reports **two** profiles, one per loop.
+
+**Stopping at a bridge would have been wrong**, and it was the first thing I
+reached for. An annulus's inner rim is an unmarked circle whose closure runs
+*through* the bridge -- `alpha1` of the rim's far end is a bridge dart -- so
+stopping there reads a closed circle as an open one-edge chain. Turning across
+comes back onto the same rim. Worked out on the boundary word before any code
+changed, which is the only reason it was caught early.
+
+**What the change exposed.** A boundary that loses its last edge leaves its
+profile key behind on the bridge that used to reach it -- scaffold, belonging to
+no chain -- and a walk started there leaves along every loop that bridge joins,
+so the key reads as a second identity on a neighbouring profile. A profile is a
+connected set of *edges*, so it is seeded on one; a key seeded on scaffold is
+dropped at commit and counted spent. That is the definition applied, not a
+repair. The dangling bridge itself still survives its hole, and removing it with
+the boundary is the next piece of scaffold hygiene.
+
+**Where it stands: 725 passing, 20 failing**, against 727/18 before the change.
+Two regressions, both `removal::imprinted_face_inner_loop_gets_removed` and
+`boolean_budget::orthogonal_cylinders_terminate`, and the second is not a budget
+problem at all -- it fails with
+
+```
+face FaceKey(9v1) covers no recoverable region:
+Face(FaceKey(9v1)) does not own the cell at Dart(20)
+```
+
+which is the one-entity/one-cell invariant being violated out loud by a builder
+that still lays down a second unowned 2-cell. Several of the standing Boolean
+failures report the identical message. The invariant is not extra work on top of
+the remaining clusters; it is the same work, named.
+
+**Not yet done:** sheets (`logical_sheet_darts` still hops between disconnected
+2-cell orbits through `face_index`, a workaround for a problem bridging already
+solved), the commit-time invariant check, and the deletions it unlocks --
+`recover_all_regions` (used by no production path, only tests), the flood in
+`recover_region`, and `Face::region_darts`' reason for existing.
+
+#### The holed cap, the reseeding gaps, and a nondeterministic removal
+
+Picking the extrusion up again in the two steps the previous attempt's write-up
+prescribed worked, and the split was the whole of it.
+
+**Step one: one cap's loop yields its logical edges.** `Loop` gained
+`occurrences_from(dart)` — the same grouping `occurrences()` does, but rotated to
+begin at a given dart and read in that dart's direction, reversing the walk when
+it runs the other way round. `sew_extruded_loop` now asks each cap's *face* for
+the boundary running along the seed it was handed, instead of walking
+`Profile::from_dart`. **Pairing was not touched**: each list still starts at the
+dart the caller already paired the caps by, so the ordinary no-hole block
+extrudes exactly as before — which was checked first, as the previous attempt's
+note demanded. That one change took the suite **708 → 718**, clearing the whole
+holed-cap cluster plus `a_hole_is_written_as_an_inner_bound` and
+`a_slab_with_a_hole_survives_a_round_trip`. Step two, re-deriving how the caps
+are paired, turned out not to be needed at all.
+
+**Two reseeding gaps of the same shape.** `remove_cell_staged` moves every
+stored reference dart off the cell it is about to delete, and two kinds of
+reference were being left behind once a face owns a cut:
+
+- **A profile is a chain, not a cell.** `reseed_attributes` reseeded profiles
+  from the Def. 59 path alone and silently skipped the ones it could not place.
+  That path steps across the faces around an edge, which is not where the rest of
+  a chain lies, so it says nothing about whether the profile survives — in the
+  imprinted case the chain kept 20 of its 24 darts and still got no replacement.
+  It now falls back to the profile's own alternating walk, taken two steps at a
+  time so the traversal direction is preserved, and removes the profile only when
+  that walk finds nothing.
+- **`MergePlan::Loops` did not reseed its face's aliases.** A fusion earlier in
+  the same transaction leaves the consumed face key in place until commit
+  reconciles it, and that key can be seeded in the cell this removal deletes.
+  `BoundaryRemoved` and `Unbounded` already moved such keys; `Loops` did not, and
+  `compact` then hit a stored dart with no remap. It now carries the aliases with
+  the sense each is turned relative to the kept seed.
+
+**`profile_key` can no longer tell a face's loops apart, and healing was still
+asking it.** `fuses_outer_loop` and `fills_inner_loop` decided which of a face's
+loops carried an edge by comparing profile keys. A face that owns a cut to its
+hole carries *every* loop on one chain, so they all share a key, and an edge on
+an inner loop read as being on the outer one — which made healing fuse a filled
+inner loop even with `remove_filled_inner_loops` turned off. Both now ask the
+derived loop, through a new `Loop::runs_along(dart)`. This is the same mistake as
+`remove_faces` and `MergeTopology for Face`, in its third location: **a question
+about which boundary something lies on is a question for the walk, and a profile
+key used to answer it only by accident.**
+
+**The imprint's two corner lists had drifted apart.** `loop_boundary_edges`
+builds the list an imprint's corner indices are counted against, and it already
+used the derived walk — but through `corners()`, which starts wherever the walk
+began rather than at the seed the caller named, contradicting the comment
+directly above it. `apply_face_chord_split` then *indexed into a different list
+altogether*, built from `Closed<Profile>` on the raw chain. Both now use
+`Loop::corners_from(seed)`, so the list an imprint is located against and the
+list the chord is spliced into are the same list.
+
+#### A nondeterministic removal, found by accident
+
+While bisecting the above, `step_import::a_foreign_torus_is_a_valid_oriented_solid`
+passed and failed on the *same binary* — roughly one run in two. Two reads in
+`builders/removal.rs` were taking an arbitrary element of a `HashSet` and letting
+it decide the answer:
+
+1. `rejoined_components` took each new component's start with
+   `unvisited.iter().next()`. The order components come out in is not an
+   implementation detail: `MergePlan::ring` gives `components[0]` the seam's
+   identity and mints a fresh one for `components[1]`, so a torus came out
+   oriented differently depending on hash order. Starts are now taken by dart id.
+2. `MergePlan::cap` sampled "where does this loop sit across the axis" from
+   whichever pcurve the set happened to yield first. Any one of them answers the
+   question, but it has to be the *same* one every run, or the side the cap
+   closes on can differ on the same shape. It now takes the lowest dart.
+
+The module already had `ordered()` documented as existing "so the survivor is
+deterministic across runs"; these two were the same requirement, unmet. **The
+practical lesson is about method, not about hashing:** two readings of the same
+tree disagreed, and the first instinct was to suspect the edit in between. Only
+running one binary repeatedly separated "my change did this" from "this was never
+stable". A flaky test in a kernel this order-sensitive should be suspected
+whenever two runs disagree, before any change is blamed.
+
+**Four tests retargeted, none weakened.** `face_boundary_edges_preserve_their_exact_loop_darts`
+read the loop's darts with `step_by(2)`, which was the `Closed<Profile>` layout —
+the property it protects (an edge keeps the dart the walk found, rather than
+substituting its stored one) is now spelled `occurrences()`.
+`merge_face_remaps_stored_darts_and_pcurves` and `isolate_face_copies_it_into_a_fresh_map`
+asserted absolute `alpha1` wiring of a copy; copying moves the face's *region*
+now, which enumerates the 2-cell orbit rather than the chain, so the darts are
+renumbered. The copies were checked by hand first — a valid closed four-edge loop
+either way — and the assertions replaced with the loop's edge count and every
+copied dart being wired in, not deleted. `a_cylinder_wall_is_a_ring_face_with_no_seam`
+expected 8 darts; the wall owns a four-dart cut between its rims now, which is
+the point of the slice, so it expects 12 with the reason written down.
+
+**Where it stands: 727 passing, 18 failing, 0 ignored**, stable across three
+consecutive runs. `cargo fmt` and `git diff --check` pass; clippy reports 30
+warnings, none in any changed file. The remaining failures are three clusters,
+and each needs scaffold work rather than another call-site fix:
+
+| Cluster | n | What is needed |
+| --- | --- | --- |
+| Boolean over curved solids | 9 | A chord split that can cross a cut |
+| Revolved bands and seam removal | 5 | `add_full_revolved_band_face` carrying a cut |
+| Boundaryless torus and sphere | 4 | The M4 scaffold builder / `ShellRoot::Face` |
+
+**The Boolean cluster's root cause is now identified, and it is not a call site.**
+`apply_face_chord_split` splices the chord by unlinking the `alpha1` link between
+the dart the loop arrives on and the one it leaves on at each corner. Probing the
+failing case gives a loop whose whole walk is two darts — two *unmarked* closed
+rims joined by the face's cut — where `alpha1(alpha0(d)) == d` for each rim,
+because that is how a circle with no corner closes. There is no `alpha1` link
+between the two occurrences to unlink: the walk gets from one rim to the other by
+turning across the cut. Splitting such a face needs a cut-aware splice, of the
+same family as `cut_between_loops`, and that is the next piece of real work.
+`gmap::dart_shafts_stay_on_a_drilled_bore` and
+`removal::redundant_faces_of_boolean_fuse_are_deleted` belong to this cluster
+too; the earlier write-up filed them under dart-level assertions, which they are
+not.
 
 **One flaw introduced and fixed in the same slice.** `Face::boundary_walks` first
 swallowed a region-recovery or walk error and returned no loops. That is the

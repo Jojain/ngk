@@ -21,7 +21,6 @@ use crate::{
         edge::Edge,
         face::Face,
         gmap::Dim,
-        profile::Profile,
         shape::{FaceTag, Shape},
         shape_keys::{FaceKey, SolidKey},
     },
@@ -206,7 +205,12 @@ fn add_extruded_face_staged<P: Payload>(
     orient_extruded_caps(edit, face_key, top_face_key, direction);
 
     for (bottom_loop_dart, top_loop_dart) in bottom_loop_darts.into_iter().zip(top_loop_darts) {
-        sew_extruded_loop(edit, bottom_loop_dart, top_loop_dart, direction)?;
+        sew_extruded_loop(
+            edit,
+            (face_key, bottom_loop_dart),
+            (top_face_key, top_loop_dart),
+            direction,
+        )?;
     }
 
     // The shell dart is contextual: unlike a cell representative, it must retain
@@ -254,24 +258,37 @@ fn face_normal_dot_direction<P: Payload>(
     face.face(g).normal_at(0.0, 0.0).dot(&direction)
 }
 
+/// Returns the logical edges of the cap loop reached through `start`, in that
+/// dart's direction.
+///
+/// The raw profile chain cannot answer this. A cap with a hole owns a cut
+/// joining its two loops, so one alpha0/alpha1 chain carries both: walking it
+/// leaves this loop part way round and continues into the other one. The face's
+/// boundary walk turns across the cut instead, which is what keeps each loop a
+/// list of its own.
+///
+/// # Panics
+///
+/// Panics when `start` is not a boundary occurrence of `face`, which no loop
+/// dart the caller read off that same face is.
+fn cap_loop_edges<P: Payload>(g: &Model<P>, face: FaceKey, start: Dart) -> Vec<Dart> {
+    Face::new(g, face)
+        .loops()
+        .into_iter()
+        .find_map(|boundary| Some(boundary.starting_at(start)?.occurrences()))
+        .expect("a cap loop dart lies on a boundary of its cap")
+}
+
 fn sew_extruded_loop<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
-    bottom_loop_dart: Dart,
-    top_loop_dart: Dart,
+    bottom: (FaceKey, Dart),
+    top: (FaceKey, Dart),
     direction: Vector3<f64>,
 ) -> Result<Dart, ExtrudeError> {
-    let bottom_edges = Profile::from_dart(edit, bottom_loop_dart)
-        .expect("bottom loop must have a registered profile")
-        .edges()
-        .into_iter()
-        .map(|edge| edge.dart())
-        .collect::<Vec<_>>();
-    let top_edges = Profile::from_dart(edit, top_loop_dart)
-        .expect("top loop must have a registered profile")
-        .edges()
-        .into_iter()
-        .map(|edge| edge.dart())
-        .collect::<Vec<_>>();
+    let (bottom_face, bottom_loop_dart) = bottom;
+    let (top_face, top_loop_dart) = top;
+    let bottom_edges = cap_loop_edges(edit, bottom_face, bottom_loop_dart);
+    let top_edges = cap_loop_edges(edit, top_face, top_loop_dart);
     if let Some(representative) =
         sew_wrapping_lateral_face(edit, &bottom_edges, &top_edges, direction)?
     {

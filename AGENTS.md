@@ -214,6 +214,68 @@ Two hazards follow from all this, and both have already bitten:
 
   In both forms: ask the corner, not the parameterization.
 
+### Boundaries: profile, loop, sheet, shell
+
+These four name **boundary components of logical entities**, never components of
+the map. That is their whole definition, and everything else follows from it.
+
+| Word | Is | Bounds |
+|---|---|---|
+| **profile** | a maximal connected set of edges | a face |
+| **loop** | a closed profile | a face |
+| **sheet** | a maximal connected set of faces | a solid |
+| **shell** | a closed sheet | a solid |
+
+A profile and a sheet are the same idea one dimension apart, and both carry a
+stable key of their own. A profile exists without a face — an open wire is a
+profile, and so is a closed one lying in space bounding nothing.
+
+**Connected means connected through logical cells only.** The traversal is the
+`alpha0`/`alpha1` walk for a profile and the `alpha0`/`alpha1`/`alpha2` walk for
+a sheet, and when a step lands on a **scaffold** cell — a raw cell owned by
+something of higher dimension, which
+[Subdivision](#subdivision-srctopologysubdivision) names — the walk **turns
+across it** and carries on:
+
+- a profile turns across a raw edge the face owns: the bridge to a hole, a
+  periodic seam;
+- a sheet turns across a raw face the solid owns: a cut face inside a cavity.
+
+Turning is local. At dimension `n`, a step onto a scaffold `n`-cell is crossed
+with `alpha(n + 1)` and the walk resumes — no region, no classification of the
+surrounding entity, nothing but the involutions and the owner of the one cell
+being crossed. `turn` is that primitive and is the same one at every dimension:
+`turn(map, index, Dim::One, dart)` walks a profile past a bridge edge around the
+0-cell they share, and `turn(map, index, Dim::Two, dart)` walks a sheet past a
+cut face around the 1-cell they share. Nothing else should re-derive it.
+
+**Turning across is not the same as stopping at.** An annulus's inner rim is an
+unmarked circle whose closure now runs *through* the bridge: `alpha1` of the
+rim's far end is a bridge dart. Stop there and a closed circle reads as an open
+one-edge chain. Turn across it and the walk comes back onto the same rim, which
+is what makes the annulus's two rims two profiles rather than one.
+
+**Why it matters that the walk turns rather than crosses straight on.** A raw
+`alpha0`/`alpha1` component of a bridged face runs through *every* loop the face
+has, so the outer rim and the hole share one component. Asked of the raw map,
+"which loop is this edge on" has no answer. Asked of the logical walk, it has
+one.
+
+#### A loop is a walk over a profile, not the profile
+
+A profile says *which* edges. A loop says *how a face runs along them*, and the
+two are not the same list:
+
+- **Sense.** An edge has up to four darts; a face sees two of them. Which two is
+  a question about the face's region, not about the profile, so a profile alone
+  cannot answer it. A standalone wire has no face and therefore no side to pick.
+- **Repetition.** A face can run along one edge twice — a slit, or a marked
+  edge passed on both sides. The profile holds that edge once; the loop's walk
+  emits it twice.
+
+So a loop *names* its profile and is read from one face's side. Connectivity
+belongs to the profile; orientation and repetition belong to the loop.
+
 ### Subdivision (`src/topology/subdivision/`)
 
 Every raw cell is labelled with the logical entity whose **interior** contains
@@ -229,17 +291,54 @@ passing over cells a higher-dimensional entity owns. `boundary_cycles` gives a
 face its oriented loops and `boundary_shells` gives a solid its boundary
 components, both by turning across interior cuts rather than emitting them.
 
-**A region is connected, so a face's scaffold must be too.** `recover_region`
-walks involutions and turns across cells the entity owns; it cannot reach a raw
-cell that touches the region nowhere. Production builders today lay down **one
-disconnected 2-cell per stored loop**, so a face with an outer loop and a hole,
-or a wrapping pair, has its second cell owned by nobody — and a boundaryless
-face (a whole sphere, a whole torus) has no 2-cell at all. `FaceAttr.loops` is
-therefore still load-bearing *connectivity*, not a duplicate of something
-derivable: it is the only thing making a multi-loop face one face. Ask
-`boundary_cycles` for a face's loops only where the face is a single cycle,
-until the bridge/seam scaffolding lands. Written up in
-`plan/logical_topology_over_gmap.md`.
+#### One entity, one cell of its own dimension
+
+Each vertex, edge, face and solid owns **exactly one** raw cell of its own
+dimension. It may own any number of raw cells of **lower** dimension — scaffold:
+a bridge to a hole, a periodic seam, the 0-cell where a circle closes, a cut
+face inside a cavity. Profiles and sheets are aggregates of entities rather than
+entities with a cell of their own, so the rule does not reach them.
+
+This is a **commit invariant**, not a construction rule. A transaction may break
+it freely — a Boolean partitions a face and puts it back together — but a commit
+that leaves an entity spanning two cells of its own dimension, or none, is
+rejected.
+
+What follows from it:
+
+- **One key, one orbit.** An entity's anchor identifies its whole
+  same-dimensional topology, so nothing ever has to collect an entity's cells.
+  `recover_region` is an orbit walk plus the orientation it reads off it, and
+  nothing floods.
+- **Ownership records only ever classify scaffold**, which is lower-dimensional
+  by definition. "Owned by an entity of higher dimension" and "is scaffold"
+  become the same statement.
+- **A raw cell between two raw cells of the dimension above is real topology.**
+  A 1-cell with a different 2-cell on each side is either a logical edge between
+  two logical faces, or it must be removed so the two raw faces merge. This is
+  the book's removal operation read as an invariant: removing an i-cell merges
+  the two incident (i + 1)-cells *when they exist*, and a bridge has only one
+  incident 2-cell, so removing it merges nothing. That is precisely what makes a
+  bridge interior rather than boundary.
+- **A raw split forces a logical split; a raw merge forces a logical merge.**
+  Commit is where that correspondence is checked, so a partition can never hide
+  beneath one key.
+
+What it costs. Each of these must exist before commit, and is not an
+optimisation:
+
+- a face with holes needs one bridge edge per hole;
+- a cylindrical face needs its seam;
+- a whole sphere needs a seam/cut representation rather than several quads;
+- a whole torus needs two cuts;
+- a solid with a cavity needs a scaffold face joining its outer and inner shells,
+  so that it is one raw 3-cell;
+- STEP import must synthesise those before committing, and can no longer keep one
+  `ADVANCED_FACE` as several disconnected raw faces.
+
+The rule is what makes a missing bridge a **named error at commit** instead of a
+face that silently reports half its boundary. That is the same trade the rest of
+this file asks for: refuse rather than approximate.
 
 ### Transactions (read `src/topology/edit.md` — short and essential)
 

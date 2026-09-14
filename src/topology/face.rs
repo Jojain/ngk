@@ -87,6 +87,25 @@ impl<'a, P: Payload> Loop<'a, P> {
         occurrences
     }
 
+    /// Returns the same loop read from `dart`, or `None` when the walk does
+    /// not run along it.
+    ///
+    /// A caller that located something by counting along this loop has to read
+    /// it back from where it counted, which is the dart it named and not
+    /// wherever the walk happened to begin. Reversing when the walk runs the
+    /// other way round means the result travels the way `dart` points too.
+    pub fn starting_at(&self, dart: Dart) -> Option<Self> {
+        let rotated = |darts: &[Dart]| {
+            darts.iter().position(|&walked| walked == dart).map(|at| {
+                let mut darts = darts.to_vec();
+                darts.rotate_left(at);
+                darts
+            })
+        };
+        let darts = rotated(&self.darts).or_else(|| rotated(&self.reversed().darts))?;
+        Some(Self::new(self.model, darts, self.kind))
+    }
+
     /// Returns this loop's edges, one per oriented occurrence, in walk order.
     pub fn edges(&self) -> Vec<Edge<'a, P>> {
         self.occurrences()

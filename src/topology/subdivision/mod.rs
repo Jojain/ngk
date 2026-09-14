@@ -32,4 +32,4 @@ pub use boundary::{
 pub(crate) use ownership::OwnerRemap;
 pub use ownership::{EntityOwner, OrbitOwnership, OwnershipIndex, Subdivision, SubdivisionError};
 pub use region::{LogicalRegion, RegionError, recover_all_regions, recover_region};
-pub use walk::turn;
+pub use walk::{is_scaffold_cell, turn, turn_where};
