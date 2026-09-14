@@ -102,12 +102,12 @@ impl BoundaryShell {
         &self.darts
     }
 
-    /// Counts the raw faces of the shell.
+    /// Counts the 2-cells of the shell.
     pub fn face_count(&self, map: &GMap) -> usize {
         self.components(|dart| vec![map.alpha(Dim::Zero, dart), map.alpha(Dim::One, dart)])
     }
 
-    /// Counts the raw edges of the shell.
+    /// Counts the 1-cells of the shell.
     pub fn edge_count(&self, map: &GMap, index: &OwnershipIndex) -> usize {
         self.components(|dart| {
             let mut out = vec![map.alpha(Dim::Zero, dart)];
@@ -116,7 +116,7 @@ impl BoundaryShell {
         })
     }
 
-    /// Counts the raw vertices of the shell.
+    /// Counts the 0-cells of the shell.
     pub fn vertex_count(&self, map: &GMap, index: &OwnershipIndex) -> usize {
         self.components(|dart| {
             let mut out = vec![map.alpha(Dim::One, dart)];
@@ -261,7 +261,7 @@ pub fn boundary_shells(
     Ok(shells)
 }
 
-/// Returns one dart per raw vertex bounding a logical edge.
+/// Returns one dart per 0-cell bounding an edge.
 ///
 /// A vertex the edge owns is a closure point interior to it and is not
 /// returned, so a vertexless circle answers nothing and a segment answers two.
@@ -392,7 +392,7 @@ pub enum BoundaryError {
     BoundaryNotAnEdge {
         /// The occurrence's dart.
         dart: Dart,
-        /// What owns its raw edge, if anything.
+        /// What owns its 1-cell, if anything.
         owner: Option<EntityOwner>,
     },
 }

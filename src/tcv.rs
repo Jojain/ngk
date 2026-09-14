@@ -9,7 +9,7 @@ use crate::tessellate::{
     IndexedMesh, Polyline3, TessellateOpts, tessellate_edge, tessellate_face_key,
 };
 use crate::topology::edge::Edge;
-use crate::topology::face::Face;
+use crate::topology::face::{Face, Loop};
 use crate::topology::gmap::Dim;
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
@@ -150,7 +150,7 @@ impl<P: Payload> ToTcv for Shape<FaceTag, P> {
             .ok_or(TcvError::MissingTopology)?;
         let face = attr.face(self.model());
         for loop_ in face.loops() {
-            append_profile(self.model(), &loop_, opts.tessellate, &mut shape)?;
+            append_loop(self.model(), &loop_, opts.tessellate, &mut shape)?;
         }
         append_face_vertices(&face, &mut shape);
         Ok(root_with_leaf(shape_leaf(&opts, "face", shape), opts.name))
@@ -267,6 +267,20 @@ fn append_mesh(mesh: &IndexedMesh, shape: &mut TcvShape) {
     shape
         .triangles_per_face
         .push((mesh.indices.len() / 3) as u32);
+}
+
+/// Appends every edge one face loop runs along, in traversal order.
+fn append_loop<P: Payload>(
+    g: &Model<P>,
+    boundary: &Loop<'_, P>,
+    opts: TessellateOpts,
+    shape: &mut TcvShape,
+) -> Result<(), TcvError> {
+    for edge in boundary.edges() {
+        let key = edge_key_from_edge(g, &edge).ok_or(TcvError::MissingTopology)?;
+        append_edge(g, key, opts, shape)?;
+    }
+    Ok(())
 }
 
 fn append_profile<P: Payload>(

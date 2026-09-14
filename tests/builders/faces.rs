@@ -524,7 +524,7 @@ fn split_face_by_imprints_adds_closed_interior_loop() {
     assert_eq!(face.pcurves.len(), 8);
 
     let shape_face = face.face(&g);
-    let hole = shape_face.inner_loops()[0].clone();
+    let hole = shape_face.inner_loops().remove(0);
     assert_eq!(hole.edges().len(), 4);
     assert!(
         hole.edges()

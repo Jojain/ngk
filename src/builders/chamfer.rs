@@ -630,12 +630,16 @@ fn prepare_solid_profile_chamfer<P: Payload>(
     let target_face = profile_edges[0]
         .faces()
         .into_iter()
-        .find(|face| face.loops().iter().any(|loop_| loop_.key() == profile))
+        .find(|face| {
+            face.loops()
+                .iter()
+                .any(|loop_| loop_.profile_key() == Some(profile))
+        })
         .ok_or(ChamferError::UnsupportedChamferTarget)?;
     if target_face.loops().len() != 1
         || target_face
             .outer_loop()
-            .is_none_or(|outer| outer.key() != profile)
+            .is_none_or(|outer| outer.profile_key() != Some(profile))
         || !matches!(target_face.surface(), Surface::Plane(_))
     {
         return Err(ChamferError::UnsupportedChamferTarget);

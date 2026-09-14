@@ -619,9 +619,11 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
                 .ok_or(ModelEditError::MissingLineageAttribute {
                     key: EditKey::Face(key),
                 })?;
-            for boundary in face.loops() {
-                removed.extend(boundary.darts());
-            }
+            // Every dart the face covers, not the one per occurrence its
+            // boundary walk names: removing a face has to free all of it, and
+            // leaving half its darts behind leaves them sewn to neighbours that
+            // no longer have anything on the other side.
+            removed.extend(face.region_darts());
         }
         for root in self
             .model

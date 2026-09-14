@@ -1,19 +1,19 @@
-use super::closed::Closed;
 use super::edge::Edge;
 use super::gmap::{Dart, Dim};
 use super::orientation::Orientation;
 use super::payload::{Payload, StandardPayload};
-use super::profile::Profile;
 use super::vertex::Vertex;
 use crate::geometry::Surface;
 use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
 use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
 use crate::model::{Cell2, MergeTopology, Model, RealizationPurpose, TopologyMerge};
-use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind};
-use crate::topology::shape_keys::FaceKey;
+use crate::topology::attributes::{FaceAttr, LoopKind};
+use crate::topology::profile::LoopCorner;
+use crate::topology::shape_keys::{FaceKey, ProfileKey};
+use crate::topology::subdivision::{EntityOwner, boundary_cycles, recover_region};
 use nalgebra::UnitVector3;
-use std::ops::Deref;
+use std::collections::HashSet;
 
 /// Samples per pcurve used to read a boundary's winding.
 ///
@@ -21,21 +21,135 @@ use std::ops::Deref;
 /// samples per pcurve settles it at any model scale.
 const BOUNDARY_WINDING_SAMPLES: usize = 8;
 
-/// A closed profile as used by one face.
+/// One closed oriented boundary of a face, as the map itself reports it.
 ///
-/// A loop combines the profile traversal with the face-domain role that gives
-/// that traversal meaning: a chart-closed exterior, a hole, or a periodic
-/// wrapping boundary. The role belongs here rather than on [`Profile`], because
-/// it depends on this face's support and parameterization.
+/// A loop combines a boundary walk with the face-domain role that gives that
+/// walk meaning: a chart-closed exterior, a hole, or a periodic wrapping
+/// boundary. The role belongs here rather than on [`Profile`], because it
+/// depends on this face's support and parameterization.
+///
+/// The walk is **derived, never stored**. Its darts come from the frontier of
+/// the face's own region, so a cut the face owns — a bridge to a hole, a
+/// periodic seam — is turned across rather than emitted, and refining the
+/// scaffold changes which raw darts appear without changing the loop. A
+/// profile cannot stand in for this: once a face reaches its hole along a
+/// bridge, one raw boundary chain carries every loop the face has, and only
+/// turning across the face's own cuts separates them again.
 pub struct Loop<'a, P: Payload = StandardPayload> {
-    profile: Closed<Profile<'a, P>>,
+    model: &'a Model<P>,
+    /// The loop's raw boundary occurrences, in traversal order.
+    darts: Vec<Dart>,
     kind: LoopKind,
 }
 
 impl<'a, P: Payload> Loop<'a, P> {
-    /// Creates a loop from a closed profile and its face-domain role.
-    fn new(profile: Closed<Profile<'a, P>>, kind: LoopKind) -> Self {
-        Self { profile, kind }
+    /// Creates a loop from a derived boundary walk and its face-domain role.
+    fn new(model: &'a Model<P>, darts: Vec<Dart>, kind: LoopKind) -> Self {
+        Self { model, darts, kind }
+    }
+
+    /// Returns the loop's raw boundary occurrences in traversal order.
+    ///
+    /// One logical edge may span several consecutive darts when the scaffold
+    /// is refined inside it; [`Self::edges`] groups them back.
+    pub fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
+        self.darts.iter().copied()
+    }
+
+    /// Returns one dart per oriented edge occurrence, in walk order.
+    ///
+    /// Refining the scaffold inside a logical edge lengthens that edge's run of
+    /// raw darts without adding an occurrence, so this is the list that answers
+    /// "what does the loop run along", and it is invariant under refinement.
+    /// An edge the loop runs twice yields two entries, because the runs are not
+    /// adjacent even though the key is the same.
+    pub fn occurrences(&self) -> Vec<Dart> {
+        let mut occurrences: Vec<Dart> = Vec::new();
+        let mut previous = None;
+        for dart in self.darts() {
+            let key = Edge::from_dart(self.model, dart).map(|edge| edge.key());
+            if key.is_some() && key == previous {
+                continue;
+            }
+            previous = key;
+            occurrences.push(dart);
+        }
+        // The walk is cyclic, so a run split across the ends of the dart list
+        // is still one occurrence.
+        if occurrences.len() > 1 {
+            let first = Edge::from_dart(self.model, occurrences[0]).map(|edge| edge.key());
+            let last = Edge::from_dart(self.model, occurrences[occurrences.len() - 1])
+                .map(|edge| edge.key());
+            if first.is_some() && first == last {
+                occurrences.pop();
+            }
+        }
+        occurrences
+    }
+
+    /// Returns this loop's edges, one per oriented occurrence, in walk order.
+    pub fn edges(&self) -> Vec<Edge<'a, P>> {
+        self.occurrences()
+            .into_iter()
+            .filter_map(|dart| Edge::from_dart(self.model, dart))
+            .collect()
+    }
+
+    /// Returns the logical vertices this loop meets, in walk order.
+    ///
+    /// A loop of closed edges meets none: the place an unmarked circle closes
+    /// is interior to it and is not a corner anything meets at.
+    pub fn vertices(&self) -> Vec<Vertex<'a, P>> {
+        self.occurrences()
+            .into_iter()
+            .filter_map(|dart| Vertex::from_dart(self.model, dart))
+            .collect()
+    }
+
+    /// Returns the loop's corners in traversal order.
+    ///
+    /// Each corner pairs the occurrence arriving at it with the one leaving.
+    pub fn corners(&self) -> Vec<LoopCorner<'a, P>> {
+        let occurrences = self.occurrences();
+        let count = occurrences.len();
+        occurrences
+            .iter()
+            .enumerate()
+            .map(|(index, &outgoing)| {
+                LoopCorner::new(
+                    self.model,
+                    occurrences[(index + count - 1) % count],
+                    outgoing,
+                )
+            })
+            .collect()
+    }
+
+    /// Returns a dart of this loop's walk, carrying its traversal orientation.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a loop with no boundary occurrence, which no walked cycle is.
+    pub fn dart(&self) -> Dart {
+        *self
+            .darts
+            .first()
+            .expect("a walked boundary cycle has at least one occurrence")
+    }
+
+    /// Returns the registered profile this loop's walk runs along, if any.
+    pub fn profile_key(&self) -> Option<ProfileKey> {
+        self.model.profile_key(self.dart())
+    }
+
+    /// Returns the number of oriented edge occurrences in this loop.
+    pub fn len(&self) -> usize {
+        self.occurrences().len()
+    }
+
+    /// Reports whether the walk found no boundary at all.
+    pub fn is_empty(&self) -> bool {
+        self.darts.is_empty()
     }
 
     /// Returns how this loop bounds its face in parameter space.
@@ -62,16 +176,17 @@ impl<'a, P: Payload> Loop<'a, P> {
     }
 
     /// Returns the same face loop with the opposite traversal orientation.
+    ///
+    /// Walking the other way round means visiting the occurrences in reverse
+    /// and reading each from its far end, which is its `alpha0` partner.
     pub fn reversed(&self) -> Self {
-        Self::new(self.profile.reversed(), self.kind)
-    }
-}
-
-impl<'a, P: Payload> Deref for Loop<'a, P> {
-    type Target = Closed<Profile<'a, P>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.profile
+        let darts = self
+            .darts
+            .iter()
+            .rev()
+            .map(|&dart| self.model.alpha(Dim::Zero, dart))
+            .collect();
+        Self::new(self.model, darts, self.kind)
     }
 }
 
@@ -135,6 +250,15 @@ impl<'g, P: Payload> Face<'g, P> {
         self.model.face_attr_unchecked(self.key)
     }
 
+    /// Returns this face's stored loop definitions.
+    ///
+    /// The seeds locate each loop's stored direction, which pcurve keys and
+    /// boundary indices are written against; [`Self::loops`] answers what the
+    /// map says bounds the face.
+    pub(crate) fn attr_loops(&self) -> &'g [crate::topology::attributes::LoopDefinition] {
+        &self.attr().loops
+    }
+
     /// Returns the stable key of this face.
     pub fn key(&self) -> FaceKey {
         self.key
@@ -185,26 +309,83 @@ impl<'g, P: Payload> Face<'g, P> {
         }
     }
 
-    /// Returns the face loop seeded at `seed`, read in this view's orientation.
+    /// Returns the face loop whose walk passes through `seed`.
     ///
-    /// The loop is trusted as closed because face attributes are created from
-    /// closed boundary profiles. A wrapping loop is closed too — on the
-    /// periodic quotient rather than in parameter space.
+    /// # Panics
+    ///
+    /// Panics if `seed` is not a boundary occurrence of this face.
     pub fn loop_from_seed(&self, seed: Dart) -> Loop<'g, P> {
-        let definition = self
-            .attr()
-            .loop_definition(seed)
-            .expect("face loop seed must be stored on its face");
-        self.loop_from_definition(definition)
+        self.loops()
+            .into_iter()
+            .find(|boundary| {
+                boundary.darts().any(|dart| {
+                    self.model.cell_representative(dart, Dim::One)
+                        == self.model.cell_representative(seed, Dim::One)
+                })
+            })
+            .expect("face loop seed must lie on a boundary of its face")
     }
 
-    /// Resolves one stored loop definition into this face's oriented loop view.
-    fn loop_from_definition(&self, definition: LoopDefinition) -> Loop<'g, P> {
-        let profile = Closed::new_unchecked(
-            Profile::from_dart(self.model, self.oriented_seed(definition.seed()))
-                .expect("face loop must have a registered profile"),
-        );
-        Loop::new(profile, definition.kind())
+    /// Returns every raw dart this face covers, cuts included.
+    ///
+    /// This is the face as the map holds it, which is what copying or merging
+    /// one has to move; [`Self::loops`] answers the different question of what
+    /// bounds it.
+    ///
+    /// Asked of the involutions alone, never of the classification. Copying a
+    /// face is something builders do half way through an edit, where the
+    /// classification is allowed to be inconsistent and a region walk has
+    /// nothing to report — and where a wrong answer would silently copy part of
+    /// a face. Every 2-cell the face's own loops touch is the whole of it,
+    /// whether the scaffold joins them into one cell or not yet.
+    pub(crate) fn region_darts(&self) -> Vec<Dart> {
+        let mut seen = HashSet::new();
+        let mut darts = Vec::new();
+        // Every 2-cell the face's own loops touch, taken from the involutions
+        // alone. Copying a face happens half way through an edit, where the
+        // classification is allowed to be inconsistent and a boundary walk has
+        // nothing to report -- and where a wrong answer silently copies part of
+        // a face. A cut the face owns lies in the same 2-cell and travels with
+        // it without being asked for separately.
+        let within = self.model.topology().orbit_indices(Dim::Two);
+        for loop_ in &self.attr().loops {
+            for dart in self.model.topology().orbit(loop_.seed(), within.clone()) {
+                if seen.insert(dart) {
+                    darts.push(dart);
+                }
+            }
+        }
+        darts
+    }
+
+    /// Walks this face's boundary and returns one dart list per closed loop.
+    ///
+    /// The walk is the authority on which boundaries the face has: it reads the
+    /// frontier of the face's own region and turns across every cut the face
+    /// owns, so a bridge to a hole or a periodic seam separates the loops
+    /// instead of joining them.
+    fn boundary_walks(&self) -> Vec<Vec<Dart>> {
+        let Some(anchor) = self.attr().seed() else {
+            return Vec::new();
+        };
+        let ownership = self.model.ownership();
+        // A face that cannot be walked is a face whose scaffold does not hold
+        // together, and answering "no boundary" would hand the caller a shape
+        // it never built. Say which face and why instead.
+        let region = recover_region(
+            self.model.topology(),
+            ownership,
+            EntityOwner::Face(self.key),
+            anchor,
+        )
+        .unwrap_or_else(|error| {
+            panic!("face {:?} covers no recoverable region: {error}", self.key)
+        });
+        boundary_cycles(self.model.topology(), ownership, &region)
+            .unwrap_or_else(|error| panic!("face {:?} has no walkable boundary: {error}", self.key))
+            .into_iter()
+            .map(|cycle| cycle.darts().to_vec())
+            .collect()
     }
 
     /// Returns the outer boundary loop of the face, if it has one.
@@ -213,33 +394,58 @@ impl<'g, P: Payload> Face<'g, P> {
     /// outer loop at all, so a caller that needs the whole boundary should
     /// reach for [`Self::loops`] rather than treat this as infallible.
     pub fn outer_loop(&self) -> Option<Loop<'g, P>> {
-        self.attr()
-            .outer_seed()
-            .map(|seed| self.loop_from_seed(seed))
+        self.loops().into_iter().find(Loop::is_outer)
     }
 
     /// Returns every inner boundary loop of the face.
     ///
-    /// Inner loops represent holes in the face region. The returned order is
-    /// the storage order from the face attribute.
+    /// Inner loops represent holes in the face region.
     pub fn inner_loops(&self) -> Vec<Loop<'g, P>> {
         self.loops().into_iter().filter(Loop::is_inner).collect()
     }
 
     /// Returns all boundary loops, outer first when there is one.
+    ///
+    /// Which boundaries exist is derived from the map; what each one *means* in
+    /// the face's parameter domain is not derivable from connectivity and is
+    /// read from the stored [`LoopDefinition`] whose seed the walk passes
+    /// through.
     pub fn loops(&self) -> Vec<Loop<'g, P>> {
         let definitions = &self.attr().loops;
-        let mut loops = Vec::with_capacity(definitions.len());
-        if let Some(outer) = self.attr().outer_seed() {
-            loops.push(self.loop_from_seed(outer));
-        }
-        loops.extend(
-            definitions
-                .iter()
-                .copied()
-                .filter(|definition| definition.kind() != LoopKind::Outer)
-                .map(|definition| self.loop_from_definition(definition)),
-        );
+        // Each stored definition describes one loop, so the pairing is
+        // one-to-one: a definition already claimed cannot describe a second
+        // cycle, and letting it would leave another cycle unnamed and silently
+        // read as an outer boundary.
+        let mut claimed = vec![false; definitions.len()];
+        let mut loops: Vec<Loop<'g, P>> = self
+            .boundary_walks()
+            .into_iter()
+            .map(|darts| {
+                let matched = definitions
+                    .iter()
+                    .enumerate()
+                    .position(|(index, definition)| {
+                        !claimed[index]
+                            && darts.iter().any(|&dart| {
+                                self.model.cell_representative(dart, Dim::One)
+                                    == self.model.cell_representative(definition.seed(), Dim::One)
+                            })
+                    });
+                let kind = match matched {
+                    Some(index) => {
+                        claimed[index] = true;
+                        definitions[index].kind()
+                    }
+                    None => LoopKind::Outer,
+                };
+                let boundary = Loop::new(self.model, darts, kind);
+                match self.sense {
+                    Orientation::Same => boundary,
+                    Orientation::Reversed => boundary.reversed(),
+                }
+            })
+            .collect();
+        loops.sort_by_key(|boundary| boundary.kind() != LoopKind::Outer);
         loops
     }
 
@@ -480,10 +686,9 @@ fn signed_area(points: &[Point2]) -> f64 {
 
 impl<P: Payload> MergeTopology<P> for Face<'_, P> {
     fn merge_topology(&self) -> TopologyMerge<'_, P> {
-        let mut darts = Vec::new();
-        for loop_ in self.loops() {
-            darts.extend(loop_.darts());
-        }
-        TopologyMerge::new(self.model, darts, self.dart_unchecked())
+        // Every dart the face covers, not just the ones its boundary walk
+        // emits: a walk names one dart per oriented occurrence, while copying
+        // a face has to carry its whole raw region, cuts and all.
+        TopologyMerge::new(self.model, self.region_darts(), self.dart_unchecked())
     }
 }

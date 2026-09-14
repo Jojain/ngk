@@ -136,6 +136,15 @@ pub struct LoopCorner<'a, P: Payload = StandardPayload> {
 }
 
 impl<'a, P: Payload> LoopCorner<'a, P> {
+    /// Creates a corner between the occurrence arriving at it and the one leaving.
+    pub(crate) fn new(model: &'a Model<P>, incoming: Dart, outgoing: Dart) -> Self {
+        Self {
+            model,
+            incoming,
+            outgoing,
+        }
+    }
+
     /// Returns the edge arriving at this corner in loop traversal order.
     pub fn incoming(&self) -> Edge<'a, P> {
         Edge::from_dart(self.model, self.incoming)

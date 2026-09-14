@@ -15,6 +15,7 @@
 //! does not build the merged geometry. Both belong to the caller;
 //! [`crate::healing`] is the caller that supplies them.
 
+use crate::builders::scaffold::cut_between_loops;
 use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
@@ -953,6 +954,11 @@ impl MergePlan {
                 ];
                 loops.extend(untouched);
                 edit.face_attr_mut_unchecked(face).loops = loops;
+                // Removing the seam took away an edge, not the connectivity: the
+                // two halves it was hiding are still one face, and a cut the
+                // face owns is what says so now that no edge does.
+                cut_between_loops(edit, face, kept, added)
+                    .expect("a ring's two halves are joinable by a cut");
                 MergedCell::Ring {
                     face,
                     survivor_loop,

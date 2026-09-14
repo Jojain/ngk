@@ -664,8 +664,8 @@ impl<P: Payload> SharedLoop<P> {
     fn from_view(model: SharedModel<P>, view: Loop<'_, P>) -> Self {
         Self {
             model,
-            key: view.key(),
-            dart: view.dart,
+            key: view.profile_key().unwrap_or_default(),
+            dart: view.dart(),
         }
     }
 
@@ -674,7 +674,7 @@ impl<P: Payload> SharedLoop<P> {
             .ok_or_else(|| missing("loop face", self.dart.id()))?;
         face.loops()
             .into_iter()
-            .find(|loop_| loop_.key() == self.key && loop_.dart == self.dart)
+            .find(|loop_| loop_.dart() == self.dart)
             .ok_or_else(|| missing("loop", self.dart.id()))
     }
 

@@ -79,6 +79,77 @@ is the live plan.
   **registered explicitly** (`add_profile` / `add_sheet`); commit rejects faces
   or solids referencing unregistered components.
 
+### Vocabulary: cells and entities
+
+Two layers, two sets of words, and they are never mixed. Getting this wrong is
+how a reader comes to believe the map has vertices.
+
+| Layer | Write | Prefer |
+|---|---|---|
+| **GMap** — what the involutions hold | `0-cell`, `1-cell`, `2-cell`, `3-cell`; or `raw vertex`, `raw edge`, `raw face`, `raw cell` | the `N-cell` form, most of the time |
+| **Logical** — what a shape is made of | `vertex`, `edge`, `face`, `profile`, `sheet`, `solid` | the bare noun |
+
+**The one rule: a bare noun is always the logical entity.** A "face" is a
+`FaceKey` and its `FaceAttr`. A thing the map holds is a 2-cell, or a raw face,
+and it is **never** just "a face" — in any context, however obvious the
+surrounding code makes it. Dropping the qualifier is the single mistake this
+vocabulary exists to prevent, because it is how a reader comes to believe the
+map has vertices.
+
+Both spellings of the map-side noun are legitimate and mean the same thing.
+`N-cell` is the better default: it is shorter, it carries the dimension, and it
+cannot be misread. Reach for `raw edge` when a sentence gains from naming the
+layer in words — "the bridge is a raw edge the face owns" reads better than the
+same sentence with `1-cell` — and use `raw cell` when the dimension is not the
+point.
+
+Going the other way, write `logical vertex` only where one sentence names both
+layers and the contrast is its whole point — "the 0-cell where a circle closes
+is not a logical vertex" — and drop the qualifier again as soon as the sentence
+is over. The bare noun already means the logical one.
+
+This applies to doc comments, inline comments, test names, error messages and
+plan prose alike. Identifiers already follow it: `Model::cells(Dim::Two)` and
+`cell_representative` are map-side, `iter_faces` and `face_attr` are
+logical-side, and `Dim` never appears in a logical signature.
+
+### Corners
+
+A **corner** is a vertex in the role of bounding something. Corners are always
+vertices — that is the whole content of the word, and it is what makes the
+following true:
+
+- A 0-cell an edge owns is **not** a corner. A whole circle closes somewhere,
+  and `point_at_dart` will tell you where, but nothing meets there, so the
+  circle has no corner and is *unmarked*.
+- **Cutting adds a corner.** A cut promotes the 0-cell at the cut to a vertex;
+  whether the edge then separates depends on whether it already had one.
+- An edge's corner count is what names its shape: **bounded** 2, **marked** 1,
+  **unmarked** 0. See the table below.
+
+Two counts, and they differ on purpose:
+
+| Count | Means | Where |
+|---|---|---|
+| **distinct corners** | how many different vertices bound the thing | `BoundedEdge::vertices`, `MarkedEdge::corner`, `EdgeCore::has_corner_at` |
+| **corner occurrences** | how many times a walk arrives at one | `Loop::corners`, `LoopCorner` |
+
+A marked edge has **one** corner and a walk along it passes that corner
+**twice** — it is both the start and the end. A loop that meets one vertex twice
+has one vertex and two corners. `LoopCorner` therefore pairs the occurrence
+arriving with the one leaving, which is what tells two visits apart; asking it
+for a `vertex()` collapses them again.
+
+**Two homonyms, deliberate and safe.** `BBox::corners`,
+`UnwrappedFaceDomain::corners` and `snap_boundary_corner` mean *points*, not
+topology, and their types say so — they hand back `Point3`/`Point2`, never a
+view. And `exchange::step::topology::export::Corner` is a corner **of the
+exported file**, not of the model: it is `Vertex(VertexKey)` or
+`Closure(EdgeKey)`, because `EDGE_CURVE` has no spelling without two ends, so a
+closure point that is no corner here must still be written as a vertex there.
+That type is private to the exporter, where the file's vocabulary is the one in
+force.
+
 ### Edges: bounded, marked, unmarked
 
 An edge's kind is decided by **how many distinct corners it has**, not by the
@@ -102,7 +173,7 @@ pattern that silently covers both. A site that genuinely means "closed" writes
 marked edge is never `Bounded` — a closed edge with a deliberate corner is still
 closed.
 
-An unmarked edge's closing point is not nothing: it is a raw 0-cell, classified
+An unmarked edge's closing point is not nothing: it is a 0-cell, classified
 as interior to the edge, and `point_at_dart` derives its position from the curve.
 It is simply not a corner anything meets at. **Ask `point_at_dart` for a
 position; ask the vertex store only when the identity of a logical vertex is
@@ -157,6 +228,18 @@ primitive — it steps around a shared boundary cell with the sewing involutions
 passing over cells a higher-dimensional entity owns. `boundary_cycles` gives a
 face its oriented loops and `boundary_shells` gives a solid its boundary
 components, both by turning across interior cuts rather than emitting them.
+
+**A region is connected, so a face's scaffold must be too.** `recover_region`
+walks involutions and turns across cells the entity owns; it cannot reach a raw
+cell that touches the region nowhere. Production builders today lay down **one
+disconnected 2-cell per stored loop**, so a face with an outer loop and a hole,
+or a wrapping pair, has its second cell owned by nobody — and a boundaryless
+face (a whole sphere, a whole torus) has no 2-cell at all. `FaceAttr.loops` is
+therefore still load-bearing *connectivity*, not a duplicate of something
+derivable: it is the only thing making a multi-loop face one face. Ask
+`boundary_cycles` for a face's loops only where the face is a single cycle,
+until the bridge/seam scaffolding lands. Written up in
+`plan/logical_topology_over_gmap.md`.
 
 ### Transactions (read `src/topology/edit.md` — short and essential)
 

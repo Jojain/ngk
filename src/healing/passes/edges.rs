@@ -240,7 +240,7 @@ fn fills_inner_loop<P: Payload>(
     let inner_loops = face.inner_loops();
     let Some(inner) = inner_loops
         .iter()
-        .find(|boundary| g.profile_key(boundary.dart) == Some(profile))
+        .find(|boundary| boundary.profile_key() == Some(profile))
     else {
         return false;
     };

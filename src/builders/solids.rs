@@ -1,6 +1,7 @@
 use crate::geometry::TrimmedCurve2;
 use crate::model::{Cell2, MergeTopology, Model};
 use crate::topology::ModelEditError;
+use crate::topology::subdivision::EntityOwner;
 use std::collections::HashMap;
 
 use nalgebra::Vector3;
@@ -192,7 +193,7 @@ fn add_extruded_face_staged<P: Payload>(
     let bottom_loop_darts = bot_face
         .loops()
         .into_iter()
-        .map(|loop_| loop_.dart)
+        .map(|loop_| loop_.dart())
         .collect::<Vec<_>>();
 
     let top_face_dart = edit.merge(top_face.face()).dart_unchecked();
@@ -355,20 +356,30 @@ fn sew_wrapping_lateral_face<P: Payload>(
         return Ok(None);
     };
 
-    // Two closed one-edge loops: the swept edge at the start of the sweep and
-    // its image at the end. `alpha1` closes each onto itself, exactly as a
-    // circular edge's own profile does.
-    let [bottom_start, bottom_end, top_start, top_end]: [Dart; 4] =
-        std::array::from_fn(|_| edit.add_dart());
-    for (start, end) in [(bottom_start, bottom_end), (top_start, top_end)] {
-        edit.link(Dim::Zero, start, end)?;
-        edit.link(Dim::One, start, end)?;
+    // The swept edge at the start of the sweep and its image at the end, joined
+    // by a seam the boundary walk uses twice. Without the seam the two loops sit
+    // in two 2-cells that nothing connects, and the wall would be one face only
+    // because its attribute said so; with it the involutions carry that fact.
+    // The seam is scaffold, not shape — a swept wall closes on itself, and the
+    // two copies of the source edge it would otherwise carry are the same curve
+    // in the same place.
+    let slots: [[Dart; 2]; 4] = std::array::from_fn(|_| [edit.add_dart(), edit.add_dart()]);
+    for slot in slots {
+        edit.link(Dim::Zero, slot[0], slot[1])?;
     }
+    for i in 0..slots.len() {
+        edit.link(Dim::One, slots[i][1], slots[(i + 1) % slots.len()][0])?;
+    }
+    let [seam_out, top_slot, seam_back, bottom_slot] = slots;
+    edit.link(Dim::Two, seam_out[0], seam_back[1])?;
+    edit.link(Dim::Two, seam_out[1], seam_back[0])?;
+    let [bottom_start, _bottom_end] = bottom_slot;
+    let [top_start, top_end] = top_slot;
 
     edit.add_profile(ProfileAttr::new(bottom_start, P::Profile::default()));
     edit.add_profile(ProfileAttr::new(top_start, P::Profile::default()));
     let uv = prepared.uv;
-    edit.add_face(FaceAttr::with_loops(
+    let face = edit.add_face(FaceAttr::with_loops(
         prepared.surface.clone(),
         P::F::default(),
         vec![
@@ -380,6 +391,7 @@ fn sew_wrapping_lateral_face<P: Payload>(
             (top_start, TrimmedCurve2::segment(uv[2], uv[3])),
         ]),
     ));
+    edit.own_cell(Dim::One, seam_out[0], EntityOwner::Face(face));
 
     // The swept loop runs with the sweep at the bottom and against it at the
     // top, so the top loop meets its cap through `alpha0`, as the quad path's

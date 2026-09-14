@@ -6,6 +6,7 @@ use radians::{Angle, Rad64};
 use thiserror::Error;
 
 use crate::builders::faces::reverse_face_winding;
+use crate::builders::scaffold::cut_between_loops;
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{
@@ -780,12 +781,20 @@ fn add_full_revolved_open_edge_face<P: Payload>(
         }
     };
 
-    Ok(edit.add_face(FaceAttr::with_loops(
+    let key = edit.add_face(FaceAttr::with_loops(
         surface,
         P::F::default(),
         loops,
         pcurves,
-    )))
+    ));
+    // Two circles bound this band, and until something joins them they sit in
+    // two 2-cells that nothing connects. The cut is where the source edge's two
+    // swept copies would have met, so the band stays seamless as a shape while
+    // the map gains the connectivity one face needs.
+    if let Some((inner, _, _)) = inner_loop {
+        cut_between_loops(edit, key, outer_loop, inner)?;
+    }
+    Ok(key)
 }
 
 /// The axis every given loop spans a whole period of, if they all span one.
@@ -1462,7 +1471,7 @@ fn add_revolved_face_staged<P: Payload>(
     let loops = face
         .loops()
         .into_iter()
-        .map(|loop_| loop_.dart)
+        .map(|loop_| loop_.dart())
         .collect::<Vec<_>>();
 
     let sweep = revolve_sweep_direction(axis, &face);

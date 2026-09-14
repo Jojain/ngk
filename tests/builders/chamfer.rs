@@ -200,7 +200,8 @@ fn solid_face_profile_chamfer_replaces_the_complete_rim_with_a_bevel_ring() {
         .expect("block should have a top face")
         .outer_loop()
         .expect("face should have an outer loop")
-        .key();
+        .profile_key()
+        .expect("the outer loop should run along a registered profile");
 
     chamfer(shape.model_mut(), top_profile, 0.25)
         .expect("complete top profile should chamfer as one solid operation");

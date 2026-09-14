@@ -4,6 +4,8 @@ mod scaffold;
 #[path = "topology/classification.rs"]
 mod classification;
 
+#[path = "topology/bridged_face.rs"]
+mod bridged_face;
 #[path = "topology/edge.rs"]
 mod edge;
 #[path = "topology/edge_split.rs"]

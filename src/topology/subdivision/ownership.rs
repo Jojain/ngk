@@ -256,6 +256,15 @@ impl OwnershipIndex {
     ///
     /// Anchors are applied first so a stored record that contradicts one is
     /// reported as the conflict it is.
+    ///
+    /// Two *anchors* landing on one cell is **not** a conflict. It means two
+    /// keys currently sit on the same cell, which is what a builder is doing on
+    /// purpose when it lays a vertex at every corner and lets commit fuse the
+    /// coincident ones; identity reconciliation owns that question and settles
+    /// it before commit finishes. The first anchor wins for the duration, which
+    /// is enough for every traversal, since a traversal asks which entity a cell
+    /// belongs to and both answers name the same cell. A *stored* record is the
+    /// authoritative half and still conflicts loudly, with anything.
     pub fn build_with_anchors(
         map: &GMap,
         subdivision: &Subdivision,
@@ -264,14 +273,21 @@ impl OwnershipIndex {
         let mut owners: [HashMap<Dart, EntityOwner>; GMAP_INVOLUTION_COUNT] =
             std::array::from_fn(|_| HashMap::new());
 
-        let anchored = anchors
+        let anchored: Vec<OrbitOwnership> = anchors
             .into_iter()
             .map(|(dimension, representative, owner)| OrbitOwnership {
                 dimension,
                 representative,
                 owner,
-            });
-        for record in anchored.chain(subdivision.records()) {
+            })
+            .collect();
+        let anchor_count = anchored.len();
+        for (position, record) in anchored
+            .into_iter()
+            .chain(subdivision.records())
+            .enumerate()
+        {
+            let is_anchor = position < anchor_count;
             let OrbitOwnership {
                 dimension,
                 representative,
@@ -297,6 +313,12 @@ impl OwnershipIndex {
                 if let Some(&held) = slot.get(&dart)
                     && held != owner
                 {
+                    // Two anchors on one cell are two keys awaiting
+                    // reconciliation, not a label that lies. Keep the first and
+                    // let the transaction settle which key survives.
+                    if is_anchor {
+                        continue;
+                    }
                     return Err(SubdivisionError::ConflictingOwnership {
                         dimension,
                         dart,

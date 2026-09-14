@@ -11,6 +11,7 @@ use super::edge::Edge;
 use super::gmap::Dart;
 use super::payload::Payload;
 use super::profile::Profile;
+use super::vertex::Vertex;
 use crate::model::{MergeTopology, TopologyMerge};
 
 /// Marker for topology views that can carry a verified support plane.
@@ -160,7 +161,7 @@ impl<P: Payload> PlanarityCheck for Face<'_, P> {
         };
 
         for loop_ in self.loops() {
-            let points = profile_points(loop_.inner())?;
+            let points = corner_points(loop_.vertices())?;
             check_points_on_plane(&points, plane, tolerance)?;
             for edge in loop_.edges() {
                 check_edge_curve(&edge, plane, tolerance)?;
@@ -197,8 +198,14 @@ fn edge_points<P: Payload>(edge: &Edge<'_, P>) -> Result<Vec<PointOnDart>, Plana
 fn profile_points<P: Payload>(
     profile: &Profile<'_, P>,
 ) -> Result<Vec<PointOnDart>, PlanarityError> {
-    profile
-        .vertices()
+    corner_points(profile.vertices())
+}
+
+/// Reads the position of each corner, keeping the dart that named it.
+fn corner_points<P: Payload>(
+    vertices: Vec<Vertex<'_, P>>,
+) -> Result<Vec<PointOnDart>, PlanarityError> {
+    vertices
         .into_iter()
         .map(|vertex| {
             let point = *vertex

@@ -28,6 +28,7 @@
 
 use std::collections::HashMap;
 
+use crate::builders::scaffold::cut_between_loops;
 use crate::geometry::{
     Curve, LINEAR_TOLERANCE, NurbsError, Point2, Point3, Surface, SurfacePeriodicity,
     TrimmedCurve2, Vector2,
@@ -982,13 +983,20 @@ fn sew_shell(
             })
             .collect();
 
-        edit.add_face(FaceAttr::with_pcurves(
+        let face = edit.add_face(FaceAttr::with_pcurves(
             surface.clone(),
             (),
             outer_seed,
-            inner_seeds,
+            inner_seeds.clone(),
             pcurves,
         ));
+        // STEP hands a face its bounds as a list and says nothing about how they
+        // connect; a face is one 2-cell only once something joins them. Each
+        // further bound is reached from the outer one along a cut the face owns,
+        // so the map carries what the list only asserted.
+        for inner_seed in inner_seeds {
+            cut_between_loops(edit, face, outer_seed, inner_seed)?;
+        }
         shell_root.get_or_insert(outer_seed);
     }
 

@@ -6,6 +6,7 @@ pub mod faces;
 pub mod profiles;
 pub mod removal;
 pub mod revolve;
+pub(crate) mod scaffold;
 pub mod sheets;
 pub mod solids;
 pub mod vertices;

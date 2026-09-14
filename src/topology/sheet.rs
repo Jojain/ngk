@@ -177,7 +177,7 @@ impl<'a, P: Payload> Sheet<'a, P> {
 
                 let face = Face::from_dart(self.model, dart)
                     .expect("registered face key must produce a face view");
-                pending.extend(face.loops().into_iter().map(|loop_| loop_.dart));
+                pending.extend(face.loops().into_iter().map(|loop_| loop_.dart()));
                 faces.push(face);
             }
         }

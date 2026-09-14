@@ -9,6 +9,7 @@ use crate::builders::errors::{FaceCreationError, ModelEditFailure};
 use crate::builders::profiles::{
     add_rectangle_staged as add_rectangle_profile_staged, profile_pcurves,
 };
+use crate::builders::scaffold::cut_between_loops;
 use crate::geometry::{
     Axis2, Curve, CurveCurveIntersection2, CurveIntersectionError, DomainSide, Interval,
     LINEAR_TOLERANCE, NurbsError, Periodicity, Plane, Point2, Point3, Surface, SurfacePeriodicity,
@@ -26,6 +27,7 @@ use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
+use crate::topology::subdivision::EntityOwner;
 use crate::topology::vertex::Vertex;
 use crate::topology::{ModelEdit, ModelEditError};
 use thiserror::Error;
@@ -1435,6 +1437,14 @@ fn finish_closed_imprint_split<P: Payload>(
         P::Profile::default(),
     ));
 
+    // The face the island sits in reaches it along a cut it owns. Without one
+    // the new hole would sit in a 2-cell of its own, leaving the face two
+    // disconnected pieces that only its loop list joined up.
+    let reached_from = old_face
+        .seed()
+        .expect("a face taking an island already has a boundary to reach it from");
+    cut_between_loops(edit, face, reached_from, outside_loop.loop_dart)?;
+
     let face_attr = edit
         .face_attr_mut(face)
         .expect("source face must remain staged during a closed-loop split");
@@ -1850,12 +1860,18 @@ fn face_boundary_edges<P: Payload>(
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
     let mut boundary = Vec::new();
-    for loop_ in face_view
-        .loops()
-        .into_iter()
-        .filter(|loop_| !loop_.is_inner())
-    {
-        boundary.extend(loop_boundary_edges(g, face, loop_.dart)?);
+    // Started at each stored seed rather than wherever the boundary walk
+    // happened to begin. An imprint is located against this list by index, and
+    // the pcurves it is compared with are keyed against the seed's own
+    // direction, so rotating the list moves every corner it can land on.
+    let seeds: Vec<Dart> = face_view
+        .attr_loops()
+        .iter()
+        .filter(|definition| definition.kind() != LoopKind::Inner)
+        .map(|definition| definition.seed())
+        .collect();
+    for seed in seeds {
+        boundary.extend(loop_boundary_edges(g, face, seed)?);
     }
     Ok(boundary)
 }
@@ -2411,7 +2427,18 @@ pub fn add_annulus(
     g.transaction(|edit| add_annulus_staged(edit, plane, outer_radius, inner_radius))
 }
 
-/// Builds both annulus boundaries and registers their shared face atomically.
+/// Builds both annulus boundaries, bridges them, and registers the face.
+///
+/// The two rims are joined by a **bridge**: one 1-cell the face's boundary
+/// walk uses twice, with the two uses `alpha2`-linked to each other. Without it
+/// the rims would sit in two disconnected 2-cells and only the face attribute
+/// would say they belong to the same face; with it the face is one raw 2-cell
+/// and the involutions alone carry that fact.
+///
+/// The bridge is scaffold, not shape: it is owned by the face, so it is never
+/// emitted as a boundary and carries no logical edge of its own. Each of its
+/// feet is the 0-cell where a rim closes, owned by that rim's edge — which is
+/// what keeps both circles unmarked.
 fn add_annulus_staged(
     edit: &mut ModelEdit<'_, StandardPayload>,
     plane: Plane,
@@ -2425,11 +2452,40 @@ fn add_annulus_staged(
         });
     }
 
+    // The boundary word, in cyclic order: out along the bridge, once round the
+    // hole, back along the bridge, once round the outer rim. Reading the bridge
+    // before and after the hole is what makes the walk turn out of the hole and
+    // back onto the outer rim rather than round the hole for ever.
+    let slots: Vec<[Dart; 2]> = (0..4).map(|_| [edit.add_dart(), edit.add_dart()]).collect();
+    for slot in &slots {
+        edit.link(Dim::Zero, slot[0], slot[1])?;
+    }
+    for i in 0..slots.len() {
+        edit.link(Dim::One, slots[i][1], slots[(i + 1) % slots.len()][0])?;
+    }
+    let [bridge_out, inner_loop_slot, bridge_back, outer_loop_slot] =
+        [0, 1, 2, 3].map(|i| slots[i]);
+    edit.link(Dim::Two, bridge_out[0], bridge_back[1])?;
+    edit.link(Dim::Two, bridge_out[1], bridge_back[0])?;
+
     let inner_plane = Plane::new(plane.origin(), plane.x_dir(), -plane.normal());
-    let outer_edge = add_circle_edge_staged(edit, plane.clone(), outer_radius)?;
-    let inner_edge = add_circle_edge_staged(edit, inner_plane, inner_radius)?;
-    let outer_loop = edit.edge_attr_unchecked(outer_edge).dart;
-    let inner_loop = edit.edge_attr_unchecked(inner_edge).dart;
+    let outer_edge = edit.add_edge(EdgeAttr::new(
+        outer_loop_slot[0],
+        Curve::circle(plane.clone(), outer_radius),
+        (),
+    ));
+    let inner_edge = edit.add_edge(EdgeAttr::new(
+        inner_loop_slot[0],
+        Curve::circle(inner_plane, inner_radius),
+        (),
+    ));
+    // Each rim closes where the bridge meets it. That 0-cell is interior to the
+    // rim, not a corner: nothing else meets there, and the rim stays unmarked.
+    edit.own_cell(Dim::Zero, outer_loop_slot[0], EntityOwner::Edge(outer_edge));
+    edit.own_cell(Dim::Zero, inner_loop_slot[0], EntityOwner::Edge(inner_edge));
+
+    let outer_loop = outer_loop_slot[0];
+    let inner_loop = inner_loop_slot[0];
     edit.add_profile(ProfileAttr::new(outer_loop, ()));
     edit.add_profile(ProfileAttr::new(inner_loop, ()));
 
@@ -2447,6 +2503,9 @@ fn add_annulus_staged(
         vec![inner_loop],
         pcurves,
     ));
+    // The bridge belongs to the face's interior, which is what stops the
+    // boundary walk emitting it and lets the walk cross it into the hole.
+    edit.own_cell(Dim::One, bridge_out[0], EntityOwner::Face(face_key));
     Ok(face_key)
 }
 
@@ -2657,9 +2716,15 @@ fn add_polygon_with_holes_staged(
         Surface::Plane(plane),
         (),
         outer_loop,
-        inner_loops,
+        inner_loops.clone(),
         pcurves,
     ));
+    // Each hole is reached from the outer boundary along a cut the face owns,
+    // so the face is one 2-cell rather than one boundary per hole with nothing
+    // joining them.
+    for inner_loop in inner_loops {
+        cut_between_loops(edit, face_key, outer_loop, inner_loop)?;
+    }
     Ok(face_key)
 }
 

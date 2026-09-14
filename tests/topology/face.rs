@@ -50,14 +50,14 @@ fn face_views_from_opposite_darts_reverse_boundary_and_normal() {
         default_face
             .outer_loop()
             .expect("face should have an outer loop")
-            .dart,
+            .dart(),
         default_dart
     );
     assert_eq!(
         reversed_face
             .outer_loop()
             .expect("face should have an outer loop")
-            .dart,
+            .dart(),
         reversed_dart
     );
     assert!(
@@ -78,10 +78,10 @@ fn face_views_from_stored_loop_seeds_share_the_same_normal() {
         &g,
         face.outer_loop()
             .expect("face should have an outer loop")
-            .dart,
+            .dart(),
     )
     .expect("outer loop should resolve its face");
-    let inner = Face::from_dart(&g, face.inner_loops()[0].dart)
+    let inner = Face::from_dart(&g, face.inner_loops()[0].dart())
         .expect("inner loop should resolve its face");
 
     assert!(
@@ -182,7 +182,7 @@ fn a_face_view_is_named_by_its_sense_not_by_the_dart_it_was_reached_from() {
     let mut g = Model::<StandardPayload>::new();
     let face_key = add_annulus(&mut g, Plane::xy(), 2.0, 1.0).expect("annulus face should build");
     let face = g.face_unchecked(face_key);
-    let inner_seed = g.face_unchecked(face_key).inner_loops()[0].dart;
+    let inner_seed = g.face_unchecked(face_key).inner_loops()[0].dart();
     let from_inner = Face::from_dart(&g, inner_seed).expect("inner seed should resolve its face");
 
     assert_eq!(face.sense(), Orientation::Same);
@@ -199,11 +199,11 @@ fn a_face_view_is_named_by_its_sense_not_by_the_dart_it_was_reached_from() {
         round_tripped
             .outer_loop()
             .expect("face should have an outer loop")
-            .dart,
+            .dart(),
         reversed
             .outer_loop()
             .expect("face should have an outer loop")
-            .dart
+            .dart()
     );
     assert_eq!(reversed.reversed().sense(), Orientation::Same);
 }

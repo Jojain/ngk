@@ -6,8 +6,11 @@ cache; its label-derived views wait on construction, for the reason in
 M4's two classification slices are complete: a built rectangle and a built
 cylinder are classified end to end, a circle is unmarked through construction,
 cutting, healing, Booleans and STEP in both directions, and the suite is green.
-Next is step 3 of the ordering correction — deriving `Face::loops()` from
-`boundary_cycles` and deleting the stored seeds.
+M4 slice 3 is **in progress and the tree is not green**: the annulus is bridged,
+the cylinder wall is seamed, `Face::loops()` is derived from the map, and every
+single-cycle face passes. 33 tests remain, in the clusters listed below — 708 passing against a
+736-passing baseline.
+See [M4 slice 3](#m4-slice-3--the-bridge-proven-on-an-annulus).
 
 Implementation guide: section 1 fixes the architecture, section 2 defines the
 milestone gates, and section 5 supplies the implementation sequence, concrete
@@ -1331,6 +1334,297 @@ The vocabulary is in `AGENTS.md`: **bounded**, **marked**, **unmarked**, with
 `Edge::is_unmarked()` carrying it in code. `Edge::Closed` stays the umbrella over
 the last two, because both *are* closed — a closed edge with a deliberate corner
 is still closed.
+
+#### A face's loops live in disconnected raw cells
+
+Step 3 was probed before it was written, and it does not hold up: the frontier
+walk cannot yet see a multi-loop face, because **a face's raw scaffold is one
+disconnected 2-cell per stored loop**, and an entity can derive ownership of
+only the one its own anchor sits in.
+
+Asking every production shape for its raw 2-cells and their owners gives a rule
+with no exceptions:
+
+| shape | logical faces | loops per face | raw 2-cells | unowned |
+|---|---|---|---|---|
+| rectangle | 1 | 1 | 1 | 0 |
+| disc | 1 | 1 | 1 | 0 |
+| block | 6 | 1 each | 6 | 0 |
+| **annulus** | 1 | **2** (outer, inner) | 2 | **1** |
+| **cylinder** | 3 | 1, 1, **2** (wrapping pair) | 4 | **1** |
+| sphere | 1 | **0** | **0** | 0 |
+| torus | 1 | **0** | **0** | 0 |
+
+One raw 2-cell per loop, and every loop after the first is unowned. Slice 1
+established that an entity owns the cell its own anchor sits in and stores only
+what it *else* contains; a face has one anchor, so it derives one cell, and
+`recover_region` walks by involutions and turns across cells the entity owns
+— it has no way to reach a cell that touches the region nowhere.
+
+So for the cylinder wall, `cell_key` answers `FaceKey(3v1)` for both `Dart(4)`
+and `Dart(6)` while `OwnershipIndex` answers `Some(Face(3v1))` and **`None`**.
+`boundary_cycles` returns one cycle of one edge where the wall has two rims, and
+the annulus likewise returns its outer rim alone.
+
+**The consequence is stronger than "step 3 is blocked".** `FaceAttr.loops` is
+not merely an authoritative ordering of boundaries that duplicates something
+derivable. Today it is the *only* thing that makes a multi-loop face one face:
+delete it and the annulus becomes two unrelated rims, the cylinder wall two
+unrelated circles. It cannot be deleted before something else connects them.
+
+That something is the scaffold M4 already owes:
+
+- **A hole needs a bridge.** An annulus becomes one 2-cell when a bridge edge
+  runs from the outer rim to the inner one, owned by the face as an interior
+  cut. `boundary_cycles` then turns across it and emits the two cycles — which
+  is exactly the case its doc comment describes, and exactly what the M1
+  hand-built fixtures proved. Nothing in production builds one.
+- **A wrapping pair needs a seam.** The cylinder wall's two rims join into one
+  2-cell only through an edge running between them, owned by the wall. Slice 2
+  observed that a built cylinder has no seam edge and read that as "there is no
+  seam to classify". The probe says the opposite: without the seam the wall's
+  second rim is not in the wall's region at all, and the wall is one face only
+  because its loop list says so. The seam is not optional scaffolding; it is the
+  connectivity.
+- **A boundaryless face needs one too.** A sphere and a torus have *no raw
+  2-cell whatsoever*, which is the `ShellRoot::Face` prediction this plan
+  already recorded, met exactly.
+
+These are one fact, not three: **a face's scaffold must be connected, and every
+face whose boundary is not a single cycle currently has no connected scaffold.**
+The bridge endpoints are raw 0-cells owned by the rim edges rather than logical
+vertices, so a bridged annulus keeps both its circles unmarked — the machinery
+slice 2 built for closure points is what makes this representable.
+
+**Ordering.** This is the plan's own ordering correction recurring one level
+down. The correction moved M3's views behind M4's *labelling*; step 3 now has to
+move behind M4's *scaffold construction* for the same reason — a derived answer
+waits on the thing it derives from. Take M4's face-scaffold work
+(`add_annulus`, the cylinder wall, then the boundaryless primitives) before
+steps 3, 4 and 5, and the refinement-invariance gate after it, where it can
+finally be written against shapes that have something to refine.
+
+Evidence: a throwaway probe over `modeling::faces` and `modeling::solids`,
+reading `Model::ownership()` against `Model::cell_key::<Cell2>` and
+`boundary_cycles`. It was deleted rather than kept: it asserts the gap rather
+than a behaviour that should survive, and the behaviour it would assert is the
+one the scaffold work is about to create. The suite is unchanged at **736
+passing, zero failing, zero ignored**.
+
+#### M4 slice 3 — the bridge, proven on an annulus
+
+The scaffold work started, and the smallest shape that needs it settled the
+construction. **This slice is in progress: the tree is not green.** What follows
+is what is established, and what is left.
+
+**The construction.** A face whose boundary is more than one cycle is built as
+one cyclic *boundary word* whose slots alternate rim and bridge:
+
+```
+[bridge_out, inner rim, bridge_back, outer rim]
+```
+
+`alpha0` links the two darts of each slot, `alpha1` links consecutive slots, and
+the bridge's two uses are `alpha2`-linked to each other — `bridge_out[0]` to
+`bridge_back[1]` and `bridge_out[1]` to `bridge_back[0]`. Reading the bridge
+*before* the hole and again *after* it is what makes the walk turn out of the
+hole and back onto the outer rim instead of circling the hole for ever; that
+ordering is the whole trick, and getting it wrong gives a walk that never
+terminates or one that closes after a single slot.
+
+The labelling is three lines: the bridge's 1-cell is owned by the face, and each
+rim's closure 0-cell is owned by that rim's edge. Then:
+
+- the annulus is **one raw 2-cell** of eight darts, where it was two disconnected
+  cells of two;
+- every raw cell of it has an owner, with nothing left unclassified;
+- `boundary_cycles` returns **two** cycles of one logical edge each;
+- the bridge is never emitted, because the walk turns across it;
+- there are **no logical vertices**: a bridge foot is where a rim closes, so both
+  circles stay unmarked, exactly as a whole circle should.
+
+Five tests in `tests/topology/bridged_face.rs` assert those, and they pass.
+
+Suite at the end of this slice: **708 passing, 33 failing, 0 ignored**, against a
+736-passing baseline. `cargo fmt` and `git diff --check` pass, and clippy adds
+no new lint.
+
+**`Face::loops()` is now derived, and it had to be.** Bridging the annulus
+forced step 3 in the same change rather than after it, which is worth recording
+because the plan had them as separate steps. The reason is that a profile cannot
+name a bridged face's loops: once the boundary reaches the hole along a bridge,
+the raw `alpha0`/`alpha1` chain runs through *every* loop the face has, so the
+two profiles the annulus used to register collapse into one, and
+`outer_loop().edges()` answers 2 where the answer is 1. Only turning across the
+face's own cuts separates them again. The step is not "derive the loops *then*
+bridge"; a bridge and a derived walk are one change.
+
+`Loop` is therefore no longer `Closed<Profile>` plus a kind. It carries the
+walk's darts and offers `occurrences()` — one dart per oriented edge use,
+collapsing the run of raw darts a refinement leaves inside one logical edge —
+with `edges()`, `vertices()` and `corners()` built on that. The list is
+refinement-invariant where a profile's dart list is not.
+
+**What the migration cost, and what it caught.** `MergeTopology for Face`
+collected its darts from the loops, which was only ever right because a profile
+walk happened to enumerate every dart of a single-cycle face. A boundary walk
+names one dart per occurrence, so copying a face silently dropped most of it and
+`isolate` panicked. It reads the face's **region** now — every dart the face
+covers, cuts included — which is the honest answer to a different question than
+`loops()` answers. That one fix took the failure count from 169 to 95.
+
+**Where it stands.** Every face whose boundary is a single cycle is green: the
+block, the disc, the rectangle, and their export, boolean and healing paths.
+The remaining 95 failures are, without exception, faces whose boundary is more
+than one cycle and whose builder has not been given a seam yet — the cylinder
+wall and every revolved band (`add_full_revolved_band_face` still lays down two
+independent closed one-edge loops in two disconnected 2-cells), and everything
+downstream of them: boolean on curved solids, STEP round-trips of cylinders,
+seam removal and healing.
+
+**The cylinder wall took the same word, and it worked.** Its builder is
+`solids::sew_wrapping_lateral_face` — a cylinder is an extruded circle, not a
+revolve — and it laid down exactly the annulus's mistake: two closed one-edge
+loops in two 2-cells, the swept edge and its image at the far end of the sweep.
+Given the seam it becomes **3 2-cells where it had 4**, the wall is one of them,
+every cell is owned, the wall derives its **two** wrapping cycles, and the
+cylinder still has **0 vertices** — both rims stay unmarked. Failures went
+94 → 86.
+
+**A false start worth recording, twice over.** `add_full_revolved_band_face` was
+given the same word first, on the assumption that a wrapping pair is the annulus
+with its rims at the ends of a sweep. Failures went 95 → 96 and revolve's own
+nine did not move, so it was reverted. Re-applied later *with a probe attached*,
+the probe said the band still had **4 darts** where the word makes 8 — the
+function was never running. `add_revolved_edge` for a whole turn routes through
+`add_full_revolved_edge_face` → `add_full_revolved_open_edge_face`, and
+`add_full_revolved_band_face` serves a different caller.
+
+The lesson is the one slices 1 and 2 already paid for: **probe which builder
+actually produces the shape before changing one.** Reading the call graph and
+believing it cost two attempts; one `println!` of the dart count settled it.
+
+**Why revolve is harder than the two that are done.** The annulus and the
+cylinder wall both *create* all their darts, so the word can be substituted
+wholesale. `add_full_revolved_open_edge_face` instead **reuses the source edge's
+own darts** as one of its two loops, through `consume_source_edge_as_closed_loop`
+— the sweep consumes the profile rather than copying it. The seam has to be
+woven into darts that already exist and already carry a logical edge, which is a
+different operation from laying down a fresh word. That is the next piece of
+real work, and it is where a shared helper should be designed rather than a
+third copy written.
+
+**The helper exists, and the word turned out to be a splice.**
+`builders/scaffold.rs` holds `cut_between_loops(edit, face, first, second)`. It
+does not build a word from scratch: every loop constructor in the tree already
+produces a closed loop, so the operation is to **splice a cut into two loops
+that already exist**, which works whether their darts were freshly made or
+adopted from a consumed source edge. Reading `alpha1` past each loop's far end
+*before* unlinking is what generalizes it — on a one-edge loop that reads back
+the loop's own dart, which is why the simple case needs no special handling, and
+on a face that already carries a cut it reads the next slot of a longer word, so
+a third loop joins a face that already has two.
+
+Applied at four sites so far: `add_annulus_staged`, `sew_wrapping_lateral_face`
+(the cylinder wall), `add_full_revolved_open_edge_face`, and STEP import's
+`sew_shell` for every bound after the outer one.
+
+**What the migration exposed, which is the more valuable half.** Deriving
+`Face::loops()` made `Model::ownership()` a dependency of a query builders call
+*constantly*, and that surfaced a rule slice 1 had only half-stated:
+
+- **Two anchors on one cell are not a conflict.** A builder that lays a vertex
+  at every corner and lets commit fuse the coincident ones is holding several
+  keys on one cell on purpose; identity reconciliation owns that question.
+  `build_with_anchors` now lets the first anchor win and keeps conflicting
+  *stored* records an error, since a stored record is the authoritative half and
+  is the only one that can lie. This alone took the failure count 83 → 68.
+- **`merge_topology` must ask the map, never the classification.** Copying a
+  face happens half way through an edit, where the classification is allowed to
+  be inconsistent and a region walk has nothing to report — and where a wrong
+  answer silently copies part of a face. It reads the 2-cell orbit of every loop
+  seed instead.
+
+**An imprinted island needs a cut like any other hole.** `split_face_by_imprints`
+was creating an inner loop and pushing it onto the face with nothing joining it,
+so the derived walk found only the outer boundary. `finish_closed_imprint_split`
+now cuts from the face's existing boundary to the new island. That fixed the
+whole `faces` group.
+
+#### The Boolean failure was a half-freed face, and bisection found it
+
+The Boolean group stood at 18 failures and resisted every fix aimed at
+scaffolding or orientation. It failed on **plain boxes**, with
+`assemble::sew_pair` reaching `edit.sew(Dim::Two, da, db)` on a `da` that was
+already `alpha2`-linked. Three guesses — asking the map for the face's dart
+directly, turning each derived walk to agree with its stored seed, restoring the
+old merge dart order — changed nothing and were reverted.
+
+What found it was **bisection, not reasoning**. A temporary switch made
+`Face::loops()` return the old stored-seed loops; Boolean went 24/18 → 34/8, so
+the derivation was the cause. A second probe then computed both forms side by
+side on every call and compared them: **identical**, every time — same loops,
+same kinds, same edges, same darts. So the value was not the channel; something
+that *consumed* the new shape of a `Loop` was.
+
+`Loop::darts()` is that consumer. A derived loop names **one dart per oriented
+occurrence**; the profile walk it replaced enumerated **every** dart of the
+boundary. `ModelEdit::remove_faces` collected the darts to free with
+`boundary.darts()` — so removing a face freed half of it, and left the other
+half sewn to neighbours that no longer had anything on the other side. That is
+exactly the `da` the Boolean tripped over. It now asks `Face::region_darts()`,
+which is the whole face.
+
+That one line took the suite 680 → 697 and Boolean 18 → 4.
+
+**The general lesson, worth more than the fix.** Deriving a value that used to be
+stored changes its *shape*, not just its provenance, and every caller that
+treated the old shape as "all of it" is now silently reading a subset. The two
+sites found this way — `remove_faces` and `MergeTopology for Face` — were both
+asking "what is this face made of", which `loops()` never answered and only
+appeared to. A boundary walk names what bounds a face; `region_darts` names what
+it is made of. Sites that confuse them fail silently, which is why both
+survived their first review.
+
+**Cuts added since:** seam removal's ring case (removing a seam takes away an
+edge, not the connectivity, so the two halves it was hiding get a cut), and
+`add_polygon_with_holes`.
+
+**An extrusion attempt, reverted.** The holed-cap cluster was tried next, on the
+reading that `sew_extruded_loop` walks the raw profile chain — which, now that a
+cap with a hole reaches it along a cut, runs straight through the cut and into
+the other loop. The change read each cap's loops through the boundary walk
+instead, anchored and rotated to the stored seeds so the two caps pair edge for
+edge. It took the suite **708 → 679** and was reverted by inverse edit.
+
+The reading is still believed correct; the replacement was not. Pairing two caps
+is not the same problem as listing one cap's edges, and the rotation silently
+changed which lateral face each edge got, which breaks the ordinary no-hole case
+that was working. Whoever takes this next should separate the two: first make
+one cap's loop yield its logical edges, and check a *block* still extrudes
+before touching how the caps are paired.
+
+**Where it stands: 708 passing, 33 failing.** The remaining clusters, in size
+order: extruding a face with a hole (`extruded_holed_pentagon`,
+`hollow_cylinder`, `extruded_face_with_a_hole`, the annulus shaft validation) —
+the extrusion's cap faces carry the source's holes and have no cuts yet; Boolean
+over *curved* solids (4) and its healing (3); `removal` (5); the boundaryless
+torus and sphere (4), which is still the `ShellRoot::Face` gap and needs the M4
+scaffold builder rather than a cut; and four dart-level tests in `model`, `face`
+and `gmap` that assert the old dart lists directly.
+
+**One flaw introduced and fixed in the same slice.** `Face::boundary_walks` first
+swallowed a region-recovery or walk error and returned no loops. That is the
+fallback pattern this plan already condemned once under the abandoned
+`EdgeUseKey` attempt: it turns "this face's scaffold does not hold together"
+into "this face has no boundary", which is a shape nobody built. Both sites now
+name the face and the error instead.
+
+Only then can the stored seeds go: `FaceAttr.loops` still carries the
+`LoopKind` metadata, and `Face::loops()` pairs each derived cycle with the
+stored definition whose seed the cycle passes through. That pairing is the last
+use of a seed dart, and deleting it is the end of this milestone, not its
+beginning.
 
 #### The finding: a span's ends are not the edge's ends
 
