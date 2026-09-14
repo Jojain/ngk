@@ -3,6 +3,7 @@ pub mod closed;
 pub mod dart;
 pub mod edge;
 pub mod edit;
+pub mod embedding;
 pub mod face;
 pub mod gmap;
 pub mod orientation;
@@ -13,13 +14,10 @@ pub mod shape;
 pub mod shape_keys;
 pub mod sheet;
 pub mod solid;
-pub mod embedding;
 pub mod unwrapped_face_domain;
 pub mod validation;
 pub mod vertex;
-pub use attributes::{
-    FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, ShellRoot, SolidAttr,
-};
+pub use attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, SolidAttr};
 pub use dart::{Dart, IsolatedDart};
 pub use edit::{EditKey, EditPolicy, ModelEdit, ModelEditError, PreservePayload};
 pub use orientation::Orientation;

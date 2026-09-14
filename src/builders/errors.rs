@@ -226,3 +226,22 @@ impl From<ModelEditError> for FaceCreationError {
         Self::ModelEditFailed(ModelEditFailure::new(error))
     }
 }
+
+/// A closed support this kernel has no polygon schema for.
+#[derive(Debug, Error)]
+pub enum ClosedFaceCellError {
+    /// The support leaves a boundary somewhere, so no face over it bounds
+    /// nothing.
+    #[error("a face that bounds nothing needs a support closing in both directions")]
+    SupportNotClosed,
+
+    /// Both parameter directions close by collapsing to a point. No polygon
+    /// here describes that surface, and guessing one would put edges where the
+    /// support has none.
+    #[error("a support closing by collapse in both directions has no polygon schema")]
+    ClosureNotSchematized,
+
+    /// Building the polygon's darts or involutions failed.
+    #[error(transparent)]
+    ModelEdit(#[from] ModelEditError),
+}

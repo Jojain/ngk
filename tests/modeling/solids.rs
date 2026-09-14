@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use nalgebra::Vector3;
 use ngk::geometry::{LINEAR_TOLERANCE, PointCoincidence, Surface, SurfacePeriodicity};
+use ngk::model::Cell2;
 use ngk::modeling::solids::{
     PrimitiveError, block, block_at, cut, cylinder, fuse, intersect, sphere, torus,
 };
@@ -20,8 +21,7 @@ fn block_builds_closed_box_with_expected_cell_counts() {
 
     assert!(
         Closed::new(
-            Sheet::from_dart(g, shell.dart_unchecked())
-                .expect("solid shell should have a registered sheet"),
+            Sheet::from_dart(g, shell.dart()).expect("solid shell should have a registered sheet"),
         )
         .is_some(),
         "block outer shell should be closed"
@@ -155,12 +155,12 @@ fn block_error_message_names_the_invalid_axis_and_value() {
     );
 }
 
-/// A sphere has no boundary anywhere, so it carries no topology at all.
+/// A sphere has no boundary anywhere, so it carries no edge and no vertex.
 ///
-/// There is nothing for an edge or a vertex to be: the face covers its whole
-/// support, and the poles are parametric singularities of `Sphere` rather than
-/// cells. That leaves no dart for the shell to be rooted at either, which is
-/// what `ShellRoot::Face` is for.
+/// There is nothing for either to be: the face covers its whole support, and
+/// the poles are parametric singularities of `Sphere` rather than cells. What
+/// the face does have is the raw 2-cell it is required to occupy — the bigon
+/// underneath it — and that is where its shell is rooted.
 #[test]
 fn sphere_builds_a_well_formed_boundaryless_solid() {
     let shape = sphere(2.0).expect("sphere primitive should build");
@@ -189,9 +189,11 @@ fn sphere_builds_a_well_formed_boundaryless_solid() {
         "a sphere face has no boundary loop"
     );
     assert_eq!(
-        g.solid_attr_unchecked(shape.key()).outer_shell.face(),
+        g.cell_key::<Cell2>(
+            g.cell_representative(g.solid_attr_unchecked(shape.key()).outer_shell, Dim::Two)
+        ),
         Some(face.key()),
-        "the shell is rooted at the face, there being no dart to root at"
+        "the shell is rooted in the 2-cell the face occupies"
     );
 }
 
@@ -272,9 +274,11 @@ fn torus_builds_a_well_formed_boundaryless_solid() {
     );
     assert!(face.loops().is_empty(), "a torus face has no boundary loop");
     assert_eq!(
-        g.solid_attr_unchecked(shape.key()).outer_shell.face(),
+        g.cell_key::<Cell2>(
+            g.cell_representative(g.solid_attr_unchecked(shape.key()).outer_shell, Dim::Two)
+        ),
         Some(face.key()),
-        "the shell is rooted at the face, there being no dart to root at"
+        "the shell is rooted in the 2-cell the face occupies"
     );
     assert!(
         matches!(

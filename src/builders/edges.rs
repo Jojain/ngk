@@ -8,10 +8,10 @@ use crate::model::{Cell0, Cell2, Model};
 use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
 use crate::topology::edit::ModelEditError;
+use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, VertexKey};
-use crate::topology::embedding::EntityOwner;
 use thiserror::Error;
 
 /// What cutting an edge left behind.

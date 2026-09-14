@@ -7,16 +7,13 @@ use std::ops::Deref;
 use thiserror::Error;
 
 use super::Dart;
-use super::attributes::{
-    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
-};
+use super::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr};
+use super::embedding::{EmbeddingError, EntityOwner};
 use super::gmap::Dim;
-use super::orientation::Orientation;
 use super::payload::Payload;
 use super::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
-use super::embedding::{EntityOwner, EmbeddingError};
 use super::validation::{GMapValidationError, validate_gmap};
-use crate::model::{MergeHandle, MergeTopology, Model};
+use crate::model::{MergeTopology, Model};
 
 /// Controls how payloads are propagated for explicit semantic edit events.
 ///
@@ -213,18 +210,6 @@ pub enum ModelEditError {
     /// A solid shell does not have a registered sheet identity.
     #[error("solid {solid:?} shell at {dart:?} has no registered sheet")]
     MissingSheetRegistration { solid: SolidKey, dart: Dart },
-    /// A shell names a face the map does not hold.
-    #[error("a shell is rooted at face {face:?}, which the map does not hold")]
-    DanglingShellRoot { face: FaceKey },
-    /// A shell names a face that has darts to be rooted at instead.
-    ///
-    /// A key root is the last resort, used only where there is no incidence to
-    /// point at; a face with a boundary must be reached through it.
-    #[error("a shell is rooted at face {face:?}, which has a boundary to root at")]
-    ShellRootNotAtDart { face: FaceKey },
-    /// A solid shell is rooted at a face that no sheet holds.
-    #[error("solid {solid:?} shell at face {face:?} has no registered sheet")]
-    MissingSheetRegistrationAtFace { solid: SolidKey, face: FaceKey },
     /// An involution cannot link a dart to itself.
     #[error("cannot link dart {dart:?} to itself")]
     SameDart { dart: Dart },
@@ -347,7 +332,7 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     }
 
     /// Copies a topology view into the staged map and returns its remapped handle.
-    pub fn merge<T>(&mut self, topology: T) -> MergeHandle
+    pub fn merge<T>(&mut self, topology: T) -> Dart
     where
         T: MergeTopology<P>,
     {
@@ -661,12 +646,8 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         for root in self
             .model
             .iter_sheets()
-            .filter_map(|(_, attr)| attr.dart())
-            .chain(
-                self.model
-                    .iter_solids()
-                    .flat_map(|(_, attr)| attr.shell_darts()),
-            )
+            .map(|(_, attr)| attr.dart())
+            .chain(self.model.iter_solids().flat_map(|(_, attr)| attr.shells()))
         {
             if removed.contains(&root) {
                 return Err(ModelEditError::ReferencedDartDeletion { dart: root });
@@ -889,101 +870,10 @@ fn validate_required_domain_attributes<P: Payload>(g: &Model<P>) -> Result<(), M
     }
 
     for (solid, attr) in g.solids.iter() {
-        for shell in attr.shells() {
-            match shell {
-                ShellRoot::Dart(dart) => {
-                    if g.sheet_key(dart).is_none() {
-                        return Err(ModelEditError::MissingSheetRegistration { solid, dart });
-                    }
-                }
-                ShellRoot::Face { face, .. } => {
-                    if !g
-                        .sheets
-                        .values()
-                        .any(|sheet| sheet.root.face() == Some(face))
-                    {
-                        return Err(ModelEditError::MissingSheetRegistrationAtFace { solid, face });
-                    }
-                }
+        for dart in attr.shells() {
+            if g.sheet_key(dart).is_none() {
+                return Err(ModelEditError::MissingSheetRegistration { solid, dart });
             }
-        }
-    }
-
-    validate_shell_roots(g)?;
-
-    Ok(())
-}
-
-/// Moves every face-rooted shell back onto a dart once its face has one.
-///
-/// This is what makes a key root self-eliminating: the moment a boundaryless
-/// face gains topology — split by a plane into two caps — there is an incidence
-/// to point at again, and the shell points at it. Nothing here can dangle,
-/// because a split keeps the source key and the shell is re-rooted in the same
-/// commit that created the darts.
-///
-/// The dart has to carry the shell's direction, which a face root spelled out
-/// and a dart root carries in itself, so a reversed shell re-roots at the
-/// `alpha0` partner of the face's seed.
-fn reroot_shells_at_darts<P: Payload>(g: &mut Model<P>) {
-    let mut dart_for = HashMap::new();
-    for root in g
-        .sheets
-        .values()
-        .map(|attr| attr.root)
-        .chain(g.solids.values().flat_map(|attr| attr.shells()))
-    {
-        let ShellRoot::Face { face, sense } = root else {
-            continue;
-        };
-        let Some(seed) = g.face_attr(face).map(|attr| attr.seed()) else {
-            continue;
-        };
-        let dart = match sense {
-            Orientation::Same => seed,
-            Orientation::Reversed => g.alpha(Dim::Zero, seed),
-        };
-        dart_for.insert(root, ShellRoot::Dart(dart));
-    }
-    if dart_for.is_empty() {
-        return;
-    }
-    for attr in g.sheets.values_mut() {
-        if let Some(&root) = dart_for.get(&attr.root) {
-            attr.root = root;
-        }
-    }
-    for attr in g.solids.values_mut() {
-        for shell in
-            std::iter::once(&mut attr.outer_shell).chain(attr.inner_shells.iter_mut().flatten())
-        {
-            if let Some(&root) = dart_for.get(shell) {
-                *shell = root;
-            }
-        }
-    }
-    g.invalidate_derived_indexes();
-}
-
-/// Checks every stored shell root against the dart-preferred invariant.
-///
-/// A root names a face only where there is no dart to point at, so a face root
-/// must resolve to a face the map holds, and that face must be boundaryless.
-/// Both are what keeps a key root self-eliminating: a sheet that gains topology
-/// stops being key-rooted, and a key that outlived its face is a commit error
-/// rather than a dangling reference discovered later.
-fn validate_shell_roots<P: Payload>(g: &Model<P>) -> Result<(), ModelEditError> {
-    let roots = g
-        .sheets
-        .values()
-        .map(|attr| attr.root)
-        .chain(g.solids.values().flat_map(|attr| attr.shells()));
-    for face in roots.filter_map(ShellRoot::face) {
-        let attr = g
-            .face_attr(face)
-            .ok_or(ModelEditError::DanglingShellRoot { face })?;
-        if !attr.is_empty() {
-            return Err(ModelEditError::ShellRootNotAtDart { face });
         }
     }
 
@@ -1005,7 +895,6 @@ where
     Q: EditPolicy<P>,
 {
     validate_gmap(g.topology()).map_err(ModelEditError::InvalidTopology)?;
-    reroot_shells_at_darts(g);
     validate_required_domain_attributes(g)?;
     validate_edit_events(g, snapshot, events)?;
     let lineage = TransactionLineage::new(g, snapshot, events);
@@ -1460,19 +1349,10 @@ fn reconcile_transaction_attributes<P: Payload>(
         EditKey::Face,
     )?;
 
-    // A boundaryless shell shares no dart with anything, so it collides with
-    // nothing and contributes no representative to group by.
     let sheets = g
         .sheets
         .iter()
-        .map(|(key, attr)| {
-            let representatives = attr
-                .dart()
-                .map(|dart| g.cell_representative(dart, Dim::Three))
-                .into_iter()
-                .collect();
-            (key, representatives)
-        })
+        .map(|(key, attr)| (key, vec![g.cell_representative(attr.dart(), Dim::Three)]))
         .collect();
     reconcile_components(
         g,
@@ -1488,7 +1368,7 @@ fn reconcile_transaction_attributes<P: Payload>(
         .iter()
         .map(|(key, attr)| {
             let representatives = attr
-                .shell_darts()
+                .shells()
                 .map(|dart| g.cell_representative(dart, Dim::Three))
                 .collect();
             (key, representatives)

@@ -31,7 +31,7 @@ fn two_blocks(
     let second = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(second));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .unwrap();
     (map, first, second)
@@ -58,7 +58,7 @@ fn two_cylinders(
     let second = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(second));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .unwrap();
     (map, first, second)

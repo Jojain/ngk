@@ -94,7 +94,7 @@ fn dart_shafts_stay_on_a_drilled_bore() {
     let cylinder = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_solid));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .expect("import bore");
     boolean(

@@ -1,17 +1,13 @@
 # One logical cell, one raw cell
 
-Status: **active — mid-flight, tree is red.** Steps 1-5 are done and the
-sphere/torus representation is decided and built. 36 tests across five targets
-fail, all from one unfinished cause: three remaining sites still build a
-boundaryless face with an empty loop list, which now panics. See
-[section 9](#9-where-this-stands). Extracted from
+Status: **active — steps 1-7 and 9 done, one test red.** The rule is built and
+the tree runs it everywhere except two places, both named in
+[section 9](#9-where-this-stands): a solid with a cavity still spans two raw
+3-cells, which is why step 8 is not wired into commit, and one healing rejoin
+leaves a face on two. Extracted from
 [logical_topology_over_gmap.md](logical_topology_over_gmap.md), which stays the
 record of the larger migration. Where that plan assumes a logical entity may
 span several raw cells, this one overrides it.
-
-The rule is an architecture revision, not a milestone: it changes what the model
-is allowed to hold, so it lands before further migration work rather than after.
-Almost all of the work is deletion.
 
 ## 1. The rule
 
@@ -45,7 +41,7 @@ only to survive it. All of it goes.
 |---|---|
 | One logical edge across several raw edges | `Loop::occurrences`, `Loop::continues_run`, `BoundaryCycle::logical_uses`, `LogicalEdgeUse` |
 | One logical face across several raw faces | `Model::logical_sheet_darts`, whose doc comment already states the now-illegal assumption |
-| A face with **no** raw cell | `ShellRoot` as an enum, `ShellRoot::{Face, at_face}`, `reroot_shells_at_darts`, `ModelEditError::MissingSheetRegistrationAtFace`, `Model::{sheet_key_at_face, solid_key_at_face, shell_sheet}`, `Option` on `FaceAttr::seed` / `Face::dart` / `Solid::dart`, and the three `dart_unchecked` twins |
+| A face with **no** raw cell | `ShellRoot` as an enum, `ShellRoot::{Face, at_face}`, `reroot_shells_at_darts`, `validate_shell_roots`, `ModelEditError::{MissingSheetRegistrationAtFace, DanglingShellRoot, ShellRootNotAtDart}`, `ModelValidationError::SolidShellSurfaceOpen`, `Model::{sheet_key_at_face, solid_key_at_face, solid_key_at, shell_sheet}`, `MergeHandle` and `TopologyMerge::with_faces`, `Sheet::boundaryless_face`, `Option` on `FaceAttr::seed` / `Face::dart` / `Solid::dart` / `Sheet::dart` / `SheetAttr::dart`, and every `dart_unchecked` twin |
 | An entity's own cell carrying a stored record | `SubdivisionError::OwnerBelowCell`, and the dimension test inside `is_scaffold` |
 | An entity reaching a second cell of its own dimension | `RegionError::{InteriorBoundaryNotShared, ForeignCell, UnlabelledCell, Disconnected, NoAnchor}`, `recover_all_regions` |
 
@@ -108,7 +104,8 @@ The check is cheap and direct, and replaces the region-flood check earlier
 milestones assumed. For each entity, every dart its attribute names must lie in
 **one** orbit of the entity's own dimension, and there must be at least one:
 
-- **face** — every `loops[].seed()` and every `pcurves` key in one 2-cell;
+- **face** — its anchor, every `loops[].seed()` and every `pcurves` key in one
+  2-cell;
 - **solid** — every shell root in one 3-cell;
 - **edge, vertex** — a single anchor, so nothing to compare; a second cell would
   need a stored record, which `EmbeddedCell` now forbids by type.
@@ -121,58 +118,47 @@ It lands in two stages. First as a standalone validator with a test that
 inventories what currently violates it — that is evidence, and it keeps the tree
 green. It moves into `commit_model_transaction`, after
 `validate_required_domain_attributes` and before lineage, only once the
-inventory is empty.
+inventory is empty. It is still in the first stage: the inventory holds one
+entry, and section 9 says what it is.
 
-## 6. Open question — boundaryless faces (sphere and torus)
+## 6. Boundaryless faces — settled
 
-**Blocked: discuss with Romain before implementing.**
+A face covering a closed support stands on the **polygon schema of that
+surface**, every cell of it embedded in the face:
 
-`solids::add_sphere` and `solids::add_torus` build a face with **no darts at
-all** ([`builders/solids.rs`](../src/builders/solids.rs) — `FaceAttr::with_loops`
-with an empty loop list). That is the "not zero" half of the rule, and it is the
-root of `ShellRoot::Face` and of every `Option<Dart>` on `Face` and `Solid`.
+- **a bigon** where one parameter direction is periodic and the other closes by
+  collapsing to a point — a sphere, four darts, one embedded edge and two
+  embedded poles, χ = 2;
+- **a square** where both directions are periodic — a torus, eight darts, two
+  embedded edges and one embedded vertex, χ = 0.
 
-What such a face should actually hold is undecided. Sketch of the space, none of
-it settled:
+`builders::scaffold::add_closed_face_cell` is the one place that builds either;
+it dispatches on `Surface::periodicity` and refuses a support it has no schema
+for rather than guessing one. `solids::{add_sphere, add_torus}`, the full-turn
+revolve of a closed edge and the STEP importer's `VERTEX_LOOP` face all go
+through it, so a built sphere and a healed imported sphere are the same map.
 
-- **One dart, all alphas free.** Its 0-, 1-, 2- and 3-cell orbits are all that
-  single dart, so every orbit exists and the gmap axioms hold trivially. Cheapest
-  possible answer, but the cell carries no structure that says which surface
-  direction is which.
-- **Two darts**, α0-linked, giving a degenerate closed edge to anchor on.
-- **A real seam**, matching what a STEP import carries: a meridian and pole cuts
-  for the sphere, two cuts for the torus, all embedded so no logical boundary is
-  exposed. Most structure, most construction work, and the one that makes a
-  built sphere and a healed imported sphere the same map.
-
-The decision changes what step 6 of the sequence builds and nothing else, so
-everything before it proceeds independently. **Do not pick one unilaterally.**
+`FaceAttr` carries its boundary as one value — `FaceBoundary::{Loops, Closed}` —
+so an anchor can never drift from the loops it came from, and `FaceBoundary::edit`
+hands out a guard that settles back into whichever variant the edit left. A face
+that bounds nothing still answers `seed()`, which is what makes `Face::dart`,
+`Solid::dart` and `SheetAttr::dart` total.
 
 ## 7. Sequence
 
-Steps 1–5 are independent of section 6 and each leave the tree green. Steps 6–8
-wait on that decision.
-
-1. **Inventory.** Add the section 5 validator as a standalone function plus a
-   test that runs it over the fixture suite and reports violators. Not wired
-   into commit. This also answers empirically whether anything today produces a
-   logical edge across several raw edges — if nothing does, step 2 is safe.
-2. **Delete the refinement machinery.** Row 1 of the section 2 table;
-   `occurrences` becomes `darts`; `Loop::edges` stops filtering.
-3. **Collapse `recover_region` to an orbit walk.** Row 5.
-4. **Rename per section 4**, and make `EmbeddedCell` enforce strictly-higher
-   owner. Row 4.
-5. **Rebuild the dart-to-solid index.** With one 3-cell per solid,
-   `logical_sheet_darts` is one orbit per solid and its cross-component flood is
-   dead weight. Row 2.
-6. **[BLOCKED — see section 6] Give every face a raw cell.**
-7. **Collapse `ShellRoot` to a bare `Dart`**, and make `Face::dart` and
-   `Solid::dart` total. Row 3. Depends on step 6.
-8. **Wire the check into commit.** Depends on the inventory being empty.
-9. **Vocabulary sweep.** AGENTS.md's classification and corner sections, module
-   docs, error-variant docs. Per the working rules, a test that still names the
-   removed design is kept and reworded, retargeted, or deleted — never left to
-   pass vacuously.
+1. ~~**Inventory.**~~ `validation::{cell_occupancy_violations,
+   validate_cell_occupancy}` plus `tests/topology/cell_occupancy.rs`.
+2. ~~**Delete the refinement machinery.**~~ Row 1 of the section 2 table.
+3. ~~**Collapse `recover_region` to an orbit walk.**~~ Row 5.
+4. ~~**Rename per section 4.**~~ Row 4.
+5. ~~**Rebuild the dart-to-solid index.**~~ Row 2.
+6. ~~**Give every face a raw cell.**~~ Section 6.
+7. ~~**Collapse `ShellRoot` to a bare `Dart`.**~~ Row 3. `MergeHandle` went with
+   it: it existed for the same reason one layer up.
+8. **Wire the check into commit.** Still waiting on the inventory being empty,
+   which today means cavity solids — see section 9.
+9. ~~**Vocabulary sweep.**~~ Every test that named the removed design is
+   reworded, retargeted or deleted.
 
 ## 8. Acceptance
 
@@ -189,58 +175,71 @@ wait on that decision.
 
 ## 9. Where this stands
 
-Done and verified:
+Steps 1-7 and 9 are done and verified. `cargo test --all-targets --all-features`
+reports **one** failure, and `--all-features` compiles again — the bindings'
+`SharedFace`, `SharedSheet`, `SharedShell` and `SharedSolid` each carried an
+`Option<Dart>` plus a fallback sense for the boundaryless case, and all four are
+now a bare `Dart`.
 
-1. **Inventory** — `validation::{cell_occupancy_violations, validate_cell_occupancy}`
-   plus `tests/topology/cell_occupancy.rs`.
-2. **Refinement machinery deleted** — `Loop::occurrences` and `continues_run` are
-   gone, `BoundaryCycle::logical_uses`/`LogicalEdgeUse` replaced by `edge_keys`.
-   Provably behaviour-free: the derived edge index registers one 1-cell
-   representative per `EdgeKey`, so `continues_run`'s "same key, different cell"
-   was unsatisfiable and `occurrences()` already equalled `darts()`.
-3. **`recover_region` collapsed** to one orbit walk; five `RegionError` variants
-   and `recover_all_regions` deleted.
-4. **Renamed to `Embedding`**, and a stored record now requires an owner of
-   strictly greater dimension than its cell (`OwnerNotAboveCell`). The fixture
-   harness grew the same two-halves split a real model has: anchors apart from
-   records.
-5. **Dart-to-solid index rebuilt** — `logical_sheet_darts` gone; `sheet_darts` is
-   one orbit. The dart-to-face index is one lookup per face rather than one per
-   loop seed.
-6. **Sphere and torus built.** `FaceAttr` carries its boundary as one value
-   (`FaceBoundary::{Loops, Closed}`) so an anchor can never drift from the loops
-   it came from. `solids::sphere` is the four-dart bigon with its two edges
-   coherently identified — one face, one embedded edge, two embedded poles,
-   χ = 2. `solids::torus` is the eight-dart square with both pairs of opposite
-   edges identified — one face, two embedded edges, one embedded vertex, χ = 0.
-   Both report `(darts, 0 vertices, 0 edges, 1 face)`.
-7. **Healing demotes rather than deletes.** Removing the last boundary of a face
-   no longer empties the map: the seam and its corners stay as cells embedded in
-   the face, which lands exactly on the four-dart sphere above. A healed seamed
-   sphere and a built one are now the same map.
+What the later steps changed beyond the table in section 2:
 
-### What is left, and why the tree is red
+- **`recover_region` refuses by name**, so a stale key reaches a named error
+  rather than a flood that papered over it. That surfaced two real defects, both
+  fixed: `Model::merge` dropped a boundaryless face outright (its `retain_mapped`
+  emptied the anchor), and the healing edge pass wrote a rebuilt boundary onto a
+  face key an earlier fusion in the same transaction had already absorbed.
+- **A demoted face anchors along its old winding.** A bounded face states which
+  way it points in its boundary's winding; a boundaryless one states it in its
+  anchor, where the reading is the support's own normal by definition. So the
+  anchor a seam removal leaves has to be the dart that read the support the way
+  the winding did (`removal::unbounded_anchor`), or every shell holding the face
+  silently turns over — which is how a round-tripped cavity came back as solid
+  material.
+- **`validate_oriented_shell_volume` refuses an empty shell** instead of
+  indexing `faces[0]`.
 
-Three sites still call `FaceAttr::with_loops` with an empty loop list, which now
-panics by design — each needs the anchor dart its own context knows:
+### What is left
 
-- `builders/revolve.rs` — the full-turn revolve of a closed edge;
-- `exchange/step/topology/import.rs` — an imported boundaryless face;
-- whatever the Boolean assembler hands a boundaryless operand.
+**A solid with a cavity spans two raw 3-cells, and step 8 waits on it.**
+Its outer shell and its void are two closed surfaces with nothing between them,
+so the `alpha0`/`alpha1`/`alpha2` walk from either never reaches the other.
+`tests/topology/cell_occupancy.rs::a_solid_with_a_cavity_spans_two_raw_cells` is
+the inventory entry. Wiring `validate_cell_occupancy` into
+`commit_model_transaction` today costs six red tests, all of them this one
+shape: two boolean results that register a cavity, and four STEP hollow-solid
+tests.
 
-Everything failing traces to those three: 11 in `builders`, 13 in `exchange`,
-2 in `healing`, 6 in `modeling`. The 4 in `topology` are the pre-existing voxel
-fixtures below.
+What it needs is the **cut face** section 2 already names — a raw 2-cell the
+solid owns, used twice by its boundary and `alpha3`-linked to itself there, so
+the walk turns across it and the two shells stay two. The shape is settled and
+built: `tests/support/scaffold.rs::cavity_solid` is the smallest one, a pillow
+whose two squares are identified —
 
-Then, still untouched:
+> outer bigon, inner bigon, two squares joining them along two vertical edges;
+> identify the squares corner-for-corner and each bigon closes into a sphere,
+> leaving 4 vertices, 4 edges, 3 faces and 1 volume, χ = 2.
 
-- **Step 7** — collapse `ShellRoot` to a bare `Dart`. Now unblocked: every face
-  has a dart, so `ShellRoot::Face`, `at_face`, `reroot_shells_at_darts`,
-  `MissingSheetRegistrationAtFace`, `sheet_key_at_face`, `solid_key_at_face` and
-  `shell_sheet` all have nothing left to do.
-- **Step 8** — wire `validate_cell_occupancy` into `commit_model_transaction`.
-- **The voxel fixtures.** `tests/support/scaffold.rs` builds a cube-as-one-face
-  and solids as 26 or 8 alpha3-sewn cubes. The rule forbids both: a solid is
-  exactly one raw 3-cell, so **a solid can never be built from voxels**. Four
-  tests assert the old shape and need the fixtures rebuilt as B-rep, which for
-  the cavity means the scaffold face joining outer and inner shells.
+and `handle_solid` is the same medicine for genus: a cube with its two opposite
+x-faces identified, one shell of genus one. Both replace the old voxel fixtures,
+which built a solid from 26 or 8 `alpha3`-sewn cubes and which the rule forbids
+outright. What is missing is the *builder*: nothing in `builders/`, the boolean
+assembler or the STEP importer synthesises such a face for a real cavity, so
+`tests/support/hollow.rs` still glues two spheres together by hand.
+
+**One healing rejoin leaves a face on two raw 2-cells.**
+`tests/builders/removal.rs::imprinted_face_inner_loop_gets_removed` is the only
+failing test. A rectangle with a filled square island heals to 1 face but 5
+edges, and the last island edge is refused with `WouldUnboundFace`. Traced: at
+the refusal the map holds 16 darts in two 2-cells — the rectangle at `Dart(0)`,
+and at `Dart(8)` the last island edge together with the bridge that used to join
+the rectangle to the hole. The bridge is still there and still owned by the
+face; it has simply ended up looping the leftover slit onto itself rather than
+onto the outer loop. So `MergePlan::loops`'s rejoin does not keep the cut
+attached as the hole's boundary shrinks.
+
+The fix is a design decision rather than a repair: `MergePlan::loops` currently
+refuses a two-component split outright, on the grounds that "which of them bounds
+the face from outside" cannot be answered combinatorially. Under this rule the
+answer may be that neither does and the two are joined by a cut, the way `Ring`
+already treats a seam removal's two halves — but that changes what a rejoin is
+allowed to produce, so it wants deciding rather than assuming.

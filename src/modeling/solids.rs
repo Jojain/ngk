@@ -172,7 +172,7 @@ fn combine_shapes<P: Payload>(
     let tool = map.transaction(|edit| {
         let handle = edit.merge(tool_map.solid_unchecked(tool));
         Ok::<_, ModelEditError>(
-            edit.solid_key_at(handle)
+            edit.solid_key(handle)
                 .expect("copied tool solid must retain its registration"),
         )
     })?;
@@ -191,9 +191,9 @@ pub(crate) fn combine_views<P: Payload>(
         let first_handle = edit.merge(first);
         let second_handle = edit.merge(second);
         Ok::<_, ModelEditError>((
-            edit.solid_key_at(first_handle)
+            edit.solid_key(first_handle)
                 .expect("copied first solid must retain its registration"),
-            edit.solid_key_at(second_handle)
+            edit.solid_key(second_handle)
                 .expect("copied second solid must retain its registration"),
         ))
     })?;

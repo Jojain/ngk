@@ -9,9 +9,9 @@ use crate::geometry::dim2::trimmed::TrimmedCurve2;
 use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
 use crate::model::{Cell2, MergeTopology, Model, RealizationPurpose, TopologyMerge};
 use crate::topology::attributes::{FaceAttr, LoopKind};
+use crate::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
 use crate::topology::profile::LoopCorner;
 use crate::topology::shape_keys::{FaceKey, ProfileKey};
-use crate::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
 use nalgebra::UnitVector3;
 use std::collections::HashSet;
 
@@ -114,7 +114,11 @@ impl<'a, P: Payload> Loop<'a, P> {
             .iter()
             .enumerate()
             .map(|(index, &outgoing)| {
-                LoopCorner::new(self.model, self.darts[(index + count - 1) % count], outgoing)
+                LoopCorner::new(
+                    self.model,
+                    self.darts[(index + count - 1) % count],
+                    outgoing,
+                )
             })
             .collect()
     }
@@ -500,7 +504,7 @@ impl<'g, P: Payload> Face<'g, P> {
             true => 0.0,
             false => self.boundaryless_signed_volume(reference)?,
         };
-        if self.attr().is_empty() {
+        if self.attr().is_boundaryless() {
             return volume.is_finite().then_some(volume);
         }
         let planar = matches!(self.surface(), Surface::Plane(_));

@@ -656,7 +656,7 @@ fn two_blocks(
     let second = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(second));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .unwrap();
     (map, first, second)
@@ -827,7 +827,7 @@ fn boolean_result_can_be_consumed_by_a_second_operation() {
     let cavity = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(cavity));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .unwrap();
     let result = boolean(
@@ -1135,7 +1135,7 @@ fn block_with_cylinder(
     let cylinder = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .unwrap();
     (map, block, cylinder)
@@ -1459,7 +1459,7 @@ fn boolean_union_topology_is_stable_under_face_reparameterization() {
             let second = map
                 .transaction(|edit| {
                     let handle = edit.merge(tool.solid_unchecked(*block));
-                    Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+                    Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
                 })
                 .unwrap();
             (map, first, second)
@@ -1510,7 +1510,7 @@ fn boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps() {
     let slot = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(slot));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .unwrap();
 
@@ -1571,7 +1571,7 @@ fn block_fused_with_cylinder_tangent_to_block_faces() {
     let cylinder = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .expect("import cylinder");
 
@@ -1607,7 +1607,7 @@ fn block_with_sphere(radius: f64) -> (Model<ngk::StandardPayload>, SolidKey, Sol
     let sphere = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_sphere));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .unwrap();
     (map, block, sphere)

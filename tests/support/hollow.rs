@@ -13,10 +13,8 @@
 
 use ngk::geometry::Frame;
 use ngk::model::Model;
-use ngk::topology::attributes::ShellRoot;
-use ngk::topology::orientation::Orientation;
+use ngk::topology::gmap::Dim;
 use ngk::topology::shape::{Shape, SolidTag};
-use ngk::topology::shape_keys::FaceKey;
 use ngk::topology::{ModelEditError, StandardPayload};
 
 /// A sphere of radius `outer` with a concentric spherical cavity of radius
@@ -34,21 +32,17 @@ pub fn hollow_sphere(outer: f64, inner: f64) -> Shape<SolidTag, StandardPayload>
     let cavity = add_sphere(&mut g, Frame::xyz(), inner).expect("a cavity sphere should build");
 
     // `add_sphere` registers a solid of its own around each face; the cavity's
-    // is dissolved into the one that surrounds it.
-    let cavity_face = boundaryless_face(&g, cavity);
+    // is dissolved into the one that surrounds it. The cavity's shell is read
+    // the other way round from the sphere it was built as: a void is bounded
+    // from the material side, and the `alpha0` partner of a dart is the same
+    // shell read reversed.
+    let cavity_root = g.solid_attr_unchecked(cavity).outer_shell;
     let solid = g
         .transaction(|edit| {
             edit.remove_solid(cavity);
-            let void = ShellRoot::Face {
-                face: cavity_face,
-                sense: Orientation::Reversed,
-            };
-            edit.sheet_attr_mut_unchecked(
-                edit.model()
-                    .sheet_key_at_face(cavity_face)
-                    .expect("the cavity's face is registered as a sheet"),
-            )
-            .root = void;
+            let void = edit.alpha(Dim::Zero, cavity_root);
+            let sheet = edit.model().sheet_key_unchecked(cavity_root);
+            edit.sheet_attr_mut_unchecked(sheet).root = void;
             let attr = edit.solid_attr_mut_unchecked(outer_solid);
             attr.inner_shells = Some(vec![void]);
             Ok::<_, ModelEditError>(outer_solid)
@@ -56,18 +50,4 @@ pub fn hollow_sphere(outer: f64, inner: f64) -> Shape<SolidTag, StandardPayload>
         .expect("a hollow sphere should commit");
 
     Shape::new(g, solid)
-}
-
-/// The one face a boundaryless solid's outer shell is.
-fn boundaryless_face(
-    g: &Model<StandardPayload>,
-    solid: ngk::topology::shape_keys::SolidKey,
-) -> FaceKey {
-    g.solid(solid)
-        .expect("the solid is registered")
-        .outer_shell()
-        .faces()
-        .first()
-        .expect("a shell has a face")
-        .key()
 }

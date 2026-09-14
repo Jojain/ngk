@@ -73,11 +73,7 @@ mod tests {
     fn extruded_holed_pentagon_is_closed_solid_shell() {
         let face = build_source_face().expect("source face");
         let solid = extrude_face(face, Vector3::new(0.0, 0.0, super::HEIGHT)).expect("extrude");
-        let shell_dart = solid
-            .solid()
-            .outer_shell()
-            .dart()
-            .expect("an extruded solid shell is dart-rooted");
+        let shell_dart = solid.solid().outer_shell().dart();
 
         assert!(
             Closed::new(

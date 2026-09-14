@@ -27,8 +27,7 @@ use ngk::exchange::step::{
 use ngk::geometry::{Frame, Plane, Point3};
 use ngk::model::Model;
 use ngk::modeling::{faces, solids};
-use ngk::topology::attributes::ShellRoot;
-use ngk::topology::orientation::Orientation;
+use ngk::topology::gmap::Dim;
 use ngk::topology::{ModelEditError, StandardPayload};
 
 const OUT_DIR: &str = "target/step_export";
@@ -132,25 +131,14 @@ fn hollow_sphere(outer: f64, inner: f64) -> String {
     let mut map = Model::<StandardPayload>::new();
     let solid = add_sphere(&mut map, Frame::xyz(), outer).expect("an outer sphere should build");
     let cavity = add_sphere(&mut map, Frame::xyz(), inner).expect("a cavity sphere should build");
-    let cavity_face = map
-        .solid(cavity)
-        .expect("the cavity is registered")
-        .outer_shell()
-        .faces()
-        .first()
-        .expect("a shell has a face")
-        .key();
+    let cavity_root = map.solid_attr_unchecked(cavity).outer_shell;
 
     map.transaction(|edit| {
         edit.remove_solid(cavity);
-        let void = ShellRoot::Face {
-            face: cavity_face,
-            sense: Orientation::Reversed,
-        };
-        let sheet = edit
-            .model()
-            .sheet_key_at_face(cavity_face)
-            .expect("the cavity's face is registered as a sheet");
+        // A void is bounded from the material side, which is the cavity
+        // sphere's own shell read the other way round.
+        let void = edit.alpha(Dim::Zero, cavity_root);
+        let sheet = edit.model().sheet_key_unchecked(cavity_root);
         edit.sheet_attr_mut_unchecked(sheet).root = void;
         edit.solid_attr_mut_unchecked(solid).inner_shells = Some(vec![void]);
         Ok::<_, ModelEditError>(())

@@ -7,21 +7,19 @@
 //! whole subject of these fixtures, so the shapes are the smallest ones that
 //! still have the feature being proved.
 //!
-//! The block fixtures classify from the map rather than from the grid: an
-//! `alpha3`-sewn face has material on both sides and is interior, a free one
-//! bounds the solid. The grid coordinates the cells were built at stay
-//! available for the tests to check the embedding independently.
+//! The solid fixtures classify from the map alone: an `alpha3`-sewn face has
+//! material on both sides and is a cut the solid owns, a free one bounds it.
 #![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet};
 
 use ngk::model::Model;
 use ngk::topology::ModelEdit;
-use ngk::topology::gmap::{Dart, Dim, GMap};
-use ngk::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 use ngk::topology::embedding::{
     Embedding, EmbeddingError, EmbeddingIndex, EntityOwner, LogicalRegion, recover_region,
 };
+use ngk::topology::gmap::{Dart, Dim, GMap};
+use ngk::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 use ngk::topology::{ModelEditError, StandardPayload};
 use slotmap::SlotMap;
 
@@ -378,13 +376,15 @@ pub fn holed_face(holes: usize) -> Scaffold {
     scaffold.seal()
 }
 
-/// A whole sphere: the boundary of a cube, entirely inside one logical face.
+/// A whole sphere: one bigon with its two edges identified.
 ///
-/// Six quads sewn into a closed surface, every raw cell of it classified in the
-/// same face. Nothing is left on the boundary, so the face has no loop at all.
+/// Four darts, every raw cell of them classified in the same logical face:
+/// one edge and two poles, all embedded. Nothing is left on the boundary, so
+/// the face has no loop at all — and it still occupies exactly one raw 2-cell,
+/// which is what a face covering a closed support is required to stand on.
 pub fn sphere() -> Scaffold {
     let (map, _) = raw_map(|edit| {
-        cube_surface(edit)?;
+        bigon(edit)?;
         Ok(Vec::new())
     });
 
@@ -419,35 +419,73 @@ pub fn torus() -> Scaffold {
     scaffold.seal()
 }
 
-/// An arrangement of unit block cells, sewn to its neighbours by `alpha3`.
+/// A solid with a spherical cavity in it, as the one raw 3-cell it must be.
 ///
-/// Every cell is one logical solid's material. A face with material on both
-/// sides is interior to that solid and so are the edges and corners buried
-/// behind it; everything the solid does not own is left on its boundary as a
-/// face, an edge or a vertex of its own.
-pub fn block_cells(cells: &[[i32; 3]]) -> Scaffold {
-    let occupied: HashSet<[i32; 3]> = cells.iter().copied().collect();
-    assert_eq!(occupied.len(), cells.len(), "block cells must be distinct");
-
+/// The material between two spheres cannot be a polyhedron on its own: a ball
+/// with one pair of boundary faces identified always leaves a boundary of genus
+/// one. What makes two boundary spheres instead is a **cut face** the solid
+/// owns — the face swept by the outer sphere's one edge as it travels inward —
+/// used twice by the solid's boundary and `alpha3`-linked to itself there.
+///
+/// The polyhedron is a pillow: an outer bigon, an inner bigon, and two squares
+/// joining them along two vertical edges. Identifying the two squares is what
+/// closes each bigon into a sphere, and the boundary walk turns across the cut
+/// rather than crossing it, so the two spheres stay two shells.
+pub fn cavity_solid() -> Scaffold {
     let (map, _) = raw_map(|edit| {
-        let mut built: HashMap<[i32; 3], [[[Dart; 2]; 4]; 6]> = HashMap::new();
-        for &cell in cells {
-            built.insert(cell, cube_surface(edit)?);
+        // Each face is wound counter-clockwise seen from outside the pillow, so
+        // every edge is walked one way by one face and the other way by the
+        // other -- which is what lets `alpha2` pair start dart with end dart.
+        let outer = boundary_word(edit, 2)?; // T1 -t1-> T2 -t2-> T1
+        let inner = boundary_word(edit, 2)?; // B2 -b1-> B1 -b2-> B2
+        let front = boundary_word(edit, 4)?; // T2 -t1-> T1 -v1-> B1 -b1-> B2 -v2-> T2
+        let back = boundary_word(edit, 4)?; // T1 -t2-> T2 -v2-> B2 -b2-> B1 -v1-> T1
+
+        for (one, other) in [
+            (outer[0], front[0]), // t1
+            (outer[1], back[0]),  // t2
+            (inner[0], front[2]), // b1
+            (inner[1], back[2]),  // b2
+            (front[1], back[3]),  // v1
+            (front[3], back[1]),  // v2
+        ] {
+            edit.link(Dim::Two, one[0], other[1])?;
+            edit.link(Dim::Two, one[1], other[0])?;
         }
-        for &cell in cells {
-            for axis in 0..3 {
-                let mut neighbour = cell;
-                neighbour[axis] += 1;
-                if !occupied.contains(&neighbour) {
-                    continue;
-                }
-                let (here, there) = alpha3_seed(&built[&cell], &built[&neighbour], cell, axis);
-                edit.sew(Dim::Three, here, there)?;
-            }
-        }
+
+        // The two squares are the same cut face seen from its two sides. The
+        // seed pairs the darts at one corner: the front's use of `t1` and the
+        // back's use of `t2` both arrive at T2, and the rest follows.
+        edit.sew(Dim::Three, front[0][0], back[0][1])?;
         Ok(Vec::new())
     });
 
+    solid_from_buried_cells(map)
+}
+
+/// A solid with a handle, as the one raw 3-cell it must be.
+///
+/// A cube with its two opposite x-faces identified: the four faces left over
+/// close into a torus, so the solid has one shell of genus one. The identified
+/// face is a cut the solid owns, exactly as a cavity's is — one pair of faces
+/// glued to each other is what a handle and a cavity each cost.
+pub fn handle_solid() -> Scaffold {
+    let (map, _) = raw_map(|edit| {
+        let cube = cube_surface(edit)?;
+        let (here, there) = alpha3_seed(&cube, &cube, [0, 0, 0], 0);
+        edit.sew(Dim::Three, here, there)?;
+        Ok(Vec::new())
+    });
+
+    solid_from_buried_cells(map)
+}
+
+/// Labels one solid over `map`: what has material on both sides is inside it.
+///
+/// A face the builder `alpha3`-sewed is the solid's own cut, and so are the
+/// edges and corners buried behind it; everything the solid does not own is
+/// left on its boundary as a face, an edge or a vertex of its own.
+fn solid_from_buried_cells(map: Model<StandardPayload>) -> Scaffold {
     let mut scaffold = Scaffold::wrap(map);
     let solid = scaffold.solid();
     scaffold.own_all(Dim::Three, solid);
@@ -467,38 +505,6 @@ pub fn block_cells(cells: &[[i32; 3]]) -> Scaffold {
     scaffold.seal()
 }
 
-/// The 26 cells of a three-by-three-by-three block with its centre left out.
-pub fn cavity_cells() -> Vec<[i32; 3]> {
-    grid(3, 3, 3)
-        .into_iter()
-        .filter(|&cell| cell != [1, 1, 1])
-        .collect()
-}
-
-/// The 8 cells of a three-by-three-by-one ring around an open shaft.
-pub fn handle_cells() -> Vec<[i32; 3]> {
-    grid(3, 3, 1)
-        .into_iter()
-        .filter(|&cell| cell != [1, 1, 0])
-        .collect()
-}
-
-/// Reports whether `point` lies strictly inside one of the unit cells.
-///
-/// This reads the grid the fixture was built from, never the map, so a test can
-/// say where the material is without trusting the traversal it is checking.
-pub fn inside_cells(cells: &[[i32; 3]], point: [f64; 3]) -> bool {
-    cells.iter().any(|cell| {
-        (0..3).all(|axis| point[axis] > cell[axis] as f64 && point[axis] < cell[axis] as f64 + 1.0)
-    })
-}
-
-fn grid(x: i32, y: i32, z: i32) -> Vec<[i32; 3]> {
-    (0..x)
-        .flat_map(move |i| (0..y).flat_map(move |j| (0..z).map(move |k| [i, j, k])))
-        .collect()
-}
-
 /// Reports whether a raw cell has material all the way around it.
 ///
 /// A face the builder sewed is `alpha3`-linked on both its darts; a face left on
@@ -516,6 +522,19 @@ fn buried(map: &GMap, cell: Dart, dimension: Dim) -> bool {
 fn quad(edit: &mut ModelEdit<'_, StandardPayload>) -> Result<[[Dart; 2]; 4], ModelEditError> {
     let uses = boundary_word(edit, 4)?;
     Ok([uses[0], uses[1], uses[2], uses[3]])
+}
+
+/// Adds the four-dart 2-cell a whole sphere is.
+///
+/// Two edge uses between the same two corners, then each paired with the use
+/// reading the other edge the same way round: that is the sphere written as a
+/// bigon. Pairing them the other way round identifies the corners too and gives
+/// a projective plane.
+fn bigon(edit: &mut ModelEdit<'_, StandardPayload>) -> Result<[[Dart; 2]; 2], ModelEditError> {
+    let uses = boundary_word(edit, 2)?;
+    edit.link(Dim::Two, uses[0][0], uses[1][1])?;
+    edit.link(Dim::Two, uses[0][1], uses[1][0])?;
+    Ok([uses[0], uses[1]])
 }
 
 /// Adds one face bounded by a single closed edge through a single vertex.

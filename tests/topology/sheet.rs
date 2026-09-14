@@ -10,9 +10,8 @@ fn opposite_sheet_roots_reverse_all_face_normals() {
     let shape = block(1.0, 2.0, 3.0).expect("block should build");
     let g = shape.model();
     let shell = shape.solid().outer_shell();
-    let same =
-        Sheet::from_dart(g, shell.dart_unchecked()).expect("shell should have a registered sheet");
-    let reversed = Sheet::from_dart(g, g.alpha(Dim::Zero, shell.dart_unchecked()))
+    let same = Sheet::from_dart(g, shell.dart()).expect("shell should have a registered sheet");
+    let reversed = Sheet::from_dart(g, g.alpha(Dim::Zero, shell.dart()))
         .expect("opposite shell root should resolve the same sheet");
     let same_normals = same
         .faces()

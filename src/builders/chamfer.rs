@@ -9,7 +9,7 @@ use crate::builders::faces::{
 use crate::builders::profiles::curve_pcurve;
 use crate::geometry::{Curve, LINEAR_TOLERANCE, Point2, Point3, RuledSurface, Surface};
 use crate::model::{Cell0, Cell1, Model};
-use crate::topology::attributes::{FaceAttr, ShellRoot, VertexAttr};
+use crate::topology::attributes::{FaceAttr, VertexAttr};
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
@@ -1134,11 +1134,11 @@ fn remove_face_patch<P: Payload>(
     // inside the removed patch to a survivor before compaction remaps darts.
     let sheet_roots = edit
         .iter_sheets()
-        .filter_map(|(key, sheet)| Some((key, sheet.dart()?)))
+        .map(|(key, sheet)| (key, sheet.dart()))
         .collect::<Vec<_>>();
     for (key, dart) in sheet_roots {
         if patch_darts.contains(&dart) {
-            edit.sheet_attr_mut_unchecked(key).root = ShellRoot::Dart(survivor);
+            edit.sheet_attr_mut_unchecked(key).root = survivor;
         }
     }
     let solid_keys = edit.iter_solids().map(|(key, _)| key).collect::<Vec<_>>();

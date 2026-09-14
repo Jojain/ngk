@@ -17,7 +17,7 @@ fn import(host: &mut Model<StandardPayload>, tool: Shape<SolidTag>) -> SolidKey 
     host.transaction(|edit| {
         let handle = edit.merge(map.solid_unchecked(key));
         Ok::<_, ModelEditError>(
-            edit.solid_key_at(handle)
+            edit.solid_key(handle)
                 .expect("imported solid should register"),
         )
     })

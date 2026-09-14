@@ -15,7 +15,7 @@ use ngk::builders::sheets::add_extruded_profile;
 use ngk::geometry::{Curve, Plane, Point2, Point3, Surface, TrimmedCurve2};
 use ngk::model::{Cell0, Cell1, Cell2, MergeTopology, Model};
 use ngk::topology::ModelEditError;
-use ngk::topology::attributes::{FaceAttr, SheetAttr, ShellRoot, SolidAttr};
+use ngk::topology::attributes::{FaceAttr, SheetAttr, SolidAttr};
 use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::payload::{Payload, StandardPayload};
 use ngk::topology::planar::Planar;
@@ -101,8 +101,7 @@ fn merge_edge_copies_topology_and_geometry() {
     let edge = source.edge_unchecked(edge_key);
     let merged_dart = target
         .transaction(|edit| Ok::<_, ModelEditError>(edit.merge(edge)))
-        .unwrap()
-        .dart_unchecked();
+        .unwrap();
     let merged_edge = target.attribute_unchecked::<Cell1>(merged_dart);
 
     assert_eq!(target.dart_count(), 2);
@@ -161,8 +160,7 @@ fn merge_face_remaps_stored_darts_and_pcurves() {
     let face = source.face_unchecked(face_key);
     let merged_dart = target
         .transaction(|edit| Ok::<_, ModelEditError>(edit.merge(face)))
-        .unwrap()
-        .dart_unchecked();
+        .unwrap();
     let merged_key = *target.attribute_unchecked::<Cell2>(merged_dart);
     let merged_face = target.face_unchecked(merged_key);
     let outer = merged_face
@@ -219,30 +217,24 @@ fn merge_profile_sheet_and_solid_return_remapped_darts() {
     let merged_profile = target
         .transaction(|edit| Ok::<_, ModelEditError>(edit.merge(Profile::new(&source, profile_key))))
         .unwrap();
-    assert_eq!(merged_profile.dart_unchecked(), Dart::new(0));
+    assert_eq!(merged_profile, Dart::new(0));
     assert_eq!(target.dart_count(), 6);
 
     let sheet_key = source
         .transaction(|edit| {
-            Ok::<_, ModelEditError>(
-                edit.add_sheet(SheetAttr::new(ShellRoot::Dart(profile_dart), ())),
-            )
+            Ok::<_, ModelEditError>(edit.add_sheet(SheetAttr::new(profile_dart, ())))
         })
         .unwrap();
     let mut sheet_target = Model::<StandardPayload>::new();
     let merged_sheet = sheet_target
         .transaction(|edit| Ok::<_, ModelEditError>(edit.merge(Sheet::new(&source, sheet_key))))
         .unwrap();
-    assert_eq!(merged_sheet.dart_unchecked(), Dart::new(0));
+    assert_eq!(merged_sheet, Dart::new(0));
     assert_eq!(sheet_target.dart_count(), 6);
 
     let solid_key = source
         .transaction(|edit| {
-            Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new(
-                (),
-                ShellRoot::Dart(profile_dart),
-                None,
-            )))
+            Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new((), profile_dart, None)))
         })
         .unwrap();
     let mut second_target = Model::<StandardPayload>::new();
@@ -250,7 +242,7 @@ fn merge_profile_sheet_and_solid_return_remapped_darts() {
     let merged_solid = second_target
         .transaction(|edit| Ok::<_, ModelEditError>(edit.merge(solid)))
         .unwrap();
-    assert_eq!(merged_solid.dart_unchecked(), Dart::new(0));
+    assert_eq!(merged_solid, Dart::new(0));
     assert_eq!(
         second_target
             .iter_solids()
@@ -258,7 +250,7 @@ fn merge_profile_sheet_and_solid_return_remapped_darts() {
             .expect("merged solid should exist")
             .1
             .outer_shell,
-        ShellRoot::Dart(Dart::new(0))
+        Dart::new(0)
     );
 }
 
@@ -292,7 +284,6 @@ fn isolate_face_copies_it_into_a_fresh_map() {
     let face = source.face_unchecked(face_key);
 
     let (isolated, isolated_dart) = face.isolate();
-    let isolated_dart = isolated_dart.dart_unchecked();
 
     assert_eq!(isolated_dart, Dart::new(0));
     assert_eq!(isolated.dart_count(), 8);
@@ -323,7 +314,6 @@ fn isolate_associated_function_accepts_any_merge_topology() {
     );
 
     let (isolated, isolated_dart) = Model::isolate(source.profile_unchecked(profile_key));
-    let isolated_dart = isolated_dart.dart_unchecked();
 
     assert_eq!(isolated_dart, Dart::new(0));
     assert_eq!(isolated.dart_count(), 6);
@@ -346,7 +336,6 @@ fn isolate_planar_topology_forwards_to_inner_topology() {
     );
 
     let (isolated, isolated_dart) = planar.isolate();
-    let isolated_dart = isolated_dart.dart_unchecked();
 
     assert_eq!(isolated_dart, Dart::new(0));
     assert_eq!(isolated.dart_count(), 6);

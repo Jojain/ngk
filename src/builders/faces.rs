@@ -21,13 +21,13 @@ use crate::topology::attributes::{
 };
 use crate::topology::closed::Closed;
 use crate::topology::edge::Edge;
+use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
-use crate::topology::embedding::EntityOwner;
 use crate::topology::vertex::Vertex;
 use crate::topology::{ModelEdit, ModelEditError};
 use thiserror::Error;
@@ -930,7 +930,7 @@ fn split_ring_face_by_wrapping_chains<P: Payload>(
     if edit
         .face_attr(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?
-        .is_empty()
+        .is_boundaryless()
     {
         let [chain] = &chains[..] else {
             return Ok(Vec::new());
@@ -1070,7 +1070,7 @@ fn wrapping_chains<P: Payload>(
         [(_, axis), (_, second_axis)] if axis == second_axis && attr.loops().len() == 2 => {
             vec![axis]
         }
-        [] if attr.is_empty() => Axis2::ALL.into_iter().collect(),
+        [] if attr.is_boundaryless() => Axis2::ALL.into_iter().collect(),
         _ => return Ok(None),
     };
 

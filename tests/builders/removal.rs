@@ -8,7 +8,7 @@ use ngk::geometry::{
     Axis2, Curve, Curve2, DomainSide, Frame, Plane, Point2, Point3, Surface, TrimmedCurve2,
 };
 use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
-use ngk::model::Model;
+use ngk::model::{Cell2, Model};
 use ngk::modeling::{faces, solids};
 use ngk::topology::gmap::Dim;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
@@ -252,7 +252,7 @@ fn tangent_union() -> (Model<StandardPayload>, ngk::topology::shape_keys::SolidK
     let cylinder = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .expect("import cylinder");
 
@@ -399,7 +399,13 @@ fn imprinted_face_inner_loop_gets_removed() {
         g.face_unchecked(healed).inner_loops().is_empty(),
         "the filled inner loop must disappear"
     );
-    assert_eq!(g.iter_edges().count(), 4, "only the rectangle remains");
+    assert_eq!(
+        g.iter_edges().count(),
+        4,
+        "only the rectangle remains; skips were {:?}, removed {:?}",
+        result.skipped,
+        result.removed_edges
+    );
     assert_eq!(result.fused_faces.len(), 1);
 }
 
@@ -540,9 +546,11 @@ fn removing_a_seam_can_leave_the_face_boundaryless() {
     let face = g.face_unchecked(sphere);
     assert!(face.loops().is_empty(), "a boundaryless face has no loops");
     assert_eq!(
-        g.solid_attr_unchecked(solid).outer_shell.face(),
+        g.cell_key::<Cell2>(
+            g.cell_representative(g.solid_attr_unchecked(solid).outer_shell, Dim::Two)
+        ),
         Some(sphere),
-        "the shell re-roots at the face, there being no dart left to root at"
+        "the shell stays rooted in the 2-cell the face still occupies"
     );
     validate_solid_manifold(&g, solid).expect("the healed sphere should still be well formed");
 }
@@ -556,12 +564,14 @@ fn healing_removes_the_seam_of_an_imported_sphere() {
 
     assert_eq!(
         g.dart_count(),
-        0,
-        "a seamed sphere heals into a seamless one"
+        4,
+        "a seamed sphere heals onto the bigon a built one stands on"
     );
     assert!(g.face_unchecked(sphere).loops().is_empty());
     assert_eq!(
-        g.solid_attr_unchecked(solid).outer_shell.face(),
+        g.cell_key::<Cell2>(
+            g.cell_representative(g.solid_attr_unchecked(solid).outer_shell, Dim::Two)
+        ),
         Some(sphere)
     );
     validate_solid_manifold(&g, solid).expect("the healed sphere should still be well formed");

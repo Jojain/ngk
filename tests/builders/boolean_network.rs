@@ -36,7 +36,7 @@ fn two_blocks(
     let second = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(second));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .unwrap();
     (map, first, second)
@@ -198,7 +198,7 @@ fn every_event_on_an_edge_lies_between_that_edge_s_own_vertices() {
     let cylinder = map
         .transaction(|edit| {
             let handle = edit.merge(tool.solid_unchecked(tool_cylinder));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).unwrap())
+            Ok::<_, ModelEditError>(edit.solid_key(handle).unwrap())
         })
         .expect("import cylinder");
 

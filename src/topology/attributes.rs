@@ -8,9 +8,8 @@ use crate::model::{Cell0, Cell2, Model};
 use crate::topology::dart::Dart;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
-use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
-use crate::topology::shape_keys::{EdgeKey, FaceKey};
+use crate::topology::shape_keys::EdgeKey;
 use crate::topology::vertex::Vertex;
 
 /// Stored data for a keyed vertex 0-cell.
@@ -257,23 +256,55 @@ impl FaceBoundary {
         }
     }
 
-    /// Returns the loop list for in-place editing.
+    /// Opens the loop list for in-place editing.
     ///
-    /// A boundaryless face grows its first loop here, so the list starts empty
-    /// in that case and [`Self::settle`] decides which state the result is.
-    fn edit(&mut self) -> &mut Vec<LoopDefinition> {
-        if let Self::Closed(dart) = *self {
-            *self = Self::Loops(Vec::new());
-            let Self::Loops(loops) = self else {
-                unreachable!("just replaced with Loops")
-            };
-            let _ = dart;
-            return loops;
-        }
-        let Self::Loops(loops) = self else {
-            unreachable!("Closed handled above")
+    /// A boundaryless face edits an empty list — it has no loop yet — and its
+    /// anchor is held aside while that happens. Whichever state the edit leaves
+    /// is decided when the guard is dropped, so an edit that adds the first loop
+    /// and one that removes the last both land on the right variant without the
+    /// caller naming a dart it already stores.
+    fn edit(&mut self) -> BoundaryEdit<'_> {
+        let anchor = self.seed();
+        let loops = match self {
+            Self::Loops(loops) => std::mem::take(loops),
+            Self::Closed(_) => Vec::new(),
         };
-        loops
+        BoundaryEdit {
+            boundary: self,
+            loops,
+            anchor,
+        }
+    }
+}
+
+/// A face's loop list open for editing, settling back into a [`FaceBoundary`].
+///
+/// Held by [`FaceBoundary::edit`] and written back when it is dropped: a list
+/// left empty becomes a boundaryless face anchored where it already was, and
+/// one left with loops becomes a bounded face anchored at the first of them.
+pub(crate) struct BoundaryEdit<'a> {
+    boundary: &'a mut FaceBoundary,
+    loops: Vec<LoopDefinition>,
+    anchor: Dart,
+}
+
+impl std::ops::Deref for BoundaryEdit<'_> {
+    type Target = Vec<LoopDefinition>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.loops
+    }
+}
+
+impl std::ops::DerefMut for BoundaryEdit<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.loops
+    }
+}
+
+impl Drop for BoundaryEdit<'_> {
+    fn drop(&mut self) {
+        *self.boundary = FaceBoundary::from_loops(std::mem::take(&mut self.loops), self.anchor);
     }
 }
 
@@ -443,7 +474,12 @@ impl<T> FaceAttr<T> {
                 .map(|loop_| loop_.seed()),
         )
     }
-    pub(crate) fn is_empty(&self) -> bool {
+    /// Returns whether this face bounds nothing at all.
+    ///
+    /// It still occupies a raw 2-cell, which [`Self::seed`] reads: a face with
+    /// no loop is a face covering a closed support, not a face with no
+    /// topology.
+    pub(crate) fn is_boundaryless(&self) -> bool {
         self.loops().is_empty()
     }
     pub(crate) fn kind_of(&self, seed: Dart) -> Option<LoopKind> {
@@ -477,25 +513,41 @@ impl<T> FaceAttr<T> {
             .extend(seeds.into_iter().map(LoopDefinition::inner));
     }
     pub(crate) fn clear_inner(&mut self) {
-        self.boundary.edit().retain(|loop_| loop_.kind() != LoopKind::Inner);
+        self.boundary
+            .edit()
+            .retain(|loop_| loop_.kind() != LoopKind::Inner);
     }
     pub(crate) fn map_darts(&mut self, map: impl Fn(Dart) -> Dart) {
         if let FaceBoundary::Closed(dart) = &mut self.boundary {
             *dart = map(*dart);
             return;
         }
-        for loop_ in self.boundary.edit() {
+        for loop_ in self.boundary.edit().iter_mut() {
             loop_.set_seed(map(loop_.seed()));
         }
     }
+    /// Rewrites every dart this face names through `map`, dropping the loops it
+    /// does not cover.
+    ///
+    /// A boundaryless face names only its anchor, so it is rewritten whole:
+    /// there is no loop for a partial answer to drop, and leaving the anchor
+    /// unmapped would point the copy back into the model it came from.
     pub(crate) fn retain_mapped(&mut self, map: &HashMap<Dart, Dart>) {
-        self.boundary.edit().retain_mut(|loop_| match map.get(&loop_.seed()) {
-            Some(&seed) => {
-                loop_.set_seed(seed);
-                true
+        if let FaceBoundary::Closed(dart) = &mut self.boundary {
+            if let Some(&mapped) = map.get(dart) {
+                *dart = mapped;
             }
-            None => false,
-        });
+            return;
+        }
+        self.boundary
+            .edit()
+            .retain_mut(|loop_| match map.get(&loop_.seed()) {
+                Some(&seed) => {
+                    loop_.set_seed(seed);
+                    true
+                }
+                None => false,
+            });
     }
     /// Returns the stored loop definition whose seed is seed.
     pub(crate) fn loop_definition(&self, seed: Dart) -> Option<LoopDefinition> {
@@ -528,112 +580,28 @@ impl<T> FaceAttr<T> {
     }
 }
 
-/// Where a sheet, or one of a solid's shells, is anchored.
-///
-/// A shell is normally located by one of its darts: its faces, its orientation
-/// and its extent all follow from walking the map from there. A boundaryless
-/// face has no darts at all, so a sheet holding one has no incidence to point
-/// at, and names the face instead.
-///
-/// > A root is a dart whenever any dart exists in the cell. It is a key only
-/// > when there is no dart to point at.
-///
-/// That invariant is what makes the key variant self-eliminating: the moment a
-/// sheet gains topology — a boundaryless face split by a plane — the commit
-/// re-roots it at a dart, so a stored key never outlives the face it names.
-/// A dart root carries its shell's direction in the dart itself; a face root
-/// has no dart to `alpha0`-flip, and no loop seeds either, so it spells the
-/// direction out. That is what lets a spherical cavity — an inner shell facing
-/// inward — be written at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ShellRoot {
-    /// An oriented dart of the shell, giving its default traversal direction.
-    Dart(Dart),
-    /// The shell is exactly one boundaryless face, read in this orientation.
-    Face {
-        /// The face that is the whole shell.
-        face: FaceKey,
-        /// How the shell faces relative to the support surface's own normal.
-        sense: Orientation,
-    },
-}
-
-impl ShellRoot {
-    /// Anchors a shell at a boundaryless face, facing as its support does.
-    pub fn at_face(face: FaceKey) -> Self {
-        Self::Face {
-            face,
-            sense: Orientation::Same,
-        }
-    }
-
-    /// Returns the anchoring dart, or `None` for a boundaryless shell.
-    pub fn dart(self) -> Option<Dart> {
-        match self {
-            Self::Dart(dart) => Some(dart),
-            Self::Face { .. } => None,
-        }
-    }
-
-    /// Returns the anchoring face, or `None` for a dart-rooted shell.
-    pub fn face(self) -> Option<FaceKey> {
-        match self {
-            Self::Face { face, .. } => Some(face),
-            Self::Dart(_) => None,
-        }
-    }
-
-    /// Returns the same root read in the opposite orientation.
-    ///
-    /// # Panics
-    ///
-    /// Panics on a dart root, whose reversal needs the map to `alpha0` it.
-    pub fn reversed_face(self) -> Self {
-        match self {
-            Self::Face { face, sense } => Self::Face {
-                face,
-                sense: sense.flip(),
-            },
-            Self::Dart(_) => panic!("reversing a dart root needs the map it belongs to"),
-        }
-    }
-
-    /// Returns the anchoring dart of a dart-rooted shell.
-    ///
-    /// # Panics
-    ///
-    /// Panics on a boundaryless shell, which has no dart to return.
-    pub fn dart_unchecked(self) -> Dart {
-        self.dart()
-            .expect("dart-rooted shell should have an anchoring dart")
-    }
-
-    /// Rewrites the anchoring dart through `map`, leaving a face root alone.
-    pub(crate) fn map_dart(&mut self, map: impl FnOnce(Dart) -> Dart) {
-        if let Self::Dart(dart) = self {
-            *dart = map(*dart);
-        }
-    }
-}
-
 /// Stored data and default orientation for a sheet.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SheetAttr<T> {
-    /// Where the sheet is anchored, carrying its default traversal direction.
-    pub root: ShellRoot,
+    /// The dart the sheet is anchored at, carrying its traversal direction.
+    pub root: Dart,
     /// User payload attached to the sheet.
     pub data: T,
 }
 
 impl<T> SheetAttr<T> {
     /// Creates a sheet attribute anchored at `root`.
-    pub fn new(root: ShellRoot, data: T) -> Self {
+    pub fn new(root: Dart, data: T) -> Self {
         Self { root, data }
     }
 
-    /// Returns the sheet's anchoring dart, or `None` when it is boundaryless.
-    pub fn dart(&self) -> Option<Dart> {
-        self.root.dart()
+    /// Returns the sheet's anchoring dart.
+    ///
+    /// Total: every face occupies a raw 2-cell, so a sheet always has a dart
+    /// to point at — a sheet that is one boundaryless face points into the
+    /// polygon that face owns.
+    pub fn dart(&self) -> Dart {
+        self.root
     }
 }
 
@@ -642,15 +610,15 @@ impl<T> SheetAttr<T> {
 pub struct SolidAttr<T> {
     /// User payload attached to the solid.
     pub data: T,
-    /// Anchor of the outer shell.
-    pub outer_shell: ShellRoot,
-    /// Anchors of inner shells, when cavities are stored.
-    pub inner_shells: Option<Vec<ShellRoot>>,
+    /// The dart the outer shell is anchored at.
+    pub outer_shell: Dart,
+    /// The darts inner shells are anchored at, when cavities are stored.
+    pub inner_shells: Option<Vec<Dart>>,
 }
 
 impl<T> SolidAttr<T> {
     /// Creates a solid attribute from an outer shell and optional inner shells.
-    pub fn new(data: T, outer_shell: ShellRoot, inner_shells: Option<Vec<ShellRoot>>) -> Self {
+    pub fn new(data: T, outer_shell: Dart, inner_shells: Option<Vec<Dart>>) -> Self {
         Self {
             data,
             outer_shell,
@@ -658,21 +626,16 @@ impl<T> SolidAttr<T> {
         }
     }
 
-    /// Returns every shell anchor, the outer shell first.
-    pub fn shells(&self) -> impl Iterator<Item = ShellRoot> + '_ {
+    /// Returns every shell's anchoring dart, the outer shell first.
+    pub fn shells(&self) -> impl Iterator<Item = Dart> + '_ {
         std::iter::once(self.outer_shell).chain(self.inner_shells.iter().flatten().copied())
-    }
-
-    /// Returns the anchoring dart of every dart-rooted shell, outer first.
-    pub fn shell_darts(&self) -> impl Iterator<Item = Dart> + '_ {
-        self.shells().filter_map(ShellRoot::dart)
     }
 
     /// Rewrites every shell's anchoring dart through `map`.
     pub(crate) fn map_shell_darts(&mut self, map: impl Fn(Dart) -> Dart) {
-        self.outer_shell.map_dart(&map);
+        self.outer_shell = map(self.outer_shell);
         for shell in self.inner_shells.iter_mut().flatten() {
-            shell.map_dart(&map);
+            *shell = map(*shell);
         }
     }
 }

@@ -4,8 +4,8 @@ use super::gmap::{Dart, Dim};
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 use crate::model::{MergeTopology, Model, TopologyMerge};
-use crate::topology::shape_keys::ProfileKey;
 use crate::topology::embedding::{is_embedded_cell, turn_where};
+use crate::topology::shape_keys::ProfileKey;
 use std::collections::HashSet;
 
 /// A keyed 1-dimensional connected topology view with a contextual root dart.

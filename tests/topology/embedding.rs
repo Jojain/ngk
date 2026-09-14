@@ -6,16 +6,15 @@
 //! boundaries all fall out of walking that pair — no stored loop seeds, no
 //! stored shell roots, no stored membership lists.
 
-use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::embedding::{
     Embedding, EmbeddingError, EntityOwner, boundary_cycles, boundary_shells, boundary_vertices,
     recover_region,
 };
+use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::validation::validate_gmap;
 
 use crate::scaffold::{
-    Scaffold, block_cells, cavity_cells, circle, cylinder, handle_cells, holed_face, inside_cells,
-    segment, sphere, torus,
+    Scaffold, cavity_solid, circle, cylinder, handle_solid, holed_face, segment, sphere, torus,
 };
 
 /// Counts the logical entities of one dimension.
@@ -230,7 +229,7 @@ fn every_loop_of_a_face_is_wound_the_same_way() {
 #[test]
 fn a_sphere_is_one_face_with_no_boundary() {
     let scaffold = sphere();
-    validate_gmap(scaffold.map()).expect("a cube surface should be a valid gmap");
+    validate_gmap(scaffold.map()).expect("a bigon with identified sides should be a valid gmap");
 
     assert_eq!(count(&scaffold, Dim::Two), 1);
     assert_eq!(count(&scaffold, Dim::One), 0);
@@ -240,8 +239,8 @@ fn a_sphere_is_one_face_with_no_boundary() {
     let region = scaffold.region(face);
     assert_eq!(
         region.cells(scaffold.map()).len(),
-        6,
-        "the logical face covers all six raw quads"
+        1,
+        "the face occupies the one raw 2-cell its bigon is"
     );
     assert!(
         boundary_cycles(scaffold.map(), &scaffold.index(), &region)
@@ -272,45 +271,49 @@ fn a_torus_is_one_face_with_no_boundary() {
 }
 
 #[test]
-fn a_cavity_solid_is_one_region_reached_through_its_internal_faces() {
-    let cells = cavity_cells();
-    let scaffold = block_cells(&cells);
-    validate_gmap(scaffold.map()).expect("sewn block cells should be a valid gmap");
+fn a_cavity_solid_is_one_raw_cell_holding_its_cut_face() {
+    let scaffold = cavity_solid();
+    validate_gmap(scaffold.map()).expect("a pillow with an identified side should be a valid gmap");
 
-    assert_eq!(cells.len(), 26);
     assert_eq!(count(&scaffold, Dim::Three), 1);
+    assert_eq!(
+        scaffold.raw_cell_count(Dim::Three),
+        1,
+        "the material between two spheres is one raw 3-cell"
+    );
 
     let solid = only(&scaffold, Dim::Three);
-    let region = scaffold.region(solid);
     assert_eq!(
-        region.cells(scaffold.map()).len(),
-        26,
-        "one anchor reaches every material cell through alpha3"
+        scaffold.region(solid).cells(scaffold.map()).len(),
+        1,
+        "a solid's region is the one cell it occupies"
+    );
+    assert_eq!(
+        count(&scaffold, Dim::Two),
+        2,
+        "an outer face and an inner one; the cut between them is the solid's own"
     );
 }
 
 #[test]
 fn a_cavity_solid_has_an_outer_shell_and_a_void_shell() {
-    let scaffold = block_cells(&cavity_cells());
+    let scaffold = cavity_solid();
     let index = scaffold.index();
     let solid = only(&scaffold, Dim::Three);
 
-    let mut shells = boundary_shells(scaffold.map(), &index, &scaffold.region(solid))
+    let shells = boundary_shells(scaffold.map(), &index, &scaffold.region(solid))
         .expect("a cavity solid's shells should be recoverable");
-    assert_eq!(shells.len(), 2, "an outer boundary and one void");
-
-    shells.sort_by_key(|shell| shell.face_count(scaffold.map()));
     assert_eq!(
-        shells[0].face_count(scaffold.map()),
-        6,
-        "the void is one cell"
-    );
-    assert_eq!(
-        shells[1].face_count(scaffold.map()),
-        54,
-        "nine faces a side"
+        shells.len(),
+        2,
+        "an outer boundary and one void: the walk turns across the cut rather          than crossing it, so the two never join"
     );
     for shell in &shells {
+        assert_eq!(
+            shell.face_count(scaffold.map()),
+            1,
+            "each shell is one face"
+        );
         assert_eq!(
             shell.euler_characteristic(scaffold.map(), &index),
             2,
@@ -320,35 +323,19 @@ fn a_cavity_solid_has_an_outer_shell_and_a_void_shell() {
 }
 
 #[test]
-fn a_cavity_solid_holds_material_everywhere_but_its_void() {
-    let cells = cavity_cells();
-    assert!(
-        !inside_cells(&cells, [1.5, 1.5, 1.5]),
-        "the centre is empty"
-    );
-    assert!(
-        inside_cells(&cells, [0.5, 0.5, 0.5]),
-        "a corner cell is material"
-    );
-    assert!(!inside_cells(&cells, [-0.5, 1.5, 1.5]), "outside is empty");
-}
-
-#[test]
 fn a_handle_solid_has_one_shell_of_genus_one() {
-    let cells = handle_cells();
-    let scaffold = block_cells(&cells);
-    validate_gmap(scaffold.map()).expect("a ring of block cells should be a valid gmap");
+    let scaffold = handle_solid();
+    validate_gmap(scaffold.map()).expect("a cube with an identified side should be a valid gmap");
 
-    assert_eq!(cells.len(), 8);
     let index = scaffold.index();
     let solid = only(&scaffold, Dim::Three);
     let region = scaffold.region(solid);
-    assert_eq!(region.cells(scaffold.map()).len(), 8);
+    assert_eq!(region.cells(scaffold.map()).len(), 1);
 
     let shells = boundary_shells(scaffold.map(), &index, &region)
         .expect("a handle's shell should be recoverable");
     assert_eq!(shells.len(), 1, "a shaft through a ring leaves one surface");
-    assert_eq!(shells[0].face_count(scaffold.map()), 32);
+    assert_eq!(shells[0].face_count(scaffold.map()), 4);
     assert_eq!(
         shells[0].euler_characteristic(scaffold.map(), &index),
         0,
@@ -357,18 +344,8 @@ fn a_handle_solid_has_one_shell_of_genus_one() {
 }
 
 #[test]
-fn a_handle_solid_is_empty_down_its_shaft() {
-    let cells = handle_cells();
-    assert!(!inside_cells(&cells, [1.5, 1.5, 0.5]), "the shaft is empty");
-    assert!(
-        inside_cells(&cells, [0.5, 1.5, 0.5]),
-        "the ring is material"
-    );
-}
-
-#[test]
 fn an_interior_label_on_an_exterior_face_is_rejected() {
-    let scaffold = block_cells(&cavity_cells());
+    let scaffold = cavity_solid();
     let solid = only(&scaffold, Dim::Three);
     let region = scaffold.region(solid);
 
@@ -416,21 +393,19 @@ fn a_label_crossing_a_public_boundary_is_rejected() {
 }
 
 #[test]
-fn two_patches_under_one_face_key_are_rejected() {
+fn a_face_recorded_on_a_2_cell_is_rejected() {
     let scaffold = sphere();
     let face = only(&scaffold, Dim::Two);
-    // Give the same key two 2-cells and nothing between them, so the two
-    // patches never meet. Neither record is legal on its own: a face occupies
-    // exactly one 2-cell and that cell comes from its anchor, so no record may
-    // name a 2-cell for a face at all.
-    let quads: Vec<Dart> = scaffold.map().cells(Dim::Two).collect();
-    let mut separate = Embedding::new();
-    separate.own(Dim::Two, quads[0], face);
-    separate.own(Dim::Two, quads[1], face);
+    // A face occupies exactly one 2-cell and that cell is read off its anchor,
+    // so no record may name a 2-cell for a face at all. A record says a cell is
+    // embedded in something larger, and a cell an entity occupies is not
+    // embedded in anything.
+    let mut same_dimension = Embedding::new();
+    same_dimension.own(Dim::Two, Dart::new(0), face);
 
     let failure = scaffold
-        .index_of(&separate)
-        .expect_err("one key cannot name two patches");
+        .index_of(&same_dimension)
+        .expect_err("a face's own dimension cannot be recorded");
     assert!(matches!(failure, EmbeddingError::OwnerNotAboveCell { .. }));
 }
 
@@ -460,7 +435,8 @@ fn re_recording_an_anchor_replaces_what_it_said() {
         1,
         "and it replaced the earlier one rather than joining it",
     );
-    scaffold.index_of(&embedding)
+    scaffold
+        .index_of(&embedding)
         .expect("a replaced label leaves nothing to contradict");
 }
 
@@ -478,7 +454,8 @@ fn two_entities_cannot_own_one_raw_cell() {
     let same_edge = scaffold.map().alpha(Dim::Zero, seam);
     contested.own(Dim::One, same_edge, intruder);
 
-    let failure = scaffold.index_of(&contested)
+    let failure = scaffold
+        .index_of(&contested)
         .expect_err("one cell cannot have two owners");
     assert!(matches!(
         failure,
@@ -494,7 +471,8 @@ fn an_owner_not_above_the_cell_it_records_is_rejected() {
     let mut inverted = Embedding::new();
     inverted.own(Dim::Two, Dart::new(0), edge);
 
-    let failure = scaffold.index_of(&inverted)
+    let failure = scaffold
+        .index_of(&inverted)
         .expect_err("an edge cannot contain a face");
     assert!(matches!(failure, EmbeddingError::OwnerNotAboveCell { .. }));
 }
@@ -509,14 +487,15 @@ fn a_record_anchored_outside_the_map_is_rejected() {
         EntityOwner::Solid(Default::default()),
     );
 
-    let failure = scaffold.index_of(&dangling)
+    let failure = scaffold
+        .index_of(&dangling)
         .expect_err("a record must name a dart that exists");
     assert!(matches!(failure, EmbeddingError::DanglingRecord { .. }));
 }
 
 #[test]
 fn rebuilding_the_index_answers_exactly_as_the_first_one_did() {
-    let scaffold = block_cells(&handle_cells());
+    let scaffold = handle_solid();
     let first = scaffold.index();
     let second = scaffold.index();
 

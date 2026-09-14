@@ -5,12 +5,11 @@ use thiserror::Error;
 use crate::geometry::Surface;
 use crate::topology::closed::Closed;
 
-use super::attributes::ShellRoot;
+use super::embedding::EntityOwner;
 use super::face::Face;
 use super::gmap::{Dart, Dim, GMap};
 use super::payload::Payload;
 use super::shape_keys::{FaceKey, SolidKey};
-use super::embedding::EntityOwner;
 use super::sheet::Sheet;
 use crate::model::Model;
 
@@ -54,15 +53,13 @@ pub enum ModelValidationError {
     MissingSolid { solid: SolidKey },
 
     #[error("solid {solid:?} shell representative {shell:?} points outside the dart set")]
-    SolidShellOutOfBounds { solid: SolidKey, shell: ShellRoot },
+    SolidShellOutOfBounds { solid: SolidKey, shell: Dart },
 
-    #[error("solid {solid:?} shell at {shell:?} is open: {dart:?} is alpha{dim}-free")]
-    SolidShellOpen {
-        solid: SolidKey,
-        shell: ShellRoot,
-        dart: Dart,
-        dim: usize,
-    },
+    #[error("solid {solid:?} shell at {shell:?} is open: some dart of it is free")]
+    SolidShellOpen { solid: SolidKey, shell: Dart },
+
+    #[error("solid {solid:?} shell at {shell:?} reaches no registered face")]
+    SolidShellHasNoFace { solid: SolidKey, shell: Dart },
 
     #[error(
         "solid {solid:?} shell at {shell:?} is the boundaryless face {face:?}, \
@@ -70,21 +67,21 @@ pub enum ModelValidationError {
     )]
     SolidShellSurfaceOpen {
         solid: SolidKey,
-        shell: ShellRoot,
+        shell: Dart,
         face: FaceKey,
     },
 
     #[error("solid {solid:?} shell at {shell:?} face {face:?} has no usable orientation data")]
     SolidFaceOrientationUnavailable {
         solid: SolidKey,
-        shell: ShellRoot,
+        shell: Dart,
         face: FaceKey,
     },
 
     #[error("solid {solid:?} shell at {shell:?} face {face:?} normal does not point outward")]
     SolidFaceNormalNotOutward {
         solid: SolidKey,
-        shell: ShellRoot,
+        shell: Dart,
         face: FaceKey,
     },
 }
@@ -211,33 +208,13 @@ pub fn validate_all_solid_orientations<P: Payload>(
 fn validate_shell<P: Payload>(
     g: &Model<P>,
     solid: SolidKey,
-    shell: ShellRoot,
+    shell: Dart,
 ) -> Result<(), ModelValidationError> {
-    match shell {
-        ShellRoot::Dart(dart) => {
-            if dart.id() >= g.dart_count() {
-                return Err(ModelValidationError::SolidShellOutOfBounds { solid, shell });
-            }
-            let sheet =
-                Sheet::from_dart(g, dart).expect("solid shell must have a registered sheet");
-            Closed::new(sheet).ok_or(ModelValidationError::SolidShellOpen {
-                solid,
-                shell,
-                dart,
-                dim: 2,
-            })?;
-        }
-        // A boundaryless shell has no free dart to find, because it has no
-        // darts; what has to close is the surface itself.
-        ShellRoot::Face { face, .. } => {
-            let attr = g
-                .face_attr(face)
-                .ok_or(ModelValidationError::SolidShellOutOfBounds { solid, shell })?;
-            if !attr.surface.is_closed() {
-                return Err(ModelValidationError::SolidShellSurfaceOpen { solid, shell, face });
-            }
-        }
+    if shell.id() >= g.dart_count() {
+        return Err(ModelValidationError::SolidShellOutOfBounds { solid, shell });
     }
+    let sheet = Sheet::from_dart(g, shell).expect("solid shell must have a registered sheet");
+    Closed::new(sheet).ok_or(ModelValidationError::SolidShellOpen { solid, shell })?;
 
     Ok(())
 }
@@ -245,7 +222,7 @@ fn validate_shell<P: Payload>(
 fn validate_shell_orientation<P: Payload>(
     g: &Model<P>,
     solid: SolidKey,
-    shell: ShellRoot,
+    shell: Dart,
     side: ShellSide,
 ) -> Result<(), ModelValidationError> {
     validate_oriented_shell_volume(g, solid, shell, side)
@@ -255,24 +232,23 @@ fn validate_shell_orientation<P: Payload>(
 fn validate_oriented_shell_volume<P: Payload>(
     g: &Model<P>,
     solid: SolidKey,
-    shell: ShellRoot,
+    shell: Dart,
     side: ShellSide,
 ) -> Result<(), ModelValidationError> {
-    let sheet = g.shell_sheet(shell).expect("validated shell");
-    let faces = match sheet.boundaryless_face() {
-        // A shell that is one boundaryless face says which way it faces on its
-        // root and nowhere else — the face has no winding to carry the answer
-        // — so the shell's own reading of it is the only one there is.
-        Some(_) => sheet.faces(),
-        // Every other face states its sense in its boundary's winding, which
-        // is what the rest of this reads, and reading it as the shell reached
-        // it would state the same thing a second time.
-        None => sheet
-            .faces()
-            .into_iter()
-            .map(|face| g.face_unchecked(face.key()))
-            .collect(),
-    };
+    let sheet = Sheet::from_dart(g, shell).expect("validated shell");
+    let faces = sheet
+        .faces()
+        .into_iter()
+        .map(|face| match face.loops().is_empty() {
+            // A boundaryless face has no winding to say which way it points,
+            // so the shell's own reading of it is the only one there is.
+            true => face,
+            // Every other face states its sense in its boundary's winding,
+            // which is what the rest of this reads, and reading it as the
+            // shell reached it would state the same thing a second time.
+            false => g.face_unchecked(face.key()),
+        })
+        .collect::<Vec<_>>();
     let mut directed = HashSet::new();
     let mut owner = std::collections::HashMap::<Dart, FaceKey>::new();
     let mut volume = 0.0;
@@ -281,12 +257,18 @@ fn validate_oriented_shell_volume<P: Payload>(
         shell,
         face: face.key(),
     };
+    // A shell is faces, and every face occupies a 2-cell the walk reaches. One
+    // that reports none is a shell whose 2-cells carry no registered face, and
+    // measuring the volume of nothing would call any solid well oriented.
+    let [first, ..] = faces.as_slice() else {
+        return Err(ModelValidationError::SolidShellHasNoFace { solid, shell });
+    };
     // Anywhere on the shell will do: the divergence integral is
     // reference-independent for a closed one. A vertex is the cheapest source.
     // A face whose rim is a whole circle has no vertex at all -- the point
     // where the circle closes is inside the edge -- so its rim's own curve
     // answers instead. A boundaryless face has neither, and the surface does.
-    let reference = faces[0]
+    let reference = first
         .vertices()
         .first()
         .and_then(|vertex| vertex.point().copied())
@@ -295,8 +277,8 @@ fn validate_oriented_shell_volume<P: Payload>(
             let edge = boundary.edges().into_iter().next()?;
             edge.trimmed_curve().map(|section| section.point_at(0.0))
         })
-        .or_else(|| faces[0].domain_center())
-        .ok_or_else(|| unavailable(&faces[0]))?;
+        .or_else(|| first.domain_center())
+        .ok_or_else(|| unavailable(first))?;
     for face in &faces {
         let planar = matches!(face.surface(), Surface::Plane(_))
             && face.edges().iter().all(|edge| {
@@ -379,7 +361,9 @@ enum ShellSide {
 /// second copy could disagree with the key it sits next to.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum CellOccupancyError {
-    #[error("{entity:?} spans more than one raw cell of its own dimension: {first:?} and {second:?}")]
+    #[error(
+        "{entity:?} spans more than one raw cell of its own dimension: {first:?} and {second:?}"
+    )]
     SpansSeveralCells {
         /// The entity holding darts in two cells.
         entity: EntityOwner,
@@ -403,8 +387,8 @@ pub enum CellOccupancyError {
 /// anchor dart, so the cell they occupy is that dart's and there is nothing to
 /// disagree with; profiles and sheets are aggregates of entities rather than
 /// entities with a cell of their own, so the rule does not reach them. A face
-/// names one dart per loop plus one per pcurve, and a solid names one per
-/// shell, and those are what can land in two cells or in none.
+/// names its anchor plus one dart per loop and one per pcurve, and a solid
+/// names one per shell, and those are what can land in two cells or in none.
 ///
 /// Reads the involutions alone, never the classification: an entity's own cell
 /// is the question being asked, so an answer derived from ownership labels
@@ -415,12 +399,14 @@ pub fn cell_occupancy_violations<P: Payload>(g: &Model<P>) -> Vec<CellOccupancyE
     let mut violations = Vec::new();
 
     for (key, attr) in g.iter_faces() {
-        let darts = attr.darts().chain(attr.pcurves.keys().copied());
+        let darts = std::iter::once(attr.seed())
+            .chain(attr.darts())
+            .chain(attr.pcurves.keys().copied());
         check_one_cell(g, EntityOwner::Face(key), Dim::Two, darts, &mut violations);
     }
 
     for (key, attr) in g.iter_solids() {
-        let darts = attr.shell_darts();
+        let darts = attr.shells();
         check_one_cell(
             g,
             EntityOwner::Solid(key),

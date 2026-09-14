@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::topology::gmap::{Dart, Dim, GMap};
 
-use super::cells::{EmbeddingIndex, Embedding};
+use super::cells::{Embedding, EmbeddingIndex};
 
 /// Turns from `dart` to the next raw `dimension`-cell around the cell one
 /// dimension below that the two share, passing over interior scaffold.

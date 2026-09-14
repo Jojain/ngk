@@ -10,9 +10,9 @@ use ngk::geometry::Plane;
 use ngk::model::Model;
 use ngk::modeling::faces;
 use ngk::topology::edge::Edge;
+use ngk::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
-use ngk::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
 
 fn annulus() -> Model<StandardPayload> {
     faces::annulus(Plane::xy(), 2.0, 1.0)

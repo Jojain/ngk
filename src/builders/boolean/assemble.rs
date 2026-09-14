@@ -10,7 +10,7 @@ use crate::healing::{HealingOptions, HealingScope, remove_redundant_cells_staged
 use crate::model::Model;
 use crate::topology::{
     ModelEdit,
-    attributes::{SheetAttr, ShellRoot, SolidAttr},
+    attributes::{SheetAttr, SolidAttr},
     closed::Closed,
     gmap::{Dart, Dim},
     payload::Payload,
@@ -104,7 +104,7 @@ pub(crate) fn run<P: Payload>(
     let mut inner = Vec::new();
     for component in components {
         let root = edit.face_unchecked(component[0]).dart();
-        let sheet = edit.add_sheet(SheetAttr::new(ShellRoot::Dart(root), P::Sheet::default()));
+        let sheet = edit.add_sheet(SheetAttr::new(root, P::Sheet::default()));
         if Closed::new(edit.sheet_unchecked(sheet)).is_none() {
             return Err(BooleanError::OpenResultShell { face: component[0] });
         }
@@ -113,9 +113,9 @@ pub(crate) fn run<P: Payload>(
             return Err(BooleanError::DegenerateResultShell { face: component[0] });
         }
         if volume > 0.0 {
-            outer.push(ShellRoot::Dart(root));
+            outer.push(root);
         } else {
-            inner.push(ShellRoot::Dart(root));
+            inner.push(root);
         }
     }
     if outer.is_empty() {

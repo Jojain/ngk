@@ -202,7 +202,7 @@ fn merged(
     let imported = map
         .transaction(|edit| {
             let handle = edit.merge(tool_map.solid_unchecked(tool_key));
-            Ok::<_, ModelEditError>(edit.solid_key_at(handle).expect("imported tool solid"))
+            Ok::<_, ModelEditError>(edit.solid_key(handle).expect("imported tool solid"))
         })
         .expect("import tool operand");
     (map, target_key, imported)

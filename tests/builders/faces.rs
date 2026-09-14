@@ -21,10 +21,10 @@ use super::seamed::seamed_cylinder_wall;
 use ngk::model::Cell0;
 use ngk::model::Model;
 use ngk::topology::ModelEditError;
+use ngk::topology::embedding::{EntityOwner, recover_region};
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
-use ngk::topology::embedding::{EntityOwner, recover_region};
 use ngk::topology::validation::{
     validate_gmap, validate_solid_manifold, validate_solid_orientation,
 };

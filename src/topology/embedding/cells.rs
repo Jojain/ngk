@@ -283,11 +283,7 @@ impl EmbeddingIndex {
             })
             .collect();
         let anchor_count = anchored.len();
-        for (position, record) in anchored
-            .into_iter()
-            .chain(embedding.records())
-            .enumerate()
-        {
+        for (position, record) in anchored.into_iter().chain(embedding.records()).enumerate() {
             let is_anchor = position < anchor_count;
             let EmbeddedCell {
                 dimension,

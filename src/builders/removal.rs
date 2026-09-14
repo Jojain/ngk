@@ -22,13 +22,12 @@ use thiserror::Error;
 
 use crate::geometry::{Axis2, DomainSide, LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
 use crate::model::{Cell0, Cell1, Cell2, Model};
-use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr, ShellRoot};
-use crate::topology::face::Face;
+use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr};
+use crate::topology::embedding::{EntityOwner, is_embedded_cell};
 use crate::topology::gmap::Dim;
 use crate::topology::orientation::Orientation;
 use crate::topology::profile::{Profile, ProfileIterator};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
-use crate::topology::embedding::{EntityOwner, is_embedded_cell};
 use crate::topology::{Dart, IsolatedDart, ModelEdit, ModelEditError, Payload};
 
 /// Failure raised while removing a cell from a staged map.
@@ -230,12 +229,11 @@ pub fn remove_cell_staged<P: Payload>(
         cell_set,
         pairs,
         seeds,
-        shell_senses,
         plan,
     } = preflight;
 
     drop_removed_cell_attribute(edit, &cell_set, dart, dim)?;
-    reseed_attributes(edit, &cell_set, &seeds, &shell_senses);
+    reseed_attributes(edit, &cell_set, &seeds);
     drop_pcurves(edit, &cell_set);
 
     // The last boundary of a face cannot be taken away, only stopped being a
@@ -372,9 +370,6 @@ struct Preflight {
     cell_set: HashSet<Dart>,
     pairs: Vec<(Dart, Dart)>,
     seeds: HashMap<Dart, Option<Dart>>,
-    /// Which way each shell rooted inside the cell faces, read here because
-    /// this is the last moment its face still has the boundary that says so.
-    shell_senses: HashMap<Dart, Orientation>,
     plan: MergePlan,
 }
 
@@ -393,12 +388,11 @@ impl Preflight {
         let pairs = removal_pairs(g, &cell, &cell_set, dim)
             .ok_or(CellRemovalError::NotRemovable { dart, dim })?;
         let seeds = replacement_seeds(g, &cell, &cell_set, dim);
-        let shell_senses = shell_senses(g, &cell_set);
         let plan = MergePlan::build(g, dart, dim, &cell, &cell_set, &pairs)?;
-        // A map with no darts is not a map with no shape: a boundaryless face
-        // covers its whole support and has nothing to be incident to. Every
-        // other removal that would take the last dart really does leave nothing
-        // behind, so the guard stands for all of them.
+        // Taking a face's last boundary does not take its darts: they stay as
+        // cells embedded in the face, which is what the map of a whole sphere
+        // is made of. Every other removal that would take the last dart really
+        // does leave nothing behind, so the guard stands for all of them.
         if cell_set.len() == g.dart_count() && !matches!(plan, MergePlan::Unbounded { .. }) {
             return Err(CellRemovalError::WouldEmptyMap { dart, dim });
         }
@@ -407,7 +401,6 @@ impl Preflight {
             cell_set,
             pairs,
             seeds,
-            shell_senses,
             plan,
         })
     }
@@ -477,6 +470,9 @@ enum MergePlan {
         face: FaceKey,
         profiles: Vec<ProfileKey>,
         face_aliases: Vec<FaceKey>,
+        /// Where the face must anchor once its boundary is gone, read while the
+        /// winding that states its direction is still there.
+        anchor: Dart,
     },
     /// Removing a seam left the face bounded by one period-spanning loop, with
     /// a degeneracy closing its far side.
@@ -636,6 +632,7 @@ impl MergePlan {
                     face,
                     profiles,
                     face_aliases,
+                    anchor: unbounded_anchor(g, face, attr),
                 });
             }
             // An inner boundary going is the ordinary case; the outer one going
@@ -1062,17 +1059,18 @@ impl MergePlan {
                 face,
                 profiles,
                 face_aliases,
+                anchor,
             } => {
                 let profile = profiles[0];
                 for key in profiles {
                     edit.remove_profile(key);
                 }
                 for key in std::iter::once(face).chain(face_aliases) {
-                    let attr = edit.face_attr_mut_unchecked(key);
                     // The face keeps the 2-cell it always had; only its boundary
-                    // is gone. It anchors at the dart its own loop named, which
-                    // the dart compaction after this pass carries forward.
-                    let anchor = attr.seed();
+                    // is gone. Every key on that cell anchors at the one dart
+                    // the winding named, so they all still read the face the
+                    // same way round when identity reconciliation picks one.
+                    let attr = edit.face_attr_mut_unchecked(key);
                     attr.set_boundary(Vec::new(), anchor);
                     attr.pcurves.clear();
                 }
@@ -1475,7 +1473,6 @@ fn reseed_attributes<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     cell: &HashSet<Dart>,
     seeds: &HashMap<Dart, Option<Dart>>,
-    shell_senses: &HashMap<Dart, Orientation>,
 ) {
     let vertices = reseeded(
         edit.model()
@@ -1538,11 +1535,11 @@ fn reseed_attributes<P: Payload>(
     let sheets = edit
         .model()
         .iter_sheets()
-        .filter_map(|(key, attr)| Some((key, attr.dart()?)))
+        .map(|(key, attr)| (key, attr.dart()))
         .filter(|(_, dart)| seeds.contains_key(dart))
         .collect::<Vec<_>>();
     for (key, dart) in sheets {
-        if let Some(root) = rerooted_shell(edit.model(), cell, seeds, shell_senses, dart) {
+        if let Some(root) = rerooted_shell(edit.model(), cell, seeds, dart) {
             edit.sheet_attr_mut_unchecked(key).root = root;
         }
     }
@@ -1564,15 +1561,11 @@ fn reseed_attributes<P: Payload>(
     let solids = edit
         .model()
         .iter_solids()
-        .filter(|(_, attr)| attr.shell_darts().any(|dart| seeds.contains_key(&dart)))
+        .filter(|(_, attr)| attr.shells().any(|dart| seeds.contains_key(&dart)))
         .map(|(key, attr)| {
             let shells = attr
                 .shells()
-                .map(|shell| match shell.dart() {
-                    Some(dart) => rerooted_shell(edit.model(), cell, seeds, shell_senses, dart)
-                        .unwrap_or(shell),
-                    None => shell,
-                })
+                .map(|shell| rerooted_shell(edit.model(), cell, seeds, shell).unwrap_or(shell))
                 .collect::<Vec<_>>();
             (key, shells)
         })
@@ -1603,94 +1596,61 @@ fn surviving_profile_dart<P: Payload>(
     // started on one leaves along both of the loops it joins and reports them
     // as a single profile.
     ProfileIterator::new(g, dart).step_by(2).find(|walked| {
-        !cell.contains(walked)
-            && !is_embedded_cell(g.topology(), g.embedding(), Dim::One, *walked)
+        !cell.contains(walked) && !is_embedded_cell(g.topology(), g.embedding(), Dim::One, *walked)
     })
 }
 
 /// The root a shell anchored at `dart` keeps once the removal is done.
 ///
-/// Three answers in order of preference, which is the dart-preferred invariant:
-/// the Def. 59 replacement, any other dart of the same shell, and only then the
-/// face. The last case is a removal that takes *every* dart of a shell — an
-/// imported sphere losing its seam — and what is left of the shell is the one
-/// face those darts bounded, now boundaryless. `reroot_shells_at_darts` reads
-/// the same invariant the other way round, moving a face root back onto a dart
-/// as soon as one exists, and the sense stored here is what it reads to put the
-/// shell back the way round it was.
+/// Two answers in order of preference: the Def. 59 replacement, and then any
+/// other dart of the same shell. A shell always has one — a removal that would
+/// take a face's last boundary demotes that boundary to scaffold instead of
+/// deleting it, so the darts stay where they were. `None` means no candidate
+/// bounds anything, and the shell keeps the root it has.
 fn rerooted_shell<P: Payload>(
     g: &Model<P>,
     cell: &HashSet<Dart>,
     seeds: &HashMap<Dart, Option<Dart>>,
-    shell_senses: &HashMap<Dart, Orientation>,
     dart: Dart,
-) -> Option<ShellRoot> {
+) -> Option<Dart> {
     // The Def. 59 step can land on a cut, because it looks across the faces
     // around the removed edge without asking what it arrives on, and a cut is
     // no root for the reason `shell_fallback` gives.
     let bounds =
         |candidate: Dart| !is_embedded_cell(g.topology(), g.embedding(), Dim::One, candidate);
     match seeds.get(&dart) {
-        None => return Some(ShellRoot::Dart(dart)),
-        Some(Some(seed)) if bounds(*seed) => return Some(ShellRoot::Dart(*seed)),
+        None => return Some(dart),
+        Some(Some(seed)) if bounds(*seed) => return Some(*seed),
         _ => {}
     }
-    if let Some(dart) = shell_fallback(g, cell, dart) {
-        return Some(ShellRoot::Dart(dart));
-    }
-
-    let face = g.cell_key::<Cell2>(dart)?;
-    Some(ShellRoot::Face {
-        face,
-        sense: *shell_senses.get(&dart)?,
-    })
+    shell_fallback(g, cell, dart)
 }
 
-/// Reads which way every shell rooted inside `cell` faces.
+/// The dart a face about to lose its last boundary must anchor at.
 ///
-/// Only the roots the removal is about to invalidate are asked, because the
-/// answer is only needed where the shell may end up rooted at its face — and
-/// because reading it is not free.
-fn shell_senses<P: Payload>(g: &Model<P>, cell: &HashSet<Dart>) -> HashMap<Dart, Orientation> {
-    let sheets = g.iter_sheets().filter_map(|(_, attr)| attr.root.dart());
-    let solids = g.iter_solids().flat_map(|(_, attr)| {
-        attr.shells()
-            .filter_map(ShellRoot::dart)
-            .collect::<Vec<_>>()
-    });
-    sheets
-        .chain(solids)
-        .filter(|dart| cell.contains(dart))
-        .filter_map(|dart| Some((dart, shell_sense(g, dart)?)))
-        .collect()
-}
-
-/// How the shell reached through `dart` faces, relative to the support's own
-/// normal.
+/// A bounded face states which way it points in its boundary's winding; a
+/// boundaryless one has no winding left and states it in its anchor alone,
+/// where the reading is the support's own normal by definition. So the anchor
+/// this removal leaves has to be the dart that reads the support the way the
+/// old winding did — otherwise every shell holding the face silently turns
+/// over, which is how a cavity comes back as solid material.
 ///
-/// That is what a face root stores, and it has to be read before the removal
-/// starts: a face keeps no sense of its own, only a boundary whose winding
-/// states one — so a face about to lose its last boundary is about to lose the
-/// answer with it.
-///
-/// Returns `None` where the support has no normal to compare against, which
-/// leaves the shell rooted as it was rather than turned by a guess.
-fn shell_sense<P: Payload>(g: &Model<P>, dart: Dart) -> Option<Orientation> {
-    let face = Face::from_dart(g, dart)?;
-    let surface = face.surface();
+/// Falls back to the stored seed where the support has no normal to compare
+/// against, which leaves the face as it was rather than turning it on a guess.
+fn unbounded_anchor<P: Payload>(g: &Model<P>, face: FaceKey, attr: &FaceAttr<P::F>) -> Dart {
+    let seed = attr.seed();
+    let view = g.face_unchecked(face);
+    let surface = view.surface();
     // A face only becomes boundaryless on a support closed in both directions,
     // so its domain is finite and the middle of it is a parameter the surface
     // answers at.
     let (u, v) = surface.domain();
     let (u, v) = (u.at(0.5), v.at(0.5));
-    let agreement = face.normal_at(u, v).dot(&surface.normal_at(u, v));
-    if agreement == 0.0 || !agreement.is_finite() {
-        return None;
+    let agreement = view.normal_at(u, v).dot(&surface.normal_at(u, v));
+    match agreement.is_finite() && agreement < 0.0 {
+        true => g.alpha(Dim::Zero, seed),
+        false => seed,
     }
-    Some(match agreement > 0.0 {
-        true => Orientation::Same,
-        false => Orientation::Reversed,
-    })
 }
 
 /// Returns a surviving dart of the shell rooted at `dart`.

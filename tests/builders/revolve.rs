@@ -213,11 +213,13 @@ fn revolve_marked_closed_edge_full_turn_is_refused() {
     );
 }
 
-/// A full turn of a closed profile sweeps a torus: one face, and no topology.
+/// A full turn of a closed profile sweeps a torus: one face bounded by nothing.
 ///
 /// The source circle is not reused as a boundary the way an open profile's ends
-/// are — a torus has no boundary for it to become — so it is consumed outright,
-/// leaving the map with a single face and nothing else in it.
+/// are — a torus has no boundary for it to become — so it is consumed outright.
+/// What the face is left standing on is the polygon schema of its own support:
+/// the eight-dart square with both pairs of opposite sides identified, every
+/// cell of it embedded in the face and none of it a logical edge or vertex.
 #[test]
 fn revolve_closed_edge_full_turn_sweeps_a_boundaryless_torus() {
     let mut g = Model::<StandardPayload>::new();
@@ -240,8 +242,8 @@ fn revolve_closed_edge_full_turn_sweeps_a_boundaryless_torus() {
             g.iter_profiles().count(),
             g.iter_faces().count()
         ),
-        (0, 0, 0, 0, 1),
-        "the source loop is consumed, leaving one boundaryless face"
+        (8, 0, 0, 0, 1),
+        "the source loop is consumed, and the face stands on the square a whole          torus is"
     );
     let face = g.face_unchecked(face_key);
     assert!(face.loops().is_empty(), "a torus face has no boundary loop");

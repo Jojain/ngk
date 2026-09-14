@@ -5,9 +5,9 @@ use super::edge::Edge;
 use super::face::Face;
 use super::gmap::Dart;
 use super::payload::{Payload, StandardPayload};
-use super::sheet::ShellRef;
+use super::sheet::{Sheet, ShellRef};
 use super::vertex::Vertex;
-use crate::model::{MergeHandle, MergeTopology, Model, TopologyMerge};
+use crate::model::{MergeTopology, Model, TopologyMerge};
 use crate::topology::shape_keys::SolidKey;
 
 /// A domain-level solid view.
@@ -15,14 +15,10 @@ use crate::topology::shape_keys::SolidKey;
 /// A solid is a bounded 3-dimensional region with one outer shell and zero or
 /// more inner shells for cavities. It is backed by a stored [`SolidAttr`] in a
 /// [`Model`].
-///
-/// A solid whose outer shell is one boundaryless face — a sphere — has no dart
-/// anywhere, so [`Self::dart`] answers `None` and the solid is read through its
-/// shells instead.
 pub struct Solid<'g, P: Payload = StandardPayload> {
     model: &'g Model<P>,
     key: SolidKey,
-    dart: Option<Dart>,
+    dart: Dart,
 }
 
 impl<'g, P: Payload> Clone for Solid<'g, P> {
@@ -38,18 +34,14 @@ impl<'g, P: Payload> Clone for Solid<'g, P> {
 impl<'g, P: Payload> Solid<'g, P> {
     /// Creates a solid view from its key using the outer shell's root.
     pub fn new(model: &'g Model<P>, key: SolidKey) -> Self {
-        let dart = model.solid_attr_unchecked(key).outer_shell.dart();
+        let dart = model.solid_attr_unchecked(key).outer_shell;
         Self { model, key, dart }
     }
 
     /// Creates a solid view from a dart on one of its registered shells.
     pub fn from_dart(model: &'g Model<P>, dart: Dart) -> Option<Self> {
         let key = model.solid_key(dart)?;
-        Some(Self {
-            model,
-            key,
-            dart: Some(dart),
-        })
+        Some(Self { model, key, dart })
     }
 
     /// Returns the stable key of this solid in the source map.
@@ -64,8 +56,9 @@ impl<'g, P: Payload> Solid<'g, P> {
 
     /// Returns the dart through which this solid view was reached.
     ///
-    /// A solid bounded only by boundaryless faces has none.
-    pub fn dart(&self) -> Option<Dart> {
+    /// Total: every solid occupies a raw 3-cell, and a solid bounded only by
+    /// boundaryless faces reads it through the polygon those faces own.
+    pub fn dart(&self) -> Dart {
         self.dart
     }
 
@@ -78,9 +71,7 @@ impl<'g, P: Payload> Solid<'g, P> {
     pub fn outer_shell(&self) -> ShellRef<'g, P> {
         let root = self.model.solid_attr_unchecked(self.key).outer_shell;
         Closed::new_unchecked(
-            self.model
-                .shell_sheet(root)
-                .expect("solid outer shell must have a sheet"),
+            Sheet::from_dart(self.model, root).expect("solid outer shell must have a sheet"),
         )
     }
 
@@ -98,8 +89,7 @@ impl<'g, P: Payload> Solid<'g, P> {
                     .iter()
                     .map(|&root| {
                         Closed::new_unchecked(
-                            self.model
-                                .shell_sheet(root)
+                            Sheet::from_dart(self.model, root)
                                 .expect("solid inner shell must have a sheet"),
                         )
                     })
@@ -172,23 +162,9 @@ impl<'g, P: Payload> Solid<'g, P> {
 impl<P: Payload> MergeTopology<P> for Solid<'_, P> {
     fn merge_topology(&self) -> TopologyMerge<'_, P> {
         let mut darts = Vec::new();
-        let mut faces = Vec::new();
         for shell in self.shells() {
             darts.extend(shell.darts());
-            faces.extend(shell.boundaryless_face());
         }
-        // A solid made only of boundaryless faces has no dart to hand back, so
-        // the copy is named by its outer shell's face instead.
-        let handle = match self.dart {
-            Some(dart) => MergeHandle::Dart(dart),
-            None => MergeHandle::Face(
-                self.model
-                    .solid_attr_unchecked(self.key)
-                    .outer_shell
-                    .face()
-                    .expect("a solid with no dart is rooted at a face"),
-            ),
-        };
-        TopologyMerge::with_faces(self.model, darts, faces, handle)
+        TopologyMerge::new(self.model, darts, self.dart)
     }
 }

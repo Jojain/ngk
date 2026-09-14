@@ -116,42 +116,42 @@ pub(crate) fn import_operand<P: Payload>(
             let view = source
                 .vertex(key)
                 .ok_or(BooleanError::MissingOperand { operand })?;
-            let dart = target.merge(view).dart_unchecked();
+            let dart = target.merge(view);
             BooleanOperand::Vertex(target.cell_key_unchecked::<Cell0>(dart))
         }
         BooleanOperand::Edge(key) => {
             let view = source
                 .edge(key)
                 .ok_or(BooleanError::MissingOperand { operand })?;
-            let dart = target.merge(view).dart_unchecked();
+            let dart = target.merge(view);
             BooleanOperand::Edge(target.cell_key_unchecked::<Cell1>(dart))
         }
         BooleanOperand::Profile(key) => {
             let view = source
                 .profile(key)
                 .ok_or(BooleanError::MissingOperand { operand })?;
-            let dart = target.merge(view).dart_unchecked();
+            let dart = target.merge(view);
             BooleanOperand::Profile(target.profile_key_unchecked(dart))
         }
         BooleanOperand::Face(key) => {
             let view = source
                 .face(key)
                 .ok_or(BooleanError::MissingOperand { operand })?;
-            let dart = target.merge(view).dart_unchecked();
+            let dart = target.merge(view);
             BooleanOperand::Face(target.cell_key_unchecked::<Cell2>(dart))
         }
         BooleanOperand::Sheet(key) => {
             let view = source
                 .sheet(key)
                 .ok_or(BooleanError::MissingOperand { operand })?;
-            let dart = target.merge(view).dart_unchecked();
+            let dart = target.merge(view);
             BooleanOperand::Sheet(target.sheet_key_unchecked(dart))
         }
         BooleanOperand::Solid(key) => {
             let view = source
                 .solid(key)
                 .ok_or(BooleanError::MissingOperand { operand })?;
-            let dart = target.merge(view).dart_unchecked();
+            let dart = target.merge(view);
             BooleanOperand::Solid(
                 target
                     .solid_key(dart)

@@ -9,9 +9,9 @@
 use ngk::builders::edges::add_edge;
 use ngk::geometry::{Curve, Point3};
 use ngk::model::{Cell0, Model};
+use ngk::topology::embedding::EntityOwner;
 use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
-use ngk::topology::embedding::EntityOwner;
 use ngk::topology::{ModelEditError, StandardPayload};
 
 /// Labels the edge's start 0-cell as interior to the edge, the way a closure
@@ -111,11 +111,7 @@ fn a_rollback_restores_the_subdivision_as_well_as_the_map() {
     });
 
     assert!(result.is_err());
-    assert_eq!(
-        model.embedding().len(),
-        1,
-        "the rolled-back label is gone"
-    );
+    assert_eq!(model.embedding().len(), 1, "the rolled-back label is gone");
     assert_eq!(
         model.embedding_index().owner(Dim::Zero, anchor),
         Some(EntityOwner::Edge(edge)),

@@ -5,8 +5,9 @@ use nalgebra::{Rotation3, Vector3, distance};
 use radians::{Angle, Rad64};
 use thiserror::Error;
 
+use crate::builders::errors::ClosedFaceCellError;
 use crate::builders::faces::reverse_face_winding;
-use crate::builders::scaffold::cut_between_loops;
+use crate::builders::scaffold::{add_closed_face_cell, cut_between_loops};
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::{
@@ -16,8 +17,7 @@ use crate::geometry::{
 use crate::model::{Cell2, MergeTopology, Model};
 use crate::topology::IsolatedDart;
 use crate::topology::attributes::{
-    EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, ShellRoot, SolidAttr,
-    VertexAttr,
+    EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
 };
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
@@ -67,6 +67,9 @@ pub enum RevolveError {
 
     #[error("Edge {key:?} touches the revolution axis; apex faces are not supported yet")]
     ApexRevolveUnsupported { key: EdgeKey },
+
+    #[error("failed to build the 2-cell of a boundaryless revolved face")]
+    ClosedFaceCell(#[from] ClosedFaceCellError),
 
     #[error("failed to rotate the geometry of dart {dart:?}")]
     RotationFailed { dart: Dart, source: NurbsError },
@@ -536,11 +539,11 @@ fn add_full_revolved_edge_face<P: Payload>(
 /// Revolves an unmarked closed profile a whole turn into one boundaryless face.
 ///
 /// An unmarked circle swept a whole turn is a torus: closed in the sweep and
-/// closed in the profile too, so it has no boundary anywhere and needs no edges
-/// and no vertices at all. The source loop is therefore consumed outright rather
-/// than reused as a boundary, leaving a face with no loops — the same shape
-/// [`crate::builders::solids::add_sphere`] registers, the difference being that
-/// here the support is swept rather than named.
+/// closed in the profile too, so it has no boundary anywhere and carries no
+/// edge and no vertex. The source loop is therefore consumed outright rather
+/// than reused as a boundary, and the face is laid on the polygon schema of its
+/// own support — the same 2-cell [`crate::builders::solids::add_torus`] builds,
+/// the difference being that here the support is swept rather than named.
 ///
 /// A *marked* profile is a different shape and is refused: its corner sweeps a
 /// circle, which bounds the result.
@@ -566,12 +569,15 @@ fn add_full_revolved_closed_edge_face<P: Payload>(
 
     validate_consumable_closed_source_edge(edit, source)?;
     consume_closed_source_edge(edit, source)?;
-    Ok(edit.add_face(FaceAttr::with_loops(
+    let cell = add_closed_face_cell(edit, &surface)?;
+    let face = edit.add_face(FaceAttr::closed(
         surface,
         P::F::default(),
-        Vec::new(),
+        cell.anchor(),
         HashMap::new(),
-    )))
+    ));
+    cell.own(edit, face);
+    Ok(face)
 }
 
 /// Closes an apex-to-apex revolution by identifying its two meridian seams.
@@ -1006,7 +1012,7 @@ fn add_revolved_profile_from_dart_staged<P: Payload>(
     let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
     let close_ring = planar.inner().is_closed();
     let dart = add_revolved_profile_faces(edit, profile_dart, axis, angle, close_ring)?.swept_dart;
-    Ok(edit.add_sheet(SheetAttr::new(ShellRoot::Dart(dart), P::Sheet::default())))
+    Ok(edit.add_sheet(SheetAttr::new(dart, P::Sheet::default())))
 }
 
 struct RevolvedProfile {
@@ -1483,7 +1489,7 @@ fn add_revolved_face_staged<P: Payload>(
     }
 
     let rotated_face = rotate_face(&face, axis, angle)?;
-    let top_face_dart = edit.merge(rotated_face.face()).dart_unchecked();
+    let top_face_dart = edit.merge(rotated_face.face());
     let top_face_key = *edit.attribute_unchecked::<Cell2>(top_face_dart);
     let top_face_attr = edit.face_attr_unchecked(top_face_key);
     let mut top_loops = Vec::with_capacity(1 + top_face_attr.inner().count());
@@ -1508,13 +1514,9 @@ fn add_revolved_face_staged<P: Payload>(
     // orientation just established for the source cap.
     let shell = edit.face_attr_unchecked(face_key).outer_unchecked();
     if edit.sheet_key(shell).is_none() {
-        edit.add_sheet(SheetAttr::new(ShellRoot::Dart(shell), P::Sheet::default()));
+        edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
     }
-    Ok(edit.add_solid(SolidAttr::new(
-        P::S::default(),
-        ShellRoot::Dart(shell),
-        None,
-    )))
+    Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
 }
 
 /// Returns the direction the revolution sweeps a point of `face`, `axis x r`.
@@ -1583,13 +1585,9 @@ fn add_full_revolved_face<P: Payload>(
     let shell = shell.expect("a face should have at least one boundary loop");
     let shell = consume_revolved_source_face(edit, face_key, &loops, shell)?;
     if edit.sheet_key(shell).is_none() {
-        edit.add_sheet(SheetAttr::new(ShellRoot::Dart(shell), P::Sheet::default()));
+        edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
     }
-    Ok(edit.add_solid(SolidAttr::new(
-        P::S::default(),
-        ShellRoot::Dart(shell),
-        None,
-    )))
+    Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
 }
 
 /// Deletes the source face and its boundary wire after a full turn.
@@ -1681,7 +1679,6 @@ fn rotate_face<P: Payload>(
     angle: Rad64,
 ) -> Result<Shape<FaceTag, P>, RevolveError> {
     let (mut rotated, rotated_dart) = face.isolate();
-    let rotated_dart = rotated_dart.dart_unchecked();
 
     let vertex_keys = rotated
         .iter_vertices()

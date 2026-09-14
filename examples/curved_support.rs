@@ -80,7 +80,7 @@ fn import_solid(target: &mut Model, source: &Shape<SolidTag>) -> Result<SolidKey
     let key = target.transaction(|edit| {
         let handle = edit.merge(source.solid());
         Ok::<_, ModelEditError>(
-            edit.solid_key_at(handle)
+            edit.solid_key(handle)
                 .expect("a merged solid should retain its registration"),
         )
     })?;

@@ -13,7 +13,6 @@ pub fn revolve_profile<P: Payload>(
     angle: Rad64,
 ) -> Result<Shape<SheetTag, P>, RevolveError> {
     let (mut g, profile_dart) = profile.isolate();
-    let profile_dart = profile_dart.dart_unchecked();
     let sheet_dart = add_revolved_profile_from_dart(&mut g, profile_dart, axis, angle)?;
     Ok(Shape::new(g, sheet_dart))
 }

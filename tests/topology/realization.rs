@@ -3,9 +3,9 @@ use std::sync::Arc;
 use ngk::geometry::{Plane, Point3, Surface};
 use ngk::model::{Model, RealizationError, RealizationPurpose};
 use ngk::modeling::{edges, faces};
+use ngk::topology::embedding::EntityOwner;
 use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
-use ngk::topology::embedding::EntityOwner;
 use ngk::topology::{ModelEditError, Orientation, StandardPayload, UnwrappedFaceDomain};
 
 #[test]

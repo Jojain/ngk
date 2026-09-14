@@ -12,9 +12,9 @@ use ngk::builders::faces::{add_circle as add_disc, split_face_edge};
 use ngk::geometry::Plane;
 use ngk::model::{Cell0, Cell1, Cell2, Model};
 use ngk::modeling::faces;
+use ngk::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
-use ngk::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
 
 /// A planar rectangle: four edges, four vertices, one face, and no scaffold.
 fn rectangle() -> Model<StandardPayload> {

@@ -205,17 +205,19 @@ impl_owned_shape_display!(
 impl_owned_shape_display!(FaceTag, DebugObjectKind::Face, face, |view: &Face<
     '_,
     StandardPayload,
->| Some(
-    view.dart()
-));
+>| Some(view.dart()));
 impl_owned_shape_display!(SheetTag, DebugObjectKind::Sheet, sheet, |view: &Sheet<
     '_,
     StandardPayload,
->| view.dart());
+>| Some(
+    view.dart()
+));
 impl_owned_shape_display!(SolidTag, DebugObjectKind::Solid, solid, |view: &Solid<
     '_,
     StandardPayload,
->| view.dart());
+>| Some(
+    view.dart()
+));
 
 macro_rules! impl_view_display {
     ($view:ty, $kind:expr) => {
@@ -379,7 +381,7 @@ where
     T: MergeTopology<StandardPayload>,
 {
     let (gmap, handle) = Model::isolate(topology);
-    objects.push(serialize_topology(&gmap, kind, handle.dart())?);
+    objects.push(serialize_topology(&gmap, kind, Some(handle))?);
     Ok(())
 }
 

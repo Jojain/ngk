@@ -112,12 +112,11 @@ impl Surface {
     /// Returns whether the surface closes on itself in both parameter
     /// directions, leaving no boundary anywhere.
     ///
-    /// A shell rooted at a boundaryless face has no free dart to test — the
-    /// combinatorial closedness check runs over darts, and that face has none —
-    /// so closedness must be asked of the geometry instead. A direction closes
+    /// This is what decides whether a face may bound nothing at all, and what
+    /// polygon schema the 2-cell under such a face is: a direction closes
     /// either by periodicity or by collapsing to a point at both ends of its
-    /// domain: a sphere is periodic in `u` and pole-capped in `v`, a torus is
-    /// periodic in both, and a cylinder, open along its axis, is neither.
+    /// domain, so a sphere is periodic in `u` and pole-capped in `v`, a torus
+    /// is periodic in both, and a cylinder, open along its axis, is neither.
     pub fn is_closed(&self) -> bool {
         let (u, v) = self.domain();
         let (u_periodic, v_periodic) = match self.periodicity() {

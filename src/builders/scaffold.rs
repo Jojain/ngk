@@ -12,11 +12,13 @@
 //!
 //! [`EdgeKey`]: crate::topology::shape_keys::EdgeKey
 
+use crate::builders::errors::ClosedFaceCellError;
+use crate::geometry::{Surface, SurfacePeriodicity};
+use crate::topology::embedding::{EntityOwner, is_embedded_cell};
 use crate::topology::face::Loop;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::FaceKey;
-use crate::topology::embedding::{EntityOwner, is_embedded_cell};
 use crate::topology::{ModelEdit, ModelEditError};
 
 /// One end of a cut, directed from an arriving boundary dart into the cut.
@@ -150,4 +152,114 @@ pub(crate) fn cut_between_loops<P: Payload>(
 
     edit.own_cell(Dim::One, cut_out[0], EntityOwner::Face(face));
     Ok(())
+}
+
+/// The raw 2-cell a face covering a closed support occupies.
+///
+/// Built by [`add_closed_face_cell`] and handed to [`Self::own`] once the face
+/// it belongs to has a key. The two halves travel together because they are one
+/// fact: these darts are that face's cell, and every cell below it is inside
+/// the face rather than bounding it.
+pub(crate) struct ClosedFaceCell {
+    anchor: Dart,
+    /// One representative per lower-dimensional cell of the polygon.
+    interior: Vec<(Dim, Dart)>,
+}
+
+impl ClosedFaceCell {
+    /// Returns the dart the face anchors at.
+    pub(crate) fn anchor(&self) -> Dart {
+        self.anchor
+    }
+
+    /// Classifies every cell below the polygon as embedded in `face`.
+    pub(crate) fn own<P: Payload>(&self, edit: &mut ModelEdit<'_, P>, face: FaceKey) {
+        let owner = EntityOwner::Face(face);
+        for &(dim, dart) in &self.interior {
+            edit.own_cell(dim, dart, owner);
+        }
+    }
+}
+
+/// Builds the raw 2-cell a face covering `surface` occupies.
+///
+/// A face bounds nothing only where its support closes in both parameter
+/// directions, and the 2-cell it needs is the polygon schema of the closed
+/// surface that makes. Two schemas cover what this kernel builds and imports:
+///
+/// - **a bigon**, where one direction is periodic and the other closes by
+///   collapsing to a point at each end — a sphere, capped at its poles;
+/// - **a square**, where both directions are periodic — a torus.
+///
+/// Every edge and corner of the polygon is scaffold: the face owns all of them,
+/// so its boundary walk turns across each and emits nothing. What the face
+/// gains is the one 2-cell it is required to occupy, which is also the dart its
+/// shell is rooted at.
+pub(crate) fn add_closed_face_cell<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    surface: &Surface,
+) -> Result<ClosedFaceCell, ClosedFaceCellError> {
+    if !surface.is_closed() {
+        return Err(ClosedFaceCellError::SupportNotClosed);
+    }
+    match surface.periodicity() {
+        SurfacePeriodicity::UVPeriodic(_, _) => add_closed_square(edit),
+        SurfacePeriodicity::UPeriodic(_) | SurfacePeriodicity::VPeriodic(_) => {
+            add_closed_bigon(edit)
+        }
+        SurfacePeriodicity::None => Err(ClosedFaceCellError::ClosureNotSchematized),
+    }
+}
+
+/// Builds the four-dart 2-cell a whole sphere is.
+///
+/// Two edges between the same two corners — the polygon with the edge word
+/// `a a⁻¹` — which is the sphere written as a bigon. `V - E + F = 2`.
+fn add_closed_bigon<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+) -> Result<ClosedFaceCell, ClosedFaceCellError> {
+    let d: Vec<Dart> = (0..4).map(|_| edit.add_dart()).collect();
+    // The bigon: two edges, each between the same two corners.
+    edit.link(Dim::Zero, d[0], d[1])?;
+    edit.link(Dim::Zero, d[2], d[3])?;
+    edit.link(Dim::One, d[1], d[2])?;
+    edit.link(Dim::One, d[3], d[0])?;
+    // Closing it. Pairing each dart with the one reading the other edge the
+    // same way round is what makes this a sphere; pairing them the other way
+    // round would identify the corners too and give a projective plane.
+    edit.link(Dim::Two, d[0], d[3])?;
+    edit.link(Dim::Two, d[1], d[2])?;
+    Ok(ClosedFaceCell {
+        anchor: d[0],
+        // One edge and two poles.
+        interior: vec![(Dim::One, d[0]), (Dim::Zero, d[0]), (Dim::Zero, d[1])],
+    })
+}
+
+/// Builds the eight-dart 2-cell a whole torus is.
+///
+/// A square with both pairs of opposite edges identified, which is the torus
+/// written as a polygon with the edge word `a b a⁻¹ b⁻¹`. The four corners
+/// become one, the four edges become two, and `V - E + F = 0`.
+fn add_closed_square<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+) -> Result<ClosedFaceCell, ClosedFaceCellError> {
+    let d: Vec<Dart> = (0..8).map(|_| edit.add_dart()).collect();
+    for pair in [(0, 1), (2, 3), (4, 5), (6, 7)] {
+        edit.link(Dim::Zero, d[pair.0], d[pair.1])?;
+    }
+    for pair in [(1, 2), (3, 4), (5, 6), (7, 0)] {
+        edit.link(Dim::One, d[pair.0], d[pair.1])?;
+    }
+    // Opposite edges identified the way a translation would: the first side
+    // onto the third, the second onto the fourth, each reversed as the square's
+    // boundary runs round.
+    for pair in [(0, 5), (1, 4), (2, 7), (3, 6)] {
+        edit.link(Dim::Two, d[pair.0], d[pair.1])?;
+    }
+    Ok(ClosedFaceCell {
+        anchor: d[0],
+        // Two edges and one corner.
+        interior: vec![(Dim::One, d[0]), (Dim::One, d[2]), (Dim::Zero, d[0])],
+    })
 }

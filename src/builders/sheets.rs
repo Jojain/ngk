@@ -7,9 +7,7 @@ use crate::builders::errors::ExtrudeError;
 use crate::geometry::{Curve, LINEAR_TOLERANCE, Plane, Point2, Point3, RuledSurface, Surface};
 use crate::model::Model;
 use crate::topology::ModelEdit;
-use crate::topology::attributes::{
-    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, VertexAttr,
-};
+use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim};
@@ -60,10 +58,7 @@ pub fn add_extruded_profile<P: Payload>(
         let translated_dart =
             translated_dart.expect("profile dart must belong to one of its profile edges");
 
-        Ok(edit.add_sheet(SheetAttr::new(
-            ShellRoot::Dart(translated_dart),
-            P::Sheet::default(),
-        )))
+        Ok(edit.add_sheet(SheetAttr::new(translated_dart, P::Sheet::default())))
     })
 }
 
@@ -388,10 +383,7 @@ mod tests {
         let direction = Vector3::new(0.0, 0.0, 2.0);
 
         let sheet_key = add_extruded_profile(&mut source, profile_key, direction).unwrap();
-        let translated_dart = source
-            .sheet_attr_unchecked(sheet_key)
-            .dart()
-            .expect("an extruded sheet is dart-rooted");
+        let translated_dart = source.sheet_attr_unchecked(sheet_key).dart();
 
         assert!(
             translated_dart.id() >= source_dart_count,

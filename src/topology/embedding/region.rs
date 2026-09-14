@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::topology::gmap::{Dart, Dim, GMap};
 
-use super::cells::{EntityOwner, EmbeddingIndex};
+use super::cells::{EmbeddingIndex, EntityOwner};
 use super::walk::below;
 
 /// Every raw dart a logical entity's interior covers, and which way each reads.
@@ -160,5 +160,4 @@ pub enum RegionError {
         /// The entity whose region was being walked.
         owner: EntityOwner,
     },
-
 }

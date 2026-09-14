@@ -20,7 +20,7 @@ use crate::builders::removal::{
     CellRemovalError, MergeKind, MergedCell, is_removable, planned_merge, remove_cell_staged,
 };
 use crate::geometry::{Plane, Surface};
-use crate::model::Model;
+use crate::model::{Cell2, Model};
 use crate::topology::attributes::LoopKind;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::orientation::Orientation;
@@ -329,6 +329,16 @@ pub(in crate::healing::passes) fn apply<P: Payload>(
         }
     };
     debug_assert_eq!(survivor, fusion.survivor, "survivor rules must agree");
+    // The removal names the key its plan was built from. An earlier fusion in
+    // the same transaction may have absorbed that key already, and this removal
+    // is what brought the two cells back together, so the key to write to is
+    // whichever one the cell answers with now. Identity reconciliation settles
+    // the rest at commit; what matters here is not writing a boundary onto a
+    // key the map no longer reads.
+    let survivor = edit
+        .model()
+        .cell_key::<Cell2>(edit.face_attr_unchecked(survivor).seed())
+        .unwrap_or(survivor);
 
     match fusion.plane {
         None => {

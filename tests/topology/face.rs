@@ -191,8 +191,7 @@ fn a_face_view_is_named_by_its_sense_not_by_the_dart_it_was_reached_from() {
     assert_eq!(from_inner.dart(), face.dart());
 
     let reversed = face.reversed();
-    let round_tripped =
-        Face::from_dart(&g, reversed.dart()).expect("dart should resolve its face");
+    let round_tripped = Face::from_dart(&g, reversed.dart()).expect("dart should resolve its face");
 
     assert_eq!(reversed.sense(), Orientation::Reversed);
     assert_eq!(round_tripped.sense(), Orientation::Reversed);

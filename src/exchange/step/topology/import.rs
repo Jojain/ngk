@@ -28,7 +28,8 @@
 
 use std::collections::HashMap;
 
-use crate::builders::scaffold::cut_between_loops;
+use crate::builders::errors::ClosedFaceCellError;
+use crate::builders::scaffold::{add_closed_face_cell, cut_between_loops};
 use crate::geometry::{
     Curve, LINEAR_TOLERANCE, NurbsError, Point2, Point3, Surface, SurfacePeriodicity,
     TrimmedCurve2, Vector2,
@@ -36,14 +37,14 @@ use crate::geometry::{
 use crate::healing::{HealingOptions, remove_redundant_cells};
 use crate::model::Model;
 use crate::topology::attributes::{
-    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
+    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
 };
 use crate::topology::edge::Edge;
+use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::orientation::Orientation;
 use crate::topology::shape::{Shape, SolidTag};
 use crate::topology::shape_keys::{EdgeKey, SolidKey, VertexKey};
-use crate::topology::embedding::EntityOwner;
 use crate::topology::{ModelEdit, ModelEditError, StandardPayload};
 
 use super::super::StepImport;
@@ -839,7 +840,7 @@ struct DartUse {
 fn sew_solid(
     edit: &mut ModelEdit<'_, StandardPayload>,
     shells: &[Vec<PlannedFace>],
-) -> Result<SolidKey, ModelEditError> {
+) -> Result<SolidKey, ClosedFaceCellError> {
     let mut roots = Vec::with_capacity(shells.len());
     for planned in shells {
         let root = sew_shell(edit, planned)?;
@@ -856,23 +857,29 @@ fn sew_solid(
 
 /// Builds every planned face of one shell and sews them together.
 ///
-/// Returns the root the shell is anchored at: a boundary dart, or the face
-/// itself when the shell is one face covering a closed support and there is no
-/// dart to anchor at.
+/// Returns the dart the shell is anchored at, which carries its direction.
+///
+/// A shell that is one face covering a closed support gets the polygon schema
+/// of that surface underneath it — the 2-cell the face is required to occupy —
+/// and anchors there. The file's `same_sense` flag is the only statement of
+/// which way such a face points, since it has no boundary whose winding could
+/// say, so a reversed one anchors at the `alpha0` partner instead.
 fn sew_shell(
     edit: &mut ModelEdit<'_, StandardPayload>,
     planned: &[PlannedFace],
-) -> Result<ShellRoot, ModelEditError> {
+) -> Result<Dart, ClosedFaceCellError> {
     if let [PlannedFace::Boundaryless { surface, sense }] = planned {
-        let face = edit.add_face(FaceAttr::with_loops(
+        let cell = add_closed_face_cell(edit, surface)?;
+        let face = edit.add_face(FaceAttr::closed(
             surface.clone(),
             (),
-            Vec::new(),
+            cell.anchor(),
             HashMap::new(),
         ));
-        return Ok(ShellRoot::Face {
-            face,
-            sense: *sense,
+        cell.own(edit, face);
+        return Ok(match sense {
+            Orientation::Same => cell.anchor(),
+            Orientation::Reversed => edit.alpha(Dim::Zero, cell.anchor()),
         });
     }
 
@@ -1003,9 +1010,7 @@ fn sew_shell(
     // Any boundary dart names the whole shell, and every face was built in the
     // direction STEP composed, so the first face's outer seed already carries
     // the side facing away from the material.
-    Ok(ShellRoot::Dart(
-        shell_root.expect("a planned shell has at least one bounded face"),
-    ))
+    Ok(shell_root.expect("a planned shell has at least one bounded face"))
 }
 
 /// Reports a curve that would not project into the face's plane.

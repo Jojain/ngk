@@ -1,3 +1,6 @@
+#[path = "support/hollow.rs"]
+mod hollow;
+
 #[path = "support/scaffold.rs"]
 mod scaffold;
 
@@ -15,6 +18,8 @@ mod edge;
 mod edge_split;
 #[path = "topology/edit.rs"]
 mod edit;
+#[path = "topology/embedding.rs"]
+mod embedding;
 #[path = "topology/face.rs"]
 mod face;
 #[path = "topology/indexes.rs"]
@@ -33,8 +38,6 @@ mod realization;
 mod serialization;
 #[path = "topology/sheet.rs"]
 mod sheet;
-#[path = "topology/embedding.rs"]
-mod embedding;
 #[path = "topology/transaction.rs"]
 mod transaction;
 #[path = "topology/unwrapped_face_domain.rs"]

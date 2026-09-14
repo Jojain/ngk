@@ -15,12 +15,15 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 use crate::topology::attributes::{
-    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
+    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
 };
 use crate::topology::edge::Edge;
 use crate::topology::edit::{
     EditEvent, EditKey, EditPolicy, ModelEdit, ModelEditError, PreservePayload,
     commit_model_transaction,
+};
+use crate::topology::embedding::{
+    Embedding, EmbeddingError, EmbeddingIndex, EntityOwner, OwnerRemap,
 };
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim, GMap, IsolatedDart, SewableDarts};
@@ -30,9 +33,6 @@ use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
-use crate::topology::embedding::{
-    EntityOwner, OwnerRemap, EmbeddingIndex, Embedding, EmbeddingError,
-};
 use crate::topology::vertex::Vertex;
 
 mod realization;
@@ -166,74 +166,15 @@ fn copied_cell_dart<P: Payload>(
 pub struct TopologyMerge<'a, P: Payload> {
     source: &'a Model<P>,
     darts: Vec<Dart>,
-    faces: Vec<FaceKey>,
-    handle: MergeHandle,
-}
-
-/// What a copied topology is reached by in the model it was copied into.
-///
-/// A copy is normally located by a dart. A boundaryless face has none, so the
-/// copy names the new face key instead — the same distinction as
-/// [`ShellRoot`](crate::topology::attributes::ShellRoot), one layer up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MergeHandle {
-    /// A dart of the copy, in the target model's numbering.
-    Dart(Dart),
-    /// The copy is one boundaryless face, under its new key.
-    Face(FaceKey),
-}
-
-impl MergeHandle {
-    /// Returns the handle's dart, or `None` for a boundaryless copy.
-    pub fn dart(self) -> Option<Dart> {
-        match self {
-            Self::Dart(dart) => Some(dart),
-            Self::Face(_) => None,
-        }
-    }
-
-    /// Returns the handle's dart.
-    ///
-    /// # Panics
-    ///
-    /// Panics on a boundaryless copy, which has no dart to return.
-    pub fn dart_unchecked(self) -> Dart {
-        self.dart()
-            .expect("a dart-backed copy should return a dart handle")
-    }
-
-    /// Returns the handle's face, or `None` for a dart-backed copy.
-    pub fn face(self) -> Option<FaceKey> {
-        match self {
-            Self::Face(face) => Some(face),
-            Self::Dart(_) => None,
-        }
-    }
+    handle: Dart,
 }
 
 impl<'a, P: Payload> TopologyMerge<'a, P> {
-    /// Creates a merge descriptor for a dart-backed topology view.
+    /// Creates a merge descriptor for a topology view reached at `handle`.
     pub fn new(source: &'a Model<P>, darts: Vec<Dart>, handle: Dart) -> Self {
         Self {
             source,
             darts,
-            faces: Vec::new(),
-            handle: MergeHandle::Dart(handle),
-        }
-    }
-
-    /// Creates a merge descriptor for topology that includes boundaryless
-    /// faces, which no dart can name.
-    pub fn with_faces(
-        source: &'a Model<P>,
-        darts: Vec<Dart>,
-        faces: Vec<FaceKey>,
-        handle: MergeHandle,
-    ) -> Self {
-        Self {
-            source,
-            darts,
-            faces,
             handle,
         }
     }
@@ -249,7 +190,7 @@ pub trait MergeTopology<P: Payload> {
     ///
     /// Alpha links within the copied topology are preserved. Links leaving the
     /// copied dart set become free in the isolated model.
-    fn isolate(self) -> (Model<P>, MergeHandle)
+    fn isolate(self) -> (Model<P>, Dart)
     where
         Self: Sized,
     {
@@ -402,8 +343,8 @@ impl<P: Payload> Model<P> {
     /// This is the derived half of the embedding: an entity contains the cell
     /// its own anchor sits in, which its attribute already says. A solid is
     /// anchored through its outer shell, whose dart lies in the volume the
-    /// solid is. A boundaryless face has no dart and contributes nothing --
-    /// the case that disappears once such a face carries a real scaffold.
+    /// solid is, and a face bounded by nothing is anchored in the polygon it
+    /// stands on like any other.
     fn entity_anchors(&self) -> impl Iterator<Item = (Dim, Dart, EntityOwner)> + '_ {
         let vertices = self
             .vertices
@@ -417,11 +358,10 @@ impl<P: Payload> Model<P> {
             .faces
             .iter()
             .map(|(key, attr)| (Dim::Two, attr.seed(), EntityOwner::Face(key)));
-        let solids = self.solids.iter().filter_map(|(key, attr)| {
-            attr.outer_shell
-                .dart()
-                .map(|dart| (Dim::Three, dart, EntityOwner::Solid(key)))
-        });
+        let solids = self
+            .solids
+            .iter()
+            .map(|(key, attr)| (Dim::Three, attr.outer_shell, EntityOwner::Solid(key)));
         vertices.chain(edges).chain(faces).chain(solids)
     }
 
@@ -590,17 +530,12 @@ impl<P: Payload> Model<P> {
             let repr = self.cell_representative(attr.seed(), Dim::Two);
             self.insert_logical_key(&mut indexes.face, repr, key, EditKey::Face);
         }
-        // A boundaryless shell has no dart to reach it from, so it registers
-        // nothing here. It is found through its key, or through the one face
-        // it holds, never by walking the map.
         for (key, attr) in self.sheets.iter() {
-            for dart in attr.dart() {
-                let repr = self.cell_representative(dart, Dim::Three);
-                self.insert_logical_key(&mut indexes.sheet, repr, key, EditKey::Sheet);
-            }
+            let repr = self.cell_representative(attr.dart(), Dim::Three);
+            self.insert_logical_key(&mut indexes.sheet, repr, key, EditKey::Sheet);
         }
         for (key, attr) in self.solids.iter() {
-            for dart in attr.shell_darts() {
+            for dart in attr.shells() {
                 let repr = self.cell_representative(dart, Dim::Three);
                 self.insert_logical_key(&mut indexes.solid, repr, key, EditKey::Solid);
             }
@@ -902,7 +837,7 @@ impl<P: Payload> Model<P> {
                 .collect();
         }
         for attr in self.sheets.values_mut() {
-            attr.root.map_dart(&map_dart);
+            attr.root = map_dart(attr.root);
         }
         for attr in self.solids.values_mut() {
             attr.map_shell_darts(&map_dart);
@@ -1113,10 +1048,17 @@ impl<P: Payload> Model<P> {
     }
 
     /// Returns how `dart` reads the face `key` relative to its default sense.
+    ///
+    /// Read from the face's anchor alone: a face occupies exactly one raw
+    /// 2-cell, so every dart it names reads the same cell and any of them
+    /// answers. The anchor is the one a boundaryless face also has.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `dart` is not in the face's 2-cell.
     pub fn face_orientation_at_dart(&self, key: FaceKey, dart: Dart) -> Orientation {
         let attr = self.face_attr_unchecked(key);
-        attr.darts()
-            .find_map(|seed| self.cell_orientation_from_seed(seed, dart, Dim::Two))
+        self.cell_orientation_from_seed(attr.seed(), dart, Dim::Two)
             .expect("face orientation requires dart to belong to face")
     }
 
@@ -1216,40 +1158,6 @@ impl<P: Payload> Model<P> {
     /// Panics if no sheet is registered for the shell.
     pub fn sheet_key_unchecked(&self, dart: Dart) -> SheetKey {
         self.sheet_key(dart).expect("sheet key should be in map")
-    }
-
-    /// Returns the sheet holding `face`, including a boundaryless one.
-    pub fn sheet_key_at_face(&self, face: FaceKey) -> Option<SheetKey> {
-        self.sheets
-            .iter()
-            .find(|(_, attr)| attr.root.face() == Some(face))
-            .map(|(key, _)| key)
-    }
-
-    /// Returns the solid bounded by a shell holding `face`.
-    pub fn solid_key_at_face(&self, face: FaceKey) -> Option<SolidKey> {
-        self.solids
-            .iter()
-            .find(|(_, attr)| attr.shells().any(|shell| shell.face() == Some(face)))
-            .map(|(key, _)| key)
-    }
-
-    /// Returns the solid a merge handle landed in, whichever form it took.
-    pub fn solid_key_at(&self, handle: MergeHandle) -> Option<SolidKey> {
-        match handle {
-            MergeHandle::Dart(dart) => self.solid_key(dart),
-            MergeHandle::Face(face) => self.solid_key_at_face(face),
-        }
-    }
-
-    /// Returns the sheet view anchored at `root`, whichever form it took.
-    pub fn shell_sheet(&self, root: ShellRoot) -> Option<Sheet<'_, P>> {
-        match root {
-            ShellRoot::Dart(dart) => Sheet::from_dart(self, dart),
-            ShellRoot::Face { face, .. } => self
-                .sheet_key_at_face(face)
-                .map(|key| Sheet::new(self, key)),
-        }
     }
 
     /// Returns the sheet attribute registered under `key`.
@@ -1361,7 +1269,7 @@ impl<P: Payload> Model<P> {
     /// Copy a topological view into a fresh [`Model`].
     ///
     /// This is the associated-function form of [`MergeTopology::isolate`].
-    pub fn isolate<T>(topology: T) -> (Self, MergeHandle)
+    pub fn isolate<T>(topology: T) -> (Self, Dart)
     where
         T: MergeTopology<P>,
     {
@@ -1375,14 +1283,13 @@ impl<P: Payload> Model<P> {
     /// preserved; links leaving the view become free. Stored vertex, edge, face,
     /// and solid attributes whose representative darts are part of the view are
     /// cloned with embedded dart references remapped to the new dart ids.
-    pub(crate) fn merge<T>(&mut self, topology: T) -> MergeHandle
+    pub(crate) fn merge<T>(&mut self, topology: T) -> Dart
     where
         T: MergeTopology<P>,
     {
         let topology = topology.merge_topology();
         let source = topology.source;
         let handle = topology.handle;
-        let source_faces = topology.faces;
         let mut seen_darts = HashSet::new();
         let source_darts = topology
             .darts
@@ -1456,9 +1363,6 @@ impl<P: Payload> Model<P> {
             }
             let mut attr = attr.clone();
             attr.retain_mapped(&dart_map);
-            if attr.is_empty() {
-                continue;
-            }
             attr.pcurves = attr
                 .pcurves
                 .into_iter()
@@ -1469,35 +1373,16 @@ impl<P: Payload> Model<P> {
             face_map.insert(old, new_key);
         }
 
-        // A merge is otherwise defined by the darts it copies, and a
-        // boundaryless face has none: it is named outright by the caller, and
-        // the map from its old key to its new one is what lets the shells that
-        // hold it come across too.
-        face_map.reserve(source_faces.len());
-        for old in source_faces {
-            let Some(attr) = source.faces.get(old) else {
-                continue;
-            };
-            let new_key = self.faces.insert(attr.clone());
-            self.record_created_attribute(EditKey::Face(new_key));
-            face_map.insert(old, new_key);
-        }
+        let copied_shell = |shell: Dart| {
+            source
+                .orbit(shell, vec![0, 1, 2])
+                .all(|dart| source_dart_set.contains(&dart))
+                .then(|| remap_dart(&dart_map, shell))
+        };
 
         for (_, attr) in source.sheets.iter() {
-            let root = match attr.root {
-                ShellRoot::Dart(root) => {
-                    if !source
-                        .orbit(root, vec![0, 1, 2])
-                        .all(|dart| source_dart_set.contains(&dart))
-                    {
-                        continue;
-                    }
-                    ShellRoot::Dart(remap_dart(&dart_map, root))
-                }
-                ShellRoot::Face { face, sense } => match face_map.get(&face) {
-                    Some(&face) => ShellRoot::Face { face, sense },
-                    None => continue,
-                },
+            let Some(root) = copied_shell(attr.root) else {
+                continue;
             };
             let mut attr = attr.clone();
             attr.root = root;
@@ -1505,15 +1390,6 @@ impl<P: Payload> Model<P> {
             self.record_created_attribute(EditKey::Sheet(new_key));
         }
 
-        let copied_shell = |shell: ShellRoot| match shell {
-            ShellRoot::Dart(dart) => source
-                .orbit(dart, vec![0, 1, 2])
-                .all(|dart| source_dart_set.contains(&dart))
-                .then(|| ShellRoot::Dart(remap_dart(&dart_map, dart))),
-            ShellRoot::Face { face, sense } => face_map
-                .get(&face)
-                .map(|&face| ShellRoot::Face { face, sense }),
-        };
         let mut solid_map = HashMap::new();
         for (old, attr) in source.solids.iter() {
             let Some(outer_shell) = copied_shell(attr.outer_shell) else {
@@ -1541,14 +1417,6 @@ impl<P: Payload> Model<P> {
         );
 
         self.invalidate_derived_indexes();
-        match handle {
-            MergeHandle::Dart(dart) => MergeHandle::Dart(remap_dart(&dart_map, dart)),
-            MergeHandle::Face(face) => MergeHandle::Face(
-                face_map
-                    .get(&face)
-                    .copied()
-                    .expect("a face named as the merge handle should be copied"),
-            ),
-        }
+        remap_dart(&dart_map, handle)
     }
 }

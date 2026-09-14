@@ -79,11 +79,7 @@ mod tests {
     #[test]
     fn hollow_cylinder_boundary_is_closed_shell() {
         let solid = build_hollow_cylinder_solid().expect("build");
-        let shell_dart = solid
-            .solid()
-            .outer_shell()
-            .dart()
-            .expect("an extruded solid shell is dart-rooted");
+        let shell_dart = solid.solid().outer_shell().dart();
         assert!(
             Closed::new(
                 Sheet::from_dart(solid.model(), shell_dart)
@@ -118,11 +114,7 @@ mod tests {
         let source = build_source_face().expect("source face");
         let solid =
             extrude_face(source, Vector3::new(0.0, 0.0, super::HEIGHT)).expect("extrude annulus");
-        let shell_dart = solid
-            .solid()
-            .outer_shell()
-            .dart()
-            .expect("an extruded solid shell is dart-rooted");
+        let shell_dart = solid.solid().outer_shell().dart();
 
         assert!(
             Closed::new(

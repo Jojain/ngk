@@ -58,7 +58,11 @@ fn the_seam_pass_canonicalizes_every_periodic_face() {
         .expect("healing a sphere should commit");
     assert_eq!(report.removed_seams.len(), 1);
     assert!(sphere_map.face_unchecked(sphere).loops().is_empty());
-    assert_eq!(sphere_map.dart_count(), 0);
+    assert_eq!(
+        sphere_map.dart_count(),
+        4,
+        "the seam is demoted rather than deleted, leaving the bigon a built          sphere stands on"
+    );
     validate_solid_manifold(&sphere_map, solid).expect("the healed sphere is still well formed");
 }
 
@@ -147,6 +151,10 @@ fn the_seam_pass_takes_both_of_a_torus_cuts() {
         g.face_unchecked(torus).loops().is_empty(),
         "a torus has no boundary once both cuts are gone"
     );
-    assert_eq!(g.dart_count(), 0);
+    assert_eq!(
+        g.dart_count(),
+        8,
+        "both cuts are demoted rather than deleted, leaving the square a built          torus stands on"
+    );
     validate_solid_manifold(&g, solid).expect("the healed torus is still well formed");
 }

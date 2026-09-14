@@ -12,7 +12,8 @@
 //! aggregates rather than entities with a cell of their own.
 //!
 //! These tests are the inventory: they say which shapes hold to the rule and
-//! which do not, so that the ones that do cannot quietly stop.
+//! which do not, so that the ones that do cannot quietly stop and the ones that
+//! do not are named rather than assumed.
 
 use ngk::geometry::Plane;
 use ngk::model::Model;
@@ -58,6 +59,17 @@ fn compliant_shapes() -> Vec<(&'static str, Model<StandardPayload>)> {
                 .into_model()
                 .0,
         ),
+        (
+            "sphere",
+            solids::sphere(1.0).expect("a sphere builds").into_model().0,
+        ),
+        (
+            "torus",
+            solids::torus(3.0, 1.0)
+                .expect("a torus builds")
+                .into_model()
+                .0,
+        ),
     ]
 }
 
@@ -72,37 +84,24 @@ fn every_entity_of_an_ordinary_shape_occupies_exactly_one_raw_cell() {
     }
 }
 
-/// A face with no raw cell at all, which the rule forbids and this tree builds.
+/// A solid with a cavity spans two raw 3-cells, which the rule forbids.
 ///
-/// `solids::sphere` and `solids::torus` cover a closed support with one face
-/// carrying no loop, so the face names no dart and the map holds none. That is
-/// the "not zero" half of the rule going unmet, and it is why a shell anchors
-/// at a face key rather than at a dart, and why a face's dart is optional.
+/// Its outer shell and its void are two closed surfaces with nothing between
+/// them, so the `alpha0`/`alpha1`/`alpha2` walk from either never reaches the
+/// other. What would join them is a scaffold face the solid owns — the cut a
+/// boundary walk turns across rather than crosses, which is what keeps the two
+/// shells two shells while the material is one cell. Nothing in this tree
+/// synthesises one yet, so a cavity is the one shape the inventory still
+/// reports, and it is why the check is not part of commit.
 #[test]
-fn a_face_covering_a_closed_support_occupies_no_raw_cell() {
-    for (name, model) in [
-        (
-            "sphere",
-            solids::sphere(1.0)
-                .expect("a sphere builds")
-                .into_model()
-                .0,
-        ),
-        (
-            "torus",
-            solids::torus(3.0, 1.0)
-                .expect("a torus builds")
-                .into_model()
-                .0,
-        ),
-    ] {
-        let violations = cell_occupancy_violations(&model);
-        assert!(
-            violations
-                .iter()
-                .any(|violation| matches!(violation, CellOccupancyError::OccupiesNoCell { .. })),
-            "{name} covers a closed support with a face that names no dart, \
-             so it should report an entity occupying no cell; it reports {violations:?}",
-        );
-    }
+fn a_solid_with_a_cavity_spans_two_raw_cells() {
+    let (model, _) = crate::hollow::hollow_sphere(2.0, 1.0).into_model();
+    let violations = cell_occupancy_violations(&model);
+
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation, CellOccupancyError::SpansSeveralCells { .. })),
+        "a hollow sphere should report a solid spanning two cells; it reports {violations:?}",
+    );
 }

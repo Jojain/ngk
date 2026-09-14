@@ -26,7 +26,7 @@ use ngk::geometry::{
 };
 use ngk::model::Model;
 use ngk::topology::attributes::{
-    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, ShellRoot, SolidAttr, VertexAttr,
+    EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
 };
 use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
@@ -80,7 +80,7 @@ pub fn seamed_revolved_sphere(radius: f64) -> (Model<StandardPayload>, FaceKey, 
                 .face(face)
                 .expect("the revolved face is registered")
                 .dart();
-            let shell = ShellRoot::Dart(seed);
+            let shell = seed;
             edit.add_sheet(SheetAttr::new(shell, ()));
             Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new((), shell, None)))
         })
@@ -338,7 +338,7 @@ pub fn seamed_torus(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey,
                 .face(face)
                 .expect("the torus face is registered")
                 .dart();
-            let shell = ShellRoot::Dart(seed);
+            let shell = seed;
             edit.add_sheet(SheetAttr::new(shell, ()));
             Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new((), shell, None)))
         })

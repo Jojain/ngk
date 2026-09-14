@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::shape_keys::EdgeKey;
 
-use super::cells::{EntityOwner, EmbeddingIndex};
+use super::cells::{EmbeddingIndex, EntityOwner};
 use super::region::LogicalRegion;
 use super::walk::turn;
 
@@ -348,9 +348,7 @@ pub enum BoundaryError {
         owner: EntityOwner,
     },
 
-    #[error(
-        "the boundary dart at {dart:?} is owned by {owner:?}, which is not a logical edge"
-    )]
+    #[error("the boundary dart at {dart:?} is owned by {owner:?}, which is not a logical edge")]
     BoundaryNotAnEdge {
         /// The dart on the boundary.
         dart: Dart,
