@@ -20,7 +20,7 @@ use crate::geometry::{
 ///
 /// Overlaps are reported only for the exactly coincident supports the table
 /// recognizes -- two collinear lines, two identical circles -- because those
-/// are the cases the subdivision search cannot settle at all. Everything else
+/// are the cases the embedding search cannot settle at all. Everything else
 /// is a finite set of crossings and tangencies.
 pub fn intersect_analytic_curves(
     a: &Curve,

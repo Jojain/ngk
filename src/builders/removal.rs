@@ -21,14 +21,14 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::geometry::{Axis2, DomainSide, LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
-use crate::model::{Cell1, Cell2, Model};
+use crate::model::{Cell0, Cell1, Cell2, Model};
 use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr, ShellRoot};
 use crate::topology::face::Face;
 use crate::topology::gmap::Dim;
 use crate::topology::orientation::Orientation;
-use crate::topology::profile::ProfileIterator;
+use crate::topology::profile::{Profile, ProfileIterator};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
-use crate::topology::subdivision::is_scaffold_cell;
+use crate::topology::embedding::{EntityOwner, is_embedded_cell};
 use crate::topology::{Dart, IsolatedDart, ModelEdit, ModelEditError, Payload};
 
 /// Failure raised while removing a cell from a staged map.
@@ -238,22 +238,36 @@ pub fn remove_cell_staged<P: Payload>(
     reseed_attributes(edit, &cell_set, &seeds, &shell_senses);
     drop_pcurves(edit, &cell_set);
 
-    for &d in &cell {
-        for dimension in [Dim::Zero, Dim::One, Dim::Two, Dim::Three] {
-            if !edit.is_free(d, dimension) {
-                edit.unlink(dimension, d)?;
+    // The last boundary of a face cannot be taken away, only stopped being a
+    // boundary. A whole sphere is one face over one raw 2-cell with an edge and
+    // two poles embedded in it, and that cell is the very one this removal was
+    // asked to delete -- so the map is left exactly as it stands and only the
+    // logical reading of it changes.
+    let demoted = matches!(plan, MergePlan::Unbounded { .. });
+    if !demoted {
+        for &d in &cell {
+            for dimension in [Dim::Zero, Dim::One, Dim::Two, Dim::Three] {
+                if !edit.is_free(d, dimension) {
+                    edit.unlink(dimension, d)?;
+                }
             }
         }
-    }
-    for (first, second) in pairs {
-        edit.link(dim, first, second)?;
+        for (first, second) in pairs {
+            edit.link(dim, first, second)?;
+        }
     }
 
     // Identity bookkeeping runs on the rewired map but before dart ids are
     // compacted, so every dart the plan captured is still addressable.
     let merged = plan.apply(edit);
 
-    let mut removed = cell;
+    let mut removed = match (demoted, merged) {
+        (true, MergedCell::Unbounded { face, .. }) => {
+            embed_in_face(edit, face, &cell);
+            Vec::new()
+        }
+        _ => cell,
+    };
     removed.sort_by_key(|d| d.id());
     let remap =
         edit.remove_isolated_darts(removed.iter().copied().map(IsolatedDart::new).collect());
@@ -262,6 +276,35 @@ pub fn remove_cell_staged<P: Payload>(
         merged,
         remap,
     })
+}
+
+/// Records the cell a boundaryless face is left standing on as its own.
+///
+/// The face has just lost its last logical boundary and still occupies the raw
+/// 2-cell it always did. The edge that used to bound it, and the corners that
+/// edge met, are what that cell is made of, so they stay in the map and become
+/// cells embedded in the face: no longer anything a user can select, and no
+/// longer anything the boundary walk emits.
+///
+/// The vertices go with them. A whole sphere has no corner anything meets at,
+/// so the logical vertices are dropped and their 0-cells are recorded as
+/// interior to the face, which is what `point_at_dart` still reads a position
+/// from.
+fn embed_in_face<P: Payload>(edit: &mut ModelEdit<'_, P>, face: FaceKey, cell: &[Dart]) {
+    let Some(&anchor) = cell.first() else {
+        return;
+    };
+    let owner = EntityOwner::Face(face);
+    edit.own_cell(Dim::One, anchor, owner);
+
+    let corners = cell
+        .iter()
+        .filter_map(|&dart| Some((edit.model().cell_key::<Cell0>(dart)?, dart)))
+        .collect::<Vec<_>>();
+    for (key, dart) in corners {
+        edit.remove_vertex(key);
+        edit.own_cell(Dim::Zero, dart, owner);
+    }
 }
 
 /// What a removal would do to the identities around a cell.
@@ -550,9 +593,13 @@ impl MergePlan {
         };
 
         let reference = boundaries[*rejoined];
+        // The chain, not the raw orbit: once a face owns a cut, one raw
+        // alpha0/alpha1 orbit runs through every loop the face has, so the seed
+        // this picks for the rejoined boundary would come from a loop the
+        // removal never touched.
         let surviving = affected
             .iter()
-            .flat_map(|&index| g.orbit(boundaries[index], vec![0, 1]))
+            .flat_map(|&index| ProfileIterator::component(g, boundaries[index]))
             .filter(|d| !cell_set.contains(d))
             .collect::<HashSet<_>>();
         if surviving.is_empty() {
@@ -882,7 +929,8 @@ impl MergePlan {
         let consumed_loop_is_outer = g.profile_key(attr.outer_unchecked()) == Some(consumed_loop);
         let loop_disappears = [survivor_loop, consumed_loop].into_iter().all(|profile| {
             let seed = g.profile_attr_unchecked(profile).dart;
-            g.orbit(seed, vec![0, 1])
+            ProfileIterator::component(g, seed)
+                .into_iter()
                 .all(|loop_dart| cell_set.contains(&loop_dart))
         });
         if survivor_loop_is_inner && consumed_loop_is_outer && loop_disappears {
@@ -930,8 +978,8 @@ impl MergePlan {
                     // The absorbed identity is dropped at commit, but until then
                     // it must still name a dart the map holds.
                     edit.profile_attr_mut_unchecked(consumed).dart = seed;
-                    edit.merge_profiles_into(survivor_loop, consumed);
                 }
+                merge_rejoined_profiles(edit, survivor_loop);
                 let attr = edit.face_attr_mut_unchecked(face);
                 attr.set_outer(boundaries[0]);
                 attr.set_inner(boundaries[1..].to_vec());
@@ -968,7 +1016,9 @@ impl MergePlan {
                     LoopKind::Capping { axis, side },
                 )];
                 loops.extend(untouched);
-                edit.face_attr_mut_unchecked(face).loops = loops;
+                let attr = edit.face_attr_mut_unchecked(face);
+                let anchor = attr.seed();
+                attr.set_boundary(loops, anchor);
                 MergedCell::Cap {
                     face,
                     survivor_loop,
@@ -994,7 +1044,9 @@ impl MergePlan {
                     LoopDefinition::from_kind(added, LoopKind::Wrapping { axis }),
                 ];
                 loops.extend(untouched);
-                edit.face_attr_mut_unchecked(face).loops = loops;
+                let attr = edit.face_attr_mut_unchecked(face);
+                let anchor = attr.seed();
+                attr.set_boundary(loops, anchor);
                 // Removing the seam took away an edge, not the connectivity: the
                 // two halves it was hiding are still one face, and a cut the
                 // face owns is what says so now that no edge does.
@@ -1017,7 +1069,11 @@ impl MergePlan {
                 }
                 for key in std::iter::once(face).chain(face_aliases) {
                     let attr = edit.face_attr_mut_unchecked(key);
-                    attr.loops.clear();
+                    // The face keeps the 2-cell it always had; only its boundary
+                    // is gone. It anchors at the dart its own loop named, which
+                    // the dart compaction after this pass carries forward.
+                    let anchor = attr.seed();
+                    attr.set_boundary(Vec::new(), anchor);
                     attr.pcurves.clear();
                 }
                 MergedCell::Unbounded { face, profile }
@@ -1117,6 +1173,37 @@ impl MergePlan {
                 }
             }
         }
+    }
+}
+
+/// Declares every profile identity the rejoin left sharing one chain.
+///
+/// The plan names the boundaries it rejoins by the profile keys carried on the
+/// removed cell, which is not the whole answer once a face owns a cut: a chain
+/// the cut reaches can be pulled into the survivor's component without any of
+/// its keys ever appearing on the cell. The map after the rejoin is the
+/// authoritative reading, so this asks it — every remaining key whose own walk
+/// now arrives at the survivor's chain describes the survivor.
+///
+/// Keys an earlier pass of the same transaction already declared merged are
+/// left alone: a key may be spoken for once, and its chain already ends
+/// somewhere commit can resolve.
+fn merge_rejoined_profiles<P: Payload>(edit: &mut ModelEdit<'_, P>, survivor: ProfileKey) {
+    let survivor = edit.merged_profile_survivor(survivor);
+    let seed = edit.profile_attr_unchecked(survivor).dart;
+    let representative = Profile::representative(edit.model(), seed);
+    let rejoined = edit
+        .model()
+        .iter_profiles()
+        .map(|(key, attr)| (key, attr.dart))
+        .filter(|&(key, dart)| {
+            key != survivor && Profile::representative(edit.model(), dart) == representative
+        })
+        .map(|(key, _)| key)
+        .filter(|&key| edit.merged_profile_survivor(key) == key)
+        .collect::<Vec<_>>();
+    for removed in rejoined {
+        edit.merge_profiles_into(survivor, removed);
     }
 }
 
@@ -1431,10 +1518,6 @@ fn reseed_attributes<P: Payload>(
         // faces around an edge, which is not where the rest of a chain lies. A
         // seed it cannot replace therefore says nothing about whether the
         // profile survives, and the profile's own walk has to be asked.
-        // A profile is a chain, not a cell: the Def. 59 path steps across the
-        // faces around an edge, which is not where the rest of a chain lies. A
-        // seed it cannot replace therefore says nothing about whether the
-        // profile survives, and the profile's own walk has to be asked.
         let replacement = dart.or_else(|| {
             surviving_profile_dart(
                 edit.model(),
@@ -1521,7 +1604,7 @@ fn surviving_profile_dart<P: Payload>(
     // as a single profile.
     ProfileIterator::new(g, dart).step_by(2).find(|walked| {
         !cell.contains(walked)
-            && !is_scaffold_cell(g.topology(), g.subdivision(), Dim::One, *walked)
+            && !is_embedded_cell(g.topology(), g.embedding(), Dim::One, *walked)
     })
 }
 
@@ -1542,10 +1625,15 @@ fn rerooted_shell<P: Payload>(
     shell_senses: &HashMap<Dart, Orientation>,
     dart: Dart,
 ) -> Option<ShellRoot> {
+    // The Def. 59 step can land on a cut, because it looks across the faces
+    // around the removed edge without asking what it arrives on, and a cut is
+    // no root for the reason `shell_fallback` gives.
+    let bounds =
+        |candidate: Dart| !is_embedded_cell(g.topology(), g.embedding(), Dim::One, candidate);
     match seeds.get(&dart) {
         None => return Some(ShellRoot::Dart(dart)),
-        Some(Some(seed)) => return Some(ShellRoot::Dart(*seed)),
-        Some(None) => {}
+        Some(Some(seed)) if bounds(*seed) => return Some(ShellRoot::Dart(*seed)),
+        _ => {}
     }
     if let Some(dart) = shell_fallback(g, cell, dart) {
         return Some(ShellRoot::Dart(dart));
@@ -1607,8 +1695,12 @@ fn shell_sense<P: Payload>(g: &Model<P>, dart: Dart) -> Option<Orientation> {
 
 /// Returns a surviving dart of the shell rooted at `dart`.
 fn shell_fallback<P: Payload>(g: &Model<P>, cell: &HashSet<Dart>, dart: Dart) -> Option<Dart> {
-    g.orbit(dart, g.orbit_indices(Dim::Three))
-        .find(|d| !cell.contains(d))
+    g.orbit(dart, g.orbit_indices(Dim::Three)).find(|d| {
+        // A cut is interior to one face, so it bounds nothing and names no
+        // side of the shell. It also goes with the boundary it joined, so a
+        // shell rooted there would be rooted on a dart about to vanish.
+        !cell.contains(d) && !is_embedded_cell(g.topology(), g.embedding(), Dim::One, *d)
+    })
 }
 
 /// Collects the `(key, replacement)` pairs for single-dart attribute seeds.

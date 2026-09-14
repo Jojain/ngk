@@ -956,7 +956,7 @@ fn a_curve_crossing_a_plane_nine_times_is_fully_resolved() {
 fn crossing_cylinders_return_two_interior_loops_with_complete_coverage() {
     // Both intersection curves lie strictly inside the two unit-height patches
     // and never touch a patch boundary, so they are only found once a
-    // subdivision certifies that the parameter boxes hold no other loop.
+    // embedding certifies that the parameter boxes hold no other loop.
     // Different radii keep the crossing transverse everywhere.
     let upright = Surface::Cylinder(Cylinder::new(
         Point3::new(0.0, 0.0, -0.5),

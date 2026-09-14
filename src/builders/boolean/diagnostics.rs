@@ -122,7 +122,7 @@ impl BooleanDiagnostics {
             "  surface/surface calls  {} ({} analytic)\n  \
              curve/surface calls    {} ({} analytic)\n  \
              curve/curve calls      {} 3D ({} analytic), {} 2D\n  \
-             subdivision nodes      {}\n  \
+             embedding nodes      {}\n  \
              trace steps            {}\n  \
              newton iterations      {}\n  \
              branch fits            {}\n  \

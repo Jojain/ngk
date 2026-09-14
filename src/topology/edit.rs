@@ -14,7 +14,7 @@ use super::gmap::Dim;
 use super::orientation::Orientation;
 use super::payload::Payload;
 use super::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
-use super::subdivision::{EntityOwner, SubdivisionError};
+use super::embedding::{EntityOwner, EmbeddingError};
 use super::validation::{GMapValidationError, validate_gmap};
 use crate::model::{MergeHandle, MergeTopology, Model};
 
@@ -240,9 +240,9 @@ pub enum ModelEditError {
     /// The edited alpha relations do not satisfy the gmap axioms.
     #[error("this edit produced an invalid generalized map")]
     InvalidTopology(#[source] GMapValidationError),
-    /// The subdivision labels no longer describe the edited map.
-    #[error("this edit produced a subdivision that does not describe its map")]
-    InvalidSubdivision(#[source] SubdivisionError),
+    /// The embedding labels no longer describe the edited map.
+    #[error("this edit produced a embedding that does not describe its map")]
+    InvalidEmbedding(#[source] EmbeddingError),
     /// More than one attribute key describes the same domain cell.
     #[error("{entity} attributes contain duplicate keys for representative {representative:?}")]
     DuplicateCellAttribute {
@@ -589,6 +589,39 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
             .record_edit_event(EditEvent::ProfileMerge { survivor, removed });
     }
 
+    /// Follows the profile merges declared so far to the identity `profile`
+    /// will be reconciled into, which is `profile` itself when none names it.
+    ///
+    /// A pass that decides what merged by reading the map back sees keys an
+    /// earlier pass of the same transaction already spoke for, and a key may be
+    /// declared merged only once. Asking where it went, and declaring into that
+    /// identity instead, is what lets two removals rejoin overlapping sets of
+    /// boundaries without either having to know about the other.
+    pub(crate) fn merged_profile_survivor(&self, profile: ProfileKey) -> ProfileKey {
+        let mut current = profile;
+        // A chain that closes on itself is a mistake, and commit names it
+        // `MergeCycle`. This walk only has to reach that report rather than
+        // spin, so it stops at the first key it sees twice.
+        let mut visited = HashSet::from([current]);
+        while let Some(survivor) =
+            self.model
+                .staged_edit_events()
+                .iter()
+                .find_map(|event| match *event {
+                    EditEvent::ProfileMerge { survivor, removed } if removed == current => {
+                        Some(survivor)
+                    }
+                    _ => None,
+                })
+        {
+            if !visited.insert(survivor) {
+                break;
+            }
+            current = survivor;
+        }
+        current
+    }
+
     /// Declares that `removed` merged into `survivor`.
     pub fn merge_faces_into(&mut self, survivor: FaceKey, removed: FaceKey) {
         self.model
@@ -903,7 +936,7 @@ fn reroot_shells_at_darts<P: Payload>(g: &mut Model<P>) {
         let ShellRoot::Face { face, sense } = root else {
             continue;
         };
-        let Some(seed) = g.face_attr(face).and_then(|attr| attr.seed()) else {
+        let Some(seed) = g.face_attr(face).map(|attr| attr.seed()) else {
             continue;
         };
         let dart = match sense {
@@ -984,8 +1017,8 @@ where
     // that is exactly what an earlier check would reject. Only once
     // reconciliation has settled which keys survived does a second owner for
     // one orbit mean a contradiction rather than a pending merge.
-    g.validate_subdivision()
-        .map_err(ModelEditError::InvalidSubdivision)?;
+    g.validate_embedding()
+        .map_err(ModelEditError::InvalidEmbedding)?;
     g.invalidate_derived_indexes();
     let policy_events = resolve_policy_events(g, snapshot, events, &lineage);
     apply_policy_events(g, snapshot, &policy_events, policy)?;

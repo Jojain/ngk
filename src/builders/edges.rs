@@ -11,7 +11,7 @@ use crate::topology::edit::ModelEditError;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, VertexKey};
-use crate::topology::subdivision::EntityOwner;
+use crate::topology::embedding::EntityOwner;
 use thiserror::Error;
 
 /// What cutting an edge left behind.

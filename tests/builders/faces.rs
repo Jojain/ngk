@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::f64::consts::TAU;
 
 use nalgebra::Vector3;
 use ngk::builders::edges::add_line;
@@ -10,8 +11,8 @@ use ngk::builders::faces::{
 use ngk::builders::profiles::add_polyline;
 use ngk::builders::sheets::add_extruded_profile;
 use ngk::geometry::{
-    Curve, Curve2, LINEAR_TOLERANCE, NurbsCurve2, Plane, Point2, Point3, PointCoincidence, Surface,
-    TrimmedCurve2,
+    Circle, Curve, Curve2, LINEAR_TOLERANCE, NurbsCurve2, Plane, Point2, Point3, PointCoincidence,
+    Surface, TrimmedCurve2,
 };
 
 use ngk::modeling::solids;
@@ -23,6 +24,92 @@ use ngk::topology::ModelEditError;
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
+use ngk::topology::embedding::{EntityOwner, recover_region};
+use ngk::topology::validation::{
+    validate_gmap, validate_solid_manifold, validate_solid_orientation,
+};
+
+#[test]
+fn wrapping_imprints_partition_a_cylinder_wall_into_connected_rings() {
+    for reverse in [false, true] {
+        let (mut g, solid) = solids::cylinder(1.0, 3.0).unwrap().into_model();
+        let wall = g
+            .iter_faces()
+            .find(|(_, attr)| matches!(attr.surface, Surface::Cylinder(_)))
+            .map(|(key, _)| key)
+            .unwrap();
+        let imprints = [1.0, 2.0].map(|height| {
+            let circle = Curve::Circle(Circle::new(
+                Plane::new(Point3::new(0.0, 0.0, height), Vector3::x(), Vector3::z()),
+                1.0,
+            ));
+            let imprint = FaceImprint::new(
+                circle,
+                TrimmedCurve2::segment(Point2::new(0.0, height), Point2::new(TAU, height)),
+            );
+            if reverse {
+                FaceImprint::with_section(imprint.curve.reversed(), imprint.pcurve.reversed())
+            } else {
+                imprint
+            }
+        });
+        let splits = split_face_by_imprints(&mut g, wall, &imprints).unwrap();
+        assert_eq!(splits.len(), 2);
+        assert!(
+            splits.iter().any(|split| split.first == wall),
+            "the source face survives"
+        );
+        assert_eq!(g.iter_faces().count(), 5);
+        assert_eq!(
+            g.iter_edges().count(),
+            4,
+            "only the two section edges are added"
+        );
+        for (key, _) in g
+            .iter_faces()
+            .filter(|(_, attr)| matches!(attr.surface, Surface::Cylinder(_)))
+        {
+            let face = g.face_unchecked(key);
+            let loops = face.loops();
+            assert_eq!(loops.len(), 2);
+            assert!(
+                loops
+                    .iter()
+                    .all(|boundary| boundary.wrapping_axis().is_some())
+            );
+            let region = recover_region(
+                g.topology(),
+                g.embedding_index(),
+                EntityOwner::Face(key),
+                loops[0].dart(),
+            )
+            .unwrap();
+            assert_eq!(
+                region.cells(g.topology()).len(),
+                1,
+                "each ring occupies one 2-cell"
+            );
+            for edge in face.edges() {
+                let pcurve = face.pcurve(edge.dart()).unwrap();
+                let section = edge.trimmed_curve().unwrap();
+                for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                    let uv = pcurve.point_at(fraction);
+                    assert!(
+                        face.point_at(uv.x, uv.y)
+                            .coincides(section.point_at(fraction), LINEAR_TOLERANCE),
+                        "reversed={reverse}, face={key:?}, edge={:?}, fraction={fraction}, surface={:?}, curve={:?}",
+                        edge.key(),
+                        face.point_at(uv.x, uv.y),
+                        section.point_at(fraction)
+                    );
+                }
+            }
+        }
+        validate_gmap(g.topology()).unwrap();
+        validate_solid_manifold(&g, solid).unwrap();
+        validate_solid_orientation(&g, solid).unwrap();
+    }
+}
 
 #[test]
 fn connected_imprints_split_a_face_and_retain_each_section() {

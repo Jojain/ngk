@@ -33,7 +33,7 @@ pub struct SolverCounters {
     pub curve_curve_analytic_calls: u64,
     /// 2D curve/curve queries entered.
     pub curve_curve_2d_calls: u64,
-    /// Subdivision nodes visited across every bounded search.
+    /// Embedding nodes visited across every bounded search.
     pub subdivision_nodes: u64,
     /// Corrector steps taken while marching a surface/surface branch.
     pub trace_steps: u64,
@@ -149,7 +149,7 @@ pub(crate) fn count_curve_curve_2d_call() {
     record(|counters| counters.curve_curve_2d_calls += 1);
 }
 
-/// Counts one subdivision node visit.
+/// Counts one embedding node visit.
 #[inline]
 pub(crate) fn count_subdivision_node() {
     record(|counters| counters.subdivision_nodes += 1);

@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
 use nalgebra::Vector3;
-use ngk::viz::debug_viewer::show;
 use radians::Rad64;
 
 use ngk::builders::edges::{add_circle, add_edge, split_edge};
@@ -913,7 +912,6 @@ fn revolve_face_full_turn_of_an_offset_rectangle_closes_its_shell() {
         Rad64::FULL_TURN,
     )
     .expect("a full turn should build");
-    show(&g);
 
     // Four bands, one per source edge, bounded by the four circles the corners
     // swept — and by nothing else. A seam on either annulus would show up as a

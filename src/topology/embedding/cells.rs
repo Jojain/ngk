@@ -39,7 +39,7 @@ impl EntityOwner {
     }
 }
 
-/// One raw cell's ownership, read out of a [`Subdivision`].
+/// One raw cell's ownership, read out of a [`Embedding`].
 ///
 /// This is a view assembled on the way out, not a stored row: the dimension is
 /// the shelf the entry sits on and the representative is its key. The
@@ -47,7 +47,7 @@ impl EntityOwner {
 /// refinement that destroys this dart re-anchors the entry on a surviving dart
 /// of the same orbit rather than allocating a second one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OrbitOwnership {
+pub struct EmbeddedCell {
     /// Dimension of the raw cell this entry labels.
     pub dimension: Dim,
     /// A dart of the labelled orbit.
@@ -56,12 +56,13 @@ pub struct OrbitOwnership {
     pub owner: EntityOwner,
 }
 
-/// The authoritative classification of one map's raw cells.
+/// Which raw cells of one map are embedded in an entity larger than themselves.
 ///
-/// One entry per labelled orbit and nothing else. The set of darts an entity
-/// covers is not stored: it is recovered by walking the map, which is what
-/// keeps the classification valid across a refinement the entity did not ask
-/// for.
+/// One entry per recorded orbit and nothing else, and every entry names a cell
+/// no entity of its own dimension occupies -- so "has an entry here" and "is
+/// embedded" are one question. Where an entity's *own* cell is does not appear:
+/// that comes from the entity's anchor, and storing it too would be a second
+/// record of the same fact, free to disagree with the first.
 ///
 /// Entries live on one shelf per cell dimension, keyed by a representative
 /// dart, so a cell's dimension is where its entry is rather than a field that
@@ -74,11 +75,11 @@ pub struct OrbitOwnership {
 /// enumeration and serialization are deterministic. Ordering here is a
 /// property callers are entitled to, not an accident of a hasher.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Subdivision {
+pub struct Embedding {
     cells: [BTreeMap<Dart, EntityOwner>; GMAP_INVOLUTION_COUNT],
 }
 
-impl Default for Subdivision {
+impl Default for Embedding {
     fn default() -> Self {
         Self {
             cells: std::array::from_fn(|_| BTreeMap::new()),
@@ -86,7 +87,7 @@ impl Default for Subdivision {
     }
 }
 
-impl Subdivision {
+impl Embedding {
     /// Creates a classification with no labelled orbits.
     pub fn new() -> Self {
         Self::default()
@@ -96,7 +97,7 @@ impl Subdivision {
     ///
     /// Labelling the same anchor again replaces what it said. Two entries that
     /// reach one orbit by *different* anchors are still a contradiction, and
-    /// [`OwnershipIndex::build`] is where that is caught.
+    /// [`EmbeddingIndex::build`] is where that is caught.
     pub fn own(&mut self, dimension: Dim, representative: Dart, owner: EntityOwner) {
         self.cells[dimension.index()].insert(representative, owner);
     }
@@ -127,18 +128,18 @@ impl Subdivision {
     ///
     /// This is the stored entry, not the answer for the whole orbit: a dart of
     /// the same cell that is not the anchor returns `None`. Ask
-    /// [`OwnershipIndex::owner`] for the orbit-wide answer.
+    /// [`EmbeddingIndex::owner`] for the orbit-wide answer.
     pub fn owner_at(&self, dimension: Dim, representative: Dart) -> Option<EntityOwner> {
         self.cells[dimension.index()].get(&representative).copied()
     }
 
     /// Returns every entry, by ascending dimension and then by anchor.
-    pub fn records(&self) -> impl Iterator<Item = OrbitOwnership> + '_ {
+    pub fn records(&self) -> impl Iterator<Item = EmbeddedCell> + '_ {
         self.cells.iter().enumerate().flat_map(|(index, shelf)| {
             let dimension = Dim::from_index(index);
             shelf
                 .iter()
-                .map(move |(&representative, &owner)| OrbitOwnership {
+                .map(move |(&representative, &owner)| EmbeddedCell {
                     dimension,
                     representative,
                     owner,
@@ -147,7 +148,7 @@ impl Subdivision {
     }
 
     /// Returns the entries naming `owner`, in the same order as [`Self::records`].
-    pub fn records_of(&self, owner: EntityOwner) -> impl Iterator<Item = OrbitOwnership> + '_ {
+    pub fn records_of(&self, owner: EntityOwner) -> impl Iterator<Item = EmbeddedCell> + '_ {
         self.records().filter(move |record| record.owner == owner)
     }
 
@@ -165,8 +166,8 @@ impl Subdivision {
     ///
     /// This is the derived half of the classification: it is rebuilt from the
     /// records whenever the map changes, and is never serialized.
-    pub fn index(&self, map: &GMap) -> Result<OwnershipIndex, SubdivisionError> {
-        OwnershipIndex::build(map, self)
+    pub fn index(&self, map: &GMap) -> Result<EmbeddingIndex, EmbeddingError> {
+        EmbeddingIndex::build(map, self)
     }
 
     /// Adds the entries of `source` whose anchor *and* owner were copied.
@@ -183,7 +184,7 @@ impl Subdivision {
     /// by it.
     pub(crate) fn extend_remapped(
         &mut self,
-        source: &Subdivision,
+        source: &Embedding,
         darts: &HashMap<Dart, Dart>,
         owners: &OwnerRemap<'_>,
     ) {
@@ -227,20 +228,20 @@ impl OwnerRemap<'_> {
     }
 }
 
-/// Dart-to-owner lookup derived from a [`Subdivision`] and the map it labels.
+/// Dart-to-owner lookup derived from a [`Embedding`] and the map it labels.
 #[derive(Debug, Clone)]
-pub struct OwnershipIndex {
+pub struct EmbeddingIndex {
     owners: [HashMap<Dart, EntityOwner>; GMAP_INVOLUTION_COUNT],
 }
 
-impl OwnershipIndex {
+impl EmbeddingIndex {
     /// Expands the stored records across their orbits.
     ///
     /// Rejects a record whose representative is not a dart of `map`, a record
     /// whose owner is of lower dimension than the cell it labels, and two
     /// records that disagree about one orbit.
-    pub fn build(map: &GMap, subdivision: &Subdivision) -> Result<Self, SubdivisionError> {
-        Self::build_with_anchors(map, subdivision, std::iter::empty())
+    pub fn build(map: &GMap, embedding: &Embedding) -> Result<Self, EmbeddingError> {
+        Self::build_with_anchors(map, embedding, std::iter::empty())
     }
 
     /// Expands the stored records *and* the cells entities are anchored at.
@@ -267,15 +268,15 @@ impl OwnershipIndex {
     /// authoritative half and still conflicts loudly, with anything.
     pub fn build_with_anchors(
         map: &GMap,
-        subdivision: &Subdivision,
+        embedding: &Embedding,
         anchors: impl IntoIterator<Item = (Dim, Dart, EntityOwner)>,
-    ) -> Result<Self, SubdivisionError> {
+    ) -> Result<Self, EmbeddingError> {
         let mut owners: [HashMap<Dart, EntityOwner>; GMAP_INVOLUTION_COUNT] =
             std::array::from_fn(|_| HashMap::new());
 
-        let anchored: Vec<OrbitOwnership> = anchors
+        let anchored: Vec<EmbeddedCell> = anchors
             .into_iter()
-            .map(|(dimension, representative, owner)| OrbitOwnership {
+            .map(|(dimension, representative, owner)| EmbeddedCell {
                 dimension,
                 representative,
                 owner,
@@ -284,24 +285,33 @@ impl OwnershipIndex {
         let anchor_count = anchored.len();
         for (position, record) in anchored
             .into_iter()
-            .chain(subdivision.records())
+            .chain(embedding.records())
             .enumerate()
         {
             let is_anchor = position < anchor_count;
-            let OrbitOwnership {
+            let EmbeddedCell {
                 dimension,
                 representative,
                 owner,
             } = record;
 
             if representative.id() >= map.dart_count() {
-                return Err(SubdivisionError::DanglingRecord {
+                return Err(EmbeddingError::DanglingRecord {
                     dimension,
                     representative,
                 });
             }
-            if owner.dimension().index() < dimension.index() {
-                return Err(SubdivisionError::OwnerBelowCell {
+            // An anchor says where an entity's own cell is, so its owner is of
+            // exactly that dimension. A stored record says a cell is embedded
+            // in something larger, so its owner is of strictly greater
+            // dimension. Neither can be of lower dimension than the cell.
+            let expected = if is_anchor {
+                owner.dimension().index() == dimension.index()
+            } else {
+                owner.dimension().index() > dimension.index()
+            };
+            if !expected {
+                return Err(EmbeddingError::OwnerNotAboveCell {
                     dimension,
                     representative,
                     owner,
@@ -319,7 +329,7 @@ impl OwnershipIndex {
                     if is_anchor {
                         continue;
                     }
-                    return Err(SubdivisionError::ConflictingOwnership {
+                    return Err(EmbeddingError::ConflictingOwnership {
                         dimension,
                         dart,
                         held,
@@ -338,12 +348,12 @@ impl OwnershipIndex {
         self.owners[dimension.index()].get(&dart).copied()
     }
 
-    /// Reports whether the raw `dimension`-cell at `dart` is interior scaffold.
+    /// Reports whether the raw `dimension`-cell at `dart` is embedded in an
+    /// entity larger than itself.
     ///
-    /// A cell is scaffold when something of strictly higher dimension owns it:
-    /// a cylinder's seam edge inside its wall, a cut face inside a solid. Such
+    /// A cylinder's seam edge inside its wall, a cut face inside a solid. Such
     /// a cell is crossed by a traversal rather than emitted by it.
-    pub fn is_scaffold(&self, dimension: Dim, dart: Dart) -> bool {
+    pub fn is_embedded(&self, dimension: Dim, dart: Dart) -> bool {
         self.owner(dimension, dart)
             .is_some_and(|owner| owner.dimension().index() > dimension.index())
     }
@@ -351,7 +361,7 @@ impl OwnershipIndex {
 
 /// A classification that does not describe the map it labels.
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum SubdivisionError {
+pub enum EmbeddingError {
     #[error(
         "ownership record for a {dimension:?}-cell names {representative:?}, which is not a dart of the map"
     )]
@@ -363,9 +373,10 @@ pub enum SubdivisionError {
     },
 
     #[error(
-        "{owner:?} cannot own the {dimension:?}-cell at {representative:?}: an owner is never of lower dimension than the cell it contains"
+        "{owner:?} cannot be recorded as containing the {dimension:?}-cell at {representative:?}: \
+         a recorded cell is embedded in something of strictly greater dimension"
     )]
-    OwnerBelowCell {
+    OwnerNotAboveCell {
         /// Dimension of the labelled cell.
         dimension: Dim,
         /// The dart the record is anchored at.

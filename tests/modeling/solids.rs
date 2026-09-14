@@ -174,8 +174,8 @@ fn sphere_builds_a_well_formed_boundaryless_solid() {
             g.iter_edges().count(),
             g.iter_faces().count()
         ),
-        (0, 0, 0, 1),
-        "a sphere is one face and nothing else"
+        (4, 0, 0, 1),
+        "a sphere is one face over the bigon its embedded edge and poles make up"
     );
     let faces = shape.solid().faces();
     assert_eq!(faces.len(), 1);
@@ -188,7 +188,6 @@ fn sphere_builds_a_well_formed_boundaryless_solid() {
         face.loops().is_empty(),
         "a sphere face has no boundary loop"
     );
-    assert!(face.dart().is_none(), "a boundaryless face has no dart");
     assert_eq!(
         g.solid_attr_unchecked(shape.key()).outer_shell.face(),
         Some(face.key()),
@@ -261,8 +260,8 @@ fn torus_builds_a_well_formed_boundaryless_solid() {
             g.iter_edges().count(),
             g.iter_faces().count()
         ),
-        (0, 0, 0, 1),
-        "a torus is one face and nothing else"
+        (8, 0, 0, 1),
+        "a torus is one face over the square its embedded edges and vertex make up"
     );
 
     let faces = shape.solid().faces();
@@ -272,7 +271,6 @@ fn torus_builds_a_well_formed_boundaryless_solid() {
         "the primitive should instantiate a torus support directly"
     );
     assert!(face.loops().is_empty(), "a torus face has no boundary loop");
-    assert!(face.dart().is_none(), "a boundaryless face has no dart");
     assert_eq!(
         g.solid_attr_unchecked(shape.key()).outer_shell.face(),
         Some(face.key()),

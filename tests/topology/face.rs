@@ -39,7 +39,7 @@ fn face_point_at_is_defined_inside_a_trimmed_hole() {
 fn face_views_from_opposite_darts_reverse_boundary_and_normal() {
     let mut g = Model::<StandardPayload>::new();
     let face_key = add_circle(&mut g, Plane::xy(), 1.0).expect("circle face should build");
-    let default_dart = g.face_unchecked(face_key).dart_unchecked();
+    let default_dart = g.face_unchecked(face_key).dart();
     let reversed_dart = g.alpha(Dim::Zero, default_dart);
     let default_face = Face::from_dart(&g, default_dart).expect("face should resolve");
     let reversed_face = Face::from_dart(&g, reversed_dart).expect("face should resolve");
@@ -95,19 +95,20 @@ fn face_boundary_edges_preserve_their_exact_loop_darts() {
     let shape = solids::block(1.0, 2.0, 3.0).expect("block should build");
 
     for face in shape.solid().faces() {
-        // One dart per oriented edge use, which is what the walk reports; the
-        // raw dart list underneath it lengthens with every refinement.
-        let occurrences = face
+        // One dart per oriented edge the walk runs along, and each resolves to
+        // the edge it names without the walk's own dart being substituted.
+        let darts: Vec<_> = face
             .outer_loop()
             .expect("face should have an outer loop")
-            .occurrences();
+            .darts()
+            .collect();
         let edges = face
             .outer_loop()
             .expect("face should have an outer loop")
             .edges();
 
-        assert_eq!(edges.len(), occurrences.len());
-        for (edge, loop_dart) in edges.iter().zip(occurrences) {
+        assert_eq!(edges.len(), darts.len());
+        for (edge, loop_dart) in edges.iter().zip(darts) {
             assert_eq!(
                 edge.dart(),
                 loop_dart,
@@ -191,7 +192,7 @@ fn a_face_view_is_named_by_its_sense_not_by_the_dart_it_was_reached_from() {
 
     let reversed = face.reversed();
     let round_tripped =
-        Face::from_dart(&g, reversed.dart_unchecked()).expect("dart should resolve its face");
+        Face::from_dart(&g, reversed.dart()).expect("dart should resolve its face");
 
     assert_eq!(reversed.sense(), Orientation::Reversed);
     assert_eq!(round_tripped.sense(), Orientation::Reversed);

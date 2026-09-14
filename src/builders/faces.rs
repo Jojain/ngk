@@ -9,13 +9,13 @@ use crate::builders::errors::{FaceCreationError, ModelEditFailure};
 use crate::builders::profiles::{
     add_rectangle_staged as add_rectangle_profile_staged, profile_pcurves,
 };
-use crate::builders::scaffold::cut_between_loops;
+use crate::builders::scaffold::{CutAttachment, cut_between_loops};
 use crate::geometry::{
     Axis2, Curve, CurveCurveIntersection2, CurveIntersectionError, DomainSide, Interval,
     LINEAR_TOLERANCE, NurbsError, Periodicity, Plane, Point2, Point3, Surface, SurfacePeriodicity,
     TrimmedCurve, TrimmedCurve2, Vector2,
 };
-use crate::model::{Cell1, Cell2, Model};
+use crate::model::{Cell1, Model};
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, VertexAttr,
 };
@@ -27,7 +27,7 @@ use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
-use crate::topology::subdivision::EntityOwner;
+use crate::topology::embedding::EntityOwner;
 use crate::topology::vertex::Vertex;
 use crate::topology::{ModelEdit, ModelEditError};
 use thiserror::Error;
@@ -72,6 +72,10 @@ pub enum FaceImprintSplitError {
     MissingPcurve { face: FaceKey, dart: Dart },
     #[error("no boundary of face {face:?} runs along its stored loop seed {dart:?}")]
     SeedNotOnBoundary { face: FaceKey, dart: Dart },
+    #[error("ring face {face:?} requires one cut attachment on loop {dart:?}")]
+    RingCutAttachment { face: FaceKey, dart: Dart },
+    #[error("the cut of face {face:?} at {dart:?} reaches no loop either half kept")]
+    CutReachesNoLoop { face: FaceKey, dart: Dart },
     #[error("missing vertex geometry at dart {dart:?}")]
     MissingVertexGeometry { dart: Dart },
     #[error("boundary edge at dart {dart:?} has no edge geometry")]
@@ -619,7 +623,7 @@ pub(crate) fn split_face_edge_staged<P: Payload>(
 /// normalized through [`FaceImprintGraph`] so coincident fragments are not
 /// inserted twice.
 ///
-/// Returns one [`FaceImprintSplit`] for each subdivision that was applied.
+/// Returns one [`FaceImprintSplit`] for each embedding that was applied.
 /// Imprints that do not define an applicable cut may produce no split rather
 /// than an error; invalid topology or missing geometry is reported as an error.
 pub fn split_face_by_imprints<P: Payload>(
@@ -1012,7 +1016,8 @@ fn split_boundaryless_face_by_wrapping_chain<P: Payload>(
     let face_attr = edit
         .face_attr_mut(face)
         .expect("source face must remain staged during a cap split");
-    face_attr.loops = cap(high, DomainSide::High);
+    let anchor = face_attr.seed();
+    face_attr.set_boundary(cap(high, DomainSide::High), anchor);
     face_attr.pcurves = high.pcurves.clone();
 
     let second = edit.add_face_split_from(
@@ -1062,7 +1067,7 @@ fn wrapping_chains<P: Payload>(
     // has no loops to name one, so every periodic axis is a candidate and the
     // chain's own travel picks the one it spans.
     let candidates = match attr.wrapping().collect::<Vec<_>>()[..] {
-        [(_, axis), (_, second_axis)] if axis == second_axis && attr.loops.len() == 2 => {
+        [(_, axis), (_, second_axis)] if axis == second_axis && attr.loops().len() == 2 => {
             vec![axis]
         }
         [] if attr.is_empty() => Axis2::ALL.into_iter().collect(),
@@ -1231,10 +1236,27 @@ fn split_ring_face_by_wrapping_chain<P: Payload>(
     let second_boundary = ring(second_seed, second_new.loop_dart);
     let first_boundary = ring(first_seed, first_new.loop_dart);
 
+    let boundary = edit
+        .face_unchecked(face)
+        .loop_from_seed(second_seed)
+        .starting_at(second_seed)
+        .ok_or(FaceImprintSplitError::SeedNotOnBoundary {
+            face,
+            dart: second_seed,
+        })?;
+    let attachment = CutAttachment::on_loop(edit, &boundary).ok_or(
+        FaceImprintSplitError::RingCutAttachment {
+            face,
+            dart: second_seed,
+        },
+    )?;
+    attachment.move_after(edit, first_new.loop_dart)?;
+
     let face_attr = edit
         .face_attr_mut(face)
         .expect("source face must remain staged during a ring split");
-    face_attr.loops = first_boundary;
+    let anchor = face_attr.seed();
+    face_attr.set_boundary(first_boundary, anchor);
     face_attr.pcurves = first_pcurves;
 
     let second = edit.add_face_split_from(
@@ -1246,6 +1268,7 @@ fn split_ring_face_by_wrapping_chain<P: Payload>(
             second_pcurves,
         ),
     );
+    cut_between_loops(edit, second, second_seed, second_new.loop_dart)?;
 
     Ok(FaceImprintSplit {
         first: face,
@@ -1442,9 +1465,7 @@ fn finish_closed_imprint_split<P: Payload>(
     // The face the island sits in reaches it along a cut it owns. Without one
     // the new hole would sit in a 2-cell of its own, leaving the face two
     // disconnected pieces that only its loop list joined up.
-    let reached_from = old_face
-        .seed()
-        .expect("a face taking an island already has a boundary to reach it from");
+    let reached_from = old_face.seed();
     cut_between_loops(edit, face, reached_from, outside_loop.loop_dart)?;
 
     let face_attr = edit
@@ -1490,7 +1511,7 @@ struct SectionLoopEdge {
     dart: Dart,
     start_uv: Point2,
     end_uv: Point2,
-    curve: Curve,
+    curve: TrimmedCurve,
     pcurve: TrimmedCurve2,
 }
 
@@ -1530,7 +1551,7 @@ fn add_section_loop<P: Payload>(
                 dart: darts[2 * edge],
                 start_uv: imprint.pcurve.point_at(0.0),
                 end_uv: imprint.pcurve.point_at(1.0),
-                curve: imprint.curve.curve().clone(),
+                curve: imprint.curve.clone(),
                 pcurve: imprint.pcurve.clone(),
             }
         })
@@ -1578,11 +1599,16 @@ fn sew_section_loops<P: Payload>(
     for (outside_edge, island_end) in pairs {
         edit.sew(Dim::Two, outside_edge.dart, island_end)
             .map_err(|source| FaceImprintSplitError::SectionLoopSewFailed { face, source })?;
-        edges.push(edit.add_edge(EdgeAttr::new(
-            outside_edge.dart,
-            outside_edge.curve.clone(),
-            P::E::default(),
-        )));
+        // The edge's default traversal follows the section, including its
+        // directed source interval. Orient the support to that traversal before
+        // discarding the span: a marked circle's corner cannot encode direction.
+        let interval = outside_edge.curve.interval();
+        let curve = if interval.end < interval.start {
+            outside_edge.curve.curve().reversed()
+        } else {
+            outside_edge.curve.curve().clone()
+        };
+        edges.push(edit.add_edge(EdgeAttr::new(outside_edge.dart, curve, P::E::default())));
     }
     Ok(edges)
 }
@@ -1708,7 +1734,7 @@ fn split_one_face_by_imprints<P: Payload>(
     let old_face = face_attr.clone();
     // A chord runs between two corners of one loop, so each bounding loop is
     // tried on its own: a ring has two, and the imprint chord lands on one.
-    let bounding = bounding_loops(&old_face.loops);
+    let bounding = bounding_loops(old_face.loops());
     for chorded in bounding {
         let boundary = loop_boundary_edges(edit, face, chorded.seed())?;
         let Some(cut) = FaceImprintCut::from_chain(imprints, &boundary)? else {
@@ -2040,6 +2066,21 @@ fn retraces_boundary(
     })
 }
 
+/// The cut a chord corner hands the boundary walk over on, when there is one.
+///
+/// A corner where the walk turns across a cut has no `alpha1` link between the
+/// occurrence it arrives on and the one it leaves on: the link off the arriving
+/// dart reaches the cut instead. That is the whole test, and it needs no
+/// classification, because on a corner with no cut the link reaches `outgoing`.
+fn corner_cut<P: Payload>(
+    edit: &ModelEdit<'_, P>,
+    previous_end: Dart,
+    outgoing: Dart,
+) -> Option<CutAttachment> {
+    let next = edit.alpha(Dim::One, previous_end);
+    (next != outgoing).then(|| CutAttachment::at(edit, next))
+}
+
 /// Cuts a face in two along a chord between two corners of one bounding loop.
 ///
 /// The chorded loop may be outer or wrapping. Chording an outer loop yields two
@@ -2082,6 +2123,21 @@ fn apply_face_chord_split<P: Payload>(
     // holds however the incoming edge is bounded.
     let start_previous_end = edit.alpha(Dim::Zero, start.incoming().dart());
     let end_previous_end = edit.alpha(Dim::Zero, end.incoming().dart());
+    // A chord corner is also where the face may reach another of its loops. The
+    // walk crosses that cut rather than emitting it, so the two occurrences it
+    // joins are not `alpha1`-linked and the splice cannot unlink them. It
+    // splices past the cut instead, which leaves the cut — and the loop beyond
+    // it — on the half the boundary arrives from. Whether that is the half the
+    // loop belongs to is a question about where the loop lies, answered once
+    // the halves are placed.
+    let start_cut = corner_cut(edit, start_previous_end, start_dart);
+    let end_cut = corner_cut(edit, end_previous_end, end_dart);
+    let start_entry = start_cut.as_ref().map_or(start_previous_end, |attachment| {
+        edit.alpha(Dim::Two, attachment.incoming())
+    });
+    let end_entry = end_cut.as_ref().map_or(end_previous_end, |attachment| {
+        edit.alpha(Dim::Two, attachment.incoming())
+    });
     let darts = cut
         .sections
         .iter()
@@ -2122,15 +2178,15 @@ fn apply_face_chord_split<P: Payload>(
     let pcurve_ab = old_face.pcurves[&ab_start].clone();
     let pcurve_ba = old_face.pcurves[&ba_start].clone();
 
-    edit.unlink(Dim::One, start_previous_end)
+    edit.unlink(Dim::One, start_entry)
         .expect("split start corner must be alpha1-linked");
-    edit.unlink(Dim::One, end_previous_end)
+    edit.unlink(Dim::One, end_entry)
         .expect("split end corner must be alpha1-linked");
-    edit.link(Dim::One, start_previous_end, ab_start)
+    edit.link(Dim::One, start_entry, ab_start)
         .expect("split start must be alpha1-free after unlink");
     edit.link(Dim::One, ab_end, end_dart)
         .expect("section endpoint must be alpha1-free");
-    edit.link(Dim::One, end_previous_end, ba_start)
+    edit.link(Dim::One, end_entry, ba_start)
         .expect("split end must be alpha1-free after unlink");
     edit.link(Dim::One, ba_end, start_dart)
         .expect("section endpoint must be alpha1-free");
@@ -2169,8 +2225,13 @@ fn apply_face_chord_split<P: Payload>(
         ab_start,
         &pcurve_ab,
     )?;
-    let source_uses_start_loop = edit.cell_key::<Cell2>(start_dart) == Some(original_face);
-    let source_uses_end_loop = edit.cell_key::<Cell2>(end_dart) == Some(original_face);
+    // The source keeps the half its chorded loop was seeded on. Asking the
+    // 2-cell which face is registered in it would not say: a cut carries the
+    // face's other loops into one of the halves, and those loops are seeded on
+    // the source too, so both halves would answer yes.
+    let chorded_cell = edit.cell_representative(chorded.seed(), Dim::Two);
+    let source_uses_start_loop = edit.cell_representative(start_dart, Dim::Two) == chorded_cell;
+    let source_uses_end_loop = edit.cell_representative(end_dart, Dim::Two) == chorded_cell;
     assert_ne!(
         source_uses_start_loop, source_uses_end_loop,
         "exactly one split region must contain the source face root"
@@ -2244,7 +2305,7 @@ fn apply_face_chord_split<P: Payload>(
     // bounded in that axis, so every other wrapping loop belongs to the half
     // that still wraps. No sampling can answer this, and none needs to.
     let source_wraps = source_kind.wrapped_axis().is_some();
-    for other in bounding_loops(&old_face.loops)
+    for other in bounding_loops(old_face.loops())
         .into_iter()
         .filter(|other| other.seed() != chorded.seed())
     {
@@ -2273,11 +2334,21 @@ fn apply_face_chord_split<P: Payload>(
             .map(|dart| LoopDefinition::from_kind(dart, LoopKind::Inner)),
     );
 
+    let source_seeds = source_loops
+        .iter()
+        .map(|definition| definition.seed())
+        .collect::<Vec<_>>();
+    let created_seeds = created_loops
+        .iter()
+        .map(|definition| definition.seed())
+        .collect::<Vec<_>>();
+
     let source_attr = edit
         .face_attr_mut(original_face)
         .expect("source face must remain staged during a chord split");
     source_attr.surface = old_face.surface.clone();
-    source_attr.loops = source_loops;
+    let anchor = source_attr.seed();
+    source_attr.set_boundary(source_loops, anchor);
     source_attr.pcurves = source_pcurves;
 
     let second = edit.add_face_split_from(
@@ -2289,6 +2360,36 @@ fn apply_face_chord_split<P: Payload>(
             created_pcurves,
         ),
     );
+
+    // The splice left each corner's cut on the half the walk arrived from,
+    // which is where it belongs only if the loop it reaches was placed there
+    // too. A cut has no identity, so following the loop is one relink; the
+    // label follows as well, because a cut is scaffold of whichever face's
+    // 2-cell its word runs through.
+    for (attachment, splice_half) in [(start_cut, end_dart), (end_cut, start_dart)] {
+        let Some(attachment) = attachment else {
+            continue;
+        };
+        let reached = edit.profile_key(attachment.across(edit));
+        let carries = |seeds: &[Dart]| {
+            reached.is_some() && seeds.iter().any(|&seed| edit.profile_key(seed) == reached)
+        };
+        let (half, owner) = if carries(&source_seeds[1..]) {
+            (source_loop, original_face)
+        } else if carries(&created_seeds[1..]) {
+            (created_loop, second)
+        } else {
+            return Err(FaceImprintSplitError::CutReachesNoLoop {
+                face: original_face,
+                dart: attachment.incoming(),
+            });
+        };
+        let cut = attachment.incoming();
+        if half != splice_half {
+            attachment.move_after(edit, half)?;
+        }
+        edit.own_cell(Dim::One, cut, EntityOwner::Face(owner));
+    }
 
     Ok(FaceImprintSplit {
         first: original_face,
@@ -2835,7 +2936,7 @@ pub fn reverse_face_winding<P: Payload>(edit: &mut ModelEdit<'_, P>, face: FaceK
     // Reversing is atomic over the whole boundary: every loop seed becomes its
     // `alpha0`, whatever that loop bounds, and every pcurve is reversed onto
     // the dart that now carries it.
-    let mut loops = face_attr.loops.clone();
+    let mut loops = face_attr.loops().to_vec();
     for loop_ in &mut loops {
         loop_.set_seed(edit.alpha(Dim::Zero, loop_.seed()));
     }
@@ -2852,7 +2953,8 @@ pub fn reverse_face_winding<P: Payload>(edit: &mut ModelEdit<'_, P>, face: FaceK
         .collect();
 
     if let Some(face) = edit.face_attr_mut(face) {
-        face.loops = loops;
+        let anchor = face.seed();
+        face.set_boundary(loops, anchor);
         face.pcurves = pcurves;
     }
 }

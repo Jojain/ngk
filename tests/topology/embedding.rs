@@ -1,4 +1,4 @@
-//! The logical topology recovered from a pure Model subdivision.
+//! The logical topology recovered from a pure Model embedding.
 //!
 //! Each fixture is a raw map with no domain attribute on it at all, plus a
 //! labelling saying which logical entity's interior contains each raw cell.
@@ -7,9 +7,9 @@
 //! stored shell roots, no stored membership lists.
 
 use ngk::topology::gmap::{Dart, Dim};
-use ngk::topology::subdivision::{
-    EntityOwner, OwnershipIndex, RegionError, Subdivision, SubdivisionError, boundary_cycles,
-    boundary_shells, boundary_vertices, recover_all_regions, recover_region,
+use ngk::topology::embedding::{
+    Embedding, EmbeddingError, EntityOwner, boundary_cycles, boundary_shells, boundary_vertices,
+    recover_region,
 };
 use ngk::topology::validation::validate_gmap;
 
@@ -116,10 +116,10 @@ fn a_cylinder_wall_has_two_loops_and_never_emits_its_seam() {
     let seam = index.owner(Dim::One, Dart::new(2));
     assert_eq!(seam, Some(wall), "the seam belongs to the wall");
     for cycle in &cycles {
-        let uses = cycle
-            .logical_uses(&index)
-            .expect("every rim occurrence should belong to a logical edge");
-        assert_eq!(uses.len(), 1, "a rim is one closed edge used once");
+        let edges = cycle
+            .edge_keys(&index)
+            .expect("every rim dart should belong to a logical edge");
+        assert_eq!(edges.len(), 1, "a rim is one closed edge walked once");
         for &dart in cycle.darts() {
             assert_ne!(
                 index.owner(Dim::One, dart),
@@ -131,7 +131,7 @@ fn a_cylinder_wall_has_two_loops_and_never_emits_its_seam() {
 
     let rims: Vec<_> = cycles
         .iter()
-        .map(|cycle| cycle.logical_uses(&index).unwrap()[0].edge)
+        .map(|cycle| cycle.edge_keys(&index).unwrap()[0])
         .collect();
     assert_ne!(rims[0], rims[1], "the two rims are different edges");
 }
@@ -372,22 +372,23 @@ fn an_interior_label_on_an_exterior_face_is_rejected() {
     let solid = only(&scaffold, Dim::Three);
     let region = scaffold.region(solid);
 
-    // A face on the outside of the material, relabelled as if the solid ran
-    // through it. Nothing lies across it, so the region walk cannot continue.
+    // A face on the outside of the material, recorded as if the solid ran
+    // through it. A 2-cell embedded in a solid is a shape the rule allows --
+    // that is what a cut face inside a cavity is -- but this one already carries
+    // a face of its own, and a cell an entity occupies is not inside anything.
     let exterior = *region
         .frontier(&scaffold.index())
         .first()
         .expect("the solid has a boundary");
     let broken = scaffold.relabelled(Dim::Two, exterior, solid);
 
-    let index = broken
-        .index(scaffold.map())
-        .expect("labels stay consistent");
-    let failure = recover_region(scaffold.map(), &index, solid, scaffold.anchor(solid))
+    let failure = scaffold
+        .index_of(&broken)
         .expect_err("an exterior face cannot be interior to the solid");
     assert!(matches!(
         failure,
-        RegionError::InteriorBoundaryNotShared { .. }
+        EmbeddingError::ConflictingOwnership { held, claimed, .. }
+            if held.dimension() == Dim::Two && claimed == solid
     ));
 }
 
@@ -404,124 +405,120 @@ fn a_label_crossing_a_public_boundary_is_rejected() {
     .darts()[0];
     let broken = scaffold.relabelled(Dim::One, rim, wall);
 
-    let index = broken
-        .index(scaffold.map())
-        .expect("labels stay consistent");
-    let failure = recover_region(scaffold.map(), &index, wall, scaffold.anchor(wall))
+    let failure = scaffold
+        .index_of(&broken)
         .expect_err("a face cannot own the boundary it shares with another face");
     assert!(matches!(
         failure,
-        RegionError::ForeignCell { found, .. } if faces[1..].contains(&found)
+        EmbeddingError::ConflictingOwnership { held, claimed, .. }
+            if held.dimension() == Dim::One && claimed == wall
     ));
 }
 
 #[test]
-fn two_disconnected_patches_under_one_key_are_rejected() {
+fn two_patches_under_one_face_key_are_rejected() {
     let scaffold = sphere();
     let face = only(&scaffold, Dim::Two);
-    // Give the same key two faces of a cube and nothing between them, so the
-    // two patches never meet.
+    // Give the same key two 2-cells and nothing between them, so the two
+    // patches never meet. Neither record is legal on its own: a face occupies
+    // exactly one 2-cell and that cell comes from its anchor, so no record may
+    // name a 2-cell for a face at all.
     let quads: Vec<Dart> = scaffold.map().cells(Dim::Two).collect();
-    let mut separate = Subdivision::new();
+    let mut separate = Embedding::new();
     separate.own(Dim::Two, quads[0], face);
     separate.own(Dim::Two, quads[1], face);
 
-    let index = separate
-        .index(scaffold.map())
-        .expect("labels stay consistent");
-    let failure = recover_all_regions(scaffold.map(), &index, &separate)
+    let failure = scaffold
+        .index_of(&separate)
         .expect_err("one key cannot name two patches");
-    assert!(matches!(failure, RegionError::Disconnected { .. }));
+    assert!(matches!(failure, EmbeddingError::OwnerNotAboveCell { .. }));
 }
 
-/// Promotion is a correction to one anchor, not a second opinion about it.
+/// Re-recording one anchor is a correction to it, not a second opinion about it.
 ///
-/// A seam edge inside a face that becomes an edge in its own right is the
-/// motivating case: the cell does not move and no second entry appears, the
-/// one entry anchored there simply says something else afterwards.
+/// A seam edge that moves from one face's interior to another's is the
+/// motivating case: the cell does not move and no second entry appears, the one
+/// entry anchored there simply says something else afterwards.
 #[test]
-fn relabelling_an_anchor_replaces_what_it_said() {
+fn re_recording_an_anchor_replaces_what_it_said() {
     let mut scaffold = sphere();
     let face = only(&scaffold, Dim::Two);
-    let promoted = scaffold.edge();
+    let other = scaffold.face();
     let seam = Dart::new(0);
 
-    let mut subdivision = Subdivision::new();
-    subdivision.own(Dim::One, seam, face);
-    subdivision.own(Dim::One, seam, promoted);
+    let mut embedding = Embedding::new();
+    embedding.own(Dim::One, seam, face);
+    embedding.own(Dim::One, seam, other);
 
     assert_eq!(
-        subdivision.owner_at(Dim::One, seam),
-        Some(promoted),
-        "the later label is the one that stands",
+        embedding.owner_at(Dim::One, seam),
+        Some(other),
+        "the later record is the one that stands",
     );
     assert_eq!(
-        subdivision.records().count(),
+        embedding.records().count(),
         1,
         "and it replaced the earlier one rather than joining it",
     );
-    subdivision
-        .index(scaffold.map())
+    scaffold.index_of(&embedding)
         .expect("a replaced label leaves nothing to contradict");
 }
 
 #[test]
 fn two_entities_cannot_own_one_raw_cell() {
     let mut scaffold = sphere();
-    let face = only(&scaffold, Dim::Two);
+    let face = scaffold.face();
     let intruder = scaffold.face();
-    let mut contested = scaffold.relabelled(Dim::Two, Dart::new(0), face);
-    // A second anchor on the same quad. Reusing dart 0 would replace the label
-    // rather than contest it: an anchor holds one answer, and it is two anchors
-    // meeting on one orbit that the index has to reject.
-    let same_quad = scaffold.map().alpha(Dim::Zero, Dart::new(0));
-    contested.own(Dim::Two, same_quad, intruder);
+    let seam = Dart::new(0);
+    let mut contested = Embedding::new();
+    contested.own(Dim::One, seam, face);
+    // A second record on the same 1-cell. Re-recording `seam` itself would
+    // replace the first rather than contest it: one anchor holds one answer,
+    // and it is two anchors meeting on one orbit that the index has to reject.
+    let same_edge = scaffold.map().alpha(Dim::Zero, seam);
+    contested.own(Dim::One, same_edge, intruder);
 
-    let failure = contested
-        .index(scaffold.map())
+    let failure = scaffold.index_of(&contested)
         .expect_err("one cell cannot have two owners");
     assert!(matches!(
         failure,
-        SubdivisionError::ConflictingOwnership { held, claimed, .. }
+        EmbeddingError::ConflictingOwnership { held, claimed, .. }
             if held == face && claimed == intruder
     ));
 }
 
 #[test]
-fn an_owner_below_the_cell_it_labels_is_rejected() {
+fn an_owner_not_above_the_cell_it_records_is_rejected() {
     let mut scaffold = sphere();
     let edge = scaffold.edge();
-    let mut inverted = Subdivision::new();
+    let mut inverted = Embedding::new();
     inverted.own(Dim::Two, Dart::new(0), edge);
 
-    let failure = inverted
-        .index(scaffold.map())
+    let failure = scaffold.index_of(&inverted)
         .expect_err("an edge cannot contain a face");
-    assert!(matches!(failure, SubdivisionError::OwnerBelowCell { .. }));
+    assert!(matches!(failure, EmbeddingError::OwnerNotAboveCell { .. }));
 }
 
 #[test]
 fn a_record_anchored_outside_the_map_is_rejected() {
     let scaffold = sphere();
-    let mut dangling = Subdivision::new();
+    let mut dangling = Embedding::new();
     dangling.own(
         Dim::Two,
         Dart::new(scaffold.map().dart_count()),
-        only(&scaffold, Dim::Two),
+        EntityOwner::Solid(Default::default()),
     );
 
-    let failure = dangling
-        .index(scaffold.map())
+    let failure = scaffold.index_of(&dangling)
         .expect_err("a record must name a dart that exists");
-    assert!(matches!(failure, SubdivisionError::DanglingRecord { .. }));
+    assert!(matches!(failure, EmbeddingError::DanglingRecord { .. }));
 }
 
 #[test]
 fn rebuilding_the_index_answers_exactly_as_the_first_one_did() {
     let scaffold = block_cells(&handle_cells());
     let first = scaffold.index();
-    let second = OwnershipIndex::build(scaffold.map(), scaffold.subdivision())
-        .expect("rebuilding the index should succeed");
+    let second = scaffold.index();
 
     for dart in scaffold.map().darts() {
         for dimension in [Dim::Zero, Dim::One, Dim::Two, Dim::Three] {

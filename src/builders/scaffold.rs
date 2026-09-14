@@ -12,11 +12,82 @@
 //!
 //! [`EdgeKey`]: crate::topology::shape_keys::EdgeKey
 
+use crate::topology::face::Loop;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::FaceKey;
-use crate::topology::subdivision::EntityOwner;
+use crate::topology::embedding::{EntityOwner, is_embedded_cell};
 use crate::topology::{ModelEdit, ModelEditError};
+
+/// One end of a cut, directed from an arriving boundary dart into the cut.
+/// Moving it changes only scaffold connectivity; the boundary keeps its keys.
+pub(crate) struct CutAttachment {
+    incoming: Dart,
+    outgoing: Dart,
+}
+
+impl CutAttachment {
+    /// Finds the unique cut leaving this loop in its traversal direction.
+    /// Returns `None` when the loop has no cut or several attachments.
+    pub(crate) fn on_loop<P: Payload>(
+        edit: &ModelEdit<'_, P>,
+        boundary: &Loop<'_, P>,
+    ) -> Option<Self> {
+        let mut cuts = boundary.darts().filter_map(|dart| {
+            let incoming = edit.alpha(Dim::One, edit.alpha(Dim::Zero, dart));
+            is_embedded_cell(edit.topology(), edit.embedding(), Dim::One, incoming)
+                .then_some(incoming)
+        });
+        let incoming = cuts.next()?;
+        if cuts.next().is_some() {
+            return None;
+        }
+        Some(Self::at(edit, incoming))
+    }
+
+    /// Reads the attachment whose two uses are the darts of `incoming`'s cut.
+    ///
+    /// `incoming` is the cut dart a boundary walk arrives on, so the walk
+    /// leaves the cut again on its `alpha2` partner. A caller that already
+    /// holds that dart — a splice that just read it off a corner — names it
+    /// here rather than searching a loop for it.
+    pub(crate) fn at<P: Payload>(edit: &ModelEdit<'_, P>, incoming: Dart) -> Self {
+        Self {
+            incoming,
+            outgoing: edit.alpha(Dim::Two, incoming),
+        }
+    }
+
+    /// Returns a dart of the boundary this cut reaches across.
+    pub(crate) fn across<P: Payload>(&self, edit: &ModelEdit<'_, P>) -> Dart {
+        edit.alpha(Dim::One, edit.alpha(Dim::Zero, self.incoming))
+    }
+
+    /// Returns the dart the arriving boundary hands the walk over on.
+    pub(crate) fn incoming(&self) -> Dart {
+        self.incoming
+    }
+
+    /// Closes the old boundary gap and inserts the attachment after `boundary`.
+    /// The destination runs in the same direction as the detached loop.
+    pub(crate) fn move_after<P: Payload>(
+        self,
+        edit: &mut ModelEdit<'_, P>,
+        boundary: Dart,
+    ) -> Result<(), ModelEditError> {
+        let old_end = edit.alpha(Dim::One, self.incoming);
+        let old_next = edit.alpha(Dim::One, self.outgoing);
+        let new_end = edit.alpha(Dim::Zero, boundary);
+        let new_next = edit.alpha(Dim::One, new_end);
+        for dart in [self.incoming, self.outgoing, new_end] {
+            edit.unlink(Dim::One, dart)?;
+        }
+        edit.link(Dim::One, old_end, old_next)?;
+        edit.link(Dim::One, new_end, self.incoming)?;
+        edit.link(Dim::One, self.outgoing, new_next)?;
+        Ok(())
+    }
+}
 
 /// Joins two closed boundary loops of one face with a cut the face owns.
 ///
@@ -41,8 +112,8 @@ use crate::topology::{ModelEdit, ModelEditError};
 /// is what hides it from [`boundary_cycles`] and lets [`recover_region`] cross
 /// it.
 ///
-/// [`boundary_cycles`]: crate::topology::subdivision::boundary_cycles
-/// [`recover_region`]: crate::topology::subdivision::recover_region
+/// [`boundary_cycles`]: crate::topology::embedding::boundary_cycles
+/// [`recover_region`]: crate::topology::embedding::recover_region
 pub(crate) fn cut_between_loops<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face: FaceKey,

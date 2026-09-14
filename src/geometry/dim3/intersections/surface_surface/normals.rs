@@ -2,7 +2,7 @@
 //!
 //! A patch that is nowhere parallel to another patch cannot meet it in a closed
 //! loop (Sederberg and Meyers, *Loop detection in surface patch intersections*),
-//! which is what lets a subdivision search stop without hunting for interior
+//! which is what lets a embedding search stop without hunting for interior
 //! loops. Making that argument requires a sound outer bound on the directions a
 //! patch normal can take, and that is what this module computes.
 //!

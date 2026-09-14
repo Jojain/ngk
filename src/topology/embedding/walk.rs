@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::topology::gmap::{Dart, Dim, GMap};
 
-use super::ownership::{OwnershipIndex, Subdivision};
+use super::cells::{EmbeddingIndex, Embedding};
 
 /// Turns from `dart` to the next raw `dimension`-cell around the cell one
 /// dimension below that the two share, passing over interior scaffold.
@@ -18,12 +18,12 @@ use super::ownership::{OwnershipIndex, Subdivision};
 /// caller keep track of which way round it is reading the map while it turns.
 ///
 /// Returns `None` at the open end of a fan, and when the whole fan is scaffold.
-pub fn turn(map: &GMap, index: &OwnershipIndex, dimension: Dim, dart: Dart) -> Option<Dart> {
-    turn_where(map, dimension, dart, |at| index.is_scaffold(dimension, at))
+pub fn turn(map: &GMap, index: &EmbeddingIndex, dimension: Dim, dart: Dart) -> Option<Dart> {
+    turn_where(map, dimension, dart, |at| index.is_embedded(dimension, at))
 }
 
 /// [`turn`], asked of a caller's own scaffold test rather than of an
-/// [`OwnershipIndex`].
+/// [`EmbeddingIndex`].
 ///
 /// Building that index validates the whole classification and refuses an
 /// inconsistent one, which is the right answer for a committed model and the
@@ -34,7 +34,7 @@ pub fn turn_where(
     map: &GMap,
     dimension: Dim,
     dart: Dart,
-    is_scaffold: impl Fn(Dart) -> bool,
+    is_embedded: impl Fn(Dart) -> bool,
 ) -> Option<Dart> {
     let up = above(dimension);
     let mut current = dart;
@@ -48,7 +48,7 @@ pub fn turn_where(
         if next == current {
             return None;
         }
-        if !is_scaffold(next) {
+        if !is_embedded(next) {
             return Some(next);
         }
         let hop = map.alpha(up?, next);
@@ -62,7 +62,7 @@ pub fn turn_where(
 /// Reports whether the raw `dimension`-cell at `dart` is interior scaffold,
 /// asked of the stored records.
 ///
-/// [`OwnershipIndex::is_scaffold`] answers the same question, but building that
+/// [`EmbeddingIndex::is_embedded`] answers the same question, but building that
 /// index validates the whole classification and refuses an inconsistent one.
 /// That is right for a committed model and wrong part way through an edit,
 /// where a builder may legitimately have laid down darts it has not classified
@@ -71,9 +71,9 @@ pub fn turn_where(
 /// An unlabelled cell is **not** scaffold. A record sits on whichever dart of
 /// the orbit the labeller handed over, so every dart of the cell is asked
 /// rather than only its representative.
-pub fn is_scaffold_cell(map: &GMap, subdivision: &Subdivision, dimension: Dim, dart: Dart) -> bool {
+pub fn is_embedded_cell(map: &GMap, embedding: &Embedding, dimension: Dim, dart: Dart) -> bool {
     map.orbit(dart, map.orbit_indices(dimension)).any(|d| {
-        subdivision
+        embedding
             .owner_at(dimension, d)
             .is_some_and(|owner| owner.dimension().index() > dimension.index())
     })

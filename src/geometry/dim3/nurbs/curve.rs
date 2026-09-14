@@ -398,7 +398,7 @@ impl NurbsCurve {
     /// everything that takes a control polygon for a hull of the curve is not:
     /// the leading and trailing control points of an unclamped vector influence
     /// only the parts outside the domain, so a Bézier decomposition or a
-    /// subdivision bound computed from them is answering about a longer curve.
+    /// embedding bound computed from them is answering about a longer curve.
     ///
     /// Raising each end's multiplicity to `degree + 1` and dropping what falls
     /// outside is exact — knot insertion does not move the curve — so this

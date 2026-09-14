@@ -6,11 +6,18 @@ cache; its label-derived views wait on construction, for the reason in
 M4's two classification slices are complete: a built rectangle and a built
 cylinder are classified end to end, a circle is unmarked through construction,
 cutting, healing, Booleans and STEP in both directions, and the suite is green.
-M4 slice 3 is **in progress and the tree is not green**: the annulus is bridged,
-the cylinder wall is seamed, `Face::loops()` is derived from the map, and every
-single-cycle face passes, as does extruding a face with a hole. 18 tests remain,
-in the three clusters listed below — 727 passing against a 736-passing baseline.
-See [M4 slice 3](#m4-slice-3--the-bridge-proven-on-an-annulus).
+M4 slice 3 is **complete and the tree is green**: the annulus is bridged, the
+cylinder wall and every revolved band carry a cut, `Face::loops()` is derived
+from the map, a chord split crosses a cut and places it, and a torus healed from
+a file is the same shape `solids::torus` builds. 742 passing, zero failing,
+against the 736 the slice started from. See
+[M4 slice 3](#m4-slice-3--the-bridge-proven-on-an-annulus) and
+[Closing slice 3](#closing-slice-3-five-readings-of-the-map-and-one-of-them-was-the-same-mistake-again).
+
+Architecture revision in force and **taking priority over every milestone
+below**: one logical cell is exactly one raw cell. The live work list is
+[one_logical_cell_one_raw_cell.md](one_logical_cell_one_raw_cell.md); where this
+plan still assumes an entity may span several raw cells, that one overrides it.
 
 Implementation guide: section 1 fixes the architecture, section 2 defines the
 milestone gates, and section 5 supplies the implementation sequence, concrete
@@ -35,6 +42,11 @@ The experiment must preserve currently working modeling, geometry, exchange, tes
 - Keep `Dart` and dimensions 0–3 in the geometry-free GMap. Raw cell identity is an orbit, not a public entity key.
 
 ### Subdivision classification
+
+Superseded in part by [section 6](#6-embedding--one-logical-cell-one-raw-cell):
+the classification records **only** cells no logical entity of their own
+dimension occupies, and the owner's dimension is strictly greater than the
+cell's, never equal.
 
 Classify each computational cell by the logical entity whose interior contains it. Ownership is constant across each raw cell orbit, and the owner's dimension cannot be lower than the raw cell's dimension.
 
@@ -1414,8 +1426,11 @@ passing, zero failing, zero ignored**.
 #### M4 slice 3 — the bridge, proven on an annulus
 
 The scaffold work started, and the smallest shape that needs it settled the
-construction. **This slice is in progress: the tree is not green.** What follows
-is what is established, and what is left.
+construction. This section and the ones after it are the slice's running log,
+kept in the order the work happened; the counts in them are the counts at that
+moment, and
+[Closing slice 3](#closing-slice-3-five-readings-of-the-map-and-one-of-them-was-the-same-mistake-again)
+is where it ends.
 
 **The construction.** A face whose boundary is more than one cycle is built as
 one cyclic *boundary word* whose slots alternate rim and bridge:
@@ -1913,6 +1928,118 @@ zero failing and zero ignored**. `cargo clippy --all-targets --all-features`
 exits 0 with the same 25 distinct warnings. `cargo fmt` and `git diff --check`
 pass.
 
+#### Closing slice 3: five readings of the map, and one of them was the same mistake again
+
+The three clusters closed, and every one of them came down to a place that
+still read the raw map where it had to read the logical one, or read the
+logical one where it had to read the raw. Recording them together, because the
+pairing is the lesson.
+
+**The rejoin's seed came from the raw orbit.** `MergePlan::loops` collected the
+darts a rejoined boundary would keep with `g.orbit(seed, vec![0, 1])`. That is
+the 1-Gmap formula again — the very one `profile_representative` was corrected
+for — and it fails for the same reason: on a face that owns a cut, one raw
+`alpha0`/`alpha1` orbit runs through *every* loop the face has. So the removal
+picked the rejoined loop's replacement seed off a loop it had never touched, and
+the face came out with two loop definitions both seeded on its outer boundary
+while the slit that was left carried none. `ProfileIterator::component` is the
+chain, and both readings in that file take it now — `surviving` and
+`loop_disappears`, which was asking whether a loop's darts all disappear and
+reading too many darts to ever say yes.
+
+That took `imprinted_face_inner_loop_gets_removed` from healing two of the
+island's four edges to healing all four.
+
+**A rejoin can also pull in a profile the removed cell never carried.** The plan
+names the boundaries it rejoins by the profile keys found *on the removed cell*,
+which stops being the whole answer once a cut can reach a chain none of whose
+keys are there. The map after the rejoin is the authoritative reading, so
+`merge_rejoined_profiles` asks it: every remaining key whose own walk now
+arrives at the survivor's chain describes the survivor, and is declared merged
+into it.
+
+Declared *once*. A key may be spoken for one time per transaction, and healing
+runs many removals in one, so the first attempt at this traded one failure for
+another — `RepeatedMerge` on a boolean that healed two boundaries sharing a
+key. `ModelEdit::merged_profile_survivor` follows the merges already declared
+to where a key is going, which both resolves the survivor and says which
+candidates are already spoken for. Two removals can now rejoin overlapping sets
+of boundaries without either having to know about the other.
+
+**A seam is two occurrences, and they are adjacent.** `Loop::occurrences`
+collapsed a run of consecutive darts carrying one edge key, on the stated
+ground that "an edge the loop runs twice yields two entries, because the runs
+are not adjacent". A seam is the counterexample: the walk goes up one side of it
+and straight back down the other, with nothing in between, so `seam_of` found no
+edge twice and four tests about seamed spheres and caps failed at their first
+line. The raw cell tells the two cases apart, and nothing else does: a refined
+edge spans several raw edges, so the walk moves *on*; a seam is one raw edge the
+face runs along twice, so the walk comes straight *back* onto the cell it just
+left. `continues_run` is that one comparison.
+
+`BoundaryCycle::logical_uses` had the same grouping and the same sentence in its
+doc, one layer down. Only tests call it, so nothing was failing on it — which is
+exactly why it was worth correcting rather than leaving: a helper that answers
+the same question a different way is the next thing somebody reaches for. It
+takes the map now, because telling the two cases apart needs the raw cell and an
+`OwnershipIndex` alone cannot supply it.
+
+**The chord splice had to cross a cut, and then place it.** This was the
+Boolean cluster's named root cause, and the shape of the answer is the part
+worth keeping. At a corner where the walk turns across a cut there is no
+`alpha1` link between the arriving occurrence and the leaving one, so the splice
+cannot unlink them — but it does not have to. It splices *past* the cut, linking
+the chord to the dart the cut hands the walk back on, which leaves the cut, and
+the loop beyond it, on the half the boundary arrived from.
+
+That is a placement, not a decision, and the decision was already written: a
+wrapping companion loop belongs to the half that still wraps, and a hole to the
+half whose winding contains it. Both were being computed for the loop *lists*
+already, several lines further down. So the splice defaults, the existing code
+decides, and one relink moves the cut when the two disagree — plus the owner it
+now has, since the cut is scaffold of whichever face's 2-cell its word runs
+through. A cut has no identity, which is exactly what makes moving it free.
+
+One assertion fell out of the same change. `apply_face_chord_split` decided
+which half kept the source face by asking the 2-cell which face key was
+registered in it. A cut carries the face's *other* loops into one of the halves,
+and those loops are seeded on the source too, so both halves answered yes. The
+question was always about the chorded loop, and it is asked of that loop's cell
+now.
+
+**A boundaryless face keeps no scaffold.** The torus was the last cluster and
+the only one that needed something deleted rather than read differently. It
+arrives cut open twice; the first removal leaves a ring and gives it a cut to
+hold its two wrapping loops together, and the second leaves a face with no
+boundary at all — and that cut, joining two loops that no longer exist, still
+standing. `add_sphere` and `add_torus` build a boundaryless face with *no darts*,
+so a healed import and a built primitive were not the same shape. `strip_scaffold`
+drops every cell the face owns when the removal leaves it unbounded, with its
+ownership records and with any corner the reseeding had moved onto it.
+
+Two shell roots had to follow. `rerooted_shell` prefers the Def. 59 replacement
+and then any other dart of the shell, and both could land on a cut — the first
+because the Def. 59 step looks across the faces around the removed edge without
+asking what it arrives on. A cut is interior to one face: it bounds nothing,
+names no side of a shell, and goes with the boundary it joined. Neither reading
+accepts one now, so the shell falls through to its face, which is what
+`ShellRoot::Face` is for and what `add_torus` writes directly.
+
+**Where it stands: the slice is closed.** `cargo test --all-targets
+--all-features` exits 0 with **742 passing, zero failing and zero ignored**,
+stable across three consecutive runs, against the 736 the slice started from.
+`cargo clippy --all-targets --all-features` exits 0 with 28 warnings, none in
+any changed file. `cargo fmt --check` and `git diff --check` pass.
+
+**Still not done, and still worth doing:** sheets (`logical_sheet_darts` hops
+between disconnected 2-cell orbits through `face_index`, where bridging already
+has the answer one dimension down), the commit-time check of the
+one-entity/one-cell invariant, and the deletions it unlocks —
+`recover_all_regions`, the flood in `recover_region`, and `Face::region_darts`'
+reason for existing. `FaceAttr.loops` also still carries the `LoopKind`
+metadata, and pairing each derived cycle with the stored definition whose seed
+it passes through is the last use of a seed dart.
+
 ### M5 implementation — operation families and promotion rules
 
 **Start with:** `builders/edges.rs`, `faces.rs`, `removal.rs`, `chamfer.rs`,
@@ -2068,3 +2195,12 @@ discovered. If an architectural gate failed, identify the smallest reproducer
 and the violated contract. Do not automatically restore an older working tree
 or relax the pure-core requirement. The experiment's outcome may be negative,
 but its status and evidence must be unambiguous.
+
+## 6. Embedding — one logical cell, one raw cell
+
+Moved to its own plan and **taking priority over the milestones above**:
+[one_logical_cell_one_raw_cell.md](one_logical_cell_one_raw_cell.md).
+
+It revises the architecture rather than extending it: a logical entity occupies
+exactly one raw cell of its own dimension, so an entity is never reconstructed
+from several. Where section 1 or 5 assumes otherwise, that plan overrides them.

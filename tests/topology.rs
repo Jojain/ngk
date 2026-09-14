@@ -4,6 +4,9 @@ mod scaffold;
 #[path = "topology/classification.rs"]
 mod classification;
 
+#[path = "topology/cell_occupancy.rs"]
+mod cell_occupancy;
+
 #[path = "topology/bridged_face.rs"]
 mod bridged_face;
 #[path = "topology/edge.rs"]
@@ -30,8 +33,8 @@ mod realization;
 mod serialization;
 #[path = "topology/sheet.rs"]
 mod sheet;
-#[path = "topology/subdivision.rs"]
-mod subdivision;
+#[path = "topology/embedding.rs"]
+mod embedding;
 #[path = "topology/transaction.rs"]
 mod transaction;
 #[path = "topology/unwrapped_face_domain.rs"]

@@ -43,7 +43,7 @@ use crate::topology::gmap::{Dart, Dim};
 use crate::topology::orientation::Orientation;
 use crate::topology::shape::{Shape, SolidTag};
 use crate::topology::shape_keys::{EdgeKey, SolidKey, VertexKey};
-use crate::topology::subdivision::EntityOwner;
+use crate::topology::embedding::EntityOwner;
 use crate::topology::{ModelEdit, ModelEditError, StandardPayload};
 
 use super::super::StepImport;

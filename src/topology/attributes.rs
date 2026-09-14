@@ -212,6 +212,71 @@ impl LoopDefinition {
     }
 }
 
+/// What bounds a face, and where the face's one raw 2-cell is read from.
+///
+/// A face occupies exactly one raw 2-cell and therefore always has an anchor,
+/// but it does not always have a *loop*: a whole sphere or a whole torus covers
+/// a closed support, so every cell its 2-cell touches is embedded in it and its
+/// boundary walk emits nothing.
+///
+/// One value rather than a loop list beside an anchor dart. A face bounded by
+/// loops anchors at the first of them, so the anchor is derived and cannot go
+/// stale; a face bounded by nothing stores the only dart it has. Healing a seam
+/// away moves a face from the first case to the second, and this makes that
+/// move name the dart it survives at instead of leaving one behind to rot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum FaceBoundary {
+    /// One definition per boundary, never empty. The face anchors at the first.
+    Loops(Vec<LoopDefinition>),
+    /// The face bounds nothing and anchors at this dart of its 2-cell.
+    Closed(Dart),
+}
+
+impl FaceBoundary {
+    /// Wraps a loop list, or records a boundaryless face anchored at `fallback`.
+    fn from_loops(loops: Vec<LoopDefinition>, fallback: Dart) -> Self {
+        match loops.is_empty() {
+            true => Self::Closed(fallback),
+            false => Self::Loops(loops),
+        }
+    }
+
+    /// Returns the dart the face is anchored at.
+    fn seed(&self) -> Dart {
+        match self {
+            Self::Loops(loops) => loops[0].seed(),
+            Self::Closed(dart) => *dart,
+        }
+    }
+
+    /// Returns the stored loop definitions; empty for a boundaryless face.
+    fn loops(&self) -> &[LoopDefinition] {
+        match self {
+            Self::Loops(loops) => loops,
+            Self::Closed(_) => &[],
+        }
+    }
+
+    /// Returns the loop list for in-place editing.
+    ///
+    /// A boundaryless face grows its first loop here, so the list starts empty
+    /// in that case and [`Self::settle`] decides which state the result is.
+    fn edit(&mut self) -> &mut Vec<LoopDefinition> {
+        if let Self::Closed(dart) = *self {
+            *self = Self::Loops(Vec::new());
+            let Self::Loops(loops) = self else {
+                unreachable!("just replaced with Loops")
+            };
+            let _ = dart;
+            return loops;
+        }
+        let Self::Loops(loops) = self else {
+            unreachable!("Closed handled above")
+        };
+        loops
+    }
+}
+
 /// Stored data for a keyed domain face.
 ///
 /// # Boundary orientation
@@ -243,8 +308,8 @@ pub struct FaceAttr<T> {
     pub surface: Surface,
     /// User payload attached to the face.
     pub data: T,
-    /// Internal storage for this face's loop definitions.
-    pub(crate) loops: Vec<LoopDefinition>,
+    /// What bounds this face, and where its one raw 2-cell is read from.
+    pub(crate) boundary: FaceBoundary,
     /// Directed boundary pcurves keyed by their oriented boundary darts.
     pub pcurves: HashMap<Dart, TrimmedCurve2>,
 }
@@ -258,9 +323,11 @@ impl<T> FaceAttr<T> {
         Self {
             surface,
             data,
-            loops: std::iter::once(LoopDefinition::outer(outer_loop))
-                .chain(inner_loops.into_iter().map(LoopDefinition::inner))
-                .collect(),
+            boundary: FaceBoundary::Loops(
+                std::iter::once(LoopDefinition::outer(outer_loop))
+                    .chain(inner_loops.into_iter().map(LoopDefinition::inner))
+                    .collect(),
+            ),
             pcurves: HashMap::new(),
         }
     }
@@ -279,9 +346,11 @@ impl<T> FaceAttr<T> {
         Self {
             surface,
             data,
-            loops: std::iter::once(LoopDefinition::outer(outer_loop))
-                .chain(inner_loops.into_iter().map(LoopDefinition::inner))
-                .collect(),
+            boundary: FaceBoundary::Loops(
+                std::iter::once(LoopDefinition::outer(outer_loop))
+                    .chain(inner_loops.into_iter().map(LoopDefinition::inner))
+                    .collect(),
+            ),
             pcurves,
         }
     }
@@ -289,36 +358,76 @@ impl<T> FaceAttr<T> {
     /// Creates a face attribute from explicit loop definitions.
     ///
     /// This constructor supports faces with no outer loop, such as a ring
-    /// bounded only by [`LoopDefinition::Wrapping`] loops.
+    /// bounded only by [`LoopDefinition::Wrapping`] loops. The face anchors at
+    /// its first loop's seed; a face bounded by nothing at all has no loop to
+    /// take one from and is built with [`Self::closed`] instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an empty loop list.
     pub fn with_loops(
         surface: Surface,
         data: T,
         loops: Vec<LoopDefinition>,
         pcurves: HashMap<Dart, TrimmedCurve2>,
     ) -> Self {
+        assert!(
+            !loops.is_empty(),
+            "a face with no loop is built with FaceAttr::closed"
+        );
         Self {
             surface,
             data,
-            loops,
+            boundary: FaceBoundary::Loops(loops),
             pcurves,
         }
+    }
+
+    /// Creates a face that bounds nothing, anchored at a dart of its 2-cell.
+    ///
+    /// A whole sphere or a whole torus covers a closed support: every cell its
+    /// 2-cell touches is embedded in the face, so its boundary walk emits
+    /// nothing and it has no loop to store. It still occupies a raw 2-cell,
+    /// and `dart` is where that cell is read from.
+    pub fn closed(
+        surface: Surface,
+        data: T,
+        dart: Dart,
+        pcurves: HashMap<Dart, TrimmedCurve2>,
+    ) -> Self {
+        Self {
+            surface,
+            data,
+            boundary: FaceBoundary::Closed(dart),
+            pcurves,
+        }
+    }
+
+    /// Replaces this face's boundaries, anchoring at `fallback` when there are
+    /// none left.
+    ///
+    /// Healing a seam away empties a face's loops, and the face still occupies
+    /// a 2-cell afterwards. Naming the surviving dart here is what stops an
+    /// anchor from outliving the loop it came from.
+    pub(crate) fn set_boundary(&mut self, loops: Vec<LoopDefinition>, fallback: Dart) {
+        self.boundary = FaceBoundary::from_loops(loops, fallback);
     }
 
     /// Returns a typed face view over this attribute in `model`.
     pub fn face<'a, P: Payload<F = T>>(&'a self, model: &'a Model<P>) -> Face<'a, P> {
         let key = model
-            .cell_key::<Cell2>(self.seed_unchecked())
+            .cell_key::<Cell2>(self.seed())
             .expect("FaceAttr must be registered to produce a Face view");
         Face::new(model, key)
     }
 
     pub(crate) fn wrapping(&self) -> impl Iterator<Item = (Dart, Axis2)> + '_ {
-        self.loops
+        self.loops()
             .iter()
             .filter_map(|loop_| loop_.kind().wrapped_axis().map(|axis| (loop_.seed(), axis)))
     }
     pub(crate) fn inner(&self) -> impl Iterator<Item = Dart> + '_ {
-        self.loops
+        self.loops()
             .iter()
             .filter(|loop_| loop_.kind() == LoopKind::Inner)
             .map(|loop_| loop_.seed())
@@ -328,14 +437,14 @@ impl<T> FaceAttr<T> {
     }
     pub(crate) fn darts(&self) -> impl Iterator<Item = Dart> + '_ {
         self.outer_seed().into_iter().chain(
-            self.loops
+            self.loops()
                 .iter()
                 .filter(|loop_| loop_.kind() != LoopKind::Outer)
                 .map(|loop_| loop_.seed()),
         )
     }
     pub(crate) fn is_empty(&self) -> bool {
-        self.loops.is_empty()
+        self.loops().is_empty()
     }
     pub(crate) fn kind_of(&self, seed: Dart) -> Option<LoopKind> {
         self.loop_definition(seed).map(|loop_| loop_.kind())
@@ -345,13 +454,14 @@ impl<T> FaceAttr<T> {
     }
     pub(crate) fn set_outer(&mut self, seed: Dart) {
         if let Some(loop_) = self
-            .loops
+            .boundary
+            .edit()
             .iter_mut()
             .find(|loop_| loop_.kind() == LoopKind::Outer)
         {
             loop_.set_seed(seed)
         } else {
-            self.loops.insert(0, LoopDefinition::outer(seed));
+            self.boundary.edit().insert(0, LoopDefinition::outer(seed));
         }
     }
     pub(crate) fn set_inner(&mut self, seeds: Vec<Dart>) {
@@ -359,22 +469,27 @@ impl<T> FaceAttr<T> {
         self.extend_inner(seeds);
     }
     pub(crate) fn push_inner(&mut self, seed: Dart) {
-        self.loops.push(LoopDefinition::inner(seed));
+        self.boundary.edit().push(LoopDefinition::inner(seed));
     }
     pub(crate) fn extend_inner(&mut self, seeds: impl IntoIterator<Item = Dart>) {
-        self.loops
+        self.boundary
+            .edit()
             .extend(seeds.into_iter().map(LoopDefinition::inner));
     }
     pub(crate) fn clear_inner(&mut self) {
-        self.loops.retain(|loop_| loop_.kind() != LoopKind::Inner);
+        self.boundary.edit().retain(|loop_| loop_.kind() != LoopKind::Inner);
     }
     pub(crate) fn map_darts(&mut self, map: impl Fn(Dart) -> Dart) {
-        for loop_ in &mut self.loops {
+        if let FaceBoundary::Closed(dart) = &mut self.boundary {
+            *dart = map(*dart);
+            return;
+        }
+        for loop_ in self.boundary.edit() {
             loop_.set_seed(map(loop_.seed()));
         }
     }
     pub(crate) fn retain_mapped(&mut self, map: &HashMap<Dart, Dart>) {
-        self.loops.retain_mut(|loop_| match map.get(&loop_.seed()) {
+        self.boundary.edit().retain_mut(|loop_| match map.get(&loop_.seed()) {
             Some(&seed) => {
                 loop_.set_seed(seed);
                 true
@@ -384,7 +499,7 @@ impl<T> FaceAttr<T> {
     }
     /// Returns the stored loop definition whose seed is seed.
     pub(crate) fn loop_definition(&self, seed: Dart) -> Option<LoopDefinition> {
-        self.loops
+        self.loops()
             .iter()
             .copied()
             .find(|loop_| loop_.seed() == seed)
@@ -392,28 +507,24 @@ impl<T> FaceAttr<T> {
 
     /// Returns the seed of the chart-closed outer loop, if this face has one.
     pub(crate) fn outer_seed(&self) -> Option<Dart> {
-        self.loops.iter().find_map(|loop_| match loop_ {
+        self.loops().iter().find_map(|loop_| match loop_ {
             LoopDefinition::Outer { seed } => Some(*seed),
             _ => None,
         })
     }
 
-    /// Returns an oriented seed locating this face, when it has a boundary.
+    /// Returns the oriented dart this face is anchored at.
     ///
-    /// A boundaryless face has no loop and so no seed: nothing is incident to
-    /// it, and it is reached by key alone.
-    pub(crate) fn seed(&self) -> Option<Dart> {
-        self.outer_seed()
-            .or_else(|| self.loops.first().map(|loop_| loop_.seed()))
+    /// Total: a face occupies exactly one raw 2-cell, and this reads it. The
+    /// loop seeds say where the face's *boundaries* are, which is a different
+    /// question and may have no answer at all.
+    pub(crate) fn seed(&self) -> Dart {
+        self.boundary.seed()
     }
 
-    /// Returns an oriented seed suitable for locating this dart-backed face.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the face has no loops.
-    pub(crate) fn seed_unchecked(&self) -> Dart {
-        self.seed().expect("dart-backed face should have a loop")
+    /// Returns this face's stored loop definitions; empty when it bounds nothing.
+    pub(crate) fn loops(&self) -> &[LoopDefinition] {
+        self.boundary.loops()
     }
 }
 

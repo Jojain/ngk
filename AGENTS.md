@@ -34,7 +34,7 @@ parametric modeler. Operations mutate one map and return explicit handles.
 
 | Layer | Path | Role |
 |---|---|---|
-| `topology` | `src/topology/` | The pure GMap (darts, α0..α3, orbits), the subdivision classification over it, entity records and typed views |
+| `topology` | `src/topology/` | The pure GMap (darts, α0..α3, orbits), the embedding classification over it, entity records and typed views |
 | `model` | `src/model.rs` | `Model<P>`: one GMap plus the entity stores, geometry, payloads, labels and derived indexes keyed against it; the transaction boundary |
 | `geometry` | `src/geometry/` | Pure math: points, curves, surfaces, NURBS, intersections, bbox, tolerance |
 | `builders` | `src/builders/` | Low-level topology construction (`&mut Model<P>`), one transaction each |
@@ -47,13 +47,14 @@ parametric modeler. Operations mutate one map and return explicit handles.
 | `visualization/` | React + R3F + Vite | Playground consuming the wasm build |
 
 `Model<P>` owns everything a shape is: `topology: GMap`, the six entity
-slotmaps, the `Subdivision` labelling, a `revision` counter, and the derived
+slotmaps, the `Embedding` classification, a `revision` counter, and the derived
 lookups over all of it. `GMap` itself imports no geometry, no payload and no
 key type — it is darts and involutions. Nothing outside `model.rs` and
 `topology/edit.rs` can reach `&mut GMap`: `Model::topology()` is read-only and
 every mutation goes through a transaction. `docs/model_api.md` predates this
-and is a design note, not a description of the tree; `plan/logical_topology_over_gmap.md`
-is the live plan.
+and is a design note, not a description of the tree.
+`plan/one_logical_cell_one_raw_cell.md` is the live plan and takes priority;
+`plan/logical_topology_over_gmap.md` is the wider migration it was cut from.
 
 ## Topology core — key concepts
 
@@ -132,13 +133,18 @@ Two counts, and they differ on purpose:
 | Count | Means | Where |
 |---|---|---|
 | **distinct corners** | how many different vertices bound the thing | `BoundedEdge::vertices`, `MarkedEdge::corner`, `EdgeCore::has_corner_at` |
-| **corner occurrences** | how many times a walk arrives at one | `Loop::corners`, `LoopCorner` |
+| **corner visits** | how many times a walk arrives at one | `Loop::corners`, `LoopCorner` |
 
 A marked edge has **one** corner and a walk along it passes that corner
 **twice** — it is both the start and the end. A loop that meets one vertex twice
-has one vertex and two corners. `LoopCorner` therefore pairs the occurrence
-arriving with the one leaving, which is what tells two visits apart; asking it
-for a `vertex()` collapses them again.
+has one vertex and two corners. `LoopCorner` therefore pairs the dart arriving
+with the one leaving, which is what tells two visits apart; asking it for a
+`vertex()` collapses them again.
+
+The same split one dimension up needs no machinery. A loop's darts *are* its
+oriented edges, one for one, because an edge occupies exactly one raw cell and
+the walk cannot land on part of one. An edge a loop runs twice — a seam — simply
+appears twice in `Loop::darts()`.
 
 **Two homonyms, deliberate and safe.** `BBox::corners`,
 `UnwrappedFaceDomain::corners` and `snap_boundary_corner` mean *points*, not
@@ -234,7 +240,7 @@ profile, and so is a closed one lying in space bounding nothing.
 `alpha0`/`alpha1` walk for a profile and the `alpha0`/`alpha1`/`alpha2` walk for
 a sheet, and when a step lands on a **scaffold** cell — a raw cell owned by
 something of higher dimension, which
-[Subdivision](#subdivision-srctopologysubdivision) names — the walk **turns
+[Embedding](#embedding-srctopologyembedding) names — the walk **turns
 across it** and carries on:
 
 - a profile turns across a raw edge the face owns: the bridge to a hole, a
@@ -276,28 +282,42 @@ two are not the same list:
 So a loop *names* its profile and is read from one face's side. Connectivity
 belongs to the profile; orientation and repetition belong to the loop.
 
-### Subdivision (`src/topology/subdivision/`)
+### Embedding (`src/topology/embedding/`)
 
-Every raw cell is labelled with the logical entity whose **interior** contains
-it: a cylinder's seam edge belongs to its wall face, and the 0-cell where a
-circle's parameterization closes belongs to the circle rather than being a
-logical vertex. Labels are one `OrbitOwnership` record per orbit, anchored at a
-representative dart; the darts an entity covers are never stored, they are
-walked out of the map by `recover_region`. An entity owns the cell its own
-anchor sits in without any record saying so, so a shape with no scaffold stores
-no labels and is still fully classified. `turn` is the one traversal
-primitive — it steps around a shared boundary cell with the sewing involutions,
-passing over cells a higher-dimensional entity owns. `boundary_cycles` gives a
-face its oriented loops and `boundary_shells` gives a solid its boundary
-components, both by turning across interior cuts rather than emitting them.
+A raw cell carrying no logical entity of its own dimension is **embedded** in
+the entity of higher dimension whose **interior** contains it: a cylinder's seam
+edge lies in its wall face, and the 0-cell where a circle's parameterization
+closes lies in the circle rather than being a logical vertex. Records are one
+`EmbeddedCell` per orbit, anchored at a representative dart, and every one of
+them names an owner of **strictly greater** dimension than the cell — so "has a
+record" and "is embedded" are one question.
+
+Where an entity's *own* cell is never appears in a record: it is read off the
+entity's anchor, so a shape with nothing embedded stores no records at all and
+is still fully classified. `recover_region` walks an entity out of the map from
+that anchor, and because an entity occupies exactly one raw cell of its own
+dimension, that walk is one orbit and nothing floods.
+
+`turn` is the one traversal primitive — it steps around a shared boundary cell
+with the sewing involutions, passing over embedded cells. `boundary_cycles`
+gives a face its oriented loops by turning across the cells it owns rather than
+emitting them. `boundary_shells` does the same one dimension up for a solid's
+boundary components, though `Solid::shells` still reads the shell roots stored
+on `SolidAttr` rather than calling it.
 
 #### One entity, one cell of its own dimension
 
-Each vertex, edge, face and solid owns **exactly one** raw cell of its own
-dimension. It may own any number of raw cells of **lower** dimension — scaffold:
-a bridge to a hole, a periodic seam, the 0-cell where a circle closes, a cut
-face inside a cavity. Profiles and sheets are aggregates of entities rather than
-entities with a cell of their own, so the rule does not reach them.
+Each vertex, edge, face and solid occupies **exactly one** raw cell of its own
+dimension — not zero, and not two. The converse does not hold: a raw cell need
+carry no entity at all, and any number of **lower**-dimensional ones may be
+embedded in a single entity — a bridge to a hole, a periodic seam, the 0-cell
+where a circle closes, a cut face inside a cavity. Profiles and sheets are
+aggregates of entities rather than entities with a cell of their own, so the
+rule does not reach them.
+
+`validation::validate_cell_occupancy` is the check. It is not yet wired into
+commit; see [plan/one_logical_cell_one_raw_cell.md](plan/one_logical_cell_one_raw_cell.md)
+for what still has to hold before it can be.
 
 This is a **commit invariant**, not a construction rule. A transaction may break
 it freely — a Boolean partitions a face and puts it back together — but a commit
@@ -310,9 +330,9 @@ What follows from it:
   same-dimensional topology, so nothing ever has to collect an entity's cells.
   `recover_region` is an orbit walk plus the orientation it reads off it, and
   nothing floods.
-- **Ownership records only ever classify scaffold**, which is lower-dimensional
-  by definition. "Owned by an entity of higher dimension" and "is scaffold"
-  become the same statement.
+- **Records only ever classify embedded cells**, which are lower-dimensional by
+  definition. "Recorded as owned by an entity of higher dimension" and "is
+  embedded" become the same statement, and the record type refuses any other.
 - **A raw cell between two raw cells of the dimension above is real topology.**
   A 1-cell with a different 2-cell on each side is either a logical edge between
   two logical faces, or it must be removed so the two raw faces merge. This is
@@ -356,7 +376,7 @@ mutation capability (`add_dart`, `remove_dart`, `link`, `unlink`, `sew`,
   (e.g. `PreservePayload`) runs only on net externally-visible changes.
 - **Identity reconciliation** picks one surviving key per final cell;
   transaction-start keys beat transaction-local ones. Local keys may vanish at commit.
-- Commit order: raw gmap axioms, subdivision labels, required registrations,
+- Commit order: raw gmap axioms, embedding records, required registrations,
   lineage, identity reconciliation, payload policy, then `revision += 1`.
 - Derived dart→key maps and the dart→owner index are lazy caches on `Model`,
   invalidated on every mutation and never serialized.

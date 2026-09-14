@@ -96,7 +96,7 @@ pub enum AnalyticSurfaceIntersection {
     Sections(Vec<AnalyticSection>),
     /// The supports touch at one point and share no section of any length.
     ///
-    /// This is the case the subdivision solver is worst at -- both hulls keep
+    /// This is the case the embedding solver is worst at -- both hulls keep
     /// overlapping however far they are split -- and the one it is cheapest to
     /// answer exactly, so it gets a variant of its own rather than being
     /// rounded to [`Self::Empty`].

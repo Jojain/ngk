@@ -1,11 +1,13 @@
 //! Periodic faces written the way an import carries them, with a seam.
 //!
-//! No builder in this tree makes a seam: a swept or revolved wall comes out a
-//! ring, a sphere comes out one face with no boundary at all. STEP AP242 and
-//! every other B-Rep interchange format writes a periodic face with its
-//! parameterization cut open, so a seam now arrives only from outside — which
-//! makes these hand-built maps the honest subject for anything about seams,
-//! rather than a builder that correctly refuses to produce one.
+//! A seam is how an import writes a periodic face, not how this tree builds
+//! one: a swept or revolved wall comes out a ring and `solids::sphere` comes
+//! out as one face with no boundary at all. STEP AP242 and every other B-Rep
+//! interchange format cuts the parameterization open instead, so these maps are
+//! the honest subject for anything about seams. Most are built by hand here;
+//! the sphere is revolved, because sweeping a meridian whose ends are both on
+//! the axis sews the swept copy back onto the arc and lands on exactly the
+//! shape a file carries.
 //!
 //! The shapes differ in what is left once the cut is gone: a wall keeps two rims
 //! and becomes a ring, a cap keeps one and is closed on its far side by a pole,
@@ -77,8 +79,7 @@ pub fn seamed_revolved_sphere(radius: f64) -> (Model<StandardPayload>, FaceKey, 
             let seed = edit
                 .face(face)
                 .expect("the revolved face is registered")
-                .dart()
-                .expect("a seamed face has a boundary to root at");
+                .dart();
             let shell = ShellRoot::Dart(seed);
             edit.add_sheet(SheetAttr::new(shell, ()));
             Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new((), shell, None)))
@@ -336,8 +337,7 @@ pub fn seamed_torus(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey,
             let seed = edit
                 .face(face)
                 .expect("the torus face is registered")
-                .dart()
-                .expect("a seamed face has a boundary to root at");
+                .dart();
             let shell = ShellRoot::Dart(seed);
             edit.add_sheet(SheetAttr::new(shell, ()));
             Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new((), shell, None)))

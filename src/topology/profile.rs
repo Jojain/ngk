@@ -5,7 +5,7 @@ use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 use crate::model::{MergeTopology, Model, TopologyMerge};
 use crate::topology::shape_keys::ProfileKey;
-use crate::topology::subdivision::{is_scaffold_cell, turn_where};
+use crate::topology::embedding::{is_embedded_cell, turn_where};
 use std::collections::HashSet;
 
 /// A keyed 1-dimensional connected topology view with a contextual root dart.
@@ -254,7 +254,7 @@ impl<'a, P: Payload> ProfileIterator<'a, P> {
     /// `None` at a free end, and where the whole fan is scaffold.
     pub(crate) fn across(model: &Model<P>, dart: Dart) -> Option<Dart> {
         turn_where(model.topology(), Dim::One, dart, |at| {
-            is_scaffold_cell(model.topology(), model.subdivision(), Dim::One, at)
+            is_embedded_cell(model.topology(), model.embedding(), Dim::One, at)
         })
     }
 

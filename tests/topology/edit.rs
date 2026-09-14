@@ -623,14 +623,19 @@ fn multiple_existing_identities_require_explicit_lineage() {
 #[test]
 fn explicit_existing_collision_keeps_declared_survivor_and_calls_policy_once() {
     let mut g = Model::<TestPayload>::new();
-    let (survivor_dart, survivor) = add_named_test_edge(&mut g, 0.0, "survivor");
-    let (removed_dart, removed) = add_named_test_edge(&mut g, 1.0, "removed");
+    let (removed_dart, removed) = add_named_test_edge(&mut g, 0.0, "removed");
+    let (survivor_dart, survivor) = add_named_test_edge(&mut g, 1.0, "survivor");
     let removed_end = g.alpha(Dim::Zero, removed_dart);
     let mut policy = RecordEdgePolicy::default();
 
     g.transaction_with_policy(&mut policy, |edit| {
         edit.sew(Dim::Two, survivor_dart, removed_end)?;
         edit.merge_edges_into(survivor, removed);
+        assert_eq!(
+            edit.cell_key::<Cell1>(removed_dart),
+            Some(survivor),
+            "staged lookup follows an explicit merge to its survivor"
+        );
         Ok::<_, ModelEditError>(())
     })
     .expect("explicit lineage should select the survivor");

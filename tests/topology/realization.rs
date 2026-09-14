@@ -5,7 +5,7 @@ use ngk::model::{Model, RealizationError, RealizationPurpose};
 use ngk::modeling::{edges, faces};
 use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
-use ngk::topology::subdivision::EntityOwner;
+use ngk::topology::embedding::EntityOwner;
 use ngk::topology::{ModelEditError, Orientation, StandardPayload, UnwrappedFaceDomain};
 
 #[test]
@@ -189,7 +189,7 @@ fn commit_validation_failure_discards_staged_realizations() {
         edit.own_cell(Dim::One, missing, EntityOwner::Edge(key));
         Ok::<_, ModelEditError>(())
     });
-    assert!(matches!(result, Err(ModelEditError::InvalidSubdivision(_))));
+    assert!(matches!(result, Err(ModelEditError::InvalidEmbedding(_))));
     assert_eq!(model.revision(), revision);
     let restored = model
         .realize_edge(key, Orientation::Same, RealizationPurpose::Geometry)

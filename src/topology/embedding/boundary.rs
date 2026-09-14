@@ -5,15 +5,15 @@ use thiserror::Error;
 use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::shape_keys::EdgeKey;
 
-use super::ownership::{EntityOwner, OwnershipIndex};
+use super::cells::{EntityOwner, EmbeddingIndex};
 use super::region::LogicalRegion;
 use super::walk::turn;
 
 /// One closed oriented boundary cycle of a logical face.
 ///
-/// Each dart names one raw boundary occurrence, read from the vertex the
-/// traversal leaves. Cuts interior to the face never appear: the walk turns
-/// across their paired occurrence instead of emitting them, which is what makes
+/// Each dart names one oriented edge the face runs along, read from the vertex
+/// the traversal leaves. Cuts interior to the face never appear: the walk turns
+/// across their paired dart instead of emitting them, which is what makes
 /// a bridged annulus come back as the two cycles it really has.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundaryCycle {
@@ -21,73 +21,35 @@ pub struct BoundaryCycle {
 }
 
 impl BoundaryCycle {
-    /// Returns the cycle's raw occurrences in traversal order.
+    /// Returns the cycle's darts in traversal order.
     pub fn darts(&self) -> &[Dart] {
         &self.darts
     }
 
-    /// Returns the number of raw occurrences in the cycle.
+    /// Returns the number of darts in the cycle.
     pub fn len(&self) -> usize {
         self.darts.len()
     }
 
-    /// Reports whether the cycle holds no occurrence.
+    /// Reports whether the cycle holds no dart.
     pub fn is_empty(&self) -> bool {
         self.darts.is_empty()
     }
 
-    /// Groups consecutive raw occurrences into logical edge uses.
+    /// Returns the logical edge each dart of the cycle runs along, in order.
     ///
-    /// Consecutive is the operative word: an edge a cycle walks twice yields
-    /// two uses, because the runs are not adjacent even though the key is the
-    /// same. A cycle made of one logical edge alone yields one use.
-    pub fn logical_uses(
-        &self,
-        index: &OwnershipIndex,
-    ) -> Result<Vec<LogicalEdgeUse>, BoundaryError> {
-        let mut keys = Vec::with_capacity(self.darts.len());
-        for &dart in &self.darts {
-            match index.owner(Dim::One, dart) {
-                Some(EntityOwner::Edge(edge)) => keys.push(edge),
-                other => {
-                    return Err(BoundaryError::BoundaryNotAnEdge { dart, owner: other });
-                }
-            }
-        }
-
-        let len = keys.len();
-        let Some(start) = (0..len).find(|&i| keys[i] != keys[(i + len - 1) % len]) else {
-            return Ok(vec![LogicalEdgeUse {
-                edge: keys[0],
-                darts: self.darts.clone(),
-            }]);
-        };
-
-        let mut uses: Vec<LogicalEdgeUse> = Vec::new();
-        for step in 0..len {
-            let i = (start + step) % len;
-            match uses.last_mut() {
-                Some(last) if last.edge == keys[i] => last.darts.push(self.darts[i]),
-                _ => uses.push(LogicalEdgeUse {
-                    edge: keys[i],
-                    darts: vec![self.darts[i]],
-                }),
-            }
-        }
-        Ok(uses)
+    /// One edge per dart. A logical edge occupies exactly one raw cell, so a
+    /// dart names a whole edge rather than a piece of one, and an edge the
+    /// cycle runs twice appears twice — which is how a seam reads.
+    pub fn edge_keys(&self, index: &EmbeddingIndex) -> Result<Vec<EdgeKey>, BoundaryError> {
+        self.darts
+            .iter()
+            .map(|&dart| match index.owner(Dim::One, dart) {
+                Some(EntityOwner::Edge(edge)) => Ok(edge),
+                other => Err(BoundaryError::BoundaryNotAnEdge { dart, owner: other }),
+            })
+            .collect()
     }
-}
-
-/// One logical edge's occurrence on a face's boundary cycle.
-///
-/// The darts are the raw pieces the occurrence is currently subdivided into.
-/// Refining those pieces changes this list and nothing else about the use.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LogicalEdgeUse {
-    /// The logical edge being used.
-    pub edge: EdgeKey,
-    /// The raw occurrences making up the use, in traversal order.
-    pub darts: Vec<Dart>,
 }
 
 /// One connected boundary component of a logical solid.
@@ -108,7 +70,7 @@ impl BoundaryShell {
     }
 
     /// Counts the 1-cells of the shell.
-    pub fn edge_count(&self, map: &GMap, index: &OwnershipIndex) -> usize {
+    pub fn edge_count(&self, map: &GMap, index: &EmbeddingIndex) -> usize {
         self.components(|dart| {
             let mut out = vec![map.alpha(Dim::Zero, dart)];
             out.extend(turn(map, index, Dim::Two, dart));
@@ -117,7 +79,7 @@ impl BoundaryShell {
     }
 
     /// Counts the 0-cells of the shell.
-    pub fn vertex_count(&self, map: &GMap, index: &OwnershipIndex) -> usize {
+    pub fn vertex_count(&self, map: &GMap, index: &EmbeddingIndex) -> usize {
         self.components(|dart| {
             let mut out = vec![map.alpha(Dim::One, dart)];
             out.extend(turn(map, index, Dim::Two, dart));
@@ -130,7 +92,7 @@ impl BoundaryShell {
     /// This is a property of the scaffold, not of the logical entities on it: a
     /// sphere shell answers 2 and a torus shell answers 0 however few logical
     /// faces happen to cover them.
-    pub fn euler_characteristic(&self, map: &GMap, index: &OwnershipIndex) -> i64 {
+    pub fn euler_characteristic(&self, map: &GMap, index: &EmbeddingIndex) -> i64 {
         self.vertex_count(map, index) as i64 - self.edge_count(map, index) as i64
             + self.face_count(map) as i64
     }
@@ -164,12 +126,12 @@ impl BoundaryShell {
 
 /// Extracts the oriented boundary cycles of a logical face.
 ///
-/// Only occurrences that read the face the way its anchor does seed a cycle, so
+/// Only darts that read the face the way its anchor does seed a cycle, so
 /// every loop of one face comes back wound the same way round, whichever order
 /// the region walk happened to reach them in.
 pub fn boundary_cycles(
     map: &GMap,
-    index: &OwnershipIndex,
+    index: &EmbeddingIndex,
     region: &LogicalRegion,
 ) -> Result<Vec<BoundaryCycle>, BoundaryError> {
     if region.dimension() != Dim::Two {
@@ -214,7 +176,7 @@ pub fn boundary_cycles(
 /// Extracts the connected boundary components of a logical solid.
 pub fn boundary_shells(
     map: &GMap,
-    index: &OwnershipIndex,
+    index: &EmbeddingIndex,
     region: &LogicalRegion,
 ) -> Result<Vec<BoundaryShell>, BoundaryError> {
     if region.dimension() != Dim::Three {
@@ -267,7 +229,7 @@ pub fn boundary_shells(
 /// returned, so a vertexless circle answers nothing and a segment answers two.
 pub fn boundary_vertices(
     map: &GMap,
-    index: &OwnershipIndex,
+    index: &EmbeddingIndex,
     region: &LogicalRegion,
 ) -> Result<Vec<Dart>, BoundaryError> {
     if region.dimension() != Dim::One {
@@ -292,15 +254,15 @@ pub fn boundary_vertices(
     Ok(vertices)
 }
 
-/// Steps to the next raw occurrence on a logical face's boundary cycle.
+/// Steps to the next dart on a logical face's boundary cycle.
 ///
-/// Flipping to the far end of the current occurrence and turning once around
+/// Flipping to the far end of the current dart and turning once around
 /// the vertex there gives the next one, unless the turn lands on a cut the face
-/// owns, in which case the walk crosses to the cut's paired occurrence and
+/// owns, in which case the walk crosses to the cut's paired dart and
 /// keeps turning.
 fn next_on_cycle(
     map: &GMap,
-    index: &OwnershipIndex,
+    index: &EmbeddingIndex,
     owner: EntityOwner,
     dart: Dart,
 ) -> Result<Dart, BoundaryError> {
@@ -387,10 +349,10 @@ pub enum BoundaryError {
     },
 
     #[error(
-        "the boundary occurrence at {dart:?} is owned by {owner:?}, which is not a logical edge"
+        "the boundary dart at {dart:?} is owned by {owner:?}, which is not a logical edge"
     )]
     BoundaryNotAnEdge {
-        /// The occurrence's dart.
+        /// The dart on the boundary.
         dart: Dart,
         /// What owns its 1-cell, if anything.
         owner: Option<EntityOwner>,

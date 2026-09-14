@@ -282,7 +282,7 @@ impl TrimmedCurve2 {
     ///
     /// A straight span needs one; a curved one needs enough that each chord
     /// subtends a small enough turn. The depth limit caps the count the way a
-    /// recursive subdivision would.
+    /// recursive embedding would.
     fn sample_count(&self, tolerance: f64, max_depth: usize) -> usize {
         let depth_limit = 1usize.checked_shl(max_depth.min(20) as u32).unwrap_or(1);
         let radius = match &self.curve {

@@ -12,7 +12,7 @@ use ngk::modeling::faces;
 use ngk::topology::edge::Edge;
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
-use ngk::topology::subdivision::{EntityOwner, boundary_cycles, recover_region};
+use ngk::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
 
 fn annulus() -> Model<StandardPayload> {
     faces::annulus(Plane::xy(), 2.0, 1.0)
@@ -24,7 +24,7 @@ fn annulus() -> Model<StandardPayload> {
 #[test]
 fn a_bridged_annulus_is_one_raw_face_with_every_cell_classified() {
     let model = annulus();
-    let ownership = model.ownership();
+    let ownership = model.embedding_index();
 
     assert_eq!(
         model.cells(Dim::Two).count(),
@@ -45,7 +45,7 @@ fn a_bridged_annulus_is_one_raw_face_with_every_cell_classified() {
 #[test]
 fn the_bridge_belongs_to_the_face_and_is_never_a_logical_edge() {
     let model = annulus();
-    let ownership = model.ownership();
+    let ownership = model.embedding_index();
     let (face, _) = model.iter_faces().next().expect("the annulus has one face");
 
     let owners: Vec<_> = model
@@ -70,7 +70,7 @@ fn the_bridge_belongs_to_the_face_and_is_never_a_logical_edge() {
 #[test]
 fn both_rims_of_an_annulus_stay_unmarked() {
     let model = annulus();
-    let ownership = model.ownership();
+    let ownership = model.embedding_index();
 
     assert_eq!(
         model.iter_vertices().count(),
@@ -94,7 +94,7 @@ fn both_rims_of_an_annulus_stay_unmarked() {
 #[test]
 fn the_boundary_walk_finds_both_rims_and_hides_the_bridge() {
     let model = annulus();
-    let ownership = model.ownership();
+    let ownership = model.embedding_index();
     let (face, _) = model.iter_faces().next().expect("the annulus has one face");
     let anchor = model
         .cells(Dim::Two)
@@ -108,15 +108,14 @@ fn the_boundary_walk_finds_both_rims_and_hides_the_bridge() {
 
     assert_eq!(cycles.len(), 2, "an annulus has two boundaries");
     for cycle in &cycles {
-        let uses = cycle
-            .logical_uses(ownership)
-            .expect("every boundary piece is a logical edge");
-        assert_eq!(uses.len(), 1, "each rim is one whole circle");
+        let edges = cycle
+            .edge_keys(ownership)
+            .expect("every boundary dart is a logical edge");
+        assert_eq!(edges.len(), 1, "each rim is one whole circle");
     }
     let walked: Vec<_> = cycles
         .iter()
-        .flat_map(|cycle| cycle.logical_uses(ownership).expect("uses"))
-        .map(|use_| use_.edge)
+        .flat_map(|cycle| cycle.edge_keys(ownership).expect("boundary edges"))
         .collect();
     let mut distinct = walked.clone();
     distinct.sort();

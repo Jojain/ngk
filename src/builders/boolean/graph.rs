@@ -524,7 +524,7 @@ fn node_spans(
             // Against the piece resolution, not the parameter tolerance: an
             // event landing between the two would cut off a piece too narrow
             // for the span or its pcurves to be trimmed to, and the whole
-            // Boolean would fail on a subdivision that carries no geometry.
+            // Boolean would fail on a embedding that carries no geometry.
             if t <= MIN_SPAN_PIECE
                 || t >= 1.0 - MIN_SPAN_PIECE
                 || !span.point_at(t).coincides(event.point, linear)

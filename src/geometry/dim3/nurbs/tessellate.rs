@@ -17,7 +17,7 @@ pub fn sample_curve_uniform(curve: &NurbsCurve, n: usize) -> Vec<Point3> {
         .collect()
 }
 
-/// Adaptive subdivision: stops refining when the chord-midpoint deviation is
+/// Adaptive embedding: stops refining when the chord-midpoint deviation is
 /// below `tolerance`. `max_depth` caps recursion per segment.
 pub fn tessellate_curve_adaptive(
     curve: &NurbsCurve,

@@ -13,7 +13,7 @@ pub mod shape;
 pub mod shape_keys;
 pub mod sheet;
 pub mod solid;
-pub mod subdivision;
+pub mod embedding;
 pub mod unwrapped_face_domain;
 pub mod validation;
 pub mod vertex;

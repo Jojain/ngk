@@ -1224,7 +1224,7 @@ fn revolved_band_loop_kinds(
     }
 }
 
-/// Builds one band of a whole turn from its two circles, with no seam to sew.
+/// Builds one band of a whole turn from two circles joined by a scaffold cut.
 ///
 /// A quad band carries a copy of the source edge at each end of the sweep, and a
 /// whole turn then sews those two copies together — the seam. They are the same
@@ -1235,9 +1235,9 @@ fn revolved_band_loop_kinds(
 /// the support's own parameters and it is an annulus. `kinds` carries which,
 /// decided by [`revolved_band_loop_kinds`].
 ///
-/// Each circle is a closed one-edge loop, `alpha1` linking its dart pair onto
-/// itself exactly as a circular edge's own profile does, so the neighbouring band
-/// sews to it through the same side darts a quad band would have offered.
+/// Each circle starts as a closed one-edge loop. The cut joins their 2-cells
+/// while keeping them separate profiles, and carries no logical edge. The
+/// neighbouring band sews to each circle through its boundary darts.
 fn add_full_revolved_band_face<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     ends: [Point3; 2],
@@ -1272,6 +1272,7 @@ fn add_full_revolved_band_face<P: Payload>(
         ],
         HashMap::from([(start_first, start_pcurve), (end_first, end_pcurve)]),
     ));
+    cut_between_loops(edit, key, start_first, end_first)?;
 
     Ok(RevolvedFace {
         bottom_edge: None,

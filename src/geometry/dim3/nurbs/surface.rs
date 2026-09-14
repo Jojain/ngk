@@ -59,7 +59,7 @@ impl BezierSurface {
     /// Returns whether every control weight is finite and positive.
     ///
     /// The control hull bounds the patch only under this condition, which every
-    /// subdivision-based rejection test relies on.
+    /// embedding-based rejection test relies on.
     pub fn has_positive_weights(&self) -> bool {
         self.control_points()
             .as_slice()

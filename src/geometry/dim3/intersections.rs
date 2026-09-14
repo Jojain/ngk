@@ -27,7 +27,7 @@ pub use surface_surface::{
 
 /// Curve/curve observations plus an explicit coverage statement.
 ///
-/// The subdivision search is bounded, so an empty result means "nothing was
+/// The embedding search is bounded, so an empty result means "nothing was
 /// found within the budget", not "the curves are disjoint". A caller that must
 /// not miss an intersection reads [`Self::coverage`].
 #[derive(Debug, Clone, PartialEq)]
@@ -295,7 +295,7 @@ pub enum IntersectionIncompleteReason {
     TraceBudgetExhausted,
     SynchronizedFitToleranceExceeded,
     UnsupportedControlPointWeights,
-    /// Subdivision hit its depth limit with a candidate domain still unresolved,
+    /// Embedding hit its depth limit with a candidate domain still unresolved,
     /// so roots inside that domain may be missing or merged.
     SubdivisionBudgetExhausted,
     /// A curve span stayed within tolerance of a non-planar patch. The reported

@@ -1,6 +1,6 @@
 //! What a shape built by an ordinary builder says about its own raw cells.
 //!
-//! The subdivision layer was proved in `subdivision.rs` against fixtures whose
+//! The embedding layer was proved in `embedding.rs` against fixtures whose
 //! labels were written by hand. These tests ask the same questions of a model
 //! an ordinary builder produced, with nothing labelled deliberately: a shape
 //! with no scaffold should still classify completely, because every entity
@@ -14,7 +14,7 @@ use ngk::model::{Cell0, Cell1, Cell2, Model};
 use ngk::modeling::faces;
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
-use ngk::topology::subdivision::{EntityOwner, boundary_cycles, recover_region};
+use ngk::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
 
 /// A planar rectangle: four edges, four vertices, one face, and no scaffold.
 fn rectangle() -> Model<StandardPayload> {
@@ -27,7 +27,7 @@ fn rectangle() -> Model<StandardPayload> {
 #[test]
 fn every_raw_cell_of_a_built_rectangle_names_the_entity_it_belongs_to() {
     let model = rectangle();
-    let ownership = model.ownership();
+    let ownership = model.embedding_index();
 
     for dart in model.cells(Dim::Two) {
         let key = model
@@ -68,14 +68,14 @@ fn a_shape_with_no_scaffold_stores_no_labels_at_all() {
     let model = rectangle();
 
     assert!(
-        model.subdivision().is_empty(),
+        model.embedding().is_empty(),
         "a rectangle has no cell inside anything but itself, so there is \
          nothing to write down -- the classification is entirely derived",
     );
     assert!(
         model
             .cells(Dim::Two)
-            .all(|dart| model.ownership().owner(Dim::Two, dart).is_some()),
+            .all(|dart| model.embedding_index().owner(Dim::Two, dart).is_some()),
         "and yet every cell still has an owner, which is the point",
     );
 }
@@ -83,7 +83,7 @@ fn a_shape_with_no_scaffold_stores_no_labels_at_all() {
 #[test]
 fn a_built_rectangle_walks_back_to_one_face_and_four_logical_edges() {
     let model = rectangle();
-    let ownership = model.ownership();
+    let ownership = model.embedding_index();
     let (face_key, _) = model
         .iter_faces()
         .next()
@@ -107,16 +107,15 @@ fn a_built_rectangle_walks_back_to_one_face_and_four_logical_edges() {
         .expect("a built face has extractable boundary cycles");
     assert_eq!(cycles.len(), 1, "a rectangle has one boundary loop");
 
-    let uses = cycles[0]
-        .logical_uses(ownership)
-        .expect("every boundary piece of a rectangle is a logical edge");
+    let walked = cycles[0]
+        .edge_keys(ownership)
+        .expect("every boundary dart of a rectangle is a logical edge");
     assert_eq!(
-        uses.len(),
+        walked.len(),
         4,
         "walked back to the four edges it was built from"
     );
 
-    let walked: Vec<_> = uses.iter().map(|use_| use_.edge).collect();
     let mut distinct = walked.clone();
     distinct.sort();
     distinct.dedup();
@@ -143,7 +142,7 @@ fn the_place_a_built_circle_closes_belongs_to_the_edge() {
         model.iter_vertices().next().is_none(),
         "a whole circle has no corner anything meets at",
     );
-    let ownership = model.ownership();
+    let ownership = model.embedding_index();
     for dart in model.cells(Dim::Zero) {
         assert_eq!(
             ownership.owner(Dim::Zero, dart),
@@ -177,7 +176,7 @@ fn marking_a_circle_hands_its_closing_point_to_a_vertex() {
         cells,
         "marking creates no 0-cell; it renames the one already there",
     );
-    let ownership = model.ownership();
+    let ownership = model.embedding_index();
     for dart in model.cells(Dim::Zero) {
         assert_eq!(
             ownership.owner(Dim::Zero, dart),

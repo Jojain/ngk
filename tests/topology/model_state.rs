@@ -1,7 +1,7 @@
 //! What a model owns, and what a transaction does to all of it at once.
 //!
 //! A `Model` holds four kinds of state that have to move together: the pure
-//! map, the entity stores keyed against it, the subdivision labels saying which
+//! map, the entity stores keyed against it, the embedding labels saying which
 //! entity each raw cell falls inside, and the derived indexes over both. A
 //! commit advances every one of them or none, and a rollback puts every one of
 //! them back.
@@ -10,8 +10,8 @@ use ngk::builders::edges::add_edge;
 use ngk::geometry::{Curve, Point3};
 use ngk::model::{Cell0, Model};
 use ngk::topology::gmap::{Dart, Dim};
-use ngk::topology::shape_keys::{EdgeKey, FaceKey};
-use ngk::topology::subdivision::EntityOwner;
+use ngk::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
+use ngk::topology::embedding::EntityOwner;
 use ngk::topology::{ModelEditError, StandardPayload};
 
 /// Labels the edge's start 0-cell as interior to the edge, the way a closure
@@ -86,11 +86,11 @@ fn a_commit_carries_the_subdivision_with_the_map() {
         .expect("labelling the closure point commits");
 
     assert_eq!(
-        model.ownership().owner(Dim::Zero, anchor),
+        model.embedding_index().owner(Dim::Zero, anchor),
         Some(EntityOwner::Edge(edge)),
         "the label is readable through the model's own index"
     );
-    assert_eq!(model.subdivision().len(), 1);
+    assert_eq!(model.embedding().len(), 1);
 }
 
 #[test]
@@ -106,18 +106,18 @@ fn a_rollback_restores_the_subdivision_as_well_as_the_map() {
 
     let result = model.transaction(|edit| {
         let dart = edit.add_dart();
-        edit.own_cell(Dim::One, dart, EntityOwner::Edge(edge));
+        edit.own_cell(Dim::One, dart, EntityOwner::Face(FaceKey::default()));
         Err::<(), _>(ModelEditError::SameDart { dart })
     });
 
     assert!(result.is_err());
     assert_eq!(
-        model.subdivision().len(),
+        model.embedding().len(),
         1,
         "the rolled-back label is gone"
     );
     assert_eq!(
-        model.ownership().owner(Dim::Zero, anchor),
+        model.embedding_index().owner(Dim::Zero, anchor),
         Some(EntityOwner::Edge(edge)),
         "and the committed one is still there"
     );
@@ -127,23 +127,27 @@ fn a_rollback_restores_the_subdivision_as_well_as_the_map() {
 fn a_label_two_entities_disagree_about_is_rejected_at_commit() {
     let (mut model, edge) = one_edge();
     let anchor = model.edge_attr_unchecked(edge).dart;
-    // The far end of the same 1-cell. Labelling one anchor twice would be a
+    // The far end of the same 1-cell. Recording one anchor twice would be a
     // correction, not a disagreement -- two entities only contradict each other
     // when they reach the same orbit by anchors the commit has to reconcile.
+    // Both claimants sit above a 1-cell, so each record is the shape the rule
+    // allows and the contradiction is the only thing wrong with the pair.
     let far_side = model.alpha(Dim::Zero, anchor);
-    let intruder = EntityOwner::Face(FaceKey::default());
+    let holder = EntityOwner::Face(FaceKey::default());
+    let intruder = EntityOwner::Solid(SolidKey::default());
+    let _ = edge;
 
     let result = model.transaction(|edit| {
-        edit.own_cell(Dim::One, anchor, EntityOwner::Edge(edge));
+        edit.own_cell(Dim::One, anchor, holder);
         edit.own_cell(Dim::One, far_side, intruder);
         Ok::<_, ModelEditError>(())
     });
 
     assert!(
-        matches!(result, Err(ModelEditError::InvalidSubdivision(_))),
+        matches!(result, Err(ModelEditError::InvalidEmbedding(_))),
         "one raw cell cannot be inside two entities"
     );
-    assert!(model.subdivision().is_empty());
+    assert!(model.embedding().is_empty());
 }
 
 #[test]
@@ -152,20 +156,22 @@ fn a_label_anchored_off_the_map_is_rejected_at_commit() {
     let beyond = Dart::new(model.dart_count());
 
     let result = model.transaction(|edit| {
-        edit.own_cell(Dim::One, beyond, EntityOwner::Edge(edge));
+        edit.own_cell(Dim::One, beyond, EntityOwner::Face(FaceKey::default()));
+        let _ = edge;
         Ok::<_, ModelEditError>(())
     });
 
-    assert!(matches!(result, Err(ModelEditError::InvalidSubdivision(_))));
+    assert!(matches!(result, Err(ModelEditError::InvalidEmbedding(_))));
 }
 
 #[test]
 fn a_label_survives_the_renumbering_that_removing_darts_causes() {
     let mut model = Model::<StandardPayload>::new();
-    let owner = EntityOwner::Face(FaceKey::default());
+    let owner = EntityOwner::Solid(SolidKey::default());
 
-    // Two isolated darts, with the second one labelled. Dropping the first
-    // renumbers the second, and the label has to move with it.
+    // Two isolated darts, with the second one recorded as a 2-cell inside a
+    // solid. Dropping the first renumbers the second, and the record has to
+    // move with it.
     let second = model
         .transaction(|edit| {
             let first = edit.add_dart();
@@ -186,7 +192,7 @@ fn a_label_survives_the_renumbering_that_removing_darts_causes() {
 
     assert_eq!(model.dart_count(), 1);
     assert_eq!(
-        model.ownership().owner(Dim::Two, Dart::new(0)),
+        model.embedding_index().owner(Dim::Two, Dart::new(0)),
         Some(owner),
         "the record follows the cell it names, not the number it had"
     );
@@ -200,7 +206,7 @@ fn a_warm_index_and_a_cold_one_answer_the_same_after_an_edit() {
     // Warm every derived lookup before touching the model.
     let _ = model.edge_attr(edge);
     let _ = model.cell_key::<ngk::model::Cell1>(anchor);
-    let _ = model.ownership();
+    let _ = model.embedding_index();
 
     model
         .transaction(|edit| {
@@ -209,9 +215,9 @@ fn a_warm_index_and_a_cold_one_answer_the_same_after_an_edit() {
         })
         .expect("labelling commits");
 
-    let warm = model.ownership().owner(Dim::Zero, anchor);
+    let warm = model.embedding_index().owner(Dim::Zero, anchor);
     let cold = model
-        .subdivision()
+        .embedding()
         .index(model.topology())
         .expect("the labelling describes the map")
         .owner(Dim::Zero, anchor);
@@ -266,7 +272,7 @@ fn a_deserialized_model_rebuilds_its_derived_lookups() {
         "the dart-to-key index comes back from the stores, not from the file"
     );
     assert_eq!(
-        decoded.ownership().owner(Dim::Zero, anchor),
+        decoded.embedding_index().owner(Dim::Zero, anchor),
         Some(EntityOwner::Edge(edge))
     );
 }

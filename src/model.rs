@@ -2,7 +2,7 @@
 //!
 //! A [`GMap`] is connectivity and nothing else. A `Model<P>` is that map, the
 //! logical entities keyed against it, the geometry and payload each entity
-//! carries, the subdivision classification saying which entity's interior every
+//! carries, the embedding classification saying which entity's interior every
 //! raw cell falls in, and the derived indexes that make all of it fast to look
 //! up. Mutation happens in one place: [`Model::transaction`] hands out a
 //! [`ModelEdit`], which is the only capability that can change any of it, and
@@ -30,8 +30,8 @@ use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
-use crate::topology::subdivision::{
-    EntityOwner, OwnerRemap, OwnershipIndex, Subdivision, SubdivisionError,
+use crate::topology::embedding::{
+    EntityOwner, OwnerRemap, EmbeddingIndex, Embedding, EmbeddingError,
 };
 use crate::topology::vertex::Vertex;
 
@@ -289,12 +289,12 @@ pub struct Model<P: Payload = StandardPayload> {
     pub(crate) faces: SlotMap<FaceKey, FaceAttr<P::F>>,
     pub(crate) sheets: SlotMap<SheetKey, SheetAttr<P::Sheet>>,
     pub(crate) solids: SlotMap<SolidKey, SolidAttr<P::S>>,
-    pub(crate) subdivision: Subdivision,
+    pub(crate) embedding: Embedding,
     revision: u64,
     #[serde(skip)]
     derived_indexes: OnceLock<DerivedCellIndexes>,
     #[serde(skip)]
-    ownership: OnceLock<OwnershipIndex>,
+    ownership: OnceLock<EmbeddingIndex>,
     #[serde(skip)]
     realizations: RealizationCache,
     #[serde(skip)]
@@ -326,7 +326,7 @@ impl<P: Payload> Clone for Model<P> {
             faces: self.faces.clone(),
             sheets: self.sheets.clone(),
             solids: self.solids.clone(),
-            subdivision: self.subdivision.clone(),
+            embedding: self.embedding.clone(),
             revision: self.revision,
             derived_indexes: OnceLock::new(),
             ownership: OnceLock::new(),
@@ -353,7 +353,7 @@ impl<P: Payload> Model<P> {
             faces: SlotMap::with_key(),
             sheets: SlotMap::with_key(),
             solids: SlotMap::with_key(),
-            subdivision: Subdivision::new(),
+            embedding: Embedding::new(),
             revision: 0,
             derived_indexes: OnceLock::new(),
             ownership: OnceLock::new(),
@@ -380,17 +380,17 @@ impl<P: Payload> Model<P> {
     }
 
     /// Returns which logical entity owns each raw cell.
-    pub fn subdivision(&self) -> &Subdivision {
-        &self.subdivision
+    pub fn embedding(&self) -> &Embedding {
+        &self.embedding
     }
 
-    /// Returns the dart-to-owner lookup derived from the subdivision.
+    /// Returns the dart-to-owner lookup derived from the embedding.
     ///
     /// # Panics
     ///
     /// Panics if the labelling does not describe this model's map. Commit
     /// rejects such a labelling, so a committed model always has one.
-    pub fn ownership(&self) -> &OwnershipIndex {
+    pub fn embedding_index(&self) -> &EmbeddingIndex {
         self.ownership.get_or_init(|| {
             self.build_ownership()
                 .expect("a committed model's labelling should describe its own map")
@@ -399,7 +399,7 @@ impl<P: Payload> Model<P> {
 
     /// Returns where each entity is anchored, as the classification reads it.
     ///
-    /// This is the derived half of the subdivision: an entity contains the cell
+    /// This is the derived half of the embedding: an entity contains the cell
     /// its own anchor sits in, which its attribute already says. A solid is
     /// anchored through its outer shell, whose dart lies in the volume the
     /// solid is. A boundaryless face has no dart and contributes nothing --
@@ -413,10 +413,10 @@ impl<P: Payload> Model<P> {
             .edges
             .iter()
             .map(|(key, attr)| (Dim::One, attr.dart, EntityOwner::Edge(key)));
-        let faces = self.faces.iter().filter_map(|(key, attr)| {
-            attr.seed()
-                .map(|seed| (Dim::Two, seed, EntityOwner::Face(key)))
-        });
+        let faces = self
+            .faces
+            .iter()
+            .map(|(key, attr)| (Dim::Two, attr.seed(), EntityOwner::Face(key)));
         let solids = self.solids.iter().filter_map(|(key, attr)| {
             attr.outer_shell
                 .dart()
@@ -426,8 +426,8 @@ impl<P: Payload> Model<P> {
     }
 
     /// Builds the dart-to-owner lookup from the stored labels and the anchors.
-    fn build_ownership(&self) -> Result<OwnershipIndex, SubdivisionError> {
-        OwnershipIndex::build_with_anchors(&self.topology, &self.subdivision, self.entity_anchors())
+    fn build_ownership(&self) -> Result<EmbeddingIndex, EmbeddingError> {
+        EmbeddingIndex::build_with_anchors(&self.topology, &self.embedding, self.entity_anchors())
     }
 
     /// Runs one atomic operation against this model.
@@ -522,6 +522,14 @@ impl<P: Payload> Model<P> {
         }
     }
 
+    /// Returns the semantic events declared so far in the active edit session.
+    pub(crate) fn staged_edit_events(&self) -> &[EditEvent] {
+        self.transaction
+            .as_deref()
+            .map(|transaction| transaction.events.as_slice())
+            .unwrap_or_default()
+    }
+
     /// Records one semantic event in the active edit session.
     pub(crate) fn record_edit_event(&mut self, event: EditEvent) {
         self.transaction
@@ -548,8 +556,8 @@ impl<P: Payload> Model<P> {
         let _ = self.derived_indexes();
     }
 
-    /// Checks that the subdivision describes this model's map.
-    pub(crate) fn validate_subdivision(&self) -> Result<(), SubdivisionError> {
+    /// Checks that the embedding describes this model's map.
+    pub(crate) fn validate_embedding(&self) -> Result<(), EmbeddingError> {
         self.build_ownership().map(|_| ())
     }
 
@@ -575,72 +583,41 @@ impl<P: Payload> Model<P> {
             let repr = Profile::representative(self, attr.dart);
             self.insert_logical_key(&mut indexes.profile, repr, key, EditKey::Profile);
         }
+        // One lookup per face, not one per loop seed: a face occupies exactly
+        // one 2-cell, so every seed it has already lies in the cell its anchor
+        // names -- and a face with no seed at all still has that anchor.
         for (key, attr) in self.faces.iter() {
-            for dart in attr.darts() {
-                let repr = self.cell_representative(dart, Dim::Two);
-                self.insert_logical_key(&mut indexes.face, repr, key, EditKey::Face);
-            }
+            let repr = self.cell_representative(attr.seed(), Dim::Two);
+            self.insert_logical_key(&mut indexes.face, repr, key, EditKey::Face);
         }
         // A boundaryless shell has no dart to reach it from, so it registers
         // nothing here. It is found through its key, or through the one face
         // it holds, never by walking the map.
         for (key, attr) in self.sheets.iter() {
-            for dart in attr
-                .dart()
-                .into_iter()
-                .flat_map(|root| self.logical_sheet_darts(root, &indexes.face))
-            {
+            for dart in attr.dart() {
                 let repr = self.cell_representative(dart, Dim::Three);
                 self.insert_logical_key(&mut indexes.sheet, repr, key, EditKey::Sheet);
             }
         }
         for (key, attr) in self.solids.iter() {
             for dart in attr.shell_darts() {
-                for shell_dart in self.logical_sheet_darts(dart, &indexes.face) {
-                    let repr = self.cell_representative(shell_dart, Dim::Three);
-                    self.insert_logical_key(&mut indexes.solid, repr, key, EditKey::Solid);
-                }
+                let repr = self.cell_representative(dart, Dim::Three);
+                self.insert_logical_key(&mut indexes.solid, repr, key, EditKey::Solid);
             }
         }
 
         indexes
     }
 
-    /// Collects every raw alpha0/alpha1/alpha2 component in a logical sheet.
-    ///
-    /// A face with holes is represented by several disconnected 2-cell orbits
-    /// tied to one face attribute. Crossing between those boundary components
-    /// makes the incident raw 3-cell components part of the same domain sheet.
-    fn logical_sheet_darts(&self, start: Dart, face_index: &HashMap<Dart, FaceKey>) -> Vec<Dart> {
-        let mut pending = VecDeque::from([start]);
-        let mut seen_components = HashSet::new();
-        let mut seen_faces = HashSet::new();
-        let mut darts = Vec::new();
-
-        while let Some(seed) = pending.pop_front() {
-            let component = self.cell_representative(seed, Dim::Three);
-            if !seen_components.insert(component) {
-                continue;
-            }
-
-            for dart in self.incident_cells(seed, Dim::Three, Dim::Two) {
-                let face_component = self.cell_representative(dart, Dim::Two);
-                if let Some(&face_key) = face_index.get(&face_component)
-                    && seen_faces.insert(face_key)
-                {
-                    let face = self.face_attr_unchecked(face_key);
-                    pending.extend(face.darts());
-                }
-            }
-            darts.extend(self.orbit(seed, self.orbit_indices(Dim::Three)));
-        }
-
-        darts
-    }
-
     /// Returns all darts in the logical sheet containing `start`.
+    ///
+    /// One orbit and no flood. A sheet's faces are joined by `alpha2`, which
+    /// generates the raw 3-cell along with `alpha0` and `alpha1`, so the whole
+    /// sheet lies in the cell its root sits in. A face's several loops lie
+    /// there too, because a face occupies exactly one 2-cell and its loop seeds
+    /// all read it the same way round.
     pub(crate) fn sheet_darts(&self, start: Dart) -> Vec<Dart> {
-        self.logical_sheet_darts(start, &self.derived_indexes().face)
+        self.orbit(start, self.orbit_indices(Dim::Three)).collect()
     }
 
     /// Inserts one cell key, resolving staged duplicate identities consistently.
@@ -822,7 +799,7 @@ impl<P: Payload> Model<P> {
     /// Labels the raw `dimension`-cell containing `dart` as owned by `owner`.
     pub(crate) fn own_cell(&mut self, dimension: Dim, dart: Dart, owner: EntityOwner) {
         self.invalidate_derived_indexes();
-        self.subdivision.own(dimension, dart, owner);
+        self.embedding.own(dimension, dart, owner);
     }
 
     /// Unlabels the raw `dimension`-cell containing `dart`.
@@ -837,14 +814,14 @@ impl<P: Payload> Model<P> {
             .orbit(dart, self.topology.orbit_indices(dimension))
             .collect();
         for anchor in anchors {
-            self.subdivision.disown_at(dimension, anchor);
+            self.embedding.disown_at(dimension, anchor);
         }
     }
 
     /// Drops every label naming `owner`, for an entity being removed.
     pub(crate) fn disown_entity(&mut self, owner: EntityOwner) {
         self.invalidate_derived_indexes();
-        self.subdivision.disown(owner);
+        self.embedding.disown(owner);
     }
 
     /// Returns where `dart` sits in space, whether or not a vertex marks it.
@@ -878,7 +855,7 @@ impl<P: Payload> Model<P> {
         // while the orbits it names still exist.
         let discarded: HashSet<Dart> = darts.iter().map(IsolatedDart::dart).collect();
         let reanchored: Vec<(Dim, Dart, EntityOwner)> = self
-            .subdivision
+            .embedding
             .records()
             .filter_map(|record| {
                 self.topology
@@ -893,11 +870,11 @@ impl<P: Payload> Model<P> {
 
         let remap = self.topology.compact(darts);
         let follow = |dart: Dart| remap.get(&dart).copied().unwrap_or(dart);
-        let mut subdivision = Subdivision::new();
+        let mut embedding = Embedding::new();
         for (dimension, survivor, owner) in reanchored {
-            subdivision.own(dimension, follow(survivor), owner);
+            embedding.own(dimension, follow(survivor), owner);
         }
-        self.subdivision = subdivision;
+        self.embedding = embedding;
 
         if remap.iter().all(|(old, new)| old == new) {
             return remap;
@@ -1473,9 +1450,7 @@ impl<P: Payload> Model<P> {
 
         let mut face_map = HashMap::new();
         for (old, attr) in source.faces.iter() {
-            let Some(seed) = attr.seed() else {
-                continue;
-            };
+            let seed = attr.seed();
             if !source_dart_set.contains(&seed) {
                 continue;
             }
@@ -1554,8 +1529,8 @@ impl<P: Payload> Model<P> {
             solid_map.insert(old, new_key);
         }
 
-        self.subdivision.extend_remapped(
-            &source.subdivision,
+        self.embedding.extend_remapped(
+            &source.embedding,
             &dart_map,
             &OwnerRemap {
                 vertices: &vertex_map,

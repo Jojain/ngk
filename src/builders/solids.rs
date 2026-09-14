@@ -1,7 +1,7 @@
 use crate::geometry::TrimmedCurve2;
 use crate::model::{Cell2, MergeTopology, Model};
 use crate::topology::ModelEditError;
-use crate::topology::subdivision::EntityOwner;
+use crate::topology::embedding::EntityOwner;
 use std::collections::HashMap;
 
 use nalgebra::Vector3;
@@ -57,13 +57,19 @@ pub fn add_sphere<P: Payload>(
 ) -> Result<SolidKey, SphereBuildError> {
     g.transaction(|edit| {
         let surface = Surface::Sphere(Sphere::new(frame, radius));
-        let face = edit.add_face(FaceAttr::with_loops(
+        let darts = add_closed_bigon(edit)?;
+        let face = edit.add_face(FaceAttr::closed(
             surface,
             P::F::default(),
-            Vec::new(),
+            darts[0],
             HashMap::new(),
         ));
-        let shell = ShellRoot::at_face(face);
+        let owner = EntityOwner::Face(face);
+        // One edge and two poles, every one of them inside the face.
+        edit.own_cell(Dim::One, darts[0], owner);
+        edit.own_cell(Dim::Zero, darts[0], owner);
+        edit.own_cell(Dim::Zero, darts[1], owner);
+        let shell = ShellRoot::Dart(darts[0]);
         edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
         Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
     })
@@ -91,13 +97,19 @@ pub fn add_torus<P: Payload>(
 
     g.transaction(|edit| {
         let surface = Surface::Torus(Torus::new(frame, major, minor));
-        let face = edit.add_face(FaceAttr::with_loops(
+        let darts = add_closed_square(edit)?;
+        let face = edit.add_face(FaceAttr::closed(
             surface,
             P::F::default(),
-            Vec::new(),
+            darts[0],
             HashMap::new(),
         ));
-        let shell = ShellRoot::at_face(face);
+        let owner = EntityOwner::Face(face);
+        // Two edges and one vertex, every one of them inside the face.
+        edit.own_cell(Dim::One, darts[0], owner);
+        edit.own_cell(Dim::One, darts[2], owner);
+        edit.own_cell(Dim::Zero, darts[0], owner);
+        let shell = ShellRoot::Dart(darts[0]);
         edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
         Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
     })
@@ -269,13 +281,13 @@ fn face_normal_dot_direction<P: Payload>(
 ///
 /// # Panics
 ///
-/// Panics when `start` is not a boundary occurrence of `face`, which no loop
-/// dart the caller read off that same face is.
+/// Panics when `start` is not a boundary dart of `face`, which no loop dart the
+/// caller read off that same face is.
 fn cap_loop_edges<P: Payload>(g: &Model<P>, face: FaceKey, start: Dart) -> Vec<Dart> {
     Face::new(g, face)
         .loops()
         .into_iter()
-        .find_map(|boundary| Some(boundary.starting_at(start)?.occurrences()))
+        .find_map(|boundary| Some(boundary.starting_at(start)?.darts().collect()))
         .expect("a cap loop dart lies on a boundary of its cap")
 }
 
@@ -648,4 +660,55 @@ fn quad_pcurves(
         );
     }
     pcurves
+}
+
+/// Builds the four-dart 2-cell a whole sphere is, and returns its darts.
+///
+/// A bigon -- a disc bounded by two edges between two corners -- with those two
+/// edges identified in dimension two. The identification is *coherent*: the
+/// face closes into a sphere rather than the projective plane the twisted
+/// gluing would give. One face, one edge, two corners, and `V - E + F = 2`.
+///
+/// Nothing here is logical. The edge and the two corners are the material the
+/// face's one 2-cell is made of, and the caller records them as embedded so
+/// that a whole sphere reports no edge and no vertex a user could select.
+fn add_closed_bigon<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+) -> Result<Vec<Dart>, ModelEditError> {
+    let d: Vec<Dart> = (0..4).map(|_| edit.add_dart()).collect();
+    // The bigon: two edges, each between the same two corners.
+    edit.link(Dim::Zero, d[0], d[1])?;
+    edit.link(Dim::Zero, d[2], d[3])?;
+    edit.link(Dim::One, d[1], d[2])?;
+    edit.link(Dim::One, d[3], d[0])?;
+    // Closing it. Pairing each dart with the one reading the other edge the
+    // same way round is what makes this a sphere; pairing them the other way
+    // round would identify the corners too and give a projective plane.
+    edit.link(Dim::Two, d[0], d[3])?;
+    edit.link(Dim::Two, d[1], d[2])?;
+    Ok(d)
+}
+
+/// Builds the eight-dart 2-cell a whole torus is, and returns its darts.
+///
+/// A square with both pairs of opposite edges identified, which is the torus
+/// written as a polygon with the edge word `a b a⁻¹ b⁻¹`. The four corners
+/// become one, the four edges become two, and `V - E + F = 0`.
+fn add_closed_square<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+) -> Result<Vec<Dart>, ModelEditError> {
+    let d: Vec<Dart> = (0..8).map(|_| edit.add_dart()).collect();
+    for pair in [(0, 1), (2, 3), (4, 5), (6, 7)] {
+        edit.link(Dim::Zero, d[pair.0], d[pair.1])?;
+    }
+    for pair in [(1, 2), (3, 4), (5, 6), (7, 0)] {
+        edit.link(Dim::One, d[pair.0], d[pair.1])?;
+    }
+    // Opposite edges identified the way a translation would: the first side
+    // onto the third, the second onto the fourth, each reversed as the square's
+    // boundary runs round.
+    for pair in [(0, 5), (1, 4), (2, 7), (3, 6)] {
+        edit.link(Dim::Two, d[pair.0], d[pair.1])?;
+    }
+    Ok(d)
 }

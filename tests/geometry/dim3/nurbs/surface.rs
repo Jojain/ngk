@@ -36,7 +36,7 @@ fn cylinder_decomposes_into_exact_rational_bezier_spans() {
 
 #[test]
 fn bezier_patch_halves_agree_with_the_parent_patch() {
-    // A doubly curved rational patch: subdivision must reproduce the parent
+    // A doubly curved rational patch: embedding must reproduce the parent
     // exactly in parent parameters, which is what makes hull rejection sound.
     let cylinder = Cylinder::new(Point3::origin(), Vector3::x(), Vector3::z(), 2.0);
     let surface = cylinder.to_nurbs().unwrap();

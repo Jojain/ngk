@@ -121,7 +121,7 @@ pub fn intersect_curves_with_options(
     ))
 }
 
-/// One bounded subdivision search over a single curve pair.
+/// One bounded embedding search over a single curve pair.
 struct Search {
     options: IntersectionOptions,
     intersections: Vec<CurveCurveIntersection>,

@@ -506,9 +506,10 @@ fn healing_removes_the_seam_of_an_imported_wall() {
 /// A meridian revolved a whole turn is a sphere written the way an import
 /// carries one: its whole boundary is the seam, walked up one side and down the
 /// other between two pole vertices. Take the seam away and there is nothing
-/// left for a boundary to be — which is exactly what `solids::sphere` builds
-/// directly. The shell has no dart to be rooted at either, so it re-roots at
-/// the face, the dart-preferred invariant read the other way round.
+/// left for a *boundary* to be — but the cell is still there. The seam and its
+/// two poles stop being logical and become cells embedded in the face, which
+/// leaves the bigon-with-its-edges-identified that a whole sphere is: four
+/// darts, one face, and nothing selectable on it.
 #[test]
 fn removing_a_seam_can_leave_the_face_boundaryless() {
     let (mut g, sphere, solid) = seamed_revolved_sphere(1.0);
@@ -533,12 +534,11 @@ fn removing_a_seam_can_leave_the_face_boundaryless() {
             g.iter_edges().count(),
             g.iter_faces().count()
         ),
-        (0, 0, 0, 1),
-        "what is left is one face covering its whole support"
+        (4, 0, 0, 1),
+        "what is left is one face covering its whole support, on the one 2-cell          its embedded edge and poles make up"
     );
     let face = g.face_unchecked(sphere);
     assert!(face.loops().is_empty(), "a boundaryless face has no loops");
-    assert!(face.dart().is_none());
     assert_eq!(
         g.solid_attr_unchecked(solid).outer_shell.face(),
         Some(sphere),

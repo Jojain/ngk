@@ -743,7 +743,7 @@ fn plane_equation(surface: &NurbsSurface, tolerance: f64) -> Option<PlaneEquatio
 
 /// Finds regular branch seeds for a pair of surfaces with no planar operand.
 ///
-/// Subdivision isolates parameter boxes whose two normal cones are disjoint. By
+/// Embedding isolates parameter boxes whose two normal cones are disjoint. By
 /// the Sederberg-Meyers loop criterion such a box cannot contain a closed
 /// intersection loop, so every branch crossing it also crosses its boundary and
 /// seeding from the patch boundary curves accounts for all of them. A box that
@@ -848,7 +848,7 @@ impl PairSeedSearch {
     }
 }
 
-/// Chooses the patch whose subdivision is most likely to separate the cones.
+/// Chooses the patch whose embedding is most likely to separate the cones.
 ///
 /// A patch with no cone at all is the blocker; otherwise the wider cone is.
 fn split_first(

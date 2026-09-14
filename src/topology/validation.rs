@@ -10,6 +10,7 @@ use super::face::Face;
 use super::gmap::{Dart, Dim, GMap};
 use super::payload::Payload;
 use super::shape_keys::{FaceKey, SolidKey};
+use super::embedding::EntityOwner;
 use super::sheet::Sheet;
 use crate::model::Model;
 
@@ -370,4 +371,106 @@ fn validate_oriented_shell_volume<P: Payload>(
 enum ShellSide {
     Outer,
     Inner,
+}
+
+/// An entity that does not occupy exactly one raw cell of its own dimension.
+///
+/// The dimension is not a field: [`EntityOwner`] already carries it, and a
+/// second copy could disagree with the key it sits next to.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum CellOccupancyError {
+    #[error("{entity:?} spans more than one raw cell of its own dimension: {first:?} and {second:?}")]
+    SpansSeveralCells {
+        /// The entity holding darts in two cells.
+        entity: EntityOwner,
+        /// A representative of the first cell reached.
+        first: Dart,
+        /// A representative of the second, which should not exist.
+        second: Dart,
+    },
+
+    #[error("{entity:?} occupies no raw cell of its own dimension: it names no dart")]
+    OccupiesNoCell {
+        /// The entity with no topology at all.
+        entity: EntityOwner,
+    },
+}
+
+/// Reports every entity that does not occupy exactly one raw cell of its own
+/// dimension.
+///
+/// Only faces and solids can fail. A vertex and an edge each name exactly one
+/// anchor dart, so the cell they occupy is that dart's and there is nothing to
+/// disagree with; profiles and sheets are aggregates of entities rather than
+/// entities with a cell of their own, so the rule does not reach them. A face
+/// names one dart per loop plus one per pcurve, and a solid names one per
+/// shell, and those are what can land in two cells or in none.
+///
+/// Reads the involutions alone, never the classification: an entity's own cell
+/// is the question being asked, so an answer derived from ownership labels
+/// would assume it. Darts outside the map are skipped rather than reported —
+/// [`validate_gmap`] is what names those — so a model whose darts all dangle
+/// reports its entities as occupying no cell, which is true of the map it has.
+pub fn cell_occupancy_violations<P: Payload>(g: &Model<P>) -> Vec<CellOccupancyError> {
+    let mut violations = Vec::new();
+
+    for (key, attr) in g.iter_faces() {
+        let darts = attr.darts().chain(attr.pcurves.keys().copied());
+        check_one_cell(g, EntityOwner::Face(key), Dim::Two, darts, &mut violations);
+    }
+
+    for (key, attr) in g.iter_solids() {
+        let darts = attr.shell_darts();
+        check_one_cell(
+            g,
+            EntityOwner::Solid(key),
+            Dim::Three,
+            darts,
+            &mut violations,
+        );
+    }
+
+    violations
+}
+
+/// Returns the first entity that breaks the rule, for a caller that only needs
+/// to refuse.
+///
+/// [`cell_occupancy_violations`] is what to reach for when the whole list is
+/// the point, such as an inventory of what a tree still has to fix.
+pub fn validate_cell_occupancy<P: Payload>(g: &Model<P>) -> Result<(), CellOccupancyError> {
+    match cell_occupancy_violations(g).into_iter().next() {
+        Some(violation) => Err(violation),
+        None => Ok(()),
+    }
+}
+
+/// Records whether `darts` all lie in one `dimension`-cell, and that there is
+/// at least one of them.
+fn check_one_cell<P: Payload>(
+    g: &Model<P>,
+    entity: EntityOwner,
+    dimension: Dim,
+    darts: impl Iterator<Item = Dart>,
+    violations: &mut Vec<CellOccupancyError>,
+) {
+    let mut held: Option<(Dart, Dart)> = None;
+    for dart in darts.filter(|dart| dart.id() < g.dart_count()) {
+        let cell = g.cell_representative(dart, dimension);
+        match held {
+            None => held = Some((dart, cell)),
+            Some((_, first)) if first == cell => {}
+            Some((first_dart, _)) => {
+                violations.push(CellOccupancyError::SpansSeveralCells {
+                    entity,
+                    first: first_dart,
+                    second: dart,
+                });
+                return;
+            }
+        }
+    }
+    if held.is_none() {
+        violations.push(CellOccupancyError::OccupiesNoCell { entity });
+    }
 }

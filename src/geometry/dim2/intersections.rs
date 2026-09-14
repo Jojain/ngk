@@ -36,7 +36,7 @@ pub enum CurveCurveIntersection2 {
 
 /// 2D curve/curve observations plus an explicit coverage statement.
 ///
-/// The subdivision search is bounded, so an empty result means "nothing was
+/// The embedding search is bounded, so an empty result means "nothing was
 /// found within the budget", not "the curves are disjoint". Boolean trimming
 /// calls this at parameter tolerance rather than linear tolerance, which makes
 /// leaves much harder to reach, so callers that must not miss a crossing read
@@ -263,7 +263,7 @@ pub fn intersect_curves(
 /// Intersects two 2D spans using explicit numerical controls.
 ///
 /// Both operands are spans rather than supports because the search is a
-/// subdivision over control polygons: an unbounded support has none. Returned
+/// embedding over control polygons: an unbounded support has none. Returned
 /// parameters are normalized traversal fractions of each span.
 pub fn intersect_curves_with_options(
     a: &TrimmedCurve2,
@@ -316,7 +316,7 @@ pub fn intersect_curves_with_options(
     ))
 }
 
-/// One bounded subdivision search over a single 2D curve pair.
+/// One bounded embedding search over a single 2D curve pair.
 struct Search {
     options: CurveIntersectionOptions,
     intersections: Vec<CurveCurveIntersection2>,

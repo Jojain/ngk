@@ -2,7 +2,7 @@
 //!
 //! Every fixture here drives the core's own edit primitives — `add_dart`,
 //! `link` and `sew` inside one transaction — and registers no domain attribute
-//! at all. What it adds beside the map is a [`Subdivision`]: one record per raw
+//! at all. What it adds beside the map is a [`Embedding`]: one record per raw
 //! cell saying which logical entity's interior contains it. That pairing is the
 //! whole subject of these fixtures, so the shapes are the smallest ones that
 //! still have the feature being proved.
@@ -19,8 +19,8 @@ use ngk::model::Model;
 use ngk::topology::ModelEdit;
 use ngk::topology::gmap::{Dart, Dim, GMap};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
-use ngk::topology::subdivision::{
-    EntityOwner, LogicalRegion, OwnershipIndex, Subdivision, recover_all_regions, recover_region,
+use ngk::topology::embedding::{
+    Embedding, EmbeddingError, EmbeddingIndex, EntityOwner, LogicalRegion, recover_region,
 };
 use ngk::topology::{ModelEditError, StandardPayload};
 use slotmap::SlotMap;
@@ -31,7 +31,14 @@ pub struct Scaffold {
     pub model: Model<StandardPayload>,
     /// Every logical entity, in the order it was created.
     pub entities: Vec<EntityOwner>,
-    staged: Subdivision,
+    /// Where each entity's own cell is.
+    ///
+    /// Held apart from `staged` for the reason a real model holds it apart from
+    /// its embedding: a record says a cell is embedded in something larger,
+    /// which an entity's own cell never is. A `Model` reads this half off its
+    /// attribute stores; a fixture has none, so it keeps the list itself.
+    anchors: Vec<(Dim, Dart, EntityOwner)>,
+    staged: Embedding,
     vertices: SlotMap<VertexKey, ()>,
     edges: SlotMap<EdgeKey, ()>,
     faces: SlotMap<FaceKey, ()>,
@@ -44,7 +51,8 @@ impl Scaffold {
         Self {
             model,
             entities: Vec::new(),
-            staged: Subdivision::new(),
+            anchors: Vec::new(),
+            staged: Embedding::new(),
             vertices: SlotMap::with_key(),
             edges: SlotMap::with_key(),
             faces: SlotMap::with_key(),
@@ -76,9 +84,25 @@ impl Scaffold {
         self.remember(EntityOwner::Solid(key))
     }
 
-    /// Stages a label for the raw `dimension`-cell containing `dart`.
+    /// Declares which entity the raw `dimension`-cell containing `dart` belongs
+    /// to, as an anchor or as an embedded cell according to the dimensions.
+    ///
+    /// An entity named on a cell of its own dimension is anchored there; one
+    /// named on a smaller cell is a record saying that cell is embedded in it.
+    /// Callers say the same thing either way, and the split follows.
     pub fn own(&mut self, dimension: Dim, dart: Dart, owner: EntityOwner) {
-        self.staged.own(dimension, dart, owner);
+        if owner.dimension() == dimension {
+            self.anchors
+                .retain(|&(held, at, _)| held != dimension || at != dart);
+            self.anchors.push((dimension, dart, owner));
+        } else {
+            self.staged.own(dimension, dart, owner);
+        }
+    }
+
+    /// Returns every anchor, for a caller building an index of its own.
+    pub fn anchors(&self) -> impl Iterator<Item = (Dim, Dart, EntityOwner)> + '_ {
+        self.anchors.iter().copied()
     }
 
     /// Stages a label for every raw cell of `dimension`.
@@ -90,14 +114,21 @@ impl Scaffold {
 
     /// Gives each still unlabelled raw cell of `dimension` an entity of its own.
     pub fn own_each_remaining(&mut self, dimension: Dim, make: fn(&mut Self) -> EntityOwner) {
-        let labelled: HashSet<Dart> = self
+        let declared: Vec<Dart> = self
             .staged
             .records()
             .filter(|record| record.dimension == dimension)
-            .flat_map(|record| {
-                self.map()
-                    .orbit(record.representative, self.map().orbit_indices(dimension))
-            })
+            .map(|record| record.representative)
+            .chain(
+                self.anchors
+                    .iter()
+                    .filter(|&&(held, ..)| held == dimension)
+                    .map(|&(_, dart, _)| dart),
+            )
+            .collect();
+        let labelled: HashSet<Dart> = declared
+            .into_iter()
+            .flat_map(|dart| self.map().orbit(dart, self.map().orbit_indices(dimension)))
             .collect();
         let bare: Vec<Dart> = self
             .map()
@@ -131,15 +162,24 @@ impl Scaffold {
     }
 
     /// Returns the committed labelling.
-    pub fn subdivision(&self) -> &Subdivision {
-        self.model.subdivision()
+    pub fn embedding(&self) -> &Embedding {
+        self.model.embedding()
     }
 
-    /// Expands the labelling into the lookup the walkers read.
-    pub fn index(&self) -> OwnershipIndex {
-        self.subdivision()
-            .index(self.map())
+    /// Expands the committed labelling into the lookup the walkers read.
+    pub fn index(&self) -> EmbeddingIndex {
+        self.index_of(self.embedding())
             .expect("a fixture's labelling should describe its own map")
+    }
+
+    /// Expands `embedding` against this fixture's anchors.
+    ///
+    /// A bare [`Embedding`] holds only embedded cells, so indexing one on its
+    /// own would leave every entity's own cell unclassified. Tests that build a
+    /// deliberately wrong labelling index it through here so that the fault
+    /// they wrote is the only thing wrong with it.
+    pub fn index_of(&self, embedding: &Embedding) -> Result<EmbeddingIndex, EmbeddingError> {
+        EmbeddingIndex::build_with_anchors(self.map(), embedding, self.anchors())
     }
 
     /// Returns the entities of one dimension, in creation order.
@@ -151,13 +191,13 @@ impl Scaffold {
             .collect()
     }
 
-    /// Returns the entity's first recorded cell of its own dimension.
+    /// Returns the cell this entity is anchored at.
     pub fn anchor(&self, owner: EntityOwner) -> Dart {
-        self.subdivision()
-            .records_of(owner)
-            .find(|record| record.dimension == owner.dimension())
-            .expect("every entity should own at least one cell of its own dimension")
-            .representative
+        self.anchors
+            .iter()
+            .find(|&&(dimension, _, held)| held == owner && dimension == owner.dimension())
+            .expect("every entity should be anchored at a cell of its own dimension")
+            .1
     }
 
     /// Recovers one entity's region by walking the map.
@@ -166,10 +206,16 @@ impl Scaffold {
             .expect("a fixture's region should be recoverable")
     }
 
-    /// Recovers every entity's region, checking each entity is one connected thing.
+    /// Recovers every entity's region, one orbit walk from each anchor.
     pub fn regions(&self) -> Vec<LogicalRegion> {
-        recover_all_regions(self.map(), &self.index(), self.subdivision())
-            .expect("a fixture's regions should all be recoverable")
+        let index = self.index();
+        self.entities
+            .iter()
+            .map(|&owner| {
+                recover_region(self.map(), &index, owner, self.anchor(owner))
+                    .expect("a fixture's region should be recoverable")
+            })
+            .collect()
     }
 
     /// Counts the raw cells of one dimension.
@@ -181,13 +227,13 @@ impl Scaffold {
     ///
     /// This is how a test writes a wrong label: replace what the fixture said
     /// about one cell rather than adding a second, conflicting claim to it.
-    pub fn relabelled(&self, dimension: Dim, dart: Dart, owner: EntityOwner) -> Subdivision {
+    pub fn relabelled(&self, dimension: Dim, dart: Dart, owner: EntityOwner) -> Embedding {
         let orbit: HashSet<Dart> = self
             .map()
             .orbit(dart, self.map().orbit_indices(dimension))
             .collect();
-        let mut copy = Subdivision::new();
-        for record in self.subdivision().records() {
+        let mut copy = Embedding::new();
+        for record in self.embedding().records() {
             if record.dimension == dimension && orbit.contains(&record.representative) {
                 continue;
             }

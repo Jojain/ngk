@@ -1,4 +1,4 @@
-//! Curve/surface intersection by exact Bézier decomposition and bounded subdivision.
+//! Curve/surface intersection by exact Bézier decomposition and bounded embedding.
 //!
 //! Both operands are decomposed once into rational Bézier spans and patches
 //! whose control hulls bound them. Candidate pairs are rejected by those hulls,
@@ -331,7 +331,7 @@ impl Search<'_> {
         }
 
         // A curve resting on a curved surface keeps both hulls overlapping
-        // however far the pair is split, so subdivision alone never settles it.
+        // however far the pair is split, so embedding alone never settles it.
         // The untouched span is tested against the surface directly instead.
         if curve.depth == 0 && self.span_lies_on_surface(&curve.bezier) {
             self.overlaps.push(curve.bezier.domain());

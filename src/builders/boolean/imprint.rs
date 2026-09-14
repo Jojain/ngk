@@ -1,4 +1,4 @@
-//! Derivation of topology-subdivision inputs from the intersection network.
+//! Derivation of topology-embedding inputs from the intersection network.
 
 use crate::model::Model;
 use std::collections::HashMap;

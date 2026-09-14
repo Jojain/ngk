@@ -103,7 +103,7 @@ pub(crate) fn run<P: Payload>(
     let mut outer = Vec::new();
     let mut inner = Vec::new();
     for component in components {
-        let root = edit.face_unchecked(component[0]).dart_unchecked();
+        let root = edit.face_unchecked(component[0]).dart();
         let sheet = edit.add_sheet(SheetAttr::new(ShellRoot::Dart(root), P::Sheet::default()));
         if Closed::new(edit.sheet_unchecked(sheet)).is_none() {
             return Err(BooleanError::OpenResultShell { face: component[0] });

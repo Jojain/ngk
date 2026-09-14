@@ -206,7 +206,7 @@ impl_owned_shape_display!(FaceTag, DebugObjectKind::Face, face, |view: &Face<
     '_,
     StandardPayload,
 >| Some(
-    view.dart_unchecked()
+    view.dart()
 ));
 impl_owned_shape_display!(SheetTag, DebugObjectKind::Sheet, sheet, |view: &Sheet<
     '_,

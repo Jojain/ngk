@@ -1,6 +1,6 @@
 //! Every Boolean terminates, whether or not it succeeds.
 //!
-//! The searches underneath a Boolean are subdivision searches, and one without
+//! The searches underneath a Boolean are embedding searches, and one without
 //! a node budget can visit a tree deep enough that it never returns on a
 //! configuration nobody anticipated. These tests assert only termination and a
 //! typed outcome; what that outcome *is* belongs in `boolean.rs`.
