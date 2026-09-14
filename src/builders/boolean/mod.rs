@@ -690,9 +690,11 @@ fn split_edge_at_points<P: Payload>(
                 return false;
             };
             let parameter = periodic_parameter_in_domain(curve, point, domain);
+            // Asked of the corners, not of the span's ends: on an unmarked edge
+            // those ends are where the curve closes, and a contact landing there
+            // is a corner to add rather than one already taken.
             domain.contains(parameter, options.parameter_tolerance)
-                && (parameter - domain.start).abs() > options.parameter_tolerance
-                && (parameter - domain.end).abs() > options.parameter_tolerance
+                && !view.has_corner_at(parameter, options.linear_tolerance)
         }) else {
             continue;
         };

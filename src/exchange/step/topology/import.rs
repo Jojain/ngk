@@ -230,7 +230,8 @@ fn demote_closure_vertices(gmap: &mut Model<StandardPayload>) -> Result<(), Mode
             let [edge] = edges.as_slice() else {
                 return None;
             };
-            matches!(edge, Edge::Closed(_)).then(|| (key, attr.dart, edge.key()))
+            matches!(edge, Edge::Marked(_) | Edge::Unmarked(_))
+                .then(|| (key, attr.dart, edge.key()))
         })
         .collect();
     if closures.is_empty() {

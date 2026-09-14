@@ -4,9 +4,9 @@ Status: **In progress** — M0, M1 and M2 complete. M3 holds the realization
 cache; its label-derived views wait on construction, for the reason in
 [Ordering correction](#ordering-correction-classification-precedes-public-views).
 M4's two classification slices are complete: a built rectangle and a built
-cylinder are classified end to end, a circle is vertex-free through construction,
-splitting, healing and STEP in both directions, and the suite is green. Next is
-step 3 of the ordering correction — deriving `Face::loops()` from
+cylinder are classified end to end, a circle is unmarked through construction,
+cutting, healing, Booleans and STEP in both directions, and the suite is green.
+Next is step 3 of the ordering correction — deriving `Face::loops()` from
 `boundary_cycles` and deleting the stored seeds.
 
 Implementation guide: section 1 fixes the architecture, section 2 defines the
@@ -1294,6 +1294,131 @@ zero failing and zero ignored** (729 inherited plus the two new tests).
 warnings, none in changed files. `cargo fmt` and `git diff --check` pass.
 Python, benchmarks and the frontend were not rerun for this core-only
 checkpoint.
+
+#### M4 slice 2 addendum — a cut adds a corner; separation is a consequence
+
+The completion above promoted a circle's closing point whenever the circle was
+cut, so that "a split leaves two edges" stayed true. That was wrong, and a probe
+said so: a circle cut **twice** came back as three edges and three corners,
+where the answer is two of each. The invented corner also sat wherever the
+parameterization happened to start — which is the accident slice 2 existed to
+delete, reintroduced one stage later.
+
+**The rule is that a cut adds a corner. Whether the edge separates depends on
+whether it already had one.**
+
+| edge cut | result |
+|---|---|
+| bounded | two bounded edges |
+| unmarked | **one marked edge**, no edge created |
+| marked | two bounded edges |
+
+Cutting an unmarked edge is a **relabel of the map**: it already holds its two
+darts and its single 0-cell orbit, so materializing that orbit as a corner costs
+no darts and no links. Only the vertex's stored point says where the corner now
+sits, and the span derivation reads it — a marked edge spans `[t, t + period]`
+from its corner, which `Curve::interval_between` already answers for two
+coincident points. `parameter_interval` had to stop asking `vertices_at_dart`,
+which folds a marked edge's coincident ends to `None`.
+
+`EdgeSplit` became an enum — `Separated { first, second, vertex }` and
+`Marked { edge, vertex }` — because the flat struct could not say that nothing
+was created. Its three internal consumers each wanted a different question
+answered, which is why the field access hid the distinction: `vertex()`,
+`created()`, `continuation()` and `edges()` are now separate.
+
+The vocabulary is in `AGENTS.md`: **bounded**, **marked**, **unmarked**, with
+`Edge::is_unmarked()` carrying it in code. `Edge::Closed` stays the umbrella over
+the last two, because both *are* closed — a closed edge with a deliberate corner
+is still closed.
+
+#### The finding: a span's ends are not the edge's ends
+
+Four separate places used a parameterization's own ends as a proxy for where the
+edge begins and ends. Each was correct until an edge could be unmarked, and each
+failed differently enough that none of them looked like the others:
+
+1. `realize_edge_spans` matched a fragment to a span by its **bounded**
+   endpoints, so a marked edge — one corner that is both its ends — never
+   matched, and the Boolean saw a span with no second side.
+2. `loop_boundary_edges` read each boundary corner off `pcurve.point_at(0.0)`.
+   The face then believed its corner was where the pcurve started while the edge
+   said otherwise, and the cut that should have followed was refused as
+   degenerate.
+3. `boundary_edge_at_uv` rejected a parameter near pcurve fraction 0 or 1 as
+   "at an edge end", refusing to find the rim at the one point needing a cut.
+4. `split_edge_at_points` and `check_split_parameter` rejected a cut near the
+   ends of the edge's span as degenerate. For an unmarked edge those ends are
+   where the *curve closes*, not corners — so a contact landing there was
+   silently dropped. This is the one that matters most in practice: a builder
+   puts a circle's parameterization origin somewhere meaningful, so a tangency
+   tends to land exactly on it. The block/cylinder tangency touches each rim at
+   the origin and at a quarter turn; the first contact was being discarded.
+
+Rejected along the way: **re-anchoring a pcurve's interval to follow the
+corner.** It works for a `Circle2` and breaks for a closed NURBS pcurve, which
+reports no periodicity — `NurbsCurve2::point_at` clamps rather than wraps, so a
+span shifted past the seam silently returns the endpoint. A pcurve's anchoring is
+its own; the corner is the corner's.
+
+That last point names real work outside this experiment. A closed NURBS is
+`is_closed()` but not `Periodicity::Periodic`, so **a span on one that crosses
+its seam is unrepresentable**, and every circle becomes a closed NURBS once it is
+a pcurve. Nothing here needs it; it is written up in
+[Periodic supports](periodic_supports.md) so the ordering it demands is on the
+record before someone reaches for it.
+
+Evidence: `cargo test --all-targets --all-features` exits 0 with **735 passing,
+zero failing and zero ignored**. `cargo clippy --all-targets --all-features`
+exits 0 with the same 25 distinct warnings, none in changed files. `cargo fmt`
+and `git diff --check` pass.
+
+#### The three shapes became three variants
+
+The vocabulary — bounded, marked, unmarked — is now the type, not a convention:
+
+```rust
+pub enum Edge<'a, P> {
+    Bounded(BoundedEdge<'a, P>),    // two distinct corners
+    Marked(MarkedEdge<'a, P>),      // one, which is both start and end
+    Unmarked(UnmarkedEdge<'a, P>),  // none
+}
+```
+
+`ClosedEdge::vertex() -> Option<Vertex>` is gone, and with it the branch a
+caller could forget to take. Corner access is total on each type:
+`BoundedEdge::vertices()` gives two, `MarkedEdge::corner()` gives one, and
+`UnmarkedEdge` offers no way to ask.
+
+**Flat rather than nested, and the evidence for that is in this plan.** The first
+attempt nested the two closed shapes under `Edge::Closed(ClosedEdge)`, so that a
+caller meaning only "closed" could keep writing one pattern. `revolve.rs` was
+such a caller — and it was wrong: a whole turn of a *marked* profile sweeps its
+corner into an edge that bounds the result, while an unmarked profile sweeps a
+boundaryless torus. The nested enum let that site keep compiling. Flattening
+turns it into a compile error at the one place that can decide, which is the
+entire point of moving the distinction into the type. Nothing took `ClosedEdge`
+as a parameter either; every use of it was inside a pattern.
+
+Sites that genuinely mean "closed" write `Marked(_) | Unmarked(_)`, which stays
+exhaustive-checked, or ask `Closeable::is_closed()`.
+
+`EdgeCore::has_corner_at(parameter, tolerance)` covers the other half. Every
+"would this cut land on an end of the edge?" test used to reconstruct the answer
+from the ends of the edge's *span*; this answers it from the corners, is total
+over all three shapes, and compares points rather than parameters, so a caller
+asking it never branches at all. Two of the four proxy sites collapse to it.
+
+`revolve`'s marked case is refused by name rather than approximated:
+`RevolveError::MarkedProfileRevolve`. Consuming the source loop as if it were
+unmarked would delete a corner the caller placed deliberately and hand back a
+shape nobody asked for. The refusal is tested; the swept-boundary torus it
+describes is not built.
+
+Evidence: `cargo test --all-targets --all-features` exits 0 with **736 passing,
+zero failing and zero ignored**. `cargo clippy --all-targets --all-features`
+exits 0 with the same 25 distinct warnings. `cargo fmt` and `git diff --check`
+pass.
 
 ### M5 implementation — operation families and promotion rules
 

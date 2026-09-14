@@ -544,6 +544,15 @@ fn check_split_parameter<P: Payload>(
         return Err(EdgeSplitError::ParameterOutOfRange { parameter, domain });
     }
 
+    // An unmarked edge has no corner for a cut to land on, so no parameter of it
+    // is degenerate. Its span is the whole support, and the ends of that span
+    // are where the curve closes -- which is a place to put a corner like any
+    // other, not one already taken. Only an edge that has corners can be cut at
+    // one.
+    if g.attribute::<Cell0>(first_dart).is_none() {
+        return Ok(());
+    }
+
     if (parameter - domain.start).abs() <= LINEAR_TOLERANCE
         || (parameter - domain.end).abs() <= LINEAR_TOLERANCE
     {

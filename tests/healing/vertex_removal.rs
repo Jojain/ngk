@@ -228,8 +228,8 @@ fn two_arcs_that_close_on_each_other_fuse_into_one_closed_edge() {
     let (edge, _) = map.iter_edges().next().expect("the fused rim");
     let view = map.edge_unchecked(edge);
     assert!(
-        matches!(view, Edge::Closed(_)),
-        "the fused rim closes on itself, so it has no endpoints to name"
+        matches!(view, Edge::Marked(_)),
+        "the fused rim closes on itself, keeping the corner the fusion left"
     );
     let span = view
         .parameter_interval()

@@ -240,16 +240,14 @@ fn cutting_an_unmarked_edge_marks_it() {
         "marking is a relabel, so the raw map gains no 1-cell",
     );
 
-    let view = g.edge_unchecked(edge);
-    assert!(
-        matches!(view, Edge::Closed(_)),
-        "a closed edge with a deliberate corner is still closed",
-    );
+    // Marked, not bounded: a closed edge with a deliberate corner is still
+    // closed, and the variant says which of the two closed shapes it is.
+    let Edge::Marked(marked) = g.edge_unchecked(edge) else {
+        panic!("a cut leaves the edge closed and carrying one corner");
+    };
     assert_eq!(
-        view.closed()
-            .and_then(|closed| closed.vertex())
-            .map(|v| v.key()),
-        Some(vertex),
+        marked.corner().key(),
+        vertex,
         "and the corner it carries is the one the cut asked for",
     );
 }
@@ -303,4 +301,39 @@ fn cutting_a_marked_edge_separates_it() {
             "each arc runs between two distinct corners",
         );
     }
+}
+
+/// An unmarked edge can be cut where its own curve closes.
+///
+/// That parameter is the end of the edge's span, but the span of an unmarked
+/// edge is its whole support and its ends are not corners -- nothing is there to
+/// cut twice. Refusing it as degenerate silently drops a junction, and a contact
+/// landing exactly on a circle's parameterization origin is not a rare accident:
+/// a builder puts that origin somewhere meaningful, so a tangency tends to find
+/// it.
+#[test]
+fn an_unmarked_edge_takes_a_corner_where_its_curve_closes() {
+    let mut g = Model::<StandardPayload>::new();
+    let face = add_disc(&mut g, Plane::xy(), 1.0).expect("a disc builds");
+    let rim = rim_of(&g, face);
+    let closes_at = g
+        .edge_unchecked(rim)
+        .parameter_interval()
+        .expect("an unmarked edge spans its support")
+        .ordered()
+        .start;
+
+    let split =
+        split_face_edge(&mut g, face, rim, closes_at).expect("the rim takes a corner there");
+
+    let EdgeSplit::Marked { vertex, .. } = split else {
+        panic!("cutting an unmarked edge marks it, got {split:?}");
+    };
+    assert_eq!(g.iter_vertices().count(), 1);
+    assert!(
+        g.vertex_attr_unchecked(vertex)
+            .point
+            .coincides(Point3::new(1.0, 0.0, 0.0), LINEAR_TOLERANCE),
+        "the corner sits where the cut asked for it",
+    );
 }

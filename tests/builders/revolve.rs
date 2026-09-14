@@ -4,7 +4,7 @@ use nalgebra::Vector3;
 use ngk::viz::debug_viewer::show;
 use radians::Rad64;
 
-use ngk::builders::edges::{add_circle, add_edge};
+use ngk::builders::edges::{add_circle, add_edge, split_edge};
 use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::revolve::{RevolveError, add_revolved_edge, add_revolved_face};
 use ngk::geometry::axis::Axis3;
@@ -179,6 +179,39 @@ fn side_arc_midpoint(
         .parameter_interval()
         .expect("side arc should have an oriented interval");
     curve.point_at(interval.at(0.5))
+}
+
+/// A full turn of a *marked* profile is a different shape, so it is refused.
+///
+/// The corner sweeps a circle, and that circle bounds the result — so the
+/// boundaryless torus below is not the answer for this profile. Consuming the
+/// source loop as if it were unmarked would delete a corner the caller put there
+/// on purpose and hand back a shape nobody asked for, so the gap is named
+/// instead.
+#[test]
+fn revolve_marked_closed_edge_full_turn_is_refused() {
+    let mut g = Model::<StandardPayload>::new();
+    let profile = ngk::geometry::Plane::new(Point3::new(3.0, 0.0, 0.0), Vector3::x(), Vector3::y());
+    let circle = add_circle(&mut g, profile, 1.0).expect("profile circle should build");
+    split_edge(&mut g, circle, 0.5).expect("the profile takes a corner");
+    assert_eq!(g.iter_vertices().count(), 1, "the profile is marked");
+
+    let refused = add_revolved_edge(
+        &mut g,
+        circle,
+        Axis3::new(Point3::origin(), Vector3::z()),
+        Rad64::FULL_TURN,
+    );
+
+    assert!(
+        matches!(&refused, Err(RevolveError::MarkedProfileRevolve { key }) if *key == circle),
+        "a marked profile sweeps a bounded torus, got {refused:?}",
+    );
+    assert_eq!(
+        g.iter_vertices().count(),
+        1,
+        "and the corner it refused over is still there",
+    );
 }
 
 /// A full turn of a closed profile sweeps a torus: one face, and no topology.

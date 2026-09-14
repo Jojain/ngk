@@ -53,6 +53,17 @@ pub enum RevolveError {
     #[error("Edge {key:?} lies on the revolution axis and sweeps no area")]
     EdgeOnRevolutionAxis { key: EdgeKey },
 
+    /// A marked closed profile swept a whole turn.
+    ///
+    /// An unmarked circle sweeps a torus with no boundary anywhere, and the
+    /// source loop is consumed. A marked one carries a corner, and a corner
+    /// sweeps a circle: the result is a torus bounded by that swept edge, used
+    /// twice. Refused rather than consumed, because consuming it would delete a
+    /// corner the caller put there deliberately and hand back the boundaryless
+    /// torus as if nothing had been asked for.
+    #[error("edge {key:?} carries a corner, which a whole turn sweeps into a boundary")]
+    MarkedProfileRevolve { key: EdgeKey },
+
     #[error("Edge {key:?} touches the revolution axis; apex faces are not supported yet")]
     ApexRevolveUnsupported { key: EdgeKey },
 
@@ -136,7 +147,7 @@ impl RevolvedSourceEdge {
                 RevolvedSourceVertex::at_dart(g, dart)?,
                 RevolvedSourceVertex::at_dart(g, g.alpha(Dim::Zero, dart))?,
             ),
-            Edge::Closed(_) => {
+            Edge::Marked(_) | Edge::Unmarked(_) => {
                 let single = RevolvedSourceVertex::at_dart(g, dart)?;
                 (single.clone(), single)
             }
@@ -521,14 +532,17 @@ fn add_full_revolved_edge_face<P: Payload>(
     add_full_revolved_open_edge_face(edit, source, axis, angle)
 }
 
-/// Revolves a closed profile a whole turn into one boundaryless face.
+/// Revolves an unmarked closed profile a whole turn into one boundaryless face.
 ///
-/// A circle swept a whole turn is a torus: closed in the sweep and closed in the
-/// profile too, so it has no boundary anywhere and needs no edges and no
-/// vertices at all. The source loop is therefore consumed outright rather than
-/// reused as a boundary, leaving a face with no loops — the same shape
+/// An unmarked circle swept a whole turn is a torus: closed in the sweep and
+/// closed in the profile too, so it has no boundary anywhere and needs no edges
+/// and no vertices at all. The source loop is therefore consumed outright rather
+/// than reused as a boundary, leaving a face with no loops — the same shape
 /// [`crate::builders::solids::add_sphere`] registers, the difference being that
 /// here the support is swept rather than named.
+///
+/// A *marked* profile is a different shape and is refused: its corner sweeps a
+/// circle, which bounds the result.
 fn add_full_revolved_closed_edge_face<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
@@ -541,6 +555,12 @@ fn add_full_revolved_closed_edge_face<P: Payload>(
     // collapse, so it is asked rather than the axis re-intersected here.
     if !surface.degenerate_rows(Axis2::U).is_empty() {
         return Err(RevolveError::EdgeOnRevolutionAxis { key: source.key });
+    }
+
+    // A corner on the profile is swept into an edge of the result, so this face
+    // is not the boundaryless one below.
+    if source.start.key.is_some() {
+        return Err(RevolveError::MarkedProfileRevolve { key: source.key });
     }
 
     validate_consumable_closed_source_edge(edit, source)?;

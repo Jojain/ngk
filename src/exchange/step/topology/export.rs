@@ -367,11 +367,12 @@ fn edge_corners<P: Payload>(
             let (start, end) = bounded.vertices();
             Ok((Corner::Vertex(start.key()), Corner::Vertex(end.key())))
         }
-        Edge::Closed(closed) => {
-            let corner = match closed.vertex() {
-                Some(vertex) => Corner::Vertex(vertex.key()),
-                None => Corner::Closure(closed.key()),
-            };
+        Edge::Marked(marked) => {
+            let corner = Corner::Vertex(marked.corner().key());
+            Ok((corner, corner))
+        }
+        Edge::Unmarked(unmarked) => {
+            let corner = Corner::Closure(unmarked.key());
             Ok((corner, corner))
         }
     }

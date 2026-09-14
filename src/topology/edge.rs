@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::ops::Deref;
 
-use crate::geometry::{Curve, Interval, TrimmedCurve};
+use crate::geometry::{Curve, Interval, PointCoincidence, TrimmedCurve};
 use crate::model::{Cell1, Cell2, MergeTopology, TopologyMerge};
 use crate::topology::closed::Closeable;
 use crate::topology::face::Face;
@@ -15,11 +15,19 @@ use super::sheet::Sheet;
 use super::vertex::Vertex;
 use crate::model::Model;
 
-/// A typed view over a 1-cell of a [`Model`], in whichever of the two shapes an
-/// edge can have.
+/// A typed view over a 1-cell of a [`Model`], in whichever of the three shapes
+/// an edge can have.
 ///
-/// An edge is closed exactly when its two ends are the same vertex — or when it
-/// has none left at all. Both are read off the combinatorics; neither is stored.
+/// The shapes are **bounded** (two distinct corners), **marked** (one corner,
+/// which is both its start and its end) and **unmarked** (no corner at all).
+/// All three are read off the combinatorics; none is stored.
+///
+/// Marked and unmarked are both *closed*, but they are separate variants rather
+/// than one with an `Option` inside, and the enum is flat rather than nested for
+/// the same reason: a site that must tell them apart should not be able to write
+/// one pattern that silently covers both. A site that genuinely means "closed"
+/// writes `Marked(_) | Unmarked(_)`, which stays exhaustive-checked, or asks
+/// [`Closeable::is_closed`](crate::topology::closed::Closeable::is_closed).
 ///
 /// The distinction is load-bearing for geometry, not decoration. A bounded edge
 /// says which part of its support it is by naming the two points that cut it. A
@@ -30,9 +38,12 @@ use crate::model::Model;
 /// would be the loose pair the codebase avoids.
 ///
 /// Everything an edge can answer without knowing which shape it has lives on
-/// [`EdgeCore`], which all three types deref to, so `key`, `curve`, `faces` and
-/// the rest read the same on every one of them. Only the endpoints differ: they
-/// are inherent and total on [`BoundedEdge`], and absent from [`ClosedEdge`].
+/// [`EdgeCore`], which every one of these types derefs to, so `key`, `curve`,
+/// `faces` and the rest read the same on all of them. Only the corners differ:
+/// two, inherent and total, on [`BoundedEdge`]; one, inherent and total, on
+/// [`MarkedEdge`]; none on [`UnmarkedEdge`], which offers no way to ask.
+/// [`has_corner_at`](EdgeCore::has_corner_at) answers across all three, so a
+/// caller asking only whether a cut lands on an existing corner never branches.
 ///
 /// # Narrowing
 ///
@@ -54,10 +65,12 @@ use crate::model::Model;
 /// [`Face::edges`](crate::topology::face::Face::edges) preserve the exact dart
 /// reached in that traversal context.
 pub enum Edge<'a, P: Payload = StandardPayload> {
-    /// Two distinct vertices cut a section out of the support.
+    /// Two distinct corners cut a section out of the support.
     Bounded(BoundedEdge<'a, P>),
-    /// The edge closes on itself, and so spans its support entirely.
-    Closed(ClosedEdge<'a, P>),
+    /// One corner, which is both the edge's start and its end.
+    Marked(MarkedEdge<'a, P>),
+    /// No corner at all; the edge spans its support entirely.
+    Unmarked(UnmarkedEdge<'a, P>),
 }
 
 impl<'a, P: Payload> Edge<'a, P> {
@@ -80,7 +93,7 @@ impl<'a, P: Payload> Edge<'a, P> {
     pub fn bounded(self) -> Option<BoundedEdge<'a, P>> {
         match self {
             Self::Bounded(edge) => Some(edge),
-            Self::Closed(_) => None,
+            Self::Marked(_) | Self::Unmarked(_) => None,
         }
     }
 
@@ -94,21 +107,14 @@ impl<'a, P: Payload> Edge<'a, P> {
             .expect("edge should be bounded by two distinct vertices")
     }
 
-    /// Returns this view as a closed edge, or `None` when two vertices bound it.
-    pub fn closed(self) -> Option<ClosedEdge<'a, P>> {
-        match self {
-            Self::Closed(edge) => Some(edge),
-            Self::Bounded(_) => None,
-        }
-    }
-
     /// Returns a new edge view with the opposite orientation.
     ///
     /// Reversal does not change what bounds an edge, so the variant is kept.
     pub fn reversed(&self) -> Self {
         match self {
             Self::Bounded(edge) => Self::Bounded(edge.reversed()),
-            Self::Closed(edge) => Self::Closed(edge.reversed()),
+            Self::Marked(edge) => Self::Marked(edge.reversed()),
+            Self::Unmarked(edge) => Self::Unmarked(edge.reversed()),
         }
     }
 }
@@ -148,19 +154,18 @@ impl<'a, P: Payload> BoundedEdge<'a, P> {
     }
 }
 
-/// An edge that closes on itself: its two ends are at the same place.
+/// A closed edge carrying one corner, which is both its start and its end.
 ///
-/// It has no endpoints to offer, because a pair of coincident ends names no
-/// arc. Two kinds sit under this one view — a **marked** edge, whose ends meet
-/// at one corner, and an **unmarked** edge, which has no corner at all because
-/// the place it closes is classified inside it. Ask
-/// [`vertex`](Self::vertex) which of the two this is.
-pub struct ClosedEdge<'a, P: Payload = StandardPayload>(EdgeCore<'a, P>);
+/// [`corner`](Self::corner) is total: a value of this type is proof the corner
+/// exists, so nothing below the narrowing unwraps it again. That corner is where
+/// the edge *begins* — which is not in general where its support's own
+/// parameterization starts, and the difference is load-bearing.
+pub struct MarkedEdge<'a, P: Payload = StandardPayload>(EdgeCore<'a, P>);
 
-impl<'a, P: Payload> ClosedEdge<'a, P> {
-    /// Returns the single vertex the edge passes through, if it still has one.
-    pub fn vertex(&self) -> Option<Vertex<'a, P>> {
-        Vertex::from_dart(self.0.model, self.0.dart)
+impl<'a, P: Payload> MarkedEdge<'a, P> {
+    /// Returns the corner the edge leaves and arrives at.
+    pub fn corner(&self) -> Vertex<'a, P> {
+        Vertex::from_dart(self.0.model, self.0.dart).expect("a marked edge has a corner")
     }
 
     /// Returns a new view of the same edge traversed the other way.
@@ -170,7 +175,27 @@ impl<'a, P: Payload> ClosedEdge<'a, P> {
 
     /// Widens back to the shape-agnostic view.
     pub fn into_edge(self) -> Edge<'a, P> {
-        Edge::Closed(self)
+        Edge::Marked(self)
+    }
+}
+
+/// A closed edge with no corner anywhere on it.
+///
+/// The place its parameterization closes is a raw cell classified as interior to
+/// the edge, not a corner anything meets at, so this type deliberately offers no
+/// way to ask for one. Cutting such an edge marks it rather than separating it:
+/// there is no second corner to separate it from.
+pub struct UnmarkedEdge<'a, P: Payload = StandardPayload>(EdgeCore<'a, P>);
+
+impl<'a, P: Payload> UnmarkedEdge<'a, P> {
+    /// Returns a new view of the same edge traversed the other way.
+    pub fn reversed(&self) -> Self {
+        Self(self.0.reversed())
+    }
+
+    /// Widens back to the shape-agnostic view.
+    pub fn into_edge(self) -> Edge<'a, P> {
+        Edge::Unmarked(self)
     }
 }
 
@@ -189,9 +214,12 @@ pub struct EdgeCore<'a, P: Payload = StandardPayload> {
 impl<'a, P: Payload> EdgeCore<'a, P> {
     /// Sorts this view into the variant its combinatorics put it in.
     fn classify(self) -> Edge<'a, P> {
-        match vertices_at_dart(self.model, self.dart) {
-            Some(_) => Edge::Bounded(BoundedEdge(self)),
-            None => Edge::Closed(ClosedEdge(self)),
+        if vertices_at_dart(self.model, self.dart).is_some() {
+            return Edge::Bounded(BoundedEdge(self));
+        }
+        match Vertex::from_dart(self.model, self.dart) {
+            Some(_) => Edge::Marked(MarkedEdge(self)),
+            None => Edge::Unmarked(UnmarkedEdge(self)),
         }
     }
 
@@ -263,14 +291,26 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
         self.model.edge_attr(self.key).map(|attr| &attr.curve)
     }
 
-    /// Reports whether this edge carries no corner at all.
+    /// Whether a corner already sits where `parameter` falls on this edge.
     ///
-    /// An unmarked edge is closed and passes through no logical vertex: the
-    /// place it closes is a raw cell classified inside the edge rather than a
-    /// corner anything meets at. Both a bounded edge and a marked one answer
-    /// `false`.
-    pub fn is_unmarked(&self) -> bool {
-        Vertex::from_dart(self.model, self.dart).is_none()
+    /// This is what "would this cut land on an end of the edge?" actually asks,
+    /// and it is total over all three shapes: a bounded edge has two corners, a
+    /// marked edge one, an unmarked edge none — so on an unmarked edge the
+    /// answer is always `false`, because there is nothing there to land on.
+    ///
+    /// Comparing *points* rather than parameters on purpose. The ends of an
+    /// edge's span coincide with its corners only when it has corners there, and
+    /// reconstructing the answer from `domain.start` is the mistake this exists
+    /// to stop. `tolerance` is a distance.
+    pub fn has_corner_at(&self, parameter: f64, tolerance: f64) -> bool {
+        let Some(curve) = self.curve() else {
+            return false;
+        };
+        let at = curve.point_at(parameter);
+        self.vertices()
+            .iter()
+            .filter_map(|corner| corner.point())
+            .any(|corner| corner.coincides(at, tolerance))
     }
 
     /// Returns the curve-parameter span followed by this oriented edge view.
@@ -355,7 +395,8 @@ fn vertices_at_dart<P: Payload>(
 // the payload type is never touched by a view.
 impl<P: Payload> Copy for Edge<'_, P> {}
 impl<P: Payload> Copy for BoundedEdge<'_, P> {}
-impl<P: Payload> Copy for ClosedEdge<'_, P> {}
+impl<P: Payload> Copy for MarkedEdge<'_, P> {}
+impl<P: Payload> Copy for UnmarkedEdge<'_, P> {}
 impl<P: Payload> Copy for EdgeCore<'_, P> {}
 
 impl<P: Payload> Clone for Edge<'_, P> {
@@ -370,7 +411,13 @@ impl<P: Payload> Clone for BoundedEdge<'_, P> {
     }
 }
 
-impl<P: Payload> Clone for ClosedEdge<'_, P> {
+impl<P: Payload> Clone for MarkedEdge<'_, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<P: Payload> Clone for UnmarkedEdge<'_, P> {
     fn clone(&self) -> Self {
         *self
     }
@@ -388,7 +435,8 @@ impl<'a, P: Payload> Deref for Edge<'a, P> {
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Bounded(edge) => &edge.0,
-            Self::Closed(edge) => &edge.0,
+            Self::Marked(edge) => &edge.0,
+            Self::Unmarked(edge) => &edge.0,
         }
     }
 }
@@ -401,7 +449,15 @@ impl<'a, P: Payload> Deref for BoundedEdge<'a, P> {
     }
 }
 
-impl<'a, P: Payload> Deref for ClosedEdge<'a, P> {
+impl<'a, P: Payload> Deref for MarkedEdge<'a, P> {
+    type Target = EdgeCore<'a, P>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a, P: Payload> Deref for UnmarkedEdge<'a, P> {
     type Target = EdgeCore<'a, P>;
 
     fn deref(&self) -> &Self::Target {
@@ -427,7 +483,13 @@ impl<P: Payload> MergeTopology<P> for BoundedEdge<'_, P> {
     }
 }
 
-impl<P: Payload> MergeTopology<P> for ClosedEdge<'_, P> {
+impl<P: Payload> MergeTopology<P> for MarkedEdge<'_, P> {
+    fn merge_topology(&self) -> TopologyMerge<'_, P> {
+        self.0.merge_topology()
+    }
+}
+
+impl<P: Payload> MergeTopology<P> for UnmarkedEdge<'_, P> {
     fn merge_topology(&self) -> TopologyMerge<'_, P> {
         self.0.merge_topology()
     }
@@ -435,7 +497,7 @@ impl<P: Payload> MergeTopology<P> for ClosedEdge<'_, P> {
 
 impl<P: Payload> Closeable for Edge<'_, P> {
     fn is_closed(&self) -> bool {
-        matches!(self, Self::Closed(_))
+        matches!(self, Self::Marked(_) | Self::Unmarked(_))
     }
 }
 
@@ -445,7 +507,13 @@ impl<P: Payload> Closeable for BoundedEdge<'_, P> {
     }
 }
 
-impl<P: Payload> Closeable for ClosedEdge<'_, P> {
+impl<P: Payload> Closeable for MarkedEdge<'_, P> {
+    fn is_closed(&self) -> bool {
+        true
+    }
+}
+
+impl<P: Payload> Closeable for UnmarkedEdge<'_, P> {
     fn is_closed(&self) -> bool {
         true
     }

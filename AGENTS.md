@@ -86,15 +86,21 @@ shape of its curve. Three cases, and these are the words for them:
 
 | Term | Corners | Example | `Edge` variant |
 |---|---|---|---|
-| **bounded** | 2 distinct | a segment, an arc | `Edge::Bounded` |
-| **marked** | 1, which is both its start and its end | a circle someone put a vertex on | `Edge::Closed`, `vertex()` is `Some` |
-| **unmarked** | 0 | a circle as built | `Edge::Closed`, `vertex()` is `None` |
+| **bounded** | 2 distinct | a segment, an arc | `Edge::Bounded(BoundedEdge)` |
+| **marked** | 1, which is both its start and its end | a circle someone cut | `Edge::Marked(MarkedEdge)` |
+| **unmarked** | 0 | a circle as built | `Edge::Unmarked(UnmarkedEdge)` |
 
-**Marked and unmarked are both closed.** `Edge::Closed` is the umbrella: the
-edge's two ends are at the same place. What separates the two is only whether a
-logical vertex sits there. `vertices_at_dart` folds `start == end` to `None`, so
-narrowing a marked edge gives `Closed`, never `Bounded` — a closed edge with a
-deliberate vertex is still closed.
+Corner access is **total on each type**: `BoundedEdge::vertices()` returns two,
+`MarkedEdge::corner()` returns one, and `UnmarkedEdge` offers no way to ask. No
+`Option` to unwrap, and nothing to forget.
+
+**Marked and unmarked are both closed**, but the enum is flat rather than nested
+on purpose: a site that must tell them apart should not be able to write one
+pattern that silently covers both. A site that genuinely means "closed" writes
+`Edge::Marked(_) | Edge::Unmarked(_)`, which is still exhaustive-checked, or asks
+`Closeable::is_closed()`. `vertices_at_dart` folds `start == end` to `None`, so a
+marked edge is never `Bounded` — a closed edge with a deliberate corner is still
+closed.
 
 An unmarked edge's closing point is not nothing: it is a raw 0-cell, classified
 as interior to the edge, and `point_at_dart` derives its position from the curve.
@@ -121,12 +127,21 @@ Two hazards follow from all this, and both have already bitten:
 
 - **Predicates over corners.** "Every vertex satisfies P" is vacuously true of an
   edge or face that has none.
-- **The pcurve's start is not the edge's start.** A pcurve is a closed loop in
-  the face's parameter space, anchored wherever it was built; a marked edge
-  begins at its *corner*, which is somewhere else on that loop. Reading
-  `pcurve.point_at(0.0)` to find a boundary corner, or treating fraction 0 and 1
-  of a pcurve as the edge's ends, is only right for a bounded edge. Ask the
-  corner.
+- **A span's ends are not always the edge's ends.** Four separate places used
+  one as a proxy for the other, and each was right only until an edge could be
+  unmarked. Two forms to watch for:
+  - *The pcurve's start.* A pcurve is a closed loop in the face's parameter
+    space, anchored wherever it was built; a marked edge begins at its *corner*,
+    somewhere else on that loop. `pcurve.point_at(0.0)` is a boundary corner
+    only for a bounded edge.
+  - *The parameter domain's ends.* "Too close to `domain.start`, so this cut is
+    degenerate" is right for a bounded or marked edge, whose span ends at a
+    corner. An unmarked edge's span is its whole support, and the ends are where
+    the curve *closes* -- a place to put a corner like any other. Refusing there
+    silently drops a junction, which is how a tangency landing on a circle's
+    parameterization origin goes missing.
+
+  In both forms: ask the corner, not the parameterization.
 
 ### Subdivision (`src/topology/subdivision/`)
 

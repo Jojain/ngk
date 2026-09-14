@@ -594,7 +594,7 @@ pub(crate) fn split_face_edge_staged<P: Payload>(
     // Cutting an unmarked edge marks it and leaves one edge, so each face using
     // it keeps one pcurve, untouched: a mark says where the edge now begins, and
     // a pcurve says where the edge *is*, which the mark does not move.
-    let separates = !edit.edge_unchecked(edge).is_unmarked();
+    let separates = !matches!(edit.edge_unchecked(edge), Edge::Unmarked(_));
     let pcurves = separates
         .then(|| incident_face_pcurves(edit, edge, parameter))
         .transpose()?
@@ -2491,7 +2491,7 @@ fn closed_boundary_curve_reversed<P: Payload>(
     // Only a closed edge can have its pcurve reversed relative to its curve
     // without that showing up in its endpoints — asked of the map rather than by
     // measuring whether two points happen to land within a tolerance.
-    let Edge::Closed(_) = edge_view else {
+    let (Edge::Marked(_) | Edge::Unmarked(_)) = edge_view else {
         return Ok(false);
     };
 

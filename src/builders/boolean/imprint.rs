@@ -157,17 +157,17 @@ pub(crate) fn realize_edge_spans<P: Payload>(
             let fragment = fragments.iter().copied().find(|fragment| {
                 // Where the fragment's ends are. A marked edge leaves and
                 // arrives at its one corner, so it realizes a span whose two
-                // ends are that same point; an unmarked edge has no corner to
-                // match a span's ends against at all.
+                // ends are that same point.
                 let ends = match map.edge_unchecked(*fragment) {
                     Edge::Bounded(bounded) => {
                         let (first, second) = bounded.vertices();
                         first.point().copied().zip(second.point().copied())
                     }
-                    Edge::Closed(closed) => closed
-                        .vertex()
-                        .and_then(|corner| corner.point().copied())
-                        .map(|point| (point, point)),
+                    Edge::Marked(marked) => {
+                        marked.corner().point().copied().map(|point| (point, point))
+                    }
+                    // No corner to match a span's ends against.
+                    Edge::Unmarked(_) => return false,
                 };
                 let Some((a, b)) = ends else {
                     return false;
