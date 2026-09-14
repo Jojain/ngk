@@ -18,7 +18,7 @@ use crate::topology::embedding::{EntityOwner, is_embedded_cell};
 use crate::topology::face::Loop;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
-use crate::topology::shape_keys::FaceKey;
+use crate::topology::shape_keys::{FaceKey, SolidKey};
 use crate::topology::{ModelEdit, ModelEditError};
 
 /// One end of a cut, directed from an arriving boundary dart into the cut.
@@ -154,6 +154,90 @@ pub(crate) fn cut_between_loops<P: Payload>(
     Ok(())
 }
 
+/// Joins every boundary shell of one solid through one scaffold cut face.
+///
+/// Each shell contributes one raw edge. Its two incident face uses are opened
+/// and attached to matching sides of two polygonal faces; those faces are then
+/// sewn through `alpha3`. The sewn pair is one raw 2-cell inside the solid,
+/// while turning across it keeps the original shell components distinct on the
+/// boundary.
+///
+/// The polygon alternates a shell attachment with a connector edge. Reflecting
+/// the second polygon before the `alpha3` sew aligns each attachment with the
+/// other use of the same shell edge. This is the two-shell pillow construction
+/// generalized to any non-empty set of shells.
+pub(crate) fn cut_between_shells<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    solid: SolidKey,
+    shells: &[Dart],
+) -> Result<(), ModelEditError> {
+    if shells.len() < 2 {
+        return Ok(());
+    }
+
+    let slots = 2 * shells.len();
+    let front = polygon(edit, slots)?;
+    let back = polygon(edit, slots)?;
+
+    for (index, &shell) in shells.iter().enumerate() {
+        let first = [shell, edit.alpha(Dim::Zero, shell)];
+        let second = [
+            edit.alpha(Dim::Zero, edit.alpha(Dim::Two, shell)),
+            edit.alpha(Dim::Two, shell),
+        ];
+        edit.unlink(Dim::Two, first[0])?;
+        edit.unlink(Dim::Two, first[1])?;
+
+        let front_slot = 2 * index;
+        let back_slot = reflected_slot(front_slot, slots);
+        link_edge_uses(edit, first, front[front_slot])?;
+        link_edge_uses(edit, second, back[back_slot])?;
+    }
+
+    for slot in (1..slots).step_by(2) {
+        link_edge_uses(edit, front[slot], back[reflected_slot(slot, slots)])?;
+    }
+
+    edit.sew(Dim::Three, front[0][0], back[0][1])?;
+
+    let owner = EntityOwner::Solid(solid);
+    edit.own_cell(Dim::Two, front[0][0], owner);
+    for slot in (1..slots).step_by(2) {
+        edit.own_cell(Dim::One, front[slot][0], owner);
+    }
+    Ok(())
+}
+
+fn reflected_slot(slot: usize, slots: usize) -> usize {
+    (slots - slot) % slots
+}
+
+fn link_edge_uses<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    first: [Dart; 2],
+    second: [Dart; 2],
+) -> Result<(), ModelEditError> {
+    edit.link(Dim::Two, first[0], second[1])?;
+    edit.link(Dim::Two, first[1], second[0])?;
+    Ok(())
+}
+
+fn polygon<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    slots: usize,
+) -> Result<Vec<[Dart; 2]>, ModelEditError> {
+    let uses = (0..slots)
+        .map(|_| [edit.add_dart(), edit.add_dart()])
+        .collect::<Vec<_>>();
+    for use_ in &uses {
+        edit.link(Dim::Zero, use_[0], use_[1])?;
+    }
+    for slot in 0..slots {
+        edit.link(Dim::One, uses[slot][1], uses[(slot + 1) % slots][0])?;
+    }
+    Ok(uses)
+}
+
 /// The raw 2-cell a face covering a closed support occupies.
 ///
 /// Built by [`add_closed_face_cell`] and handed to [`Self::own`] once the face
@@ -262,4 +346,62 @@ fn add_closed_square<P: Payload>(
         // Two edges and one corner.
         interior: vec![(Dim::One, d[0]), (Dim::One, d[2]), (Dim::Zero, d[0])],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::geometry::{Frame, Sphere};
+    use crate::model::Model;
+    use crate::topology::attributes::{FaceAttr, SheetAttr, SolidAttr};
+    use crate::topology::embedding::{EntityOwner, boundary_shells, recover_region};
+    use crate::topology::payload::StandardPayload;
+    use crate::topology::validation::validate_cell_occupancy;
+
+    use super::*;
+
+    #[test]
+    fn one_cut_joins_three_shells_without_joining_their_boundaries() {
+        let mut model = Model::<StandardPayload>::new();
+        let solid = model
+            .transaction(|edit| {
+                let mut roots = Vec::new();
+                for (index, radius) in [3.0, 2.0, 1.0].into_iter().enumerate() {
+                    let surface = Surface::Sphere(Sphere::new(Frame::xyz(), radius));
+                    let cell = add_closed_face_cell(edit, &surface)?;
+                    let face =
+                        edit.add_face(FaceAttr::closed(surface, (), cell.anchor(), HashMap::new()));
+                    cell.own(edit, face);
+                    let root = if index == 0 {
+                        cell.anchor()
+                    } else {
+                        edit.alpha(Dim::Zero, cell.anchor())
+                    };
+                    edit.add_sheet(SheetAttr::new(root, ()));
+                    roots.push(root);
+                }
+                let solid = edit.add_solid(SolidAttr::new((), roots[0], Some(roots[1..].to_vec())));
+                cut_between_shells(edit, solid, &roots)?;
+                Ok::<_, ClosedFaceCellError>(solid)
+            })
+            .expect("three closed shells should share one scaffold cut");
+
+        validate_cell_occupancy(&model).expect("the solid should occupy one raw 3-cell");
+        assert_eq!(model.iter_sheets().count(), 3);
+        assert_eq!(model.solid_unchecked(solid).shells().len(), 3);
+        let region = recover_region(
+            model.topology(),
+            model.embedding_index(),
+            EntityOwner::Solid(solid),
+            model.solid_unchecked(solid).dart(),
+        )
+        .expect("the solid region should be recoverable");
+        assert_eq!(
+            boundary_shells(model.topology(), model.embedding_index(), &region)
+                .expect("the boundary should be closed")
+                .len(),
+            3
+        );
+    }
 }

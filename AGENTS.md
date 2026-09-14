@@ -53,8 +53,9 @@ key type — it is darts and involutions. Nothing outside `model.rs` and
 `topology/edit.rs` can reach `&mut GMap`: `Model::topology()` is read-only and
 every mutation goes through a transaction. `docs/model_api.md` predates this
 and is a design note, not a description of the tree.
-`plan/one_logical_cell_one_raw_cell.md` is the live plan and takes priority;
-`plan/logical_topology_over_gmap.md` is the wider migration it was cut from.
+`plan/one_logical_cell_one_raw_cell.done.md` records the final cell-occupancy
+invariant; `plan/logical_topology_over_gmap.done.md` is the completed wider
+migration record.
 
 ## Topology core — key concepts
 
@@ -315,9 +316,9 @@ where a circle closes, a cut face inside a cavity. Profiles and sheets are
 aggregates of entities rather than entities with a cell of their own, so the
 rule does not reach them.
 
-`validation::validate_cell_occupancy` is the check. It is not yet wired into
-commit; see [plan/one_logical_cell_one_raw_cell.md](plan/one_logical_cell_one_raw_cell.md)
-for what still has to hold before it can be.
+`validation::validate_cell_occupancy` is the commit check; see
+[plan/one_logical_cell_one_raw_cell.done.md](plan/one_logical_cell_one_raw_cell.done.md)
+for the completed construction and validation contract.
 
 This is a **commit invariant**, not a construction rule. A transaction may break
 it freely — a Boolean partitions a face and puts it back together — but a commit

@@ -19,7 +19,7 @@ use ngk::geometry::Plane;
 use ngk::model::Model;
 use ngk::modeling::{faces, solids};
 use ngk::topology::payload::StandardPayload;
-use ngk::topology::validation::{CellOccupancyError, cell_occupancy_violations};
+use ngk::topology::validation::cell_occupancy_violations;
 
 /// Every shape whose entities are each expected to occupy exactly one cell.
 fn compliant_shapes() -> Vec<(&'static str, Model<StandardPayload>)> {
@@ -70,6 +70,10 @@ fn compliant_shapes() -> Vec<(&'static str, Model<StandardPayload>)> {
                 .into_model()
                 .0,
         ),
+        (
+            "hollow sphere",
+            crate::hollow::hollow_sphere(2.0, 1.0).into_model().0,
+        ),
     ]
 }
 
@@ -84,24 +88,13 @@ fn every_entity_of_an_ordinary_shape_occupies_exactly_one_raw_cell() {
     }
 }
 
-/// A solid with a cavity spans two raw 3-cells, which the rule forbids.
-///
-/// Its outer shell and its void are two closed surfaces with nothing between
-/// them, so the `alpha0`/`alpha1`/`alpha2` walk from either never reaches the
-/// other. What would join them is a scaffold face the solid owns — the cut a
-/// boundary walk turns across rather than crosses, which is what keeps the two
-/// shells two shells while the material is one cell. Nothing in this tree
-/// synthesises one yet, so a cavity is the one shape the inventory still
-/// reports, and it is why the check is not part of commit.
 #[test]
-fn a_solid_with_a_cavity_spans_two_raw_cells() {
+fn a_solid_with_a_cavity_occupies_one_raw_cell() {
     let (model, _) = crate::hollow::hollow_sphere(2.0, 1.0).into_model();
     let violations = cell_occupancy_violations(&model);
 
     assert!(
-        violations
-            .iter()
-            .any(|violation| matches!(violation, CellOccupancyError::SpansSeveralCells { .. })),
-        "a hollow sphere should report a solid spanning two cells; it reports {violations:?}",
+        violations.is_empty(),
+        "a hollow sphere should hold one raw cell per entity, but reports {violations:?}",
     );
 }

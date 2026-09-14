@@ -58,7 +58,9 @@ pub(super) fn scoped_edges<P: Payload>(
 pub(super) fn incident_faces<P: Payload>(g: &Model<P>, dart: Dart) -> Vec<FaceKey> {
     let mut faces = Vec::new();
     for d in g.orbit(dart, g.orbit_indices(Dim::One)) {
-        if let Some(face) = g.cell_key::<Cell2>(d)
+        if let Some(face) = g
+            .cell_key::<Cell2>(d)
+            .map(|face| g.staged_face_survivor(face))
             && !faces.contains(&face)
         {
             faces.push(face);

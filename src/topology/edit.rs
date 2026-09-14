@@ -12,7 +12,9 @@ use super::embedding::{EmbeddingError, EntityOwner};
 use super::gmap::Dim;
 use super::payload::Payload;
 use super::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
-use super::validation::{GMapValidationError, validate_gmap};
+use super::validation::{
+    CellOccupancyError, GMapValidationError, validate_cell_occupancy, validate_gmap,
+};
 use crate::model::{MergeTopology, Model};
 
 /// Controls how payloads are propagated for explicit semantic edit events.
@@ -228,6 +230,9 @@ pub enum ModelEditError {
     /// The embedding labels no longer describe the edited map.
     #[error("this edit produced a embedding that does not describe its map")]
     InvalidEmbedding(#[source] EmbeddingError),
+    /// A logical entity does not occupy exactly one raw cell of its own dimension.
+    #[error("this edit broke logical cell occupancy")]
+    InvalidCellOccupancy(#[source] CellOccupancyError),
     /// More than one attribute key describes the same domain cell.
     #[error("{entity} attributes contain duplicate keys for representative {representative:?}")]
     DuplicateCellAttribute {
@@ -908,6 +913,7 @@ where
     // one orbit mean a contradiction rather than a pending merge.
     g.validate_embedding()
         .map_err(ModelEditError::InvalidEmbedding)?;
+    validate_cell_occupancy(g).map_err(ModelEditError::InvalidCellOccupancy)?;
     g.invalidate_derived_indexes();
     let policy_events = resolve_policy_events(g, snapshot, events, &lineage);
     apply_policy_events(g, snapshot, &policy_events, policy)?;
@@ -1352,7 +1358,15 @@ fn reconcile_transaction_attributes<P: Payload>(
     let sheets = g
         .sheets
         .iter()
-        .map(|(key, attr)| (key, vec![g.cell_representative(attr.dart(), Dim::Three)]))
+        .map(|(key, attr)| {
+            (
+                key,
+                vec![crate::topology::sheet::Sheet::representative(
+                    g,
+                    attr.dart(),
+                )],
+            )
+        })
         .collect();
     reconcile_components(
         g,

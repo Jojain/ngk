@@ -971,7 +971,7 @@ Exit: the polyhedral vertical slice from
 
 - [x] Consume certified `SurfaceIntersectionBranch` output for curved pairs.
 - [x] Parameter-seam handling in trim classification and face splitting —
-      delivered by `plan/seamless_periodic_faces.md` by removing the subject: no
+      delivered by `plan/seamless_periodic_faces.done.md` by removing the subject: no
       builder makes a seam, a wall is a ring, and trimming reads a closed
       direction per-axis instead of by winding, so no loop straddles a cut.
 - [ ] Tangent-span policy in classification (barrier, no implied flip).

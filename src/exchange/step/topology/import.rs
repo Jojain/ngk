@@ -28,13 +28,15 @@
 
 use std::collections::HashMap;
 
+use thiserror::Error;
+
 use crate::builders::errors::ClosedFaceCellError;
-use crate::builders::scaffold::{add_closed_face_cell, cut_between_loops};
+use crate::builders::scaffold::{add_closed_face_cell, cut_between_loops, cut_between_shells};
 use crate::geometry::{
     Curve, LINEAR_TOLERANCE, NurbsError, Point2, Point3, Surface, SurfacePeriodicity,
     TrimmedCurve2, Vector2,
 };
-use crate::healing::{HealingOptions, remove_redundant_cells};
+use crate::healing::{HealingError, HealingOptions, remove_redundant_cells_staged};
 use crate::model::Model;
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
@@ -187,24 +189,11 @@ fn read_solid(
 
     let mut gmap = Model::<StandardPayload>::new();
     let solid = gmap
-        .transaction(|edit| sew_solid(edit, &shells))
+        .transaction(|edit| sew_solid(edit, &shells, options.heal_seams))
         .map_err(|error| TopologyError::UnsewableShell {
             brep: origin,
             detail: error.to_string(),
         })?;
-
-    if options.heal_seams {
-        // A seam is not part of the shape: STEP writes a periodic face with
-        // its parameterization cut open, and that cut comes off as a step of
-        // its own rather than as something the sewing above is allowed to
-        // assume. A planar solid has none, so this changes nothing for one.
-        remove_redundant_cells(&mut gmap, HealingOptions::seams_only()).map_err(|error| {
-            TopologyError::UnsewableShell {
-                brep: origin,
-                detail: error.to_string(),
-            }
-        })?;
-    }
 
     demote_closure_vertices(&mut gmap).map_err(|error| TopologyError::UnsewableShell {
         brep: origin,
@@ -840,7 +829,8 @@ struct DartUse {
 fn sew_solid(
     edit: &mut ModelEdit<'_, StandardPayload>,
     shells: &[Vec<PlannedFace>],
-) -> Result<SolidKey, ClosedFaceCellError> {
+    heal_seams: bool,
+) -> Result<SolidKey, SolidSewError> {
     let mut roots = Vec::with_capacity(shells.len());
     for planned in shells {
         let root = sew_shell(edit, planned)?;
@@ -852,7 +842,29 @@ fn sew_solid(
         unreachable!("a planned solid has at least one shell");
     };
     let inner = (!voids.is_empty()).then(|| voids.to_vec());
-    Ok(edit.add_solid(SolidAttr::new((), *outer, inner)))
+    let solid = edit.add_solid(SolidAttr::new((), *outer, inner));
+    if heal_seams {
+        // STEP's synthetic periodic cuts have to come off before the cavity
+        // cut is attached. Once that solid-owned face turns through the same
+        // edge, the edge is no longer merely a parameterization seam.
+        remove_redundant_cells_staged(edit, &HealingOptions::seams_only())?;
+    }
+    let roots = edit
+        .solid_attr_unchecked(solid)
+        .shells()
+        .collect::<Vec<_>>();
+    cut_between_shells(edit, solid, &roots)?;
+    Ok(solid)
+}
+
+#[derive(Debug, Error)]
+enum SolidSewError {
+    #[error(transparent)]
+    ClosedFace(#[from] ClosedFaceCellError),
+    #[error(transparent)]
+    Healing(#[from] HealingError),
+    #[error(transparent)]
+    ModelEdit(#[from] ModelEditError),
 }
 
 /// Builds every planned face of one shell and sews them together.

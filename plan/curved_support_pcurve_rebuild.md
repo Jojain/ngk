@@ -6,7 +6,7 @@ Healing cannot rebuild a parameter curve on anything but a plane, and never
 could. Every curved fusion is reported as `PcurveNotJoinable`, so a cylinder's
 rim — split by a Boolean, then healed — does not come back as the one closed
 edge it started as. That is the last unpaid part of §9 of
-`plan/seamless_periodic_faces.md`: seamless representation landed, the closed
+`plan/seamless_periodic_faces.done.md`: seamless representation landed, the closed
 edge it makes expressible does not yet survive a round trip through healing.
 
 This plan owns that path. It was found while building the seamless work,

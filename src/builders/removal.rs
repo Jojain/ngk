@@ -534,7 +534,15 @@ impl MergePlan {
                 Ok(MergePlan::Edges { survivor, consumed })
             }
             _ => match incident_keys(g, dart, dim, |d| g.cell_key::<Cell2>(d))?.as_slice() {
-                [face] => Self::loops(g, dart, dim, cell, cell_set, pairs, *face),
+                [face] => Self::loops(
+                    g,
+                    dart,
+                    dim,
+                    cell,
+                    cell_set,
+                    pairs,
+                    g.staged_face_survivor(*face),
+                ),
                 [first, second] => {
                     let (survivor, consumed) = match (
                         incident_loop_is_outer(g, cell, *first),
@@ -980,17 +988,23 @@ impl MergePlan {
                 let attr = edit.face_attr_mut_unchecked(face);
                 attr.set_outer(boundaries[0]);
                 attr.set_inner(boundaries[1..].to_vec());
-                // An alias is a key commit will reconcile away, so all it owes
-                // until then is a dart the map still holds, turned the way the
-                // seed it lost was.
+                // An alias is a key commit will reconcile away, but another
+                // removal in the same transaction may still resolve through
+                // it. Keep the complete boundary until then, turned the way
+                // the seed it lost was, so a shrinking inner loop cannot make
+                // the alias forget the outer loop.
                 for (alias, sense) in face_aliases {
-                    let oriented = match sense {
-                        Orientation::Same => seed,
-                        Orientation::Reversed => edit.alpha(Dim::Zero, seed),
-                    };
+                    let oriented = boundaries
+                        .iter()
+                        .copied()
+                        .map(|seed| match sense {
+                            Orientation::Same => seed,
+                            Orientation::Reversed => edit.alpha(Dim::Zero, seed),
+                        })
+                        .collect::<Vec<_>>();
                     let attr = edit.face_attr_mut_unchecked(alias);
-                    attr.set_outer(oriented);
-                    attr.clear_inner();
+                    attr.set_outer(oriented[0]);
+                    attr.set_inner(oriented[1..].to_vec());
                     attr.pcurves.clear();
                 }
                 MergedCell::Loops {

@@ -1,6 +1,6 @@
 use std::convert::Infallible;
 
-use ngk::geometry::{Curve, Plane, Point3, Surface};
+use ngk::geometry::{Curve, Frame, Plane, Point2, Point3, Surface, TrimmedCurve2};
 use ngk::model::{Cell1, Model};
 use ngk::topology::Dart;
 use ngk::topology::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
@@ -8,6 +8,7 @@ use ngk::topology::edit::{EditPolicy, ModelEditError, PreservePayload};
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::Payload;
 use ngk::topology::shape_keys::EdgeKey;
+use ngk::topology::validation::CellOccupancyError;
 
 #[derive(Clone, Default)]
 struct TestPayload;
@@ -84,6 +85,33 @@ fn solid_registration_requires_registered_shell_sheets() {
     ));
     assert_eq!(g.dart_count(), 0);
     assert_eq!(g.iter_solids().count(), 0);
+}
+
+#[test]
+fn commit_rejects_and_rolls_back_a_face_spanning_two_raw_cells() {
+    let mut g = Model::<TestPayload>::new();
+    let solid = ngk::builders::solids::add_sphere(&mut g, Frame::xyz(), 1.0)
+        .expect("a sphere should build");
+    let face = g.solid_unchecked(solid).faces()[0].key();
+    let before_darts = g.dart_count();
+
+    let result = g.transaction(|edit| {
+        let foreign = edit.add_dart();
+        edit.face_attr_mut_unchecked(face).pcurves.insert(
+            foreign,
+            TrimmedCurve2::segment(Point2::origin(), Point2::new(1.0, 0.0)),
+        );
+        Ok::<_, ModelEditError>(())
+    });
+
+    assert!(matches!(
+        result,
+        Err(ModelEditError::InvalidCellOccupancy(
+            CellOccupancyError::SpansSeveralCells { .. }
+        ))
+    ));
+    assert_eq!(g.dart_count(), before_darts);
+    assert!(g.face_attr_unchecked(face).pcurves.is_empty());
 }
 
 #[test]

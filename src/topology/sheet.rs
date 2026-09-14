@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 
 use super::closed::{Closeable, Closed};
 use super::edge::Edge;
@@ -13,10 +13,12 @@ use crate::topology::shape_keys::SheetKey;
 
 /// A keyed 2-dimensional connected topology view with a contextual anchor.
 ///
-/// A sheet is the alpha0/alpha1/alpha2 component of its anchor. Open sheets can
-/// have free boundary darts; closed sheets are represented as [`ShellRef`]. The
-/// anchor determines the traversal orientation used when producing incident
-/// face views.
+/// A sheet is a logical boundary component. Its walk follows
+/// `alpha0`/`alpha1`/`alpha2` and turns across solid-owned cut faces, so the
+/// outer and inner sheets of one raw 3-cell remain distinct. Open sheets can
+/// have free boundary darts; closed sheets are represented as [`ShellRef`].
+/// The anchor determines the traversal orientation used when producing
+/// incident face views.
 ///
 /// A sheet that is one boundaryless face anchors inside the polygon that face
 /// owns, so it has darts like any other — they are simply all scaffold, and
@@ -38,6 +40,16 @@ impl<'a, P: Payload> Clone for Sheet<'a, P> {
 }
 
 impl<'a, P: Payload> Sheet<'a, P> {
+    /// Returns the canonical representative of the boundary component at
+    /// `dart`.
+    pub(crate) fn representative(model: &Model<P>, dart: Dart) -> Dart {
+        model
+            .sheet_darts(dart)
+            .into_iter()
+            .min()
+            .expect("a sheet component contains its seed")
+    }
+
     /// Creates a sheet view from its key using the attribute's stored root.
     pub fn new(model: &'a Model<P>, key: SheetKey) -> Self {
         let anchor = model.sheet_attr_unchecked(key).root;
@@ -90,38 +102,27 @@ impl<'a, P: Payload> Sheet<'a, P> {
     ///
     /// Raw 2-cells without a registered [`Face`] are skipped.
     pub fn faces(&self) -> Vec<Face<'a, P>> {
-        let seed = self.anchor;
-        let mut pending = VecDeque::from([seed]);
-        let mut seen_components = HashSet::new();
         let mut seen_faces = HashSet::new();
         let mut faces = Vec::new();
 
-        while let Some(seed) = pending.pop_front() {
-            let component = self.model.cell_representative(seed, Dim::Three);
-            if !seen_components.insert(component) {
+        for mut dart in self.darts() {
+            let Some(key) = self.model.cell_key::<Cell2>(dart) else {
+                continue;
+            };
+            if !seen_faces.insert(key) {
                 continue;
             }
-
-            for mut dart in self.model.incident_cells(seed, Dim::Three, Dim::Two) {
-                let Some(key) = self.model.cell_key::<Cell2>(dart) else {
-                    continue;
-                };
-                if self
-                    .model
-                    .cell_orientation_from_seed(seed, dart, Dim::Three)
-                    == Some(Orientation::Reversed)
-                {
-                    dart = self.model.alpha(Dim::Zero, dart);
-                }
-                if !seen_faces.insert(key) {
-                    continue;
-                }
-
-                let face = Face::from_dart(self.model, dart)
-                    .expect("registered face key must produce a face view");
-                pending.extend(face.loops().into_iter().map(|loop_| loop_.dart()));
-                faces.push(face);
+            if self
+                .model
+                .cell_orientation_from_seed(self.anchor, dart, Dim::Three)
+                == Some(Orientation::Reversed)
+            {
+                dart = self.model.alpha(Dim::Zero, dart);
             }
+            faces.push(
+                Face::from_dart(self.model, dart)
+                    .expect("registered face key must produce a face view"),
+            );
         }
 
         faces

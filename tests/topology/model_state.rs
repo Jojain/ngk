@@ -74,7 +74,7 @@ fn a_failed_transaction_leaves_the_revision_where_it_was() {
 }
 
 #[test]
-fn a_commit_carries_the_subdivision_with_the_map() {
+fn a_commit_carries_the_embedding_with_the_map() {
     let (mut model, edge) = one_edge();
     let anchor = model.edge_attr_unchecked(edge).dart;
 
@@ -94,7 +94,7 @@ fn a_commit_carries_the_subdivision_with_the_map() {
 }
 
 #[test]
-fn a_rollback_restores_the_subdivision_as_well_as_the_map() {
+fn a_rollback_restores_the_embedding_as_well_as_the_map() {
     let (mut model, edge) = one_edge();
     let anchor = model.edge_attr_unchecked(edge).dart;
     model

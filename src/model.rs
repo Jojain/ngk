@@ -23,7 +23,8 @@ use crate::topology::edit::{
     commit_model_transaction,
 };
 use crate::topology::embedding::{
-    Embedding, EmbeddingError, EmbeddingIndex, EntityOwner, OwnerRemap,
+    Embedding, EmbeddingError, EmbeddingIndex, EntityOwner, OwnerRemap, boundary_shells,
+    recover_region,
 };
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim, GMap, IsolatedDart, SewableDarts};
@@ -52,7 +53,7 @@ pub struct Cell3;
 ///
 /// The association lives here rather than in the map because a raw cell does
 /// not name a logical entity by itself: the key comes from this model's stores,
-/// which is what lets one entity span several raw cells.
+/// and a raw cell may instead be embedded in an entity of higher dimension.
 pub trait CellDim {
     /// Dimension represented by this cell marker.
     const DIM: Dim;
@@ -470,6 +471,30 @@ impl<P: Payload> Model<P> {
             .unwrap_or_default()
     }
 
+    /// Follows face merges already declared in the active transaction.
+    ///
+    /// Staged topology can resolve through a consumed key until commit removes
+    /// its attribute. Algorithms that take several passes over that topology
+    /// use this to keep reading the final surviving face identity meanwhile.
+    pub(crate) fn staged_face_survivor(&self, face: FaceKey) -> FaceKey {
+        let mut current = face;
+        let mut visited = HashSet::from([current]);
+        while let Some(survivor) = self
+            .staged_edit_events()
+            .iter()
+            .find_map(|event| match *event {
+                EditEvent::FaceMerge { survivor, removed } if removed == current => Some(survivor),
+                _ => None,
+            })
+        {
+            if !visited.insert(survivor) {
+                break;
+            }
+            current = survivor;
+        }
+        current
+    }
+
     /// Records one semantic event in the active edit session.
     pub(crate) fn record_edit_event(&mut self, event: EditEvent) {
         self.transaction
@@ -531,8 +556,9 @@ impl<P: Payload> Model<P> {
             self.insert_logical_key(&mut indexes.face, repr, key, EditKey::Face);
         }
         for (key, attr) in self.sheets.iter() {
-            let repr = self.cell_representative(attr.dart(), Dim::Three);
-            self.insert_logical_key(&mut indexes.sheet, repr, key, EditKey::Sheet);
+            for dart in self.sheet_component_darts(attr.dart()) {
+                indexes.sheet.insert(dart, key);
+            }
         }
         for (key, attr) in self.solids.iter() {
             for dart in attr.shells() {
@@ -546,13 +572,38 @@ impl<P: Payload> Model<P> {
 
     /// Returns all darts in the logical sheet containing `start`.
     ///
-    /// One orbit and no flood. A sheet's faces are joined by `alpha2`, which
-    /// generates the raw 3-cell along with `alpha0` and `alpha1`, so the whole
-    /// sheet lies in the cell its root sits in. A face's several loops lie
-    /// there too, because a face occupies exactly one 2-cell and its loop seeds
-    /// all read it the same way round.
+    /// A sheet is a boundary component, not a 3-cell. When it bounds a solid,
+    /// the walk turns across solid-owned cut faces and therefore keeps a
+    /// cavity shell separate from the outer shell even though both border the
+    /// same raw 3-cell. A standalone sheet has no solid cut to turn across and
+    /// is its ordinary `alpha0`/`alpha1`/`alpha2` component.
     pub(crate) fn sheet_darts(&self, start: Dart) -> Vec<Dart> {
-        self.orbit(start, self.orbit_indices(Dim::Three)).collect()
+        self.sheet_component_darts(start)
+    }
+
+    fn sheet_component_darts(&self, start: Dart) -> Vec<Dart> {
+        let raw_component = || {
+            self.orbit(start, self.orbit_indices(Dim::Three))
+                .collect::<Vec<_>>()
+        };
+        let index = self.embedding_index();
+        let Some(EntityOwner::Solid(solid)) = index.owner(Dim::Three, start) else {
+            return raw_component();
+        };
+        let Ok(region) = recover_region(self.topology(), index, EntityOwner::Solid(solid), start)
+        else {
+            return raw_component();
+        };
+        let Ok(shells) = boundary_shells(self.topology(), index, &region) else {
+            // A transaction may ask for a sheet while a builder has opened
+            // its boundary and has not sewn the replacement yet. The raw
+            // component is the only meaningful staged view until it closes.
+            return raw_component();
+        };
+        shells
+            .into_iter()
+            .find(|shell| shell.darts().contains(&start))
+            .map_or_else(raw_component, |shell| shell.darts().to_vec())
     }
 
     /// Inserts one cell key, resolving staged duplicate identities consistently.
@@ -1147,8 +1198,7 @@ impl<P: Payload> Model<P> {
 
     /// Returns the sheet key of the shell containing `dart`, if registered.
     pub fn sheet_key(&self, dart: Dart) -> Option<SheetKey> {
-        let repr = self.cell_representative(dart, Dim::Three);
-        self.derived_indexes().sheet.get(&repr).copied()
+        self.derived_indexes().sheet.get(&dart).copied()
     }
 
     /// Returns the sheet key of the shell containing `dart`.

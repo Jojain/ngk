@@ -4,7 +4,7 @@
 Its closure receives a `ModelEdit`, which is the public mutation capability for
 the staged model. Returning an error, failing validation, failing identity
 reconciliation, or failing payload policy restores the complete
-transaction-start snapshot — the map, the entity stores, the subdivision
+transaction-start snapshot — the map, the entity stores, the embedding
 labelling and the revision counter alike.
 
 `Model::transaction_with_policy` uses the same boundary with a caller-provided
@@ -28,7 +28,7 @@ adding darts, changing alpha links, labelling cells, or mutating attributes.
 
 `ModelEdit` owns no snapshot and has no independent commit. It provides the
 checked alpha operations `add_dart`, `remove_dart`, `link`, `unlink`, and `sew`,
-the subdivision label `own_cell`, plus attribute creation, removal, mutation,
+the embedding label `own_cell`, plus attribute creation, removal, mutation,
 split, and merge declarations.
 
 Profile and sheet registration follows the same explicit model as edge and
@@ -72,13 +72,14 @@ lookups resolve the operation's logical survivor.
 ## Commit order
 
 1. the raw gmap axioms, on `Model::topology()` alone;
-2. the subdivision labels, which must describe that map: no record anchored off
-   it, no owner of lower dimension than the cell it claims, and no cell two
-   entities disagree about;
-3. shell re-rooting and the required profile/sheet registrations;
-4. edit-event lineage, then identity reconciliation;
-5. payload policy on net externally-visible changes;
-6. `revision += 1` and cache invalidation.
+2. the required profile/sheet registrations;
+3. edit-event lineage, then identity reconciliation;
+4. the embedding labels, which must describe the reconciled map: no record
+   anchored off it, no owner of lower dimension than the cell it claims, and
+   no cell two entities disagree about;
+5. one same-dimensional raw cell per logical vertex, edge, face and solid;
+6. payload policy on net externally-visible changes;
+7. `revision += 1` and cache invalidation.
 
 A failure at any step restores the transaction-start snapshot whole.
 

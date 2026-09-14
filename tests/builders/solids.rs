@@ -6,6 +6,7 @@ use ngk::model::Model;
 use ngk::modeling::faces;
 use ngk::topology::payload::StandardPayload;
 use ngk::topology::validation::{validate_gmap, validate_solid_orientation};
+use ngk::viz::debug_viewer::show;
 
 #[test]
 fn translate_face_copies_face_into_translated_map() {

@@ -180,7 +180,7 @@ and desirable, a one-edge loop vanishing is not.
 vertex of a closed edge, on the grounds that a circle needs a seam vertex to
 hang its span from. It does not: a closed edge *is* its support and spans the
 whole period, so the vertex is a cell like any other. See §11.3 of
-`seamless_periodic_faces.md`.
+`seamless_periodic_faces.done.md`.
 
 ### 6.2 Redundant edge (1-removal)
 
@@ -205,7 +205,7 @@ whole period, so the vertex is a cell like any other. See §11.3 of
   where the parameterization was cut open — and removing it is the whole point
   of the `seams` pass. What is left is the face the cut was hiding: a ring, a
   cap, or a face with no boundary at all. See §11.9 of
-  `seamless_periodic_faces.md`; only a lone period-spanning loop with nothing
+  `seamless_periodic_faces.done.md`; only a lone period-spanning loop with nothing
   closing its far side is still refused.
 - *Inner/outer merge.* Removing an edge that joins an outer loop to an inner
   loop is legal and correct (it fuses a hole into the outer boundary) but must
@@ -404,7 +404,7 @@ stable invariant (per `skills/test-first-workflow`). Write them red first.
 | 3 | The two passes + fixed-point driver + report + guards (seam, closed edge, outer loop, shared-edge count). | **Done** — `tests/healing/{vertex,edge}_removal.rs` |
 | 4 | Boolean integration: `BooleanOptions::heal`, call site in `assemble::run`, lineage rewritten onto the surviving identities. | **Done, opt-in** — `tests/healing/boolean_integration.rs`; see §12 |
 | 5 | Loop-reshaping 1-removal (same face on both sides), up to a single rejoined loop. | **Done** — see §12 |
-| 6 | Splitting a rejoined boundary into two loops (annulus, cylinder seam), which needs outer/inner classification in parameter space; contraction (Defs. 63–64) for degenerate cells; optional `GeometrySupport` provenance tag; flipping `BooleanOptions::heal` on by default. | **Partly done** — the periodic half of the split is in (`MergePlan::{Ring, Cap, Unbounded}`, §11.9 of `seamless_periodic_faces.md`), where no outer/inner question arises; an annulus closing up still needs one. `BooleanOptions::heal` defaults on. Contraction and the provenance tag are outstanding. |
+| 6 | Splitting a rejoined boundary into two loops (annulus, cylinder seam), which needs outer/inner classification in parameter space; contraction (Defs. 63–64) for degenerate cells; optional `GeometrySupport` provenance tag; flipping `BooleanOptions::heal` on by default. | **Partly done** — the periodic half of the split is in (`MergePlan::{Ring, Cap, Unbounded}`, §11.9 of `seamless_periodic_faces.done.md`), where no outer/inner question arises; an annulus closing up still needs one. `BooleanOptions::heal` defaults on. Contraction and the provenance tag are outstanding. |
 
 ## 12. What shipped
 
@@ -443,7 +443,7 @@ of a ring are read as such and kept (`MergePlan::Ring`); an annulus closing up i
 still refused with `CellRemovalError::LoopWouldSplit`, because which of the two
 then bounds the face from outside is not a combinatorial question, where for a
 ring it does not arise. The blanket refusal of a seam on a periodic surface is
-gone — see §11.9 of `seamless_periodic_faces.md`.
+gone — see §11.9 of `seamless_periodic_faces.done.md`.
 
 Two consequences fell out of it. The Def. 59 path does not always leave the
 removed cell: at the vertex where a slit's two edges met, once both are gone,

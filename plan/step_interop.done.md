@@ -51,7 +51,7 @@ Three properties of the kernel shape everything below.
 2. **NGK stores periodic faces seamlessly; STEP writes them cut open.** A cylinder
    wall is one ring face with two `LoopKind::Wrapping` loops and no seam edge; a
    sphere or torus is one *boundaryless* face with zero loops, edges and vertices,
-   rooted by `ShellRoot::Face`. This is the largest piece of real work and it is
+   anchored on the finite raw 2-cell of their closed support. This is the largest piece of real work and it is
    asymmetric between the directions.
 3. **NGK does not store a face's sense; it derives it.** `Face::normal_at`
    (`src/topology/face.rs:404-423`) flips the surface normal iff the boundary's signed
@@ -287,7 +287,7 @@ This is not new design; it is pre-built. `HealingOptions::seams_only()`
 (`src/healing/options.rs:69-76`) carries the rustdoc *"This is what an importer
 runs."* `tests/fixtures/seamed.rs` is a hand-built model of importer output and says
 so in its module doc. The seam pass is milestone 7 of
-`plan/seamless_periodic_faces.md`, status **Complete**.
+`plan/seamless_periodic_faces.done.md`, status **Complete**.
 
 Separating the stages means a file that heals badly still imports, the healing report
 surfaces separately, and the importer is testable against the existing fixtures with
@@ -298,7 +298,7 @@ healing out of the picture.
 The tempting design — "un-heal" the map by inserting seam edges, then export normally
 — is wrong twice: it mutates the user's model in order to serialize it, and it
 reintroduces exactly the arbitrary, rotation-dependent seam that
-`plan/seamless_periodic_faces.md` spent seven milestones removing.
+`plan/seamless_periodic_faces.done.md` spent seven milestones removing.
 
 Instead export derives a **seamed view**. This is mostly built already:
 `UnwrappedFaceDomain::of_face` cuts a periodic face's domain open and returns closed
@@ -329,8 +329,8 @@ Two producers implement it:
   or a circle on a revolution.
 - **Boundaryless faces** (sphere, torus) — zero loops, so nothing to walk. The
   boundary comes from `Surface::domain()`, `periodicity()` and `degenerate_rows(axis)`
-  (`surfaces.rs:48/61/95`) instead. Sense comes from `ShellRoot::Face{sense}`, which is
-  also what makes a spherical *cavity* come out right.
+  (`surfaces.rs:48/61/95`) instead. Sense comes from the face's oriented anchor,
+  which is also what makes a spherical *cavity* come out right.
   - A **sphere** is `UPeriodic` with degenerate rows at both poles: it cuts to one
     meridian traversed twice plus two pole vertices.
   - A **torus** is `UVPeriodic(TAU, TAU)` with `is_degenerate_at` always false and no
@@ -1110,11 +1110,10 @@ depends on it.
   first loop seed, which for a ring is an orbit the shell's dart need not be
   in. The second showed up as a coin-flip: the seeds come out of a `HashSet`,
   so the test failed on about half its runs.
-- **A boundaryless face's sense has exactly one home, and it is the shell
-  root.** A face states which way it points by the winding of its boundary,
-  and a face with no boundary states nothing — so `ShellRoot::Face { sense }`
-  is not a convenience for a face with no dart, it is the only place the
-  answer lives. Three places were reading past it: `Face::normal_at` returned
+- **A boundaryless face's sense has exactly one home, and it is its oriented
+  anchor.** A face states which way it points by the winding of its boundary,
+  and a face with no boundary states it by which way its raw 2-cell is read.
+  Three places were reading past that orientation: `Face::normal_at` returned
   the support normal whatever the view said, `validate_oriented_shell_volume`
   re-read each face by key and dropped the shell's own reading of it, and the
   removal computed the sense *after* dropping the edge attribute the winding

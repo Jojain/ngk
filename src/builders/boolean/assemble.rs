@@ -5,6 +5,7 @@ use super::{
     BooleanSide, IntersectionSpanId, neighborhood::FragmentGraph, select::SelectionPlan,
 };
 use crate::builders::faces::reverse_face_winding;
+use crate::builders::scaffold::cut_between_shells;
 use crate::geometry::{Point3, PointCoincidence};
 use crate::healing::{HealingOptions, HealingScope, remove_redundant_cells_staged};
 use crate::model::Model;
@@ -126,8 +127,12 @@ pub(crate) fn run<P: Payload>(
             components: outer.len(),
         });
     }
+    let mut shell_roots = Vec::with_capacity(1 + inner.len());
+    shell_roots.push(outer[0]);
+    shell_roots.extend(inner.iter().copied());
     let solid =
         edit.add_solid_split_from(context.first, SolidAttr::new(data, outer[0], Some(inner)));
+    cut_between_shells(edit, solid, &shell_roots)?;
     validate_gmap(edit.topology()).map_err(ModelValidationError::from)?;
     validate_solid_manifold(edit, solid)?;
     validate_solid_orientation(edit, solid)?;

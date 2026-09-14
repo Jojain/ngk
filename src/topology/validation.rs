@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::geometry::Surface;
 use crate::topology::closed::Closed;
 
-use super::embedding::EntityOwner;
+use super::embedding::{EntityOwner, turn};
 use super::face::Face;
 use super::gmap::{Dart, Dim, GMap};
 use super::payload::Payload;
@@ -325,7 +325,8 @@ fn validate_oriented_shell_volume<P: Payload>(
     for face in &faces {
         for boundary in face.loops() {
             for edge in boundary.edges() {
-                if !directed.contains(&g.alpha(Dim::Zero, g.alpha(Dim::Two, edge.dart()))) {
+                let across = turn(g.topology(), g.embedding_index(), Dim::Two, edge.dart());
+                if !across.is_some_and(|dart| directed.contains(&g.alpha(Dim::Zero, dart))) {
                     return Err(ModelValidationError::SolidFaceNormalNotOutward {
                         solid,
                         shell,
