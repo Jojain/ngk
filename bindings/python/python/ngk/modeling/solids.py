@@ -1,5 +1,5 @@
 """Solid constructors and Boolean operations."""
 
-from .._ngk import block, cut, fuse, intersect
+from .._ngk import block, cut, cylinder, fuse, intersect, sphere, torus
 
-__all__ = ["block", "cut", "fuse", "intersect"]
+__all__ = ["block", "cylinder", "sphere", "torus", "cut", "fuse", "intersect"]

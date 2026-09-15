@@ -11,6 +11,9 @@ use super::common::py_solid;
 
 pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(block, module)?)?;
+    module.add_function(wrap_pyfunction!(cylinder, module)?)?;
+    module.add_function(wrap_pyfunction!(sphere, module)?)?;
+    module.add_function(wrap_pyfunction!(torus, module)?)?;
     module.add_function(wrap_pyfunction!(fuse, module)?)?;
     module.add_function(wrap_pyfunction!(cut, module)?)?;
     module.add_function(wrap_pyfunction!(intersect, module)?)?;
@@ -23,6 +26,43 @@ pub(crate) fn block(x: f64, y: f64, z: f64, frame: Option<PyFrame>) -> PyResult<
     match frame {
         Some(frame) => modeling::solids::block_at(frame.frame, x, y, z),
         None => modeling::solids::block(x, y, z),
+    }
+    .map_err(|error| PyValueError::new_err(error.to_string()))
+    .and_then(py_solid)
+}
+
+#[pyfunction]
+#[pyo3(signature = (radius, height, frame=None))]
+pub(crate) fn cylinder(
+    radius: f64,
+    height: f64,
+    frame: Option<PyFrame>,
+) -> PyResult<PySolid> {
+    match frame {
+        Some(frame) => modeling::solids::cylinder_at(frame.frame, radius, height),
+        None => modeling::solids::cylinder(radius, height),
+    }
+    .map_err(|error| PyValueError::new_err(error.to_string()))
+    .and_then(py_solid)
+}
+
+#[pyfunction]
+#[pyo3(signature = (radius, frame=None))]
+pub(crate) fn sphere(radius: f64, frame: Option<PyFrame>) -> PyResult<PySolid> {
+    match frame {
+        Some(frame) => modeling::solids::sphere_at(frame.frame, radius),
+        None => modeling::solids::sphere(radius),
+    }
+    .map_err(|error| PyValueError::new_err(error.to_string()))
+    .and_then(py_solid)
+}
+
+#[pyfunction]
+#[pyo3(signature = (major, minor, frame=None))]
+pub(crate) fn torus(major: f64, minor: f64, frame: Option<PyFrame>) -> PyResult<PySolid> {
+    match frame {
+        Some(frame) => modeling::solids::torus_at(frame.frame, major, minor),
+        None => modeling::solids::torus(major, minor),
     }
     .map_err(|error| PyValueError::new_err(error.to_string()))
     .and_then(py_solid)
