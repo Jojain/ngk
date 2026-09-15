@@ -69,7 +69,7 @@ impl Default for DebugViewerOptions {
 
 /// Transport envelope understood by the browser debug viewer.
 ///
-/// Topology entries contain a complete serialized standard-payload map.
+/// Topology entries contain a complete serialized standard-payload model.
 /// Geometry entries contain the serde representation of the real kernel value.
 /// The browser hydrates both through the NGK WASM bindings.
 #[derive(Debug, Clone, Serialize)]
@@ -328,17 +328,17 @@ pub fn show_with_options<T: DebugDisplay + ?Sized>(
     send_payload(&payload, options)
 }
 
-/// Sends a complete standard-payload map to the debug viewer.
-pub fn show_gmap(gmap: &Model<StandardPayload>) -> Result<(), DebugViewerError> {
-    show_gmap_with_options(gmap, &DebugViewerOptions::default())
+/// Sends a complete standard-payload model to the debug viewer.
+pub fn show_model(model: &Model<StandardPayload>) -> Result<(), DebugViewerError> {
+    show_model_with_options(model, &DebugViewerOptions::default())
 }
 
-/// Sends a complete standard-payload map with explicit connection options.
-pub fn show_gmap_with_options(
-    gmap: &Model<StandardPayload>,
+/// Sends a complete standard-payload model with explicit connection options.
+pub fn show_model_with_options(
+    model: &Model<StandardPayload>,
     options: &DebugViewerOptions,
 ) -> Result<(), DebugViewerError> {
-    show_with_options(gmap, options)
+    show_with_options(model, options)
 }
 
 /// Builds the serialized object envelope without sending it.
@@ -355,12 +355,12 @@ pub fn payload_for_display<T: DebugDisplay + ?Sized>(
     })
 }
 
-/// Builds the serialized object envelope for a complete map without sending it.
-pub fn payload_for_gmap(
-    gmap: &Model<StandardPayload>,
+/// Builds the serialized object envelope for a complete model without sending it.
+pub fn payload_for_model(
+    model: &Model<StandardPayload>,
     options: &DebugViewerOptions,
 ) -> Result<DebugViewerPayload, DebugViewerError> {
-    payload_for_display(gmap, options)
+    payload_for_display(model, options)
 }
 
 /// Sends an already-built debug viewer payload.
@@ -380,20 +380,20 @@ fn append_isolated_topology<T>(
 where
     T: MergeTopology<StandardPayload>,
 {
-    let (gmap, handle) = Model::isolate(topology);
-    objects.push(serialize_topology(&gmap, kind, Some(handle))?);
+    let (model, handle) = Model::isolate(topology);
+    objects.push(serialize_topology(&model, kind, Some(handle))?);
     Ok(())
 }
 
 fn serialize_topology(
-    gmap: &Model<StandardPayload>,
+    model: &Model<StandardPayload>,
     kind: DebugObjectKind,
     primary_dart: Option<Dart>,
 ) -> Result<SerializedDebugObject, serde_json::Error> {
     Ok(SerializedDebugObject {
         kind,
         primary_dart: primary_dart.map(|dart| dart.id() as u32),
-        serialized: serde_json::to_string(gmap)?,
+        serialized: serde_json::to_string(model)?,
     })
 }
 

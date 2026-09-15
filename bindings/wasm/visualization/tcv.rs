@@ -18,8 +18,8 @@ fn js_err(error: impl ToString) -> JsValue {
 
 /// Tessellates a deserialized browser-owned model for the debug viewer.
 #[wasm_bindgen(js_name = sceneFromGMap)]
-pub fn scene_from_model(gmap: &WasmModel) -> Result<JsValue, JsValue> {
-    let scene = crate::viz::scene_from_model(gmap.inner.model(), &VizHints::new());
+pub fn scene_from_model(model: &WasmModel) -> Result<JsValue, JsValue> {
+    let scene = crate::viz::scene_from_model(model.inner.model(), &VizHints::new());
     serde_wasm_bindgen::to_value(&scene).map_err(js_err)
 }
 

@@ -18,7 +18,7 @@ use ngk::topology::ModelEditError;
 use ngk::topology::shape::{Shape, SolidTag};
 use ngk::topology::shape_keys::SolidKey;
 use ngk::topology::validation::{validate_gmap, validate_solid_manifold};
-use ngk::viz::debug_viewer::{DebugViewerOptions, show_gmap_with_options};
+use ngk::viz::debug_viewer::{DebugViewerOptions, show_model_with_options};
 
 const CENTRE_DISTANCE: f64 = 125.0;
 
@@ -144,7 +144,7 @@ fn show(name: &str, map: &Model) -> Result<(), Box<dyn Error>> {
     if env::var_os("NGK_SKIP_DEBUG_VIEWER").is_some() {
         return Ok(());
     }
-    show_gmap_with_options(
+    show_model_with_options(
         map,
         &DebugViewerOptions {
             name: name.to_owned(),

@@ -20,7 +20,7 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use ngk::exchange::step::{StepReadOptions, read_step_file};
-use ngk::viz::debug_viewer::{DebugViewerOptions, show_gmap_with_options};
+use ngk::viz::debug_viewer::{DebugViewerOptions, show_model_with_options};
 
 const DEFAULT_DIR: &str = "tests/exchange/foreign/files";
 
@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             import.report.skipped.len(),
         );
 
-        show_gmap_with_options(
+        show_model_with_options(
             shape.model(),
             &DebugViewerOptions {
                 name,

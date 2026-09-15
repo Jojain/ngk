@@ -3,8 +3,8 @@ import type {
   Cylinder,
   Edge,
   Face,
-  GMap,
   Line,
+  Model,
   NurbsCurve,
   NurbsSurface,
   Plane,
@@ -33,7 +33,7 @@ export type DebugViewerPayload = {
 };
 
 export type DebugObjectKind =
-  | "gmap"
+  | "model"
   | "vertex"
   | "edge"
   | "profile"
@@ -87,7 +87,7 @@ export type DebugCone = {
   normalAt: (u: number, v: number) => Vector3;
 };
 export type DebugObject =
-  | GMap
+  | Model
   | Vertex
   | Edge
   | Profile
@@ -129,20 +129,20 @@ export type DebugFacePcurve = {
 export type HydratedObject = {
   kind: DebugObjectKind;
   value: DebugObject;
-  gmap?: GMap;
+  model?: Model;
 };
 
 export type DebugEntityEntry<T> = {
   id: number;
   value: T;
-  gmap: GMap;
+  model: Model;
 };
 
 export type DebugSelectionIndex = {
   vertices: DebugEntityEntry<Vertex>[];
   edges: DebugEntityEntry<Edge>[];
   faces: DebugEntityEntry<Face>[];
-  darts: Array<{ id: number; dart: number; gmap: GMap }>;
+  darts: Array<{ id: number; dart: number; model: Model }>;
 };
 
 export type HydratedDebugDump = {
@@ -151,8 +151,8 @@ export type HydratedDebugDump = {
   objects: DebugObject[];
   shape: DebugObject | undefined;
   shapes: DebugObject[];
-  gmap: GMap | undefined;
-  gmaps: GMap[];
+  model: Model | undefined;
+  models: Model[];
   scene: VizScene;
   selection: DebugSelectionIndex;
 };
@@ -259,33 +259,33 @@ export function hydrateDebugDump(
   for (const serialized of payload.objects) {
     let localScene: VizScene;
     if (isTopologyKind(serialized.kind)) {
-      const gmap = kernel.GMap.deserialize(serialized.serialized);
-      const vertices = gmap.vertices();
-      const edges = gmap.edges();
-      const faces = gmap.faces();
-      localScene = kernel.sceneFromGMap(gmap) as VizScene;
+      const model = kernel.Model.deserialize(serialized.serialized);
+      const vertices = model.vertices();
+      const edges = model.edges();
+      const faces = model.faces();
+      localScene = kernel.sceneFromGMap(model) as VizScene;
 
       selection.vertices.push(
-        ...vertices.map((value, id) => ({ id: vertexBase + id, value, gmap })),
+        ...vertices.map((value, id) => ({ id: vertexBase + id, value, model })),
       );
       selection.edges.push(
-        ...edges.map((value, id) => ({ id: edgeBase + id, value, gmap })),
+        ...edges.map((value, id) => ({ id: edgeBase + id, value, model })),
       );
       selection.faces.push(
-        ...faces.map((value, id) => ({ id: faceBase + id, value, gmap })),
+        ...faces.map((value, id) => ({ id: faceBase + id, value, model })),
       );
       selection.darts.push(
-        ...Array.from(gmap.darts(), (dart) => ({
+        ...Array.from(model.darts(), (dart) => ({
           id: dartBase + dart,
           dart,
-          gmap,
+          model,
         })),
       );
 
       hydrated.push({
         kind: serialized.kind,
-        value: resolvePrimaryTopology(gmap, serialized),
-        gmap,
+        value: resolvePrimaryTopology(model, serialized),
+        model,
       });
     } else {
       const geometry = kernel.hydrateDebugGeometry(
@@ -304,25 +304,25 @@ export function hydrateDebugDump(
   }
 
   const objects = hydrated.map(({ value }) => value);
-  const gmaps = hydrated.flatMap(({ gmap }) => (gmap ? [gmap] : []));
+  const models = hydrated.flatMap(({ model }) => (model ? [model] : []));
   return {
     name: payload.name,
     object: objects[0],
     objects,
     shape: objects[0],
     shapes: objects,
-    gmap: gmaps[0],
-    gmaps,
+    model: models[0],
+    models,
     scene,
     selection,
   };
 }
 
 function resolvePrimaryTopology(
-  gmap: GMap,
+  model: Model,
   serialized: SerializedDebugObject,
-): GMap | Vertex | Edge | Profile | Face | Sheet | Solid {
-  if (serialized.kind === "gmap") return gmap;
+): Model | Vertex | Edge | Profile | Face | Sheet | Solid {
+  if (serialized.kind === "model") return model;
   const dart = serialized.primaryDart;
   if (dart === undefined) {
     throw new Error(`${serialized.kind} debug object has no primary dart`);
@@ -330,25 +330,25 @@ function resolvePrimaryTopology(
 
   const value =
     serialized.kind === "vertex"
-      ? gmap.vertex(dart)
+      ? model.vertex(dart)
       : serialized.kind === "edge"
-        ? gmap.edge(dart)
+        ? model.edge(dart)
         : serialized.kind === "profile"
-          ? gmap.profile(dart)
+          ? model.profile(dart)
           : serialized.kind === "face"
-            ? gmap.face(dart)
+            ? model.face(dart)
             : serialized.kind === "sheet"
-              ? gmap.sheet(dart)
-              : gmap.solid(dart);
+              ? model.sheet(dart)
+              : model.solid(dart);
   if (!value) throw new Error(`could not restore ${serialized.kind} at dart ${dart}`);
   return value;
 }
 
 function isTopologyKind(
   kind: DebugObjectKind,
-): kind is "gmap" | "vertex" | "edge" | "profile" | "face" | "sheet" | "solid" {
+): kind is "model" | "vertex" | "edge" | "profile" | "face" | "sheet" | "solid" {
   return (
-    kind === "gmap" ||
+    kind === "model" ||
     kind === "vertex" ||
     kind === "edge" ||
     kind === "profile" ||

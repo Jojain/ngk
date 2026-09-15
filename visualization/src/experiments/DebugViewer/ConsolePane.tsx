@@ -21,8 +21,8 @@ type ConsoleBindings = {
   objects: HydratedDebugDump["objects"];
   shape: HydratedDebugDump["shape"];
   shapes: HydratedDebugDump["shapes"];
-  gmap: HydratedDebugDump["gmap"];
-  gmaps: HydratedDebugDump["gmaps"];
+  model: HydratedDebugDump["model"];
+  models: HydratedDebugDump["models"];
   ngk: Kernel;
 };
 
@@ -92,8 +92,8 @@ export function ConsolePane({
             objects: dump.objects,
             shape: dump.shape,
             shapes: dump.shapes,
-            gmap: dump.gmap,
-            gmaps: dump.gmaps,
+            model: dump.model,
+            models: dump.models,
             ngk: kernel,
           }
         : null,

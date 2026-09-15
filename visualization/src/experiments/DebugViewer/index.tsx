@@ -22,8 +22,10 @@ import { ConsolePane } from "./ConsolePane";
 export default function DebugViewer() {
   const kernel = useKernel();
   const controls = useVizControls({
-    showDarts: false,
+    faceOpacity: 0.35,
+    showDarts: true,
     showDartLabels: false,
+    showAlpha3: true,
     viewerFaceColorOverridesScene: false,
   });
   const [dumps, setDumps] = useState<DebugViewerEnvelope[]>([]);
@@ -298,8 +300,8 @@ function InspectorPanel({
           <KeyValue
             label="alphas"
             value={Array.from(
-              { length: entity.entry.gmap.involutionCount },
-              (_, alpha) => `α${alpha}: ${entity.entry.gmap.alpha(alpha, entity.entry.dart)}`,
+              { length: entity.entry.model.involutionCount },
+              (_, alpha) => `α${alpha}: ${entity.entry.model.alpha(alpha, entity.entry.dart)}`,
             ).join(", ")}
           />
         </>
@@ -695,7 +697,7 @@ function EntityIdentity<T extends { key: string; dartId?: number }>({
       {entry.value.dartId !== undefined && (
         <KeyValue
           label="cell darts"
-          value={Array.from(entry.gmap.cellDarts(entry.value.dartId, dimension)).join(", ")}
+          value={Array.from(entry.model.cellDarts(entry.value.dartId, dimension)).join(", ")}
         />
       )}
     </>

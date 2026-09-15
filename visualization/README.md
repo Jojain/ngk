@@ -23,6 +23,37 @@ npm run dev
 `npm run dev` first rebuilds the wasm bundle into `visualization/src/wasm/` and
 then starts Vite.
 
+## Debug viewer
+
+Start the local viewer from `visualization/` and select **Debug viewer** in the
+sidebar:
+
+```powershell
+npm run debug
+```
+
+Then send current kernel objects from a second terminal. Rust can display
+models, logical topology entities, and standalone geometry:
+
+```powershell
+cargo run --example debug_holes
+```
+
+`debug_holes` adds two snapshots: an annular face and the through-hole solid
+obtained by extruding it. The Debug viewer starts with translucent faces and
+the dart and alpha-link overlays visible, so both logical boundaries and the
+underlying raw topology can be inspected together. `debug_geometry` is a
+smaller example for standalone points, vectors, curves, and surfaces.
+
+Python exposes the same topology viewer through `ngk.debug`:
+
+```powershell
+.\bindings\python\run.ps1 -Script bindings/python/examples/show_debug_block.py
+```
+
+Each call adds an entry to the viewer timeline, so a debugging session can keep
+several snapshots without creating a registered visualization experiment.
+
 ## GitHub Pages
 
 The repository deploys this app with GitHub Actions on every push to `master`.

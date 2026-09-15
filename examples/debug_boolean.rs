@@ -7,7 +7,7 @@ use ngk::geometry::{Plane, Point3};
 use ngk::model::Model;
 use ngk::modeling::faces;
 use ngk::topology::shape_keys::SolidKey;
-use ngk::viz::debug_viewer::{DebugViewerOptions, show_gmap_with_options};
+use ngk::viz::debug_viewer::{DebugViewerOptions, show_model_with_options};
 
 fn block_at(origin: Point3, size: f64) -> Result<(Model, SolidKey), Box<dyn Error>> {
     let plane = Plane::from_xy(origin, Vector3::x(), Vector3::y());
@@ -18,7 +18,7 @@ fn block_at(origin: Point3, size: f64) -> Result<(Model, SolidKey), Box<dyn Erro
 }
 
 fn show_named(name: &str, map: &Model) -> Result<(), Box<dyn Error>> {
-    show_gmap_with_options(
+    show_model_with_options(
         map,
         &DebugViewerOptions {
             name: name.to_owned(),

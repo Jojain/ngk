@@ -10,7 +10,7 @@ use ngk::model::Model;
 use ngk::modeling::{faces, sweep::extrude_profile};
 use ngk::topology::shape::{EdgeTag, Shape};
 use ngk::topology::shape_keys::{SheetKey, SolidKey};
-use ngk::viz::debug_viewer::{DebugViewerOptions, show_gmap_with_options};
+use ngk::viz::debug_viewer::{DebugViewerOptions, show_model_with_options};
 
 fn block_at(origin: Point3, size: f64) -> Result<(Model, SolidKey), Box<dyn Error>> {
     let plane = Plane::from_xy(origin, Vector3::x(), Vector3::y());
@@ -39,7 +39,7 @@ fn show_named(name: &str, map: &Model) -> Result<(), Box<dyn Error>> {
     if env::var_os("NGK_SKIP_DEBUG_VIEWER").is_some() {
         return Ok(());
     }
-    show_gmap_with_options(
+    show_model_with_options(
         map,
         &DebugViewerOptions {
             name: name.to_owned(),

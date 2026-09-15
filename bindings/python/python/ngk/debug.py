@@ -9,11 +9,11 @@ _ENDPOINT = "/__ngk_debug/dumps"
 
 def _debug_object(obj):
     kind = type(obj).__name__.lower()
-    if kind == "gmap":
-        return {"kind": "gmap", "serialized": obj.serialize()}
+    if kind == "model":
+        return {"kind": "model", "serialized": obj.serialize()}
     if kind in {"vertex", "edge", "profile", "face", "sheet", "solid"}:
-        return {"kind": kind, "primaryDart": obj.dart_id, "serialized": obj.gmap.serialize()}
-    raise TypeError("ngk.debug.show supports GMap and topology cell objects")
+        return {"kind": kind, "primaryDart": obj.dart_id, "serialized": obj.model.serialize()}
+    raise TypeError("ngk.debug.show supports Model and topology entity objects")
 
 
 def show(obj, name=None, host="127.0.0.1", port=3941, timeout=1.0):
