@@ -71,6 +71,12 @@ impl WasmProfile {
     pub(crate) fn from_inner(inner: SharedProfile<StandardPayload>) -> Self {
         Self { inner }
     }
+
+    pub(crate) fn isolated_shape(
+        &self,
+    ) -> Result<crate::topology::shape::Shape<crate::topology::shape::ProfileTag>, JsValue> {
+        self.inner.isolated_shape().map_err(js_err)
+    }
 }
 
 entity_common!(WasmProfile);

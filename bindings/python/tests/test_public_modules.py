@@ -35,3 +35,11 @@ def test_profile_from_edges_orders_connected_edges():
     profile = ngk.modeling.profiles.from_edges([second, third, first])
 
     assert len(profile.edges()) == 3
+
+
+def test_face_from_profile_builds_a_face_from_a_profile():
+    profile = ngk.modeling.profiles.rectangle(2.0, 3.0)
+
+    face = ngk.modeling.faces.from_profile(profile)
+
+    assert len(face.edges()) == 4

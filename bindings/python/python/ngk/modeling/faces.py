@@ -1,5 +1,5 @@
 """Face constructors."""
 
-from .._ngk import rectangle_face as rectangle
+from .._ngk.modeling.faces import from_profile, rectangle
 
-__all__ = ["rectangle"]
+__all__ = ["from_profile", "rectangle"]

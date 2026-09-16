@@ -14,14 +14,14 @@ pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-#[pyfunction(name = "rectangle_profile")]
+#[pyfunction]
 pub(crate) fn rectangle(x_size: f64, y_size: f64) -> PyResult<PyProfile> {
     modeling::profiles::rectangle(Plane::xy(), x_size, y_size)
         .map_err(|error| PyValueError::new_err(error.to_string()))
         .and_then(py_profile)
 }
 
-#[pyfunction(name = "profile_from_edges")]
+#[pyfunction]
 pub(crate) fn from_edges(edges: Vec<PyRef<'_, PyEdge>>) -> PyResult<PyProfile> {
     let shapes = edges
         .iter()

@@ -10,7 +10,7 @@ use crate::topology::face::{Face, Loop};
 use crate::topology::gmap::{Dart, Dim, GMAP_INVOLUTION_COUNT};
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
-use crate::topology::shape::{EdgeTag, Shape};
+use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::{Sheet, ShellRef};
 use crate::topology::solid::Solid;
@@ -650,6 +650,15 @@ impl<P: Payload> SharedProfile<P> {
     /// Returns the same profile in the opposite traversal orientation.
     pub(crate) fn reversed(&self) -> Result<Self, ExploreError> {
         Ok(Self::from_view(self.model.clone(), self.view()?.reversed()))
+    }
+
+    /// Copies this profile into an owned shape for a modeling constructor.
+    pub(crate) fn isolated_shape(&self) -> Result<Shape<ProfileTag, P>, ExploreError> {
+        let (model, dart) = self.view()?.isolate();
+        let key = Profile::from_dart(&model, dart)
+            .ok_or_else(|| missing("profile", dart.id()))?
+            .key();
+        Ok(Shape::new(model, key))
     }
 }
 

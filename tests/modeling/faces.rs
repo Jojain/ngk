@@ -1,6 +1,7 @@
 use ngk::geometry::Plane;
 use ngk::geometry::Point3;
 use ngk::modeling::faces;
+use ngk::modeling::profiles;
 
 #[test]
 fn rectangle_returns_owned_face_shape() {
@@ -50,6 +51,25 @@ fn annulus_returns_owned_face_shape_with_circular_hole() {
         1
     );
     assert_eq!(shape.face().inner_loops().len(), 1);
+}
+
+#[test]
+fn from_profile_returns_owned_face_shape() {
+    let profile = profiles::rectangle(Plane::xy(), 2.0, 3.0).expect("profile should build");
+
+    let shape = faces::from_profile(&profile).expect("face should build");
+
+    assert_eq!(shape.model().iter_faces().count(), 1);
+    assert_eq!(
+        shape
+            .face()
+            .outer_loop()
+            .expect("face should have an outer loop")
+            .edges()
+            .len(),
+        4
+    );
+    assert_eq!(profile.model().iter_faces().count(), 0);
 }
 
 #[test]

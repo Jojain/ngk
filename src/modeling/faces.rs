@@ -5,8 +5,9 @@ use crate::builders::faces::{
 };
 use crate::geometry::{Plane, Point3};
 use crate::model::Model;
-use crate::topology::payload::StandardPayload;
-use crate::topology::shape::{FaceTag, Shape};
+use crate::topology::payload::{Payload, StandardPayload};
+use crate::topology::profile::Profile;
+use crate::topology::shape::{FaceTag, ProfileTag, Shape};
 
 pub fn rectangle(
     plane: Plane,
@@ -56,6 +57,24 @@ pub fn polygon(points: &[Point3]) -> Result<Shape<FaceTag, StandardPayload>, Fac
     let mut g = Model::new();
     let face_key = g.transaction(|edit| {
         let profile_key = add_polygon_staged(edit, points);
+        add_face_staged(edit, profile_key)
+    })?;
+    Ok(Shape::new(g, face_key))
+}
+
+/// Builds an owned face bounded by an existing profile's loop.
+///
+/// The profile must be closed and planar. The returned shape owns a copy of
+/// the profile; the source shape is unchanged.
+pub fn from_profile<P: Payload>(
+    profile: &Shape<ProfileTag, P>,
+) -> Result<Shape<FaceTag, P>, FaceCreationError> {
+    let mut g = Model::new();
+    let face_key = g.transaction(|edit| {
+        let dart = edit.merge(profile.profile());
+        let profile_key = Profile::from_dart(edit.model(), dart)
+            .expect("a merged profile is registered under its own key")
+            .key();
         add_face_staged(edit, profile_key)
     })?;
     Ok(Shape::new(g, face_key))
