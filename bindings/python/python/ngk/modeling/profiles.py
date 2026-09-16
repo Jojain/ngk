@@ -1,5 +1,5 @@
 """Profile constructors."""
 
-from .._ngk import rectangle_profile as rectangle
+from .._ngk import profile_from_edges as from_edges, rectangle_profile as rectangle
 
-__all__ = ["rectangle"]
+__all__ = ["from_edges", "rectangle"]

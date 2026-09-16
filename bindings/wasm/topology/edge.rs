@@ -21,6 +21,12 @@ impl WasmEdge {
     pub(crate) fn from_inner(inner: SharedEdge<StandardPayload>) -> Self {
         Self { inner }
     }
+
+    pub(crate) fn isolated_shape(
+        &self,
+    ) -> Result<crate::topology::shape::Shape<crate::topology::shape::EdgeTag>, JsValue> {
+        self.inner.isolated_shape().map_err(js_err)
+    }
 }
 
 entity_common!(WasmEdge);

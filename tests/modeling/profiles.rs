@@ -46,6 +46,22 @@ fn polygon_returns_owned_closed_profile_shape() {
 }
 
 #[test]
+fn from_edges_orders_connected_edge_shapes() {
+    let first = edges::line(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0))
+        .expect("first edge should build");
+    let second = edges::line(Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 1.0, 0.0))
+        .expect("second edge should build");
+    let third = edges::line(Point3::new(1.0, 1.0, 0.0), Point3::new(0.0, 1.0, 0.0))
+        .expect("third edge should build");
+
+    let profile = profiles::from_edges(&[&second, &third, &first])
+        .expect("connected edge shapes should build a profile");
+
+    assert_eq!(profile.profile().edges().len(), 3);
+    assert_eq!(first.model().iter_edges().count(), 1);
+}
+
+#[test]
 fn add_copies_an_edge_shape_into_the_profile() {
     let arc = edges::arc(Plane::xy(), 2.0, 0.0, std::f64::consts::FRAC_PI_2)
         .expect("arc edge should build");

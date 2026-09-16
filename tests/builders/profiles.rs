@@ -2,7 +2,8 @@ use std::convert::Infallible;
 
 use ngk::builders::edges::add_line;
 use ngk::builders::profiles::{
-    PolylineError, add_polyline, add_polyline_staged, add_rectangle, append_edge,
+    PolylineError, add_polyline, add_polyline_staged, add_profile_from_edges, add_rectangle,
+    append_edge,
 };
 use ngk::geometry::{Plane, Point3};
 use ngk::model::Model;
@@ -42,6 +43,66 @@ fn add_polyline_creates_valid_profile() {
     assert_eq!(profile.darts().count(), 4);
     assert_eq!(g.iter_vertices().count(), 3);
     assert_eq!(g.cells(Dim::Zero).count(), 3);
+}
+
+#[test]
+fn add_profile_from_edges_orders_a_connected_unordered_chain() {
+    let mut g = Model::<StandardPayload>::new();
+    let first = add_line(
+        &mut g,
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+    )
+    .expect("first edge should build");
+    let second = add_line(
+        &mut g,
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(1.0, 1.0, 0.0),
+    )
+    .expect("second edge should build");
+    let third = add_line(
+        &mut g,
+        Point3::new(1.0, 1.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+    )
+    .expect("third edge should build");
+
+    let profile_key = add_profile_from_edges(&mut g, &[second, third, first])
+        .expect("connected edges should become one profile");
+    let profile = g.profile_unchecked(profile_key);
+
+    assert!(!profile.is_closed());
+    assert_eq!(profile.edges().len(), 3);
+    assert_eq!(g.iter_vertices().count(), 4);
+}
+
+#[test]
+fn add_profile_from_edges_rejects_disconnected_edges() {
+    let mut g = Model::<StandardPayload>::new();
+    let connected_first = add_line(
+        &mut g,
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+    )
+    .expect("first edge should build");
+    let connected_second = add_line(
+        &mut g,
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(2.0, 0.0, 0.0),
+    )
+    .expect("second edge should build");
+    let disconnected = add_line(
+        &mut g,
+        Point3::new(3.0, 0.0, 0.0),
+        Point3::new(4.0, 0.0, 0.0),
+    )
+    .expect("disconnected edge should build");
+
+    let error = add_profile_from_edges(&mut g, &[connected_second, disconnected, connected_first])
+        .expect_err("disconnected edges must be rejected");
+
+    assert!(matches!(error, PolylineError::DisconnectedEdges));
+    assert_eq!(g.iter_profiles().count(), 0);
 }
 
 #[test]

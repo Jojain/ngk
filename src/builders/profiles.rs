@@ -31,6 +31,90 @@ pub fn add_polyline<P: Payload>(
     g.transaction(|edit| add_polyline_staged(edit, points))
 }
 
+/// Adds one profile from existing edges, regardless of their supplied order.
+///
+/// The edges must form exactly one non-branching open chain or closed cycle.
+/// Coincident endpoints are joined within [`LINEAR_TOLERANCE`], and their
+/// logical vertices are merged as the profile is sewn. Disconnected input and
+/// branches are rejected without changing the model.
+pub fn add_profile_from_edges<P: Payload>(
+    g: &mut Model<P>,
+    edges: &[EdgeKey],
+) -> Result<ProfileKey, PolylineError> {
+    g.transaction(|edit| add_profile_from_edges_staged(edit, edges))
+}
+
+/// Orders and joins existing edges inside the caller's transaction.
+pub fn add_profile_from_edges_staged<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    edges: &[EdgeKey],
+) -> Result<ProfileKey, PolylineError> {
+    let mut edges = edges
+        .iter()
+        .copied()
+        .map(|key| profile_edge_endpoints(edit, key))
+        .collect::<Result<Vec<_>, _>>()?;
+    let first = edges.first().ok_or(PolylineError::EmptyPolyline)?;
+
+    if edges.len() == 1 {
+        return Ok(edit.add_profile(ProfileAttr::new(first.start, P::Profile::default())));
+    }
+
+    let endpoint_degrees = edges
+        .iter()
+        .flat_map(|edge| [edge.start_point, edge.end_point])
+        .map(|point| {
+            let degree = edges
+                .iter()
+                .flat_map(|edge| [edge.start_point, edge.end_point])
+                .filter(|candidate| candidate.coincides(point, LINEAR_TOLERANCE))
+                .count();
+            (point, degree)
+        })
+        .collect::<Vec<_>>();
+    if let Some((point, _)) = endpoint_degrees.iter().find(|(_, degree)| *degree > 2) {
+        return Err(PolylineError::NonManifoldEdgeConnection { point: *point });
+    }
+    if endpoint_degrees.iter().any(|(_, degree)| *degree == 1) {
+        if endpoint_degrees
+            .iter()
+            .filter(|(_, degree)| *degree == 1)
+            .count()
+            != 2
+        {
+            return Err(PolylineError::DisconnectedEdges);
+        }
+    } else if endpoint_degrees.iter().any(|(_, degree)| *degree != 2) {
+        return Err(PolylineError::DisconnectedEdges);
+    }
+
+    let start = endpoint_degrees
+        .iter()
+        .find(|(_, degree)| *degree == 1)
+        .map(|(point, _)| *point)
+        .unwrap_or(first.start_point);
+    let mut ordered = Vec::with_capacity(edges.len());
+    let mut current = start;
+
+    while !edges.is_empty() {
+        let Some(index) = edges.iter().position(|edge| edge.touches(current)) else {
+            return Err(PolylineError::DisconnectedEdges);
+        };
+        let edge = edges.swap_remove(index);
+        current = edge.other_end(current);
+        ordered.push(edge);
+    }
+
+    let profile = edit.add_profile(ProfileAttr::new(
+        ordered[0].dart_at(start),
+        P::Profile::default(),
+    ));
+    for edge in ordered.iter().skip(1) {
+        append_edge_staged(edit, profile, edge.key)?;
+    }
+    Ok(profile)
+}
+
 /// Builds all polyline edges and joins them into one staged profile.
 pub fn add_polyline_staged<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
@@ -356,6 +440,38 @@ struct SegmentTopology {
 }
 
 #[derive(Clone, Copy)]
+struct ProfileEdgeEndpoints {
+    key: EdgeKey,
+    start: Dart,
+    end: Dart,
+    start_point: Point3,
+    end_point: Point3,
+}
+
+impl ProfileEdgeEndpoints {
+    fn touches(self, point: Point3) -> bool {
+        self.start_point.coincides(point, LINEAR_TOLERANCE)
+            || self.end_point.coincides(point, LINEAR_TOLERANCE)
+    }
+
+    fn other_end(self, point: Point3) -> Point3 {
+        if self.start_point.coincides(point, LINEAR_TOLERANCE) {
+            self.end_point
+        } else {
+            self.start_point
+        }
+    }
+
+    fn dart_at(self, point: Point3) -> Dart {
+        if self.start_point.coincides(point, LINEAR_TOLERANCE) {
+            self.start
+        } else {
+            self.end
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 struct VertexMerge {
     survivor: VertexKey,
     removed: VertexKey,
@@ -374,4 +490,22 @@ fn vertex_point<P: Payload>(g: &Model<P>, dart: Dart) -> Result<Point3, Polyline
 fn vertex_key<P: Payload>(g: &Model<P>, dart: Dart) -> Result<VertexKey, PolylineError> {
     g.cell_key::<Cell0>(dart)
         .ok_or(PolylineError::MissingVertexPoint { dart })
+}
+
+fn profile_edge_endpoints<P: Payload>(
+    g: &Model<P>,
+    key: EdgeKey,
+) -> Result<ProfileEdgeEndpoints, PolylineError> {
+    let start = g
+        .edge_attr(key)
+        .ok_or(PolylineError::MissingEdge { edge: key })?
+        .dart;
+    let end = g.alpha(Dim::Zero, start);
+    Ok(ProfileEdgeEndpoints {
+        key,
+        start,
+        end,
+        start_point: vertex_point(g, start)?,
+        end_point: vertex_point(g, end)?,
+    })
 }

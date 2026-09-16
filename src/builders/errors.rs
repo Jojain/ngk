@@ -152,6 +152,10 @@ impl From<ModelEditError> for ExtrudeError {
 pub enum PolylineError {
     #[error("polyline is empty")]
     EmptyPolyline,
+    #[error("the supplied edges do not form one connected profile")]
+    DisconnectedEdges,
+    #[error("more than two supplied edges meet at {point:?}")]
+    NonManifoldEdgeConnection { point: Point3 },
     #[error("polygon needs at least 3 points, got {point_count}")]
     InvalidPolygon { point_count: usize },
     #[error("profile starting at dart {dart:?} is already closed")]

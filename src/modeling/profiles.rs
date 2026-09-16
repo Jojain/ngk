@@ -1,6 +1,7 @@
 use crate::builders::errors::EdgeCreationError;
 use crate::builders::profiles::{
-    PolylineError, add_polyline, add_rectangle, add_square, append_edge_staged,
+    PolylineError, add_polyline, add_profile_from_edges_staged, add_rectangle, add_square,
+    append_edge_staged,
 };
 use crate::geometry::{Plane, Point3};
 use crate::model::{Cell1, Model};
@@ -32,6 +33,27 @@ pub fn polyline(points: &[Point3]) -> Result<Shape<ProfileTag, StandardPayload>,
     let mut g = Model::new();
     let profile_dart = add_polyline(&mut g, points)?;
     Ok(Shape::new(g, profile_dart))
+}
+
+/// Builds an owned profile from connected edge shapes in any input order.
+///
+/// The returned shape owns copies of the input edges. The source shapes remain
+/// unchanged. The edges must make one non-branching chain or cycle.
+pub fn from_edges<P: Payload>(
+    edges: &[&Shape<EdgeTag, P>],
+) -> Result<Shape<ProfileTag, P>, PolylineError> {
+    let mut g = Model::new();
+    let profile = g.transaction(|edit| {
+        let keys = edges
+            .iter()
+            .map(|edge| {
+                let dart = edit.merge(edge.edge());
+                edit.cell_key_unchecked::<Cell1>(dart)
+            })
+            .collect::<Vec<_>>();
+        add_profile_from_edges_staged(edit, &keys)
+    })?;
+    Ok(Shape::new(g, profile))
 }
 
 pub fn polygon(points: &[Point3]) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {

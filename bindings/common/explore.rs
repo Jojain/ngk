@@ -1,15 +1,16 @@
-﻿use std::sync::Arc;
+use std::sync::Arc;
 
 use thiserror::Error;
 
 use crate::geometry::{Curve, Point3, Surface, TrimmedCurve2};
-use crate::model::Model;
+use crate::model::{Cell1, MergeTopology, Model};
 use crate::topology::closed::{Closeable, Closed};
 use crate::topology::edge::{BoundedEdge, Edge};
 use crate::topology::face::{Face, Loop};
 use crate::topology::gmap::{Dart, Dim, GMAP_INVOLUTION_COUNT};
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
+use crate::topology::shape::{EdgeTag, Shape};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::{Sheet, ShellRef};
 use crate::topology::solid::Solid;
@@ -561,6 +562,13 @@ impl<P: Payload> SharedEdge<P> {
     /// Returns the same edge in the opposite orientation.
     pub(crate) fn reversed(&self) -> Result<Self, ExploreError> {
         Ok(Self::from_view(self.model.clone(), self.view()?.reversed()))
+    }
+
+    /// Copies this edge into an owned shape for a modeling constructor.
+    pub(crate) fn isolated_shape(&self) -> Result<Shape<EdgeTag, P>, ExploreError> {
+        let (model, dart) = self.view()?.isolate();
+        let key = model.cell_key_unchecked::<Cell1>(dart);
+        Ok(Shape::new(model, key))
     }
 }
 
