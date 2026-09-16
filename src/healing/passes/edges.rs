@@ -30,7 +30,6 @@ use crate::topology::{ModelEdit, ModelEditError};
 
 use super::super::errors::HealingError;
 use super::super::options::HealingOptions;
-use super::super::predicates::curve::reversed;
 use super::super::predicates::{SurfaceMatch, surfaces_match};
 use super::super::report::{HealedCell, HealingReport, SkipReason};
 use super::{edge_dart_in_face, incident_faces};
@@ -387,17 +386,12 @@ fn rebuild_pcurves<P: Payload>(
         for boundary in view.loops() {
             for edge in boundary.edges() {
                 let dart = edge.dart();
-                // The ends of the section the edge *is*, not of the vertices it
-                // happens to carry: a closed edge has one vertex or none, and
-                // still runs from somewhere to somewhere.
+                // The section the edge *is*, orientation and span together: a
+                // reversed interval traverses the stored support backward, which
+                // is what keeps a shared edge's stored direction out of the
+                // face's own parameter space.
                 let section = edge.trimmed_curve()?;
-                let (start, end) = (section.point_at(0.0), section.point_at(1.0));
-                let stored = edge.curve()?;
-                let oriented = match edit.model().edge_orientation_at_dart(edge.key(), dart) {
-                    Orientation::Same => stored.clone(),
-                    Orientation::Reversed => reversed(stored)?,
-                };
-                pcurves.insert(dart, curve_pcurve(&oriented, start, end, plane).ok()?);
+                pcurves.insert(dart, curve_pcurve(&section, plane).ok()?);
             }
         }
     }

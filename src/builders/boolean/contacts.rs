@@ -1072,12 +1072,10 @@ fn section_imprint<P: Payload>(
     options: BooleanOptions,
 ) -> Result<Option<FaceImprint>, BooleanError> {
     if let Surface::Plane(plane) = face.surface() {
-        let pcurve = crate::builders::profiles::curve_pcurve(
-            section,
-            section.point_at(0.0),
-            section.point_at(1.0),
-            plane,
-        )?;
+        // The section already *is* its span, so its own `[0, 1]` window is what
+        // the pcurve covers.
+        let span = TrimmedCurve::new(section.clone(), Interval::new(0.0, 1.0));
+        let pcurve = crate::builders::profiles::curve_pcurve(&span, plane)?;
         return Ok(Some(FaceImprint::new(section.clone(), pcurve)));
     }
     let mut points = Vec::with_capacity(SECTION_SAMPLE_COUNT + 1);

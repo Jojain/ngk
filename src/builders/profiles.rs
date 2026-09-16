@@ -1,9 +1,11 @@
 use crate::geometry::TrimmedCurve2;
 use std::collections::HashMap;
 
+use nalgebra::Vector3;
+
 use crate::geometry::{
-    ControlPolygon2, Curve, Curve2, HPoint2, LINEAR_TOLERANCE, NurbsCurve2, NurbsError, Plane,
-    Point2, Point3, PointCoincidence,
+    Circle2, ControlPolygon2, Curve, Curve2, Ellipse2, HPoint2, LINEAR_TOLERANCE, Line2,
+    NurbsCurve2, NurbsError, Plane, Point2, Point3, PointCoincidence, TrimmedCurve, Vector2,
 };
 use crate::model::{Cell0, Model};
 use crate::topology::ModelEdit;
@@ -231,10 +233,10 @@ fn append_orientation(
 
 /// Builds the face-parameter curves for every edge of `profile` on `plane`.
 ///
-/// Each result is keyed by the oriented profile-edge dart. Straight edges
-/// become UV-space lines; other supported curves are converted to NURBS and
-/// their control points are projected into the plane's local coordinates.
-/// This function does not require the source geometry to lie on `plane`.
+/// Each result is keyed by the oriented profile-edge dart and carries the
+/// edge's own trimmed span, so the parameter curve covers the edge rather than
+/// its whole support. The profile is required to lie on `plane`; see
+/// [`curve_pcurve`].
 pub fn profile_pcurves<P: Payload>(
     profile: &Profile<'_, P>,
     plane: &Plane,
@@ -247,50 +249,90 @@ pub fn profile_pcurves<P: Payload>(
         let section = edge
             .trimmed_curve()
             .ok_or(PolylineError::MissingVertexPoint { dart })?;
-        let (start, end) = (section.point_at(0.0), section.point_at(1.0));
-        let curve = edge
-            .curve()
-            .ok_or(PolylineError::MissingEdgeCurve { dart })?;
-
-        pcurves.insert(dart, curve_pcurve(curve, start, end, plane)?);
+        pcurves.insert(dart, curve_pcurve(&section, plane)?);
     }
 
     Ok(pcurves)
 }
 
-/// Projects one oriented 3D curve boundary into a plane's parameter space.
+/// Projects one oriented 3D section into a plane's parameter space.
 ///
-/// Lines stay analytical. Other curve variants preserve their NURBS degree,
-/// weights, and knots while projecting the homogeneous control polygon.
+/// The section is required to lie on `plane`. That is what lets the span carry
+/// over untouched: a plane's parameters are Cartesian coordinates in it, so
+/// projection moves the support's representation and leaves its
+/// parameterization where it was. A circle stays a [`Circle2`], an ellipse an
+/// [`Ellipse2`], a line a [`Line2`], and a NURBS keeps its degree, weights and
+/// knots. Nothing is degraded to NURBS to be projected.
 pub(crate) fn curve_pcurve(
-    curve: &Curve,
-    start: Point3,
-    end: Point3,
+    section: &TrimmedCurve,
     plane: &Plane,
 ) -> Result<TrimmedCurve2, NurbsError> {
-    match curve {
-        Curve::Line(_) => Ok(TrimmedCurve2::segment(
-            plane_uv(plane, start),
-            plane_uv(plane, end),
+    let point = |point: Point3| plane_uv(plane, point);
+    let direction =
+        |vector: Vector3<f64>| Vector2::new(vector.dot(&plane.x_dir()), vector.dot(&plane.y_dir()));
+
+    let support = match section.curve() {
+        Curve::Line(line) => Curve2::Line(Line2::new(
+            point(line.point_at(0.0)),
+            direction(line.point_at(1.0) - line.point_at(0.0)),
         )),
-        Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) => {
-            let nurbs = curve.to_nurbs()?;
+        Curve::Circle(circle) => {
+            let x = direction(circle.plane().x_dir().into_inner());
+            let y = direction(circle.plane().y_dir().into_inner());
+            let flat = Circle2::new(point(circle.plane().origin()), x, circle.radius());
+            Curve2::Circle(oriented(flat, x, y, Circle2::reversed))
+        }
+        Curve::Ellipse(ellipse) => {
+            let frame = ellipse.frame();
+            let x = direction(frame.x_dir.into_inner());
+            let y = direction(frame.y_dir.into_inner());
+            let flat = Ellipse2::new(
+                point(frame.origin),
+                x,
+                ellipse.major_radius(),
+                ellipse.minor_radius(),
+            );
+            Curve2::Ellipse(oriented(flat, x, y, Ellipse2::reversed))
+        }
+        // Projecting the homogeneous control polygon is exact because the
+        // projection is affine, and it leaves the degree, the weights and the
+        // knots alone — so the curve keeps its own parameter as well as its
+        // point set.
+        Curve::Nurbs(nurbs) => {
             let control_points = ControlPolygon2::new(
                 nurbs
                     .control_points()
                     .iter()
-                    .map(|point| {
-                        HPoint2::from_cartesian(
-                            plane_uv(plane, point.to_cartesian()),
-                            point.weight(),
-                        )
+                    .map(|control| {
+                        HPoint2::from_cartesian(point(control.to_cartesian()), control.weight())
                     })
                     .collect(),
             )?;
-            let pcurve = NurbsCurve2::new(nurbs.degree(), control_points, nurbs.knots().clone())?;
-            let span = pcurve.domain();
-            Ok(TrimmedCurve2::new(Curve2::Nurbs(pcurve), span))
+            Curve2::Nurbs(NurbsCurve2::new(
+                nurbs.degree(),
+                control_points,
+                nurbs.knots().clone(),
+            )?)
         }
+    };
+
+    Ok(TrimmedCurve2::new(support, section.interval()))
+}
+
+/// Restores a conic's sense when the plane it lay in faces the other way.
+///
+/// A conic built from a centre, a start direction and a radius turns
+/// counter-clockwise by construction, so its quarter-turn direction is
+/// `perp(x)`. A circle whose own plane is the face's plane seen from behind
+/// projects with the opposite one, and saying so is what keeps its angular
+/// parameter — and so every span written on it — running the way it did in
+/// space.
+fn oriented<T>(conic: T, x: Vector2, y: Vector2, reverse: impl Fn(&T) -> T) -> T {
+    let turns_counter_clockwise = x.x * y.y - x.y * y.x;
+    if turns_counter_clockwise < 0.0 {
+        reverse(&conic)
+    } else {
+        conic
     }
 }
 

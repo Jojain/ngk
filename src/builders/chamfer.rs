@@ -7,7 +7,9 @@ use crate::builders::faces::{
     FaceImprint, add_face_staged, add_polygon_staged, split_face_by_imprints_staged,
 };
 use crate::builders::profiles::curve_pcurve;
-use crate::geometry::{Curve, LINEAR_TOLERANCE, Point2, Point3, RuledSurface, Surface};
+use crate::geometry::{
+    Curve, LINEAR_TOLERANCE, Point2, Point3, RuledSurface, Surface, TrimmedCurve,
+};
 use crate::model::{Cell0, Cell1, Model};
 use crate::topology::attributes::{FaceAttr, VertexAttr};
 use crate::topology::edge::Edge;
@@ -432,8 +434,11 @@ fn chamfer_curve_imprint<P: Payload>(
         .map(|face| face.surface().clone())
         .ok_or(ChamferError::UnsupportedSolidChamferGeometry { edge })?;
     let pcurve = match &surface {
-        Surface::Plane(plane) => curve_pcurve(curve, points[0], points[1], plane)
-            .map_err(|_| ChamferError::UnsupportedSolidChamferGeometry { edge })?,
+        Surface::Plane(plane) => {
+            let section = TrimmedCurve::between(curve.clone(), points[0], points[1]);
+            curve_pcurve(&section, plane)
+                .map_err(|_| ChamferError::UnsupportedSolidChamferGeometry { edge })?
+        }
         Surface::Ruled(_) => {
             let start = surface
                 .param_at(points[0])

@@ -25,11 +25,10 @@
 //! and takes the other from its neighbour, which is the direction the curve was
 //! actually travelling when it got there.
 
-use nalgebra::Vector3;
-
+use crate::builders::profiles::curve_pcurve;
 use crate::geometry::{
-    Axis2, Circle2, ControlPolygon2, Curve, Curve2, Ellipse2, HPoint2, Interval, Line2,
-    NurbsCurve2, NurbsError, Plane, Point2, Point3, Surface, TrimmedCurve, TrimmedCurve2, Vector2,
+    Axis2, Curve, Curve2, Interval, NurbsCurve2, NurbsError, Point2, Surface, TrimmedCurve,
+    TrimmedCurve2,
 };
 
 /// How many points a lift inverts before it decides what it is looking at.
@@ -71,7 +70,7 @@ pub fn lift_pcurve(
 ) -> Result<LiftedPcurve, NurbsError> {
     if let Surface::Plane(plane) = surface {
         return Ok(LiftedPcurve {
-            pcurve: TrimmedCurve2::new(project_onto_plane(plane, curve)?, interval),
+            pcurve: curve_pcurve(&TrimmedCurve::new(curve.clone(), interval), plane)?,
             residual: None,
         });
     }
@@ -89,87 +88,6 @@ pub fn lift_pcurve(
         });
     }
     fit(surface, &section, &image, tolerance)
-}
-
-/// Projects a support lying in a plane onto that plane's parameter space.
-///
-/// **The interval carries over untouched**, which is the whole reason this is
-/// a separate path rather than a lift. A plane's parameters are Cartesian
-/// coordinates in it, so projection is an isometry of the plane onto its own
-/// domain: it moves the support's *representation* and leaves its
-/// parameterization exactly where it was. A circle's angle stays that angle, a
-/// B-spline keeps its knots, and the span the edge's corners bound means the
-/// same thing in both.
-fn project_onto_plane(plane: &Plane, curve: &Curve) -> Result<Curve2, NurbsError> {
-    let origin = plane.origin();
-    let point = |point: Point3| {
-        let offset = point - origin;
-        Point2::new(offset.dot(&plane.x_dir()), offset.dot(&plane.y_dir()))
-    };
-    let direction =
-        |vector: Vector3<f64>| Vector2::new(vector.dot(&plane.x_dir()), vector.dot(&plane.y_dir()));
-
-    Ok(match curve {
-        Curve::Line(line) => Curve2::Line(Line2::new(
-            point(line.point_at(0.0)),
-            direction(line.point_at(1.0) - line.point_at(0.0)),
-        )),
-        Curve::Circle(circle) => {
-            let x = direction(circle.plane().x_dir().into_inner());
-            let y = direction(circle.plane().y_dir().into_inner());
-            let flat = Circle2::new(point(circle.plane().origin()), x, circle.radius());
-            Curve2::Circle(oriented(flat, x, y, Circle2::reversed))
-        }
-        Curve::Ellipse(ellipse) => {
-            let frame = ellipse.frame();
-            let x = direction(frame.x_dir.into_inner());
-            let y = direction(frame.y_dir.into_inner());
-            let flat = Ellipse2::new(
-                point(frame.origin),
-                x,
-                ellipse.major_radius(),
-                ellipse.minor_radius(),
-            );
-            Curve2::Ellipse(oriented(flat, x, y, Ellipse2::reversed))
-        }
-        // Projecting the homogeneous control polygon is exact because the
-        // projection is affine, and it leaves the degree, the weights and the
-        // knots alone — so the curve keeps its own parameter as well as its
-        // point set.
-        Curve::Nurbs(nurbs) => {
-            let control_points = ControlPolygon2::new(
-                nurbs
-                    .control_points()
-                    .iter()
-                    .map(|control| {
-                        HPoint2::from_cartesian(point(control.to_cartesian()), control.weight())
-                    })
-                    .collect(),
-            )?;
-            Curve2::Nurbs(NurbsCurve2::new(
-                nurbs.degree(),
-                control_points,
-                nurbs.knots().clone(),
-            )?)
-        }
-    })
-}
-
-/// Restores a conic's sense when the plane it lay in faces the other way.
-///
-/// A conic built from a centre, a start direction and a radius turns
-/// counter-clockwise by construction, so its quarter-turn direction is
-/// `perp(x)`. A circle whose own plane is the face's plane seen from behind
-/// projects with the opposite one, and saying so is what keeps its angular
-/// parameter — and so every span written on it — running the way it did in
-/// space.
-fn oriented<T>(conic: T, x: Vector2, y: Vector2, reverse: impl Fn(&T) -> T) -> T {
-    let turns_counter_clockwise = x.x * y.y - x.y * y.x;
-    if turns_counter_clockwise < 0.0 {
-        reverse(&conic)
-    } else {
-        conic
-    }
 }
 
 /// Inverts a section onto a support at the given fractions of its span.

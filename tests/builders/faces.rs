@@ -1,14 +1,14 @@
 use std::collections::HashSet;
-use std::f64::consts::TAU;
+use std::f64::consts::{FRAC_PI_2, TAU};
 
 use nalgebra::Vector3;
-use ngk::builders::edges::add_line;
+use ngk::builders::edges::{add_arc, add_line};
 use ngk::builders::errors::{FaceCreationError, PolylineError};
 use ngk::builders::faces::{
     FaceEdgeSplitError, FaceImprint, FaceImprintGraph, add_annulus, add_circle, add_face,
     add_polygon, add_rectangle, split_face_by_imprints, split_face_edge,
 };
-use ngk::builders::profiles::add_polyline;
+use ngk::builders::profiles::{add_polyline, add_profile_from_edges};
 use ngk::builders::sheets::add_extruded_profile;
 use ngk::geometry::{
     Circle, Curve, Curve2, LINEAR_TOLERANCE, NurbsCurve2, Plane, Point2, Point3, PointCoincidence,
@@ -263,7 +263,7 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
     let pcurve = shape_face
         .pcurve(edge.dart())
         .expect("circle edge should have a pcurve");
-    assert!(matches!(pcurve.curve(), Curve2::Nurbs(_)));
+    assert!(matches!(pcurve.curve(), Curve2::Circle(_)));
     for fraction in [0.0, 0.125, 0.25, 0.5, 0.875, 1.0] {
         let uv = pcurve.point_at(fraction);
         let surface_point = shape_face.point_at(uv.x, uv.y);
@@ -273,6 +273,43 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
             .point_at(std::f64::consts::TAU * fraction);
         assert!(surface_point.coincides(edge_point, LINEAR_TOLERANCE));
     }
+}
+
+#[test]
+fn an_arc_profile_gets_a_pcurve_over_the_arc_not_the_whole_circle() {
+    let mut g = Model::<StandardPayload>::new();
+    let arc = add_arc(&mut g, Plane::xy(), 2.0, 0.0, FRAC_PI_2).expect("arc edge should build");
+    let section = g
+        .edge_unchecked(arc)
+        .trimmed_curve()
+        .expect("the arc should carry a span");
+    let chord = add_line(&mut g, section.end(), section.start()).expect("chord should build");
+    let profile = add_profile_from_edges(&mut g, &[arc, chord])
+        .expect("the arc and its chord should close a profile");
+    let face_key = add_face(&mut g, profile).expect("the arc profile should build a face");
+    let shape_face = g.face_unchecked(face_key);
+
+    let arc_edge = shape_face
+        .outer_loop()
+        .expect("face should have an outer loop")
+        .edges()
+        .into_iter()
+        .find(|edge| matches!(edge.curve(), Some(Curve::Circle(_))))
+        .expect("the arc edge should be on the boundary");
+    let pcurve = shape_face
+        .pcurve(arc_edge.dart())
+        .expect("the arc edge should have a pcurve");
+
+    assert!(
+        matches!(pcurve.curve(), Curve2::Circle(_)),
+        "a circular arc should project to a circle, got {:?}",
+        pcurve.curve(),
+    );
+    assert!(
+        (pcurve.interval().delta().abs() - FRAC_PI_2).abs() <= LINEAR_TOLERANCE,
+        "the pcurve covers the whole circle instead of the arc: {:?}",
+        pcurve.interval(),
+    );
 }
 
 #[test]

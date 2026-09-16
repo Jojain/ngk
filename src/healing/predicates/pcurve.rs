@@ -9,8 +9,8 @@
 
 use crate::builders::profiles::curve_pcurve;
 use crate::geometry::{
-    Circle2, Curve, Curve2, Interval, Point2, Point3, Surface, SurfacePeriodicity, TrimmedCurve2,
-    Vector2,
+    Circle2, Curve, Curve2, Interval, Point2, Point3, Surface, SurfacePeriodicity, TrimmedCurve,
+    TrimmedCurve2, Vector2,
 };
 
 use super::curve::{SUPPORT_SAMPLES, sample_between};
@@ -25,7 +25,8 @@ pub fn boundary_pcurve(
     linear: f64,
 ) -> Option<TrimmedCurve2> {
     if let Surface::Plane(plane) = surface {
-        return curve_pcurve(curve, start, end, plane).ok();
+        let section = TrimmedCurve::between(curve.clone(), start, end);
+        return curve_pcurve(&section, plane).ok();
     }
 
     let samples = sample_between(curve, start, end, SUPPORT_SAMPLES);
