@@ -120,7 +120,7 @@ impl PyPoint3 {
 #[pyclass(name = "Vector", module = "ngk.geometry")]
 #[derive(Clone)]
 pub(crate) struct PyVector3 {
-    vector: Vector3<f64>,
+    pub(crate) vector: Vector3<f64>,
 }
 
 #[pymethods]

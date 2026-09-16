@@ -2,7 +2,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-use crate::geometry::Plane;
+use crate::geometry::{Plane, Point3};
 use crate::modeling;
 
 use super::super::topology::{PyEdge, PyProfile};
@@ -10,6 +10,7 @@ use super::common::py_profile;
 
 pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(rectangle, module)?)?;
+    module.add_function(wrap_pyfunction!(polygon, module)?)?;
     module.add_function(wrap_pyfunction!(from_edges, module)?)?;
     Ok(())
 }
@@ -17,6 +18,17 @@ pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
 #[pyfunction]
 pub(crate) fn rectangle(x_size: f64, y_size: f64) -> PyResult<PyProfile> {
     modeling::profiles::rectangle(Plane::xy(), x_size, y_size)
+        .map_err(|error| PyValueError::new_err(error.to_string()))
+        .and_then(py_profile)
+}
+
+#[pyfunction]
+pub(crate) fn polygon(points: Vec<(f64, f64, f64)>) -> PyResult<PyProfile> {
+    let points = points
+        .into_iter()
+        .map(|(x, y, z)| Point3::new(x, y, z))
+        .collect::<Vec<_>>();
+    modeling::profiles::polygon(&points)
         .map_err(|error| PyValueError::new_err(error.to_string()))
         .and_then(py_profile)
 }

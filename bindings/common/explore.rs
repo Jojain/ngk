@@ -7,6 +7,10 @@ use crate::model::{Cell1, MergeTopology, Model};
 use crate::topology::closed::{Closeable, Closed};
 use crate::topology::edge::{BoundedEdge, Edge};
 use crate::topology::face::{Face, Loop};
+#[cfg(feature = "python")]
+use crate::model::Cell2;
+#[cfg(feature = "python")]
+use crate::topology::shape::FaceTag;
 use crate::topology::gmap::{Dart, Dim, GMAP_INVOLUTION_COUNT};
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
@@ -820,6 +824,14 @@ impl<P: Payload> SharedFace<P> {
     /// Returns the same face in the opposite orientation.
     pub(crate) fn reversed(&self) -> Result<Self, ExploreError> {
         Ok(Self::from_view(self.model.clone(), self.view()?.reversed()))
+    }
+
+    /// Copies this face into an owned shape for a modeling constructor.
+    #[cfg(feature = "python")]
+    pub(crate) fn isolated_shape(&self) -> Result<Shape<FaceTag, P>, ExploreError> {
+        let (model, dart) = self.view()?.isolate();
+        let key = model.cell_key_unchecked::<Cell2>(dart);
+        Ok(Shape::new(model, key))
     }
 }
 

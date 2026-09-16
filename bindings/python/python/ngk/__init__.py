@@ -1,10 +1,24 @@
 import json
 
 from .geometry import *
+from .modeling.edges import arc as arc_edge
+from .modeling.edges import circle as circle_edge
 from .modeling.edges import line
+from .modeling.faces import circle as circle_face
+from .modeling.faces import polygon as polygon_face
 from .modeling.faces import rectangle as rectangle_face
+from .modeling.profiles import polygon as polygon_profile
 from .modeling.profiles import rectangle as rectangle_profile
-from .modeling.solids import block, cut, cylinder, fuse, intersect, sphere, torus
+from .modeling.solids import (
+    block,
+    cut,
+    cylinder,
+    extruded as extrude,
+    fuse,
+    intersect,
+    sphere,
+    torus,
+)
 from .exchange.step import StepImport, read_step, step_from_string, step_to_string, write_step
 from ._ngk import *
 from ._ngk import _to_tcv_json

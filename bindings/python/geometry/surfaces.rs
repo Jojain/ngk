@@ -7,11 +7,34 @@ use super::{PyPoint3, PyVector3, curve_to_py, point, unit_vector, vector};
 #[pyclass(name = "Plane", module = "ngk")]
 #[derive(Clone)]
 pub(crate) struct PyPlane {
-    pub(super) plane: Plane,
+    pub(crate) plane: Plane,
 }
 
 #[pymethods]
 impl PyPlane {
+    #[new]
+    #[pyo3(signature = (origin, x_dir, normal))]
+    fn new(origin: PyPoint3, x_dir: PyVector3, normal: PyVector3) -> Self {
+        Self {
+            plane: Plane::new(origin.point, x_dir.vector, normal.vector),
+        }
+    }
+
+    #[staticmethod]
+    fn xy() -> Self {
+        Self { plane: Plane::xy() }
+    }
+
+    #[staticmethod]
+    fn xz() -> Self {
+        Self { plane: Plane::xz() }
+    }
+
+    #[staticmethod]
+    fn yz() -> Self {
+        Self { plane: Plane::yz() }
+    }
+
     #[getter]
     fn origin(&self) -> PyPoint3 {
         point(self.plane.origin())

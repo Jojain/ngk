@@ -1,3 +1,4 @@
+use nalgebra::Unit;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -5,8 +6,8 @@ use pyo3::types::PyModule;
 use crate::builders::boolean::BooleanOperation;
 use crate::modeling;
 
-use super::super::geometry::PyFrame;
-use super::super::topology::PySolid;
+use super::super::geometry::{PyFrame, PyVector3};
+use super::super::topology::{PyFace, PySolid};
 use super::common::py_solid;
 
 pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -14,10 +15,32 @@ pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(cylinder, module)?)?;
     module.add_function(wrap_pyfunction!(sphere, module)?)?;
     module.add_function(wrap_pyfunction!(torus, module)?)?;
+    module.add_function(wrap_pyfunction!(extruded, module)?)?;
     module.add_function(wrap_pyfunction!(fuse, module)?)?;
     module.add_function(wrap_pyfunction!(cut, module)?)?;
     module.add_function(wrap_pyfunction!(intersect, module)?)?;
     Ok(())
+}
+
+#[pyfunction]
+#[pyo3(signature = (face, direction, distance))]
+pub(crate) fn extruded(
+    face: PyRef<'_, PyFace>,
+    direction: PyVector3,
+    distance: f64,
+) -> PyResult<PySolid> {
+    let shape = face
+        .inner
+        .isolated_shape()
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    if direction.vector.norm_squared() <= 0.0 {
+        return Err(PyValueError::new_err(
+            "extrusion direction must be non-zero",
+        ));
+    }
+    modeling::solids::extruded(shape, Unit::new_normalize(direction.vector), distance)
+        .map_err(|error| PyValueError::new_err(error.to_string()))
+        .and_then(py_solid)
 }
 
 #[pyfunction]
