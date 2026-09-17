@@ -132,10 +132,6 @@ pub enum ExtrudeError {
     DegenerateSweep { dart: Dart },
     #[error("darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
     SewFailed { dim: Dim, first: Dart, second: Dart },
-    #[error("failed to translate curve at dart {dart:?}: {source}")]
-    CurveTranslationFailed { dart: Dart, source: NurbsError },
-    #[error("failed to translate surface at dart {dart:?}: {source}")]
-    SurfaceTranslationFailed { dart: Dart, source: NurbsError },
     #[error("missing face for key {dart:?}")]
     MissingFace { dart: FaceKey },
     #[error("extrusion model edit failed")]

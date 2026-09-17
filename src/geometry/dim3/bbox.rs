@@ -4,6 +4,7 @@ use nalgebra::{Matrix3, SymmetricEigen, Vector3};
 
 use super::frame::Frame;
 use super::utils::Point3;
+use crate::geometry::transform::Rigid;
 
 /// A 3D bounding box that may be empty.
 ///
@@ -49,6 +50,20 @@ impl BBox {
             Self::Empty
         } else {
             Self::fit_points_in_frame(&points, frame)
+        }
+    }
+
+    /// Returns this box under a rigid motion.
+    ///
+    /// Exact: an oriented box is a frame and three extents, and a rigid motion
+    /// moves the frame without changing any extent.
+    pub fn moved(&self, r: &Rigid) -> Self {
+        match self {
+            Self::Empty => Self::Empty,
+            Self::NonEmpty { frame, size } => Self::NonEmpty {
+                frame: frame.moved(r),
+                size: *size,
+            },
         }
     }
 

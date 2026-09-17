@@ -38,11 +38,7 @@ pub fn cylinder(radius: f64, height: f64) -> Result<WasmSolid, JsValue> {
 
 /// Builds a cylinder at an explicitly supplied placement frame.
 #[wasm_bindgen(js_name = cylinderAt)]
-pub fn cylinder_at(
-    frame: &WasmFrame,
-    radius: f64,
-    height: f64,
-) -> Result<WasmSolid, JsValue> {
+pub fn cylinder_at(frame: &WasmFrame, radius: f64, height: f64) -> Result<WasmSolid, JsValue> {
     modeling::solids::cylinder_at(frame.inner.clone(), radius, height)
         .map_err(js_err)
         .and_then(wasm_solid)

@@ -102,6 +102,20 @@ impl NurbsCurve {
         self.degree
     }
 
+    /// This curve with every control point moved by `f`.
+    ///
+    /// Degree, weights and knots are kept, so the result is the image of this
+    /// curve under `f` with the same parameterization whenever `f` is affine.
+    /// Infallible because the count invariant [`Self::new`] enforces is
+    /// untouched by a point-wise map.
+    pub(crate) fn map_control_points(&self, f: impl Fn(Point3) -> Point3) -> Self {
+        Self {
+            degree: self.degree,
+            control_points: self.control_points.map_points(f),
+            knots: self.knots.clone(),
+        }
+    }
+
     pub fn control_points(&self) -> &ControlPolygon {
         &self.control_points
     }

@@ -194,6 +194,22 @@ impl NurbsSurface {
         })
     }
 
+    /// This surface with every control point moved by `f`.
+    ///
+    /// Degrees, weights and both knot vectors are kept, so the result is the
+    /// image of this surface under `f` with the same parameterization whenever
+    /// `f` is affine. Infallible because the count invariants [`Self::new`]
+    /// enforces are untouched by a point-wise map.
+    pub(crate) fn map_control_points(&self, f: impl Fn(Point3) -> Point3) -> Self {
+        Self {
+            degree_u: self.degree_u,
+            degree_v: self.degree_v,
+            control_points: self.control_points.map_points(f),
+            knots_u: self.knots_u.clone(),
+            knots_v: self.knots_v.clone(),
+        }
+    }
+
     pub fn with_uniform_knots(
         degree_u: Degree,
         degree_v: Degree,

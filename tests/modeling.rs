@@ -6,3 +6,5 @@ mod faces;
 mod profiles;
 #[path = "modeling/solids.rs"]
 mod solids;
+#[path = "modeling/transform.rs"]
+mod transform;

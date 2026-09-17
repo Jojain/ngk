@@ -3,8 +3,10 @@ use std::f64::consts::FRAC_PI_2;
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::{
     Circle, Curve, Cylinder, Interval, LINEAR_TOLERANCE, Plane, Point2, Point3, PointCoincidence,
-    RuledSurface, Surface, SurfaceGeometry, SurfaceOfRevolution, SurfacePeriodicity, axis::Axis3,
+    Rigid, RuledSurface, Surface, SurfaceGeometry, SurfaceOfRevolution, SurfacePeriodicity,
+    axis::Axis3,
 };
+use radians::Rad64;
 
 fn assert_point_near(actual: Point3, expected: Point3) {
     assert!(
@@ -323,16 +325,14 @@ fn surface_of_revolution_normal_is_radial_on_a_cylinder() {
 }
 
 #[test]
-fn rotated_surface_keeps_its_parameterisation() {
+fn moved_surface_keeps_its_parameterisation() {
     let axis = Axis3::new(Point3::origin(), Vector3::z());
     let surface = Surface::Plane(Plane::from_xy(
         Point3::new(1.0, 0.0, 0.0),
         Vector3::x(),
         Vector3::z(),
     ));
-    let rotated = surface
-        .rotated(axis, std::f64::consts::FRAC_PI_2)
-        .expect("a plane should rotate");
+    let rotated = surface.moved(&Rigid::rotation(axis, Rad64::QUARTER_TURN));
 
     for (u, v) in [(0.0, 0.0), (0.3, -0.7), (2.0, 1.5)] {
         let expected = Rotation3::from_axis_angle(&axis.direction, std::f64::consts::FRAC_PI_2)

@@ -8,7 +8,7 @@ use crate::builders::faces::{
 };
 use crate::builders::profiles::curve_pcurve;
 use crate::geometry::{
-    Curve, LINEAR_TOLERANCE, Point2, Point3, RuledSurface, Surface, TrimmedCurve,
+    Curve, LINEAR_TOLERANCE, Point2, Point3, Rigid, RuledSurface, Surface, TrimmedCurve,
 };
 use crate::model::{Cell0, Cell1, Model};
 use crate::topology::attributes::{FaceAttr, VertexAttr};
@@ -346,15 +346,10 @@ fn prepare_solid_edge_chamfer<P: Payload>(
     // A supported curved trim is a rigid translation of the selected NURBS
     // edge. Equal endpoint translations prove that a single translated curve
     // represents the full boundary exactly.
-    let trim_curves = std::array::from_fn(|face_index| {
+    let trim_curves: [Curve; 2] = std::array::from_fn(|face_index| {
         let first_offset = face_offsets[face_index][0] - endpoint_points[0];
-        edge_curve.translated(first_offset)
+        edge_curve.moved(&Rigid::translation(first_offset))
     });
-    let [first_trim, second_trim] = trim_curves;
-    let trim_curves = [
-        first_trim.map_err(|_| ChamferError::UnsupportedSolidChamferGeometry { edge })?,
-        second_trim.map_err(|_| ChamferError::UnsupportedSolidChamferGeometry { edge })?,
-    ];
     for offsets in &face_offsets {
         let first_offset = offsets[0] - endpoint_points[0];
         let second_offset = offsets[1] - endpoint_points[1];
@@ -1205,8 +1200,7 @@ fn add_curved_chamfer_face<P: Payload>(
 
     let opposite_curve = geometry
         .base_curve
-        .translated(geometry.direction)
-        .map_err(|_| ChamferError::UnsupportedChamferTarget)?;
+        .moved(&Rigid::translation(geometry.direction));
     let reversed_opposite = Curve::Nurbs(
         opposite_curve
             .to_nurbs()

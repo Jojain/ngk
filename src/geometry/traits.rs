@@ -20,7 +20,6 @@
 //! carries a parameter across the conversion must reparameterize; code that
 //! only needs points is safe.
 
-use crate::geometry::axis::Axis3;
 use crate::geometry::dim2::nurbs::NurbsCurve2;
 use crate::geometry::dim2::utils::{Axis2, Point2};
 use crate::geometry::dim3::bbox::BBox;
@@ -31,6 +30,7 @@ use crate::geometry::dim3::utils::Point3;
 use crate::geometry::interval::Interval;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::reparam::ParamMap;
+use crate::geometry::transform::Rigid;
 use nalgebra::{UnitVector3, Vector2, Vector3};
 
 /// The behaviour every 3D support curve provides.
@@ -74,14 +74,13 @@ pub trait CurveGeometry: Sized {
     /// example a rational NURBS with a non-positive control weight.
     fn bbox_over(&self, interval: Interval) -> Option<BBox>;
 
-    /// The curve rotated by `angle` radians around `axis`.
+    /// The curve under a rigid motion.
     ///
-    /// The parameterization is preserved, so a parameter interval computed on
-    /// the source curve stays valid on the result.
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError>;
-
-    /// The curve translated along `direction`, preserving parameterization.
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError>;
+    /// Total and exact: the parameterization is preserved, so a parameter
+    /// interval computed on the source curve stays valid on the result, and
+    /// the analytic type is preserved, so nothing degrades to NURBS. See
+    /// [`Rigid`] for why there is nothing here to fail at.
+    fn moved(&self, r: &Rigid) -> Self;
 }
 
 /// The behaviour every 2D support curve provides.
@@ -198,12 +197,11 @@ pub trait SurfaceGeometry: Sized {
     /// A conservative bounding box of the surface restricted to a finite box.
     fn bbox_over(&self, u: Interval, v: Interval) -> Option<BBox>;
 
-    /// The surface rotated by `angle` radians around `axis`.
+    /// The surface under a rigid motion.
     ///
-    /// The parameterization is preserved, so parameter curves expressed in
-    /// this surface's space stay valid on the result.
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError>;
-
-    /// The surface translated along `direction`, preserving parameterization.
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError>;
+    /// Total and exact: the parameterization is preserved, so pcurves and loop
+    /// definitions expressed in this surface's `(u, v)` stay valid — and stay
+    /// bit-identical — on the result. See [`Rigid`] for why there is nothing
+    /// here to fail at.
+    fn moved(&self, r: &Rigid) -> Self;
 }

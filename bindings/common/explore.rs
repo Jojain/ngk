@@ -3,17 +3,17 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::geometry::{Curve, Point3, Surface, TrimmedCurve2};
+#[cfg(feature = "python")]
+use crate::model::Cell2;
 use crate::model::{Cell1, MergeTopology, Model};
 use crate::topology::closed::{Closeable, Closed};
 use crate::topology::edge::{BoundedEdge, Edge};
 use crate::topology::face::{Face, Loop};
-#[cfg(feature = "python")]
-use crate::model::Cell2;
-#[cfg(feature = "python")]
-use crate::topology::shape::FaceTag;
 use crate::topology::gmap::{Dart, Dim, GMAP_INVOLUTION_COUNT};
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
+#[cfg(feature = "python")]
+use crate::topology::shape::FaceTag;
 use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::{Sheet, ShellRef};

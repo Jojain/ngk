@@ -9,4 +9,5 @@ pub mod revolve;
 pub(crate) mod scaffold;
 pub mod sheets;
 pub mod solids;
+pub mod transform;
 pub mod vertices;

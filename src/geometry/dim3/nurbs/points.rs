@@ -109,6 +109,21 @@ impl ControlPolygon {
         self.0.iter()
     }
 
+    /// This polygon with every control point's cartesian position mapped by
+    /// `f`, keeping each weight.
+    ///
+    /// Infallible where [`Self::new`] is not, because the only thing `new`
+    /// checks is that the sequence is non-empty and a point-wise map cannot
+    /// empty it.
+    pub(crate) fn map_points(&self, f: impl Fn(Point3) -> Point3) -> Self {
+        Self(
+            self.0
+                .iter()
+                .map(|point| HPoint::from_cartesian(f(point.to_cartesian()), point.weight()))
+                .collect(),
+        )
+    }
+
     pub(crate) fn into_inner(self) -> Vec<HPoint> {
         self.0
     }
@@ -183,5 +198,23 @@ impl ControlNet {
 
     pub fn as_slice(&self) -> &[HPoint] {
         &self.points
+    }
+
+    /// This net with every control point's cartesian position mapped by `f`,
+    /// keeping each weight and the `(nu, nv)` shape.
+    ///
+    /// Infallible where [`Self::new`] is not, because the only thing `new`
+    /// checks is the point count against `nu * nv`, which a point-wise map
+    /// leaves alone.
+    pub(crate) fn map_points(&self, f: impl Fn(Point3) -> Point3) -> Self {
+        Self {
+            points: self
+                .points
+                .iter()
+                .map(|point| HPoint::from_cartesian(f(point.to_cartesian()), point.weight()))
+                .collect(),
+            nu: self.nu,
+            nv: self.nv,
+        }
     }
 }

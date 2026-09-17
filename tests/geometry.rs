@@ -4,3 +4,5 @@ mod dim2;
 mod dim3;
 #[path = "geometry/interval.rs"]
 mod interval;
+#[path = "geometry/transform.rs"]
+mod transform;

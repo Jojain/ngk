@@ -2,8 +2,9 @@ use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
     Circle, Curve, Ellipse, Frame, Interval, LINEAR_TOLERANCE, Line, Plane, Point3,
-    PointCoincidence,
+    PointCoincidence, Rigid,
 };
+use radians::Rad64;
 
 fn assert_point_near(actual: Point3, expected: Point3) {
     assert!(
@@ -162,12 +163,10 @@ fn arc_spanning_more_than_half_a_turn_reports_its_own_span() {
 }
 
 #[test]
-fn rotated_curve_keeps_its_parameterisation() {
+fn moved_curve_keeps_its_parameterisation() {
     let axis = Axis3::new(Point3::origin(), Vector3::z());
     let curve = Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(2.0, 0.0, 1.0));
-    let rotated = curve
-        .rotated(axis, std::f64::consts::FRAC_PI_2)
-        .expect("a bounded line should rotate");
+    let rotated = curve.moved(&Rigid::rotation(axis, Rad64::QUARTER_TURN));
 
     for t in [0.0, 0.25, 1.0] {
         let expected = Rotation3::from_axis_angle(&axis.direction, std::f64::consts::FRAC_PI_2)

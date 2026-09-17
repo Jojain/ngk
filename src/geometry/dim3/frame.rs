@@ -1,4 +1,5 @@
 use crate::geometry::axis::Axis3;
+use crate::geometry::transform::Rigid;
 
 use super::utils::{IntoUnit, Point3};
 use nalgebra::{UnitVector3, Vector3};
@@ -57,6 +58,16 @@ impl Frame {
     }
     pub fn z_axis(&self) -> Axis3 {
         Axis3::new(self.origin, self.z_dir)
+    }
+
+    /// This frame under a rigid motion.
+    pub fn moved(&self, r: &Rigid) -> Self {
+        Self {
+            origin: r.apply(self.origin),
+            x_dir: r.apply_unit(self.x_dir),
+            y_dir: r.apply_unit(self.y_dir),
+            z_dir: r.apply_unit(self.z_dir),
+        }
     }
 
     pub fn coordinates_of(&self, point: Point3) -> Vector3<f64> {

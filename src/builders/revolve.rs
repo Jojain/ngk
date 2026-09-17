@@ -1,7 +1,7 @@
 use crate::geometry::TrimmedCurve2;
 use std::collections::HashMap;
 
-use nalgebra::{Rotation3, Vector3, distance};
+use nalgebra::{Vector3, distance};
 use radians::{Angle, Rad64};
 use thiserror::Error;
 
@@ -9,7 +9,7 @@ use crate::builders::errors::ClosedFaceCellError;
 use crate::builders::faces::reverse_face_winding;
 use crate::builders::scaffold::{add_closed_face_cell, cut_between_loops};
 use crate::geometry::axis::Axis3;
-use crate::geometry::nurbs::error::NurbsError;
+use crate::geometry::transform::Rigid;
 use crate::geometry::{
     ANGULAR_TOLERANCE, Axis2, Circle, Cone, Curve, Cylinder, DomainSide, Frame, LINEAR_TOLERANCE,
     Plane, Point2, Point3, Surface, SurfaceOfRevolution, SurfacePeriodicity,
@@ -70,9 +70,6 @@ pub enum RevolveError {
 
     #[error("failed to build the 2-cell of a boundaryless revolved face")]
     ClosedFaceCell(#[from] ClosedFaceCellError),
-
-    #[error("failed to rotate the geometry of dart {dart:?}")]
-    RotationFailed { dart: Dart, source: NurbsError },
 
     #[error("Darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
     SewFailed { dim: Dim, first: Dart, second: Dart },
@@ -429,7 +426,7 @@ fn add_partial_revolved_edge_face<P: Payload>(
     let end = source.end.point;
     let rotated_start = rotate_point(axis, start, angle);
     let rotated_end = rotate_point(axis, end, angle);
-    let rotated_curve = rotate_curve(source.dart, &source.curve, axis, angle)?;
+    let rotated_curve = source.curve.moved(&Rigid::rotation(axis, angle));
     let interval = source.curve.interval_between(start, end);
     let surface = Surface::Revolution(SurfaceOfRevolution::new(source.curve.clone(), axis));
 
@@ -943,24 +940,8 @@ fn add_closed_revolve_boundary_loop<P: Payload>(
     Ok(first)
 }
 
-/// Rotates an edge curve, keeping its parameterisation.
-///
-/// Rebuilding the curve from sampled endpoints instead would re-parameterise
-/// it, so the rotated edge would no longer agree with the parameter interval
-/// the caller computed on the source curve.
-fn rotate_curve(
-    dart: Dart,
-    curve: &Curve,
-    axis: Axis3,
-    angle: Rad64,
-) -> Result<Curve, RevolveError> {
-    curve
-        .rotated(axis, angle.val())
-        .map_err(|source| RevolveError::RotationFailed { dart, source })
-}
-
 fn rotate_point(axis: Axis3, point: Point3, angle: Rad64) -> Point3 {
-    axis.origin + Rotation3::from_axis_angle(&axis.direction, angle.val()) * (point - axis.origin)
+    Rigid::rotation(axis, angle).apply(point)
 }
 
 fn is_full_turn(angle: Rad64) -> bool {
@@ -1088,7 +1069,7 @@ fn add_revolved_edge_face<P: Payload>(
     let curve = source.curve.clone();
     let rotated_start = rotate_point(axis, start, angle);
     let rotated_end = rotate_point(axis, end, angle);
-    let rotated_curve = rotate_curve(source.dart, &curve, axis, angle)?;
+    let rotated_curve = curve.moved(&Rigid::rotation(axis, angle));
     let start_arc = revolve_circle_curve(axis, start, angle);
     let end_arc = revolve_circle_curve(axis, end, angle);
     let interval = curve.interval_between(start, end);
@@ -1686,41 +1667,28 @@ fn rotate_face<P: Payload>(
         .collect::<Vec<_>>();
     let edge_keys = rotated.iter_edges().map(|(key, _)| key).collect::<Vec<_>>();
     let rotated_face_key = *rotated.attribute_unchecked::<Cell2>(rotated_dart);
+    // A rigid motion preserves every parameterisation, so the copy keeps the
+    // source face's pcurves unchanged and no interval has to be recomputed.
+    let motion = Rigid::rotation(axis, angle);
     rotated.transaction(|edit| {
         for key in vertex_keys {
             let vertex = edit.vertex_attr_mut_unchecked(key);
-            vertex.point = rotate_point(axis, vertex.point, angle);
+            vertex.point = motion.apply(vertex.point);
         }
 
         for key in edge_keys {
             let edge = edit.edge_attr_mut_unchecked(key);
-            edge.curve = rotate_curve(edge.dart, &edge.curve, axis, angle)?;
+            edge.curve = edge.curve.moved(&motion);
         }
 
-        let rotated_face = edit.face_attr_mut_unchecked(rotated_face_key);
-        rotated_face.surface = rotate_surface(
-            rotated_face.outer_unchecked(),
-            &rotated_face.surface,
-            axis,
-            angle,
-        )?;
+        edit.face_attr_mut_unchecked(rotated_face_key).surface = edit
+            .face_attr_mut_unchecked(rotated_face_key)
+            .surface
+            .moved(&motion);
         Ok::<_, RevolveError>(())
     })?;
 
     Ok(Shape::new(rotated, rotated_face_key))
-}
-
-/// Rotates a face's support surface, keeping its parameterisation so the
-/// face's existing pcurves stay valid on the rotated copy.
-fn rotate_surface(
-    dart: Dart,
-    surface: &Surface,
-    axis: Axis3,
-    angle: Rad64,
-) -> Result<Surface, RevolveError> {
-    surface
-        .rotated(axis, angle.val())
-        .map_err(|source| RevolveError::RotationFailed { dart, source })
 }
 
 /// Returns the key of the face incident to `dart`, if the dart belongs to one.

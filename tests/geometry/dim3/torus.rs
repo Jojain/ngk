@@ -4,10 +4,11 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
-    Frame, Interval, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Surface, SurfaceGeometry,
-    SurfacePeriodicity, Torus,
+    Frame, Interval, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Rigid, Surface,
+    SurfaceGeometry, SurfacePeriodicity, Torus,
 };
 use ngk::tessellate::{SurfaceOpts, tessellate_surface_patch};
+use radians::Rad64;
 
 fn torus() -> Torus {
     Torus::new(
@@ -186,14 +187,14 @@ fn torus_bbox_over_contains_a_trimmed_patch() {
 }
 
 #[test]
-fn torus_rotation_and_translation_preserve_parameterization() {
+fn torus_rigid_motion_preserves_parameterization() {
     let torus = torus();
     let axis = Axis3::new(Point3::new(-1.0, 0.5, 0.0), Vector3::z());
-    let angle = 0.63;
-    let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-    let rotated = torus.rotated(axis, angle).unwrap();
+    let angle = Rad64::new(0.63);
+    let rotation = Rotation3::from_axis_angle(&axis.direction, angle.val());
+    let rotated = torus.moved(&Rigid::rotation(axis, angle));
     let offset = Vector3::new(-2.0, 5.0, 1.5);
-    let translated = torus.translated(offset).unwrap();
+    let translated = torus.moved(&Rigid::translation(offset));
 
     for (u, v) in [(0.37, 2.7), (2.4, 0.13), (5.9, 3.1)] {
         let rotated_offset = rotation * (torus.point_at(u, v) - axis.origin);

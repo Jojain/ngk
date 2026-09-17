@@ -7,7 +7,9 @@ pub mod nurbs;
 pub mod reparam;
 pub mod tolerance;
 pub mod traits;
+pub mod transform;
 
+pub use axis::{Axis, Axis3};
 pub use counters::SolverCounters;
 pub use dim2::curves::{Circle2, Curve2, Ellipse2, Line2};
 pub use dim2::intersections::{
@@ -50,3 +52,4 @@ pub use nurbs::error::NurbsError;
 pub use reparam::{ParamMap, Reparam};
 pub use tolerance::{ANGULAR_TOLERANCE, LINEAR_TOLERANCE};
 pub use traits::{Curve2Geometry, CurveGeometry, SurfaceGeometry};
+pub use transform::Rigid;

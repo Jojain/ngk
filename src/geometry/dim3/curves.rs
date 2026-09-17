@@ -14,7 +14,8 @@ use super::utils::{IntoUnit, Point3, PointCoincidence};
 use crate::geometry::axis::Axis3;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::tolerance::LINEAR_TOLERANCE_SQUARED;
-use crate::geometry::traits::CurveGeometry;
+use crate::geometry::traits::{CurveGeometry, SurfaceGeometry};
+use crate::geometry::transform::Rigid;
 use crate::geometry::{Interval, LINEAR_TOLERANCE, Reparam};
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 use serde::{Deserialize, Serialize};
@@ -277,72 +278,18 @@ impl Curve {
         }
     }
 
-    /// Returns this curve rotated by `angle` radians around `axis`.
+    /// Returns this curve under a rigid motion.
     ///
-    /// The parameterisation is preserved: `rotated(..).point_at(t)` is
-    /// `point_at(t)` rotated, for every `t`. Callers therefore keep any
-    /// parameter interval computed on the source curve.
-    pub fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        let rotate = |point: Point3| axis.origin + rotation * (point - axis.origin);
+    /// The parameterisation is preserved: `moved(r).point_at(t)` is
+    /// `r.apply(point_at(t))` for every `t`. Callers therefore keep any
+    /// parameter interval computed on the source curve, and the variant is
+    /// preserved so nothing degrades to NURBS.
+    pub fn moved(&self, r: &Rigid) -> Self {
         match self {
-            Curve::Line(line) => Ok(Curve::Line(Line::with_axis(
-                Axis3::new(rotate(line.origin()), rotation * *line.direction()),
-                line.scale,
-            ))),
-            Curve::Circle(circle) => Ok(Curve::Circle(Circle::new(
-                Plane::new(
-                    rotate(circle.plane().origin()),
-                    rotation * *circle.plane().x_dir(),
-                    rotation * *circle.plane().normal(),
-                ),
-                circle.radius(),
-            ))),
-            Curve::Ellipse(ellipse) => Ok(Curve::Ellipse(ellipse.rotated(axis, angle)?)),
-            Curve::Nurbs(nurbs) => {
-                let points = nurbs
-                    .control_points()
-                    .iter()
-                    .map(|point| {
-                        HPoint::from_cartesian(rotate(point.to_cartesian()), point.weight())
-                    })
-                    .collect();
-                Ok(Curve::Nurbs(NurbsCurve::new(
-                    nurbs.degree(),
-                    ControlPolygon::new(points)?,
-                    nurbs.knots().clone(),
-                )?))
-            }
-        }
-    }
-
-    pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        match self {
-            Curve::Line(line) => Ok(Curve::Line(line.translated(direction))),
-            Curve::Circle(circle) => Ok(Curve::Circle(Circle::new(
-                Plane::new(
-                    circle.plane.origin() + direction,
-                    circle.plane.x_dir(),
-                    circle.plane.normal(),
-                ),
-                circle.radius,
-            ))),
-            Curve::Ellipse(ellipse) => Ok(Curve::Ellipse(ellipse.translated(direction)?)),
-            Curve::Nurbs(nurbs) => {
-                let points = nurbs
-                    .control_points()
-                    .iter()
-                    .map(|point| {
-                        HPoint::from_cartesian(point.to_cartesian() + direction, point.weight())
-                    })
-                    .collect();
-                let control_points = ControlPolygon::new(points)?;
-                Ok(Curve::Nurbs(NurbsCurve::new(
-                    nurbs.degree(),
-                    control_points,
-                    nurbs.knots().clone(),
-                )?))
-            }
+            Curve::Line(line) => Curve::Line(line.moved(r)),
+            Curve::Circle(circle) => Curve::Circle(circle.moved(r)),
+            Curve::Ellipse(ellipse) => Curve::Ellipse(ellipse.moved(r)),
+            Curve::Nurbs(nurbs) => Curve::Nurbs(CurveGeometry::moved(nurbs, r)),
         }
     }
 
@@ -557,13 +504,6 @@ impl Line {
         self.axis.project(point)
     }
 
-    pub fn translated(&self, direction: Vector3<f64>) -> Self {
-        Self {
-            axis: Axis3::new(self.axis.origin + direction, self.axis.direction),
-            scale: self.scale,
-        }
-    }
-
     pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
         NurbsCurve::new(
             Degree::new(1)?,
@@ -770,31 +710,6 @@ impl Ellipse {
             |t| self.derivative_at(t, 1),
         )
     }
-
-    pub fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        Ok(Self::new(
-            Frame::from_xy(
-                axis.origin + rotation * (self.frame.origin - axis.origin),
-                rotation * *self.frame.x_dir,
-                rotation * *self.frame.y_dir,
-            ),
-            self.major_radius,
-            self.minor_radius,
-        ))
-    }
-
-    pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(Self::new(
-            Frame::from_xy(
-                self.frame.origin + direction,
-                self.frame.x_dir,
-                self.frame.y_dir,
-            ),
-            self.major_radius,
-            self.minor_radius,
-        ))
-    }
 }
 
 impl CurveGeometry for Line {
@@ -840,16 +755,13 @@ impl CurveGeometry for Line {
         ]))
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        Ok(Line::new(Axis3::new(
-            axis.origin + rotation * (self.origin() - axis.origin),
-            rotation * *self.direction(),
-        )))
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(Line::translated(self, direction))
+    /// The affine `scale` rides along: a rigid motion cannot change a length,
+    /// so the image's parameter must still map `1` to the same distance.
+    fn moved(&self, r: &Rigid) -> Self {
+        Self {
+            axis: self.axis.moved(r),
+            scale: self.scale,
+        }
     }
 }
 
@@ -911,27 +823,8 @@ impl CurveGeometry for Circle {
         ))
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        Ok(Circle::new(
-            Plane::new(
-                axis.origin + rotation * (self.plane.origin() - axis.origin),
-                rotation * *self.plane.x_dir(),
-                rotation * *self.plane.normal(),
-            ),
-            self.radius,
-        ))
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(Circle::new(
-            Plane::new(
-                self.plane.origin() + direction,
-                self.plane.x_dir(),
-                self.plane.normal(),
-            ),
-            self.radius,
-        ))
+    fn moved(&self, r: &Rigid) -> Self {
+        Circle::new(SurfaceGeometry::moved(&self.plane, r), self.radius)
     }
 }
 
@@ -980,12 +873,8 @@ impl CurveGeometry for Ellipse {
         ))
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        Ellipse::rotated(self, axis, angle)
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ellipse::translated(self, direction)
+    fn moved(&self, r: &Rigid) -> Self {
+        Ellipse::new(self.frame.moved(r), self.major_radius, self.minor_radius)
     }
 }
 
@@ -1035,34 +924,10 @@ impl CurveGeometry for NurbsCurve {
             })
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        let points = self
-            .control_points()
-            .iter()
-            .map(|point| {
-                let rotated = axis.origin + rotation * (point.to_cartesian() - axis.origin);
-                HPoint::from_cartesian(rotated, point.weight())
-            })
-            .collect();
-        NurbsCurve::new(
-            self.degree(),
-            ControlPolygon::new(points)?,
-            self.knots().clone(),
-        )
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        let points = self
-            .control_points()
-            .iter()
-            .map(|point| HPoint::from_cartesian(point.to_cartesian() + direction, point.weight()))
-            .collect();
-        NurbsCurve::new(
-            self.degree(),
-            ControlPolygon::new(points)?,
-            self.knots().clone(),
-        )
+    /// An affine map of a rational NURBS is again a rational NURBS with the
+    /// same weights and the same knots, so only the control points move.
+    fn moved(&self, r: &Rigid) -> Self {
+        self.map_control_points(|point| r.apply(point))
     }
 }
 
@@ -1108,11 +973,7 @@ impl CurveGeometry for Curve {
         Curve::bbox_over(self, interval)
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        Curve::rotated(self, axis, angle)
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Curve::translated(self, direction)
+    fn moved(&self, r: &Rigid) -> Self {
+        Curve::moved(self, r)
     }
 }

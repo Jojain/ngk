@@ -4,8 +4,9 @@ use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
     Curve, CurveGeometry, Ellipse, Frame, Interval, LINEAR_TOLERANCE, Periodicity, Point3,
-    PointCoincidence,
+    PointCoincidence, Rigid,
 };
+use radians::Rad64;
 
 fn ellipse() -> Ellipse {
     Ellipse::new(
@@ -74,14 +75,14 @@ fn ellipse_converts_to_an_exact_rational_quadratic_point_set() {
 }
 
 #[test]
-fn ellipse_rotation_and_translation_preserve_parameterization() {
+fn ellipse_rigid_motion_preserves_parameterization() {
     let ellipse = ellipse();
     let axis = Axis3::new(Point3::origin(), Vector3::z());
-    let angle = 0.63;
-    let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-    let rotated = ellipse.rotated(axis, angle).unwrap();
+    let angle = Rad64::new(0.63);
+    let rotation = Rotation3::from_axis_angle(&axis.direction, angle.val());
+    let rotated = ellipse.moved(&Rigid::rotation(axis, angle));
     let offset = Vector3::new(-2.0, 5.0, 1.5);
-    let translated = ellipse.translated(offset).unwrap();
+    let translated = ellipse.moved(&Rigid::translation(offset));
 
     for parameter in [0.0, 0.37, 2.4, 5.9] {
         let rotated_offset = rotation * (ellipse.point_at(parameter) - axis.origin);

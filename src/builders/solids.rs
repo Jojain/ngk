@@ -15,7 +15,7 @@ use crate::{
     builders::scaffold::add_closed_face_cell,
     geometry::{
         ANGULAR_TOLERANCE, Axis2, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3,
-        RuledSurface, Sphere, Surface, SurfacePeriodicity, Torus,
+        Rigid, RuledSurface, Sphere, Surface, SurfacePeriodicity, Torus,
     },
     topology::{
         Dart, ModelEdit, SheetAttr, SolidAttr,
@@ -118,11 +118,10 @@ pub fn add_torus<P: Payload>(
 /// Returns an isolated copy of `face` translated by `direction`.
 ///
 /// Vertex positions, edge curves, and the supporting surface are translated;
-/// face pcurves remain unchanged because they use the face's local parameter
-/// space. The source map is not modified.
+/// face pcurves remain unchanged because a rigid motion preserves every
+/// parameterisation. The source map is not modified.
 ///
-/// Returns an error for a zero direction or when curve or surface geometry
-/// cannot be translated.
+/// Returns an error for a zero direction.
 pub fn translate_face<P: Payload>(
     face: &Face<'_, P>,
     direction: Vector3<f64>,
@@ -142,6 +141,7 @@ pub fn translate_face<P: Payload>(
         .map(|(key, _)| key)
         .collect::<Vec<_>>();
     let translated_face_key = *translated.attribute_unchecked::<Cell2>(translated_dart);
+    let motion = Rigid::translation(direction);
     translated.transaction(|edit| {
         for key in vertex_keys {
             edit.vertex_attr_mut_unchecked(key).point += direction;
@@ -149,23 +149,11 @@ pub fn translate_face<P: Payload>(
 
         for key in edge_keys {
             let edge = edit.edge_attr_mut_unchecked(key);
-            edge.curve = edge.curve.translated(direction).map_err(|source| {
-                ExtrudeError::CurveTranslationFailed {
-                    dart: edge.dart,
-                    source,
-                }
-            })?;
+            edge.curve = edge.curve.moved(&motion);
         }
 
         let translated_face = edit.face_attr_mut_unchecked(translated_face_key);
-        translated_face.surface =
-            translated_face
-                .surface
-                .translated(direction)
-                .map_err(|source| ExtrudeError::SurfaceTranslationFailed {
-                    dart: translated_face.outer_unchecked(),
-                    source,
-                })?;
+        translated_face.surface = translated_face.surface.moved(&motion);
         Ok::<_, ExtrudeError>(())
     })?;
 

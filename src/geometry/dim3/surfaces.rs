@@ -12,6 +12,7 @@ use crate::geometry::axis::Axis3;
 use crate::geometry::dim2::utils::Axis2;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::traits::SurfaceGeometry;
+use crate::geometry::transform::Rigid;
 use crate::geometry::{Interval, ParamMap, Point2, Reparam};
 use nalgebra::{Matrix2, Rotation3, UnitVector3, Vector2, Vector3};
 use serde::{Deserialize, Serialize};
@@ -279,34 +280,22 @@ impl Surface {
         intersect_surfaces_with_options(self, other, options)
     }
 
-    /// Returns this surface rotated by `angle` radians around `axis`.
+    /// Returns this surface under a rigid motion.
     ///
-    /// The parameterisation is preserved, so pcurves expressed in this
-    /// surface's parameter space stay valid on the rotated copy.
-    pub fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        Ok(match self {
-            Surface::Plane(surface) => Surface::Plane(surface.rotated(axis, angle)?),
-            Surface::Cylinder(surface) => Surface::Cylinder(surface.rotated(axis, angle)?),
-            Surface::Sphere(surface) => Surface::Sphere(surface.rotated(axis, angle)?),
-            Surface::Cone(surface) => Surface::Cone(surface.rotated(axis, angle)?),
-            Surface::Torus(surface) => Surface::Torus(surface.rotated(axis, angle)?),
-            Surface::Ruled(surface) => Surface::Ruled(surface.rotated(axis, angle)?),
-            Surface::Revolution(surface) => Surface::Revolution(surface.rotated(axis, angle)?),
-            Surface::Nurbs(surface) => Surface::Nurbs(surface.rotated(axis, angle)?),
-        })
-    }
-
-    pub fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(match self {
-            Surface::Plane(surface) => Surface::Plane(surface.translated(direction)?),
-            Surface::Cylinder(surface) => Surface::Cylinder(surface.translated(direction)?),
-            Surface::Sphere(surface) => Surface::Sphere(surface.translated(direction)?),
-            Surface::Cone(surface) => Surface::Cone(surface.translated(direction)?),
-            Surface::Torus(surface) => Surface::Torus(surface.translated(direction)?),
-            Surface::Ruled(surface) => Surface::Ruled(surface.translated(direction)?),
-            Surface::Revolution(surface) => Surface::Revolution(surface.translated(direction)?),
-            Surface::Nurbs(surface) => Surface::Nurbs(surface.translated(direction)?),
-        })
+    /// The parameterisation is preserved, so a face's pcurves and loop
+    /// definitions stay valid — bit-identical, in fact — on the moved copy.
+    /// The variant is preserved too: a moved cylinder is still a cylinder.
+    pub fn moved(&self, r: &Rigid) -> Self {
+        match self {
+            Surface::Plane(surface) => Surface::Plane(surface.moved(r)),
+            Surface::Cylinder(surface) => Surface::Cylinder(surface.moved(r)),
+            Surface::Sphere(surface) => Surface::Sphere(surface.moved(r)),
+            Surface::Cone(surface) => Surface::Cone(surface.moved(r)),
+            Surface::Torus(surface) => Surface::Torus(surface.moved(r)),
+            Surface::Ruled(surface) => Surface::Ruled(surface.moved(r)),
+            Surface::Revolution(surface) => Surface::Revolution(surface.moved(r)),
+            Surface::Nurbs(surface) => Surface::Nurbs(SurfaceGeometry::moved(surface, r)),
+        }
     }
 }
 
@@ -360,12 +349,8 @@ impl SurfaceGeometry for Surface {
         Surface::bbox_over(self, u, v)
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        Surface::rotated(self, axis, angle)
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Surface::translated(self, direction)
+    fn moved(&self, r: &Rigid) -> Self {
+        Surface::moved(self, r)
     }
 }
 
@@ -1119,21 +1104,8 @@ impl SurfaceGeometry for Plane {
         ))
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        Ok(Plane::from_xy(
-            axis.origin + rotation * (self.origin() - axis.origin),
-            rotation * *self.x_dir(),
-            rotation * *self.y_dir(),
-        ))
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(Plane::from_xy(
-            self.origin() + direction,
-            self.x_dir(),
-            self.y_dir(),
-        ))
+    fn moved(&self, r: &Rigid) -> Self {
+        Plane::from_frame(self.frame.moved(r))
     }
 }
 
@@ -1199,23 +1171,11 @@ impl SurfaceGeometry for Cylinder {
         ))
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        Ok(Cylinder::new(
-            axis.origin + rotation * (self.origin() - axis.origin),
-            rotation * *self.x_dir(),
-            rotation * *self.axis(),
-            self.radius,
-        ))
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(Cylinder::new(
-            self.origin() + direction,
-            self.x_dir(),
-            self.axis(),
-            self.radius,
-        ))
+    fn moved(&self, r: &Rigid) -> Self {
+        Self {
+            frame: self.frame.moved(r),
+            radius: self.radius,
+        }
     }
 }
 
@@ -1292,27 +1252,8 @@ impl SurfaceGeometry for Sphere {
         ))
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        Ok(Sphere::new(
-            Frame::from_xy(
-                axis.origin + rotation * (self.frame.origin - axis.origin),
-                rotation * *self.frame.x_dir,
-                rotation * *self.frame.y_dir,
-            ),
-            self.radius,
-        ))
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(Sphere::new(
-            Frame::from_xy(
-                self.frame.origin + direction,
-                self.frame.x_dir,
-                self.frame.y_dir,
-            ),
-            self.radius,
-        ))
+    fn moved(&self, r: &Rigid) -> Self {
+        Sphere::new(self.frame.moved(r), self.radius)
     }
 }
 
@@ -1385,29 +1326,8 @@ impl SurfaceGeometry for Cone {
         ))
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        Ok(Cone::new(
-            Frame::from_xy(
-                axis.origin + rotation * (self.frame.origin - axis.origin),
-                rotation * *self.frame.x_dir,
-                rotation * *self.frame.y_dir,
-            ),
-            self.reference_radius,
-            self.half_angle,
-        ))
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(Cone::new(
-            Frame::from_xy(
-                self.frame.origin + direction,
-                self.frame.x_dir,
-                self.frame.y_dir,
-            ),
-            self.reference_radius,
-            self.half_angle,
-        ))
+    fn moved(&self, r: &Rigid) -> Self {
+        Cone::new(self.frame.moved(r), self.reference_radius, self.half_angle)
     }
 }
 
@@ -1599,29 +1519,8 @@ impl SurfaceGeometry for Torus {
         positive_surface_control_bounds(&self.to_nurbs_over(u, v).ok()?)
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        Ok(Torus::new(
-            Frame::from_xy(
-                axis.origin + rotation * (self.frame.origin - axis.origin),
-                rotation * *self.frame.x_dir,
-                rotation * *self.frame.y_dir,
-            ),
-            self.major_radius,
-            self.minor_radius,
-        ))
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(Torus::new(
-            Frame::from_xy(
-                self.frame.origin + direction,
-                self.frame.x_dir,
-                self.frame.y_dir,
-            ),
-            self.major_radius,
-            self.minor_radius,
-        ))
+    fn moved(&self, r: &Rigid) -> Self {
+        Torus::new(self.frame.moved(r), self.major_radius, self.minor_radius)
     }
 }
 
@@ -1685,19 +1584,9 @@ impl SurfaceGeometry for RuledSurface {
         )))
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        Ok(RuledSurface::new(
-            self.curve.rotated(axis, angle)?,
-            rotation * self.direction,
-        ))
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(RuledSurface::new(
-            self.curve.translated(direction)?,
-            self.direction,
-        ))
+    /// The ruling direction is a vector, so only the rotation reaches it.
+    fn moved(&self, r: &Rigid) -> Self {
+        RuledSurface::new(self.curve.moved(r), r.apply_vector(self.direction))
     }
 }
 
@@ -1789,22 +1678,8 @@ impl SurfaceGeometry for SurfaceOfRevolution {
         positive_surface_control_bounds(&self.to_nurbs().ok()?)
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        Ok(SurfaceOfRevolution::new(
-            self.curve.rotated(axis, angle)?,
-            Axis3::new(
-                axis.origin + rotation * (self.axis.origin - axis.origin),
-                rotation * *self.axis.direction,
-            ),
-        ))
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        Ok(SurfaceOfRevolution::new(
-            self.curve.translated(direction)?,
-            self.axis,
-        ))
+    fn moved(&self, r: &Rigid) -> Self {
+        SurfaceOfRevolution::new(self.curve.moved(r), self.axis.moved(r))
     }
 }
 
@@ -1851,50 +1726,10 @@ impl SurfaceGeometry for NurbsSurface {
         positive_surface_control_bounds(self)
     }
 
-    fn rotated(&self, axis: Axis3, angle: f64) -> Result<Self, NurbsError> {
-        let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
-        let points = self
-            .control_points()
-            .as_slice()
-            .iter()
-            .map(|point| {
-                let rotated = axis.origin + rotation * (point.to_cartesian() - axis.origin);
-                HPoint::from_cartesian(rotated, point.weight())
-            })
-            .collect();
-        let control_points = ControlNet::new(
-            points,
-            self.control_points().nu(),
-            self.control_points().nv(),
-        )?;
-        NurbsSurface::new(
-            self.degree_u(),
-            self.degree_v(),
-            control_points,
-            self.knots_u().clone(),
-            self.knots_v().clone(),
-        )
-    }
-
-    fn translated(&self, direction: Vector3<f64>) -> Result<Self, NurbsError> {
-        let points = self
-            .control_points()
-            .as_slice()
-            .iter()
-            .map(|point| HPoint::from_cartesian(point.to_cartesian() + direction, point.weight()))
-            .collect();
-        let control_points = ControlNet::new(
-            points,
-            self.control_points().nu(),
-            self.control_points().nv(),
-        )?;
-        NurbsSurface::new(
-            self.degree_u(),
-            self.degree_v(),
-            control_points,
-            self.knots_u().clone(),
-            self.knots_v().clone(),
-        )
+    /// An affine map of a rational NURBS is again a rational NURBS with the
+    /// same weights and the same knots, so only the control points move.
+    fn moved(&self, r: &Rigid) -> Self {
+        self.map_control_points(|point| r.apply(point))
     }
 }
 

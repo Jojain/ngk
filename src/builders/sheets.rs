@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use nalgebra::Vector3;
 
 use crate::builders::errors::ExtrudeError;
-use crate::geometry::{Curve, LINEAR_TOLERANCE, Plane, Point2, Point3, RuledSurface, Surface};
+use crate::geometry::{
+    Curve, LINEAR_TOLERANCE, Plane, Point2, Point3, Rigid, RuledSurface, Surface,
+};
 use crate::model::Model;
 use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, VertexAttr};
@@ -123,9 +125,7 @@ fn extruded_edge_surface(
     match curve {
         Curve::Line(_) => {
             let surface = lateral_plane(dart, start, end, direction)?;
-            let translated_curve = curve
-                .translated(direction)
-                .map_err(|source| ExtrudeError::CurveTranslationFailed { dart, source })?;
+            let translated_curve = curve.moved(&Rigid::translation(direction));
             let uv = [
                 plane_uv(&surface, start),
                 plane_uv(&surface, end),
@@ -145,9 +145,7 @@ fn extruded_edge_surface(
         }
         Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) => {
             let interval = curve.interval_between(start, end);
-            let translated_curve = curve
-                .translated(direction)
-                .map_err(|source| ExtrudeError::CurveTranslationFailed { dart, source })?;
+            let translated_curve = curve.moved(&Rigid::translation(direction));
             Ok(ExtrudedSurface {
                 surface: Surface::Ruled(RuledSurface::new(curve.clone(), direction)),
                 uv: [

@@ -56,11 +56,7 @@ pub(crate) fn block(x: f64, y: f64, z: f64, frame: Option<PyFrame>) -> PyResult<
 
 #[pyfunction]
 #[pyo3(signature = (radius, height, frame=None))]
-pub(crate) fn cylinder(
-    radius: f64,
-    height: f64,
-    frame: Option<PyFrame>,
-) -> PyResult<PySolid> {
+pub(crate) fn cylinder(radius: f64, height: f64, frame: Option<PyFrame>) -> PyResult<PySolid> {
     match frame {
         Some(frame) => modeling::solids::cylinder_at(frame.frame, radius, height),
         None => modeling::solids::cylinder(radius, height),

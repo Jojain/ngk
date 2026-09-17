@@ -1,6 +1,7 @@
-use nalgebra::{Const, OVector, Point, Unit};
+use nalgebra::{Const, OVector, Point, Unit, Vector3};
 use serde::{Deserialize, Serialize};
 
+use crate::geometry::transform::Rigid;
 use crate::geometry::{dim3::utils::IntoUnit, tolerance::LINEAR_TOLERANCE_SQUARED};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -26,6 +27,31 @@ impl<const D: usize> Axis<D> {
             return self.origin;
         }
         self.origin + *dir * ((point - self.origin).dot(&dir) / len_sq)
+    }
+}
+
+impl Axis3 {
+    /// The world `x` axis through the origin.
+    pub fn x() -> Self {
+        Self::new(Point::origin(), Vector3::x())
+    }
+
+    /// The world `y` axis through the origin.
+    pub fn y() -> Self {
+        Self::new(Point::origin(), Vector3::y())
+    }
+
+    /// The world `z` axis through the origin.
+    pub fn z() -> Self {
+        Self::new(Point::origin(), Vector3::z())
+    }
+
+    /// This axis under a rigid motion.
+    pub fn moved(&self, r: &Rigid) -> Self {
+        Self {
+            origin: r.apply(self.origin),
+            direction: r.apply_unit(self.direction),
+        }
     }
 }
 
