@@ -169,7 +169,19 @@ impl Curve {
                 |parameter| ellipse.point_at(parameter),
                 |parameter| ellipse.derivative_at(parameter, 1),
             )?,
-            Curve::Line(_) | Curve::Nurbs(_) => {
+            // A line runs to infinity, so the section is read off the support
+            // itself rather than out of the `[0, 1]` window `to_nurbs` reports:
+            // a span anchored elsewhere — `[-1, 0]`, `[2, 5]` — names a real
+            // part of the line, and trimming the window would refuse it.
+            Curve::Line(line) => NurbsCurve::new(
+                Degree::new(1)?,
+                ControlPolygon::new(vec![
+                    HPoint::from_cartesian(line.point_at(interval.start), 1.0),
+                    HPoint::from_cartesian(line.point_at(interval.end), 1.0),
+                ])?,
+                KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
+            )?,
+            Curve::Nurbs(_) => {
                 let nurbs = self.to_nurbs()?;
                 nurbs.trimmed(interval.start, interval.end)?
             }

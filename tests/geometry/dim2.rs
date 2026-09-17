@@ -502,3 +502,49 @@ fn quadratic_curve2(points: [Point2; 3]) -> NurbsCurve2 {
     )
     .unwrap()
 }
+
+#[test]
+fn line2_trims_a_span_anchored_outside_its_construction_vector() {
+    // The support runs to infinity, so `[-1, 0]` names the stretch *before*
+    // the construction vector, and the section over it is a real segment.
+    let line = Curve2::line(Point2::new(14.0, 0.0), Point2::new(34.0, 0.0));
+
+    let section = line.trimmed_native(Interval::new(-1.0, 0.0)).unwrap();
+
+    assert_point2_close(section.point_at(0.0), Point2::new(-6.0, 0.0));
+    assert_point2_close(section.point_at(1.0), Point2::new(14.0, 0.0));
+}
+
+#[test]
+fn trimming_a_polyline_an_ulp_off_a_knot_lands_on_the_knot() {
+    // A pcurve's span end is recovered from a point, so it reaches an interior
+    // knot a rounding step to one side of it. Splitting where it literally
+    // asked would leave a span narrower than the parameter can resolve, which
+    // no subdivision search can take apart.
+    let knot = 0.53524662156341;
+    let polyline = NurbsCurve2::new(
+        Degree::new(1).unwrap(),
+        ControlPolygon2::new(vec![
+            HPoint2::from_cartesian(Point2::new(45.0, 41.0), 1.0),
+            HPoint2::from_cartesian(Point2::new(85.0, 41.0), 1.0),
+            HPoint2::from_cartesian(Point2::new(85.0, 30.0), 1.0),
+            HPoint2::from_cartesian(Point2::new(45.0, 11.0), 1.0),
+        ])
+        .unwrap(),
+        KnotVector::new(vec![0.0, 0.0, 0.41980127181443916, knot, 1.0, 1.0]).unwrap(),
+    )
+    .unwrap();
+    let span = TrimmedCurve2::new(
+        Curve2::Nurbs(polyline),
+        Interval::new(1.0, f64::from_bits(knot.to_bits() - 1)),
+    );
+
+    let crossing = span
+        .intersect_curve(&TrimmedCurve2::segment(
+            Point2::new(45.0, 30.0),
+            Point2::new(125.0, 30.0),
+        ))
+        .expect("a span ending beside a knot still converts to Bezier pieces");
+
+    assert_eq!(crossing.len(), 1);
+}

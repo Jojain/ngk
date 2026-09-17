@@ -256,3 +256,15 @@ fn curve_domains_distinguish_bounded_from_unbounded_supports() {
         Interval::new(0.0, 1.0)
     );
 }
+
+#[test]
+fn line_trims_a_span_anchored_outside_its_construction_vector() {
+    // The support runs to infinity, so `[-1, 0]` names the stretch *before*
+    // the construction vector, and the section over it is a real segment.
+    let line = Curve::line(Point3::new(14.0, 0.0, 0.0), Point3::new(34.0, 0.0, 0.0));
+
+    let section = line.trimmed_native(Interval::new(-1.0, 0.0)).unwrap();
+
+    assert_point_near(section.point_at(0.0), Point3::new(-6.0, 0.0, 0.0));
+    assert_point_near(section.point_at(1.0), Point3::new(14.0, 0.0, 0.0));
+}

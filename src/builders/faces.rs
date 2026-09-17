@@ -2391,6 +2391,30 @@ fn apply_face_chord_split<P: Payload>(
         edit.own_cell(Dim::One, cut, EntityOwner::Face(owner));
     }
 
+    // Every other cell the face owned is scaffold of whichever half its word
+    // now runs through, and the chord left the two halves in two 2-cells. The
+    // relabelling above reaches only the cuts at the chord's own corners; a
+    // bridge the chord ran nowhere near still names the source, and a walk of
+    // the created half would then emit its darts as boundary rather than turn
+    // across them -- a loop carrying a dart that names no edge.
+    let source_cell = edit.cell_representative(source_loop, Dim::Two);
+    let owned = edit
+        .embedding()
+        .records_of(EntityOwner::Face(original_face))
+        .collect::<Vec<_>>();
+    for record in owned {
+        let half = if edit.cell_representative(record.representative, Dim::Two) == source_cell {
+            original_face
+        } else {
+            second
+        };
+        edit.own_cell(
+            record.dimension,
+            record.representative,
+            EntityOwner::Face(half),
+        );
+    }
+
     Ok(FaceImprintSplit {
         first: original_face,
         second,

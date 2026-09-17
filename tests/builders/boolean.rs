@@ -1763,3 +1763,80 @@ fn every_event_use_names_a_cell_of_the_side_it_claims() {
         }
     }
 }
+
+type SolidShape = ngk::topology::shape::Shape<ngk::topology::shape::SolidTag, ngk::StandardPayload>;
+
+/// The gusset web of the Too Tall Toby tie plate: a pentagon prism trimmed to a
+/// stepped thickness, with a bolt hole bored across it.
+///
+/// The hole gives the web's two side faces an inner loop, so each of them owns
+/// a bridge edge, and the block below chords those faces well away from it.
+fn stepped_web_with_a_bolt_hole() -> SolidShape {
+    let block = |x0: f64, x1: f64, y0: f64, y1: f64, z0: f64, z1: f64| {
+        solids::block_at(
+            Frame::from_xy(Point3::new(x0, y0, z0), Vector3::x(), Vector3::y()),
+            x1 - x0,
+            y1 - y0,
+            z1 - z0,
+        )
+        .expect("thickness prism")
+    };
+    let outline = [
+        (45.0, 0.0),
+        (45.0, 11.0),
+        (125.0, 11.0),
+        (125.0, -19.0),
+        (85.0, -19.0),
+    ]
+    .map(|(x, z)| Point3::new(x, -10.0, z));
+    let web = solids::extruded(
+        faces::polygon(&outline).expect("pentagon"),
+        nalgebra::Unit::new_normalize(Vector3::y()),
+        20.0,
+    )
+    .expect("pentagon prism");
+    let thickness = solids::fuse(
+        block(40.0, 130.0, -4.0, 4.0, -30.0, 30.0),
+        block(85.0, 130.0, -10.0, 10.0, -30.0, 30.0),
+    )
+    .expect("stepped thickness");
+    let web = solids::intersect(web, thickness).expect("web trimmed to its thickness");
+    let bolt = solids::cylinder_at(
+        Frame::from_xy(
+            Point3::new(111.0, -20.0, -5.0),
+            Vector3::x(),
+            Vector3::new(0.0, 0.0, -1.0),
+        ),
+        5.5,
+        40.0,
+    )
+    .expect("bolt hole");
+    solids::cut(web, bolt).expect("web with its bolt hole")
+}
+
+#[test]
+fn splitting_a_face_moves_the_bridges_it_owns_to_the_half_that_holds_them() {
+    // Chording a face hands one half to a new key, and a bridge to a hole that
+    // the chord ran nowhere near goes with it. Left recorded against the source,
+    // the created half's boundary walk emits the bridge instead of turning
+    // across it, and hands back a loop dart that names no edge.
+    let plate = solids::block_at(
+        Frame::from_xy(Point3::new(0.0, -20.0, 0.0), Vector3::x(), Vector3::y()),
+        94.0,
+        40.0,
+        16.0,
+    )
+    .expect("plate");
+
+    let part = solids::fuse(plate, stepped_web_with_a_bolt_hole()).expect("plate fused to web");
+
+    let (map, solid) = part.into_model();
+    validate_solid_manifold(&map, solid).unwrap();
+    for face in map.solid_unchecked(solid).faces() {
+        for boundary in face.loops() {
+            // `Loop::edges` panics on a dart naming no edge, which is the shape
+            // the stale record gave this walk.
+            assert_eq!(boundary.edges().len(), boundary.len());
+        }
+    }
+}

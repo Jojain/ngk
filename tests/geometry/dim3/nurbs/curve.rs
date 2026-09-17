@@ -283,3 +283,39 @@ fn clamping_an_already_clamped_curve_changes_nothing() {
 
     assert_eq!(curve.clamped().expect("already clamped"), curve);
 }
+
+#[test]
+fn trimming_a_polyline_an_ulp_off_a_knot_lands_on_the_knot() {
+    // An edge's span end is recovered from its vertex, so it reaches an
+    // interior knot a rounding step to one side of it. Splitting where it
+    // literally asked would leave a span narrower than the parameter can
+    // resolve, which no subdivision search can take apart.
+    let knot = 0.25;
+    let polyline = NurbsCurve::new(
+        Degree::new(1).unwrap(),
+        ControlPolygon::new(vec![
+            HPoint::from_cartesian(Point3::origin(), 1.0),
+            HPoint::from_cartesian(Point3::new(1.0, 0.0, 0.0), 1.0),
+            HPoint::from_cartesian(Point3::new(1.0, 3.0, 0.0), 1.0),
+        ])
+        .unwrap(),
+        KnotVector::new(vec![0.0, 0.0, knot, 1.0, 1.0]).unwrap(),
+    )
+    .unwrap();
+
+    let section = polyline
+        .trimmed(f64::from_bits(knot.to_bits() - 1), 1.0)
+        .unwrap();
+
+    // Two knots a rounding step apart would be a Bezier piece with no extent.
+    let knots = section.knots().as_slice().to_vec();
+    for pair in knots.windows(2) {
+        let gap = pair[1] - pair[0];
+        assert!(
+            gap <= 0.0 || gap > LINEAR_TOLERANCE,
+            "knot span [{}, {}] is narrower than the tolerance",
+            pair[0],
+            pair[1]
+        );
+    }
+}

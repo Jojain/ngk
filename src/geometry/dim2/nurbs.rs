@@ -318,6 +318,13 @@ impl NurbsCurve2 {
     }
 
     /// Returns the exact subcurve over the requested native-domain interval.
+    ///
+    /// Each end is first snapped onto a knot it already lands within
+    /// [`LINEAR_TOLERANCE`] of. A parameter recovered from a point — which is
+    /// how the piece of a pcurve one edge carries is named — reaches an
+    /// interior knot an ulp to one side of it, and splitting there would leave
+    /// a span narrower than the parameter can resolve: a Bezier piece with no
+    /// control polygon to subdivide, which every later search refuses.
     pub fn trimmed(&self, start: f64, end: f64) -> Result<Self, NurbsError> {
         if (end - start).abs() <= LINEAR_TOLERANCE {
             return Err(NurbsError::DegenerateInterval { start, end });
@@ -335,6 +342,11 @@ impl NurbsCurve2 {
             });
         }
 
+        let (start, end) = (self.snapped_to_knot(start), self.snapped_to_knot(end));
+        if (end - start).abs() <= LINEAR_TOLERANCE {
+            return Err(NurbsError::DegenerateInterval { start, end });
+        }
+
         let after_start = if start <= domain.start + LINEAR_TOLERANCE {
             self.clone()
         } else {
@@ -345,6 +357,21 @@ impl NurbsCurve2 {
         } else {
             Ok(after_start.split_at(end)?.0)
         }
+    }
+
+    /// Returns the knot nearest `parameter` within [`LINEAR_TOLERANCE`], else `parameter`.
+    fn snapped_to_knot(&self, parameter: f64) -> f64 {
+        self.knots
+            .as_slice()
+            .iter()
+            .copied()
+            .filter(|knot| (knot - parameter).abs() <= LINEAR_TOLERANCE)
+            .min_by(|first, second| {
+                (first - parameter)
+                    .abs()
+                    .total_cmp(&(second - parameter).abs())
+            })
+            .unwrap_or(parameter)
     }
 
     /// Samples the curve adaptively and returns native parameters with points.
