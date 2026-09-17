@@ -1,0 +1,24 @@
+# Installed as a uv tool so the repo has a `profile` command:
+#
+#     uv tool install --editable ./profiling
+#
+# Editable, so editing these files changes the command with no reinstall. The
+# package depends on nothing: it locates the repo's .venv and drives samply,
+# py-spy and maturin as subprocesses, and needs only the standard library to do
+# it. It is deliberately not part of the `ngk` distribution -- profiling tooling
+# has no business shipping inside the library wheel.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ngk-profile"
+version = "0.0.1"
+description = "Records a profile of a script driving the ngk kernel"
+requires-python = ">=3.9"
+
+[project.scripts]
+profile = "ngk_profile.profile:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ngk_profile"]
