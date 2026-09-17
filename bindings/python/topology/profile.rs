@@ -53,6 +53,11 @@ pub struct PyProfile {
 }
 
 entity_methods!(PyProfile, SharedProfile<StandardPayload>, "profile", {
+    /// This entity, copied into a model holding nothing else.
+    fn isolated(&self) -> PyResult<Self> {
+        Ok(Self::from_inner(self.inner.isolated().map_err(py_err)?))
+    }
+
     #[getter]
     fn is_closed(&self) -> PyResult<bool> {
         self.inner.is_closed().map_err(py_err)

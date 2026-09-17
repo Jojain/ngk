@@ -68,7 +68,8 @@ in scope:
 use ngk::viz::debug_viewer::{show, show_with_options, DebugViewerOptions};
 
 show(&shape)?;   // GMap, a Vertex/Edge/Profile/Face/Sheet/Solid, geometry
-                 // (Point3/Vector3/Plane/Curve/Surface), or a Vec of any of these
+                 // (Point3/Vector3/Plane/Curve/Surface), or a Vec of any of
+                 // these — a Vec arrives as one togglable group
 
 show_with_options(&shape, &DebugViewerOptions {
     name: "after_cut".into(),
@@ -90,10 +91,19 @@ Override host/port via `NGK_DEBUG_VIEWER_PORT` or the fields on
 ```python
 import ngk.debug as debug
 
-debug.show(gmap_or_cell, name="my_shape")  # GMap, or a vertex/edge/profile/
-                                             # face/sheet/solid cell, or a list
-debug.clear()                               # empty the viewer's history
+debug.show(part)                 # a Model, or a vertex/edge/profile/face/
+                                 # sheet/solid entity
+debug.show(part, part.faces())   # two togglable nodes: the solid, and a group
+                                 # holding every face on its own
+debug.clear()                    # empty the viewer's history
 ```
+
+Each argument is one node of the viewer's object tree, named after the
+expression written at the call site — so the second call labels its nodes
+`part` and `part.faces()`. An iterable argument becomes a group, and `name=`
+titles the dump rather than any one node. Entities travel isolated: a face node
+carries that face, not the solid it was read from, which is what makes hiding
+one of them mean anything.
 
 ## Reading the viewer
 
@@ -101,12 +111,16 @@ debug.clear()                               # empty the viewer's history
   Click one to inspect it. Hit "Clear" (or call `debug.clear()`) between
   runs so old shapes from an earlier debugging session don't linger and get
   mistaken for the current one.
+- **Objects**: the dump's tree, one row per node. Unchecking a row drops its
+  geometry from the scene, and unchecking a group drops everything below it —
+  which is how you isolate one face of a solid you sent alongside its own face
+  list. Large groups start folded.
 - **3D scene**: toggle vertices/edges/faces, adjust sizes/colors/opacity,
-  orbit/pan/zoom like a CAD viewer. A dart/alpha overlay mode shows raw
-  darts and per-involution α0–α3 links, with a one-click preset to flip
-  from B-rep view to pure combinatorial-map view — reach for this when the
-  suspected bug is topological (a bad sew, a wrong alpha link) rather than
-  a geometric one.
+  orbit/pan/zoom like a CAD viewer. Darts and α links start off; turning
+  "alpha links" on shows the per-involution α0–α3 overlay, and there is a
+  one-click preset to flip from B-rep view to pure combinatorial-map view —
+  reach for this when the suspected bug is topological (a bad sew, a wrong
+  alpha link) rather than a geometric one.
 - **Selection**: click a vertex/edge/face/dart to select it, hover to
   preview; the Inspector panel follows the selection.
 - **Inspector**: a face shows loop/edge/vertex counts, surface type,

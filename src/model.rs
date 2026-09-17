@@ -1407,8 +1407,17 @@ impl<P: Payload> Model<P> {
 
         let mut face_map = HashMap::new();
         for (old, attr) in source.faces.iter() {
-            let seed = attr.seed();
-            if !source_dart_set.contains(&seed) {
+            // A face comes along only when its whole 2-cell does, the same
+            // all-or-nothing rule the profiles above and the shells below
+            // follow. Half a face is not a face: its loops would name profiles
+            // that were left behind, and commit refuses a face whose profiles
+            // are unregistered. Copying an edge out of a solid crosses the
+            // seeds of the faces meeting there, so this is what keeps those
+            // faces from following the edge.
+            if !source
+                .orbit(attr.seed(), source.orbit_indices(Dim::Two))
+                .all(|dart| source_dart_set.contains(&dart))
+            {
                 continue;
             }
             let mut attr = attr.clone();

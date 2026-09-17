@@ -1064,3 +1064,30 @@ impl<P: Payload> SharedSolid<P> {
             .collect())
     }
 }
+
+/// Gives a shared entity a copy of itself in a model holding nothing else.
+///
+/// An entity read out of a model keeps pointing at that whole model, so
+/// handing one to a viewer or a constructor would drag everything around it
+/// along — every face of a solid would carry that solid. Isolating copies the
+/// entity's own darts into a fresh model and re-reads it there.
+macro_rules! shared_isolated {
+    ($type:ident, $at:ident, $name:literal) => {
+        impl<P: Payload> $type<P> {
+            /// This entity, copied into a model holding nothing else.
+            pub(crate) fn isolated(&self) -> Result<Self, ExploreError> {
+                let (model, dart) = self.view()?.isolate();
+                SharedModel::from_model(model)
+                    .$at(dart.id())?
+                    .ok_or_else(|| missing($name, dart.id()))
+            }
+        }
+    };
+}
+
+shared_isolated!(SharedVertex, vertex_at, "vertex");
+shared_isolated!(SharedEdge, edge_at, "edge");
+shared_isolated!(SharedProfile, profile_at, "profile");
+shared_isolated!(SharedFace, face_at, "face");
+shared_isolated!(SharedSheet, sheet_at, "sheet");
+shared_isolated!(SharedSolid, solid_at, "solid");

@@ -27,9 +27,20 @@ export type DebugViewerEnvelope = {
 };
 
 export type DebugViewerPayload = {
-  kind: "ngk.debug.v3";
+  kind: "ngk.debug.v4";
   name: string;
-  objects: SerializedDebugObject[];
+  nodes: DebugNodePayload[];
+};
+
+/**
+ * One entry of the transported object tree. A leaf carries the value it
+ * transports; a group carries children instead, and the viewer shows or hides
+ * a whole group at once.
+ */
+export type DebugNodePayload = {
+  name: string;
+  object?: SerializedDebugObject;
+  children?: DebugNodePayload[];
 };
 
 export type DebugObjectKind =
@@ -132,6 +143,22 @@ export type HydratedObject = {
   model?: Model;
 };
 
+/**
+ * A transported node with its value restored and its share of the render
+ * scene resolved. A leaf owns a scene whose ids are already offset into the
+ * dump's global numbering; a group owns children and no scene of its own, so
+ * hiding it hides everything below it.
+ */
+export type HydratedDebugNode = {
+  id: string;
+  name: string;
+  kind: DebugObjectKind | null;
+  value: DebugObject | null;
+  model: Model | null;
+  scene: VizScene | null;
+  children: HydratedDebugNode[];
+};
+
 export type DebugEntityEntry<T> = {
   id: number;
   value: T;
@@ -147,6 +174,7 @@ export type DebugSelectionIndex = {
 
 export type HydratedDebugDump = {
   name: string;
+  nodes: HydratedDebugNode[];
   object: DebugObject | undefined;
   objects: DebugObject[];
   shape: DebugObject | undefined;
@@ -239,11 +267,10 @@ export function hydrateDebugDump(
   payload: DebugViewerPayload,
   kernel: Kernel,
 ): HydratedDebugDump {
-  if (payload.kind !== "ngk.debug.v3") {
+  if (payload.kind !== "ngk.debug.v4") {
     throw new Error(`unsupported debug object payload: ${String(payload.kind)}`);
   }
 
-  const scene = emptyScene();
   const selection: DebugSelectionIndex = {
     vertices: [],
     edges: [],
@@ -251,71 +278,154 @@ export function hydrateDebugDump(
     darts: [],
   };
   const hydrated: HydratedObject[] = [];
-  let vertexBase = 0;
-  let edgeBase = 0;
-  let faceBase = 0;
-  let dartBase = 0;
-
-  for (const serialized of payload.objects) {
-    let localScene: VizScene;
-    if (isTopologyKind(serialized.kind)) {
-      const model = kernel.Model.deserialize(serialized.serialized);
-      const vertices = model.vertices();
-      const edges = model.edges();
-      const faces = model.faces();
-      localScene = kernel.sceneFromGMap(model) as VizScene;
-
-      selection.vertices.push(
-        ...vertices.map((value, id) => ({ id: vertexBase + id, value, model })),
-      );
-      selection.edges.push(
-        ...edges.map((value, id) => ({ id: edgeBase + id, value, model })),
-      );
-      selection.faces.push(
-        ...faces.map((value, id) => ({ id: faceBase + id, value, model })),
-      );
-      selection.darts.push(
-        ...Array.from(model.darts(), (dart) => ({
-          id: dartBase + dart,
-          dart,
-          model,
-        })),
-      );
-
-      hydrated.push({
-        kind: serialized.kind,
-        value: resolvePrimaryTopology(model, serialized),
-        model,
-      });
-    } else {
-      const geometry = kernel.hydrateDebugGeometry(
-        serialized.kind,
-        serialized.serialized,
-      ) as { value: DebugGeometry; scene: VizScene };
-      localScene = geometry.scene;
-      hydrated.push({ kind: serialized.kind, value: geometry.value });
-    }
-
-    appendScene(scene, localScene, { vertexBase, edgeBase, faceBase, dartBase });
-    vertexBase += sceneIdSpan(localScene.vertices, "vertexId");
-    edgeBase += sceneIdSpan(localScene.edges, "edgeId");
-    faceBase += sceneIdSpan(localScene.faces, "faceId");
-    dartBase += sceneIdSpan(localScene.darts, "dartId");
-  }
+  const bases: SceneOffsets = {
+    vertexBase: 0,
+    edgeBase: 0,
+    faceBase: 0,
+    dartBase: 0,
+  };
+  const nodes = payload.nodes.map((node, index) =>
+    hydrateNode(node, String(index), kernel, selection, bases, hydrated),
+  );
 
   const objects = hydrated.map(({ value }) => value);
   const models = hydrated.flatMap(({ model }) => (model ? [model] : []));
   return {
     name: payload.name,
+    nodes,
     object: objects[0],
     objects,
     shape: objects[0],
     shapes: objects,
     model: models[0],
     models,
-    scene,
+    scene: debugScene(nodes, new Set()),
     selection,
   };
+}
+
+/**
+ * The scene of every leaf whose node and ancestors are all shown.
+ *
+ * Leaf scenes already carry the dump's global ids, so a visible subset is a
+ * concatenation and selections keep meaning the same entity as the tree is
+ * toggled.
+ */
+export function debugScene(
+  nodes: readonly HydratedDebugNode[],
+  hidden: ReadonlySet<string>,
+): VizScene {
+  const scene = emptyScene();
+  for (const node of nodes) appendVisibleNode(node, hidden, scene);
+  return scene;
+}
+
+/** Every leaf below a node, itself included when it is one. */
+export function debugNodeLeaves(node: HydratedDebugNode): HydratedDebugNode[] {
+  if (node.scene) return [node];
+  return node.children.flatMap(debugNodeLeaves);
+}
+
+function appendVisibleNode(
+  node: HydratedDebugNode,
+  hidden: ReadonlySet<string>,
+  target: VizScene,
+) {
+  if (hidden.has(node.id)) return;
+  if (node.scene) appendScene(target, node.scene);
+  for (const child of node.children) appendVisibleNode(child, hidden, target);
+}
+
+function hydrateNode(
+  node: DebugNodePayload,
+  id: string,
+  kernel: Kernel,
+  selection: DebugSelectionIndex,
+  bases: SceneOffsets,
+  hydrated: HydratedObject[],
+): HydratedDebugNode {
+  if (node.object) {
+    const leaf = hydrateObject(node.object, kernel, selection, bases);
+    hydrated.push({
+      kind: leaf.kind,
+      value: leaf.value,
+      model: leaf.model ?? undefined,
+    });
+    return { id, name: node.name, children: [], ...leaf };
+  }
+  return {
+    id,
+    name: node.name,
+    kind: null,
+    value: null,
+    model: null,
+    scene: null,
+    children: (node.children ?? []).map((child, index) =>
+      hydrateNode(child, `${id}/${index}`, kernel, selection, bases, hydrated),
+    ),
+  };
+}
+
+/**
+ * Restores one transported value and advances `bases`, so each leaf's scene
+ * and selection entries occupy their own range of the dump's id space.
+ */
+function hydrateObject(
+  serialized: SerializedDebugObject,
+  kernel: Kernel,
+  selection: DebugSelectionIndex,
+  bases: SceneOffsets,
+): {
+  kind: DebugObjectKind;
+  value: DebugObject;
+  model: Model | null;
+  scene: VizScene;
+} {
+  const { vertexBase, edgeBase, faceBase, dartBase } = bases;
+  let localScene: VizScene;
+  let value: DebugObject;
+  let model: Model | null = null;
+
+  if (isTopologyKind(serialized.kind)) {
+    model = kernel.Model.deserialize(serialized.serialized);
+    const vertices = model.vertices();
+    const edges = model.edges();
+    const faces = model.faces();
+    localScene = kernel.sceneFromGMap(model) as VizScene;
+
+    selection.vertices.push(
+      ...vertices.map((entry, id) => ({ id: vertexBase + id, value: entry, model: model! })),
+    );
+    selection.edges.push(
+      ...edges.map((entry, id) => ({ id: edgeBase + id, value: entry, model: model! })),
+    );
+    selection.faces.push(
+      ...faces.map((entry, id) => ({ id: faceBase + id, value: entry, model: model! })),
+    );
+    selection.darts.push(
+      ...Array.from(model.darts(), (dart) => ({
+        id: dartBase + dart,
+        dart,
+        model: model!,
+      })),
+    );
+
+    value = resolvePrimaryTopology(model, serialized);
+  } else {
+    const geometry = kernel.hydrateDebugGeometry(
+      serialized.kind,
+      serialized.serialized,
+    ) as { value: DebugGeometry; scene: VizScene };
+    localScene = geometry.scene;
+    value = geometry.value;
+  }
+
+  const scene = offsetScene(localScene, bases);
+  bases.vertexBase += sceneIdSpan(localScene.vertices, "vertexId");
+  bases.edgeBase += sceneIdSpan(localScene.edges, "edgeId");
+  bases.faceBase += sceneIdSpan(localScene.faces, "faceId");
+  bases.dartBase += sceneIdSpan(localScene.darts, "dartId");
+  return { kind: serialized.kind, value, model, scene };
 }
 
 function resolvePrimaryTopology(
@@ -365,39 +475,41 @@ type SceneOffsets = {
   dartBase: number;
 };
 
-function appendScene(target: VizScene, source: VizScene, offsets: SceneOffsets) {
-  target.vertices.push(
-    ...source.vertices.map((vertex) => ({
+/** Renumbers a leaf's scene into the dump's global id space. */
+function offsetScene(source: VizScene, offsets: SceneOffsets): VizScene {
+  return {
+    vertices: source.vertices.map((vertex) => ({
       ...vertex,
       vertexId: vertex.vertexId + offsets.vertexBase,
     })),
-  );
-  target.edges.push(
-    ...source.edges.map((edge) => ({
+    edges: source.edges.map((edge) => ({
       ...edge,
       edgeId: edge.edgeId + offsets.edgeBase,
     })),
-  );
-  target.faces.push(
-    ...source.faces.map((face) => ({
+    faces: source.faces.map((face) => ({
       ...face,
       faceId: face.faceId + offsets.faceBase,
     })),
-  );
-  target.darts.push(
-    ...source.darts.map((dart) => ({
+    darts: source.darts.map((dart) => ({
       ...dart,
       dartId: dart.dartId + offsets.dartBase,
       edgeId: dart.edgeId + offsets.edgeBase,
     })),
-  );
-  target.alphaLinks.push(
-    ...source.alphaLinks.map((link) => ({
+    alphaLinks: source.alphaLinks.map((link) => ({
       ...link,
       dartA: link.dartA + offsets.dartBase,
       dartB: link.dartB + offsets.dartBase,
     })),
-  );
+    labels: [...source.labels],
+  };
+}
+
+function appendScene(target: VizScene, source: VizScene) {
+  target.vertices.push(...source.vertices);
+  target.edges.push(...source.edges);
+  target.faces.push(...source.faces);
+  target.darts.push(...source.darts);
+  target.alphaLinks.push(...source.alphaLinks);
   target.labels.push(...source.labels);
 }
 

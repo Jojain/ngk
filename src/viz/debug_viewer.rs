@@ -77,7 +77,42 @@ impl Default for DebugViewerOptions {
 pub struct DebugViewerPayload {
     pub kind: String,
     pub name: String,
-    pub objects: Vec<SerializedDebugObject>,
+    pub nodes: Vec<DebugNode>,
+}
+
+/// One entry of the viewer's object tree.
+///
+/// A leaf carries the single value it transports; a group carries children
+/// instead, and the viewer shows or hides a whole group at once. Which one a
+/// node is, is said by whether `object` is present.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugNode {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub object: Option<SerializedDebugObject>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<DebugNode>,
+}
+
+impl DebugNode {
+    /// A node holding one transported value.
+    pub fn leaf(name: impl Into<String>, object: SerializedDebugObject) -> Self {
+        Self {
+            name: name.into(),
+            object: Some(object),
+            children: Vec::new(),
+        }
+    }
+
+    /// A node the viewer toggles as a whole.
+    pub fn group(name: impl Into<String>, children: Vec<DebugNode>) -> Self {
+        Self {
+            name: name.into(),
+            object: None,
+            children,
+        }
+    }
 }
 
 /// One debug value and the information required to restore its real WASM
@@ -348,11 +383,32 @@ pub fn payload_for_display<T: DebugDisplay + ?Sized>(
 ) -> Result<DebugViewerPayload, DebugViewerError> {
     let mut objects = Vec::new();
     display.append_debug_objects(&mut objects)?;
+    let name = clean_name(&options.name);
     Ok(DebugViewerPayload {
-        kind: "ngk.debug.v3".to_owned(),
-        name: clean_name(&options.name),
-        objects,
+        kind: "ngk.debug.v4".to_owned(),
+        nodes: nodes_for_objects(&name, objects),
+        name,
     })
+}
+
+/// Names the transported values so the viewer's tree can address them.
+///
+/// One value is one leaf under the caller's name. Several — a slice of faces,
+/// a `Vec` of edges — become one group carrying that name, so the viewer hides
+/// them together while still reaching each on its own.
+fn nodes_for_objects(name: &str, objects: Vec<SerializedDebugObject>) -> Vec<DebugNode> {
+    if let [_] = objects.as_slice() {
+        return objects
+            .into_iter()
+            .map(|object| DebugNode::leaf(name, object))
+            .collect();
+    }
+    let children = objects
+        .into_iter()
+        .enumerate()
+        .map(|(index, object)| DebugNode::leaf(format!("{name}[{index}]"), object))
+        .collect();
+    vec![DebugNode::group(name, children)]
 }
 
 /// Builds the serialized object envelope for a complete model without sending it.
@@ -474,4 +530,51 @@ fn connect(host: &str, port: u16) -> Result<TcpStream, DebugViewerError> {
         .set_write_timeout(Some(Duration::from_secs(1)))
         .map_err(DebugViewerError::Send)?;
     Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload(display: &(impl DebugDisplay + ?Sized)) -> DebugViewerPayload {
+        payload_for_display(
+            display,
+            &DebugViewerOptions {
+                name: "corners".to_owned(),
+                ..DebugViewerOptions::default()
+            },
+        )
+        .expect("serializing a point cannot fail")
+    }
+
+    #[test]
+    fn one_value_is_one_named_leaf() {
+        let sent = payload(&Point3::new(1.0, 2.0, 3.0));
+
+        let [node] = sent.nodes.as_slice() else {
+            panic!("expected one node, got {}", sent.nodes.len());
+        };
+        assert_eq!(node.name, "corners");
+        assert!(node.object.is_some());
+        assert!(node.children.is_empty());
+    }
+
+    #[test]
+    fn several_values_share_one_group_the_viewer_can_hide_at_once() {
+        let sent = payload(&vec![Point3::origin(), Point3::new(1.0, 0.0, 0.0)]);
+
+        let [node] = sent.nodes.as_slice() else {
+            panic!("expected one node, got {}", sent.nodes.len());
+        };
+        assert_eq!(node.name, "corners");
+        assert!(node.object.is_none());
+        assert_eq!(
+            node.children
+                .iter()
+                .map(|child| child.name.as_str())
+                .collect::<Vec<_>>(),
+            ["corners[0]", "corners[1]"]
+        );
+        assert!(node.children.iter().all(|child| child.object.is_some()));
+    }
 }

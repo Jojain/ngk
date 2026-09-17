@@ -19,6 +19,11 @@ pub struct PyFace {
 }
 
 entity_methods!(PyFace, SharedFace<StandardPayload>, "face", {
+    /// This entity, copied into a model holding nothing else.
+    fn isolated(&self) -> PyResult<Self> {
+        Ok(Self::from_inner(self.inner.isolated().map_err(py_err)?))
+    }
+
     #[getter]
     fn surface(&self, py: Python<'_>) -> PyResult<PyObject> {
         surface_to_py(py, self.inner.surface().map_err(py_err)?)

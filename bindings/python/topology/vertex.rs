@@ -19,6 +19,11 @@ pub struct PyVertex {
 }
 
 entity_methods!(PyVertex, SharedVertex<StandardPayload>, "vertex", {
+    /// This entity, copied into a model holding nothing else.
+    fn isolated(&self) -> PyResult<Self> {
+        Ok(Self::from_inner(self.inner.isolated().map_err(py_err)?))
+    }
+
     #[getter]
     fn point(&self) -> PyResult<Option<PyPoint3>> {
         Ok(self.inner.point().map_err(py_err)?.map(point))

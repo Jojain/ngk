@@ -5,6 +5,8 @@ import VizSceneView, { type VizSelection } from "../../components/VizSceneView";
 import { useVizControls } from "../../components/useVizControls";
 import {
   clearDebugDumps,
+  debugNodeLeaves,
+  debugScene,
   debugSelectionForTopology,
   debugTopologyForSelection,
   fetchDebugDumps,
@@ -14,17 +16,23 @@ import {
   type DebugTopologyEntity,
   type DebugViewerEnvelope,
   type HydratedDebugDump,
+  type HydratedDebugNode,
 } from "../../kernel/debugViewer";
 import { useKernel } from "../../kernel/useKernel";
+import type { VizScene } from "../../kernel/viz";
 import type { Edge, Face, Vertex } from "../../wasm/ngk";
 import { ConsolePane } from "./ConsolePane";
+
+/** Groups this large open on load would bury the rest of the tree. */
+const AUTO_COLLAPSE_CHILDREN = 12;
 
 export default function DebugViewer() {
   const kernel = useKernel();
   const controls = useVizControls({
-    faceOpacity: 0.35,
-    showDarts: true,
+    faceOpacity: 1,
+    showDarts: false,
     showDartLabels: false,
+    showAlphaLinks: false,
     showAlpha3: true,
     viewerFaceColorOverridesScene: false,
   });
@@ -33,6 +41,8 @@ export default function DebugViewer() {
   const [followLatest, setFollowLatest] = useState(true);
   const [selected, setSelected] = useState<VizSelection | null>(null);
   const [hovered, setHovered] = useState<VizSelection | null>(null);
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [fetchError, setFetchError] = useState<string | null>(null);
   const hydrationCache = useRef(
     new Map<string, { dump: HydratedDebugDump | null; error: string | null }>(),
@@ -92,7 +102,14 @@ export default function DebugViewer() {
   useEffect(() => {
     setSelected(null);
     setHovered(null);
-  }, [active?.sequence]);
+    setHidden(new Set());
+    setCollapsed(autoCollapsed(hydrated.dump?.nodes ?? []));
+  }, [active?.sequence, hydrated.dump]);
+
+  const scene = useMemo(
+    () => (hydrated.dump ? debugScene(hydrated.dump.nodes, hidden) : null),
+    [hidden, hydrated.dump],
+  );
 
   const clear = async () => {
     await clearDebugDumps();
@@ -101,8 +118,14 @@ export default function DebugViewer() {
     setFollowLatest(true);
     setSelected(null);
     setHovered(null);
+    setHidden(new Set());
     hydrationCache.current.clear();
   };
+
+  const toggleHidden = (id: string) =>
+    setHidden((current) => toggledSet(current, id));
+  const toggleCollapsed = (id: string) =>
+    setCollapsed((current) => toggledSet(current, id));
 
   const selectDump = (sequence: number) => {
     setFollowLatest(false);
@@ -138,8 +161,17 @@ export default function DebugViewer() {
           onLatest={selectLatest}
           onClear={() => void clear()}
         />
+        <ObjectTreePanel
+          nodes={hydrated.dump?.nodes ?? []}
+          hidden={hidden}
+          collapsed={collapsed}
+          onToggleHidden={toggleHidden}
+          onToggleCollapsed={toggleCollapsed}
+          onShowAll={() => setHidden(new Set())}
+        />
         <InspectorPanel
           dump={hydrated.dump}
+          scene={scene}
           inspected={inspected}
           selected={selected}
           hovered={hovered}
@@ -158,9 +190,9 @@ export default function DebugViewer() {
 
   return (
     <>
-      {hydrated.dump && (
+      {scene && (
         <VizSceneView
-          scene={hydrated.dump.scene}
+          scene={scene}
           {...controls}
           selected={selected}
           hovered={hovered}
@@ -248,8 +280,149 @@ function TimelinePanel({
   );
 }
 
+/**
+ * The dump's object tree, one row per transported node.
+ *
+ * Unchecking a row drops its geometry from the rendered scene; unchecking a
+ * group drops everything below it, which is why a descendant row stays checked
+ * while reading as dimmed — it says what the row itself is set to, not whether
+ * anything of it is on screen.
+ */
+function ObjectTreePanel({
+  nodes,
+  hidden,
+  collapsed,
+  onToggleHidden,
+  onToggleCollapsed,
+  onShowAll,
+}: {
+  nodes: HydratedDebugNode[];
+  hidden: ReadonlySet<string>;
+  collapsed: ReadonlySet<string>;
+  onToggleHidden: (id: string) => void;
+  onToggleCollapsed: (id: string) => void;
+  onShowAll: () => void;
+}) {
+  return (
+    <section className="debug-section debug-tree">
+      <div className="debug-panel-header">
+        <h2>Objects</h2>
+        <div className="debug-header-actions">
+          <button type="button" onClick={onShowAll} disabled={hidden.size === 0}>
+            Show all
+          </button>
+        </div>
+      </div>
+      {nodes.length === 0 ? (
+        <div className="debug-empty">No object loaded</div>
+      ) : (
+        <div className="debug-tree-list">
+          {nodes.map((node) => (
+            <TreeRow
+              key={node.id}
+              node={node}
+              depth={0}
+              ancestorHidden={false}
+              hidden={hidden}
+              collapsed={collapsed}
+              onToggleHidden={onToggleHidden}
+              onToggleCollapsed={onToggleCollapsed}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TreeRow({
+  node,
+  depth,
+  ancestorHidden,
+  hidden,
+  collapsed,
+  onToggleHidden,
+  onToggleCollapsed,
+}: {
+  node: HydratedDebugNode;
+  depth: number;
+  ancestorHidden: boolean;
+  hidden: ReadonlySet<string>;
+  collapsed: ReadonlySet<string>;
+  onToggleHidden: (id: string) => void;
+  onToggleCollapsed: (id: string) => void;
+}) {
+  const isGroup = node.children.length > 0 || !node.scene;
+  const isCollapsed = collapsed.has(node.id);
+  const isHidden = hidden.has(node.id);
+  const leaves = debugNodeLeaves(node).length;
+
+  return (
+    <>
+      <div
+        className={`debug-tree-row${ancestorHidden || isHidden ? " dimmed" : ""}`}
+        style={{ paddingLeft: depth * 14 }}
+      >
+        {isGroup ? (
+          <button
+            type="button"
+            className="debug-tree-caret"
+            onClick={() => onToggleCollapsed(node.id)}
+            aria-label={isCollapsed ? "expand" : "collapse"}
+          >
+            {isCollapsed ? "▸" : "▾"}
+          </button>
+        ) : (
+          <span className="debug-tree-caret" />
+        )}
+        <input
+          type="checkbox"
+          checked={!isHidden}
+          onChange={() => onToggleHidden(node.id)}
+        />
+        <span className="debug-tree-name" title={node.name}>
+          {node.name}
+        </span>
+        <small>{node.kind ?? `${leaves} object${leaves === 1 ? "" : "s"}`}</small>
+      </div>
+      {isGroup &&
+        !isCollapsed &&
+        node.children.map((child) => (
+          <TreeRow
+            key={child.id}
+            node={child}
+            depth={depth + 1}
+            ancestorHidden={ancestorHidden || isHidden}
+            hidden={hidden}
+            collapsed={collapsed}
+            onToggleHidden={onToggleHidden}
+            onToggleCollapsed={onToggleCollapsed}
+          />
+        ))}
+    </>
+  );
+}
+
+/** Groups too large to read at a glance start folded. */
+function autoCollapsed(nodes: readonly HydratedDebugNode[]): Set<string> {
+  const folded = new Set<string>();
+  const visit = (node: HydratedDebugNode) => {
+    if (node.children.length > AUTO_COLLAPSE_CHILDREN) folded.add(node.id);
+    node.children.forEach(visit);
+  };
+  nodes.forEach(visit);
+  return folded;
+}
+
+function toggledSet(current: ReadonlySet<string>, id: string): Set<string> {
+  const next = new Set(current);
+  if (!next.delete(id)) next.add(id);
+  return next;
+}
+
 function InspectorPanel({
   dump,
+  scene,
   inspected,
   selected,
   hovered,
@@ -257,13 +430,15 @@ function InspectorPanel({
   onHover,
 }: {
   dump: HydratedDebugDump | null;
+  scene: VizScene | null;
   inspected: VizSelection | null;
   selected: VizSelection | null;
   hovered: VizSelection | null;
   onSelect: (selection: VizSelection) => void;
   onHover: (selection: VizSelection | null) => void;
 }) {
-  const entity = dump && inspected ? inspectedEntity(dump, inspected) : null;
+  const entity =
+    dump && scene && inspected ? inspectedEntity(dump, scene, inspected) : null;
   return (
     <section className="debug-section debug-inspector">
       <div className="debug-panel-header">
@@ -341,6 +516,7 @@ type InspectedEntity =
 
 function inspectedEntity(
   dump: HydratedDebugDump,
+  scene: VizScene,
   selection: VizSelection,
 ): InspectedEntity | null {
   if (selection.kind === "vertex") {
@@ -359,7 +535,9 @@ function inspectedEntity(
     const entry = dump.selection.darts.find(({ id }) => id === selection.id);
     return entry ? { kind: "dart", entry } : null;
   }
-  const link = dump.scene.alphaLinks[selection.id];
+  // An alpha link is addressed by its index in the scene that was rendered,
+  // which is the visible subset rather than the whole dump.
+  const link = scene.alphaLinks[selection.id];
   return link
     ? {
         kind: "alphaLink",

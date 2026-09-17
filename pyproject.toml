@@ -7,13 +7,21 @@ name = "ngk"
 authors = [{name = "Romain Ferru", email = "romain.ferru@gmail.com"}]
 version = "0.0.1"
 description = "Python bindings for the NGK geometry kernel"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
     "build123d>=0.8.0",
+    "ruff>=0.16.8",
 ]
 
 [tool.maturin]
 features = ["python"]
 module-name = "ngk._ngk"
 python-source = "bindings/python/python"
+
+[dependency-groups]
+dev = [
+    "ipython>=9.17.1",
+    "jupyter>=1.1.1",
+    "ocp-viewer>=1.1.3",
+]

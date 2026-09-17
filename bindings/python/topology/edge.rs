@@ -19,6 +19,11 @@ pub struct PyEdge {
 }
 
 entity_methods!(PyEdge, SharedEdge<StandardPayload>, "edge", {
+    /// This entity, copied into a model holding nothing else.
+    fn isolated(&self) -> PyResult<Self> {
+        Ok(Self::from_inner(self.inner.isolated().map_err(py_err)?))
+    }
+
     #[getter]
     fn start(&self) -> PyResult<PyVertex> {
         Ok(PyVertex::from_inner(self.inner.start().map_err(py_err)?))

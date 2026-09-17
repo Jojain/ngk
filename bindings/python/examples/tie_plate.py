@@ -1,34 +1,6 @@
-"""Too Tall Toby Party Pack 01-08 Tie Plate, rebuilt with ngk.
-
-The published model is `ppp0108` in
-`tests/exchange/foreign/generate/generate_ttt.py`: a steel plate with two
-bolted gusset webs, published at 3387.06 g for 7800 kg/m^3 (434238.27 mm^3).
-
-ngk has no sketch/extrude stack, so each piece is built from the primitives the
-Python bindings expose:
-
-* the plate is one extrusion of a closed profile made of four lines and the
-  four arcs of its rounded slot ends, then five holes are cut through it;
-* each web is a pentagon extruded across the plate's thickness, intersected with
-  an L-shaped thickness prism, then its bolt hole is cut;
-* the three are fused into one solid.
-
-Each piece reproduces the build123d geometry. The web measures 30560.0 mm^3,
-which is the oracle's value, and the plate outline is built from the same
-tangency points.
-
-The part is shown rather than written: ``write_step`` refuses a solid carrying a
-Boolean-cut cylindrical hole ("needs a seam its support has no analytic curve
-for"), so this assembly cannot be written to STEP. It still displays.
-"""
-
+# %%
 import math
-
 import ngk
-
-# --------------------------------------------------------------------------- #
-# Model constants, from the build123d source.
-# --------------------------------------------------------------------------- #
 
 DENSITY_STEEL = 7800 / 1e6  # g/mm^3
 PUBLISHED_MASS = 3387.06  # g
@@ -54,11 +26,6 @@ WEB_BOLT_RADIUS = 11 / 2  # 5.5
 _CAP_DY = TAB_HALF_HEIGHT - CAP_CENTER_Y
 _CAP_DX = math.sqrt(CAP_RADIUS * CAP_RADIUS - _CAP_DY * _CAP_DY)
 _CAP_ANGLE = math.atan2(_CAP_DY, -_CAP_DX)
-
-
-# --------------------------------------------------------------------------- #
-# Small helpers over the binding surface.
-# --------------------------------------------------------------------------- #
 
 
 def _frame(origin, x_dir=(1.0, 0.0, 0.0), y_dir=(0.0, 1.0, 0.0)):
@@ -96,11 +63,6 @@ def _cap_plane(cx, cy):
     return ngk.Plane(ngk.Point(cx, cy, 0.0), ngk.Vector(1, 0, 0), ngk.Vector(0, 0, 1))
 
 
-# --------------------------------------------------------------------------- #
-# The base plate: a rounded-slot outline extruded, then pierced.
-# --------------------------------------------------------------------------- #
-
-
 def base_plate():
     """The 16 mm plate, with its two rounded slot ends and five holes."""
     x_in = CAP_CENTER_X - _CAP_DX
@@ -115,7 +77,9 @@ def base_plate():
 
     edges = [
         ngk.line(p7, p0),
-        ngk.arc_edge(_cap_plane(CAP_CENTER_X, CAP_CENTER_Y), CAP_RADIUS, 0.0, _CAP_ANGLE),
+        ngk.arc_edge(
+            _cap_plane(CAP_CENTER_X, CAP_CENTER_Y), CAP_RADIUS, 0.0, _CAP_ANGLE
+        ),
         ngk.line(p1, p2),
         ngk.arc_edge(
             _cap_plane(-CAP_CENTER_X, CAP_CENTER_Y),
@@ -152,11 +116,6 @@ def base_plate():
     return plate
 
 
-# --------------------------------------------------------------------------- #
-# A gusset web: the pentagon, thinned to a step, pierced.
-# --------------------------------------------------------------------------- #
-
-
 def side_web(sign):
     """One web, on the `sign` side of YZ.
 
@@ -183,8 +142,22 @@ def side_web(sign):
     # The web is 8 mm thick up to the step, 20 mm beyond it. The boxes overlap
     # the web's own faces so the intersection only trims, never extends.
     thickness = _fuse_all(
-        _box(sign * (WEB_INNER_X - 5), sign * (WEB_OUTER_X + 5), -WEB_THIN_HALF, WEB_THIN_HALF, -30, 30),
-        _box(sign * WEB_STEP_X, sign * (WEB_OUTER_X + 5), -WEB_THICK_HALF, WEB_THICK_HALF, -30, 30),
+        _box(
+            sign * (WEB_INNER_X - 5),
+            sign * (WEB_OUTER_X + 5),
+            -WEB_THIN_HALF,
+            WEB_THIN_HALF,
+            -30,
+            30,
+        ),
+        _box(
+            sign * WEB_STEP_X,
+            sign * (WEB_OUTER_X + 5),
+            -WEB_THICK_HALF,
+            WEB_THICK_HALF,
+            -30,
+            30,
+        ),
     )
     web = ngk.intersect(web, thickness)
 
@@ -194,32 +167,21 @@ def side_web(sign):
     )
 
 
-# --------------------------------------------------------------------------- #
-# Assembly.
-# --------------------------------------------------------------------------- #
+# %%
 
 
-def _show(solid, name):
-    """Sends a shape to ocp_vscode, reporting rather than raising with no viewer."""
-    try:
-        ngk.debug.show(solid, name=name)
-    except Exception as error:  # noqa: BLE001 - a missing viewer is not a model error
-        print(f"  (could not reach the viewer for {name}: {error})")
+plate = base_plate()
+right = side_web(+1)
+left = side_web(-1)
+
+print(f"plate: {plate.face_count} faces")
+print(f"web +X: {right.face_count} faces")
+print(f"web -X: {left.face_count} faces")
+
+part = _fuse_all(plate, right, left)
+print(f"\nassembled: {part.face_count} faces")
+
+ngk.debug.show(part, part.faces()[0], part.faces()[0].edges())
 
 
-def main():
-    plate = base_plate()
-    right = side_web(+1)
-    left = side_web(-1)
-
-    print(f"plate: {plate.face_count} faces")
-    print(f"web +X: {right.face_count} faces")
-    print(f"web -X: {left.face_count} faces")
-
-    part = _fuse_all(plate, right, left)
-    print(f"\nassembled: {part.face_count} faces")
-    _show(part, "tie_plate")
-
-
-if __name__ == "__main__":
-    main()
+# %%

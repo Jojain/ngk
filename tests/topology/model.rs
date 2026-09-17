@@ -14,6 +14,7 @@ use ngk::builders::profiles::add_rectangle;
 use ngk::builders::sheets::add_extruded_profile;
 use ngk::geometry::{Curve, Plane, Point2, Point3, Surface, TrimmedCurve2};
 use ngk::model::{Cell0, Cell1, Cell2, MergeTopology, Model};
+use ngk::modeling::solids;
 use ngk::topology::ModelEditError;
 use ngk::topology::attributes::{FaceAttr, SheetAttr, SolidAttr};
 use ngk::topology::gmap::{Dart, Dim};
@@ -339,4 +340,26 @@ fn isolate_planar_topology_forwards_to_inner_topology() {
 
     assert_eq!(isolated_dart, Dart::new(0));
     assert_eq!(isolated.dart_count(), 6);
+}
+
+#[test]
+fn isolating_an_edge_of_a_solid_leaves_the_faces_meeting_there_behind() {
+    // An edge's darts run through the seeds of the faces on either side, so a
+    // rule that copied a face on its seed alone pulled those faces along —
+    // without their profiles, which commit then refused.
+    let shape = solids::block(1.0, 2.0, 3.0).expect("block should build");
+    let edge = shape
+        .solid()
+        .edges()
+        .into_iter()
+        .next()
+        .expect("a block has edges");
+
+    let (isolated, isolated_dart) = edge.isolate();
+
+    assert!(isolated.attribute::<Cell1>(isolated_dart).is_some());
+    assert_eq!(isolated.iter_edges().count(), 1);
+    assert_eq!(isolated.iter_faces().count(), 0);
+    assert_eq!(isolated.iter_profiles().count(), 0);
+    assert_eq!(isolated.iter_solids().count(), 0);
 }
