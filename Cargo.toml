@@ -3,6 +3,11 @@ name = "ngk"
 version = "0.0.1"
 edition = "2024"
 license = "MIT"
+description = "Nales Geometry Kernel, a GMap-based CAD geometry kernel"
+repository = "https://github.com/Jojain/ngk"
+homepage = "https://jojain.github.io/ngk/"
+keywords = ["cad", "geometry", "gmap", "nurbs"]
+categories = ["science", "mathematics"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -20,7 +25,7 @@ wasm = ["dep:wasm-bindgen", "dep:js-sys", "dep:serde-wasm-bindgen", "dep:console
 nalgebra = { version = "0.34.2", features = ["serde-serialize"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-pyo3 = { version = "0.22.6", optional = true, features = ["extension-module", "abi3", "abi3-py39", "generate-import-lib"] }
+pyo3 = { version = "0.22.6", optional = true, features = ["extension-module", "abi3", "abi3-py312", "generate-import-lib"] }
 wasm-bindgen = { version = "0.2", optional = true }
 js-sys = { version = "0.3", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
