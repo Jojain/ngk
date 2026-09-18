@@ -160,7 +160,7 @@ fn recognize_circle_3d(
     let circle = Circle::new(Plane::new(center, first_radial, normal), radius);
     let mut angles = Vec::with_capacity(points.len());
     for point in &points {
-        let mut angle = circle.param_at(*point).value();
+        let mut angle = circle.parameter_at(*point).value();
         if let Some(previous) = angles.last().copied() {
             while angle + PI < previous {
                 angle += TAU;

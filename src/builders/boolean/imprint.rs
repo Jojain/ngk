@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use super::graph::SpanSubdivision;
 use crate::builders::faces::{FaceImprint, FaceImprintSection, split_face_edge_staged};
-use crate::geometry::parameter::{Fraction, NativeParam};
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{Interval, Point3, PointCoincidence};
 use crate::topology::edge::Edge;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
@@ -111,9 +111,9 @@ pub(crate) fn realize_section<P: Payload>(
         if index + 2 < cuts.len() {
             let point = imprint.imprint.point_at(pair[1]);
             let view = edit.edge_unchecked(edge);
-            let parameter = view.curve().expect("section geometry").param_at(point);
+            let parameter = view.trimmed_curve().parameter_at(point);
             let face = view.faces()[0].key();
-            edge = split_face_edge_staged(edit, face, edge, parameter.value())?.continuation();
+            edge = split_face_edge_staged(edit, face, edge, parameter)?.continuation();
         }
         let middle = Interval::new(pair[0], pair[1]).midpoint();
         let piece = imprint
@@ -162,10 +162,11 @@ pub(crate) fn realize_edge_spans<P: Payload>(
                 let ends = match map.edge_unchecked(*fragment) {
                     Edge::Bounded(bounded) => {
                         let (first, second) = bounded.vertices();
-                        first.point().copied().zip(second.point().copied())
+                        Some((*first.point(), *second.point()))
                     }
                     Edge::Marked(marked) => {
-                        marked.corner().point().copied().map(|point| (point, point))
+                        let point = *marked.corner().point();
+                        Some((point, point))
                     }
                     // No corner to match a span's ends against.
                     Edge::Unmarked(_) => return false,

@@ -83,7 +83,7 @@ fn a_foreign_box_imports_at_its_own_corners() {
     }
 
     for vertex in shape.solid().vertices() {
-        let point = vertex.point().expect("an imported vertex carries a point");
+        let point = vertex.point();
         let found = expected.iter().any(|(x, y, z)| {
             let corner = ngk::geometry::Point3::new(
                 f64::from_bits(*x),
@@ -215,7 +215,7 @@ fn a_file_in_inches_arrives_in_millimetres() {
         .solid()
         .vertices()
         .iter()
-        .filter_map(|vertex| vertex.point().map(|point| point.x.abs()))
+        .map(|vertex| vertex.point().x.abs())
         .fold(0.0_f64, f64::max);
 
     assert!(
@@ -536,7 +536,7 @@ fn a_foreign_loft_arrives_on_spline_supports() {
     let spline_edges = solid
         .edges()
         .iter()
-        .filter(|edge| matches!(edge.curve(), Some(ngk::geometry::Curve::Nurbs(_))))
+        .filter(|edge| matches!(edge.curve(), ngk::geometry::Curve::Nurbs(_)))
         .count();
     assert!(spline_edges > 0, "and bounded by spline edges");
 }

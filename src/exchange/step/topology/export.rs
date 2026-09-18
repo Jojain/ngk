@@ -421,17 +421,13 @@ fn write_edge_curve<P: Payload>(
     let start_id = write_corner(builder, gmap, start, cache)?;
     let end_id = write_corner(builder, gmap, end, cache)?;
 
-    let geometry = edge
-        .curve()
-        .ok_or(TopologyError::MissingCurve { edge: key })?;
+    let geometry = edge.curve();
     let curve = write_curve(builder, geometry)?;
 
     // An edge stores no interval, so which way the support runs between the
     // two corners is derived: the span they bound increases exactly when the
     // curve agrees with start → end.
-    let interval = edge
-        .parameter_interval()
-        .ok_or(TopologyError::MissingCurve { edge: key })?;
+    let interval = edge.parameter_interval();
     let same_sense = interval.start.value() <= interval.end.value();
 
     let edge_curve = builder.add_entity(&entities::EdgeCurve {

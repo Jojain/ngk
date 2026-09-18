@@ -9,7 +9,7 @@
 
 use ngk::builders::edges::add_circle;
 use ngk::builders::faces::{add_circle as add_disc, split_face_edge};
-use ngk::geometry::Plane;
+use ngk::geometry::{Fraction, Plane};
 use ngk::model::{Cell0, Cell1, Cell2, Model};
 use ngk::modeling::faces;
 use ngk::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
@@ -169,7 +169,8 @@ fn marking_a_circle_hands_its_closing_point_to_a_vertex() {
         .key();
     let cells = model.cells(Dim::Zero).count();
 
-    let split = split_face_edge(&mut model, face, rim, 0.5).expect("the rim takes a corner");
+    let split =
+        split_face_edge(&mut model, face, rim, Fraction::new(0.5)).expect("the rim takes a corner");
 
     assert_eq!(
         model.cells(Dim::Zero).count(),

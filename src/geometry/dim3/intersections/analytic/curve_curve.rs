@@ -156,14 +156,14 @@ fn shared_window(
         ]
     };
     let [b_start, b_end] = ends(b);
-    let (first, second) = (a.param_at(b_start), a.param_at(b_end));
+    let (first, second) = (a.parameter_at(b_start), a.parameter_at(b_end));
     let low = first.min(second).max(NativeParam::new(0.0));
     let high = first.max(second).min(NativeParam::new(1.0));
     if high - low <= options.parameter_tolerance {
         return None;
     }
     let interval_a = Interval::new(low, high);
-    let mapped = |parameter: f64| b.param_at(a.point_at(NativeParam::new(parameter)));
+    let mapped = |parameter: f64| b.parameter_at(a.point_at(NativeParam::new(parameter)));
     Some((
         interval_a,
         Interval::new(mapped(low.value()), mapped(high.value())),
@@ -232,7 +232,7 @@ fn line_circle(line: &Line, circle: &Circle, options: IntersectionOptions) -> Op
                 (radial.norm() - circle.radius())
                     .abs()
                     .le(&options.linear_tolerance)
-                    .then(|| (parameter, wrapped(circle.param_at(point).value())))
+                    .then(|| (parameter, wrapped(circle.parameter_at(point).value())))
             })
             .collect(),
     ))
@@ -284,7 +284,7 @@ fn circle_circle(a: &Circle, b: &Circle, options: IntersectionOptions) -> Option
                 let point = a.point_at(NativeParam::new(angle));
                 let radial = point - b.plane().origin();
                 ((radial.norm() - b.radius()).abs() <= options.linear_tolerance)
-                    .then(|| (wrapped(angle), wrapped(b.param_at(point).value())))
+                    .then(|| (wrapped(angle), wrapped(b.parameter_at(point).value())))
             })
             .collect(),
     ))
@@ -318,8 +318,8 @@ fn coplanar_circles(a: &Circle, b: &Circle, options: IntersectionOptions) -> Sol
             .map(|side| {
                 let point: Point3 = foot + across * side;
                 (
-                    wrapped(a.param_at(point).value()),
-                    wrapped(b.param_at(point).value()),
+                    wrapped(a.parameter_at(point).value()),
+                    wrapped(b.parameter_at(point).value()),
                 )
             })
             .collect(),

@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use crate::geometry::Point3;
 use crate::model::{Cell0, Cell2, MergeTopology, TopologyMerge};
+use crate::topology::attributes::VertexAttr;
 use crate::topology::face::Face;
 use crate::topology::gmap::Dim;
 use crate::topology::shape_keys::VertexKey;
@@ -51,6 +52,11 @@ impl<'a, P: Payload> Vertex<'a, P> {
         self.key
     }
 
+    /// Returns the stored vertex attribute.
+    pub fn attr(&self) -> &'a VertexAttr<P::V> {
+        self.model.vertex_attr_unchecked(self.key)
+    }
+
     /// Returns all edge 1-cells incident to this vertex.
     ///
     /// Each returned [`Edge`] is a view over the same source map and is rooted
@@ -90,11 +96,9 @@ impl<'a, P: Payload> Vertex<'a, P> {
             .collect()
     }
 
-    /// Returns this vertex's geometric point, if one is stored.
-    ///
-    /// `None` means the 0-cell has no registered vertex attribute in the map.
-    pub fn point(&self) -> Option<&Point3> {
-        Some(&self.model.vertex_attr_unchecked(self.key).point)
+    /// Returns this vertex's geometric point.
+    pub fn point(&self) -> &Point3 {
+        &self.model.vertex_attr_unchecked(self.key).point
     }
 }
 

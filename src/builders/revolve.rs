@@ -154,10 +154,7 @@ impl RevolvedSourceEdge {
                 (single.clone(), single)
             }
         };
-        let curve = edge
-            .curve()
-            .ok_or(RevolveError::MissingEdgeCurve { dart })?
-            .clone();
+        let curve = edge.curve().clone();
 
         Ok(Self {
             key,
@@ -1509,8 +1506,7 @@ fn revolve_sweep_direction<P: Payload>(axis: Axis3, face: &Face<'_, P>) -> Vecto
     let point = face
         .edges()
         .first()
-        .and_then(|edge| edge.trimmed_curve())
-        .map(|section| section.point_at(Fraction::new(0.0)))
+        .map(|edge| edge.trimmed_curve().point_at(Fraction::new(0.0)))
         .unwrap_or(axis.origin);
     axis.direction.cross(&(point - axis.project(point)))
 }

@@ -89,18 +89,18 @@ impl Curve {
     }
 
     // / Returns the parameter of the point on the curve nearest `point`.
-    pub fn param_at(&self, point: Point3) -> NativeParam {
+    pub fn parameter_at(&self, point: Point3) -> NativeParam {
         match self {
-            Curve::Line(l) => l.param_at(point),
-            Curve::Circle(c) => c.param_at(point),
-            Curve::Ellipse(c) => c.param_at(point),
+            Curve::Line(l) => l.parameter_at(point),
+            Curve::Circle(c) => c.parameter_at(point),
+            Curve::Ellipse(c) => c.parameter_at(point),
             Curve::Nurbs(n) => NativeParam::new(closest_sample_parameter(n, point)),
         }
     }
 
     pub fn interval_between(&self, start: Point3, end: Point3) -> Interval {
-        let t0 = self.param_at(start);
-        let raw_t1 = self.param_at(end);
+        let t0 = self.parameter_at(start);
+        let raw_t1 = self.parameter_at(end);
         match self.periodicity() {
             Periodicity::Periodic(period) => {
                 let delta = if start.coincides(end, LINEAR_TOLERANCE) {
@@ -450,7 +450,7 @@ impl Line {
     }
     /// Inverse of [`Self::point_at`] — returns the `t ∈ [0, 1]` parameter
     /// such that `point_at(t)` is the closest point on the line.
-    pub fn param_at(&self, point: Point3) -> NativeParam {
+    pub fn parameter_at(&self, point: Point3) -> NativeParam {
         let dir = *self.axis.direction;
         let len_sq = dir.norm_squared();
         if len_sq < LINEAR_TOLERANCE_SQUARED {
@@ -527,7 +527,7 @@ impl Circle {
     /// Inverse of [`Self::point_at`]: returns the angle (in radians) of the
     /// projection of `point` onto the circle's plane, measured from `x_dir`
     /// counter-clockwise around `normal`. Range is `(-π, π]`.
-    pub fn param_at(&self, point: Point3) -> NativeParam {
+    pub fn parameter_at(&self, point: Point3) -> NativeParam {
         let v = point - self.plane.origin();
         let x = v.dot(&self.plane.x_dir());
         let y = v.dot(&self.plane.y_dir());
@@ -610,7 +610,7 @@ impl Ellipse {
     }
 
     /// Returns the closest-point parameter, measured from the frame's X axis.
-    pub fn param_at(&self, point: Point3) -> NativeParam {
+    pub fn parameter_at(&self, point: Point3) -> NativeParam {
         let local = self.frame.coordinates_of(point);
         let mut best = 0.0;
         let mut best_distance = f64::INFINITY;
@@ -644,7 +644,7 @@ impl Ellipse {
     }
 
     pub fn project(&self, point: Point3) -> Point3 {
-        self.point_at(self.param_at(point))
+        self.point_at(self.parameter_at(point))
     }
 
     /// Numerically integrates the analytic speed over the interval.
@@ -702,7 +702,7 @@ impl CurveGeometry for Line {
     }
 
     fn param_at(&self, point: Point3) -> NativeParam {
-        Line::param_at(self, point)
+        Line::parameter_at(self, point)
     }
 
     fn project(&self, point: Point3) -> Point3 {
@@ -755,7 +755,7 @@ impl CurveGeometry for Circle {
     }
 
     fn param_at(&self, point: Point3) -> NativeParam {
-        Circle::param_at(self, point)
+        Circle::parameter_at(self, point)
     }
 
     /// Projects onto the circle by dropping `point` to the circle's plane and
@@ -818,7 +818,7 @@ impl CurveGeometry for Ellipse {
     }
 
     fn param_at(&self, point: Point3) -> NativeParam {
-        Ellipse::param_at(self, point)
+        Ellipse::parameter_at(self, point)
     }
 
     fn project(&self, point: Point3) -> Point3 {
@@ -926,7 +926,7 @@ impl CurveGeometry for Curve {
     }
 
     fn param_at(&self, point: Point3) -> NativeParam {
-        Curve::param_at(self, point)
+        Curve::parameter_at(self, point)
     }
 
     fn project(&self, point: Point3) -> Point3 {

@@ -136,6 +136,11 @@ impl TrimmedCurve {
         self.point_at(Fraction::END)
     }
 
+    /// Returns the arc length of the span.
+    pub fn length(&self) -> f64 {
+        self.curve.length(self.interval.start, self.interval.end)
+    }
+
     /// Returns the derivative with respect to the normalized fraction.
     pub fn derivative_at(&self, fraction: Fraction, order: usize) -> nalgebra::Vector3<f64> {
         let derivative = self.curve.derivative_at(self.interval.at(fraction), order);
@@ -153,7 +158,7 @@ impl TrimmedCurve {
     /// nearest the span, so one crossing the branch cut still measures against
     /// its own extent rather than the complementary one.
     pub fn native_parameter_at(&self, point: Point3) -> NativeParam {
-        let raw = self.curve.param_at(point);
+        let raw = self.curve.parameter_at(point);
         let Periodicity::Periodic(period) = self.curve.periodicity() else {
             return raw;
         };
@@ -173,7 +178,7 @@ impl TrimmedCurve {
     /// speed so it means the same thing on a long span as on a short one.
     pub fn contains(&self, point: Point3, tolerance: f64) -> bool {
         self.curve
-            .point_at(self.curve.param_at(point))
+            .point_at(self.curve.parameter_at(point))
             .coincides(point, tolerance)
             && self.interval.contains(
                 self.native_parameter_at(point),
@@ -213,11 +218,6 @@ impl TrimmedCurve {
                 self.interval.at(fractions.end),
             ),
         )
-    }
-
-    /// Returns the arc length of the span.
-    pub fn length(&self) -> f64 {
-        self.curve.length(self.interval.start, self.interval.end)
     }
 
     /// Returns the span as a standalone curve parameterized over `[0, 1]`.

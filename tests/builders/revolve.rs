@@ -160,25 +160,15 @@ fn side_arc_midpoint(
         .edges()
         .into_iter()
         .find(|edge| {
-            let start = *edge
-                .bounded_unchecked()
-                .start()
-                .point()
-                .expect("arc start should have geometry");
-            let end = *edge
-                .bounded_unchecked()
-                .end()
-                .point()
-                .expect("arc end should have geometry");
-            matches!(edge.curve(), Some(Curve::Circle(_)))
+            let start = *edge.bounded_unchecked().start().point();
+            let end = *edge.bounded_unchecked().end().point();
+            matches!(edge.curve(), Curve::Circle(_))
                 && (start.coincides(origin, LINEAR_TOLERANCE)
                     || end.coincides(origin, LINEAR_TOLERANCE))
         })
         .expect("revolve should create a circular side arc");
-    let curve = arc.curve().expect("side arc should have geometry");
-    let interval = arc
-        .parameter_interval()
-        .expect("side arc should have an oriented interval");
+    let curve = arc.curve();
+    let interval = arc.parameter_interval();
     curve.point_at(interval.at(Fraction::new(0.5)))
 }
 
@@ -194,7 +184,7 @@ fn revolve_marked_closed_edge_full_turn_is_refused() {
     let mut g = Model::<StandardPayload>::new();
     let profile = ngk::geometry::Plane::new(Point3::new(3.0, 0.0, 0.0), Vector3::x(), Vector3::y());
     let circle = add_circle(&mut g, profile, 1.0).expect("profile circle should build");
-    split_edge(&mut g, circle, 0.5).expect("the profile takes a corner");
+    split_edge(&mut g, circle, Fraction::new(0.5)).expect("the profile takes a corner");
     assert_eq!(g.iter_vertices().count(), 1, "the profile is marked");
 
     let refused = add_revolved_edge(
@@ -874,7 +864,7 @@ fn revolve_edge_full_turn_perpendicular_to_the_axis_sweeps_a_planar_annulus() {
     // in step here.
     for edge in face.edges() {
         let pcurve = face.pcurve(edge.dart()).expect("every edge carries one");
-        let section = edge.trimmed_curve().expect("a boundary edge has a section");
+        let section = edge.trimmed_curve();
         for fraction in [0.0, 0.25, 0.5, 0.75] {
             let uv = pcurve.point_at(Fraction::new(fraction));
             assert!(
@@ -951,7 +941,7 @@ fn revolve_face_full_turn_of_an_offset_rectangle_closes_its_shell() {
         let face = g.face_unchecked(key);
         for edge in face.edges() {
             let pcurve = face.pcurve(edge.dart()).expect("every edge carries one");
-            let section = edge.trimmed_curve().expect("a boundary edge has a section");
+            let section = edge.trimmed_curve();
             for fraction in [0.0, 0.25, 0.5, 0.75] {
                 let uv = pcurve.point_at(Fraction::new(fraction));
                 assert!(

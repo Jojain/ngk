@@ -262,13 +262,8 @@ fn prepare_solid_edge_chamfer<P: Payload>(
     let edge_view = g
         .edge(edge)
         .ok_or(ChamferError::MissingChamferEdge { edge })?;
-    let edge_curve = edge_view
-        .curve()
-        .cloned()
-        .ok_or(ChamferError::MissingEdgeCurve {
-            dart: edge_view.dart(),
-        })?;
-    let curved = !is_linear_curve(Some(&edge_curve));
+    let edge_curve = edge_view.curve();
+    let curved = !is_linear_curve(&edge_curve);
     if curved && !is_nurbs_curve(&edge_curve) {
         return Err(ChamferError::UnsupportedSolidChamferGeometry { edge });
     }
@@ -310,9 +305,7 @@ fn prepare_solid_edge_chamfer<P: Payload>(
             return Err(ChamferError::UnsupportedSolidChamferGeometry { edge });
         }
         endpoint_faces[endpoint_index] = other_faces[0].key();
-        endpoint_points[endpoint_index] = *vertex
-            .point()
-            .ok_or(ChamferError::MissingVertexPoint { dart: vertex.dart })?;
+        endpoint_points[endpoint_index] = *vertex.point();
 
         for (face_index, face) in faces.iter().enumerate() {
             let adjacent = face
@@ -336,9 +329,7 @@ fn prepare_solid_edge_chamfer<P: Payload>(
             } else {
                 adjacent_start
             };
-            let neighbor_point = *neighbor.point().ok_or(ChamferError::MissingVertexPoint {
-                dart: neighbor.dart,
-            })?;
+            let neighbor_point = *neighbor.point();
             face_offsets[face_index][endpoint_index] =
                 offset_point(adjacent.dart(), endpoint_point, neighbor_point, distance)?;
         }
@@ -688,9 +679,7 @@ fn prepare_solid_profile_chamfer<P: Payload>(
             .bounded()
             .ok_or(ChamferError::UnsupportedSolidChamferGeometry { edge: edge.key() })?
             .start();
-        let point = *vertex
-            .point()
-            .ok_or(ChamferError::MissingVertexPoint { dart: vertex.dart })?;
+        let point = *vertex.point();
         polygon.push(plane.parameter_at(point));
         // The one non-profile edge leads away from the cap and supplies the
         // lower corner of each bevel face at the requested edge distance.
@@ -716,9 +705,7 @@ fn prepare_solid_profile_chamfer<P: Payload>(
         } else {
             outside_start
         };
-        let neighbor_point = *neighbor.point().ok_or(ChamferError::MissingVertexPoint {
-            dart: neighbor.dart,
-        })?;
+        let neighbor_point = *neighbor.point();
         lower_corners.push(offset_point(
             outside.dart(),
             point,
@@ -933,11 +920,7 @@ fn chamfer_solid_vertex<P: Payload>(
     {
         return Err(ChamferError::UnsupportedSolidVertexChamferGeometry { vertex });
     }
-    let vertex_point = *vertex_view
-        .point()
-        .ok_or(ChamferError::MissingVertexPoint {
-            dart: vertex_view.dart,
-        })?;
+    let vertex_point = *vertex_view.point();
     let edge_keys = edges.iter().map(|edge| edge.key()).collect::<Vec<_>>();
     let face_keys = faces.iter().map(|face| face.key()).collect::<Vec<_>>();
     let mut offsets = HashMap::new();
@@ -951,9 +934,7 @@ fn chamfer_solid_vertex<P: Payload>(
         } else {
             edge_start
         };
-        let neighbor_point = *neighbor.point().ok_or(ChamferError::MissingVertexPoint {
-            dart: neighbor.dart,
-        })?;
+        let neighbor_point = *neighbor.point();
         offsets.insert(
             edge.key(),
             offset_point(edge.dart(), vertex_point, neighbor_point, distance)?,
@@ -1002,8 +983,8 @@ fn chamfer_solid_vertex<P: Payload>(
     replace_face_patch(edit, &patch_faces, &section_edges, &corners, None)
 }
 
-fn is_linear_curve(curve: Option<&Curve>) -> bool {
-    matches!(curve, Some(Curve::Line(_)))
+fn is_linear_curve(curve: &Curve) -> bool {
+    matches!(curve, Curve::Line(_))
 }
 
 fn is_nurbs_curve(curve: &Curve) -> bool {

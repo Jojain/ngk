@@ -323,45 +323,33 @@ fn append_polyline(polyline: &Polyline3, shape: &mut TcvShape) {
 }
 
 fn fallback_chord<P: Payload>(edge: &Edge<'_, P>) -> Polyline3 {
-    let points = edge
-        .trimmed_curve()
-        .map(|section| {
-            vec![
-                section.point_at(Fraction::new(0.0)),
-                section.point_at(Fraction::new(1.0)),
-            ]
-        })
-        .unwrap_or_default();
+    let section = edge.trimmed_curve();
+    let points = vec![
+        section.point_at(Fraction::new(0.0)),
+        section.point_at(Fraction::new(1.0)),
+    ];
     Polyline3::new(points)
 }
 
 fn append_edge_vertices<P: Payload>(edge: &Edge<'_, P>, shape: &mut TcvShape) {
     for vertex in edge.vertices() {
-        if let Some(point) = vertex.point() {
-            push_point(&mut shape.obj_vertices, point);
-        }
+        push_point(&mut shape.obj_vertices, vertex.point());
     }
 }
 
 fn append_profile_vertices<P: Payload>(profile: &Profile<'_, P>, shape: &mut TcvShape) {
     for vertex in profile.vertices() {
-        if let Some(point) = vertex.point() {
-            push_point(&mut shape.obj_vertices, point);
-        }
+        push_point(&mut shape.obj_vertices, vertex.point());
     }
 }
 
 fn append_face_vertices<P: Payload>(face: &Face<'_, P>, shape: &mut TcvShape) {
     for vertex in face.vertices() {
-        if let Some(point) = vertex.point() {
-            push_point(&mut shape.obj_vertices, point);
-        }
+        push_point(&mut shape.obj_vertices, vertex.point());
     }
     for loop_ in face.inner_loops() {
         for vertex in loop_.vertices() {
-            if let Some(point) = vertex.point() {
-                push_point(&mut shape.obj_vertices, point);
-            }
+            push_point(&mut shape.obj_vertices, vertex.point());
         }
     }
 }

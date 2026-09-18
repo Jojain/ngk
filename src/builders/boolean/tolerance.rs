@@ -109,18 +109,10 @@ impl BooleanTolerances {
         let mut points = Vec::new();
         for cells in [first, second] {
             for &vertex in &cells.vertices {
-                points.push(
-                    *map.vertex_unchecked(vertex)
-                        .point()
-                        .expect("admitted geometry"),
-                );
+                points.push(*map.vertex_unchecked(vertex).point());
             }
             for &edge in &cells.edges {
-                let curve = map
-                    .edge_unchecked(edge)
-                    .curve()
-                    .expect("admitted geometry")
-                    .to_nurbs()?;
+                let curve = map.edge_unchecked(edge).curve().to_nurbs()?;
                 points.extend(
                     curve
                         .control_points()

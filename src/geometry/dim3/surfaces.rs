@@ -825,7 +825,7 @@ impl RuledSurface {
     /// Returns the least-squares source parameters of a point on the ruled surface.
     pub fn closest_parameter(&self, point: Point3) -> Point2 {
         let direction_squared = self.direction.norm_squared();
-        let mut u = self.curve.param_at(point).value();
+        let mut u = self.curve.parameter_at(point).value();
         let mut v = if direction_squared > LINEAR_TOLERANCE * LINEAR_TOLERANCE {
             (point - self.curve.point_at(NativeParam::new(u))).dot(&self.direction)
                 / direction_squared
@@ -934,7 +934,7 @@ impl SurfaceOfRevolution {
         let sweep = self.sweep_angle(point);
         let rotation = Rotation3::from_axis_angle(&self.axis.direction, -sweep);
         let unswept = self.axis.origin + rotation * (point - self.axis.origin);
-        Point2::new(self.curve.param_at(unswept).value(), sweep)
+        Point2::new(self.curve.parameter_at(unswept).value(), sweep)
     }
 
     /// The angle carrying the profile's half-plane onto `point`.

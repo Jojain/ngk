@@ -272,23 +272,20 @@ fn validate_oriented_shell_volume<P: Payload>(
     let reference = first
         .vertices()
         .first()
-        .and_then(|vertex| vertex.point().copied())
+        .map(|vertex| *vertex.point())
         .or_else(|| {
             let boundary = faces[0].loops().into_iter().next()?;
             let edge = boundary.edges().into_iter().next()?;
-            edge.trimmed_curve()
-                .map(|section| section.point_at(Fraction::new(0.0)))
+            Some(edge.trimmed_curve().point_at(Fraction::new(0.0)))
         })
         .or_else(|| first.domain_center())
         .ok_or_else(|| unavailable(first))?;
     for face in &faces {
         let planar = matches!(face.surface(), Surface::Plane(_))
             && face.edges().iter().all(|edge| {
-                edge.curve().is_some_and(|curve| {
-                    curve
-                        .to_nurbs()
-                        .is_ok_and(|curve| curve.degree().get() == 1)
-                })
+                edge.curve()
+                    .to_nurbs()
+                    .is_ok_and(|curve| curve.degree().get() == 1)
             });
         if !planar {
             volume += face.signed_volume_contribution(reference).ok_or(
@@ -304,15 +301,7 @@ fn validate_oriented_shell_volume<P: Payload>(
             for edge in boundary.edges() {
                 directed.insert(edge.dart());
                 owner.insert(edge.dart(), face.key());
-                points.push(
-                    edge.trimmed_curve()
-                        .map(|section| section.point_at(Fraction::new(0.0)))
-                        .ok_or(ModelValidationError::SolidFaceOrientationUnavailable {
-                            solid,
-                            shell,
-                            face: face.key(),
-                        })?,
-                );
+                points.push(edge.trimmed_curve().point_at(Fraction::new(0.0)));
             }
             for pair in points[1..].windows(2).filter(|_| planar) {
                 volume += (points[0] - reference)

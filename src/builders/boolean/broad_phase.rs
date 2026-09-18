@@ -60,7 +60,7 @@ impl Bounds {
 /// Positive weights make the hull a true bound; anything else keeps the edge
 /// unbounded so no candidate pair is dropped on unverified data.
 fn edge_bounds<P: Payload>(edge: Edge<'_, P>, padding: f64) -> Option<Bounds> {
-    let curve = edge.curve()?.to_nurbs().ok()?;
+    let curve = edge.curve().to_nurbs().ok()?;
     let mut points = Vec::with_capacity(curve.control_points().len());
     for point in curve.control_points().as_slice() {
         if !point.weight().is_finite() || point.weight() <= 0.0 {

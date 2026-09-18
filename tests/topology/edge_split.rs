@@ -43,19 +43,14 @@ fn split_profile_edge_handles_isolated_edge() {
     let end = Point3::new(1.0, 0.0, 0.0);
     let edge = add_line(&mut g, start, end).expect("line edge should build");
 
-    let split = split_edge(&mut g, edge, 0.25).expect("isolated edge should split");
+    let split = split_edge(&mut g, edge, Fraction::new(0.25)).expect("isolated edge should split");
 
     assert_eq!(g.iter_edges().count(), 2);
     assert_eq!(g.iter_vertices().count(), 3);
 
     let midpoint = Point3::new(0.25, 0.0, 0.0);
     let split_vertex = g.vertex_attr_unchecked(split.vertex()).vertex(&g);
-    assert!(
-        split_vertex
-            .point()
-            .unwrap()
-            .coincides(midpoint, LINEAR_TOLERANCE)
-    );
+    assert!(split_vertex.point().coincides(midpoint, LINEAR_TOLERANCE));
 
     let EdgeSplit::Separated { first, second, .. } = split else {
         panic!("cutting a bounded edge separates it, got {split:?}");
@@ -67,7 +62,6 @@ fn split_profile_edge_handles_isolated_edge() {
             .bounded_unchecked()
             .start()
             .point()
-            .unwrap()
             .coincides(start, LINEAR_TOLERANCE)
     );
     assert!(
@@ -75,7 +69,6 @@ fn split_profile_edge_handles_isolated_edge() {
             .bounded_unchecked()
             .end()
             .point()
-            .unwrap()
             .coincides(midpoint, LINEAR_TOLERANCE)
     );
 
@@ -84,7 +77,6 @@ fn split_profile_edge_handles_isolated_edge() {
             .bounded_unchecked()
             .start()
             .point()
-            .expect("second split edge start should have geometry")
             .coincides(midpoint, LINEAR_TOLERANCE),
         "the second split edge should start at the split point"
     );
@@ -93,7 +85,6 @@ fn split_profile_edge_handles_isolated_edge() {
             .bounded_unchecked()
             .end()
             .point()
-            .expect("second split edge end should have geometry")
             .coincides(end, LINEAR_TOLERANCE),
         "the second split edge should preserve the original end point"
     );
@@ -109,7 +100,7 @@ fn split_isolated_edge_keeps_edge_profile_free() {
     )
     .expect("line edge should build");
 
-    let split = split_edge(&mut g, edge, 0.5).expect("isolated edge should split");
+    let split = split_edge(&mut g, edge, Fraction::new(0.5)).expect("isolated edge should split");
 
     for key in split.edges() {
         assert!(Profile::from_dart(&g, g.edge_attr_unchecked(key).dart).is_none());
@@ -131,7 +122,7 @@ fn split_edge_initializes_split_edge_payload_from_source() {
     })
     .unwrap();
 
-    let split = split_edge(&mut g, edge, 0.5).expect("edge should split");
+    let split = split_edge(&mut g, edge, Fraction::new(0.5)).expect("edge should split");
 
     for key in split.edges() {
         assert_eq!(g.edge_attr_unchecked(key).data, "source");
@@ -149,11 +140,11 @@ fn split_profile_edge_rejects_boundary_parameters() {
     .expect("line edge should build");
 
     assert!(matches!(
-        split_edge(&mut g, edge, 0.0),
+        split_edge(&mut g, edge, Fraction::START),
         Err(EdgeSplitError::DegenerateSplit { .. })
     ));
     assert!(matches!(
-        split_edge(&mut g, edge, 1.0),
+        split_edge(&mut g, edge, Fraction::END),
         Err(EdgeSplitError::DegenerateSplit { .. })
     ));
 }
@@ -170,7 +161,7 @@ fn split_profile_edge_rejects_face_boundary_edges() {
         .0;
 
     assert!(matches!(
-        split_edge(face.model_mut(), edge, 0.5),
+        split_edge(face.model_mut(), edge, Fraction::new(0.5)),
         Err(EdgeSplitError::EdgeBelongsToFace { .. })
     ));
 }
@@ -184,7 +175,8 @@ fn split_profile_edge_preserves_open_profile_order() {
     let profile_key = add_polyline(&mut g, &[p0, p1, p2]).expect("profile should build");
     let first_edge = g.profile_unchecked(profile_key).edges()[0].key();
 
-    let split = split_edge(&mut g, first_edge, 0.5).expect("profile edge should split");
+    let split =
+        split_edge(&mut g, first_edge, Fraction::new(0.5)).expect("profile edge should split");
     let profile = g.profile_unchecked(profile_key);
     let midpoint = Point3::new(0.5, 0.0, 0.0);
 
@@ -204,7 +196,7 @@ fn split_profile_edge_preserves_closed_profile() {
     let first_edge_dart = g.profile_unchecked(profile_key).edges()[0].dart();
     let first_edge = edge_key_for_dart(&g, first_edge_dart);
 
-    split_edge(&mut g, first_edge, 0.5).expect("closed profile edge should split");
+    split_edge(&mut g, first_edge, Fraction::new(0.5)).expect("closed profile edge should split");
     let profile = g.profile_unchecked(profile_key);
 
     assert!(profile.is_closed());
@@ -228,7 +220,8 @@ fn cutting_an_unmarked_edge_marks_it() {
     let rim = rim_of(&g, face);
     let darts = g.cells(Dim::One).count();
 
-    let split = split_face_edge(&mut g, face, rim, 1.0).expect("the rim takes a corner");
+    let split =
+        split_face_edge(&mut g, face, rim, Fraction::new(0.5)).expect("the rim takes a corner");
 
     let EdgeSplit::Marked { edge, vertex } = split else {
         panic!("cutting an unmarked edge marks it, got {split:?}");
@@ -258,21 +251,19 @@ fn cutting_an_unmarked_edge_marks_it() {
 ///
 /// The corner is where the edge now begins and ends, so the span is derived
 /// from it rather than from wherever the support's own domain happens to start.
+/// An unmarked rim spans its support, `[0, TAU)`, so a cut halfway along it
+/// lands at a half turn -- and that, not zero, is where the span then starts.
 #[test]
 fn a_marked_edge_spans_a_period_from_its_corner() {
     let mut g = Model::<StandardPayload>::new();
     let face = add_disc(&mut g, Plane::xy(), 1.0).expect("a disc builds");
     let rim = rim_of(&g, face);
 
-    split_face_edge(&mut g, face, rim, 1.0).expect("the rim takes a corner");
+    split_face_edge(&mut g, face, rim, Fraction::new(0.5)).expect("the rim takes a corner");
 
-    let span = g
-        .edge_unchecked(rim)
-        .parameter_interval()
-        .expect("a marked edge still spans")
-        .ordered();
+    let span = g.edge_unchecked(rim).parameter_interval().ordered();
     assert!(
-        (span.start - 1.0).value().abs() <= LINEAR_TOLERANCE,
+        (span.start - NativeParam::new(std::f64::consts::PI)).abs() <= LINEAR_TOLERANCE,
         "the span begins at the corner, got {span:?}",
     );
     assert!(
@@ -287,9 +278,13 @@ fn cutting_a_marked_edge_separates_it() {
     let mut g = Model::<StandardPayload>::new();
     let face = add_disc(&mut g, Plane::xy(), 1.0).expect("a disc builds");
     let rim = rim_of(&g, face);
-    split_face_edge(&mut g, face, rim, 1.0).expect("the first cut marks");
+    split_face_edge(&mut g, face, rim, Fraction::new(0.5)).expect("the first cut marks");
 
-    let split = split_face_edge(&mut g, face, rim, 3.0).expect("the second cut separates");
+    // Halfway along again, but the span has moved: it now runs a period from
+    // the corner the first cut left, so this lands on the opposite side of the
+    // circle rather than on that same corner.
+    let split =
+        split_face_edge(&mut g, face, rim, Fraction::new(0.5)).expect("the second cut separates");
 
     let EdgeSplit::Separated { first, second, .. } = split else {
         panic!("cutting a marked edge separates it, got {split:?}");
@@ -318,15 +313,8 @@ fn an_unmarked_edge_takes_a_corner_where_its_curve_closes() {
     let mut g = Model::<StandardPayload>::new();
     let face = add_disc(&mut g, Plane::xy(), 1.0).expect("a disc builds");
     let rim = rim_of(&g, face);
-    let closes_at = g
-        .edge_unchecked(rim)
-        .parameter_interval()
-        .expect("an unmarked edge spans its support")
-        .ordered()
-        .start;
-
-    let split = split_face_edge(&mut g, face, rim, closes_at.value())
-        .expect("the rim takes a corner there");
+    let split =
+        split_face_edge(&mut g, face, rim, Fraction::START).expect("the rim takes a corner there");
 
     let EdgeSplit::Marked { vertex, .. } = split else {
         panic!("cutting an unmarked edge marks it, got {split:?}");
@@ -342,11 +330,11 @@ fn an_unmarked_edge_takes_a_corner_where_its_curve_closes() {
 
 /// Splitting a bounded arc leaves each piece on the sweep the cut asked for.
 ///
-/// The split parameter is native -- radians on the circle -- so the corner
-/// lands correctly whatever the pieces carry, and the corners are therefore no
-/// evidence on their own. What is evidence is where a piece's interior runs: a
-/// piece cut against the whole support rather than against the edge's own span
-/// leaves the sweep entirely.
+/// The split parameter is a fraction of the *edge's* span, not of the circle it
+/// sits on, so halfway along an arc from 1 to 2 rad is 1.5 rad. A cut measured
+/// against the whole support would land at a half turn instead, which is not on
+/// the arc at all -- so the corners alone are weak evidence. What is evidence is
+/// where each piece's interior runs.
 ///
 /// Stated over the point set rather than over the parameter, because trimming
 /// an arc yields a NURBS and a NURBS does not span an arc in angle: the pieces
@@ -356,7 +344,7 @@ fn splitting_a_bounded_arc_keeps_each_piece_on_its_own_sweep() {
     let mut g = Model::<StandardPayload>::new();
     let arc = add_arc(&mut g, Plane::xy(), 1.0, 1.0, 2.0).expect("an arc builds");
 
-    let split = split_edge(&mut g, arc, 1.5).expect("the arc separates at 1.5 rad");
+    let split = split_edge(&mut g, arc, Fraction::new(0.5)).expect("the arc separates midway");
 
     let EdgeSplit::Separated { first, second, .. } = split else {
         panic!("cutting a bounded edge separates it, got {split:?}");
@@ -366,10 +354,7 @@ fn splitting_a_bounded_arc_keeps_each_piece_on_its_own_sweep() {
         (first, (1.0, 1.5), "the first piece"),
         (second, (1.5, 2.0), "the second piece"),
     ] {
-        let piece = g
-            .edge_unchecked(key)
-            .trimmed_curve()
-            .expect("a bounded edge has a span");
+        let piece = g.edge_unchecked(key).trimmed_curve();
         assert!(
             piece
                 .start()

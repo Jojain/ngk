@@ -427,7 +427,7 @@ impl<P: Payload> SharedVertex<P> {
 
     /// Returns the stored point geometry.
     pub(crate) fn point(&self) -> Result<Option<Point3>, ExploreError> {
-        Ok(self.view()?.point().copied())
+        Ok(Some(*self.view()?.point()))
     }
 
     /// Returns incident edges.
@@ -555,12 +555,12 @@ impl<P: Payload> SharedEdge<P> {
 
     /// Returns a clone of the attached curve.
     pub(crate) fn curve(&self) -> Result<Option<Curve>, ExploreError> {
-        Ok(self.view()?.curve().cloned())
+        Ok(Some(self.view()?.curve().clone()))
     }
 
     /// Returns the geometric edge length when geometry is available.
     pub(crate) fn length(&self) -> Result<Option<f64>, ExploreError> {
-        Ok(self.view()?.length())
+        Ok(Some(self.view()?.length()))
     }
 
     /// Returns the same edge in the opposite orientation.

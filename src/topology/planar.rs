@@ -185,12 +185,9 @@ fn edge_points<P: Payload>(edge: &Edge<'_, P>) -> Result<Vec<PointOnDart>, Plana
     edge.vertices()
         .into_iter()
         .map(|vertex| {
-            let point = *vertex
-                .point()
-                .ok_or(PlanarityError::MissingVertexPoint { dart: vertex.dart })?;
             Ok(PointOnDart {
                 dart: vertex.dart,
-                point,
+                point: *vertex.point(),
             })
         })
         .collect()
@@ -209,12 +206,9 @@ fn corner_points<P: Payload>(
     vertices
         .into_iter()
         .map(|vertex| {
-            let point = *vertex
-                .point()
-                .ok_or(PlanarityError::MissingVertexPoint { dart: vertex.dart })?;
             Ok(PointOnDart {
                 dart: vertex.dart,
-                point,
+                point: *vertex.point(),
             })
         })
         .collect()
@@ -252,19 +246,16 @@ fn edge_planarity_points<P: Payload>(
     edge: &Edge<'_, P>,
 ) -> Result<Vec<PointOnDart>, PlanarityError> {
     let mut points = edge_points(edge)?;
-    if let Some(curve) = edge.curve() {
-        let Some(interval) = edge.parameter_interval() else {
-            return Ok(points);
-        };
-        points.extend(
-            sampled_curve_points(curve, interval.start.value(), interval.end.value())
-                .into_iter()
-                .map(|point| PointOnDart {
-                    dart: edge.dart(),
-                    point,
-                }),
-        );
-    }
+    let curve = edge.curve();
+    let interval = edge.parameter_interval();
+    points.extend(
+        sampled_curve_points(curve, interval.start.value(), interval.end.value())
+            .into_iter()
+            .map(|point| PointOnDart {
+                dart: edge.dart(),
+                point,
+            }),
+    );
     Ok(points)
 }
 
@@ -301,13 +292,8 @@ fn check_edge_curve<P: Payload>(
     plane: &Plane,
     tolerance: f64,
 ) -> Result<(), PlanarityError> {
-    let Some(curve) = edge.curve() else {
-        return Ok(());
-    };
-
-    let Some(interval) = edge.parameter_interval() else {
-        return Ok(());
-    };
+    let curve = edge.curve();
+    let interval = edge.parameter_interval();
 
     for point in sampled_curve_points(curve, interval.start.value(), interval.end.value()) {
         let distance = plane_distance(plane, point);

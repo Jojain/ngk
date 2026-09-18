@@ -94,7 +94,7 @@ fn assert_corners_match(before: &Solid, after: &Solid) {
             .solid()
             .vertices()
             .iter()
-            .map(|vertex| *vertex.point().expect("a corner carries a point"))
+            .map(|vertex| *vertex.point())
             .collect::<Vec<Point3>>()
     };
     let (first, second) = (corners(before), corners(after));
@@ -283,7 +283,7 @@ fn a_boolean_result_survives_a_round_trip() {
         .solid()
         .edges()
         .iter()
-        .filter(|edge| matches!(edge.curve(), Some(ngk::geometry::Curve::Nurbs(_))))
+        .filter(|edge| matches!(edge.curve(), ngk::geometry::Curve::Nurbs(_)))
         .count();
     assert!(splines > 0, "a cut leaves spline edges behind");
 

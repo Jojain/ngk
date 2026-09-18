@@ -5,7 +5,8 @@ use ngk::builders::removal::{
     CellRemovalError, MergedCell, is_removable, remove_cell, remove_cell_staged,
 };
 use ngk::geometry::{
-    Axis2, Curve, Curve2, DomainSide, Frame, Plane, Point2, Point3, Surface, TrimmedCurve2,
+    Axis2, Curve, Curve2, DomainSide, Fraction, Frame, Plane, Point2, Point3, Surface,
+    TrimmedCurve2,
 };
 use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
 use ngk::model::{Cell2, Model};
@@ -64,7 +65,7 @@ fn a_block_corner_is_not_removable() {
 fn a_vertex_inserted_by_a_split_is_removable() {
     let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
-    let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
+    let split = split_face_edge(&mut map, face, edge, Fraction::new(0.5)).expect("split");
 
     let dart = map.vertex_attr_unchecked(split.vertex()).dart;
     assert!(is_removable(&map, dart, Dim::Zero));
@@ -75,7 +76,7 @@ fn removing_a_split_vertex_restores_the_original_dart_count() {
     let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let darts = map.dart_count();
     let (face, edge) = any_boundary_edge(&map);
-    let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
+    let split = split_face_edge(&mut map, face, edge, Fraction::new(0.5)).expect("split");
     assert!(map.dart_count() > darts);
 
     let dart = map.vertex_attr_unchecked(split.vertex()).dart;
@@ -93,7 +94,7 @@ fn removing_a_split_vertex_restores_the_original_dart_count() {
 fn a_vertex_removal_names_the_two_edges_it_fuses() {
     let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
-    let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
+    let split = split_face_edge(&mut map, face, edge, Fraction::new(0.5)).expect("split");
     let dart = map.vertex_attr_unchecked(split.vertex()).dart;
 
     let removal = map
@@ -118,7 +119,7 @@ fn a_vertex_removal_names_the_two_edges_it_fuses() {
 fn removal_translates_every_dart_it_did_not_delete() {
     let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
-    let split = split_face_edge(&mut map, face, edge, 0.5).expect("split");
+    let split = split_face_edge(&mut map, face, edge, Fraction::new(0.5)).expect("split");
     let dart = map.vertex_attr_unchecked(split.vertex()).dart;
     let before = map.dart_count();
 

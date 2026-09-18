@@ -77,16 +77,8 @@ fn solid_edge_chamfer_replaces_a_block_edge_with_a_planar_face() {
         .edges()
         .into_iter()
         .find(|edge| {
-            let start = *edge
-                .bounded_unchecked()
-                .start()
-                .point()
-                .expect("edge start should be geometric");
-            let end = *edge
-                .bounded_unchecked()
-                .end()
-                .point()
-                .expect("edge end should be geometric");
+            let start = *edge.bounded_unchecked().start().point();
+            let end = *edge.bounded_unchecked().end().point();
             (start.x - end.x).abs() < 1.0e-9
                 && (start.y - end.y).abs() < 1.0e-9
                 && (start.z - end.z).abs() > 3.9
@@ -114,7 +106,7 @@ fn solid_vertex_chamfer_replaces_a_block_corner_with_a_planar_face() {
         .vertices()
         .into_iter()
         .find(|vertex| {
-            let point = *vertex.point().expect("block vertex should be geometric");
+            let point = *vertex.point();
             point.coords.norm() < 1.0e-9
         })
         .expect("block should have an origin vertex")
@@ -153,16 +145,8 @@ fn several_disjoint_solid_edges_can_be_chamfered_in_one_transaction() {
         .edges()
         .into_iter()
         .filter(|edge| {
-            let start = *edge
-                .bounded_unchecked()
-                .start()
-                .point()
-                .expect("edge start should be geometric");
-            let end = *edge
-                .bounded_unchecked()
-                .end()
-                .point()
-                .expect("edge end should be geometric");
+            let start = *edge.bounded_unchecked().start().point();
+            let end = *edge.bounded_unchecked().end().point();
             (start.x - end.x).abs() < 1.0e-9
                 && (start.y - end.y).abs() < 1.0e-9
                 && (start.z - end.z).abs() > 3.9
@@ -191,11 +175,9 @@ fn solid_face_profile_chamfer_replaces_the_complete_rim_with_a_bevel_ring() {
         .faces()
         .into_iter()
         .find(|face| {
-            face.vertices().iter().all(|vertex| {
-                vertex
-                    .point()
-                    .is_some_and(|point| (point.z - 4.0).abs() < 1.0e-9)
-            })
+            face.vertices()
+                .iter()
+                .all(|vertex| (vertex.point().z - 4.0).abs() < 1.0e-9)
         })
         .expect("block should have a top face")
         .outer_loop()
@@ -260,12 +242,8 @@ fn solid_edge_chamfer_supports_an_extruded_nurbs_profile_edge() {
         .edges()
         .into_iter()
         .find(|edge| {
-            matches!(edge.curve(), Some(Curve::Nurbs(_)))
-                && edge
-                    .bounded_unchecked()
-                    .start()
-                    .point()
-                    .is_some_and(|point| (point.z - 2.0).abs() < 1.0e-9)
+            matches!(edge.curve(), Curve::Nurbs(_))
+                && (edge.bounded_unchecked().start().point().z - 2.0).abs() < 1.0e-9
         })
         .expect("extrusion should contain a translated wavy edge")
         .key();
@@ -294,7 +272,7 @@ fn solid_edge_chamfer_supports_an_extruded_nurbs_profile_edge() {
         chamfer_face
             .edges()
             .iter()
-            .filter(|edge| matches!(edge.curve(), Some(Curve::Nurbs(_))))
+            .filter(|edge| matches!(edge.curve(), Curve::Nurbs(_)))
             .count(),
         2,
         "the chamfer should retain both curved NURBS boundaries"

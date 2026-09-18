@@ -30,11 +30,9 @@ pub fn build(distance: f64) -> Result<ScriptResult, String> {
         .faces()
         .into_iter()
         .find(|face| {
-            face.vertices().iter().all(|vertex| {
-                vertex
-                    .point()
-                    .is_some_and(|point| (point.z - Z_SIZE).abs() < 1.0e-9)
-            })
+            face.vertices()
+                .iter()
+                .all(|vertex| (vertex.point().z - Z_SIZE).abs() < 1.0e-9)
         })
         .ok_or("whole-profile block did not expose its top face")?
         .outer_loop()
@@ -58,11 +56,7 @@ pub fn build(distance: f64) -> Result<ScriptResult, String> {
         .solid_unchecked(vertex_solid)
         .vertices()
         .into_iter()
-        .find(|vertex| {
-            vertex
-                .point()
-                .is_some_and(|point| (*point - vertex_origin).norm() <= 1.0e-9)
-        })
+        .find(|vertex| (*vertex.point() - vertex_origin).norm() <= 1.0e-9)
         .ok_or("single-vertex block did not expose its lower-front-left vertex")?
         .key();
     let vertex_faces_before = g.iter_faces().map(|(key, _)| key).collect::<HashSet<_>>();
@@ -78,11 +72,10 @@ pub fn build(distance: f64) -> Result<ScriptResult, String> {
 
     let mut hints = VizHints::new();
     for face in g.solid_unchecked(profile_solid).faces() {
-        let is_top_cap = face.vertices().iter().all(|vertex| {
-            vertex
-                .point()
-                .is_some_and(|point| (point.z - Z_SIZE).abs() < 1.0e-9)
-        });
+        let is_top_cap = face
+            .vertices()
+            .iter()
+            .all(|vertex| (vertex.point().z - Z_SIZE).abs() < 1.0e-9);
         let style = if profile_new_faces.contains(&face.key()) && !is_top_cap {
             Style::default()
                 .color("#ffb454")

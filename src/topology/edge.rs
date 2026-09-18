@@ -4,6 +4,7 @@ use std::ops::Deref;
 use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Curve, Interval, PointCoincidence, TrimmedCurve};
 use crate::model::{Cell1, Cell2, MergeTopology, TopologyMerge};
+use crate::topology::attributes::EdgeAttr;
 use crate::topology::closed::Closeable;
 use crate::topology::face::Face;
 use crate::topology::gmap::Dim;
@@ -238,6 +239,11 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
         self.key
     }
 
+    /// Returns the store edge attribute
+    pub fn attr(&self) -> &EdgeAttr<P::E> {
+        self.model.edge_attr_unchecked(self.key)
+    }
+
     /// Returns the dart that represents this edge view in the current
     /// traversal context.
     pub fn dart(&self) -> Dart {
@@ -287,9 +293,9 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
             .collect()
     }
 
-    /// Returns the geometric curve attached to this edge, if it has one.
-    pub fn curve(&self) -> Option<&'a Curve> {
-        self.model.edge_attr(self.key).map(|attr| &attr.curve)
+    /// Returns the geometric curve attached to this edge.
+    pub fn curve(&self) -> &'a Curve {
+        &self.model.edge_attr_unchecked(self.key).curve
     }
 
     /// Whether a corner already sits where `parameter` falls on this edge.
@@ -303,14 +309,11 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     /// edge's span coincide with its corners only when it has corners there, and
     /// reconstructing the answer from `domain.start.value()` is the mistake this exists
     /// to stop. `tolerance` is a distance.
-    pub fn has_corner_at(&self, parameter: f64, tolerance: f64) -> bool {
-        let Some(curve) = self.curve() else {
-            return false;
-        };
-        let at = curve.point_at(NativeParam::new(parameter));
+    pub fn has_corner_at(&self, parameter: NativeParam, tolerance: f64) -> bool {
+        let at = self.curve().point_at(parameter);
         self.vertices()
             .iter()
-            .filter_map(|corner| corner.point())
+            .map(|corner| corner.point())
             .any(|corner| corner.coincides(at, tolerance))
     }
 
@@ -320,8 +323,8 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     /// stored dart. A view reached in the opposite direction swaps that span
     /// without applying periodic wrapping again, so it traverses the same
     /// geometric section backward rather than its complement.
-    pub fn parameter_interval(&self) -> Option<Interval> {
-        let attr = self.model.edge_attr(self.key)?;
+    pub fn parameter_interval(&self) -> Interval {
+        let attr = self.model.edge_attr_unchecked(self.key);
         // The reference span belongs to the stored dart, not to this view: the
         // view's orientation is applied to it below.
         //
@@ -335,16 +338,14 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
             self.model.alpha(Dim::Zero, attr.dart),
         ));
         let reference = match ends {
-            Some((start, end)) => attr.curve.interval_between(*start.point()?, *end.point()?),
+            Some((start, end)) => attr.curve.interval_between(*start.point(), *end.point()),
             // An unmarked edge is its support, and has no corner to ask.
             None => attr.curve.domain(),
         };
-        Some(
-            match self.model.edge_orientation_at_dart(self.key, self.dart) {
-                Orientation::Same => reference,
-                Orientation::Reversed => reference.reversed(),
-            },
-        )
+        match self.model.edge_orientation_at_dart(self.key, self.dart) {
+            Orientation::Same => reference,
+            Orientation::Reversed => reference.reversed(),
+        }
     }
 
     /// Returns this edge's curve paired with the span its vertices bound.
@@ -355,22 +356,14 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     /// view's orientation gives its direction, which is why an edge needs no
     /// interval in its attribute. Geometry that has no vertices to derive from,
     /// such as a solver's section, must carry its span instead.
-    pub fn trimmed_curve(&self) -> Option<TrimmedCurve> {
-        Some(TrimmedCurve::new(
-            self.curve()?.clone(),
-            self.parameter_interval()?,
-        ))
+    pub fn trimmed_curve(&self) -> TrimmedCurve {
+        TrimmedCurve::new(self.curve().clone(), self.parameter_interval())
     }
 
     /// Returns the curve length over this edge view's
     /// [`parameter_interval`](Self::parameter_interval).
-    ///
-    /// `None` when the edge has no curve, or when an endpoint it would derive
-    /// its span from carries no point geometry.
-    pub fn length(&self) -> Option<f64> {
-        let interval = self.parameter_interval()?;
-        self.curve()
-            .map(|curve| curve.length(interval.start, interval.end))
+    pub fn length(&self) -> f64 {
+        self.trimmed_curve().length()
     }
 }
 

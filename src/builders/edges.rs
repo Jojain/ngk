@@ -3,11 +3,12 @@ use std::collections::{HashMap, HashSet};
 use crate::builders::errors::{EdgeCreationError, ModelEditFailure};
 use crate::geometry::parameter::NativeParam;
 use crate::geometry::{
-    Curve, Interval, LINEAR_TOLERANCE, NurbsError, Plane, Point3, PointCoincidence,
+    Curve, Fraction, Interval, LINEAR_TOLERANCE, NurbsError, Plane, Point3, PointCoincidence,
 };
 use crate::model::{Cell0, Cell2, Model};
 use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
+use crate::topology::edge::Edge;
 use crate::topology::edit::ModelEditError;
 use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
@@ -92,18 +93,19 @@ pub enum EdgeSplitError {
     EdgeNotProfileOnly { edge: EdgeKey },
     #[error("edge {edge:?} belongs to a face; use a face-boundary split builder")]
     EdgeBelongsToFace { edge: EdgeKey },
-    #[error("edge {edge:?} has missing endpoint geometry")]
-    MissingEndpointGeometry { edge: EdgeKey },
     #[error("split parameter must be finite, got {parameter}")]
-    NonFiniteParameter { parameter: f64 },
+    NonFiniteParameter { parameter: Fraction },
     #[error("split parameter {parameter} is outside edge domain {domain:?}")]
-    ParameterOutOfRange { parameter: f64, domain: Interval },
+    ParameterOutOfRange {
+        parameter: Fraction,
+        domain: Interval,
+    },
     #[error("split parameter {parameter} is too close to an edge boundary")]
-    DegenerateSplit { parameter: f64 },
+    DegenerateSplit { parameter: Fraction },
     #[error("failed to trim edge {edge:?} at split parameter {parameter}")]
     CurveTrimFailed {
         edge: EdgeKey,
-        parameter: f64,
+        parameter: NativeParam,
         #[source]
         source: NurbsError,
     },
@@ -117,16 +119,52 @@ impl From<ModelEditError> for EdgeSplitError {
     }
 }
 
+/// Where a cut lands on an edge, resolved in every space that names it.
+///
+/// A split reads geometry off an edge and then rewires the map, and the view
+/// that answers the first borrows the model the second mutates. So the reading
+/// happens once, while the view is still in hand, and what it derives travels
+/// as one value: the span the edge covers of its support, the cut expressed in
+/// that support's own parameters, and the point the new corner takes. A native
+/// parameter apart from the span it was resolved against would be the loose
+/// pair this exists to avoid.
+#[derive(Debug, Clone, Copy)]
+struct EdgeCut {
+    /// The span the edge covers, in its stored dart's direction.
+    interval: Interval,
+    /// Where the cut falls in the support's own parameterization.
+    native: NativeParam,
+    /// The point the corner the cut adds is placed at.
+    point: Point3,
+}
+
+impl EdgeCut {
+    /// Resolves `parameter` -- a fraction of `edge`'s span -- against that span.
+    fn new<P: Payload>(edge: Edge<'_, P>, parameter: Fraction) -> Self {
+        let interval = edge.parameter_interval();
+        let native = interval.at(parameter);
+        Self {
+            interval,
+            native,
+            point: edge.curve().point_at(native),
+        }
+    }
+}
+
+/// A cut on a free profile edge, read off the model before it is touched.
 struct PreparedFreeEdgeSplit {
     first_dart: Dart,
     second_dart: Dart,
     curve: Curve,
+    cut: EdgeCut,
 }
 
+/// A cut on an edge a face hangs off, read off the model before it is touched.
 struct PreparedAttachedEdgeSplit {
     first_dart: Dart,
     second_dart: Dart,
     curve: Curve,
+    cut: EdgeCut,
     edge_darts: Vec<Dart>,
 }
 
@@ -185,7 +223,7 @@ pub fn add_line<P: Payload>(
 pub fn split_edge<P: Payload>(
     g: &mut Model<P>,
     edge: EdgeKey,
-    parameter: f64,
+    parameter: Fraction,
 ) -> Result<EdgeSplit, EdgeSplitError> {
     g.transaction(|edit| split_edge_staged(edit, edge, parameter))
 }
@@ -194,38 +232,26 @@ pub fn split_edge<P: Payload>(
 pub(crate) fn split_edge_staged<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
-    parameter: f64,
+    parameter: Fraction,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    let split = prepare_profile_edge_split(edit, edge, parameter)?;
+    let split = prepare_profile_edge_split(edit.model(), edge, parameter)?;
     if edit.attribute::<Cell0>(split.first_dart).is_none() {
-        return Ok(mark_closed_edge(
-            edit,
-            edge,
-            split.first_dart,
-            &split.curve,
-            parameter,
-        ));
+        return Ok(mark_closed_edge(edit, edge, split.first_dart, split.cut));
     }
-    split_edge_with_profile_links(edit, edge, parameter, split)
+    split_edge_with_profile_links(edit, edge, split)
 }
 
 pub(crate) fn split_face_boundary_edge<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
-    parameter: f64,
+    parameter: Fraction,
     reversed: bool,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    let split = prepare_attached_edge_split(edit, edge, parameter)?;
+    let split = prepare_attached_edge_split(edit.model(), edge, parameter)?;
     if edit.attribute::<Cell0>(split.first_dart).is_none() {
-        return Ok(mark_closed_edge(
-            edit,
-            edge,
-            split.first_dart,
-            &split.curve,
-            parameter,
-        ));
+        return Ok(mark_closed_edge(edit, edge, split.first_dart, split.cut));
     }
-    split_attached_edge_with_profile_links(edit, edge, parameter, split, reversed)
+    split_attached_edge_with_profile_links(edit, edge, split, reversed)
 }
 
 /// Materializes an unmarked edge's own 0-cell as the corner a cut asked for.
@@ -243,33 +269,19 @@ fn mark_closed_edge<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     dart: Dart,
-    curve: &Curve,
-    parameter: f64,
+    cut: EdgeCut,
 ) -> EdgeSplit {
     edit.disown_cell(Dim::Zero, dart);
-    let vertex = edit.add_vertex(VertexAttr::new(
-        dart,
-        curve.point_at(NativeParam::new(parameter)),
-        P::V::default(),
-    ));
+    let vertex = edit.add_vertex(VertexAttr::new(dart, cut.point, P::V::default()));
     EdgeSplit::Marked { edge, vertex }
 }
 
 fn split_edge_with_profile_links<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
-    parameter: f64,
     split: PreparedFreeEdgeSplit,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    let midpoint = split.curve.point_at(NativeParam::new(parameter));
-    let (first_curve, second_curve) = split_curve_at_parameter(
-        edit,
-        edge,
-        split.first_dart,
-        split.second_dart,
-        &split.curve,
-        parameter,
-    )?;
+    let (first_curve, second_curve) = split_curve_at_parameter(edge, &split.curve, split.cut)?;
     let first_mid = edit.add_dart();
     let second_mid = edit.add_dart();
 
@@ -278,10 +290,8 @@ fn split_edge_with_profile_links<P: Payload>(
     edit.link(Dim::Zero, second_mid, split.second_dart)?;
     edit.link(Dim::One, first_mid, second_mid)?;
 
-    let vertex = edit.add_vertex(VertexAttr::new(first_mid, midpoint, P::V::default()));
-    edit.edge_attr_mut(edge)
-        .expect("split edge must remain registered")
-        .curve = first_curve;
+    let vertex = edit.add_vertex(VertexAttr::new(first_mid, split.cut.point, P::V::default()));
+    edit.edge_attr_mut_unchecked(edge).curve = first_curve;
     let second = edit.add_edge_split_from(
         edge,
         EdgeAttr::new(second_mid, second_curve, P::E::default()),
@@ -297,24 +307,13 @@ fn split_edge_with_profile_links<P: Payload>(
 fn split_attached_edge_with_profile_links<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
-    parameter: f64,
     split: PreparedAttachedEdgeSplit,
     reversed: bool,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    let midpoint = split.curve.point_at(NativeParam::new(parameter));
-    let (mut first_curve, mut second_curve) = split_curve_at_parameter(
-        edit,
-        edge,
-        split.first_dart,
-        split.second_dart,
-        &split.curve,
-        parameter,
-    )?;
+    let (mut first_curve, mut second_curve) =
+        split_curve_at_parameter(edge, &split.curve, split.cut)?;
     if reversed {
-        (first_curve, second_curve) = (
-            reverse_split_curve(edge, parameter, second_curve)?,
-            reverse_split_curve(edge, parameter, first_curve)?,
-        );
+        (first_curve, second_curve) = (second_curve.reversed(), first_curve.reversed());
     }
     let alpha0_pairs = alpha_pairs(edit, &split.edge_darts, Dim::Zero);
     let alpha2_pairs = alpha_pairs(edit, &split.edge_darts, Dim::Two);
@@ -339,12 +338,10 @@ fn split_attached_edge_with_profile_links<P: Payload>(
 
     let vertex = edit.add_vertex(VertexAttr::new(
         mid_darts[&split.first_dart],
-        midpoint,
+        split.cut.point,
         P::V::default(),
     ));
-    edit.edge_attr_mut(edge)
-        .expect("split edge must remain registered")
-        .curve = first_curve;
+    edit.edge_attr_mut_unchecked(edge).curve = first_curve;
     let second = edit.add_edge_split_from(
         edge,
         EdgeAttr::new(mid_darts[&split.second_dart], second_curve, P::E::default()),
@@ -357,53 +354,46 @@ fn split_attached_edge_with_profile_links<P: Payload>(
     })
 }
 
-fn reverse_split_curve(
-    _edge: EdgeKey,
-    _parameter: f64,
-    curve: Curve,
-) -> Result<Curve, EdgeSplitError> {
-    Ok(curve.reversed())
-}
-
 fn prepare_profile_edge_split<P: Payload>(
     g: &Model<P>,
     edge: EdgeKey,
-    parameter: f64,
+    parameter: Fraction,
 ) -> Result<PreparedFreeEdgeSplit, EdgeSplitError> {
     if !parameter.is_finite() {
         return Err(EdgeSplitError::NonFiniteParameter { parameter });
     }
 
-    let attr = g
-        .edge_attr(edge)
-        .ok_or(EdgeSplitError::MissingEdge { edge })?;
+    let view = g.edge(edge).ok_or(EdgeSplitError::MissingEdge { edge })?;
+    let attr = view.attr();
     let first_dart = attr.dart;
     let second_dart = g.alpha(Dim::Zero, first_dart);
+    let cut = EdgeCut::new(view, parameter);
     let split = PreparedFreeEdgeSplit {
         first_dart,
         second_dart,
         curve: attr.curve.clone(),
+        cut,
     };
 
     check_profile_edge(g, edge, first_dart, second_dart)?;
-    check_split_parameter(g, edge, parameter, first_dart, second_dart, &split.curve)?;
+    check_split_parameter(g, parameter, first_dart, cut)?;
     Ok(split)
 }
 
 fn prepare_attached_edge_split<P: Payload>(
     g: &Model<P>,
     edge: EdgeKey,
-    parameter: f64,
+    parameter: Fraction,
 ) -> Result<PreparedAttachedEdgeSplit, EdgeSplitError> {
     if !parameter.is_finite() {
         return Err(EdgeSplitError::NonFiniteParameter { parameter });
     }
 
-    let attr = g
-        .edge_attr(edge)
-        .ok_or(EdgeSplitError::MissingEdge { edge })?;
+    let view = g.edge(edge).ok_or(EdgeSplitError::MissingEdge { edge })?;
+    let attr = view.attr();
     let first_dart = attr.dart;
     let second_dart = g.alpha(Dim::Zero, first_dart);
+    let cut = EdgeCut::new(view, parameter);
     let edge_darts = g
         .orbit(first_dart, g.orbit_indices(Dim::One))
         .collect::<Vec<_>>();
@@ -411,11 +401,12 @@ fn prepare_attached_edge_split<P: Payload>(
         first_dart,
         second_dart,
         curve: attr.curve.clone(),
+        cut,
         edge_darts,
     };
 
     check_attached_edge(g, edge, first_dart, second_dart, &split.edge_darts)?;
-    check_split_parameter(g, edge, parameter, first_dart, second_dart, &split.curve)?;
+    check_split_parameter(g, parameter, first_dart, cut)?;
     Ok(split)
 }
 
@@ -470,55 +461,30 @@ fn check_attached_edge<P: Payload>(
 
     Ok(())
 }
-/// Returns the span of `curve` that the edge between these darts occupies.
+/// Cuts `curve` into the part of the edge's span before the cut and the part
+/// beyond it.
 ///
-/// Vertices give the ends when the edge has them. A whole circle with nothing
-/// marked on it has none -- the point where it closes is inside the edge -- and
-/// its span is the curve's own domain, which is the same answer
-/// [`crate::topology::edge::Edge::parameter_interval`] gives.
-fn edge_reference_interval<P: Payload>(
-    g: &Model<P>,
+/// Both ends of the span and the cut itself are native on `curve`, so each
+/// piece is named directly. Going through a fraction would have to say a
+/// fraction of what, and the edge's span is not the support's own extent: the
+/// two agree only on an edge that covers the whole support.
+fn split_curve_at_parameter(
     edge: EdgeKey,
-    first_dart: Dart,
-    second_dart: Dart,
     curve: &Curve,
-) -> Result<Interval, EdgeSplitError> {
-    let ends = g
-        .attribute::<Cell0>(first_dart)
-        .map(|vertex| vertex.point)
-        .zip(g.attribute::<Cell0>(second_dart).map(|vertex| vertex.point));
-    match ends {
-        Some((start, end)) => Ok(curve.interval_between(start, end)),
-        None if curve.is_closed() => Ok(curve.domain()),
-        None => Err(EdgeSplitError::MissingEndpointGeometry { edge }),
-    }
-}
-
-fn split_curve_at_parameter<P: Payload>(
-    g: &Model<P>,
-    edge: EdgeKey,
-    first_dart: Dart,
-    second_dart: Dart,
-    curve: &Curve,
-    parameter: f64,
+    cut: EdgeCut,
 ) -> Result<(Curve, Curve), EdgeSplitError> {
-    let interval = edge_reference_interval(g, edge, first_dart, second_dart, curve)?;
-    // `parameter` is native on `curve`, and so are the ends of the edge's span,
-    // so each piece is named directly. Going through a fraction would have to
-    // say a fraction of what, and the edge's span is not the support's own
-    // extent: the two agree only on an edge that covers the whole support.
     let trim = |interval| {
         curve
             .trimmed_native(interval)
             .map_err(|source| EdgeSplitError::CurveTrimFailed {
                 edge,
-                parameter,
+                parameter: cut.native,
                 source,
             })
     };
     Ok((
-        trim(Interval::new(interval.start.value(), parameter))?,
-        trim(Interval::new(parameter, interval.end.value()))?,
+        trim(Interval::new(cut.interval.start, cut.native))?,
+        trim(Interval::new(cut.native, cut.interval.end))?,
     ))
 }
 
@@ -536,15 +502,13 @@ fn alpha_pairs<P: Payload>(g: &Model<P>, darts: &[Dart], dim: Dim) -> Vec<(Dart,
 
 fn check_split_parameter<P: Payload>(
     g: &Model<P>,
-    edge: EdgeKey,
-    parameter: f64,
+    parameter: Fraction,
     first_dart: Dart,
-    second_dart: Dart,
-    curve: &Curve,
+    cut: EdgeCut,
 ) -> Result<(), EdgeSplitError> {
-    let domain = edge_reference_interval(g, edge, first_dart, second_dart, curve)?.ordered();
+    let domain = cut.interval.ordered();
 
-    if !domain.contains(NativeParam::new(parameter), LINEAR_TOLERANCE) {
+    if !domain.contains(cut.native, LINEAR_TOLERANCE) {
         return Err(EdgeSplitError::ParameterOutOfRange { parameter, domain });
     }
 
@@ -557,8 +521,11 @@ fn check_split_parameter<P: Payload>(
         return Ok(());
     }
 
-    if (parameter - domain.start.value()).abs() <= LINEAR_TOLERANCE
-        || (parameter - domain.end.value()).abs() <= LINEAR_TOLERANCE
+    // Asked in the support's own space rather than in fractions: the tolerance
+    // is a distance, and a fraction becomes one only once the span it measures
+    // has been applied to it.
+    if (cut.native - domain.start).abs() <= LINEAR_TOLERANCE
+        || (cut.native - domain.end).abs() <= LINEAR_TOLERANCE
     {
         return Err(EdgeSplitError::DegenerateSplit { parameter });
     }

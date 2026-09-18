@@ -1,5 +1,5 @@
 use ngk::builders::faces::{add_circle, split_face_edge};
-use ngk::geometry::{Curve, NativeParam, Point3};
+use ngk::geometry::{Curve, Fraction, NativeParam, Point3};
 use ngk::healing::{HealedCell, HealingOptions, HealingScope, SkipReason, remove_redundant_cells};
 use ngk::model::Model;
 use ngk::modeling::solids;
@@ -29,7 +29,8 @@ fn splitting_an_edge_then_healing_restores_a_single_edge() {
     let vertices = map.iter_vertices().count();
 
     let (face, edge) = any_boundary_edge(&map);
-    split_face_edge(&mut map, face, edge, 0.5).expect("splitting a block edge should succeed");
+    split_face_edge(&mut map, face, edge, Fraction::new(0.5))
+        .expect("splitting a block edge should succeed");
     assert_eq!(map.iter_edges().count(), edges + 1);
     assert_eq!(map.iter_vertices().count(), vertices + 1);
 
@@ -55,7 +56,8 @@ fn a_fused_edge_spans_its_two_original_endpoints() {
     let start = original.point_at(NativeParam::new(0.0));
     let end = original.point_at(NativeParam::new(1.0));
 
-    split_face_edge(&mut map, face, edge, 0.25).expect("splitting a block edge should succeed");
+    split_face_edge(&mut map, face, edge, Fraction::new(0.25))
+        .expect("splitting a block edge should succeed");
     remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     let fused = map
@@ -91,7 +93,8 @@ fn healing_preserves_shell_euler_characteristic() {
     let before = euler(&map);
 
     let (face, edge) = any_boundary_edge(&map);
-    split_face_edge(&mut map, face, edge, 0.5).expect("splitting a block edge should succeed");
+    split_face_edge(&mut map, face, edge, Fraction::new(0.5))
+        .expect("splitting a block edge should succeed");
     assert_eq!(euler(&map), before, "splitting must not change the shell");
 
     remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
@@ -132,7 +135,7 @@ fn the_lone_vertex_of_a_closed_edge_is_preserved() {
         .first()
         .expect("the disc has a rim")
         .key();
-    split_face_edge(&mut map, face, rim, 0.5).expect("the rim takes a corner");
+    split_face_edge(&mut map, face, rim, Fraction::new(0.5)).expect("the rim takes a corner");
     assert_eq!(map.iter_edges().count(), 1, "marking separates nothing");
     assert_eq!(map.iter_vertices().count(), 1, "and leaves one corner");
 
@@ -154,7 +157,8 @@ fn the_lone_vertex_of_a_closed_edge_is_preserved() {
 fn a_healed_face_still_tessellates() {
     let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
-    split_face_edge(&mut map, face, edge, 0.5).expect("splitting a block edge should succeed");
+    split_face_edge(&mut map, face, edge, Fraction::new(0.5))
+        .expect("splitting a block edge should succeed");
     remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
 
     for (key, _) in map.iter_faces() {
@@ -171,7 +175,8 @@ fn a_healed_face_still_tessellates() {
 fn an_empty_scope_heals_nothing() {
     let (mut map, _) = solids::block(2.0, 2.0, 2.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
-    split_face_edge(&mut map, face, edge, 0.5).expect("splitting a block edge should succeed");
+    split_face_edge(&mut map, face, edge, Fraction::new(0.5))
+        .expect("splitting a block edge should succeed");
     let edges = map.iter_edges().count();
 
     let report = remove_redundant_cells(
@@ -212,8 +217,8 @@ fn two_arcs_that_close_on_each_other_fuse_into_one_closed_edge() {
         .key();
     // Two cuts, because one only marks: a circle needs two corners before it
     // is two arcs.
-    split_face_edge(&mut map, face, rim, 0.5).expect("the first cut marks the rim");
-    split_face_edge(&mut map, face, rim, 3.0).expect("the second cut separates it");
+    split_face_edge(&mut map, face, rim, Fraction::new(0.5)).expect("the first cut marks the rim");
+    split_face_edge(&mut map, face, rim, Fraction::new(0.5)).expect("the second cut separates it");
     assert_eq!(map.iter_edges().count(), 2, "the rim starts split in two");
     assert_eq!(map.iter_vertices().count(), 2);
 
@@ -236,9 +241,7 @@ fn two_arcs_that_close_on_each_other_fuse_into_one_closed_edge() {
         matches!(view, Edge::Marked(_)),
         "the fused rim closes on itself, keeping the corner the fusion left"
     );
-    let span = view
-        .parameter_interval()
-        .expect("a closed edge still spans");
+    let span = view.parameter_interval();
     assert!(
         (span.end - span.start).abs() > std::f64::consts::PI,
         "a closed edge spans its support's whole period, got {span:?}"

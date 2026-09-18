@@ -91,7 +91,7 @@ fn wrapping_imprints_partition_a_cylinder_wall_into_connected_rings() {
             );
             for edge in face.edges() {
                 let pcurve = face.pcurve(edge.dart()).unwrap();
-                let section = edge.trimmed_curve().unwrap();
+                let section = edge.trimmed_curve();
                 for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
                     let uv = pcurve.point_at(Fraction::new(fraction));
                     assert!(
@@ -182,7 +182,7 @@ fn splitting_a_seamed_wall_preserves_both_face_pcurves() {
         .expect("the meridian is walked twice")
         .key();
     let occurrences = edges.len();
-    split_face_edge(&mut g, side, seam, 0.5).unwrap();
+    split_face_edge(&mut g, side, seam, Fraction::new(0.5)).unwrap();
 
     let face = g.face_unchecked(side);
     let split_loop = face
@@ -201,9 +201,7 @@ fn splitting_a_seamed_wall_preserves_both_face_pcurves() {
         let pcurve = face
             .pcurve(edge.dart())
             .expect("every seam occurrence needs its own pcurve");
-        let section = edge
-            .trimmed_curve()
-            .expect("a boundary edge should have a section");
+        let section = edge.trimmed_curve();
         for fraction in [0.0, 1.0] {
             let uv = pcurve.point_at(Fraction::new(fraction));
             assert!(
@@ -269,7 +267,6 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
         let surface_point = shape_face.point_at(uv.x, uv.y);
         let edge_point = edge
             .curve()
-            .expect("circle edge should have geometry")
             .point_at(NativeParam::new(std::f64::consts::TAU * fraction));
         assert!(surface_point.coincides(edge_point, LINEAR_TOLERANCE));
     }
@@ -279,10 +276,7 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
 fn an_arc_profile_gets_a_pcurve_over_the_arc_not_the_whole_circle() {
     let mut g = Model::<StandardPayload>::new();
     let arc = add_arc(&mut g, Plane::xy(), 2.0, 0.0, FRAC_PI_2).expect("arc edge should build");
-    let section = g
-        .edge_unchecked(arc)
-        .trimmed_curve()
-        .expect("the arc should carry a span");
+    let section = g.edge_unchecked(arc).trimmed_curve();
     let chord = add_line(&mut g, section.end(), section.start()).expect("chord should build");
     let profile = add_profile_from_edges(&mut g, &[arc, chord])
         .expect("the arc and its chord should close a profile");
@@ -294,7 +288,7 @@ fn an_arc_profile_gets_a_pcurve_over_the_arc_not_the_whole_circle() {
         .expect("face should have an outer loop")
         .edges()
         .into_iter()
-        .find(|edge| matches!(edge.curve(), Some(Curve::Circle(_))))
+        .find(|edge| matches!(edge.curve(), Curve::Circle(_)))
         .expect("the arc edge should be on the boundary");
     let pcurve = shape_face
         .pcurve(arc_edge.dart())
@@ -330,7 +324,7 @@ fn split_face_edge_updates_boundary_and_pcurves() {
     let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 1.0).expect("face should build");
     let edge = first_outer_edge_key(&g, face_key);
-    let parameter = edge_mid_parameter(&g, edge);
+    let parameter = Fraction::new(0.5);
 
     let split = split_face_edge(&mut g, face_key, edge, parameter).expect("face edge should split");
     let face = g.face_attr_unchecked(face_key);
@@ -367,7 +361,7 @@ fn split_face_edge_rejects_edges_outside_the_face() {
     .expect("outside edge should build");
 
     assert!(matches!(
-        split_face_edge(&mut g, face_key, edge, 0.5),
+        split_face_edge(&mut g, face_key, edge, Fraction::new(0.5)),
         Err(FaceEdgeSplitError::EdgeNotOnFace { .. })
     ));
 }
@@ -388,7 +382,7 @@ fn split_face_edge_uses_existing_pcurve_for_non_planar_surface_variant() {
     .unwrap();
     let edge = first_outer_edge_key(&g, face_key);
 
-    split_face_edge(&mut g, face_key, edge, 0.5)
+    split_face_edge(&mut g, face_key, edge, Fraction::new(0.5))
         .expect("face edge split should use existing pcurve");
 
     let face = g.face_attr_unchecked(face_key);
@@ -417,7 +411,7 @@ fn split_face_edge_splits_shared_edge_of_two_extruded_faces() {
 
     let edge = edge_between_points(&g, Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 0.0, 2.0));
     let adjacent_faces = incident_face_keys(&g, edge);
-    let parameter = 0.75;
+    let parameter = Fraction::new(0.75);
     let edge_count = g.iter_edges().count();
     let vertex_count = g.iter_vertices().count();
     assert_eq!(
@@ -880,15 +874,6 @@ fn incident_face_keys(g: &Model<StandardPayload>, edge: EdgeKey) -> Vec<FaceKey>
     faces
 }
 
-fn edge_mid_parameter(g: &Model<StandardPayload>, edge: EdgeKey) -> f64 {
-    let attr = g.edge_attr_unchecked(edge);
-    let start = g.attribute_unchecked::<Cell0>(attr.dart).point;
-    let end_dart = g.alpha(Dim::Zero, attr.dart);
-    let end = g.attribute_unchecked::<Cell0>(end_dart).point;
-    let interval = attr.curve.interval_between(start, end);
-    interval.midpoint().value()
-}
-
 fn edge_between_points(g: &Model<StandardPayload>, first: Point3, second: Point3) -> EdgeKey {
     g.iter_edges()
         .find_map(|(key, edge)| {
@@ -934,14 +919,12 @@ fn imprint_sections_retain_source_indices_and_directed_intervals() {
             edge.bounded_unchecked()
                 .start()
                 .point()
-                .unwrap()
                 .coincides(source.point_at(section.interval.start), LINEAR_TOLERANCE)
         );
         assert!(
             edge.bounded_unchecked()
                 .end()
                 .point()
-                .unwrap()
                 .coincides(source.point_at(section.interval.end), LINEAR_TOLERANCE)
         );
     }

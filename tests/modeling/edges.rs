@@ -11,9 +11,9 @@ fn line_returns_owned_line_edge_shape() {
     let shape = edges::line(start, end).expect("line should build");
     let edge = shape.edge();
 
-    assert_eq!(edge.bounded_unchecked().start().point(), Some(&start));
-    assert_eq!(edge.bounded_unchecked().end().point(), Some(&end));
-    assert!(matches!(edge.curve(), Some(Curve::Line(_))));
+    assert_eq!(*edge.bounded_unchecked().start().point(), start);
+    assert_eq!(*edge.bounded_unchecked().end().point(), end);
+    assert!(matches!(edge.curve(), Curve::Line(_)));
 }
 
 #[test]
@@ -25,7 +25,7 @@ fn circle_returns_owned_closed_edge_shape() {
     assert!(edge.is_closed());
     assert!(matches!(
         edge.curve(),
-        Some(Curve::Circle(circle)) if (circle.radius() - 2.0).abs() <= f64::EPSILON
+        Curve::Circle(circle) if (circle.radius() - 2.0).abs() <= f64::EPSILON
     ));
 }
 
@@ -39,7 +39,7 @@ fn arc_returns_owned_open_circle_edge_shape() {
     assert!(!edge.is_closed());
     assert!(matches!(
         edge.curve(),
-        Some(Curve::Circle(circle)) if (circle.radius() - 2.0).abs() <= f64::EPSILON
+        Curve::Circle(circle) if (circle.radius() - 2.0).abs() <= f64::EPSILON
     ));
 }
 
@@ -51,11 +51,11 @@ fn reversed_arc_uses_the_same_span_with_a_negative_parameter_delta() {
 
     assert_eq!(
         edge.parameter_interval(),
-        Some(Interval::new(0.0, std::f64::consts::FRAC_PI_2))
+        Interval::new(0.0, std::f64::consts::FRAC_PI_2)
     );
     assert_eq!(
         edge.reversed().parameter_interval(),
-        Some(Interval::new(std::f64::consts::FRAC_PI_2, 0.0))
+        Interval::new(std::f64::consts::FRAC_PI_2, 0.0)
     );
 }
 
@@ -64,10 +64,7 @@ fn circle_edge_vertices_recover_a_span_wider_than_half_a_turn() {
     let span = 3.0 * std::f64::consts::FRAC_PI_2;
     let shape = edges::arc(Plane::xy(), 1.0, 0.0, span).expect("arc should build");
 
-    assert_eq!(
-        shape.edge().parameter_interval(),
-        Some(Interval::new(0.0, span))
-    );
+    assert_eq!(shape.edge().parameter_interval(), Interval::new(0.0, span));
 }
 
 #[test]

@@ -127,8 +127,8 @@ impl From<MissingEdgeCurve> for FaceEdgeSplitError {
     }
 }
 
-fn edge_curve<'a, P: Payload>(edge: &'a Edge<'_, P>) -> Result<&'a Curve, MissingEdgeCurve> {
-    edge.curve().ok_or(MissingEdgeCurve(edge.dart()))
+fn edge_curve<'a, P: Payload>(edge: &'a Edge<'_, P>) -> &'a Curve {
+    edge.curve()
 }
 
 /// A section edge and its directed interval on the original input imprint.
@@ -580,7 +580,7 @@ pub fn add_square(
 
 /// Splits a face-boundary edge and all of its incident face pcurves.
 ///
-/// `parameter` is interpreted in the stored 3D curve's parameter domain. The
+/// `parameter` is interpreted as a fraction of the edge's parameter domain. The
 /// split is applied across the full topological edge, so pcurves on neighboring
 /// faces sharing that edge are split at the corresponding surface points too.
 /// The returned [`EdgeSplit`] identifies both resulting edges and the inserted
@@ -589,7 +589,7 @@ pub fn split_face_edge<P: Payload>(
     g: &mut Model<P>,
     face: FaceKey,
     edge: EdgeKey,
-    parameter: f64,
+    parameter: Fraction,
 ) -> Result<EdgeSplit, FaceEdgeSplitError> {
     g.transaction(|edit| split_face_edge_staged(edit, face, edge, parameter))
 }
@@ -599,7 +599,7 @@ pub(crate) fn split_face_edge_staged<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     edge: EdgeKey,
-    parameter: f64,
+    parameter: Fraction,
 ) -> Result<EdgeSplit, FaceEdgeSplitError> {
     let boundary_dart = face_edge_dart(edit, face, edge)?;
     let reversed = closed_boundary_curve_reversed(edit, face, edge, boundary_dart)?;
@@ -1715,17 +1715,15 @@ fn split_boundary_at_uv<P: Payload>(
     };
 
     let edge = Edge::new(edit, target.edge);
-    let curve = edge_curve(&edge)?;
+    let curve = edge_curve(&edge);
     let face_view = edit
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
     let surface = face_view.surface();
-    let mut parameter = curve.param_at(surface.point_at(uv.x, uv.y));
+    let interval = edge.parameter_interval();
+    let mut parameter = curve.parameter_at(surface.point_at(uv.x, uv.y));
     if let Periodicity::Periodic(period) = curve.periodicity() {
-        let domain = edge
-            .parameter_interval()
-            .ok_or(MissingEdgeCurve(edge.dart()))?
-            .ordered();
+        let domain = interval.ordered();
         while parameter < NativeParam::new(domain.start.value() - LINEAR_TOLERANCE) {
             parameter += period;
         }
@@ -1733,7 +1731,10 @@ fn split_boundary_at_uv<P: Payload>(
             parameter -= period;
         }
     }
-    match split_face_edge_staged(edit, face, target.edge, parameter.value()) {
+    // The splitter cuts at a fraction of the edge's span, and the span that
+    // fraction is of is the one the parameter was just brought onto.
+    let parameter = interval.fraction_of(parameter);
+    match split_face_edge_staged(edit, face, target.edge, parameter) {
         Ok(_)
         | Err(FaceEdgeSplitError::EdgeSplitFailed(EdgeSplitError::DegenerateSplit { .. })) => {
             Ok(())
@@ -1965,7 +1966,7 @@ fn loop_boundary_edges<P: Payload>(
             // An unmarked loop has no corner at all, and the pcurve's start is
             // then the only place to begin the walk from.
             let uv = Vertex::from_dart(g, dart)
-                .and_then(|vertex| vertex.point().copied())
+                .map(|vertex| *vertex.point())
                 .and_then(|point| face_view.surface().param_at(point).ok())
                 .map(|uv| periodic_image_near_pcurve(face_view.surface(), &pcurve, uv))
                 .unwrap_or_else(|| pcurve.point_at(Fraction::new(0.0)));
@@ -2766,17 +2767,14 @@ fn closed_boundary_curve_reversed<P: Payload>(
 fn incident_face_pcurves<P: Payload>(
     g: &Model<P>,
     edge: EdgeKey,
-    parameter: f64,
+    parameter: Fraction,
 ) -> Result<Vec<IncidentFacePcurve>, FaceEdgeSplitError> {
     let edge_view = g.edge(edge).ok_or(FaceEdgeSplitError::EdgeSplitFailed(
         EdgeSplitError::MissingEdge { edge },
     ))?;
     let split_point = edge_view
         .curve()
-        .ok_or(FaceEdgeSplitError::MissingEdgeCurve {
-            dart: edge_view.dart(),
-        })?
-        .point_at(NativeParam::new(parameter));
+        .point_at(edge_view.parameter_interval().at(parameter));
     // A seam has two boundary occurrences on one face, each with its own UV curve.
     let mut occurrences = HashSet::new();
     for face in edge_view.faces() {

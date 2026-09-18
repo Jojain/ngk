@@ -80,12 +80,7 @@ fn block_face_normals_point_outward_from_solid_center() {
         let vertices = face.vertices();
         let face_center = vertices
             .iter()
-            .map(|vertex| {
-                vertex
-                    .point()
-                    .expect("block face vertices should have geometry")
-                    .coords
-            })
+            .map(|vertex| vertex.point().coords)
             .sum::<Vector3<f64>>()
             / vertices.len() as f64;
         let outward = face_center - solid_center;

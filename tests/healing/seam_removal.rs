@@ -1,6 +1,6 @@
 //! The seam pass: a seamed model in, a seamless model out.
 
-use ngk::geometry::{Axis2, DomainSide};
+use ngk::geometry::{Axis2, DomainSide, Fraction};
 use ngk::healing::{HealingOptions, remove_redundant_cells};
 use ngk::topology::attributes::LoopKind;
 use ngk::topology::validation::validate_solid_manifold;
@@ -95,7 +95,8 @@ fn seams_only_removes_the_cut_and_declines_everything_else() {
         .first()
         .expect("a block face has edges")
         .key();
-    split_face_edge(&mut block_map, face, edge, 0.5).expect("splitting a block edge should work");
+    split_face_edge(&mut block_map, face, edge, Fraction::new(0.5))
+        .expect("splitting a block edge should work");
     let vertices_before = block_map.iter_vertices().count();
 
     let report = remove_redundant_cells(&mut block_map, HealingOptions::seams_only())

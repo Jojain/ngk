@@ -142,7 +142,7 @@ fn the_cut_down_copy_is_the_span_over_a_unit_domain() {
     for step in 0..=8 {
         let fraction = f64::from(step) / 8.0;
         let on_arc = arc.point_at(Fraction::new(fraction));
-        let projected = standalone.point_at(standalone.param_at(on_arc));
+        let projected = standalone.point_at(standalone.parameter_at(on_arc));
         assert!(
             (projected - on_arc).norm() <= 1e-9,
             "the exact copy must carry every point of the span"

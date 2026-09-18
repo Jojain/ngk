@@ -270,21 +270,18 @@ fn fills_inner_loop<P: Payload>(
         })
 }
 
-/// Reports whether every boundary edge of both faces carries the geometry a
-/// rebuild needs.
+/// Reports whether the surviving and consumed faces are both registered.
+///
+/// An edge always carries a curve, so a registered face's boundary is
+/// rebuildable; a missing face is the only way a rebuild has no geometry.
 fn has_rebuildable_boundary<P: Payload>(
     g: &Model<P>,
     survivor: FaceKey,
     consumed: Option<FaceKey>,
 ) -> bool {
-    std::iter::once(survivor).chain(consumed).all(|face| {
-        g.face(face).is_some_and(|view| {
-            view.loops()
-                .iter()
-                .flat_map(|boundary| boundary.edges())
-                .all(|edge| edge.trimmed_curve().is_some())
-        })
-    })
+    std::iter::once(survivor)
+        .chain(consumed)
+        .all(|face| g.face(face).is_some())
 }
 
 /// Removes the edge and restores the fused face's parameter curves.
@@ -390,7 +387,7 @@ fn rebuild_pcurves<P: Payload>(
                 // reversed interval traverses the stored support backward, which
                 // is what keeps a shared edge's stored direction out of the
                 // face's own parameter space.
-                let section = edge.trimmed_curve()?;
+                let section = edge.trimmed_curve();
                 pcurves.insert(dart, curve_pcurve(&section, plane).ok()?);
             }
         }

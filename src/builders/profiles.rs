@@ -247,9 +247,7 @@ pub fn profile_pcurves<P: Payload>(
 
     for edge in edges.iter() {
         let dart = edge.dart();
-        let section = edge
-            .trimmed_curve()
-            .ok_or(PolylineError::MissingVertexPoint { dart })?;
+        let section = edge.trimmed_curve();
         pcurves.insert(dart, curve_pcurve(&section, plane)?);
     }
 

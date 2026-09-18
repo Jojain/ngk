@@ -74,16 +74,12 @@ fn extrude_edge<P: Payload>(
         .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
     // The ends of the section being swept. A closed edge sweeps a wall whose two
     // ends are the same point, which is exactly the wrapping case.
-    let section = edge
-        .trimmed_curve()
-        .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
+    let section = edge.trimmed_curve();
     let (start, end) = (
         section.point_at(Fraction::new(0.0)),
         section.point_at(Fraction::new(1.0)),
     );
-    let curve = edge
-        .curve()
-        .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
+    let curve = edge.curve();
 
     let corners = [start, end, end + direction, start + direction];
     let surface_data = extruded_edge_surface(edge.dart(), curve, start, end, direction)?;
@@ -394,12 +390,8 @@ mod tests {
         let translated_edge = Edge::from_dart(&source, translated_dart)
             .expect("translated dart should belong to an edge");
         let (translated_start, translated_end) = translated_edge.bounded_unchecked().vertices();
-        let start = *translated_start
-            .point()
-            .expect("translated edge start should have geometry");
-        let end = *translated_end
-            .point()
-            .expect("translated edge end should have geometry");
+        let start = *translated_start.point();
+        let end = *translated_end.point();
 
         assert!((start.z - 2.0).abs() <= LINEAR_TOLERANCE);
         assert!((end.z - 2.0).abs() <= LINEAR_TOLERANCE);

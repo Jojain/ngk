@@ -220,9 +220,7 @@ fn every_event_on_an_edge_lies_between_that_edge_s_own_vertices() {
                 continue;
             };
             let edge = map.edge(key).expect("an event names a live edge");
-            let interval = edge
-                .parameter_interval()
-                .expect("an attributed edge has a parameter interval");
+            let interval = edge.parameter_interval();
             assert!(
                 interval.contains(NativeParam::new(parameter), 1e-6),
                 "event {index} at {:?} sits at {parameter} on edge {key:?}, \
@@ -231,7 +229,6 @@ fn every_event_on_an_edge_lies_between_that_edge_s_own_vertices() {
             );
             assert!(
                 edge.curve()
-                    .expect("registered edge geometry")
                     .point_at(NativeParam::new(parameter))
                     .coincides(event.point, tolerance),
                 "event {index}'s edge parameter must locate the event's own point"

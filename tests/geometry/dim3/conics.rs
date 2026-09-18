@@ -36,7 +36,7 @@ fn ellipse_uses_its_frame_and_recovers_parameters() {
         Point3::new(-1.0, 2.0, 3.0),
     );
     for parameter in [0.17, 1.23, 3.81, 5.77] {
-        let recovered = ellipse.param_at(ellipse.point_at(NativeParam::new(parameter)));
+        let recovered = ellipse.parameter_at(ellipse.point_at(NativeParam::new(parameter)));
         let error = (recovered.value() - parameter)
             .rem_euclid(TAU)
             .min((parameter - recovered.value()).rem_euclid(TAU));

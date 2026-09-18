@@ -65,18 +65,8 @@ fn from_edges_orders_connected_edge_shapes() {
 fn add_copies_an_edge_shape_into_the_profile() {
     let arc = edges::arc(Plane::xy(), 2.0, 0.0, std::f64::consts::FRAC_PI_2)
         .expect("arc edge should build");
-    let start = *arc
-        .edge()
-        .bounded_unchecked()
-        .start()
-        .point()
-        .expect("arc start");
-    let end = *arc
-        .edge()
-        .bounded_unchecked()
-        .end()
-        .point()
-        .expect("arc end");
+    let start = *arc.edge().bounded_unchecked().start().point();
+    let end = *arc.edge().bounded_unchecked().end().point();
     let closing_edge = edges::line(end, start).expect("closing edge should build");
     let mut shape = arc.into_profile();
 

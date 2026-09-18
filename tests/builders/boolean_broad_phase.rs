@@ -69,7 +69,7 @@ fn face_bounds(map: &Model<ngk::StandardPayload>, face: FaceKey) -> (Point3, Poi
     let mut min = Point3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
     let mut max = Point3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
     for vertex in map.face_unchecked(face).vertices() {
-        let point = *vertex.point().expect("face geometry");
+        let point = *vertex.point();
         min = Point3::new(min.x.min(point.x), min.y.min(point.y), min.z.min(point.z));
         max = Point3::new(max.x.max(point.x), max.y.max(point.y), max.z.max(point.z));
     }

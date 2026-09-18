@@ -50,7 +50,7 @@ impl PreparedGeometry {
             Entry::Occupied(entry) => Ok(Rc::clone(entry.get())),
             Entry::Vacant(entry) => {
                 let edge = g.edge_unchecked(key);
-                let curve = edge.curve().expect("registered edge geometry");
+                let curve = edge.curve();
                 Ok(Rc::clone(entry.insert(Rc::new(PreparedCurve::new(curve)?))))
             }
         }
@@ -475,9 +475,7 @@ fn enumerate_pairs<P: Payload>(
 }
 
 fn vertex_point<P: Payload>(g: &Model<P>, key: VertexKey) -> Point3 {
-    *g.vertex_unchecked(key)
-        .point()
-        .expect("registered vertex geometry")
+    *g.vertex_unchecked(key).point()
 }
 
 fn edge_curve<P: Payload>(g: &Model<P>, key: EdgeKey) -> &Curve {
@@ -510,17 +508,14 @@ fn probe_vertex_edge<P: Payload>(
     let point = vertex_point(g, vertex_key);
     let edge = g.edge_unchecked(edge_key);
     let curve = edge_curve(g, edge_key);
-    let parameter = curve.param_at(point);
+    let parameter = curve.parameter_at(point);
     if !curve.point_at(parameter).coincides(point, tolerance) {
         return Vec::new();
     }
     // The span the edge actually occupies, which is what the probe must land in
     // — derived from the edge itself rather than rebuilt from its endpoints, so
     // a closed edge answers with its whole period instead of an empty interval.
-    let span = edge
-        .parameter_interval()
-        .expect("registered edge span")
-        .ordered();
+    let span = edge.parameter_interval().ordered();
     if !span.contains(parameter, tolerance) {
         return Vec::new();
     }
@@ -660,9 +655,7 @@ fn probe_edge_face<P: Payload>(
     let edge = g.edge_unchecked(edge_key);
     let face = g.face_unchecked(face_key);
     let curve = edge_curve(g, edge_key);
-    let edge_interval = edge
-        .parameter_interval()
-        .expect("an attributed edge with vertices has a parameter interval");
+    let edge_interval = edge.parameter_interval();
     let trim = trims.get(g, face_key, options.intersections.parameter_tolerance)?;
     let analytic = matches!(curve, Curve::Line(_) | Curve::Circle(_))
         .then(|| {
@@ -993,7 +986,7 @@ fn grazed_vertex<P: Payload, const N: usize>(
     edges
         .into_iter()
         .flat_map(|edge| edge.vertices())
-        .filter_map(|vertex| vertex.point().copied())
+        .map(|vertex| *vertex.point())
         .find(|vertex| {
             !vertex.coincides(point, tolerance)
                 && (vertex - point).norm() <= graze
@@ -1066,7 +1059,6 @@ fn aligned_with_edge(edge: &TrimmedCurve, span: Interval) -> Interval {
 /// Returns an edge's curve paired with the span its vertices bound.
 fn edge_section<P: Payload>(edge: &crate::topology::edge::Edge<'_, P>) -> TrimmedCurve {
     edge.trimmed_curve()
-        .expect("an attributed edge with vertices has a bounded curve")
 }
 
 /// Samples used to carry a section whose parameter image is not a straight line.

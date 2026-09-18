@@ -18,10 +18,7 @@ const HEIGHT: f64 = 1.5;
 pub fn run() -> Result<ScriptResult, String> {
     let arc = edges::arc(Plane::xy(), RADIUS, 0.0, std::f64::consts::FRAC_PI_2)
         .map_err(|err| format!("failed to build arc edge: {err:?}"))?;
-    let section = arc
-        .edge()
-        .trimmed_curve()
-        .ok_or("arc geometry is missing")?;
+    let section = arc.edge().trimmed_curve();
     let (start, end) = (
         section.point_at(Fraction::new(0.0)),
         section.point_at(Fraction::new(1.0)),

@@ -1190,7 +1190,7 @@ fn boolean_difference_supports_a_cylindrical_through_hole() {
             );
             walls.push(neighbours[0]);
 
-            let curve = edge.curve().expect("a rim arc carries geometry");
+            let curve = edge.curve();
             let mid = curve.point_at(NativeParam::new(0.5));
             let radius = ((mid.x - 1.0).powi(2) + (mid.y - 1.0).powi(2)).sqrt();
             assert!(
@@ -1295,7 +1295,7 @@ fn face_uv_extent(
     let mut min = Point2::new(f64::INFINITY, f64::INFINITY);
     let mut max = Point2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
     for vertex in face.vertices() {
-        let point = *vertex.point().expect("face geometry");
+        let point = *vertex.point();
         let uv = surface.param_at(point).expect("planar parameter");
         min = Point2::new(min.x.min(uv.x), min.y.min(uv.y));
         max = Point2::new(max.x.max(uv.x), max.y.max(uv.y));

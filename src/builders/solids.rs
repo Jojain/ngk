@@ -472,16 +472,12 @@ fn prepare_lateral_face<P: Payload>(
     let edge_dart = bottom_edge_view.dart();
     // The ends of the section being swept: for a closed edge they are the same
     // point, which is what makes the swept wall wrap.
-    let section = bottom_edge_view
-        .trimmed_curve()
-        .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
+    let section = bottom_edge_view.trimmed_curve();
     let (start, end) = (
         section.point_at(Fraction::new(0.0)),
         section.point_at(Fraction::new(1.0)),
     );
-    let curve = bottom_edge_view
-        .curve()
-        .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
+    let curve = bottom_edge_view.curve();
     let surface = lateral_face_surface(edge_dart, curve, start, end, direction)?;
     let uv = lateral_face_uv(&surface, curve, start, end, direction);
 

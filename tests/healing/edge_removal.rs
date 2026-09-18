@@ -18,11 +18,7 @@ fn face_at_height(g: &Model<StandardPayload>, height: f64) -> FaceKey {
                 .expect("face should be registered")
                 .vertices()
                 .iter()
-                .all(|vertex| {
-                    vertex
-                        .point()
-                        .is_some_and(|point| (point.z - height).abs() <= 1.0e-9)
-                })
+                .all(|vertex| (vertex.point().z - height).abs() <= 1.0e-9)
         })
         .expect("a face at the requested height should exist")
 }

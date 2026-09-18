@@ -116,9 +116,7 @@ impl<P: Payload> Model<P> {
             Orientation::Same => view,
             Orientation::Reversed => view.reversed(),
         };
-        let curve = view
-            .trimmed_curve()
-            .ok_or(RealizationError::MissingEdgeGeometry(edge))?;
+        let curve = view.trimmed_curve();
         let mut entries = self
             .realizations
             .edges

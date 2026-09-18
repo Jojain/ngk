@@ -330,7 +330,7 @@ fn build_intersection_network<P: Payload>(
                 second_interval,
             } => {
                 let first_edge_view = g.edge_unchecked(*first_edge);
-                let first_curve = first_edge_view.curve().expect("registered edge geometry");
+                let first_curve = first_edge_view.curve();
                 let start = first_curve.point_at(first_interval.start);
                 let end = first_curve.point_at(first_interval.end);
                 let curve = TrimmedCurve::segment(start, end);
@@ -377,7 +377,7 @@ fn build_intersection_network<P: Payload>(
             } => builder.record_region(*first_face, *second_face),
             RawIntersection::EdgeSection { side, edge, curve } => {
                 let edge_view = g.edge_unchecked(*edge);
-                let edge_curve = edge_view.curve().expect("registered edge geometry");
+                let edge_curve = edge_view.curve();
                 let edge_interval = edge_section_parameters(edge_curve, curve);
                 builder.record_span(
                     curve.clone(),
@@ -443,12 +443,12 @@ fn build_intersection_network<P: Payload>(
 /// own sweep instead of folding it back over the branch cut.
 fn edge_section_parameters(edge_curve: &Curve, section: &TrimmedCurve) -> Interval {
     let point_at = |parameter: f64| section.point_at(Fraction::new(parameter));
-    let start = edge_curve.param_at(point_at(0.0));
+    let start = edge_curve.parameter_at(point_at(0.0));
     let Periodicity::Periodic(period) = edge_curve.periodicity() else {
-        return Interval::new(start, edge_curve.param_at(point_at(1.0)));
+        return Interval::new(start, edge_curve.parameter_at(point_at(1.0)));
     };
     let continued = |previous: f64, point: Point3| {
-        let offset = (edge_curve.param_at(point).value() - previous).rem_euclid(period);
+        let offset = (edge_curve.parameter_at(point).value() - previous).rem_euclid(period);
         let offset = if offset > 0.5 * period {
             offset - period
         } else {
@@ -469,11 +469,7 @@ fn event_use_for_cell<P: Payload>(
     match cell {
         BooleanCell::Vertex(_) => vertex_use(side, cell),
         BooleanCell::Edge(edge) => {
-            let parameter = g
-                .edge_unchecked(edge)
-                .curve()
-                .expect("registered edge geometry")
-                .param_at(point);
+            let parameter = g.edge_unchecked(edge).curve().parameter_at(point);
             edge_use(side, edge, parameter.value())
         }
         BooleanCell::Face(face) => {
@@ -678,15 +674,11 @@ fn split_edge_at_points<P: Payload>(
 ) -> Result<Vec<EdgeKey>, BooleanError> {
     let source_curve = edit
         .edge(source)
-        .and_then(|edge| edge.curve().cloned())
+        .and_then(|edge| Some(edge.curve()))
         .ok_or(BooleanError::MissingOperand {
             operand: BooleanOperand::Edge(source),
         })?;
-    let source_domain = edit
-        .edge_unchecked(source)
-        .parameter_interval()
-        .expect("registered edge span")
-        .ordered();
+    let source_domain = edit.edge_unchecked(source).parameter_interval().ordered();
     points.sort_by(|a, b| {
         periodic_parameter_in_domain(&source_curve, *a, source_domain).total_cmp(
             &periodic_parameter_in_domain(&source_curve, *b, source_domain),
@@ -698,29 +690,23 @@ fn split_edge_at_points<P: Payload>(
     for point in points {
         let Some(fragment) = fragments.iter().copied().find(|edge| {
             let view = edit.edge_unchecked(*edge);
-            let Some(curve) = view.curve() else {
-                return false;
-            };
-            let Some(domain) = view.parameter_interval().map(|span| span.ordered()) else {
-                return false;
-            };
-            let parameter = periodic_parameter_in_domain(curve, point, domain);
+
+            let domain = view.parameter_interval().ordered();
+            let parameter = periodic_parameter_in_domain(view.curve(), point, domain);
             // Asked of the corners, not of the span's ends: on an unmarked edge
             // those ends are where the curve closes, and a contact landing there
             // is a corner to add rather than one already taken.
-            domain.contains(NativeParam::new(parameter), options.parameter_tolerance)
+            domain.contains(parameter, options.parameter_tolerance)
                 && !view.has_corner_at(parameter, options.linear_tolerance)
         }) else {
             continue;
         };
 
         let view = edit.edge_unchecked(fragment);
-        let curve = view.curve().expect("registered edge geometry");
-        let domain = view
-            .parameter_interval()
-            .expect("registered edge span")
-            .ordered();
+        let curve = view.curve();
+        let domain = view.parameter_interval().ordered();
         let parameter = periodic_parameter_in_domain(curve, point, domain);
+        let parameter = view.parameter_interval().fraction_of(parameter);
         let incident_face = view.faces().first().map(|face| face.key());
         let split = if let Some(face) = incident_face {
             split_face_edge_staged(edit, face, fragment, parameter)?
@@ -737,8 +723,8 @@ fn split_edge_at_points<P: Payload>(
     Ok(fragments)
 }
 
-fn periodic_parameter_in_domain(curve: &Curve, point: Point3, domain: Interval) -> f64 {
-    let mut parameter = curve.param_at(point);
+fn periodic_parameter_in_domain(curve: &Curve, point: Point3, domain: Interval) -> NativeParam {
+    let mut parameter = curve.parameter_at(point);
     if let Periodicity::Periodic(period) = curve.periodicity() {
         while parameter < NativeParam::new(domain.start.value()) {
             parameter += period;
@@ -747,5 +733,5 @@ fn periodic_parameter_in_domain(curve: &Curve, point: Point3, domain: Interval) 
             parameter -= period;
         }
     }
-    parameter.value()
+    parameter
 }

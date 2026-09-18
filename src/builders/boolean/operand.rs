@@ -8,8 +8,8 @@ use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
 
 use super::{
-    BooleanCell, BooleanError, BooleanOperand, BooleanOperation, BooleanOptions,
-    BooleanTolerancePolicy, BooleanTolerances,
+    BooleanError, BooleanOperand, BooleanOperation, BooleanOptions, BooleanTolerancePolicy,
+    BooleanTolerances,
 };
 use crate::topology::shape_keys::SolidKey;
 use crate::topology::validation::{validate_solid_manifold, validate_solid_orientation};
@@ -89,20 +89,6 @@ pub(crate) fn operand_cells<P: Payload>(
             }
         }
     };
-    for vertex in cells.vertices.iter().copied() {
-        if g.vertex_unchecked(vertex).point().is_none() {
-            return Err(BooleanError::MissingGeometry {
-                cell: BooleanCell::Vertex(vertex),
-            });
-        }
-    }
-    for edge in cells.edges.iter().copied() {
-        if g.edge_unchecked(edge).curve().is_none() {
-            return Err(BooleanError::MissingGeometry {
-                cell: BooleanCell::Edge(edge),
-            });
-        }
-    }
     Ok(cells)
 }
 

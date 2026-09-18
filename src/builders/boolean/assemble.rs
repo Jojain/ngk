@@ -340,7 +340,7 @@ fn loop_traversal<P: Payload>(
         .flat_map(|boundary| boundary.edges())
         .find(|candidate| candidate.key() == edge)?;
     let dart = traversed.dart();
-    let section = traversed.trimmed_curve()?;
+    let section = traversed.trimmed_curve();
     // The quarter sample is what orients a closed edge. Its two ends are the
     // same point, so they cannot say which way round the other side runs; a
     // point partway along can, and agrees with the ends everywhere else.
@@ -381,20 +381,19 @@ fn shell_components<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> Vec<Vec<Fa
 }
 
 /// Signed boundary integral for planar polygon loops, including concave loops and holes.
+/// Signed boundary integral for planar polygon loops, including concave loops and holes.
 fn signed_volume<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> f64 {
-    let reference = *map.face_unchecked(faces[0]).vertices()[0]
-        .point()
-        .expect("admitted geometry");
+    let reference = *map.face_unchecked(faces[0]).vertices()[0].point();
     let mut volume = 0.0;
+
     for &key in faces {
         let face = map.face_unchecked(key);
+
         if !matches!(face.surface(), crate::geometry::Surface::Plane(_))
             || face.edges().iter().any(|edge| {
-                edge.curve().is_some_and(|curve| {
-                    curve
-                        .to_nurbs()
-                        .is_ok_and(|curve| curve.degree().get() != 1)
-                })
+                edge.curve()
+                    .to_nurbs()
+                    .is_ok_and(|curve| curve.degree().get() != 1)
             })
         {
             volume += face
@@ -402,16 +401,14 @@ fn signed_volume<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> f64 {
                 .unwrap_or(f64::NAN);
             continue;
         }
-        for boundary in map.face_unchecked(key).loops() {
+
+        for boundary in face.loops() {
             let points = boundary
                 .edges()
                 .iter()
-                .map(|edge| {
-                    edge.trimmed_curve()
-                        .expect("admitted geometry")
-                        .point_at(Fraction::new(0.0))
-                })
+                .map(|edge| edge.trimmed_curve().point_at(Fraction::new(0.0)))
                 .collect::<Vec<Point3>>();
+
             for pair in points[1..].windows(2) {
                 volume += (points[0] - reference)
                     .dot(&(pair[0] - reference).cross(&(pair[1] - reference)))
@@ -419,5 +416,6 @@ fn signed_volume<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> f64 {
             }
         }
     }
+
     volume
 }

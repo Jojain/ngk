@@ -82,9 +82,7 @@ fn assert_profile_points(profile: &Profile<'_>, expected: &[Point3]) {
     assert_eq!(vertices.len(), expected.len());
 
     for (index, (vertex, expected)) in vertices.iter().zip(expected).enumerate() {
-        let actual = vertex
-            .point()
-            .expect("rectangle profile vertices should have geometry");
+        let actual = vertex.point();
         assert!(
             actual.coincides(expected, LINEAR_TOLERANCE),
             "profile vertex {index} should be {expected:?}, got {actual:?}"
