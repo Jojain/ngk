@@ -38,6 +38,21 @@ impl TcvOptions {
             ..Self::default()
         }
     }
+
+    /// Uses the sampling density appropriate for an interactive CAD viewer.
+    ///
+    /// TCV is consumed by viewers that expose curved faces directly, so its
+    /// default preview must not use the lighter geometry-inspection sampling.
+    pub fn viewer(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            tessellate: TessellateOpts {
+                curve: crate::tessellate::CurveOpts { segments: 64 },
+                surface: crate::tessellate::SurfaceOpts { nu: 64, nv: 32 },
+            },
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for TcvOptions {

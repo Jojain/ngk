@@ -16,7 +16,7 @@ dependencies = [
 
 [tool.maturin]
 features = ["python"]
-module-name = "ngk._ngk"
+module-name = "ngk.core"
 python-source = "bindings/python/python"
 
 [dependency-groups]

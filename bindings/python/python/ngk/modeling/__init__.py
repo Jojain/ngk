@@ -1,5 +1,5 @@
 """High-level shape construction and modification."""
 
-from . import edges, faces, profiles, solids
+from . import booleans, edges, faces, profiles, solids
 
-__all__ = ["edges", "faces", "profiles", "solids"]
+__all__ = ["booleans", "edges", "faces", "profiles", "solids"]

@@ -1,10 +1,10 @@
 
 #%%
-import ngk
-# from ngk import show
+from ngk.modeling import solids
+from ngk.viz import debug
 
-solid = ngk.block(1.0, 2.0, 3.0)
-# show(solid)
+solid = solids.block(1.0, 2.0, 3.0)
+# debug.show(solid)
 for f in solid.faces():
     print(f.surface.normal)
     print(f.surface.origin)

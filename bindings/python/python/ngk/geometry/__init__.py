@@ -1,6 +1,6 @@
 """Geometric values, curves, and surfaces."""
 
-from .._ngk import (
+from ..core import (
     Axis,
     Circle,
     Cone,

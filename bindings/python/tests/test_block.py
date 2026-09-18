@@ -1,7 +1,8 @@
-import ngk
+from ngk.geometry import Line, NurbsCurve, Plane
+from ngk.modeling import booleans, solids
 
 def test_block_traversal_counts():
-    solid = ngk.block(1.0, 2.0, 3.0)
+    solid = solids.block(1.0, 2.0, 3.0)
 
     faces = solid.faces()
     edge_occurrences = [edge for face in faces for edge in face.edges()]
@@ -16,19 +17,19 @@ def test_block_traversal_counts():
 
 
 def test_block_properties_expose_geometry():
-    solid = ngk.block(1.0, 2.0, 3.0)
+    solid = solids.block(1.0, 2.0, 3.0)
     face = solid.faces()[0]
     edge = face.edges()[0]
 
-    assert isinstance(face.surface, ngk.Plane)
-    assert isinstance(edge.curve, (ngk.Line, ngk.NurbsCurve))
+    assert isinstance(face.surface, Plane)
+    assert isinstance(edge.curve, (Line, NurbsCurve))
     assert edge.start.point is not None
     assert edge.end.point is not None
     assert edge.length is not None
 
 
 def test_nested_traversal_returns_vertices():
-    solid = ngk.block(1.0, 2.0, 3.0)
+    solid = solids.block(1.0, 2.0, 3.0)
 
     vertices = solid.faces()[0].edges()[0].vertices()
 
@@ -37,7 +38,7 @@ def test_nested_traversal_returns_vertices():
 
 
 def test_edges_compare_by_topological_identity():
-    solid = ngk.block(1.0, 2.0, 3.0)
+    solid = solids.block(1.0, 2.0, 3.0)
     edge_occurrences = [edge for face in solid.faces() for edge in face.edges()]
 
     found_equal_pair = False
@@ -59,8 +60,8 @@ def test_edges_compare_by_topological_identity():
 
 
 def test_topology_wrappers_compare_by_identity():
-    solid = ngk.block(1.0, 2.0, 3.0)
-    other_solid = ngk.block(1.0, 2.0, 3.0)
+    solid = solids.block(1.0, 2.0, 3.0)
+    other_solid = solids.block(1.0, 2.0, 3.0)
 
     assert solid == solid
     assert solid != other_solid
@@ -89,7 +90,7 @@ def test_topology_wrappers_compare_by_identity():
 
 
 def test_vertices_and_edges_traverse_to_faces():
-    solid = ngk.block(1.0, 2.0, 3.0)
+    solid = solids.block(1.0, 2.0, 3.0)
     face = solid.faces()[0]
     edge = face.edges()[0]
     vertex = edge.start
@@ -102,20 +103,15 @@ def test_vertices_and_edges_traverse_to_faces():
 
 
 def test_solid_boolean_functions_return_new_results_without_mutating_inputs():
-    first = ngk.block(2.0, 2.0, 2.0)
-    second = ngk.block(1.0, 1.0, 1.0)
+    first = solids.block(2.0, 2.0, 2.0)
+    second = solids.block(1.0, 1.0, 1.0)
 
-    fused = ngk.fuse(first, second)
-    common = ngk.intersect(first, second)
-    remainder = ngk.cut(first, second)
+    fused = booleans.fuse(first, second)
+    common = booleans.intersect(first, second)
+    remainder = booleans.cut(first, second)
 
     assert fused.face_count == 6
     assert common.face_count == 6
     assert remainder.face_count == 9
     assert first.face_count == 6
     assert second.face_count == 6
-
-
-from pathlib import Path
-c = Path(__file__).parent / "test_block.py"
-c.s

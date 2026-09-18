@@ -21,10 +21,9 @@ fn _to_tcv_json(
     alpha: f64,
 ) -> PyResult<String> {
     let opts = TcvOptions {
-        name: name.unwrap_or_else(|| "shape".to_string()),
         color: color.to_string(),
         alpha,
-        ..TcvOptions::default()
+        ..TcvOptions::viewer(name.unwrap_or_else(|| "shape".to_string()))
     };
 
     if let Ok(edge) = obj.extract::<PyRef<'_, PyEdge>>() {

@@ -11,7 +11,8 @@ import os
 
 import pytest
 
-import ngk
+from ngk.exchange import step
+from ngk.modeling import booleans, solids
 
 try:
     import build123d as _b3d
@@ -22,7 +23,7 @@ needs_build123d = pytest.mark.skipif(_b3d is None, reason="build123d is not inst
 
 
 def test_write_step_returns_a_path_that_exists():
-    path = ngk.write_step(ngk.block(10.0, 20.0, 30.0))
+    path = step.write_step(solids.block(10.0, 20.0, 30.0))
 
     assert os.path.isfile(path)
     assert path.endswith(".step")
@@ -32,14 +33,14 @@ def test_write_step_returns_a_path_that_exists():
 def test_write_step_honours_an_explicit_path(tmp_path):
     target = tmp_path / "block.step"
 
-    written = ngk.write_step(ngk.block(1.0, 1.0, 1.0), str(target))
+    written = step.write_step(solids.block(1.0, 1.0, 1.0), str(target))
 
     assert written == str(target)
     assert target.read_text().startswith("ISO-10303-21;")
 
 
 def test_write_step_names_the_product():
-    text = ngk.step_to_string(ngk.block(1.0, 1.0, 1.0), name="WIDGET")
+    text = step.step_to_string(solids.block(1.0, 1.0, 1.0), name="WIDGET")
 
     assert "PRODUCT('WIDGET','WIDGET'" in text
 
@@ -47,33 +48,35 @@ def test_write_step_names_the_product():
 def test_step_to_string_writes_no_file(tmp_path):
     before = set(os.listdir(tmp_path))
 
-    text = ngk.step_to_string(ngk.block(1.0, 1.0, 1.0))
+    text = step.step_to_string(solids.block(1.0, 1.0, 1.0))
 
     assert text.startswith("ISO-10303-21;")
     assert text.rstrip().endswith("END-ISO-10303-21;")
     assert set(os.listdir(tmp_path)) == before
 
 
-def test_geometry_that_cannot_be_written_raises_rather_than_writing_garbage():
-    # A cylinder wall has no STEP spelling without a synthesized seam, so it
-    # must refuse by name rather than produce a file that is quietly wrong.
-    with pytest.raises(ValueError) as raised:
-        ngk.step_to_string(ngk.cut(ngk.block(8.0, 8.0, 8.0), ngk.block(2.0, 2.0, 20.0)))
+def test_cylinder_wall_round_trips_through_ngk_step_text():
+    result = booleans.cut(
+        solids.block(8.0, 8.0, 8.0),
+        solids.block(2.0, 2.0, 20.0),
+    )
 
-    assert "not written yet" in str(raised.value)
+    restored = step.step_from_string(step.step_to_string(result))
+
+    assert len(restored.solids) == 1
 
 
 def test_writing_into_a_missing_directory_raises_oserror(tmp_path):
     missing = tmp_path / "no_such_directory" / "block.step"
 
     with pytest.raises(OSError):
-        ngk.write_step(ngk.block(1.0, 1.0, 1.0), str(missing))
+        step.write_step(solids.block(1.0, 1.0, 1.0), str(missing))
 
 
 @needs_build123d
 def test_a_block_round_trips_through_build123d(tmp_path):
     path = str(tmp_path / "block.step")
-    ngk.write_step(ngk.block(10.0, 20.0, 30.0), path, name="BLOCK")
+    step.write_step(solids.block(10.0, 20.0, 30.0), path, name="BLOCK")
 
     solids = _b3d.import_step(path).solids()
     assert len(solids) == 1
@@ -90,9 +93,9 @@ def test_a_block_round_trips_through_build123d(tmp_path):
 
 def test_read_step_reads_what_write_step_wrote(tmp_path):
     path = str(tmp_path / "block.step")
-    ngk.write_step(ngk.block(10.0, 20.0, 30.0), path, name="BLOCK")
+    step.write_step(solids.block(10.0, 20.0, 30.0), path, name="BLOCK")
 
-    result = ngk.read_step(path)
+    result = step.read_step(path)
 
     assert len(result) == 1
     assert result.skipped == []
@@ -103,8 +106,8 @@ def test_read_step_reads_what_write_step_wrote(tmp_path):
 def test_step_from_string_reads_no_file(tmp_path):
     before = set(os.listdir(tmp_path))
 
-    text = ngk.step_to_string(ngk.block(1.0, 2.0, 3.0))
-    result = ngk.step_from_string(text)
+    text = step.step_to_string(solids.block(1.0, 2.0, 3.0))
+    result = step.step_from_string(text)
 
     assert len(result.solids) == 1
     assert set(os.listdir(tmp_path)) == before
@@ -112,12 +115,12 @@ def test_step_from_string_reads_no_file(tmp_path):
 
 def test_reading_a_file_that_is_not_there_raises_oserror(tmp_path):
     with pytest.raises(OSError):
-        ngk.read_step(str(tmp_path / "absent.step"))
+        step.read_step(str(tmp_path / "absent.step"))
 
 
 def test_reading_malformed_text_raises_valueerror():
     with pytest.raises(ValueError) as raised:
-        ngk.step_from_string("this is not a STEP file\n")
+        step.step_from_string("this is not a STEP file\n")
 
     assert "line 1" in str(raised.value)
 
@@ -132,7 +135,7 @@ def test_a_build123d_box_imports_into_ngk(tmp_path):
     path = str(tmp_path / "b3d_box.step")
     _b3d.export_step(_b3d.Box(10, 20, 30), path)
 
-    result = ngk.read_step(path)
+    result = step.read_step(path)
 
     assert result.skipped == []
     assert len(result.solids) == 1
@@ -149,8 +152,8 @@ def test_a_build123d_solid_survives_a_trip_through_ngk(tmp_path):
     second = str(tmp_path / "out.step")
     _b3d.export_step(_b3d.Box(10, 20, 30), first)
 
-    result = ngk.read_step(first)
-    ngk.write_step(result.solids[0], second, name="ROUND_TRIP")
+    result = step.read_step(first)
+    step.write_step(result.solids[0], second, name="ROUND_TRIP")
 
     solid = _b3d.import_step(second).solids()[0]
     assert solid.is_valid
