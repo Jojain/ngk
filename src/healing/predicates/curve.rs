@@ -16,6 +16,7 @@ use std::f64::consts::TAU;
 
 use nalgebra::{UnitVector3, Vector3};
 
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Curve, Plane, Point3};
 
 /// Samples taken per curve when testing a candidate support.
@@ -31,7 +32,9 @@ pub fn sample_between(curve: &Curve, start: Point3, end: Point3, segments: usize
     (0..=segments)
         .map(|index| {
             let fraction = index as f64 / segments as f64;
-            curve.point_at(span.start + (span.end - span.start) * fraction)
+            curve.point_at(NativeParam::new(
+                span.start.value() + (span.end.value() - span.start.value()) * fraction,
+            ))
         })
         .collect()
 }

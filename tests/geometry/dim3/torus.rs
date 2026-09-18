@@ -4,7 +4,7 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
-    Frame, Interval, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Rigid, Surface,
+    Fraction, Frame, Interval, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Rigid, Surface,
     SurfaceGeometry, SurfacePeriodicity, Torus,
 };
 use ngk::tessellate::{SurfaceOpts, tessellate_surface_patch};
@@ -129,8 +129,8 @@ fn torus_nurbs_patch_honours_a_partial_box() {
 
     for fraction_u in [0.0, 0.13, 0.5, 0.77, 1.0] {
         for fraction_v in [0.0, 0.29, 0.5, 0.81, 1.0] {
-            let analytic_u = u.start + u.length() * fraction_u;
-            let analytic_v = v.start + v.length() * fraction_v;
+            let analytic_u = u.at(Fraction::new(fraction_u)).value();
+            let analytic_v = v.at(Fraction::new(fraction_v)).value();
             let mapped = map.map(Point2::new(analytic_u, analytic_v));
             assert_point_near(
                 nurbs.point_at(mapped.x, mapped.y),
@@ -176,8 +176,8 @@ fn torus_bbox_over_contains_a_trimmed_patch() {
 
     for iu in 0..=64 {
         for iv in 0..=32 {
-            let parameter_u = u.start + u.length() * iu as f64 / 64.0;
-            let parameter_v = v.start + v.length() * iv as f64 / 32.0;
+            let parameter_u = u.at(Fraction::new(iu as f64 / 64.0)).value();
+            let parameter_v = v.at(Fraction::new(iv as f64 / 32.0)).value();
             assert!(
                 bounds.contains_point(torus.point_at(parameter_u, parameter_v), LINEAR_TOLERANCE),
                 "torus point ({parameter_u}, {parameter_v}) escaped its bounds"

@@ -26,6 +26,7 @@
 //! actually travelling when it got there.
 
 use crate::builders::profiles::curve_pcurve;
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{
     Axis2, Curve, Curve2, Interval, NurbsCurve2, NurbsError, Point2, Surface, TrimmedCurve,
     TrimmedCurve2,
@@ -98,7 +99,7 @@ fn invert(
 ) -> Result<Vec<Point2>, NurbsError> {
     let mut image = Vec::with_capacity(fractions.len());
     for &fraction in fractions {
-        image.push(surface.param_at(section.point_at(fraction))?);
+        image.push(surface.param_at(section.point_at(Fraction::new(fraction)))?);
     }
     resolve_collapsed_rows(surface, &mut image);
     unwrap_periods(surface, &mut image);
@@ -253,8 +254,8 @@ fn deviation(surface: &Surface, section: &TrimmedCurve, pcurve: &TrimmedCurve2) 
     (0..=CHECKS)
         .map(|index| {
             let fraction = index as f64 / CHECKS as f64;
-            let uv = pcurve.point_at(fraction);
-            (surface.point_at(uv.x, uv.y) - section.point_at(fraction)).norm()
+            let uv = pcurve.point_at(Fraction::new(fraction));
+            (surface.point_at(uv.x, uv.y) - section.point_at(Fraction::new(fraction))).norm()
         })
         .fold(0.0_f64, |worst, distance| {
             if distance.is_finite() {

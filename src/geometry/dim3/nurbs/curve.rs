@@ -227,7 +227,7 @@ impl NurbsCurve {
 
     fn clamp_parameter(&self, u: f64) -> f64 {
         let domain = self.domain();
-        u.clamp(domain.start, domain.end)
+        u.clamp(domain.start.value(), domain.end.value())
     }
 
     fn integrate_length_span(&self, a: f64, b: f64) -> f64 {
@@ -356,7 +356,7 @@ impl NurbsCurve {
                 .as_slice()
                 .iter()
                 .rev()
-                .map(|knot| domain.start + domain.end - knot)
+                .map(|knot| domain.start.value() + domain.end.value() - knot)
                 .collect(),
         )
         .expect("reversing a valid knot vector remains valid");
@@ -370,11 +370,11 @@ impl NurbsCurve {
     /// Splits the curve exactly at an interior native-domain parameter.
     pub fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
         let domain = self.domain();
-        if parameter <= domain.start + LINEAR_TOLERANCE
-            || parameter >= domain.end - LINEAR_TOLERANCE
+        if parameter <= domain.start.value() + LINEAR_TOLERANCE
+            || parameter >= domain.end.value() - LINEAR_TOLERANCE
         {
             return Err(NurbsError::DegenerateInterval {
-                start: domain.start,
+                start: domain.start.value(),
                 end: parameter,
             });
         }
@@ -425,7 +425,7 @@ impl NurbsCurve {
         let p = self.degree.get();
         let domain = self.domain();
         let mut refined = self.clone();
-        for end in [domain.start, domain.end] {
+        for end in [domain.start.value(), domain.end.value()] {
             while refined.knots.multiplicity(end) < p + 1 {
                 refined.insert_knot(end);
             }
@@ -433,8 +433,8 @@ impl NurbsCurve {
 
         let knots = refined.knots.as_slice();
         let (Some(first), Some(last)) = (
-            knots.iter().position(|&knot| knot == domain.start),
-            knots.iter().rposition(|&knot| knot == domain.end),
+            knots.iter().position(|&knot| knot == domain.start.value()),
+            knots.iter().rposition(|&knot| knot == domain.end.value()),
         ) else {
             return Err(NurbsError::UnsortedKnots);
         };
@@ -462,11 +462,17 @@ impl NurbsCurve {
         }
 
         let domain = self.domain();
-        if start < domain.start - LINEAR_TOLERANCE || end > domain.end + LINEAR_TOLERANCE {
+        if start < domain.start.value() - LINEAR_TOLERANCE
+            || end > domain.end.value() + LINEAR_TOLERANCE
+        {
             return Err(NurbsError::ParameterOutOfRange {
-                u: if start < domain.start { start } else { end },
-                min: domain.start,
-                max: domain.end,
+                u: if start < domain.start.value() {
+                    start
+                } else {
+                    end
+                },
+                min: domain.start.value(),
+                max: domain.end.value(),
             });
         }
 
@@ -475,12 +481,12 @@ impl NurbsCurve {
             return Err(NurbsError::DegenerateInterval { start, end });
         }
 
-        let after_start = if start <= domain.start + LINEAR_TOLERANCE {
+        let after_start = if start <= domain.start.value() + LINEAR_TOLERANCE {
             self.clone()
         } else {
             self.split_at(start)?.1
         };
-        if end >= domain.end - LINEAR_TOLERANCE {
+        if end >= domain.end.value() - LINEAR_TOLERANCE {
             Ok(after_start)
         } else {
             Ok(after_start.split_at(end)?.0)
@@ -625,14 +631,14 @@ fn interpolate_closed(points: &[Point3], parameters: &[f64]) -> Result<NurbsCurv
 fn distinct_interior_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
     distinct_domain_knots(knots, domain)
         .into_iter()
-        .filter(|knot| *knot > domain.start && *knot < domain.end)
+        .filter(|knot| *knot > domain.start.value() && *knot < domain.end.value())
         .collect()
 }
 
 fn distinct_domain_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
     let mut distinct = Vec::new();
     for &knot in knots {
-        if knot < domain.start || knot > domain.end {
+        if knot < domain.start.value() || knot > domain.end.value() {
             continue;
         }
         if distinct.last().is_none_or(|last| *last != knot) {

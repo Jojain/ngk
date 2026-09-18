@@ -143,10 +143,10 @@ fn domain_bound<P: Payload>(face: &Face<'_, P>) -> Result<SeamedBound, TopologyE
     }
 
     let mut corners = [
-        Point2::new(u.start, v.start),
-        Point2::new(u.end, v.start),
-        Point2::new(u.end, v.end),
-        Point2::new(u.start, v.end),
+        Point2::new(u.start.value(), v.start.value()),
+        Point2::new(u.end.value(), v.start.value()),
+        Point2::new(u.end.value(), v.end.value()),
+        Point2::new(u.start.value(), v.end.value()),
     ];
     if face.sense() == Orientation::Reversed {
         corners.reverse();

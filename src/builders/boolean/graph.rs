@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use super::{BooleanCell, BooleanError, BooleanSide, BooleanTolerances, PointContactKind};
+use crate::geometry::parameter::{Fraction, Normalized};
 
 /// Stable index of a remarkable point in an intersection network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -87,11 +88,11 @@ pub struct IntersectionSpan {
 }
 
 impl IntersectionSpan {
-    pub fn point_at(&self, parameter: f64) -> Point3 {
+    pub fn point_at(&self, parameter: Fraction) -> Point3 {
         self.curve.point_at(parameter)
     }
 
-    pub fn parameter_at(&self, point: Point3) -> f64 {
+    pub fn parameter_at(&self, point: Point3) -> Fraction {
         self.curve.parameter_at(point)
     }
 }
@@ -177,8 +178,10 @@ impl IntersectionNetwork {
             if span.uses.is_empty() {
                 return Err(IntersectionNetworkValidationError::SpanWithoutUse { span: index });
             }
-            if !span.point_at(0.0).coincides(start.point, tolerance)
-                || !span.point_at(1.0).coincides(end.point, tolerance)
+            if !span
+                .point_at(Fraction::START)
+                .coincides(start.point, tolerance)
+                || !span.point_at(Fraction::END).coincides(end.point, tolerance)
             {
                 return Err(IntersectionNetworkValidationError::SpanEndpointMismatch {
                     span: index,
@@ -331,8 +334,8 @@ fn curves_coincide(
         } else {
             parameter
         };
-        left.point_at(parameter)
-            .coincides(right.point_at(right_parameter), tolerance)
+        left.point_at(Fraction::new(parameter))
+            .coincides(right.point_at(Fraction::new(right_parameter)), tolerance)
     })
 }
 
@@ -359,7 +362,7 @@ fn align_span_use(span_use: IntersectionSpanUse, reversed: bool) -> Intersection
         } => IntersectionSpanUse::Edge {
             side,
             edge,
-            interval: Interval::new(interval.end, interval.start),
+            interval: Interval::new(interval.end.value(), interval.start.value()),
         },
     }
 }
@@ -468,7 +471,7 @@ pub(crate) fn face_use(side: BooleanSide, face: FaceKey, uv: Point2) -> Intersec
 #[derive(Clone)]
 pub(crate) struct SpanSubdivision {
     pub(crate) span: IntersectionSpanId,
-    pub(crate) interval: Interval,
+    pub(crate) interval: Interval<Normalized>,
     pub(crate) reversed: bool,
 }
 
@@ -518,15 +521,15 @@ fn node_spans(
     }
     let mut mapping = Vec::new();
     for span in &network.spans {
-        let mut parameters = vec![0.0, 1.0];
+        let mut parameters = vec![Fraction::START, Fraction::END];
         for event in events {
             let t = span.parameter_at(event.point);
             // Against the piece resolution, not the parameter tolerance: an
             // event landing between the two would cut off a piece too narrow
             // for the span or its pcurves to be trimmed to, and the whole
             // Boolean would fail on a embedding that carries no geometry.
-            if t <= MIN_SPAN_PIECE
-                || t >= 1.0 - MIN_SPAN_PIECE
+            if t <= Fraction::new(MIN_SPAN_PIECE)
+                || t >= Fraction::new(1.0 - MIN_SPAN_PIECE)
                 || !span.point_at(t).coincides(event.point, linear)
             {
                 continue;
@@ -536,7 +539,7 @@ fn node_spans(
                 parameters.push(t);
             }
         }
-        parameters.sort_by(f64::total_cmp);
+        parameters.sort_by(Fraction::total_cmp);
         parameters.dedup_by(|a, b| (*a - *b).abs() <= MIN_SPAN_PIECE);
         let mut pieces = Vec::new();
         for pair in parameters.windows(2) {
@@ -565,10 +568,7 @@ fn node_spans(
                     } => Ok(IntersectionSpanUse::Edge {
                         side: *side,
                         edge: *edge,
-                        interval: Interval::new(
-                            source.start + (source.end - source.start) * pair[0],
-                            source.start + (source.end - source.start) * pair[1],
-                        ),
+                        interval: Interval::new(source.at(pair[0]), source.at(pair[1])),
                     }),
                 })
                 .collect::<Result<Vec<_>, NurbsError>>()?;
@@ -599,7 +599,7 @@ fn node_spans(
 }
 
 /// Converts a span parameter into each of its operand-local event incidences.
-fn span_event_uses(uses: &[IntersectionSpanUse], t: f64) -> Vec<IntersectionEventUse> {
+fn span_event_uses(uses: &[IntersectionSpanUse], t: Fraction) -> Vec<IntersectionEventUse> {
     uses.iter()
         .map(|usage| match usage {
             IntersectionSpanUse::Face {
@@ -609,25 +609,29 @@ fn span_event_uses(uses: &[IntersectionSpanUse], t: f64) -> Vec<IntersectionEven
                 side,
                 edge,
                 interval,
-            } => edge_use(
-                *side,
-                *edge,
-                interval.start + (interval.end - interval.start) * t,
-            ),
+            } => edge_use(*side, *edge, interval.at(t).value()),
         })
         .collect()
 }
 
-/// Restores a normalized parameter domain after exact NURBS trimming.
-pub(crate) fn normalized_subcurve(curve: &Curve, interval: Interval) -> Result<Curve, NurbsError> {
-    let trimmed = curve.trimmed(interval)?.to_nurbs()?;
+/// Returns an exact section of a support's NURBS form, renormalized to `[0, 1]`.
+///
+/// `knots` is stated in the knot domain of `curve.to_nurbs()`, which is the
+/// space the numeric curve/surface solver answers in and is **not** the
+/// support's own parameterization: a circle's knots are not its angle. Trimming
+/// the support with [`Curve::trimmed_native`] would read the same numbers in
+/// that other space and cut the wrong section.
+pub(crate) fn nurbs_subcurve(curve: &Curve, knots: Interval) -> Result<Curve, NurbsError> {
+    let trimmed = curve
+        .to_nurbs()?
+        .trimmed(knots.start.value(), knots.end.value())?;
     let domain = trimmed.domain();
     let knots = KnotVector::new(
         trimmed
             .knots()
             .as_slice()
             .iter()
-            .map(|knot| (knot - domain.start) / (domain.end - domain.start))
+            .map(|knot| (knot - domain.start.value()) / (domain.end.value() - domain.start.value()))
             .collect(),
     )?;
     Ok(Curve::Nurbs(NurbsCurve::new(
@@ -871,7 +875,7 @@ fn validate_span_pcurves<P: Payload>(
         };
         let view = map.face_unchecked(*face);
         for step in 0..=SAMPLES {
-            let t = step as f64 / SAMPLES as f64;
+            let t = Fraction::new(step as f64 / SAMPLES as f64);
             let uv = pcurve.point_at(t);
             let residual = (view.point_at(uv.x, uv.y) - span.point_at(t)).norm();
             if residual > tolerances.section_fit {

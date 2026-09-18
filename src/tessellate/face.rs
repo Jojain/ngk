@@ -156,7 +156,12 @@ fn tessellate_boundaryless_face<P: Payload>(
     if !u.is_finite() || !v.is_finite() {
         return Err(TessellateError::UnboundedDomain);
     }
-    let bounds = (u.start, u.end, v.start, v.end);
+    let bounds = (
+        u.start.value(),
+        u.end.value(),
+        v.start.value(),
+        v.end.value(),
+    );
     let ccw = face.sense() == Orientation::Same;
     let mut mesh = surface_grid_over_bounds(face.surface(), bounds, ccw, opts);
     if face.loops().is_empty() {
@@ -295,8 +300,8 @@ fn revolution_surface_grid(
     if (u_max - u_min).abs() <= EPS
         && let Some(domain) = finite_curve_domain(profile_curve)
     {
-        u_min = domain.start;
-        u_max = domain.end;
+        u_min = domain.start.value();
+        u_max = domain.end.value();
     }
 
     let ccw = if signed_outer_area.abs() > EPS {

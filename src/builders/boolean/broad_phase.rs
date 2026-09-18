@@ -1,5 +1,6 @@
 //! Conservative trimmed-face bounds and deterministic BVH candidate generation.
 
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Interval, Point2, Point3, Surface};
 use crate::model::Model;
 use crate::topology::LoopKind;
@@ -157,18 +158,20 @@ fn face_bounds<P: Payload>(face: Face<'_, P>, padding: f64) -> Option<Bounds> {
     };
     let du = surface.domain_u();
     let dv = surface.domain_v();
-    if uv_points
-        .iter()
-        .any(|uv| uv.x < du.start || uv.x > du.end || uv.y < dv.start || uv.y > dv.end)
-    {
+    if uv_points.iter().any(|uv| {
+        uv.x < du.start.value()
+            || uv.x > du.end.value()
+            || uv.y < dv.start.value()
+            || uv.y > dv.end.value()
+    }) {
         return None;
     }
     let mut points = Vec::new();
     for patch in surface.bezier_spans().ok()? {
-        if patch.domain_u().end < u_min
-            || patch.domain_u().start > u_max
-            || patch.domain_v().end < v_min
-            || patch.domain_v().start > v_max
+        if patch.domain_u().end < NativeParam::new(u_min)
+            || patch.domain_u().start > NativeParam::new(u_max)
+            || patch.domain_v().end < NativeParam::new(v_min)
+            || patch.domain_v().start > NativeParam::new(v_max)
         {
             continue;
         }

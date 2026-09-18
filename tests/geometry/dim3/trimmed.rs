@@ -1,7 +1,8 @@
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 use ngk::geometry::{
-    Curve, Frame, Interval, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence, TrimmedCurve,
+    Curve, Fraction, Frame, Interval, LINEAR_TOLERANCE, NativeParam, Plane, Point3,
+    PointCoincidence, TrimmedCurve,
 };
 
 fn unit_circle() -> Curve {
@@ -31,7 +32,10 @@ fn a_span_traverses_its_own_extent_from_fraction_zero_to_one() {
 
     assert_point_near(quarter.start(), Point3::new(1.0, 0.0, 0.0));
     assert_point_near(quarter.end(), Point3::new(0.0, 1.0, 0.0));
-    assert_point_near(quarter.point_at(0.5), at_angle(FRAC_PI_2 / 2.0));
+    assert_point_near(
+        quarter.point_at(Fraction::new(0.5)),
+        at_angle(FRAC_PI_2 / 2.0),
+    );
     assert!((quarter.length() - FRAC_PI_2).abs() <= LINEAR_TOLERANCE);
 }
 
@@ -45,9 +49,16 @@ fn two_arcs_between_the_same_points_are_told_apart_only_by_their_spans() {
     assert_point_near(minor.start(), major.start());
     assert_point_near(minor.end(), major.end());
 
-    assert_point_near(minor.point_at(0.5), at_angle(FRAC_PI_2 / 2.0));
+    assert_point_near(
+        minor.point_at(Fraction::new(0.5)),
+        at_angle(FRAC_PI_2 / 2.0),
+    );
     // The major arc's midpoint is on the far side of the circle.
-    assert!(major.point_at(0.5).x < 0.0, "got {:?}", major.point_at(0.5));
+    assert!(
+        major.point_at(Fraction::new(0.5)).x < 0.0,
+        "got {:?}",
+        major.point_at(Fraction::new(0.5))
+    );
     assert!((minor.length() - FRAC_PI_2).abs() <= LINEAR_TOLERANCE);
     assert!((major.length() - (TAU - FRAC_PI_2)).abs() <= LINEAR_TOLERANCE);
 }
@@ -84,12 +95,12 @@ fn a_span_crossing_the_branch_cut_measures_against_its_own_extent() {
     // runs off the end of that branch. A point just past it must read as being
     // near the end of this arc, not as having wrapped back to the start.
     let arc = TrimmedCurve::new(unit_circle(), Interval::new(PI - 0.2, PI + 0.2));
-    let past_the_cut = arc.point_at(0.9);
+    let past_the_cut = arc.point_at(Fraction::new(0.9));
 
     assert!(arc.contains(past_the_cut, LINEAR_TOLERANCE));
     let fraction = arc.parameter_at(past_the_cut);
     assert!(
-        (fraction - 0.9).abs() <= 1e-9,
+        (fraction - 0.9).value().abs() <= 1e-9,
         "expected the arc's own fraction, got {fraction}"
     );
 }
@@ -101,7 +112,10 @@ fn reversing_a_span_keeps_its_geometry_and_swaps_its_ends() {
 
     assert_point_near(reversed.start(), arc.end());
     assert_point_near(reversed.end(), arc.start());
-    assert_point_near(reversed.point_at(0.25), arc.point_at(0.75));
+    assert_point_near(
+        reversed.point_at(Fraction::new(0.25)),
+        arc.point_at(Fraction::new(0.75)),
+    );
     assert!((reversed.length() - arc.length()).abs() <= LINEAR_TOLERANCE);
 }
 
@@ -114,8 +128,8 @@ fn narrowing_a_span_keeps_the_analytic_support() {
         matches!(half.curve(), Curve::Circle(_)),
         "narrowing must not degrade the support to NURBS"
     );
-    assert_point_near(half.start(), arc.point_at(0.25));
-    assert_point_near(half.end(), arc.point_at(0.75));
+    assert_point_near(half.start(), arc.point_at(Fraction::new(0.25)));
+    assert_point_near(half.end(), arc.point_at(Fraction::new(0.75)));
 }
 
 #[test]
@@ -123,11 +137,11 @@ fn the_cut_down_copy_is_the_span_over_a_unit_domain() {
     let arc = unit_arc(FRAC_PI_2);
     let standalone = arc.to_curve().expect("an arc converts exactly");
 
-    assert_point_near(standalone.point_at(0.0), arc.start());
-    assert_point_near(standalone.point_at(1.0), arc.end());
+    assert_point_near(standalone.point_at(NativeParam::new(0.0)), arc.start());
+    assert_point_near(standalone.point_at(NativeParam::new(1.0)), arc.end());
     for step in 0..=8 {
         let fraction = f64::from(step) / 8.0;
-        let on_arc = arc.point_at(fraction);
+        let on_arc = arc.point_at(Fraction::new(fraction));
         let projected = standalone.point_at(standalone.param_at(on_arc));
         assert!(
             (projected - on_arc).norm() <= 1e-9,
@@ -154,7 +168,10 @@ fn arc_helpers_anchor_the_support_and_span_the_sweep() {
     assert_eq!(ellipse.interval(), Interval::new(0.0, PI));
     assert_point_near(ellipse.start(), Point3::new(3.0, 0.0, 0.0));
     assert_point_near(ellipse.end(), Point3::new(-3.0, 0.0, 0.0));
-    assert_point_near(ellipse.point_at(0.5), Point3::new(0.0, 1.0, 0.0));
+    assert_point_near(
+        ellipse.point_at(Fraction::new(0.5)),
+        Point3::new(0.0, 1.0, 0.0),
+    );
 }
 
 #[test]

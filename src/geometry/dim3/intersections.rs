@@ -7,6 +7,7 @@ mod surface_surface;
 
 use std::ops::Index;
 
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{Interval, Point2, Point3, TrimmedCurve, TrimmedCurve2};
 
 pub use analytic::{
@@ -240,12 +241,12 @@ pub struct SurfaceIntersectionBranch {
 
 impl SurfaceIntersectionBranch {
     /// Evaluates the 3D branch at a normalized traversal parameter.
-    pub fn point_at(&self, parameter: f64) -> Point3 {
+    pub fn point_at(&self, parameter: Fraction) -> Point3 {
         self.curve_3d.point_at(parameter)
     }
 
     /// Projects a point to the branch's normalized traversal parameter.
-    pub fn parameter_at(&self, point: Point3) -> f64 {
+    pub fn parameter_at(&self, point: Point3) -> Fraction {
         self.curve_3d.parameter_at(point)
     }
 }

@@ -20,6 +20,7 @@ use super::surfaces::Plane;
 use super::utils::{Point3, PointCoincidence};
 use crate::geometry::Interval;
 use crate::geometry::nurbs::error::NurbsError;
+use crate::geometry::parameter::{Fraction, NativeParam, Normalized};
 
 /// A support curve together with the native parameter span that is meant.
 ///
@@ -121,22 +122,22 @@ impl TrimmedCurve {
     }
 
     /// Evaluates at a normalized traversal fraction of the span.
-    pub fn point_at(&self, fraction: f64) -> Point3 {
+    pub fn point_at(&self, fraction: Fraction) -> Point3 {
         self.curve.point_at(self.interval.at(fraction))
     }
 
     /// Returns the first point of the span.
     pub fn start(&self) -> Point3 {
-        self.point_at(0.0)
+        self.point_at(Fraction::START)
     }
 
     /// Returns the last point of the span.
     pub fn end(&self) -> Point3 {
-        self.point_at(1.0)
+        self.point_at(Fraction::END)
     }
 
     /// Returns the derivative with respect to the normalized fraction.
-    pub fn derivative_at(&self, fraction: f64, order: usize) -> nalgebra::Vector3<f64> {
+    pub fn derivative_at(&self, fraction: Fraction, order: usize) -> nalgebra::Vector3<f64> {
         let derivative = self.curve.derivative_at(self.interval.at(fraction), order);
         match order {
             1 => derivative * self.interval.delta(),
@@ -151,18 +152,17 @@ impl TrimmedCurve {
     /// covers. The raw parameter is shifted by whole periods onto the branch
     /// nearest the span, so one crossing the branch cut still measures against
     /// its own extent rather than the complementary one.
-    pub fn native_parameter_at(&self, point: Point3) -> f64 {
+    pub fn native_parameter_at(&self, point: Point3) -> NativeParam {
         let raw = self.curve.param_at(point);
         let Periodicity::Periodic(period) = self.curve.periodicity() else {
             return raw;
         };
-        let middle = 0.5 * (self.interval.start + self.interval.end);
-        raw + ((middle - raw) / period).round() * period
+        raw.on_branch_near(self.interval.midpoint(), period)
     }
 
     /// Returns where `point` falls along the span, as a normalized fraction.
-    pub fn parameter_at(&self, point: Point3) -> f64 {
-        (self.native_parameter_at(point) - self.interval.start) / self.interval.delta()
+    pub fn parameter_at(&self, point: Point3) -> Fraction {
+        self.interval.fraction_of(self.native_parameter_at(point))
     }
 
     /// Whether `point` lies on this span, and not merely on the support.
@@ -188,10 +188,7 @@ impl TrimmedCurve {
     /// arc and reject one well inside a long one. Dividing by the speed at the
     /// span's midpoint spends the tolerance in the unit it was given in.
     pub fn parameter_slack(&self, tolerance: f64) -> f64 {
-        let speed = self
-            .curve
-            .derivative_at(0.5 * (self.interval.start + self.interval.end), 1)
-            .norm();
+        let speed = self.curve.derivative_at(self.interval.midpoint(), 1).norm();
         if speed > crate::geometry::LINEAR_TOLERANCE {
             tolerance / speed
         } else {
@@ -208,7 +205,7 @@ impl TrimmedCurve {
     ///
     /// The support is carried over untouched, so repeated narrowing never
     /// accumulates conversion error.
-    pub fn sub(&self, fractions: Interval) -> Self {
+    pub fn sub(&self, fractions: Interval<Normalized>) -> Self {
         Self::new(
             self.curve.clone(),
             Interval::new(

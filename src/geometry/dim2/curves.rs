@@ -24,6 +24,7 @@ use super::conics::conic_arc_nurbs2;
 use super::nurbs::NurbsCurve2;
 use super::utils::Point2;
 use crate::geometry::dim3::curves::Periodicity;
+use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::geometry::traits::Curve2Geometry;
 
 /// An unbounded support curve in a surface's 2D parameter space.
@@ -84,27 +85,27 @@ impl Curve2 {
     }
 
     /// Evaluates the support at a native parameter.
-    pub fn point_at(&self, t: f64) -> Point2 {
+    pub fn point_at(&self, t: NativeParam) -> Point2 {
         match self {
             Curve2::Line(line) => line.point_at(t),
             Curve2::Circle(circle) => circle.point_at(t),
             Curve2::Ellipse(ellipse) => ellipse.point_at(t),
-            Curve2::Nurbs(curve) => curve.point_at(t),
+            Curve2::Nurbs(curve) => curve.point_at(t.value()),
         }
     }
 
     /// Returns the `order`-th derivative at a native parameter.
-    pub fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+    pub fn derivative_at(&self, t: NativeParam, order: usize) -> Vector2<f64> {
         match self {
             Curve2::Line(line) => line.derivative_at(t, order),
             Curve2::Circle(circle) => circle.derivative_at(t, order),
             Curve2::Ellipse(ellipse) => ellipse.derivative_at(t, order),
-            Curve2::Nurbs(curve) => curve.derivative_at(t, order),
+            Curve2::Nurbs(curve) => curve.derivative_at(t.value(), order),
         }
     }
 
     /// Returns the native parameter of the support point nearest `point`.
-    pub fn param_at(&self, point: Point2) -> f64 {
+    pub fn param_at(&self, point: Point2) -> NativeParam {
         match self {
             Curve2::Line(line) => line.param_at(point),
             Curve2::Circle(circle) => circle.param_at(point),
@@ -119,17 +120,17 @@ impl Curve2 {
             Curve2::Line(line) => line.project(point),
             Curve2::Circle(circle) => circle.project(point),
             Curve2::Ellipse(ellipse) => ellipse.project(point),
-            Curve2::Nurbs(curve) => curve.point_at(closest_sample_parameter(curve, point)),
+            Curve2::Nurbs(curve) => curve.point_at(closest_sample_parameter(curve, point).value()),
         }
     }
 
     /// Returns the arc length between two native parameters.
-    pub fn length(&self, t0: f64, t1: f64) -> f64 {
+    pub fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
         match self {
             Curve2::Line(line) => line.length(t0, t1),
             Curve2::Circle(circle) => circle.length(t0, t1),
             Curve2::Ellipse(ellipse) => ellipse.length(t0, t1),
-            Curve2::Nurbs(curve) => polyline_length(|t| curve.point_at(t), t0, t1),
+            Curve2::Nurbs(curve) => polyline_length(|t| curve.point_at(t.value()), t0, t1),
         }
     }
 
@@ -192,7 +193,8 @@ impl Curve2 {
                             .reversed(),
                     ));
                 }
-                self.to_nurbs()?.trimmed(interval.start, interval.end)?
+                self.to_nurbs()?
+                    .trimmed(interval.start.value(), interval.end.value())?
             }
         };
         Ok(Curve2::Nurbs(renormalized(nurbs)?))
@@ -229,13 +231,13 @@ impl Curve2 {
 /// Renormalizes a NURBS curve's knot vector onto `[0, 1]`.
 fn renormalized(nurbs: NurbsCurve2) -> Result<NurbsCurve2, NurbsError> {
     let domain = nurbs.domain();
-    let extent = domain.end - domain.start;
+    let extent = domain.delta();
     let knots = KnotVector::new(
         nurbs
             .knots()
             .as_slice()
             .iter()
-            .map(|knot| (knot - domain.start) / extent)
+            .map(|knot| (knot - domain.start.value()) / extent)
             .collect(),
     )?;
     NurbsCurve2::new(nurbs.degree(), nurbs.control_points().clone(), knots)
@@ -245,12 +247,16 @@ fn renormalized(nurbs: NurbsCurve2) -> Result<NurbsCurve2, NurbsError> {
 const LENGTH_SAMPLES: usize = 64;
 
 /// Accumulates a polyline approximation of arc length between two parameters.
-fn polyline_length(point_at: impl Fn(f64) -> Point2, t0: f64, t1: f64) -> f64 {
+fn polyline_length(
+    point_at: impl Fn(NativeParam) -> Point2,
+    t0: NativeParam,
+    t1: NativeParam,
+) -> f64 {
     let span = Interval::new(t0, t1);
     (0..LENGTH_SAMPLES)
         .map(|index| {
-            let a = point_at(span.at(index as f64 / LENGTH_SAMPLES as f64));
-            let b = point_at(span.at((index + 1) as f64 / LENGTH_SAMPLES as f64));
+            let a = point_at(span.at(Fraction::new(index as f64 / LENGTH_SAMPLES as f64)));
+            let b = point_at(span.at(Fraction::new((index + 1) as f64 / LENGTH_SAMPLES as f64)));
             (b - a).norm()
         })
         .sum()
@@ -260,14 +266,19 @@ fn polyline_length(point_at: impl Fn(f64) -> Point2, t0: f64, t1: f64) -> f64 {
 const CLOSEST_POINT_SAMPLES: usize = 64;
 
 /// Returns the native parameter of the NURBS point nearest `point`.
-fn closest_sample_parameter(curve: &NurbsCurve2, point: Point2) -> f64 {
+fn closest_sample_parameter(curve: &NurbsCurve2, point: Point2) -> NativeParam {
     if let Some(parameter) = curve.parameter_at(point, LINEAR_TOLERANCE) {
-        return parameter;
+        return NativeParam::new(parameter);
     }
     let domain = curve.domain();
     (0..=CLOSEST_POINT_SAMPLES)
-        .map(|index| domain.at(index as f64 / CLOSEST_POINT_SAMPLES as f64))
-        .map(|parameter| (parameter, (curve.point_at(parameter) - point).norm()))
+        .map(|index| domain.at(Fraction::new(index as f64 / CLOSEST_POINT_SAMPLES as f64)))
+        .map(|parameter| {
+            (
+                parameter,
+                (curve.point_at(parameter.value()) - point).norm(),
+            )
+        })
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(parameter, _)| parameter)
         .unwrap_or(domain.start)
@@ -328,11 +339,11 @@ impl Line2 {
     }
 
     /// Evaluates the line at a native (affine) parameter.
-    pub fn point_at(&self, t: f64) -> Point2 {
-        self.origin + *self.direction * (self.scale * t)
+    pub fn point_at(&self, t: NativeParam) -> Point2 {
+        self.origin + *self.direction * (self.scale * t.value())
     }
 
-    pub fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+    pub fn derivative_at(&self, t: NativeParam, order: usize) -> Vector2<f64> {
         match order {
             0 => self.point_at(t).coords,
             1 => *self.direction * self.scale,
@@ -341,11 +352,11 @@ impl Line2 {
     }
 
     /// Returns the parameter of the line point nearest `point`.
-    pub fn param_at(&self, point: Point2) -> f64 {
+    pub fn param_at(&self, point: Point2) -> NativeParam {
         if self.scale.abs() <= LINEAR_TOLERANCE {
-            return 0.0;
+            return NativeParam::new(0.0);
         }
-        (point - self.origin).dot(&self.direction) / self.scale
+        NativeParam::new((point - self.origin).dot(&self.direction) / self.scale)
     }
 
     pub fn project(&self, point: Point2) -> Point2 {
@@ -353,7 +364,7 @@ impl Line2 {
     }
 
     /// Returns the distance travelled between two parameters.
-    pub fn length(&self, t0: f64, t1: f64) -> f64 {
+    pub fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
         (t1 - t0).abs() * self.scale.abs()
     }
 
@@ -371,8 +382,8 @@ impl Line2 {
         NurbsCurve2::new(
             Degree::new(1)?,
             ControlPolygon2::new(vec![
-                HPoint2::from_cartesian(self.point_at(0.0), 1.0),
-                HPoint2::from_cartesian(self.point_at(1.0), 1.0),
+                HPoint2::from_cartesian(self.point_at(NativeParam::new(0.0)), 1.0),
+                HPoint2::from_cartesian(self.point_at(NativeParam::new(1.0)), 1.0),
             ])?,
             KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
         )
@@ -436,16 +447,16 @@ impl Circle2 {
     }
 
     /// Evaluates the circle at an angle in radians.
-    pub fn point_at(&self, t: f64) -> Point2 {
-        let (sin, cos) = t.sin_cos();
+    pub fn point_at(&self, t: NativeParam) -> Point2 {
+        let (sin, cos) = t.value().sin_cos();
         self.center + self.radius * (cos * *self.x_dir + sin * *self.y_dir)
     }
 
-    pub fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+    pub fn derivative_at(&self, t: NativeParam, order: usize) -> Vector2<f64> {
         if order == 0 {
             return self.point_at(t).coords;
         }
-        let (sin, cos) = t.sin_cos();
+        let (sin, cos) = t.value().sin_cos();
         let x = *self.x_dir * self.radius;
         let y = *self.y_dir * self.radius;
         match order % 4 {
@@ -457,9 +468,9 @@ impl Circle2 {
     }
 
     /// Returns the angle of the circle point nearest `point`, in `(-pi, pi]`.
-    pub fn param_at(&self, point: Point2) -> f64 {
+    pub fn param_at(&self, point: Point2) -> NativeParam {
         let radial = point - self.center;
-        radial.dot(&self.y_dir).atan2(radial.dot(&self.x_dir))
+        NativeParam::new(radial.dot(&self.y_dir).atan2(radial.dot(&self.x_dir)))
     }
 
     pub fn project(&self, point: Point2) -> Point2 {
@@ -471,7 +482,7 @@ impl Circle2 {
     }
 
     /// Returns the arc length swept between two angles.
-    pub fn length(&self, t0: f64, t1: f64) -> f64 {
+    pub fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
         (t1 - t0).abs() * self.radius.abs()
     }
 
@@ -487,8 +498,8 @@ impl Circle2 {
     /// Converts one full turn to an exact rational quadratic NURBS curve.
     pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
         conic_arc_nurbs2(
-            0.0,
-            TAU,
+            NativeParam::new(0.0),
+            NativeParam::new(TAU),
             FRAC_PI_2,
             |parameter| self.point_at(parameter),
             |parameter| self.derivative_at(parameter, 1),
@@ -557,18 +568,18 @@ impl Ellipse2 {
     }
 
     /// Evaluates the ellipse at an eccentric angle in radians.
-    pub fn point_at(&self, t: f64) -> Point2 {
-        let (sin, cos) = t.sin_cos();
+    pub fn point_at(&self, t: NativeParam) -> Point2 {
+        let (sin, cos) = t.value().sin_cos();
         self.center
             + *self.x_dir * (self.major_radius * cos)
             + *self.y_dir * (self.minor_radius * sin)
     }
 
-    pub fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+    pub fn derivative_at(&self, t: NativeParam, order: usize) -> Vector2<f64> {
         if order == 0 {
             return self.point_at(t).coords;
         }
-        let (sin, cos) = t.sin_cos();
+        let (sin, cos) = t.value().sin_cos();
         let x = *self.x_dir * self.major_radius;
         let y = *self.y_dir * self.minor_radius;
         match order % 4 {
@@ -583,11 +594,11 @@ impl Ellipse2 {
     ///
     /// This inverts the parameterization rather than minimizing distance: on
     /// the ellipse the two agree, which is the case the kernel asks about.
-    pub fn param_at(&self, point: Point2) -> f64 {
+    pub fn param_at(&self, point: Point2) -> NativeParam {
         let offset = point - self.center;
         let x = offset.dot(&self.x_dir) / self.major_radius;
         let y = offset.dot(&self.y_dir) / self.minor_radius;
-        y.atan2(x)
+        NativeParam::new(y.atan2(x))
     }
 
     pub fn project(&self, point: Point2) -> Point2 {
@@ -595,7 +606,7 @@ impl Ellipse2 {
     }
 
     /// Approximates the arc length swept between two angles.
-    pub fn length(&self, t0: f64, t1: f64) -> f64 {
+    pub fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
         polyline_length(|t| self.point_at(t), t0, t1)
     }
 
@@ -623,8 +634,8 @@ impl Ellipse2 {
     /// Converts one full turn to an exact rational quadratic NURBS curve.
     pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
         conic_arc_nurbs2(
-            0.0,
-            TAU,
+            NativeParam::new(0.0),
+            NativeParam::new(TAU),
             FRAC_PI_2,
             |parameter| self.point_at(parameter),
             |parameter| self.derivative_at(parameter, 1),
@@ -641,15 +652,15 @@ impl Curve2Geometry for Line2 {
         Periodicity::None
     }
 
-    fn point_at(&self, t: f64) -> Point2 {
+    fn point_at(&self, t: NativeParam) -> Point2 {
         Line2::point_at(self, t)
     }
 
-    fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+    fn derivative_at(&self, t: NativeParam, order: usize) -> Vector2<f64> {
         Line2::derivative_at(self, t, order)
     }
 
-    fn param_at(&self, point: Point2) -> f64 {
+    fn param_at(&self, point: Point2) -> NativeParam {
         Line2::param_at(self, point)
     }
 
@@ -657,7 +668,7 @@ impl Curve2Geometry for Line2 {
         Line2::project(self, point)
     }
 
-    fn length(&self, t0: f64, t1: f64) -> f64 {
+    fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
         Line2::length(self, t0, t1)
     }
 
@@ -683,15 +694,15 @@ impl Curve2Geometry for Circle2 {
         Periodicity::Periodic(TAU)
     }
 
-    fn point_at(&self, t: f64) -> Point2 {
+    fn point_at(&self, t: NativeParam) -> Point2 {
         Circle2::point_at(self, t)
     }
 
-    fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+    fn derivative_at(&self, t: NativeParam, order: usize) -> Vector2<f64> {
         Circle2::derivative_at(self, t, order)
     }
 
-    fn param_at(&self, point: Point2) -> f64 {
+    fn param_at(&self, point: Point2) -> NativeParam {
         Circle2::param_at(self, point)
     }
 
@@ -699,7 +710,7 @@ impl Curve2Geometry for Circle2 {
         Circle2::project(self, point)
     }
 
-    fn length(&self, t0: f64, t1: f64) -> f64 {
+    fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
         Circle2::length(self, t0, t1)
     }
 
@@ -725,15 +736,15 @@ impl Curve2Geometry for Ellipse2 {
         Periodicity::Periodic(TAU)
     }
 
-    fn point_at(&self, t: f64) -> Point2 {
+    fn point_at(&self, t: NativeParam) -> Point2 {
         Ellipse2::point_at(self, t)
     }
 
-    fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+    fn derivative_at(&self, t: NativeParam, order: usize) -> Vector2<f64> {
         Ellipse2::derivative_at(self, t, order)
     }
 
-    fn param_at(&self, point: Point2) -> f64 {
+    fn param_at(&self, point: Point2) -> NativeParam {
         Ellipse2::param_at(self, point)
     }
 
@@ -741,7 +752,7 @@ impl Curve2Geometry for Ellipse2 {
         Ellipse2::project(self, point)
     }
 
-    fn length(&self, t0: f64, t1: f64) -> f64 {
+    fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
         Ellipse2::length(self, t0, t1)
     }
 
@@ -772,15 +783,15 @@ impl Curve2Geometry for Curve2 {
         Curve2::periodicity(self)
     }
 
-    fn point_at(&self, t: f64) -> Point2 {
+    fn point_at(&self, t: NativeParam) -> Point2 {
         Curve2::point_at(self, t)
     }
 
-    fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64> {
+    fn derivative_at(&self, t: NativeParam, order: usize) -> Vector2<f64> {
         Curve2::derivative_at(self, t, order)
     }
 
-    fn param_at(&self, point: Point2) -> f64 {
+    fn param_at(&self, point: Point2) -> NativeParam {
         Curve2::param_at(self, point)
     }
 
@@ -788,7 +799,7 @@ impl Curve2Geometry for Curve2 {
         Curve2::project(self, point)
     }
 
-    fn length(&self, t0: f64, t1: f64) -> f64 {
+    fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
         Curve2::length(self, t0, t1)
     }
 

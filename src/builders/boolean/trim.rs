@@ -1,6 +1,7 @@
 //! Trim-domain queries and exact pcurve crossings for Boolean branches.
 
 use crate::geometry::TrimmedCurve2;
+use crate::geometry::parameter::{Fraction, Native};
 use crate::geometry::{
     CurveCurveIntersection2, CurveIntersectionError, CurveIntersectionOptions, IntersectionOptions,
     Interval, Point2,
@@ -18,9 +19,16 @@ use super::BooleanError;
 /// Location of a parameter-space point relative to a trimmed face.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum TrimLocation {
-    Inside { margin: f64 },
-    Outside { margin: f64 },
-    OnBoundary { loop_index: usize, parameter: f64 },
+    Inside {
+        margin: f64,
+    },
+    Outside {
+        margin: f64,
+    },
+    OnBoundary {
+        loop_index: usize,
+        parameter: Fraction,
+    },
 }
 
 /// Relative chord budget used when flattening trim loops into winding polygons.
@@ -81,7 +89,10 @@ impl FaceTrimDomain {
         let whole_support = (!enclosed).then(|| {
             let (u, v) = face.surface().domain();
             let (u, v) = (u.ordered(), v.ordered());
-            (Point2::new(u.start, v.start), Point2::new(u.end, v.end))
+            (
+                Point2::new(u.start.value(), v.start.value()),
+                Point2::new(u.end.value(), v.end.value()),
+            )
         });
         Ok(Self {
             domain,
@@ -258,7 +269,7 @@ impl FaceTrimDomain {
                 let Some(span) = clip_to_box(origin, direction, min, max) else {
                     return Ok(Vec::new());
                 };
-                (span.start, span.end)
+                (span.start.value(), span.end.value())
             }
             None => {
                 let mut projected = self
@@ -295,9 +306,10 @@ impl FaceTrimDomain {
         };
         let mut normalized = Vec::new();
         self.crossings(&bounded_line, curve_options, &mut normalized)?;
+        let line = Interval::<Native>::new(start, end);
         let mut parameters = normalized
             .into_iter()
-            .map(|parameter| start + parameter * (end - start))
+            .map(|fraction| line.at(fraction).value())
             .collect::<Vec<_>>();
         parameters.sort_by(f64::total_cmp);
         parameters.dedup_by(|a, b| (*a - *b).abs() <= parameter_tolerance);
@@ -316,18 +328,18 @@ impl FaceTrimDomain {
         &self,
         span: &TrimmedCurve2,
         options: CurveIntersectionOptions,
-        parameters: &mut Vec<f64>,
+        parameters: &mut Vec<Fraction>,
     ) -> Result<(), CurveIntersectionError> {
         for boundary in self.trim_curves() {
             for contact in span.intersect_curve_with_options(boundary, options)? {
                 match contact {
                     CurveCurveIntersection2::Point { u_a, .. } => {
-                        parameters.push(u_a.clamp(0.0, 1.0))
+                        parameters.push(u_a.clamped_to_unit())
                     }
                     CurveCurveIntersection2::Overlap { interval_a, .. } => {
                         parameters.extend([
-                            interval_a.start.clamp(0.0, 1.0),
-                            interval_a.end.clamp(0.0, 1.0),
+                            interval_a.start.clamped_to_unit(),
+                            interval_a.end.clamped_to_unit(),
                         ]);
                     }
                 }
@@ -407,7 +419,7 @@ pub(crate) fn boundary_edge_for<P: Payload>(
     pcurve: &TrimmedCurve2,
     tolerance: f64,
 ) -> Option<EdgeKey> {
-    let samples = [0.0, 0.25, 0.5, 0.75, 1.0].map(|t| pcurve.point_at(t));
+    let samples = [0.0, 0.25, 0.5, 0.75, 1.0].map(|t| pcurve.point_at(Fraction::new(t)));
     face.edges()
         .into_iter()
         .find(|edge| {

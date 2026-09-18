@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::ops::Deref;
 
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Curve, Interval, PointCoincidence, TrimmedCurve};
 use crate::model::{Cell1, Cell2, MergeTopology, TopologyMerge};
 use crate::topology::closed::Closeable;
@@ -300,13 +301,13 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     ///
     /// Comparing *points* rather than parameters on purpose. The ends of an
     /// edge's span coincide with its corners only when it has corners there, and
-    /// reconstructing the answer from `domain.start` is the mistake this exists
+    /// reconstructing the answer from `domain.start.value()` is the mistake this exists
     /// to stop. `tolerance` is a distance.
     pub fn has_corner_at(&self, parameter: f64, tolerance: f64) -> bool {
         let Some(curve) = self.curve() else {
             return false;
         };
-        let at = curve.point_at(parameter);
+        let at = curve.point_at(NativeParam::new(parameter));
         self.vertices()
             .iter()
             .filter_map(|corner| corner.point())

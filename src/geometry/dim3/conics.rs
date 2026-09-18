@@ -4,19 +4,23 @@ use crate::geometry::dim3::nurbs::points::{ControlPolygon, HPoint};
 use crate::geometry::dim3::nurbs::{Degree, KnotVector, NurbsCurve};
 use crate::geometry::dim3::utils::Point3;
 use crate::geometry::nurbs::error::NurbsError;
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::tolerance::LINEAR_TOLERANCE;
 use nalgebra::Vector3;
 
 /// Builds an exact piecewise rational-quadratic conic over `[start, end]`.
 pub(crate) fn conic_arc_nurbs(
-    start: f64,
-    end: f64,
+    start: NativeParam,
+    end: NativeParam,
     max_span: f64,
-    point_at: impl Fn(f64) -> Point3,
-    derivative_at: impl Fn(f64) -> Vector3<f64>,
+    point_at: impl Fn(NativeParam) -> Point3,
+    derivative_at: impl Fn(NativeParam) -> Vector3<f64>,
 ) -> Result<NurbsCurve, NurbsError> {
     if (end - start).abs() <= LINEAR_TOLERANCE {
-        return Err(NurbsError::DegenerateInterval { start, end });
+        return Err(NurbsError::DegenerateInterval {
+            start: start.value(),
+            end: end.value(),
+        });
     }
     if end < start {
         return Ok(conic_arc_nurbs(end, start, max_span, point_at, derivative_at)?.reversed());
@@ -25,12 +29,12 @@ pub(crate) fn conic_arc_nurbs(
     let span_count = ((end - start) / max_span).ceil().max(1.0) as usize;
     let span = (end - start) / span_count as f64;
     let mut points = Vec::with_capacity(2 * span_count + 1);
-    let mut knots = vec![start; 3];
+    let mut knots = vec![start.value(); 3];
 
     for index in 0..span_count {
         let t0 = start + index as f64 * span;
         let t2 = t0 + span;
-        let midpoint_parameter = 0.5 * (t0 + t2);
+        let midpoint_parameter = t0 + 0.5 * span;
         let p0 = point_at(t0);
         let p2 = point_at(t2);
         let p1 = tangent_intersection(p0, derivative_at(t0), p2, derivative_at(t2));
@@ -44,10 +48,10 @@ pub(crate) fn conic_arc_nurbs(
         points.push(HPoint::from_cartesian(p1, weight));
         points.push(HPoint::from_cartesian(p2, 1.0));
         if index + 1 < span_count {
-            knots.extend([t2, t2]);
+            knots.extend([t2.value(), t2.value()]);
         }
     }
-    knots.extend([end, end, end]);
+    knots.extend([end.value(), end.value(), end.value()]);
 
     NurbsCurve::new(
         Degree::new(2)?,

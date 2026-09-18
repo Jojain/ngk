@@ -40,6 +40,7 @@ use std::time::{Duration, Instant};
 
 use crate::builders::edges::split_edge_staged;
 use crate::builders::faces::{FaceImprint, split_face_by_imprints_staged, split_face_edge_staged};
+use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveCurveIntersection,
     CurveSurfaceIntersection, Degree, HPoint, HPoint2, IntersectionOptions, Interval, KnotVector,
@@ -279,8 +280,10 @@ pub fn compute_boolean_intersections<P: Payload>(
         imprint.pieces = embedding[imprint.span.0].clone();
         if imprint.orientation == IntersectionOrientation::Reversed {
             for piece in &mut imprint.pieces {
-                piece.interval =
-                    Interval::new(1.0 - piece.interval.end, 1.0 - piece.interval.start);
+                piece.interval = Interval::new(
+                    1.0 - piece.interval.end.value(),
+                    1.0 - piece.interval.start.value(),
+                );
                 piece.reversed = !piece.reversed;
             }
         }
@@ -335,12 +338,24 @@ fn build_intersection_network<P: Payload>(
                     curve,
                     IntersectionSpanKind::Overlap,
                     [
-                        edge_use(BooleanSide::First, *first_edge, first_interval.start),
-                        edge_use(BooleanSide::Second, *second_edge, second_interval.start),
+                        edge_use(
+                            BooleanSide::First,
+                            *first_edge,
+                            first_interval.start.value(),
+                        ),
+                        edge_use(
+                            BooleanSide::Second,
+                            *second_edge,
+                            second_interval.start.value(),
+                        ),
                     ],
                     [
-                        edge_use(BooleanSide::First, *first_edge, first_interval.end),
-                        edge_use(BooleanSide::Second, *second_edge, second_interval.end),
+                        edge_use(BooleanSide::First, *first_edge, first_interval.end.value()),
+                        edge_use(
+                            BooleanSide::Second,
+                            *second_edge,
+                            second_interval.end.value(),
+                        ),
                     ],
                     [
                         IntersectionSpanUse::Edge {
@@ -367,8 +382,8 @@ fn build_intersection_network<P: Payload>(
                 builder.record_span(
                     curve.clone(),
                     IntersectionSpanKind::Overlap,
-                    [edge_use(*side, *edge, edge_interval.start)],
-                    [edge_use(*side, *edge, edge_interval.end)],
+                    [edge_use(*side, *edge, edge_interval.start.value())],
+                    [edge_use(*side, *edge, edge_interval.end.value())],
                     [IntersectionSpanUse::Edge {
                         side: *side,
                         edge: *edge,
@@ -392,8 +407,8 @@ fn build_intersection_network<P: Payload>(
                 BooleanSide::Second
             };
             for imprint in imprints {
-                let start_uv = imprint.pcurve.point_at(0.0);
-                let end_uv = imprint.pcurve.point_at(1.0);
+                let start_uv = imprint.pcurve.point_at(Fraction::new(0.0));
+                let end_uv = imprint.pcurve.point_at(Fraction::new(1.0));
                 builder.record_span(
                     imprint.curve.clone(),
                     kind,
@@ -427,13 +442,13 @@ fn build_intersection_network<P: Payload>(
 /// section's midpoint keeps the returned interval monotone along the section's
 /// own sweep instead of folding it back over the branch cut.
 fn edge_section_parameters(edge_curve: &Curve, section: &TrimmedCurve) -> Interval {
-    let point_at = |parameter: f64| section.point_at(parameter);
+    let point_at = |parameter: f64| section.point_at(Fraction::new(parameter));
     let start = edge_curve.param_at(point_at(0.0));
     let Periodicity::Periodic(period) = edge_curve.periodicity() else {
         return Interval::new(start, edge_curve.param_at(point_at(1.0)));
     };
     let continued = |previous: f64, point: Point3| {
-        let offset = (edge_curve.param_at(point) - previous).rem_euclid(period);
+        let offset = (edge_curve.param_at(point).value() - previous).rem_euclid(period);
         let offset = if offset > 0.5 * period {
             offset - period
         } else {
@@ -441,7 +456,7 @@ fn edge_section_parameters(edge_curve: &Curve, section: &TrimmedCurve) -> Interv
         };
         previous + offset
     };
-    let middle = continued(start, point_at(0.5));
+    let middle = continued(start.value(), point_at(0.5));
     Interval::new(start, continued(middle, point_at(1.0)))
 }
 
@@ -459,7 +474,7 @@ fn event_use_for_cell<P: Payload>(
                 .curve()
                 .expect("registered edge geometry")
                 .param_at(point);
-            edge_use(side, edge, parameter)
+            edge_use(side, edge, parameter.value())
         }
         BooleanCell::Face(face) => {
             let uv = g
@@ -693,7 +708,7 @@ fn split_edge_at_points<P: Payload>(
             // Asked of the corners, not of the span's ends: on an unmarked edge
             // those ends are where the curve closes, and a contact landing there
             // is a corner to add rather than one already taken.
-            domain.contains(parameter, options.parameter_tolerance)
+            domain.contains(NativeParam::new(parameter), options.parameter_tolerance)
                 && !view.has_corner_at(parameter, options.linear_tolerance)
         }) else {
             continue;
@@ -725,12 +740,12 @@ fn split_edge_at_points<P: Payload>(
 fn periodic_parameter_in_domain(curve: &Curve, point: Point3, domain: Interval) -> f64 {
     let mut parameter = curve.param_at(point);
     if let Periodicity::Periodic(period) = curve.periodicity() {
-        while parameter < domain.start {
+        while parameter < NativeParam::new(domain.start.value()) {
             parameter += period;
         }
-        while parameter > domain.end {
+        while parameter > NativeParam::new(domain.end.value()) {
             parameter -= period;
         }
     }
-    parameter
+    parameter.value()
 }

@@ -6,6 +6,7 @@ use super::vertex::Vertex;
 use crate::geometry::Surface;
 use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
 use crate::model::{Cell2, MergeTopology, Model, RealizationPurpose, TopologyMerge};
 use crate::topology::attributes::{FaceAttr, LoopKind};
@@ -481,7 +482,12 @@ impl<'g, P: Payload> Face<'g, P> {
     /// no closed surface is.
     pub(crate) fn domain_center(&self) -> Option<Point3> {
         let (u, v) = self.surface().domain();
-        (u.is_finite() && v.is_finite()).then(|| self.point_at(u.at(0.5), v.at(0.5)))
+        (u.is_finite() && v.is_finite()).then(|| {
+            self.point_at(
+                u.at(Fraction::new(0.5)).value(),
+                v.at(Fraction::new(0.5)).value(),
+            )
+        })
     }
 
     /// Approximates this oriented face's signed tetrahedral volume contribution.
@@ -563,9 +569,9 @@ impl<'g, P: Payload> Face<'g, P> {
             return None;
         }
         let corner = |i: usize, j: usize| {
-            let u = u_span.at(i as f64 / STEPS as f64);
-            let v = v_span.at(j as f64 / STEPS as f64);
-            self.point_at(u, v) - reference
+            let u = u_span.at(Fraction::new(i as f64 / STEPS as f64));
+            let v = v_span.at(Fraction::new(j as f64 / STEPS as f64));
+            self.point_at(u.value(), v.value()) - reference
         };
         let mut volume = 0.0;
         for i in 0..STEPS {

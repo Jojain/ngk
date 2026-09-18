@@ -3,8 +3,8 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
-    Frame, Interval, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Rigid, Sphere, Surface,
-    SurfaceGeometry, SurfacePeriodicity,
+    Fraction, Frame, Interval, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Rigid, Sphere,
+    Surface, SurfaceGeometry, SurfacePeriodicity,
 };
 use radians::Rad64;
 
@@ -121,8 +121,8 @@ fn sphere_bbox_over_contains_a_trimmed_patch() {
 
     for iu in 0..=64 {
         for iv in 0..=32 {
-            let parameter_u = u.start + u.length() * iu as f64 / 64.0;
-            let parameter_v = v.start + v.length() * iv as f64 / 32.0;
+            let parameter_u = u.at(Fraction::new(iu as f64 / 64.0)).value();
+            let parameter_v = v.at(Fraction::new(iv as f64 / 32.0)).value();
             assert!(
                 bounds.contains_point(sphere.point_at(parameter_u, parameter_v), LINEAR_TOLERANCE,),
                 "sphere point ({parameter_u}, {parameter_v}) escaped its bounds"

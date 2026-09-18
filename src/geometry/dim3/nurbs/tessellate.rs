@@ -7,12 +7,12 @@ use crate::tessellate::IndexedMesh;
 pub fn sample_curve_uniform(curve: &NurbsCurve, n: usize) -> Vec<Point3> {
     let domain = curve.domain();
     if n == 0 {
-        return vec![curve.point_at(domain.start)];
+        return vec![curve.point_at(domain.start.value())];
     }
     (0..=n)
         .map(|i| {
             let t = i as f64 / n as f64;
-            curve.point_at(domain.start + (domain.end - domain.start) * t)
+            curve.point_at(domain.start.value() + (domain.end.value() - domain.start.value()) * t)
         })
         .collect()
 }
@@ -25,11 +25,11 @@ pub fn tessellate_curve_adaptive(
     max_depth: usize,
 ) -> Vec<Point3> {
     let domain = curve.domain();
-    let mut out = vec![curve.point_at(domain.start)];
+    let mut out = vec![curve.point_at(domain.start.value())];
     subdivide(
         curve,
-        domain.start,
-        domain.end,
+        domain.start.value(),
+        domain.end.value(),
         tolerance,
         max_depth,
         &mut out,
@@ -71,10 +71,10 @@ pub fn tessellate_surface_grid(surface: &NurbsSurface, nu: usize, nv: usize) -> 
     let mut normals = Vec::with_capacity((nu + 1) * (nv + 1));
     for j in 0..=nv {
         let tv = j as f64 / nv as f64;
-        let v = domain_v.start + (domain_v.end - domain_v.start) * tv;
+        let v = domain_v.start.value() + (domain_v.end.value() - domain_v.start.value()) * tv;
         for i in 0..=nu {
             let tu = i as f64 / nu as f64;
-            let u = domain_u.start + (domain_u.end - domain_u.start) * tu;
+            let u = domain_u.start.value() + (domain_u.end.value() - domain_u.start.value()) * tu;
             positions.push(surface.point_at(u, v));
             normals.push(surface.normal_at(u, v));
         }

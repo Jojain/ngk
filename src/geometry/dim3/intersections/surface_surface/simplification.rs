@@ -3,6 +3,7 @@ use std::f64::consts::{PI, TAU};
 use nalgebra::{Matrix3, SymmetricEigen, Vector3};
 
 use super::tracer::TraceState;
+use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::geometry::{
     Circle, Circle2, Curve, Curve2, Interval, NurbsCurve2, Plane, Point2, Point3, TrimmedCurve2,
 };
@@ -159,7 +160,7 @@ fn recognize_circle_3d(
     let circle = Circle::new(Plane::new(center, first_radial, normal), radius);
     let mut angles = Vec::with_capacity(points.len());
     for point in &points {
-        let mut angle = circle.param_at(*point);
+        let mut angle = circle.param_at(*point).value();
         if let Some(previous) = angles.last().copied() {
             while angle + PI < previous {
                 angle += TAU;
@@ -215,7 +216,9 @@ fn recognize_line_2d(
     points
         .iter()
         .zip(parameters)
-        .all(|(point, parameter)| (candidate.point_at(*parameter) - point).norm() <= tolerance)
+        .all(|(point, parameter)| {
+            (candidate.point_at(Fraction::new(*parameter)) - point).norm() <= tolerance
+        })
         .then_some(candidate)
 }
 
@@ -261,7 +264,9 @@ fn recognize_circle_2d(
         points
             .iter()
             .zip(parameters)
-            .all(|(point, parameter)| (candidate.point_at(*parameter) - point).norm() <= tolerance)
+            .all(|(point, parameter)| {
+                (candidate.point_at(Fraction::new(*parameter)) - point).norm() <= tolerance
+            })
             .then_some(candidate)
     })
 }
@@ -273,7 +278,7 @@ fn curve_3_matches_samples(
     tolerance: f64,
 ) -> bool {
     states.iter().zip(parameters).all(|(state, parameter)| {
-        (candidate.point_at(*parameter) - state.point).norm() <= tolerance
+        (candidate.point_at(NativeParam::new(*parameter)) - state.point).norm() <= tolerance
     })
 }
 

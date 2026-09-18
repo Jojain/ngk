@@ -10,7 +10,7 @@ use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
 use nalgebra::Vector3;
 use ngk::geometry::{
-    AnalyticSurfaceIntersection, ControlNet, Curve, Cylinder, Degree, Frame, HPoint,
+    AnalyticSurfaceIntersection, ControlNet, Curve, Cylinder, Degree, Fraction, Frame, HPoint,
     IntersectionOptions, KnotVector, LINEAR_TOLERANCE, NurbsSurface, PcurveFidelity, Plane, Point3,
     Sphere, Surface, SurfaceSurfaceIntersection, intersect_analytic_surfaces, intersect_surfaces,
 };
@@ -49,8 +49,8 @@ fn assert_sections_are_consistent(
                     "section left its support by {distance} at t={t}"
                 );
             }
-            let uv_a = section.pcurve_a.point_at(t);
-            let uv_b = section.pcurve_b.point_at(t);
+            let uv_a = section.pcurve_a.point_at(Fraction::new(t));
+            let uv_b = section.pcurve_b.point_at(Fraction::new(t));
             let tolerance = (section.fidelity.deviation() + LINEAR_TOLERANCE).max(1.0e-6) * 10.0;
             assert!(
                 (a.point_at(uv_a.x, uv_a.y) - point).norm() <= tolerance,
@@ -72,7 +72,7 @@ fn solver_points(a: &Surface, b: &Surface) -> Vec<Point3> {
         match result {
             SurfaceSurfaceIntersection::Branch(branch) => {
                 for index in 0..=32 {
-                    points.push(branch.point_at(index as f64 / 32.0));
+                    points.push(branch.point_at(Fraction::new(index as f64 / 32.0)));
                 }
             }
             SurfaceSurfaceIntersection::Point(point) => points.push(point.point),
@@ -351,9 +351,12 @@ fn a_section_crossing_a_seam_stays_one_section() {
     );
     for section in intersection.sections() {
         let samples = 64;
-        let mut previous = section.pcurve_b.point_at(0.0).x;
+        let mut previous = section.pcurve_b.point_at(Fraction::new(0.0)).x;
         for index in 1..=samples {
-            let u = section.pcurve_b.point_at(index as f64 / samples as f64).x;
+            let u = section
+                .pcurve_b
+                .point_at(Fraction::new(index as f64 / samples as f64))
+                .x;
             assert!(
                 (u - previous).abs() < TAU / 4.0,
                 "the spherical pcurve jumped from u={previous} to u={u}, \
@@ -394,7 +397,9 @@ fn a_sphere_seam_meridian_section_stays_inside_its_period() {
     assert_sections_are_consistent(&intersection, &plane, &sphere);
     for section in intersection.sections() {
         for index in 0..=32 {
-            let uv = section.pcurve_b.point_at(index as f64 / 32.0);
+            let uv = section
+                .pcurve_b
+                .point_at(Fraction::new(index as f64 / 32.0));
             assert!(
                 (-LINEAR_TOLERANCE..=TAU + LINEAR_TOLERANCE).contains(&uv.x),
                 "a pole-crossing pcurve left its period at u={}",

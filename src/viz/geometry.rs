@@ -2,6 +2,7 @@
 
 use nalgebra::Vector3;
 
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Curve, Plane, Point3, Surface};
 
 use super::{VizEdge, VizFace, VizScene, VizVertex};
@@ -74,7 +75,7 @@ pub fn scene_from_curve(curve: &Curve) -> VizScene {
     let polyline = (0..=CURVE_SEGMENTS)
         .map(|index| {
             let fraction = index as f64 / CURVE_SEGMENTS as f64;
-            point_array(&curve.point_at(start + (end - start) * fraction))
+            point_array(&curve.point_at(NativeParam::new(start + (end - start) * fraction)))
         })
         .collect();
 
@@ -104,7 +105,7 @@ pub fn scene_from_surface(surface: &Surface) -> VizScene {
 /// for an unbounded one.
 fn curve_interval(curve: &Curve) -> (f64, f64) {
     let domain = curve.domain().or_extent(DEBUG_EXTENT);
-    (domain.start, domain.end)
+    (domain.start.value(), domain.end.value())
 }
 
 /// The debug window for a surface, per parameter direction.
@@ -112,7 +113,10 @@ fn surface_intervals(surface: &Surface) -> ((f64, f64), (f64, f64)) {
     let (u, v) = surface.domain();
     let u = u.or_extent(DEBUG_EXTENT);
     let v = v.or_extent(DEBUG_EXTENT);
-    ((u.start, u.end), (v.start, v.end))
+    (
+        (u.start.value(), u.end.value()),
+        (v.start.value(), v.end.value()),
+    )
 }
 
 fn tessellate_surface(

@@ -29,6 +29,7 @@ use crate::geometry::dim3::surfaces::SurfacePeriodicity;
 use crate::geometry::dim3::utils::Point3;
 use crate::geometry::interval::Interval;
 use crate::geometry::nurbs::error::NurbsError;
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::reparam::ParamMap;
 use crate::geometry::transform::Rigid;
 use nalgebra::{UnitVector3, Vector2, Vector3};
@@ -48,19 +49,19 @@ pub trait CurveGeometry: Sized {
     fn periodicity(&self) -> Periodicity;
 
     /// The point at parameter `t`.
-    fn point_at(&self, t: f64) -> Point3;
+    fn point_at(&self, t: NativeParam) -> Point3;
 
     /// The `order`-th derivative at parameter `t`.
-    fn derivative_at(&self, t: f64, order: usize) -> Vector3<f64>;
+    fn derivative_at(&self, t: NativeParam, order: usize) -> Vector3<f64>;
 
     /// The parameter of the curve point nearest `point`.
-    fn param_at(&self, point: Point3) -> f64;
+    fn param_at(&self, point: Point3) -> NativeParam;
 
     /// The point on the curve nearest `point`.
     fn project(&self, point: Point3) -> Point3;
 
     /// Arc length between two parameters, in distance units.
-    fn length(&self, t0: f64, t1: f64) -> f64;
+    fn length(&self, t0: NativeParam, t1: NativeParam) -> f64;
 
     /// An exact NURBS representation of the curve as a point set.
     ///
@@ -106,19 +107,19 @@ pub trait Curve2Geometry: Sized {
     fn periodicity(&self) -> Periodicity;
 
     /// The point at native parameter `t`.
-    fn point_at(&self, t: f64) -> Point2;
+    fn point_at(&self, t: NativeParam) -> Point2;
 
     /// The `order`-th derivative at native parameter `t`.
-    fn derivative_at(&self, t: f64, order: usize) -> Vector2<f64>;
+    fn derivative_at(&self, t: NativeParam, order: usize) -> Vector2<f64>;
 
     /// The native parameter of the support point nearest `point`.
-    fn param_at(&self, point: Point2) -> f64;
+    fn param_at(&self, point: Point2) -> NativeParam;
 
     /// The point on the support nearest `point`.
     fn project(&self, point: Point2) -> Point2;
 
     /// Arc length between two native parameters, in parameter-space units.
-    fn length(&self, t0: f64, t1: f64) -> f64;
+    fn length(&self, t0: NativeParam, t1: NativeParam) -> f64;
 
     /// The same support traversed in the opposite direction.
     ///

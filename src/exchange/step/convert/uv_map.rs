@@ -25,6 +25,7 @@
 
 use nalgebra::{Vector2, vector};
 
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{
     Circle2, ControlPolygon2, Curve2, Ellipse2, HPoint2, Line2, NurbsCurve2, NurbsError, Point2,
     TrimmedCurve2,
@@ -173,7 +174,7 @@ impl UvMap {
             // compose without touching the parameter at all.
             Curve2::Line(line) => Some(Curve2::Line(Line2::new(
                 self.apply(line.origin()),
-                self.linear(line.derivative_at(0.0, 1)),
+                self.linear(line.derivative_at(NativeParam::new(0.0), 1)),
             ))),
             Curve2::Circle(circle) if self.is_similarity() => {
                 let center = self.apply(circle.center());

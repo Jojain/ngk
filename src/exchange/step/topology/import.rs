@@ -60,6 +60,7 @@ use super::super::part21::{EntityId, StepExchange};
 use super::super::report::{ImportReport, ImportSkip, ImportSkipReason};
 use super::super::schema::entities;
 use super::super::schema::resolver::{Located, Origin, Resolver, SchemaError};
+use crate::geometry::parameter::Fraction;
 
 /// How finely a pcurve is sampled when reading a loop's winding.
 ///
@@ -612,7 +613,7 @@ fn signed_area(uses: &[PlannedUse], surface: &Surface) -> f64 {
         }
         for sample in 0..WINDING_SAMPLES {
             let fraction = sample as f64 / WINDING_SAMPLES as f64;
-            points.push(use_.pcurve.point_at(fraction) + offset);
+            points.push(use_.pcurve.point_at(Fraction::new(fraction)) + offset);
         }
         previous = Some(use_.pcurve.end() + offset);
     }

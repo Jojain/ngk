@@ -1,14 +1,50 @@
+//! A directed range of parameters, in a stated parameter space.
+
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Interval {
-    pub start: f64,
-    pub end: f64,
+use crate::geometry::parameter::{Fraction, Native, Param};
+
+/// A directed range of parameters in the space `S`.
+///
+/// Directed, not ordered: `start` may exceed `end`, and that is the same
+/// geometry traversed backward rather than a normalization bug. Direction is
+/// load-bearing — the minor and major arcs between two points on a circle share
+/// both endpoints, so only the span tells them apart.
+///
+/// The space defaults to [`Native`], because most intervals in the kernel are a
+/// support's own parameters. A range of traversal fractions is
+/// `Interval<Normalized>`, and the two do not convert implicitly: crossing
+/// between them takes [`at`](Self::at) or [`fraction_of`](Self::fraction_of),
+/// each of which names the span the fraction is a fraction of.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct Interval<S = Native> {
+    pub start: Param<S>,
+    pub end: Param<S>,
 }
 
-impl Interval {
-    pub fn new(start: f64, end: f64) -> Self {
-        Self { start, end }
+// Written out rather than derived, for the reason given on [`Param`]: a derive
+// would bound each impl on the marker, and a marker is not a value.
+impl<S> Clone for Interval<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S> Copy for Interval<S> {}
+
+impl<S> PartialEq for Interval<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.start == other.start && self.end == other.end
+    }
+}
+
+impl<S> Interval<S> {
+    pub fn new(start: impl Into<Param<S>>, end: impl Into<Param<S>>) -> Self {
+        Self {
+            start: start.into(),
+            end: end.into(),
+        }
     }
 
     /// Returns the same parameter span traversed in the opposite direction.
@@ -21,9 +57,32 @@ impl Interval {
         self.end - self.start
     }
 
+    /// Returns the parameter halfway along the span.
+    pub fn midpoint(self) -> Param<S> {
+        self.start + 0.5 * self.delta()
+    }
+
     /// Maps a normalized traversal fraction onto this directed parameter span.
-    pub fn at(self, fraction: f64) -> f64 {
-        self.start + fraction * self.delta()
+    ///
+    /// Fraction `0` is [`start`](Self::start) and `1` is [`end`](Self::end),
+    /// whichever way the span runs. This is one of the two conversions between
+    /// parameter spaces, and the span it is asked of is the reference the
+    /// fraction is a fraction of.
+    pub fn at(self, fraction: Fraction) -> Param<S> {
+        self.start + fraction.value() * self.delta()
+    }
+
+    /// Returns where `parameter` falls along this span, as a fraction of it.
+    ///
+    /// The inverse of [`at`](Self::at). A degenerate span has no direction to
+    /// measure along, so every parameter on it reports fraction `0`.
+    pub fn fraction_of(self, parameter: Param<S>) -> Fraction {
+        let delta = self.delta();
+        if delta == 0.0 {
+            Fraction::START
+        } else {
+            Fraction::new((parameter - self.start) / delta)
+        }
     }
 
     pub fn ordered(self) -> Self {
@@ -35,10 +94,10 @@ impl Interval {
     }
 
     pub fn length(self) -> f64 {
-        (self.end - self.start).abs()
+        self.delta().abs()
     }
 
-    pub fn contains(self, value: f64, tolerance: f64) -> bool {
+    pub fn contains(self, value: Param<S>, tolerance: f64) -> bool {
         let ordered = self.ordered();
         value >= ordered.start - tolerance && value <= ordered.end + tolerance
     }
@@ -60,7 +119,7 @@ impl Interval {
             return Some(Self::new(start, end));
         }
         if start - end <= tolerance {
-            let midpoint = 0.5 * (start + end);
+            let midpoint = Self::new(start, end).midpoint();
             return Some(Self::new(midpoint, midpoint));
         }
         None
@@ -90,13 +149,21 @@ impl Interval {
             if self.start.is_finite() {
                 self.start
             } else {
-                -extent
+                Param::new(-extent)
             },
             if self.end.is_finite() {
                 self.end
             } else {
-                extent
+                Param::new(extent)
             },
         )
     }
+}
+
+impl Interval<crate::geometry::parameter::Normalized> {
+    /// The whole of a span, start to end.
+    pub const UNIT: Self = Self {
+        start: Fraction::START,
+        end: Fraction::END,
+    };
 }

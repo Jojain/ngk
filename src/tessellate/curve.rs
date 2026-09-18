@@ -6,6 +6,7 @@
 
 use super::{CurveOpts, Polyline3};
 use crate::geometry::Curve;
+use crate::geometry::parameter::NativeParam;
 
 /// Sample `curve` uniformly between `t0` and `t1` into `opts.segments + 1`
 /// points. The endpoints are always present.
@@ -14,7 +15,7 @@ pub fn tessellate_curve(curve: &Curve, t0: f64, t1: f64, opts: CurveOpts) -> Pol
     let mut points = Vec::with_capacity(segments + 1);
     for i in 0..=segments {
         let t = t0 + (t1 - t0) * (i as f64 / segments as f64);
-        points.push(curve.point_at(t));
+        points.push(curve.point_at(NativeParam::new(t)));
     }
     Polyline3 { points }
 }

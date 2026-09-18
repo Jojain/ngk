@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use crate::geometry::Surface;
+use crate::geometry::parameter::Fraction;
 use crate::topology::closed::Closed;
 
 use super::embedding::{EntityOwner, turn};
@@ -275,7 +276,8 @@ fn validate_oriented_shell_volume<P: Payload>(
         .or_else(|| {
             let boundary = faces[0].loops().into_iter().next()?;
             let edge = boundary.edges().into_iter().next()?;
-            edge.trimmed_curve().map(|section| section.point_at(0.0))
+            edge.trimmed_curve()
+                .map(|section| section.point_at(Fraction::new(0.0)))
         })
         .or_else(|| first.domain_center())
         .ok_or_else(|| unavailable(first))?;
@@ -304,7 +306,7 @@ fn validate_oriented_shell_volume<P: Payload>(
                 owner.insert(edge.dart(), face.key());
                 points.push(
                     edge.trimmed_curve()
-                        .map(|section| section.point_at(0.0))
+                        .map(|section| section.point_at(Fraction::new(0.0)))
                         .ok_or(ModelValidationError::SolidFaceOrientationUnavailable {
                             solid,
                             shell,

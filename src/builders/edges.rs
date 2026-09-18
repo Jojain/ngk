@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::builders::errors::{EdgeCreationError, ModelEditFailure};
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{
     Curve, Interval, LINEAR_TOLERANCE, NurbsError, Plane, Point3, PointCoincidence,
 };
@@ -248,7 +249,7 @@ fn mark_closed_edge<P: Payload>(
     edit.disown_cell(Dim::Zero, dart);
     let vertex = edit.add_vertex(VertexAttr::new(
         dart,
-        curve.point_at(parameter),
+        curve.point_at(NativeParam::new(parameter)),
         P::V::default(),
     ));
     EdgeSplit::Marked { edge, vertex }
@@ -260,7 +261,7 @@ fn split_edge_with_profile_links<P: Payload>(
     parameter: f64,
     split: PreparedFreeEdgeSplit,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    let midpoint = split.curve.point_at(parameter);
+    let midpoint = split.curve.point_at(NativeParam::new(parameter));
     let (first_curve, second_curve) = split_curve_at_parameter(
         edit,
         edge,
@@ -300,7 +301,7 @@ fn split_attached_edge_with_profile_links<P: Payload>(
     split: PreparedAttachedEdgeSplit,
     reversed: bool,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    let midpoint = split.curve.point_at(parameter);
+    let midpoint = split.curve.point_at(NativeParam::new(parameter));
     let (mut first_curve, mut second_curve) = split_curve_at_parameter(
         edit,
         edge,
@@ -502,10 +503,13 @@ fn split_curve_at_parameter<P: Payload>(
     parameter: f64,
 ) -> Result<(Curve, Curve), EdgeSplitError> {
     let interval = edge_reference_interval(g, edge, first_dart, second_dart, curve)?;
-    let fraction = (parameter - interval.start) / (interval.end - interval.start);
+    // `parameter` is native on `curve`, and so are the ends of the edge's span,
+    // so each piece is named directly. Going through a fraction would have to
+    // say a fraction of what, and the edge's span is not the support's own
+    // extent: the two agree only on an edge that covers the whole support.
     let trim = |interval| {
         curve
-            .trimmed(interval)
+            .trimmed_native(interval)
             .map_err(|source| EdgeSplitError::CurveTrimFailed {
                 edge,
                 parameter,
@@ -513,8 +517,8 @@ fn split_curve_at_parameter<P: Payload>(
             })
     };
     Ok((
-        trim(Interval::new(0.0, fraction))?,
-        trim(Interval::new(fraction, 1.0))?,
+        trim(Interval::new(interval.start.value(), parameter))?,
+        trim(Interval::new(parameter, interval.end.value()))?,
     ))
 }
 
@@ -540,7 +544,7 @@ fn check_split_parameter<P: Payload>(
 ) -> Result<(), EdgeSplitError> {
     let domain = edge_reference_interval(g, edge, first_dart, second_dart, curve)?.ordered();
 
-    if !domain.contains(parameter, LINEAR_TOLERANCE) {
+    if !domain.contains(NativeParam::new(parameter), LINEAR_TOLERANCE) {
         return Err(EdgeSplitError::ParameterOutOfRange { parameter, domain });
     }
 
@@ -553,8 +557,8 @@ fn check_split_parameter<P: Payload>(
         return Ok(());
     }
 
-    if (parameter - domain.start).abs() <= LINEAR_TOLERANCE
-        || (parameter - domain.end).abs() <= LINEAR_TOLERANCE
+    if (parameter - domain.start.value()).abs() <= LINEAR_TOLERANCE
+        || (parameter - domain.end.value()).abs() <= LINEAR_TOLERANCE
     {
         return Err(EdgeSplitError::DegenerateSplit { parameter });
     }
@@ -590,8 +594,8 @@ pub(crate) fn add_arc_staged<P: Payload>(
     check_valid_angle("end", end_angle)?;
 
     let circle = Curve::circle(plane, radius);
-    let start = circle.point_at(start_angle);
-    let end = circle.point_at(end_angle);
+    let start = circle.point_at(NativeParam::new(start_angle));
+    let end = circle.point_at(NativeParam::new(end_angle));
     let curve = if end_angle < start_angle {
         circle.reversed()
     } else {

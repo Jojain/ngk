@@ -7,7 +7,9 @@ use ngk::builders::edges::{add_circle, add_edge, split_edge};
 use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::revolve::{RevolveError, add_revolved_edge, add_revolved_face};
 use ngk::geometry::axis::Axis3;
-use ngk::geometry::{Axis2, Curve, Curve2, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface};
+use ngk::geometry::{
+    Axis2, Curve, Curve2, Fraction, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface,
+};
 use ngk::model::Model;
 use ngk::tessellate::{TessellateOpts, tessellate_face_key};
 use ngk::topology::LoopKind;
@@ -177,7 +179,7 @@ fn side_arc_midpoint(
     let interval = arc
         .parameter_interval()
         .expect("side arc should have an oriented interval");
-    curve.point_at(interval.at(0.5))
+    curve.point_at(interval.at(Fraction::new(0.5)))
 }
 
 /// A full turn of a *marked* profile is a different shape, so it is refused.
@@ -874,10 +876,10 @@ fn revolve_edge_full_turn_perpendicular_to_the_axis_sweeps_a_planar_annulus() {
         let pcurve = face.pcurve(edge.dart()).expect("every edge carries one");
         let section = edge.trimmed_curve().expect("a boundary edge has a section");
         for fraction in [0.0, 0.25, 0.5, 0.75] {
-            let uv = pcurve.point_at(fraction);
+            let uv = pcurve.point_at(Fraction::new(fraction));
             assert!(
                 face.point_at(uv.x, uv.y)
-                    .coincides(section.point_at(fraction), LINEAR_TOLERANCE),
+                    .coincides(section.point_at(Fraction::new(fraction)), LINEAR_TOLERANCE),
                 "pcurve left its edge at {fraction}"
             );
         }
@@ -951,10 +953,10 @@ fn revolve_face_full_turn_of_an_offset_rectangle_closes_its_shell() {
             let pcurve = face.pcurve(edge.dart()).expect("every edge carries one");
             let section = edge.trimmed_curve().expect("a boundary edge has a section");
             for fraction in [0.0, 0.25, 0.5, 0.75] {
-                let uv = pcurve.point_at(fraction);
+                let uv = pcurve.point_at(Fraction::new(fraction));
                 assert!(
                     face.point_at(uv.x, uv.y)
-                        .coincides(section.point_at(fraction), LINEAR_TOLERANCE),
+                        .coincides(section.point_at(Fraction::new(fraction)), LINEAR_TOLERANCE),
                     "pcurve left its edge at {fraction}"
                 );
             }

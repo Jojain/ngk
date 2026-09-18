@@ -11,6 +11,7 @@ use crate::geometry::LINEAR_TOLERANCE;
 use crate::geometry::axis::Axis3;
 use crate::geometry::dim2::utils::Axis2;
 use crate::geometry::nurbs::error::NurbsError;
+use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::geometry::traits::SurfaceGeometry;
 use crate::geometry::transform::Rigid;
 use crate::geometry::{Interval, ParamMap, Point2, Reparam};
@@ -144,19 +145,22 @@ impl Surface {
         if !span.is_finite() {
             return false;
         }
-        [span.ordered().at(0.0), span.ordered().at(1.0)]
-            .into_iter()
-            .all(|end| {
-                (0..=SAMPLES).all(|step| {
-                    let other = across
-                        .or_extent(1.0)
-                        .at(f64::from(step as u32) / SAMPLES as f64);
-                    match axis {
-                        Axis2::U => self.is_degenerate_at(end, other),
-                        Axis2::V => self.is_degenerate_at(other, end),
-                    }
-                })
+        [
+            span.ordered().at(Fraction::START),
+            span.ordered().at(Fraction::END),
+        ]
+        .into_iter()
+        .all(|end| {
+            (0..=SAMPLES).all(|step| {
+                let other = across
+                    .or_extent(1.0)
+                    .at(Fraction::new(f64::from(step as u32) / SAMPLES as f64));
+                match axis {
+                    Axis2::U => self.is_degenerate_at(end.value(), other.value()),
+                    Axis2::V => self.is_degenerate_at(other.value(), end.value()),
+                }
             })
+        })
     }
 
     pub fn to_nurbs(&self) -> Result<NurbsSurface, NurbsError> {
@@ -427,10 +431,10 @@ impl Plane {
             Degree::new(1)?,
             ControlNet::new(
                 vec![
-                    corner(u.start, v.start),
-                    corner(u.end, v.start),
-                    corner(u.start, v.end),
-                    corner(u.end, v.end),
+                    corner(u.start.value(), v.start.value()),
+                    corner(u.end.value(), v.start.value()),
+                    corner(u.start.value(), v.end.value()),
+                    corner(u.end.value(), v.end.value()),
                 ],
                 2,
                 2,
@@ -539,8 +543,8 @@ impl Cylinder {
             Plane::new(self.origin(), self.x_dir(), self.axis()),
             self.radius,
         );
-        let arc = if u.start.abs() <= LINEAR_TOLERANCE
-            && (u.end - std::f64::consts::TAU).abs() <= LINEAR_TOLERANCE
+        let arc = if u.start.value().abs() <= LINEAR_TOLERANCE
+            && (u.end.value() - std::f64::consts::TAU).abs() <= LINEAR_TOLERANCE
         {
             circle.to_nurbs()?
         } else {
@@ -549,7 +553,7 @@ impl Cylinder {
 
         let nu = arc.control_points().len();
         let mut points = Vec::with_capacity(2 * nu);
-        for height in [v.start, v.end] {
+        for height in [v.start.value(), v.end.value()] {
             for point in arc.control_points().iter() {
                 points.push(HPoint::from_cartesian(
                     point.to_cartesian() + height * *self.axis(),
@@ -773,7 +777,7 @@ impl Cone {
         let arc = Circle::new(Plane::xy(), 1.0).to_nurbs_between(u.start, u.end)?;
         let nu = arc.control_points().len();
         let mut points = Vec::with_capacity(2 * nu);
-        for parameter_v in [v.start, v.end] {
+        for parameter_v in [v.start.value(), v.end.value()] {
             let radius = self.radius_at(parameter_v);
             let height = parameter_v * self.half_angle.cos();
             for arc_point in arc.control_points().iter() {
@@ -815,21 +819,22 @@ impl RuledSurface {
     }
 
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
-        self.curve.point_at(u) + self.direction * v
+        self.curve.point_at(NativeParam::new(u)) + self.direction * v
     }
 
     /// Returns the least-squares source parameters of a point on the ruled surface.
     pub fn closest_parameter(&self, point: Point3) -> Point2 {
         let direction_squared = self.direction.norm_squared();
-        let mut u = self.curve.param_at(point);
+        let mut u = self.curve.param_at(point).value();
         let mut v = if direction_squared > LINEAR_TOLERANCE * LINEAR_TOLERANCE {
-            (point - self.curve.point_at(u)).dot(&self.direction) / direction_squared
+            (point - self.curve.point_at(NativeParam::new(u))).dot(&self.direction)
+                / direction_squared
         } else {
             0.0
         };
         for _ in 0..16 {
             let residual = self.point_at(u, v) - point;
-            let du = self.curve.derivative_at(u, 1);
+            let du = self.curve.derivative_at(NativeParam::new(u), 1);
             let jacobian = Matrix2::new(
                 du.dot(&du),
                 du.dot(&self.direction),
@@ -850,7 +855,7 @@ impl RuledSurface {
     }
 
     pub fn normal_at(&self, u: f64, _v: f64) -> UnitVector3<f64> {
-        let du = self.curve.derivative_at(u, 1);
+        let du = self.curve.derivative_at(NativeParam::new(u), 1);
         let n = du.cross(&self.direction);
         match UnitVector3::try_new(n, LINEAR_TOLERANCE) {
             Some(n) => n,
@@ -900,7 +905,7 @@ impl SurfaceOfRevolution {
 
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
         // u walks the profile curve, v is the angle [0, 2π]
-        let p = self.curve.point_at(u);
+        let p = self.curve.point_at(NativeParam::new(u));
 
         // Project p onto the axis, then get the radial component
         let proj = self.axis.project(p);
@@ -929,7 +934,7 @@ impl SurfaceOfRevolution {
         let sweep = self.sweep_angle(point);
         let rotation = Rotation3::from_axis_angle(&self.axis.direction, -sweep);
         let unswept = self.axis.origin + rotation * (point - self.axis.origin);
-        Point2::new(self.curve.param_at(unswept), sweep)
+        Point2::new(self.curve.param_at(unswept).value(), sweep)
     }
 
     /// The angle carrying the profile's half-plane onto `point`.
@@ -961,7 +966,7 @@ impl SurfaceOfRevolution {
             .map(|index| {
                 let profile = self
                     .curve
-                    .point_at(domain.at(index as f64 / MERIDIAN_SAMPLES as f64));
+                    .point_at(domain.at(Fraction::new(index as f64 / MERIDIAN_SAMPLES as f64)));
                 profile - self.axis.project(profile)
             })
             .max_by(|a, b| a.norm().total_cmp(&b.norm()))
@@ -984,7 +989,8 @@ impl SurfaceOfRevolution {
     /// Rotating about the axis is a rigid motion independent of `u`, so it
     /// commutes with differentiation along the profile.
     fn partial_u(&self, u: f64, v: f64) -> Vector3<f64> {
-        Rotation3::from_axis_angle(&self.axis.direction, v) * self.curve.derivative_at(u, 1)
+        Rotation3::from_axis_angle(&self.axis.direction, v)
+            * self.curve.derivative_at(NativeParam::new(u), 1)
     }
 
     /// Analytic `dS/dv`: the rotational velocity `axis x radius`.
@@ -1049,7 +1055,12 @@ fn unit_linear_knots() -> Result<KnotVector, NurbsError> {
 
 /// Clamped degree-1 knots spanning `domain`.
 fn linear_knots(domain: Interval) -> Result<KnotVector, NurbsError> {
-    KnotVector::new(vec![domain.start, domain.start, domain.end, domain.end])
+    KnotVector::new(vec![
+        domain.start.value(),
+        domain.start.value(),
+        domain.end.value(),
+        domain.end.value(),
+    ])
 }
 
 impl SurfaceGeometry for Plane {
@@ -1096,10 +1107,10 @@ impl SurfaceGeometry for Plane {
         Some(BBox::from_points_in_frame(
             self.frame.clone(),
             [
-                self.point_at(u.start, v.start),
-                self.point_at(u.end, v.start),
-                self.point_at(u.start, v.end),
-                self.point_at(u.end, v.end),
+                self.point_at(u.start.value(), v.start.value()),
+                self.point_at(u.end.value(), v.start.value()),
+                self.point_at(u.start.value(), v.end.value()),
+                self.point_at(u.end.value(), v.end.value()),
             ],
         ))
     }
@@ -1157,17 +1168,19 @@ impl SurfaceGeometry for Cylinder {
             return None;
         }
         let ordered = u.ordered();
-        let mut angles = vec![ordered.start, ordered.end];
-        let first = (ordered.start / std::f64::consts::FRAC_PI_2).ceil() as i64;
-        let last = (ordered.end / std::f64::consts::FRAC_PI_2).floor() as i64;
+        let mut angles = vec![ordered.start.value(), ordered.end.value()];
+        let first = (ordered.start.value() / std::f64::consts::FRAC_PI_2).ceil() as i64;
+        let last = (ordered.end.value() / std::f64::consts::FRAC_PI_2).floor() as i64;
         angles.extend((first..=last).map(|index| index as f64 * std::f64::consts::FRAC_PI_2));
         Some(BBox::from_points_in_frame(
             self.frame.clone(),
-            [v.start, v.end].into_iter().flat_map(|height| {
-                angles
-                    .iter()
-                    .map(move |&angle| self.point_at(angle, height))
-            }),
+            [v.start.value(), v.end.value()]
+                .into_iter()
+                .flat_map(|height| {
+                    angles
+                        .iter()
+                        .map(move |&angle| self.point_at(angle, height))
+                }),
         ))
     }
 
@@ -1209,7 +1222,7 @@ impl SurfaceGeometry for Sphere {
         match axis {
             Axis2::V => {
                 let (_, v) = SurfaceGeometry::domain(self);
-                vec![v.start, v.end]
+                vec![v.start.value(), v.end.value()]
             }
             Axis2::U => Vec::new(),
         }
@@ -1240,8 +1253,8 @@ impl SurfaceGeometry for Sphere {
         }
         let mut longitudes = angular_extrema(u, std::f64::consts::FRAC_PI_2);
         let mut latitudes = angular_extrema(v, std::f64::consts::FRAC_PI_2);
-        longitudes.extend([u.start, u.end]);
-        latitudes.extend([v.start, v.end]);
+        longitudes.extend([u.start.value(), u.end.value()]);
+        latitudes.extend([v.start.value(), v.end.value()]);
         Some(BBox::from_points_in_frame(
             self.frame.clone(),
             latitudes.into_iter().flat_map(|latitude| {
@@ -1315,14 +1328,16 @@ impl SurfaceGeometry for Cone {
             return None;
         }
         let mut angles = angular_extrema(u, std::f64::consts::FRAC_PI_2);
-        angles.extend([u.start, u.end]);
+        angles.extend([u.start.value(), u.end.value()]);
         Some(BBox::from_points_in_frame(
             self.frame.clone(),
-            [v.start, v.end].into_iter().flat_map(|parameter_v| {
-                angles
-                    .iter()
-                    .map(move |&parameter_u| self.point_at(parameter_u, parameter_v))
-            }),
+            [v.start.value(), v.end.value()]
+                .into_iter()
+                .flat_map(|parameter_v| {
+                    angles
+                        .iter()
+                        .map(move |&parameter_u| self.point_at(parameter_u, parameter_v))
+                }),
         ))
     }
 
@@ -1575,13 +1590,15 @@ impl SurfaceGeometry for RuledSurface {
         }
         let curve_bounds = self.curve.bbox_over(u)?;
         let corners = curve_bounds.corners()?;
-        Some(BBox::from_points([v.start, v.end].into_iter().flat_map(
-            |parameter| {
-                corners
-                    .iter()
-                    .map(move |point| *point + self.direction * parameter)
-            },
-        )))
+        Some(BBox::from_points(
+            [v.start.value(), v.end.value()]
+                .into_iter()
+                .flat_map(|parameter| {
+                    corners
+                        .iter()
+                        .map(move |point| *point + self.direction * parameter)
+                }),
+        ))
     }
 
     /// The ruling direction is a vector, so only the rotation reaches it.
@@ -1755,7 +1772,7 @@ fn positive_surface_control_bounds(surface: &NurbsSurface) -> Option<BBox> {
 /// Interior multiples of `step` inside an angular interval.
 fn angular_extrema(interval: Interval, step: f64) -> Vec<f64> {
     let ordered = interval.ordered();
-    let first = (ordered.start / step).ceil() as i64;
-    let last = (ordered.end / step).floor() as i64;
+    let first = (ordered.start.value() / step).ceil() as i64;
+    let last = (ordered.end.value() / step).floor() as i64;
     (first..=last).map(|index| index as f64 * step).collect()
 }

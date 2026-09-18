@@ -3,8 +3,8 @@ use std::f64::consts::{FRAC_PI_6, TAU};
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
-    Cone, Frame, Interval, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Rigid, Surface,
-    SurfaceGeometry, SurfacePeriodicity,
+    Cone, Fraction, Frame, Interval, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Rigid,
+    Surface, SurfaceGeometry, SurfacePeriodicity,
 };
 use ngk::tessellate::{SurfaceOpts, tessellate_surface_patch};
 use radians::Rad64;
@@ -112,8 +112,8 @@ fn cone_bbox_over_contains_a_trimmed_patch() {
 
     for iu in 0..=64 {
         for iv in 0..=32 {
-            let parameter_u = u.start + u.length() * iu as f64 / 64.0;
-            let parameter_v = v.start + v.length() * iv as f64 / 32.0;
+            let parameter_u = u.at(Fraction::new(iu as f64 / 64.0)).value();
+            let parameter_v = v.at(Fraction::new(iv as f64 / 32.0)).value();
             assert!(
                 bounds.contains_point(cone.point_at(parameter_u, parameter_v), LINEAR_TOLERANCE),
                 "cone point ({parameter_u}, {parameter_v}) escaped its bounds"

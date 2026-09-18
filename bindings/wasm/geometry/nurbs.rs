@@ -170,7 +170,7 @@ impl WasmNurbsCurve {
     #[wasm_bindgen(getter)]
     pub fn domain(&self) -> Float64Array {
         let domain = self.inner.domain();
-        flat_from_f64(&[domain.start, domain.end])
+        flat_from_f64(&[domain.start.value(), domain.end.value()])
     }
 
     /// Intersects this curve with another NURBS curve.
@@ -231,8 +231,8 @@ impl From<CurveCurveIntersection> for WasmCurveCurveIntersection {
                 interval_a,
                 interval_b,
             } => Self::Overlap {
-                interval_a: [interval_a.start, interval_a.end],
-                interval_b: [interval_b.start, interval_b.end],
+                interval_a: [interval_a.start.value(), interval_a.end.value()],
+                interval_b: [interval_b.start.value(), interval_b.end.value()],
             },
         }
     }
@@ -267,7 +267,7 @@ impl From<CurveSurfaceIntersection> for WasmCurveSurfaceIntersection {
                 surface_v,
             },
             CurveSurfaceIntersection::Overlap { curve_interval } => Self::Overlap {
-                curve_interval: [curve_interval.start, curve_interval.end],
+                curve_interval: [curve_interval.start.value(), curve_interval.end.value()],
             },
         }
     }
@@ -348,10 +348,22 @@ impl From<SurfaceSurfaceIntersection> for WasmSurfaceSurfaceIntersection {
                 }
             }
             SurfaceSurfaceIntersection::OverlapCandidate(candidate) => Self::OverlapCandidate {
-                surface_a_u_domain: [candidate.domain_a_u.start, candidate.domain_a_u.end],
-                surface_a_v_domain: [candidate.domain_a_v.start, candidate.domain_a_v.end],
-                surface_b_u_domain: [candidate.domain_b_u.start, candidate.domain_b_u.end],
-                surface_b_v_domain: [candidate.domain_b_v.start, candidate.domain_b_v.end],
+                surface_a_u_domain: [
+                    candidate.domain_a_u.start.value(),
+                    candidate.domain_a_u.end.value(),
+                ],
+                surface_a_v_domain: [
+                    candidate.domain_a_v.start.value(),
+                    candidate.domain_a_v.end.value(),
+                ],
+                surface_b_u_domain: [
+                    candidate.domain_b_u.start.value(),
+                    candidate.domain_b_u.end.value(),
+                ],
+                surface_b_v_domain: [
+                    candidate.domain_b_v.start.value(),
+                    candidate.domain_b_v.end.value(),
+                ],
             },
         }
     }
@@ -458,14 +470,14 @@ impl WasmNurbsSurface {
     #[wasm_bindgen(getter, js_name = domainU)]
     pub fn domain_u(&self) -> Float64Array {
         let domain = self.inner.domain_u();
-        flat_from_f64(&[domain.start, domain.end])
+        flat_from_f64(&[domain.start.value(), domain.end.value()])
     }
 
     /// Returns the v parameter domain as `[start, end]`.
     #[wasm_bindgen(getter, js_name = domainV)]
     pub fn domain_v(&self) -> Float64Array {
         let domain = self.inner.domain_v();
-        flat_from_f64(&[domain.start, domain.end])
+        flat_from_f64(&[domain.start.value(), domain.end.value()])
     }
 
     /// Returns the u knot vector.

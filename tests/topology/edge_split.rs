@@ -1,7 +1,9 @@
-use ngk::builders::edges::{EdgeSplit, EdgeSplitError, add_line, split_edge};
+use ngk::builders::edges::{EdgeSplit, EdgeSplitError, add_arc, add_line, split_edge};
 use ngk::builders::faces::{add_circle as add_disc, split_face_edge};
 use ngk::builders::profiles::{add_polyline, add_rectangle};
-use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
+use ngk::geometry::{
+    Curve, Fraction, LINEAR_TOLERANCE, NativeParam, Plane, Point3, PointCoincidence,
+};
 use ngk::model::Model;
 use ngk::modeling::faces;
 use ngk::topology::ModelEditError;
@@ -270,7 +272,7 @@ fn a_marked_edge_spans_a_period_from_its_corner() {
         .expect("a marked edge still spans")
         .ordered();
     assert!(
-        (span.start - 1.0).abs() <= LINEAR_TOLERANCE,
+        (span.start - 1.0).value().abs() <= LINEAR_TOLERANCE,
         "the span begins at the corner, got {span:?}",
     );
     assert!(
@@ -323,8 +325,8 @@ fn an_unmarked_edge_takes_a_corner_where_its_curve_closes() {
         .ordered()
         .start;
 
-    let split =
-        split_face_edge(&mut g, face, rim, closes_at).expect("the rim takes a corner there");
+    let split = split_face_edge(&mut g, face, rim, closes_at.value())
+        .expect("the rim takes a corner there");
 
     let EdgeSplit::Marked { vertex, .. } = split else {
         panic!("cutting an unmarked edge marks it, got {split:?}");
@@ -336,4 +338,66 @@ fn an_unmarked_edge_takes_a_corner_where_its_curve_closes() {
             .coincides(Point3::new(1.0, 0.0, 0.0), LINEAR_TOLERANCE),
         "the corner sits where the cut asked for it",
     );
+}
+
+/// Splitting a bounded arc leaves each piece on the sweep the cut asked for.
+///
+/// The split parameter is native -- radians on the circle -- so the corner
+/// lands correctly whatever the pieces carry, and the corners are therefore no
+/// evidence on their own. What is evidence is where a piece's interior runs: a
+/// piece cut against the whole support rather than against the edge's own span
+/// leaves the sweep entirely.
+///
+/// Stated over the point set rather than over the parameter, because trimming
+/// an arc yields a NURBS and a NURBS does not span an arc in angle: the pieces
+/// owe the right geometry, not the circle's own parameterization.
+#[test]
+fn splitting_a_bounded_arc_keeps_each_piece_on_its_own_sweep() {
+    let mut g = Model::<StandardPayload>::new();
+    let arc = add_arc(&mut g, Plane::xy(), 1.0, 1.0, 2.0).expect("an arc builds");
+
+    let split = split_edge(&mut g, arc, 1.5).expect("the arc separates at 1.5 rad");
+
+    let EdgeSplit::Separated { first, second, .. } = split else {
+        panic!("cutting a bounded edge separates it, got {split:?}");
+    };
+    let circle = Curve::circle(Plane::xy(), 1.0);
+    for (key, sweep, name) in [
+        (first, (1.0, 1.5), "the first piece"),
+        (second, (1.5, 2.0), "the second piece"),
+    ] {
+        let piece = g
+            .edge_unchecked(key)
+            .trimmed_curve()
+            .expect("a bounded edge has a span");
+        assert!(
+            piece
+                .start()
+                .coincides(circle.point_at(NativeParam::new(sweep.0)), LINEAR_TOLERANCE)
+                && piece
+                    .end()
+                    .coincides(circle.point_at(NativeParam::new(sweep.1)), LINEAR_TOLERANCE),
+            "{name} runs {sweep:?} rad, so it goes {:?} -> {:?}, but found {:?} -> {:?}",
+            circle.point_at(NativeParam::new(sweep.0)),
+            circle.point_at(NativeParam::new(sweep.1)),
+            piece.start(),
+            piece.end(),
+        );
+        assert!(
+            (piece.length() - (sweep.1 - sweep.0)).abs() <= 1.0e-6,
+            "{name} sweeps {} rad on a unit circle, so it is that long, got {}",
+            sweep.1 - sweep.0,
+            piece.length(),
+        );
+        for fraction in [0.25, 0.5, 0.75] {
+            let found = piece.point_at(Fraction::new(fraction));
+            let angle = found.y.atan2(found.x);
+            assert!(
+                (found.coords.norm() - 1.0).abs() <= LINEAR_TOLERANCE
+                    && (sweep.0..=sweep.1).contains(&angle),
+                "{name} stays within {sweep:?} rad, but fraction {fraction} is                  {found:?}, at angle {angle} and radius {}",
+                found.coords.norm(),
+            );
+        }
+    }
 }

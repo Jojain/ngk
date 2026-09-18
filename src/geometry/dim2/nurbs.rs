@@ -261,7 +261,7 @@ impl NurbsCurve2 {
                 .as_slice()
                 .iter()
                 .rev()
-                .map(|knot| domain.start + domain.end - knot)
+                .map(|knot| domain.start.value() + domain.end.value() - knot)
                 .collect(),
         )
         .expect("reversing a valid knot vector remains valid");
@@ -269,7 +269,7 @@ impl NurbsCurve2 {
             .interpolation_parameters
             .iter()
             .rev()
-            .map(|parameter| domain.start + domain.end - parameter)
+            .map(|parameter| domain.start.value() + domain.end.value() - parameter)
             .collect::<Vec<_>>();
         interpolation_parameters.sort_by(f64::total_cmp);
         Self {
@@ -283,11 +283,11 @@ impl NurbsCurve2 {
     /// Splits the curve exactly at an interior native-domain parameter.
     pub fn split_at(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
         let domain = self.domain();
-        if parameter <= domain.start + LINEAR_TOLERANCE
-            || parameter >= domain.end - LINEAR_TOLERANCE
+        if parameter <= domain.start.value() + LINEAR_TOLERANCE
+            || parameter >= domain.end.value() - LINEAR_TOLERANCE
         {
             return Err(NurbsError::DegenerateInterval {
-                start: domain.start,
+                start: domain.start.value(),
                 end: parameter,
             });
         }
@@ -334,11 +334,17 @@ impl NurbsCurve2 {
         }
 
         let domain = self.domain();
-        if start < domain.start - LINEAR_TOLERANCE || end > domain.end + LINEAR_TOLERANCE {
+        if start < domain.start.value() - LINEAR_TOLERANCE
+            || end > domain.end.value() + LINEAR_TOLERANCE
+        {
             return Err(NurbsError::ParameterOutOfRange {
-                u: if start < domain.start { start } else { end },
-                min: domain.start,
-                max: domain.end,
+                u: if start < domain.start.value() {
+                    start
+                } else {
+                    end
+                },
+                min: domain.start.value(),
+                max: domain.end.value(),
             });
         }
 
@@ -347,12 +353,12 @@ impl NurbsCurve2 {
             return Err(NurbsError::DegenerateInterval { start, end });
         }
 
-        let after_start = if start <= domain.start + LINEAR_TOLERANCE {
+        let after_start = if start <= domain.start.value() + LINEAR_TOLERANCE {
             self.clone()
         } else {
             self.split_at(start)?.1
         };
-        if end >= domain.end - LINEAR_TOLERANCE {
+        if end >= domain.end.value() - LINEAR_TOLERANCE {
             Ok(after_start)
         } else {
             Ok(after_start.split_at(end)?.0)
@@ -377,11 +383,11 @@ impl NurbsCurve2 {
     /// Samples the curve adaptively and returns native parameters with points.
     pub fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
         let domain = self.domain();
-        let mut samples = vec![(domain.start, self.point_at(domain.start))];
+        let mut samples = vec![(domain.start.value(), self.point_at(domain.start.value()))];
         adaptive_sample(
             self,
-            domain.start,
-            domain.end,
+            domain.start.value(),
+            domain.end.value(),
             tolerance,
             max_depth,
             &mut samples,
@@ -396,7 +402,8 @@ impl NurbsCurve2 {
         let mut parameter = (0..=sample_count)
             .map(|index| {
                 let fraction = index as f64 / sample_count as f64;
-                let u = domain.start + (domain.end - domain.start) * fraction;
+                let u =
+                    domain.start.value() + (domain.end.value() - domain.start.value()) * fraction;
                 (u, (self.point_at(u) - point).norm_squared())
             })
             .min_by(|left, right| left.1.total_cmp(&right.1))?
@@ -411,8 +418,8 @@ impl NurbsCurve2 {
             if denominator.abs() <= f64::EPSILON {
                 break;
             }
-            let next =
-                (parameter - delta.dot(&first) / denominator).clamp(domain.start, domain.end);
+            let next = (parameter - delta.dot(&first) / denominator)
+                .clamp(domain.start.value(), domain.end.value());
             if (next - parameter).abs() <= 1.0e-12 {
                 parameter = next;
                 break;
@@ -459,7 +466,7 @@ impl NurbsCurve2 {
 
     fn clamp_parameter(&self, parameter: f64) -> f64 {
         let domain = self.domain();
-        parameter.clamp(domain.start, domain.end)
+        parameter.clamp(domain.start.value(), domain.end.value())
     }
 
     fn insert_knot(&mut self, parameter: f64) {
@@ -675,14 +682,14 @@ fn adaptive_sample(
 fn distinct_interior_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
     distinct_domain_knots(knots, domain)
         .into_iter()
-        .filter(|knot| *knot > domain.start && *knot < domain.end)
+        .filter(|knot| *knot > domain.start.value() && *knot < domain.end.value())
         .collect()
 }
 
 fn distinct_domain_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
     let mut distinct = Vec::new();
     for &knot in knots {
-        if knot < domain.start || knot > domain.end {
+        if knot < domain.start.value() || knot > domain.end.value() {
             continue;
         }
         if distinct.last().is_none_or(|last| *last != knot) {

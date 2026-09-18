@@ -7,6 +7,7 @@
 use nalgebra::Vector3;
 
 use crate::geometry::Plane;
+use crate::geometry::parameter::Fraction;
 use crate::modeling::edges;
 use crate::modeling::sweep::extrude_profile;
 use crate::viz::{ScriptResult, Style, VizHints};
@@ -21,7 +22,10 @@ pub fn run() -> Result<ScriptResult, String> {
         .edge()
         .trimmed_curve()
         .ok_or("arc geometry is missing")?;
-    let (start, end) = (section.point_at(0.0), section.point_at(1.0));
+    let (start, end) = (
+        section.point_at(Fraction::new(0.0)),
+        section.point_at(Fraction::new(1.0)),
+    );
     let closing_edge =
         edges::line(end, start).map_err(|err| format!("failed to build closing edge: {err:?}"))?;
     let mut profile = arc.into_profile();

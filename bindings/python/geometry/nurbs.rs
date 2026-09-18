@@ -20,7 +20,7 @@ impl PyNurbsCurve {
     #[getter]
     fn domain(&self) -> (f64, f64) {
         let domain = self.curve.domain();
-        (domain.start, domain.end)
+        (domain.start.value(), domain.end.value())
     }
 
     #[getter]
@@ -67,13 +67,13 @@ impl PyNurbsSurface {
     #[getter]
     fn domain_u(&self) -> (f64, f64) {
         let domain = self.surface.domain_u();
-        (domain.start, domain.end)
+        (domain.start.value(), domain.end.value())
     }
 
     #[getter]
     fn domain_v(&self) -> (f64, f64) {
         let domain = self.surface.domain_v();
-        (domain.start, domain.end)
+        (domain.start.value(), domain.end.value())
     }
 
     #[getter]

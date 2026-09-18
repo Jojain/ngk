@@ -13,6 +13,7 @@
 //! now a second [`PairKind`] variant that the same probe answers.
 
 use crate::geometry::TrimmedCurve2;
+use crate::geometry::parameter::{Fraction, NativeParam};
 use std::collections::hash_map::Entry;
 use std::rc::Rc;
 
@@ -267,8 +268,8 @@ fn clip_deferred<P: Payload>(
             let face_key = pair.face(ContactCell::Face);
             let trim = trims.get(g, face_key, tolerance)?;
             for piece in clip_imprint_to_trim(&trim, &imprint, anchors, graze, options)? {
-                let start = piece.point_at(0.0);
-                let end = piece.point_at(1.0);
+                let start = piece.point_at(Fraction::START);
+                let end = piece.point_at(Fraction::END);
                 contacts.push(Contact::EdgePoint {
                     cell: ContactCell::Edge,
                     point: start,
@@ -630,11 +631,11 @@ fn probe_edge_edge<P: Payload>(
                 ] {
                     contacts.push(Contact::EdgePoint {
                         cell,
-                        point: curve.point_at(interval.start),
+                        point: curve.point_at(NativeParam::new(interval.start.value())),
                     });
                     contacts.push(Contact::EdgePoint {
                         cell,
-                        point: curve.point_at(interval.end),
+                        point: curve.point_at(NativeParam::new(interval.end.value())),
                     });
                 }
                 contacts.push(Contact::EdgeOverlap {
@@ -698,10 +699,13 @@ fn probe_edge_face<P: Payload>(
             } => {
                 if analytic_parameters {
                     if let Periodicity::Periodic(period) = curve.periodicity() {
-                        let midpoint = 0.5 * (edge_interval.start + edge_interval.end);
+                        let midpoint = edge_interval.midpoint().value();
                         curve_u += ((midpoint - curve_u) / period).round() * period;
                     }
-                    if !edge_interval.contains(curve_u, options.intersections.parameter_tolerance) {
+                    if !edge_interval.contains(
+                        NativeParam::new(curve_u),
+                        options.intersections.parameter_tolerance,
+                    ) {
                         continue;
                     }
                 }
@@ -723,7 +727,7 @@ fn probe_edge_face<P: Payload>(
                     graze,
                 )
                 .unwrap_or(point);
-                let tangent = curve.derivative_at(curve_u, 1);
+                let tangent = curve.derivative_at(NativeParam::new(curve_u), 1);
                 let normal = face.surface().normal_at(surface_u, surface_v);
                 let kind = if tangent.dot(&normal).abs()
                     <= options.intersections.angular_tolerance * tangent.norm() * normal.norm()
@@ -744,13 +748,16 @@ fn probe_edge_face<P: Payload>(
                 let section = if analytic_parameters {
                     curve.trimmed_native(edge_interval)?
                 } else {
-                    let native = curve.to_nurbs()?.domain();
-                    let extent = native.end - native.start;
-                    let interval = Interval::new(
-                        ((curve_interval.start - native.start) / extent).clamp(0.0, 1.0),
-                        ((curve_interval.end - native.start) / extent).clamp(0.0, 1.0),
-                    );
-                    graph::normalized_subcurve(curve, interval)?
+                    // The numeric solver answers in the prepared curve's knot
+                    // domain, so the overlap is clipped and spent there.
+                    let knots = curve.to_nurbs()?.domain();
+                    graph::nurbs_subcurve(
+                        curve,
+                        Interval::new(
+                            curve_interval.start.clamp(knots.start, knots.end),
+                            curve_interval.end.clamp(knots.start, knots.end),
+                        ),
+                    )?
                 };
                 let Some(imprint) = section_imprint(&face, &section, options)? else {
                     continue;
@@ -822,8 +829,8 @@ fn probe_face_face<P: Payload>(
             if end_t - start_t <= options.intersections.linear_tolerance {
                 continue;
             }
-            let start = line_point + direction * start_t;
-            let end = line_point + direction * end_t;
+            let start = line_point + direction * start_t.value();
+            let end = line_point + direction * end_t.value();
             let curve = Curve::line(start, end);
             for (cell, plane) in [
                 (ContactCell::First, a_plane),
@@ -937,19 +944,25 @@ fn prepare_face_surface<P: Payload>(
         return Ok(PreparedSurface::new(face.surface())?);
     };
     let surface = face.surface();
-    let middle = |domain: Interval| 0.5 * (domain.start + domain.end);
+    let middle = |domain: Interval| 0.5 * (domain.start.value() + domain.end.value());
     let closed_in_u = surface
-        .point_at(domain_u.start, middle(domain_v))
-        .coincides(surface.point_at(domain_u.end, middle(domain_v)), tolerance);
+        .point_at(domain_u.start.value(), middle(domain_v))
+        .coincides(
+            surface.point_at(domain_u.end.value(), middle(domain_v)),
+            tolerance,
+        );
     let closed_in_v = surface
-        .point_at(middle(domain_u), domain_v.start)
-        .coincides(surface.point_at(middle(domain_u), domain_v.end), tolerance);
+        .point_at(middle(domain_u), domain_v.start.value())
+        .coincides(
+            surface.point_at(middle(domain_u), domain_v.end.value()),
+            tolerance,
+        );
     let grown = |domain: Interval, closed: bool| {
         if closed {
             return domain;
         }
-        let margin = (domain.end - domain.start) * DOMAIN_MARGIN;
-        Interval::new(domain.start - margin, domain.end + margin)
+        let margin = (domain.end.value() - domain.start.value()) * DOMAIN_MARGIN;
+        Interval::new(domain.start.value() - margin, domain.end.value() + margin)
     };
     match PreparedSurface::over(
         surface,
@@ -1008,13 +1021,13 @@ fn clip_overlap_to_edges(
         let slack = edge.parameter_slack(tolerance);
         let bounds = edge.interval().ordered();
         let span = Interval::new(
-            (bounds.start - slack - overlap.start) / overlap.delta(),
-            (bounds.end + slack - overlap.start) / overlap.delta(),
+            overlap.fraction_of(bounds.start - slack),
+            overlap.fraction_of(bounds.end + slack),
         )
         .ordered();
         Some((
             overlap,
-            Interval::new(span.start.max(0.0), span.end.min(1.0)),
+            Interval::new(span.start.max(Fraction::START), span.end.min(Fraction::END)),
         ))
     };
     let (first_overlap, first_span) = carried(first)?;
@@ -1045,9 +1058,9 @@ fn aligned_with_edge(edge: &TrimmedCurve, span: Interval) -> Interval {
         return span;
     };
     let edge = edge.interval();
-    let offset = (0.5 * (edge.start + edge.end) - 0.5 * (span.start + span.end)) / period;
+    let offset = (edge.midpoint() - span.midpoint()) / period;
     let shift = offset.round() * period;
-    Interval::new(span.start + shift, span.end + shift)
+    Interval::new(span.start.value() + shift, span.end.value() + shift)
 }
 
 /// Returns an edge's curve paired with the span its vertices bound.
@@ -1081,7 +1094,7 @@ fn section_imprint<P: Payload>(
     let mut points = Vec::with_capacity(SECTION_SAMPLE_COUNT + 1);
     let mut uv_points = Vec::with_capacity(SECTION_SAMPLE_COUNT + 1);
     for index in 0..=SECTION_SAMPLE_COUNT {
-        let point = section.point_at(index as f64 / SECTION_SAMPLE_COUNT as f64);
+        let point = section.point_at(NativeParam::new(index as f64 / SECTION_SAMPLE_COUNT as f64));
         let Ok(uv) = face.surface().param_at(point) else {
             return Ok(None);
         };
@@ -1137,7 +1150,7 @@ fn clip_imprint_to_trim(
                 .iter()
                 .find(|anchor| (point - **anchor).norm() <= graze)
         })
-        .map(|anchor| imprint.parameter_at(*anchor).clamp(0.0, 1.0))
+        .map(|anchor| imprint.parameter_at(*anchor).clamped_to_unit())
         .collect::<Vec<_>>();
     crossings.retain(|crossing| {
         let point = imprint.point_at(*crossing);
@@ -1145,10 +1158,10 @@ fn clip_imprint_to_trim(
             .iter()
             .any(|node| (point - imprint.point_at(*node)).norm() <= graze)
     });
-    let mut parameters = vec![0.0, 1.0];
+    let mut parameters = vec![Fraction::START, Fraction::END];
     parameters.append(&mut crossings);
     parameters.extend(nodes);
-    parameters.sort_by(f64::total_cmp);
+    parameters.sort_by(Fraction::total_cmp);
     parameters.dedup_by(|a, b| (*a - *b).abs() <= tolerance);
     let mut pieces = Vec::new();
     for pair in parameters.windows(2) {
@@ -1157,7 +1170,7 @@ fn clip_imprint_to_trim(
         if pair[1] - pair[0] <= LINEAR_TOLERANCE {
             continue;
         }
-        let midpoint = 0.5 * (pair[0] + pair[1]);
+        let midpoint = Interval::new(pair[0], pair[1]).midpoint();
         if !matches!(
             trim.classify(imprint.pcurve.point_at(midpoint)),
             TrimLocation::Inside { .. }
@@ -1236,12 +1249,13 @@ fn dedup_face_imprints(imprints: &mut Vec<FaceImprint>, tolerance: f64) {
 /// Whether two pcurves trace the same section, in either direction.
 fn same_section(left: &TrimmedCurve2, right: &TrimmedCurve2, tolerance: f64) -> bool {
     let samples = [0.0, 0.25, 0.5, 0.75, 1.0];
-    let forward = samples
-        .iter()
-        .all(|t| (left.point_at(*t) - right.point_at(*t)).norm() <= tolerance);
-    let reversed = samples
-        .iter()
-        .all(|t| (left.point_at(*t) - right.point_at(1.0 - *t)).norm() <= tolerance);
+    let forward = samples.iter().all(|t| {
+        (left.point_at(Fraction::new(*t)) - right.point_at(Fraction::new(*t))).norm() <= tolerance
+    });
+    let reversed = samples.iter().all(|t| {
+        (left.point_at(Fraction::new(*t)) - right.point_at(Fraction::new(1.0 - *t))).norm()
+            <= tolerance
+    });
     forward || reversed
 }
 
@@ -1274,12 +1288,12 @@ pub(super) fn normalize_face_imprint_chains<P: Payload>(
         for (index, imprint) in imprints.iter().enumerate() {
             let start = graph_node(
                 &mut nodes,
-                imprint.pcurve.point_at(0.0),
+                imprint.pcurve.point_at(Fraction::new(0.0)),
                 options.intersections.parameter_tolerance,
             );
             let end = graph_node(
                 &mut nodes,
-                imprint.pcurve.point_at(1.0),
+                imprint.pcurve.point_at(Fraction::new(1.0)),
                 options.intersections.parameter_tolerance,
             );
             edges.push((start, end, index));
@@ -1484,7 +1498,7 @@ fn coplanar_faces_share_area<P: Payload>(
                     continue;
                 };
                 for fraction in [0.0, 0.5] {
-                    let uv = pcurve.point_at(fraction);
+                    let uv = pcurve.point_at(Fraction::new(fraction));
                     samples.push(face.point_at(uv.x, uv.y));
                 }
             }

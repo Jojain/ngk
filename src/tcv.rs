@@ -4,6 +4,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::geometry::Point3;
+use crate::geometry::parameter::Fraction;
 use crate::model::{Cell1, Model};
 use crate::tessellate::{
     IndexedMesh, Polyline3, TessellateOpts, tessellate_edge, tessellate_face_key,
@@ -324,7 +325,12 @@ fn append_polyline(polyline: &Polyline3, shape: &mut TcvShape) {
 fn fallback_chord<P: Payload>(edge: &Edge<'_, P>) -> Polyline3 {
     let points = edge
         .trimmed_curve()
-        .map(|section| vec![section.point_at(0.0), section.point_at(1.0)])
+        .map(|section| {
+            vec![
+                section.point_at(Fraction::new(0.0)),
+                section.point_at(Fraction::new(1.0)),
+            ]
+        })
         .unwrap_or_default();
     Polyline3::new(points)
 }

@@ -46,8 +46,8 @@ pub fn tessellate_edge<P: Payload>(
     let interval = edge.parameter_interval()?;
     Some(tessellate_curve(
         curve,
-        interval.start,
-        interval.end,
+        interval.start.value(),
+        interval.end.value(),
         opts.curve,
     ))
 }

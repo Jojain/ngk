@@ -30,6 +30,7 @@ use super::nurbs::NurbsCurve2;
 use super::utils::Point2;
 use crate::geometry::dim3::curves::Periodicity;
 use crate::geometry::nurbs::error::NurbsError;
+use crate::geometry::parameter::{Fraction, NativeParam, Normalized};
 use crate::geometry::{Interval, LINEAR_TOLERANCE};
 
 /// A 2D support together with the native parameter span that is meant.
@@ -129,22 +130,22 @@ impl TrimmedCurve2 {
     }
 
     /// Evaluates at a normalized traversal fraction of the span.
-    pub fn point_at(&self, fraction: f64) -> Point2 {
+    pub fn point_at(&self, fraction: Fraction) -> Point2 {
         self.curve.point_at(self.interval.at(fraction))
     }
 
     /// Returns the first point of the span.
     pub fn start(&self) -> Point2 {
-        self.point_at(0.0)
+        self.point_at(Fraction::START)
     }
 
     /// Returns the last point of the span.
     pub fn end(&self) -> Point2 {
-        self.point_at(1.0)
+        self.point_at(Fraction::END)
     }
 
     /// Returns the derivative with respect to the normalized fraction.
-    pub fn derivative_at(&self, fraction: f64, order: usize) -> Vector2<f64> {
+    pub fn derivative_at(&self, fraction: Fraction, order: usize) -> Vector2<f64> {
         let derivative = self.curve.derivative_at(self.interval.at(fraction), order);
         match order {
             1 => derivative * self.interval.delta(),
@@ -164,24 +165,23 @@ impl TrimmedCurve2 {
     /// covers. The raw parameter is shifted by whole periods onto the branch
     /// nearest the span, so one crossing the branch cut still measures against
     /// its own extent rather than the complementary one.
-    pub fn native_parameter_at(&self, point: Point2) -> f64 {
+    pub fn native_parameter_at(&self, point: Point2) -> NativeParam {
         let raw = self.curve.param_at(point);
         let Periodicity::Periodic(period) = self.curve.periodicity() else {
             return raw;
         };
-        let middle = 0.5 * (self.interval.start + self.interval.end);
-        raw + ((middle - raw) / period).round() * period
+        raw.on_branch_near(self.interval.midpoint(), period)
     }
 
     /// Returns where `point` falls along the span, as a normalized fraction.
-    pub fn parameter_at(&self, point: Point2) -> f64 {
-        (self.native_parameter_at(point) - self.interval.start) / self.interval.delta()
+    pub fn parameter_at(&self, point: Point2) -> Fraction {
+        self.interval.fraction_of(self.native_parameter_at(point))
     }
 
     /// Returns the fraction of `point`, or `None` when it is not on the span.
-    pub fn try_parameter_at(&self, point: Point2, tolerance: f64) -> Option<f64> {
+    pub fn try_parameter_at(&self, point: Point2, tolerance: f64) -> Option<Fraction> {
         self.contains(point, tolerance)
-            .then(|| self.parameter_at(point).clamp(0.0, 1.0))
+            .then(|| self.parameter_at(point).clamped_to_unit())
     }
 
     /// Whether `point` lies on this span, and not merely on the support.
@@ -206,10 +206,7 @@ impl TrimmedCurve2 {
     /// arc and reject one well inside a long one. Dividing by the speed at the
     /// span's midpoint spends the tolerance in the unit it was given in.
     pub fn parameter_slack(&self, tolerance: f64) -> f64 {
-        let speed = self
-            .curve
-            .derivative_at(0.5 * (self.interval.start + self.interval.end), 1)
-            .norm();
+        let speed = self.curve.derivative_at(self.interval.midpoint(), 1).norm();
         if speed > LINEAR_TOLERANCE {
             tolerance / speed
         } else {
@@ -226,7 +223,7 @@ impl TrimmedCurve2 {
     ///
     /// The support is carried over untouched, so repeated narrowing never
     /// accumulates conversion error.
-    pub fn sub(&self, fractions: Interval) -> Self {
+    pub fn sub(&self, fractions: Interval<Normalized>) -> Self {
         Self::new(
             self.curve.clone(),
             Interval::new(
@@ -237,10 +234,10 @@ impl TrimmedCurve2 {
     }
 
     /// Returns the two halves of the span either side of a normalized fraction.
-    pub fn split_at(&self, fraction: f64) -> (Self, Self) {
+    pub fn split_at(&self, fraction: Fraction) -> (Self, Self) {
         (
-            self.sub(Interval::new(0.0, fraction)),
-            self.sub(Interval::new(fraction, 1.0)),
+            self.sub(Interval::new(Fraction::START, fraction)),
+            self.sub(Interval::new(fraction, Fraction::END)),
         )
     }
 
@@ -261,18 +258,18 @@ impl TrimmedCurve2 {
     pub fn sample(&self, segments: usize) -> Vec<Point2> {
         let segments = segments.max(1);
         (0..=segments)
-            .map(|index| self.point_at(index as f64 / segments as f64))
+            .map(|index| self.point_at(Fraction::new(index as f64 / segments as f64)))
             .collect()
     }
 
     /// Samples the span densely enough to stay within `tolerance` of it.
     ///
     /// Returned parameters are normalized traversal fractions of the span.
-    pub fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(f64, Point2)> {
+    pub fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(Fraction, Point2)> {
         let segments = self.sample_count(tolerance, max_depth);
         (0..=segments)
             .map(|index| {
-                let fraction = index as f64 / segments as f64;
+                let fraction = Fraction::new(index as f64 / segments as f64);
                 (fraction, self.point_at(fraction))
             })
             .collect()

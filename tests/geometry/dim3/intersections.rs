@@ -1,7 +1,7 @@
 use nalgebra::Vector3;
 use ngk::geometry::{
     Circle, ControlNet, ControlPolygon, Curve, Curve2, CurveCurveIntersection,
-    CurveSurfaceIntersection, Cylinder, Degree, HPoint, IntersectionCoverage,
+    CurveSurfaceIntersection, Cylinder, Degree, Fraction, HPoint, IntersectionCoverage,
     IntersectionIncompleteReason, IntersectionOptions, Interval, KnotVector, LINEAR_TOLERANCE,
     NurbsCurve, NurbsSurface, Plane, Point3, PointCoincidence, PreparedCurve, PreparedSurface,
     RuledSurface, Surface, SurfaceIntersectionBranchKind, SurfaceSurfaceIntersection,
@@ -94,10 +94,10 @@ fn collinear_lines_return_overlap_interval() {
     else {
         panic!("expected overlap, got {results:?}");
     };
-    assert!((interval_a.start - 1.0 / 3.0).abs() <= LINEAR_TOLERANCE * 10.0);
-    assert!((interval_a.end - 2.0 / 3.0).abs() <= LINEAR_TOLERANCE * 10.0);
-    assert!((interval_b.start - 0.0).abs() <= LINEAR_TOLERANCE * 10.0);
-    assert!((interval_b.end - 1.0).abs() <= LINEAR_TOLERANCE * 10.0);
+    assert!((interval_a.start - 1.0 / 3.0).value().abs() <= LINEAR_TOLERANCE * 10.0);
+    assert!((interval_a.end - 2.0 / 3.0).value().abs() <= LINEAR_TOLERANCE * 10.0);
+    assert!((interval_b.start - 0.0).value().abs() <= LINEAR_TOLERANCE * 10.0);
+    assert!((interval_b.end - 1.0).value().abs() <= LINEAR_TOLERANCE * 10.0);
 }
 
 #[test]
@@ -204,8 +204,8 @@ fn line_on_plane_returns_curve_surface_overlap() {
     let CurveSurfaceIntersection::Overlap { curve_interval } = results[0] else {
         panic!("expected overlap, got {results:?}");
     };
-    assert!((curve_interval.start - 0.0).abs() <= LINEAR_TOLERANCE * 10.0);
-    assert!((curve_interval.end - 1.0).abs() <= LINEAR_TOLERANCE * 10.0);
+    assert!((curve_interval.start - 0.0).value().abs() <= LINEAR_TOLERANCE * 10.0);
+    assert!((curve_interval.end - 1.0).value().abs() <= LINEAR_TOLERANCE * 10.0);
 }
 
 #[test]
@@ -235,9 +235,9 @@ fn perpendicular_planes_return_surface_surface_curve() {
                 && sample.residual <= LINEAR_TOLERANCE)
     );
     for parameter in [0.0, 0.25, 0.5, 0.75, 1.0] {
-        let point = branch.point_at(parameter);
-        let uv_a = branch.pcurve_a.point_at(parameter);
-        let uv_b = branch.pcurve_b.point_at(parameter);
+        let point = branch.point_at(Fraction::new(parameter));
+        let uv_a = branch.pcurve_a.point_at(Fraction::new(parameter));
+        let uv_b = branch.pcurve_b.point_at(Fraction::new(parameter));
         assert_point_near(point, a.point_at(uv_a.x, uv_a.y));
         assert_point_near(point, b.point_at(uv_b.x, uv_b.y));
     }
@@ -308,20 +308,23 @@ fn plane_cylinder_intersection_returns_closed_synchronized_branch() {
         branch.quality
     );
     assert!(branch.quality.certified);
-    assert_point_near(branch.point_at(0.0), branch.point_at(1.0));
+    assert_point_near(
+        branch.point_at(Fraction::new(0.0)),
+        branch.point_at(Fraction::new(1.0)),
+    );
     for parameter in [0.125, 0.375, 0.625, 0.875] {
-        let point = branch.point_at(parameter);
-        let uv_plane = branch.pcurve_a.point_at(parameter);
-        let uv_cylinder = branch.pcurve_b.point_at(parameter);
+        let point = branch.point_at(Fraction::new(parameter));
+        let uv_plane = branch.pcurve_a.point_at(Fraction::new(parameter));
+        let uv_cylinder = branch.pcurve_b.point_at(Fraction::new(parameter));
         let fit_tolerance = IntersectionOptions::default().fit_tolerance;
         assert!((point - plane.point_at(uv_plane.x, uv_plane.y)).norm() <= fit_tolerance);
         assert!((point - cylinder.point_at(uv_cylinder.x, uv_cylinder.y)).norm() <= fit_tolerance);
     }
     for index in 0..=128 {
         let parameter = index as f64 / 128.0;
-        let point = branch.point_at(parameter);
-        let uv_plane = branch.pcurve_a.point_at(parameter);
-        let uv_cylinder = branch.pcurve_b.point_at(parameter);
+        let point = branch.point_at(Fraction::new(parameter));
+        let uv_plane = branch.pcurve_a.point_at(Fraction::new(parameter));
+        let uv_cylinder = branch.pcurve_b.point_at(Fraction::new(parameter));
         let fit_tolerance = IntersectionOptions::default().fit_tolerance;
         assert!((point - plane.point_at(uv_plane.x, uv_plane.y)).norm() <= fit_tolerance);
         assert!((point - cylinder.point_at(uv_cylinder.x, uv_cylinder.y)).norm() <= fit_tolerance);
@@ -550,7 +553,7 @@ fn a_plane_tangent_to_a_cylinder_yields_the_ruling_it_touches_along() {
     // The contact is the ruling the plane rests on, so every point of the
     // branch stays on both surfaces' shared line.
     for step in 0..=8 {
-        let point = branch.point_at(f64::from(step) / 8.0);
+        let point = branch.point_at(Fraction::new(f64::from(step) / 8.0));
         assert!(
             (point.x - 1.0).abs() <= LINEAR_TOLERANCE && point.y.abs() <= LINEAR_TOLERANCE,
             "tangency point {point:?} left the ruling"
@@ -992,7 +995,7 @@ fn crossing_cylinders_return_two_interior_loops_with_complete_coverage() {
         assert!(branch.quality.certified, "{branch:?}");
         for index in 0..=64 {
             let parameter = index as f64 / 64.0;
-            let point = branch.point_at(parameter);
+            let point = branch.point_at(Fraction::new(parameter));
             assert!(
                 (point.x * point.x + point.y * point.y - 0.09).abs() <= 1.0e-6,
                 "{point:?}"
@@ -1005,7 +1008,8 @@ fn crossing_cylinders_return_two_interior_loops_with_complete_coverage() {
     }
     // The two loops sit on opposite sides of the upright cylinder's axis.
     assert!(
-        branches[0].point_at(0.0).x * branches[1].point_at(0.0).x < 0.0,
+        branches[0].point_at(Fraction::new(0.0)).x * branches[1].point_at(Fraction::new(0.0)).x
+            < 0.0,
         "{results:?}"
     );
 }

@@ -1,7 +1,7 @@
 use nalgebra::Vector3;
 use ngk::geometry::{
-    ControlNet, Cylinder, Degree, HPoint, KnotVector, LINEAR_TOLERANCE, NurbsSurface, Point3,
-    Surface,
+    ControlNet, Cylinder, Degree, Fraction, HPoint, KnotVector, LINEAR_TOLERANCE, NurbsSurface,
+    Point3, Surface,
 };
 
 #[test]
@@ -23,8 +23,8 @@ fn cylinder_decomposes_into_exact_rational_bezier_spans() {
         let domain_v = span.domain_v();
         for local_u in [0.0, 0.25, 0.5, 0.75, 1.0] {
             for local_v in [0.0, 0.5, 1.0] {
-                let u = domain_u.start + domain_u.length() * local_u;
-                let v = domain_v.start + domain_v.length() * local_v;
+                let u = domain_u.at(Fraction::new(local_u)).value();
+                let v = domain_v.at(Fraction::new(local_v)).value();
                 let expected = surface.point_at(u, v);
                 let actual = span.point_at(u, v);
                 assert!((actual - expected).norm() <= 1.0e-9);
@@ -44,8 +44,8 @@ fn bezier_patch_halves_agree_with_the_parent_patch() {
 
     let mid_u = patch.domain_u().start + patch.domain_u().length() * 0.5;
     let mid_v = patch.domain_v().start + patch.domain_v().length() * 0.5;
-    let (left, right) = patch.subdivide_u(mid_u).unwrap();
-    let (lower, upper) = patch.subdivide_v(mid_v).unwrap();
+    let (left, right) = patch.subdivide_u(mid_u.value()).unwrap();
+    let (lower, upper) = patch.subdivide_v(mid_v.value()).unwrap();
 
     assert_eq!(left.domain_u().end, mid_u);
     assert_eq!(right.domain_u().start, mid_u);
@@ -55,8 +55,8 @@ fn bezier_patch_halves_agree_with_the_parent_patch() {
     for half in [&left, &right, &lower, &upper] {
         for su in [0.0, 0.5, 1.0] {
             for sv in [0.0, 0.5, 1.0] {
-                let u = half.domain_u().start + half.domain_u().length() * su;
-                let v = half.domain_v().start + half.domain_v().length() * sv;
+                let u = half.domain_u().at(Fraction::new(su)).value();
+                let v = half.domain_v().at(Fraction::new(sv)).value();
                 let expected = patch.point_at(u, v);
                 assert!((half.point_at(u, v) - expected).norm() <= 1.0e-9, "{u} {v}");
                 assert!(half.bbox().contains_point(expected, 1.0e-9));
@@ -77,7 +77,7 @@ fn bezier_patch_halves_bound_more_tightly_than_the_parent() {
         .remove(0);
     let mid_u = patch.domain_u().start + patch.domain_u().length() * 0.5;
 
-    let (left, right) = patch.subdivide_u(mid_u).unwrap();
+    let (left, right) = patch.subdivide_u(mid_u.value()).unwrap();
 
     assert!(left.bbox().diagonal_length() < patch.bbox().diagonal_length());
     assert!(right.bbox().diagonal_length() < patch.bbox().diagonal_length());
@@ -93,8 +93,8 @@ fn bezier_patch_rejects_subdivision_outside_its_domain() {
         .unwrap()
         .remove(0);
 
-    assert!(patch.subdivide_u(patch.domain_u().start).is_err());
-    assert!(patch.subdivide_v(patch.domain_v().end).is_err());
+    assert!(patch.subdivide_u(patch.domain_u().start.value()).is_err());
+    assert!(patch.subdivide_v(patch.domain_v().end.value()).is_err());
 }
 
 /// An unclamped patch, unclamped in `u` only and deliberately not square.
@@ -139,7 +139,11 @@ fn clamping_keeps_the_surface_and_its_domain() {
     let (du, dv) = (surface.domain_u(), surface.domain_v());
     for iu in 0..=12 {
         for iv in 0..=12 {
-            let (u, v) = (du.at(f64::from(iu) / 12.0), dv.at(f64::from(iv) / 12.0));
+            let (u, v) = (
+                du.at(Fraction::new(f64::from(iu) / 12.0)),
+                dv.at(Fraction::new(f64::from(iv) / 12.0)),
+            );
+            let (u, v) = (u.value(), v.value());
             let (before, after) = (surface.point_at(u, v), clamped.point_at(u, v));
             assert!(
                 (before - after).norm() <= LINEAR_TOLERANCE,

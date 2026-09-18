@@ -1,4 +1,5 @@
 use crate::geometry::TrimmedCurve2;
+use crate::geometry::parameter::Fraction;
 use std::collections::HashMap;
 
 use nalgebra::Vector3;
@@ -76,7 +77,10 @@ fn extrude_edge<P: Payload>(
     let section = edge
         .trimmed_curve()
         .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
-    let (start, end) = (section.point_at(0.0), section.point_at(1.0));
+    let (start, end) = (
+        section.point_at(Fraction::new(0.0)),
+        section.point_at(Fraction::new(1.0)),
+    );
     let curve = edge
         .curve()
         .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
@@ -149,10 +153,10 @@ fn extruded_edge_surface(
             Ok(ExtrudedSurface {
                 surface: Surface::Ruled(RuledSurface::new(curve.clone(), direction)),
                 uv: [
-                    Point2::new(interval.start, 0.0),
-                    Point2::new(interval.end, 0.0),
-                    Point2::new(interval.end, 1.0),
-                    Point2::new(interval.start, 1.0),
+                    Point2::new(interval.start.value(), 0.0),
+                    Point2::new(interval.end.value(), 0.0),
+                    Point2::new(interval.end.value(), 1.0),
+                    Point2::new(interval.start.value(), 1.0),
                 ],
                 boundary_curves: [
                     curve.clone(),

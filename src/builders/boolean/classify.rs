@@ -91,7 +91,7 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
                 trim,
                 predicate,
                 uv_center: face_uv_bounds(&face)
-                    .map(|(u, v)| Point2::new((u.start + u.end) * 0.5, (v.start + v.end) * 0.5))
+                    .map(|(u, v)| Point2::new(u.midpoint().value(), v.midpoint().value()))
                     .unwrap_or(Point2::origin()),
             });
         }

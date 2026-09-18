@@ -1,5 +1,5 @@
 use ngk::builders::faces::{add_annulus, add_circle};
-use ngk::geometry::{Axis2, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
+use ngk::geometry::{Axis2, Fraction, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
 use ngk::model::Model;
 use ngk::modeling::{faces, solids};
 use ngk::topology::face::Face;
@@ -145,8 +145,8 @@ fn block_face_pcurves_follow_oriented_boundary_edges() {
             let pcurve = face
                 .pcurve(edge.dart())
                 .expect("each block boundary edge should have a pcurve");
-            let start_uv = pcurve.point_at(0.0);
-            let end_uv = pcurve.point_at(1.0);
+            let start_uv = pcurve.point_at(Fraction::new(0.0));
+            let end_uv = pcurve.point_at(Fraction::new(1.0));
             let pcurve_start = face.point_at(start_uv.x, start_uv.y);
             let pcurve_end = face.point_at(end_uv.x, end_uv.y);
             let edge_start = *edge

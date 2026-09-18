@@ -19,6 +19,7 @@ use crate::geometry::counters::{
     count_curve_surface_call, count_newton_iterations, count_prepared_curve,
     count_prepared_surface, count_subdivision_node,
 };
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{
     Bezier, BezierSurface, Curve, Interval, NurbsCurve, NurbsSurface, Point3, PointCoincidence,
     Surface,
@@ -222,7 +223,7 @@ impl CurvePiece {
 
     fn split(&self) -> Option<(Self, Self)> {
         let domain = self.bezier.domain();
-        let midpoint = 0.5 * (domain.start + domain.end);
+        let midpoint = 0.5 * (domain.start.value() + domain.end.value());
         let (left, right) = self.bezier.subdivide(midpoint).ok()?;
         Some((
             Self {
@@ -256,19 +257,27 @@ impl SurfacePiece {
     fn split(&self) -> Option<(Self, Self)> {
         let domain_u = self.patch.domain_u();
         let domain_v = self.patch.domain_v();
-        let extent_u = (self.patch.point_at(domain_u.end, domain_v.start)
-            - self.patch.point_at(domain_u.start, domain_v.start))
+        let extent_u = (self
+            .patch
+            .point_at(domain_u.end.value(), domain_v.start.value())
+            - self
+                .patch
+                .point_at(domain_u.start.value(), domain_v.start.value()))
         .norm();
-        let extent_v = (self.patch.point_at(domain_u.start, domain_v.end)
-            - self.patch.point_at(domain_u.start, domain_v.start))
+        let extent_v = (self
+            .patch
+            .point_at(domain_u.start.value(), domain_v.end.value())
+            - self
+                .patch
+                .point_at(domain_u.start.value(), domain_v.start.value()))
         .norm();
         let (left, right) = if extent_u >= extent_v {
             self.patch
-                .subdivide_u(0.5 * (domain_u.start + domain_u.end))
+                .subdivide_u(0.5 * (domain_u.start.value() + domain_u.end.value()))
                 .ok()?
         } else {
             self.patch
-                .subdivide_v(0.5 * (domain_v.start + domain_v.end))
+                .subdivide_v(0.5 * (domain_v.start.value() + domain_v.end.value()))
                 .ok()?
         };
         Some((
@@ -397,7 +406,9 @@ impl Search<'_> {
         let domain = span.domain();
         (0..=OVERLAP_SAMPLE_COUNT).all(|index| {
             let fraction = index as f64 / OVERLAP_SAMPLE_COUNT as f64;
-            let point = span.point_at(domain.start + (domain.end - domain.start) * fraction);
+            let point = span.point_at(
+                domain.start.value() + (domain.end.value() - domain.start.value()) * fraction,
+            );
             let uv = self.surface.closest_parameter(point);
             (self.surface.point_at(uv.x, uv.y) - point).norm() <= self.options.residual_tolerance
         })
@@ -409,9 +420,9 @@ impl Search<'_> {
         let curve_domain = curve.bezier.domain();
         let surface_domain_u = surface.patch.domain_u();
         let surface_domain_v = surface.patch.domain_v();
-        let mut curve_u = 0.5 * (curve_domain.start + curve_domain.end);
-        let mut surface_u = 0.5 * (surface_domain_u.start + surface_domain_u.end);
-        let mut surface_v = 0.5 * (surface_domain_v.start + surface_domain_v.end);
+        let mut curve_u = curve_domain.midpoint().value();
+        let mut surface_u = surface_domain_u.midpoint().value();
+        let mut surface_v = surface_domain_v.midpoint().value();
 
         for _ in 0..options.newton_max_iterations {
             count_newton_iterations(1);
@@ -474,9 +485,9 @@ impl Search<'_> {
             let CurveSurfaceIntersection::Point { curve_u, .. } = point else {
                 return true;
             };
-            !overlaps
-                .iter()
-                .any(|interval| interval.contains(*curve_u, options.parameter_tolerance))
+            !overlaps.iter().any(|interval| {
+                interval.contains(NativeParam::new(*curve_u), options.parameter_tolerance)
+            })
         }));
         intersections.extend(
             overlaps
@@ -558,5 +569,5 @@ fn point_merge_tolerance(options: IntersectionOptions) -> f64 {
 }
 
 fn clamp_interval(value: f64, interval: Interval) -> f64 {
-    value.clamp(interval.start, interval.end)
+    value.clamp(interval.start.value(), interval.end.value())
 }

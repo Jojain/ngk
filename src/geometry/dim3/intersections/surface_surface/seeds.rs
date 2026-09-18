@@ -13,6 +13,7 @@ use super::super::{
 use super::normals::NormalCone;
 use super::tracer::TraceState;
 use crate::geometry::counters::{count_newton_iterations, count_subdivision_node};
+use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::geometry::{
     BBox, BezierSurface, ControlNet, ControlPolygon, ControlPolygon2, Curve, Curve2, HPoint2,
     Interval, KnotVector, NurbsCurve, NurbsCurve2, NurbsError, NurbsSurface, Point2, Point3,
@@ -111,9 +112,9 @@ impl PatchEdge {
             patch.domain_u()
         };
         if self.at_end {
-            domain.end
+            domain.end.value()
         } else {
-            domain.start
+            domain.start.value()
         }
     }
 
@@ -166,7 +167,7 @@ impl PatchEdge {
     /// Returns the two patch corners bounding this edge.
     fn corners(self, patch: &BezierSurface) -> [Point2; 2] {
         let varying = self.varying(patch);
-        [varying.start, varying.end].map(|value| self.parameters(patch, value))
+        [varying.start, varying.end].map(|value| self.parameters(patch, value.value()))
     }
 
     /// Names this edge as a surface boundary of the patch it belongs to.
@@ -333,9 +334,9 @@ impl<'a> PlanarSeedSearch<'a> {
 
         let u = patch.domain_u();
         let v = patch.domain_v();
-        let (left, right) = patch.subdivide_u(0.5 * (u.start + u.end))?;
-        let (lower_left, upper_left) = left.subdivide_v(0.5 * (v.start + v.end))?;
-        let (lower_right, upper_right) = right.subdivide_v(0.5 * (v.start + v.end))?;
+        let (left, right) = patch.subdivide_u(u.midpoint().value())?;
+        let (lower_left, upper_left) = left.subdivide_v(v.midpoint().value())?;
+        let (lower_right, upper_right) = right.subdivide_v(v.midpoint().value())?;
         for child in [lower_left, upper_left, lower_right, upper_right] {
             self.visit(child, depth + 1)?;
         }
@@ -470,8 +471,8 @@ impl<'a> PlanarSeedSearch<'a> {
         let curve = normalized_knots(boundary_curve(patch.surface(), edge.boundary())?)?;
         let varying = edge.varying(patch);
         let pcurve_other = TrimmedCurve2::segment(
-            edge.parameters(patch, varying.start),
-            edge.parameters(patch, varying.end),
+            edge.parameters(patch, varying.start.value()),
+            edge.parameters(patch, varying.end.value()),
         );
         let pcurve_planar = self.planar_pcurve(&curve)?;
         let (pcurve_a, pcurve_b) = if self.planar_is_a {
@@ -482,11 +483,11 @@ impl<'a> PlanarSeedSearch<'a> {
         let curve_3d = Curve::Nurbs(curve);
         let samples = [0.0, 1.0]
             .map(|t| {
-                let point = curve_3d.point_at(t);
+                let point = curve_3d.point_at(NativeParam::new(t));
                 SurfaceIntersectionPoint {
                     point,
-                    uv_a: pcurve_a.point_at(t),
-                    uv_b: pcurve_b.point_at(t),
+                    uv_a: pcurve_a.point_at(Fraction::new(t)),
+                    uv_b: pcurve_b.point_at(Fraction::new(t)),
                     kind: SurfaceIntersectionPointKind::Tangent,
                     residual: 0.0,
                 }
@@ -514,11 +515,19 @@ impl<'a> PlanarSeedSearch<'a> {
     fn planar_pcurve(&self, curve: &NurbsCurve) -> Result<TrimmedCurve2, IntersectionError> {
         let domain_u = self.planar.domain_u();
         let domain_v = self.planar.domain_v();
-        let origin = self.planar.point_at(domain_u.start, domain_v.start);
-        let along_u = (self.planar.point_at(domain_u.end, domain_v.start) - origin)
-            / (domain_u.end - domain_u.start);
-        let along_v = (self.planar.point_at(domain_u.start, domain_v.end) - origin)
-            / (domain_v.end - domain_v.start);
+        let origin = self
+            .planar
+            .point_at(domain_u.start.value(), domain_v.start.value());
+        let along_u = (self
+            .planar
+            .point_at(domain_u.end.value(), domain_v.start.value())
+            - origin)
+            / (domain_u.end.value() - domain_u.start.value());
+        let along_v = (self
+            .planar
+            .point_at(domain_u.start.value(), domain_v.end.value())
+            - origin)
+            / (domain_v.end.value() - domain_v.start.value());
         // The frame is not orthogonal in general, so the parameters come from
         // the Gram system rather than from bare projections.
         let uu = along_u.dot(&along_u);
@@ -527,8 +536,8 @@ impl<'a> PlanarSeedSearch<'a> {
         let determinant = uu * vv - uv * uv;
         if determinant.abs() <= f64::EPSILON {
             return Err(IntersectionError::Nurbs(NurbsError::DegenerateInterval {
-                start: domain_u.start,
-                end: domain_u.end,
+                start: domain_u.start.value(),
+                end: domain_u.end.value(),
             }));
         }
         let parameters = |point: Point3| {
@@ -536,8 +545,8 @@ impl<'a> PlanarSeedSearch<'a> {
             let ru = along_u.dot(&offset);
             let rv = along_v.dot(&offset);
             Point2::new(
-                domain_u.start + (vv * ru - uv * rv) / determinant,
-                domain_v.start + (uu * rv - uv * ru) / determinant,
+                domain_u.start.value() + (vv * ru - uv * rv) / determinant,
+                domain_v.start.value() + (uu * rv - uv * ru) / determinant,
             )
         };
         let control_points = ControlPolygon2::new(
@@ -590,16 +599,14 @@ impl<'a> PlanarSeedSearch<'a> {
         for other_uv in parameters {
             let point = patch.point_at(other_uv.x, other_uv.y);
             let plane_uv = self.planar.closest_parameter(point);
-            if !self
-                .planar
-                .domain_u()
-                .contains(plane_uv.x, self.options.parameter_tolerance)
-                || !self
-                    .planar
-                    .domain_v()
-                    .contains(plane_uv.y, self.options.parameter_tolerance)
-                || (self.planar.point_at(plane_uv.x, plane_uv.y) - point).norm()
-                    > self.options.residual_tolerance
+            if !self.planar.domain_u().contains(
+                NativeParam::new(plane_uv.x),
+                self.options.parameter_tolerance,
+            ) || !self.planar.domain_v().contains(
+                NativeParam::new(plane_uv.y),
+                self.options.parameter_tolerance,
+            ) || (self.planar.point_at(plane_uv.x, plane_uv.y) - point).norm()
+                > self.options.residual_tolerance
             {
                 discarded += 1;
                 continue;
@@ -691,13 +698,13 @@ impl<'a> PlanarSeedSearch<'a> {
 /// parameterization has to be rescaled before the two can be read together.
 fn normalized_knots(curve: NurbsCurve) -> Result<NurbsCurve, IntersectionError> {
     let domain = curve.domain();
-    let extent = domain.end - domain.start;
+    let extent = domain.end.value() - domain.start.value();
     let knots = KnotVector::new(
         curve
             .knots()
             .as_slice()
             .iter()
-            .map(|knot| (knot - domain.start) / extent)
+            .map(|knot| (knot - domain.start.value()) / extent)
             .collect(),
     )?;
     Ok(NurbsCurve::new(
@@ -868,9 +875,9 @@ fn split_first(
 fn quarters(patch: &BezierSurface) -> Result<[BezierSurface; 4], IntersectionError> {
     let u = patch.domain_u();
     let v = patch.domain_v();
-    let (left, right) = patch.subdivide_u(0.5 * (u.start + u.end))?;
-    let (lower_left, upper_left) = left.subdivide_v(0.5 * (v.start + v.end))?;
-    let (lower_right, upper_right) = right.subdivide_v(0.5 * (v.start + v.end))?;
+    let (left, right) = patch.subdivide_u(u.midpoint().value())?;
+    let (lower_left, upper_left) = left.subdivide_v(v.midpoint().value())?;
+    let (lower_right, upper_right) = right.subdivide_v(v.midpoint().value())?;
     Ok([lower_left, upper_left, lower_right, upper_right])
 }
 
@@ -885,9 +892,10 @@ fn indexed_coefficients<'a>(
 /// Returns the Greville parameter of a Bézier control index.
 fn greville(domain: Interval, index: usize, count: usize) -> f64 {
     if count < 2 {
-        return domain.start;
+        return domain.start.value();
     }
-    domain.start + (domain.end - domain.start) * index as f64 / (count - 1) as f64
+    domain.start.value()
+        + (domain.end.value() - domain.start.value()) * index as f64 / (count - 1) as f64
 }
 
 fn signed_control_distances(patch: &BezierSurface, plane: PlaneEquation) -> Vec<f64> {
@@ -986,8 +994,8 @@ fn isolate_edge_root(
         let uv = edge.parameters(patch, parameter);
         (patch.point_at(uv.x, uv.y) - plane.origin).dot(&plane.normal)
     };
-    let mut lower = domain.start;
-    let mut upper = domain.end;
+    let mut lower = domain.start.value();
+    let mut upper = domain.end.value();
     let mut lower_value = evaluate(lower);
     let upper_value = evaluate(upper);
     if lower_value.abs() <= options.residual_tolerance {
@@ -1140,10 +1148,10 @@ fn boundary_parameters(
     curve_parameter: f64,
 ) -> (f64, f64) {
     match boundary {
-        Boundary::UMin => (surface.domain_u().start, curve_parameter),
-        Boundary::UMax => (surface.domain_u().end, curve_parameter),
-        Boundary::VMin => (curve_parameter, surface.domain_v().start),
-        Boundary::VMax => (curve_parameter, surface.domain_v().end),
+        Boundary::UMin => (surface.domain_u().start.value(), curve_parameter),
+        Boundary::UMax => (surface.domain_u().end.value(), curve_parameter),
+        Boundary::VMin => (curve_parameter, surface.domain_v().start.value()),
+        Boundary::VMax => (curve_parameter, surface.domain_v().end.value()),
     }
 }
 

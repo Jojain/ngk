@@ -7,7 +7,7 @@ use ngk::builders::boolean::{
 
 use ngk::builders::edges::add_line;
 use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints};
-use ngk::geometry::{Curve, Point2, Surface, TrimmedCurve2};
+use ngk::geometry::{Curve, Fraction, NativeParam, Point2, Surface, TrimmedCurve2};
 use ngk::geometry::{Frame, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
 use ngk::model::Model;
 use ngk::modeling::{edges, faces, solids};
@@ -489,7 +489,7 @@ fn nurbs_face_intersection_does_not_bridge_an_inner_loop() {
     assert!(!spans.is_empty());
     for span in spans {
         for i in 1..100 {
-            let point = span.point_at(i as f64 / 100.0);
+            let point = span.point_at(Fraction::new(i as f64 / 100.0));
             assert!(
                 point.x <= 0.4 + LINEAR_TOLERANCE || point.x >= 0.6 - LINEAR_TOLERANCE,
                 "intersection bridges the hole at {point:?}"
@@ -1191,7 +1191,7 @@ fn boolean_difference_supports_a_cylindrical_through_hole() {
             walls.push(neighbours[0]);
 
             let curve = edge.curve().expect("a rim arc carries geometry");
-            let mid = curve.point_at(0.5);
+            let mid = curve.point_at(NativeParam::new(0.5));
             let radius = ((mid.x - 1.0).powi(2) + (mid.y - 1.0).powi(2)).sqrt();
             assert!(
                 (radius - 0.5).abs() <= LINEAR_TOLERANCE,

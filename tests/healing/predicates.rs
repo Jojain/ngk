@@ -1,3 +1,4 @@
+use ngk::geometry::NativeParam;
 use ngk::geometry::{
     Cone, Curve, Frame, Interval, LINEAR_TOLERANCE, Plane, Point3, Sphere, Surface,
 };
@@ -6,24 +7,20 @@ use std::f64::consts::FRAC_PI_2;
 
 const ANGULAR: f64 = 1.0e-9;
 
-fn split(curve: &Curve, at: f64) -> (Curve, Curve) {
-    (
-        curve
-            .trimmed(Interval::new(0.0, at))
-            .expect("first half should trim"),
-        curve
-            .trimmed(Interval::new(at, 1.0))
-            .expect("second half should trim"),
-    )
-}
-
 #[test]
 fn the_two_halves_of_a_split_line_rejoin_into_the_original_span() {
     let start = Point3::new(0.0, 0.0, 0.0);
     let end = Point3::new(4.0, 0.0, 0.0);
     let line = Curve::line(start, end);
-    let (first, second) = split(&line, 0.25);
-    let through = line.point_at(0.25);
+    // A line's native parameter is its affine one, anchored on `start` and
+    // reaching `end` at 1, so the halves are named in the same numbers.
+    let first = line
+        .trimmed_native(Interval::new(0.0, 0.25))
+        .expect("first half should trim");
+    let second = line
+        .trimmed_native(Interval::new(0.25, 1.0))
+        .expect("second half should trim");
+    let through = line.point_at(NativeParam::new(0.25));
 
     let joined = join_curves(
         &first,
@@ -35,18 +32,18 @@ fn the_two_halves_of_a_split_line_rejoin_into_the_original_span() {
         ANGULAR,
     )
     .expect("halves of one line should rejoin");
-    assert!((joined.point_at(0.0) - start).norm() <= LINEAR_TOLERANCE);
-    assert!((joined.point_at(1.0) - end).norm() <= LINEAR_TOLERANCE);
-    assert!((joined.length(0.0, 1.0) - 4.0).abs() <= 1.0e-9);
+    assert!((joined.point_at(NativeParam::new(0.0)) - start).norm() <= LINEAR_TOLERANCE);
+    assert!((joined.point_at(NativeParam::new(1.0)) - end).norm() <= LINEAR_TOLERANCE);
+    assert!((joined.length(NativeParam::new(0.0), NativeParam::new(1.0)) - 4.0).abs() <= 1.0e-9);
 }
 
 #[test]
 fn the_two_halves_of_a_split_arc_rejoin_onto_the_same_circle() {
     let plane = Plane::xy();
     let arc = Curve::circle(plane, 2.0);
-    let start = arc.point_at(0.0);
-    let through = arc.point_at(0.4 * FRAC_PI_2);
-    let end = arc.point_at(FRAC_PI_2);
+    let start = arc.point_at(NativeParam::new(0.0));
+    let through = arc.point_at(NativeParam::new(0.4 * FRAC_PI_2));
+    let end = arc.point_at(NativeParam::new(FRAC_PI_2));
     let first = arc
         .trimmed_native(Interval::new(0.0, 0.4 * FRAC_PI_2))
         .unwrap();
@@ -57,7 +54,7 @@ fn the_two_halves_of_a_split_arc_rejoin_onto_the_same_circle() {
     let joined = join_curves(&first, &second, start, through, end, 1.0e-7, 1.0e-7)
         .expect("halves of one arc should rejoin");
     for step in 0..=8 {
-        let point = joined.point_at(step as f64 / 8.0);
+        let point = joined.point_at(NativeParam::new(step as f64 / 8.0));
         assert!(
             (point.coords.norm() - 2.0).abs() <= 1.0e-6,
             "the fused arc should stay on the original circle"

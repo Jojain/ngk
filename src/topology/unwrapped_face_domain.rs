@@ -17,6 +17,7 @@
 
 use thiserror::Error;
 
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{
     Axis2, DomainSide, LINEAR_TOLERANCE, Point2, Surface, SurfacePeriodicity, TrimmedCurve2,
     Vector2,
@@ -75,7 +76,7 @@ impl UnwrappedFaceDomainCurve {
 
     /// Evaluates this pcurve in the unwrapped domain, at a fraction of its span.
     pub fn point_at(&self, fraction: f64) -> Point2 {
-        self.curve.point_at(fraction) + self.offset
+        self.curve.point_at(Fraction::new(fraction)) + self.offset
     }
 
     /// Returns this pcurve's start in the unwrapped domain.

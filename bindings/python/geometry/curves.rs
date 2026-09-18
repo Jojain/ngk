@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Circle, Ellipse, Line};
 
 use super::{PyPlane, PyPoint3, point};
@@ -19,11 +20,11 @@ impl PyLine {
 
     #[getter]
     fn end(&self) -> PyPoint3 {
-        point(self.line.point_at(1.0))
+        point(self.line.point_at(NativeParam::new(1.0)))
     }
 
     fn point_at(&self, t: f64) -> PyPoint3 {
-        point(self.line.point_at(t))
+        point(self.line.point_at(NativeParam::new(t)))
     }
 
     fn __repr__(&self) -> &'static str {
@@ -52,7 +53,7 @@ impl PyCircle {
     }
 
     fn point_at(&self, t: f64) -> PyPoint3 {
-        point(self.circle.point_at(t))
+        point(self.circle.point_at(NativeParam::new(t)))
     }
 
     fn __repr__(&self) -> String {
@@ -79,7 +80,7 @@ impl PyEllipse {
     }
 
     fn point_at(&self, t: f64) -> PyPoint3 {
-        point(self.ellipse.point_at(t))
+        point(self.ellipse.point_at(NativeParam::new(t)))
     }
 
     fn __repr__(&self) -> String {

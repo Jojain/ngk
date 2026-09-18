@@ -9,6 +9,7 @@ use crate::builders::errors::ClosedFaceCellError;
 use crate::builders::faces::reverse_face_winding;
 use crate::builders::scaffold::{add_closed_face_cell, cut_between_loops};
 use crate::geometry::axis::Axis3;
+use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::geometry::transform::Rigid;
 use crate::geometry::{
     ANGULAR_TOLERANCE, Axis2, Circle, Cone, Curve, Cylinder, DomainSide, Frame, LINEAR_TOLERANCE,
@@ -407,8 +408,8 @@ fn planar_revolved_support(
 fn linear_profile(curve: &Curve) -> Option<(Point3, Vector3<f64>)> {
     match curve {
         Curve::Line(_) => {
-            let origin = curve.point_at(0.0);
-            Some((origin, curve.point_at(1.0) - origin))
+            let origin = curve.point_at(NativeParam::new(0.0));
+            Some((origin, curve.point_at(NativeParam::new(1.0)) - origin))
         }
         _ => None,
     }
@@ -475,29 +476,29 @@ fn add_partial_revolved_edge_face<P: Payload>(
     pcurves.insert(
         bottom_start,
         TrimmedCurve2::segment(
-            Point2::new(interval.start, 0.0),
-            Point2::new(interval.end, 0.0),
+            Point2::new(interval.start.value(), 0.0),
+            Point2::new(interval.end.value(), 0.0),
         ),
     );
     pcurves.insert(
         end_arc_start,
         TrimmedCurve2::segment(
-            Point2::new(interval.end, 0.0),
-            Point2::new(interval.end, angle.val()),
+            Point2::new(interval.end.value(), 0.0),
+            Point2::new(interval.end.value(), angle.val()),
         ),
     );
     pcurves.insert(
         rotated_start_dart,
         TrimmedCurve2::segment(
-            Point2::new(interval.end, angle.val()),
-            Point2::new(interval.start, angle.val()),
+            Point2::new(interval.end.value(), angle.val()),
+            Point2::new(interval.start.value(), angle.val()),
         ),
     );
     pcurves.insert(
         start_arc_start,
         TrimmedCurve2::segment(
-            Point2::new(interval.start, angle.val()),
-            Point2::new(interval.start, 0.0),
+            Point2::new(interval.start.value(), angle.val()),
+            Point2::new(interval.start.value(), 0.0),
         ),
     );
 
@@ -594,7 +595,9 @@ fn add_full_revolved_apex_to_apex_face<P: Payload>(
     let interval = source
         .curve
         .interval_between(source.start.point, source.end.point);
-    let middle = source.curve.point_at(0.5 * (interval.start + interval.end));
+    let middle = source.curve.point_at(NativeParam::new(
+        0.5 * (interval.start.value() + interval.end.value()),
+    ));
     if revolve_radius(axis, middle) <= LINEAR_TOLERANCE {
         return Err(RevolveError::EdgeOnRevolutionAxis { key: source.key });
     }
@@ -620,15 +623,15 @@ fn add_full_revolved_apex_to_apex_face<P: Payload>(
     pcurves.insert(
         seam_start,
         TrimmedCurve2::segment(
-            map_pcurve_point(Point2::new(interval.start, 0.0)),
-            map_pcurve_point(Point2::new(interval.end, 0.0)),
+            map_pcurve_point(Point2::new(interval.start.value(), 0.0)),
+            map_pcurve_point(Point2::new(interval.end.value(), 0.0)),
         ),
     );
     pcurves.insert(
         opposite_end,
         TrimmedCurve2::segment(
-            map_pcurve_point(Point2::new(interval.end, angle.val())),
-            map_pcurve_point(Point2::new(interval.start, angle.val())),
+            map_pcurve_point(Point2::new(interval.end.value(), angle.val())),
+            map_pcurve_point(Point2::new(interval.start.value(), angle.val())),
         ),
     );
     let face = edit.add_face(FaceAttr::with_pcurves(
@@ -704,7 +707,7 @@ fn add_full_revolved_open_edge_face<P: Payload>(
             }
         })
         .transpose()?
-        .map(|dart| (dart, interval.start, start_radius));
+        .map(|dart| (dart, interval.start.value(), start_radius));
     let end_loop = (end_radius > LINEAR_TOLERANCE)
         .then(|| {
             if !reuse_start {
@@ -718,7 +721,7 @@ fn add_full_revolved_open_edge_face<P: Payload>(
             }
         })
         .transpose()?
-        .map(|dart| (dart, interval.end, end_radius));
+        .map(|dart| (dart, interval.end.value(), end_radius));
 
     let (outer_loop, outer_u, inner_loop) = match (start_loop, end_loop) {
         (Some(start), Some(end)) if start.2 >= end.2 => (start.0, start.1, Some(end)),
@@ -757,10 +760,10 @@ fn add_full_revolved_open_edge_face<P: Payload>(
         // by the degeneracy there. The loop still runs a whole turn, so it is no
         // more an outer loop than a ring's are — it is a cap.
         None => {
-            let degenerate_profile = if outer_u == interval.start {
-                interval.end
+            let degenerate_profile = if outer_u == interval.start.value() {
+                interval.end.value()
             } else {
-                interval.start
+                interval.start.value()
             };
             match pcurves
                 .get(&outer_loop)
@@ -816,7 +819,8 @@ fn swept_period_axis(surface: &Surface, pcurves: [&TrimmedCurve2; 2]) -> Option<
     Axis2::ALL.into_iter().find(|axis| {
         periods[axis.index()].is_some_and(|period| {
             pcurves.iter().all(|pcurve| {
-                let span = axis.of(pcurve.point_at(1.0)) - axis.of(pcurve.point_at(0.0));
+                let span = axis.of(pcurve.point_at(Fraction::new(1.0)))
+                    - axis.of(pcurve.point_at(Fraction::new(0.0)));
                 (span.abs() - period).abs() <= ANGULAR_TOLERANCE
             })
         })
@@ -1079,10 +1083,10 @@ fn add_revolved_edge_face<P: Payload>(
     // sweeps, the profile back at the far angle, and the arc its near end sweeps
     // in reverse.
     let pcurves = [
-        support.meridian(0.0, interval.start, interval.end),
-        support.swept(interval.end, 0.0, angle.val()),
-        support.meridian(angle.val(), interval.end, interval.start),
-        support.swept(interval.start, angle.val(), 0.0),
+        support.meridian(0.0, interval.start.value(), interval.end.value()),
+        support.swept(interval.end.value(), 0.0, angle.val()),
+        support.meridian(angle.val(), interval.end.value(), interval.start.value()),
+        support.swept(interval.start.value(), angle.val(), 0.0),
     ];
 
     // A whole turn brings the swept copy back onto its source, so the band
@@ -1506,7 +1510,7 @@ fn revolve_sweep_direction<P: Payload>(axis: Axis3, face: &Face<'_, P>) -> Vecto
         .edges()
         .first()
         .and_then(|edge| edge.trimmed_curve())
-        .map(|section| section.point_at(0.0))
+        .map(|section| section.point_at(Fraction::new(0.0)))
         .unwrap_or(axis.origin);
     axis.direction.cross(&(point - axis.project(point)))
 }

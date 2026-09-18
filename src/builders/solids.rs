@@ -1,4 +1,5 @@
 use crate::geometry::TrimmedCurve2;
+use crate::geometry::parameter::Fraction;
 use crate::model::{Cell2, MergeTopology, Model};
 use crate::topology::ModelEditError;
 use crate::topology::embedding::EntityOwner;
@@ -474,7 +475,10 @@ fn prepare_lateral_face<P: Payload>(
     let section = bottom_edge_view
         .trimmed_curve()
         .ok_or(ExtrudeError::MissingVertexPoint { dart: edge_dart })?;
-    let (start, end) = (section.point_at(0.0), section.point_at(1.0));
+    let (start, end) = (
+        section.point_at(Fraction::new(0.0)),
+        section.point_at(Fraction::new(1.0)),
+    );
     let curve = bottom_edge_view
         .curve()
         .ok_or(ExtrudeError::MissingEdgeCurve { dart: edge_dart })?;
@@ -584,10 +588,10 @@ fn lateral_face_uv(
         Surface::Ruled(_) => {
             let interval = curve.interval_between(start, end);
             [
-                Point2::new(interval.start, 0.0),
-                Point2::new(interval.end, 0.0),
-                Point2::new(interval.end, 1.0),
-                Point2::new(interval.start, 1.0),
+                Point2::new(interval.start.value(), 0.0),
+                Point2::new(interval.end.value(), 0.0),
+                Point2::new(interval.end.value(), 1.0),
+                Point2::new(interval.start.value(), 1.0),
             ]
         }
         // The cylinder was built on the circle's own frame, so `u` is the
@@ -597,10 +601,10 @@ fn lateral_face_uv(
             let interval = curve.interval_between(start, end);
             let height = direction.dot(&cylinder.axis());
             [
-                Point2::new(interval.start, 0.0),
-                Point2::new(interval.end, 0.0),
-                Point2::new(interval.end, height),
-                Point2::new(interval.start, height),
+                Point2::new(interval.start.value(), 0.0),
+                Point2::new(interval.end.value(), 0.0),
+                Point2::new(interval.end.value(), height),
+                Point2::new(interval.start.value(), height),
             ]
         }
         _ => unreachable!("lateral_face_surface only creates plane, cylinder or ruled surfaces"),

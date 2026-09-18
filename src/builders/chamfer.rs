@@ -1,4 +1,5 @@
 use crate::geometry::TrimmedCurve2;
+use crate::geometry::parameter::{Fraction, NativeParam};
 use std::collections::{HashMap, HashSet};
 
 use crate::builders::edges::add_edge_staged;
@@ -443,8 +444,9 @@ fn chamfer_curve_imprint<P: Payload>(
                 .map_err(|_| ChamferError::UnsupportedSolidChamferGeometry { edge })?;
             let pcurve = TrimmedCurve2::segment(start, end);
             for parameter in [0.0, 0.25, 0.5, 0.75, 1.0] {
-                let uv = pcurve.point_at(parameter);
-                if (surface.point_at(uv.x, uv.y) - curve.point_at(parameter)).norm()
+                let uv = pcurve.point_at(Fraction::new(parameter));
+                if (surface.point_at(uv.x, uv.y) - curve.point_at(NativeParam::new(parameter)))
+                    .norm()
                     > 10.0 * LINEAR_TOLERANCE
                 {
                     return Err(ChamferError::UnsupportedSolidChamferGeometry { edge });
@@ -1224,20 +1226,20 @@ fn add_curved_chamfer_face<P: Payload>(
     // fraction as `v`, so its four pcurves form a unit-height parameter strip.
     let uv = [
         (
-            nalgebra::Point2::new(interval.start, 0.0),
-            nalgebra::Point2::new(interval.end, 0.0),
+            nalgebra::Point2::new(interval.start.value(), 0.0),
+            nalgebra::Point2::new(interval.end.value(), 0.0),
         ),
         (
-            nalgebra::Point2::new(interval.end, 0.0),
-            nalgebra::Point2::new(interval.end, 1.0),
+            nalgebra::Point2::new(interval.end.value(), 0.0),
+            nalgebra::Point2::new(interval.end.value(), 1.0),
         ),
         (
-            nalgebra::Point2::new(interval.end, 1.0),
-            nalgebra::Point2::new(interval.start, 1.0),
+            nalgebra::Point2::new(interval.end.value(), 1.0),
+            nalgebra::Point2::new(interval.start.value(), 1.0),
         ),
         (
-            nalgebra::Point2::new(interval.start, 1.0),
-            nalgebra::Point2::new(interval.start, 0.0),
+            nalgebra::Point2::new(interval.start.value(), 1.0),
+            nalgebra::Point2::new(interval.start.value(), 0.0),
         ),
     ];
     let pcurves = edges

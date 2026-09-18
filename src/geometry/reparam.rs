@@ -2,6 +2,7 @@
 
 use std::f64::consts::FRAC_PI_2;
 
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Interval, Point2};
 
 /// A monotone map from one analytic parameter to its NURBS parameter.
@@ -40,9 +41,8 @@ impl Reparam {
                 angle,
                 max_span,
             } => {
-                let fraction = interval_fraction(source, parameter);
-                let theta = angle.start + (angle.end - angle.start) * fraction;
-                conic_parameter(angle, max_span, theta)
+                let fraction = source.fraction_of(NativeParam::new(parameter));
+                conic_parameter(angle, max_span, angle.at(fraction).value())
             }
         }
     }
@@ -56,8 +56,8 @@ impl Reparam {
                 angle,
                 max_span,
             } => {
-                let theta = conic_angle(angle, max_span, parameter);
-                source.start + (source.end - source.start) * interval_fraction(angle, theta)
+                let theta = NativeParam::new(conic_angle(angle, max_span, parameter));
+                source.at(angle.fraction_of(theta)).value()
             }
         }
     }
@@ -90,15 +90,6 @@ impl ParamMap {
     }
 }
 
-fn interval_fraction(interval: Interval, parameter: f64) -> f64 {
-    let length = interval.end - interval.start;
-    if length == 0.0 {
-        0.0
-    } else {
-        (parameter - interval.start) / length
-    }
-}
-
 fn conic_layout(angle: Interval, max_span: f64) -> (Interval, usize, f64, bool) {
     let reversed = angle.end < angle.start;
     let ordered = angle.ordered();
@@ -109,9 +100,9 @@ fn conic_layout(angle: Interval, max_span: f64) -> (Interval, usize, f64, bool) 
 
 fn conic_parameter(angle: Interval, max_span: f64, theta: f64) -> f64 {
     let (ordered, span_count, span, reversed) = conic_layout(angle, max_span);
-    let relative = ((theta - ordered.start) / span).clamp(0.0, span_count as f64);
+    let relative = ((theta - ordered.start.value()) / span).clamp(0.0, span_count as f64);
     let index = (relative.floor() as usize).min(span_count - 1);
-    let start = ordered.start + index as f64 * span;
+    let start = ordered.start.value() + index as f64 * span;
     let delta = (theta - start).clamp(0.0, span);
     let weight = (0.5 * span).cos();
     let tangent = (0.5 * delta).tan();
@@ -119,7 +110,7 @@ fn conic_parameter(angle: Interval, max_span: f64, theta: f64) -> f64 {
     let local = tangent / (weight * full_tangent + tangent * (1.0 - weight));
     let mapped = start + span * local;
     if reversed {
-        ordered.start + ordered.end - mapped
+        ordered.start.value() + ordered.end.value() - mapped
     } else {
         mapped
     }
@@ -128,13 +119,13 @@ fn conic_parameter(angle: Interval, max_span: f64, theta: f64) -> f64 {
 fn conic_angle(angle: Interval, max_span: f64, parameter: f64) -> f64 {
     let (ordered, span_count, span, reversed) = conic_layout(angle, max_span);
     let parameter = if reversed {
-        ordered.start + ordered.end - parameter
+        ordered.start.value() + ordered.end.value() - parameter
     } else {
         parameter
     };
-    let relative = ((parameter - ordered.start) / span).clamp(0.0, span_count as f64);
+    let relative = ((parameter - ordered.start.value()) / span).clamp(0.0, span_count as f64);
     let index = (relative.floor() as usize).min(span_count - 1);
-    let start = ordered.start + index as f64 * span;
+    let start = ordered.start.value() + index as f64 * span;
     let local = ((parameter - start) / span).clamp(0.0, 1.0);
     let weight = (0.5 * span).cos();
     let tangent = weight * local * (0.5 * span).tan() / (1.0 - local + weight * local);

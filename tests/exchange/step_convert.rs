@@ -20,8 +20,8 @@ use ngk::exchange::step::convert::uv_map::UvMap;
 use ngk::exchange::step::part21::{EntityId, parse_exchange};
 use ngk::exchange::step::schema::resolver::{Origin, Resolver};
 use ngk::geometry::{
-    Circle, Curve, Curve2, Cylinder, Interval, LINEAR_TOLERANCE, Line, Plane, Point2, Point3,
-    Surface, TrimmedCurve2, Vector2,
+    Circle, Curve, Curve2, Cylinder, Fraction, Interval, LINEAR_TOLERANCE, Line, Plane, Point2,
+    Point3, Surface, TrimmedCurve2, Vector2,
 };
 
 use nalgebra::Vector3;
@@ -290,8 +290,8 @@ fn a_line_pcurve_keeps_its_type_and_its_endpoints_under_every_map() {
             "{map:?} demoted a line",
         );
         for fraction in [0.0, 0.25, 0.5, 1.0] {
-            let want = map.apply(pcurve.point_at(fraction));
-            let got = mapped.point_at(fraction);
+            let want = map.apply(pcurve.point_at(Fraction::new(fraction)));
+            let got = mapped.point_at(Fraction::new(fraction));
             assert!(
                 (got - want).norm() <= LINEAR_TOLERANCE,
                 "{map:?} moved the line at {fraction}: {got:?} vs {want:?}",
@@ -328,8 +328,8 @@ fn a_circular_pcurve_survives_a_similarity_and_demotes_under_a_stretch() {
     // A similarity keeps the conic's own angular parameter, so fraction for
     // fraction is the right assertion there.
     for fraction in [0.0, 0.3, 0.6, 1.0] {
-        let want = similarity.apply(pcurve.point_at(fraction));
-        let got = kept.point_at(fraction);
+        let want = similarity.apply(pcurve.point_at(Fraction::new(fraction)));
+        let got = kept.point_at(Fraction::new(fraction));
         assert!(
             (got - want).norm() <= LINEAR_TOLERANCE,
             "the similarity moved the arc at {fraction}: {got:?} vs {want:?}",
@@ -344,7 +344,7 @@ fn a_circular_pcurve_survives_a_similarity_and_demotes_under_a_stretch() {
     assert!((demoted.start() - stretch.apply(pcurve.start())).norm() <= LINEAR_TOLERANCE);
     assert!((demoted.end() - stretch.apply(pcurve.end())).norm() <= LINEAR_TOLERANCE);
     for fraction in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0] {
-        let on_arc = stretch.apply(pcurve.point_at(fraction));
+        let on_arc = stretch.apply(pcurve.point_at(Fraction::new(fraction)));
         assert!(
             demoted.contains(on_arc, LINEAR_TOLERANCE),
             "the demoted arc lost the point at {fraction}: {on_arc:?}",
@@ -393,7 +393,7 @@ fn lift(surface: &Surface, curve: &Curve, span: Interval) -> TrimmedCurve2 {
 fn follows(surface: &Surface, pcurve: &TrimmedCurve2, section: impl Fn(f64) -> Point3) {
     for step in 0..=8 {
         let fraction = step as f64 / 8.0;
-        let uv = pcurve.point_at(fraction);
+        let uv = pcurve.point_at(Fraction::new(fraction));
         let got = surface.point_at(uv.x, uv.y);
         let want = section(fraction);
         assert!(
@@ -421,7 +421,7 @@ fn a_circle_projected_onto_a_plane_facing_it_keeps_its_sense() {
     );
     follows(&plane, &pcurve, |fraction| {
         let angle = span.start + (span.end - span.start) * fraction;
-        Point3::new(2.0 * angle.cos(), 2.0 * angle.sin(), 0.0)
+        Point3::new(2.0 * angle.value().cos(), 2.0 * angle.value().sin(), 0.0)
     });
 }
 
@@ -441,7 +441,7 @@ fn a_circle_projected_onto_a_plane_facing_away_reverses() {
     let pcurve = lift(&plane, &circle, span);
     follows(&plane, &pcurve, |fraction| {
         let angle = span.start + (span.end - span.start) * fraction;
-        Point3::new(2.0 * angle.cos(), 2.0 * angle.sin(), 0.0)
+        Point3::new(2.0 * angle.value().cos(), 2.0 * angle.value().sin(), 0.0)
     });
 }
 
@@ -499,7 +499,7 @@ fn a_rim_lifted_onto_a_cylinder_crosses_the_fold_without_jumping() {
 
     // Monotone in `u` over the whole turn: that is what "did not jump" means.
     let samples: Vec<f64> = (0..=16)
-        .map(|step| pcurve.point_at(step as f64 / 16.0).x)
+        .map(|step| pcurve.point_at(Fraction::new(step as f64 / 16.0)).x)
         .collect();
     assert!(
         samples.windows(2).all(|pair| pair[1] > pair[0]),

@@ -1,6 +1,8 @@
 use std::f64::consts::{FRAC_PI_3, FRAC_PI_6, TAU};
 
 use nalgebra::{Rotation3, Vector3};
+use ngk::geometry::Fraction;
+use ngk::geometry::NativeParam;
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
     BBox, Circle, Cone, Curve, CurveGeometry, Cylinder, Ellipse, Frame, LINEAR_TOLERANCE, Line,
@@ -253,13 +255,15 @@ fn every_curve_variant_keeps_its_parameterization() {
         let moved = curve.moved(&r);
         let domain = curve.domain().or_extent(1.0);
         for step in 0..=8 {
-            let t = domain.start + domain.length() * f64::from(step) / 8.0;
-            let expected = r.apply(curve.point_at(t));
+            let t = domain.at(Fraction::new(f64::from(step) / 8.0)).value();
+            let expected = r.apply(curve.point_at(NativeParam::new(t)));
             assert!(
-                moved.point_at(t).coincides(expected, LINEAR_TOLERANCE),
+                moved
+                    .point_at(NativeParam::new(t))
+                    .coincides(expected, LINEAR_TOLERANCE),
                 "{} re-parameterised at {t}: expected {expected:?}, got {:?}",
                 curve_variant(&curve),
-                moved.point_at(t)
+                moved.point_at(NativeParam::new(t))
             );
         }
     }
@@ -275,8 +279,8 @@ fn every_surface_variant_keeps_its_parameterization() {
         let v = v.or_extent(1.0);
         for iu in 0..=4 {
             for iv in 0..=4 {
-                let pu = u.start + u.length() * f64::from(iu) / 4.0;
-                let pv = v.start + v.length() * f64::from(iv) / 4.0;
+                let pu = u.at(Fraction::new(f64::from(iu) / 4.0)).value();
+                let pv = v.at(Fraction::new(f64::from(iv) / 4.0)).value();
                 let expected = r.apply(surface.point_at(pu, pv));
                 assert!(
                     moved.point_at(pu, pv).coincides(expected, LINEAR_TOLERANCE),
@@ -296,7 +300,8 @@ fn a_moved_line_keeps_its_affine_scale() {
     let line = Line::through(Point3::new(1.0, 0.0, 0.0), Point3::new(4.0, 4.0, 0.0));
     let moved = line.moved(&motion());
 
-    assert!((moved.length(0.0, 1.0) - line.length(0.0, 1.0)).abs() <= LINEAR_TOLERANCE);
+    let (start, end) = (NativeParam::new(0.0), NativeParam::new(1.0));
+    assert!((moved.length(start, end) - line.length(start, end)).abs() <= LINEAR_TOLERANCE);
 }
 
 #[test]

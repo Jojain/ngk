@@ -3,8 +3,8 @@ use std::f64::consts::TAU;
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
-    Curve, CurveGeometry, Ellipse, Frame, Interval, LINEAR_TOLERANCE, Periodicity, Point3,
-    PointCoincidence, Rigid,
+    Curve, CurveGeometry, Ellipse, Fraction, Frame, Interval, LINEAR_TOLERANCE, NativeParam,
+    Periodicity, Point3, PointCoincidence, Rigid,
 };
 use radians::Rad64;
 
@@ -27,16 +27,19 @@ fn assert_point_near(actual: Point3, expected: Point3) {
 fn ellipse_uses_its_frame_and_recovers_parameters() {
     let ellipse = ellipse();
 
-    assert_point_near(ellipse.point_at(0.0), Point3::new(1.0, 6.0, 3.0));
     assert_point_near(
-        ellipse.point_at(std::f64::consts::FRAC_PI_2),
+        ellipse.point_at(NativeParam::new(0.0)),
+        Point3::new(1.0, 6.0, 3.0),
+    );
+    assert_point_near(
+        ellipse.point_at(NativeParam::new(std::f64::consts::FRAC_PI_2)),
         Point3::new(-1.0, 2.0, 3.0),
     );
     for parameter in [0.17, 1.23, 3.81, 5.77] {
-        let recovered = ellipse.param_at(ellipse.point_at(parameter));
-        let error = (recovered - parameter)
+        let recovered = ellipse.param_at(ellipse.point_at(NativeParam::new(parameter)));
+        let error = (recovered.value() - parameter)
             .rem_euclid(TAU)
-            .min((parameter - recovered).rem_euclid(TAU));
+            .min((parameter - recovered.value()).rem_euclid(TAU));
         assert!(error <= 1.0e-10, "parameter error at {parameter}: {error}");
     }
 }
@@ -50,7 +53,7 @@ fn ellipse_curve_forwards_domain_periodicity_and_projection() {
     assert_eq!(curve.periodicity(), Periodicity::Periodic(TAU));
     assert_point_near(
         curve.project(Point3::new(1.0, 8.0, 9.0)),
-        ellipse.point_at(0.0),
+        ellipse.point_at(NativeParam::new(0.0)),
     );
 }
 
@@ -85,11 +88,15 @@ fn ellipse_rigid_motion_preserves_parameterization() {
     let translated = ellipse.moved(&Rigid::translation(offset));
 
     for parameter in [0.0, 0.37, 2.4, 5.9] {
-        let rotated_offset = rotation * (ellipse.point_at(parameter) - axis.origin);
-        assert_point_near(rotated.point_at(parameter), axis.origin + rotated_offset);
+        let rotated_offset =
+            rotation * (ellipse.point_at(NativeParam::new(parameter)) - axis.origin);
         assert_point_near(
-            translated.point_at(parameter),
-            ellipse.point_at(parameter) + offset,
+            rotated.point_at(NativeParam::new(parameter)),
+            axis.origin + rotated_offset,
+        );
+        assert_point_near(
+            translated.point_at(NativeParam::new(parameter)),
+            ellipse.point_at(NativeParam::new(parameter)) + offset,
         );
     }
 }
@@ -103,9 +110,12 @@ fn ellipse_bbox_over_contains_an_off_axis_arc() {
         .expect("an ellipse arc has finite exact bounds");
 
     for index in 0..=128 {
-        let parameter = interval.start + interval.length() * index as f64 / 128.0;
+        let parameter = interval.at(Fraction::new(index as f64 / 128.0)).value();
         assert!(
-            bounds.contains_point(ellipse.point_at(parameter), LINEAR_TOLERANCE),
+            bounds.contains_point(
+                ellipse.point_at(NativeParam::new(parameter)),
+                LINEAR_TOLERANCE
+            ),
             "ellipse point at {parameter} escaped its analytic bounds"
         );
     }

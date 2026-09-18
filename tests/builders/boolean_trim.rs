@@ -1,7 +1,7 @@
 use nalgebra::Vector3;
 use ngk::builders::boolean::{BooleanOperand, BooleanOptions, compute_boolean_intersections};
 use ngk::builders::faces::add_rectangle;
-use ngk::geometry::{Plane, Point3};
+use ngk::geometry::{Fraction, Plane, Point3};
 use ngk::model::Model;
 use ngk::modeling::faces;
 use ngk::topology::ModelEditError;
@@ -83,7 +83,10 @@ fn planar_section_crosses_a_curved_trim_at_exact_pcurve_points() {
 
     assert_eq!(plan.network.spans().len(), 1);
     let span = &plan.network.spans()[0];
-    for point in [span.point_at(0.0), span.point_at(1.0)] {
+    for point in [
+        span.point_at(Fraction::new(0.0)),
+        span.point_at(Fraction::new(1.0)),
+    ] {
         assert!((point.coords.norm() - 2.0).abs() <= 1.0e-10, "{point:?}");
     }
 }

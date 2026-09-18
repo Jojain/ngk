@@ -2,7 +2,7 @@ use std::f64::consts::FRAC_PI_2;
 
 use nalgebra::Vector3;
 use ngk::builders::edges::add_edge;
-use ngk::geometry::{Curve, Interval, LINEAR_TOLERANCE, Plane, Point3};
+use ngk::geometry::{Curve, Interval, LINEAR_TOLERANCE, NativeParam, Plane, Point3};
 use ngk::model::Model;
 use ngk::topology::StandardPayload;
 use ngk::viz::{VizHints, scene_from_model};
@@ -12,8 +12,8 @@ use ngk::viz::{VizHints, scene_from_model};
 fn quarter_arc_edge(as_nurbs: bool) -> Model<StandardPayload> {
     let plane = Plane::new(Point3::origin(), Vector3::x(), Vector3::z());
     let arc = Curve::circle(plane, 1.0);
-    let start = arc.point_at(0.0);
-    let end = arc.point_at(FRAC_PI_2);
+    let start = arc.point_at(NativeParam::new(0.0));
+    let end = arc.point_at(NativeParam::new(FRAC_PI_2));
     let curve = if as_nurbs {
         arc.trimmed_native(Interval::new(0.0, FRAC_PI_2))
             .expect("arc as nurbs")

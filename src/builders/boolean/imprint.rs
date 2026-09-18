@@ -5,7 +5,8 @@ use std::collections::HashMap;
 
 use super::graph::SpanSubdivision;
 use crate::builders::faces::{FaceImprint, FaceImprintSection, split_face_edge_staged};
-use crate::geometry::{Point3, PointCoincidence};
+use crate::geometry::parameter::{Fraction, NativeParam};
+use crate::geometry::{Interval, Point3, PointCoincidence};
 use crate::topology::edge::Edge;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use crate::topology::{ModelEdit, payload::Payload};
@@ -98,7 +99,7 @@ pub(crate) fn realize_section<P: Payload>(
             }
         }
     }
-    cuts.sort_by(f64::total_cmp);
+    cuts.sort_by(Fraction::total_cmp);
     cuts.dedup_by(|a, b| (*a - *b).abs() <= tolerance);
     if start > end {
         cuts.reverse();
@@ -112,16 +113,16 @@ pub(crate) fn realize_section<P: Payload>(
             let view = edit.edge_unchecked(edge);
             let parameter = view.curve().expect("section geometry").param_at(point);
             let face = view.faces()[0].key();
-            edge = split_face_edge_staged(edit, face, edge, parameter)?.continuation();
+            edge = split_face_edge_staged(edit, face, edge, parameter.value())?.continuation();
         }
-        let middle = (pair[0] + pair[1]) * 0.5;
+        let middle = Interval::new(pair[0], pair[1]).midpoint();
         let piece = imprint
             .pieces
             .iter()
             .find(|piece| piece.interval.ordered().contains(middle, tolerance))
             .ok_or(BooleanError::UnrealizedSpan { span: imprint.span })?;
-        let mut a = (pair[0] - piece.interval.start) / (piece.interval.end - piece.interval.start);
-        let mut b = (pair[1] - piece.interval.start) / (piece.interval.end - piece.interval.start);
+        let mut a = piece.interval.fraction_of(pair[0]).value();
+        let mut b = piece.interval.fraction_of(pair[1]).value();
         if piece.reversed {
             a = 1.0 - a;
             b = 1.0 - b;
@@ -145,8 +146,8 @@ pub(crate) fn realize_edge_spans<P: Payload>(
 ) -> Vec<(IntersectionSpanId, BooleanSide, EdgeKey)> {
     let mut realized = Vec::new();
     for (index, span) in network.spans().iter().enumerate() {
-        let start = span.point_at(0.0);
-        let end = span.point_at(1.0);
+        let start = span.point_at(Fraction::START);
+        let end = span.point_at(Fraction::END);
         for span_use in &span.uses {
             let IntersectionSpanUse::Edge { side, edge, .. } = span_use else {
                 continue;

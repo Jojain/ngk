@@ -1,5 +1,5 @@
 use ngk::builders::faces::{add_circle, split_face_edge};
-use ngk::geometry::{Curve, Point3};
+use ngk::geometry::{Curve, NativeParam, Point3};
 use ngk::healing::{HealedCell, HealingOptions, HealingScope, SkipReason, remove_redundant_cells};
 use ngk::model::Model;
 use ngk::modeling::solids;
@@ -52,8 +52,8 @@ fn a_fused_edge_spans_its_two_original_endpoints() {
     let (mut map, _) = solids::block(2.0, 3.0, 4.0).expect("block").into_model();
     let (face, edge) = any_boundary_edge(&map);
     let original = map.edge_attr_unchecked(edge).curve.clone();
-    let start = original.point_at(0.0);
-    let end = original.point_at(1.0);
+    let start = original.point_at(NativeParam::new(0.0));
+    let end = original.point_at(NativeParam::new(1.0));
 
     split_face_edge(&mut map, face, edge, 0.25).expect("splitting a block edge should succeed");
     remove_redundant_cells(&mut map, HealingOptions::default()).expect("healing should succeed");
@@ -64,15 +64,20 @@ fn a_fused_edge_spans_its_two_original_endpoints() {
         .find(|curve| endpoints_match(curve, start, end))
         .expect("a fused edge spanning the original endpoints should exist");
     assert!(
-        (fused.length(0.0, 1.0) - original.length(0.0, 1.0)).abs() <= 1.0e-6,
+        (fused.length(NativeParam::new(0.0), NativeParam::new(1.0))
+            - original.length(NativeParam::new(0.0), NativeParam::new(1.0)))
+        .abs()
+            <= 1.0e-6,
         "the fused edge should keep the original length"
     );
 }
 
 fn endpoints_match(curve: &Curve, start: Point3, end: Point3) -> bool {
     let matches = |a: Point3, b: Point3| (a - b).norm() <= 1.0e-9;
-    (matches(curve.point_at(0.0), start) && matches(curve.point_at(1.0), end))
-        || (matches(curve.point_at(0.0), end) && matches(curve.point_at(1.0), start))
+    (matches(curve.point_at(NativeParam::new(0.0)), start)
+        && matches(curve.point_at(NativeParam::new(1.0)), end))
+        || (matches(curve.point_at(NativeParam::new(0.0)), end)
+            && matches(curve.point_at(NativeParam::new(1.0)), start))
 }
 
 #[test]

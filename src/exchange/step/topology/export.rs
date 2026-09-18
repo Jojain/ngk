@@ -432,7 +432,7 @@ fn write_edge_curve<P: Payload>(
     let interval = edge
         .parameter_interval()
         .ok_or(TopologyError::MissingCurve { edge: key })?;
-    let same_sense = interval.start <= interval.end;
+    let same_sense = interval.start.value() <= interval.end.value();
 
     let edge_curve = builder.add_entity(&entities::EdgeCurve {
         edge_start: start_id,
@@ -479,7 +479,7 @@ fn write_seam<P: Payload>(
         edge_start: start,
         edge_end: end,
         edge_geometry: geometry,
-        same_sense: span.start <= span.end,
+        same_sense: span.start.value() <= span.end.value(),
     });
 
     cut.seams.insert(

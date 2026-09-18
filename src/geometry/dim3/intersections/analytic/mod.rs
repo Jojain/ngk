@@ -26,6 +26,7 @@ pub use curve_curve::intersect_analytic_curves;
 pub use curve_surface::{intersect_analytic_curve_surface, line_surface_is_analytic};
 pub use surface_surface::intersect_analytic_surfaces;
 
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{Point3, TrimmedCurve, TrimmedCurve2};
 
 /// How faithfully a section's pcurve represents it in a support's parameters.
@@ -79,12 +80,12 @@ pub struct AnalyticSection {
 impl AnalyticSection {
     /// Evaluates the section at a normalized traversal parameter.
     pub fn point_at(&self, parameter: f64) -> Point3 {
-        self.curve.point_at(parameter)
+        self.curve.point_at(Fraction::new(parameter))
     }
 
     /// Projects a point to this section's normalized traversal parameter.
     pub fn parameter_at(&self, point: Point3) -> f64 {
-        self.curve.parameter_at(point)
+        self.curve.parameter_at(point).value()
     }
 }
 

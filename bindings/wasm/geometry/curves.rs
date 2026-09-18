@@ -1,5 +1,6 @@
 use wasm_bindgen::prelude::*;
 
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Circle, Ellipse, Line};
 
 use super::surfaces::WasmPlane;
@@ -21,13 +22,13 @@ impl WasmLine {
     /// Returns the end point.
     #[wasm_bindgen(getter)]
     pub fn end(&self) -> WasmPoint3 {
-        point(self.inner.point_at(1.0))
+        point(self.inner.point_at(NativeParam::new(1.0)))
     }
 
     /// Evaluates the line.
     #[wasm_bindgen(js_name = pointAt)]
     pub fn point_at(&self, parameter: f64) -> WasmPoint3 {
-        point(self.inner.point_at(parameter))
+        point(self.inner.point_at(NativeParam::new(parameter)))
     }
 }
 
@@ -56,7 +57,7 @@ impl WasmCircle {
     /// Evaluates the circle.
     #[wasm_bindgen(js_name = pointAt)]
     pub fn point_at(&self, parameter: f64) -> WasmPoint3 {
-        point(self.inner.point_at(parameter))
+        point(self.inner.point_at(NativeParam::new(parameter)))
     }
 }
 
@@ -80,6 +81,6 @@ impl WasmEllipse {
 
     #[wasm_bindgen(js_name = pointAt)]
     pub fn point_at(&self, parameter: f64) -> WasmPoint3 {
-        point(self.inner.point_at(parameter))
+        point(self.inner.point_at(NativeParam::new(parameter)))
     }
 }

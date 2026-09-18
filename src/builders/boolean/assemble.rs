@@ -6,6 +6,7 @@ use super::{
 };
 use crate::builders::faces::reverse_face_winding;
 use crate::builders::scaffold::cut_between_shells;
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{Point3, PointCoincidence};
 use crate::healing::{HealingOptions, HealingScope, remove_redundant_cells_staged};
 use crate::model::Model;
@@ -344,9 +345,9 @@ fn loop_traversal<P: Payload>(
     // same point, so they cannot say which way round the other side runs; a
     // point partway along can, and agrees with the ends everywhere else.
     let samples = [
-        section.point_at(0.0),
-        section.point_at(1.0),
-        section.point_at(0.25),
+        section.point_at(Fraction::new(0.0)),
+        section.point_at(Fraction::new(1.0)),
+        section.point_at(Fraction::new(0.25)),
     ];
     let keys = match traversed.bounded() {
         Some(bounded) => {
@@ -408,7 +409,7 @@ fn signed_volume<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> f64 {
                 .map(|edge| {
                     edge.trimmed_curve()
                         .expect("admitted geometry")
-                        .point_at(0.0)
+                        .point_at(Fraction::new(0.0))
                 })
                 .collect::<Vec<Point3>>();
             for pair in points[1..].windows(2) {

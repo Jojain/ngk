@@ -8,6 +8,7 @@ use super::trimmed::TrimmedCurve2;
 use crate::geometry::counters::{
     count_curve_curve_2d_call, count_newton_iterations, count_subdivision_node,
 };
+use crate::geometry::parameter::{Fraction, NativeParam, Normalized};
 use crate::geometry::{
     IntersectionCoverage, IntersectionIncompleteReason, Interval, LINEAR_TOLERANCE, NurbsError,
     Point2,
@@ -23,6 +24,26 @@ const SEARCH_NODE_BUDGET: usize = 4_096;
 /// A point or coincident interval shared by two 2D curves.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CurveCurveIntersection2 {
+    Point {
+        point: Point2,
+        u_a: Fraction,
+        u_b: Fraction,
+    },
+    Overlap {
+        interval_a: Interval<Normalized>,
+        interval_b: Interval<Normalized>,
+    },
+}
+
+/// One observation in the fitted NURBS curves' own knot parameters.
+///
+/// The search runs over Bezier spans of the fitted curves, so everything it
+/// finds is stated in their knot domains — which is neither span's fraction
+/// and, on a conic, not even an affine image of one.
+/// [`normalize_intersection`] and [`onto_spans`] are the two steps that carry a
+/// hit out of that space, and this type is what keeps the stages apart.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum KnotHit {
     Point {
         point: Point2,
         u_a: f64,
@@ -235,7 +256,7 @@ impl CurvePiece {
         if domain.is_degenerate(LINEAR_TOLERANCE) {
             return None;
         }
-        let midpoint = 0.5 * (domain.start + domain.end);
+        let midpoint = 0.5 * (domain.start.value() + domain.end.value());
         let (left, right) = self.bezier.subdivide(midpoint).ok()?;
         Some((
             Self {
@@ -319,7 +340,7 @@ pub fn intersect_curves_with_options(
 /// One bounded embedding search over a single 2D curve pair.
 struct Search {
     options: CurveIntersectionOptions,
-    intersections: Vec<CurveCurveIntersection2>,
+    intersections: Vec<KnotHit>,
     reasons: Vec<IntersectionIncompleteReason>,
     /// Remaining node visits for this query.
     ///
@@ -405,15 +426,15 @@ fn straight_span_intersection(
     a: &Bezier2,
     b: &Bezier2,
     options: CurveIntersectionOptions,
-) -> Option<CurveCurveIntersection2> {
+) -> Option<KnotHit> {
     if a.degree().get() != 1 || b.degree().get() != 1 {
         return None;
     }
 
-    let a0 = a.point_at(a.domain().start);
-    let a1 = a.point_at(a.domain().end);
-    let b0 = b.point_at(b.domain().start);
-    let b1 = b.point_at(b.domain().end);
+    let a0 = a.point_at(a.domain().start.value());
+    let a1 = a.point_at(a.domain().end.value());
+    let b0 = b.point_at(b.domain().start.value());
+    let b1 = b.point_at(b.domain().end.value());
     let direction_a = a1 - a0;
     let direction_b = b1 - b0;
     let denominator = cross(direction_a, direction_b);
@@ -428,7 +449,7 @@ fn straight_span_intersection(
             return None;
         }
         let point = a0 + direction_a * fraction_a.clamp(0.0, 1.0);
-        return Some(CurveCurveIntersection2::Point {
+        return Some(KnotHit::Point {
             point,
             u_a: a.parameter_at(point, options.linear_tolerance)?,
             u_b: b.parameter_at(point, options.linear_tolerance)?,
@@ -450,7 +471,7 @@ fn straight_span_overlap(
     b0: Point2,
     b1: Point2,
     options: CurveIntersectionOptions,
-) -> Option<CurveCurveIntersection2> {
+) -> Option<KnotHit> {
     let direction = a1 - a0;
     let length = direction.norm();
     if length <= options.linear_tolerance {
@@ -467,7 +488,7 @@ fn straight_span_overlap(
 
     let start_point = a0 + axis * overlap_start;
     if overlap_end - overlap_start <= options.linear_tolerance {
-        return Some(CurveCurveIntersection2::Point {
+        return Some(KnotHit::Point {
             point: start_point,
             u_a: a.parameter_at(start_point, options.linear_tolerance)?,
             u_b: b.parameter_at(start_point, options.linear_tolerance)?,
@@ -475,7 +496,7 @@ fn straight_span_overlap(
     }
 
     let end_point = a0 + axis * overlap_end;
-    Some(CurveCurveIntersection2::Overlap {
+    Some(KnotHit::Overlap {
         interval_a: Interval::new(
             a.parameter_at(start_point, options.linear_tolerance)?,
             a.parameter_at(end_point, options.linear_tolerance)?,
@@ -499,19 +520,19 @@ fn matching_bezier_overlap(
     a: &Bezier2,
     b: &Bezier2,
     options: CurveIntersectionOptions,
-) -> Option<CurveCurveIntersection2> {
+) -> Option<KnotHit> {
     if a.degree() != b.degree() {
         return None;
     }
     if same_bezier_samples(a, b, false, options) {
-        return Some(CurveCurveIntersection2::Overlap {
+        return Some(KnotHit::Overlap {
             interval_a: a.domain(),
             interval_b: b.domain(),
         });
     }
-    same_bezier_samples(a, b, true, options).then_some(CurveCurveIntersection2::Overlap {
+    same_bezier_samples(a, b, true, options).then_some(KnotHit::Overlap {
         interval_a: a.domain(),
-        interval_b: Interval::new(b.domain().end, b.domain().start),
+        interval_b: Interval::new(b.domain().end.value(), b.domain().start.value()),
     })
 }
 
@@ -546,16 +567,12 @@ fn tangents_are_compatible(a: &Bezier2, b: &Bezier2, u: f64, v: f64, reverse_b: 
 }
 
 fn lerp_domain(domain: Interval, fraction: f64) -> f64 {
-    domain.start + (domain.end - domain.start) * fraction
+    domain.start.value() + (domain.end.value() - domain.start.value()) * fraction
 }
 
-fn refine_point(
-    a: &Bezier2,
-    b: &Bezier2,
-    options: CurveIntersectionOptions,
-) -> Option<CurveCurveIntersection2> {
-    let mut u = 0.5 * (a.domain().start + a.domain().end);
-    let mut v = 0.5 * (b.domain().start + b.domain().end);
+fn refine_point(a: &Bezier2, b: &Bezier2, options: CurveIntersectionOptions) -> Option<KnotHit> {
+    let mut u = 0.5 * (a.domain().start.value() + a.domain().end.value());
+    let mut v = 0.5 * (b.domain().start.value() + b.domain().end.value());
 
     for _ in 0..options.newton_max_iterations {
         count_newton_iterations(1);
@@ -569,8 +586,8 @@ fn refine_point(
             break;
         };
 
-        u = (u - delta.x).clamp(a.domain().start, a.domain().end);
-        v = (v - delta.y).clamp(b.domain().start, b.domain().end);
+        u = (u - delta.x).clamp(a.domain().start.value(), a.domain().end.value());
+        v = (v - delta.y).clamp(b.domain().start.value(), b.domain().end.value());
         if delta.norm() <= options.parameter_tolerance {
             break;
         }
@@ -579,7 +596,7 @@ fn refine_point(
     let point_a = a.point_at(u);
     let point_b = b.point_at(v);
     ((point_a - point_b).norm_squared() <= options.linear_tolerance_squared()).then(|| {
-        CurveCurveIntersection2::Point {
+        KnotHit::Point {
             point: Point2::from((point_a.coords + point_b.coords) * 0.5),
             u_a: u,
             u_b: v,
@@ -588,9 +605,9 @@ fn refine_point(
 }
 
 fn dedup_intersections(
-    intersections: Vec<CurveCurveIntersection2>,
+    intersections: Vec<KnotHit>,
     options: CurveIntersectionOptions,
-) -> Vec<CurveCurveIntersection2> {
+) -> Vec<KnotHit> {
     let mut deduped = Vec::new();
     let mut counts = Vec::new();
     for intersection in intersections {
@@ -608,14 +625,10 @@ fn dedup_intersections(
     deduped
 }
 
-fn merge_intersection(
-    existing: &mut CurveCurveIntersection2,
-    incoming: CurveCurveIntersection2,
-    existing_count: usize,
-) {
+fn merge_intersection(existing: &mut KnotHit, incoming: KnotHit, existing_count: usize) {
     let (
-        CurveCurveIntersection2::Point { point, u_a, u_b },
-        CurveCurveIntersection2::Point {
+        KnotHit::Point { point, u_a, u_b },
+        KnotHit::Point {
             point: incoming_point,
             u_a: incoming_u_a,
             u_b: incoming_u_b,
@@ -631,19 +644,15 @@ fn merge_intersection(
     *u_b = (*u_b * count + incoming_u_b) / (count + 1.0);
 }
 
-fn same_intersection(
-    a: &CurveCurveIntersection2,
-    b: &CurveCurveIntersection2,
-    options: CurveIntersectionOptions,
-) -> bool {
+fn same_intersection(a: &KnotHit, b: &KnotHit, options: CurveIntersectionOptions) -> bool {
     match (a, b) {
         (
-            CurveCurveIntersection2::Point {
+            KnotHit::Point {
                 point: point_a,
                 u_a: a_u_a,
                 u_b: a_u_b,
             },
-            CurveCurveIntersection2::Point {
+            KnotHit::Point {
                 point: point_b,
                 u_a: b_u_a,
                 u_b: b_u_b,
@@ -662,11 +671,11 @@ fn same_intersection(
                 && (a_u_b - b_u_b).abs() <= parameter_merge_tolerance
         }
         (
-            CurveCurveIntersection2::Overlap {
+            KnotHit::Overlap {
                 interval_a: a_interval_a,
                 interval_b: a_interval_b,
             },
-            CurveCurveIntersection2::Overlap {
+            KnotHit::Overlap {
                 interval_a: b_interval_a,
                 interval_b: b_interval_b,
             },
@@ -683,35 +692,32 @@ fn same_interval(a: Interval, b: Interval, options: CurveIntersectionOptions) ->
         && (a.end - b.end).abs() <= options.parameter_tolerance
 }
 
+/// Restates a knot-space hit as a fraction of each fitted curve's domain.
 fn normalize_intersection(
-    intersection: CurveCurveIntersection2,
+    hit: KnotHit,
     domain_a: Interval,
     domain_b: Interval,
 ) -> CurveCurveIntersection2 {
-    match intersection {
-        CurveCurveIntersection2::Point { point, u_a, u_b } => CurveCurveIntersection2::Point {
+    match hit {
+        KnotHit::Point { point, u_a, u_b } => CurveCurveIntersection2::Point {
             point,
-            u_a: normalize_parameter(domain_a, u_a),
-            u_b: normalize_parameter(domain_b, u_b),
+            u_a: domain_a.fraction_of(NativeParam::new(u_a)),
+            u_b: domain_b.fraction_of(NativeParam::new(u_b)),
         },
-        CurveCurveIntersection2::Overlap {
+        KnotHit::Overlap {
             interval_a,
             interval_b,
         } => CurveCurveIntersection2::Overlap {
             interval_a: Interval::new(
-                normalize_parameter(domain_a, interval_a.start),
-                normalize_parameter(domain_a, interval_a.end),
+                domain_a.fraction_of(interval_a.start),
+                domain_a.fraction_of(interval_a.end),
             ),
             interval_b: Interval::new(
-                normalize_parameter(domain_b, interval_b.start),
-                normalize_parameter(domain_b, interval_b.end),
+                domain_b.fraction_of(interval_b.start),
+                domain_b.fraction_of(interval_b.end),
             ),
         },
     }
-}
-
-fn normalize_parameter(domain: Interval, parameter: f64) -> f64 {
-    (parameter - domain.start) / (domain.end - domain.start)
 }
 
 /// Re-expresses a result found on the fitted NURBS in each span's own fraction.
@@ -751,24 +757,28 @@ fn nurbs_parameter_is_affine(span: &TrimmedCurve2) -> bool {
     matches!(span.curve(), Curve2::Line(_) | Curve2::Nurbs(_))
 }
 
-fn span_fraction(span: &TrimmedCurve2, normalized: f64, point: Point2) -> f64 {
+fn span_fraction(span: &TrimmedCurve2, normalized: Fraction, point: Point2) -> Fraction {
     if nurbs_parameter_is_affine(span) {
         normalized
     } else {
-        span.parameter_at(point).clamp(0.0, 1.0)
+        span.parameter_at(point).clamped_to_unit()
     }
 }
 
-fn span_interval(span: &TrimmedCurve2, normalized: Interval, nurbs: &NurbsCurve2) -> Interval {
+fn span_interval(
+    span: &TrimmedCurve2,
+    normalized: Interval<Normalized>,
+    nurbs: &NurbsCurve2,
+) -> Interval<Normalized> {
     if nurbs_parameter_is_affine(span) {
         return normalized;
     }
     let domain = nurbs.domain();
-    let at = |fraction: f64| {
+    let at = |fraction: Fraction| {
         span_fraction(
             span,
             fraction,
-            nurbs.point_at(domain.at(fraction.clamp(0.0, 1.0))),
+            nurbs.point_at(domain.at(fraction.clamped_to_unit()).value()),
         )
     };
     Interval::new(at(normalized.start), at(normalized.end))

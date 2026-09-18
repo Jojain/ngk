@@ -402,6 +402,38 @@ mutation capability (`add_dart`, `remove_dart`, `link`, `unlink`, `sew`,
   circle×{plane,sphere}; curve/curve line×line, line×circle, circle×circle.
   Not covered: anything involving a cone surface pair, cylinder×cylinder,
   circle×{cylinder,cone}.
+- **A parameter carries the space it lives in** (`geometry/parameter.rs`).
+  `Param<S>` wraps one `f64` with a marker, and `Interval<S>` is a range of
+  them: **`Native`** is the support's own parameterization — a line's affine, a
+  conic's radians, a NURBS curve's knot domain — and **`Normalized`** is a
+  traversal fraction of *a named span*, `0` its start and `1` its end. The
+  aliases are `NativeParam` and `Fraction`; `Interval` alone means
+  `Interval<Native>`, because most spans in the kernel are native.
+  `Interval::at` and `Interval::fraction_of` are the **only** two conversions
+  between them, and each is asked of the span the fraction is a fraction of, so
+  "a fraction of what" always has an answer at the call site.
+  - **Only a `TrimmedCurve`/`TrimmedCurve2` produces or consumes a `Fraction`.**
+    A bare `Curve` has no fractions, because it has no span to be a fraction of.
+    That is why there is no `Curve::trimmed`: naming a portion of a support is
+    `trimmed_native`, in the support's own parameters. A fraction spent against
+    the wrong reference is a bug no brand can see, and this is what removes the
+    chance of writing one.
+  - **A `Fraction` is not confined to `[0, 1]`.** A solver hit just off the end
+    of a span, a clipped overlap, a point projected past an edge — each is a
+    real value outside the unit interval, and refusing or clamping it would
+    destroy the news that the hit was off the span. Ask `is_inside_unit` where
+    that matters.
+  - **Surfaces are not branded yet, and not because they are safe.** A surface
+    has two parameter spaces as much as a curve does — its analytic `(u, v)`
+    and the knot domain of `to_nurbs_over`, which is why `ParamMap` and
+    `Reparam` exist. What it lacks is a *fraction*: there is no trimmed surface,
+    so `Normalized` has nothing to say about one, and its second space is
+    `Knot`, which is not built. So `u` and `v` stay `f64`, as does the `Point2`
+    of its parameter space; `domain()` is still `Interval<Native>`, and reading
+    an endpoint out to evaluate takes `Param::value`. The NURBS evaluator and
+    the subdivision solvers are plain `f64` for the same reason — one space
+    each, unwrapped at their edges. See `plan/parameter_units.md` stage 4 for
+    the `Uv<S>` shape this wants.
 - **A `Curve` is an unbounded support, never trimmed to the cell carrying it.**
   There is no `Curve::Bounded` variant: a line runs to infinity, a circle closes.
   Which part is meant is said by **`TrimmedCurve`** (`geometry/dim3/trimmed.rs`)

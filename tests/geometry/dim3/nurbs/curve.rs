@@ -2,7 +2,8 @@ use std::f64::consts::FRAC_1_SQRT_2;
 
 use nalgebra::Vector3;
 use ngk::geometry::{
-    Circle, ControlPolygon, Degree, HPoint, KnotVector, LINEAR_TOLERANCE, NurbsCurve, Plane, Point3,
+    Circle, ControlPolygon, Degree, Fraction, HPoint, KnotVector, LINEAR_TOLERANCE, NurbsCurve,
+    Plane, Point3,
 };
 
 fn assert_vector_near(actual: Vector3<f64>, expected: Vector3<f64>, tol: f64) {
@@ -194,7 +195,7 @@ fn bezier_spans_splits_curve_at_interior_knots() {
         let domain = span.domain();
         for i in 0..=8 {
             let u = domain.start + (domain.end - domain.start) * i as f64 / 8.0;
-            let error = (span.point_at(u) - curve.point_at(u)).norm();
+            let error = (span.point_at(u.value()) - curve.point_at(u.value())).norm();
             assert!(error <= LINEAR_TOLERANCE, "u={u}, error={error}");
         }
     }
@@ -217,7 +218,7 @@ fn bezier_spans_extracts_four_quadratic_circle_arcs() {
         let domain = span.domain();
         for i in 0..=8 {
             let u = domain.start + (domain.end - domain.start) * i as f64 / 8.0;
-            let point = span.point_at(u);
+            let point = span.point_at(u.value());
             let radius = (point.x * point.x + point.y * point.y).sqrt();
             assert!((radius - 1.0).abs() <= 1.0e-10);
         }
@@ -259,8 +260,8 @@ fn clamping_keeps_the_curve_and_its_domain() {
     let domain = curve.domain();
     assert_eq!(clamped.domain(), domain);
     for step in 0..=32 {
-        let u = domain.at(f64::from(step) / 32.0);
-        let (before, after) = (curve.point_at(u), clamped.point_at(u));
+        let u = domain.at(Fraction::new(f64::from(step) / 32.0));
+        let (before, after) = (curve.point_at(u.value()), clamped.point_at(u.value()));
         assert!(
             (before - after).norm() <= LINEAR_TOLERANCE,
             "at {u}: {before:?} became {after:?}",

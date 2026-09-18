@@ -12,6 +12,7 @@ use nalgebra::Vector3;
 use super::brep::BrepIndex;
 use super::hints::VizHints;
 use super::scene::{VizAlphaLink, VizDart, VizScene};
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Curve, LINEAR_TOLERANCE, Point3, PointCoincidence};
 use crate::model::{Cell0, Cell1, Model};
 use crate::tessellate::{TessellateOpts, tessellate_curve};
@@ -83,9 +84,9 @@ fn build_dart<P: Payload>(
         // closed edge's do.
         let domain = curve.domain();
         let (t0, t1) = if d == edge_attr.dart {
-            (domain.start, domain.end)
+            (domain.start.value(), domain.end.value())
         } else {
-            (domain.end, domain.start)
+            (domain.end.value(), domain.start.value())
         };
         return sampled_arrow(curve, edge_id, t0, t1, opts);
     };
@@ -95,19 +96,22 @@ fn build_dart<P: Payload>(
         // A closed edge starts and ends at the same vertex: the two darts split
         // the period, so the non-reference one walks it backwards.
         if d == edge_attr.dart {
-            (interval.start, interval.end)
+            (interval.start.value(), interval.end.value())
         } else {
-            (interval.end, interval.start)
+            (interval.end.value(), interval.start.value())
         }
     } else if curve
-        .point_at(interval.start)
+        .point_at(NativeParam::new(interval.start.value()))
         .coincides(v0, LINEAR_TOLERANCE)
     {
-        (interval.start, interval.end)
-    } else if curve.point_at(interval.end).coincides(v0, LINEAR_TOLERANCE) {
+        (interval.start.value(), interval.end.value())
+    } else if curve
+        .point_at(NativeParam::new(interval.end.value()))
+        .coincides(v0, LINEAR_TOLERANCE)
+    {
         // `parameters_between` reports a NURBS edge's whole domain, which is
         // ordered by the curve rather than by this dart's vertex.
-        (interval.end, interval.start)
+        (interval.end.value(), interval.start.value())
     } else {
         return chord_arrow(edge_id, v0, v1);
     };
@@ -230,6 +234,7 @@ mod tests {
     use nalgebra::Vector3;
 
     use crate::builders::edges::add_edge;
+    use crate::geometry::parameter::NativeParam;
     use crate::geometry::{Circle, Curve, Plane, Point3};
     use crate::model::Model;
     use crate::topology::StandardPayload;
@@ -240,8 +245,8 @@ mod tests {
         let mut g = Model::<StandardPayload>::new();
         let plane = Plane::new(Point3::origin(), Vector3::x(), Vector3::z());
         let curve = Curve::Circle(Circle::new(plane, 1.0));
-        let start = curve.point_at(0.0);
-        let end = curve.point_at(FRAC_PI_2);
+        let start = curve.point_at(NativeParam::new(0.0));
+        let end = curve.point_at(NativeParam::new(FRAC_PI_2));
         let _ = add_edge(&mut g, start, end, curve);
 
         let scene = scene_from_model(&g, &VizHints::new());

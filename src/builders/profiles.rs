@@ -1,4 +1,5 @@
 use crate::geometry::TrimmedCurve2;
+use crate::geometry::parameter::NativeParam;
 use std::collections::HashMap;
 
 use nalgebra::Vector3;
@@ -273,8 +274,8 @@ pub(crate) fn curve_pcurve(
 
     let support = match section.curve() {
         Curve::Line(line) => Curve2::Line(Line2::new(
-            point(line.point_at(0.0)),
-            direction(line.point_at(1.0) - line.point_at(0.0)),
+            point(line.point_at(NativeParam::new(0.0))),
+            direction(line.point_at(NativeParam::new(1.0)) - line.point_at(NativeParam::new(0.0))),
         )),
         Curve::Circle(circle) => {
             let x = direction(circle.plane().x_dir().into_inner());

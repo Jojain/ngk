@@ -3,6 +3,7 @@ use super::degree::Degree;
 use super::knots::KnotVector;
 use super::points::ControlPolygon;
 use crate::geometry::nurbs::error::NurbsError;
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{BBox, Interval, LINEAR_TOLERANCE, Point3};
 use nalgebra::Vector3;
 
@@ -28,8 +29,8 @@ impl Bezier {
         }
         if domain.is_degenerate(LINEAR_TOLERANCE) {
             return Err(NurbsError::DegenerateInterval {
-                start: domain.start,
-                end: domain.end,
+                start: domain.start.value(),
+                end: domain.end.value(),
             });
         }
         Ok(Self {
@@ -68,16 +69,18 @@ impl Bezier {
     }
 
     pub fn subdivide(&self, u: f64) -> Result<(Self, Self), NurbsError> {
-        if !self.domain.contains(u, LINEAR_TOLERANCE) {
+        if !self.domain.contains(NativeParam::new(u), LINEAR_TOLERANCE) {
             return Err(NurbsError::ParameterOutOfRange {
                 u,
-                min: self.domain.start,
-                max: self.domain.end,
+                min: self.domain.start.value(),
+                max: self.domain.end.value(),
             });
         }
-        if u <= self.domain.start + LINEAR_TOLERANCE || u >= self.domain.end - LINEAR_TOLERANCE {
+        if u <= self.domain.start.value() + LINEAR_TOLERANCE
+            || u >= self.domain.end.value() - LINEAR_TOLERANCE
+        {
             return Err(NurbsError::DegenerateInterval {
-                start: self.domain.start,
+                start: self.domain.start.value(),
                 end: u,
             });
         }
@@ -93,16 +96,24 @@ impl Bezier {
         let right = ControlPolygon::new(points[degree..=(degree * 2)].to_vec())?;
 
         Ok((
-            Self::new(self.degree, left, Interval::new(self.domain.start, u))?,
-            Self::new(self.degree, right, Interval::new(u, self.domain.end))?,
+            Self::new(
+                self.degree,
+                left,
+                Interval::new(self.domain.start.value(), u),
+            )?,
+            Self::new(
+                self.degree,
+                right,
+                Interval::new(u, self.domain.end.value()),
+            )?,
         ))
     }
 
     fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
         let p = self.degree.get();
         let mut knots = Vec::with_capacity(2 * (p + 1));
-        knots.extend(std::iter::repeat_n(self.domain.start, p + 1));
-        knots.extend(std::iter::repeat_n(self.domain.end, p + 1));
+        knots.extend(std::iter::repeat_n(self.domain.start.value(), p + 1));
+        knots.extend(std::iter::repeat_n(self.domain.end.value(), p + 1));
         NurbsCurve::new(
             self.degree,
             self.control_points.clone(),

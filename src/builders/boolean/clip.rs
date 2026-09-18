@@ -1,6 +1,7 @@
 //! Synchronized interval clipping; never reconnect filtered branch samples.
 
 use crate::geometry::TrimmedCurve2;
+use crate::geometry::parameter::Fraction;
 use nalgebra::Vector2;
 
 use crate::builders::faces::FaceImprint;
@@ -22,7 +23,7 @@ pub(crate) type ClipSide<'a> = (&'a Surface, &'a FaceTrimDomain);
 /// other face, say — that point is the truthful node, and the fragments meeting
 /// there are corrected onto it.
 struct BranchNode {
-    parameter: f64,
+    parameter: Fraction,
     point: Point3,
     /// Parameter-space correction on each face, measured at the branch itself
     /// so a periodic surface stays on the branch's own image of the domain.
@@ -68,20 +69,20 @@ pub(crate) fn clip_branch(
         capture,
         &crossings,
     );
-    let captured = |parameter: f64| {
+    let captured = |parameter: Fraction| {
         nodes
             .iter()
             .any(|node| (branch.point_at(parameter) - node.point).norm() <= capture)
     };
     crossings.retain(|parameter| !captured(*parameter));
-    let mut parameters = vec![0.0, 1.0];
+    let mut parameters = vec![Fraction::START, Fraction::END];
     parameters.append(&mut crossings);
     parameters.extend(nodes.iter().map(|node| node.parameter));
     // A closed branch needs distinct endpoints for the existing network representation.
     if branch.closed {
-        parameters.push(0.5);
+        parameters.push(Fraction::new(0.5));
     }
-    parameters.sort_by(f64::total_cmp);
+    parameters.sort_by(Fraction::total_cmp);
     parameters.dedup_by(|a, b| (*a - *b).abs() <= options.parameter_tolerance);
     let mut fragments = Vec::new();
     for pair in parameters.windows(2) {
@@ -91,7 +92,7 @@ pub(crate) fn clip_branch(
         if pair[1] - pair[0] <= LINEAR_TOLERANCE {
             continue;
         }
-        let midpoint = (pair[0] + pair[1]) * 0.5;
+        let midpoint = Interval::new(pair[0], pair[1]).midpoint();
         if !first.1.contains(pcurve_a.point_at(midpoint))
             || !second.1.contains(pcurve_b.point_at(midpoint))
         {
@@ -109,7 +110,7 @@ pub(crate) fn clip_branch(
                 continue;
             };
             let end = if at_start { 0.0 } else { 1.0 };
-            if (curve.point_at(end) - node.point).norm() > options.linear_tolerance {
+            if (curve.point_at(Fraction::new(end)) - node.point).norm() > options.linear_tolerance {
                 // Moving an end off the support costs the analytic support:
                 // only a curve that *is* the section can be bent onto the node.
                 let snapped = snapped_curve(&curve.to_curve()?, at_start, node.point)?;
@@ -138,11 +139,11 @@ fn branch_nodes(
     pcurves: [&TrimmedCurve2; 2],
     anchors: &[Point3],
     capture: f64,
-    crossings: &[f64],
+    crossings: &[Fraction],
 ) -> Vec<BranchNode> {
     let mut nodes: Vec<BranchNode> = Vec::new();
     for anchor in anchors.iter().copied() {
-        let parameter = branch.parameter_at(anchor).clamp(0.0, 1.0);
+        let parameter = branch.parameter_at(anchor).clamped_to_unit();
         let fitted = branch.point_at(parameter);
         if (fitted - anchor).norm() > capture {
             continue;
@@ -183,7 +184,7 @@ fn periodic_pcurve_image(
     surface: &Surface,
     trim: &FaceTrimDomain,
 ) -> Result<TrimmedCurve2, NurbsError> {
-    let reference = span.point_at(0.5);
+    let reference = span.point_at(Fraction::new(0.5));
     let center = trim.domain_center();
     let mut offset = Vector2::zeros();
     let nearest_shift =

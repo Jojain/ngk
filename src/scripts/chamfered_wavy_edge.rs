@@ -7,6 +7,7 @@ use crate::builders::edges::add_edge;
 use crate::builders::faces::add_face;
 use crate::builders::profiles::{add_polyline, append_edge};
 use crate::builders::solids::add_extruded_face;
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{Curve, NurbsCurve, Point3, Surface};
 use crate::model::Model;
 use crate::topology::StandardPayload;
@@ -71,9 +72,9 @@ pub fn build(distance: f64) -> Result<ScriptResult, String> {
         .into_iter()
         .find(|edge| {
             matches!(edge.curve(), Some(Curve::Nurbs(_)))
-                && edge
-                    .trimmed_curve()
-                    .is_some_and(|section| (section.point_at(0.0).z - DEPTH).abs() < 1.0e-9)
+                && edge.trimmed_curve().is_some_and(|section| {
+                    (section.point_at(Fraction::new(0.0)).z - DEPTH).abs() < 1.0e-9
+                })
         })
         .map(|edge| edge.key())
         .ok_or("extrusion did not expose its translated wavy edge")?;

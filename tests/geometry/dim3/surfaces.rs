@@ -2,9 +2,9 @@ use std::f64::consts::FRAC_PI_2;
 
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::{
-    Circle, Curve, Cylinder, Interval, LINEAR_TOLERANCE, Plane, Point2, Point3, PointCoincidence,
-    Rigid, RuledSurface, Surface, SurfaceGeometry, SurfaceOfRevolution, SurfacePeriodicity,
-    axis::Axis3,
+    Circle, Curve, Cylinder, Fraction, Interval, LINEAR_TOLERANCE, Plane, Point2, Point3,
+    PointCoincidence, Rigid, RuledSurface, Surface, SurfaceGeometry, SurfaceOfRevolution,
+    SurfacePeriodicity, axis::Axis3,
 };
 use radians::Rad64;
 
@@ -225,14 +225,14 @@ fn cylinder_param_map_handles_shifted_and_reversed_full_turns() {
         let map = surface.param_map_over(u, v);
         for fraction in [0.0, 0.17, 0.43, 0.79, 1.0] {
             let analytic_u = u.start + (u.end - u.start) * fraction;
-            let mapped = map.map(Point2::new(analytic_u, 0.37));
+            let mapped = map.map(Point2::new(analytic_u.value(), 0.37));
             assert_point_near(
                 nurbs.point_at(mapped.x, mapped.y),
-                surface.point_at(analytic_u, 0.37),
+                surface.point_at(analytic_u.value(), 0.37),
             );
             let recovered = map.inverse(mapped).x;
             assert!(
-                (recovered - analytic_u).abs() <= 1.0e-11,
+                (recovered - analytic_u.value()).abs() <= 1.0e-11,
                 "interval {u:?}, fraction {fraction}: mapped {}, recovered {recovered}, expected {analytic_u}",
                 mapped.x,
             );
@@ -256,8 +256,8 @@ fn cylinder_bbox_over_contains_a_trimmed_patch() {
 
     for iu in 0..=64 {
         for iv in 0..=8 {
-            let parameter_u = u.start + u.length() * iu as f64 / 64.0;
-            let parameter_v = v.start + v.length() * iv as f64 / 8.0;
+            let parameter_u = u.at(Fraction::new(iu as f64 / 64.0)).value();
+            let parameter_v = v.at(Fraction::new(iv as f64 / 8.0)).value();
             assert!(
                 bounds.contains_point(
                     cylinder.point_at(parameter_u, parameter_v),
@@ -386,8 +386,11 @@ fn revolution_closest_parameter_inverts_its_own_evaluation() {
     let mut worst: f64 = 0.0;
     for i in 0..=12 {
         for j in 0..=12 {
-            let (u, v) = (u_domain.at(i as f64 / 12.0), v_domain.at(j as f64 / 12.0));
-            let point = torus.point_at(u, v);
+            let (u, v) = (
+                u_domain.at(Fraction::new(i as f64 / 12.0)),
+                v_domain.at(Fraction::new(j as f64 / 12.0)),
+            );
+            let point = torus.point_at(u.value(), v.value());
             let uv = torus.closest_parameter(point);
             worst = worst.max((torus.point_at(uv.x, uv.y) - point).norm());
         }

@@ -43,7 +43,7 @@ impl CurvePiece {
 
     fn midpoint(&self) -> f64 {
         let domain = self.domain();
-        0.5 * (domain.start + domain.end)
+        0.5 * (domain.start.value() + domain.end.value())
     }
 
     fn split(&self) -> Option<(Self, Self)> {
@@ -215,10 +215,10 @@ fn line_overlap(
     if a.degree().get() != 1 || b.degree().get() != 1 {
         return None;
     }
-    let a0 = a.point_at(a.domain().start);
-    let a1 = a.point_at(a.domain().end);
-    let b0 = b.point_at(b.domain().start);
-    let b1 = b.point_at(b.domain().end);
+    let a0 = a.point_at(a.domain().start.value());
+    let a1 = a.point_at(a.domain().end.value());
+    let b0 = b.point_at(b.domain().start.value());
+    let b1 = b.point_at(b.domain().end.value());
     let a_dir = a1 - a0;
     let b_dir = b1 - b0;
     let a_len = a_dir.norm();
@@ -264,15 +264,15 @@ fn line_overlap(
 }
 
 fn parameter_from_line_distance(domain: Interval, t: f64) -> f64 {
-    domain.start + (domain.end - domain.start) * t
+    domain.start.value() + (domain.end.value() - domain.start.value()) * t
 }
 
 fn parameter_on_second_line(domain: Interval, b0_s: f64, b1_s: f64, target: f64) -> f64 {
     let denom = b1_s - b0_s;
     if denom.abs() <= f64::EPSILON {
-        return domain.start;
+        return domain.start.value();
     }
-    domain.start + (domain.end - domain.start) * ((target - b0_s) / denom)
+    domain.start.value() + (domain.end.value() - domain.start.value()) * ((target - b0_s) / denom)
 }
 
 fn matching_bezier_overlap(
@@ -324,7 +324,7 @@ fn tangents_are_compatible(a: &Bezier, b: &Bezier, u: f64, v: f64, reverse_b: bo
 }
 
 fn normalized_parameter(domain: Interval, t: f64) -> f64 {
-    domain.start + (domain.end - domain.start) * t
+    domain.start.value() + (domain.end.value() - domain.start.value()) * t
 }
 
 fn refine_point(
@@ -332,8 +332,8 @@ fn refine_point(
     b: &Bezier,
     options: IntersectionOptions,
 ) -> Option<CurveCurveIntersection> {
-    let mut u = 0.5 * (a.domain().start + a.domain().end);
-    let mut v = 0.5 * (b.domain().start + b.domain().end);
+    let mut u = 0.5 * (a.domain().start.value() + a.domain().end.value());
+    let mut v = 0.5 * (b.domain().start.value() + b.domain().end.value());
 
     for _ in 0..options.newton_max_iterations {
         count_newton_iterations(1);
@@ -358,8 +358,8 @@ fn refine_point(
             break;
         };
 
-        u = (u - delta.x).clamp(a.domain().start, a.domain().end);
-        v = (v - delta.y).clamp(b.domain().start, b.domain().end);
+        u = (u - delta.x).clamp(a.domain().start.value(), a.domain().end.value());
+        v = (v - delta.y).clamp(b.domain().start.value(), b.domain().end.value());
         if delta.norm() <= options.parameter_tolerance {
             break;
         }

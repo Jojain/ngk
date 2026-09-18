@@ -3,6 +3,7 @@ use super::simplification::{recognize_curve_3d, simplify_curve_2d};
 use super::tracer::TraceState;
 use crate::geometry::counters::count_branch_fit;
 use crate::geometry::nurbs::basis::basis_functions;
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, Degree, IntersectionError, IntersectionQuality,
     Interval, KnotVector, NurbsCurve, NurbsCurve2, Point2, Point3, Surface,
@@ -468,9 +469,9 @@ fn validate_fit(
         .extend((0..=GLOBAL_CHECKPOINTS).map(|index| index as f64 / GLOBAL_CHECKPOINTS as f64));
     let mut max_fit_error: f64 = 0.0;
     for parameter in checkpoints {
-        let point = curve_3d.point_at(parameter);
-        let uv_a = pcurve_a.point_at(parameter);
-        let uv_b = pcurve_b.point_at(parameter);
+        let point = curve_3d.point_at(Fraction::new(parameter));
+        let uv_a = pcurve_a.point_at(Fraction::new(parameter));
+        let uv_b = pcurve_b.point_at(Fraction::new(parameter));
         let point_a = a.point_at(uv_a.x, uv_a.y);
         let point_b = b.point_at(uv_b.x, uv_b.y);
         max_fit_error = max_fit_error
@@ -479,7 +480,8 @@ fn validate_fit(
             .max((point - point_b).norm());
     }
     for (state, parameter) in states.iter().zip(parameters.iter().copied()) {
-        max_fit_error = max_fit_error.max((curve_3d.point_at(parameter) - state.point).norm());
+        max_fit_error =
+            max_fit_error.max((curve_3d.point_at(Fraction::new(parameter)) - state.point).norm());
     }
     max_fit_error
 }

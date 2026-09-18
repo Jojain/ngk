@@ -19,6 +19,7 @@ use super::{
     SurfaceSurfaceIntersections,
 };
 use crate::geometry::counters::count_surface_surface_call;
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{BBox, Curve, NurbsSurface, Point2, Surface};
 
 /// Intersects two surfaces with the default operation-scoped tolerances.
@@ -148,8 +149,8 @@ fn analytic_branch(
             let point = section.point_at(parameter);
             SurfaceIntersectionPoint {
                 point,
-                uv_a: section.pcurve_a.point_at(parameter),
-                uv_b: section.pcurve_b.point_at(parameter),
+                uv_a: section.pcurve_a.point_at(Fraction::new(parameter)),
+                uv_b: section.pcurve_b.point_at(Fraction::new(parameter)),
                 kind: SurfaceIntersectionPointKind::Transverse,
                 residual: 0.0,
             }

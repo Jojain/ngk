@@ -70,9 +70,9 @@ impl BezierSurface {
     /// Splits the patch at `u`, keeping both halves in parent-surface parameters.
     pub fn subdivide_u(&self, u: f64) -> Result<(Self, Self), NurbsError> {
         let domain = self.domain_u();
-        if u <= domain.start || u >= domain.end {
+        if u <= domain.start.value() || u >= domain.end.value() {
             return Err(NurbsError::DegenerateInterval {
-                start: domain.start,
+                start: domain.start.value(),
                 end: u,
             });
         }
@@ -92,17 +92,17 @@ impl BezierSurface {
             }
         }
         Ok((
-            self.rebuilt_u(left, Interval::new(domain.start, u))?,
-            self.rebuilt_u(right, Interval::new(u, domain.end))?,
+            self.rebuilt_u(left, Interval::new(domain.start.value(), u))?,
+            self.rebuilt_u(right, Interval::new(u, domain.end.value()))?,
         ))
     }
 
     /// Splits the patch at `v`, keeping both halves in parent-surface parameters.
     pub fn subdivide_v(&self, v: f64) -> Result<(Self, Self), NurbsError> {
         let domain = self.domain_v();
-        if v <= domain.start || v >= domain.end {
+        if v <= domain.start.value() || v >= domain.end.value() {
             return Err(NurbsError::DegenerateInterval {
-                start: domain.start,
+                start: domain.start.value(),
                 end: v,
             });
         }
@@ -122,8 +122,8 @@ impl BezierSurface {
             }
         }
         Ok((
-            self.rebuilt_v(lower, Interval::new(domain.start, v))?,
-            self.rebuilt_v(upper, Interval::new(v, domain.end))?,
+            self.rebuilt_v(lower, Interval::new(domain.start.value(), v))?,
+            self.rebuilt_v(upper, Interval::new(v, domain.end.value()))?,
         ))
     }
 
@@ -134,7 +134,7 @@ impl BezierSurface {
                 degree_u,
                 self.surface.degree_v,
                 ControlNet::new(points, degree_u.get() + 1, self.surface.control_points.nv())?,
-                bezier_knots(degree_u, domain_u.start, domain_u.end)?,
+                bezier_knots(degree_u, domain_u.start.value(), domain_u.end.value())?,
                 self.surface.knots_v.clone(),
             )?,
         })
@@ -148,7 +148,7 @@ impl BezierSurface {
                 degree_v,
                 ControlNet::new(points, self.surface.control_points.nu(), degree_v.get() + 1)?,
                 self.surface.knots_u.clone(),
-                bezier_knots(degree_v, domain_v.start, domain_v.end)?,
+                bezier_knots(degree_v, domain_v.start.value(), domain_v.end.value())?,
             )?,
         })
     }
@@ -262,8 +262,8 @@ impl NurbsSurface {
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
         let domain_u = self.domain_u();
         let domain_v = self.domain_v();
-        let u = u.clamp(domain_u.start, domain_u.end);
-        let v = v.clamp(domain_v.start, domain_v.end);
+        let u = u.clamp(domain_u.start.value(), domain_u.end.value());
+        let v = v.clamp(domain_v.start.value(), domain_v.end.value());
 
         let p = self.degree_u.get();
         let q = self.degree_v.get();
@@ -317,8 +317,8 @@ impl NurbsSurface {
 
             let delta_u = (vv * ru - uv * rv) / determinant;
             let delta_v = (uu * rv - uv * ru) / determinant;
-            u = (u - delta_u).clamp(domain_u.start, domain_u.end);
-            v = (v - delta_v).clamp(domain_v.start, domain_v.end);
+            u = (u - delta_u).clamp(domain_u.start.value(), domain_u.end.value());
+            v = (v - delta_v).clamp(domain_v.start.value(), domain_v.end.value());
 
             if delta_u.hypot(delta_v) <= 1.0e-10 {
                 break;
@@ -332,13 +332,14 @@ impl NurbsSurface {
         let sample_count = sample_count.max(1);
         let domain_u = self.domain_u();
         let domain_v = self.domain_v();
-        let mut closest = (domain_u.start, domain_v.start);
+        let mut closest = (domain_u.start.value(), domain_v.start.value());
         let mut closest_distance = f64::INFINITY;
 
         for i in 0..=sample_count {
-            let u = domain_u.start + domain_u.length() * (i as f64 / sample_count as f64);
+            let u = domain_u.start.value() + domain_u.length() * (i as f64 / sample_count as f64);
             for j in 0..=sample_count {
-                let v = domain_v.start + domain_v.length() * (j as f64 / sample_count as f64);
+                let v =
+                    domain_v.start.value() + domain_v.length() * (j as f64 / sample_count as f64);
                 let distance = (self.point_at(u, v) - point).norm_squared();
                 if distance < closest_distance {
                     closest = (u, v);
@@ -354,8 +355,8 @@ impl NurbsSurface {
     pub fn derivatives_uv(&self, u: f64, v: f64) -> (Vector3<f64>, Vector3<f64>) {
         let domain_u = self.domain_u();
         let domain_v = self.domain_v();
-        let u = u.clamp(domain_u.start, domain_u.end);
-        let v = v.clamp(domain_v.start, domain_v.end);
+        let u = u.clamp(domain_u.start.value(), domain_u.end.value());
+        let v = v.clamp(domain_v.start.value(), domain_v.end.value());
 
         let p = self.degree_u.get();
         let q = self.degree_v.get();
@@ -485,7 +486,7 @@ impl NurbsSurface {
         }
         let p = self.degree_u.get();
         let domain = self.domain_u();
-        for end in [domain.start, domain.end] {
+        for end in [domain.start.value(), domain.end.value()] {
             while self.knots_u.multiplicity(end) < p + 1 {
                 self.insert_knot_u(end)?;
             }
@@ -509,7 +510,7 @@ impl NurbsSurface {
         }
         let q = self.degree_v.get();
         let domain = self.domain_v();
-        for end in [domain.start, domain.end] {
+        for end in [domain.start.value(), domain.end.value()] {
             while self.knots_v.multiplicity(end) < q + 1 {
                 self.insert_knot_v(end)?;
             }
@@ -564,14 +565,14 @@ fn bezier_knots(degree: Degree, start: f64, end: f64) -> Result<KnotVector, Nurb
 fn distinct_interior_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
     distinct_domain_knots(knots, domain)
         .into_iter()
-        .filter(|knot| *knot > domain.start && *knot < domain.end)
+        .filter(|knot| *knot > domain.start.value() && *knot < domain.end.value())
         .collect()
 }
 
 fn distinct_domain_knots(knots: &[f64], domain: Interval) -> Vec<f64> {
     let mut distinct = Vec::new();
     for &knot in knots {
-        if knot < domain.start || knot > domain.end {
+        if knot < domain.start.value() || knot > domain.end.value() {
             continue;
         }
         if distinct.last().is_none_or(|last| *last != knot) {
@@ -598,8 +599,8 @@ fn span_offsets(knots: &KnotVector, degree: Degree, breaks: &[f64]) -> Vec<usize
 /// them.
 fn clamped_span(knots: &[f64], domain: Interval) -> Result<(usize, usize), NurbsError> {
     let (Some(first), Some(last)) = (
-        knots.iter().position(|&knot| knot == domain.start),
-        knots.iter().rposition(|&knot| knot == domain.end),
+        knots.iter().position(|&knot| knot == domain.start.value()),
+        knots.iter().rposition(|&knot| knot == domain.end.value()),
     ) else {
         return Err(NurbsError::UnsortedKnots);
     };

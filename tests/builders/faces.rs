@@ -11,8 +11,8 @@ use ngk::builders::faces::{
 use ngk::builders::profiles::{add_polyline, add_profile_from_edges};
 use ngk::builders::sheets::add_extruded_profile;
 use ngk::geometry::{
-    Circle, Curve, Curve2, LINEAR_TOLERANCE, NurbsCurve2, Plane, Point2, Point3, PointCoincidence,
-    Surface, TrimmedCurve2,
+    Circle, Curve, Curve2, Fraction, LINEAR_TOLERANCE, NativeParam, NurbsCurve2, Plane, Point2,
+    Point3, PointCoincidence, Surface, TrimmedCurve2,
 };
 
 use ngk::modeling::solids;
@@ -93,14 +93,14 @@ fn wrapping_imprints_partition_a_cylinder_wall_into_connected_rings() {
                 let pcurve = face.pcurve(edge.dart()).unwrap();
                 let section = edge.trimmed_curve().unwrap();
                 for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
-                    let uv = pcurve.point_at(fraction);
+                    let uv = pcurve.point_at(Fraction::new(fraction));
                     assert!(
                         face.point_at(uv.x, uv.y)
-                            .coincides(section.point_at(fraction), LINEAR_TOLERANCE),
+                            .coincides(section.point_at(Fraction::new(fraction)), LINEAR_TOLERANCE),
                         "reversed={reverse}, face={key:?}, edge={:?}, fraction={fraction}, surface={:?}, curve={:?}",
                         edge.key(),
                         face.point_at(uv.x, uv.y),
-                        section.point_at(fraction)
+                        section.point_at(Fraction::new(fraction))
                     );
                 }
             }
@@ -205,10 +205,10 @@ fn splitting_a_seamed_wall_preserves_both_face_pcurves() {
             .trimmed_curve()
             .expect("a boundary edge should have a section");
         for fraction in [0.0, 1.0] {
-            let uv = pcurve.point_at(fraction);
+            let uv = pcurve.point_at(Fraction::new(fraction));
             assert!(
                 face.point_at(uv.x, uv.y)
-                    .coincides(section.point_at(fraction), LINEAR_TOLERANCE)
+                    .coincides(section.point_at(Fraction::new(fraction)), LINEAR_TOLERANCE)
             );
         }
     }
@@ -265,12 +265,12 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
         .expect("circle edge should have a pcurve");
     assert!(matches!(pcurve.curve(), Curve2::Circle(_)));
     for fraction in [0.0, 0.125, 0.25, 0.5, 0.875, 1.0] {
-        let uv = pcurve.point_at(fraction);
+        let uv = pcurve.point_at(Fraction::new(fraction));
         let surface_point = shape_face.point_at(uv.x, uv.y);
         let edge_point = edge
             .curve()
             .expect("circle edge should have geometry")
-            .point_at(std::f64::consts::TAU * fraction);
+            .point_at(NativeParam::new(std::f64::consts::TAU * fraction));
         assert!(surface_point.coincides(edge_point, LINEAR_TOLERANCE));
     }
 }
@@ -698,10 +698,10 @@ fn face_imprint_graph_splits_crossing_segments_at_interior_vertex() {
         2
     );
     assert!(graph.edges().iter().all(|edge| {
-        (edge.interval.start - 0.0).abs() <= LINEAR_TOLERANCE
-            && (edge.interval.end - 0.5).abs() <= LINEAR_TOLERANCE
-            || (edge.interval.start - 0.5).abs() <= LINEAR_TOLERANCE
-                && (edge.interval.end - 1.0).abs() <= LINEAR_TOLERANCE
+        (edge.interval.start - 0.0).value().abs() <= LINEAR_TOLERANCE
+            && (edge.interval.end - 0.5).value().abs() <= LINEAR_TOLERANCE
+            || (edge.interval.start - 0.5).value().abs() <= LINEAR_TOLERANCE
+                && (edge.interval.end - 1.0).value().abs() <= LINEAR_TOLERANCE
     }));
     let branch = graph.branch_vertices()[0];
     assert_eq!(graph.vertex_degree(branch), 4);
@@ -886,7 +886,7 @@ fn edge_mid_parameter(g: &Model<StandardPayload>, edge: EdgeKey) -> f64 {
     let end_dart = g.alpha(Dim::Zero, attr.dart);
     let end = g.attribute_unchecked::<Cell0>(end_dart).point;
     let interval = attr.curve.interval_between(start, end);
-    0.5 * (interval.start + interval.end)
+    interval.midpoint().value()
 }
 
 fn edge_between_points(g: &Model<StandardPayload>, first: Point3, second: Point3) -> EdgeKey {

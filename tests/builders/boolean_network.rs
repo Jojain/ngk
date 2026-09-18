@@ -5,7 +5,7 @@ use ngk::builders::boolean::{
     IntersectionSpanUse, compute_boolean_intersections, prepare_boolean_with_external_tool,
     validate_solid_network,
 };
-use ngk::geometry::{Frame, Plane, Point3, PointCoincidence};
+use ngk::geometry::{Fraction, Frame, NativeParam, Plane, Point3, PointCoincidence};
 use ngk::model::Model;
 use ngk::modeling::{faces, solids};
 use ngk::topology::ModelEditError;
@@ -72,7 +72,8 @@ fn canonical_spans_carry_no_event_in_their_interior() {
                 continue;
             }
             assert!(
-                t <= tolerances.parameter || t >= 1.0 - tolerances.parameter,
+                t <= Fraction::new(tolerances.parameter)
+                    || t >= Fraction::new(1.0 - tolerances.parameter),
                 "event at {:?} splits span {index} at {t}",
                 event.point
             );
@@ -223,7 +224,7 @@ fn every_event_on_an_edge_lies_between_that_edge_s_own_vertices() {
                 .parameter_interval()
                 .expect("an attributed edge has a parameter interval");
             assert!(
-                interval.contains(parameter, 1e-6),
+                interval.contains(NativeParam::new(parameter), 1e-6),
                 "event {index} at {:?} sits at {parameter} on edge {key:?}, \
                  whose own span is {interval:?}",
                 event.point
@@ -231,7 +232,7 @@ fn every_event_on_an_edge_lies_between_that_edge_s_own_vertices() {
             assert!(
                 edge.curve()
                     .expect("registered edge geometry")
-                    .point_at(parameter)
+                    .point_at(NativeParam::new(parameter))
                     .coincides(event.point, tolerance),
                 "event {index}'s edge parameter must locate the event's own point"
             );

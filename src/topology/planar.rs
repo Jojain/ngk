@@ -3,6 +3,7 @@ use std::ops::Deref;
 use nalgebra::Vector3;
 use thiserror::Error;
 
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Curve, LINEAR_TOLERANCE, Plane, Point3, Surface};
 use crate::topology::face::Face;
 
@@ -256,7 +257,7 @@ fn edge_planarity_points<P: Payload>(
             return Ok(points);
         };
         points.extend(
-            sampled_curve_points(curve, interval.start, interval.end)
+            sampled_curve_points(curve, interval.start.value(), interval.end.value())
                 .into_iter()
                 .map(|point| PointOnDart {
                     dart: edge.dart(),
@@ -308,7 +309,7 @@ fn check_edge_curve<P: Payload>(
         return Ok(());
     };
 
-    for point in sampled_curve_points(curve, interval.start, interval.end) {
+    for point in sampled_curve_points(curve, interval.start.value(), interval.end.value()) {
         let distance = plane_distance(plane, point);
         if distance > tolerance {
             return Err(PlanarityError::NonPlanarCurve {
@@ -323,13 +324,16 @@ fn check_edge_curve<P: Payload>(
 
 fn sampled_curve_points(curve: &Curve, t0: f64, t1: f64) -> Vec<Point3> {
     match curve {
-        Curve::Line(_) => vec![curve.point_at(t0), curve.point_at(t1)],
+        Curve::Line(_) => vec![
+            curve.point_at(NativeParam::new(t0)),
+            curve.point_at(NativeParam::new(t1)),
+        ],
         Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) => {
             let segments = 32usize;
             (0..=segments)
                 .map(|i| {
                     let t = t0 + (t1 - t0) * (i as f64 / segments as f64);
-                    curve.point_at(t)
+                    curve.point_at(NativeParam::new(t))
                 })
                 .collect()
         }

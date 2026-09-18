@@ -121,7 +121,6 @@ impl Rigid {
     pub fn apply_unit(self, direction: UnitVector3<f64>) -> UnitVector3<f64> {
         self.0.rotation * direction
     }
-
 }
 
 impl Default for Rigid {

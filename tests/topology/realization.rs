@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ngk::geometry::{Plane, Point3, Surface};
+use ngk::geometry::{Fraction, Plane, Point3, Surface};
 use ngk::model::{Model, RealizationError, RealizationPurpose};
 use ngk::modeling::{edges, faces};
 use ngk::topology::embedding::EntityOwner;
@@ -48,7 +48,10 @@ fn reversed_edge_realizations_keep_the_same_native_section() {
         .realize_edge(key, Orientation::Reversed, RealizationPurpose::Geometry)
         .unwrap();
     for t in [0.0, 0.2, 0.5, 0.8, 1.0] {
-        assert!((forward.point_at(t) - backward.point_at(1.0 - t)).norm() < 1e-12);
+        assert!(
+            (forward.point_at(Fraction::new(t)) - backward.point_at(Fraction::new(1.0 - t))).norm()
+                < 1e-12
+        );
     }
     let another_purpose = model
         .realize_edge(key, Orientation::Same, RealizationPurpose::Exchange)
@@ -74,13 +77,19 @@ fn staged_geometry_changes_invalidate_reads_before_revision_advances() {
                 .realize_edge(key, Orientation::Same, RealizationPurpose::Geometry)
                 .unwrap();
             assert_eq!(edit.model().revision(), revision);
-            assert_eq!(staged.point_at(1.0), Point3::new(2.0, 0.0, 0.0));
+            assert_eq!(
+                staged.point_at(Fraction::new(1.0)),
+                Point3::new(2.0, 0.0, 0.0)
+            );
             edit.vertex_attr_mut_unchecked(endpoint).point.x = 3.0;
             let staged = edit
                 .model()
                 .realize_edge(key, Orientation::Same, RealizationPurpose::Geometry)
                 .unwrap();
-            assert_eq!(staged.point_at(1.0), Point3::new(3.0, 0.0, 0.0));
+            assert_eq!(
+                staged.point_at(Fraction::new(1.0)),
+                Point3::new(3.0, 0.0, 0.0)
+            );
             Ok::<_, ModelEditError>(())
         })
         .unwrap();
@@ -88,8 +97,11 @@ fn staged_geometry_changes_invalidate_reads_before_revision_advances() {
         .realize_edge(key, Orientation::Same, RealizationPurpose::Geometry)
         .unwrap();
     assert_eq!(model.revision(), revision + 1);
-    assert_eq!(current.point_at(1.0), Point3::new(3.0, 0.0, 0.0));
-    assert_eq!(old.point_at(1.0), Point3::new(1.0, 0.0, 0.0));
+    assert_eq!(
+        current.point_at(Fraction::new(1.0)),
+        Point3::new(3.0, 0.0, 0.0)
+    );
+    assert_eq!(old.point_at(Fraction::new(1.0)), Point3::new(1.0, 0.0, 0.0));
 }
 
 #[test]
@@ -107,7 +119,10 @@ fn rollback_discards_realizations_of_aborted_geometry() {
             .model()
             .realize_edge(key, Orientation::Same, RealizationPurpose::Geometry)
             .unwrap();
-        assert_eq!(staged.point_at(1.0), Point3::new(4.0, 0.0, 0.0));
+        assert_eq!(
+            staged.point_at(Fraction::new(1.0)),
+            Point3::new(4.0, 0.0, 0.0)
+        );
         Err::<(), _>(ModelEditError::SameDart {
             dart: edit.model().edge_attr_unchecked(key).dart,
         })
@@ -184,7 +199,10 @@ fn commit_validation_failure_discards_staged_realizations() {
             .model()
             .realize_edge(key, Orientation::Same, RealizationPurpose::Geometry)
             .unwrap();
-        assert_eq!(staged.point_at(1.0), Point3::new(4.0, 0.0, 0.0));
+        assert_eq!(
+            staged.point_at(Fraction::new(1.0)),
+            Point3::new(4.0, 0.0, 0.0)
+        );
         let missing = Dart::new(edit.model().dart_count());
         edit.own_cell(Dim::One, missing, EntityOwner::Edge(key));
         Ok::<_, ModelEditError>(())

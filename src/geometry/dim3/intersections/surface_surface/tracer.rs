@@ -2,6 +2,7 @@ use nalgebra::{Matrix2, Matrix3, Matrix4, Vector2, Vector4};
 
 use super::super::options::IntersectionOptions;
 use crate::geometry::counters::{count_newton_iterations, count_trace_step};
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{
     IntersectionIncompleteReason, Interval, NurbsSurface, Point2, Point3, SurfaceIntersectionPoint,
     SurfaceIntersectionPointKind,
@@ -235,12 +236,12 @@ fn correct_boundary_state(
         )
     })?;
     let mut parameters = predicted;
-    parameters[fixed] = if (parameters[fixed] - domains[fixed].start).abs()
-        <= (parameters[fixed] - domains[fixed].end).abs()
+    parameters[fixed] = if (parameters[fixed] - domains[fixed].start.value()).abs()
+        <= (parameters[fixed] - domains[fixed].end.value()).abs()
     {
-        domains[fixed].start
+        domains[fixed].start.value()
     } else {
-        domains[fixed].end
+        domains[fixed].end.value()
     };
 
     for _ in 0..options.newton_max_iterations {
@@ -417,9 +418,13 @@ fn closed_period(surface: &NurbsSurface, in_u: bool, options: IntersectionOption
         }
     };
     (0..=SAMPLES)
-        .map(|index| across.start + (across.end - across.start) * index as f64 / SAMPLES as f64)
+        .map(|index| {
+            across
+                .at(Fraction::new(index as f64 / SAMPLES as f64))
+                .value()
+        })
         .all(|value| {
-            (evaluate(seam.start, value) - evaluate(seam.end, value)).norm()
+            (evaluate(seam.start.value(), value) - evaluate(seam.end.value(), value)).norm()
                 <= options.linear_tolerance
         })
         .then_some(seam.end - seam.start)
@@ -443,9 +448,9 @@ fn wrap_periodic(
     for index in 0..4 {
         let domain = domains[index];
         let leaving_end = tangent[index] > options.parameter_tolerance
-            && (parameters[index] - domain.end).abs() <= options.parameter_tolerance;
+            && (parameters[index] - domain.end.value()).abs() <= options.parameter_tolerance;
         let leaving_start = tangent[index] < -options.parameter_tolerance
-            && (parameters[index] - domain.start).abs() <= options.parameter_tolerance;
+            && (parameters[index] - domain.start.value()).abs() <= options.parameter_tolerance;
         if !leaving_end && !leaving_start {
             continue;
         }
@@ -466,9 +471,9 @@ fn distance_to_boundary(
     for index in 0..4 {
         let component = direction[index];
         if component > options.parameter_tolerance {
-            distance = distance.min((domains[index].end - parameters[index]) / component);
+            distance = distance.min((domains[index].end.value() - parameters[index]) / component);
         } else if component < -options.parameter_tolerance {
-            distance = distance.min((domains[index].start - parameters[index]) / component);
+            distance = distance.min((domains[index].start.value() - parameters[index]) / component);
         }
     }
     distance.max(0.0)
@@ -476,15 +481,25 @@ fn distance_to_boundary(
 
 fn clamp_parameters(parameters: Vector4<f64>, domains: [Interval; 4]) -> Vector4<f64> {
     Vector4::new(
-        parameters.x.clamp(domains[0].start, domains[0].end),
-        parameters.y.clamp(domains[1].start, domains[1].end),
-        parameters.z.clamp(domains[2].start, domains[2].end),
-        parameters.w.clamp(domains[3].start, domains[3].end),
+        parameters
+            .x
+            .clamp(domains[0].start.value(), domains[0].end.value()),
+        parameters
+            .y
+            .clamp(domains[1].start.value(), domains[1].end.value()),
+        parameters
+            .z
+            .clamp(domains[2].start.value(), domains[2].end.value()),
+        parameters
+            .w
+            .clamp(domains[3].start.value(), domains[3].end.value()),
     )
 }
 
 fn distance_from_interval_end(value: f64, domain: Interval) -> f64 {
-    (value - domain.start).abs().min((value - domain.end).abs())
+    (value - domain.start.value())
+        .abs()
+        .min((value - domain.end.value()).abs())
 }
 
 fn parameter_distance(a: Vector4<f64>, b: Vector4<f64>) -> f64 {

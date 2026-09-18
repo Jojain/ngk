@@ -13,6 +13,7 @@ use crate::geometry::Point2;
 use crate::geometry::dim2::curves::{Circle2, Curve2, Ellipse2, Line2};
 use crate::geometry::dim2::nurbs::NurbsCurve2;
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
+use crate::geometry::parameter::Fraction;
 
 fn point_array(point: Point2) -> Float64Array {
     let out = Float64Array::new_with_length(2);
@@ -40,7 +41,7 @@ fn f64_array(values: &[f64]) -> Float64Array {
 /// Returns the span's native parameter interval as `[start, end]`.
 fn interval_array(span: &TrimmedCurve2) -> Float64Array {
     let interval = span.interval();
-    f64_array(&[interval.start, interval.end])
+    f64_array(&[interval.start.value(), interval.end.value()])
 }
 
 /// Read-only straight 2D pcurve: an infinite line plus the span meant.
@@ -97,7 +98,7 @@ impl WasmLine2 {
     /// Evaluates at a normalized traversal fraction of the span.
     #[wasm_bindgen(js_name = pointAt)]
     pub fn point_at(&self, fraction: f64) -> Float64Array {
-        point_array(self.inner.point_at(fraction))
+        point_array(self.inner.point_at(Fraction::new(fraction)))
     }
 
     /// Returns `segments + 1` uniform samples as a flattened `[u, v, ...]` array.
@@ -165,7 +166,7 @@ impl WasmCircle2 {
     /// Evaluates at a normalized traversal fraction of the span.
     #[wasm_bindgen(js_name = pointAt)]
     pub fn point_at(&self, fraction: f64) -> Float64Array {
-        point_array(self.inner.point_at(fraction))
+        point_array(self.inner.point_at(Fraction::new(fraction)))
     }
 
     /// Returns `segments + 1` uniform samples as a flattened `[u, v, ...]` array.
@@ -234,7 +235,7 @@ impl WasmEllipse2 {
 
     #[wasm_bindgen(js_name = pointAt)]
     pub fn point_at(&self, fraction: f64) -> Float64Array {
-        point_array(self.inner.point_at(fraction))
+        point_array(self.inner.point_at(Fraction::new(fraction)))
     }
 
     pub fn sample(&self, segments: usize) -> Float64Array {
@@ -283,7 +284,7 @@ impl WasmNurbsCurve2 {
     #[wasm_bindgen(getter)]
     pub fn domain(&self) -> Float64Array {
         let domain = self.support().domain();
-        f64_array(&[domain.start, domain.end])
+        f64_array(&[domain.start.value(), domain.end.value()])
     }
 
     /// Returns the span in the support's native parameters as `[start, end]`.
@@ -321,7 +322,7 @@ impl WasmNurbsCurve2 {
     /// Evaluates at a normalized traversal fraction of the span.
     #[wasm_bindgen(js_name = pointAt)]
     pub fn point_at(&self, fraction: f64) -> Float64Array {
-        point_array(self.inner.point_at(fraction))
+        point_array(self.inner.point_at(Fraction::new(fraction)))
     }
 
     /// Returns `segments + 1` uniform samples as a flattened `[u, v, ...]` array.

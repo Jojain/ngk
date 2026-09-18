@@ -10,6 +10,7 @@ use crate::builders::profiles::{
     add_rectangle_staged as add_rectangle_profile_staged, profile_pcurves,
 };
 use crate::builders::scaffold::{CutAttachment, cut_between_loops};
+use crate::geometry::parameter::{Fraction, NativeParam, Normalized};
 use crate::geometry::{
     Axis2, Curve, CurveCurveIntersection2, CurveIntersectionError, DomainSide, Interval,
     LINEAR_TOLERANCE, NurbsError, Periodicity, Plane, Point2, Point3, Surface, SurfacePeriodicity,
@@ -136,8 +137,8 @@ pub struct FaceImprintSection {
     pub edge: EdgeKey,
     /// Index in the input slice passed to the splitter.
     pub imprint: usize,
-    /// Source parameters at the start and end of the stored edge.
-    pub interval: Interval,
+    /// Fractions of the source imprint at the start and end of the stored edge.
+    pub interval: Interval<Normalized>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -179,16 +180,19 @@ impl FaceImprint {
         Self { curve, pcurve }
     }
 
-    pub fn point_at(&self, parameter: f64) -> Point3 {
+    pub fn point_at(&self, parameter: Fraction) -> Point3 {
         self.curve.point_at(parameter)
     }
 
-    pub fn parameter_at(&self, point: Point3) -> f64 {
+    pub fn parameter_at(&self, point: Point3) -> Fraction {
         self.curve.parameter_at(point)
     }
 
-    /// Returns the exact synchronized fragment over a normalized interval.
-    pub fn trimmed(&self, interval: Interval) -> Result<Self, NurbsError> {
+    /// Returns the exact synchronized fragment over a span of the traversal.
+    ///
+    /// One interval cuts both halves, which is only meaningful because they are
+    /// synchronized: the same fraction is the same point on each.
+    pub fn trimmed(&self, interval: Interval<Normalized>) -> Result<Self, NurbsError> {
         Ok(Self::with_section(
             self.curve.sub(interval),
             self.pcurve.sub(interval),
@@ -209,7 +213,7 @@ pub struct FaceImprintGraphEdge {
     pub start: usize,
     pub end: usize,
     pub source_curve: usize,
-    pub interval: Interval,
+    pub interval: Interval<Normalized>,
 }
 
 /// A normalized planar graph built from imprint curves in a face's UV space.
@@ -447,8 +451,8 @@ impl OrientedGraphEdge {
 
 fn curve_split_parameters(
     curves: &[TrimmedCurve2],
-) -> Result<Vec<Vec<f64>>, CurveIntersectionError> {
-    let mut parameters = vec![vec![0.0, 1.0]; curves.len()];
+) -> Result<Vec<Vec<Fraction>>, CurveIntersectionError> {
+    let mut parameters = vec![vec![Fraction::START, Fraction::END]; curves.len()];
 
     for i in 0..curves.len() {
         for j in (i + 1)..curves.len() {
@@ -471,7 +475,7 @@ fn curve_split_parameters(
     }
 
     for values in &mut parameters {
-        values.sort_by(|a, b| a.total_cmp(b));
+        values.sort_by(Fraction::total_cmp);
         values.dedup_by(|a, b| (*a - *b).abs() <= LINEAR_TOLERANCE);
     }
 
@@ -500,7 +504,7 @@ struct IncidentFacePcurve {
     face: FaceKey,
     dart: Dart,
     pcurve: TrimmedCurve2,
-    fraction: f64,
+    fraction: Fraction,
 }
 
 /// Adds a planar face bounded by an existing profile loop.
@@ -743,7 +747,10 @@ fn imprints_on_one_periodic_image(
 }
 
 fn endpoints(imprint: &FaceImprint) -> [Point2; 2] {
-    [imprint.pcurve.point_at(0.0), imprint.pcurve.point_at(1.0)]
+    [
+        imprint.pcurve.point_at(Fraction::new(0.0)),
+        imprint.pcurve.point_at(Fraction::new(1.0)),
+    ]
 }
 
 /// The whole-period translation carrying `point` onto `anchor`, if one does.
@@ -805,7 +812,12 @@ fn split_imprint_boundary_endpoints<P: Payload>(
 ) -> Result<(), FaceImprintSplitError> {
     let endpoints = imprints
         .iter()
-        .flat_map(|imprint| [imprint.pcurve.point_at(0.0), imprint.pcurve.point_at(1.0)])
+        .flat_map(|imprint| {
+            [
+                imprint.pcurve.point_at(Fraction::new(0.0)),
+                imprint.pcurve.point_at(Fraction::new(1.0)),
+            ]
+        })
         .collect::<Vec<_>>();
 
     for endpoint in endpoints {
@@ -871,7 +883,7 @@ struct ChainLink {
     /// Index of the input imprint this link was cut from.
     source: usize,
     /// The part of that input used, backwards when the chain travels it so.
-    interval: Interval,
+    interval: Interval<Normalized>,
 }
 
 /// Imprints that together close on a face's periodic quotient.
@@ -902,7 +914,8 @@ fn travel_along(axis: Axis2, imprints: &[FaceImprint]) -> f64 {
     imprints
         .iter()
         .map(|imprint| {
-            axis.of(imprint.pcurve.point_at(1.0)) - axis.of(imprint.pcurve.point_at(0.0))
+            axis.of(imprint.pcurve.point_at(Fraction::new(1.0)))
+                - axis.of(imprint.pcurve.point_at(Fraction::new(0.0)))
         })
         .sum()
 }
@@ -981,7 +994,7 @@ fn split_boundaryless_face_by_wrapping_chain<P: Payload>(
     let at = chain
         .links
         .first()
-        .map(|link| transverse.of(link.imprint.pcurve.point_at(0.0)))
+        .map(|link| transverse.of(link.imprint.pcurve.point_at(Fraction::new(0.0))))
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
     if [DomainSide::Low, DomainSide::High]
         .into_iter()
@@ -1108,21 +1121,25 @@ fn chain_imprints(imprints: &[FaceImprint]) -> Option<Vec<Vec<ChainLink>>> {
         let mut links = vec![ChainLink {
             imprint: imprints[source].clone(),
             source,
-            interval: Interval::new(0.0, 1.0),
+            interval: Interval::UNIT,
         }];
         loop {
-            let end = links.last()?.imprint.pcurve.point_at(1.0);
+            let end = links.last()?.imprint.pcurve.point_at(Fraction::new(1.0));
             let meets = |index: &usize| {
                 let pcurve = &imprints[*index].pcurve;
-                [pcurve.point_at(0.0), pcurve.point_at(1.0)]
-                    .iter()
-                    .any(|point| (point - end).norm() <= LINEAR_TOLERANCE)
+                [
+                    pcurve.point_at(Fraction::new(0.0)),
+                    pcurve.point_at(Fraction::new(1.0)),
+                ]
+                .iter()
+                .any(|point| (point - end).norm() <= LINEAR_TOLERANCE)
             };
             let Some(position) = remaining.iter().position(meets) else {
                 break;
             };
             let index = remaining.remove(position);
-            let backwards = (imprints[index].pcurve.point_at(0.0) - end).norm() > LINEAR_TOLERANCE;
+            let backwards = (imprints[index].pcurve.point_at(Fraction::new(0.0)) - end).norm()
+                > LINEAR_TOLERANCE;
             links.push(ChainLink {
                 imprint: if backwards {
                     imprints[index].reversed().ok()?
@@ -1153,7 +1170,7 @@ fn ring_face_for_chain<P: Payload>(
     chain: &WrappingChain,
 ) -> Result<Option<FaceKey>, FaceImprintSplitError> {
     let transverse = chain.axis.transverse();
-    let at = |pcurve: &TrimmedCurve2| transverse.of(pcurve.point_at(0.5));
+    let at = |pcurve: &TrimmedCurve2| transverse.of(pcurve.point_at(Fraction::new(0.5)));
     let position = chain
         .links
         .iter()
@@ -1297,7 +1314,10 @@ fn loop_travel<P: Payload>(
         .darts()
         .step_by(2)
         .filter_map(|dart| pcurves.get(&dart))
-        .map(|pcurve| axis.of(pcurve.point_at(1.0)) - axis.of(pcurve.point_at(0.0)))
+        .map(|pcurve| {
+            axis.of(pcurve.point_at(Fraction::new(1.0)))
+                - axis.of(pcurve.point_at(Fraction::new(0.0)))
+        })
         .sum())
 }
 
@@ -1390,7 +1410,7 @@ fn add_closed_imprint_loops<P: Payload>(
             .collect::<Result<Vec<_>, NurbsError>>()?;
         let uvs = loop_imprints
             .iter()
-            .map(|imprint| imprint.pcurve.point_at(0.0))
+            .map(|imprint| imprint.pcurve.point_at(Fraction::new(0.0)))
             .collect::<Vec<_>>();
         if uvs.len() < 2
             || uvs
@@ -1405,7 +1425,7 @@ fn add_closed_imprint_loops<P: Payload>(
             .map(|oriented| {
                 let edge = &graph.edges[oriented.edge];
                 let interval = if oriented.reversed {
-                    Interval::new(edge.interval.end, edge.interval.start)
+                    Interval::new(edge.interval.end.value(), edge.interval.start.value())
                 } else {
                     edge.interval
                 };
@@ -1415,7 +1435,7 @@ fn add_closed_imprint_loops<P: Payload>(
         if orient_imprint_loop_against_boundary(&boundary_uvs, &mut loop_imprints)? {
             provenance.reverse();
             for (_, interval) in &mut provenance {
-                *interval = Interval::new(interval.end, interval.start);
+                *interval = interval.reversed();
             }
         }
         let mut split = split_face_by_closed_imprint_loop(edit, face, &loop_imprints)?;
@@ -1494,7 +1514,7 @@ fn finish_closed_imprint_split<P: Payload>(
             .map(|(imprint, edge)| FaceImprintSection {
                 edge,
                 imprint,
-                interval: Interval::new(0.0, 1.0),
+                interval: Interval::UNIT,
             })
             .collect(),
     })
@@ -1536,7 +1556,7 @@ fn add_section_loop<P: Payload>(
 
     for vertex in 0..n {
         let dart = edit.cell_representative(darts[2 * vertex], Dim::Zero);
-        let uv = imprints[vertex].pcurve.point_at(0.0);
+        let uv = imprints[vertex].pcurve.point_at(Fraction::new(0.0));
         edit.add_vertex(VertexAttr::new(
             dart,
             surface.point_at(uv.x, uv.y),
@@ -1549,8 +1569,8 @@ fn add_section_loop<P: Payload>(
             let imprint = &imprints[edge];
             SectionLoopEdge {
                 dart: darts[2 * edge],
-                start_uv: imprint.pcurve.point_at(0.0),
-                end_uv: imprint.pcurve.point_at(1.0),
+                start_uv: imprint.pcurve.point_at(Fraction::new(0.0)),
+                end_uv: imprint.pcurve.point_at(Fraction::new(1.0)),
                 curve: imprint.curve.clone(),
                 pcurve: imprint.pcurve.clone(),
             }
@@ -1603,7 +1623,7 @@ fn sew_section_loops<P: Payload>(
         // directed source interval. Orient the support to that traversal before
         // discarding the span: a marked circle's corner cannot encode direction.
         let interval = outside_edge.curve.interval();
-        let curve = if interval.end < interval.start {
+        let curve = if interval.end.value() < interval.start.value() {
             outside_edge.curve.curve().reversed()
         } else {
             outside_edge.curve.curve().clone()
@@ -1706,14 +1726,14 @@ fn split_boundary_at_uv<P: Payload>(
             .parameter_interval()
             .ok_or(MissingEdgeCurve(edge.dart()))?
             .ordered();
-        while parameter < domain.start - LINEAR_TOLERANCE {
+        while parameter < NativeParam::new(domain.start.value() - LINEAR_TOLERANCE) {
             parameter += period;
         }
-        while parameter > domain.end + LINEAR_TOLERANCE {
+        while parameter > NativeParam::new(domain.end.value() + LINEAR_TOLERANCE) {
             parameter -= period;
         }
     }
-    match split_face_edge_staged(edit, face, target.edge, parameter) {
+    match split_face_edge_staged(edit, face, target.edge, parameter.value()) {
         Ok(_)
         | Err(FaceEdgeSplitError::EdgeSplitFailed(EdgeSplitError::DegenerateSplit { .. })) => {
             Ok(())
@@ -1795,7 +1815,11 @@ impl FaceImprintCut {
     ) -> Result<Option<Self>, NurbsError> {
         for (index, imprint) in imprints.iter().enumerate() {
             for reversed in [false, true] {
-                let uv = imprint.pcurve.point_at(if reversed { 1.0 } else { 0.0 });
+                let uv = imprint.pcurve.point_at(if reversed {
+                    Fraction::new(1.0)
+                } else {
+                    Fraction::new(0.0)
+                });
                 let Some(start) = snap_boundary_corner_in(boundary, uv) else {
                     continue;
                 };
@@ -1828,7 +1852,7 @@ impl FaceImprintCut {
             } else {
                 imprints[index].clone()
             };
-            let end_uv = imprint.pcurve.point_at(1.0);
+            let end_uv = imprint.pcurve.point_at(Fraction::new(1.0));
             sections.push((index, reversed, imprint));
             if let Some(end) = snap_boundary_corner_in(boundary, end_uv) {
                 return Ok(
@@ -1845,7 +1869,11 @@ impl FaceImprintCut {
                 .filter(|(index, _)| !visited.contains(index))
                 .flat_map(|(index, imprint)| {
                     [false, true].into_iter().filter_map(move |reversed| {
-                        ((imprint.pcurve.point_at(if reversed { 1.0 } else { 0.0 }) - end_uv)
+                        ((imprint.pcurve.point_at(if reversed {
+                            Fraction::new(1.0)
+                        } else {
+                            Fraction::new(0.0)
+                        }) - end_uv)
                             .norm()
                             <= LINEAR_TOLERANCE)
                             .then_some((index, reversed))
@@ -1940,7 +1968,7 @@ fn loop_boundary_edges<P: Payload>(
                 .and_then(|vertex| vertex.point().copied())
                 .and_then(|point| face_view.surface().param_at(point).ok())
                 .map(|uv| periodic_image_near_pcurve(face_view.surface(), &pcurve, uv))
-                .unwrap_or_else(|| pcurve.point_at(0.0));
+                .unwrap_or_else(|| pcurve.point_at(Fraction::new(0.0)));
             Ok((uv, pcurve))
         })
         .collect()
@@ -1980,7 +2008,8 @@ fn boundary_edge_at_uv<P: Payload>(
         // the edge begins -- which is its corner, if it has one.
         let ends_where_it_ends = matches!(edge, Edge::Bounded(_));
         if ends_where_it_ends
-            && (fraction <= LINEAR_TOLERANCE || 1.0 - fraction <= LINEAR_TOLERANCE)
+            && (fraction <= Fraction::new(LINEAR_TOLERANCE)
+                || fraction >= Fraction::new(1.0 - LINEAR_TOLERANCE))
         {
             continue;
         }
@@ -1993,7 +2022,7 @@ fn boundary_edge_at_uv<P: Payload>(
     Ok(None)
 }
 
-fn pcurve_fraction_at(pcurve: &TrimmedCurve2, point: Point2) -> Option<f64> {
+fn pcurve_fraction_at(pcurve: &TrimmedCurve2, point: Point2) -> Option<Fraction> {
     pcurve.try_parameter_at(point, LINEAR_TOLERANCE)
 }
 
@@ -2058,7 +2087,7 @@ fn retraces_boundary(
 ) -> bool {
     sections.iter().all(|(_, _, imprint)| {
         [0.25, 0.5, 0.75].iter().all(|fraction| {
-            let uv = imprint.pcurve.point_at(*fraction);
+            let uv = imprint.pcurve.point_at(Fraction::new(*fraction));
             boundary
                 .iter()
                 .any(|(_, pcurve)| pcurve.try_parameter_at(uv, LINEAR_TOLERANCE).is_some())
@@ -2163,7 +2192,7 @@ fn apply_face_chord_split<P: Payload>(
                 .expect("chain vertex");
             edit.link(Dim::One, d, darts[index - 1][2])
                 .expect("reverse chain vertex");
-            let uv = imprint.pcurve.point_at(0.0);
+            let uv = imprint.pcurve.point_at(Fraction::new(0.0));
             edit.add_vertex(VertexAttr::new(
                 a,
                 old_face.surface.point_at(uv.x, uv.y),
@@ -2717,10 +2746,10 @@ fn closed_boundary_curve_reversed<P: Payload>(
         .to_nurbs()?;
     let domain = curve.domain();
     let fraction = 1.0e-4;
-    let sample_uv = pcurve.point_at(fraction);
+    let sample_uv = pcurve.point_at(Fraction::new(fraction));
     let sample = face_view.point_at(sample_uv.x, sample_uv.y);
-    let forward = curve.point_at(domain.start + domain.length() * fraction);
-    let reverse = curve.point_at(domain.end - domain.length() * fraction);
+    let forward = curve.point_at(domain.start.value() + domain.length() * fraction);
+    let reverse = curve.point_at(domain.end.value() - domain.length() * fraction);
     let against = (sample - reverse).norm_squared() < (sample - forward).norm_squared();
 
     // A closed boundary starts and ends at one point, so only its direction
@@ -2747,7 +2776,7 @@ fn incident_face_pcurves<P: Payload>(
         .ok_or(FaceEdgeSplitError::MissingEdgeCurve {
             dart: edge_view.dart(),
         })?
-        .point_at(parameter);
+        .point_at(NativeParam::new(parameter));
     // A seam has two boundary occurrences on one face, each with its own UV curve.
     let mut occurrences = HashSet::new();
     for face in edge_view.faces() {
@@ -2782,8 +2811,8 @@ fn incident_face_pcurves<P: Payload>(
 }
 
 fn periodic_image_near_pcurve(surface: &Surface, pcurve: &TrimmedCurve2, mut uv: Point2) -> Point2 {
-    let start = pcurve.point_at(0.0);
-    let end = pcurve.point_at(1.0);
+    let start = pcurve.point_at(Fraction::new(0.0));
+    let end = pcurve.point_at(Fraction::new(1.0));
     let center = Point2::from((start.coords + end.coords) * 0.5);
     match surface.periodicity() {
         SurfacePeriodicity::UPeriodic(period) => {

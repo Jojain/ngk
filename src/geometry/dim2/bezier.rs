@@ -1,6 +1,7 @@
 use nalgebra::Vector2;
 
 use super::nurbs::{ControlPolygon2, NurbsCurve2};
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Degree, Interval, KnotVector, LINEAR_TOLERANCE, NurbsError, Point2};
 
 #[derive(Debug, Clone)]
@@ -25,8 +26,8 @@ impl Bezier2 {
         }
         if domain.is_degenerate(LINEAR_TOLERANCE) {
             return Err(NurbsError::DegenerateInterval {
-                start: domain.start,
-                end: domain.end,
+                start: domain.start.value(),
+                end: domain.end.value(),
             });
         }
         Ok(Self {
@@ -67,11 +68,14 @@ impl Bezier2 {
     }
 
     pub(crate) fn subdivide(&self, parameter: f64) -> Result<(Self, Self), NurbsError> {
-        if !self.domain.contains(parameter, LINEAR_TOLERANCE) {
+        if !self
+            .domain
+            .contains(NativeParam::new(parameter), LINEAR_TOLERANCE)
+        {
             return Err(NurbsError::ParameterOutOfRange {
                 u: parameter,
-                min: self.domain.start,
-                max: self.domain.end,
+                min: self.domain.start.value(),
+                max: self.domain.end.value(),
             });
         }
         let (left, right) = self.to_nurbs()?.split_at(parameter)?;
@@ -79,12 +83,12 @@ impl Bezier2 {
             Self::new(
                 self.degree,
                 left.control_points().clone(),
-                Interval::new(self.domain.start, parameter),
+                Interval::new(self.domain.start.value(), parameter),
             )?,
             Self::new(
                 self.degree,
                 right.control_points().clone(),
-                Interval::new(parameter, self.domain.end),
+                Interval::new(parameter, self.domain.end.value()),
             )?,
         ))
     }
@@ -92,8 +96,8 @@ impl Bezier2 {
     fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
         let knot_count = self.degree.get() + 1;
         let mut knots = Vec::with_capacity(2 * knot_count);
-        knots.extend(std::iter::repeat_n(self.domain.start, knot_count));
-        knots.extend(std::iter::repeat_n(self.domain.end, knot_count));
+        knots.extend(std::iter::repeat_n(self.domain.start.value(), knot_count));
+        knots.extend(std::iter::repeat_n(self.domain.end.value(), knot_count));
         NurbsCurve2::new(
             self.degree,
             self.control_points.clone(),

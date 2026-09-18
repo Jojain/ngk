@@ -20,6 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use thiserror::Error;
 
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{Axis2, DomainSide, LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
 use crate::model::{Cell0, Cell1, Cell2, Model};
 use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr};
@@ -786,7 +787,7 @@ impl MergePlan {
             .filter(|dart| attr.pcurves.contains_key(dart))
             .min_by_key(Dart::id)
             .and_then(|dart| attr.pcurves.get(&dart))
-            .map(|pcurve| transverse.of(pcurve.point_at(0.0)))
+            .map(|pcurve| transverse.of(pcurve.point_at(Fraction::new(0.0))))
         else {
             return Ok(None);
         };
@@ -1356,7 +1357,10 @@ fn travel_along<D>(attr: &FaceAttr<D>, component: &HashSet<Dart>, axis: Axis2) -
     component
         .iter()
         .filter_map(|dart| attr.pcurves.get(dart))
-        .map(|pcurve| axis.of(pcurve.point_at(1.0)) - axis.of(pcurve.point_at(0.0)))
+        .map(|pcurve| {
+            axis.of(pcurve.point_at(Fraction::new(1.0)))
+                - axis.of(pcurve.point_at(Fraction::new(0.0)))
+        })
         .sum()
 }
 
@@ -1659,7 +1663,10 @@ fn unbounded_anchor<P: Payload>(g: &Model<P>, face: FaceKey, attr: &FaceAttr<P::
     // so its domain is finite and the middle of it is a parameter the surface
     // answers at.
     let (u, v) = surface.domain();
-    let (u, v) = (u.at(0.5), v.at(0.5));
+    let (u, v) = (
+        u.at(Fraction::new(0.5)).value(),
+        v.at(Fraction::new(0.5)).value(),
+    );
     let agreement = view.normal_at(u, v).dot(&surface.normal_at(u, v));
     match agreement.is_finite() && agreement < 0.0 {
         true => g.alpha(Dim::Zero, seed),

@@ -6,6 +6,7 @@
 //! name rather than approximated, so a new curve type is one entry appended
 //! to a chain and no call site here changes.
 
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Circle, Curve, Ellipse, Line, Plane};
 
 use super::super::builder::InstanceBuilder;
@@ -52,8 +53,8 @@ fn write_line(
         return None;
     };
 
-    let base = line.point_at(0.0);
-    let span = line.point_at(1.0) - base;
+    let base = line.point_at(NativeParam::new(0.0));
+    let span = line.point_at(NativeParam::new(1.0)) - base;
     let magnitude = span.norm();
     if magnitude == 0.0 {
         return Some(Err(GeometryError::DegenerateLine));

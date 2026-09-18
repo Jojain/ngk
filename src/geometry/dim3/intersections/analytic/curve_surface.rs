@@ -17,6 +17,7 @@ use super::roots::{harmonic_roots, quadratic_roots, wrapped};
 use crate::geometry::counters::count_curve_surface_analytic_call;
 use crate::geometry::dim3::intersections::error::IntersectionError;
 use crate::geometry::dim3::intersections::options::IntersectionOptions;
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{
     Circle, Curve, CurveSurfaceIntersection, CurveSurfaceIntersections, IntersectionCoverage,
     Interval, Line, Point3, Surface,
@@ -116,7 +117,7 @@ impl Restriction {
             let Some(reported) = self.report(parameter, options) else {
                 continue;
             };
-            let point = curve.point_at(reported);
+            let point = curve.point_at(NativeParam::new(reported));
             let Ok(uv) = surface.param_at(point) else {
                 continue;
             };
@@ -150,7 +151,7 @@ impl Restriction {
 /// Solves a line against a recognized surface.
 fn line_surface(line: &Line, surface: &Surface, options: IntersectionOptions) -> Option<Solved> {
     let origin = line.origin();
-    let direction = line.derivative_at(0.0, 1);
+    let direction = line.derivative_at(NativeParam::new(0.0), 1);
     match surface {
         Surface::Plane(plane) => {
             let normal = *plane.normal();

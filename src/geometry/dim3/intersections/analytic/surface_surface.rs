@@ -14,6 +14,7 @@ use crate::geometry::axis::Axis3;
 use crate::geometry::counters::count_surface_surface_analytic_call;
 use crate::geometry::dim3::intersections::error::IntersectionError;
 use crate::geometry::dim3::intersections::options::IntersectionOptions;
+use crate::geometry::parameter::{Fraction, NativeParam, Normalized};
 use crate::geometry::{
     Curve, Curve2, Cylinder, Ellipse, Frame, Interval, Line, NurbsCurve2, Plane, Point2, Point3,
     Sphere, Surface, TrimmedCurve, TrimmedCurve2,
@@ -43,8 +44,8 @@ const MIN_PIECE_SPAN: f64 = 1.0e-6;
 /// its pcurves are straight, and `Line2` extrapolates, so the description is
 /// exact everywhere rather than only inside the window.
 const SECTION_DOMAIN: Interval = Interval {
-    start: 0.0,
-    end: 1.0,
+    start: NativeParam::new(0.0),
+    end: NativeParam::new(1.0),
 };
 
 /// Intersects two surfaces in closed form, or declines the pair.
@@ -300,7 +301,7 @@ fn plane_cylinder(
 }
 
 /// Maps a normalized piece onto a support curve's native parameter interval.
-fn trim_section(interval: Interval, piece: Interval) -> Interval {
+fn trim_section(interval: Interval, piece: Interval<Normalized>) -> Interval {
     Interval::new(interval.at(piece.start), interval.at(piece.end))
 }
 
@@ -382,8 +383,8 @@ fn sections_for(
 
     let mut sections = Vec::new();
     for window in cuts.windows(2) {
-        let piece = Interval::new(window[0], window[1]);
-        if piece.end - piece.start <= MIN_PIECE_SPAN {
+        let piece = Interval::<Normalized>::new(window[0], window[1]);
+        if piece.delta() <= MIN_PIECE_SPAN {
             continue;
         }
         let curve_interval = if cuts.len() == 2 {
@@ -435,13 +436,14 @@ impl SectionTrace {
         };
         let parameters = (0..INITIAL_FIT_SAMPLES)
             .map(|index| {
-                domain.start
-                    + (domain.end - domain.start) * index as f64 / (INITIAL_FIT_SAMPLES - 1) as f64
+                domain.start.value()
+                    + (domain.end.value() - domain.start.value()) * index as f64
+                        / (INITIAL_FIT_SAMPLES - 1) as f64
             })
             .collect::<Vec<_>>();
         let mut uv = Vec::with_capacity(parameters.len());
         for &parameter in &parameters {
-            uv.push(surface.param_at(curve.point_at(interval.at(parameter)))?);
+            uv.push(surface.param_at(curve.point_at(interval.at(Fraction::new(parameter))))?);
         }
         unwrap_periodic(&mut uv, period);
         let mut trace = Self {
@@ -457,7 +459,7 @@ impl SectionTrace {
         Ok(trace)
     }
 
-    fn point_at(&self, parameter: f64) -> Point3 {
+    fn point_at(&self, parameter: Fraction) -> Point3 {
         self.curve.point_at(self.interval.at(parameter))
     }
 
@@ -485,11 +487,11 @@ impl SectionTrace {
 
     /// A non-finite sample counts as infinitely far — see [`worst_distance`].
     /// Largest distance between the section and a pcurve lifted back onto the support.
-    fn deviation(&self, pcurve: &TrimmedCurve2, piece: Interval) -> f64 {
+    fn deviation(&self, pcurve: &TrimmedCurve2, piece: Interval<Normalized>) -> f64 {
         let samples = 4 * INITIAL_FIT_SAMPLES;
         (0..=samples)
             .map(|index| {
-                let local = index as f64 / samples as f64;
+                let local = Fraction::new(index as f64 / samples as f64);
                 let uv = pcurve.point_at(local);
                 let expected = self.point_at(piece.at(local));
                 (self.surface.point_at(uv.x, uv.y) - expected).norm()
@@ -503,7 +505,7 @@ impl SectionTrace {
     /// answer would jump wherever the trace was unwrapped. Shifting it by
     /// whole periods towards the trace keeps every sample on one branch while
     /// still being an exact inversion rather than an interpolation.
-    fn uv_at(&self, parameter: f64) -> Result<Point2, IntersectionError> {
+    fn uv_at(&self, parameter: Fraction) -> Result<Point2, IntersectionError> {
         let raw = self.surface.param_at(self.point_at(parameter))?;
         let Some(period) = self.period else {
             return Ok(raw);
@@ -551,7 +553,7 @@ impl SectionTrace {
             }
             let parameter =
                 self.slowest_between(self.parameters[index - 1], self.parameters[index + 1]);
-            if let Ok(uv) = self.uv_at(parameter)
+            if let Ok(uv) = self.uv_at(Fraction::new(parameter))
                 && self.surface.is_degenerate_at(uv.x, uv.y)
             {
                 crossings.push(parameter);
@@ -562,7 +564,7 @@ impl SectionTrace {
 
     /// Speed of the support's `u` parameter line under the section at `parameter`.
     fn u_speed(&self, parameter: f64) -> f64 {
-        let Ok(uv) = self.uv_at(parameter) else {
+        let Ok(uv) = self.uv_at(Fraction::new(parameter)) else {
             return f64::INFINITY;
         };
         let step = 1.0e-6;
@@ -588,12 +590,12 @@ impl SectionTrace {
     /// Writes this support's pcurve over one piece of the section.
     fn pcurve_over(
         &self,
-        piece: Interval,
+        piece: Interval<Normalized>,
         options: IntersectionOptions,
     ) -> Result<(TrimmedCurve2, PcurveFidelity), IntersectionError> {
         if let Some(exact) = &self.exact {
-            let trimmed = if piece.start <= options.parameter_tolerance
-                && piece.end >= 1.0 - options.parameter_tolerance
+            let trimmed = if piece.start <= Fraction::new(options.parameter_tolerance)
+                && piece.end >= Fraction::new(1.0 - options.parameter_tolerance)
             {
                 exact.clone()
             } else {
@@ -622,14 +624,17 @@ impl SectionTrace {
     /// endpoint may sit on a degeneracy -- a pole reports longitude zero
     /// whatever meridian reaches it -- which would place the line nowhere near
     /// the piece it is meant to describe.
-    fn exact_piece(&self, piece: Interval, options: IntersectionOptions) -> Option<TrimmedCurve2> {
+    fn exact_piece(
+        &self,
+        piece: Interval<Normalized>,
+        options: IntersectionOptions,
+    ) -> Option<TrimmedCurve2> {
         let sub_interval = trim_section(self.interval, piece);
         if let Surface::Plane(plane) = &self.surface {
             return plane_pcurve(plane, &self.curve, sub_interval, options);
         }
-        let span = piece.end - piece.start;
-        let first = self.uv_at(piece.start + span * 0.25).ok()?;
-        let second = self.uv_at(piece.start + span * 0.75).ok()?;
+        let first = self.uv_at(piece.at(Fraction::new(0.25))).ok()?;
+        let second = self.uv_at(piece.at(Fraction::new(0.75))).ok()?;
         let direction = (second - first) * 2.0;
         let candidate = TrimmedCurve2::segment(first - direction * 0.25, second + direction * 0.25);
         (self.deviation(&candidate, piece) <= options.linear_tolerance).then_some(candidate)
@@ -638,7 +643,7 @@ impl SectionTrace {
     /// Interpolates this support's pcurve over one piece of the section.
     fn fitted_over(
         &self,
-        piece: Interval,
+        piece: Interval<Normalized>,
         options: IntersectionOptions,
     ) -> Result<(TrimmedCurve2, PcurveFidelity), IntersectionError> {
         let mut samples = INITIAL_FIT_SAMPLES;
@@ -670,15 +675,15 @@ impl SectionTrace {
     /// Samples the support parameters over one piece, at normalized positions.
     fn resample(
         &self,
-        piece: Interval,
+        piece: Interval<Normalized>,
         samples: usize,
     ) -> Result<(Vec<Point2>, Vec<f64>), IntersectionError> {
         let mut points = Vec::with_capacity(samples);
         let mut parameters = Vec::with_capacity(samples);
         for index in 0..samples {
-            let local = index as f64 / (samples - 1) as f64;
-            points.push(self.uv_at(piece.start + (piece.end - piece.start) * local)?);
-            parameters.push(local);
+            let local = Fraction::new(index as f64 / (samples - 1) as f64);
+            points.push(self.uv_at(piece.at(local))?);
+            parameters.push(local.value());
         }
         Ok((points, parameters))
     }
@@ -689,10 +694,10 @@ impl SectionTrace {
     /// belongs to, never what the parameter is. Fitting against it directly
     /// would fit the sampled polyline instead of the section, capping accuracy
     /// at the polyline's own sagitta however dense the fit became.
-    fn interpolated_uv(&self, parameter: f64) -> Point2 {
+    fn interpolated_uv(&self, parameter: Fraction) -> Point2 {
         match self
             .parameters
-            .binary_search_by(|probe| probe.total_cmp(&parameter))
+            .binary_search_by(|probe| probe.total_cmp(&parameter.value()))
         {
             Ok(index) => self.uv[index],
             Err(0) => self.uv[0],
@@ -702,7 +707,7 @@ impl SectionTrace {
                 let fraction = if (b - a).abs() <= f64::EPSILON {
                     0.0
                 } else {
-                    (parameter - a) / (b - a)
+                    (parameter.value() - a) / (b - a)
                 };
                 let (start, end) = (self.uv[index - 1], self.uv[index]);
                 start + (end - start) * fraction
@@ -715,11 +720,11 @@ impl SectionTrace {
     /// Measured after lifting the pcurve back onto the support, so the number
     /// is a distance in the model rather than in a parameter space whose scale
     /// varies across the surface.
-    fn fit_deviation(&self, pcurve: &TrimmedCurve2, piece: Interval) -> f64 {
+    fn fit_deviation(&self, pcurve: &TrimmedCurve2, piece: Interval<Normalized>) -> f64 {
         let samples = 4 * INITIAL_FIT_SAMPLES;
         (0..=samples)
             .map(|index| {
-                let local = index as f64 / samples as f64;
+                let local = Fraction::new(index as f64 / samples as f64);
                 let uv = pcurve.point_at(local);
                 let expected = self.point_at(piece.at(local));
                 (self.surface.point_at(uv.x, uv.y) - expected).norm()
@@ -753,7 +758,7 @@ fn shifted_into_period(curve: TrimmedCurve2, period: Option<f64>) -> TrimmedCurv
     let Some(period) = period else {
         return curve;
     };
-    let shift = -(curve.point_at(0.5).x / period).floor() * period;
+    let shift = -(curve.point_at(Fraction::new(0.5)).x / period).floor() * period;
     if shift == 0.0 {
         return curve;
     }
@@ -776,12 +781,12 @@ fn plane_pcurve(
     let project = |point: Point3| plane.parameter_at(point);
     let candidate = match curve {
         Curve::Line(line) => TrimmedCurve2::segment(
-            project(line.point_at(interval.start)),
-            project(line.point_at(interval.end)),
+            project(line.point_at(NativeParam::new(interval.start.value()))),
+            project(line.point_at(NativeParam::new(interval.end.value()))),
         ),
         Curve::Circle(circle) => {
             let centre = project(circle.plane().origin());
-            let start = project(circle.point_at(interval.start));
+            let start = project(circle.point_at(NativeParam::new(interval.start.value())));
             // Anchoring the support on the section's own start puts its angle
             // at zero there, so the span is just the signed sweep from it.
             TrimmedCurve2::arc(
@@ -793,7 +798,7 @@ fn plane_pcurve(
         }
         Curve::Ellipse(ellipse) => {
             let centre = project(ellipse.frame().origin);
-            let start = project(ellipse.point_at(interval.start));
+            let start = project(ellipse.point_at(NativeParam::new(interval.start.value())));
             TrimmedCurve2::ellipse_arc(
                 centre,
                 start - centre,
@@ -811,8 +816,8 @@ fn plane_pcurve(
     let worst = (0..=samples)
         .map(|index| {
             let local = index as f64 / samples as f64;
-            let uv = candidate.point_at(local);
-            (plane.point_at(uv.x, uv.y) - curve.point_at(interval.at(local))).norm()
+            let uv = candidate.point_at(Fraction::new(local));
+            (plane.point_at(uv.x, uv.y) - curve.point_at(interval.at(Fraction::new(local)))).norm()
         })
         .fold(0.0_f64, f64::max);
     (worst <= options.linear_tolerance).then_some(candidate)

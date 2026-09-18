@@ -11,6 +11,7 @@ use super::roots::{harmonic_roots, quadratic_roots, wrapped};
 use crate::geometry::counters::count_curve_curve_analytic_call;
 use crate::geometry::dim3::intersections::error::IntersectionError;
 use crate::geometry::dim3::intersections::options::IntersectionOptions;
+use crate::geometry::parameter::NativeParam;
 use crate::geometry::{
     Circle, Curve, CurveCurveIntersection, CurveCurveIntersections, IntersectionCoverage, Interval,
     Line, Point3,
@@ -123,8 +124,8 @@ fn report(
         let (Some(u), Some(v)) = (first.report(u, options), second.report(v, options)) else {
             continue;
         };
-        let point_a = a.point_at(u);
-        let point_b = b.point_at(v);
+        let point_a = a.point_at(NativeParam::new(u));
+        let point_b = b.point_at(NativeParam::new(v));
         // The two supports were solved independently; disagreement here means
         // the crossing is outside one of them however the parameters mapped.
         if (point_a - point_b).norm() > options.linear_tolerance {
@@ -148,23 +149,34 @@ fn shared_window(
     b: &Curve,
     options: IntersectionOptions,
 ) -> Option<(Interval, Interval)> {
-    let ends = |curve: &Curve| [curve.point_at(0.0), curve.point_at(1.0)];
+    let ends = |curve: &Curve| {
+        [
+            curve.point_at(NativeParam::new(0.0)),
+            curve.point_at(NativeParam::new(1.0)),
+        ]
+    };
     let [b_start, b_end] = ends(b);
     let (first, second) = (a.param_at(b_start), a.param_at(b_end));
-    let low = first.min(second).max(0.0);
-    let high = first.max(second).min(1.0);
+    let low = first.min(second).max(NativeParam::new(0.0));
+    let high = first.max(second).min(NativeParam::new(1.0));
     if high - low <= options.parameter_tolerance {
         return None;
     }
     let interval_a = Interval::new(low, high);
-    let mapped = |parameter: f64| b.param_at(a.point_at(parameter));
-    Some((interval_a, Interval::new(mapped(low), mapped(high))))
+    let mapped = |parameter: f64| b.param_at(a.point_at(NativeParam::new(parameter)));
+    Some((
+        interval_a,
+        Interval::new(mapped(low.value()), mapped(high.value())),
+    ))
 }
 
 /// Two lines cross at one point, are collinear, or are skew or parallel.
 fn line_line(a: &Line, b: &Line, options: IntersectionOptions) -> Option<Solved> {
     let (p, q) = (a.origin(), b.origin());
-    let (u, v) = (a.derivative_at(0.0, 1), b.derivative_at(0.0, 1));
+    let (u, v) = (
+        a.derivative_at(NativeParam::new(0.0), 1),
+        b.derivative_at(NativeParam::new(0.0), 1),
+    );
     let offset = q - p;
     let cross = u.cross(&v);
     let denominator = cross.norm_squared();
@@ -181,7 +193,9 @@ fn line_line(a: &Line, b: &Line, options: IntersectionOptions) -> Option<Solved>
     // separation decides whether they describe one.
     let s = offset.cross(&v).dot(&cross) / denominator;
     let t = offset.cross(&u).dot(&cross) / denominator;
-    if (a.point_at(s) - b.point_at(t)).norm() > options.linear_tolerance {
+    if (a.point_at(NativeParam::new(s)) - b.point_at(NativeParam::new(t))).norm()
+        > options.linear_tolerance
+    {
         return Some(Solved::Crossings(Vec::new()));
     }
     Some(Solved::Crossings(vec![(s, t)]))
@@ -191,7 +205,7 @@ fn line_line(a: &Line, b: &Line, options: IntersectionOptions) -> Option<Solved>
 fn line_circle(line: &Line, circle: &Circle, options: IntersectionOptions) -> Option<Solved> {
     let normal = *circle.plane().normal();
     let origin = line.origin();
-    let direction = line.derivative_at(0.0, 1);
+    let direction = line.derivative_at(NativeParam::new(0.0), 1);
     let slope = direction.dot(&normal);
     let offset = (origin - circle.plane().origin()).dot(&normal);
     let parameters = if slope.abs() <= options.angular_tolerance * direction.norm() {
@@ -213,12 +227,12 @@ fn line_circle(line: &Line, circle: &Circle, options: IntersectionOptions) -> Op
         parameters
             .into_iter()
             .filter_map(|parameter| {
-                let point = line.point_at(parameter);
+                let point = line.point_at(NativeParam::new(parameter));
                 let radial = point - circle.plane().origin();
                 (radial.norm() - circle.radius())
                     .abs()
                     .le(&options.linear_tolerance)
-                    .then(|| (parameter, wrapped(circle.param_at(point))))
+                    .then(|| (parameter, wrapped(circle.param_at(point).value())))
             })
             .collect(),
     ))
@@ -267,10 +281,10 @@ fn circle_circle(a: &Circle, b: &Circle, options: IntersectionOptions) -> Option
         candidates
             .into_iter()
             .filter_map(|angle| {
-                let point = a.point_at(angle);
+                let point = a.point_at(NativeParam::new(angle));
                 let radial = point - b.plane().origin();
                 ((radial.norm() - b.radius()).abs() <= options.linear_tolerance)
-                    .then(|| (wrapped(angle), wrapped(b.param_at(point))))
+                    .then(|| (wrapped(angle), wrapped(b.param_at(point).value())))
             })
             .collect(),
     ))
@@ -303,7 +317,10 @@ fn coplanar_circles(a: &Circle, b: &Circle, options: IntersectionOptions) -> Sol
             .into_iter()
             .map(|side| {
                 let point: Point3 = foot + across * side;
-                (wrapped(a.param_at(point)), wrapped(b.param_at(point)))
+                (
+                    wrapped(a.param_at(point).value()),
+                    wrapped(b.param_at(point).value()),
+                )
             })
             .collect(),
     )
