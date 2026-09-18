@@ -7,16 +7,37 @@ name = "ngk"
 authors = [{name = "Romain Ferru", email = "romain.ferru@gmail.com"}]
 version = "0.0.1"
 description = "Python bindings for the NGK geometry kernel"
+readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-dependencies = [
-    "build123d>=0.8.0",
-    "ruff>=0.16.8",
+keywords = ["brep", "cad", "geometry", "gmap", "nurbs"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: CAD",
+    "Typing :: Typed",
 ]
+dependencies = []
+
+[project.optional-dependencies]
+ocp = [
+    "build123d>=0.8.0",
+    "ocp-viewer>=1.1.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/Jojain/ngk"
+Repository = "https://github.com/Jojain/ngk"
+Issues = "https://github.com/Jojain/ngk/issues"
 
 [tool.maturin]
 features = ["python"]
-module-name = "ngk._ngk"
+module-name = "ngk.core"
 python-source = "bindings/python/python"
 
 [dependency-groups]
@@ -24,5 +45,6 @@ dev = [
     "build123d>=0.11.1",
     "ipython>=9.17.1",
     "jupyter>=1.1.1",
-    "ocp-viewer>=1.1.3",
+    "pytest>=8.0.0",
+    "ruff>=0.16.8",
 ]

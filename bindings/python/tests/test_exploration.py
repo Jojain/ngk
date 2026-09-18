@@ -1,10 +1,11 @@
-import ngk
+from ngk.model import Model
+from ngk.modeling import profiles, solids
 
 
 def test_model_serialization_and_raw_topology_exploration():
-    solid = ngk.block(1.0, 2.0, 3.0)
+    solid = solids.block(1.0, 2.0, 3.0)
     model = solid.model
-    restored = ngk.Model.deserialize(model.serialize())
+    restored = Model.deserialize(model.serialize())
 
     assert model.dimension == 3
     assert model.involution_count == 4
@@ -21,7 +22,7 @@ def test_model_serialization_and_raw_topology_exploration():
 
 
 def test_typed_lookup_and_traversal_preserve_contextual_orientation():
-    solid = ngk.block(1.0, 2.0, 3.0)
+    solid = solids.block(1.0, 2.0, 3.0)
     face = solid.faces()[0]
     edge = face.edges()[0]
     reversed_edge = edge.reversed()
@@ -39,7 +40,7 @@ def test_typed_lookup_and_traversal_preserve_contextual_orientation():
     assert shell == reversed_shell
     assert shell.dart_id != reversed_shell.dart_id
 
-    profile = ngk.rectangle_profile(1.0, 2.0)
+    profile = profiles.rectangle(1.0, 2.0)
     reversed_profile = profile.reversed()
     assert profile == reversed_profile
     assert profile.dart_id != reversed_profile.dart_id
@@ -47,14 +48,14 @@ def test_typed_lookup_and_traversal_preserve_contextual_orientation():
 
 
 def test_all_typed_objects_retain_their_shared_model():
-    solid = ngk.block(1.0, 2.0, 3.0)
+    solid = solids.block(1.0, 2.0, 3.0)
     shell = solid.shells()[0]
     sheet = solid.model.sheets()[0]
     face = shell.faces()[0]
     loop = face.loops()[0]
     edge = loop.edges()[0]
     vertex = edge.start
-    profile = ngk.rectangle_profile(1.0, 2.0)
+    profile = profiles.rectangle(1.0, 2.0)
 
     assert shell.model.solids()[0] == solid
     assert sheet.model.dart_count == solid.model.dart_count

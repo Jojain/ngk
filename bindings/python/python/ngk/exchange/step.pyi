@@ -1,4 +1,5 @@
-from .. import Solid, StepImport
+from ..core import StepImport
+from ..topology import Solid
 
 def write_step(solid: Solid, path: str | None = None, name: str | None = None) -> str: ...
 def step_to_string(solid: Solid, name: str | None = None) -> str: ...

@@ -37,8 +37,11 @@ visualization/src/wasm/
 
 # Python local builds
 .venv/
+.wheel-venv/
+dist/
 .uv-cache/
 .uv-python/
+.pytest_cache/
 __pycache__/
 **/__pycache__/
 *.pyd

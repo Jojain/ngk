@@ -1,4 +1,5 @@
-from .. import Face, Plane, Profile
+from ..geometry import Plane
+from ..topology import Face, Profile
 
 def rectangle(x_size: float, y_size: float) -> Face: ...
 def polygon(points: list[tuple[float, float, float]]) -> Face: ...

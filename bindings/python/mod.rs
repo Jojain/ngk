@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 #[pymodule]
-pub fn _ngk(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     exchange::register(m)?;
     geometry::register(m)?;
     modeling::register(m)?;

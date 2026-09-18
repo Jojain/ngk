@@ -15,8 +15,56 @@ coordinates and geometric data stay layered on top.
 This repository currently contains:
 
 - A Rust kernel under `src/`.
+- Python bindings built with Maturin.
 - WebAssembly bindings for browser experiments.
 - A React Three Fiber visualization app under `visualization/`.
+
+NGK is pre-alpha software. The public API, file compatibility, and modeling
+coverage will change as the kernel evolves.
+
+## Python package
+
+Install the minimal native package with:
+
+```bash
+pip install ngk
+```
+
+The optional OCP viewer bridge is kept out of the core dependency set. Install
+it when you want to display shapes through `ocp_vscode`:
+
+```bash
+pip install "ngk[ocp]"
+```
+
+The Python API follows the kernel's domain structure. Primitive solid builders
+and the current solid Boolean operations live under `ngk.modeling`; the latter
+are intentionally solid-only for now.
+
+```python
+from ngk.geometry import Frame, Point, Vector
+from ngk.modeling import booleans, solids
+from ngk.viz import ocp
+
+frame = Frame.from_xy(
+    Point(0, 0, 0),
+    Vector(1, 0, 0),
+    Vector(0, 1, 0),
+)
+base = solids.block(40, 30, 20, frame=frame)
+tool = solids.cylinder(8, 30)
+result = booleans.cut(base, tool)
+
+ocp.show(result)
+```
+
+`ngk.viz.debug.show` can send objects to the NGK debug viewer, but the viewer is
+not bundled with the wheel: start it separately from an NGK checkout before
+using that bridge.
+
+The current Python surface is useful for primitive solids, solid Booleans,
+topology inspection, experimental STEP exchange, and visualization. It is not
+yet a complete build123d or OCCT replacement.
 
 ## Experiments
 

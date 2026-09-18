@@ -1,4 +1,5 @@
-from .. import Edge, Plane
+from ..geometry import Plane
+from ..topology import Edge
 
 def line(start: tuple[float, float, float], end: tuple[float, float, float]) -> Edge: ...
 def arc(plane: Plane, radius: float, start_angle: float, end_angle: float) -> Edge: ...

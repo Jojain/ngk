@@ -1,3 +1,4 @@
+mod booleans;
 mod common;
 mod edges;
 mod faces;
@@ -12,13 +13,17 @@ use pyo3::types::PyModule;
 /// Matches `module-name` in `pyproject.toml`. A submodule created with
 /// [`PyModule::new`] only carries its own leaf name, so this is what lets
 /// each one register under its real dotted path in `sys.modules` and be
-/// found by `from ngk._ngk.modeling.faces import ...`.
-const EXTENSION_QUALNAME: &str = "ngk._ngk";
+/// found by `from ngk.core.modeling.faces import ...`.
+const EXTENSION_QUALNAME: &str = "ngk.core";
 
 pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = parent.py();
     let modeling = new_submodule(py, "modeling", EXTENSION_QUALNAME)?;
     let modeling_qualname = format!("{EXTENSION_QUALNAME}.modeling");
+
+    let booleans_module = new_submodule(py, "booleans", &modeling_qualname)?;
+    booleans::register(&booleans_module)?;
+    modeling.add_submodule(&booleans_module)?;
 
     let edges_module = new_submodule(py, "edges", &modeling_qualname)?;
     edges::register(&edges_module)?;

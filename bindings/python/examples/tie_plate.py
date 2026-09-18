@@ -1,6 +1,8 @@
 # %%
 import math
-import ngk
+from ngk.geometry import Frame, Plane, Point, Vector
+from ngk.modeling import booleans, edges, faces, profiles, solids
+from ngk.viz import debug
 
 DENSITY_STEEL = 7800 / 1e6  # g/mm^3
 PUBLISHED_MASS = 3387.06  # g
@@ -29,25 +31,25 @@ _CAP_ANGLE = math.atan2(_CAP_DY, -_CAP_DX)
 
 
 def _frame(origin, x_dir=(1.0, 0.0, 0.0), y_dir=(0.0, 1.0, 0.0)):
-    return ngk.Frame.from_xy(ngk.Point(*origin), ngk.Vector(*x_dir), ngk.Vector(*y_dir))
+    return Frame.from_xy(Point(*origin), Vector(*x_dir), Vector(*y_dir))
 
 
 def _box(x0, x1, y0, y1, z0, z1):
     x0, x1 = sorted((x0, x1))
     y0, y1 = sorted((y0, y1))
     z0, z1 = sorted((z0, z1))
-    return ngk.block(x1 - x0, y1 - y0, z1 - z0, frame=_frame((x0, y0, z0)))
+    return solids.block(x1 - x0, y1 - y0, z1 - z0, frame=_frame((x0, y0, z0)))
 
 
 def _z_cylinder(cx, cy, z0, z1, radius):
     z0, z1 = sorted((z0, z1))
-    return ngk.cylinder(radius, z1 - z0, frame=_frame((cx, cy, z0)))
+    return solids.cylinder(radius, z1 - z0, frame=_frame((cx, cy, z0)))
 
 
 def _y_cylinder(x, z, y0, y1, radius):
     """A cylinder whose axis runs along +Y, so it bores across the plate."""
     y0, y1 = sorted((y0, y1))
-    return ngk.cylinder(
+    return solids.cylinder(
         radius, y1 - y0, frame=_frame((x, y0, z), (1.0, 0.0, 0.0), (0.0, 0.0, -1.0))
     )
 
@@ -55,12 +57,12 @@ def _y_cylinder(x, z, y0, y1, radius):
 def _fuse_all(*solids):
     result = solids[0]
     for solid in solids[1:]:
-        result = ngk.fuse(result, solid)
+        result = booleans.fuse(result, solid)
     return result
 
 
 def _cap_plane(cx, cy):
-    return ngk.Plane(ngk.Point(cx, cy, 0.0), ngk.Vector(1, 0, 0), ngk.Vector(0, 0, 1))
+    return Plane(Point(cx, cy, 0.0), Vector(1, 0, 0), Vector(0, 0, 1))
 
 
 def base_plate():
@@ -75,35 +77,35 @@ def base_plate():
     p6 = (x_in, -(CAP_CENTER_Y + _CAP_DY), 0.0)
     p7 = (CAP_CENTER_X + CAP_RADIUS, -CAP_CENTER_Y, 0.0)
 
-    edges = [
-        ngk.line(p7, p0),
-        ngk.arc_edge(
+    boundary_edges = [
+        edges.line(p7, p0),
+        edges.arc(
             _cap_plane(CAP_CENTER_X, CAP_CENTER_Y), CAP_RADIUS, 0.0, _CAP_ANGLE
         ),
-        ngk.line(p1, p2),
-        ngk.arc_edge(
+        edges.line(p1, p2),
+        edges.arc(
             _cap_plane(-CAP_CENTER_X, CAP_CENTER_Y),
             CAP_RADIUS,
             math.pi - _CAP_ANGLE,
             math.pi,
         ),
-        ngk.line(p3, p4),
-        ngk.arc_edge(
+        edges.line(p3, p4),
+        edges.arc(
             _cap_plane(-CAP_CENTER_X, -CAP_CENTER_Y),
             CAP_RADIUS,
             math.pi,
             math.pi + _CAP_ANGLE,
         ),
-        ngk.line(p5, p6),
-        ngk.arc_edge(
+        edges.line(p5, p6),
+        edges.arc(
             _cap_plane(CAP_CENTER_X, -CAP_CENTER_Y),
             CAP_RADIUS,
             2 * math.pi - _CAP_ANGLE,
             2 * math.pi,
         ),
     ]
-    outline = ngk.modeling.faces.from_profile(ngk.modeling.profiles.from_edges(edges))
-    plate = ngk.extrude(outline, ngk.Vector(0, 0, 1), PLATE_THICKNESS)
+    outline = faces.from_profile(profiles.from_edges(boundary_edges))
+    plate = solids.extruded(outline, Vector(0, 0, 1), PLATE_THICKNESS)
 
     for cx, cy, radius in [
         (CAP_CENTER_X, CAP_CENTER_Y, 29 / 2),
@@ -112,7 +114,7 @@ def base_plate():
         (-CAP_CENTER_X, -CAP_CENTER_Y, 29 / 2),
         (0.0, 0.0, 84 / 2),
     ]:
-        plate = ngk.cut(plate, _z_cylinder(cx, cy, -1.0, PLATE_THICKNESS + 1.0, radius))
+        plate = booleans.cut(plate, _z_cylinder(cx, cy, -1.0, PLATE_THICKNESS + 1.0, radius))
     return plate
 
 
@@ -132,12 +134,12 @@ def side_web(sign):
     ]
     if sign > 0:
         profile = [(x, -WEB_THICK_HALF, z) for x, z in outline]
-        direction = ngk.Vector(0, 1, 0)
+        direction = Vector(0, 1, 0)
     else:
         profile = [(-x, WEB_THICK_HALF, z) for x, z in outline]
-        direction = ngk.Vector(0, -1, 0)
+        direction = Vector(0, -1, 0)
 
-    web = ngk.extrude(ngk.polygon_face(profile), direction, 2 * WEB_THICK_HALF)
+    web = solids.extruded(faces.polygon(profile), direction, 2 * WEB_THICK_HALF)
 
     # The web is 8 mm thick up to the step, 20 mm beyond it. The boxes overlap
     # the web's own faces so the intersection only trims, never extends.
@@ -159,9 +161,9 @@ def side_web(sign):
             30,
         ),
     )
-    web = ngk.intersect(web, thickness)
+    web = booleans.intersect(web, thickness)
 
-    return ngk.cut(
+    return booleans.cut(
         web,
         _y_cylinder(sign * WEB_BOLT_X, WEB_BOLT_Z, -20.0, 20.0, WEB_BOLT_RADIUS),
     )
@@ -181,7 +183,7 @@ print(f"web -X: {left.face_count} faces")
 part = _fuse_all(plate, right, left)
 print(f"\nassembled: {part.face_count} faces")
 
-ngk.debug.show(part, part.faces()[0], part.faces()[0].edges())
+debug.show(part, part.faces()[0], part.faces()[0].edges())
 
 
 # %%
