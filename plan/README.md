@@ -15,6 +15,7 @@ This directory contains implementation plans for substantial kernel work.
 | [Periodic supports](periodic_supports.md) | Proposed | Separate "closed" from "periodic parameterization": let a closed NURBS span cross its own seam, and leave room for a helix, which repeats without ever closing |
 | [Transforms](transform.md) | In progress | A total `Rigid` motion for the common case, a general affine `Transform<D>` for the rest, the parameter remap a support owes when its parameterization moves, and the orientation reversal a mirror owes on top |
 | [Parameter units](parameter_units.md) | In progress | Stop `f64` meaning native parameter, normalized fraction, knot parameter and arc length at once: brand the scalar and its interval, and make a fraction inexpressible without the span it is a fraction of |
+| [Loft](loft.md) | Complete | Skin `N` sections into a sheet or a solid: a traversal parametrized as one curve so sections with unlike edge counts correspond, a column per merged breakpoint, and one algorithm over open profiles, closed profiles and faces |
 | [STEP interop](step_interop.done.md) | Complete | Bidirectional ISO 10303-21 B-Rep exchange through the supported profile, including analytic/NURBS geometry, seam synthesis, and cavities |
 
 Statuses used by the plans:

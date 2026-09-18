@@ -8,9 +8,10 @@
 //! be derived from the support on the way out.
 //!
 //! Every cut a domain makes runs along a parameter direction, so the only
-//! curves needed here are the parameter lines, and on the analytic supports
-//! each is a line or a circle in closed form. Anything else declines, and the
-//! caller refuses the face by name rather than approximating a boundary.
+//! curves needed here are the parameter lines. On the analytic supports each
+//! is a line or a circle in closed form, and on a NURBS surface each is the
+//! exact isocurve its control net already holds. Anything else declines, and
+//! the caller refuses the face by name rather than approximating a boundary.
 //!
 //! **The parameterizations agree.** Each curve below is anchored so that its
 //! own parameter *is* the surface parameter that varies: a cylinder's
@@ -52,6 +53,12 @@ pub fn iso_curve(surface: &Surface, from: Point2, to: Point2) -> Option<Curve> {
         ))),
         (Surface::Torus(torus), Axis2::U) => torus_latitude(torus, from.y),
         (Surface::Torus(torus), Axis2::V) => Some(torus_tube(torus, from.x)),
+        // A NURBS surface has no analytic parameter lines, but it does not
+        // need any: an isocurve is the surface's own basis functions applied
+        // along the other direction, which is exact and keeps the varying
+        // parameter as the curve's own.
+        (Surface::Nurbs(nurbs), Axis2::U) => nurbs.isocurve_v(from.y).ok().map(Curve::Nurbs),
+        (Surface::Nurbs(nurbs), Axis2::V) => nurbs.isocurve_u(from.x).ok().map(Curve::Nurbs),
         _ => None,
     }
 }

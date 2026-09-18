@@ -2,6 +2,7 @@ mod booleans;
 mod common;
 mod edges;
 mod faces;
+mod loft;
 mod profiles;
 mod solids;
 
@@ -36,6 +37,10 @@ pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let faces_module = new_submodule(py, "faces", &modeling_qualname)?;
     faces::register(&faces_module)?;
     modeling.add_submodule(&faces_module)?;
+
+    let loft_module = new_submodule(py, "loft", &modeling_qualname)?;
+    loft::register(&loft_module)?;
+    modeling.add_submodule(&loft_module)?;
 
     let solids_module = new_submodule(py, "solids", &modeling_qualname)?;
     solids::register(&solids_module)?;

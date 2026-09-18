@@ -2,6 +2,8 @@
 mod edges;
 #[path = "modeling/faces.rs"]
 mod faces;
+#[path = "modeling/loft.rs"]
+mod loft;
 #[path = "modeling/profiles.rs"]
 mod profiles;
 #[path = "modeling/solids.rs"]

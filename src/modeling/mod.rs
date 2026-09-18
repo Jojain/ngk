@@ -1,6 +1,7 @@
 pub mod edges;
 pub mod errors;
 pub mod faces;
+pub mod loft;
 pub mod profiles;
 pub mod revolve;
 pub mod sheets;

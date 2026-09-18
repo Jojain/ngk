@@ -32,4 +32,41 @@ pub enum NurbsError {
     InvalidInterpolationParameters,
     #[error("interpolation system is singular")]
     SingularInterpolationSystem,
+    #[error("degree {from} cannot be lowered to {to}: elevation is exact, reduction approximates")]
+    DegreeReductionRefused { from: usize, to: usize },
+    #[error("skinning needs at least {minimum} sections, got {got}")]
+    InsufficientSkinningSections { minimum: usize, got: usize },
+    #[error("section {index} is not compatible with section 0: {reason}")]
+    IncompatibleSkinningSection {
+        index: usize,
+        reason: SkinningIncompatibility,
+    },
+    #[error("v-degree {degree} needs at least {degree} + 1 sections, got {sections}")]
+    SkinningDegreeTooHigh { degree: usize, sections: usize },
+}
+
+/// How one section of a skin fails to match the first.
+///
+/// Skinning interpolates one grid of control points across the sections, so
+/// the sections must first agree on everything that decides what a control
+/// point index *means*. Each variant names one of those agreements, because a
+/// bare "incompatible" leaves the caller nothing to act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkinningIncompatibility {
+    /// The degrees differ, so the basis functions are not the same functions.
+    Degree,
+    /// The control point counts differ, so the grid is not rectangular.
+    ControlPointCount,
+    /// The knot vectors differ, so equal indices name unequal basis functions.
+    KnotVector,
+}
+
+impl std::fmt::Display for SkinningIncompatibility {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Degree => "degrees differ",
+            Self::ControlPointCount => "control point counts differ",
+            Self::KnotVector => "knot vectors differ",
+        })
+    }
 }

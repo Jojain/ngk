@@ -1,4 +1,4 @@
-use nalgebra::{DMatrix, DVector, Point4, Vector3};
+use nalgebra::{DMatrix, DVector, Point4, Vector3, Vector4};
 use serde::{Deserialize, Serialize};
 
 use super::bezier::Bezier;
@@ -11,6 +11,14 @@ use crate::geometry::{Interval, LINEAR_TOLERANCE, Point3, PointCoincidence};
 
 const LENGTH_TOLERANCE: f64 = 1.0e-10;
 const MAX_LENGTH_RECURSION: usize = 24;
+
+/// Parameter distance below which two knots name the same break.
+///
+/// Not a distance in space, and deliberately not [`LINEAR_TOLERANCE`]: knots
+/// are compared only between curves already mapped onto `[0, 1]`, so this is a
+/// fraction of a whole domain. Two knots closer than this are one knot, and
+/// keeping them apart would leave a span no evaluator can subdivide.
+pub const KNOT_TOLERANCE: f64 = 1.0e-9;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NurbsCurve {
@@ -507,6 +515,375 @@ impl NurbsCurve {
             })
             .unwrap_or(parameter)
     }
+
+    /// Returns the same curve with its knot domain mapped affinely onto `[0, 1]`.
+    ///
+    /// An affine change of knots is a reparameterization and nothing else: the
+    /// control points and weights are untouched, so the curve traces the same
+    /// points in the same order. It exists because interior knots are only
+    /// comparable between curves once both domains are the same — `0.5` of
+    /// `[0, 5]` and `0.5` of `[0, 1]` name different places, and a knot union
+    /// taken before this is a union of numbers rather than of breaks.
+    pub fn normalized(&self) -> Result<Self, NurbsError> {
+        let domain = self.domain();
+        let (start, extent) = (domain.start.value(), domain.delta());
+        if extent <= 0.0 || !extent.is_finite() {
+            return Err(NurbsError::DegenerateInterval {
+                start,
+                end: domain.end.value(),
+            });
+        }
+        if start == 0.0 && extent == 1.0 {
+            return Ok(self.clone());
+        }
+        Self::new(
+            self.degree,
+            self.control_points.clone(),
+            KnotVector::new(
+                self.knots
+                    .as_slice()
+                    .iter()
+                    .map(|knot| (knot - start) / extent)
+                    .collect(),
+            )?,
+        )
+    }
+
+    /// Piegl & Tiller A5.4 — inserts every knot of `knots` in one pass.
+    ///
+    /// The same result as calling [`Self::insert_knot`] once per knot, at
+    /// `O(n + m)` rather than `O(n · m)` and with one rebuild rather than one
+    /// per knot. Knot insertion does not move a curve, so neither does this:
+    /// the refined curve evaluates identically to this one everywhere.
+    ///
+    /// Every knot must fall strictly inside the domain. A knot at an end would
+    /// raise an end multiplicity past `degree + 1`, which describes a different
+    /// curve rather than the same one refined, so it is refused by name.
+    pub fn refined(&self, knots: &[f64]) -> Result<Self, NurbsError> {
+        if knots.is_empty() {
+            return Ok(self.clone());
+        }
+        let domain = self.domain();
+        let (min, max) = (domain.start.value(), domain.end.value());
+        if let Some(&outside) = knots
+            .iter()
+            .find(|knot| **knot <= min || **knot >= max || !knot.is_finite())
+        {
+            return Err(NurbsError::ParameterOutOfRange {
+                u: outside,
+                min,
+                max,
+            });
+        }
+
+        let mut inserted = knots.to_vec();
+        inserted.sort_by(f64::total_cmp);
+
+        let p = self.degree.get();
+        let n = self.control_points.len() - 1;
+        let m = n + p + 1;
+        let r = inserted.len() - 1;
+        let u = self.knots.as_slice();
+        let source = self.control_points.as_slice();
+
+        let a = self.knots.find_span(n, self.degree, inserted[0]);
+        let b = self.knots.find_span(n, self.degree, inserted[r]) + 1;
+
+        let mut points = vec![Vector4::zeros(); n + r + 2];
+        let mut refined = vec![0.0; m + r + 2];
+        for j in 0..=a - p {
+            points[j] = source[j].0.coords;
+        }
+        for j in (b - 1)..=n {
+            points[j + r + 1] = source[j].0.coords;
+        }
+        for (j, knot) in u.iter().copied().enumerate().take(a + 1) {
+            refined[j] = knot;
+        }
+        for j in (b + p)..=m {
+            refined[j + r + 1] = u[j];
+        }
+
+        let mut i = b + p - 1;
+        let mut k = b + p + r;
+        for j in (0..=r).rev() {
+            while inserted[j] <= u[i] && i > a {
+                points[k - p - 1] = source[i - p - 1].0.coords;
+                refined[k] = u[i];
+                k -= 1;
+                i -= 1;
+            }
+            points[k - p - 1] = points[k - p];
+            for l in 1..=p {
+                let index = k - p + l;
+                let numerator = refined[k + l] - inserted[j];
+                points[index - 1] = if numerator == 0.0 {
+                    points[index]
+                } else {
+                    let alpha = numerator / (refined[k + l] - u[i - p + l]);
+                    points[index - 1] * alpha + points[index] * (1.0 - alpha)
+                };
+            }
+            refined[k] = inserted[j];
+            k -= 1;
+        }
+
+        Self::new(
+            self.degree,
+            ControlPolygon::new(
+                points
+                    .into_iter()
+                    .map(|point| HPoint(Point4::from(point)))
+                    .collect(),
+            )?,
+            KnotVector::new(refined)?,
+        )
+    }
+
+    /// Piegl & Tiller A5.9 — raises the degree to `degree`, leaving the curve
+    /// where it is.
+    ///
+    /// Degree elevation is exact: the elevated curve evaluates identically to
+    /// this one at every parameter. It costs control points and interior knots,
+    /// which is why it runs before a knot union rather than after — the knots
+    /// it inserts of its own would otherwise leave the vectors different again.
+    ///
+    /// Lowering a degree is a different operation with a different contract —
+    /// it approximates — so a lower `degree` is refused rather than silently
+    /// treated as a request for no change.
+    pub fn elevated_degree(&self, degree: Degree) -> Result<Self, NurbsError> {
+        if degree < self.degree {
+            return Err(NurbsError::DegreeReductionRefused {
+                from: self.degree.get(),
+                to: degree.get(),
+            });
+        }
+        let t = degree.get() - self.degree.get();
+        if t == 0 {
+            return self.clamped();
+        }
+
+        // A5.9 reads the source as a sequence of Bezier segments recovered from
+        // knot multiplicities, and an unclamped end carries no segment boundary
+        // to recover one from.
+        let source = self.clamped()?;
+        let p = source.degree.get();
+        let n = source.control_points.len() - 1;
+        let m = n + p + 1;
+        let u = source.knots.as_slice();
+        let control: Vec<Vector4<f64>> = source
+            .control_points
+            .iter()
+            .map(|point| point.0.coords)
+            .collect();
+
+        let ph = p + t;
+        let ph2 = ph / 2;
+        let mut coefficients = vec![vec![0.0; p + 1]; ph + 1];
+        coefficients[0][0] = 1.0;
+        coefficients[ph][p] = 1.0;
+        for i in 1..=ph2 {
+            let inverse = 1.0 / binomial(ph, i);
+            for j in i.saturating_sub(t)..=p.min(i) {
+                coefficients[i][j] = inverse * binomial(p, j) * binomial(t, i - j);
+            }
+        }
+        for i in (ph2 + 1)..ph {
+            for j in i.saturating_sub(t)..=p.min(i) {
+                coefficients[i][j] = coefficients[ph - i][p - j];
+            }
+        }
+
+        // Every span of the source contributes at most `p + t + 1` control
+        // points and knots to the result, which bounds both buffers without
+        // predicting the multiplicities first.
+        let capacity = (m + 1) * (t + 1) + 2 * (ph + 1);
+        let mut elevated_points = vec![Vector4::zeros(); capacity];
+        let mut elevated_knots = vec![0.0; capacity];
+        let mut segment: Vec<Vector4<f64>> = control[0..=p].to_vec();
+        let mut elevated_segment = vec![Vector4::zeros(); ph + 1];
+        let mut next_segment = vec![Vector4::zeros(); p];
+        let mut alphas = vec![0.0; p];
+
+        let mut total = ph;
+        let mut kind = ph + 1;
+        let mut r: isize = -1;
+        let mut a = p;
+        let mut b = p + 1;
+        let mut cursor = 1usize;
+        let mut ua = u[0];
+        elevated_points[0] = control[0];
+        for knot in elevated_knots.iter_mut().take(ph + 1) {
+            *knot = ua;
+        }
+
+        while b < m {
+            let first_of_run = b;
+            while b < m && u[b] == u[b + 1] {
+                b += 1;
+            }
+            let multiplicity = b - first_of_run + 1;
+            total += multiplicity + t;
+            let ub = u[b];
+            let old_r = r;
+            r = p as isize - multiplicity as isize;
+
+            let lbz = if old_r > 0 {
+                ((old_r + 2) / 2) as usize
+            } else {
+                1
+            };
+            let rbz = if r > 0 {
+                ph - ((r + 1) / 2) as usize
+            } else {
+                ph
+            };
+
+            if r > 0 {
+                let numerator = ub - ua;
+                for k in ((multiplicity + 1)..=p).rev() {
+                    alphas[k - multiplicity - 1] = numerator / (u[a + k] - ua);
+                }
+                for j in 1..=r as usize {
+                    let save = r as usize - j;
+                    let s = multiplicity + j;
+                    for k in (s..=p).rev() {
+                        let alpha = alphas[k - s];
+                        segment[k] = segment[k] * alpha + segment[k - 1] * (1.0 - alpha);
+                    }
+                    next_segment[save] = segment[p];
+                }
+            }
+
+            for i in lbz..=ph {
+                let mut accumulated = Vector4::zeros();
+                for j in i.saturating_sub(t)..=p.min(i) {
+                    accumulated += segment[j] * coefficients[i][j];
+                }
+                elevated_segment[i] = accumulated;
+            }
+
+            if old_r > 1 {
+                let old_r = old_r as usize;
+                let mut first = kind as isize - 2;
+                let mut last = kind as isize;
+                let denominator = ub - ua;
+                let beta = (ub - elevated_knots[kind - 1]) / denominator;
+                for removal in 1..old_r as isize {
+                    let mut i = first;
+                    let mut j = last;
+                    let mut kj = j - kind as isize + 1;
+                    while j - i > removal {
+                        if (i as usize) < cursor {
+                            let i = i as usize;
+                            let alpha = (ub - elevated_knots[i]) / (ua - elevated_knots[i]);
+                            elevated_points[i] =
+                                elevated_points[i] * alpha + elevated_points[i - 1] * (1.0 - alpha);
+                        }
+                        if j >= lbz as isize {
+                            let kj = kj as usize;
+                            let factor =
+                                if j - removal <= kind as isize - ph as isize + old_r as isize {
+                                    (ub - elevated_knots[(j - removal) as usize]) / denominator
+                                } else {
+                                    beta
+                                };
+                            elevated_segment[kj] = elevated_segment[kj] * factor
+                                + elevated_segment[kj + 1] * (1.0 - factor);
+                        }
+                        i += 1;
+                        j -= 1;
+                        kj -= 1;
+                    }
+                    first -= 1;
+                    last += 1;
+                }
+            }
+
+            if a != p {
+                for _ in 0..(ph - old_r.max(0) as usize) {
+                    elevated_knots[kind] = ua;
+                    kind += 1;
+                }
+            }
+            for j in lbz..=rbz {
+                elevated_points[cursor] = elevated_segment[j];
+                cursor += 1;
+            }
+
+            if b < m {
+                let carried = r.max(0) as usize;
+                segment[..carried].copy_from_slice(&next_segment[..carried]);
+                for j in carried..=p {
+                    segment[j] = control[b - p + j];
+                }
+                a = b;
+                b += 1;
+                ua = ub;
+            } else {
+                for i in 0..=ph {
+                    elevated_knots[kind + i] = ub;
+                }
+            }
+        }
+
+        elevated_points.truncate(total - ph);
+        elevated_knots.truncate(total + 1);
+        Self::new(
+            Degree::new(ph)?,
+            ControlPolygon::new(
+                elevated_points
+                    .into_iter()
+                    .map(|point| HPoint(Point4::from(point)))
+                    .collect(),
+            )?,
+            KnotVector::new(elevated_knots)?,
+        )
+    }
+
+    /// Returns this curve's interior knots, in order and with repeats kept.
+    pub fn interior_knots(&self) -> Vec<f64> {
+        let domain = self.domain();
+        self.knots
+            .as_slice()
+            .iter()
+            .copied()
+            .filter(|knot| *knot > domain.start.value() && *knot < domain.end.value())
+            .collect()
+    }
+
+    /// Returns this curve with each interior knot within [`KNOT_TOLERANCE`] of
+    /// a value in `breaks` replaced by that value exactly.
+    ///
+    /// Two curves cut at the same place arrive with knots differing in the last
+    /// few bits, and a union taken over the raw numbers admits both, leaving a
+    /// span narrower than any evaluator can subdivide. The relabel moves the
+    /// curve by less than the knot shift, which at this tolerance is far below
+    /// [`LINEAR_TOLERANCE`] in space.
+    fn with_snapped_knots(&self, breaks: &[f64]) -> Result<Self, NurbsError> {
+        let domain = self.domain();
+        Self::new(
+            self.degree,
+            self.control_points.clone(),
+            KnotVector::new(
+                self.knots
+                    .as_slice()
+                    .iter()
+                    .copied()
+                    .map(|knot| {
+                        if knot <= domain.start.value() || knot >= domain.end.value() {
+                            return knot;
+                        }
+                        breaks
+                            .iter()
+                            .copied()
+                            .find(|break_at| (break_at - knot).abs() <= KNOT_TOLERANCE)
+                            .unwrap_or(knot)
+                    })
+                    .collect(),
+            )?,
+        )
+    }
 }
 
 fn validate_interpolation_input(points: &[Point3], parameters: &[f64]) -> Result<(), NurbsError> {
@@ -529,44 +906,17 @@ fn validate_interpolation_input(points: &[Point3], parameters: &[f64]) -> Result
 }
 
 fn interpolate_open(points: &[Point3], parameters: &[f64]) -> Result<NurbsCurve, NurbsError> {
-    let n = points.len() - 1;
-    let degree = Degree::new(3.min(n))?;
-    let p = degree.get();
-    let mut knots = vec![parameters[0]; p + 1];
-    for index in 1..=n - p {
-        knots.push(parameters[index..index + p].iter().sum::<f64>() / p as f64);
-    }
-    knots.extend(std::iter::repeat_n(parameters[n], p + 1));
-    let knots = KnotVector::new(knots)?;
-
-    let mut coefficients = DMatrix::zeros(n + 1, n + 1);
-    for (row, parameter) in parameters.iter().copied().enumerate() {
-        let span = knots.find_span(n, degree, parameter);
-        let basis = basis_functions(span, parameter, degree, &knots);
-        for (offset, value) in basis.into_iter().enumerate() {
-            coefficients[(row, span - p + offset)] = value;
-        }
-    }
-    let decomposition = coefficients.lu();
-    let solve = |coordinate: fn(&Point3) -> f64| {
-        decomposition
-            .solve(&DVector::from_iterator(
-                points.len(),
-                points.iter().map(coordinate),
-            ))
-            .ok_or(NurbsError::SingularInterpolationSystem)
-    };
-    let x = solve(|point| point.x)?;
-    let y = solve(|point| point.y)?;
-    let z = solve(|point| point.z)?;
-    let control_points = ControlPolygon::new(
-        x.iter()
-            .zip(y.iter())
-            .zip(z.iter())
-            .map(|((x, y), z)| HPoint::from_cartesian(Point3::new(*x, *y, *z), 1.0))
-            .collect(),
-    )?;
-    NurbsCurve::new(degree, control_points, knots)
+    let degree = Degree::new(3.min(points.len() - 1))?;
+    let knots = KnotVector::averaged(parameters, degree)?;
+    interpolate_with_knots(
+        &points
+            .iter()
+            .map(|point| HPoint::from_cartesian(*point, 1.0))
+            .collect::<Vec<_>>(),
+        parameters,
+        degree,
+        &knots,
+    )
 }
 
 fn interpolate_closed(points: &[Point3], parameters: &[f64]) -> Result<NurbsCurve, NurbsError> {
@@ -720,4 +1070,239 @@ fn binomial(n: usize, k: usize) -> f64 {
     }
     let k = k.min(n - k);
     (1..=k).fold(1.0, |acc, i| acc * (n + 1 - i) as f64 / i as f64)
+}
+
+/// The factored linear system that interpolates points at stated parameters.
+///
+/// The coefficient matrix depends only on `(parameters, degree, knots)` and
+/// not at all on the points, so a caller with many point sequences over one
+/// parameterization factors once and solves many times. Skinning is exactly
+/// that caller: it interpolates one row of the control grid per control point
+/// index, all against the same v-parameters.
+pub struct InterpolationSystem {
+    degree: Degree,
+    knots: KnotVector,
+    decomposition: nalgebra::LU<f64, nalgebra::Dyn, nalgebra::Dyn>,
+    count: usize,
+}
+
+impl InterpolationSystem {
+    /// Factors the system interpolating `parameters.len()` points of degree
+    /// `degree` over `knots`.
+    ///
+    /// `parameters` must be strictly increasing, and `knots` must be the
+    /// vector for that many control points at that degree —
+    /// [`KnotVector::averaged`] produces one.
+    pub fn new(parameters: &[f64], degree: Degree, knots: &KnotVector) -> Result<Self, NurbsError> {
+        let count = parameters.len();
+        let p = degree.get();
+        if count <= p {
+            return Err(NurbsError::InsufficientInterpolationPoints {
+                minimum: p + 1,
+                got: count,
+            });
+        }
+        let expected = count + p + 1;
+        if knots.len() != expected {
+            return Err(NurbsError::KnotCountMismatch {
+                expected,
+                got: knots.len(),
+            });
+        }
+        if parameters.windows(2).any(|pair| pair[1] <= pair[0]) {
+            return Err(NurbsError::InvalidInterpolationParameters);
+        }
+
+        let n = count - 1;
+        let mut coefficients = DMatrix::zeros(count, count);
+        for (row, parameter) in parameters.iter().copied().enumerate() {
+            let span = knots.find_span(n, degree, parameter);
+            let basis = basis_functions(span, parameter, degree, knots);
+            for (offset, value) in basis.into_iter().enumerate().take(p + 1) {
+                coefficients[(row, span - p + offset)] = value;
+            }
+        }
+
+        Ok(Self {
+            degree,
+            knots: knots.clone(),
+            decomposition: coefficients.lu(),
+            count,
+        })
+    }
+
+    /// The degree the interpolated curve has.
+    pub fn degree(&self) -> Degree {
+        self.degree
+    }
+
+    /// The knot vector the interpolated curve has.
+    pub fn knots(&self) -> &KnotVector {
+        &self.knots
+    }
+
+    /// Solves for the control points whose curve passes through `points`.
+    ///
+    /// **The solve runs in homogeneous coordinates.** Interpolating the
+    /// cartesian positions and giving every control point weight `1` produces
+    /// a curve that does not pass through a rational input at all — the
+    /// weights are part of where the point is. Each of the four homogeneous
+    /// components is solved as its own right-hand side and the divide happens
+    /// only when the result is evaluated.
+    ///
+    /// Equal input weights are carried straight through rather than solved
+    /// for. The weight row's solution is analytically that same constant,
+    /// because the basis functions sum to one, and solving for it would return
+    /// it with a rounding error that makes a non-rational curve report itself
+    /// rational.
+    pub fn solve(&self, points: &[HPoint]) -> Result<ControlPolygon, NurbsError> {
+        if points.len() != self.count {
+            return Err(NurbsError::InterpolationParameterCountMismatch {
+                expected: self.count,
+                got: points.len(),
+            });
+        }
+
+        let solve = |component: fn(&HPoint) -> f64| {
+            self.decomposition
+                .solve(&DVector::from_iterator(
+                    points.len(),
+                    points.iter().map(component),
+                ))
+                .ok_or(NurbsError::SingularInterpolationSystem)
+        };
+        let x = solve(|point| point.0.x)?;
+        let y = solve(|point| point.0.y)?;
+        let z = solve(|point| point.0.z)?;
+
+        let first = points[0].weight();
+        let uniform = points
+            .iter()
+            .all(|point| (point.weight() - first).abs() <= LINEAR_TOLERANCE);
+        let w = if uniform {
+            DVector::from_element(points.len(), first)
+        } else {
+            solve(|point| point.0.w)?
+        };
+
+        ControlPolygon::new(
+            (0..points.len())
+                .map(|index| HPoint::new(x[index], y[index], z[index], w[index]))
+                .collect(),
+        )
+    }
+}
+
+/// Interpolates homogeneous points at stated parameters over a stated knot
+/// vector.
+///
+/// The one-shot form of [`InterpolationSystem`], for a caller with a single
+/// sequence to interpolate.
+pub fn interpolate_with_knots(
+    points: &[HPoint],
+    parameters: &[f64],
+    degree: Degree,
+    knots: &KnotVector,
+) -> Result<NurbsCurve, NurbsError> {
+    let system = InterpolationSystem::new(parameters, degree, knots)?;
+    let control_points = system.solve(points)?;
+    NurbsCurve::new(degree, control_points, knots.clone())
+}
+
+/// Brings a set of curves onto one degree, one domain and one knot vector,
+/// without moving any of them.
+///
+/// Skinning reads the curves as a rectangular grid of control points, which
+/// only means anything once index `i` names the same basis function on every
+/// curve. Four steps get there, and the order is forced:
+///
+/// 1. **Clamp.** An unclamped end has no segment boundary for degree
+///    elevation to recover, and its leading control points influence only the
+///    curve outside its own domain.
+/// 2. **Normalize.** Interior knots of `[0, 5]` and of `[0, 1]` are not
+///    comparable until both domains are the same, so a union taken before
+///    this is a union of unrelated numbers.
+/// 3. **Elevate** every curve to the highest degree present. Elevation
+///    inserts knots of its own, so refining first would leave the vectors
+///    different again.
+/// 4. **Refine** every curve to the union of all the knot vectors.
+///
+/// Every step is exact: each curve evaluates identically before and after,
+/// which is the whole contract. The one exception is knots that differ by less
+/// than [`KNOT_TOLERANCE`], which are relabelled onto a common value rather
+/// than both admitted — see [`NurbsCurve::with_snapped_knots`].
+pub fn make_compatible(curves: &mut [NurbsCurve]) -> Result<(), NurbsError> {
+    for curve in curves.iter_mut() {
+        *curve = curve.clamped()?.normalized()?;
+    }
+    let Some(degree) = curves.iter().map(NurbsCurve::degree).max() else {
+        return Ok(());
+    };
+    for curve in curves.iter_mut() {
+        *curve = curve.elevated_degree(degree)?;
+    }
+
+    let breaks = merged_breaks(curves);
+    if breaks.is_empty() {
+        return Ok(());
+    }
+    for curve in curves.iter_mut() {
+        *curve = curve.with_snapped_knots(&breaks)?;
+    }
+
+    let multiplicities = breaks
+        .iter()
+        .map(|&break_at| {
+            curves
+                .iter()
+                .map(|curve| curve.knots().multiplicity(break_at))
+                .max()
+                .unwrap_or(0)
+                // An interior knot of multiplicity `degree` already splits the
+                // curve; more than that describes a gap rather than a break.
+                .min(degree.get())
+        })
+        .collect::<Vec<_>>();
+
+    for curve in curves.iter_mut() {
+        let mut missing = Vec::new();
+        for (&break_at, &wanted) in breaks.iter().zip(&multiplicities) {
+            let present = curve.knots().multiplicity(break_at);
+            missing.extend(std::iter::repeat_n(
+                break_at,
+                wanted.saturating_sub(present),
+            ));
+        }
+        *curve = curve.refined(&missing)?;
+    }
+    Ok(())
+}
+
+/// The distinct interior breaks of `curves`, merged within [`KNOT_TOLERANCE`].
+///
+/// One representative per cluster, placed at the cluster's mean so that no
+/// curve is relabelled further than any other.
+fn merged_breaks(curves: &[NurbsCurve]) -> Vec<f64> {
+    let mut all = curves
+        .iter()
+        .flat_map(NurbsCurve::interior_knots)
+        .collect::<Vec<_>>();
+    all.sort_by(f64::total_cmp);
+
+    let mut breaks = Vec::new();
+    let mut cluster: Vec<f64> = Vec::new();
+    for knot in all {
+        if cluster
+            .first()
+            .is_some_and(|first| knot - first > KNOT_TOLERANCE)
+        {
+            breaks.push(cluster.iter().sum::<f64>() / cluster.len() as f64);
+            cluster.clear();
+        }
+        cluster.push(knot);
+    }
+    if !cluster.is_empty() {
+        breaks.push(cluster.iter().sum::<f64>() / cluster.len() as f64);
+    }
+    breaks
 }

@@ -3,9 +3,9 @@ use pyo3::prelude::*;
 
 use crate::StandardPayload;
 use crate::binding_common::explore::SharedModel;
-use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape, SolidTag};
+use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape, SheetTag, SolidTag};
 
-use super::super::topology::{PyEdge, PyFace, PyProfile, PySolid};
+use super::super::topology::{PyEdge, PyFace, PyProfile, PySheet, PySolid};
 
 pub(super) fn py_edge(shape: Shape<EdgeTag, StandardPayload>) -> PyResult<PyEdge> {
     let (map, key) = shape.into_model();
@@ -32,6 +32,15 @@ pub(super) fn py_face(shape: Shape<FaceTag, StandardPayload>) -> PyResult<PyFace
         .face_by_key(key)
         .ok_or_else(|| PyValueError::new_err(format!("missing face {key:?}")))?;
     Ok(PyFace::from_inner(inner))
+}
+
+pub(super) fn py_sheet(shape: Shape<SheetTag, StandardPayload>) -> PyResult<PySheet> {
+    let (map, key) = shape.into_model();
+    let map = SharedModel::from_model(map);
+    let inner = map
+        .sheet_by_key(key)
+        .ok_or_else(|| PyValueError::new_err(format!("missing sheet {key:?}")))?;
+    Ok(PySheet::from_inner(inner))
 }
 
 pub(super) fn py_solid(shape: Shape<SolidTag, StandardPayload>) -> PyResult<PySolid> {

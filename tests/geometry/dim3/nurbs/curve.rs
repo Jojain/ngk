@@ -2,8 +2,9 @@ use std::f64::consts::FRAC_1_SQRT_2;
 
 use nalgebra::Vector3;
 use ngk::geometry::{
-    Circle, ControlPolygon, Degree, Fraction, HPoint, KnotVector, LINEAR_TOLERANCE, NurbsCurve,
-    Plane, Point3,
+    Circle, ControlPolygon, Degree, Fraction, HPoint, InterpolationSystem, KnotVector,
+    LINEAR_TOLERANCE, NurbsCurve, NurbsError, Plane, Point3, interpolate_with_knots,
+    make_compatible,
 };
 
 fn assert_vector_near(actual: Vector3<f64>, expected: Vector3<f64>, tol: f64) {
@@ -318,5 +319,256 @@ fn trimming_a_polyline_an_ulp_off_a_knot_lands_on_the_knot() {
             pair[0],
             pair[1]
         );
+    }
+}
+
+/// Samples both curves over `[0, 1]` and asserts they trace the same points.
+///
+/// This is the whole contract of normalizing, refining and elevating: each
+/// changes the representation and nothing else.
+fn assert_traces_same(actual: &NurbsCurve, expected: &NurbsCurve, tolerance: f64) {
+    for step in 0..=64 {
+        let t = step as f64 / 64.0;
+        let a = actual.point_at(actual.domain().at(Fraction::new(t)).value());
+        let b = expected.point_at(expected.domain().at(Fraction::new(t)).value());
+        let error = (a - b).norm();
+        assert!(
+            error <= tolerance,
+            "at fraction {t}: expected {b:?}, got {a:?}, error {error}"
+        );
+    }
+}
+
+fn wavy_cubic() -> NurbsCurve {
+    NurbsCurve::interpolate(&[
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 2.0, 0.5),
+        Point3::new(3.0, -1.0, 1.0),
+        Point3::new(4.5, 0.5, -0.5),
+        Point3::new(6.0, 0.0, 0.0),
+    ])
+    .unwrap()
+}
+
+/// A rational quadratic quarter circle of radius 1 in the xy plane.
+fn quarter_arc() -> NurbsCurve {
+    NurbsCurve::new(
+        Degree::new(2).unwrap(),
+        ControlPolygon::new(vec![
+            HPoint::from_cartesian(Point3::new(1.0, 0.0, 0.0), 1.0),
+            HPoint::from_cartesian(Point3::new(1.0, 1.0, 0.0), FRAC_1_SQRT_2),
+            HPoint::from_cartesian(Point3::new(0.0, 1.0, 0.0), 1.0),
+        ])
+        .unwrap(),
+        KnotVector::new(vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]).unwrap(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn normalized_maps_the_domain_without_moving_the_curve() {
+    let source = NurbsCurve::new(
+        Degree::new(2).unwrap(),
+        ControlPolygon::new(vec![
+            HPoint::from_cartesian(Point3::new(0.0, 0.0, 0.0), 1.0),
+            HPoint::from_cartesian(Point3::new(1.0, 2.0, 0.0), 1.0),
+            HPoint::from_cartesian(Point3::new(3.0, 0.0, 0.0), 1.0),
+            HPoint::from_cartesian(Point3::new(4.0, 1.0, 0.0), 1.0),
+        ])
+        .unwrap(),
+        KnotVector::new(vec![2.0, 2.0, 2.0, 5.0, 7.0, 7.0, 7.0]).unwrap(),
+    )
+    .unwrap();
+
+    let normalized = source.normalized().unwrap();
+    assert!(approx_eq(normalized.domain().start.value(), 0.0, 1e-15));
+    assert!(approx_eq(normalized.domain().end.value(), 1.0, 1e-15));
+    assert_traces_same(&normalized, &source, 1e-12);
+}
+
+#[test]
+fn refined_inserts_every_knot_without_moving_the_curve() {
+    let source = wavy_cubic();
+    let refined = source.refined(&[0.1, 0.25, 0.25, 0.9]).unwrap();
+
+    assert_eq!(
+        refined.control_points().len(),
+        source.control_points().len() + 4
+    );
+    for knot in [0.1, 0.9] {
+        assert_eq!(refined.knots().multiplicity(knot), 1);
+    }
+    assert_eq!(refined.knots().multiplicity(0.25), 2);
+    assert_traces_same(&refined, &source, 1e-12);
+}
+
+#[test]
+fn refined_matches_repeated_single_insertion() {
+    let source = wavy_cubic();
+    let mut one_at_a_time = source.clone();
+    for knot in [0.2, 0.55, 0.55] {
+        one_at_a_time.insert_knot(knot);
+    }
+    let at_once = source.refined(&[0.2, 0.55, 0.55]).unwrap();
+
+    assert_eq!(at_once.knots().as_slice(), one_at_a_time.knots().as_slice());
+    for (a, b) in at_once
+        .control_points()
+        .iter()
+        .zip(one_at_a_time.control_points().iter())
+    {
+        assert!((a.to_cartesian() - b.to_cartesian()).norm() <= 1e-12);
+    }
+}
+
+#[test]
+fn refined_refuses_a_knot_outside_the_domain() {
+    let source = wavy_cubic();
+    assert!(matches!(
+        source.refined(&[1.5]),
+        Err(NurbsError::ParameterOutOfRange { .. })
+    ));
+    assert!(matches!(
+        source.refined(&[0.0]),
+        Err(NurbsError::ParameterOutOfRange { .. })
+    ));
+}
+
+#[test]
+fn elevated_degree_raises_the_degree_without_moving_the_curve() {
+    let source = wavy_cubic();
+    for target in [4, 5, 6] {
+        let elevated = source
+            .elevated_degree(Degree::new(target).unwrap())
+            .unwrap();
+        assert_eq!(elevated.degree().get(), target);
+        assert_traces_same(&elevated, &source, 1e-10);
+    }
+}
+
+#[test]
+fn elevated_degree_keeps_a_rational_arc_on_its_circle() {
+    let source = quarter_arc();
+    let elevated = source.elevated_degree(Degree::new(4).unwrap()).unwrap();
+
+    assert_eq!(elevated.degree().get(), 4);
+    assert!(elevated.is_rational());
+    for step in 0..=32 {
+        let point = elevated.point_at(step as f64 / 32.0);
+        assert!(
+            (point.coords.norm() - 1.0).abs() <= 1e-12,
+            "elevated arc left the unit circle at {point:?}"
+        );
+    }
+    assert_traces_same(&elevated, &source, 1e-12);
+}
+
+#[test]
+fn elevated_degree_refuses_to_lower_a_degree() {
+    let source = wavy_cubic();
+    assert!(matches!(
+        source.elevated_degree(Degree::new(2).unwrap()),
+        Err(NurbsError::DegreeReductionRefused { from: 3, to: 2 })
+    ));
+}
+
+#[test]
+fn make_compatible_agrees_a_line_with_an_arc_and_moves_neither() {
+    let line = NurbsCurve::new(
+        Degree::new(1).unwrap(),
+        ControlPolygon::new(vec![
+            HPoint::from_cartesian(Point3::new(0.0, 0.0, 1.0), 1.0),
+            HPoint::from_cartesian(Point3::new(0.0, 1.0, 1.0), 1.0),
+        ])
+        .unwrap(),
+        KnotVector::new(vec![0.0, 0.0, 1.0, 1.0]).unwrap(),
+    )
+    .unwrap();
+    let arc = quarter_arc();
+    let sources = [line.clone(), arc.clone()];
+
+    let mut curves = vec![line, arc];
+    make_compatible(&mut curves).unwrap();
+
+    assert_eq!(curves[0].degree(), curves[1].degree());
+    assert_eq!(curves[0].degree().get(), 2);
+    assert_eq!(
+        curves[0].control_points().len(),
+        curves[1].control_points().len()
+    );
+    assert_eq!(curves[0].knots().as_slice(), curves[1].knots().as_slice());
+    for curve in &curves {
+        assert!(approx_eq(curve.domain().start.value(), 0.0, 1e-15));
+        assert!(approx_eq(curve.domain().end.value(), 1.0, 1e-15));
+    }
+    for (compatible, source) in curves.iter().zip(&sources) {
+        assert_traces_same(compatible, source, 1e-12);
+    }
+}
+
+#[test]
+fn make_compatible_takes_the_union_of_interior_knots() {
+    let first = wavy_cubic().refined(&[0.3]).unwrap();
+    let second = wavy_cubic().refined(&[0.7]).unwrap();
+    let sources = [first.clone(), second.clone()];
+
+    let mut curves = vec![first, second];
+    make_compatible(&mut curves).unwrap();
+
+    assert_eq!(curves[0].knots().as_slice(), curves[1].knots().as_slice());
+    for curve in &curves {
+        assert!(curve.knots().multiplicity(0.3) >= 1);
+        assert!(curve.knots().multiplicity(0.7) >= 1);
+    }
+    for (compatible, source) in curves.iter().zip(&sources) {
+        assert_traces_same(compatible, source, 1e-12);
+    }
+}
+
+#[test]
+fn interpolate_with_knots_passes_through_rational_samples() {
+    let points = vec![
+        HPoint::from_cartesian(Point3::new(0.0, 0.0, 0.0), 1.0),
+        HPoint::from_cartesian(Point3::new(1.0, 1.0, 0.0), 0.5),
+        HPoint::from_cartesian(Point3::new(2.0, 0.0, 0.0), 2.0),
+        HPoint::from_cartesian(Point3::new(3.0, 1.0, 0.0), 1.0),
+    ];
+    let parameters = [0.0, 0.3, 0.7, 1.0];
+    let degree = Degree::new(2).unwrap();
+    let knots = KnotVector::averaged(&parameters, degree).unwrap();
+
+    let curve = interpolate_with_knots(&points, &parameters, degree, &knots).unwrap();
+
+    for (parameter, point) in parameters.iter().zip(&points) {
+        let traced = curve.point_at(*parameter);
+        let expected = point.to_cartesian();
+        assert!(
+            (traced - expected).norm() <= 1e-10,
+            "at {parameter}: expected {expected:?}, got {traced:?}"
+        );
+    }
+}
+
+#[test]
+fn interpolation_system_solves_many_rows_from_one_factorization() {
+    let parameters = [0.0, 0.25, 0.75, 1.0];
+    let degree = Degree::new(3).unwrap();
+    let knots = KnotVector::averaged(&parameters, degree).unwrap();
+    let system = InterpolationSystem::new(&parameters, degree, &knots).unwrap();
+
+    for offset in 0..3 {
+        let points = (0..4)
+            .map(|index| {
+                HPoint::from_cartesian(
+                    Point3::new(index as f64, (offset + index) as f64, offset as f64),
+                    1.0,
+                )
+            })
+            .collect::<Vec<_>>();
+        let control_points = system.solve(&points).unwrap();
+        let curve = NurbsCurve::new(degree, control_points, knots.clone()).unwrap();
+        for (parameter, point) in parameters.iter().zip(&points) {
+            assert!((curve.point_at(*parameter) - point.to_cartesian()).norm() <= 1e-10);
+        }
     }
 }

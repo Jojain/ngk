@@ -39,6 +39,35 @@ impl KnotVector {
         Self(knots)
     }
 
+    /// The averaged knot vector interpolation at `parameters` wants.
+    ///
+    /// Piegl & Tiller eq. 9.8: each interior knot is the mean of `degree`
+    /// consecutive parameters, which puts one knot between every `degree + 1`
+    /// of them and is what makes the interpolation matrix banded and
+    /// well-conditioned. The ends are clamped at the first and last parameter,
+    /// so the curve's domain is exactly the range the parameters span.
+    ///
+    /// Refuses a degree the parameter count cannot support: interpolating
+    /// `k` points at degree `p` needs `k > p`, or there are fewer conditions
+    /// than control points and the system is not square.
+    pub fn averaged(parameters: &[f64], degree: Degree) -> Result<Self, NurbsError> {
+        let p = degree.get();
+        let count = parameters.len();
+        if count <= p {
+            return Err(NurbsError::InsufficientInterpolationPoints {
+                minimum: p + 1,
+                got: count,
+            });
+        }
+        let n = count - 1;
+        let mut knots = vec![parameters[0]; p + 1];
+        for index in 1..=n - p {
+            knots.push(parameters[index..index + p].iter().sum::<f64>() / p as f64);
+        }
+        knots.extend(std::iter::repeat_n(parameters[n], p + 1));
+        Self::new(knots)
+    }
+
     pub fn as_slice(&self) -> &[f64] {
         &self.0
     }

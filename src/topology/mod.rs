@@ -10,6 +10,7 @@ pub mod orientation;
 pub mod payload;
 pub mod planar;
 pub mod profile;
+pub mod profile_curve;
 pub mod shape;
 pub mod shape_keys;
 pub mod sheet;
@@ -22,6 +23,9 @@ pub use dart::{Dart, IsolatedDart};
 pub use edit::{EditKey, EditPolicy, ModelEdit, ModelEditError, PreservePayload};
 pub use orientation::Orientation;
 pub use payload::{Payload, StandardPayload};
+pub use profile_curve::{
+    ProfileCurve, ProfileCurveError, ProfileSpan, agree_directions, align_seams,
+};
 pub use unwrapped_face_domain::{
     UnwrappedFaceDomain, UnwrappedFaceDomainCurve, UnwrappedFaceDomainError,
     UnwrappedFaceDomainLoop,

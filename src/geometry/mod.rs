@@ -39,8 +39,8 @@ pub use dim3::nurbs::tessellate::{
     sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,
 };
 pub use dim3::nurbs::{
-    Bezier, BezierSurface, ControlNet, ControlPolygon, Degree, HPoint, KnotVector, NurbsCurve,
-    NurbsSurface,
+    Bezier, BezierSurface, ControlNet, ControlPolygon, Degree, HPoint, InterpolationSystem,
+    KNOT_TOLERANCE, KnotVector, NurbsCurve, NurbsSurface, interpolate_with_knots, make_compatible,
 };
 pub use dim3::surfaces::{
     Cone, Cylinder, Plane, RuledSurface, Sphere, Surface, SurfaceOfRevolution, SurfacePeriodicity,
@@ -49,7 +49,7 @@ pub use dim3::surfaces::{
 pub use dim3::trimmed::TrimmedCurve;
 pub use dim3::utils::{IntoUnit, Point3, PointCoincidence};
 pub use interval::Interval;
-pub use nurbs::error::NurbsError;
+pub use nurbs::error::{NurbsError, SkinningIncompatibility};
 pub use parameter::{Fraction, Native, NativeParam, Normalized, Param};
 pub use reparam::{ParamMap, Reparam};
 pub use tolerance::{ANGULAR_TOLERANCE, LINEAR_TOLERANCE};

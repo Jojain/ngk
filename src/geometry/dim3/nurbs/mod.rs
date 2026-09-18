@@ -7,7 +7,9 @@ pub mod surface;
 pub mod tessellate;
 
 pub use bezier::Bezier;
-pub use curve::NurbsCurve;
+pub use curve::{
+    InterpolationSystem, KNOT_TOLERANCE, NurbsCurve, interpolate_with_knots, make_compatible,
+};
 pub use degree::Degree;
 pub use knots::KnotVector;
 pub use points::{ControlNet, ControlPolygon, HPoint};

@@ -3,18 +3,14 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::geometry::{Curve, Point3, Surface, TrimmedCurve2};
-#[cfg(feature = "python")]
-use crate::model::Cell2;
-use crate::model::{Cell1, MergeTopology, Model};
+use crate::model::{Cell1, Cell2, MergeTopology, Model};
 use crate::topology::closed::{Closeable, Closed};
 use crate::topology::edge::{BoundedEdge, Edge};
 use crate::topology::face::{Face, Loop};
 use crate::topology::gmap::{Dart, Dim, GMAP_INVOLUTION_COUNT};
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
-#[cfg(feature = "python")]
-use crate::topology::shape::FaceTag;
-use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
+use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::{Sheet, ShellRef};
 use crate::topology::solid::Solid;
@@ -312,6 +308,13 @@ impl<P: Payload> SharedModel<P> {
         self.model
             .face(key)
             .map(|view| SharedFace::from_view(self.clone(), view))
+    }
+
+    /// Resolves a registered sheet from its stable key.
+    pub(crate) fn sheet_by_key(&self, key: SheetKey) -> Option<SharedSheet<P>> {
+        self.model
+            .sheet(key)
+            .map(|view| SharedSheet::from_view(self.clone(), view))
     }
 
     /// Resolves a registered solid from its stable key.
@@ -827,7 +830,6 @@ impl<P: Payload> SharedFace<P> {
     }
 
     /// Copies this face into an owned shape for a modeling constructor.
-    #[cfg(feature = "python")]
     pub(crate) fn isolated_shape(&self) -> Result<Shape<FaceTag, P>, ExploreError> {
         let (model, dart) = self.view()?.isolate();
         let key = model.cell_key_unchecked::<Cell2>(dart);

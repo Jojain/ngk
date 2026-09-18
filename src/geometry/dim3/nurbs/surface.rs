@@ -1,12 +1,12 @@
 use nalgebra::{Point2, Point4, UnitVector3, Vector3, Vector4};
 use serde::{Deserialize, Serialize};
 
-use super::curve::NurbsCurve;
+use super::curve::{InterpolationSystem, KNOT_TOLERANCE, NurbsCurve};
 use super::degree::Degree;
 use super::knots::KnotVector;
 use super::points::{ControlNet, ControlPolygon, HPoint};
 use crate::geometry::nurbs::basis::{basis_function_derivatives, basis_functions};
-use crate::geometry::nurbs::error::NurbsError;
+use crate::geometry::nurbs::error::{NurbsError, SkinningIncompatibility};
 use crate::geometry::{BBox, Interval, LINEAR_TOLERANCE, Point3};
 
 /// One exact rational Bézier patch extracted from a parent NURBS surface.
@@ -445,6 +445,214 @@ impl NurbsSurface {
         Ok(spans)
     }
 
+    /// The surface that passes through every one of `sections`, of degree
+    /// `degree_v` across them.
+    ///
+    /// Skinning (Piegl & Tiller §10.3) reads the sections as the rows of one
+    /// control grid and interpolates down each column of it, so
+    /// `S(u, v_k) = C_k(u)` for every `k` — the surface reproduces every
+    /// section, not only the two ends, and is `C^(degree_v - 1)` across the
+    /// intermediate ones. `degree_v = 1` gives a surface linear in `v` between
+    /// consecutive sections, which is the multi-section ruled surface; nothing
+    /// else changes, so the two are one construction.
+    ///
+    /// The sections must already be compatible — one degree, one domain, one
+    /// knot vector — which [`make_compatible`] establishes. A grid is
+    /// rectangular or it is not a grid, so a mismatch is named rather than
+    /// papered over.
+    ///
+    /// The interpolation runs on the sections' **homogeneous** control points,
+    /// so a rational section is reproduced exactly rather than approximated by
+    /// a surface through its cartesian control points.
+    pub fn skinned(sections: &[NurbsCurve], degree_v: Degree) -> Result<Self, NurbsError> {
+        if sections.len() < 2 {
+            return Err(NurbsError::InsufficientSkinningSections {
+                minimum: 2,
+                got: sections.len(),
+            });
+        }
+        if degree_v.get() >= sections.len() {
+            return Err(NurbsError::SkinningDegreeTooHigh {
+                degree: degree_v.get(),
+                sections: sections.len(),
+            });
+        }
+
+        let first = &sections[0];
+        let nu = first.control_points().len();
+        for (index, section) in sections.iter().enumerate().skip(1) {
+            let reason = if section.degree() != first.degree() {
+                Some(SkinningIncompatibility::Degree)
+            } else if section.control_points().len() != nu {
+                Some(SkinningIncompatibility::ControlPointCount)
+            } else if !knot_vectors_agree(section.knots(), first.knots()) {
+                Some(SkinningIncompatibility::KnotVector)
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                return Err(NurbsError::IncompatibleSkinningSection { index, reason });
+            }
+        }
+
+        let parameters = Self::skinning_parameters(sections)?;
+        let knots_v = KnotVector::averaged(&parameters, degree_v)?;
+        let system = InterpolationSystem::new(&parameters, degree_v, &knots_v)?;
+
+        let rows = (0..nu)
+            .map(|index| {
+                let column = sections
+                    .iter()
+                    .map(|section| *section.control_points().get(index).expect("index < nu"))
+                    .collect::<Vec<_>>();
+                system.solve(&column)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut points = Vec::with_capacity(nu * sections.len());
+        for j in 0..sections.len() {
+            for row in &rows {
+                points.push(*row.get(j).expect("one control point per section"));
+            }
+        }
+
+        Self::new(
+            first.degree(),
+            degree_v,
+            ControlNet::new(points, nu, sections.len())?,
+            first.knots().clone(),
+            knots_v,
+        )
+    }
+
+    /// The `v` at which a skin through `sections` reproduces each of them.
+    ///
+    /// Piegl & Tiller eq. 10.8: chord length along each row of the control
+    /// grid, normalized per row and then averaged over all rows. Averaging is
+    /// what stops one wild row skewing the parameterization of the whole
+    /// surface; a row of zero extent — every section sharing that control
+    /// point — has no chord length to contribute and is left out of the mean
+    /// rather than counted as zero.
+    ///
+    /// [`Self::skinned`] takes these as its interpolation parameters, so
+    /// `S(u, parameters[k])` is section `k`. The sections must already be
+    /// compatible, which is what makes one control point index name one row.
+    pub fn skinning_parameters(sections: &[NurbsCurve]) -> Result<Vec<f64>, NurbsError> {
+        let count = sections.len();
+        if count < 2 {
+            return Err(NurbsError::InsufficientSkinningSections {
+                minimum: 2,
+                got: count,
+            });
+        }
+        let nu = sections[0].control_points().len();
+        let mut totals = vec![0.0; nu];
+        let mut cumulative = vec![vec![0.0; count]; nu];
+        for (index, row) in cumulative.iter_mut().enumerate() {
+            let mut accumulated = 0.0;
+            for k in 1..count {
+                let at = |section: &NurbsCurve| {
+                    section
+                        .control_points()
+                        .get(index)
+                        .map(|point| point.to_cartesian())
+                };
+                let (Some(here), Some(before)) = (at(&sections[k]), at(&sections[k - 1])) else {
+                    return Err(NurbsError::IncompatibleSkinningSection {
+                        index: k,
+                        reason: SkinningIncompatibility::ControlPointCount,
+                    });
+                };
+                accumulated += (here - before).norm();
+                row[k] = accumulated;
+            }
+            totals[index] = accumulated;
+        }
+
+        let contributing = (0..nu)
+            .filter(|&index| totals[index] > LINEAR_TOLERANCE)
+            .collect::<Vec<_>>();
+        if contributing.is_empty() {
+            return Err(NurbsError::DegenerateInterpolationSamples);
+        }
+
+        let mut parameters = vec![0.0; count];
+        for (k, parameter) in parameters.iter_mut().enumerate().take(count - 1).skip(1) {
+            *parameter = contributing
+                .iter()
+                .map(|&index| cumulative[index][k] / totals[index])
+                .sum::<f64>()
+                / contributing.len() as f64;
+        }
+        parameters[count - 1] = 1.0;
+        if parameters.windows(2).any(|pair| pair[1] <= pair[0]) {
+            return Err(NurbsError::InvalidInterpolationParameters);
+        }
+        Ok(parameters)
+    }
+
+    /// The curve this surface traces at constant `u`, parameterized by `v`.
+    ///
+    /// Exact, not sampled: the isocurve's control points are the `u` basis
+    /// functions applied to each column of the net, so the curve lies on the
+    /// surface everywhere rather than at the points it was fitted through.
+    /// That is what a rail of a skinned face needs — a rail derived any other
+    /// way would not lie on both the faces that share it.
+    pub fn isocurve_u(&self, u: f64) -> Result<NurbsCurve, NurbsError> {
+        let domain = self.domain_u();
+        let u = u.clamp(domain.start.value(), domain.end.value());
+        let p = self.degree_u.get();
+        let span = self
+            .knots_u
+            .find_span(self.control_points.nu() - 1, self.degree_u, u);
+        let basis = basis_functions(span, u, self.degree_u, &self.knots_u);
+
+        let points = (0..self.control_points.nv())
+            .map(|j| {
+                let mut accumulated = Vector4::zeros();
+                for (i, weight) in basis.iter().copied().enumerate().take(p + 1) {
+                    accumulated += self.control_points.get(span - p + i, j).0.coords * weight;
+                }
+                HPoint(Point4::from(accumulated))
+            })
+            .collect();
+
+        NurbsCurve::new(
+            self.degree_v,
+            ControlPolygon::new(points)?,
+            self.knots_v.clone(),
+        )
+    }
+
+    /// The curve this surface traces at constant `v`, parameterized by `u`.
+    ///
+    /// The `v` twin of [`Self::isocurve_u`], and exact for the same reason.
+    pub fn isocurve_v(&self, v: f64) -> Result<NurbsCurve, NurbsError> {
+        let domain = self.domain_v();
+        let v = v.clamp(domain.start.value(), domain.end.value());
+        let q = self.degree_v.get();
+        let span = self
+            .knots_v
+            .find_span(self.control_points.nv() - 1, self.degree_v, v);
+        let basis = basis_functions(span, v, self.degree_v, &self.knots_v);
+
+        let points = (0..self.control_points.nu())
+            .map(|i| {
+                let mut accumulated = Vector4::zeros();
+                for (j, weight) in basis.iter().copied().enumerate().take(q + 1) {
+                    accumulated += self.control_points.get(i, span - q + j).0.coords * weight;
+                }
+                HPoint(Point4::from(accumulated))
+            })
+            .collect();
+
+        NurbsCurve::new(
+            self.degree_u,
+            ControlPolygon::new(points)?,
+            self.knots_u.clone(),
+        )
+    }
+
     fn insert_knot_u(&mut self, knot: f64) -> Result<(), NurbsError> {
         let old_nu = self.control_points.nu();
         let nv = self.control_points.nv();
@@ -605,4 +813,14 @@ fn clamped_span(knots: &[f64], domain: Interval) -> Result<(usize, usize), Nurbs
         return Err(NurbsError::UnsortedKnots);
     };
     Ok((first, last))
+}
+
+/// Whether two knot vectors are the same vector, within [`KNOT_TOLERANCE`].
+fn knot_vectors_agree(first: &KnotVector, second: &KnotVector) -> bool {
+    first.len() == second.len()
+        && first
+            .as_slice()
+            .iter()
+            .zip(second.as_slice())
+            .all(|(a, b)| (a - b).abs() <= KNOT_TOLERANCE)
 }

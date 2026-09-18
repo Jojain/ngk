@@ -3,6 +3,7 @@ pub mod chamfer;
 pub mod edges;
 pub mod errors;
 pub mod faces;
+pub mod loft;
 pub mod profiles;
 pub mod removal;
 pub mod revolve;

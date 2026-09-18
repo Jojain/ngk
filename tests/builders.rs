@@ -21,6 +21,8 @@ mod chamfer;
 mod face_lineage;
 #[path = "builders/faces.rs"]
 mod faces;
+#[path = "builders/loft.rs"]
+mod loft;
 #[path = "builders/profiles.rs"]
 mod profiles;
 #[path = "builders/removal.rs"]
