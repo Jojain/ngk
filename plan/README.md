@@ -14,6 +14,7 @@ This directory contains implementation plans for substantial kernel work.
 | [Curved-support pcurve rebuild](curved_support_pcurve_rebuild.md) | Proposed | Let healing rebuild a parameter curve on a curved support, so a rim split by a Boolean heals back into the one closed edge it started as |
 | [Periodic supports](periodic_supports.md) | Proposed | Separate "closed" from "periodic parameterization": let a closed NURBS span cross its own seam, and leave room for a helix, which repeats without ever closing |
 | [Transforms](transform.md) | In progress | A total `Rigid` motion for the common case, a general affine `Transform<D>` for the rest, the parameter remap a support owes when its parameterization moves, and the orientation reversal a mirror owes on top |
+| [Parameter units](parameter_units.md) | Proposed | Stop `f64` meaning native parameter, normalized fraction, knot parameter and arc length at once: brand the scalar and its interval, and make a fraction inexpressible without the span it is a fraction of |
 | [STEP interop](step_interop.done.md) | Complete | Bidirectional ISO 10303-21 B-Rep exchange through the supported profile, including analytic/NURBS geometry, seam synthesis, and cavities |
 
 Statuses used by the plans:

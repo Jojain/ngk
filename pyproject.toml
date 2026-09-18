@@ -21,6 +21,7 @@ python-source = "bindings/python/python"
 
 [dependency-groups]
 dev = [
+    "build123d>=0.11.1",
     "ipython>=9.17.1",
     "jupyter>=1.1.1",
     "ocp-viewer>=1.1.3",
