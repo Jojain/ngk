@@ -68,6 +68,22 @@ def replace_version(text: str, section: str, version: str) -> str:
     return result
 
 
+def replace_lock_package_version(text: str, package: str, version: str) -> str:
+    """Replace one package version in a Cargo lockfile."""
+    pattern = re.compile(
+        rf'(?ms)(^\[\[package\]\]\s*^name\s*=\s*"{re.escape(package)}"\s*^version\s*=\s*")'
+        rf'(?P<version>{STABLE_VERSION})(")'
+    )
+
+    def replacement(match: re.Match[str]) -> str:
+        return f"{match.group(1)}{version}{match.group(3)}"
+
+    result, replacements = pattern.subn(replacement, text)
+    if replacements != 1:
+        raise ValueError(f'Expected one Cargo.lock package entry for "{package}", found {replacements}.')
+    return result
+
+
 def run(command: list[str], repo: Path) -> str:
     """Run a release command in the repository and return its standard output."""
     print("+", " ".join(command))
@@ -128,9 +144,12 @@ def apply_bump(repo: Path, kind: str, release: bool) -> str:
     }
     try:
         cargo.write_text(replace_version(cargo_text, "package", next_version), encoding="utf-8")
+        cargo_lock.write_text(
+            replace_lock_package_version(cargo_lock.read_text(encoding="utf-8"), "ngk", next_version),
+            encoding="utf-8",
+        )
         pyproject.write_text(replace_version(pyproject_text, "project", next_version), encoding="utf-8")
         run(["uv", "lock"], repo)
-        run(["cargo", "metadata", "--no-deps", "--format-version", "1"], repo)
     except BaseException:
         for path, content in originals.items():
             path.write_text(content, encoding="utf-8")
@@ -162,4 +181,13 @@ def main() -> None:
     app()
 
 
-__all__ = ["app", "apply_bump", "bump", "bump_version", "main", "read_version_file", "replace_version"]
+__all__ = [
+    "app",
+    "apply_bump",
+    "bump",
+    "bump_version",
+    "main",
+    "read_version_file",
+    "replace_lock_package_version",
+    "replace_version",
+]

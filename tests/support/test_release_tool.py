@@ -71,7 +71,10 @@ class VersionBumpTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
             (repo / "Cargo.toml").write_text('[package]\nversion = "0.0.1"\n', encoding="utf-8")
-            (repo / "Cargo.lock").write_text('version = 3\n', encoding="utf-8")
+            (repo / "Cargo.lock").write_text(
+                'version = 3\n\n[[package]]\nname = "ngk"\nversion = "0.0.1"\n',
+                encoding="utf-8",
+            )
             (repo / "pyproject.toml").write_text('[project]\nversion = "0.0.1"\n', encoding="utf-8")
             (repo / "uv.lock").write_text('version = 1\n', encoding="utf-8")
 
@@ -80,7 +83,11 @@ class VersionBumpTests(unittest.TestCase):
 
         commands = [call.args[0] for call in run.call_args_list]
         self.assertIn(["uv", "lock"], commands)
-        self.assertIn(["cargo", "metadata", "--no-deps", "--format-version", "1"], commands)
+        self.assertNotIn(["cargo", "metadata", "--no-deps", "--format-version", "1"], commands)
+        self.assertIn(
+            '[[package]]\nname = "ngk"\nversion = "0.0.2"',
+            (repo / "Cargo.lock").read_text(encoding="utf-8"),
+        )
 
     def test_version_field_replacement_is_scoped_to_its_toml_section(self) -> None:
         text = '[package]\nversion = "0.0.1"\n\n[project]\nversion = "0.0.1"\n'
