@@ -94,15 +94,16 @@ def create_release(repo: Path, version: str) -> None:
     if run(["git", "tag", "--list", tag], repo):
         raise RuntimeError(f"Tag {tag} already exists.")
 
-    run(["git", "add", "Cargo.toml", "pyproject.toml", "uv.lock"], repo)
+    run(["git", "add", "Cargo.toml", "Cargo.lock", "pyproject.toml", "uv.lock"], repo)
     run(["git", "commit", "-m", f"chore(release): {tag}"], repo)
     run(["git", "tag", "-a", tag, "-m", f"NGK {version}"], repo)
     print(f"Created commit and tag {tag}. Push them with: git push origin master --follow-tags")
 
 
 def apply_bump(repo: Path, kind: str, release: bool) -> str:
-    """Synchronize the Rust and Python versions and refresh the uv lockfile."""
+    """Synchronize package versions and refresh both lockfiles."""
     cargo = repo / "Cargo.toml"
+    cargo_lock = repo / "Cargo.lock"
     pyproject = repo / "pyproject.toml"
     lockfile = repo / "uv.lock"
 
@@ -121,6 +122,7 @@ def apply_bump(repo: Path, kind: str, release: bool) -> str:
     next_version = bump_version(cargo_version, kind)
     originals = {
         cargo: cargo_text,
+        cargo_lock: cargo_lock.read_text(encoding="utf-8"),
         pyproject: pyproject_text,
         lockfile: lockfile.read_text(encoding="utf-8"),
     }
@@ -128,6 +130,7 @@ def apply_bump(repo: Path, kind: str, release: bool) -> str:
         cargo.write_text(replace_version(cargo_text, "package", next_version), encoding="utf-8")
         pyproject.write_text(replace_version(pyproject_text, "project", next_version), encoding="utf-8")
         run(["uv", "lock"], repo)
+        run(["cargo", "metadata", "--no-deps", "--format-version", "1"], repo)
     except BaseException:
         for path, content in originals.items():
             path.write_text(content, encoding="utf-8")

@@ -2,6 +2,7 @@
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -54,6 +55,32 @@ class VersionBumpTests(unittest.TestCase):
         self.assertEqual(RELEASE_TOOL.bump_version("0.0.1", "patch"), "0.0.2")
         self.assertEqual(RELEASE_TOOL.bump_version("0.0.1", "minor"), "0.1.0")
         self.assertEqual(RELEASE_TOOL.bump_version("0.0.1", "major"), "1.0.0")
+
+    def test_release_commit_includes_cargo_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(RELEASE_TOOL, "run", return_value="") as run:
+                RELEASE_TOOL.create_release(Path(directory), "0.0.2")
+
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn(
+            ["git", "add", "Cargo.toml", "Cargo.lock", "pyproject.toml", "uv.lock"],
+            commands,
+        )
+
+    def test_bump_refreshes_cargo_lock_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            (repo / "Cargo.toml").write_text('[package]\nversion = "0.0.1"\n', encoding="utf-8")
+            (repo / "Cargo.lock").write_text('version = 3\n', encoding="utf-8")
+            (repo / "pyproject.toml").write_text('[project]\nversion = "0.0.1"\n', encoding="utf-8")
+            (repo / "uv.lock").write_text('version = 1\n', encoding="utf-8")
+
+            with patch.object(RELEASE_TOOL, "run", return_value="") as run:
+                RELEASE_TOOL.apply_bump(repo, "patch", False)
+
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertIn(["uv", "lock"], commands)
+        self.assertIn(["cargo", "metadata", "--no-deps", "--format-version", "1"], commands)
 
     def test_version_field_replacement_is_scoped_to_its_toml_section(self) -> None:
         text = '[package]\nversion = "0.0.1"\n\n[project]\nversion = "0.0.1"\n'
