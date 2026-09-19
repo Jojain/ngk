@@ -119,8 +119,8 @@ fn a_revolved_meridian_unwraps_the_poles_its_loop_turns_through() {
         &mut g,
         Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::z()),
         1.0,
-        FRAC_PI_2,
-        -FRAC_PI_2,
+        Rad64::QUARTER_TURN,
+        -Rad64::QUARTER_TURN,
     )
     .expect("meridian arc should build");
     let face_key = add_revolved_edge(
@@ -399,8 +399,8 @@ fn a_seamed_sphere_keeps_the_cut_its_loop_closes_across() {
         &mut g,
         Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::z()),
         1.0,
-        FRAC_PI_2,
-        -FRAC_PI_2,
+        Rad64::QUARTER_TURN,
+        -Rad64::QUARTER_TURN,
     )
     .expect("meridian arc should build");
     let face_key = add_revolved_edge(

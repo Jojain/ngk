@@ -7,6 +7,7 @@ use ngk::topology::embedding::EntityOwner;
 use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 use ngk::topology::{ModelEditError, Orientation, StandardPayload, UnwrappedFaceDomain};
+use radians::Rad64;
 
 #[test]
 fn repeated_face_requests_share_an_immutable_realization() {
@@ -38,7 +39,7 @@ fn repeated_face_requests_share_an_immutable_realization() {
 
 #[test]
 fn reversed_edge_realizations_keep_the_same_native_section() {
-    let shape = edges::arc(Plane::xy(), 2.0, 0.3, 5.4).unwrap();
+    let shape = edges::arc(Plane::xy(), 2.0, Rad64::new(0.3), Rad64::new(5.4)).unwrap();
     let key = shape.edge().key();
     let model = shape.model();
     let forward = model

@@ -14,6 +14,7 @@ use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, VertexKey};
+use radians::Rad64;
 use thiserror::Error;
 
 /// What cutting an edge left behind.
@@ -542,8 +543,8 @@ pub fn add_arc<P: Payload>(
     g: &mut Model<P>,
     plane: Plane,
     radius: f64,
-    start_angle: f64,
-    end_angle: f64,
+    start_angle: Rad64,
+    end_angle: Rad64,
 ) -> Result<EdgeKey, EdgeCreationError> {
     g.transaction(|edit| add_arc_staged(edit, plane, radius, start_angle, end_angle))
 }
@@ -553,16 +554,14 @@ pub(crate) fn add_arc_staged<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     radius: f64,
-    start_angle: f64,
-    end_angle: f64,
+    start_angle: Rad64,
+    end_angle: Rad64,
 ) -> Result<EdgeKey, EdgeCreationError> {
     check_valid_radius(radius)?;
-    check_valid_angle("start", start_angle)?;
-    check_valid_angle("end", end_angle)?;
 
     let circle = Curve::circle(plane, radius);
-    let start = circle.point_at(NativeParam::new(start_angle));
-    let end = circle.point_at(NativeParam::new(end_angle));
+    let start = circle.point_at(NativeParam::new(start_angle.val()));
+    let end = circle.point_at(NativeParam::new(end_angle.val()));
     let curve = if end_angle < start_angle {
         circle.reversed()
     } else {
@@ -618,13 +617,5 @@ fn check_valid_radius(radius: f64) -> Result<(), EdgeCreationError> {
         Ok(())
     } else {
         Err(EdgeCreationError::InvalidRadius { radius })
-    }
-}
-
-fn check_valid_angle(name: &'static str, angle: f64) -> Result<(), EdgeCreationError> {
-    if angle.is_finite() {
-        Ok(())
-    } else {
-        Err(EdgeCreationError::InvalidAngle { name, angle })
     }
 }

@@ -1,3 +1,5 @@
+use radians::Rad64;
+
 use crate::builders::errors::EdgeCreationError;
 use crate::builders::profiles::{
     PolylineError, add_polyline, add_profile_from_edges_staged, add_rectangle, add_square,
@@ -73,8 +75,8 @@ pub fn polygon(points: &[Point3]) -> Result<Shape<ProfileTag, StandardPayload>, 
 pub fn arc(
     plane: Plane,
     radius: f64,
-    start_angle: f64,
-    end_angle: f64,
+    start_angle: Rad64,
+    end_angle: Rad64,
 ) -> Result<Shape<ProfileTag, StandardPayload>, EdgeCreationError> {
     Ok(edges::arc(plane, radius, start_angle, end_angle)?.into_profile())
 }

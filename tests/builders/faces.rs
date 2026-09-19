@@ -16,6 +16,7 @@ use ngk::geometry::{
 };
 
 use ngk::modeling::solids;
+use radians::Rad64;
 
 use super::seamed::seamed_cylinder_wall;
 use ngk::model::Cell0;
@@ -275,7 +276,8 @@ fn add_circle_creates_single_planar_face_with_circular_pcurve() {
 #[test]
 fn an_arc_profile_gets_a_pcurve_over_the_arc_not_the_whole_circle() {
     let mut g = Model::<StandardPayload>::new();
-    let arc = add_arc(&mut g, Plane::xy(), 2.0, 0.0, FRAC_PI_2).expect("arc edge should build");
+    let arc = add_arc(&mut g, Plane::xy(), 2.0, Rad64::ZERO, Rad64::QUARTER_TURN)
+        .expect("arc edge should build");
     let section = g.edge_unchecked(arc).trimmed_curve();
     let chord = add_line(&mut g, section.end(), section.start()).expect("chord should build");
     let profile = add_profile_from_edges(&mut g, &[arc, chord])

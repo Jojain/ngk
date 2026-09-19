@@ -1,6 +1,7 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
+use radians::Rad64;
 
 use crate::geometry::Point3;
 use crate::modeling;
@@ -33,9 +34,14 @@ pub(crate) fn arc(
     start_angle: f64,
     end_angle: f64,
 ) -> PyResult<PyEdge> {
-    modeling::edges::arc(plane.plane, radius, start_angle, end_angle)
-        .map_err(|error| PyValueError::new_err(error.to_string()))
-        .and_then(py_edge)
+    modeling::edges::arc(
+        plane.plane,
+        radius,
+        Rad64::new(start_angle),
+        Rad64::new(end_angle),
+    )
+    .map_err(|error| PyValueError::new_err(error.to_string()))
+    .and_then(py_edge)
 }
 
 #[pyfunction]

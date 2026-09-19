@@ -1,3 +1,5 @@
+use radians::Rad64;
+
 use crate::builders::edges::{add_arc, add_circle, add_line};
 use crate::builders::errors::EdgeCreationError;
 use crate::geometry::{Plane, Point3};
@@ -6,6 +8,7 @@ use crate::topology::ModelEditError;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
 
+/// Creates a line segment between two points in 3D space.
 pub fn line(
     start: Point3,
     end: Point3,
@@ -15,11 +18,12 @@ pub fn line(
     Ok(Shape::new(g, edge_key))
 }
 
+/// Creates an arc of a circle in 3D space defined by a plane, radius, and start/end angles.
 pub fn arc(
     plane: Plane,
     radius: f64,
-    start_angle: f64,
-    end_angle: f64,
+    start_angle: Rad64,
+    end_angle: Rad64,
 ) -> Result<Shape<EdgeTag, StandardPayload>, EdgeCreationError> {
     let mut g = Model::new();
     let edge_key = add_arc(&mut g, plane, radius, start_angle, end_angle)?;

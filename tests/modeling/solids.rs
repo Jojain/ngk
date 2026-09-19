@@ -536,8 +536,7 @@ fn a_cylinder_bored_from_above_its_floor_is_a_cup() {
     let cup = cut(outer, inner).expect("boring a cylinder should succeed");
 
     validate_solid_manifold(cup.model(), cup.key()).expect("the cup should be manifold");
-    validate_solid_orientation(cup.model(), cup.key())
-        .expect("the cup should be outward oriented");
+    validate_solid_orientation(cup.model(), cup.key()).expect("the cup should be outward oriented");
 
     let faces = cup.solid().faces();
     assert_eq!(
@@ -553,7 +552,11 @@ fn a_cylinder_bored_from_above_its_floor_is_a_cup() {
         })
         .collect::<Vec<_>>();
     radii.sort_by(f64::total_cmp);
-    assert_eq!(radii, vec![16.0, 20.0], "the two walls keep their own radii");
+    assert_eq!(
+        radii,
+        vec![16.0, 20.0],
+        "the two walls keep their own radii"
+    );
     let mut heights = faces
         .iter()
         .filter_map(|face| match face.surface() {
@@ -640,8 +643,7 @@ fn a_handle_that_bores_and_notches_one_wall_fuses_to_a_mug() {
     let mug = fuse(cup, handle).expect("a handle should fuse onto a cup");
 
     validate_solid_manifold(mug.model(), mug.key()).expect("the mug should be manifold");
-    validate_solid_orientation(mug.model(), mug.key())
-        .expect("the mug should be outward oriented");
+    validate_solid_orientation(mug.model(), mug.key()).expect("the mug should be outward oriented");
 
     assert_eq!(
         mug.solid().faces().len(),
@@ -658,7 +660,7 @@ fn a_handle_that_bores_and_notches_one_wall_fuses_to_a_mug() {
     let [wall] = walls[..] else {
         panic!("the mug keeps exactly one cylindrical wall");
     };
-    
+
     assert_eq!(
         mug.model().face_unchecked(wall).inner_loops().len(),
         1,

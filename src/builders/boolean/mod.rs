@@ -272,8 +272,12 @@ pub fn compute_boolean_intersections<P: Payload>(
     observations.diagnostics.stages.imprint_normalization = stage.lap();
     let observed_network = build_intersection_network(g, &observations, options)?;
     let mut face_imprints = imprint::face_imprints(&observed_network);
-    let (mut network, embedding) =
-        graph::finalize_network(g, &observed_network, tolerances.linear, tolerances.parameter)?;
+    let (mut network, embedding) = graph::finalize_network(
+        g,
+        &observed_network,
+        tolerances.linear,
+        tolerances.parameter,
+    )?;
     graph::close_regions(&mut network, g)?;
     observations.diagnostics.stages.network = stage.lap();
     for imprint in face_imprints.values_mut().flatten() {

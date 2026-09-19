@@ -12,10 +12,6 @@ categories = ["science", "mathematics"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[[bin]]
-name = "ngk"
-path = "src/main.rs"
-
 [features]
 default = []
 python = ["dep:pyo3"]

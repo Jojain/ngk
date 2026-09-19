@@ -5,6 +5,7 @@
 //! genuinely curved edge (`Curve::Circle` -> `Surface::Ruled`).
 
 use nalgebra::Vector3;
+use radians::Rad64;
 
 use crate::geometry::Plane;
 use crate::geometry::parameter::Fraction;
@@ -16,7 +17,7 @@ const RADIUS: f64 = 2.0;
 const HEIGHT: f64 = 1.5;
 
 pub fn run() -> Result<ScriptResult, String> {
-    let arc = edges::arc(Plane::xy(), RADIUS, 0.0, std::f64::consts::FRAC_PI_2)
+    let arc = edges::arc(Plane::xy(), RADIUS, Rad64::ZERO, Rad64::QUARTER_TURN)
         .map_err(|err| format!("failed to build arc edge: {err:?}"))?;
     let section = arc.edge().trimmed_curve();
     let (start, end) = (

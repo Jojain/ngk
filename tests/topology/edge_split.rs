@@ -14,6 +14,7 @@ use ngk::topology::payload::{Payload, StandardPayload};
 use ngk::topology::profile::Profile;
 use ngk::topology::shape_keys::EdgeKey;
 use ngk::topology::shape_keys::FaceKey;
+use radians::Rad64;
 
 /// Returns the single rim edge of a disc.
 fn rim_of(g: &Model<StandardPayload>, face: FaceKey) -> EdgeKey {
@@ -342,7 +343,8 @@ fn an_unmarked_edge_takes_a_corner_where_its_curve_closes() {
 #[test]
 fn splitting_a_bounded_arc_keeps_each_piece_on_its_own_sweep() {
     let mut g = Model::<StandardPayload>::new();
-    let arc = add_arc(&mut g, Plane::xy(), 1.0, 1.0, 2.0).expect("an arc builds");
+    let arc =
+        add_arc(&mut g, Plane::xy(), 1.0, Rad64::new(1.0), Rad64::new(2.0)).expect("an arc builds");
 
     let split = split_edge(&mut g, arc, Fraction::new(0.5)).expect("the arc separates midway");
 

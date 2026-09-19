@@ -123,14 +123,6 @@ impl ControlPolygon {
                 .collect(),
         )
     }
-
-    pub(crate) fn into_inner(self) -> Vec<HPoint> {
-        self.0
-    }
-
-    pub(crate) fn inner_mut(&mut self) -> &mut Vec<HPoint> {
-        &mut self.0
-    }
 }
 
 /// A 2D control grid for NURBS surfaces, stored flat in row-major order

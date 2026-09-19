@@ -56,15 +56,14 @@ pub fn seamed_revolved_sphere(radius: f64) -> (Model<StandardPayload>, FaceKey, 
     use ngk::builders::edges::add_arc;
     use ngk::builders::revolve::add_revolved_edge;
     use radians::Rad64;
-    use std::f64::consts::FRAC_PI_2;
 
     let mut g = Model::<StandardPayload>::new();
     let meridian = add_arc(
         &mut g,
         Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::z()),
         radius,
-        FRAC_PI_2,
-        -FRAC_PI_2,
+        Rad64::QUARTER_TURN,
+        -Rad64::QUARTER_TURN,
     )
     .expect("meridian arc should build");
     let face = add_revolved_edge(
