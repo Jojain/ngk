@@ -623,7 +623,7 @@ impl<'g, P: Payload> Face<'g, P> {
     /// and the winding is read from the closed result. That is the same
     /// rectangle a stored seam used to spell out, computed rather than
     /// recorded.
-    fn boundary_signed_area(&self) -> Option<f64> {
+    pub(crate) fn boundary_signed_area(&self) -> Option<f64> {
         let realization = self
             .model
             .realize_face(self.key, self.sense, RealizationPurpose::Geometry)

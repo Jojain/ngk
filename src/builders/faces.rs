@@ -1464,6 +1464,9 @@ fn add_closed_imprint_loops<P: Payload>(
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
     let boundary_uvs = face_boundary_uvs(edit, face)?;
+    // The winding every hole added here must turn against, read once before
+    // any of them is added and while the face is still whole.
+    let boundary_area = boundary_winding(edit, face);
     let mut splits = Vec::new();
     for component in graph.closed_edge_components() {
         let mut loop_imprints = component
@@ -1502,7 +1505,7 @@ fn add_closed_imprint_loops<P: Payload>(
                 (edge.source_curve, interval)
             })
             .collect::<Vec<_>>();
-        if orient_imprint_loop_against_boundary(&boundary_uvs, &mut loop_imprints)? {
+        if orient_imprint_loop_against_boundary(boundary_area, &mut loop_imprints)? {
             provenance.reverse();
             for (_, interval) in &mut provenance {
                 *interval = interval.reversed();
@@ -1731,22 +1734,37 @@ fn matching_reversed_loop_edge(
         .cloned()
 }
 
+/// Which way a face's boundary turns in its own parameter domain.
+///
+/// Read from the realized domain, never from the face's corners. A ring face's
+/// loops each run exactly one period and carry no winding of their own, and
+/// the corners they happen to have — the two ends of a chord imprinted in the
+/// same pass, say — are not a polygon: an area taken over them has a sign
+/// decided by how many corners some unrelated cut left on the rim, so one more
+/// arriving flips it.
+///
+/// A face nothing encloses has no boundary to read and needs none: it covers
+/// the support's whole domain as the support is parameterized, so
+/// counter-clockwise is its material side, and the positive sense stands in.
+fn boundary_winding<P: Payload>(edit: &ModelEdit<'_, P>, face: FaceKey) -> f64 {
+    edit.face(face)
+        .and_then(|view| view.boundary_signed_area())
+        .filter(|area| area.abs() > LINEAR_TOLERANCE)
+        .unwrap_or(1.0)
+}
+
 /// Winds an imprint loop so it cuts a hole rather than bounding one.
 ///
 /// A face's material lies to the left of its boundary, so a hole runs the
-/// opposite way round from whatever encloses the face. A bounded face says
-/// which way that is with its own boundary. A face nothing encloses has none to
-/// compare against and needs none: it covers the support's whole domain as the
-/// support is parameterized, so counter-clockwise is its material side and a
-/// hole in it is clockwise. Leaving that to whichever way the intersection
+/// opposite way round from whatever encloses the face, which is what
+/// `boundary_area` states. Leaving that to whichever way the intersection
 /// chain happened to be walked instead makes the face's winding depend on which
 /// Boolean operand it belonged to — the same cut then sews up correctly one way
 /// round and inside-out the other.
 fn orient_imprint_loop_against_boundary(
-    boundary_uvs: &[Point2],
+    boundary_area: f64,
     imprints: &mut Vec<FaceImprint>,
 ) -> Result<bool, NurbsError> {
-    let boundary_area = signed_area(boundary_uvs);
     let loop_uvs = imprints
         .iter()
         .flat_map(|imprint| imprint.pcurve.sample(16).into_iter().take(16))
@@ -1756,11 +1774,6 @@ fn orient_imprint_loop_against_boundary(
     if loop_area.abs() <= LINEAR_TOLERANCE {
         return Ok(false);
     }
-    let boundary_area = match boundary_area.abs() <= LINEAR_TOLERANCE {
-        true => 1.0,
-        false => boundary_area,
-    };
-
     if boundary_area.signum() == loop_area.signum() {
         *imprints = reversed_imprint_loop(imprints)?;
         return Ok(true);
@@ -2413,15 +2426,21 @@ fn apply_face_chord_split<P: Payload>(
         } else {
             (end_dart, end_pcurves, start_dart, start_pcurves)
         };
+    // Before the holes are placed, because which half is a ring and which a
+    // disk is what says which of the two can be asked to hold one.
+    let (source_kind, created_kind) = chord_loop_kinds(
+        edit,
+        chorded.kind(),
+        (source_loop, &source_pcurves),
+        (created_loop, &created_pcurves),
+    )?;
     let (source_inner_loops, created_inner_loops) = partition_inner_loops(
         edit,
         original_face,
         &old_face.inner_vec(),
         &old_face.pcurves,
-        source_loop,
-        &source_pcurves,
-        created_loop,
-        &created_pcurves,
+        (source_loop, &source_pcurves, source_kind),
+        (created_loop, &created_pcurves, created_kind),
     )?;
     for &loop_dart in &source_inner_loops {
         extend_loop_pcurves(
@@ -2463,12 +2482,6 @@ fn apply_face_chord_split<P: Payload>(
             }
         })
         .collect();
-    let (source_kind, created_kind) = chord_loop_kinds(
-        edit,
-        chorded.kind(),
-        (source_loop, &source_pcurves),
-        (created_loop, &created_pcurves),
-    )?;
     let mut source_loops = vec![LoopDefinition::from_kind(source_loop, source_kind)];
     let mut created_loops = vec![LoopDefinition::from_kind(created_loop, created_kind)];
 
@@ -2593,46 +2606,80 @@ fn apply_face_chord_split<P: Payload>(
     })
 }
 
-/// Assigns each existing hole to the one child region that contains its boundary.
+/// Assigns each existing hole to the one child region that contains it.
 ///
-/// A chord may touch a hole, but it must not cross one: crossing would require
-/// splitting that inner loop as part of the same edit. Sampling the complete
-/// loop rather than one seed point distinguishes a tangent touch from a crossing.
+/// A half that still spans the period cannot be asked: its sampled boundary is
+/// an open polyline, and a crossing count over one says nothing. Chording a
+/// wrapping loop leaves exactly one such ring and bounds the other half into a
+/// disk, so the disk is the half that answers and the ring takes every hole the
+/// disk does not hold — there being nowhere else for one to be.
+///
+/// With both halves bounded, both are asked. A chord may touch a hole, but it
+/// must not cross one: crossing would require splitting that inner loop as part
+/// of the same edit. Sampling the complete loop rather than one seed point
+/// distinguishes a tangent touch from a crossing.
 #[allow(clippy::too_many_arguments)]
 fn partition_inner_loops<P: Payload>(
     edit: &ModelEdit<'_, P>,
     face: FaceKey,
     inner_loops: &[Dart],
     old_pcurves: &HashMap<Dart, TrimmedCurve2>,
-    source_loop: Dart,
-    source_pcurves: &HashMap<Dart, TrimmedCurve2>,
-    created_loop: Dart,
-    created_pcurves: &HashMap<Dart, TrimmedCurve2>,
+    source_half: (Dart, &HashMap<Dart, TrimmedCurve2>, LoopKind),
+    created_half: (Dart, &HashMap<Dart, TrimmedCurve2>, LoopKind),
 ) -> Result<(Vec<Dart>, Vec<Dart>), FaceImprintSplitError> {
-    // Locating a hole means a winding test, which a wrapping loop cannot
-    // answer; with no hole to place there is nothing to ask in the first place.
+    // With no hole to place there is nothing to ask in the first place.
     if inner_loops.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
+    let (source_loop, source_pcurves, source_kind) = source_half;
+    let (created_loop, created_pcurves, created_kind) = created_half;
+    // Which half, if either, still spans the period after the chord.
+    let ring = match (source_kind.wrapped_axis(), created_kind.wrapped_axis()) {
+        (Some(_), None) => Some(ChordHalf::Source),
+        (None, Some(_)) => Some(ChordHalf::Created),
+        _ => None,
+    };
     let source_boundary = sampled_loop_uvs(edit, face, source_loop, source_pcurves)?;
     let created_boundary = sampled_loop_uvs(edit, face, created_loop, created_pcurves)?;
     let mut source = Vec::new();
     let mut created = Vec::new();
     for &inner_loop in inner_loops {
         let samples = sampled_loop_uvs(edit, face, inner_loop, old_pcurves)?;
-        let in_source = samples
-            .iter()
-            .all(|point| sampled_loop_contains(&source_boundary, *point));
-        let in_created = samples
-            .iter()
-            .all(|point| sampled_loop_contains(&created_boundary, *point));
-        match (in_source, in_created) {
-            (true, false) => source.push(inner_loop),
-            (false, true) => created.push(inner_loop),
-            _ => return Err(FaceImprintSplitError::InnerLoopsNotSupported { face }),
+        let held_by = |boundary: &[Point2]| {
+            samples
+                .iter()
+                .all(|point| sampled_loop_contains(boundary, *point))
+        };
+        let half = match ring {
+            Some(ChordHalf::Source) => match held_by(&created_boundary) {
+                true => ChordHalf::Created,
+                false => ChordHalf::Source,
+            },
+            Some(ChordHalf::Created) => match held_by(&source_boundary) {
+                true => ChordHalf::Source,
+                false => ChordHalf::Created,
+            },
+            None => match (held_by(&source_boundary), held_by(&created_boundary)) {
+                (true, false) => ChordHalf::Source,
+                (false, true) => ChordHalf::Created,
+                _ => return Err(FaceImprintSplitError::InnerLoopsNotSupported { face }),
+            },
+        };
+        match half {
+            ChordHalf::Source => source.push(inner_loop),
+            ChordHalf::Created => created.push(inner_loop),
         }
     }
     Ok((source, created))
+}
+
+/// One of the two regions a chord split leaves behind.
+#[derive(Clone, Copy, PartialEq)]
+enum ChordHalf {
+    /// The half the source face keeps.
+    Source,
+    /// The half that becomes a new face.
+    Created,
 }
 
 fn sampled_loop_uvs<P: Payload>(

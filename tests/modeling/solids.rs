@@ -1,16 +1,22 @@
 use std::collections::HashMap;
 
 use nalgebra::Vector3;
-use ngk::geometry::{LINEAR_TOLERANCE, PointCoincidence, Surface, SurfacePeriodicity};
+use ngk::StandardPayload;
+use ngk::geometry::{
+    Curve, Frame, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface, SurfacePeriodicity,
+};
 use ngk::model::Cell2;
 use ngk::modeling::solids::{
-    PrimitiveError, block, block_at, cut, cylinder, fuse, intersect, sphere, torus,
+    PrimitiveError, block, block_at, cut, cylinder, cylinder_at, fuse, intersect, sphere, torus,
 };
-use ngk::tessellate::{TessellateOpts, face::tessellate_face_key};
+use ngk::tessellate::{CurveOpts, SurfaceOpts, TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
 use ngk::topology::gmap::Dim;
+use ngk::topology::shape::{Shape, SolidTag};
+use ngk::topology::shape_keys::FaceKey;
 use ngk::topology::sheet::Sheet;
 use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
+use ngk::viz::debug_viewer::show;
 
 #[test]
 fn block_builds_closed_box_with_expected_cell_counts() {
@@ -471,4 +477,196 @@ fn a_cylinder_wall_tessellates_into_a_closed_tube() {
             );
         }
     }
+}
+
+/// A frame at `(x, y, z)` with the world's own axes.
+fn frame_at(x: f64, y: f64, z: f64) -> Frame {
+    Frame::from_xy(Point3::new(x, y, z), Vector3::x(), Vector3::y())
+}
+
+/// The volume a solid's meshed boundary encloses, by the divergence theorem.
+///
+/// Sampled finely, because a meshed circle is a polygon inscribed in it and so
+/// measures a little short: at these settings a rim is a 128-gon, which holds
+/// 99.96% of its circle's area, and the assertion below leaves a percent of
+/// room for that. This is a check on which side of each face the material was
+/// kept, not a mass property.
+fn meshed_volume(shape: &Shape<SolidTag, StandardPayload>) -> f64 {
+    let opts = TessellateOpts {
+        curve: CurveOpts { segments: 128 },
+        surface: SurfaceOpts { nu: 128, nv: 16 },
+    };
+    let mut volume = 0.0;
+    for face in shape.solid().faces() {
+        let mesh = tessellate_face_key(shape.model(), face.key(), opts)
+            .unwrap_or_else(|error| panic!("face {:?} should mesh: {error}", face.key()));
+        for triangle in mesh.indices.chunks_exact(3) {
+            let corner = |slot: usize| mesh.positions[triangle[slot] as usize].coords;
+            volume += corner(0).dot(&corner(1).cross(&corner(2))) / 6.0;
+        }
+    }
+    volume
+}
+
+/// Every planar face the solid carries whose support sits at height `z`.
+fn planes_at_height(shape: &Shape<SolidTag, StandardPayload>, z: f64) -> Vec<FaceKey> {
+    shape
+        .solid()
+        .faces()
+        .into_iter()
+        .filter(|face| {
+            matches!(face.surface(), Surface::Plane(plane)
+                if (plane.frame.origin.z - z).abs() <= LINEAR_TOLERANCE)
+        })
+        .map(|face| face.key())
+        .collect()
+}
+
+/// A cup: a cylinder with a narrower, taller one cut out from above its floor.
+///
+/// The bore runs out through the top, so the cut leaves an annulus there rather
+/// than closing the tool off. Each of that annulus's rims is a whole circle, and
+/// the pair of arcs meeting at two invented corners that would describe one just
+/// as well is what the network used to record instead.
+#[test]
+fn a_cylinder_bored_from_above_its_floor_is_a_cup() {
+    let outer = cylinder_at(frame_at(0.0, 0.0, 0.0), 20.0, 30.0).expect("outer cylinder");
+    let inner = cylinder_at(frame_at(0.0, 0.0, 4.0), 16.0, 28.0).expect("boring tool");
+
+    let cup = cut(outer, inner).expect("boring a cylinder should succeed");
+
+    validate_solid_manifold(cup.model(), cup.key()).expect("the cup should be manifold");
+    validate_solid_orientation(cup.model(), cup.key())
+        .expect("the cup should be outward oriented");
+
+    let faces = cup.solid().faces();
+    assert_eq!(
+        faces.len(),
+        5,
+        "a cup is a floor, an outer wall, a rim annulus, a bore wall and a bore floor"
+    );
+    let mut radii = faces
+        .iter()
+        .filter_map(|face| match face.surface() {
+            Surface::Cylinder(wall) => Some(wall.radius),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    radii.sort_by(f64::total_cmp);
+    assert_eq!(radii, vec![16.0, 20.0], "the two walls keep their own radii");
+    let mut heights = faces
+        .iter()
+        .filter_map(|face| match face.surface() {
+            Surface::Plane(plane) => Some(plane.frame.origin.z),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    heights.sort_by(f64::total_cmp);
+    assert_eq!(
+        heights,
+        vec![0.0, 4.0, 30.0],
+        "the floor is at 0, the bore floor at 4, and the rim at 30"
+    );
+
+    let [rim] = planes_at_height(&cup, 30.0)[..] else {
+        panic!("the rim is one face");
+    };
+    let rim = cup.model().face_unchecked(rim);
+    assert_eq!(
+        rim.inner_loops().len(),
+        1,
+        "the bore opens through the rim, which is therefore an annulus"
+    );
+    for boundary in rim.loops() {
+        let [edge] = boundary.edges()[..] else {
+            panic!("each rim circle is one unbounded edge, not a pair of arcs");
+        };
+        assert!(
+            matches!(edge.curve(), Curve::Circle(_)),
+            "a whole circle stays a circle rather than becoming a fitted curve"
+        );
+    }
+
+    let expected = std::f64::consts::PI * (400.0 * 30.0 - 256.0 * 26.0);
+    let volume = meshed_volume(&cup);
+    assert!(
+        (volume - expected).abs() <= 0.01 * expected,
+        "a cup of these sizes holds {expected}, not {volume}, \
+         so a face was kept on the wrong side"
+    );
+}
+
+/// A bar whose top is flush with a cylinder's, coplanar over part of its disc.
+///
+/// The two coincident faces share an arc of the disc's rim, which each operand
+/// reads on its own branch of the circle's angle -- `-2.99` on one side and
+/// `3.29` on the other, one period apart. Read literally those are two points,
+/// the arc is recorded as two sections with one incidence each, and the
+/// coincident region is left with a boundary that never closes.
+#[test]
+fn a_bar_flush_with_a_cylinders_top_fuses_across_the_rims_period() {
+    let cylinder = cylinder(20.0, 30.0).expect("cylinder primitive should build");
+    let bar = block_at(frame_at(-30.0, -3.0, 24.0), 12.5, 6.0, 6.0).expect("bar primitive");
+
+    let result = fuse(cylinder, bar).expect("a flush bar should fuse");
+
+    validate_solid_manifold(result.model(), result.key()).expect("the fusion should be manifold");
+    validate_solid_orientation(result.model(), result.key())
+        .expect("the fusion should be outward oriented");
+    assert_eq!(
+        planes_at_height(&result, 30.0).len(),
+        1,
+        "the disc and the bar top are coplanar and adjacent, so they are one face"
+    );
+}
+
+/// A cup with a handle: one Boolean that both bores and notches a cylinder wall.
+///
+/// The handle meets the wall twice. The lower bar imprints a closed loop, which
+/// is a hole, and the upper bar runs out through the rim, which is a chord. Both
+/// land on a ring face, whose loops are each one period long and sample to open
+/// polylines rather than polygons -- so neither the hole's own winding nor the
+/// half of the chorded face it belongs to can be read by counting crossings over
+/// the face's corners. The upper bar's top is flush with the cup's rim besides,
+/// so two coincident faces meet along an arc each operand reads a period apart.
+#[test]
+fn a_handle_that_bores_and_notches_one_wall_fuses_to_a_mug() {
+    let cup = cylinder_at(frame_at(0.0, 0.0, 0.0), 20.0, 30.0).expect("cup body");
+    let lower = block_at(frame_at(-30.0, -3.0, 8.0), 12.5, 6.0, 6.0).expect("lower bar");
+    let upper = block_at(frame_at(-30.0, -3.0, 24.0), 12.5, 6.0, 6.0).expect("upper bar");
+    let spine = block_at(frame_at(-30.0, -3.0, 8.0), 6.0, 6.0, 22.0).expect("handle spine");
+    let handle = fuse(fuse(lower, spine).expect("handle base"), upper).expect("handle");
+
+    let mug = fuse(cup, handle).expect("a handle should fuse onto a cup");
+
+    validate_solid_manifold(mug.model(), mug.key()).expect("the mug should be manifold");
+    validate_solid_orientation(mug.model(), mug.key())
+        .expect("the mug should be outward oriented");
+
+    assert_eq!(
+        mug.solid().faces().len(),
+        10,
+        "a floor, a wall and a rim, plus the seven outward faces of the handle"
+    );
+    let walls = mug
+        .solid()
+        .faces()
+        .into_iter()
+        .filter(|face| matches!(face.surface(), Surface::Cylinder(_)))
+        .map(|face| face.key())
+        .collect::<Vec<_>>();
+    let [wall] = walls[..] else {
+        panic!("the mug keeps exactly one cylindrical wall");
+    };
+    
+    assert_eq!(
+        mug.model().face_unchecked(wall).inner_loops().len(),
+        1,
+        "the lower bar bores the wall once; the upper bar notches its rim instead"
+    );
+    assert_eq!(
+        planes_at_height(&mug, 30.0).len(),
+        1,
+        "the rim and the upper bar top are coplanar and adjacent, so they are one face"
+    );
 }

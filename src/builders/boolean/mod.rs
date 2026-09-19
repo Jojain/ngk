@@ -273,7 +273,7 @@ pub fn compute_boolean_intersections<P: Payload>(
     let observed_network = build_intersection_network(g, &observations, options)?;
     let mut face_imprints = imprint::face_imprints(&observed_network);
     let (mut network, embedding) =
-        graph::finalize_network(&observed_network, tolerances.linear, tolerances.parameter)?;
+        graph::finalize_network(g, &observed_network, tolerances.linear, tolerances.parameter)?;
     graph::close_regions(&mut network, g)?;
     observations.diagnostics.stages.network = stage.lap();
     for imprint in face_imprints.values_mut().flatten() {
@@ -309,7 +309,7 @@ fn build_intersection_network<P: Payload>(
     plan: &IntersectionAccumulator,
     options: BooleanOptions,
 ) -> Result<IntersectionNetwork, BooleanError> {
-    let mut builder = IntersectionNetworkBuilder::new(options.intersections.linear_tolerance);
+    let mut builder = IntersectionNetworkBuilder::new(g, options.intersections.linear_tolerance);
 
     for contact in &plan.contacts {
         match contact {

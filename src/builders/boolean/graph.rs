@@ -1,8 +1,8 @@
 //! Canonical intersection network shared by both Boolean operands.
 
 use crate::geometry::{
-    Curve, Interval, KnotVector, NurbsCurve, NurbsError, Point2, Point3, PointCoincidence,
-    TrimmedCurve, TrimmedCurve2,
+    Curve, Interval, KnotVector, NurbsCurve, NurbsError, Periodicity, Point2, Point3,
+    PointCoincidence, TrimmedCurve, TrimmedCurve2,
 };
 use crate::model::Model;
 use crate::topology::payload::Payload;
@@ -193,15 +193,20 @@ impl IntersectionNetwork {
 }
 
 /// Collects raw intersection observations into one incidence-aware network.
-pub(crate) struct IntersectionNetworkBuilder {
+///
+/// The map is held because an event's edge-local position is a parameter, and
+/// a parameter only says where it is once the curve's period is known.
+pub(crate) struct IntersectionNetworkBuilder<'m, P: Payload> {
     tolerance: f64,
+    map: &'m Model<P>,
     network: IntersectionNetwork,
 }
 
-impl IntersectionNetworkBuilder {
-    pub(crate) fn new(tolerance: f64) -> Self {
+impl<'m, P: Payload> IntersectionNetworkBuilder<'m, P> {
+    pub(crate) fn new(map: &'m Model<P>, tolerance: f64) -> Self {
         Self {
             tolerance,
+            map,
             network: IntersectionNetwork::default(),
         }
     }
@@ -213,6 +218,9 @@ impl IntersectionNetworkBuilder {
         uses: impl IntoIterator<Item = IntersectionEventUse>,
     ) -> IntersectionEventId {
         let uses = uses.into_iter().collect::<Vec<_>>();
+        // Bound before the mutable borrow of the event store, which the
+        // predicate would otherwise overlap with.
+        let (map, tolerance) = (self.map, self.tolerance);
         if let Some((index, event)) =
             self.network
                 .events
@@ -220,14 +228,14 @@ impl IntersectionNetworkBuilder {
                 .enumerate()
                 .find(|(_, event)| {
                     event.point.coincides(point, self.tolerance)
-                        && uses_are_compatible(&event.uses, &uses, self.tolerance)
+                        && uses_are_compatible(map, &event.uses, &uses, tolerance)
                 })
         {
             for event_use in uses {
                 if !event
                     .uses
                     .iter()
-                    .any(|existing| uses_match(*existing, event_use, self.tolerance))
+                    .any(|existing| uses_match(map, *existing, event_use, tolerance))
                 {
                     event.uses.push(event_use);
                 }
@@ -340,7 +348,7 @@ impl IntersectionNetworkBuilder {
         for event_use in end_uses {
             if !both
                 .iter()
-                .any(|existing| uses_match(*existing, event_use, self.tolerance))
+                .any(|existing| uses_match(self.map, *existing, event_use, self.tolerance))
             {
                 both.push(event_use);
             }
@@ -448,7 +456,8 @@ fn same_span_cell(left: &IntersectionSpanUse, right: &IntersectionSpanUse) -> bo
     }
 }
 
-fn uses_are_compatible(
+fn uses_are_compatible<P: Payload>(
+    map: &Model<P>,
     existing: &[IntersectionEventUse],
     incoming: &[IntersectionEventUse],
     tolerance: f64,
@@ -464,20 +473,56 @@ fn uses_are_compatible(
                         IntersectionEventLocation::Face { .. },
                         IntersectionEventLocation::Face { .. }
                     )
-                ) || locations_are_compatible(left.location, right.location, tolerance)
+                ) || locations_are_compatible(
+                    left.location,
+                    right.location,
+                    cell_periodicity(map, left.cell),
+                    tolerance,
+                )
             })
     })
 }
 
-fn uses_match(left: IntersectionEventUse, right: IntersectionEventUse, tolerance: f64) -> bool {
+fn uses_match<P: Payload>(
+    map: &Model<P>,
+    left: IntersectionEventUse,
+    right: IntersectionEventUse,
+    tolerance: f64,
+) -> bool {
     left.side == right.side
         && left.cell == right.cell
-        && locations_are_compatible(left.location, right.location, tolerance)
+        && locations_are_compatible(
+            left.location,
+            right.location,
+            cell_periodicity(map, left.cell),
+            tolerance,
+        )
 }
 
+/// The period an event's cell-local parameter is read modulo.
+///
+/// Only an edge has one: a vertex has no parameter, and a face's `(u, v)` is
+/// compared as a point in its own domain.
+fn cell_periodicity<P: Payload>(map: &Model<P>, cell: BooleanCell) -> Periodicity {
+    let BooleanCell::Edge(edge) = cell else {
+        return Periodicity::None;
+    };
+    map.edge(edge)
+        .map_or(Periodicity::None, |edge| edge.curve().periodicity())
+}
+
+/// Whether two readings of one cell's local position name the same place.
+///
+/// On a periodic curve the difference is taken modulo the period: a point on a
+/// circle is as truly at `-2.99` as at `3.29`, and which branch it is written
+/// on says nothing about where it is. Two producers pick different branches
+/// routinely — a raw `parameter_at` answers on the support's own range, while
+/// a section's span is continued across the seam so it stays monotone — and
+/// reading the gap literally splits one contact point into two events.
 fn locations_are_compatible(
     left: IntersectionEventLocation,
     right: IntersectionEventLocation,
+    periodicity: Periodicity,
     tolerance: f64,
 ) -> bool {
     match (left, right) {
@@ -485,13 +530,23 @@ fn locations_are_compatible(
         (
             IntersectionEventLocation::Edge { parameter: left },
             IntersectionEventLocation::Edge { parameter: right },
-        ) => (left - right).abs() <= tolerance,
+        ) => parameter_gap(left, right, periodicity) <= tolerance,
         (
             IntersectionEventLocation::Face { uv: left },
             IntersectionEventLocation::Face { uv: right },
         ) => (left - right).norm() <= tolerance,
         _ => false,
     }
+}
+
+/// Distance between two parameters of one curve, the short way around a period.
+fn parameter_gap(left: f64, right: f64, periodicity: Periodicity) -> f64 {
+    let gap = (left - right).abs();
+    let Periodicity::Periodic(period) = periodicity else {
+        return gap;
+    };
+    let wrapped = gap.rem_euclid(period);
+    wrapped.min(period - wrapped)
 }
 
 pub(crate) fn vertex_use(side: BooleanSide, cell: BooleanCell) -> IntersectionEventUse {
@@ -540,14 +595,15 @@ const MIN_SPAN_PIECE: f64 = crate::geometry::LINEAR_TOLERANCE * 10.0;
 /// Nodes every span interior at compatible events, repeating until no pass adds an
 /// event. A pass can split a span at a point whose incidences only became
 /// compatible once an earlier pass merged them, so one pass is not a fixed point.
-pub(crate) fn finalize_network(
+pub(crate) fn finalize_network<P: Payload>(
+    map: &Model<P>,
     network: &IntersectionNetwork,
     linear: f64,
     _parameter: f64,
 ) -> Result<(IntersectionNetwork, Vec<Vec<SpanSubdivision>>), BooleanError> {
     let mut events = network.events.clone();
     for _ in 0..MAX_NODING_PASSES {
-        let (builder, mapping) = node_spans(network, &events, linear)?;
+        let (builder, mapping) = node_spans(map, network, &events, linear)?;
         if builder.network.events.len() <= events.len() {
             return Ok((builder.finish()?, mapping));
         }
@@ -561,12 +617,13 @@ pub(crate) fn finalize_network(
 /// One noding pass of the original spans against `events`, which already include
 /// every observed span endpoint, so partial overlaps gain common endpoints before
 /// canonicalization.
-fn node_spans(
+fn node_spans<'m, P: Payload>(
+    map: &'m Model<P>,
     network: &IntersectionNetwork,
     events: &[IntersectionEvent],
     linear: f64,
-) -> Result<(IntersectionNetworkBuilder, Vec<Vec<SpanSubdivision>>), BooleanError> {
-    let mut builder = IntersectionNetworkBuilder::new(linear);
+) -> Result<(IntersectionNetworkBuilder<'m, P>, Vec<Vec<SpanSubdivision>>), BooleanError> {
+    let mut builder = IntersectionNetworkBuilder::new(map, linear);
     for event in events {
         builder.record_event(event.point, event.kind, event.uses.clone());
     }
@@ -586,7 +643,7 @@ fn node_spans(
                 continue;
             }
             let uses = span_event_uses(&span.uses, t);
-            if uses_are_compatible(&event.uses, &uses, linear) {
+            if uses_are_compatible(map, &event.uses, &uses, linear) {
                 parameters.push(t);
             }
         }
