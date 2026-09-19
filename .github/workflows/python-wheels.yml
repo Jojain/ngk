@@ -56,7 +56,7 @@ jobs:
           args: --release --locked --compatibility pypi --out dist
       - name: Verify installed wheel
         run: |
-          python -m pip install --no-deps dist/*.whl
+          python -c "import glob, subprocess, sys; subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-deps', glob.glob('dist/*.whl')[0]])"
           python -c "import ngk; from ngk.modeling import booleans, solids; assert not hasattr(ngk, 'block'); shape = booleans.fuse(solids.block(10, 10, 10), solids.block(5, 5, 5)); assert shape.__class__.__name__ == 'Solid'"
       - uses: actions/upload-artifact@v4
         with:
