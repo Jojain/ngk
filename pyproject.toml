@@ -19,7 +19,6 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Rust",
-    "Topic :: Scientific/Engineering :: CAD",
     "Typing :: Typed",
 ]
 dependencies = []
