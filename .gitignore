@@ -28,7 +28,7 @@ target
 private_doc/
 
 # Local junction onto skills/ — recreate per machine, see AGENTS.md
-.claude/skills
+.claude/
 
 # Visualization frontend
 visualization/node_modules/

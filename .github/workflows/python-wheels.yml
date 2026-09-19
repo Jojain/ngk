@@ -77,7 +77,7 @@ jobs:
         with:
           command: sdist
           rust-toolchain: stable
-          args: --locked --out dist
+          args: --out dist
       - name: Verify source distribution metadata and install
         run: |
           python -m pip install twine
