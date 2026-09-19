@@ -286,6 +286,26 @@ fn capped_sections_loft_to_a_valid_solid() {
 }
 
 #[test]
+fn a_rectangle_and_a_circle_loft_to_a_capped_solid() {
+    let mut model = Model::<StandardPayload>::new();
+    let bottom_profile = square(&mut model, 0.0);
+    let bottom = add_face(&mut model, bottom_profile).unwrap();
+    let top = disk(&mut model, 1.0, 2.0);
+
+    let sections = [capped(&model, bottom), capped(&model, top)];
+    let solid = add_loft(&mut model, &sections, LoftOptions::default()).unwrap();
+
+    // The square's four corners each open a column, and the circular cap is
+    // cut at all four of them: one closed edge becomes four arcs, so the four
+    // walls and two caps meet along a closed ring of eight edges.
+    let shell = model.solid_unchecked(solid).shells().remove(0);
+    assert_eq!(shell.faces().len(), 6);
+    assert_eq!(shell.edges().len(), 12);
+    validate_all_solid_manifolds(&model).expect("a capped loft should be manifold");
+    validate_all_solid_orientations(&model).expect("a capped loft should face outward");
+}
+
+#[test]
 fn a_ruled_loft_is_straight_between_consecutive_sections() {
     let mut model = Model::<StandardPayload>::new();
     let keys = [0.0, 1.0, 3.0]

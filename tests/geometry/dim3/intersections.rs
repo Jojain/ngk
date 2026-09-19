@@ -1013,3 +1013,81 @@ fn crossing_cylinders_return_two_interior_loops_with_complete_coverage() {
         "{results:?}"
     );
 }
+
+/// One lateral wall of a square-to-circle loft, or any image of it.
+///
+/// A straight section at `z = 0` skinned to a quarter arc at `z = 5`. The arc
+/// is two rational quadratic pieces meeting at an interior knot of full
+/// multiplicity, so the patch is geometrically smooth across `u = 0.5` while
+/// its *parameterization* is only C0 there -- exactly the join every rational
+/// circle carries, and the reason a pcurve crossing it has a corner.
+fn arc_join_wall(place: impl Fn(Point3) -> Point3) -> Surface {
+    // A rational quadratic spanning 45 degrees has its off-curve control point
+    // at `radius / cos(22.5)` and carries that cosine as its weight.
+    let cosine = std::f64::consts::FRAC_PI_8.cos();
+    let shoulder = 2.0 * std::f64::consts::FRAC_PI_8.tan();
+    let diagonal = 2.0 * std::f64::consts::FRAC_PI_4.cos();
+    // Degree-2 control points at the Greville abscissae of the knot vector
+    // below, which is what makes this row the straight segment exactly.
+    let straight = [-2.0, -1.0, 0.0, 1.0, 2.0].map(|y| (Point3::new(2.0, y, 0.0), 1.0));
+    let quarter = [
+        (Point3::new(diagonal, -diagonal, 5.0), 1.0),
+        (Point3::new(2.0, -shoulder, 5.0), cosine),
+        (Point3::new(2.0, 0.0, 5.0), 1.0),
+        (Point3::new(2.0, shoulder, 5.0), cosine),
+        (Point3::new(diagonal, diagonal, 5.0), 1.0),
+    ];
+    let (points, weights): (Vec<_>, Vec<_>) = straight
+        .into_iter()
+        .chain(quarter)
+        .map(|(point, weight)| (place(point), weight))
+        .unzip();
+    Surface::Nurbs(
+        NurbsSurface::new(
+            Degree::new(2).unwrap(),
+            Degree::new(1).unwrap(),
+            ControlNet::from_cartesian(points, &weights, 5, 2).unwrap(),
+            KnotVector::new(vec![0.0, 0.0, 0.0, 0.5, 0.5, 1.0, 1.0, 1.0]).unwrap(),
+            KnotVector::new(vec![0.0, 0.0, 1.0, 1.0]).unwrap(),
+        )
+        .unwrap(),
+    )
+}
+
+#[test]
+fn a_branch_crossing_an_arc_join_is_certified() {
+    // The two walls are mirror images across `x = z`, so their intersection
+    // runs over the arc join both of them carry. Fitting that branch against a
+    // basis with no knot at the join converges at first order and never
+    // reaches the fit tolerance however many control points it is given.
+    let upright = arc_join_wall(|point| point);
+    let lying = arc_join_wall(|point| Point3::new(point.z, point.y, point.x));
+
+    let results = upright.intersect_surface(&lying).unwrap();
+
+    let branches = results
+        .intersections()
+        .iter()
+        .filter_map(|intersection| match intersection {
+            SurfaceSurfaceIntersection::Branch(branch) => Some(branch),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let qualities = branches
+        .iter()
+        .map(|branch| branch.quality)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        results.coverage(),
+        &IntersectionCoverage::Complete,
+        "{qualities:?}"
+    );
+    assert_eq!(branches.len(), 1, "{qualities:?}");
+    assert!(branches[0].quality.certified, "{qualities:?}");
+    // The two walls are each other's mirror, so the branch they share lies in
+    // the mirror plane.
+    for index in 0..=32 {
+        let point = branches[0].point_at(Fraction::new(index as f64 / 32.0));
+        assert!((point.x - point.z).abs() <= LINEAR_TOLERANCE, "{point:?}");
+    }
+}

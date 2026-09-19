@@ -5,6 +5,7 @@ use pyo3::types::PyModule;
 use crate::geometry::{Plane, Point3};
 use crate::modeling;
 
+use super::super::geometry::PyPlane;
 use super::super::topology::{PyEdge, PyProfile};
 use super::common::py_profile;
 
@@ -16,8 +17,10 @@ pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[pyfunction]
-pub(crate) fn rectangle(x_size: f64, y_size: f64) -> PyResult<PyProfile> {
-    modeling::profiles::rectangle(Plane::xy(), x_size, y_size)
+#[pyo3(signature = (x_size, y_size, plane=None))]
+pub(crate) fn rectangle(x_size: f64, y_size: f64, plane: Option<PyPlane>) -> PyResult<PyProfile> {
+    let plane = plane.map_or_else(Plane::xy, |plane| plane.plane);
+    modeling::profiles::rectangle(plane, x_size, y_size)
         .map_err(|error| PyValueError::new_err(error.to_string()))
         .and_then(py_profile)
 }

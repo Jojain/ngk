@@ -19,8 +19,10 @@ pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[pyfunction]
-pub(crate) fn rectangle(x_size: f64, y_size: f64) -> PyResult<PyFace> {
-    modeling::faces::rectangle(Plane::xy(), x_size, y_size)
+#[pyo3(signature = (x_size, y_size, plane=None))]
+pub(crate) fn rectangle(x_size: f64, y_size: f64, plane: Option<PyPlane>) -> PyResult<PyFace> {
+    let plane = plane.map_or_else(Plane::xy, |plane| plane.plane);
+    modeling::faces::rectangle(plane, x_size, y_size)
         .map_err(|error| PyValueError::new_err(error.to_string()))
         .and_then(py_face)
 }
@@ -37,15 +39,23 @@ pub(crate) fn polygon(points: Vec<(f64, f64, f64)>) -> PyResult<PyFace> {
 }
 
 #[pyfunction]
-pub(crate) fn circle(plane: PyPlane, radius: f64) -> PyResult<PyFace> {
-    modeling::faces::circle(plane.plane, radius)
+#[pyo3(signature = (radius, plane=None))]
+pub(crate) fn circle(radius: f64, plane: Option<PyPlane>) -> PyResult<PyFace> {
+    let plane = plane.map_or_else(Plane::xy, |plane| plane.plane);
+    modeling::faces::circle(plane, radius)
         .map_err(|error| PyValueError::new_err(error.to_string()))
         .and_then(py_face)
 }
 
 #[pyfunction]
-pub(crate) fn annulus(plane: PyPlane, outer_radius: f64, inner_radius: f64) -> PyResult<PyFace> {
-    modeling::faces::annulus(plane.plane, outer_radius, inner_radius)
+#[pyo3(signature = (outer_radius, inner_radius, plane=None))]
+pub(crate) fn annulus(
+    outer_radius: f64,
+    inner_radius: f64,
+    plane: Option<PyPlane>,
+) -> PyResult<PyFace> {
+    let plane = plane.map_or_else(Plane::xy, |plane| plane.plane);
+    modeling::faces::annulus(plane, outer_radius, inner_radius)
         .map_err(|error| PyValueError::new_err(error.to_string()))
         .and_then(py_face)
 }

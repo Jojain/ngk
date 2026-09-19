@@ -28,7 +28,7 @@ use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
-use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, VertexKey};
 use crate::topology::vertex::Vertex;
 use crate::topology::{ModelEdit, ModelEditError};
 use thiserror::Error;
@@ -89,6 +89,8 @@ pub enum FaceImprintSplitError {
         #[source]
         source: ModelEditError,
     },
+    #[error("imprint {imprint} of face {face:?} was not realized by any section")]
+    ImprintNotRealized { face: FaceKey, imprint: usize },
     #[error("failed to convert imprint curve geometry")]
     ImprintCurveConversion(#[from] NurbsError),
     #[error("failed to intersect face imprint pcurves")]
@@ -507,6 +509,13 @@ struct IncidentFacePcurve {
     fraction: Fraction,
 }
 
+/// A face pcurve turned to begin where a closed edge was just marked.
+struct RebasedFacePcurve {
+    face: FaceKey,
+    dart: Dart,
+    pcurve: TrimmedCurve2,
+}
+
 /// Adds a planar face bounded by an existing profile loop.
 ///
 /// The profile must be closed and planar. Its plane becomes the supporting
@@ -603,18 +612,25 @@ pub(crate) fn split_face_edge_staged<P: Payload>(
 ) -> Result<EdgeSplit, FaceEdgeSplitError> {
     let boundary_dart = face_edge_dart(edit, face, edge)?;
     let reversed = closed_boundary_curve_reversed(edit, face, edge, boundary_dart)?;
-    // Cutting an unmarked edge marks it and leaves one edge, so each face using
-    // it keeps one pcurve, untouched: a mark says where the edge now begins, and
-    // a pcurve says where the edge *is*, which the mark does not move.
+    // Cutting an unmarked edge marks it and leaves one edge, so no pcurve is
+    // cut in two. Each incident pcurve is turned to begin at the mark instead,
+    // because that is where the marked edge's own span now begins.
     let separates = !matches!(edit.edge_unchecked(edge), Edge::Unmarked(_));
     let pcurves = separates
         .then(|| incident_face_pcurves(edit, edge, parameter))
+        .transpose()?
+        .unwrap_or_default();
+    let rebased = (!separates)
+        .then(|| rebased_face_pcurves(edit.model(), edge, parameter))
         .transpose()?
         .unwrap_or_default();
 
     let split = split_face_boundary_edge(edit, edge, parameter, reversed)?;
     for pcurve in pcurves {
         assign_split_pcurves(edit, pcurve)?;
+    }
+    for pcurve in rebased {
+        assign_rebased_pcurve(edit, pcurve)?;
     }
     Ok(split)
 }
@@ -677,14 +693,68 @@ pub fn split_face_by_imprints_staged<P: Payload>(
         .map(|imprint| imprint.pcurve.clone())
         .collect::<Vec<_>>();
     let graph = FaceImprintGraph::from_curves(&pcurves)?;
-    split_imprint_boundary_endpoints(edit, face, imprints)?;
+    // Cut for the imprints as handed in, so a corner is placed once, and read
+    // back against the open ones the walk uses: a periodic image is the same
+    // imprint written elsewhere in the domain, and lands on the same vertex.
+    let placed = split_imprint_boundary_endpoints(edit, face, imprints)?;
+    let open_placed = open_indices
+        .iter()
+        .map(|index| placed[*index])
+        .collect::<Vec<_>>();
     let mut splits = add_closed_curve_imprint_loops(edit, face, &closed_imprints)?;
     remap_section_indices(&mut splits, &closed_indices);
     let mut open_splits = add_closed_imprint_loops(edit, face, &graph, &open_imprints)?;
-    open_splits.extend(split_open_imprints(edit, vec![face], &open_imprints)?);
+    open_splits.extend(split_open_imprints(
+        edit,
+        vec![face],
+        &open_imprints,
+        &open_placed,
+    )?);
     remap_section_indices(&mut open_splits, &open_indices);
     splits.extend(open_splits);
+    check_imprints_realized(face, &splits, &graph, &closed_indices, &open_indices)?;
     Ok(splits)
+}
+
+/// Refuses a split that left an imprint with nothing to show for it.
+///
+/// An imprint the splitter cannot place is a cut the caller asked for and did
+/// not get, and returning the other cuts alone hands back a face that is wrong
+/// rather than incomplete — the Boolean that asked for it then fails much later,
+/// where the span it cannot sew says nothing about the imprint that went
+/// missing here.
+///
+/// An imprint that contributed no graph edge is *not* missing: the graph drops a
+/// fragment that duplicates one already recorded, so a chord handed in twice,
+/// or in both directions, is realized once and the copy has nothing left to
+/// realize.
+fn check_imprints_realized(
+    face: FaceKey,
+    splits: &[FaceImprintSplit],
+    graph: &FaceImprintGraph,
+    closed_indices: &[usize],
+    open_indices: &[usize],
+) -> Result<(), FaceImprintSplitError> {
+    let realized = splits
+        .iter()
+        .flat_map(|split| &split.sections)
+        .map(|section| section.imprint)
+        .collect::<HashSet<_>>();
+    let contributing = graph
+        .edges()
+        .iter()
+        .filter_map(|edge| open_indices.get(edge.source_curve).copied())
+        .collect::<HashSet<_>>();
+    let mut expected = closed_indices
+        .iter()
+        .copied()
+        .chain(contributing)
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+    match expected.into_iter().find(|index| !realized.contains(index)) {
+        Some(imprint) => Err(FaceImprintSplitError::ImprintNotRealized { face, imprint }),
+        None => Ok(()),
+    }
 }
 
 /// Rewrites imprints onto one continuous image of a periodic face's domain.
@@ -779,6 +849,7 @@ fn split_open_imprints<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     mut active_faces: Vec<FaceKey>,
     imprints: &[FaceImprint],
+    placed: &[[Option<VertexKey>; 2]],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
     let mut splits = Vec::new();
     loop {
@@ -786,7 +857,7 @@ fn split_open_imprints<P: Payload>(
         let mut progressed = false;
 
         for face in active_faces {
-            let Some(split) = split_one_face_by_imprints(edit, face, imprints)? else {
+            let Some(split) = split_one_face_by_imprints(edit, face, imprints, placed)? else {
                 next_faces.push(face);
                 continue;
             };
@@ -805,26 +876,25 @@ fn split_open_imprints<P: Payload>(
     Ok(splits)
 }
 
+/// Cuts the boundary at every imprint end, returning the corner each became.
+///
+/// The result is indexed like `imprints`, each entry holding the corner for the
+/// imprint's start and for its end. An endpoint that meets no boundary has none.
 fn split_imprint_boundary_endpoints<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
-) -> Result<(), FaceImprintSplitError> {
-    let endpoints = imprints
-        .iter()
-        .flat_map(|imprint| {
-            [
-                imprint.pcurve.point_at(Fraction::new(0.0)),
-                imprint.pcurve.point_at(Fraction::new(1.0)),
-            ]
-        })
-        .collect::<Vec<_>>();
-
-    for endpoint in endpoints {
-        split_boundary_at_uv(edit, face, endpoint)?;
+) -> Result<Vec<[Option<VertexKey>; 2]>, FaceImprintSplitError> {
+    let mut placed = Vec::with_capacity(imprints.len());
+    for imprint in imprints {
+        let mut corners = [None, None];
+        for (slot, fraction) in [0.0, 1.0].into_iter().enumerate() {
+            let uv = imprint.pcurve.point_at(Fraction::new(fraction));
+            corners[slot] = split_boundary_at_uv(edit, face, uv)?;
+        }
+        placed.push(corners);
     }
-
-    Ok(())
+    Ok(placed)
 }
 
 fn add_closed_curve_imprint_loops<P: Payload>(
@@ -1700,18 +1770,23 @@ fn signed_area(uvs: &[Point2]) -> f64 {
         .sum::<f64>()
 }
 
+/// Cuts the boundary where an imprint meets it, and says which corner that is.
+///
+/// The corner is returned rather than left to be found again: the caller has to
+/// know which vertex this endpoint became, and asking the boundary afterwards
+/// puts it back to comparing a projected corner with a traced endpoint.
 fn split_boundary_at_uv<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     uv: Point2,
-) -> Result<(), FaceImprintSplitError> {
-    let boundary_uvs = face_boundary_uvs(edit, face)?;
-    if snap_boundary_corner(&boundary_uvs, uv).is_some() {
-        return Ok(());
+) -> Result<Option<VertexKey>, FaceImprintSplitError> {
+    let boundary = face_boundary_edges(edit, face)?;
+    if let Some(index) = snap_boundary_corner_in(&boundary, uv) {
+        return Ok(boundary[index].vertex);
     }
 
     let Some(target) = boundary_edge_at_uv(edit, face, uv)? else {
-        return Ok(());
+        return Ok(None);
     };
 
     let edge = Edge::new(edit, target.edge);
@@ -1735,9 +1810,12 @@ fn split_boundary_at_uv<P: Payload>(
     // fraction is of is the one the parameter was just brought onto.
     let parameter = interval.fraction_of(parameter);
     match split_face_edge_staged(edit, face, target.edge, parameter) {
-        Ok(_)
-        | Err(FaceEdgeSplitError::EdgeSplitFailed(EdgeSplitError::DegenerateSplit { .. })) => {
-            Ok(())
+        Ok(split) => Ok(Some(split.vertex())),
+        // A cut that lands on an end of the edge adds no vertex because one is
+        // already there, so the corner is the one the boundary now reports.
+        Err(FaceEdgeSplitError::EdgeSplitFailed(EdgeSplitError::DegenerateSplit { .. })) => {
+            let boundary = face_boundary_edges(edit, face)?;
+            Ok(snap_boundary_corner_in(&boundary, uv).and_then(|index| boundary[index].vertex))
         }
         Err(error) => Err(error.into()),
     }
@@ -1747,6 +1825,7 @@ fn split_one_face_by_imprints<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
+    placed: &[[Option<VertexKey>; 2]],
 ) -> Result<Option<FaceImprintSplit>, FaceImprintSplitError> {
     let face_attr = edit
         .face_attr(face)
@@ -1758,7 +1837,7 @@ fn split_one_face_by_imprints<P: Payload>(
     let bounding = bounding_loops(old_face.loops());
     for chorded in bounding {
         let boundary = loop_boundary_edges(edit, face, chorded.seed())?;
-        let Some(cut) = FaceImprintCut::from_chain(imprints, &boundary)? else {
+        let Some(cut) = FaceImprintCut::from_chain(imprints, &boundary, placed)? else {
             continue;
         };
         let split = apply_face_chord_split(edit, face, old_face, chorded, &cut)?;
@@ -1812,19 +1891,20 @@ impl FaceImprintCut {
     /// Follows a nonbranching path from one boundary corner to another.
     fn from_chain(
         imprints: &[FaceImprint],
-        boundary: &[(Point2, TrimmedCurve2)],
+        boundary: &[BoundaryCorner],
+        placed: &[[Option<VertexKey>; 2]],
     ) -> Result<Option<Self>, NurbsError> {
         for (index, imprint) in imprints.iter().enumerate() {
             for reversed in [false, true] {
-                let uv = imprint.pcurve.point_at(if reversed {
-                    Fraction::new(1.0)
-                } else {
-                    Fraction::new(0.0)
-                });
-                let Some(start) = snap_boundary_corner_in(boundary, uv) else {
+                let slot = usize::from(reversed);
+                let uv = imprint
+                    .pcurve
+                    .point_at(Fraction::new(if reversed { 1.0 } else { 0.0 }));
+                let Some(start) = imprint_endpoint_corner(boundary, placed[index][slot], uv) else {
                     continue;
                 };
-                if let Some(cut) = Self::follow(imprints, boundary, start, index, reversed)? {
+                if let Some(cut) = Self::follow(imprints, boundary, placed, start, index, reversed)?
+                {
                     return Ok(Some(cut));
                 }
             }
@@ -1835,7 +1915,8 @@ impl FaceImprintCut {
     /// Stops at boundary vertices or ambiguous junctions rather than inventing a path.
     fn follow(
         imprints: &[FaceImprint],
-        boundary: &[(Point2, TrimmedCurve2)],
+        boundary: &[BoundaryCorner],
+        placed: &[[Option<VertexKey>; 2]],
         start: usize,
         index: usize,
         reversed: bool,
@@ -1855,7 +1936,8 @@ impl FaceImprintCut {
             };
             let end_uv = imprint.pcurve.point_at(Fraction::new(1.0));
             sections.push((index, reversed, imprint));
-            if let Some(end) = snap_boundary_corner_in(boundary, end_uv) {
+            let end_slot = usize::from(!reversed);
+            if let Some(end) = imprint_endpoint_corner(boundary, placed[index][end_slot], end_uv) {
                 return Ok(
                     valid_chord(start, end, boundary, &sections).then_some(Self {
                         start_corner: start,
@@ -1900,7 +1982,7 @@ fn face_boundary_uvs<P: Payload>(
 ) -> Result<Vec<Point2>, FaceImprintSplitError> {
     Ok(face_boundary_edges(g, face)?
         .into_iter()
-        .map(|(uv, _)| uv)
+        .map(|corner| corner.uv)
         .collect())
 }
 
@@ -1912,7 +1994,7 @@ fn face_boundary_uvs<P: Payload>(
 fn face_boundary_edges<P: Payload>(
     g: &Model<P>,
     face: FaceKey,
-) -> Result<Vec<(Point2, TrimmedCurve2)>, FaceImprintSplitError> {
+) -> Result<Vec<BoundaryCorner>, FaceImprintSplitError> {
     let face_view = g
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
@@ -1934,11 +2016,26 @@ fn face_boundary_edges<P: Payload>(
 }
 
 /// Each corner of the loop seeded at `loop_dart`, with the pcurve leaving it.
+/// One corner of a face's bounding loop, with the pcurve leaving it.
+///
+/// The vertex is carried rather than re-found from `uv`, because the two are
+/// derived by different routes: `uv` projects the vertex onto the surface,
+/// while an imprint endpoint comes from the solver that traced the contact, and
+/// they agree only to that solver's residual. Identity is what an imprint is
+/// matched by wherever the splitter placed the corner itself; the position is
+/// what is left for corners it did not place.
+#[derive(Clone)]
+struct BoundaryCorner {
+    uv: Point2,
+    pcurve: TrimmedCurve2,
+    vertex: Option<VertexKey>,
+}
+
 fn loop_boundary_edges<P: Payload>(
     g: &Model<P>,
     face: FaceKey,
     loop_dart: Dart,
-) -> Result<Vec<(Point2, TrimmedCurve2)>, FaceImprintSplitError> {
+) -> Result<Vec<BoundaryCorner>, FaceImprintSplitError> {
     let face_view = g
         .face(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
@@ -1965,12 +2062,18 @@ fn loop_boundary_edges<P: Payload>(
             // -- so reading the pcurve would put the corner in the wrong place.
             // An unmarked loop has no corner at all, and the pcurve's start is
             // then the only place to begin the walk from.
-            let uv = Vertex::from_dart(g, dart)
+            let corner = Vertex::from_dart(g, dart);
+            let uv = corner
+                .as_ref()
                 .map(|vertex| *vertex.point())
                 .and_then(|point| face_view.surface().param_at(point).ok())
                 .map(|uv| periodic_image_near_pcurve(face_view.surface(), &pcurve, uv))
                 .unwrap_or_else(|| pcurve.point_at(Fraction::new(0.0)));
-            Ok((uv, pcurve))
+            Ok(BoundaryCorner {
+                uv,
+                pcurve,
+                vertex: corner.map(|vertex| vertex.key()),
+            })
         })
         .collect()
 }
@@ -2036,16 +2139,39 @@ fn boundary_edge_key<P: Payload>(
 }
 
 /// [`snap_boundary_corner`] over corners paired with their outgoing pcurves.
-fn snap_boundary_corner_in(boundary: &[(Point2, TrimmedCurve2)], uv: Point2) -> Option<usize> {
+fn snap_boundary_corner_in(boundary: &[BoundaryCorner], uv: Point2) -> Option<usize> {
     boundary
         .iter()
         .enumerate()
-        .filter_map(|(index, (corner, _))| {
-            let distance = (*corner - uv).norm();
+        .filter_map(|(index, corner)| {
+            let distance = (corner.uv - uv).norm();
             (distance <= LINEAR_TOLERANCE).then_some((distance, index))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, index)| index)
+}
+
+/// The corner `vertex` is, by identity rather than by position.
+fn corner_of_vertex(boundary: &[BoundaryCorner], vertex: VertexKey) -> Option<usize> {
+    boundary
+        .iter()
+        .position(|corner| corner.vertex == Some(vertex))
+}
+
+/// Where an imprint endpoint meets the boundary.
+///
+/// The vertex the splitter cut for that endpoint settles it outright; a corner
+/// it did not place is left to the position it reports. Snapping by position
+/// alone is what dropped a chord whose endpoint sat a solver residual away from
+/// the corner cut for it, and left the Boolean a span one side never imprinted.
+fn imprint_endpoint_corner(
+    boundary: &[BoundaryCorner],
+    placed: Option<VertexKey>,
+    uv: Point2,
+) -> Option<usize> {
+    placed
+        .and_then(|vertex| corner_of_vertex(boundary, vertex))
+        .or_else(|| snap_boundary_corner_in(boundary, uv))
 }
 
 fn snap_boundary_corner(boundary_uvs: &[Point2], uv: Point2) -> Option<usize> {
@@ -2071,7 +2197,7 @@ fn snap_boundary_corner(boundary_uvs: &[Point2], uv: Point2) -> Option<usize> {
 fn valid_chord(
     start: usize,
     end: usize,
-    boundary: &[(Point2, TrimmedCurve2)],
+    boundary: &[BoundaryCorner],
     sections: &[(usize, bool, FaceImprint)],
 ) -> bool {
     boundary.len() >= 2 && start != end && !retraces_boundary(boundary, sections)
@@ -2082,16 +2208,16 @@ fn valid_chord(
 /// This is what bounds the splitter's work: cutting a face turns the chain into
 /// boundary edges of both fragments, so the same chain is refused on everything
 /// it has already produced.
-fn retraces_boundary(
-    boundary: &[(Point2, TrimmedCurve2)],
-    sections: &[(usize, bool, FaceImprint)],
-) -> bool {
+fn retraces_boundary(boundary: &[BoundaryCorner], sections: &[(usize, bool, FaceImprint)]) -> bool {
     sections.iter().all(|(_, _, imprint)| {
         [0.25, 0.5, 0.75].iter().all(|fraction| {
             let uv = imprint.pcurve.point_at(Fraction::new(*fraction));
-            boundary
-                .iter()
-                .any(|(_, pcurve)| pcurve.try_parameter_at(uv, LINEAR_TOLERANCE).is_some())
+            boundary.iter().any(|corner| {
+                corner
+                    .pcurve
+                    .try_parameter_at(uv, LINEAR_TOLERANCE)
+                    .is_some()
+            })
         })
     })
 }
@@ -2738,19 +2864,23 @@ fn closed_boundary_curve_reversed<P: Payload>(
     let pcurve = face_view
         .pcurve(dart)
         .ok_or(FaceEdgeSplitError::MissingPcurve { face, dart })?;
-    let curve = g
-        .edge_attr(edge)
+    // Against the edge's own span, not the support's extent: a marked closed
+    // edge begins at its corner, which is not in general where the support's
+    // domain starts. Reading the support would compare the sample with two
+    // points it is nowhere near, and a closed span's ends are the one place
+    // the two directions are told apart.
+    let reference = g
+        .edge(edge)
         .ok_or(FaceEdgeSplitError::EdgeSplitFailed(
             EdgeSplitError::MissingEdge { edge },
         ))?
-        .curve
-        .to_nurbs()?;
-    let domain = curve.domain();
+        .parameter_interval();
+    let curve = edge_view.curve();
     let fraction = 1.0e-4;
     let sample_uv = pcurve.point_at(Fraction::new(fraction));
     let sample = face_view.point_at(sample_uv.x, sample_uv.y);
-    let forward = curve.point_at(domain.start.value() + domain.length() * fraction);
-    let reverse = curve.point_at(domain.end.value() - domain.length() * fraction);
+    let forward = curve.point_at(reference.at(Fraction::new(fraction)));
+    let reverse = curve.point_at(reference.at(Fraction::new(1.0 - fraction)));
     let against = (sample - reverse).norm_squared() < (sample - forward).norm_squared();
 
     // A closed boundary starts and ends at one point, so only its direction
@@ -2764,18 +2894,30 @@ fn closed_boundary_curve_reversed<P: Payload>(
     })
 }
 
-fn incident_face_pcurves<P: Payload>(
+/// Where a fraction of an edge's own span falls in model space.
+fn edge_point_at<P: Payload>(
     g: &Model<P>,
     edge: EdgeKey,
     parameter: Fraction,
-) -> Result<Vec<IncidentFacePcurve>, FaceEdgeSplitError> {
+) -> Result<Point3, FaceEdgeSplitError> {
     let edge_view = g.edge(edge).ok_or(FaceEdgeSplitError::EdgeSplitFailed(
         EdgeSplitError::MissingEdge { edge },
     ))?;
-    let split_point = edge_view
+    Ok(edge_view
         .curve()
-        .point_at(edge_view.parameter_interval().at(parameter));
-    // A seam has two boundary occurrences on one face, each with its own UV curve.
+        .point_at(edge_view.parameter_interval().at(parameter)))
+}
+
+/// Every boundary dart a face uses `edge` at.
+///
+/// A seam has two boundary occurrences on one face, each with its own UV curve.
+fn edge_face_occurrences<P: Payload>(
+    g: &Model<P>,
+    edge: EdgeKey,
+) -> Result<HashSet<(FaceKey, Dart)>, FaceEdgeSplitError> {
+    let edge_view = g.edge(edge).ok_or(FaceEdgeSplitError::EdgeSplitFailed(
+        EdgeSplitError::MissingEdge { edge },
+    ))?;
     let mut occurrences = HashSet::new();
     for face in edge_view.faces() {
         for boundary in g.face_unchecked(face.key()).edges() {
@@ -2784,7 +2926,16 @@ fn incident_face_pcurves<P: Payload>(
             }
         }
     }
-    occurrences
+    Ok(occurrences)
+}
+
+fn incident_face_pcurves<P: Payload>(
+    g: &Model<P>,
+    edge: EdgeKey,
+    parameter: Fraction,
+) -> Result<Vec<IncidentFacePcurve>, FaceEdgeSplitError> {
+    let split_point = edge_point_at(g, edge, parameter)?;
+    edge_face_occurrences(g, edge)?
         .into_iter()
         .map(|(face, dart)| {
             let face_view = g
@@ -2806,6 +2957,86 @@ fn incident_face_pcurves<P: Payload>(
             })
         })
         .collect()
+}
+
+/// Turns each face pcurve of a closed edge to begin where a mark lands.
+///
+/// A marked closed edge derives its span from its corner, so the span begins at
+/// the mark rather than wherever the support's own domain does. A pcurve has no
+/// corner to derive from and carries its own span, so it has to be turned with
+/// it: left where it was it would run the same closed curve from a different
+/// starting point, and every later cut would read the wrong arc of it.
+fn rebased_face_pcurves<P: Payload>(
+    g: &Model<P>,
+    edge: EdgeKey,
+    parameter: Fraction,
+) -> Result<Vec<RebasedFacePcurve>, FaceEdgeSplitError> {
+    let mark = edge_point_at(g, edge, parameter)?;
+    edge_face_occurrences(g, edge)?
+        .into_iter()
+        .filter_map(|(face, dart)| rebased_face_pcurve(g, face, dart, mark).transpose())
+        .collect()
+}
+
+/// One face's pcurve for a closed edge, turned to begin at `mark`.
+///
+/// `None` where there is nothing to turn: a pcurve that does not close in
+/// parameter space runs between two distinct ends — a seam crossing, where the
+/// face's own domain is what pins them — and only a closed one is free to say
+/// where it starts.
+fn rebased_face_pcurve<P: Payload>(
+    g: &Model<P>,
+    face: FaceKey,
+    dart: Dart,
+    mark: Point3,
+) -> Result<Option<RebasedFacePcurve>, FaceEdgeSplitError> {
+    let face_view = g
+        .face(face)
+        .ok_or(FaceEdgeSplitError::MissingFace { face })?;
+    let pcurve = face_view
+        .pcurve(dart)
+        .ok_or(FaceEdgeSplitError::MissingPcurve { face, dart })?;
+    if !pcurve.is_closed() {
+        return Ok(None);
+    }
+    let surface = face_view.surface();
+    let uv = periodic_image_near_pcurve(surface, &pcurve, surface.param_at(mark)?);
+    if !pcurve.contains(uv, LINEAR_TOLERANCE) {
+        return Err(FaceEdgeSplitError::SplitPointNotOnPcurve { face, dart });
+    }
+    // The span keeps its length and direction and only moves its ends, so the
+    // turned pcurve still runs the whole closed curve once.
+    let start = pcurve.native_parameter_at(uv);
+    let span = Interval::new(start, start + pcurve.interval().delta());
+    Ok(Some(RebasedFacePcurve {
+        face,
+        dart: stored_pcurve_dart(g, face, dart).unwrap_or(dart),
+        pcurve: TrimmedCurve2::new(pcurve.into_curve(), span),
+    }))
+}
+
+/// The dart a face keeps a boundary occurrence's pcurve under.
+///
+/// A pcurve is stored once per boundary occurrence but looked up from any of
+/// the darts that occurrence covers, so replacing one means writing back to the
+/// key it already lives at rather than adding a second entry beside it.
+fn stored_pcurve_dart<P: Payload>(g: &Model<P>, face: FaceKey, dart: Dart) -> Option<Dart> {
+    let attr = g.face_attr(face)?;
+    [dart, g.alpha(Dim::Zero, dart), g.alpha(Dim::Two, dart)]
+        .into_iter()
+        .find(|candidate| attr.pcurves.contains_key(candidate))
+}
+
+/// Stores a turned pcurve back on the face it belongs to.
+fn assign_rebased_pcurve<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    rebased: RebasedFacePcurve,
+) -> Result<(), FaceEdgeSplitError> {
+    let face_attr = edit
+        .face_attr_mut(rebased.face)
+        .ok_or(FaceEdgeSplitError::MissingFace { face: rebased.face })?;
+    face_attr.pcurves.insert(rebased.dart, rebased.pcurve);
+    Ok(())
 }
 
 fn periodic_image_near_pcurve(surface: &Surface, pcurve: &TrimmedCurve2, mut uv: Point2) -> Point2 {

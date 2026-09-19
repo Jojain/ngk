@@ -238,6 +238,12 @@ fn greville(knots: &KnotVector, degree: Degree, control: usize) -> f64 {
 ///
 /// Control count grows only until the 3D curve and both pcurves jointly meet the
 /// surface-intersection fit tolerance. Endpoints remain exact constraints.
+///
+/// Every round carries the breaks the two surfaces impose and refines only
+/// between them, and the best round wins rather than the last: a control count
+/// dense enough to leave a knot span without a sample has no unique least
+/// squares solution, and the one solved for there can be worse than the
+/// coarser fit before it.
 fn approximate_open_branch(
     a: &Surface,
     b: &Surface,
@@ -245,15 +251,22 @@ fn approximate_open_branch(
     options: IntersectionOptions,
 ) -> Result<SynchronizedNurbsFit, IntersectionError> {
     let maximum = samples.points.len().min(MAX_FIT_CONTROL_POINTS);
+    let degree = Degree::new(3.min(maximum.saturating_sub(1)).max(1))?;
+    let breaks = fit_breaks(a, b, &samples, degree);
     let mut control_count = samples.points.len().min(INITIAL_FIT_CONTROL_POINTS);
     let target_tolerance = options.fit_tolerance.min(options.residual_tolerance);
+    let mut best: Option<(f64, SynchronizedNurbsFit)> = None;
     loop {
         let fitted = least_squares_synchronized(
             samples.points,
             samples.uv_a,
             samples.uv_b,
             samples.parameters,
-            control_count,
+            FitBasis {
+                degree,
+                control_count,
+                breaks: &breaks,
+            },
         )?;
         let error = validate_fit(
             a,
@@ -267,11 +280,242 @@ fn approximate_open_branch(
             samples.states,
             samples.parameters,
         );
+        if best.as_ref().is_none_or(|(lowest, _)| error < *lowest) {
+            best = Some((error, fitted));
+        }
         if error <= target_tolerance || control_count == maximum {
-            return Ok(fitted);
+            return Ok(best.expect("a round has been recorded").1);
         }
         control_count = (control_count * 2).min(maximum);
     }
+}
+
+/// The basis one fitting round solves against.
+struct FitBasis<'a> {
+    degree: Degree,
+    /// Control points the round asks for, the breaks' own knots included.
+    control_count: usize,
+    breaks: &'a [FitBreak],
+}
+
+/// A branch parameter the fit has to be free to lose smoothness at, and the
+/// knot multiplicity that buys it.
+struct FitBreak {
+    parameter: f64,
+    multiplicity: usize,
+}
+
+/// The branch parameters where the fitted triple has to be allowed a corner.
+///
+/// A circle written as rational arcs joins its pieces at a knot of full
+/// multiplicity, so a surface skinned through one is geometrically smooth
+/// across that knot line while its *parameterization* is only C0 there. A
+/// pcurve crossing it has a corner however smooth the 3D curve is, and one
+/// B-spline basis carrying no knot at that parameter approximates a corner to
+/// first order whatever control count it is given -- the error halves when the
+/// count doubles instead of dropping by sixteen, so such a branch never
+/// reaches the fit tolerance and the Boolean that asked for it aborts.
+/// Answering the surface's own break with a knot of the fit's degree gives the
+/// basis that corner back.
+fn fit_breaks(
+    a: &Surface,
+    b: &Surface,
+    samples: &BranchSamples<'_>,
+    degree: Degree,
+) -> Vec<FitBreak> {
+    let mut breaks = Vec::new();
+    for (surface, uv) in [(a, samples.uv_a), (b, samples.uv_b)] {
+        let (along_u, along_v) = parametric_breaks(surface);
+        for (coordinates, values) in [
+            (uv_coordinates(uv, 0), along_u),
+            (uv_coordinates(uv, 1), along_v),
+        ] {
+            for (value, continuity) in values {
+                let multiplicity = degree.get().saturating_sub(continuity);
+                if multiplicity == 0 {
+                    continue;
+                }
+                for parameter in crossings(&coordinates, samples.parameters, value) {
+                    breaks.push(FitBreak {
+                        parameter,
+                        multiplicity,
+                    });
+                }
+            }
+        }
+    }
+    let mut merged = merge_breaks(breaks, samples.parameters);
+    // No round can ask for more control points than there are samples to
+    // determine them by, so a branch too short to carry every break keeps the
+    // ones it has room for and is reported uncertified if that is not enough.
+    while merged.iter().map(|item| item.multiplicity).sum::<usize>() + degree.get() + 1
+        > samples.points.len()
+    {
+        merged.pop();
+    }
+    merged
+}
+
+/// One coordinate of a pcurve's samples, `0` for `u` and `1` for `v`.
+fn uv_coordinates(uv: &[Point2], axis: usize) -> Vec<f64> {
+    uv.iter()
+        .map(|point| if axis == 0 { point.x } else { point.y })
+        .collect()
+}
+
+/// Orders breaks and folds together the ones a single knot can serve.
+///
+/// Two surfaces can break at the same place, and two knots closer together
+/// than the samples are leave a span with nothing to condition it, so
+/// neighbouring breaks become one carrying the larger multiplicity. A break
+/// within one sample of an end is dropped: a clamped fit already ends in a
+/// knot of full multiplicity, so the corner is representable there already.
+fn merge_breaks(mut breaks: Vec<FitBreak>, parameters: &[f64]) -> Vec<FitBreak> {
+    let spacing = parameters
+        .windows(2)
+        .map(|window| window[1] - window[0])
+        .fold(0.0_f64, f64::max)
+        .max(f64::MIN_POSITIVE);
+    breaks.retain(|item| item.parameter > spacing && item.parameter < 1.0 - spacing);
+    breaks.sort_by(|first, second| first.parameter.total_cmp(&second.parameter));
+    let mut merged: Vec<FitBreak> = Vec::with_capacity(breaks.len());
+    for item in breaks {
+        match merged.last_mut() {
+            Some(last) if item.parameter - last.parameter <= spacing => {
+                last.multiplicity = last.multiplicity.max(item.multiplicity);
+            }
+            _ => merged.push(item),
+        }
+    }
+    merged
+}
+
+/// The branch parameters at which `values` crosses `target`.
+fn crossings(values: &[f64], parameters: &[f64], target: f64) -> Vec<f64> {
+    let mut found = Vec::new();
+    for index in 1..values.len() {
+        let (before, after) = (values[index - 1], values[index]);
+        if (before < target) == (after < target) {
+            continue;
+        }
+        let span = after - before;
+        let fraction = if span == 0.0 {
+            0.5
+        } else {
+            ((target - before) / span).clamp(0.0, 1.0)
+        };
+        found.push(parameters[index - 1] + fraction * (parameters[index] - parameters[index - 1]));
+    }
+    found
+}
+
+/// A knot value in a support's own parameter space, with the order of
+/// continuity the support keeps across it.
+type ParametricBreak = (f64, usize);
+
+/// Where a surface's own parameterization stops being smooth, per direction.
+///
+/// A caller reads the reported continuity to ask for exactly the freedom the
+/// surface loses. An analytic support reports nothing: its parameterization is
+/// smooth over its whole domain.
+fn parametric_breaks(surface: &Surface) -> (Vec<ParametricBreak>, Vec<ParametricBreak>) {
+    match surface {
+        Surface::Nurbs(nurbs) => (
+            knot_breaks(nurbs.knots_u(), nurbs.degree_u()),
+            knot_breaks(nurbs.knots_v(), nurbs.degree_v()),
+        ),
+        // Both walk their generating curve in `u` and are smooth in `v`.
+        Surface::Ruled(ruled) => (curve_breaks(ruled.curve()), Vec::new()),
+        Surface::Revolution(revolution) => (curve_breaks(revolution.curve()), Vec::new()),
+        Surface::Plane(_)
+        | Surface::Cylinder(_)
+        | Surface::Sphere(_)
+        | Surface::Cone(_)
+        | Surface::Torus(_) => (Vec::new(), Vec::new()),
+    }
+}
+
+/// The breaks a generating curve hands to the surface built on it.
+fn curve_breaks(curve: &Curve) -> Vec<ParametricBreak> {
+    match curve {
+        Curve::Nurbs(nurbs) => knot_breaks(nurbs.knots(), nurbs.degree()),
+        _ => Vec::new(),
+    }
+}
+
+/// Interior knots of `knots`, each with the continuity a spline of `degree`
+/// keeps across it.
+///
+/// A knot of multiplicity `m` in a degree-`p` spline leaves `C^(p - m)`, so a
+/// knot of full multiplicity -- an arc join -- reports `0`: continuous, with a
+/// corner.
+fn knot_breaks(knots: &KnotVector, degree: Degree) -> Vec<ParametricBreak> {
+    let p = degree.get();
+    let values = knots.as_slice();
+    let domain = knots.domain(degree);
+    let mut breaks = Vec::new();
+    let mut index = 0;
+    while index < values.len() {
+        let value = values[index];
+        let mut multiplicity = 1;
+        while index + multiplicity < values.len() && values[index + multiplicity] == value {
+            multiplicity += 1;
+        }
+        if value > domain.start.value() && value < domain.end.value() {
+            breaks.push((value, p.saturating_sub(multiplicity)));
+        }
+        index += multiplicity;
+    }
+    breaks
+}
+
+/// Builds the clamped knot vector one fitting round solves against, with the
+/// control count it actually carries.
+///
+/// The breaks go in first and keep their multiplicity, so a round can end up
+/// with more control points than it asked for; whatever is left over is spread
+/// over the segments the breaks cut `[0, 1]` into, in proportion to each
+/// segment's length. Refining therefore never walks a uniform knot onto a
+/// break and leaves a span too short to condition.
+fn fit_knots(basis: &FitBasis<'_>) -> (KnotVector, usize) {
+    let p = basis.degree.get();
+    let fixed = basis
+        .breaks
+        .iter()
+        .map(|item| item.multiplicity)
+        .sum::<usize>();
+    let uniform = basis.control_count.saturating_sub(p + 1 + fixed);
+    let mut bounds = Vec::with_capacity(basis.breaks.len() + 2);
+    bounds.push(0.0);
+    bounds.extend(basis.breaks.iter().map(|item| item.parameter));
+    bounds.push(1.0);
+
+    let mut interior = Vec::with_capacity(uniform + fixed);
+    let mut placed = 0;
+    for (segment, window) in bounds.windows(2).enumerate() {
+        let (start, end) = (window[0], window[1]);
+        let share = if segment + 2 == bounds.len() {
+            uniform - placed
+        } else {
+            (((end - start) * uniform as f64).round() as usize).min(uniform - placed)
+        };
+        placed += share;
+        for step in 1..=share {
+            interior.push(start + (end - start) * step as f64 / (share + 1) as f64);
+        }
+        if let Some(item) = basis.breaks.get(segment) {
+            interior.extend(std::iter::repeat_n(item.parameter, item.multiplicity));
+        }
+    }
+
+    let control_count = interior.len() + p + 1;
+    let mut knots = vec![0.0; p + 1];
+    knots.extend(interior);
+    knots.extend(std::iter::repeat_n(1.0, p + 1));
+    (
+        KnotVector::new(knots).expect("knots are built in non-decreasing order"),
+        control_count,
+    )
 }
 
 /// Solves all seven synchronized coordinates against one shared B-spline basis.
@@ -280,17 +524,25 @@ fn least_squares_synchronized(
     uv_a: &[Point2],
     uv_b: &[Point2],
     parameters: &[f64],
-    control_count: usize,
+    basis: FitBasis<'_>,
 ) -> Result<SynchronizedNurbsFit, IntersectionError> {
-    if control_count == points.len() {
+    let fixed = basis
+        .breaks
+        .iter()
+        .map(|item| item.multiplicity)
+        .sum::<usize>();
+    // An interpolating round has one condition per sample and needs no least
+    // squares -- but only where no break asks for a knot the averaged vector
+    // interpolation builds does not carry.
+    if basis.control_count == points.len() && fixed == 0 {
         return Ok(SynchronizedNurbsFit {
             curve_3d: NurbsCurve::interpolate_with_parameters(points, parameters)?,
             pcurve_a: NurbsCurve2::interpolate_with_parameters(uv_a, parameters)?,
             pcurve_b: NurbsCurve2::interpolate_with_parameters(uv_b, parameters)?,
         });
     }
-    let degree = Degree::new(3.min(control_count - 1))?;
-    let knots = KnotVector::uniform_clamped(control_count, degree);
+    let degree = basis.degree;
+    let (knots, control_count) = fit_knots(&basis);
     let internal_count = control_count - 2;
     let mut coefficients = DMatrix::zeros(points.len(), internal_count);
     let mut right_hand_side = DMatrix::zeros(points.len(), 7);

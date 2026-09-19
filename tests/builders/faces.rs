@@ -5,8 +5,8 @@ use nalgebra::Vector3;
 use ngk::builders::edges::{add_arc, add_line};
 use ngk::builders::errors::{FaceCreationError, PolylineError};
 use ngk::builders::faces::{
-    FaceEdgeSplitError, FaceImprint, FaceImprintGraph, add_annulus, add_circle, add_face,
-    add_polygon, add_rectangle, split_face_by_imprints, split_face_edge,
+    FaceEdgeSplitError, FaceImprint, FaceImprintGraph, FaceImprintSplitError, add_annulus,
+    add_circle, add_face, add_polygon, add_rectangle, split_face_by_imprints, split_face_edge,
 };
 use ngk::builders::profiles::{add_polyline, add_profile_from_edges};
 use ngk::builders::sheets::add_extruded_profile;
@@ -350,6 +350,71 @@ fn split_face_edge_updates_boundary_and_pcurves() {
 }
 
 #[test]
+fn repeated_cuts_on_a_circular_boundary_keep_each_pcurve_on_its_edge() {
+    let mut g = Model::<StandardPayload>::new();
+    let face = add_circle(&mut g, Plane::xy(), 2.0).expect("circle face should build");
+
+    // A circle's boundary is one unmarked closed edge, so the first cut only
+    // marks it and moves where its span begins, and the cuts after that are
+    // the ones that separate it. The third is the first to land on a piece an
+    // earlier cut left behind, which is where a pcurve that stayed where the
+    // support starts, rather than where the edge does, stops matching.
+    for degrees in [225.0_f64, 315.0, 45.0] {
+        let radians = degrees.to_radians();
+        let point = Point3::new(2.0 * radians.cos(), 2.0 * radians.sin(), 0.0);
+        let (edge, parameter) = boundary_edge_at(&g, face, point);
+        split_face_edge(&mut g, face, edge, parameter)
+            .unwrap_or_else(|error| panic!("the cut at {degrees} degrees should land: {error}"));
+        assert_pcurves_follow_edges(&g, face, degrees);
+    }
+
+    assert_eq!(g.iter_edges().count(), 3);
+}
+
+/// The boundary edge of `face` that `point` lies on, and where along it.
+fn boundary_edge_at(
+    g: &Model<StandardPayload>,
+    face: FaceKey,
+    point: Point3,
+) -> (EdgeKey, Fraction) {
+    g.face_unchecked(face)
+        .edges()
+        .into_iter()
+        .find_map(|edge| {
+            let section = g.edge_unchecked(edge.key()).trimmed_curve();
+            section
+                .contains(point, LINEAR_TOLERANCE)
+                .then(|| (edge.key(), section.parameter_at(point)))
+        })
+        .unwrap_or_else(|| panic!("no boundary edge of {face:?} passes through {point:?}"))
+}
+
+/// Asserts every boundary pcurve traces the arc its own edge covers.
+///
+/// Sampled rather than compared fraction by fraction: a pcurve and its edge
+/// need not share a parameterization, only the piece of the boundary they are
+/// both talking about. Two arcs of one circle share both ends, so their ends
+/// alone cannot tell them apart and a swapped pair would read as correct.
+fn assert_pcurves_follow_edges(g: &Model<StandardPayload>, face: FaceKey, degrees: f64) {
+    let view = g.face_unchecked(face);
+    for edge in view.edges() {
+        let pcurve = view
+            .pcurve(edge.dart())
+            .unwrap_or_else(|| panic!("boundary edge {:?} should have a pcurve", edge.key()));
+        let section = g.edge_unchecked(edge.key()).trimmed_curve();
+        for step in 0..=8 {
+            let uv = pcurve.point_at(Fraction::new(step as f64 / 8.0));
+            let at = view.point_at(uv.x, uv.y);
+            assert!(
+                section.contains(at, LINEAR_TOLERANCE),
+                "after the cut at {degrees} degrees the pcurve on {:?} leaves its edge at {at:?}",
+                edge.key(),
+            );
+        }
+    }
+}
+
+#[test]
 fn split_face_edge_rejects_edges_outside_the_face() {
     let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 1.0).expect("face should build");
@@ -583,7 +648,7 @@ fn split_face_by_imprints_applies_multiple_non_crossing_chords() {
 }
 
 #[test]
-fn split_face_by_imprints_ignores_crossing_chords_after_first_split() {
+fn split_face_by_imprints_refuses_to_drop_a_crossing_chord() {
     let mut g = Model::<StandardPayload>::new();
     let face_key = add_rectangle(&mut g, Plane::xy(), 2.0, 2.0).expect("face should build");
     let imprints = [
@@ -597,12 +662,21 @@ fn split_face_by_imprints_ignores_crossing_chords_after_first_split() {
         )),
     ];
 
-    let splits = split_face_by_imprints(&mut g, face_key, &imprints)
-        .expect("crossing imprints should leave a valid partial split");
+    // Two diagonals cut a rectangle into four, and the splitter applies one of
+    // them: it walks whole imprints, so the second is no longer a chord of
+    // either half it has to cross. The partial answer names the imprint it
+    // could not place rather than being handed back as if it were the whole
+    // cut, which is what left a Boolean sewing a span one side never imprinted.
+    let error = split_face_by_imprints(&mut g, face_key, &imprints)
+        .expect_err("a dropped chord should be reported, not silently skipped");
 
-    assert_eq!(splits.len(), 1);
-    assert_eq!(g.iter_faces().count(), 2);
-    assert_eq!(g.iter_edges().count(), 5);
+    assert!(
+        matches!(
+            error,
+            FaceImprintSplitError::ImprintNotRealized { face, imprint: 1 } if face == face_key
+        ),
+        "expected the unplaced chord to be named, got {error}"
+    );
 }
 
 #[test]
