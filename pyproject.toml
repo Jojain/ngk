@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "ngk"
 authors = [{name = "Romain Ferru", email = "romain.ferru@gmail.com"}]
-version = "0.0.5"
+version = "0.0.6"
 description = "Python bindings for the NGK geometry kernel"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "ngk"
-version = "0.0.5"
+version = "0.0.6"
 dependencies = [
  "console_error_panic_hook",
  "criterion",
