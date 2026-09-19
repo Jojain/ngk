@@ -17,6 +17,7 @@ This directory contains implementation plans for substantial kernel work.
 | [Parameter units](parameter_units.md) | In progress | Stop `f64` meaning native parameter, normalized fraction, knot parameter and arc length at once: brand the scalar and its interval, and make a fraction inexpressible without the span it is a fraction of |
 | [Loft](loft.md) | Complete | Skin `N` sections into a sheet or a solid: a traversal parametrized as one curve so sections with unlike edge counts correspond, a column per merged breakpoint, and one algorithm over open profiles, closed profiles and faces |
 | [STEP interop](step_interop.done.md) | Complete | Bidirectional ISO 10303-21 B-Rep exchange through the supported profile, including analytic/NURBS geometry, seam synthesis, and cavities |
+| [Payload](payload.md) | Proposed | Make `Model<P>`'s user data reachable: name why every identity is created and destroyed, refuse a transaction that will not, hand the caller a creation hook instead of a `Default`, and open the builders that create from nothing |
 
 Statuses used by the plans:
 
