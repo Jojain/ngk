@@ -41,6 +41,7 @@ visualization/src/wasm/
 dist/
 .uv-cache/
 .uv-python/
+.uv-tools/
 .pytest_cache/
 __pycache__/
 **/__pycache__/

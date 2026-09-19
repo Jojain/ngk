@@ -3,10 +3,10 @@
 #     uv tool install --editable ./profiling
 #
 # Editable, so editing these files changes the command with no reinstall. The
-# package depends on nothing: it locates the repo's .venv and drives samply,
-# py-spy and maturin as subprocesses, and needs only the standard library to do
-# it. It is deliberately not part of the `ngk` distribution -- profiling tooling
-# has no business shipping inside the library wheel.
+# package depends only on Typer for its command interface. It locates the repo's
+# .venv and drives samply, py-spy and maturin as subprocesses. It is deliberately
+# not part of the `ngk` distribution -- profiling tooling has no business shipping
+# inside the library wheel.
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -16,6 +16,7 @@ name = "ngk-profile"
 version = "0.0.1"
 description = "Records a profile of a script driving the ngk kernel"
 requires-python = ">=3.9"
+dependencies = ["typer>=0.15,<1"]
 
 [project.scripts]
 profile = "ngk_profile.profile:main"

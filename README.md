@@ -97,6 +97,27 @@ npm run dev
 
 See `visualization/README.md` for details about adding new experiments.
 
+## Python releases
+
+Prepare the next version with the repository helper:
+
+```bash
+uv tool install --editable ./release
+bump
+```
+
+To let the tool create the commit and annotated tag from a clean `master`
+checkout, use `--release` directly:
+
+```bash
+bump patch --release
+git push origin master --follow-tags
+```
+
+The `--release` command changes `Cargo.toml` and `pyproject.toml`, refreshes
+`uv.lock`, commits those files, and creates `vX.Y.Z`; it never pushes or uploads
+to PyPI itself.
+
 ## Architecture Notes
 
 - [Chamfer algorithm](docs/chamfer_architecture.md)

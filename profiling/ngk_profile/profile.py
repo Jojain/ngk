@@ -39,13 +39,16 @@ Examples
     profile tie_plate --tool py-spy --skip-build
 """
 
-import argparse
 import os
 import shutil
 import subprocess
 import sys
 import time
+from enum import Enum
 from pathlib import Path
+from typing import Annotated
+
+import typer
 
 from .fix_debug_paths import absolutize_file
 
@@ -66,6 +69,14 @@ MAIN_THREAD_ONLY = sys.platform in ("win32", "darwin")
 # of the run is the heap". PDBs land in samply's cache, so only the first look
 # at a given Windows build pays for it.
 WINDOWS_SYMBOL_SERVER = "https://msdl.microsoft.com/download/symbols"
+app = typer.Typer(help=__doc__, no_args_is_help=True)
+
+
+class Profiler(str, Enum):
+    """The supported recording backends."""
+
+    samply = "samply"
+    py_spy = "py-spy"
 
 
 def venv_paths(venv):
@@ -135,46 +146,23 @@ def resolve_script(name):
     raise SystemExit(f"no script {name!r}; examples are: {', '.join(known)}")
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        prog="profile",
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument(
-        "script",
-        help=(
-            "the script to profile: a path, or the bare name of an example in "
-            "bindings/python/examples"
-        ),
-    )
-    parser.add_argument(
-        "repeat",
-        nargs="?",
-        type=int,
-        default=1,
-        help=(
-            "run the script's main() this many times in the one process "
-            "(default: 1, a single plain run). One tie_plate build is well "
-            "under a second, most of which is interpreter startup, so repeating "
-            "lifts the kernel work above that floor when the tail of the "
-            "profile matters."
-        ),
-    )
-    parser.add_argument("--tool", choices=("samply", "py-spy"), default="samply")
-    parser.add_argument("--rate", type=int, default=1000, help="samples per second")
-    parser.add_argument("--skip-build", action="store_true")
-    parser.add_argument(
-        "--no-open",
-        action="store_true",
-        help="leave the recording on disk instead of opening it",
-    )
-    return parser.parse_args()
-
-
-def main():
-    args = parse_args()
-    script = resolve_script(args.script)
+@app.command()
+def profile(
+    script_name: Annotated[
+        str,
+        typer.Argument(help="path or bare name of an example in bindings/python/examples"),
+    ],
+    repeat: Annotated[
+        int,
+        typer.Argument(help="number of in-process main() runs", min=1),
+    ] = 1,
+    tool: Annotated[Profiler, typer.Option(help="recording backend")] = Profiler.samply,
+    rate: Annotated[int, typer.Option(help="samples per second", min=1)] = 1000,
+    skip_build: Annotated[bool, typer.Option(help="do not rebuild the extension")] = False,
+    no_open: Annotated[bool, typer.Option(help="leave the recording on disk")] = False,
+) -> None:
+    """Build the profiling extension and record one Python example."""
+    script = resolve_script(script_name)
     env = tool_env()
 
     env.setdefault("UV_CACHE_DIR", str(REPO_ROOT / ".uv-cache"))
@@ -187,25 +175,25 @@ def main():
     if not python.exists():
         raise SystemExit(f"no interpreter at {python}; run build.ps1 or create .venv first")
 
-    if not args.skip_build:
+    if not skip_build:
         run([find_tool("maturin", env), "develop", "--profile", "profiling"], cwd=REPO_ROOT, env=env)
 
     out_dir = REPO_ROOT / "target" / "profiles"
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{script.stem}-{time.strftime('%Y%m%d-%H%M%S')}"
 
-    if args.repeat > 1:
-        target = [Path(__file__).resolve().parent / "runner.py", script, str(args.repeat)]
+    if repeat > 1:
+        target = [Path(__file__).resolve().parent / "runner.py", script, str(repeat)]
     else:
         target = [script]
 
-    if args.tool == "samply":
+    if tool is Profiler.samply:
         out = out_dir / f"{stem}.json.gz"
 
         # --save-only records without holding the shell on a local server, which
         # leaves the profile on disk to be patched before anything reads it.
         samply = find_tool("samply", env)
-        record = [samply, "record", "--rate", str(args.rate), "--save-only", "--no-open"]
+        record = [samply, "record", "--rate", str(rate), "--save-only", "--no-open"]
         if MAIN_THREAD_ONLY:
             record.append("--main-thread-only")
         record += ["--output", out, "--", python, *target]
@@ -232,7 +220,7 @@ def main():
         load.append(out)
 
         print(f"\nRecorded {out}")
-        if args.no_open:
+        if no_open:
             # Printed with the plain tool name rather than the resolved path, so
             # the line is something to read and retype.
             hint = " ".join(["samply", *(str(a) for a in load[1:])])
@@ -258,13 +246,18 @@ def main():
             )
 
         run(
-            [find_tool("py-spy", env), "record", "--rate", str(args.rate), "--format", "speedscope",
+            [find_tool("py-spy", env), "record", "--rate", str(rate), "--format", "speedscope",
              "--output", out, "--", spy_python, *target],
             cwd=REPO_ROOT, env=env,
         )
 
         print(f"\nRecorded {out}")
         print("Drop it on https://speedscope.app (it renders in the page; nothing is uploaded).")
+
+
+def main() -> None:
+    """Run the profiling command-line application."""
+    app()
 
 
 if __name__ == "__main__":

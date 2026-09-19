@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ngk-bump"
+version = "0.0.1"
+description = "Version-bump helper for the NGK repository"
+requires-python = ">=3.13"
+dependencies = ["typer>=0.15,<1"]
+
+[project.scripts]
+bump = "ngk_release:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ngk_release"]
