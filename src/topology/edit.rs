@@ -17,6 +17,33 @@ use super::validation::{
 };
 use crate::model::{MergeTopology, Model};
 
+/// Why a transaction created an entity.
+///
+/// Exhaustive over the ways a builder may explain a creation: an entity that
+/// arrived by copy is not among them, since [`Model::merge`] transports
+/// payload verbatim and never reaches [`EditPolicy`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Origin {
+    /// Nothing in the model before this transaction explains it.
+    New,
+    /// It carries on from an entity of its own kind.
+    Split(EditKey),
+    /// It was produced by entities of another kind, in an order the builder
+    /// documents — a loft names its sections as it traverses them.
+    Derived(Vec<EditKey>),
+}
+
+impl Origin {
+    /// Builds a [`Origin::Derived`] from a single source.
+    ///
+    /// The variant always carries a `Vec` because a derived entity may have
+    /// several sources; this is the one-source spelling over it, not a second
+    /// variant.
+    pub fn derived(source: EditKey) -> Self {
+        Self::Derived(vec![source])
+    }
+}
+
 /// Controls how payloads are propagated for explicit semantic edit events.
 ///
 /// The edit layer does not infer merge or split lineage from topology. Builders
@@ -182,6 +209,9 @@ pub enum ModelEditError {
     /// A split or merge references an attribute that is not staged.
     #[error("model edit lineage references missing attribute {key:?}")]
     MissingLineageAttribute { key: EditKey },
+    /// A transaction-start attribute is gone at commit and no event explains it.
+    #[error("{key:?} was removed without a merge or consumption declaring it")]
+    UnexplainedRemoval { key: EditKey },
     /// The same attribute was declared consumed more than once.
     #[error("model edit lineage consumes {removed:?} more than once")]
     RepeatedMerge { removed: EditKey },
@@ -270,59 +300,24 @@ pub enum EditKey {
     Solid(SolidKey),
 }
 
-#[derive(Debug, Clone, Copy)]
+/// A semantic edit declared against the staged model, uniform over [`EditKey`]
+/// so a [`Derived`](Origin::Derived) source can name an entity of another kind.
+///
+/// The typed `add_*_split_from` / `merge_*_into` constructors on [`ModelEdit`]
+/// keep the same-kind check at the call site, where the concrete key types
+/// make it free; this representation does not repeat it.
+#[derive(Debug, Clone)]
 pub(crate) enum EditEvent {
-    Created {
-        key: EditKey,
-    },
-    VertexSplit {
-        source: VertexKey,
-        created: VertexKey,
-    },
-    EdgeSplit {
-        source: EdgeKey,
-        created: EdgeKey,
-    },
-    ProfileSplit {
-        source: ProfileKey,
-        created: ProfileKey,
-    },
-    FaceSplit {
-        source: FaceKey,
-        created: FaceKey,
-    },
-    SheetSplit {
-        source: SheetKey,
-        created: SheetKey,
-    },
-    SolidSplit {
-        source: SolidKey,
-        created: SolidKey,
-    },
-    VertexMerge {
-        survivor: VertexKey,
-        removed: VertexKey,
-    },
-    EdgeMerge {
-        survivor: EdgeKey,
-        removed: EdgeKey,
-    },
-    ProfileMerge {
-        survivor: ProfileKey,
-        removed: ProfileKey,
-    },
-    FaceMerge {
-        survivor: FaceKey,
-        removed: FaceKey,
-    },
-    SheetMerge {
-        survivor: SheetKey,
-        removed: SheetKey,
-    },
-    SolidMerge {
-        survivor: SolidKey,
-        removed: SolidKey,
-    },
+    /// A new identity, explained by `origin`.
+    Created { key: EditKey, origin: Origin },
+    /// `removed`'s identity carries on inside `survivor`.
+    Merged { survivor: EditKey, removed: EditKey },
+    /// `key` stopped existing and nothing inherits it.
+    Consumed { key: EditKey },
+    /// `key` was transported verbatim from another model by [`Model::merge`].
+    ///
+    /// Never routed to [`EditPolicy`]: a copy is not a creation.
+    Copied { key: EditKey },
 }
 
 impl<'g, P: Payload> ModelEdit<'g, P> {
@@ -437,14 +432,8 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     /// the attribute and cannot drift from it. [`Self::own_cell`] records the
     /// rest -- the cells an entity contains *besides* its own, such as a
     /// closure point inside an edge or a seam inside a face.
-    pub fn add_vertex(&mut self, mut vertex: VertexAttr<P::V>) -> VertexKey {
-        vertex.dart = self.model.cell_representative(vertex.dart, Dim::Zero);
-        let key = self.model.vertices.insert(vertex);
-        self.model.invalidate_derived_indexes();
-        self.model.record_edit_event(EditEvent::Created {
-            key: EditKey::Vertex(key),
-        });
-        key
+    pub fn add_vertex(&mut self, vertex: VertexAttr<P::V>) -> VertexKey {
+        self.add_vertex_with_origin(vertex, Origin::New)
     }
 
     /// Stages a vertex created by explicitly splitting an existing vertex.
@@ -453,40 +442,67 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         source: VertexKey,
         vertex: VertexAttr<P::V>,
     ) -> VertexKey {
-        let created = self.add_vertex(vertex);
-        self.model
-            .record_edit_event(EditEvent::VertexSplit { source, created });
-        created
+        self.add_vertex_with_origin(vertex, Origin::Split(EditKey::Vertex(source)))
+    }
+
+    /// Stages a vertex produced by entities of another kind.
+    pub fn add_vertex_derived_from(
+        &mut self,
+        sources: Vec<EditKey>,
+        vertex: VertexAttr<P::V>,
+    ) -> VertexKey {
+        self.add_vertex_with_origin(vertex, Origin::Derived(sources))
+    }
+
+    fn add_vertex_with_origin(
+        &mut self,
+        mut vertex: VertexAttr<P::V>,
+        origin: Origin,
+    ) -> VertexKey {
+        vertex.dart = self.model.cell_representative(vertex.dart, Dim::Zero);
+        let key = self.model.vertices.insert(vertex);
+        self.model.invalidate_derived_indexes();
+        self.model.record_edit_event(EditEvent::Created {
+            key: EditKey::Vertex(key),
+            origin,
+        });
+        key
     }
 
     /// Stages an edge attribute for reconciliation at commit.
     ///
     /// Its own 1-cell is derived, not recorded; see [`Self::add_vertex`].
     pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
-        let key = self.model.edges.insert(edge);
-        self.model.invalidate_derived_indexes();
-        self.model.record_edit_event(EditEvent::Created {
-            key: EditKey::Edge(key),
-        });
-        key
+        self.add_edge_with_origin(edge, Origin::New)
     }
 
     /// Stages an edge created by explicitly splitting an existing edge.
     pub fn add_edge_split_from(&mut self, source: EdgeKey, edge: EdgeAttr<P::E>) -> EdgeKey {
-        let created = self.add_edge(edge);
-        self.model
-            .record_edit_event(EditEvent::EdgeSplit { source, created });
-        created
+        self.add_edge_with_origin(edge, Origin::Split(EditKey::Edge(source)))
+    }
+
+    /// Stages an edge produced by entities of another kind.
+    pub fn add_edge_derived_from(
+        &mut self,
+        sources: Vec<EditKey>,
+        edge: EdgeAttr<P::E>,
+    ) -> EdgeKey {
+        self.add_edge_with_origin(edge, Origin::Derived(sources))
+    }
+
+    fn add_edge_with_origin(&mut self, edge: EdgeAttr<P::E>, origin: Origin) -> EdgeKey {
+        let key = self.model.edges.insert(edge);
+        self.model.invalidate_derived_indexes();
+        self.model.record_edit_event(EditEvent::Created {
+            key: EditKey::Edge(key),
+            origin,
+        });
+        key
     }
 
     /// Stages a profile attribute for reconciliation at commit.
     pub fn add_profile(&mut self, profile: ProfileAttr<P::Profile>) -> ProfileKey {
-        let key = self.model.profiles.insert(profile);
-        self.model.invalidate_derived_indexes();
-        self.model.record_edit_event(EditEvent::Created {
-            key: EditKey::Profile(key),
-        });
-        key
+        self.add_profile_with_origin(profile, Origin::New)
     }
 
     /// Stages a profile created by explicitly splitting an existing profile.
@@ -495,40 +511,68 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         source: ProfileKey,
         profile: ProfileAttr<P::Profile>,
     ) -> ProfileKey {
-        let created = self.add_profile(profile);
-        self.model
-            .record_edit_event(EditEvent::ProfileSplit { source, created });
-        created
+        self.add_profile_with_origin(profile, Origin::Split(EditKey::Profile(source)))
+    }
+
+    /// Stages a profile produced by entities of another kind.
+    pub fn add_profile_derived_from(
+        &mut self,
+        sources: Vec<EditKey>,
+        profile: ProfileAttr<P::Profile>,
+    ) -> ProfileKey {
+        self.add_profile_with_origin(profile, Origin::Derived(sources))
+    }
+
+    fn add_profile_with_origin(
+        &mut self,
+        profile: ProfileAttr<P::Profile>,
+        origin: Origin,
+    ) -> ProfileKey {
+        let key = self.model.profiles.insert(profile);
+        self.model.invalidate_derived_indexes();
+        self.model.record_edit_event(EditEvent::Created {
+            key: EditKey::Profile(key),
+            origin,
+        });
+        key
     }
 
     /// Stages a face attribute for reconciliation at commit.
     ///
     /// Its own 2-cell is derived, not recorded; see [`Self::add_vertex`].
     pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
-        let key = self.model.faces.insert(face);
-        self.model.invalidate_derived_indexes();
-        self.model.record_edit_event(EditEvent::Created {
-            key: EditKey::Face(key),
-        });
-        key
+        self.add_face_with_origin(face, Origin::New)
     }
 
     /// Stages a face created by explicitly splitting an existing face.
     pub fn add_face_split_from(&mut self, source: FaceKey, face: FaceAttr<P::F>) -> FaceKey {
-        let created = self.add_face(face);
-        self.model
-            .record_edit_event(EditEvent::FaceSplit { source, created });
-        created
+        self.add_face_with_origin(face, Origin::Split(EditKey::Face(source)))
+    }
+
+    /// Stages a face produced by entities of another kind, such as a sweep's
+    /// wall face from the profile edge it runs along, or a loft's from the two
+    /// section edges it spans.
+    pub fn add_face_derived_from(
+        &mut self,
+        sources: Vec<EditKey>,
+        face: FaceAttr<P::F>,
+    ) -> FaceKey {
+        self.add_face_with_origin(face, Origin::Derived(sources))
+    }
+
+    fn add_face_with_origin(&mut self, face: FaceAttr<P::F>, origin: Origin) -> FaceKey {
+        let key = self.model.faces.insert(face);
+        self.model.invalidate_derived_indexes();
+        self.model.record_edit_event(EditEvent::Created {
+            key: EditKey::Face(key),
+            origin,
+        });
+        key
     }
 
     /// Stages a sheet attribute for reconciliation at commit.
     pub fn add_sheet(&mut self, sheet: SheetAttr<P::Sheet>) -> SheetKey {
-        let key = self.model.sheets.insert(sheet);
-        self.model.invalidate_derived_indexes();
-        self.model.record_edit_event(EditEvent::Created {
-            key: EditKey::Sheet(key),
-        });
-        key
+        self.add_sheet_with_origin(sheet, Origin::New)
     }
 
     /// Stages a sheet created by explicitly splitting an existing sheet.
@@ -537,28 +581,55 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         source: SheetKey,
         sheet: SheetAttr<P::Sheet>,
     ) -> SheetKey {
-        let created = self.add_sheet(sheet);
-        self.model
-            .record_edit_event(EditEvent::SheetSplit { source, created });
-        created
+        self.add_sheet_with_origin(sheet, Origin::Split(EditKey::Sheet(source)))
     }
 
-    /// Stages a solid attribute for reconciliation at commit.
-    pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidKey {
-        let key = self.model.solids.insert(solid);
+    /// Stages a sheet produced by entities of another kind.
+    pub fn add_sheet_derived_from(
+        &mut self,
+        sources: Vec<EditKey>,
+        sheet: SheetAttr<P::Sheet>,
+    ) -> SheetKey {
+        self.add_sheet_with_origin(sheet, Origin::Derived(sources))
+    }
+
+    fn add_sheet_with_origin(&mut self, sheet: SheetAttr<P::Sheet>, origin: Origin) -> SheetKey {
+        let key = self.model.sheets.insert(sheet);
         self.model.invalidate_derived_indexes();
         self.model.record_edit_event(EditEvent::Created {
-            key: EditKey::Solid(key),
+            key: EditKey::Sheet(key),
+            origin,
         });
         key
     }
 
+    /// Stages a solid attribute for reconciliation at commit.
+    pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidKey {
+        self.add_solid_with_origin(solid, Origin::New)
+    }
+
     /// Stages a solid created by explicitly splitting an existing solid.
     pub fn add_solid_split_from(&mut self, source: SolidKey, solid: SolidAttr<P::S>) -> SolidKey {
-        let created = self.add_solid(solid);
-        self.model
-            .record_edit_event(EditEvent::SolidSplit { source, created });
-        created
+        self.add_solid_with_origin(solid, Origin::Split(EditKey::Solid(source)))
+    }
+
+    /// Stages a solid produced by entities of another kind.
+    pub fn add_solid_derived_from(
+        &mut self,
+        sources: Vec<EditKey>,
+        solid: SolidAttr<P::S>,
+    ) -> SolidKey {
+        self.add_solid_with_origin(solid, Origin::Derived(sources))
+    }
+
+    fn add_solid_with_origin(&mut self, solid: SolidAttr<P::S>, origin: Origin) -> SolidKey {
+        let key = self.model.solids.insert(solid);
+        self.model.invalidate_derived_indexes();
+        self.model.record_edit_event(EditEvent::Created {
+            key: EditKey::Solid(key),
+            origin,
+        });
+        key
     }
 
     /// Declares that `removed` merged into `survivor`.
@@ -571,8 +642,10 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     pub fn merge_vertices_into(&mut self, survivor: VertexKey, removed: VertexKey) {
         self.model
             .retarget_ownership(EntityOwner::Vertex(removed), EntityOwner::Vertex(survivor));
-        self.model
-            .record_edit_event(EditEvent::VertexMerge { survivor, removed });
+        self.model.record_edit_event(EditEvent::Merged {
+            survivor: EditKey::Vertex(survivor),
+            removed: EditKey::Vertex(removed),
+        });
     }
 
     /// Declares that `removed` merged into `survivor`, carrying its
@@ -580,14 +653,18 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     pub fn merge_edges_into(&mut self, survivor: EdgeKey, removed: EdgeKey) {
         self.model
             .retarget_ownership(EntityOwner::Edge(removed), EntityOwner::Edge(survivor));
-        self.model
-            .record_edit_event(EditEvent::EdgeMerge { survivor, removed });
+        self.model.record_edit_event(EditEvent::Merged {
+            survivor: EditKey::Edge(survivor),
+            removed: EditKey::Edge(removed),
+        });
     }
 
     /// Declares that `removed` merged into `survivor`.
     pub fn merge_profiles_into(&mut self, survivor: ProfileKey, removed: ProfileKey) {
-        self.model
-            .record_edit_event(EditEvent::ProfileMerge { survivor, removed });
+        self.model.record_edit_event(EditEvent::Merged {
+            survivor: EditKey::Profile(survivor),
+            removed: EditKey::Profile(removed),
+        });
     }
 
     /// Follows the profile merges declared so far to the identity `profile`
@@ -599,7 +676,7 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     /// identity instead, is what lets two removals rejoin overlapping sets of
     /// boundaries without either having to know about the other.
     pub(crate) fn merged_profile_survivor(&self, profile: ProfileKey) -> ProfileKey {
-        let mut current = profile;
+        let mut current = EditKey::Profile(profile);
         // A chain that closes on itself is a mistake, and commit names it
         // `MergeCycle`. This walk only has to reach that report rather than
         // spin, so it stops at the first key it sees twice.
@@ -608,10 +685,8 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
             self.model
                 .staged_edit_events()
                 .iter()
-                .find_map(|event| match *event {
-                    EditEvent::ProfileMerge { survivor, removed } if removed == current => {
-                        Some(survivor)
-                    }
+                .find_map(|event| match event.merge_keys() {
+                    Some((survivor, removed)) if removed == current => Some(survivor),
                     _ => None,
                 })
         {
@@ -620,7 +695,10 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
             }
             current = survivor;
         }
-        current
+        match current {
+            EditKey::Profile(key) => key,
+            _ => profile,
+        }
     }
 
     /// Declares that `removed` merged into `survivor`, carrying its
@@ -628,14 +706,18 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     pub fn merge_faces_into(&mut self, survivor: FaceKey, removed: FaceKey) {
         self.model
             .retarget_ownership(EntityOwner::Face(removed), EntityOwner::Face(survivor));
-        self.model
-            .record_edit_event(EditEvent::FaceMerge { survivor, removed });
+        self.model.record_edit_event(EditEvent::Merged {
+            survivor: EditKey::Face(survivor),
+            removed: EditKey::Face(removed),
+        });
     }
 
     /// Declares that `removed` merged into `survivor`.
     pub fn merge_sheets_into(&mut self, survivor: SheetKey, removed: SheetKey) {
-        self.model
-            .record_edit_event(EditEvent::SheetMerge { survivor, removed });
+        self.model.record_edit_event(EditEvent::Merged {
+            survivor: EditKey::Sheet(survivor),
+            removed: EditKey::Sheet(removed),
+        });
     }
 
     /// Declares that `removed` merged into `survivor`, carrying its
@@ -643,8 +725,10 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     pub fn merge_solids_into(&mut self, survivor: SolidKey, removed: SolidKey) {
         self.model
             .retarget_ownership(EntityOwner::Solid(removed), EntityOwner::Solid(survivor));
-        self.model
-            .record_edit_event(EditEvent::SolidMerge { survivor, removed });
+        self.model.record_edit_event(EditEvent::Merged {
+            survivor: EditKey::Solid(survivor),
+            removed: EditKey::Solid(removed),
+        });
     }
 
     /// Deletes face loops and orphaned lower-dimensional cells in one compaction pass.
@@ -747,7 +831,12 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     /// outlive the entity it names.
     pub fn remove_vertex(&mut self, key: VertexKey) -> Option<VertexAttr<P::V>> {
         let removed = self.model.vertices.remove(key);
-        self.model.disown_entity(EntityOwner::Vertex(key));
+        if removed.is_some() {
+            self.model.disown_entity(EntityOwner::Vertex(key));
+            self.model.record_edit_event(EditEvent::Consumed {
+                key: EditKey::Vertex(key),
+            });
+        }
         removed
     }
 
@@ -757,14 +846,24 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     /// interior to it such as a closure point.
     pub fn remove_edge(&mut self, key: EdgeKey) -> Option<EdgeAttr<P::E>> {
         let removed = self.model.edges.remove(key);
-        self.model.disown_entity(EntityOwner::Edge(key));
+        if removed.is_some() {
+            self.model.disown_entity(EntityOwner::Edge(key));
+            self.model.record_edit_event(EditEvent::Consumed {
+                key: EditKey::Edge(key),
+            });
+        }
         removed
     }
 
     /// Removes a profile attribute inside the transaction.
     pub fn remove_profile(&mut self, key: ProfileKey) -> Option<ProfileAttr<P::Profile>> {
         let removed = self.model.profiles.remove(key);
-        self.model.invalidate_derived_indexes();
+        if removed.is_some() {
+            self.model.invalidate_derived_indexes();
+            self.model.record_edit_event(EditEvent::Consumed {
+                key: EditKey::Profile(key),
+            });
+        }
         removed
     }
 
@@ -774,14 +873,24 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     /// interior to it such as a seam or a bridge.
     pub fn remove_face(&mut self, key: FaceKey) -> Option<FaceAttr<P::F>> {
         let removed = self.model.faces.remove(key);
-        self.model.disown_entity(EntityOwner::Face(key));
+        if removed.is_some() {
+            self.model.disown_entity(EntityOwner::Face(key));
+            self.model.record_edit_event(EditEvent::Consumed {
+                key: EditKey::Face(key),
+            });
+        }
         removed
     }
 
     /// Removes a sheet attribute inside the transaction.
     pub fn remove_sheet(&mut self, key: SheetKey) -> Option<SheetAttr<P::Sheet>> {
         let removed = self.model.sheets.remove(key);
-        self.model.invalidate_derived_indexes();
+        if removed.is_some() {
+            self.model.invalidate_derived_indexes();
+            self.model.record_edit_event(EditEvent::Consumed {
+                key: EditKey::Sheet(key),
+            });
+        }
         removed
     }
 
@@ -791,7 +900,12 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     /// faces, edges and corners interior to it.
     pub fn remove_solid(&mut self, key: SolidKey) -> Option<SolidAttr<P::S>> {
         let removed = self.model.solids.remove(key);
-        self.model.disown_entity(EntityOwner::Solid(key));
+        if removed.is_some() {
+            self.model.disown_entity(EntityOwner::Solid(key));
+            self.model.record_edit_event(EditEvent::Consumed {
+                key: EditKey::Solid(key),
+            });
+        }
         removed
     }
 
@@ -920,8 +1034,9 @@ where
     validate_required_domain_attributes(g)?;
     validate_edit_events(g, snapshot, events)?;
     let lineage = TransactionLineage::new(g, snapshot, events);
-    reconcile_transaction_attributes(g, snapshot, events, &lineage)?;
+    let structurally_dropped = reconcile_transaction_attributes(g, snapshot, events, &lineage)?;
     canonicalize_vertex_darts(g);
+    validate_no_unexplained_removal(g, snapshot, events, &structurally_dropped)?;
     // The classification is checked *after* reconciliation, not before it.
     // A builder that lays down one entity per face corner and lets commit merge
     // the coincident ones is holding several keys on one cell on purpose, and
@@ -946,52 +1061,69 @@ fn validate_edit_events<P: Payload>(
 ) -> Result<(), ModelEditError> {
     let mut merges = HashMap::new();
 
+    let created_within = |key: EditKey| {
+        events
+            .iter()
+            .any(|candidate| matches!(candidate, EditEvent::Created { key: created, .. } if *created == key))
+    };
+    let check_source = |source: EditKey| -> Result<(), ModelEditError> {
+        if !contains_edit_key(g, source)
+            && !contains_edit_key(snapshot, source)
+            && !created_within(source)
+        {
+            return Err(ModelEditError::MissingLineageAttribute { key: source });
+        }
+        Ok(())
+    };
+
     for event in events {
-        if matches!(event, EditEvent::Created { .. }) {
+        match event {
             // Transaction-local identities may be explicitly discarded by a
             // later builder pass. Their creation record still determines
             // ordering, but they need not survive until commit.
-            continue;
-        }
-
-        if let Some((source, created)) = event.split_keys() {
-            let source_was_created = events
-                .iter()
-                .any(|candidate| matches!(candidate, EditEvent::Created { key } if *key == source));
-            if !contains_edit_key(g, source)
-                && !contains_edit_key(snapshot, source)
-                && !source_was_created
-            {
-                return Err(ModelEditError::MissingLineageAttribute { key: source });
+            EditEvent::Created {
+                origin: Origin::New,
+                ..
             }
-            // A split identity consumed by a later pass is transient and does
-            // not need to remain in the final attribute stores.
-            let _ = created;
-            continue;
-        }
-
-        // A merge both of whose identities are gone was spent: a later pass in
-        // the same operation removed the cell they had just come to share, so
-        // there is nothing left to reconcile or to hand the payload policy.
-        if is_spent_merge(g, *event) {
-            continue;
-        }
-
-        let (first, second) = event.keys();
-        for key in std::iter::once(first).chain(second) {
-            if !contains_edit_key(g, key) {
-                return Err(ModelEditError::MissingLineageAttribute { key });
+            | EditEvent::Copied { .. } => continue,
+            EditEvent::Created {
+                origin: Origin::Split(source),
+                ..
+            } => {
+                check_source(*source)?;
             }
-        }
-
-        let Some((survivor, removed)) = event.merge_keys() else {
-            continue;
-        };
-        if survivor == removed {
-            return Err(ModelEditError::InvalidMerge { survivor, removed });
-        }
-        if merges.insert(removed, survivor).is_some() {
-            return Err(ModelEditError::RepeatedMerge { removed });
+            EditEvent::Created {
+                origin: Origin::Derived(sources),
+                ..
+            } => {
+                for &source in sources {
+                    check_source(source)?;
+                }
+            }
+            // Recorded once the attribute is already gone; there is nothing
+            // left here to validate against the staged map.
+            EditEvent::Consumed { .. } => continue,
+            EditEvent::Merged { survivor, removed } => {
+                let (survivor, removed) = (*survivor, *removed);
+                // A merge both of whose identities are gone was spent: a later
+                // pass in the same operation removed the cell they had just
+                // come to share, so there is nothing left to reconcile or to
+                // hand the payload policy.
+                if is_spent_merge(g, survivor, removed) {
+                    continue;
+                }
+                for key in [survivor, removed] {
+                    if !contains_edit_key(g, key) {
+                        return Err(ModelEditError::MissingLineageAttribute { key });
+                    }
+                }
+                if survivor == removed {
+                    return Err(ModelEditError::InvalidMerge { survivor, removed });
+                }
+                if merges.insert(removed, survivor).is_some() {
+                    return Err(ModelEditError::RepeatedMerge { removed });
+                }
+            }
         }
     }
 
@@ -1010,95 +1142,10 @@ fn validate_edit_events<P: Payload>(
 }
 
 impl EditEvent {
-    /// Returns the generic attribute keys carried by any event variant.
-    pub(super) fn keys(self) -> (EditKey, Option<EditKey>) {
+    /// Extracts a merge's survivor and consumed identity.
+    pub(crate) fn merge_keys(&self) -> Option<(EditKey, EditKey)> {
         match self {
-            Self::Created { key } => (key, None),
-            Self::VertexSplit { source, created } => {
-                (EditKey::Vertex(source), Some(EditKey::Vertex(created)))
-            }
-            Self::EdgeSplit { source, created } => {
-                (EditKey::Edge(source), Some(EditKey::Edge(created)))
-            }
-            Self::ProfileSplit { source, created } => {
-                (EditKey::Profile(source), Some(EditKey::Profile(created)))
-            }
-            Self::FaceSplit { source, created } => {
-                (EditKey::Face(source), Some(EditKey::Face(created)))
-            }
-            Self::SheetSplit { source, created } => {
-                (EditKey::Sheet(source), Some(EditKey::Sheet(created)))
-            }
-            Self::SolidSplit { source, created } => {
-                (EditKey::Solid(source), Some(EditKey::Solid(created)))
-            }
-            Self::VertexMerge { survivor, removed } => {
-                (EditKey::Vertex(survivor), Some(EditKey::Vertex(removed)))
-            }
-            Self::EdgeMerge { survivor, removed } => {
-                (EditKey::Edge(survivor), Some(EditKey::Edge(removed)))
-            }
-            Self::ProfileMerge { survivor, removed } => {
-                (EditKey::Profile(survivor), Some(EditKey::Profile(removed)))
-            }
-            Self::FaceMerge { survivor, removed } => {
-                (EditKey::Face(survivor), Some(EditKey::Face(removed)))
-            }
-            Self::SheetMerge { survivor, removed } => {
-                (EditKey::Sheet(survivor), Some(EditKey::Sheet(removed)))
-            }
-            Self::SolidMerge { survivor, removed } => {
-                (EditKey::Solid(survivor), Some(EditKey::Solid(removed)))
-            }
-        }
-    }
-
-    /// Extracts a split's source and created identity, independent of cell type.
-    fn split_keys(self) -> Option<(EditKey, EditKey)> {
-        match self {
-            Self::VertexSplit { source, created } => {
-                Some((EditKey::Vertex(source), EditKey::Vertex(created)))
-            }
-            Self::EdgeSplit { source, created } => {
-                Some((EditKey::Edge(source), EditKey::Edge(created)))
-            }
-            Self::ProfileSplit { source, created } => {
-                Some((EditKey::Profile(source), EditKey::Profile(created)))
-            }
-            Self::FaceSplit { source, created } => {
-                Some((EditKey::Face(source), EditKey::Face(created)))
-            }
-            Self::SheetSplit { source, created } => {
-                Some((EditKey::Sheet(source), EditKey::Sheet(created)))
-            }
-            Self::SolidSplit { source, created } => {
-                Some((EditKey::Solid(source), EditKey::Solid(created)))
-            }
-            _ => None,
-        }
-    }
-
-    /// Extracts a merge's survivor and consumed identity, independent of cell type.
-    pub(crate) fn merge_keys(self) -> Option<(EditKey, EditKey)> {
-        match self {
-            Self::VertexMerge { survivor, removed } => {
-                Some((EditKey::Vertex(survivor), EditKey::Vertex(removed)))
-            }
-            Self::EdgeMerge { survivor, removed } => {
-                Some((EditKey::Edge(survivor), EditKey::Edge(removed)))
-            }
-            Self::ProfileMerge { survivor, removed } => {
-                Some((EditKey::Profile(survivor), EditKey::Profile(removed)))
-            }
-            Self::FaceMerge { survivor, removed } => {
-                Some((EditKey::Face(survivor), EditKey::Face(removed)))
-            }
-            Self::SheetMerge { survivor, removed } => {
-                Some((EditKey::Sheet(survivor), EditKey::Sheet(removed)))
-            }
-            Self::SolidMerge { survivor, removed } => {
-                Some((EditKey::Solid(survivor), EditKey::Solid(removed)))
-            }
+            Self::Merged { survivor, removed } => Some((*survivor, *removed)),
             _ => None,
         }
     }
@@ -1109,10 +1156,42 @@ impl EditEvent {
 /// Both identities are absent exactly when a later pass removed the cell they
 /// were merging into. The declaration is then inert: it names no surviving
 /// identity, consumes nothing, and reaches no payload policy.
-fn is_spent_merge<P: Payload>(g: &Model<P>, event: EditEvent) -> bool {
-    event.merge_keys().is_some_and(|(survivor, removed)| {
-        !contains_edit_key(g, survivor) && !contains_edit_key(g, removed)
-    })
+fn is_spent_merge<P: Payload>(g: &Model<P>, survivor: EditKey, removed: EditKey) -> bool {
+    !contains_edit_key(g, survivor) && !contains_edit_key(g, removed)
+}
+
+/// Rejects a commit that leaves a transaction-start attribute unaccounted for.
+///
+/// Every attribute the transaction started with is either still present at
+/// commit, named by a `Merged` or `Consumed` event, or dropped by the
+/// structural bookkeeping reconciliation performs on its own -- a profile that
+/// lost its last edge, which is a redefinition rather than a removal. Since
+/// `remove_*` and `merge_*_into` are the only ways to delete an attribute and
+/// both record their own event, reaching this error means some other path
+/// bypassed them.
+fn validate_no_unexplained_removal<P: Payload>(
+    g: &Model<P>,
+    snapshot: &Model<P>,
+    events: &[EditEvent],
+    structurally_dropped: &HashSet<EditKey>,
+) -> Result<(), ModelEditError> {
+    let explained = events
+        .iter()
+        .filter_map(|event| match event {
+            EditEvent::Merged { removed, .. } => Some(*removed),
+            EditEvent::Consumed { key } => Some(*key),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    for key in current_edit_keys(snapshot) {
+        if !contains_edit_key(g, key)
+            && !explained.contains(&key)
+            && !structurally_dropped.contains(&key)
+        {
+            return Err(ModelEditError::UnexplainedRemoval { key });
+        }
+    }
+    Ok(())
 }
 
 /// Checks the appropriate attribute store for a type-erased edit key.
@@ -1150,20 +1229,31 @@ impl TransactionLineage {
         let mut merges = HashMap::new();
 
         for (order, event) in events.iter().enumerate() {
-            match *event {
-                EditEvent::Created { key } => {
-                    origins.entry(key).or_insert(CreationOrigin::Fresh);
-                    creation_order.entry(key).or_insert(order);
+            match event {
+                EditEvent::Created {
+                    key,
+                    origin: Origin::Split(source),
+                } => {
+                    origins.insert(*key, CreationOrigin::SplitFrom(*source));
+                    creation_order.entry(*key).or_insert(order);
                 }
-                _ => {
-                    if let Some((source, created)) = event.split_keys() {
-                        origins.insert(created, CreationOrigin::SplitFrom(source));
-                        creation_order.entry(created).or_insert(order);
-                    }
-                    if let Some((survivor, removed)) = event.merge_keys() {
-                        merges.insert(removed, survivor);
-                    }
+                // A derived creation has several sources of another kind, so
+                // there is no single parent to trace a split chain through.
+                // Stage 2's creation hook reads `Origin::Derived` off the
+                // event log directly; the reconciliation ordering below only
+                // needs a creation order, which "fresh" already supplies.
+                EditEvent::Created {
+                    key,
+                    origin: Origin::New | Origin::Derived(_),
                 }
+                | EditEvent::Copied { key } => {
+                    origins.entry(*key).or_insert(CreationOrigin::Fresh);
+                    creation_order.entry(*key).or_insert(order);
+                }
+                EditEvent::Merged { survivor, removed } => {
+                    merges.insert(*removed, *survivor);
+                }
+                EditEvent::Consumed { .. } => {}
             }
         }
 
@@ -1203,21 +1293,33 @@ fn resolve_policy_events<P: Payload>(
 ) -> Vec<PolicyEvent> {
     events
         .iter()
-        .filter_map(|event| {
-            if let Some((source, created)) = event.split_keys() {
-                if !contains_edit_key(g, created) {
+        .filter_map(|event| match event {
+            // Only a split names a single source of the created entity's own
+            // kind, so only a split has a hook to route to in this vocabulary.
+            // `New` and `Derived` reach no policy call until a creation hook
+            // exists to receive them.
+            EditEvent::Created {
+                key: created,
+                origin: Origin::Split(source),
+            } => {
+                if !contains_edit_key(g, *created) {
                     return None;
                 }
-                return transaction_start_origin(snapshot, &lineage.origins, source)
-                    .map(|source| PolicyEvent::Split { source, created });
+                transaction_start_origin(snapshot, &lineage.origins, *source).map(|source| {
+                    PolicyEvent::Split {
+                        source,
+                        created: *created,
+                    }
+                })
             }
-
-            event.merge_keys().and_then(|(survivor, removed)| {
-                let survivor = final_survivor(&lineage.merges, survivor);
+            EditEvent::Merged { survivor, removed } => {
+                let survivor = final_survivor(&lineage.merges, *survivor);
+                let removed = *removed;
                 // A spent merge has no surviving payload to merge into.
                 (contains_edit_key(snapshot, removed) && contains_edit_key(g, survivor))
                     .then_some(PolicyEvent::Merge { survivor, removed })
-            })
+            }
+            _ => None,
         })
         .collect()
 }
@@ -1270,18 +1372,25 @@ fn final_survivor(merges: &HashMap<EditKey, EditKey>, start: EditKey) -> EditKey
 ///
 /// Explicitly consumed attributes are removed first. Remaining local collisions
 /// are resolved per cell type, while ambiguous pre-existing collisions are errors.
+///
+/// Returns every transaction-start attribute this bookkeeping dropped on its
+/// own authority, independent of any declared event -- today, only a profile
+/// that lost its last edge. The unexplained-removal check exempts these:
+/// dropping them is the profile definition applied, not a removal a builder
+/// had to name.
 fn reconcile_transaction_attributes<P: Payload>(
     g: &mut Model<P>,
     snapshot: &Model<P>,
     events: &[EditEvent],
     lineage: &TransactionLineage,
-) -> Result<(), ModelEditError> {
+) -> Result<HashSet<EditKey>, ModelEditError> {
     let mut spent = events
         .iter()
-        .filter(|event| is_spent_merge(g, **event))
         .filter_map(|event| event.merge_keys())
+        .filter(|&(survivor, removed)| is_spent_merge(g, survivor, removed))
         .map(|(survivor, _)| survivor)
         .collect::<HashSet<_>>();
+    let mut structurally_dropped = HashSet::new();
     remove_consumed_attributes(g, events);
 
     let vertices = g
@@ -1329,6 +1438,7 @@ fn reconcile_transaction_attributes<P: Payload>(
         // A merge declared into a key the definition says does not exist is
         // spent, exactly like one whose identities a later pass consumed.
         spent.insert(EditKey::Profile(key));
+        structurally_dropped.insert(EditKey::Profile(key));
     }
 
     let profiles = g
@@ -1423,7 +1533,7 @@ fn reconcile_transaction_attributes<P: Payload>(
         }
     }
 
-    Ok(())
+    Ok(structurally_dropped)
 }
 
 /// Groups keys connected through one or more shared cell representatives.
@@ -1572,26 +1682,27 @@ fn remove_edit_key<P: Payload>(g: &mut Model<P>, key: EditKey) {
 /// operation removed outright, taking both identities with it.
 fn remove_consumed_attributes<P: Payload>(g: &mut Model<P>, events: &[EditEvent]) {
     for event in events {
-        match *event {
-            EditEvent::VertexMerge { removed, .. } => {
-                g.vertices.remove(removed);
+        if let EditEvent::Merged { removed, .. } = event {
+            match *removed {
+                EditKey::Vertex(key) => {
+                    g.vertices.remove(key);
+                }
+                EditKey::Edge(key) => {
+                    g.edges.remove(key);
+                }
+                EditKey::Profile(key) => {
+                    g.profiles.remove(key);
+                }
+                EditKey::Face(key) => {
+                    g.faces.remove(key);
+                }
+                EditKey::Sheet(key) => {
+                    g.sheets.remove(key);
+                }
+                EditKey::Solid(key) => {
+                    g.solids.remove(key);
+                }
             }
-            EditEvent::EdgeMerge { removed, .. } => {
-                g.edges.remove(removed);
-            }
-            EditEvent::ProfileMerge { removed, .. } => {
-                g.profiles.remove(removed);
-            }
-            EditEvent::FaceMerge { removed, .. } => {
-                g.faces.remove(removed);
-            }
-            EditEvent::SheetMerge { removed, .. } => {
-                g.sheets.remove(removed);
-            }
-            EditEvent::SolidMerge { removed, .. } => {
-                g.solids.remove(removed);
-            }
-            _ => {}
         }
     }
 }
@@ -1747,5 +1858,46 @@ fn canonicalize_vertex_darts<P: Payload>(g: &mut Model<P>) {
         .collect::<Vec<_>>();
     for (key, dart) in canonical_darts {
         g.vertices[key].dart = dart;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geometry::Point3;
+    use crate::topology::payload::StandardPayload;
+
+    /// `remove_vertex` and `merge_*_into` are the only ways `ModelEdit` deletes
+    /// an attribute, and both record their own event. Reaching this error
+    /// therefore requires bypassing them, which this test does directly
+    /// through the crate-internal field `ModelEdit` normally keeps private --
+    /// standing in for a future path that forgets to call either.
+    #[test]
+    fn a_removal_no_event_explains_is_rejected() {
+        let mut g = Model::<StandardPayload>::new();
+        let key = g
+            .transaction(|edit| {
+                let dart = edit.add_dart();
+                Ok::<_, ModelEditError>(edit.add_vertex(VertexAttr::new(
+                    dart,
+                    Point3::origin(),
+                    (),
+                )))
+            })
+            .unwrap();
+
+        let result = g.transaction(|edit| {
+            edit.model.vertices.remove(key);
+            Ok::<_, ModelEditError>(())
+        });
+
+        assert!(matches!(
+            result,
+            Err(ModelEditError::UnexplainedRemoval { key: EditKey::Vertex(k) }) if k == key
+        ));
+        assert!(
+            g.vertices.contains_key(key),
+            "a rejected commit should restore the transaction-start snapshot"
+        );
     }
 }

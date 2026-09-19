@@ -372,13 +372,19 @@ mutation capability (`add_dart`, `remove_dart`, `link`, `unlink`, `sew`,
   `&mut ModelEdit` down to private `*_staged` helpers.
 - Any error, validation failure, identity-reconciliation failure or payload
   policy failure restores the full transaction-start snapshot. Panics are **not** caught.
-- **Lineage**: `add_*` (fresh) / `add_*_split_from` (derived) / `merge_*_into`
-  (explicit survivor). At commit, merge chains resolve and `EditPolicy`
+- **Lineage**: `add_*` (`Origin::New`) / `add_*_split_from` (`Origin::Split`,
+  same kind) / `add_*_derived_from` (`Origin::Derived`, one or more sources of
+  any kind) / `merge_*_into` (explicit survivor) / `remove_*` (nothing
+  inherits). At commit, merge chains resolve and `EditPolicy`
   (e.g. `PreservePayload`) runs only on net externally-visible changes.
+  `remove_*` and `merge_*_into` each record their own event, so commit rejects
+  a transaction-start attribute that goes missing without one explaining it
+  (`ModelEditError::UnexplainedRemoval`).
 - **Identity reconciliation** picks one surviving key per final cell;
   transaction-start keys beat transaction-local ones. Local keys may vanish at commit.
 - Commit order: raw gmap axioms, embedding records, required registrations,
-  lineage, identity reconciliation, payload policy, then `revision += 1`.
+  lineage, identity reconciliation, the unexplained-removal check, payload
+  policy, then `revision += 1`.
 - Derived dart→key maps and the dart→owner index are lazy caches on `Model`,
   invalidated on every mutation and never serialized.
 

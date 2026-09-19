@@ -41,9 +41,16 @@ components have not been registered.
 
 ## Lineage and policy
 
-Plain `add_*` records a fresh transaction-local identity. `add_*_split_from`
-records an identity derived from a source key. `merge_*_into` explicitly names
-the surviving and consumed identities.
+Every creation names an `Origin`: plain `add_*` records `Origin::New`,
+`add_*_split_from` records `Origin::Split` from a source of the created
+entity's own kind, and `add_*_derived_from` records `Origin::Derived` from one
+or more sources of any kind. `merge_*_into` explicitly names the surviving and
+consumed identities. `remove_*` records that the removed identity's payload is
+inherited by nothing. Both `remove_*` and `merge_*_into` record their own
+event, so a transaction-start attribute cannot go missing at commit without
+one explaining it -- see "Commit order" below. A copy made by `Model::merge`
+is recorded so reconciliation can see it, but it is neither a creation nor a
+removal and never reaches `EditPolicy`.
 
 At commit, merge chains are resolved to their final survivor. Policy is
 then applied only to net changes visible outside the operation:
@@ -55,7 +62,9 @@ then applied only to net changes visible outside the operation:
 
 Policy callbacks run in declaration order and receive payloads from the
 transaction-start snapshot. `PreservePayload` clones split payloads and keeps
-the merge survivor payload. A policy error restores topology and payloads.
+the merge survivor payload; a `Derived` creation has no single source of the
+created entity's own kind to clone, so it defaults instead. A policy error
+restores topology and payloads.
 
 ## Identity reconciliation
 
@@ -74,12 +83,16 @@ lookups resolve the operation's logical survivor.
 1. the raw gmap axioms, on `Model::topology()` alone;
 2. the required profile/sheet registrations;
 3. edit-event lineage, then identity reconciliation;
-4. the embedding labels, which must describe the reconciled map: no record
+4. every transaction-start attribute is either still present, named by a
+   `Merged` or `Consumed` event, or dropped by reconciliation's own structural
+   bookkeeping (a profile that lost its last edge) -- otherwise commit rejects
+   the transaction with `UnexplainedRemoval`;
+5. the embedding labels, which must describe the reconciled map: no record
    anchored off it, no owner of lower dimension than the cell it claims, and
    no cell two entities disagree about;
-5. one same-dimensional raw cell per logical vertex, edge, face and solid;
-6. payload policy on net externally-visible changes;
-7. `revision += 1` and cache invalidation.
+6. one same-dimensional raw cell per logical vertex, edge, face and solid;
+7. payload policy on net externally-visible changes;
+8. `revision += 1` and cache invalidation.
 
 A failure at any step restores the transaction-start snapshot whole.
 

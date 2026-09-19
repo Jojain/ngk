@@ -11,7 +11,7 @@ use crate::geometry::{Point3, PointCoincidence};
 use crate::healing::{HealingOptions, HealingScope, remove_redundant_cells_staged};
 use crate::model::Model;
 use crate::topology::{
-    ModelEdit,
+    EditKey, ModelEdit,
     attributes::{SheetAttr, SolidAttr},
     closed::Closed,
     gmap::{Dart, Dim},
@@ -71,6 +71,17 @@ pub(crate) fn run<P: Payload>(
     for &face in &selection.reversed {
         reverse_face_winding(edit, face);
     }
+    // Captured before any sheet is removed: a kept face still names the
+    // original sheet it belonged to, and that lineage is what lets a result
+    // sheet carry a payload forward instead of defaulting.
+    let sheet_sources = selection
+        .kept
+        .iter()
+        .filter_map(|&face| {
+            let dart = edit.face_unchecked(face).dart();
+            edit.sheet_key(dart).map(|sheet| (face, sheet))
+        })
+        .collect::<HashMap<_, _>>();
     let sheets = [context.first, context.second]
         .into_iter()
         .flat_map(|solid| {
@@ -80,7 +91,13 @@ pub(crate) fn run<P: Payload>(
                 .map(|shell| shell.key())
         })
         .collect::<BTreeSet<_>>();
-    let data = edit.solid_unchecked(context.first).data().clone();
+    // Both operands' shells are about to be torn apart and reassembled, so
+    // neither can stay staged until commit the way a `merge_*_into` survivor
+    // would need to: `validate_required_domain_attributes` runs before
+    // reconciliation and would reject a solid still pointing at shells the
+    // rebuild below has stripped of their sheet registration. Both are
+    // removed immediately instead, and the result solid names both as its
+    // `Derived` origin below, so a caller's policy sees where it came from.
     for solid in [context.first, context.second] {
         edit.remove_solid(solid);
     }
@@ -106,7 +123,15 @@ pub(crate) fn run<P: Payload>(
     let mut inner = Vec::new();
     for component in components {
         let root = edit.face_unchecked(component[0]).dart();
-        let sheet = edit.add_sheet(SheetAttr::new(root, P::Sheet::default()));
+        // One of the shells that fed this component supplies the split
+        // source when one is known; a component assembled purely from
+        // healing or from a side with no prior sheet still gets a fresh one.
+        let sheet = match sheet_sources.get(&component[0]) {
+            Some(&source) => {
+                edit.add_sheet_split_from(source, SheetAttr::new(root, P::Sheet::default()))
+            }
+            None => edit.add_sheet(SheetAttr::new(root, P::Sheet::default())),
+        };
         if Closed::new(edit.sheet_unchecked(sheet)).is_none() {
             return Err(BooleanError::OpenResultShell { face: component[0] });
         }
@@ -131,8 +156,22 @@ pub(crate) fn run<P: Payload>(
     let mut shell_roots = Vec::with_capacity(1 + inner.len());
     shell_roots.push(outer[0]);
     shell_roots.extend(inner.iter().copied());
-    let solid =
-        edit.add_solid_split_from(context.first, SolidAttr::new(data, outer[0], Some(inner)));
+    // A same-kind, two-source `Derived` rather than a `Split`: the result is
+    // not `first` continuing, it is a new solid the whole operation produced,
+    // and naming both operands is what lets a policy combine their payloads
+    // instead of one arbitrarily standing in for both.
+    let sources = if context.first == context.second {
+        vec![EditKey::Solid(context.first)]
+    } else {
+        vec![
+            EditKey::Solid(context.first),
+            EditKey::Solid(context.second),
+        ]
+    };
+    let solid = edit.add_solid_derived_from(
+        sources,
+        SolidAttr::new(P::S::default(), outer[0], Some(inner)),
+    );
     cut_between_shells(edit, solid, &shell_roots)?;
     validate_gmap(edit.topology()).map_err(ModelValidationError::from)?;
     validate_solid_manifold(edit, solid)?;

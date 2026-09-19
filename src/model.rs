@@ -477,22 +477,26 @@ impl<P: Payload> Model<P> {
     /// its attribute. Algorithms that take several passes over that topology
     /// use this to keep reading the final surviving face identity meanwhile.
     pub(crate) fn staged_face_survivor(&self, face: FaceKey) -> FaceKey {
-        let mut current = face;
+        let target = EditKey::Face(face);
+        let mut current = target;
         let mut visited = HashSet::from([current]);
-        while let Some(survivor) = self
-            .staged_edit_events()
-            .iter()
-            .find_map(|event| match *event {
-                EditEvent::FaceMerge { survivor, removed } if removed == current => Some(survivor),
-                _ => None,
-            })
+        while let Some(survivor) =
+            self.staged_edit_events()
+                .iter()
+                .find_map(|event| match event.merge_keys() {
+                    Some((survivor, removed)) if removed == current => Some(survivor),
+                    _ => None,
+                })
         {
             if !visited.insert(survivor) {
                 break;
             }
             current = survivor;
         }
-        current
+        match current {
+            EditKey::Face(key) => key,
+            _ => face,
+        }
     }
 
     /// Records one semantic event in the active edit session.
@@ -504,9 +508,12 @@ impl<P: Payload> Model<P> {
             .push(event);
     }
 
-    /// Records attributes created by internal model-copying operations.
-    fn record_created_attribute(&mut self, key: EditKey) {
-        self.record_edit_event(EditEvent::Created { key });
+    /// Records attributes transported verbatim by [`Model::merge`].
+    ///
+    /// A copy is not a creation: it never reaches [`EditPolicy`], so it is
+    /// recorded as [`EditEvent::Copied`] rather than [`EditEvent::Created`].
+    fn record_copied_attribute(&mut self, key: EditKey) {
+        self.record_edit_event(EditEvent::Copied { key });
     }
 
     /// Discards cached lookups after topology, attributes or labels change.
@@ -673,9 +680,11 @@ impl<P: Payload> Model<P> {
             transaction
                 .events
                 .iter()
-                .position(
-                    |event| matches!(event, EditEvent::Created { key: created } if *created == key),
-                )
+                .position(|event| match event {
+                    EditEvent::Created { key: created, .. }
+                    | EditEvent::Copied { key: created } => *created == key,
+                    _ => false,
+                })
                 .unwrap_or(usize::MAX)
         };
         if creation_order(second) < creation_order(first) {
@@ -1380,7 +1389,7 @@ impl<P: Payload> Model<P> {
             let mut attr = attr.clone();
             attr.dart = self.cell_representative(remap_dart(&dart_map, attribute_dart), Dim::Zero);
             let new_key = self.vertices.insert(attr);
-            self.record_created_attribute(EditKey::Vertex(new_key));
+            self.record_copied_attribute(EditKey::Vertex(new_key));
             vertex_map.insert(old, new_key);
         }
 
@@ -1394,7 +1403,7 @@ impl<P: Payload> Model<P> {
             let mut attr = attr.clone();
             attr.dart = remap_dart(&dart_map, attribute_dart);
             let new_key = self.edges.insert(attr);
-            self.record_created_attribute(EditKey::Edge(new_key));
+            self.record_copied_attribute(EditKey::Edge(new_key));
             edge_map.insert(old, new_key);
         }
 
@@ -1408,7 +1417,7 @@ impl<P: Payload> Model<P> {
             let mut attr = attr.clone();
             attr.dart = remap_dart(&dart_map, attr.dart);
             let new_key = self.profiles.insert(attr);
-            self.record_created_attribute(EditKey::Profile(new_key));
+            self.record_copied_attribute(EditKey::Profile(new_key));
         }
 
         let mut face_map = HashMap::new();
@@ -1434,7 +1443,7 @@ impl<P: Payload> Model<P> {
                 .filter_map(|(dart, curve)| dart_map.get(&dart).copied().map(|d| (d, curve)))
                 .collect();
             let new_key = self.faces.insert(attr);
-            self.record_created_attribute(EditKey::Face(new_key));
+            self.record_copied_attribute(EditKey::Face(new_key));
             face_map.insert(old, new_key);
         }
 
@@ -1452,7 +1461,7 @@ impl<P: Payload> Model<P> {
             let mut attr = attr.clone();
             attr.root = root;
             let new_key = self.sheets.insert(attr);
-            self.record_created_attribute(EditKey::Sheet(new_key));
+            self.record_copied_attribute(EditKey::Sheet(new_key));
         }
 
         let mut solid_map = HashMap::new();
@@ -1466,7 +1475,7 @@ impl<P: Payload> Model<P> {
                 .inner_shells
                 .map(|shells| shells.into_iter().filter_map(copied_shell).collect());
             let new_key = self.solids.insert(attr);
-            self.record_created_attribute(EditKey::Solid(new_key));
+            self.record_copied_attribute(EditKey::Solid(new_key));
             solid_map.insert(old, new_key);
         }
 

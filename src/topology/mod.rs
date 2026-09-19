@@ -20,7 +20,7 @@ pub mod validation;
 pub mod vertex;
 pub use attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, SolidAttr};
 pub use dart::{Dart, IsolatedDart};
-pub use edit::{EditKey, EditPolicy, ModelEdit, ModelEditError, PreservePayload};
+pub use edit::{EditKey, EditPolicy, ModelEdit, ModelEditError, Origin, PreservePayload};
 pub use orientation::Orientation;
 pub use payload::{Payload, StandardPayload};
 pub use profile_curve::{
