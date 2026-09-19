@@ -381,9 +381,15 @@ fn shell_components<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> Vec<Vec<Fa
 }
 
 /// Signed boundary integral for planar polygon loops, including concave loops and holes.
-/// Signed boundary integral for planar polygon loops, including concave loops and holes.
+///
+/// The integral is taken about an arbitrary reference point, which is read off
+/// a boundary dart rather than off a corner: a disc bounded by one unmarked
+/// circle has no vertex at all, and asking its vertices for one answers with
+/// nothing.
 fn signed_volume<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> f64 {
-    let reference = *map.face_unchecked(faces[0]).vertices()[0].point();
+    let reference = map
+        .point_at_dart(map.face_unchecked(faces[0]).dart())
+        .expect("a face of a result shell sits on a boundary that has a position");
     let mut volume = 0.0;
 
     for &key in faces {

@@ -78,10 +78,10 @@ pub(crate) fn clip_branch(
     let mut parameters = vec![Fraction::START, Fraction::END];
     parameters.append(&mut crossings);
     parameters.extend(nodes.iter().map(|node| node.parameter));
-    // A closed branch needs distinct endpoints for the existing network representation.
-    if branch.closed {
-        parameters.push(Fraction::new(0.5));
-    }
+    // A closed branch that nothing crosses stays one fragment: its two ends are
+    // the single point it closes at, and the network carries that as one event
+    // referred to twice. Cutting it anyway would put a corner on a circle
+    // nothing meets on, which is a vertex the shape does not have.
     parameters.sort_by(Fraction::total_cmp);
     parameters.dedup_by(|a, b| (*a - *b).abs() <= options.parameter_tolerance);
     let mut fragments = Vec::new();

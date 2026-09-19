@@ -253,27 +253,39 @@ impl IntersectionNetworkBuilder {
         end_uses: impl IntoIterator<Item = IntersectionEventUse>,
         uses: impl IntoIterator<Item = IntersectionSpanUse>,
     ) -> Option<IntersectionSpanId> {
-        let start_point = curve.start();
-        let end_point = curve.end();
-        if start_point.coincides(end_point, self.tolerance) {
-            return None;
-        }
         let point_kind = match kind {
             IntersectionSpanKind::Tangent => PointContactKind::Tangent,
             IntersectionSpanKind::Transverse | IntersectionSpanKind::Overlap => {
                 PointContactKind::Transverse
             }
         };
-        let start = self.record_event(start_point, point_kind, start_uses);
-        let end = self.record_event(end_point, point_kind, end_uses);
+        let (start, end) = self.ends_of(&curve, point_kind, start_uses, end_uses)?;
         let incoming_uses = uses.into_iter().collect::<Vec<_>>();
-        if let Some((index, span)) = self.network.spans.iter_mut().enumerate().find(|(_, span)| {
-            let same_direction = span.start == start && span.end == end;
-            let reversed_direction = span.start == end && span.end == start;
-            (same_direction || reversed_direction)
-                && curves_coincide(&span.curve, &curve, reversed_direction, self.tolerance)
-        }) {
-            let reversed = span.start == end && span.end == start;
+        // A closed span's two ends are one event, so `start == end` holds in
+        // both directions and the identifiers alone cannot say which way a
+        // candidate runs. The curve is asked instead, once per direction.
+        let existing = self
+            .network
+            .spans
+            .iter()
+            .enumerate()
+            .find_map(|(index, span)| {
+                if span.start == start
+                    && span.end == end
+                    && curves_coincide(&span.curve, &curve, false, self.tolerance)
+                {
+                    return Some((index, false));
+                }
+                if span.start == end
+                    && span.end == start
+                    && curves_coincide(&span.curve, &curve, true, self.tolerance)
+                {
+                    return Some((index, true));
+                }
+                None
+            });
+        if let Some((index, reversed)) = existing {
+            let span = &mut self.network.spans[index];
             for span_use in incoming_uses {
                 let span_use = align_span_use(span_use, reversed);
                 if !span
@@ -296,6 +308,45 @@ impl IntersectionNetworkBuilder {
             uses: incoming_uses,
         });
         Some(id)
+    }
+
+    /// Resolves a span's two endpoint events, or declines a curve with no extent.
+    ///
+    /// A curve whose ends meet is closed, not degenerate, as long as it goes
+    /// somewhere in between: a bore rim is one circle, and the point it closes
+    /// at is one event the span names twice. What is dropped instead is a curve
+    /// that never leaves its start, which carries no section at all.
+    fn ends_of(
+        &mut self,
+        curve: &TrimmedCurve,
+        kind: PointContactKind,
+        start_uses: impl IntoIterator<Item = IntersectionEventUse>,
+        end_uses: impl IntoIterator<Item = IntersectionEventUse>,
+    ) -> Option<(IntersectionEventId, IntersectionEventId)> {
+        let start_point = curve.start();
+        let end_point = curve.end();
+        if !start_point.coincides(end_point, self.tolerance) {
+            let start = self.record_event(start_point, kind, start_uses);
+            let end = self.record_event(end_point, kind, end_uses);
+            return Some((start, end));
+        }
+        if curve
+            .point_at(Fraction::new(0.5))
+            .coincides(start_point, self.tolerance)
+        {
+            return None;
+        }
+        let mut both = start_uses.into_iter().collect::<Vec<_>>();
+        for event_use in end_uses {
+            if !both
+                .iter()
+                .any(|existing| uses_match(*existing, event_use, self.tolerance))
+            {
+                both.push(event_use);
+            }
+        }
+        let event = self.record_event(start_point, kind, both);
+        Some((event, event))
     }
 
     /// Records a coincident face pair; its oriented boundary is closed after noding.

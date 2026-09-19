@@ -400,11 +400,13 @@ Algorithm (per solver branch, per candidate face pair):
 6. build the interval's exact fragments with `Curve::trimmed` /
    `Curve2::trimmed`, never by re-interpolating samples.
 
-For a closed branch (`SurfaceIntersectionBranch::closed`), insert a
-`LoopAnchor` at the branch parameter of the lexicographically smallest 3D
-sample before step 4, so the loop becomes a cyclic sequence of spans rather
-than a discarded zero-length curve. This also removes the current
-`record_span` behaviour of silently dropping spans whose endpoints coincide.
+A closed branch (`SurfaceIntersectionBranch::closed`) needs no anchor of its
+own: `record_span` carries a span whose two ends are one event, so a branch
+nothing crosses becomes one span and the map realizes it as an edge with no
+corner. An anchor would put a vertex on a circle nothing meets on. What the
+cyclic sequence is still owed is the *crossed* case: a closed branch cut at one
+crossing is two spans today, and one of the two joins meets at the branch's own
+parameter origin, which is a place nothing meets either.
 
 ### 7.5 Network finalization — `graph.rs`
 
@@ -882,7 +884,7 @@ matching `src/topology/edit.md`.
 | `src/builders/faces.rs` | `FaceImprintSplit.section_edges` → `sections: Vec<FaceImprintSection>` with imprint index and interval; migrate `chamfer.rs`, `boolean/mod.rs`, and the face tests |
 | `src/builders/boolean/mod.rs` | move split application into `imprint.rs`; drop the `format!("{key:?}")` sort; thread `BooleanContext` instead of `BooleanOptions` |
 | `src/builders/boolean/contacts.rs` | remove `normalize_face_imprint_chains` (superseded by finalization); move `face_contains_uv`, `face_uv_loops`, `point_in_polygon`, `clip_convex_polygon` into `trim.rs` with exact loop handling; emit `RawContact` with residual and contact kind |
-| `src/builders/boolean/graph.rs` | add `ContactKind`, `IntersectionQuality`, oriented region boundaries; add the finalization pass and the five new validation errors; stop dropping degenerate closed spans |
+| `src/builders/boolean/graph.rs` | add `ContactKind`, `IntersectionQuality`, oriented region boundaries; add the finalization pass and the five new validation errors |
 | `src/builders/boolean/broad_phase.rs` | replace with `FaceBounds` / `FaceBvh` / `CandidateSet` |
 | `src/builders/boolean/operand.rs` | add `admit_solid` running `validate_solid_manifold` + `validate_solid_orientation`; make `OperandCells` hash-set backed |
 | `src/builders/boolean/errors.rs` | per-stage variants with geometric context |

@@ -1624,14 +1624,22 @@ fn add_section_loop<P: Payload>(
             .expect("fresh section loop darts must be alpha1-free");
     }
 
-    for vertex in 0..n {
-        let dart = edit.cell_representative(darts[2 * vertex], Dim::Zero);
-        let uv = imprints[vertex].pcurve.point_at(Fraction::new(0.0));
-        edit.add_vertex(VertexAttr::new(
-            dart,
-            surface.point_at(uv.x, uv.y),
-            P::V::default(),
-        ));
+    // A loop of one section closes on itself, so its single 0-cell is where
+    // that section comes back round rather than a place two of them meet.
+    // Nothing is bounded there, so no vertex is registered; `sew_section_loops`
+    // classifies the 0-cell inside the edge instead, which is what leaves a
+    // closed section an unmarked edge rather than a circle with an invented
+    // corner.
+    if n > 1 {
+        for vertex in 0..n {
+            let dart = edit.cell_representative(darts[2 * vertex], Dim::Zero);
+            let uv = imprints[vertex].pcurve.point_at(Fraction::new(0.0));
+            edit.add_vertex(VertexAttr::new(
+                dart,
+                surface.point_at(uv.x, uv.y),
+                P::V::default(),
+            ));
+        }
     }
 
     let edges = (0..n)
@@ -1685,6 +1693,9 @@ fn sew_section_loops<P: Payload>(
             Ok((outside_edge, edit.alpha(Dim::Zero, island_edge.dart)))
         })
         .collect::<Result<Vec<_>, FaceImprintSplitError>>()?;
+    // One pair is one section closing on itself, which `add_section_loop` left
+    // without a vertex.
+    let closes_on_itself = pairs.len() == 1;
     let mut edges = Vec::with_capacity(pairs.len());
     for (outside_edge, island_end) in pairs {
         edit.sew(Dim::Two, outside_edge.dart, island_end)
@@ -1698,7 +1709,11 @@ fn sew_section_loops<P: Payload>(
         } else {
             outside_edge.curve.curve().clone()
         };
-        edges.push(edit.add_edge(EdgeAttr::new(outside_edge.dart, curve, P::E::default())));
+        let key = edit.add_edge(EdgeAttr::new(outside_edge.dart, curve, P::E::default()));
+        if closes_on_itself {
+            edit.own_cell(Dim::Zero, outside_edge.dart, EntityOwner::Edge(key));
+        }
+        edges.push(key);
     }
     Ok(edges)
 }

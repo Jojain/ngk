@@ -13,6 +13,7 @@ use ngk::model::Model;
 use ngk::modeling::{edges, faces, solids};
 use ngk::topology::ModelEditError;
 use ngk::topology::attributes::VertexAttr;
+use ngk::topology::edge::Edge;
 use ngk::topology::shape_keys::{SolidKey, VertexKey};
 use ngk::topology::validation::{validate_gmap, validate_solid_manifold};
 
@@ -1168,14 +1169,14 @@ fn boolean_difference_supports_a_cylindrical_through_hole() {
         .collect();
     assert_eq!(rims.len(), 2);
 
-    // Both rims are built the same way: one closed loop of arcs on the bore
-    // radius, every one of them shared with the single bore wall face.
+    // Both rims are built the same way: one closed loop on the bore radius,
+    // every edge of it shared with the single bore wall face.
     let mut walls = Vec::new();
     for rim in &rims {
         let inner = rim.inner_loops();
         assert_eq!(inner.len(), 1);
         let edges = inner[0].edges();
-        assert!(edges.len() >= 2, "a rim needs at least two arcs");
+        assert!(!edges.is_empty(), "a rim is a loop of at least one edge");
         for edge in &edges {
             let neighbours: Vec<_> = edge
                 .faces()
@@ -1203,6 +1204,40 @@ fn boolean_difference_supports_a_cylindrical_through_hole() {
         walls.windows(2).all(|pair| pair[0] == pair[1]),
         "both rims must border the same bore wall, got {walls:?}"
     );
+}
+
+#[test]
+fn boolean_difference_leaves_a_through_bore_rim_uncut() {
+    let (mut map, block, cylinder) = block_with_cylinder(0.5, -1.0, 4.0);
+
+    let result = boolean(
+        &mut map,
+        block,
+        cylinder,
+        BooleanOperation::Difference,
+        BooleanOptions::default(),
+    )
+    .unwrap();
+
+    let solid = map.solid_unchecked(result.solid);
+    // A cap plane meets the bore wall in one closed circle, and nothing meets
+    // anywhere along it. The rim is therefore one unmarked edge, and the bore
+    // leaves the block's eight corners as the solid's only vertices.
+    for rim in solid
+        .faces()
+        .iter()
+        .filter(|face| !face.inner_loops().is_empty())
+    {
+        let inner = rim.inner_loops();
+        assert_eq!(inner.len(), 1);
+        let edges = inner[0].edges();
+        assert_eq!(edges.len(), 1, "a bore rim is one closed edge");
+        assert!(
+            matches!(edges[0], Edge::Unmarked(_)),
+            "a bore rim carries no corner"
+        );
+    }
+    assert_eq!(solid.vertices().len(), 8);
 }
 
 #[test]

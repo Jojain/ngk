@@ -115,6 +115,24 @@ impl Embedding {
         }
     }
 
+    /// Moves every entry naming `removed` onto `survivor`.
+    ///
+    /// Reconciliation settles two keys into one, and a record the consumed key
+    /// made still describes a real cell — it only names an identity that is
+    /// gone. Dropping it would leave that cell unclassified and keeping it
+    /// would leave the classification pointing at nothing, so it follows the
+    /// survivor. Two anchors then naming one owner on one orbit is agreement,
+    /// not the contradiction [`EmbeddingIndex::build`] refuses.
+    pub(crate) fn retarget(&mut self, removed: EntityOwner, survivor: EntityOwner) {
+        for shelf in &mut self.cells {
+            for held in shelf.values_mut() {
+                if *held == removed {
+                    *held = survivor;
+                }
+            }
+        }
+    }
+
     /// Drops the entry anchored exactly at `representative`, if there is one.
     ///
     /// Keyed by anchor rather than by owner, because this unlabels one cell and

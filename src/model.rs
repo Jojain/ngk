@@ -788,6 +788,12 @@ impl<P: Payload> Model<P> {
         self.embedding.own(dimension, dart, owner);
     }
 
+    /// Moves every classification record naming `removed` onto `survivor`.
+    pub(crate) fn retarget_ownership(&mut self, removed: EntityOwner, survivor: EntityOwner) {
+        self.invalidate_derived_indexes();
+        self.embedding.retarget(removed, survivor);
+    }
+
     /// Unlabels the raw `dimension`-cell containing `dart`.
     ///
     /// An entry sits on whichever dart of the orbit the labeller happened to

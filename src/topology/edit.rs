@@ -562,13 +562,24 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     }
 
     /// Declares that `removed` merged into `survivor`.
+    ///
+    /// Anything `removed` was classified as owning follows it, so a cell it
+    /// claimed does not go on naming an identity the transaction has spoken
+    /// for. This has to happen here rather than at commit: a later pass of the
+    /// same transaction reads the classification back, and two owners on one
+    /// orbit is a contradiction there however the transaction ends.
     pub fn merge_vertices_into(&mut self, survivor: VertexKey, removed: VertexKey) {
+        self.model
+            .retarget_ownership(EntityOwner::Vertex(removed), EntityOwner::Vertex(survivor));
         self.model
             .record_edit_event(EditEvent::VertexMerge { survivor, removed });
     }
 
-    /// Declares that `removed` merged into `survivor`.
+    /// Declares that `removed` merged into `survivor`, carrying its
+    /// classification records across — see [`Self::merge_vertices_into`].
     pub fn merge_edges_into(&mut self, survivor: EdgeKey, removed: EdgeKey) {
+        self.model
+            .retarget_ownership(EntityOwner::Edge(removed), EntityOwner::Edge(survivor));
         self.model
             .record_edit_event(EditEvent::EdgeMerge { survivor, removed });
     }
@@ -612,8 +623,11 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         current
     }
 
-    /// Declares that `removed` merged into `survivor`.
+    /// Declares that `removed` merged into `survivor`, carrying its
+    /// classification records across — see [`Self::merge_vertices_into`].
     pub fn merge_faces_into(&mut self, survivor: FaceKey, removed: FaceKey) {
+        self.model
+            .retarget_ownership(EntityOwner::Face(removed), EntityOwner::Face(survivor));
         self.model
             .record_edit_event(EditEvent::FaceMerge { survivor, removed });
     }
@@ -624,8 +638,11 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
             .record_edit_event(EditEvent::SheetMerge { survivor, removed });
     }
 
-    /// Declares that `removed` merged into `survivor`.
+    /// Declares that `removed` merged into `survivor`, carrying its
+    /// classification records across — see [`Self::merge_vertices_into`].
     pub fn merge_solids_into(&mut self, survivor: SolidKey, removed: SolidKey) {
+        self.model
+            .retarget_ownership(EntityOwner::Solid(removed), EntityOwner::Solid(survivor));
         self.model
             .record_edit_event(EditEvent::SolidMerge { survivor, removed });
     }
