@@ -1346,6 +1346,7 @@ source = { editable = "." }
 ocp = [
     { name = "build123d" },
     { name = "ocp-viewer" },
+    { name = "ocp-vscode" },
 ]
 
 [package.dev-dependencies]
@@ -1361,6 +1362,7 @@ dev = [
 requires-dist = [
     { name = "build123d", marker = "extra == 'ocp'", specifier = ">=0.8.0" },
     { name = "ocp-viewer", marker = "extra == 'ocp'", specifier = ">=1.1.3" },
+    { name = "ocp-vscode", marker = "extra == 'ocp'", specifier = ">=4.1.0" },
 ]
 provides-extras = ["ocp"]
 
@@ -1540,6 +1542,18 @@ wheels = [
 [package.optional-dependencies]
 cli = [
     { name = "questionary" },
+]
+
+[[package]]
+name = "ocp-vscode"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ocp-viewer-core", extra = ["cli"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cf/64/5ad3de2ea4a92f55ffba46aea3e7cf5f0caa7ba847cd6d97d54dbae4a497/ocp_vscode-4.1.0.tar.gz", hash = "sha256:fc9e79b34af50420c0eca7c8cdfae96c28318ad11adcd645f12a54b4855f2818", size = 35562, upload-time = "2026-09-16T10:28:25.321Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/c0/882dda3115d0df79fa67decdc6f9d09048aef521015c2f8d20181e1339e4/ocp_vscode-4.1.0-py3-none-any.whl", hash = "sha256:78c2a2bb7a7918546ce05eb35403b6be542bab5de8d9a7fb8e25b9663ff84432", size = 23326, upload-time = "2026-09-16T10:28:24.204Z" },
 ]
 
 [[package]]

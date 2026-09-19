@@ -27,6 +27,7 @@ dependencies = []
 ocp = [
     "build123d>=0.8.0",
     "ocp-viewer>=1.1.3",
+    "ocp-vscode>=4.1.0",
 ]
 
 [project.urls]
