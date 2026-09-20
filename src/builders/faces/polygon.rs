@@ -8,7 +8,7 @@ use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::FaceKey;
-use crate::topology::{ModelEdit, ModelEditError};
+use crate::topology::{EditKey, ModelEdit, ModelEditError};
 
 pub fn add_polygon_with_holes<P: Payload>(
     g: &mut Model<P>,
@@ -47,12 +47,19 @@ pub(crate) fn add_polygon_with_holes_edit<P: Payload>(
         inner_loops.push(inner_loop);
     }
 
-    let face_key = edit.add_face(FaceAttr::with_pcurves(
-        Surface::Plane(plane),
-        outer_loop,
-        inner_loops.clone(),
-        pcurves,
-    ));
+    let sources = std::iter::once(outer_loop)
+        .chain(inner_loops.iter().copied())
+        .filter_map(|dart| edit.profile_key(dart).map(EditKey::Profile))
+        .collect();
+    let face_key = edit.add_face_derived_from(
+        sources,
+        FaceAttr::with_pcurves(
+            Surface::Plane(plane),
+            outer_loop,
+            inner_loops.clone(),
+            pcurves,
+        ),
+    );
     // Each hole is reached from the outer boundary along a cut the face owns,
     // so the face is one 2-cell rather than one boundary per hole with nothing
     // joining them.

@@ -1039,7 +1039,7 @@ impl EditPolicy<TestPayload> for CombineDerivedEdges {
         before: &Model<TestPayload>,
     ) -> Result<String, Self::Error> {
         match origin {
-            Origin::Derived(sources) => {
+            Origin::Derived { sources } => {
                 self.derived_from.push((key, sources.clone()));
                 Ok(sources
                     .iter()

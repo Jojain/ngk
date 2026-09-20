@@ -269,7 +269,7 @@ a hook for a surviving entity whose extent changed.
   `Origin::Split(EditKey)` whose kind it already knows, and must match it back
   to `EditKey::Face(_)` with an unreachable arm. `preserve_created`'s six
   closures in `edit.rs` are that pattern, written out six times.
-- **`Origin::Derived(Vec<EditKey>)` orders its sources by convention.** The
+- **`Origin::Derived { sources: Vec<EditKey> }` orders its sources by convention.** The
   order is documented in each builder's prose, so a policy that reads position
   is coupled to a builder's documentation rather than to a type.
 - **The `Default` bound on `PreservePayload` surfaces far from its cause.** A

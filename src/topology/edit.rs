@@ -30,7 +30,7 @@ pub enum Origin {
     Split(EditKey),
     /// It was produced by entities of another kind, in an order the builder
     /// documents — a loft names its sections as it traverses them.
-    Derived(Vec<EditKey>),
+    Derived { sources: Vec<EditKey> },
 }
 
 impl Origin {
@@ -40,7 +40,9 @@ impl Origin {
     /// several sources; this is the one-source spelling over it, not a second
     /// variant.
     pub fn derived(source: EditKey) -> Self {
-        Self::Derived(vec![source])
+        Self::Derived {
+            sources: vec![source],
+        }
     }
 }
 
@@ -244,7 +246,7 @@ where
 {
     match origin {
         Origin::Split(source) => source_data(before, source).unwrap_or_default(),
-        Origin::New | Origin::Derived(_) => T::default(),
+        Origin::New | Origin::Derived { .. } => T::default(),
     }
 }
 
@@ -582,7 +584,7 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         sources: Vec<EditKey>,
         vertex: VertexAttr<P::V>,
     ) -> VertexKey {
-        self.add_vertex_with_origin(vertex, Origin::Derived(sources))
+        self.add_vertex_with_origin(vertex, Origin::Derived { sources })
     }
 
     fn add_vertex_with_origin(
@@ -618,7 +620,7 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         sources: Vec<EditKey>,
         edge: EdgeAttr<P::E>,
     ) -> EdgeKey {
-        self.add_edge_with_origin(edge, Origin::Derived(sources))
+        self.add_edge_with_origin(edge, Origin::Derived { sources })
     }
 
     fn add_edge_with_origin(&mut self, edge: EdgeAttr<P::E>, origin: Origin) -> EdgeKey {
@@ -651,7 +653,7 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         sources: Vec<EditKey>,
         profile: ProfileAttr<P::Profile>,
     ) -> ProfileKey {
-        self.add_profile_with_origin(profile, Origin::Derived(sources))
+        self.add_profile_with_origin(profile, Origin::Derived { sources })
     }
 
     fn add_profile_with_origin(
@@ -688,7 +690,7 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         sources: Vec<EditKey>,
         face: FaceAttr<P::F>,
     ) -> FaceKey {
-        self.add_face_with_origin(face, Origin::Derived(sources))
+        self.add_face_with_origin(face, Origin::Derived { sources })
     }
 
     fn add_face_with_origin(&mut self, face: FaceAttr<P::F>, origin: Origin) -> FaceKey {
@@ -721,7 +723,7 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         sources: Vec<EditKey>,
         sheet: SheetAttr<P::Sheet>,
     ) -> SheetKey {
-        self.add_sheet_with_origin(sheet, Origin::Derived(sources))
+        self.add_sheet_with_origin(sheet, Origin::Derived { sources })
     }
 
     fn add_sheet_with_origin(&mut self, sheet: SheetAttr<P::Sheet>, origin: Origin) -> SheetKey {
@@ -750,7 +752,7 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         sources: Vec<EditKey>,
         solid: SolidAttr<P::S>,
     ) -> SolidKey {
-        self.add_solid_with_origin(solid, Origin::Derived(sources))
+        self.add_solid_with_origin(solid, Origin::Derived { sources })
     }
 
     fn add_solid_with_origin(&mut self, solid: SolidAttr<P::S>, origin: Origin) -> SolidKey {
@@ -1224,7 +1226,7 @@ fn validate_edit_events<P: Payload>(
                 check_source(*source)?;
             }
             EditEvent::Created {
-                origin: Origin::Derived(sources),
+                origin: Origin::Derived { sources },
                 ..
             } => {
                 for &source in sources {
@@ -1375,7 +1377,7 @@ impl TransactionLineage {
                 // needs a creation order, which "fresh" already supplies.
                 EditEvent::Created {
                     key,
-                    origin: Origin::New | Origin::Derived(_),
+                    origin: Origin::New | Origin::Derived { .. },
                 }
                 | EditEvent::Copied { key } => {
                     origins.entry(*key).or_insert(CreationOrigin::Fresh);
@@ -1469,7 +1471,7 @@ fn resolve_origin<P: Payload>(
         Origin::Split(source) => transaction_start_origin(snapshot, origins, *source)
             .map(Origin::Split)
             .unwrap_or(Origin::New),
-        Origin::Derived(sources) => {
+        Origin::Derived { sources } => {
             let resolved = sources
                 .iter()
                 .filter_map(|&source| transaction_start_origin(snapshot, origins, source))
@@ -1477,7 +1479,7 @@ fn resolve_origin<P: Payload>(
             if resolved.is_empty() {
                 Origin::New
             } else {
-                Origin::Derived(resolved)
+                Origin::Derived { sources: resolved }
             }
         }
     }

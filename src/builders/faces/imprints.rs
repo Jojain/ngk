@@ -14,6 +14,7 @@ use crate::topology::attributes::{
     EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, VertexAttr,
 };
 use crate::topology::edge::Edge;
+use crate::topology::edit::EditKey;
 use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
@@ -453,11 +454,11 @@ pub(crate) fn split_boundaryless_face_by_wrapping_chain<P: Payload>(
 
     let forward = chain.imprints();
     let backward = reversed_imprint_loop(&forward)?;
-    let forward_loop = add_section_loop(edit, &old_face.surface, &forward);
-    let backward_loop = add_section_loop(edit, &old_face.surface, &backward);
+    let forward_loop = add_section_loop(edit, face, &old_face.surface, &forward);
+    let backward_loop = add_section_loop(edit, face, &old_face.surface, &backward);
     let section_edges = sew_section_loops(edit, face, &forward_loop, &backward_loop)?;
     for loop_ in [&forward_loop, &backward_loop] {
-        edit.add_profile(ProfileAttr::new(loop_.loop_dart));
+        edit.add_profile_derived_from(vec![EditKey::Face(face)], ProfileAttr::new(loop_.loop_dart));
     }
 
     // The forward copy travels the chain's own direction; the reversed one
@@ -663,11 +664,17 @@ pub(crate) fn split_ring_face_by_wrapping_chain<P: Payload>(
     let forward = chain.imprints();
     let backward = reversed_imprint_loop(&forward)?;
 
-    let forward_loop = add_section_loop(edit, &old_face.surface, &forward);
-    let backward_loop = add_section_loop(edit, &old_face.surface, &backward);
+    let forward_loop = add_section_loop(edit, face, &old_face.surface, &forward);
+    let backward_loop = add_section_loop(edit, face, &old_face.surface, &backward);
     let section_edges = sew_section_loops(edit, face, &forward_loop, &backward_loop)?;
-    edit.add_profile(ProfileAttr::new(forward_loop.loop_dart));
-    edit.add_profile(ProfileAttr::new(backward_loop.loop_dart));
+    edit.add_profile_derived_from(
+        vec![EditKey::Face(face)],
+        ProfileAttr::new(forward_loop.loop_dart),
+    );
+    edit.add_profile_derived_from(
+        vec![EditKey::Face(face)],
+        ProfileAttr::new(backward_loop.loop_dart),
+    );
 
     let seeds = old_face.wrapping().collect::<Vec<_>>();
     let [(first_seed, _), (second_seed, _)] = seeds[..] else {
@@ -818,8 +825,9 @@ pub(crate) fn split_face_by_closed_curve_imprint<P: Payload>(
         .face_attr(face)
         .ok_or(FaceImprintSplitError::MissingFace { face })?
         .clone();
-    let outside_loop = add_imprint_section_loop(edit, &old_face.surface, imprint);
-    let island_loop = add_imprint_section_loop(edit, &old_face.surface, &reverse_imprint(imprint)?);
+    let outside_loop = add_imprint_section_loop(edit, face, &old_face.surface, imprint);
+    let island_loop =
+        add_imprint_section_loop(edit, face, &old_face.surface, &reverse_imprint(imprint)?);
     finish_closed_imprint_split(edit, face, old_face, outside_loop, island_loop)
 }
 
@@ -899,8 +907,8 @@ pub(crate) fn split_face_by_closed_imprint_loop<P: Payload>(
         .clone();
     let island_imprints = reversed_imprint_loop(imprints)?;
 
-    let outside_loop = add_section_loop(edit, &old_face.surface, imprints);
-    let island_loop = add_section_loop(edit, &old_face.surface, &island_imprints);
+    let outside_loop = add_section_loop(edit, face, &old_face.surface, imprints);
+    let island_loop = add_section_loop(edit, face, &old_face.surface, &island_imprints);
     finish_closed_imprint_split(edit, face, old_face, outside_loop, island_loop)
 }
 
@@ -912,8 +920,14 @@ pub(crate) fn finish_closed_imprint_split<P: Payload>(
     island_loop: SectionLoop,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
     let section_edges = sew_section_loops(edit, face, &outside_loop, &island_loop)?;
-    edit.add_profile(ProfileAttr::new(outside_loop.loop_dart));
-    edit.add_profile(ProfileAttr::new(island_loop.loop_dart));
+    edit.add_profile_derived_from(
+        vec![EditKey::Face(face)],
+        ProfileAttr::new(outside_loop.loop_dart),
+    );
+    edit.add_profile_derived_from(
+        vec![EditKey::Face(face)],
+        ProfileAttr::new(island_loop.loop_dart),
+    );
 
     // The face the island sits in reaches it along a cut it owns. Without one
     // the new hole would sit in a 2-cell of its own, leaving the face two
@@ -969,6 +983,7 @@ pub(crate) struct SectionLoopEdge {
 
 pub(crate) fn add_section_loop<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
+    source_face: FaceKey,
     surface: &Surface,
     imprints: &[FaceImprint],
 ) -> SectionLoop {
@@ -996,7 +1011,10 @@ pub(crate) fn add_section_loop<P: Payload>(
         for vertex in 0..n {
             let dart = edit.cell_representative(darts[2 * vertex], Dim::Zero);
             let uv = imprints[vertex].pcurve.point_at(Fraction::new(0.0));
-            edit.add_vertex(VertexAttr::new(dart, surface.point_at(uv.x, uv.y)));
+            edit.add_vertex_derived_from(
+                vec![EditKey::Face(source_face)],
+                VertexAttr::new(dart, surface.point_at(uv.x, uv.y)),
+            );
         }
     }
 
@@ -1026,10 +1044,11 @@ pub(crate) fn add_section_loop<P: Payload>(
 
 pub(crate) fn add_imprint_section_loop<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
+    source_face: FaceKey,
     surface: &Surface,
     imprint: &FaceImprint,
 ) -> SectionLoop {
-    add_section_loop(edit, surface, std::slice::from_ref(imprint))
+    add_section_loop(edit, source_face, surface, std::slice::from_ref(imprint))
 }
 
 pub(crate) fn sew_section_loops<P: Payload>(
@@ -1067,7 +1086,10 @@ pub(crate) fn sew_section_loops<P: Payload>(
         } else {
             outside_edge.curve.curve().clone()
         };
-        let key = edit.add_edge(EdgeAttr::new(outside_edge.dart, curve));
+        let key = edit.add_edge_derived_from(
+            vec![EditKey::Face(face)],
+            EdgeAttr::new(outside_edge.dart, curve),
+        );
         if closes_on_itself {
             edit.own_cell(Dim::Zero, outside_edge.dart, EntityOwner::Edge(key));
         }
@@ -1233,17 +1255,18 @@ pub(crate) fn split_one_face_by_imprints<P: Payload>(
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
-
     use super::split_face_by_imprints_edit;
     use crate::builders::faces::{FaceImprint, add_face};
     use crate::builders::profiles::add_rectangle as add_rectangle_profile;
+    use crate::builders::test_support::LineageRecorder;
     use crate::geometry::{Curve, Plane, Point2, Point3, TrimmedCurve2};
     use crate::model::Model;
     use crate::topology::ModelEditError;
     use crate::topology::edit::{EditKey, EditPolicy, Origin, PreservePayload};
     use crate::topology::payload::Payload;
-    use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
+    use crate::topology::shape_keys::{
+        EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey,
+    };
 
     #[derive(Clone, Default)]
     struct FacePayload;
@@ -1259,88 +1282,6 @@ mod tests {
         type Policy = PreservePayload;
     }
 
-    #[derive(Default)]
-    struct RecordFaceSplits {
-        splits: Vec<(FaceKey, FaceKey)>,
-        profile_splits: Vec<(ProfileKey, ProfileKey)>,
-    }
-
-    impl EditPolicy<FacePayload> for RecordFaceSplits {
-        type Error = Infallible;
-
-        fn vertex_created(
-            &mut self,
-            _key: VertexKey,
-            _origin: Origin,
-            _before: &Model<FacePayload>,
-        ) -> Result<(), Self::Error> {
-            Ok(())
-        }
-
-        fn edge_created(
-            &mut self,
-            _key: EdgeKey,
-            _origin: Origin,
-            _before: &Model<FacePayload>,
-        ) -> Result<(), Self::Error> {
-            Ok(())
-        }
-
-        fn profile_created(
-            &mut self,
-            key: ProfileKey,
-            origin: Origin,
-            before: &Model<FacePayload>,
-        ) -> Result<String, Self::Error> {
-            match origin {
-                Origin::Split(EditKey::Profile(source)) => {
-                    self.profile_splits.push((source, key));
-                    Ok(format!(
-                        "{}:split",
-                        before.profile_attr_unchecked(source).data()
-                    ))
-                }
-                _ => Ok(String::new()),
-            }
-        }
-
-        fn face_created(
-            &mut self,
-            key: FaceKey,
-            origin: Origin,
-            before: &Model<FacePayload>,
-        ) -> Result<String, Self::Error> {
-            match origin {
-                Origin::Split(EditKey::Face(source)) => {
-                    self.splits.push((source, key));
-                    Ok(format!(
-                        "{}:split",
-                        before.face_attr_unchecked(source).data()
-                    ))
-                }
-                _ => Ok(String::new()),
-            }
-        }
-
-        fn sheet_created(
-            &mut self,
-            _key: SheetKey,
-            _origin: Origin,
-            _before: &Model<FacePayload>,
-        ) -> Result<(), Self::Error> {
-            Ok(())
-        }
-
-        fn solid_created(
-            &mut self,
-            _key: SolidKey,
-            _origin: Origin,
-            _before: &Model<FacePayload>,
-        ) -> Result<(), Self::Error> {
-            Ok(())
-        }
-    }
-
     #[test]
     fn boundary_chord_split_preserves_source_face_and_applies_payload_policy() {
         let mut g = attributed_rectangle();
@@ -1349,7 +1290,7 @@ mod tests {
             .profile_key(g.face_unchecked(source).dart())
             .expect("source face should have a profile");
         let imprint = planar_line_imprint(Point2::new(0.0, 0.0), Point2::new(2.0, 2.0));
-        let mut policy = RecordFaceSplits::default();
+        let mut policy = LineageRecorder::<FacePayload>::default();
 
         let splits = g
             .transaction_with_policy(&mut policy, |edit| {
@@ -1360,16 +1301,26 @@ mod tests {
         assert_eq!(splits.len(), 1);
         assert_eq!(splits[0].first, source);
         assert_eq!(g.face_attr_unchecked(source).data(), "source");
+        assert_eq!(g.face_attr_unchecked(splits[0].second).data(), "source");
+        assert!(policy.created.contains(&(
+            EditKey::Face(splits[0].second),
+            Origin::Split(EditKey::Face(source)),
+        )));
+        let split_profile = policy
+            .created
+            .iter()
+            .find_map(|(key, origin)| match (key, origin) {
+                (EditKey::Profile(key), Origin::Split(EditKey::Profile(source)))
+                    if *source == source_profile =>
+                {
+                    Some(*key)
+                }
+                _ => None,
+            })
+            .expect("profile split should be recorded");
         assert_eq!(
-            g.face_attr_unchecked(splits[0].second).data(),
-            "source:split"
-        );
-        assert_eq!(policy.splits, vec![(source, splits[0].second)]);
-        assert_eq!(policy.profile_splits.len(), 1);
-        assert_eq!(policy.profile_splits[0].0, source_profile);
-        assert_eq!(
-            g.profile_attr_unchecked(policy.profile_splits[0].1).data(),
-            "source profile:split"
+            g.profile_attr_unchecked(split_profile).data(),
+            "source profile"
         );
     }
 
@@ -1388,7 +1339,7 @@ mod tests {
             .windows(2)
             .map(|pair| planar_line_imprint(pair[0], pair[1]))
             .collect::<Vec<_>>();
-        let mut policy = RecordFaceSplits::default();
+        let mut policy = LineageRecorder::<FacePayload>::default();
 
         let splits = g
             .transaction_with_policy(&mut policy, |edit| {
@@ -1399,11 +1350,11 @@ mod tests {
         assert_eq!(splits.len(), 1);
         assert_eq!(splits[0].first, source);
         assert_eq!(g.face_attr_unchecked(source).data(), "source");
-        assert_eq!(
-            g.face_attr_unchecked(splits[0].second).data(),
-            "source:split"
-        );
-        assert_eq!(policy.splits, vec![(source, splits[0].second)]);
+        assert_eq!(g.face_attr_unchecked(splits[0].second).data(), "source");
+        assert!(policy.created.contains(&(
+            EditKey::Face(splits[0].second),
+            Origin::Split(EditKey::Face(source)),
+        )));
     }
 
     #[test]

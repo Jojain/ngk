@@ -2,7 +2,7 @@
 
 use crate::geometry::TrimmedCurve2;
 use crate::geometry::parameter::Fraction;
-use crate::model::{Cell1, Cell2, MergeTopology, Model};
+use crate::model::{Cell0, Cell1, Cell2, MergeTopology, Model};
 use crate::model::{OpResult, StaleResult};
 use crate::topology::ModelEditError;
 use crate::topology::embedding::EntityOwner;
@@ -26,6 +26,7 @@ use crate::{
         attributes::{EdgeAttr, FaceAttr, LoopDefinition, ProfileAttr},
         edge::Edge,
         edge::Edge as EdgeView,
+        edit::EditKey,
         face::Face,
         face::Face as FaceView,
         gmap::Dim,
@@ -210,7 +211,7 @@ pub(crate) fn add_sphere_edit<P: Payload>(
     let shell = cell.anchor();
     edit.add_sheet(SheetAttr::new(shell));
     Ok(ClosedSolid {
-        solid: edit.add_solid(SolidAttr::new(shell, None)),
+        solid: edit.add_solid_derived_from(vec![EditKey::Face(face)], SolidAttr::new(shell, None)),
         faces: vec![face],
         seams: Vec::new(),
         revision: None,
@@ -255,7 +256,7 @@ pub(crate) fn add_torus_edit<P: Payload>(
     let shell = cell.anchor();
     edit.add_sheet(SheetAttr::new(shell));
     Ok(ClosedSolid {
-        solid: edit.add_solid(SolidAttr::new(shell, None)),
+        solid: edit.add_solid_derived_from(vec![EditKey::Face(face)], SolidAttr::new(shell, None)),
         faces: vec![face],
         seams: Vec::new(),
         revision: None,
@@ -367,7 +368,10 @@ pub(crate) fn add_extruded_face_edit<P: Payload>(
     if edit.sheet_key(outer_shell).is_none() {
         edit.add_sheet(SheetAttr::new(outer_shell));
     }
-    let solid = edit.add_solid(SolidAttr::new(outer_shell, None));
+    let solid = edit.add_solid_derived_from(
+        vec![EditKey::Face(face_key)],
+        SolidAttr::new(outer_shell, None),
+    );
     Ok(FaceExtrusion {
         solid,
         start_cap: face_key,
@@ -436,12 +440,24 @@ fn sew_extruded_loop<P: Payload>(
     let (top_face, top_loop_dart) = top;
     let bottom_edges = cap_loop_edges(edit, bottom_face, bottom_loop_dart);
     let top_edges = cap_loop_edges(edit, top_face, top_loop_dart);
-    if let Some(representative) =
+    if let Some((representative, face)) =
         sew_wrapping_lateral_face(edit, &bottom_edges, &top_edges, direction)?
     {
+        let swept_from = edit
+            .cell_key::<Cell1>(*bottom_edges.first().expect("one bottom edge"))
+            .expect("wrapping lateral must have a source edge");
+        let start_edge = swept_from;
+        let end_edge = edit
+            .cell_key::<Cell1>(*top_edges.first().expect("one top edge"))
+            .expect("wrapping lateral must have a copied edge");
         return Ok((
             edit.cell_representative(representative, Dim::Three),
-            Vec::new(),
+            vec![Lateral {
+                swept_from,
+                face,
+                start_edge,
+                end_edge,
+            }],
         ));
     }
 
@@ -452,7 +468,10 @@ fn sew_extruded_loop<P: Payload>(
         .map(|(bottom_edge, top_edge)| {
             let prepared = prepare_lateral_face(edit, bottom_edge, top_edge, direction)?;
             let topology = add_lateral_face_topology(edit)?;
-            let face = add_lateral_face_attributes(edit, &topology, &prepared);
+            let swept_from = edit
+                .cell_key::<Cell1>(bottom_edge)
+                .expect("lateral must have a source edge");
+            let face = add_lateral_face_attributes(edit, &topology, &prepared, swept_from);
             Ok(ExtrudedFaceLateral {
                 topology,
                 face,
@@ -487,10 +506,16 @@ fn sew_extruded_loop<P: Payload>(
     let vertical_edges = laterals
         .iter()
         .map(|lateral| {
-            edit.add_edge(EdgeAttr::new(
-                lateral.topology.end_vertical,
-                Curve::line(lateral.vertical_start, lateral.vertical_end),
-            ))
+            edit.add_edge_derived_from(
+                vec![EditKey::Vertex(
+                    edit.cell_key::<Cell0>(lateral.topology.end_vertical)
+                        .expect("vertical edge must meet a swept vertex"),
+                )],
+                EdgeAttr::new(
+                    lateral.topology.end_vertical,
+                    Curve::line(lateral.vertical_start, lateral.vertical_end),
+                ),
+            )
         })
         .collect::<Vec<_>>();
     let representative = laterals
@@ -526,7 +551,7 @@ fn sew_wrapping_lateral_face<P: Payload>(
     bottom_edges: &[Dart],
     top_edges: &[Dart],
     direction: Vector3<f64>,
-) -> Result<Option<Dart>, ExtrudeError> {
+) -> Result<Option<(Dart, FaceKey)>, ExtrudeError> {
     let ([bottom_edge], [top_edge]) = (bottom_edges, top_edges) else {
         return Ok(None);
     };
@@ -558,17 +583,23 @@ fn sew_wrapping_lateral_face<P: Payload>(
     edit.add_profile(ProfileAttr::new(bottom_start));
     edit.add_profile(ProfileAttr::new(top_start));
     let uv = prepared.uv;
-    let face = edit.add_face(FaceAttr::with_loops(
-        prepared.surface.clone(),
-        vec![
-            LoopDefinition::wrapping(bottom_start, axis),
-            LoopDefinition::wrapping(top_start, axis),
-        ],
-        HashMap::from([
-            (bottom_start, TrimmedCurve2::segment(uv[0], uv[1])),
-            (top_start, TrimmedCurve2::segment(uv[2], uv[3])),
-        ]),
-    ));
+    let source_edge = edit
+        .cell_key::<Cell1>(*bottom_edge)
+        .expect("wrapping lateral must have a source edge");
+    let face = edit.add_face_derived_from(
+        vec![EditKey::Edge(source_edge)],
+        FaceAttr::with_loops(
+            prepared.surface.clone(),
+            vec![
+                LoopDefinition::wrapping(bottom_start, axis),
+                LoopDefinition::wrapping(top_start, axis),
+            ],
+            HashMap::from([
+                (bottom_start, TrimmedCurve2::segment(uv[0], uv[1])),
+                (top_start, TrimmedCurve2::segment(uv[2], uv[3])),
+            ]),
+        ),
+    );
     edit.own_cell(Dim::One, seam_out[0], EntityOwner::Face(face));
 
     // The swept loop runs with the sweep at the bottom and against it at the
@@ -576,7 +607,7 @@ fn sew_wrapping_lateral_face<P: Payload>(
     // top edge does.
     sew(edit, Dim::Two, bottom_start, *bottom_edge)?;
     sew(edit, Dim::Two, top_end, *top_edge)?;
-    Ok(Some(bottom_start))
+    Ok(Some((bottom_start, face)))
 }
 
 /// The axis a prepared lateral face spans a whole period of, if it spans one.
@@ -684,14 +715,18 @@ fn add_lateral_face_attributes<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     topology: &LateralFaceTopology,
     prepared: &PreparedLateralFace,
+    swept_from: EdgeKey,
 ) -> FaceKey {
     edit.add_profile(ProfileAttr::new(topology.loop_dart));
-    edit.add_face(FaceAttr::with_pcurves(
-        prepared.surface.clone(),
-        topology.loop_dart,
-        Vec::new(),
-        quad_pcurves(&prepared.uv, &topology.darts),
-    ))
+    edit.add_face_derived_from(
+        vec![EditKey::Edge(swept_from)],
+        FaceAttr::with_pcurves(
+            prepared.surface.clone(),
+            topology.loop_dart,
+            Vec::new(),
+            quad_pcurves(&prepared.uv, &topology.darts),
+        ),
+    )
 }
 
 fn lateral_face_surface(
@@ -808,4 +843,104 @@ fn quad_pcurves(
         );
     }
     pcurves
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use nalgebra::Vector3;
+
+    use super::add_extruded_face_edit;
+    use crate::builders::faces::{add_circle, add_face, add_polygon};
+    use crate::builders::test_support::LineageRecorder;
+    use crate::geometry::{Plane, Point3};
+    use crate::model::Model;
+    use crate::topology::edit::{EditKey, Origin};
+    use crate::topology::payload::StandardPayload;
+
+    #[test]
+    fn rectangle_extrusion_declares_swept_and_assembled_lineage() {
+        let mut model = Model::<StandardPayload>::new();
+        let profile = add_polygon(
+            &mut model,
+            &[
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(2.0, 0.0, 0.0),
+                Point3::new(2.0, 2.0, 0.0),
+                Point3::new(0.0, 2.0, 0.0),
+            ],
+        );
+        let face = add_face(&mut model, profile).expect("face should build");
+        let mut recorder = LineageRecorder::default();
+
+        let result = model
+            .transaction_with_policy(&mut recorder, |edit| {
+                add_extruded_face_edit(edit, face, Vector3::z())
+            })
+            .expect("extrusion should commit");
+
+        let mut expected = result
+            .laterals
+            .iter()
+            .map(|lateral| {
+                (
+                    EditKey::Face(lateral.face),
+                    Origin::derived(EditKey::Edge(lateral.swept_from)),
+                )
+            })
+            .chain(std::iter::once((
+                EditKey::Solid(result.solid),
+                Origin::derived(EditKey::Face(face)),
+            )))
+            .collect::<Vec<_>>();
+
+        let lateral_edges = result
+            .laterals
+            .iter()
+            .flat_map(|lateral| [lateral.start_edge, lateral.end_edge])
+            .collect::<HashSet<_>>();
+        for edge in lateral_edges {
+            let source = model
+                .cell_key::<crate::model::Cell0>(model.edge_attr_unchecked(edge).dart)
+                .expect("vertical edge should meet its source vertex");
+            expected.push((
+                EditKey::Edge(edge),
+                Origin::derived(EditKey::Vertex(source)),
+            ));
+        }
+
+        expected.extend(
+            recorder
+                .created
+                .iter()
+                .filter(|(key, _)| matches!(key, EditKey::Profile(_) | EditKey::Sheet(_)))
+                .map(|(key, _)| (*key, Origin::New)),
+        );
+        recorder.assert_exact(&expected);
+    }
+
+    #[test]
+    fn circle_extrusion_reports_its_wrapping_lateral_face() {
+        let mut model = Model::<StandardPayload>::new();
+        let face = add_circle(&mut model, Plane::xy(), 1.0).expect("circle face should build");
+        let mut recorder = LineageRecorder::default();
+
+        let result = model
+            .transaction_with_policy(&mut recorder, |edit| {
+                add_extruded_face_edit(edit, face, Vector3::z())
+            })
+            .expect("circle extrusion should commit");
+
+        assert_eq!(result.laterals.len(), 1);
+        let lateral = result.laterals[0];
+        assert_eq!(
+            lateral.swept_from,
+            model.face_unchecked(face).edges()[0].key()
+        );
+        assert!(recorder.created.contains(&(
+            EditKey::Face(lateral.face),
+            Origin::derived(EditKey::Edge(lateral.swept_from)),
+        )));
+    }
 }

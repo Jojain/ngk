@@ -93,7 +93,7 @@ payloads.
 
 **A builder is only as informative as its declarations.** A hook handed
 `Origin::New` is told that nothing explains the entity, and can do nothing but
-invent a value; one handed `Origin::Derived([edge])` can read that edge out of
+invent a value; one handed `Origin::Derived { sources: vec![edge] }` can read that edge out of
 `before` and carry its data across. So reach for the most specific constructor
 that is true — `add_*_derived_from` over `add_*_split_from` over `add_*` — and
 document the order the sources are named in, because a policy that cares reads

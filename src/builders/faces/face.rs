@@ -5,6 +5,7 @@ use crate::model::Model;
 use crate::topology::ModelEdit;
 use crate::topology::attributes::FaceAttr;
 use crate::topology::closed::Closed;
+use crate::topology::edit::EditKey;
 use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::shape_keys::{FaceKey, ProfileKey};
@@ -31,12 +32,10 @@ pub(crate) fn add_face_edit<P: Payload>(
         (loop_dart, plane, pcurves)
     };
 
-    Ok(edit.add_face(FaceAttr::with_pcurves(
-        Surface::Plane(plane),
-        loop_dart,
-        Vec::new(),
-        pcurves,
-    )))
+    Ok(edit.add_face_derived_from(
+        vec![EditKey::Profile(profile)],
+        FaceAttr::with_pcurves(Surface::Plane(plane), loop_dart, Vec::new(), pcurves),
+    ))
 }
 
 /// Adds a planar rectangular face whose first corner is `plane.origin()`.
@@ -83,4 +82,32 @@ pub(crate) fn add_square_edit<P: Payload>(
 ) -> Result<FaceKey, FaceCreationError> {
     let profile = add_rectangle_profile(edit, plane, size, size)?;
     add_face_edit(edit, profile)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::add_face_edit;
+    use crate::builders::profiles::add_rectangle;
+    use crate::builders::test_support::LineageRecorder;
+    use crate::geometry::Plane;
+    use crate::model::Model;
+    use crate::topology::edit::{EditKey, Origin};
+    use crate::topology::payload::StandardPayload;
+
+    #[test]
+    fn face_creation_declares_its_profile_lineage() {
+        let mut model = Model::<StandardPayload>::new();
+        let profile =
+            add_rectangle(&mut model, Plane::xy(), 2.0, 2.0).expect("source profile should build");
+        let mut recorder = LineageRecorder::default();
+
+        let face = model
+            .transaction_with_policy(&mut recorder, |edit| add_face_edit(edit, profile))
+            .expect("face should build");
+
+        recorder.assert_exact(&[(
+            EditKey::Face(face),
+            Origin::derived(EditKey::Profile(profile)),
+        )]);
+    }
 }

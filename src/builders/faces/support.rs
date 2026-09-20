@@ -20,7 +20,7 @@ use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
 use crate::topology::vertex::Vertex;
-use crate::topology::{ModelEdit, ModelEditError};
+use crate::topology::{EditKey, ModelEdit, ModelEditError};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Error, PartialEq)]
@@ -957,7 +957,10 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
             edit.link(Dim::One, d, darts[index - 1][2])
                 .expect("reverse chain vertex");
             let uv = imprint.pcurve.point_at(Fraction::new(0.0));
-            edit.add_vertex(VertexAttr::new(a, old_face.surface.point_at(uv.x, uv.y)));
+            edit.add_vertex_derived_from(
+                vec![EditKey::Face(original_face)],
+                VertexAttr::new(a, old_face.surface.point_at(uv.x, uv.y)),
+            );
         }
     }
     let ab_start = darts[0][0];
@@ -1065,7 +1068,10 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
         .iter()
         .zip(&darts)
         .map(|((index, reversed, imprint), darts)| {
-            let edge = edit.add_edge(EdgeAttr::new(darts[0], imprint.curve.curve().clone()));
+            let edge = edit.add_edge_derived_from(
+                vec![EditKey::Face(original_face)],
+                EdgeAttr::new(darts[0], imprint.curve.curve().clone()),
+            );
             FaceImprintSection {
                 edge,
                 imprint: *index,

@@ -12,3 +12,6 @@ pub mod sheets;
 pub mod solids;
 pub mod transform;
 pub mod vertices;
+
+#[cfg(test)]
+pub(crate) mod test_support;

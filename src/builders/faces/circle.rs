@@ -5,6 +5,7 @@ use crate::geometry::{Plane, Surface};
 use crate::model::Model;
 use crate::topology::ModelEdit;
 use crate::topology::attributes::{FaceAttr, ProfileAttr};
+use crate::topology::edit::EditKey;
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::FaceKey;
@@ -29,11 +30,9 @@ pub(crate) fn add_circle_edit<P: Payload>(
     let profile =
         Profile::from_dart(edit, loop_dart).expect("face loop must have a registered profile");
     let pcurves = profile_pcurves(&profile, &plane)?;
-    let face_key = edit.add_face(FaceAttr::with_pcurves(
-        Surface::Plane(plane),
-        loop_dart,
-        Vec::new(),
-        pcurves,
-    ));
+    let face_key = edit.add_face_derived_from(
+        vec![EditKey::Edge(edge)],
+        FaceAttr::with_pcurves(Surface::Plane(plane), loop_dart, Vec::new(), pcurves),
+    );
     Ok(face_key)
 }

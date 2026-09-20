@@ -11,7 +11,7 @@ use crate::model::{Cell0, Cell2, Model};
 use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
 use crate::topology::edge::Edge;
-use crate::topology::edit::ModelEditError;
+use crate::topology::edit::{EditKey, ModelEditError};
 use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
@@ -275,7 +275,8 @@ fn mark_closed_edge<P: Payload>(
     cut: EdgeCut,
 ) -> EdgeSplit {
     edit.disown_cell(Dim::Zero, dart);
-    let vertex = edit.add_vertex(VertexAttr::new(dart, cut.point));
+    let vertex =
+        edit.add_vertex_derived_from(vec![EditKey::Edge(edge)], VertexAttr::new(dart, cut.point));
     EdgeSplit::Marked { edge, vertex }
 }
 
@@ -293,7 +294,10 @@ fn split_edge_with_profile_links<P: Payload>(
     edit.link(Dim::Zero, second_mid, split.second_dart)?;
     edit.link(Dim::One, first_mid, second_mid)?;
 
-    let vertex = edit.add_vertex(VertexAttr::new(first_mid, split.cut.point));
+    let vertex = edit.add_vertex_derived_from(
+        vec![EditKey::Edge(edge)],
+        VertexAttr::new(first_mid, split.cut.point),
+    );
     edit.edge_attr_mut_unchecked(edge).curve = first_curve;
     let second = edit.add_edge_split_from(edge, EdgeAttr::new(second_mid, second_curve));
 
@@ -336,10 +340,10 @@ fn split_attached_edge_with_profile_links<P: Payload>(
         edit.link(Dim::Two, mid_darts[&first], mid_darts[&second])?;
     }
 
-    let vertex = edit.add_vertex(VertexAttr::new(
-        mid_darts[&split.first_dart],
-        split.cut.point,
-    ));
+    let vertex = edit.add_vertex_derived_from(
+        vec![EditKey::Edge(edge)],
+        VertexAttr::new(mid_darts[&split.first_dart], split.cut.point),
+    );
     edit.edge_attr_mut_unchecked(edge).curve = first_curve;
     let second = edit.add_edge_split_from(
         edge,
@@ -615,5 +619,44 @@ fn check_valid_radius(radius: f64) -> Result<(), EdgeCreationError> {
         Ok(())
     } else {
         Err(EdgeCreationError::InvalidRadius { radius })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{add_line, split_edge_edit};
+    use crate::builders::test_support::LineageRecorder;
+    use crate::geometry::{Fraction, Point3};
+    use crate::model::Model;
+    use crate::topology::edit::{EditKey, Origin};
+    use crate::topology::payload::StandardPayload;
+
+    #[test]
+    fn splitting_an_edge_declares_vertex_and_edge_lineage() {
+        let mut model = Model::<StandardPayload>::new();
+        let edge = add_line(
+            &mut model,
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(2.0, 0.0, 0.0),
+        )
+        .expect("source edge should build");
+        let mut recorder = LineageRecorder::default();
+
+        let split = model
+            .transaction_with_policy(&mut recorder, |edit| {
+                split_edge_edit(edit, edge, Fraction::new(0.5))
+            })
+            .expect("edge split should commit");
+
+        recorder.assert_exact(&[
+            (
+                EditKey::Vertex(split.vertex()),
+                Origin::derived(EditKey::Edge(edge)),
+            ),
+            (
+                EditKey::Edge(split.created().expect("bounded split creates an edge")),
+                Origin::Split(EditKey::Edge(edge)),
+            ),
+        ]);
     }
 }

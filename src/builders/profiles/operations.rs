@@ -14,7 +14,7 @@ use crate::model::{Cell0, Model, OpResult, StaleResult};
 use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closeable;
-use crate::topology::edit::ModelEditError;
+use crate::topology::edit::{EditKey, ModelEditError};
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
@@ -83,7 +83,10 @@ pub(crate) fn add_profile_from_edges_edit<P: Payload>(
     let first = edges.first().ok_or(PolylineError::EmptyPolyline)?;
 
     if edges.len() == 1 {
-        return Ok(edit.add_profile(ProfileAttr::new(first.start)));
+        return Ok(edit.add_profile_derived_from(
+            vec![EditKey::Edge(first.key)],
+            ProfileAttr::new(first.start),
+        ));
     }
 
     let endpoint_degrees = edges
@@ -131,7 +134,10 @@ pub(crate) fn add_profile_from_edges_edit<P: Payload>(
         ordered.push(edge);
     }
 
-    let profile = edit.add_profile(ProfileAttr::new(ordered[0].dart_at(start)));
+    let profile = edit.add_profile_derived_from(
+        ordered.iter().map(|edge| EditKey::Edge(edge.key)).collect(),
+        ProfileAttr::new(ordered[0].dart_at(start)),
+    );
     for edge in ordered.iter().skip(1) {
         append_edge_edit(edit, profile, edge.key)?;
     }
@@ -557,10 +563,12 @@ fn profile_edge_endpoints<P: Payload>(
 mod tests {
     use std::convert::Infallible;
 
-    use super::{PolylineError, add_polyline_edit};
+    use super::{PolylineError, add_polyline_edit, add_profile_from_edges_edit};
+    use crate::builders::edges::add_line;
+    use crate::builders::test_support::LineageRecorder;
     use crate::geometry::Point3;
     use crate::model::Model;
-    use crate::topology::edit::{EditPolicy, Origin};
+    use crate::topology::edit::{EditKey, EditPolicy, Origin};
     use crate::topology::payload::StandardPayload;
     use crate::topology::shape_keys::{
         EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey,
@@ -660,5 +668,37 @@ mod tests {
         .expect("builder should join the custom outer transaction");
 
         assert_eq!(policy.calls, 0);
+    }
+
+    #[test]
+    fn joining_existing_edges_declares_profile_lineage() {
+        let mut model = Model::<StandardPayload>::new();
+        let first = add_line(
+            &mut model,
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+        )
+        .expect("first edge should build");
+        let second = add_line(
+            &mut model,
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(2.0, 0.0, 0.0),
+        )
+        .expect("second edge should build");
+        let mut recorder = LineageRecorder::default();
+
+        let profile = model
+            .transaction_with_policy(&mut recorder, |edit| {
+                add_profile_from_edges_edit(edit, &[first, second])
+            })
+            .expect("connected edges should form a profile");
+
+        recorder.assert_exact(&[(
+            EditKey::Profile(profile),
+            Origin::Derived {
+                sources: vec![EditKey::Edge(first), EditKey::Edge(second)],
+            },
+        )]);
+        assert_eq!(recorder.created.len(), 1);
     }
 }

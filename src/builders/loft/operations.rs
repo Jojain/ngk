@@ -71,7 +71,7 @@ use crate::topology::attributes::{
 };
 use crate::topology::closed::{Closeable, Closed};
 use crate::topology::edge::Edge;
-use crate::topology::edit::{ModelEdit, ModelEditError};
+use crate::topology::edit::{EditKey, ModelEdit, ModelEditError};
 use crate::topology::embedding::EntityOwner;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim};
@@ -186,6 +186,10 @@ pub trait LoftSection: Copy + sealed::Sealed {
         columns: &LoftColumns,
         ends: [Self; 2],
     ) -> Result<Self::Output, LoftError>;
+
+    /// Returns the section identities that explain geometry created by the
+    /// loft.
+    fn lineage_keys(self) -> Vec<EditKey>;
 }
 
 impl LoftSection for OpenSection {
@@ -216,6 +220,10 @@ impl LoftSection for OpenSection {
     ) -> Result<SheetKey, LoftError> {
         Ok(columns.register_sheet(edit))
     }
+
+    fn lineage_keys(self) -> Vec<EditKey> {
+        vec![EditKey::Profile(self.0)]
+    }
 }
 
 impl LoftSection for ClosedSection {
@@ -245,6 +253,10 @@ impl LoftSection for ClosedSection {
         _ends: [Self; 2],
     ) -> Result<SheetKey, LoftError> {
         Ok(columns.register_sheet(edit))
+    }
+
+    fn lineage_keys(self) -> Vec<EditKey> {
+        vec![EditKey::Profile(self.0)]
     }
 }
 
@@ -293,9 +305,13 @@ impl LoftSection for CappedSection {
         // orientation just established for the bottom cap.
         let shell = edit.face_attr_unchecked(caps[0]).outer_unchecked();
         if edit.sheet_key(shell).is_none() {
-            edit.add_sheet(SheetAttr::new(shell));
+            edit.add_sheet_derived_from(columns.source_keys.clone(), SheetAttr::new(shell));
         }
-        Ok(edit.add_solid(SolidAttr::new(shell, None)))
+        Ok(edit.add_solid_derived_from(columns.source_keys.clone(), SolidAttr::new(shell, None)))
+    }
+
+    fn lineage_keys(self) -> Vec<EditKey> {
+        vec![EditKey::Face(self.0)]
     }
 }
 
@@ -462,6 +478,7 @@ struct LoftPlan<S: LoftSection> {
     /// every lateral face at once.
     laterals_face_outward: bool,
     degree_v: Degree,
+    source_keys: Vec<EditKey>,
     /// Whether the run's one column closes onto itself.
     ///
     /// A closed run whose sections share no breakpoint — a pair of circles —
@@ -520,6 +537,11 @@ impl<S: LoftSection> LoftPlan<S> {
             .collect::<Result<Vec<_>, _>>()?;
 
         let ends = [0, traversals.len() - 1];
+        let source_keys = sections
+            .iter()
+            .copied()
+            .flat_map(LoftSection::lineage_keys)
+            .collect();
         let advance = center(&pieces[ends[1]]) - center(&pieces[ends[0]]);
         Ok(Self {
             ends: [*first, *last],
@@ -530,12 +552,14 @@ impl<S: LoftSection> LoftPlan<S> {
             wraps: S::CLOSES_RING && columns.len() == 1,
             columns,
             degree_v,
+            source_keys,
         })
     }
 
     /// Builds the columns, sews them, and finishes according to the kind.
     fn build<P: Payload>(self, edit: &mut ModelEdit<'_, P>) -> Result<S::Output, LoftError> {
         self.prepare_ends(edit)?;
+        let source_keys = &self.source_keys;
 
         let mut faces = Vec::with_capacity(self.columns.len());
         for (column, curves) in self.columns.iter().enumerate() {
@@ -547,9 +571,9 @@ impl<S: LoftSection> LoftPlan<S> {
                 }
             })?;
             faces.push(if self.wraps {
-                add_loft_band_face(edit, column, skin, self.end_corners)?
+                add_loft_band_face(edit, column, skin, self.end_corners, source_keys)?
             } else {
-                add_loft_quad_face(edit, column, skin)?
+                add_loft_quad_face(edit, column, skin, source_keys)?
             });
         }
 
@@ -574,6 +598,7 @@ impl<S: LoftSection> LoftPlan<S> {
             cap_seams: self.cap_seams,
             advance: self.advance,
             laterals_face_outward: self.laterals_face_outward,
+            source_keys: self.source_keys,
         };
         S::finish(edit, &columns, self.ends)
     }
@@ -609,13 +634,14 @@ pub struct LoftColumns {
     cap_seams: [Vec<(Point3, Point3)>; 2],
     advance: Vector3<f64>,
     laterals_face_outward: bool,
+    source_keys: Vec<EditKey>,
 }
 
 impl LoftColumns {
     /// Registers the lateral faces as one sheet.
     fn register_sheet<P: Payload>(&self, edit: &mut ModelEdit<'_, P>) -> SheetKey {
         let dart = self.faces[0].anchor;
-        edit.add_sheet(SheetAttr::new(dart))
+        edit.add_sheet_derived_from(self.source_keys.clone(), SheetAttr::new(dart))
     }
 
     /// Sews every column's section edge onto the cap it came from.
@@ -800,6 +826,7 @@ fn add_loft_quad_face<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     column: usize,
     skin: NurbsSurface,
+    sources: &[EditKey],
 ) -> Result<LoftColumnFace, LoftError> {
     let named = |source| LoftError::Column {
         column,
@@ -823,10 +850,13 @@ fn add_loft_quad_face<P: Payload>(
     }
     for i in 0..4 {
         let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
-        edit.add_vertex(VertexAttr::new(dart, corners[i]));
+        edit.add_vertex_derived_from(sources.to_vec(), VertexAttr::new(dart, corners[i]));
     }
     for i in 0..4 {
-        edit.add_edge(EdgeAttr::new(darts[2 * i], boundary[i].clone()));
+        edit.add_edge_derived_from(
+            sources.to_vec(),
+            EdgeAttr::new(darts[2 * i], boundary[i].clone()),
+        );
     }
 
     let pcurves = (0..4)
@@ -837,13 +867,11 @@ fn add_loft_quad_face<P: Payload>(
             )
         })
         .collect::<HashMap<_, _>>();
-    edit.add_profile(ProfileAttr::new(darts[0]));
-    let key = edit.add_face(FaceAttr::with_pcurves(
-        Surface::Nurbs(skin),
-        darts[0],
-        Vec::new(),
-        pcurves,
-    ));
+    edit.add_profile_derived_from(sources.to_vec(), ProfileAttr::new(darts[0]));
+    let key = edit.add_face_derived_from(
+        sources.to_vec(),
+        FaceAttr::with_pcurves(Surface::Nurbs(skin), darts[0], Vec::new(), pcurves),
+    );
 
     Ok(LoftColumnFace {
         key,
@@ -877,6 +905,7 @@ fn add_loft_band_face<P: Payload>(
     column: usize,
     skin: NurbsSurface,
     corners: [Option<Point3>; 2],
+    sources: &[EditKey],
 ) -> Result<LoftColumnFace, LoftError> {
     let named = |source| LoftError::Column {
         column,
@@ -900,31 +929,37 @@ fn add_loft_band_face<P: Payload>(
         let second = edit.add_dart();
         edit.link(Dim::Zero, first, second)?;
         edit.link(Dim::One, first, second)?;
-        let edge = edit.add_edge(EdgeAttr::new(first, boundary[slot].clone()));
+        let edge = edit.add_edge_derived_from(
+            sources.to_vec(),
+            EdgeAttr::new(first, boundary[slot].clone()),
+        );
         match corners[slot] {
             Some(point) => {
-                edit.add_vertex(VertexAttr::new(first, point));
+                edit.add_vertex_derived_from(sources.to_vec(), VertexAttr::new(first, point));
             }
             // Nothing meets where this loop closes, so the 0-cell there is
             // interior to the edge rather than a corner of the shape.
             None => edit.own_cell(Dim::Zero, first, EntityOwner::Edge(edge)),
         }
-        edit.add_profile(ProfileAttr::new(first));
+        edit.add_profile_derived_from(sources.to_vec(), ProfileAttr::new(first));
         *darts = [first, second];
     }
     let seeds = [loops[0][0], loops[1][0]];
 
-    let key = edit.add_face(FaceAttr::with_loops(
-        Surface::Nurbs(skin),
-        vec![
-            LoopDefinition::from_kind(seeds[0], LoopKind::Wrapping { axis: Axis2::U }),
-            LoopDefinition::from_kind(seeds[1], LoopKind::Wrapping { axis: Axis2::U }),
-        ],
-        HashMap::from([
-            (seeds[0], pcurves[0].clone()),
-            (seeds[1], pcurves[1].clone()),
-        ]),
-    ));
+    let key = edit.add_face_derived_from(
+        sources.to_vec(),
+        FaceAttr::with_loops(
+            Surface::Nurbs(skin),
+            vec![
+                LoopDefinition::from_kind(seeds[0], LoopKind::Wrapping { axis: Axis2::U }),
+                LoopDefinition::from_kind(seeds[1], LoopKind::Wrapping { axis: Axis2::U }),
+            ],
+            HashMap::from([
+                (seeds[0], pcurves[0].clone()),
+                (seeds[1], pcurves[1].clone()),
+            ]),
+        ),
+    );
     cut_between_loops(edit, key, seeds[0], seeds[1])?;
 
     Ok(LoftColumnFace {
@@ -1092,4 +1127,57 @@ fn cap_dart_between<P: Payload>(
 /// How much a cap's normal runs with the loft.
 fn cap_normal_along_run<P: Payload>(model: &Model<P>, cap: FaceKey, advance: Vector3<f64>) -> f64 {
     Face::new(model, cap).normal_at(0.0, 0.0).dot(&advance)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LoftOptions, LoftPlan, OpenSection};
+    use crate::builders::profiles::add_polyline;
+    use crate::builders::test_support::LineageRecorder;
+    use crate::geometry::Point3;
+    use crate::model::Model;
+    use crate::topology::edit::{EditKey, Origin};
+    use crate::topology::payload::StandardPayload;
+
+    #[test]
+    fn loft_declares_all_generated_entities_from_its_sections() {
+        let mut model = Model::<StandardPayload>::new();
+        let first = add_polyline(
+            &mut model,
+            &[Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)],
+        )
+        .expect("first profile should build");
+        let second = add_polyline(
+            &mut model,
+            &[Point3::new(0.0, 0.0, 1.0), Point3::new(1.0, 0.0, 1.0)],
+        )
+        .expect("second profile should build");
+        let sections = [
+            OpenSection::new(&model.profile_unchecked(first)).expect("first profile is open"),
+            OpenSection::new(&model.profile_unchecked(second)).expect("second profile is open"),
+        ];
+        let plan = LoftPlan::read(&model, &sections, LoftOptions::default())
+            .expect("loft plan should be readable");
+        let mut recorder = LineageRecorder::default();
+
+        let sheet = model
+            .transaction_with_policy(&mut recorder, |edit| plan.build(edit))
+            .expect("loft should commit");
+
+        let section_origin = Origin::Derived {
+            sources: vec![EditKey::Profile(first), EditKey::Profile(second)],
+        };
+        for (key, origin) in &recorder.created {
+            match key {
+                EditKey::Vertex(_) | EditKey::Edge(_) | EditKey::Profile(_) | EditKey::Face(_) => {
+                    assert_eq!(*origin, section_origin);
+                }
+                EditKey::Sheet(key) => {
+                    assert_eq!(*origin, section_origin);
+                    assert_eq!(*key, sheet);
+                }
+                EditKey::Solid(_) => panic!("an open loft cannot create a solid"),
+            }
+        }
+    }
 }

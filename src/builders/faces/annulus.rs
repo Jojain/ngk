@@ -13,6 +13,7 @@ use crate::model::Model;
 use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr};
 use crate::topology::edge::Edge;
+use crate::topology::edit::EditKey;
 use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::orientation::Orientation;
@@ -96,12 +97,10 @@ pub(crate) fn add_annulus_edit<P: Payload>(
     let mut pcurves = profile_pcurves(&outer_profile, &plane)?;
     pcurves.extend(profile_pcurves(&inner_profile, &plane)?);
 
-    let face_key = edit.add_face(FaceAttr::with_pcurves(
-        Surface::Plane(plane),
-        outer_loop,
-        vec![inner_loop],
-        pcurves,
-    ));
+    let face_key = edit.add_face_derived_from(
+        vec![EditKey::Edge(outer_edge), EditKey::Edge(inner_edge)],
+        FaceAttr::with_pcurves(Surface::Plane(plane), outer_loop, vec![inner_loop], pcurves),
+    );
     // The bridge belongs to the face's interior, which is what stops the
     // boundary walk emitting it and lets the walk cross it into the hole.
     edit.own_cell(Dim::One, bridge_out[0], EntityOwner::Face(face_key));
