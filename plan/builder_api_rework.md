@@ -10,10 +10,12 @@ Payload and policy work is not part of this. Neither is the
 
 ## Decisions
 
-- **Naming.** The private kernel function is the public one with a leading
-  underscore: `add_rectangle` / `_add_rectangle`, `split_face_edge` /
-  `_split_face_edge`. Mechanical, works for every verb, and both live in the
-  same file.
+- **Naming.** The private kernel function is the public one with an `_edit`
+  suffix: `add_rectangle` / `add_rectangle_edit`, `split_face_edge` /
+  `split_face_edge_edit`. Mechanical, works for every verb, both live in the
+  same file, and the suffix names the actual difference — it takes
+  `&mut ModelEdit` (already open) instead of `&mut Model`. A leading
+  underscore did the same job but is a known-bad idea in Rust: see below.
 - **Layout.** A builder family is a directory when it holds more than one
   public operation; each operation gets its own file. Families with one
   operation stay a single file.
@@ -21,16 +23,23 @@ Payload and policy work is not part of this. Neither is the
   are untouched.
 - **`_staged` disappears** as a word and as a suffix.
 
-### Known cost of the underscore prefix
+### Why not a leading underscore
 
-`rustc`'s `dead_code` lint skips items whose name begins with `_`. A
-`_add_rectangle` left behind after its public wrapper is deleted will not be
-reported. Removing an operation therefore means deleting both halves by hand;
-the compiler will only catch the public one.
+The first pass of this work used a leading underscore (`_add_rectangle`) for
+the kernel half of the pair. `rustc`'s `dead_code` lint skips any item whose
+name begins with `_`, so a `_add_rectangle` left behind after its public
+wrapper is deleted goes unreported — removing an operation would mean
+deleting both halves by hand, with the compiler only catching the public one.
+This was not hypothetical: renaming the pattern away from the underscore
+(2026-09-20) immediately surfaced `add_profile_darts_edit` in
+`src/builders/profiles/operations.rs` as genuinely dead — no public wrapper
+calls it and nothing else does either. It needs a decision (restore the
+public wrapper, or delete it) that is out of scope for the rename itself.
+The `_edit` suffix does not start with `_`, so this class of bug can't recur.
 
 ## The convention
 
-To be written into `AGENTS.md` once the first family lands.
+Written into `AGENTS.md` under "Transactions".
 
 Every kernel operation is a pair in one file:
 
@@ -42,18 +51,18 @@ pub fn add_rectangle<P: Payload>(
     x_size: f64,
     y_size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    g.transaction(|edit| _add_rectangle(edit, plane, x_size, y_size))
+    g.transaction(|edit| add_rectangle_edit(edit, plane, x_size, y_size))
 }
 
 /// Builds the rectangle's profile and face inside an open edit.
-pub(crate) fn _add_rectangle<P: Payload>(
+pub(crate) fn add_rectangle_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     x_size: f64,
     y_size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    let profile = _add_rectangle_profile(edit, plane, x_size, y_size)?;
-    _add_face(edit, profile)
+    let profile = add_rectangle_profile_edit(edit, plane, x_size, y_size)?;
+    add_face_edit(edit, profile)
 }
 ```
 
@@ -61,13 +70,13 @@ Rules:
 
 1. **The public function opens one transaction and does nothing else.** No
    validation, no logic, no error mapping — a one-line body.
-2. **The `_` function holds the logic and takes `&mut ModelEdit`.** It is
+2. **The `_edit` function holds the logic and takes `&mut ModelEdit`.** It is
    `pub(crate)`, so any other kernel operation can compose it.
 3. **A composite passes the same `edit` down.** Never open a transaction inside
    one: `run_transaction` asserts no transaction is active.
 4. **Close view borrows before mutating again.** `edit.face(k)` borrows the
    edit; collect what is needed into keys and end the borrow before the next
-   staged call.
+   `_edit` call.
 5. **Errors compose with `#[from]`**, never flatten. A composite's error wraps
    each sub-operation's error unchanged.
 6. **The result carries everything the operation learned** and nothing a single
@@ -76,51 +85,53 @@ Rules:
    through a typed lookup when a later step merges or splits an earlier step's
    output.
 
-## Inventory
+## Inventory (done)
 
-### Already returning a typed result
-
-`split_edge` → `EdgeSplit`, `split_face_edge` → `EdgeSplit`,
-`split_face_by_imprints` → `Vec<FaceImprintSplit>`, `remove_cell` →
-`CellRemoval`, `boolean` → `BooleanResult`, `add_loft` → `S::Output`. These are
-the precedent; they need the file move and the rename, not a new result type.
-
-### Returning less than they know
-
-| operation | today | needs |
-|---|---|---|
-| `chamfer` | `()` | the chamfer faces, and the edge each replaced |
-| `add_extruded_face` | `SolidKey` | caps, laterals, and the base edge each lateral was swept from |
-| `add_extruded_profile` | `SheetKey` | the same, one dimension down |
-| `add_revolved_face` | `SolidKey` | caps, laterals, seam |
-| `add_revolved_profile` | `SheetKey` | laterals, seam |
-| `add_revolved_edge` | `FaceKey` | the face plus its start/end/seam edges |
-| `add_sphere`, `add_torus` | `SolidKey` | the faces and seams they synthesized |
-| `append_edge` | `()` | at minimum the profile it extended |
+Every operation below now returns a typed result: `split_edge` → `EdgeSplit`,
+`split_face_edge` → `EdgeSplit`, `split_face_by_imprints` →
+`Vec<FaceImprintSplit>`, `remove_cell` → `CellRemoval`, `boolean` →
+`BooleanResult`, `add_loft` → `S::Output`, `chamfer` → `Chamfer`,
+`add_extruded_face` → `Extrusion`, `add_extruded_profile` →
+`ProfileExtrusionView`-backed result, `add_revolved_face` → `RevolvedFace`,
+`add_revolved_profile` → `RevolvedProfile`, `add_revolved_edge` →
+`RevolvedEdge`, `add_sphere`/`add_torus` → `ClosedSolid`, `append_edge` →
+`AppendEdge`.
 
 Primitives whose whole result is one key — `add_line`, `add_arc`, `add_circle`,
-`add_face`, `add_rectangle`, `add_square` — keep returning the key. A result
-struct earns its place at more than two keys or any nesting.
+`add_face`, `add_rectangle`, `add_square` — still just return the key, per the
+rule that a result struct earns its place at more than two keys or any
+nesting.
 
 ### Public functions that take `ModelEdit` and must stop being public
 
-`reverse_face_winding`, `split_face_by_imprints_staged`, `remove_cell_staged`,
-`add_polyline_staged`, `add_profile_from_edges_staged`, `add_profile_darts`.
-These become `_`-prefixed and `pub(crate)`. Helpers that take `&Model` and are
-genuinely useful to a caller (`is_removable`, `can_remove_cell`,
-`planned_merge`, `solid_contains_point`, `face_key_for_dart`, `profile_pcurves`,
-`plane_uv`) stay public and are not renamed.
+`reverse_face_winding_edit`, `split_face_by_imprints_edit`, `remove_cell_edit`,
+`add_polyline_edit`, `add_profile_from_edges_edit`, `add_profile_darts_edit`
+were all renamed to the `_edit` convention. `reverse_face_winding_edit`,
+`add_profile_from_edges_edit` and `add_profile_darts_edit` are already
+`pub(crate)`. **Still outstanding:** `split_face_by_imprints_edit`,
+`remove_cell_edit` and `add_polyline_edit` are still `pub` — dropping that to
+`pub(crate)` breaks `tests/builders/face_lineage.rs`,
+`tests/builders/removal.rs` and `tests/builders/profiles.rs`, which call the
+`_edit` function directly instead of going through the public wrapper. Fixing
+the visibility means first rewriting those tests to exercise the public API
+(or moving the relevant cases to in-crate `#[cfg(test)]` modules where
+`pub(crate)` is visible). Helpers that take `&Model` and are genuinely useful
+to a caller (`is_removable`, `can_remove_cell`, `planned_merge`,
+`solid_contains_point`, `face_key_for_dart`, `profile_pcurves`, `plane_uv`)
+stay public and are not renamed.
 
-## Work
+## Work (done)
 
-Each family is one reviewable change: split the files, rename the pair, add the
-result type, update call sites. Ordered so the pattern is established on a small
-family before the large ones.
+Each family was one reviewable change: split the files, rename the pair, add the
+result type, update call sites. Items 1–9 below are all landed (verified against
+the current file layout and signatures); item 10 was landed for the leading-underscore
+convention and has now been updated in place for `_edit` (see "Why not a leading
+underscore" above) rather than re-run as a separate step.
 
 ### 1. `Model::transaction_result` and `StaleResult`
 
 A result names the revision it was made at, but the revision only increments at
-commit, so a `_` function cannot stamp its own result. The public wrapper can:
+commit, so an `_edit` function cannot stamp its own result. The public wrapper can:
 
 ```rust
 pub trait OpResult { fn stamp(&mut self, revision: u64); }
@@ -140,7 +151,7 @@ impl<P: Payload> Model<P> {
 }
 ```
 
-A `_` function returns an unstamped result; only the public wrapper stamps it.
+An `_edit` function returns an unstamped result; only the public wrapper stamps it.
 `view()` on an unstamped result must fail rather than compare against zero, so
 the stamped revision is `Option<u64>` internally and `StaleResult` distinguishes
 the two cases.
@@ -154,16 +165,18 @@ reference change every later family copies.
 ### 3. `builders/profiles/`
 
 `profiles.rs` (545) → `{mod,polyline,rectangle,from_edges,append,pcurves}.rs`.
-`append_edge` gains a result. `add_polyline_staged`,
-`add_profile_from_edges_staged` and `add_profile_darts` stop being public.
+`append_edge` gains a result. `add_polyline_edit`,
+`add_profile_from_edges_edit` and `add_profile_darts_edit` stop being public
+(the first is still `pub` — see "Public functions that take `ModelEdit`..."
+above).
 
 ### 4. `builders/solids/` + extrusion results
 
 `solids.rs` (630) → `{mod,extrude,sphere,torus,translate,lateral,support}.rs`.
 Add `Extrusion` / `Lateral` and their views. `add_extruded_face` and
 `add_extruded_profile` return them. This is the first family where a real result
-type is designed, and `add_extruded_face_staged` becoming `pub(crate)
-_add_extruded_face` is what makes composites possible at all.
+type is designed, and the old `add_extruded_face_staged` becoming `pub(crate)
+add_extruded_face_edit` is what makes composites possible at all.
 
 ### 5. `builders/faces/`
 
@@ -196,8 +209,9 @@ single files.
 
 ### 10. Write the convention into `AGENTS.md`
 
-Under "Transactions", replacing the "Builder composition" paragraph in
-`src/topology/edit.md` that still says `*_staged`.
+Done, under "Transactions" in `AGENTS.md` and the "Builder composition"
+section of `src/topology/edit.md`. Both were updated again (2026-09-20) to
+describe `_edit` instead of the leading underscore.
 
 ## Open design points
 

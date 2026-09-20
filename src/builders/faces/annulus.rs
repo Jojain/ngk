@@ -26,7 +26,7 @@ pub fn add_annulus<P: Payload>(
     outer_radius: f64,
     inner_radius: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    g.transaction(|edit| _add_annulus(edit, plane, outer_radius, inner_radius))
+    g.transaction(|edit| add_annulus_edit(edit, plane, outer_radius, inner_radius))
 }
 
 /// Builds both annulus boundaries, bridges them, and registers the face.
@@ -41,7 +41,7 @@ pub fn add_annulus<P: Payload>(
 /// emitted as a boundary and carries no logical edge of its own. Each of its
 /// feet is the 0-cell where a rim closes, owned by that rim's edge — which is
 /// what keeps both circles unmarked.
-pub(crate) fn _add_annulus<P: Payload>(
+pub(crate) fn add_annulus_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     outer_radius: f64,

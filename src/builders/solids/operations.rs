@@ -15,7 +15,7 @@ use crate::{
     Payload,
     builders::errors::ClosedFaceCellError,
     builders::errors::ExtrudeError,
-    builders::faces::_reverse_face_winding,
+    builders::faces::reverse_face_winding_edit,
     builders::scaffold::add_closed_face_cell,
     geometry::{
         ANGULAR_TOLERANCE, Axis2, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3,
@@ -195,10 +195,10 @@ pub fn add_sphere<P: Payload>(
     frame: Frame,
     radius: f64,
 ) -> Result<ClosedSolid, SphereBuildError> {
-    g.transaction_result(|edit| _add_sphere(edit, frame, radius))
+    g.transaction_result(|edit| add_sphere_edit(edit, frame, radius))
 }
 
-pub(crate) fn _add_sphere<P: Payload>(
+pub(crate) fn add_sphere_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     frame: Frame,
     radius: f64,
@@ -236,10 +236,10 @@ pub fn add_torus<P: Payload>(
     major: f64,
     minor: f64,
 ) -> Result<ClosedSolid, TorusBuildError> {
-    g.transaction_result(|edit| _add_torus(edit, frame, major, minor))
+    g.transaction_result(|edit| add_torus_edit(edit, frame, major, minor))
 }
 
-pub(crate) fn _add_torus<P: Payload>(
+pub(crate) fn add_torus_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     frame: Frame,
     major: f64,
@@ -321,11 +321,11 @@ pub fn add_extruded_face<P: Payload>(
     face_key: FaceKey,
     direction: Vector3<f64>,
 ) -> Result<Extrusion, ExtrudeError> {
-    g.transaction_result(|edit| _add_extruded_face(edit, face_key, direction))
+    g.transaction_result(|edit| add_extruded_face_edit(edit, face_key, direction))
 }
 
 /// Builds translated caps and lateral faces, then registers the staged solid.
-pub(crate) fn _add_extruded_face<P: Payload>(
+pub(crate) fn add_extruded_face_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
@@ -391,9 +391,9 @@ fn orient_extruded_caps<P: Payload>(
     };
 
     if bottom_normal_dot_direction > LINEAR_TOLERANCE {
-        _reverse_face_winding(edit, bottom_face);
+        reverse_face_winding_edit(edit, bottom_face);
     } else if bottom_normal_dot_direction < -LINEAR_TOLERANCE {
-        _reverse_face_winding(edit, top_face);
+        reverse_face_winding_edit(edit, top_face);
     }
 }
 

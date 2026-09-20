@@ -4,9 +4,9 @@ use crate::geometry::TrimmedCurve2;
 use crate::geometry::parameter::{Fraction, NativeParam};
 use std::collections::{HashMap, HashSet};
 
-use crate::builders::edges::_add_edge;
+use crate::builders::edges::add_edge_edit;
 use crate::builders::errors::ChamferError;
-use crate::builders::faces::{_add_face, _add_polygon, _split_face_by_imprints, FaceImprint};
+use crate::builders::faces::{add_face_edit, add_polygon_edit, split_face_by_imprints_edit, FaceImprint};
 use crate::builders::profiles::curve_pcurve;
 use crate::geometry::{
     Curve, LINEAR_TOLERANCE, Point2, Point3, Rigid, RuledSurface, Surface, TrimmedCurve,
@@ -95,11 +95,11 @@ pub fn chamfer<P: Payload, T: Into<ChamferTarget>>(
     target: T,
     distance: f64,
 ) -> Result<Chamfer, ChamferError> {
-    g.transaction_result(|edit| _chamfer(edit, target, distance))
+    g.transaction_result(|edit| chamfer_edit(edit, target, distance))
 }
 
 /// Applies a chamfer inside an existing edit and reports its new faces.
-pub(crate) fn _chamfer<P: Payload, T: Into<ChamferTarget>>(
+pub(crate) fn chamfer_edit<P: Payload, T: Into<ChamferTarget>>(
     edit: &mut ModelEdit<'_, P>,
     target: T,
     distance: f64,
@@ -178,7 +178,7 @@ fn chamfer_profile_corner<P: Payload>(
 
     // The new edge closes the gap by alpha1-sewing its two endpoints to the
     // now-distinct incoming and outgoing profile vertices.
-    let chamfer_edge = _add_edge(
+    let chamfer_edge = add_edge_edit(
         edit,
         incoming_offset,
         outgoing_offset,
@@ -429,7 +429,7 @@ fn split_chamfer_face<P: Payload>(
     imprint: FaceImprint,
     is_patch: impl Fn(&Model<P>, FaceKey) -> bool,
 ) -> Result<(FaceKey, EdgeKey), ChamferError> {
-    let splits = _split_face_by_imprints(edit, face, &[imprint])
+    let splits = split_face_by_imprints_edit(edit, face, &[imprint])
         .map_err(|_| ChamferError::ChamferFaceSplitFailed { face })?;
     let split = splits
         .into_iter()
@@ -862,9 +862,9 @@ fn add_profile_chamfer_faces<P: Payload>(
     prepared: &SolidProfileChamfer,
     boundary_darts: &[Dart],
 ) -> Result<Vec<FaceKey>, ChamferError> {
-    let top_profile = _add_polygon(edit, &prepared.inset_corners);
+    let top_profile = add_polygon_edit(edit, &prepared.inset_corners);
     let top_face =
-        _add_face(edit, top_profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
+        add_face_edit(edit, top_profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
     let mut faces = vec![top_face];
     let top_darts = edit
         .profile_unchecked(top_profile)
@@ -888,8 +888,8 @@ fn add_profile_chamfer_faces<P: Payload>(
         if candidate_normal.dot(&outward) < 0.0 {
             corners.reverse();
         }
-        let profile = _add_polygon(edit, &corners);
-        let face = _add_face(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
+        let profile = add_polygon_edit(edit, &corners);
+        let face = add_face_edit(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
         faces.push(face);
         chamfer_darts.push(
             edit.profile_unchecked(profile)
@@ -1071,10 +1071,10 @@ fn replace_face_patch<P: Payload>(
     curved_geometry: Option<CurvedChamferFace>,
 ) -> Result<FaceKey, ChamferError> {
     let boundary_darts = remove_face_patch(edit, patch_faces, section_edges)?;
-    let profile = _add_polygon(edit, corners);
+    let profile = add_polygon_edit(edit, corners);
     let face = match curved_geometry {
         Some(geometry) => add_curved_chamfer_face(edit, profile, corners, geometry)?,
-        None => _add_face(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?,
+        None => add_face_edit(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?,
     };
     let candidates = edit
         .profile_unchecked(profile)

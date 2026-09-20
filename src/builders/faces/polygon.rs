@@ -16,11 +16,11 @@ pub fn add_polygon_with_holes<P: Payload>(
     outer: &[Point3],
     holes: &[&[Point3]],
 ) -> Result<FaceKey, FaceCreationError> {
-    g.transaction(|edit| _add_polygon_with_holes(edit, plane, outer, holes))
+    g.transaction(|edit| add_polygon_with_holes_edit(edit, plane, outer, holes))
 }
 
 /// Builds the outer polygon and all hole loops before registering the face.
-pub(crate) fn _add_polygon_with_holes<P: Payload>(
+pub(crate) fn add_polygon_with_holes_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     outer: &[Point3],
@@ -31,7 +31,7 @@ pub(crate) fn _add_polygon_with_holes<P: Payload>(
         validate_polygon(hole)?;
     }
 
-    let outer_profile = _add_polygon(edit, outer);
+    let outer_profile = add_polygon_edit(edit, outer);
     let outer_loop = edit.profile_attr_unchecked(outer_profile).dart;
     let mut inner_loops = Vec::with_capacity(holes.len());
     let outer_profile =
@@ -39,7 +39,7 @@ pub(crate) fn _add_polygon_with_holes<P: Payload>(
     let mut pcurves = profile_pcurves(&outer_profile, &plane)?;
 
     for hole in holes {
-        let inner_profile = _add_polygon(edit, hole);
+        let inner_profile = add_polygon_edit(edit, hole);
         let inner_loop = edit.profile_attr_unchecked(inner_profile).dart;
         let inner_profile = Profile::from_dart(edit, inner_loop)
             .expect("inner loop must have a registered profile");
@@ -85,12 +85,12 @@ pub fn add_polygon<P: Payload>(
     g: &mut Model<P>,
     corners: &[Point3],
 ) -> crate::topology::shape_keys::ProfileKey {
-    g.transaction(|edit| Ok::<_, ModelEditError>(_add_polygon(edit, corners)))
+    g.transaction(|edit| Ok::<_, ModelEditError>(add_polygon_edit(edit, corners)))
         .expect("fresh polygon operation must commit")
 }
 
 /// Creates and links polygon segments without opening another transaction scope.
-pub(crate) fn _add_polygon<P: Payload>(
+pub(crate) fn add_polygon_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     corners: &[Point3],
 ) -> crate::topology::shape_keys::ProfileKey {
@@ -135,7 +135,7 @@ pub(crate) fn _add_polygon<P: Payload>(
 /// face attribute changes — so darts captured for sewing stay valid.
 ///
 /// Does nothing when `face` is not a registered face.
-pub(crate) fn _reverse_face_winding<P: Payload>(edit: &mut ModelEdit<'_, P>, face: FaceKey) {
+pub(crate) fn reverse_face_winding_edit<P: Payload>(edit: &mut ModelEdit<'_, P>, face: FaceKey) {
     let Some(face_attr) = edit.face_attr(face).cloned() else {
         return;
     };

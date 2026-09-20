@@ -8,7 +8,7 @@ use radians::{Angle, Rad64};
 use thiserror::Error;
 
 use crate::builders::errors::ClosedFaceCellError;
-use crate::builders::faces::_reverse_face_winding;
+use crate::builders::faces::reverse_face_winding_edit;
 use crate::builders::scaffold::{add_closed_face_cell, cut_between_loops};
 use crate::geometry::axis::Axis3;
 use crate::geometry::parameter::{Fraction, NativeParam};
@@ -324,11 +324,11 @@ pub fn add_revolved_edge<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<RevolvedEdge, RevolveError> {
-    g.transaction_result(|edit| _add_revolved_edge(edit, edge, axis, angle))
+    g.transaction_result(|edit| add_revolved_edge_edit(edit, edge, axis, angle))
 }
 
 /// Revolves an edge inside the caller's active transaction.
-pub(crate) fn _add_revolved_edge<P: Payload>(
+pub(crate) fn add_revolved_edge_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     axis: Axis3,
@@ -1094,18 +1094,18 @@ pub fn add_revolved_profile<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<RevolvedProfile, RevolveError> {
-    g.transaction_result(|edit| _add_revolved_profile(edit, profile, axis, angle))
+    g.transaction_result(|edit| add_revolved_profile_edit(edit, profile, axis, angle))
 }
 
 /// Revolves a profile inside an existing edit.
-pub(crate) fn _add_revolved_profile<P: Payload>(
+pub(crate) fn add_revolved_profile_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     profile: ProfileKey,
     axis: Axis3,
     angle: Rad64,
 ) -> Result<RevolvedProfile, RevolveError> {
     let profile_dart = edit.profile_unchecked(profile).dart;
-    let built = _add_revolved_profile_from_dart(edit, profile_dart, axis, angle)?;
+    let built = add_revolved_profile_from_dart_edit(edit, profile_dart, axis, angle)?;
     let sheet = edit.add_sheet(SheetAttr::new(built.swept_dart));
     Ok(RevolvedProfile {
         sheet,
@@ -1115,7 +1115,7 @@ pub(crate) fn _add_revolved_profile<P: Payload>(
     })
 }
 
-fn _add_revolved_profile_from_dart<P: Payload>(
+fn add_revolved_profile_from_dart_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     profile_dart: Dart,
     axis: Axis3,
@@ -1567,11 +1567,11 @@ pub fn add_revolved_face<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<RevolvedFace, RevolveError> {
-    g.transaction_result(|edit| _add_revolved_face(edit, face_key, axis, angle))
+    g.transaction_result(|edit| add_revolved_face_edit(edit, face_key, axis, angle))
 }
 
 /// Builds caps and lateral sheets, then registers the resulting staged solid.
-pub(crate) fn _add_revolved_face<P: Payload>(
+pub(crate) fn add_revolved_face_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     axis: Axis3,
@@ -1665,13 +1665,13 @@ fn orient_revolved_shell<P: Payload>(
     bottom_normal_dot_sweep: f64,
 ) {
     if bottom_normal_dot_sweep > LINEAR_TOLERANCE {
-        _reverse_face_winding(edit, bottom_face);
+        reverse_face_winding_edit(edit, bottom_face);
         return;
     }
 
-    _reverse_face_winding(edit, top_face);
+    reverse_face_winding_edit(edit, top_face);
     for &face in lateral_faces {
-        _reverse_face_winding(edit, face);
+        reverse_face_winding_edit(edit, face);
     }
 }
 
@@ -1699,7 +1699,7 @@ fn add_full_revolved_face<P: Payload>(
 
     if source_normal_dot_sweep <= LINEAR_TOLERANCE {
         for &face in &lateral_faces {
-            _reverse_face_winding(edit, face);
+            reverse_face_winding_edit(edit, face);
         }
     }
 

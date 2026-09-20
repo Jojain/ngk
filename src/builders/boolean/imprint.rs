@@ -4,7 +4,7 @@ use crate::model::Model;
 use std::collections::HashMap;
 
 use super::graph::SpanSubdivision;
-use crate::builders::faces::{_split_face_edge, FaceImprint, FaceImprintSection};
+use crate::builders::faces::{split_face_edge_edit, FaceImprint, FaceImprintSection};
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{Interval, Point3, PointCoincidence};
 use crate::topology::edge::Edge;
@@ -113,7 +113,7 @@ pub(crate) fn realize_section<P: Payload>(
             let view = edit.edge_unchecked(edge);
             let parameter = view.trimmed_curve().parameter_at(point);
             let face = view.faces()[0].key();
-            edge = _split_face_edge(edit, face, edge, parameter)?.continuation();
+            edge = split_face_edge_edit(edit, face, edge, parameter)?.continuation();
         }
         let middle = Interval::new(pair[0], pair[1]).midpoint();
         let piece = imprint

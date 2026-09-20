@@ -1,4 +1,4 @@
-use crate::builders::edges::_add_circle as add_circle_edge;
+use crate::builders::edges::add_circle_edit as add_circle_edge;
 use crate::builders::errors::FaceCreationError;
 use crate::builders::profiles::profile_pcurves;
 use crate::geometry::{Plane, Surface};
@@ -14,11 +14,11 @@ pub fn add_circle<P: Payload>(
     plane: Plane,
     radius: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    g.transaction(|edit| _add_circle(edit, plane, radius))
+    g.transaction(|edit| add_circle_edit(edit, plane, radius))
 }
 
 /// Builds a circular boundary and its face within one staged operation.
-pub(crate) fn _add_circle<P: Payload>(
+pub(crate) fn add_circle_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     radius: f64,

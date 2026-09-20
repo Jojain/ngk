@@ -25,11 +25,11 @@ pub fn split_face_by_imprints<P: Payload>(
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
-    g.transaction(|edit| _split_face_by_imprints(edit, face, imprints))
+    g.transaction(|edit| split_face_by_imprints_edit(edit, face, imprints))
 }
 
 /// Applies every open and closed imprint before the outer transaction commits.
-pub fn _split_face_by_imprints<P: Payload>(
+pub fn split_face_by_imprints_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     imprints: &[FaceImprint],
@@ -1194,7 +1194,7 @@ pub(crate) fn split_boundary_at_uv<P: Payload>(
     // The splitter cuts at a fraction of the edge's span, and the span that
     // fraction is of is the one the parameter was just brought onto.
     let parameter = interval.fraction_of(parameter);
-    match _split_face_edge(edit, face, target.edge, parameter) {
+    match split_face_edge_edit(edit, face, target.edge, parameter) {
         Ok(split) => Ok(Some(split.vertex())),
         // A cut that lands on an end of the edge adds no vertex because one is
         // already there, so the corner is the one the boundary now reports.

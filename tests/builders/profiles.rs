@@ -2,7 +2,7 @@ use std::convert::Infallible;
 
 use ngk::builders::edges::add_line;
 use ngk::builders::profiles::{
-    _add_polyline, PolylineError, add_polyline, add_profile_from_edges, add_rectangle, append_edge,
+    add_polyline_edit, PolylineError, add_polyline, add_profile_from_edges, add_rectangle, append_edge,
 };
 use ngk::geometry::{Plane, Point3};
 use ngk::model::Model;
@@ -281,7 +281,7 @@ fn custom_outer_policy_observes_only_external_builder_lineage() {
     let mut policy = CountingPolicy::default();
 
     g.transaction_with_policy(&mut policy, |edit| {
-        _add_polyline(
+        add_polyline_edit(
             edit,
             &[
                 Point3::new(0.0, 0.0, 0.0),

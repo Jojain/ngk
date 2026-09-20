@@ -119,7 +119,7 @@ pub fn boolean<P: Payload>(
         }
         validate_solid_network(edit, &plan.network, context.tolerances)?;
         let mut stage = StageClock::start();
-        let mut prepared = _apply_boolean_splits(edit, plan, false)?;
+        let mut prepared = apply_boolean_splits_edit(edit, plan, false)?;
         prepared.diagnostics.stages.splitting = stage.lap();
         let graph = neighborhood::FragmentGraph::build(edit, &prepared);
         let (classes, rays) = classify::run(edit, &graph, context.options, context.tolerances)?;
@@ -438,7 +438,7 @@ pub fn apply_boolean_splits<P: Payload>(
     g: &mut Model<P>,
     plan: BooleanIntersectionPlan,
 ) -> Result<BooleanPreparation, BooleanError> {
-    g.transaction(|edit| _apply_boolean_splits(edit, plan, false))
+    g.transaction(|edit| apply_boolean_splits_edit(edit, plan, false))
 }
 
 /// Computes contacts and splits two operands already stored in the same map.
@@ -468,11 +468,11 @@ pub fn prepare_boolean_with_external_tool<P: Payload>(
     target_map.transaction(|edit| {
         let imported = import_operand(edit, tool_map, tool)?;
         let plan = compute_boolean_intersections(edit, target, imported, options)?;
-        _apply_boolean_splits(edit, plan, true)
+        apply_boolean_splits_edit(edit, plan, true)
     })
 }
 
-fn _apply_boolean_splits<P: Payload>(
+fn apply_boolean_splits_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plan: BooleanIntersectionPlan,
     imported_second: bool,
@@ -526,7 +526,7 @@ fn _apply_boolean_splits<P: Payload>(
             .iter()
             .map(|imprint| imprint.imprint.clone())
             .collect::<Vec<_>>();
-        let splits = _split_face_by_imprints(edit, source, &curves)?;
+        let splits = split_face_by_imprints_edit(edit, source, &curves)?;
         for section in splits.iter().flat_map(|split| &split.sections) {
             let imprint = &imprints[section.imprint];
             let side = match imprint.side {
@@ -659,9 +659,9 @@ fn split_edge_at_points<P: Payload>(
         let parameter = view.parameter_interval().fraction_of(parameter);
         let incident_face = view.faces().first().map(|face| face.key());
         let split = if let Some(face) = incident_face {
-            _split_face_edge(edit, face, fragment, parameter)?
+            split_face_edge_edit(edit, face, fragment, parameter)?
         } else {
-            _split_edge(edit, fragment, parameter)?
+            split_edge_edit(edit, fragment, parameter)?
         };
         // A cut that only marked an unmarked edge created nothing: the edge
         // still covers the whole of what it covered, and the next point cuts

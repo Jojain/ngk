@@ -54,7 +54,7 @@ pub fn add_polyline<P: Payload>(
     g: &mut Model<P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
-    g.transaction(|edit| _add_polyline(edit, points))
+    g.transaction(|edit| add_polyline_edit(edit, points))
 }
 
 /// Adds one profile from existing edges, regardless of their supplied order.
@@ -67,11 +67,11 @@ pub fn add_profile_from_edges<P: Payload>(
     g: &mut Model<P>,
     edges: &[EdgeKey],
 ) -> Result<ProfileKey, PolylineError> {
-    g.transaction(|edit| _add_profile_from_edges(edit, edges))
+    g.transaction(|edit| add_profile_from_edges_edit(edit, edges))
 }
 
 /// Orders and joins existing edges inside the caller's transaction.
-pub(crate) fn _add_profile_from_edges<P: Payload>(
+pub(crate) fn add_profile_from_edges_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edges: &[EdgeKey],
 ) -> Result<ProfileKey, PolylineError> {
@@ -133,13 +133,13 @@ pub(crate) fn _add_profile_from_edges<P: Payload>(
 
     let profile = edit.add_profile(ProfileAttr::new(ordered[0].dart_at(start)));
     for edge in ordered.iter().skip(1) {
-        _append_edge(edit, profile, edge.key)?;
+        append_edge_edit(edit, profile, edge.key)?;
     }
     Ok(profile)
 }
 
 /// Builds all polyline edges and joins them into one staged profile.
-pub fn _add_polyline<P: Payload>(
+pub fn add_polyline_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
@@ -166,11 +166,11 @@ pub fn append_edge<P: Payload>(
     profile_key: ProfileKey,
     edge_key: EdgeKey,
 ) -> Result<AppendEdge, PolylineError> {
-    g.transaction_result(|edit| _append_edge(edit, profile_key, edge_key))
+    g.transaction_result(|edit| append_edge_edit(edit, profile_key, edge_key))
 }
 
 /// Connects an edge to a profile and records any resulting vertex merge lineage.
-pub(crate) fn _append_edge<P: Payload>(
+pub(crate) fn append_edge_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
@@ -383,11 +383,11 @@ pub fn add_rectangle<P: Payload>(
     x_size: f64,
     y_size: f64,
 ) -> Result<ProfileKey, PolylineError> {
-    g.transaction(|edit| _add_rectangle(edit, plane, x_size, y_size))
+    g.transaction(|edit| add_rectangle_edit(edit, plane, x_size, y_size))
 }
 
 /// Builds the four rectangle edges and profile inside one transaction.
-pub(crate) fn _add_rectangle<P: Payload>(
+pub(crate) fn add_rectangle_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     x_size: f64,
@@ -403,7 +403,7 @@ pub(crate) fn _add_rectangle<P: Payload>(
         plane.point_at(0.0, y_size),
         plane.point_at(0.0, 0.0),
     ];
-    _add_polyline(edit, &corners)
+    add_polyline_edit(edit, &corners)
 }
 
 /// Adds a closed square profile on `plane`.
@@ -415,7 +415,7 @@ pub fn add_square<P: Payload>(
     plane: Plane,
     size: f64,
 ) -> Result<ProfileKey, PolylineError> {
-    g.transaction(|edit| _add_rectangle(edit, plane, size, size))
+    g.transaction(|edit| add_rectangle_edit(edit, plane, size, size))
 }
 
 fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), PolylineError> {
@@ -427,7 +427,7 @@ fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), Polylin
 }
 
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
-pub(crate) fn _add_profile_darts<P: Payload>(
+pub(crate) fn add_profile_darts_edit<P: Payload>(
     g: &mut Model<P>,
     count: usize,
     closed: bool,

@@ -14,11 +14,11 @@ pub fn split_face_edge<P: Payload>(
     edge: EdgeKey,
     parameter: Fraction,
 ) -> Result<EdgeSplit, FaceEdgeSplitError> {
-    g.transaction(|edit| _split_face_edge(edit, face, edge, parameter))
+    g.transaction(|edit| split_face_edge_edit(edit, face, edge, parameter))
 }
 
 /// Splits topology and all incident face pcurves in the same transaction.
-pub(crate) fn _split_face_edge<P: Payload>(
+pub(crate) fn split_face_edge_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face: FaceKey,
     edge: EdgeKey,

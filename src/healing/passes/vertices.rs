@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use crate::builders::removal::{_remove_cell, MergedCell, is_removable};
+use crate::builders::removal::{remove_cell_edit, MergedCell, is_removable};
 use crate::geometry::{Curve, Point3, TrimmedCurve2};
 use crate::model::{Cell0, Model};
 use crate::topology::gmap::{Dart, Dim};
@@ -77,7 +77,7 @@ fn plan<P: Payload>(
     let [first, second] = incident[..] else {
         return Err(SkipReason::NotBetweenTwoCells);
     };
-    // Matches the survivor rule of `_remove_cell`, so the fused geometry
+    // Matches the survivor rule of `remove_cell_edit`, so the fused geometry
     // is built in the direction the surviving identity will keep.
     let (survivor, consumed) = if first <= second {
         (first, second)
@@ -194,7 +194,7 @@ fn apply<P: Payload>(
     fusion: VertexFusion,
     report: &mut HealingReport,
 ) -> Result<(), HealingError> {
-    let removal = _remove_cell(edit, fusion.dart, Dim::Zero)?;
+    let removal = remove_cell_edit(edit, fusion.dart, Dim::Zero)?;
     let MergedCell::Edges { survivor, consumed } = removal.merged else {
         return Err(ModelEditError::MissingLineageAttribute {
             key: crate::topology::EditKey::Edge(fusion.survivor),

@@ -372,10 +372,14 @@ mutation capability (`add_dart`, `remove_dart`, `link`, `unlink`, `sew`,
 `own_cell`, plus attribute create/remove/split/merge declarations).
 
 - One public builder = one transaction; composite builders pass the same
-  `&mut ModelEdit` down to the matching private `_`-prefixed operation.
-- The public wrapper is a one-line transaction boundary. The `_` operation
+  `&mut ModelEdit` down to the matching `_edit`-suffixed operation.
+- The public wrapper is a one-line transaction boundary. The `_edit` operation
   owns validation and construction, and is `pub(crate)` so kernel operations
-  can compose without opening a nested transaction.
+  can compose without opening a nested transaction. The suffix names the
+  parameter that makes it composable (`&mut ModelEdit`, already open),
+  not just "this one is private" — a leading underscore did that but also
+  hid the item from `dead_code`, so an orphaned `_edit` function left behind
+  after its public wrapper is deleted is now reported like any other item.
 - Operation results are stamped only after commit with `transaction_result`;
   their view methods reject an unstamped or stale result.
 - `mod.rs` files are module manifests: they declare modules and re-export

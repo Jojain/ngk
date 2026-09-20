@@ -1,5 +1,5 @@
 use crate::builders::errors::FaceCreationError;
-use crate::builders::profiles::{_add_rectangle as add_rectangle_profile, profile_pcurves};
+use crate::builders::profiles::{add_rectangle_edit as add_rectangle_profile, profile_pcurves};
 use crate::geometry::{Plane, Surface};
 use crate::model::Model;
 use crate::topology::ModelEdit;
@@ -13,10 +13,10 @@ pub fn add_face<P: Payload>(
     g: &mut Model<P>,
     profile: ProfileKey,
 ) -> Result<FaceKey, FaceCreationError> {
-    g.transaction(|edit| _add_face(edit, profile))
+    g.transaction(|edit| add_face_edit(edit, profile))
 }
 
-pub(crate) fn _add_face<P: Payload>(
+pub(crate) fn add_face_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     profile: ProfileKey,
 ) -> Result<FaceKey, FaceCreationError> {
@@ -49,18 +49,18 @@ pub fn add_rectangle<P: Payload>(
     x_size: f64,
     y_size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    g.transaction(|edit| _add_rectangle(edit, plane, x_size, y_size))
+    g.transaction(|edit| add_rectangle_edit(edit, plane, x_size, y_size))
 }
 
 /// Builds a rectangular profile and fills it inside an existing edit.
-pub(crate) fn _add_rectangle<P: Payload>(
+pub(crate) fn add_rectangle_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     x_size: f64,
     y_size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
     let profile = add_rectangle_profile(edit, plane, x_size, y_size)?;
-    _add_face(edit, profile)
+    add_face_edit(edit, profile)
 }
 
 /// Adds a planar square face whose first corner is `plane.origin()`.
@@ -72,15 +72,15 @@ pub fn add_square<P: Payload>(
     plane: Plane,
     size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
-    g.transaction(|edit| _add_square(edit, plane, size))
+    g.transaction(|edit| add_square_edit(edit, plane, size))
 }
 
 /// Builds a square profile and fills it inside an existing edit.
-pub(crate) fn _add_square<P: Payload>(
+pub(crate) fn add_square_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     size: f64,
 ) -> Result<FaceKey, FaceCreationError> {
     let profile = add_rectangle_profile(edit, plane, size, size)?;
-    _add_face(edit, profile)
+    add_face_edit(edit, profile)
 }

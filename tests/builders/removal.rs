@@ -2,7 +2,7 @@ use nalgebra::Vector2;
 use ngk::builders::boolean::{BooleanOperation, BooleanOptions, boolean};
 use ngk::builders::faces::{FaceImprint, add_rectangle, split_face_by_imprints, split_face_edge};
 use ngk::builders::removal::{
-    _remove_cell, CellRemovalError, MergedCell, is_removable, remove_cell,
+    remove_cell_edit, CellRemovalError, MergedCell, is_removable, remove_cell,
 };
 use ngk::geometry::{
     Axis2, Curve, Curve2, DomainSide, Fraction, Frame, Plane, Point2, Point3, Surface,
@@ -80,7 +80,7 @@ fn removing_a_split_vertex_restores_the_original_dart_count() {
     assert!(map.dart_count() > darts);
 
     let dart = map.vertex_attr_unchecked(split.vertex()).dart;
-    map.transaction(|edit| _remove_cell(edit, dart, Dim::Zero))
+    map.transaction(|edit| remove_cell_edit(edit, dart, Dim::Zero))
         .expect("removing the inserted vertex should commit");
 
     assert_eq!(map.dart_count(), darts);
@@ -98,7 +98,7 @@ fn a_vertex_removal_names_the_two_edges_it_fuses() {
     let dart = map.vertex_attr_unchecked(split.vertex()).dart;
 
     let removal = map
-        .transaction(|edit| _remove_cell(edit, dart, Dim::Zero))
+        .transaction(|edit| remove_cell_edit(edit, dart, Dim::Zero))
         .expect("removing the inserted vertex should commit");
 
     let MergedCell::Edges { survivor, consumed } = removal.merged else {
@@ -124,7 +124,7 @@ fn removal_translates_every_dart_it_did_not_delete() {
     let before = map.dart_count();
 
     let removal = map
-        .transaction(|edit| _remove_cell(edit, dart, Dim::Zero))
+        .transaction(|edit| remove_cell_edit(edit, dart, Dim::Zero))
         .expect("removing the inserted vertex should commit");
 
     for removed in &removal.removed {
@@ -157,7 +157,7 @@ fn removing_a_non_removable_cell_is_rejected_and_rolls_back() {
     let darts = map.dart_count();
 
     assert!(
-        map.transaction(|edit| _remove_cell(edit, dart, Dim::Zero))
+        map.transaction(|edit| remove_cell_edit(edit, dart, Dim::Zero))
             .is_err(),
         "a three-edge corner is not removable"
     );
@@ -177,7 +177,7 @@ fn removing_a_dimension_three_cell_is_rejected() {
 
     assert!(!is_removable(&map, dart, Dim::Three));
     assert!(
-        map.transaction(|edit| _remove_cell(edit, dart, Dim::Three))
+        map.transaction(|edit| remove_cell_edit(edit, dart, Dim::Three))
             .is_err()
     );
 }
@@ -190,7 +190,7 @@ fn removing_a_shared_edge_fuses_its_two_faces_and_their_loops() {
     let dart = map.edge_attr_unchecked(shared).dart;
 
     let removal = map
-        .transaction(|edit| _remove_cell(edit, dart, Dim::One))
+        .transaction(|edit| remove_cell_edit(edit, dart, Dim::One))
         .expect("removing the shared edge should commit");
 
     let MergedCell::Faces {

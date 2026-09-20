@@ -36,7 +36,7 @@ use crate::geometry::{
     Curve, LINEAR_TOLERANCE, NurbsError, Point2, Point3, Surface, SurfacePeriodicity,
     TrimmedCurve2, Vector2,
 };
-use crate::healing::{_remove_redundant_cells, HealingError, HealingOptions};
+use crate::healing::{remove_redundant_cells_edit, HealingError, HealingOptions};
 use crate::model::Model;
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
@@ -848,7 +848,7 @@ fn sew_solid(
         // STEP's synthetic periodic cuts have to come off before the cavity
         // cut is attached. Once that solid-owned face turns through the same
         // edge, the edge is no longer merely a parameterization seam.
-        _remove_redundant_cells(edit, &HealingOptions::seams_only())?;
+        remove_redundant_cells_edit(edit, &HealingOptions::seams_only())?;
     }
     let roots = edit
         .solid_attr_unchecked(solid)

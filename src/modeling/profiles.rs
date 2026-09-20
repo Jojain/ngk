@@ -2,7 +2,7 @@ use radians::Rad64;
 
 use crate::builders::errors::EdgeCreationError;
 use crate::builders::profiles::{
-    _add_profile_from_edges, _append_edge, PolylineError, add_polyline, add_rectangle, add_square,
+    add_profile_from_edges_edit, append_edge_edit, PolylineError, add_polyline, add_rectangle, add_square,
 };
 use crate::geometry::{Plane, Point3};
 use crate::model::{Cell1, Model};
@@ -52,7 +52,7 @@ pub fn from_edges<P: Payload>(
                 edit.cell_key_unchecked::<Cell1>(dart)
             })
             .collect::<Vec<_>>();
-        _add_profile_from_edges(edit, &keys)
+        add_profile_from_edges_edit(edit, &keys)
     })?;
     Ok(Shape::new(g, profile))
 }
@@ -91,7 +91,7 @@ impl<P: Payload> Shape<ProfileTag, P> {
         self.model_mut().transaction(|edit| {
             let edge_dart = edit.merge(edge.edge());
             let edge_key = edit.cell_key_unchecked::<Cell1>(edge_dart);
-            _append_edge(edit, profile_key, edge_key).map(|_| ())
+            append_edge_edit(edit, profile_key, edge_key).map(|_| ())
         })
     }
 }

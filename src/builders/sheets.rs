@@ -87,11 +87,11 @@ pub fn add_extruded_profile<P: Payload>(
     profile_key: ProfileKey,
     direction: Vector3<f64>,
 ) -> Result<ProfileExtrusion, ExtrudeError> {
-    g.transaction_result(|edit| _add_extruded_profile(edit, profile_key, direction))
+    g.transaction_result(|edit| add_extruded_profile_edit(edit, profile_key, direction))
 }
 
 /// Builds a profile extrusion inside an existing edit.
-pub(crate) fn _add_extruded_profile<P: Payload>(
+pub(crate) fn add_extruded_profile_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     profile_key: ProfileKey,
     direction: Vector3<f64>,

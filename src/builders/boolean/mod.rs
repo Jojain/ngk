@@ -38,8 +38,8 @@ pub use result::{
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-use crate::builders::edges::_split_edge;
-use crate::builders::faces::{_split_face_by_imprints, _split_face_edge, FaceImprint};
+use crate::builders::edges::split_edge_edit;
+use crate::builders::faces::{split_face_by_imprints_edit, split_face_edge_edit, FaceImprint};
 use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveCurveIntersection,
