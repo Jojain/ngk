@@ -65,6 +65,22 @@ pub struct Shape<K: ShapeKind = SheetTag, P: Payload = StandardPayload> {
 }
 
 impl<K: ShapeKind, P: Payload> Shape<K, P> {
+    /// Runs one builder into a fresh model and owns its primary result.
+    pub fn build<E>(f: impl FnOnce(&mut Model<P>) -> Result<K::Handle, E>) -> Result<Self, E> {
+        let mut model = Model::new();
+        let handle = f(&mut model)?;
+        Ok(Self::new(model, handle))
+    }
+
+    /// Runs one builder over this shape's model and rebinds its primary handle.
+    pub fn then<K2: ShapeKind, E>(
+        mut self,
+        f: impl FnOnce(&mut Model<P>, K::Handle) -> Result<K2::Handle, E>,
+    ) -> Result<Shape<K2, P>, E> {
+        let handle = f(&mut self.model, self.handle)?;
+        Ok(Shape::new(self.model, handle))
+    }
+
     /// Creates an owned shape from a map and primary handle.
     pub fn new(model: Model<P>, handle: K::Handle) -> Self {
         Self {

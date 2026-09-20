@@ -38,7 +38,7 @@ parametric modeler. Operations mutate one map and return explicit handles.
 | `model` | `src/model.rs` | `Model<P>`: one GMap plus the entity stores, geometry, payloads, labels and derived indexes keyed against it; the transaction boundary |
 | `geometry` | `src/geometry/` | Pure math: points, curves, surfaces, NURBS, intersections, bbox, tolerance |
 | `builders` | `src/builders/` | Low-level topology construction (`&mut Model<P>`), one transaction each |
-| `modeling` | `src/modeling/` | Thin user-facing standalone shape builders (`block`, `revolve`, …) |
+| `modeling` | `src/modeling/` | Owned-`Shape` facade over `builders`: constructors allocate a model and delegate one operation; payload-generic constructors expose plain and `_with` pairs |
 | `healing` | `src/healing/` | Removes topology that carries no shape (`i`-removal passes over `builders::removal`) |
 | `tessellate` | `src/tessellate/` | Geometry/BRep → polylines + indexed meshes |
 | `viz` | `src/viz/` | `VizScene` assembly, dart/α overlays, debug viewer, ocp_vscode bridge |

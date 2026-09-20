@@ -1,12 +1,15 @@
-use crate::model::Model;
 use nalgebra::{Unit, Vector3};
 
 use crate::{
     StandardPayload,
     builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, boolean},
-    builders::solids::{add_extruded_face, add_sphere, add_torus},
-    geometry::{Frame, Plane},
-    modeling::faces,
+    builders::errors::ExtrudeError,
+    builders::solids::{
+        BlockError, CylinderError, SphereBuildError, TorusBuildError, add_block, add_cylinder,
+        add_extruded_face, add_sphere, add_torus,
+    },
+    geometry::Frame,
+    model::Model,
     topology::{
         ModelEditError,
         payload::Payload,
@@ -16,43 +19,40 @@ use crate::{
 
 use crate::topology::solid::Solid;
 
-pub use crate::modeling::errors::PrimitiveError;
-
-fn validate_length(axis: &'static str, value: f64) -> Result<(), PrimitiveError> {
-    if value.is_finite() && value > 0.0 {
-        Ok(())
-    } else {
-        Err(PrimitiveError::InvalidSize { axis, value })
-    }
-}
-
 /// Creates a block (rectangular prism) at the given frame with the specified dimensions.
 pub fn block_at(
     frame: Frame,
     x_size: f64,
     y_size: f64,
     z_size: f64,
-) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
-    validate_length("x", x_size)?;
-    validate_length("y", y_size)?;
-    validate_length("z", z_size)?;
-    let direction = frame.z_dir.into_inner() * z_size;
-    let plane = Plane::from_frame(frame);
-    let base =
-        faces::rectangle(plane, x_size, y_size).map_err(|_| PrimitiveError::FaceCreationFailed)?;
-    let (mut g, face_key) = base.into_model();
-    let solid_key = add_extruded_face(&mut g, face_key, direction)
-        .map_err(|_| PrimitiveError::SolidCreationFailed)?;
-    Ok(Shape::new(g, solid_key.solid))
+) -> Result<Shape<SolidTag>, BlockError> {
+    block_at_with::<StandardPayload>(frame, x_size, y_size, z_size)
 }
 
-// Creates a block at the origin with the specified dimensions.
-pub fn block(
+/// As [`block_at`], with the payload chosen by the caller.
+pub fn block_at_with<P: Payload>(
+    frame: Frame,
     x_size: f64,
     y_size: f64,
     z_size: f64,
-) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
-    block_at(Frame::xyz(), x_size, y_size, z_size)
+) -> Result<Shape<SolidTag, P>, BlockError> {
+    Shape::build(|model| {
+        add_block(model, frame, x_size, y_size, z_size).map(|extrusion| extrusion.solid)
+    })
+}
+
+/// Creates a block at the origin with the specified dimensions.
+pub fn block(x_size: f64, y_size: f64, z_size: f64) -> Result<Shape<SolidTag>, BlockError> {
+    block_with::<StandardPayload>(x_size, y_size, z_size)
+}
+
+/// As [`block`], with the payload chosen by the caller.
+pub fn block_with<P: Payload>(
+    x_size: f64,
+    y_size: f64,
+    z_size: f64,
+) -> Result<Shape<SolidTag, P>, BlockError> {
+    block_at_with::<P>(Frame::xyz(), x_size, y_size, z_size)
 }
 
 /// Creates a cylinder at the given frame with the specified radius and height.
@@ -60,44 +60,58 @@ pub fn cylinder_at(
     frame: Frame,
     radius: f64,
     height: f64,
-) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
-    validate_length("radius", radius)?;
-    validate_length("height", height)?;
-    let direction = frame.z_dir.into_inner() * height;
-    let plane = Plane::from_frame(frame);
-    let base = faces::circle(plane, radius).map_err(|_| PrimitiveError::FaceCreationFailed)?;
-    let (mut g, face_key) = base.into_model();
-    let solid_key = add_extruded_face(&mut g, face_key, direction)
-        .map_err(|_| PrimitiveError::SolidCreationFailed)?;
-    Ok(Shape::new(g, solid_key.solid))
+) -> Result<Shape<SolidTag>, CylinderError> {
+    cylinder_at_with::<StandardPayload>(frame, radius, height)
+}
+
+/// As [`cylinder_at`], with the payload chosen by the caller.
+pub fn cylinder_at_with<P: Payload>(
+    frame: Frame,
+    radius: f64,
+    height: f64,
+) -> Result<Shape<SolidTag, P>, CylinderError> {
+    Shape::build(|model| {
+        add_cylinder(model, frame, radius, height).map(|extrusion| extrusion.solid)
+    })
 }
 
 /// Creates a cylinder at the origin with the specified radius and height.
-pub fn cylinder(
+pub fn cylinder(radius: f64, height: f64) -> Result<Shape<SolidTag>, CylinderError> {
+    cylinder_with::<StandardPayload>(radius, height)
+}
+
+/// As [`cylinder`], with the payload chosen by the caller.
+pub fn cylinder_with<P: Payload>(
     radius: f64,
     height: f64,
-) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
-    cylinder_at(Frame::xyz(), radius, height)
+) -> Result<Shape<SolidTag, P>, CylinderError> {
+    cylinder_at_with::<P>(Frame::xyz(), radius, height)
 }
 
 /// Creates a sphere centered at the given frame origin.
 ///
 /// The frame's z-axis is the revolution axis and its x-axis fixes the
 /// generating circle arc's meridian.
-pub fn sphere_at(
+pub fn sphere_at(frame: Frame, radius: f64) -> Result<Shape<SolidTag>, SphereBuildError> {
+    sphere_at_with::<StandardPayload>(frame, radius)
+}
+
+/// As [`sphere_at`], with the payload chosen by the caller.
+pub fn sphere_at_with<P: Payload>(
     frame: Frame,
     radius: f64,
-) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
-    validate_length("radius", radius)?;
-    let mut g = Model::new();
-    let solid_key =
-        add_sphere(&mut g, frame, radius).map_err(|_| PrimitiveError::SolidCreationFailed)?;
-    Ok(Shape::new(g, solid_key.solid))
+) -> Result<Shape<SolidTag, P>, SphereBuildError> {
+    Shape::build(|model| add_sphere(model, frame, radius).map(|solid| solid.solid))
 }
 
 /// Creates a sphere centered at the origin.
-pub fn sphere(radius: f64) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
-    sphere_at(Frame::xyz(), radius)
+pub fn sphere(radius: f64) -> Result<Shape<SolidTag>, SphereBuildError> {
+    sphere_with::<StandardPayload>(radius)
+}
+
+/// As [`sphere`], with the payload chosen by the caller.
+pub fn sphere_with<P: Payload>(radius: f64) -> Result<Shape<SolidTag, P>, SphereBuildError> {
+    sphere_at_with::<P>(Frame::xyz(), radius)
 }
 
 /// Creates a torus centered at the given frame origin.
@@ -105,36 +119,42 @@ pub fn sphere(radius: f64) -> Result<Shape<SolidTag, StandardPayload>, Primitive
 /// The frame's z-axis is the revolution axis and its x-axis fixes where the
 /// generating circle sits. `minor` is the tube's radius and `major` the distance
 /// from the axis out to the tube's centre, so `minor` must stay under `major`.
-pub fn torus_at(
+pub fn torus_at(frame: Frame, major: f64, minor: f64) -> Result<Shape<SolidTag>, TorusBuildError> {
+    torus_at_with::<StandardPayload>(frame, major, minor)
+}
+
+/// As [`torus_at`], with the payload chosen by the caller.
+pub fn torus_at_with<P: Payload>(
     frame: Frame,
     major: f64,
     minor: f64,
-) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
-    validate_length("major", major)?;
-    validate_length("minor", minor)?;
-    let mut g = Model::new();
-    let solid_key =
-        add_torus(&mut g, frame, major, minor).map_err(|_| PrimitiveError::SolidCreationFailed)?;
-    Ok(Shape::new(g, solid_key.solid))
+) -> Result<Shape<SolidTag, P>, TorusBuildError> {
+    Shape::build(|model| add_torus(model, frame, major, minor).map(|solid| solid.solid))
 }
 
 /// Creates a torus centered at the origin.
-pub fn torus(major: f64, minor: f64) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
-    torus_at(Frame::xyz(), major, minor)
+pub fn torus(major: f64, minor: f64) -> Result<Shape<SolidTag>, TorusBuildError> {
+    torus_with::<StandardPayload>(major, minor)
+}
+
+/// As [`torus`], with the payload chosen by the caller.
+pub fn torus_with<P: Payload>(
+    major: f64,
+    minor: f64,
+) -> Result<Shape<SolidTag, P>, TorusBuildError> {
+    torus_at_with::<P>(Frame::xyz(), major, minor)
 }
 
 /// Creates a solid by extruding the given face in the specified direction.
-pub fn extruded(
-    face: Shape<FaceTag, StandardPayload>,
+pub fn extruded<P: Payload>(
+    face: Shape<FaceTag, P>,
     direction: Unit<Vector3<f64>>,
     distance: f64,
-) -> Result<Shape<SolidTag, StandardPayload>, PrimitiveError> {
-    validate_length("distance", distance)?;
+) -> Result<Shape<SolidTag, P>, ExtrudeError> {
     let direction = direction.into_inner() * distance;
-    let (mut g, face_key) = face.into_model();
-    let solid_key = add_extruded_face(&mut g, face_key, direction)
-        .map_err(|_| PrimitiveError::SolidCreationFailed)?;
-    Ok(Shape::new(g, solid_key.solid))
+    face.then(|model, face_key| {
+        add_extruded_face(model, face_key, direction).map(|extrusion| extrusion.solid)
+    })
 }
 
 /// Consumes two owned solid shapes and fuses them into one owned solid.

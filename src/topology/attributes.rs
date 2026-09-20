@@ -28,6 +28,10 @@ pub struct VertexAttr<T> {
 }
 
 impl<T> VertexAttr<T> {
+    pub(crate) fn has_data(&self) -> bool {
+        self.data.is_some()
+    }
+
     /// Creates a vertex attribute rooted at `dart`, with no payload yet.
     ///
     /// The payload is assigned once by commit's creation hook; see
@@ -94,6 +98,10 @@ pub struct EdgeAttr<T> {
 }
 
 impl<T> EdgeAttr<T> {
+    pub(crate) fn has_data(&self) -> bool {
+        self.data.is_some()
+    }
+
     /// Creates an edge attribute rooted at `dart`, with no payload yet.
     ///
     /// The caller's `dart` defines the edge's default orientation. The
@@ -151,6 +159,10 @@ pub struct ProfileAttr<T> {
 }
 
 impl<T> ProfileAttr<T> {
+    pub(crate) fn has_data(&self) -> bool {
+        self.data.is_some()
+    }
+
     /// Creates a profile attribute rooted at the given oriented dart, with no
     /// payload yet.
     ///
@@ -454,6 +466,10 @@ pub struct FaceAttr<T> {
 }
 
 impl<T> FaceAttr<T> {
+    pub(crate) fn has_data(&self) -> bool {
+        self.data.is_some()
+    }
+
     /// Creates a face attribute without boundary pcurves, with no payload yet.
     ///
     /// The loop darts must follow the orientation contract documented on
@@ -727,6 +743,10 @@ pub struct SheetAttr<T> {
 }
 
 impl<T> SheetAttr<T> {
+    pub(crate) fn has_data(&self) -> bool {
+        self.data.is_some()
+    }
+
     /// Creates a sheet attribute anchored at `root`, with no payload yet.
     ///
     /// The payload is assigned once by commit's creation hook; see
@@ -786,6 +806,10 @@ pub struct SolidAttr<T> {
 }
 
 impl<T> SolidAttr<T> {
+    pub(crate) fn has_data(&self) -> bool {
+        self.data.is_some()
+    }
+
     /// Creates a solid attribute from an outer shell and optional inner
     /// shells, with no payload yet.
     ///

@@ -26,7 +26,9 @@ pub(crate) use annulus::{
     assign_rebased_pcurve, assign_split_pcurves, closed_boundary_curve_reversed, face_edge_dart,
     incident_face_pcurves, periodic_image_near_pcurve, rebased_face_pcurves,
 };
+pub(crate) use circle::add_circle_edit;
 pub(crate) use face::add_face_edit;
+pub(crate) use face::add_rectangle_edit;
 pub(crate) use imprints::{chord_loop_kinds, split_face_by_imprints_edit};
 pub(crate) use polygon::add_polygon_edit;
 pub(crate) use polygon::reverse_face_winding_edit;

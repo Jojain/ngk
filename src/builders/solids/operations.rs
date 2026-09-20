@@ -15,7 +15,7 @@ use crate::{
     Payload,
     builders::errors::ClosedFaceCellError,
     builders::errors::ExtrudeError,
-    builders::faces::reverse_face_winding_edit,
+    builders::faces::{add_circle_edit, add_rectangle_edit, reverse_face_winding_edit},
     builders::scaffold::add_closed_face_cell,
     geometry::{
         ANGULAR_TOLERANCE, Axis2, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3,
@@ -38,10 +38,43 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum SphereBuildError {
+    #[error("sphere radius must be positive and finite, got {radius}")]
+    InvalidRadius { radius: f64 },
+
     #[error("failed to build the sphere's 2-cell")]
     ClosedFaceCell(#[from] ClosedFaceCellError),
 
     #[error("failed to commit sphere topology")]
+    ModelEdit(#[from] ModelEditError),
+}
+
+#[derive(Debug, Error)]
+pub enum BlockError {
+    #[error("block height must be positive and finite, got {height}")]
+    InvalidHeight { height: f64 },
+
+    #[error(transparent)]
+    Face(#[from] crate::builders::errors::FaceCreationError),
+
+    #[error(transparent)]
+    Extrusion(#[from] ExtrudeError),
+
+    #[error(transparent)]
+    ModelEdit(#[from] ModelEditError),
+}
+
+#[derive(Debug, Error)]
+pub enum CylinderError {
+    #[error("cylinder height must be positive and finite, got {height}")]
+    InvalidHeight { height: f64 },
+
+    #[error(transparent)]
+    Face(#[from] crate::builders::errors::FaceCreationError),
+
+    #[error(transparent)]
+    Extrusion(#[from] ExtrudeError),
+
+    #[error(transparent)]
     ModelEdit(#[from] ModelEditError),
 }
 
@@ -204,6 +237,9 @@ pub(crate) fn add_sphere_edit<P: Payload>(
     frame: Frame,
     radius: f64,
 ) -> Result<ClosedSolid, SphereBuildError> {
+    if !radius.is_finite() || radius <= 0.0 {
+        return Err(SphereBuildError::InvalidRadius { radius });
+    }
     let surface = Surface::Sphere(Sphere::new(frame, radius));
     let cell = add_closed_face_cell(edit, &surface)?;
     let face = edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
@@ -216,6 +252,58 @@ pub(crate) fn add_sphere_edit<P: Payload>(
         seams: Vec::new(),
         revision: None,
     })
+}
+
+/// Adds a rectangular prism whose base starts on `frame` and rises along its
+/// positive z direction.
+pub fn add_block<P: Payload>(
+    g: &mut Model<P>,
+    frame: Frame,
+    x_size: f64,
+    y_size: f64,
+    height: f64,
+) -> Result<FaceExtrusion, BlockError> {
+    g.transaction_result(|edit| add_block_edit(edit, frame, x_size, y_size, height))
+}
+
+pub(crate) fn add_block_edit<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    frame: Frame,
+    x_size: f64,
+    y_size: f64,
+    height: f64,
+) -> Result<FaceExtrusion, BlockError> {
+    if !height.is_finite() || height <= 0.0 {
+        return Err(BlockError::InvalidHeight { height });
+    }
+    let direction = frame.z_dir.into_inner() * height;
+    let face = add_rectangle_edit(edit, Plane::from_frame(frame), x_size, y_size)?;
+    Ok(add_extruded_face_edit(edit, face, direction)?)
+}
+
+/// Adds a cylindrical solid whose base starts on `frame` and rises along its
+/// positive z direction.
+pub fn add_cylinder<P: Payload>(
+    g: &mut Model<P>,
+    frame: Frame,
+    radius: f64,
+    height: f64,
+) -> Result<FaceExtrusion, CylinderError> {
+    g.transaction_result(|edit| add_cylinder_edit(edit, frame, radius, height))
+}
+
+pub(crate) fn add_cylinder_edit<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    frame: Frame,
+    radius: f64,
+    height: f64,
+) -> Result<FaceExtrusion, CylinderError> {
+    if !height.is_finite() || height <= 0.0 {
+        return Err(CylinderError::InvalidHeight { height });
+    }
+    let direction = frame.z_dir.into_inner() * height;
+    let face = add_circle_edit(edit, Plane::from_frame(frame), radius)?;
+    Ok(add_extruded_face_edit(edit, face, direction)?)
 }
 
 /// Adds a torus as one boundaryless face on a [`Torus`] support.

@@ -2,12 +2,14 @@ use std::collections::HashMap;
 
 use nalgebra::Vector3;
 use ngk::StandardPayload;
+use ngk::builders::errors::{FaceCreationError, PolylineError};
+use ngk::builders::solids::{BlockError, TorusBuildError};
 use ngk::geometry::{
     Curve, Frame, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface, SurfacePeriodicity,
 };
 use ngk::model::Cell2;
 use ngk::modeling::solids::{
-    PrimitiveError, block, block_at, cut, cylinder, cylinder_at, fuse, intersect, sphere, torus,
+    block, block_at, cut, cylinder, cylinder_at, fuse, intersect, sphere, torus,
 };
 use ngk::tessellate::{CurveOpts, SurfaceOpts, TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
@@ -119,41 +121,28 @@ fn solid_and_shell_expose_boundary_subtypes() {
 
 #[test]
 fn block_rejects_non_positive_or_non_finite_sizes() {
-    assert_eq!(
-        block(-1.0, 2.0, 3.0).err().expect("negative x should fail"),
-        PrimitiveError::InvalidSize {
-            axis: "x",
-            value: -1.0,
-        }
-    );
-    assert_eq!(
-        block(1.0, 0.0, 3.0).err().expect("zero y should fail"),
-        PrimitiveError::InvalidSize {
-            axis: "y",
-            value: 0.0,
-        }
-    );
-
-    match block(1.0, 2.0, f64::NAN)
-        .err()
-        .expect("non-finite z should fail")
-    {
-        PrimitiveError::InvalidSize { axis, value } => {
-            assert_eq!(axis, "z");
-            assert!(value.is_nan());
-        }
-        other => panic!("expected invalid z size, got {other:?}"),
-    }
-}
-
-#[test]
-fn block_error_message_names_the_invalid_axis_and_value() {
-    let error = block(1.0, -2.0, 3.0).err().expect("negative y should fail");
-
-    assert_eq!(
-        error.to_string(),
-        "block y size must be greater than 0, got -2"
-    );
+    assert!(matches!(
+        block(-1.0, 2.0, 3.0),
+        Err(BlockError::Face(FaceCreationError::ProfileCreationFailed(
+            PolylineError::InvalidRectangleSize {
+                axis: "x",
+                value: -1.0
+            }
+        )))
+    ));
+    assert!(matches!(
+        block(1.0, 0.0, 3.0),
+        Err(BlockError::Face(FaceCreationError::ProfileCreationFailed(
+            PolylineError::InvalidRectangleSize {
+                axis: "y",
+                value: 0.0
+            }
+        )))
+    ));
+    assert!(matches!(
+        block(1.0, 2.0, f64::NAN),
+        Err(BlockError::InvalidHeight { height }) if height.is_nan()
+    ));
 }
 
 /// A sphere has no boundary anywhere, so it carries no edge and no vertex.
@@ -335,11 +324,11 @@ fn a_torus_tessellates_into_a_closed_tube() {
 #[test]
 fn a_torus_whose_tube_reaches_the_axis_is_refused() {
     assert!(
-        matches!(torus(1.0, 1.0), Err(PrimitiveError::SolidCreationFailed)),
+        matches!(torus(1.0, 1.0), Err(TorusBuildError::InvalidRadii { .. })),
         "a tube as wide as its offset touches the axis"
     );
     assert!(
-        matches!(torus(1.0, 2.0), Err(PrimitiveError::SolidCreationFailed)),
+        matches!(torus(1.0, 2.0), Err(TorusBuildError::InvalidRadii { .. })),
         "a tube wider than its offset sweeps through itself"
     );
 }

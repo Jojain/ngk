@@ -18,7 +18,7 @@
 //! let bracket = block(40.0, 20.0, 6.0)?
 //!     .rotated(Axis3::z(), Rad64::QUARTER_TURN)
 //!     .translated(Vector3::new(0.0, 0.0, 12.0));
-//! # Ok::<(), ngk::modeling::solids::PrimitiveError>(())
+//! # Ok::<(), ngk::builders::solids::BlockError>(())
 //! ```
 
 use nalgebra::Vector3;

@@ -19,7 +19,7 @@ use crate::topology::attributes::{
 };
 use crate::topology::edge::Edge;
 use crate::topology::edit::{
-    EditEvent, EditKey, EditPolicy, ModelEdit, ModelEditError, commit_model_transaction,
+    EditEvent, EditKey, EditPolicy, ModelEdit, ModelEditError, Origin, commit_model_transaction,
 };
 use crate::topology::embedding::{
     Embedding, EmbeddingError, EmbeddingIndex, EntityOwner, OwnerRemap, boundary_shells,
@@ -586,6 +586,24 @@ impl<P: Payload> Model<P> {
     /// recorded as [`EditEvent::Copied`] rather than [`EditEvent::Created`].
     fn record_copied_attribute(&mut self, key: EditKey) {
         self.record_edit_event(EditEvent::Copied { key });
+    }
+
+    fn record_copied_or_derived_attribute(
+        &mut self,
+        key: EditKey,
+        source: EditKey,
+        initialized: bool,
+    ) {
+        if initialized {
+            self.record_copied_attribute(key);
+        } else {
+            self.record_edit_event(EditEvent::Created {
+                key,
+                origin: Origin::Derived {
+                    sources: vec![source],
+                },
+            });
+        }
     }
 
     /// Discards cached lookups after topology, attributes or labels change.
@@ -1459,10 +1477,15 @@ impl<P: Payload> Model<P> {
             else {
                 continue;
             };
+            let initialized = attr.has_data();
             let mut attr = attr.clone();
             attr.dart = self.cell_representative(remap_dart(&dart_map, attribute_dart), Dim::Zero);
             let new_key = self.vertices.insert(attr);
-            self.record_copied_attribute(EditKey::Vertex(new_key));
+            self.record_copied_or_derived_attribute(
+                EditKey::Vertex(new_key),
+                EditKey::Vertex(old),
+                initialized,
+            );
             vertex_map.insert(old, new_key);
         }
 
@@ -1473,24 +1496,34 @@ impl<P: Payload> Model<P> {
             else {
                 continue;
             };
+            let initialized = attr.has_data();
             let mut attr = attr.clone();
             attr.dart = remap_dart(&dart_map, attribute_dart);
             let new_key = self.edges.insert(attr);
-            self.record_copied_attribute(EditKey::Edge(new_key));
+            self.record_copied_or_derived_attribute(
+                EditKey::Edge(new_key),
+                EditKey::Edge(old),
+                initialized,
+            );
             edge_map.insert(old, new_key);
         }
 
-        for (_, attr) in source.profiles.iter() {
+        for (old, attr) in source.profiles.iter() {
             if !source
                 .orbit(attr.dart, vec![Dim::Zero.index(), Dim::One.index()])
                 .all(|dart| source_dart_set.contains(&dart))
             {
                 continue;
             }
+            let initialized = attr.has_data();
             let mut attr = attr.clone();
             attr.dart = remap_dart(&dart_map, attr.dart);
             let new_key = self.profiles.insert(attr);
-            self.record_copied_attribute(EditKey::Profile(new_key));
+            self.record_copied_or_derived_attribute(
+                EditKey::Profile(new_key),
+                EditKey::Profile(old),
+                initialized,
+            );
         }
 
         let mut face_map = HashMap::new();
@@ -1508,6 +1541,7 @@ impl<P: Payload> Model<P> {
             {
                 continue;
             }
+            let initialized = attr.has_data();
             let mut attr = attr.clone();
             attr.retain_mapped(&dart_map);
             attr.pcurves = attr
@@ -1516,7 +1550,11 @@ impl<P: Payload> Model<P> {
                 .filter_map(|(dart, curve)| dart_map.get(&dart).copied().map(|d| (d, curve)))
                 .collect();
             let new_key = self.faces.insert(attr);
-            self.record_copied_attribute(EditKey::Face(new_key));
+            self.record_copied_or_derived_attribute(
+                EditKey::Face(new_key),
+                EditKey::Face(old),
+                initialized,
+            );
             face_map.insert(old, new_key);
         }
 
@@ -1527,14 +1565,19 @@ impl<P: Payload> Model<P> {
                 .then(|| remap_dart(&dart_map, shell))
         };
 
-        for (_, attr) in source.sheets.iter() {
+        for (old, attr) in source.sheets.iter() {
             let Some(root) = copied_shell(attr.root) else {
                 continue;
             };
+            let initialized = attr.has_data();
             let mut attr = attr.clone();
             attr.root = root;
             let new_key = self.sheets.insert(attr);
-            self.record_copied_attribute(EditKey::Sheet(new_key));
+            self.record_copied_or_derived_attribute(
+                EditKey::Sheet(new_key),
+                EditKey::Sheet(old),
+                initialized,
+            );
         }
 
         let mut solid_map = HashMap::new();
@@ -1542,13 +1585,18 @@ impl<P: Payload> Model<P> {
             let Some(outer_shell) = copied_shell(attr.outer_shell) else {
                 continue;
             };
+            let initialized = attr.has_data();
             let mut attr = attr.clone();
             attr.outer_shell = outer_shell;
             attr.inner_shells = attr
                 .inner_shells
                 .map(|shells| shells.into_iter().filter_map(copied_shell).collect());
             let new_key = self.solids.insert(attr);
-            self.record_copied_attribute(EditKey::Solid(new_key));
+            self.record_copied_or_derived_attribute(
+                EditKey::Solid(new_key),
+                EditKey::Solid(old),
+                initialized,
+            );
             solid_map.insert(old, new_key);
         }
 

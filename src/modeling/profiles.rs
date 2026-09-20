@@ -2,7 +2,8 @@ use radians::Rad64;
 
 use crate::builders::errors::EdgeCreationError;
 use crate::builders::profiles::{
-    add_profile_from_edges_edit, append_edge_edit, PolylineError, add_polyline, add_rectangle, add_square,
+    PolylineError, add_polyline, add_profile_from_edges_edit, add_rectangle, add_square,
+    append_edge_edit,
 };
 use crate::geometry::{Plane, Point3};
 use crate::model::{Cell1, Model};
@@ -11,29 +12,45 @@ use crate::topology::closed::Closeable;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
 
+/// Creates a closed rectangular profile whose first corner is `plane.origin()`.
 pub fn rectangle(
     plane: Plane,
     x_size: f64,
     y_size: f64,
-) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {
-    let mut g = Model::new();
-    let profile_dart = add_rectangle(&mut g, plane, x_size, y_size)?;
-    Ok(Shape::new(g, profile_dart))
+) -> Result<Shape<ProfileTag>, PolylineError> {
+    rectangle_with::<StandardPayload>(plane, x_size, y_size)
 }
 
-pub fn square(
+/// As [`rectangle`], with the payload chosen by the caller.
+pub fn rectangle_with<P: Payload>(
+    plane: Plane,
+    x_size: f64,
+    y_size: f64,
+) -> Result<Shape<ProfileTag, P>, PolylineError> {
+    Shape::build(|model| add_rectangle(model, plane, x_size, y_size))
+}
+
+/// Creates a closed square profile whose first corner is `plane.origin()`.
+pub fn square(plane: Plane, size: f64) -> Result<Shape<ProfileTag>, PolylineError> {
+    square_with::<StandardPayload>(plane, size)
+}
+
+/// As [`square`], with the payload chosen by the caller.
+pub fn square_with<P: Payload>(
     plane: Plane,
     size: f64,
-) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {
-    let mut g = Model::new();
-    let handle = add_square(&mut g, plane, size)?;
-    Ok(Shape::new(g, handle))
+) -> Result<Shape<ProfileTag, P>, PolylineError> {
+    Shape::build(|model| add_square(model, plane, size))
 }
 
-pub fn polyline(points: &[Point3]) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {
-    let mut g = Model::new();
-    let profile_dart = add_polyline(&mut g, points)?;
-    Ok(Shape::new(g, profile_dart))
+/// Creates an open or closed profile by joining the supplied points in order.
+pub fn polyline(points: &[Point3]) -> Result<Shape<ProfileTag>, PolylineError> {
+    polyline_with::<StandardPayload>(points)
+}
+
+/// As [`polyline`], with the payload chosen by the caller.
+pub fn polyline_with<P: Payload>(points: &[Point3]) -> Result<Shape<ProfileTag, P>, PolylineError> {
+    Shape::build(|model| add_polyline(model, points))
 }
 
 /// Builds an owned profile from connected edge shapes in any input order.
@@ -57,7 +74,13 @@ pub fn from_edges<P: Payload>(
     Ok(Shape::new(g, profile))
 }
 
-pub fn polygon(points: &[Point3]) -> Result<Shape<ProfileTag, StandardPayload>, PolylineError> {
+/// Creates a closed polygon profile from the supplied corners.
+pub fn polygon(points: &[Point3]) -> Result<Shape<ProfileTag>, PolylineError> {
+    polygon_with::<StandardPayload>(points)
+}
+
+/// As [`polygon`], with the payload chosen by the caller.
+pub fn polygon_with<P: Payload>(points: &[Point3]) -> Result<Shape<ProfileTag, P>, PolylineError> {
     let mut closed_points = points.to_vec();
     let first = points.first().ok_or(PolylineError::InvalidPolygon {
         point_count: points.len(),
@@ -68,16 +91,27 @@ pub fn polygon(points: &[Point3]) -> Result<Shape<ProfileTag, StandardPayload>, 
         });
     }
     closed_points.push(*first);
-    polyline(&closed_points)
+    polyline_with::<P>(&closed_points)
 }
 
+/// Creates a circular arc profile in 3D space.
 pub fn arc(
     plane: Plane,
     radius: f64,
     start_angle: Rad64,
     end_angle: Rad64,
-) -> Result<Shape<ProfileTag, StandardPayload>, EdgeCreationError> {
-    Ok(edges::arc(plane, radius, start_angle, end_angle)?.into_profile())
+) -> Result<Shape<ProfileTag>, EdgeCreationError> {
+    arc_with::<StandardPayload>(plane, radius, start_angle, end_angle)
+}
+
+/// As [`arc`], with the payload chosen by the caller.
+pub fn arc_with<P: Payload>(
+    plane: Plane,
+    radius: f64,
+    start_angle: Rad64,
+    end_angle: Rad64,
+) -> Result<Shape<ProfileTag, P>, EdgeCreationError> {
+    Ok(edges::arc_with::<P>(plane, radius, start_angle, end_angle)?.into_profile())
 }
 
 impl<P: Payload> Shape<ProfileTag, P> {
