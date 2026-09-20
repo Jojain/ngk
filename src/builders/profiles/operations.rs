@@ -139,7 +139,7 @@ pub(crate) fn add_profile_from_edges_edit<P: Payload>(
 }
 
 /// Builds all polyline edges and joins them into one staged profile.
-pub fn add_polyline_edit<P: Payload>(
+pub(crate) fn add_polyline_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
@@ -426,28 +426,6 @@ fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), Polylin
     }
 }
 
-/// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
-pub(crate) fn add_profile_darts_edit<P: Payload>(
-    g: &mut Model<P>,
-    count: usize,
-    closed: bool,
-) -> ProfileKey {
-    g.transaction(|edit| {
-        let darts: Vec<Dart> = (0..count).map(|_| edit.add_dart()).collect();
-        for i in 0..count {
-            edit.sew(Dim::Zero, darts[i], darts[(i + 1) % count])?;
-        }
-        for i in 0..count {
-            edit.sew(Dim::One, darts[i], darts[(i + 1) % count])?;
-        }
-        if closed {
-            edit.sew(Dim::Zero, darts[count - 1], darts[0])?;
-        }
-        Ok::<_, ModelEditError>(edit.add_profile(ProfileAttr::new(darts[0])))
-    })
-    .expect("fresh profile topology must commit")
-}
-
 fn add_segments<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     segments: &[(Point3, Point3, Curve)],
@@ -573,4 +551,112 @@ fn profile_edge_endpoints<P: Payload>(
         start_point: vertex_point(g, start)?,
         end_point: vertex_point(g, end)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+
+    use super::{PolylineError, add_polyline_edit};
+    use crate::geometry::Point3;
+    use crate::model::Model;
+    use crate::topology::edit::{EditPolicy, Origin};
+    use crate::topology::payload::StandardPayload;
+    use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
+
+    #[derive(Default)]
+    struct CountingPolicy {
+        calls: usize,
+    }
+
+    impl EditPolicy<StandardPayload> for CountingPolicy {
+        type Error = Infallible;
+
+        fn vertex_created(
+            &mut self,
+            _: VertexKey,
+            _: Origin,
+            _: &Model<StandardPayload>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn edge_created(
+            &mut self,
+            _: EdgeKey,
+            _: Origin,
+            _: &Model<StandardPayload>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn profile_created(
+            &mut self,
+            _: ProfileKey,
+            _: Origin,
+            _: &Model<StandardPayload>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn face_created(
+            &mut self,
+            _: FaceKey,
+            _: Origin,
+            _: &Model<StandardPayload>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn sheet_created(
+            &mut self,
+            _: SheetKey,
+            _: Origin,
+            _: &Model<StandardPayload>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn solid_created(
+            &mut self,
+            _: SolidKey,
+            _: Origin,
+            _: &Model<StandardPayload>,
+        ) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        /// Counts externally visible vertex merges without changing their payloads.
+        fn vertex_merged(
+            &mut self,
+            _survivor: VertexKey,
+            _survivor_data: &mut (),
+            _removed: VertexKey,
+            _removed_data: (),
+        ) -> Result<(), Self::Error> {
+            self.calls += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn custom_outer_policy_observes_only_external_builder_lineage() {
+        let mut g = Model::<StandardPayload>::new();
+        let mut policy = CountingPolicy::default();
+
+        g.transaction_with_policy(&mut policy, |edit| {
+            add_polyline_edit(
+                edit,
+                &[
+                    Point3::new(0.0, 0.0, 0.0),
+                    Point3::new(1.0, 0.0, 0.0),
+                    Point3::new(2.0, 0.0, 0.0),
+                ],
+            )?;
+            Ok::<_, PolylineError>(())
+        })
+        .expect("builder should join the custom outer transaction");
+
+        assert_eq!(policy.calls, 0);
+    }
 }

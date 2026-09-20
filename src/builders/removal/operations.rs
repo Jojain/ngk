@@ -222,7 +222,7 @@ pub fn is_removable<P: Payload>(g: &Model<P>, dart: Dart, dim: Dim) -> bool {
 /// afterwards. In particular the surviving edge of a 0-removal keeps whichever
 /// curve it had, which no longer spans the fused edge, and the fused boundary
 /// has no parameter curve until the caller supplies one.
-pub fn remove_cell_edit<P: Payload>(
+pub(crate) fn remove_cell_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     dart: Dart,
     dim: Dim,

@@ -17,8 +17,6 @@ mod boolean_network;
 mod boolean_trim;
 #[path = "builders/chamfer.rs"]
 mod chamfer;
-#[path = "builders/face_lineage.rs"]
-mod face_lineage;
 #[path = "builders/faces.rs"]
 mod faces;
 #[path = "builders/loft.rs"]

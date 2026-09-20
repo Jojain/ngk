@@ -14,7 +14,7 @@ mod support;
 pub use annulus::add_annulus;
 pub use circle::add_circle;
 pub use face::{add_face, add_rectangle, add_square};
-pub use imprints::{split_face_by_imprints_edit, split_face_by_imprints};
+pub use imprints::split_face_by_imprints;
 pub use polygon::{add_polygon, add_polygon_with_holes};
 pub use split::split_face_edge;
 pub use support::{
@@ -27,7 +27,7 @@ pub(crate) use annulus::{
     incident_face_pcurves, periodic_image_near_pcurve, rebased_face_pcurves,
 };
 pub(crate) use face::add_face_edit;
-pub(crate) use imprints::chord_loop_kinds;
+pub(crate) use imprints::{chord_loop_kinds, split_face_by_imprints_edit};
 pub(crate) use polygon::add_polygon_edit;
 pub(crate) use polygon::reverse_face_winding_edit;
 pub(crate) use split::split_face_edge_edit;

@@ -33,9 +33,8 @@ deleting both halves by hand, with the compiler only catching the public one.
 This was not hypothetical: renaming the pattern away from the underscore
 (2026-09-20) immediately surfaced `add_profile_darts_edit` in
 `src/builders/profiles/operations.rs` as genuinely dead — no public wrapper
-calls it and nothing else does either. It needs a decision (restore the
-public wrapper, or delete it) that is out of scope for the rename itself.
-The `_edit` suffix does not start with `_`, so this class of bug can't recur.
+called it and nothing else did either. It was deleted the same day. The
+`_edit` suffix does not start with `_`, so this class of bug can't recur.
 
 ## The convention
 
@@ -102,23 +101,32 @@ Primitives whose whole result is one key — `add_line`, `add_arc`, `add_circle`
 rule that a result struct earns its place at more than two keys or any
 nesting.
 
-### Public functions that take `ModelEdit` and must stop being public
+### Public functions that take `ModelEdit` and must stop being public (done)
 
 `reverse_face_winding_edit`, `split_face_by_imprints_edit`, `remove_cell_edit`,
 `add_polyline_edit`, `add_profile_from_edges_edit`, `add_profile_darts_edit`
-were all renamed to the `_edit` convention. `reverse_face_winding_edit`,
-`add_profile_from_edges_edit` and `add_profile_darts_edit` are already
-`pub(crate)`. **Still outstanding:** `split_face_by_imprints_edit`,
-`remove_cell_edit` and `add_polyline_edit` are still `pub` — dropping that to
-`pub(crate)` breaks `tests/builders/face_lineage.rs`,
-`tests/builders/removal.rs` and `tests/builders/profiles.rs`, which call the
-`_edit` function directly instead of going through the public wrapper. Fixing
-the visibility means first rewriting those tests to exercise the public API
-(or moving the relevant cases to in-crate `#[cfg(test)]` modules where
-`pub(crate)` is visible). Helpers that take `&Model` and are genuinely useful
-to a caller (`is_removable`, `can_remove_cell`, `planned_merge`,
-`solid_contains_point`, `face_key_for_dart`, `profile_pcurves`, `plane_uv`)
-stay public and are not renamed.
+were all renamed to the `_edit` convention and are now `pub(crate)`.
+
+Fixing the last three required moving the tests that called them directly
+instead of through the public wrapper: `tests/builders/removal.rs` turned out
+to only need `remove_cell` (its `map.transaction(|edit| remove_cell_edit(edit,
+...))` calls are exactly what `remove_cell` already does — no test behavior
+changed, just less code). `tests/builders/face_lineage.rs` and one test in
+`tests/builders/profiles.rs` genuinely needed kernel-level access — they
+exercise a builder composed with a *custom* `EditPolicy`
+(`transaction_with_policy`), which the public wrapper never exposes since it
+always runs `P::Policy::default()`. Those moved to `#[cfg(test)] mod tests`
+inside `src/builders/faces/imprints.rs` and
+`src/builders/profiles/operations.rs` respectively, next to the kernel
+function they test. `add_profile_darts_edit` had no caller at all by the time
+its visibility was checked — see "Why not a leading underscore" — and was
+deleted rather than restored, since nothing in the codebase or its tests
+needed it.
+
+Helpers that take `&Model` and are genuinely useful to a caller
+(`is_removable`, `can_remove_cell`, `planned_merge`, `solid_contains_point`,
+`face_key_for_dart`, `profile_pcurves`, `plane_uv`) stay public and are not
+renamed.
 
 ## Work (done)
 
