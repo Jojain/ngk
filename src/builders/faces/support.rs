@@ -158,7 +158,9 @@ impl FaceImprint {
     /// Creates an imprint whose 3D curve and 2D pcurve share direction.
     pub fn new(curve: Curve, pcurve: TrimmedCurve2) -> Self {
         let interval = match &curve {
-            Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) => curve.domain(),
+            Curve::Circle(_) | Curve::Ellipse(_) | Curve::Helix(_) | Curve::Nurbs(_) => {
+                curve.domain()
+            }
             Curve::Line(_) => Interval::new(0.0, 1.0),
         };
         Self {

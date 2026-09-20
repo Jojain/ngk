@@ -5,7 +5,8 @@ use std::collections::{HashMap, HashSet};
 use crate::builders::errors::{EdgeCreationError, ModelEditFailure};
 use crate::geometry::parameter::NativeParam;
 use crate::geometry::{
-    Curve, Fraction, Interval, LINEAR_TOLERANCE, NurbsError, Plane, Point3, PointCoincidence,
+    Axis3, Curve, Fraction, Helix, Interval, LINEAR_TOLERANCE, NurbsError, Plane, Point3,
+    PointCoincidence,
 };
 use crate::model::{Cell0, Cell2, Model};
 use crate::topology::ModelEdit;
@@ -572,6 +573,49 @@ pub(crate) fn add_arc_edit<P: Payload>(
     add_edge_edit(edit, start, end, curve)
 }
 
+/// Adds an isolated finite helical edge around `axis`.
+///
+/// The helix uses radians as its native parameter. `pitch` is the signed axial
+/// advance per full turn, and the two angles define the finite edge span.
+/// The radius must be positive and finite, while the pitch must be finite and
+/// non-zero;
+/// both angles must be finite, and the resulting endpoints must differ.
+pub fn add_helix<P: Payload>(
+    g: &mut Model<P>,
+    axis: Axis3,
+    radius: f64,
+    pitch: f64,
+    start_angle: Rad64,
+    end_angle: Rad64,
+) -> Result<EdgeKey, EdgeCreationError> {
+    g.transaction(|edit| add_helix_edit(edit, axis, radius, pitch, start_angle, end_angle))
+}
+
+/// Builds a finite helical edge inside the caller's active transaction.
+pub(crate) fn add_helix_edit<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    axis: Axis3,
+    radius: f64,
+    pitch: f64,
+    start_angle: Rad64,
+    end_angle: Rad64,
+) -> Result<EdgeKey, EdgeCreationError> {
+    check_valid_radius(radius)?;
+    check_valid_pitch(pitch)?;
+    check_valid_angle("start", start_angle.val())?;
+    check_valid_angle("end", end_angle.val())?;
+
+    let helix = Helix::from_axis(axis, radius, pitch);
+    let start = helix.point_at(NativeParam::new(start_angle.val()));
+    let end = helix.point_at(NativeParam::new(end_angle.val()));
+    let curve = if end_angle < start_angle {
+        helix.reversed()
+    } else {
+        helix
+    };
+    add_edge_edit(edit, start, end, Curve::Helix(curve))
+}
+
 /// Adds a closed, single-edge circle on `plane`.
 ///
 /// The edge has one topological vertex at the plane's positive x-axis and its
@@ -619,6 +663,22 @@ fn check_valid_radius(radius: f64) -> Result<(), EdgeCreationError> {
         Ok(())
     } else {
         Err(EdgeCreationError::InvalidRadius { radius })
+    }
+}
+
+fn check_valid_pitch(pitch: f64) -> Result<(), EdgeCreationError> {
+    if pitch.is_finite() && pitch.abs() > LINEAR_TOLERANCE {
+        Ok(())
+    } else {
+        Err(EdgeCreationError::InvalidPitch { pitch })
+    }
+}
+
+fn check_valid_angle(name: &'static str, angle: f64) -> Result<(), EdgeCreationError> {
+    if angle.is_finite() {
+        Ok(())
+    } else {
+        Err(EdgeCreationError::InvalidAngle { name, angle })
     }
 }
 

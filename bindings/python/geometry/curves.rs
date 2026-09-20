@@ -1,9 +1,9 @@
 use pyo3::prelude::*;
 
 use crate::geometry::parameter::NativeParam;
-use crate::geometry::{Circle, Ellipse, Line};
+use crate::geometry::{Circle, Ellipse, Helix, Line};
 
-use super::{PyPlane, PyPoint3, point};
+use super::{PyAxis3, PyPlane, PyPoint3, point};
 
 #[pyclass(name = "Line", module = "ngk")]
 #[derive(Clone)]
@@ -88,6 +88,51 @@ impl PyEllipse {
             "Ellipse(major_radius={}, minor_radius={})",
             self.ellipse.major_radius(),
             self.ellipse.minor_radius()
+        )
+    }
+}
+
+#[pyclass(name = "Helix", module = "ngk")]
+#[derive(Clone)]
+pub(crate) struct PyHelix {
+    pub(super) helix: Helix,
+}
+
+#[pymethods]
+impl PyHelix {
+    #[new]
+    fn new(axis: PyAxis3, radius: f64, pitch: f64) -> Self {
+        Self {
+            helix: Helix::from_axis(axis.axis, radius, pitch),
+        }
+    }
+
+    #[getter]
+    fn axis(&self) -> PyAxis3 {
+        PyAxis3 {
+            axis: self.helix.axis(),
+        }
+    }
+
+    #[getter]
+    fn radius(&self) -> f64 {
+        self.helix.radius()
+    }
+
+    #[getter]
+    fn pitch(&self) -> f64 {
+        self.helix.pitch()
+    }
+
+    fn point_at(&self, t: f64) -> PyPoint3 {
+        point(self.helix.point_at(NativeParam::new(t)))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Helix(radius={}, pitch={})",
+            self.helix.radius(),
+            self.helix.pitch()
         )
     }
 }

@@ -1,9 +1,9 @@
 use radians::Rad64;
 
-use crate::builders::edges::{add_arc, add_circle, add_line};
+use crate::builders::edges::{add_arc, add_circle, add_helix, add_line};
 use crate::builders::errors::EdgeCreationError;
 use crate::builders::profiles::add_profile_from_edges;
-use crate::geometry::{Plane, Point3};
+use crate::geometry::{Axis3, Plane, Point3};
 use crate::topology::ModelEditError;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
@@ -42,6 +42,28 @@ pub fn arc_with<P: Payload>(
     end_angle: Rad64,
 ) -> Result<Shape<EdgeTag, P>, EdgeCreationError> {
     Shape::build(|model| add_arc(model, plane, radius, start_angle, end_angle))
+}
+
+/// Creates a finite helical edge around an axis.
+pub fn helix(
+    axis: Axis3,
+    radius: f64,
+    pitch: f64,
+    start_angle: Rad64,
+    end_angle: Rad64,
+) -> Result<Shape<EdgeTag, StandardPayload>, EdgeCreationError> {
+    helix_with::<StandardPayload>(axis, radius, pitch, start_angle, end_angle)
+}
+
+/// As [`helix`], with the payload chosen by the caller.
+pub fn helix_with<P: Payload>(
+    axis: Axis3,
+    radius: f64,
+    pitch: f64,
+    start_angle: Rad64,
+    end_angle: Rad64,
+) -> Result<Shape<EdgeTag, P>, EdgeCreationError> {
+    Shape::build(|model| add_helix(model, axis, radius, pitch, start_angle, end_angle))
 }
 
 /// Creates a closed circular edge in 3D space.

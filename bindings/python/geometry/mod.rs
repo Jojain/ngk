@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 pub(crate) use convert::{curve_to_py, surface_to_py};
-pub(crate) use curves::{PyCircle, PyEllipse, PyLine};
+pub(crate) use curves::{PyCircle, PyEllipse, PyHelix, PyLine};
 pub(crate) use nurbs::{PyNurbsCurve, PyNurbsSurface};
 pub(crate) use surfaces::{
     PyCone, PyCylinder, PyPlane, PyRuledSurface, PySphere, PySurfaceOfRevolution, PyTorus,
@@ -27,6 +27,7 @@ pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLine>()?;
     m.add_class::<PyCircle>()?;
     m.add_class::<PyEllipse>()?;
+    m.add_class::<PyHelix>()?;
     m.add_class::<PyNurbsCurve>()?;
     m.add_class::<PyPlane>()?;
     m.add_class::<PyCylinder>()?;

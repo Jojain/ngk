@@ -108,6 +108,7 @@ fn curve_variant(curve: &Curve) -> &'static str {
         Curve::Line(_) => "Line",
         Curve::Circle(_) => "Circle",
         Curve::Ellipse(_) => "Ellipse",
+        Curve::Helix(_) => "Helix",
         Curve::Nurbs(_) => "Nurbs",
     }
 }

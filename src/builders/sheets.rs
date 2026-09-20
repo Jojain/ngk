@@ -219,7 +219,7 @@ fn extruded_edge_surface(
                 ],
             })
         }
-        Curve::Circle(_) | Curve::Ellipse(_) | Curve::Nurbs(_) => {
+        Curve::Circle(_) | Curve::Ellipse(_) | Curve::Helix(_) | Curve::Nurbs(_) => {
             let interval = curve.interval_between(start, end);
             let translated_curve = curve.moved(&Rigid::translation(direction));
             Ok(ExtrudedSurface {

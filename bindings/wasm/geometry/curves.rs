@@ -1,9 +1,10 @@
 use wasm_bindgen::prelude::*;
 
 use crate::geometry::parameter::NativeParam;
-use crate::geometry::{Circle, Ellipse, Line};
+use crate::geometry::{Circle, Ellipse, Helix, Line};
 
 use super::surfaces::WasmPlane;
+use super::values::WasmFrame;
 use super::values::{WasmPoint3, point};
 
 #[wasm_bindgen(js_name = Line)]
@@ -77,6 +78,38 @@ impl WasmEllipse {
     #[wasm_bindgen(getter, js_name = minorRadius)]
     pub fn minor_radius(&self) -> f64 {
         self.inner.minor_radius()
+    }
+
+    #[wasm_bindgen(js_name = pointAt)]
+    pub fn point_at(&self, parameter: f64) -> WasmPoint3 {
+        point(self.inner.point_at(NativeParam::new(parameter)))
+    }
+}
+
+/// Analytical helical curve.
+#[wasm_bindgen(js_name = Helix)]
+pub struct WasmHelix {
+    pub(crate) inner: Helix,
+}
+
+#[wasm_bindgen]
+impl WasmHelix {
+    /// Creates a helix around the frame's z axis.
+    #[wasm_bindgen(constructor)]
+    pub fn new(frame: &WasmFrame, radius: f64, pitch: f64) -> Self {
+        Self {
+            inner: Helix::new(frame.inner.clone(), radius, pitch),
+        }
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn radius(&self) -> f64 {
+        self.inner.radius()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn pitch(&self) -> f64 {
+        self.inner.pitch()
     }
 
     #[wasm_bindgen(js_name = pointAt)]

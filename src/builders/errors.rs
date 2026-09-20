@@ -51,6 +51,9 @@ pub enum EdgeCreationError {
     #[error("Invalid radius: {radius}")]
     InvalidRadius { radius: f64 },
 
+    #[error("Invalid pitch: {pitch}")]
+    InvalidPitch { pitch: f64 },
+
     #[error("Invalid {name} angle: {angle}")]
     InvalidAngle { name: &'static str, angle: f64 },
 

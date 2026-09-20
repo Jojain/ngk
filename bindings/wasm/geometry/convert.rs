@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::geometry::{Curve, Curve2, Surface, TrimmedCurve2};
 
-use super::curves::{WasmCircle, WasmEllipse, WasmLine};
+use super::curves::{WasmCircle, WasmEllipse, WasmHelix, WasmLine};
 use super::nurbs::{WasmNurbsCurve, WasmNurbsSurface};
 use super::pcurves::{WasmCircle2, WasmEllipse2, WasmLine2, WasmNurbsCurve2};
 use super::surfaces::{
@@ -16,6 +16,7 @@ pub(crate) fn curve_to_js(curve: Curve) -> Result<JsValue, JsValue> {
         Curve::Line(line) => Ok(WasmLine { inner: line }.into()),
         Curve::Circle(circle) => Ok(WasmCircle { inner: circle }.into()),
         Curve::Ellipse(ellipse) => Ok(WasmEllipse { inner: ellipse }.into()),
+        Curve::Helix(helix) => Ok(WasmHelix { inner: helix }.into()),
         Curve::Nurbs(curve) => Ok(WasmNurbsCurve::from_inner(curve).into()),
     }
 }

@@ -323,6 +323,9 @@ pub(crate) fn curve_pcurve(
             );
             Curve2::Ellipse(oriented(flat, x, y, Ellipse2::reversed))
         }
+        Curve::Helix(_) => {
+            return Err(NurbsError::UnsupportedCurveRepresentation { curve: "Helix" });
+        }
         // Projecting the homogeneous control polygon is exact because the
         // projection is affine, and it leaves the degree, the weights and the
         // knots alone — so the curve keeps its own parameter as well as its

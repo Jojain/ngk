@@ -1,5 +1,7 @@
 use ngk::builders::errors::EdgeCreationError;
-use ngk::geometry::{Curve, Interval, Plane, Point3};
+use std::f64::consts::TAU;
+
+use ngk::geometry::{Axis3, Curve, Interval, Plane, Point3};
 use ngk::modeling::edges;
 use ngk::topology::closed::Closeable;
 use radians::Rad64;
@@ -82,4 +84,20 @@ fn circle_rejects_invalid_radius() {
         edges::circle(Plane::xy(), f64::NAN),
         Err(EdgeCreationError::InvalidRadius { radius }) if radius.is_nan()
     ));
+}
+
+#[test]
+fn helix_returns_owned_helical_edge_shape() {
+    let shape = edges::helix(Axis3::z(), 1.0, 2.0, Rad64::ZERO, Rad64::new(TAU))
+        .expect("helix should build");
+    let edge = shape.edge();
+
+    assert_eq!(edge.parameter_interval(), Interval::new(0.0, TAU));
+    assert!(matches!(
+        edge.curve(),
+        Curve::Helix(helix) if helix.radius() == 1.0 && helix.pitch() == 2.0
+    ));
+    let end = *edge.bounded_unchecked().end().point();
+    let expected = edge.curve().point_at(ngk::geometry::NativeParam::new(TAU));
+    assert!((end - expected).norm() <= 1.0e-12);
 }

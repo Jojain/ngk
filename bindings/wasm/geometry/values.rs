@@ -100,7 +100,7 @@ impl WasmVector3 {
 #[wasm_bindgen(js_name = Axis3)]
 #[derive(Clone)]
 pub struct WasmAxis3 {
-    axis: Axis3,
+    pub(crate) axis: Axis3,
 }
 
 #[wasm_bindgen]

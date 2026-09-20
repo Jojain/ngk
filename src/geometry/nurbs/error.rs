@@ -34,6 +34,8 @@ pub enum NurbsError {
     SingularInterpolationSystem,
     #[error("degree {from} cannot be lowered to {to}: elevation is exact, reduction approximates")]
     DegreeReductionRefused { from: usize, to: usize },
+    #[error("curve type {curve} has no exact NURBS representation")]
+    UnsupportedCurveRepresentation { curve: &'static str },
     #[error("skinning needs at least {minimum} sections, got {got}")]
     InsufficientSkinningSections { minimum: usize, got: usize },
     #[error("section {index} is not compatible with section 0: {reason}")]

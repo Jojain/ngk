@@ -5,6 +5,7 @@ from ..core import (
     Cylinder as Cylinder,
     Ellipse as Ellipse,
     Frame as Frame,
+    Helix as Helix,
     Line as Line,
     NurbsCurve as NurbsCurve,
     NurbsSurface as NurbsSurface,

@@ -7,6 +7,7 @@ from ..core import (
     Cylinder,
     Ellipse,
     Frame,
+    Helix,
     Line,
     NurbsCurve,
     NurbsSurface,
@@ -22,7 +23,7 @@ from ..core import (
 )
 
 __all__ = [
-    "Axis", "Circle", "Cone", "Cylinder", "Ellipse", "Frame", "Line",
+    "Axis", "Circle", "Cone", "Cylinder", "Ellipse", "Frame", "Helix", "Line",
     "NurbsCurve", "NurbsSurface", "Plane", "Point", "Point2", "RuledSurface", "Sphere",
     "SurfaceOfRevolution", "Torus", "Vector", "Vector2",
 ]

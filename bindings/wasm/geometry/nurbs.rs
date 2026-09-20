@@ -374,6 +374,7 @@ fn curve_representation(curve: &Curve) -> &'static str {
         Curve::Line(_) => "line",
         Curve::Circle(_) => "circle",
         Curve::Ellipse(_) => "ellipse",
+        Curve::Helix(_) => "helix",
         Curve::Nurbs(_) => "nurbs",
     }
 }

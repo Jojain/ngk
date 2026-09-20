@@ -32,6 +32,7 @@ pub enum Curve {
     Line(Line),
     Circle(Circle),
     Ellipse(Ellipse),
+    Helix(Helix),
     Nurbs(NurbsCurve),
 }
 
@@ -44,11 +45,18 @@ impl Curve {
         Curve::Circle(Circle::new(plane, radius))
     }
 
+    /// Creates a helix whose radial frame is the supplied frame and whose
+    /// `z` direction is the helix axis.
+    pub fn helix(frame: Frame, radius: f64, pitch: f64) -> Self {
+        Curve::Helix(Helix::new(frame, radius, pitch))
+    }
+
     pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
         match self {
             Curve::Line(line) => line.to_nurbs(),
             Curve::Circle(circle) => circle.to_nurbs(),
             Curve::Ellipse(ellipse) => ellipse.to_nurbs(),
+            Curve::Helix(helix) => helix.to_nurbs(),
             Curve::Nurbs(nurbs) => Ok(nurbs.clone()),
         }
     }
@@ -58,6 +66,7 @@ impl Curve {
             Curve::Line(_) => Periodicity::None,
             Curve::Circle(_) => Periodicity::Periodic(TAU),
             Curve::Ellipse(_) => Periodicity::Periodic(TAU),
+            Curve::Helix(_) => Periodicity::None,
             Curve::Nurbs(_) => Periodicity::None,
         }
     }
@@ -66,6 +75,7 @@ impl Curve {
             Curve::Line(l) => l.point_at(t),
             Curve::Circle(c) => c.point_at(t),
             Curve::Ellipse(c) => c.point_at(t),
+            Curve::Helix(c) => c.point_at(t),
             Curve::Nurbs(n) => n.point_at(t.value()),
         }
     }
@@ -84,6 +94,7 @@ impl Curve {
             Curve::Line(l) => l.derivative_at(t, order),
             Curve::Circle(c) => c.derivative_at(t, order),
             Curve::Ellipse(c) => c.derivative_at(t, order),
+            Curve::Helix(c) => c.derivative_at(t, order),
             Curve::Nurbs(n) => n.derivative_at(t.value(), order),
         }
     }
@@ -94,6 +105,7 @@ impl Curve {
             Curve::Line(l) => l.parameter_at(point),
             Curve::Circle(c) => c.parameter_at(point),
             Curve::Ellipse(c) => c.parameter_at(point),
+            Curve::Helix(c) => c.parameter_at(point),
             Curve::Nurbs(n) => NativeParam::new(closest_sample_parameter(n, point)),
         }
     }
@@ -132,6 +144,7 @@ impl Curve {
                 |parameter| ellipse.point_at(parameter),
                 |parameter| ellipse.derivative_at(parameter, 1),
             )?,
+            Curve::Helix(helix) => return helix.to_nurbs().map(Curve::Nurbs),
             // A line runs to infinity, so the section is read off the support
             // itself rather than out of the `[0, 1]` window `to_nurbs` reports:
             // a span anchored elsewhere — `[-1, 0]`, `[2, 5]` — names a real
@@ -171,6 +184,7 @@ impl Curve {
             Curve::Line(l) => l.length(t0, t1),
             Curve::Circle(c) => c.length(t0, t1),
             Curve::Ellipse(c) => c.length(t0, t1),
+            Curve::Helix(c) => c.length(t0, t1),
             Curve::Nurbs(n) => n.length(t0.value(), t1.value()),
         }
     }
@@ -203,6 +217,7 @@ impl Curve {
             Curve::Line(curve) => curve.project(point),
             Curve::Circle(curve) => curve.project(point),
             Curve::Ellipse(curve) => curve.project(point),
+            Curve::Helix(curve) => curve.project(point),
             Curve::Nurbs(curve) => curve.project(point),
         }
     }
@@ -216,6 +231,7 @@ impl Curve {
             Curve::Line(curve) => CurveGeometry::domain(curve),
             Curve::Circle(curve) => CurveGeometry::domain(curve),
             Curve::Ellipse(curve) => CurveGeometry::domain(curve),
+            Curve::Helix(curve) => CurveGeometry::domain(curve),
             Curve::Nurbs(curve) => CurveGeometry::domain(curve),
         }
     }
@@ -226,6 +242,7 @@ impl Curve {
             Curve::Line(curve) => curve.bbox_over(interval),
             Curve::Circle(curve) => curve.bbox_over(interval),
             Curve::Ellipse(curve) => curve.bbox_over(interval),
+            Curve::Helix(curve) => curve.bbox_over(interval),
             Curve::Nurbs(curve) => curve.bbox_over(interval),
         }
     }
@@ -251,6 +268,7 @@ impl Curve {
             Curve::Line(line) => Curve::Line(line.moved(r)),
             Curve::Circle(circle) => Curve::Circle(circle.moved(r)),
             Curve::Ellipse(ellipse) => Curve::Ellipse(ellipse.moved(r)),
+            Curve::Helix(helix) => Curve::Helix(helix.moved(r)),
             Curve::Nurbs(nurbs) => Curve::Nurbs(CurveGeometry::moved(nurbs, r)),
         }
     }
@@ -282,6 +300,7 @@ impl Curve {
                 ellipse.major_radius(),
                 ellipse.minor_radius(),
             )),
+            Curve::Helix(helix) => Curve::Helix(helix.reversed()),
             Curve::Nurbs(curve) => Curve::Nurbs(curve.reversed()),
         }
     }
@@ -475,6 +494,152 @@ impl Line {
                 HPoint::from_cartesian(self.point_at(NativeParam::new(1.0)), 1.0),
             ])?,
             KnotVector::new(vec![0.0, 0.0, 1.0, 1.0])?,
+        )
+    }
+}
+
+/// An unbounded circular helix around the frame's `z` axis.
+///
+/// The native parameter is an angle in radians. One full turn advances by
+/// `pitch` along the axis, so a negative pitch produces the opposite handedness
+/// without changing the radial orientation. A finite thread is represented by
+/// pairing this support with an explicit [`Interval`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Helix {
+    frame: Frame,
+    radius: f64,
+    pitch: f64,
+}
+
+impl Helix {
+    /// Creates a helix around the frame's `z` axis.
+    pub fn new(frame: Frame, radius: f64, pitch: f64) -> Self {
+        Self {
+            frame,
+            radius,
+            pitch,
+        }
+    }
+
+    /// Creates a helix around `axis`, choosing a deterministic radial phase.
+    pub fn from_axis(axis: Axis3, radius: f64, pitch: f64) -> Self {
+        let reference =
+            if axis.direction.cross(&Vector3::z()).norm_squared() > LINEAR_TOLERANCE_SQUARED {
+                Vector3::z()
+            } else {
+                Vector3::y()
+            };
+        let x_dir = axis.direction.cross(&reference).normalized();
+        Self::new(
+            Frame::from_xz(axis.origin, x_dir, axis.direction),
+            radius,
+            pitch,
+        )
+    }
+
+    /// Returns the helix's radial frame.
+    pub fn frame(&self) -> &Frame {
+        &self.frame
+    }
+
+    /// Returns the axis around which the helix winds.
+    pub fn axis(&self) -> Axis3 {
+        Axis3::new(self.frame.origin, self.frame.z_dir)
+    }
+
+    /// Returns the radial distance from the axis.
+    pub fn radius(&self) -> f64 {
+        self.radius
+    }
+
+    /// Returns the signed axial advance per full revolution.
+    pub fn pitch(&self) -> f64 {
+        self.pitch
+    }
+
+    /// Evaluates the helix at an angular parameter in radians.
+    pub fn point_at(&self, t: NativeParam) -> Point3 {
+        let t = t.value();
+        self.frame.origin
+            + *self.frame.x_dir * (self.radius * t.cos())
+            + *self.frame.y_dir * (self.radius * t.sin())
+            + *self.frame.z_dir * (self.pitch * t / TAU)
+    }
+
+    /// Returns the derivative of the requested order with respect to angle.
+    pub fn derivative_at(&self, t: NativeParam, order: usize) -> Vector3<f64> {
+        if order == 0 {
+            return self.point_at(t).coords;
+        }
+
+        let phase = t.value() + order as f64 * FRAC_PI_2;
+        let axial = if order == 1 {
+            *self.frame.z_dir * (self.pitch / TAU)
+        } else {
+            Vector3::zeros()
+        };
+        *self.frame.x_dir * (self.radius * phase.cos())
+            + *self.frame.y_dir * (self.radius * phase.sin())
+            + axial
+    }
+
+    /// Returns the native parameter of the nearest point on the helix.
+    ///
+    /// The axial coordinate chooses the closest turn, then a short Newton
+    /// refinement accounts for the radial part of the distance as well.
+    pub fn parameter_at(&self, point: Point3) -> NativeParam {
+        let local = self.frame.coordinates_of(point);
+        let radial_parameter = local.y.atan2(local.x);
+        let rise_per_radian = self.pitch / TAU;
+        let mut parameter = if rise_per_radian.abs() <= LINEAR_TOLERANCE {
+            radial_parameter
+        } else {
+            let axial_parameter = local.z / rise_per_radian;
+            radial_parameter + TAU * ((axial_parameter - radial_parameter) / TAU).round()
+        };
+
+        for _ in 0..16 {
+            let residual = self.point_at(NativeParam::new(parameter)) - point;
+            let first = self.derivative_at(NativeParam::new(parameter), 1);
+            let second = self.derivative_at(NativeParam::new(parameter), 2);
+            let gradient = residual.dot(&first);
+            let curvature = first.dot(&first) + residual.dot(&second);
+            if curvature.abs() <= 1.0e-14 {
+                break;
+            }
+            let next = parameter - gradient / curvature;
+            if (next - parameter).abs() <= 1.0e-12 {
+                parameter = next;
+                break;
+            }
+            parameter = next;
+        }
+
+        NativeParam::new(parameter)
+    }
+
+    /// Returns the nearest point on the helix to `point`.
+    pub fn project(&self, point: Point3) -> Point3 {
+        self.point_at(self.parameter_at(point))
+    }
+
+    /// Returns the analytic length over a parameter span.
+    pub fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
+        let speed = (self.radius * self.radius + (self.pitch / TAU).powi(2)).sqrt();
+        (t1 - t0).abs() * speed
+    }
+
+    /// A helix is transcendental and therefore has no exact finite NURBS form.
+    pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        Err(NurbsError::UnsupportedCurveRepresentation { curve: "Helix" })
+    }
+
+    /// Returns the same helix traversed with the opposite angular direction.
+    pub fn reversed(&self) -> Self {
+        Self::new(
+            Frame::from_xz(self.frame.origin, self.frame.x_dir, -*self.frame.z_dir),
+            self.radius,
+            self.pitch,
         )
     }
 }
@@ -847,6 +1012,56 @@ impl CurveGeometry for Ellipse {
 
     fn moved(&self, r: &Rigid) -> Self {
         Ellipse::new(self.frame.moved(r), self.major_radius, self.minor_radius)
+    }
+}
+
+impl CurveGeometry for Helix {
+    fn domain(&self) -> Interval {
+        Interval::unbounded()
+    }
+
+    fn periodicity(&self) -> Periodicity {
+        Periodicity::None
+    }
+
+    fn point_at(&self, t: NativeParam) -> Point3 {
+        Helix::point_at(self, t)
+    }
+
+    fn derivative_at(&self, t: NativeParam, order: usize) -> Vector3<f64> {
+        Helix::derivative_at(self, t, order)
+    }
+
+    fn param_at(&self, point: Point3) -> NativeParam {
+        Helix::parameter_at(self, point)
+    }
+
+    fn project(&self, point: Point3) -> Point3 {
+        Helix::project(self, point)
+    }
+
+    fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
+        Helix::length(self, t0, t1)
+    }
+
+    fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
+        Helix::to_nurbs(self)
+    }
+
+    fn bbox_over(&self, interval: Interval) -> Option<BBox> {
+        if !interval.is_finite() {
+            return None;
+        }
+        Some(BBox::from_points_in_frame(
+            self.frame.clone(),
+            conic_extrema_parameters(interval)
+                .into_iter()
+                .map(|parameter| self.point_at(parameter)),
+        ))
+    }
+
+    fn moved(&self, r: &Rigid) -> Self {
+        Self::new(self.frame.moved(r), self.radius, self.pitch)
     }
 }
 

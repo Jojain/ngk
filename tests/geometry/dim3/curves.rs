@@ -1,8 +1,8 @@
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
-    Circle, Curve, Ellipse, Frame, Interval, LINEAR_TOLERANCE, Line, NativeParam, Plane, Point3,
-    PointCoincidence, Rigid,
+    Circle, Curve, Ellipse, Frame, Helix, Interval, LINEAR_TOLERANCE, Line, NativeParam, Plane,
+    Point3, PointCoincidence, Rigid,
 };
 use radians::Rad64;
 
@@ -285,4 +285,59 @@ fn line_trims_a_span_anchored_outside_its_construction_vector() {
         section.point_at(NativeParam::new(1.0)),
         Point3::new(14.0, 0.0, 0.0),
     );
+}
+
+#[test]
+fn helix_evaluates_with_axial_pitch_per_turn() {
+    let helix = Helix::new(Frame::xyz(), 2.0, 6.0);
+
+    assert_point_near(
+        helix.point_at(NativeParam::new(0.0)),
+        Point3::new(2.0, 0.0, 0.0),
+    );
+    assert_point_near(
+        helix.point_at(NativeParam::new(std::f64::consts::TAU)),
+        Point3::new(2.0, 0.0, 6.0),
+    );
+    assert_vector_near(
+        helix.derivative_at(NativeParam::new(0.0), 1),
+        Vector3::new(0.0, 2.0, 6.0 / std::f64::consts::TAU),
+        1.0e-12,
+    );
+}
+
+#[test]
+fn helix_parameter_and_projection_are_consistent() {
+    let helix = Helix::new(Frame::xyz(), 2.0, 6.0);
+    let parameter = NativeParam::new(1.25 * std::f64::consts::TAU);
+    let point = helix.point_at(parameter);
+
+    assert!((helix.parameter_at(point).value() - parameter.value()).abs() <= 1.0e-10);
+    assert_point_near(helix.project(point), point);
+}
+
+#[test]
+fn reversed_helix_flips_parameter_direction_without_changing_points() {
+    let helix = Helix::new(Frame::xyz(), 2.0, 6.0);
+    let reversed = Curve::Helix(helix.clone()).reversed();
+
+    for parameter in [0.0, 0.3, 1.7, 2.0 * std::f64::consts::PI] {
+        assert_point_near(
+            reversed.point_at(NativeParam::new(parameter)),
+            helix.point_at(NativeParam::new(-parameter)),
+        );
+    }
+}
+
+#[test]
+fn helix_is_unbounded_and_has_exact_finite_span_bounds() {
+    let helix = Curve::Helix(Helix::new(Frame::xyz(), 2.0, 6.0));
+    assert!(!helix.domain().is_finite());
+
+    let bbox = helix
+        .bbox_over(Interval::new(0.0, std::f64::consts::TAU))
+        .expect("finite helix spans have a bound");
+    assert!((bbox.z_size() - 6.0).abs() <= 1.0e-12);
+    assert!((bbox.x_size() - 4.0).abs() <= 1.0e-12);
+    assert!((bbox.y_size() - 4.0).abs() <= 1.0e-12);
 }
