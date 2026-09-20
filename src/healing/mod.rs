@@ -72,14 +72,14 @@ pub fn remove_redundant_cells<P: Payload>(
     g: &mut Model<P>,
     options: HealingOptions,
 ) -> Result<HealingReport, HealingError> {
-    g.transaction(|edit| remove_redundant_cells_staged(edit, &options))
+    g.transaction(|edit| _remove_redundant_cells(edit, &options))
 }
 
 /// Runs the healing passes inside an operation's own transaction.
 ///
 /// Use this from a builder that already knows which cells it created, so the
 /// run stays proportional to the edit instead of to the model.
-pub fn remove_redundant_cells_staged<P: Payload>(
+pub(crate) fn _remove_redundant_cells<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     options: &HealingOptions,
 ) -> Result<HealingReport, HealingError> {

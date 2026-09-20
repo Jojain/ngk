@@ -43,7 +43,7 @@ pub fn block_at(
     let (mut g, face_key) = base.into_model();
     let solid_key = add_extruded_face(&mut g, face_key, direction)
         .map_err(|_| PrimitiveError::SolidCreationFailed)?;
-    Ok(Shape::new(g, solid_key))
+    Ok(Shape::new(g, solid_key.solid))
 }
 
 // Creates a block at the origin with the specified dimensions.
@@ -69,7 +69,7 @@ pub fn cylinder_at(
     let (mut g, face_key) = base.into_model();
     let solid_key = add_extruded_face(&mut g, face_key, direction)
         .map_err(|_| PrimitiveError::SolidCreationFailed)?;
-    Ok(Shape::new(g, solid_key))
+    Ok(Shape::new(g, solid_key.solid))
 }
 
 /// Creates a cylinder at the origin with the specified radius and height.
@@ -92,7 +92,7 @@ pub fn sphere_at(
     let mut g = Model::new();
     let solid_key =
         add_sphere(&mut g, frame, radius).map_err(|_| PrimitiveError::SolidCreationFailed)?;
-    Ok(Shape::new(g, solid_key))
+    Ok(Shape::new(g, solid_key.solid))
 }
 
 /// Creates a sphere centered at the origin.
@@ -115,7 +115,7 @@ pub fn torus_at(
     let mut g = Model::new();
     let solid_key =
         add_torus(&mut g, frame, major, minor).map_err(|_| PrimitiveError::SolidCreationFailed)?;
-    Ok(Shape::new(g, solid_key))
+    Ok(Shape::new(g, solid_key.solid))
 }
 
 /// Creates a torus centered at the origin.
@@ -134,7 +134,7 @@ pub fn extruded(
     let (mut g, face_key) = face.into_model();
     let solid_key = add_extruded_face(&mut g, face_key, direction)
         .map_err(|_| PrimitiveError::SolidCreationFailed)?;
-    Ok(Shape::new(g, solid_key))
+    Ok(Shape::new(g, solid_key.solid))
 }
 
 /// Consumes two owned solid shapes and fuses them into one owned solid.

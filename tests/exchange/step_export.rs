@@ -222,8 +222,9 @@ fn holed_solid() -> StepExchange {
     let profile = faces::polygon_with_holes(Plane::xy(), &outer, &[&hole])
         .expect("a holed face should build");
     let (mut map, face) = profile.into_model();
-    let solid =
-        add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 3.0)).expect("it should extrude");
+    let solid = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 3.0))
+        .expect("it should extrude")
+        .solid;
 
     map_to_exchange(&map, &[solid], &StepWriteOptions::named("HOLED"))
         .expect("a planar solid should export")

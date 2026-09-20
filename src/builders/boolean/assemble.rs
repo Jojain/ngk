@@ -4,11 +4,11 @@ use super::{
     BooleanContext, BooleanError, BooleanPreparation, BooleanResult, BooleanResultLineage,
     BooleanSide, IntersectionSpanId, neighborhood::FragmentGraph, select::SelectionPlan,
 };
-use crate::builders::faces::reverse_face_winding;
+use crate::builders::faces::_reverse_face_winding;
 use crate::builders::scaffold::cut_between_shells;
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{Point3, PointCoincidence};
-use crate::healing::{HealingOptions, HealingScope, remove_redundant_cells_staged};
+use crate::healing::{_remove_redundant_cells, HealingOptions, HealingScope};
 use crate::model::Model;
 use crate::topology::{
     EditKey, ModelEdit,
@@ -69,7 +69,7 @@ pub(crate) fn run<P: Payload>(
         );
     }
     for &face in &selection.reversed {
-        reverse_face_winding(edit, face);
+        _reverse_face_winding(edit, face);
     }
     // Captured before any sheet is removed: a kept face still names the
     // original sheet it belonged to, and that lineage is what lets a result
@@ -230,7 +230,7 @@ fn heal_result<P: Payload>(
     solid: SolidKey,
     prepared: &mut BooleanPreparation,
 ) -> Result<(), BooleanError> {
-    let report = remove_redundant_cells_staged(
+    let report = _remove_redundant_cells(
         edit,
         &HealingOptions {
             scope: HealingScope::Solid(solid),

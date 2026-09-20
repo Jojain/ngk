@@ -1,3 +1,5 @@
+//! Removal operations and edit-scoped implementations.
+
 //! Cell removal — the inverse of cell splitting.
 //!
 //! This module implements the `i`-removal operation of Damiand & Lienhardt
@@ -220,7 +222,7 @@ pub fn is_removable<P: Payload>(g: &Model<P>, dart: Dart, dim: Dim) -> bool {
 /// afterwards. In particular the surviving edge of a 0-removal keeps whichever
 /// curve it had, which no longer spans the fused edge, and the fused boundary
 /// has no parameter curve until the caller supplies one.
-pub fn remove_cell_staged<P: Payload>(
+pub fn _remove_cell<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     dart: Dart,
     dim: Dim,
@@ -344,7 +346,7 @@ impl MergeKind {
     }
 }
 
-/// Reports what [`remove_cell_staged`] would do to this cell, without doing it.
+/// Reports what [`_remove_cell`] would do to this cell, without doing it.
 ///
 /// Every rejection the removal can raise is decided before it mutates
 /// anything, so a caller that must not disturb the map on refusal — a healing
@@ -357,7 +359,7 @@ pub fn planned_merge<P: Payload>(
     Preflight::resolve(g, dart, dim).map(|preflight| preflight.plan.kind())
 }
 
-/// Reports whether [`remove_cell_staged`] would accept this cell.
+/// Reports whether [`_remove_cell`] would accept this cell.
 pub fn can_remove_cell<P: Payload>(
     g: &Model<P>,
     dart: Dart,
@@ -410,7 +412,7 @@ impl Preflight {
 
 /// Removes the `dim`-cell containing `dart` in its own transaction.
 ///
-/// This is the standalone form of [`remove_cell_staged`] and carries the same
+/// This is the standalone form of [`_remove_cell`] and carries the same
 /// caller obligations. Because it commits immediately, use it only when the
 /// stale geometry it leaves behind does not matter — most callers want the
 /// staged form inside a healing pass.
@@ -419,7 +421,7 @@ pub fn remove_cell<P: Payload>(
     dart: Dart,
     dim: Dim,
 ) -> Result<CellRemoval, CellRemovalError> {
-    g.transaction(|edit| remove_cell_staged(edit, dart, dim))
+    g.transaction(|edit| _remove_cell(edit, dart, dim))
 }
 
 /// Identity bookkeeping decided before the topology changes and applied after.

@@ -1,7 +1,8 @@
 use nalgebra::Vector3;
+use ngk::builders::edges::add_edge;
 use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::solids::{add_extruded_face, translate_face};
-use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, Surface};
+use ngk::geometry::{Curve, LINEAR_TOLERANCE, Plane, Point3, Surface};
 use ngk::model::Model;
 use ngk::modeling::faces;
 use ngk::topology::payload::StandardPayload;
@@ -48,6 +49,36 @@ fn translate_face_copies_face_into_translated_map() {
 }
 
 #[test]
+fn extrusion_result_views_are_revision_checked() {
+    let mut model = Model::<StandardPayload>::new();
+    let profile = add_polygon(
+        &mut model,
+        &[
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+        ],
+    );
+    let face = add_face(&mut model, profile).expect("face should build");
+    let result = add_extruded_face(&mut model, face, Vector3::z()).expect("face should extrude");
+
+    let view = result.view(&model).expect("a fresh result should resolve");
+    assert_eq!(view.laterals.len(), 4);
+    assert_eq!(view.start_cap.key(), result.start_cap);
+    assert_eq!(view.end_cap.key(), result.end_cap);
+
+    add_edge(
+        &mut model,
+        Point3::new(4.0, 0.0, 0.0),
+        Point3::new(5.0, 0.0, 0.0),
+        Curve::line(Point3::new(4.0, 0.0, 0.0), Point3::new(5.0, 0.0, 0.0)),
+    )
+    .expect("independent edit should commit");
+    assert!(result.view(&model).is_err());
+}
+
+#[test]
 fn extruded_face_with_a_hole_forms_one_complete_closed_shell() {
     let outer = [
         Point3::new(0.0, 0.0, 0.0),
@@ -66,7 +97,8 @@ fn extruded_face_with_a_hole_forms_one_complete_closed_shell() {
     let (mut g, face) = profile.into_model();
 
     let solid_key = add_extruded_face(&mut g, face, Vector3::new(0.0, 0.0, 3.0))
-        .expect("holed face should extrude");
+        .expect("holed face should extrude")
+        .solid;
 
     validate_gmap(g.topology()).expect("extrusion should produce a valid map");
     validate_solid_orientation(&g, solid_key)

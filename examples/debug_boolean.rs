@@ -14,7 +14,7 @@ fn block_at(origin: Point3, size: f64) -> Result<(Model, SolidKey), Box<dyn Erro
     let base = faces::rectangle(plane, size, size)?;
     let (mut map, face) = base.into_model();
     let solid = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, size))?;
-    Ok((map, solid))
+    Ok((map, solid.solid))
 }
 
 fn show_named(name: &str, map: &Model) -> Result<(), Box<dyn Error>> {

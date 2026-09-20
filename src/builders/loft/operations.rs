@@ -1,3 +1,5 @@
+//! Loft operations and edit-scoped implementations.
+
 //! Skinning a sequence of sections.
 //!
 //! A loft takes an ordered sequence of `N` sections and builds the shape
@@ -56,7 +58,7 @@ use nalgebra::Vector3;
 use thiserror::Error;
 
 use crate::builders::errors::ModelEditFailure;
-use crate::builders::faces::{reverse_face_winding, split_face_edge_staged};
+use crate::builders::faces::{_reverse_face_winding, _split_face_edge};
 use crate::builders::scaffold::cut_between_loops;
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{
@@ -647,14 +649,14 @@ impl LoftColumns {
     fn orient_shell<P: Payload>(&self, edit: &mut ModelEdit<'_, P>, caps: [FaceKey; 2]) {
         if !self.laterals_face_outward {
             for face in &self.faces {
-                reverse_face_winding(edit, face.key);
+                _reverse_face_winding(edit, face.key);
             }
         }
         if cap_normal_along_run(edit, caps[0], self.advance) > 0.0 {
-            reverse_face_winding(edit, caps[0]);
+            _reverse_face_winding(edit, caps[0]);
         }
         if cap_normal_along_run(edit, caps[1], self.advance) < 0.0 {
-            reverse_face_winding(edit, caps[1]);
+            _reverse_face_winding(edit, caps[1]);
         }
     }
 }
@@ -1056,7 +1058,7 @@ fn cut_cap_at<P: Payload>(
     let Some((edge, parameter)) = target else {
         return Err(LoftError::CapNotCuttable { index, point });
     };
-    split_face_edge_staged(edit, cap, edge, parameter)
+    _split_face_edge(edit, cap, edge, parameter)
         .map(|_| ())
         .map_err(|_| LoftError::CapNotCuttable { index, point })
 }

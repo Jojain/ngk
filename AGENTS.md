@@ -372,7 +372,15 @@ mutation capability (`add_dart`, `remove_dart`, `link`, `unlink`, `sew`,
 `own_cell`, plus attribute create/remove/split/merge declarations).
 
 - One public builder = one transaction; composite builders pass the same
-  `&mut ModelEdit` down to private `*_staged` helpers.
+  `&mut ModelEdit` down to the matching private `_`-prefixed operation.
+- The public wrapper is a one-line transaction boundary. The `_` operation
+  owns validation and construction, and is `pub(crate)` so kernel operations
+  can compose without opening a nested transaction.
+- Operation results are stamped only after commit with `transaction_result`;
+  their view methods reject an unstamped or stale result.
+- `mod.rs` files are module manifests: they declare modules and re-export
+  their API. Non-trivial logic belongs in named child files; only exceptional
+  code small enough not to justify its own file may remain in `mod.rs`.
 - Any error, validation failure, identity-reconciliation failure or payload
   policy failure restores the full transaction-start snapshot. Panics are **not** caught.
 - **Lineage**: `add_*` (`Origin::New`) / `add_*_split_from` (`Origin::Split`,

@@ -129,7 +129,8 @@ fn a_revolved_meridian_unwraps_the_poles_its_loop_turns_through() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .expect("a full revolution of the meridian should build");
+    .expect("a full revolution of the meridian should build")
+    .face;
     let face = g.face_unchecked(face_key);
     let domain = UnwrappedFaceDomain::of_face(&face).expect("the revolved face should unwrap");
     let boundary = domain
@@ -216,7 +217,8 @@ fn a_capped_face_closes_its_domain_against_the_degenerate_row() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .expect("a cone should build");
+    .expect("a cone should build")
+    .face;
     let face = g.face_unchecked(face_key);
     assert!(matches!(face.loops()[0].kind(), LoopKind::Capping { .. }));
 
@@ -406,7 +408,8 @@ fn a_seamed_sphere_keeps_the_cut_its_loop_closes_across() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .expect("a full revolution of the meridian should build");
+    .expect("a full revolution of the meridian should build")
+    .face;
     let face = g.face_unchecked(face_key);
     let domain = UnwrappedFaceDomain::of_face(&face).expect("the revolved face should unwrap");
     let boundary = domain

@@ -13,8 +13,8 @@ pub fn extrude_profile<P: Payload>(
 ) -> Result<Shape<SheetTag, P>, ExtrudeError> {
     let (mut g, profile_dart) = profile.isolate();
     let profile_key = g.profile_key_unchecked(profile_dart);
-    let sheet_dart = add_extruded_profile(&mut g, profile_key, direction)?;
-    Ok(Shape::new(g, sheet_dart))
+    let sheet = add_extruded_profile(&mut g, profile_key, direction)?;
+    Ok(Shape::new(g, sheet.sheet))
 }
 
 pub fn extrude_face<P: Payload>(
@@ -23,5 +23,5 @@ pub fn extrude_face<P: Payload>(
 ) -> Result<Shape<SolidTag, P>, ExtrudeError> {
     let (mut g, face_key) = face.into_model();
     let solid_key = add_extruded_face(&mut g, face_key, direction)?;
-    Ok(Shape::new(g, solid_key))
+    Ok(Shape::new(g, solid_key.solid))
 }

@@ -36,7 +36,8 @@ fn revolve_edge_partial_turn_creates_four_edge_face() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::QUARTER_TURN,
     )
-    .unwrap();
+    .unwrap()
+    .face;
     let face = g.face_unchecked(face_key);
     let boundary_edges = face
         .outer_loop()
@@ -101,7 +102,8 @@ fn revolve_edge_partial_turn_uses_quarter_circle_sides() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::QUARTER_TURN,
     )
-    .unwrap();
+    .unwrap()
+    .face;
 
     let midpoint = side_arc_midpoint(&g, face_key, Point3::new(1.0, 0.0, 0.0));
 
@@ -135,7 +137,8 @@ fn revolve_edge_past_half_turn_sweeps_the_long_way() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::new(3.0 * std::f64::consts::FRAC_PI_2),
     )
-    .unwrap();
+    .unwrap()
+    .face;
 
     let midpoint = side_arc_midpoint(&g, face_key, Point3::new(1.0, 0.0, 0.0));
     let three_eighths = 3.0 * std::f64::consts::FRAC_PI_4;
@@ -224,7 +227,8 @@ fn revolve_closed_edge_full_turn_sweeps_a_boundaryless_torus() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .expect("a circle off the axis should revolve into a torus");
+    .expect("a circle off the axis should revolve into a torus")
+    .face;
 
     assert_eq!(
         (
@@ -291,7 +295,8 @@ fn revolve_edge_full_turn_sweeps_two_distinct_circles() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .unwrap();
+    .unwrap()
+    .face;
     let face = g.face_unchecked(face_key);
     let boundary_edges = face.edges();
     let boundary_vertices = face.vertices();
@@ -346,7 +351,8 @@ fn revolve_edge_full_turn_with_an_end_on_the_axis_has_one_loop() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .unwrap();
+    .unwrap()
+    .face;
     let face = g.face_unchecked(face_key);
     let boundary_edges = face.edges();
     let boundary_vertices = face.vertices();
@@ -415,7 +421,8 @@ fn revolve_edge_full_turn_from_the_axis_caps_a_cone() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .unwrap();
+    .unwrap()
+    .face;
     let face = g.face_unchecked(face_key);
 
     assert!(matches!(face.surface(), Surface::Cone(_)));
@@ -449,7 +456,8 @@ fn revolve_edge_full_turn_from_the_axis_caps_a_surface_of_revolution() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .unwrap();
+    .unwrap()
+    .face;
     let face = g.face_unchecked(face_key);
 
     assert!(matches!(face.surface(), Surface::Revolution(_)));
@@ -520,7 +528,8 @@ fn revolved_triangle_partial_turn_has_wedge_topology() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::QUARTER_TURN,
     )
-    .unwrap();
+    .unwrap()
+    .solid;
 
     let vertices = g.iter_vertices().count();
     let edges = g.iter_edges().count();
@@ -575,7 +584,8 @@ fn revolved_wedge_faces_point_outward_for_either_profile_winding() {
             Axis3::new(Point3::origin(), Vector3::z()),
             Rad64::QUARTER_TURN,
         )
-        .unwrap();
+        .unwrap()
+        .solid;
 
         validate_solid_orientation(&g, solid).unwrap_or_else(|err| {
             panic!("wedge from a {winding:?} profile should face outward: {err}")
@@ -663,7 +673,8 @@ fn revolved_face_full_turn_bands_are_rings() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .unwrap();
+    .unwrap()
+    .solid;
 
     // One lateral band per source edge, each a ring bounded by the two circles
     // its endpoints swept — and by nothing else, since a whole turn brings the
@@ -791,7 +802,8 @@ fn revolve_edge_full_turn_bounds_its_band_with_wrapping_loops() {
             Axis3::new(Point3::origin(), Vector3::z()),
             Rad64::FULL_TURN,
         )
-        .expect("a full turn should build");
+        .expect("a full turn should build")
+        .face;
 
         let face = g.face_unchecked(face);
         assert_eq!(face.loops().len(), 2, "{start:?} -> {end:?}");
@@ -829,7 +841,8 @@ fn revolve_edge_full_turn_perpendicular_to_the_axis_sweeps_a_planar_annulus() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .expect("a full turn should build");
+    .expect("a full turn should build")
+    .face;
     let face = g.face_unchecked(face_key);
 
     assert!(matches!(face.surface(), Surface::Plane(_)));
@@ -905,7 +918,8 @@ fn revolve_face_full_turn_of_an_offset_rectangle_closes_its_shell() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .expect("a full turn should build");
+    .expect("a full turn should build")
+    .solid;
 
     // Four bands, one per source edge, bounded by the four circles the corners
     // swept — and by nothing else. A seam on either annulus would show up as a

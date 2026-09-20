@@ -8,20 +8,76 @@ use crate::builders::errors::ExtrudeError;
 use crate::geometry::{
     Curve, LINEAR_TOLERANCE, Plane, Point2, Point3, Rigid, RuledSurface, Surface,
 };
-use crate::model::Model;
+use crate::model::{Cell1, Model, OpResult, StaleResult};
 use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
-use crate::topology::shape_keys::{EdgeKey, ProfileKey, SheetKey, VertexKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, VertexKey};
 use crate::topology::vertex::Vertex;
+use crate::topology::{edge::Edge as EdgeView, face::Face as FaceView, sheet::Sheet as SheetView};
 
-/// Adds an extruded profile to the given model.
+use crate::builders::solids::Lateral;
+
+/// Everything learned while extruding a profile into a sheet.
+#[derive(Debug)]
+pub struct ProfileExtrusion {
+    /// The sheet assembled by the operation.
+    pub sheet: SheetKey,
+    /// One lateral face for each edge of the source profile, in profile order.
+    pub laterals: Vec<Lateral>,
+    revision: Option<u64>,
+}
+
+/// Borrowed views for a [`ProfileExtrusion`] result.
+pub struct ProfileExtrusionView<'m, P: Payload> {
+    pub sheet: SheetView<'m, P>,
+    pub laterals: Vec<ProfileLateralView<'m, P>>,
+}
+
+/// Borrowed views for one profile extrusion lateral.
+pub struct ProfileLateralView<'m, P: Payload> {
+    pub swept_from: EdgeView<'m, P>,
+    pub face: FaceView<'m, P>,
+    pub start_edge: EdgeView<'m, P>,
+    pub end_edge: EdgeView<'m, P>,
+}
+
+impl OpResult for ProfileExtrusion {
+    fn stamp(&mut self, revision: u64) {
+        self.revision = Some(revision);
+    }
+}
+
+impl ProfileExtrusion {
+    /// Resolves every key in the result against its committed model revision.
+    pub fn view<'m, P: Payload>(
+        &self,
+        model: &'m Model<P>,
+    ) -> Result<ProfileExtrusionView<'m, P>, StaleResult> {
+        StaleResult::check(self.revision, model)?;
+        Ok(ProfileExtrusionView {
+            sheet: model.sheet_unchecked(self.sheet),
+            laterals: self
+                .laterals
+                .iter()
+                .map(|lateral| ProfileLateralView {
+                    swept_from: model.edge_unchecked(lateral.swept_from),
+                    face: model.face_unchecked(lateral.face),
+                    start_edge: model.edge_unchecked(lateral.start_edge),
+                    end_edge: model.edge_unchecked(lateral.end_edge),
+                })
+                .collect(),
+        })
+    }
+}
+
+/// Adds an extruded profile to the given model and reports its laterals.
 ///
-/// Returns the generated sheet key. Its stored dart belongs to the translated
-/// copy of the input edge.
+/// The returned sheet's stored dart belongs to the translated copy of the
+/// input edge.
 ///
 /// # Panics
 ///
@@ -30,38 +86,56 @@ pub fn add_extruded_profile<P: Payload>(
     g: &mut Model<P>,
     profile_key: ProfileKey,
     direction: Vector3<f64>,
-) -> Result<SheetKey, ExtrudeError> {
-    g.transaction(|edit| {
-        if direction.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
-            return Err(ExtrudeError::ZeroDirection);
+) -> Result<ProfileExtrusion, ExtrudeError> {
+    g.transaction_result(|edit| _add_extruded_profile(edit, profile_key, direction))
+}
+
+/// Builds a profile extrusion inside an existing edit.
+pub(crate) fn _add_extruded_profile<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    profile_key: ProfileKey,
+    direction: Vector3<f64>,
+) -> Result<ProfileExtrusion, ExtrudeError> {
+    if direction.norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
+        return Err(ExtrudeError::ZeroDirection);
+    }
+
+    let profile = edit.profile_unchecked(profile_key);
+    let profile_dart = profile.dart;
+    let is_closed = profile.is_closed();
+    let edge_darts = profile
+        .edges()
+        .into_iter()
+        .map(|edge| edge.dart())
+        .collect::<Vec<_>>();
+    let mut faces = Vec::with_capacity(edge_darts.len());
+    let mut laterals = Vec::with_capacity(edge_darts.len());
+    let mut translated_dart = None;
+
+    for edge_dart in edge_darts {
+        let extruded_face = extrude_edge(edit, edge_dart, direction)?;
+        if edge_dart == profile_dart {
+            translated_dart = Some(extruded_face.translated_start);
+        } else if edit.alpha(Dim::Zero, edge_dart) == profile_dart {
+            translated_dart = Some(extruded_face.translated_end);
         }
+        laterals.push(Lateral {
+            swept_from: edit.cell_key_unchecked::<Cell1>(edge_dart),
+            face: extruded_face.face,
+            start_edge: extruded_face.edges[1],
+            end_edge: extruded_face.edges[3],
+        });
+        faces.push(extruded_face);
+    }
 
-        let profile = edit.profile_unchecked(profile_key);
-        let profile_dart = profile.dart;
-        let is_closed = profile.is_closed();
-        let edge_darts = profile
-            .edges()
-            .into_iter()
-            .map(|edge| edge.dart())
-            .collect::<Vec<_>>();
-        let mut faces = Vec::with_capacity(edge_darts.len());
-        let mut translated_dart = None;
+    sew_extruded_faces(edit, &faces, is_closed)?;
+    let translated_dart =
+        translated_dart.expect("profile dart must belong to one of its profile edges");
 
-        for edge_dart in edge_darts {
-            let extruded_face = extrude_edge(edit, edge_dart, direction)?;
-            if edge_dart == profile_dart {
-                translated_dart = Some(extruded_face.translated_start);
-            } else if edit.alpha(Dim::Zero, edge_dart) == profile_dart {
-                translated_dart = Some(extruded_face.translated_end);
-            }
-            faces.push(extruded_face);
-        }
-
-        sew_extruded_faces(edit, &faces, is_closed)?;
-        let translated_dart =
-            translated_dart.expect("profile dart must belong to one of its profile edges");
-
-        Ok(edit.add_sheet(SheetAttr::new(translated_dart)))
+    Ok(ProfileExtrusion {
+        sheet: edit.add_sheet(SheetAttr::new(translated_dart)),
+        laterals,
+        revision: None,
     })
 }
 
@@ -107,6 +181,8 @@ struct ExtrudedFace {
     end_side: Dart,
     translated_start: Dart,
     translated_end: Dart,
+    face: FaceKey,
+    edges: [EdgeKey; 4],
 }
 
 struct ExtrudedSurface {
@@ -189,16 +265,16 @@ fn add_extruded_edge_face<P: Payload>(
         edit.add_vertex(VertexAttr::new(dart, corners[i]));
     }
 
-    for i in 0..4 {
+    let edges = std::array::from_fn(|i| {
         let edge_dart = darts[2 * i];
         edit.add_edge(EdgeAttr::new(
             edge_dart,
             surface_data.boundary_curves[i].clone(),
-        ));
-    }
+        ))
+    });
 
     edit.add_profile(ProfileAttr::new(darts[0]));
-    edit.add_face(FaceAttr::with_pcurves(
+    let face = edit.add_face(FaceAttr::with_pcurves(
         surface_data.surface,
         darts[0],
         Vec::new(),
@@ -210,6 +286,8 @@ fn add_extruded_edge_face<P: Payload>(
         end_side: darts[2],
         translated_start: darts[5],
         translated_end: darts[4],
+        face,
+        edges,
     })
 }
 
@@ -378,7 +456,9 @@ mod tests {
         let source_dart_count = source.dart_count();
         let direction = Vector3::new(0.0, 0.0, 2.0);
 
-        let sheet_key = add_extruded_profile(&mut source, profile_key, direction).unwrap();
+        let sheet_key = add_extruded_profile(&mut source, profile_key, direction)
+            .unwrap()
+            .sheet;
         let translated_dart = source.sheet_attr_unchecked(sheet_key).dart();
 
         assert!(

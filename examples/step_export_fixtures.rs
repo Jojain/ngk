@@ -129,8 +129,11 @@ fn reexport(fixture: &str, name: &str) {
 /// a cavity means facing into itself.
 fn hollow_sphere(outer: f64, inner: f64) -> String {
     let mut map = Model::<StandardPayload>::new();
-    let solid = add_sphere(&mut map, Frame::xyz(), outer).expect("an outer sphere should build");
+    let solid = add_sphere(&mut map, Frame::xyz(), outer)
+        .expect("an outer sphere should build")
+        .solid;
     let cavity = add_sphere(&mut map, Frame::xyz(), inner).expect("a cavity sphere should build");
+    let cavity = cavity.solid;
     let cavity_root = map.solid_attr_unchecked(cavity).outer_shell;
 
     map.transaction(|edit| {
@@ -167,8 +170,9 @@ fn holed_slab() -> String {
     let profile = faces::polygon_with_holes(Plane::xy(), &outer, &[&hole])
         .expect("a holed face should build");
     let (mut map, face) = profile.into_model();
-    let solid =
-        add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 3.0)).expect("it should extrude");
+    let solid = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 3.0))
+        .expect("it should extrude")
+        .solid;
 
     let exchange = map_to_exchange(&map, &[solid], &StepWriteOptions::named("HOLED_SLAB"))
         .expect("a planar solid should export");

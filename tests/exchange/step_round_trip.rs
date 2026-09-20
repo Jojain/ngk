@@ -180,7 +180,8 @@ fn an_extruded_triangle_survives_a_round_trip() {
     .expect("a triangle should build");
     let (mut map, face) = triangle.into_model();
     let solid = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 2.0))
-        .expect("a triangle should extrude");
+        .expect("a triangle should extrude")
+        .solid;
 
     round_trip(&Shape::new(map, solid));
 }
@@ -222,8 +223,9 @@ fn holed_slab() -> Solid {
     let profile = faces::polygon_with_holes(Plane::xy(), &outer, &[&hole])
         .expect("a holed face should build");
     let (mut map, face) = profile.into_model();
-    let solid =
-        add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 3.0)).expect("it should extrude");
+    let solid = add_extruded_face(&mut map, face, Vector3::new(0.0, 0.0, 3.0))
+        .expect("it should extrude")
+        .solid;
     Shape::new(map, solid)
 }
 

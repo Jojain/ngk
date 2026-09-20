@@ -1,6 +1,9 @@
+//! Solid operations and edit-scoped implementations.
+
 use crate::geometry::TrimmedCurve2;
 use crate::geometry::parameter::Fraction;
-use crate::model::{Cell2, MergeTopology, Model};
+use crate::model::{Cell1, Cell2, MergeTopology, Model};
+use crate::model::{OpResult, StaleResult};
 use crate::topology::ModelEditError;
 use crate::topology::embedding::EntityOwner;
 use std::collections::HashMap;
@@ -12,7 +15,7 @@ use crate::{
     Payload,
     builders::errors::ClosedFaceCellError,
     builders::errors::ExtrudeError,
-    builders::faces::reverse_face_winding,
+    builders::faces::_reverse_face_winding,
     builders::scaffold::add_closed_face_cell,
     geometry::{
         ANGULAR_TOLERANCE, Axis2, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3,
@@ -22,10 +25,13 @@ use crate::{
         Dart, ModelEdit, SheetAttr, SolidAttr,
         attributes::{EdgeAttr, FaceAttr, LoopDefinition, ProfileAttr},
         edge::Edge,
+        edge::Edge as EdgeView,
         face::Face,
+        face::Face as FaceView,
         gmap::Dim,
         shape::{FaceTag, Shape},
-        shape_keys::{FaceKey, SolidKey},
+        shape_keys::{EdgeKey, FaceKey, SolidKey},
+        solid::Solid as SolidView,
     },
 };
 
@@ -50,6 +56,128 @@ pub enum TorusBuildError {
     ModelEdit(#[from] ModelEditError),
 }
 
+/// One lateral face and the boundary edges created while sweeping one base
+/// edge of an extrusion.
+#[derive(Debug, Clone, Copy)]
+pub struct Lateral {
+    /// The base-face edge that produced this lateral.
+    pub swept_from: EdgeKey,
+    /// The lateral face itself.
+    pub face: FaceKey,
+    /// The vertical edge at the beginning of this lateral in loop order.
+    pub start_edge: EdgeKey,
+    /// The vertical edge at the end of this lateral in loop order.
+    pub end_edge: EdgeKey,
+}
+
+/// Everything learned while extruding a face.
+#[derive(Debug)]
+pub struct Extrusion {
+    /// The solid assembled by the operation.
+    pub solid: SolidKey,
+    /// The source face used as the start cap.
+    pub start_cap: FaceKey,
+    /// The translated copy used as the end cap.
+    pub end_cap: FaceKey,
+    /// Laterals in the base face's outer-loop order, followed by inner loops.
+    pub laterals: Vec<Lateral>,
+    revision: Option<u64>,
+}
+
+/// Borrowed views for an [`Extrusion`] result.
+pub struct ExtrusionView<'m, P: Payload> {
+    pub solid: SolidView<'m, P>,
+    pub start_cap: FaceView<'m, P>,
+    pub end_cap: FaceView<'m, P>,
+    pub laterals: Vec<LateralView<'m, P>>,
+}
+
+/// Borrowed views for one [`Lateral`] in an extrusion.
+pub struct LateralView<'m, P: Payload> {
+    pub swept_from: EdgeView<'m, P>,
+    pub face: FaceView<'m, P>,
+    pub start_edge: EdgeView<'m, P>,
+    pub end_edge: EdgeView<'m, P>,
+}
+
+/// Everything learned while building a boundaryless primitive solid.
+#[derive(Debug)]
+pub struct ClosedSolid {
+    pub solid: SolidKey,
+    pub faces: Vec<FaceKey>,
+    pub seams: Vec<EdgeKey>,
+    revision: Option<u64>,
+}
+
+/// Borrowed views for a [`ClosedSolid`] result.
+pub struct ClosedSolidView<'m, P: Payload> {
+    pub solid: SolidView<'m, P>,
+    pub faces: Vec<FaceView<'m, P>>,
+    pub seams: Vec<EdgeView<'m, P>>,
+}
+
+impl OpResult for ClosedSolid {
+    fn stamp(&mut self, revision: u64) {
+        self.revision = Some(revision);
+    }
+}
+
+impl ClosedSolid {
+    /// Resolves the primitive result against its committed model revision.
+    pub fn view<'m, P: Payload>(
+        &self,
+        model: &'m Model<P>,
+    ) -> Result<ClosedSolidView<'m, P>, StaleResult> {
+        StaleResult::check(self.revision, model)?;
+        Ok(ClosedSolidView {
+            solid: model.solid_unchecked(self.solid),
+            faces: self
+                .faces
+                .iter()
+                .map(|&key| model.face_unchecked(key))
+                .collect(),
+            seams: self
+                .seams
+                .iter()
+                .map(|&key| model.edge_unchecked(key))
+                .collect(),
+        })
+    }
+}
+
+impl OpResult for Extrusion {
+    fn stamp(&mut self, revision: u64) {
+        self.revision = Some(revision);
+    }
+}
+
+impl Extrusion {
+    /// Resolves every key in the result against `model` at the result's
+    /// committed revision.
+    pub fn view<'m, P: Payload>(
+        &self,
+        model: &'m Model<P>,
+    ) -> Result<ExtrusionView<'m, P>, StaleResult> {
+        StaleResult::check(self.revision, model)?;
+        let view = |key| model.face_unchecked(key);
+        Ok(ExtrusionView {
+            solid: model.solid_unchecked(self.solid),
+            start_cap: view(self.start_cap),
+            end_cap: view(self.end_cap),
+            laterals: self
+                .laterals
+                .iter()
+                .map(|lateral| LateralView {
+                    swept_from: model.edge_unchecked(lateral.swept_from),
+                    face: view(lateral.face),
+                    start_edge: model.edge_unchecked(lateral.start_edge),
+                    end_edge: model.edge_unchecked(lateral.end_edge),
+                })
+                .collect(),
+        })
+    }
+}
+
 /// Adds a sphere as one boundaryless face on a spherical support.
 ///
 /// A sphere has no boundary anywhere, so it carries no edge and no vertex: the
@@ -59,19 +187,33 @@ pub enum TorusBuildError {
 ///
 /// The support's own parameterization already faces outward, so the face is
 /// stored unreversed.
+///
+/// The result exposes the generated solid and face, together with any seam
+/// edges synthesized by the operation.
 pub fn add_sphere<P: Payload>(
     g: &mut Model<P>,
     frame: Frame,
     radius: f64,
-) -> Result<SolidKey, SphereBuildError> {
-    g.transaction(|edit| {
-        let surface = Surface::Sphere(Sphere::new(frame, radius));
-        let cell = add_closed_face_cell(edit, &surface)?;
-        let face = edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
-        cell.own(edit, face);
-        let shell = cell.anchor();
-        edit.add_sheet(SheetAttr::new(shell));
-        Ok(edit.add_solid(SolidAttr::new(shell, None)))
+) -> Result<ClosedSolid, SphereBuildError> {
+    g.transaction_result(|edit| _add_sphere(edit, frame, radius))
+}
+
+pub(crate) fn _add_sphere<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    frame: Frame,
+    radius: f64,
+) -> Result<ClosedSolid, SphereBuildError> {
+    let surface = Surface::Sphere(Sphere::new(frame, radius));
+    let cell = add_closed_face_cell(edit, &surface)?;
+    let face = edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
+    cell.own(edit, face);
+    let shell = cell.anchor();
+    edit.add_sheet(SheetAttr::new(shell));
+    Ok(ClosedSolid {
+        solid: edit.add_solid(SolidAttr::new(shell, None)),
+        faces: vec![face],
+        seams: Vec::new(),
+        revision: None,
     })
 }
 
@@ -85,24 +227,38 @@ pub fn add_sphere<P: Payload>(
 ///
 /// `minor` must stay under `major`: a tube as wide as its offset reaches the
 /// axis, and one wider sweeps through itself.
+///
+/// The result exposes the generated solid and face, together with any seam
+/// edges synthesized by the operation.
 pub fn add_torus<P: Payload>(
     g: &mut Model<P>,
     frame: Frame,
     major: f64,
     minor: f64,
-) -> Result<SolidKey, TorusBuildError> {
+) -> Result<ClosedSolid, TorusBuildError> {
+    g.transaction_result(|edit| _add_torus(edit, frame, major, minor))
+}
+
+pub(crate) fn _add_torus<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    frame: Frame,
+    major: f64,
+    minor: f64,
+) -> Result<ClosedSolid, TorusBuildError> {
     if !major.is_finite() || !minor.is_finite() || minor <= 0.0 || minor >= major {
         return Err(TorusBuildError::InvalidRadii { major, minor });
     }
-
-    g.transaction(|edit| {
-        let surface = Surface::Torus(Torus::new(frame, major, minor));
-        let cell = add_closed_face_cell(edit, &surface)?;
-        let face = edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
-        cell.own(edit, face);
-        let shell = cell.anchor();
-        edit.add_sheet(SheetAttr::new(shell));
-        Ok(edit.add_solid(SolidAttr::new(shell, None)))
+    let surface = Surface::Torus(Torus::new(frame, major, minor));
+    let cell = add_closed_face_cell(edit, &surface)?;
+    let face = edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
+    cell.own(edit, face);
+    let shell = cell.anchor();
+    edit.add_sheet(SheetAttr::new(shell));
+    Ok(ClosedSolid {
+        solid: edit.add_solid(SolidAttr::new(shell, None)),
+        faces: vec![face],
+        seams: Vec::new(),
+        revision: None,
     })
 }
 
@@ -164,16 +320,16 @@ pub fn add_extruded_face<P: Payload>(
     g: &mut Model<P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
-) -> Result<SolidKey, ExtrudeError> {
-    g.transaction(|edit| add_extruded_face_staged(edit, face_key, direction))
+) -> Result<Extrusion, ExtrudeError> {
+    g.transaction_result(|edit| _add_extruded_face(edit, face_key, direction))
 }
 
 /// Builds translated caps and lateral faces, then registers the staged solid.
-fn add_extruded_face_staged<P: Payload>(
+pub(crate) fn _add_extruded_face<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
-) -> Result<SolidKey, ExtrudeError> {
+) -> Result<Extrusion, ExtrudeError> {
     let bot_face = edit
         .face_attr(face_key)
         .map(|attr| attr.face(edit))
@@ -194,13 +350,15 @@ fn add_extruded_face_staged<P: Payload>(
 
     orient_extruded_caps(edit, face_key, top_face_key, direction);
 
+    let mut laterals = Vec::new();
     for (bottom_loop_dart, top_loop_dart) in bottom_loop_darts.into_iter().zip(top_loop_darts) {
-        sew_extruded_loop(
+        let (_, loop_laterals) = sew_extruded_loop(
             edit,
             (face_key, bottom_loop_dart),
             (top_face_key, top_loop_dart),
             direction,
         )?;
+        laterals.extend(loop_laterals);
     }
 
     // The shell dart is contextual: unlike a cell representative, it must retain
@@ -210,7 +368,13 @@ fn add_extruded_face_staged<P: Payload>(
         edit.add_sheet(SheetAttr::new(outer_shell));
     }
     let solid = edit.add_solid(SolidAttr::new(outer_shell, None));
-    Ok(solid)
+    Ok(Extrusion {
+        solid,
+        start_cap: face_key,
+        end_cap: top_face_key,
+        laterals,
+        revision: None,
+    })
 }
 
 fn orient_extruded_caps<P: Payload>(
@@ -227,9 +391,9 @@ fn orient_extruded_caps<P: Payload>(
     };
 
     if bottom_normal_dot_direction > LINEAR_TOLERANCE {
-        reverse_face_winding(edit, bottom_face);
+        _reverse_face_winding(edit, bottom_face);
     } else if bottom_normal_dot_direction < -LINEAR_TOLERANCE {
-        reverse_face_winding(edit, top_face);
+        _reverse_face_winding(edit, top_face);
     }
 }
 
@@ -267,7 +431,7 @@ fn sew_extruded_loop<P: Payload>(
     bottom: (FaceKey, Dart),
     top: (FaceKey, Dart),
     direction: Vector3<f64>,
-) -> Result<Dart, ExtrudeError> {
+) -> Result<(Dart, Vec<Lateral>), ExtrudeError> {
     let (bottom_face, bottom_loop_dart) = bottom;
     let (top_face, top_loop_dart) = top;
     let bottom_edges = cap_loop_edges(edit, bottom_face, bottom_loop_dart);
@@ -275,7 +439,10 @@ fn sew_extruded_loop<P: Payload>(
     if let Some(representative) =
         sew_wrapping_lateral_face(edit, &bottom_edges, &top_edges, direction)?
     {
-        return Ok(edit.cell_representative(representative, Dim::Three));
+        return Ok((
+            edit.cell_representative(representative, Dim::Three),
+            Vec::new(),
+        ));
     }
 
     let laterals = bottom_edges
@@ -285,9 +452,10 @@ fn sew_extruded_loop<P: Payload>(
         .map(|(bottom_edge, top_edge)| {
             let prepared = prepare_lateral_face(edit, bottom_edge, top_edge, direction)?;
             let topology = add_lateral_face_topology(edit)?;
-            add_lateral_face_attributes(edit, &topology, &prepared);
+            let face = add_lateral_face_attributes(edit, &topology, &prepared);
             Ok(ExtrudedFaceLateral {
                 topology,
+                face,
                 vertical_start: prepared.end,
                 vertical_end: prepared.end + direction,
             })
@@ -316,18 +484,30 @@ fn sew_extruded_loop<P: Payload>(
         sew(edit, Dim::Two, lateral.topology.top_edge, top_edge)?;
     }
 
-    for lateral in &laterals {
-        edit.add_edge(EdgeAttr::new(
-            lateral.topology.end_vertical,
-            Curve::line(lateral.vertical_start, lateral.vertical_end),
-        ));
-    }
-
+    let vertical_edges = laterals
+        .iter()
+        .map(|lateral| {
+            edit.add_edge(EdgeAttr::new(
+                lateral.topology.end_vertical,
+                Curve::line(lateral.vertical_start, lateral.vertical_end),
+            ))
+        })
+        .collect::<Vec<_>>();
     let representative = laterals
         .first()
         .map(|lateral| lateral.topology.bottom_edge)
         .expect("a loop should have at least one lateral face");
-    Ok(edit.cell_representative(representative, Dim::Three))
+    let result = laterals
+        .iter()
+        .enumerate()
+        .map(|(index, lateral)| Lateral {
+            swept_from: edit.cell_key_unchecked::<Cell1>(bottom_edges[index]),
+            face: lateral.face,
+            start_edge: vertical_edges[(index + vertical_edges.len() - 1) % vertical_edges.len()],
+            end_edge: vertical_edges[index],
+        })
+        .collect();
+    Ok((edit.cell_representative(representative, Dim::Three), result))
 }
 
 /// Builds the lateral face of a sweep that closes on itself, if this one does.
@@ -436,6 +616,7 @@ struct PreparedLateralFace {
 
 struct ExtrudedFaceLateral {
     topology: LateralFaceTopology,
+    face: FaceKey,
     vertical_start: Point3,
     vertical_end: Point3,
 }
@@ -503,14 +684,14 @@ fn add_lateral_face_attributes<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     topology: &LateralFaceTopology,
     prepared: &PreparedLateralFace,
-) {
+) -> FaceKey {
     edit.add_profile(ProfileAttr::new(topology.loop_dart));
     edit.add_face(FaceAttr::with_pcurves(
         prepared.surface.clone(),
         topology.loop_dart,
         Vec::new(),
         quad_pcurves(&prepared.uv, &topology.darts),
-    ));
+    ))
 }
 
 fn lateral_face_surface(

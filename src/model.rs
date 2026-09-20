@@ -39,6 +39,54 @@ mod realization;
 use realization::RealizationCache;
 pub use realization::{FaceRealization, RealizationError, RealizationPurpose};
 
+/// A value returned by a builder that can be associated with its committed
+/// model revision.
+///
+/// Kernel implementations return an unstamped value from their edit-scoped
+/// function. The public transaction wrapper stamps it only after commit, so a
+/// result can never claim a revision that was later rolled back.
+pub trait OpResult {
+    /// Records the revision reached by the transaction that produced `self`.
+    fn stamp(&mut self, revision: u64);
+}
+
+/// Why a builder result cannot be resolved against a model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub struct StaleResult {
+    /// The revision recorded by the result, or `None` when it came directly
+    /// from an edit-scoped kernel operation and has not been committed yet.
+    pub made_at: Option<u64>,
+    /// The model revision supplied to the view lookup.
+    pub now: u64,
+}
+
+impl std::fmt::Display for StaleResult {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.made_at {
+            Some(made_at) => write!(
+                formatter,
+                "operation result was made at revision {made_at}, model is at revision {}",
+                self.now
+            ),
+            None => formatter.write_str("operation result has not been committed"),
+        }
+    }
+}
+
+impl StaleResult {
+    /// Checks the revision carried by a result against `model`.
+    pub(crate) fn check<P: Payload>(revision: Option<u64>, model: &Model<P>) -> Result<(), Self> {
+        if revision == Some(model.revision) {
+            Ok(())
+        } else {
+            Err(Self {
+                made_at: revision,
+                now: model.revision,
+            })
+        }
+    }
+}
+
 /// Type marker for vertex attributes.
 pub struct Cell0;
 /// Type marker for edge attributes.
@@ -386,6 +434,22 @@ impl<P: Payload> Model<P> {
         F: FnOnce(&mut ModelEdit<'_, P>) -> Result<T, E>,
     {
         self.run_transaction(&mut P::Policy::default(), operation)
+    }
+
+    /// Runs one operation and stamps its result with the committed revision.
+    ///
+    /// The operation itself still receives an edit-scoped result before the
+    /// commit. If the operation or commit fails, no result is returned and the
+    /// model is restored by [`Self::transaction`].
+    pub fn transaction_result<T, E, F>(&mut self, operation: F) -> Result<T, E>
+    where
+        T: OpResult,
+        E: From<ModelEditError>,
+        F: FnOnce(&mut ModelEdit<'_, P>) -> Result<T, E>,
+    {
+        let mut result = self.transaction(operation)?;
+        result.stamp(self.revision);
+        Ok(result)
     }
 
     /// Runs one atomic operation with a caller-provided payload policy.

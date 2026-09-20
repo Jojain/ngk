@@ -29,9 +29,9 @@ for recoverable failure.
 ## Builder composition
 
 Each public builder accepts `&mut Model` and starts one transaction. Its private
-staged helper accepts `&mut ModelEdit` and performs the actual work. A composite
-builder calls other staged helpers with the same edit capability, so the whole
-modeling operation has one snapshot, one journal, and one commit.
+`_`-prefixed operation accepts `&mut ModelEdit` and performs the actual work. A
+composite builder calls other `_` operations with the same edit capability, so
+the whole modeling operation has one snapshot, one journal, and one commit.
 
 Raw map mutation is model-internal. `Model::topology()` hands out `&GMap` and
 nothing hands out `&mut GMap`, so builders can inspect the map through the

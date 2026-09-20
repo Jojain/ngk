@@ -1,3 +1,5 @@
+//! Revolution operations and edit-scoped implementations.
+
 use crate::geometry::TrimmedCurve2;
 use std::collections::HashMap;
 
@@ -6,7 +8,7 @@ use radians::{Angle, Rad64};
 use thiserror::Error;
 
 use crate::builders::errors::ClosedFaceCellError;
-use crate::builders::faces::reverse_face_winding;
+use crate::builders::faces::_reverse_face_winding;
 use crate::builders::scaffold::{add_closed_face_cell, cut_between_loops};
 use crate::geometry::axis::Axis3;
 use crate::geometry::parameter::{Fraction, NativeParam};
@@ -15,7 +17,7 @@ use crate::geometry::{
     ANGULAR_TOLERANCE, Axis2, Circle, Cone, Curve, Cylinder, DomainSide, Frame, LINEAR_TOLERANCE,
     Plane, Point2, Point3, Surface, SurfaceOfRevolution, SurfacePeriodicity,
 };
-use crate::model::{Cell2, MergeTopology, Model};
+use crate::model::{Cell2, MergeTopology, Model, OpResult, StaleResult};
 use crate::topology::IsolatedDart;
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
@@ -30,7 +32,9 @@ use crate::topology::planar::{Planar, PlanarityError};
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceTag, Shape};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
+use crate::topology::solid::Solid as SolidView;
 use crate::topology::vertex::Vertex;
+use crate::topology::{edge::Edge as EdgeView, face::Face as FaceView, sheet::Sheet as SheetView};
 
 #[derive(Debug, Error)]
 pub enum RevolveError {
@@ -77,6 +81,145 @@ pub enum RevolveError {
 
     #[error("failed to create revolved face topology")]
     ModelEditFailed(#[from] ModelEditError),
+}
+
+/// Keys produced while revolving one edge.
+#[derive(Debug)]
+pub struct RevolvedEdge {
+    pub face: FaceKey,
+    pub start_edge: Option<EdgeKey>,
+    pub end_edge: Option<EdgeKey>,
+    pub seam: Option<EdgeKey>,
+    revision: Option<u64>,
+}
+
+/// Keys produced while revolving a profile.
+#[derive(Debug)]
+pub struct RevolvedProfile {
+    pub sheet: SheetKey,
+    pub faces: Vec<FaceKey>,
+    pub seam: Option<EdgeKey>,
+    revision: Option<u64>,
+}
+
+/// Keys produced while revolving a face.
+#[derive(Debug)]
+pub struct RevolvedFace {
+    pub solid: SolidKey,
+    pub start_cap: Option<FaceKey>,
+    pub end_cap: Option<FaceKey>,
+    pub laterals: Vec<FaceKey>,
+    pub seam: Option<EdgeKey>,
+    revision: Option<u64>,
+}
+
+/// Borrowed views for a revolved edge result.
+pub struct RevolvedEdgeView<'m, P: Payload> {
+    pub face: FaceView<'m, P>,
+    pub start_edge: Option<EdgeView<'m, P>>,
+    pub end_edge: Option<EdgeView<'m, P>>,
+    pub seam: Option<EdgeView<'m, P>>,
+}
+
+/// Borrowed views for a revolved profile result.
+pub struct RevolvedProfileView<'m, P: Payload> {
+    pub sheet: SheetView<'m, P>,
+    pub faces: Vec<FaceView<'m, P>>,
+    pub seam: Option<EdgeView<'m, P>>,
+}
+
+/// Borrowed views for a revolved face result.
+pub struct RevolvedFaceView<'m, P: Payload> {
+    pub solid: SolidView<'m, P>,
+    pub start_cap: Option<FaceView<'m, P>>,
+    pub end_cap: Option<FaceView<'m, P>>,
+    pub laterals: Vec<FaceView<'m, P>>,
+    pub seam: Option<EdgeView<'m, P>>,
+}
+
+impl OpResult for RevolvedEdge {
+    fn stamp(&mut self, revision: u64) {
+        self.revision = Some(revision);
+    }
+}
+impl OpResult for RevolvedProfile {
+    fn stamp(&mut self, revision: u64) {
+        self.revision = Some(revision);
+    }
+}
+impl OpResult for RevolvedFace {
+    fn stamp(&mut self, revision: u64) {
+        self.revision = Some(revision);
+    }
+}
+
+impl RevolvedEdge {
+    /// Resolves this result against its committed model revision.
+    pub fn view<'m, P: Payload>(
+        &self,
+        model: &'m Model<P>,
+    ) -> Result<RevolvedEdgeView<'m, P>, StaleResult> {
+        StaleResult::check(self.revision, model)?;
+        Ok(RevolvedEdgeView {
+            face: model.face_unchecked(self.face),
+            start_edge: self.start_edge.map(|key| model.edge_unchecked(key)),
+            end_edge: self.end_edge.map(|key| model.edge_unchecked(key)),
+            seam: self.seam.map(|key| model.edge_unchecked(key)),
+        })
+    }
+
+    /// Checks that this result still belongs to `model`'s committed revision.
+    pub fn check<P: Payload>(&self, model: &Model<P>) -> Result<(), StaleResult> {
+        StaleResult::check(self.revision, model)
+    }
+}
+impl RevolvedProfile {
+    /// Resolves this result against its committed model revision.
+    pub fn view<'m, P: Payload>(
+        &self,
+        model: &'m Model<P>,
+    ) -> Result<RevolvedProfileView<'m, P>, StaleResult> {
+        StaleResult::check(self.revision, model)?;
+        Ok(RevolvedProfileView {
+            sheet: model.sheet_unchecked(self.sheet),
+            faces: self
+                .faces
+                .iter()
+                .map(|&key| model.face_unchecked(key))
+                .collect(),
+            seam: self.seam.map(|key| model.edge_unchecked(key)),
+        })
+    }
+
+    /// Checks that this result still belongs to `model`'s committed revision.
+    pub fn check<P: Payload>(&self, model: &Model<P>) -> Result<(), StaleResult> {
+        StaleResult::check(self.revision, model)
+    }
+}
+impl RevolvedFace {
+    /// Resolves this result against its committed model revision.
+    pub fn view<'m, P: Payload>(
+        &self,
+        model: &'m Model<P>,
+    ) -> Result<RevolvedFaceView<'m, P>, StaleResult> {
+        StaleResult::check(self.revision, model)?;
+        Ok(RevolvedFaceView {
+            solid: model.solid_unchecked(self.solid),
+            start_cap: self.start_cap.map(|key| model.face_unchecked(key)),
+            end_cap: self.end_cap.map(|key| model.face_unchecked(key)),
+            laterals: self
+                .laterals
+                .iter()
+                .map(|&key| model.face_unchecked(key))
+                .collect(),
+            seam: self.seam.map(|key| model.edge_unchecked(key)),
+        })
+    }
+
+    /// Checks that this result still belongs to `model`'s committed revision.
+    pub fn check<P: Payload>(&self, model: &Model<P>) -> Result<(), StaleResult> {
+        StaleResult::check(self.revision, model)
+    }
 }
 
 /// Where one end of a source edge is, and which logical vertex is there.
@@ -180,24 +323,32 @@ pub fn add_revolved_edge<P: Payload>(
     edge: EdgeKey,
     axis: Axis3,
     angle: Rad64,
-) -> Result<FaceKey, RevolveError> {
-    g.transaction(|edit| add_revolved_edge_staged(edit, edge, axis, angle))
+) -> Result<RevolvedEdge, RevolveError> {
+    g.transaction_result(|edit| _add_revolved_edge(edit, edge, axis, angle))
 }
 
 /// Revolves an edge inside the caller's active transaction.
-pub(crate) fn add_revolved_edge_staged<P: Payload>(
+pub(crate) fn _add_revolved_edge<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     axis: Axis3,
     angle: Rad64,
-) -> Result<FaceKey, RevolveError> {
+) -> Result<RevolvedEdge, RevolveError> {
     let source = RevolvedSourceEdge::from_key(edit, edge)?;
     let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
-    if is_full_turn(angle) {
-        return add_full_revolved_edge_face(edit, &source, axis, angle);
-    }
-
-    add_partial_revolved_edge_face(edit, &source, axis, angle)
+    let face = if is_full_turn(angle) {
+        add_full_revolved_edge_face(edit, &source, axis, angle)?
+    } else {
+        add_partial_revolved_edge_face(edit, &source, axis, angle)?
+    };
+    let edges = Face::new(edit, face).edges();
+    Ok(RevolvedEdge {
+        face,
+        start_edge: edges.first().map(|edge| edge.key()),
+        end_edge: edges.last().map(|edge| edge.key()),
+        seam: None,
+        revision: None,
+    })
 }
 
 /// The support a revolution really has, with the map onto that support's own
@@ -942,43 +1093,49 @@ pub fn add_revolved_profile<P: Payload>(
     profile: ProfileKey,
     axis: Axis3,
     angle: Rad64,
-) -> Result<SheetKey, RevolveError> {
-    let profile_dart = g.profile_unchecked(profile).dart;
-    add_revolved_profile_from_dart(g, profile_dart, axis, angle)
+) -> Result<RevolvedProfile, RevolveError> {
+    g.transaction_result(|edit| _add_revolved_profile(edit, profile, axis, angle))
 }
 
-/// Revolves a profile from an oriented traversal dart for internal callers.
-pub(crate) fn add_revolved_profile_from_dart<P: Payload>(
-    g: &mut Model<P>,
-    profile_dart: Dart,
+/// Revolves a profile inside an existing edit.
+pub(crate) fn _add_revolved_profile<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    profile: ProfileKey,
     axis: Axis3,
     angle: Rad64,
-) -> Result<SheetKey, RevolveError> {
-    g.transaction(|edit| add_revolved_profile_from_dart_staged(edit, profile_dart, axis, angle))
+) -> Result<RevolvedProfile, RevolveError> {
+    let profile_dart = edit.profile_unchecked(profile).dart;
+    let built = _add_revolved_profile_from_dart(edit, profile_dart, axis, angle)?;
+    let sheet = edit.add_sheet(SheetAttr::new(built.swept_dart));
+    Ok(RevolvedProfile {
+        sheet,
+        faces: built.faces,
+        seam: None,
+        revision: None,
+    })
 }
 
-fn add_revolved_profile_from_dart_staged<P: Payload>(
+fn _add_revolved_profile_from_dart<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     profile_dart: Dart,
     axis: Axis3,
     angle: Rad64,
-) -> Result<SheetKey, RevolveError> {
+) -> Result<RevolvedProfileBuild, RevolveError> {
     let profile = Profile::from_dart(edit, profile_dart)
         .expect("profile dart must belong to a registered profile");
     let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
     let close_ring = planar.inner().is_closed();
-    let dart = add_revolved_profile_faces(edit, profile_dart, axis, angle, close_ring)?.swept_dart;
-    Ok(edit.add_sheet(SheetAttr::new(dart)))
+    add_revolved_profile_faces(edit, profile_dart, axis, angle, close_ring)
 }
 
-struct RevolvedProfile {
+struct RevolvedProfileBuild {
     swept_dart: Dart,
     bottom_edges: Vec<Dart>,
     top_edges: Vec<Dart>,
     faces: Vec<FaceKey>,
 }
 
-struct RevolvedFace {
+struct RevolvedFaceBuild {
     /// Dart of the un-rotated source edge, sitting at the source `start` vertex.
     ///
     /// `None` for a band swept through a whole turn, which has no copy of the
@@ -1005,7 +1162,7 @@ fn add_revolved_profile_faces<P: Payload>(
     axis: Axis3,
     angle: Rad64,
     close_ring: bool,
-) -> Result<RevolvedProfile, RevolveError> {
+) -> Result<RevolvedProfileBuild, RevolveError> {
     let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
     let model: &Model<P> = edit;
     let profile = Profile::from_dart(model, profile_dart)
@@ -1023,7 +1180,7 @@ fn add_revolved_profile_faces<P: Payload>(
 
     sew_revolved_faces(edit, &faces, close_ring)?;
     let swept_dart = faces.first().map_or(profile_dart, |face| face.outer_loop);
-    Ok(RevolvedProfile {
+    Ok(RevolvedProfileBuild {
         swept_dart,
         bottom_edges: faces.iter().filter_map(|face| face.bottom_edge).collect(),
         top_edges: faces.iter().filter_map(|face| face.top_edge).collect(),
@@ -1036,7 +1193,7 @@ fn add_revolved_edge_face<P: Payload>(
     source: &RevolvedSourceEdge,
     axis: Axis3,
     angle: Rad64,
-) -> Result<RevolvedFace, RevolveError> {
+) -> Result<RevolvedFaceBuild, RevolveError> {
     validate_revolvable_radii(axis, source)?;
 
     let start = source.start.point;
@@ -1117,7 +1274,7 @@ fn add_revolved_quad_face<P: Payload>(
     boundary_curves: [Curve; 4],
     surface: Surface,
     pcurves: [TrimmedCurve2; 4],
-) -> Result<RevolvedFace, RevolveError> {
+) -> Result<RevolvedFaceBuild, RevolveError> {
     let darts: Vec<Dart> = (0..8).map(|_| edit.add_dart()).collect();
 
     for i in 0..4 {
@@ -1145,7 +1302,7 @@ fn add_revolved_quad_face<P: Payload>(
         quad_pcurves(&pcurves, &darts),
     ));
 
-    Ok(RevolvedFace {
+    Ok(RevolvedFaceBuild {
         bottom_edge: Some(darts[0]),
         // darts[4] is at `rotated_end`; darts[5] is its alpha0 partner at
         // `rotated_start`, which is the vertex the cap edge dart carries.
@@ -1202,7 +1359,7 @@ fn add_full_revolved_band_face<P: Payload>(
     surface: Surface,
     pcurves: [TrimmedCurve2; 2],
     kinds: [LoopKind; 2],
-) -> Result<RevolvedFace, RevolveError> {
+) -> Result<RevolvedFaceBuild, RevolveError> {
     let [start_first, start_second, end_first, end_second]: [Dart; 4] =
         std::array::from_fn(|_| edit.add_dart());
     for (first, second) in [(start_first, start_second), (end_first, end_second)] {
@@ -1230,7 +1387,7 @@ fn add_full_revolved_band_face<P: Payload>(
     ));
     cut_between_loops(edit, key, start_first, end_first)?;
 
-    Ok(RevolvedFace {
+    Ok(RevolvedFaceBuild {
         bottom_edge: None,
         top_edge: None,
         // A neighbouring band must traverse the shared circle the other way
@@ -1248,7 +1405,7 @@ fn add_full_revolved_band_face<P: Payload>(
 
 fn sew_revolved_faces<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
-    faces: &[RevolvedFace],
+    faces: &[RevolvedFaceBuild],
     close_ring: bool,
 ) -> Result<(), RevolveError> {
     for i in 0..faces.len().saturating_sub(1) {
@@ -1409,17 +1566,17 @@ pub fn add_revolved_face<P: Payload>(
     face_key: FaceKey,
     axis: Axis3,
     angle: Rad64,
-) -> Result<SolidKey, RevolveError> {
-    g.transaction(|edit| add_revolved_face_staged(edit, face_key, axis, angle))
+) -> Result<RevolvedFace, RevolveError> {
+    g.transaction_result(|edit| _add_revolved_face(edit, face_key, axis, angle))
 }
 
 /// Builds caps and lateral sheets, then registers the resulting staged solid.
-fn add_revolved_face_staged<P: Payload>(
+pub(crate) fn _add_revolved_face<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     axis: Axis3,
     angle: Rad64,
-) -> Result<SolidKey, RevolveError> {
+) -> Result<RevolvedFace, RevolveError> {
     let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
     let face = edit
         .face_attr(face_key)
@@ -1435,7 +1592,15 @@ fn add_revolved_face_staged<P: Payload>(
     let cap_faces_sweep = face.normal_at(0.0, 0.0).dot(&sweep);
 
     if is_full_turn(angle) {
-        return add_full_revolved_face(edit, face_key, loops, axis, angle, cap_faces_sweep);
+        let solid = add_full_revolved_face(edit, face_key, loops, axis, angle, cap_faces_sweep)?;
+        return Ok(RevolvedFace {
+            solid,
+            start_cap: None,
+            end_cap: None,
+            laterals: Vec::new(),
+            seam: None,
+            revision: None,
+        });
     }
 
     let rotated_face = rotate_face(&face, axis, angle)?;
@@ -1466,7 +1631,14 @@ fn add_revolved_face_staged<P: Payload>(
     if edit.sheet_key(shell).is_none() {
         edit.add_sheet(SheetAttr::new(shell));
     }
-    Ok(edit.add_solid(SolidAttr::new(shell, None)))
+    Ok(RevolvedFace {
+        solid: edit.add_solid(SolidAttr::new(shell, None)),
+        start_cap: Some(face_key),
+        end_cap: Some(top_face_key),
+        laterals: lateral_faces,
+        seam: None,
+        revision: None,
+    })
 }
 
 /// Returns the direction the revolution sweeps a point of `face`, `axis x r`.
@@ -1493,13 +1665,13 @@ fn orient_revolved_shell<P: Payload>(
     bottom_normal_dot_sweep: f64,
 ) {
     if bottom_normal_dot_sweep > LINEAR_TOLERANCE {
-        reverse_face_winding(edit, bottom_face);
+        _reverse_face_winding(edit, bottom_face);
         return;
     }
 
-    reverse_face_winding(edit, top_face);
+    _reverse_face_winding(edit, top_face);
     for &face in lateral_faces {
-        reverse_face_winding(edit, face);
+        _reverse_face_winding(edit, face);
     }
 }
 
@@ -1527,7 +1699,7 @@ fn add_full_revolved_face<P: Payload>(
 
     if source_normal_dot_sweep <= LINEAR_TOLERANCE {
         for &face in &lateral_faces {
-            reverse_face_winding(edit, face);
+            _reverse_face_winding(edit, face);
         }
     }
 
@@ -1593,7 +1765,7 @@ fn sew_revolved_loop_to_caps<P: Payload>(
     top_loop: Dart,
     axis: Axis3,
     angle: Rad64,
-) -> Result<RevolvedProfile, RevolveError> {
+) -> Result<RevolvedProfileBuild, RevolveError> {
     let bottom_edges = Profile::from_dart(edit, bottom_loop)
         .expect("bottom loop must have a registered profile")
         .edges()

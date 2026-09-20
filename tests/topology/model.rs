@@ -49,8 +49,9 @@ fn profile_and_sheet_payloads_are_exposed_and_preserved_by_merge() {
             Ok::<_, ModelEditError>(())
         })
         .unwrap();
-    let sheet_key =
-        add_extruded_profile(&mut source, profile_key, Vector3::z()).expect("sheet should build");
+    let sheet_key = add_extruded_profile(&mut source, profile_key, Vector3::z())
+        .expect("sheet should build")
+        .sheet;
     source
         .transaction(|edit| {
             *edit.sheet_attr_mut_unchecked(sheet_key).data_mut() = "sheet".to_owned();

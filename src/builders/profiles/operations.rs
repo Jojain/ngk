@@ -1,3 +1,5 @@
+//! Profile operations and edit-scoped implementations.
+
 use crate::geometry::TrimmedCurve2;
 use crate::geometry::parameter::NativeParam;
 use std::collections::HashMap;
@@ -8,7 +10,7 @@ use crate::geometry::{
     Circle2, ControlPolygon2, Curve, Curve2, Ellipse2, HPoint2, LINEAR_TOLERANCE, Line2,
     NurbsCurve2, NurbsError, Plane, Point2, Point3, PointCoincidence, TrimmedCurve, Vector2,
 };
-use crate::model::{Cell0, Model};
+use crate::model::{Cell0, Model, OpResult, StaleResult};
 use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closeable;
@@ -19,6 +21,27 @@ use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, ProfileKey, VertexKey};
 
 pub use crate::builders::errors::PolylineError;
+
+/// The profile extended by [`append_edge`].
+#[derive(Debug)]
+pub struct AppendEdge {
+    pub profile: ProfileKey,
+    revision: Option<u64>,
+}
+
+impl OpResult for AppendEdge {
+    fn stamp(&mut self, revision: u64) {
+        self.revision = Some(revision);
+    }
+}
+
+impl AppendEdge {
+    /// Resolves the extended profile at the revision that produced this result.
+    pub fn view<'m, P: Payload>(&self, model: &'m Model<P>) -> Result<Profile<'m, P>, StaleResult> {
+        StaleResult::check(self.revision, model)?;
+        Ok(model.profile_unchecked(self.profile))
+    }
+}
 
 /// Adds a profile made of straight segments through `points` in order.
 ///
@@ -31,7 +54,7 @@ pub fn add_polyline<P: Payload>(
     g: &mut Model<P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
-    g.transaction(|edit| add_polyline_staged(edit, points))
+    g.transaction(|edit| _add_polyline(edit, points))
 }
 
 /// Adds one profile from existing edges, regardless of their supplied order.
@@ -44,11 +67,11 @@ pub fn add_profile_from_edges<P: Payload>(
     g: &mut Model<P>,
     edges: &[EdgeKey],
 ) -> Result<ProfileKey, PolylineError> {
-    g.transaction(|edit| add_profile_from_edges_staged(edit, edges))
+    g.transaction(|edit| _add_profile_from_edges(edit, edges))
 }
 
 /// Orders and joins existing edges inside the caller's transaction.
-pub fn add_profile_from_edges_staged<P: Payload>(
+pub(crate) fn _add_profile_from_edges<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edges: &[EdgeKey],
 ) -> Result<ProfileKey, PolylineError> {
@@ -110,13 +133,13 @@ pub fn add_profile_from_edges_staged<P: Payload>(
 
     let profile = edit.add_profile(ProfileAttr::new(ordered[0].dart_at(start)));
     for edge in ordered.iter().skip(1) {
-        append_edge_staged(edit, profile, edge.key)?;
+        _append_edge(edit, profile, edge.key)?;
     }
     Ok(profile)
 }
 
 /// Builds all polyline edges and joins them into one staged profile.
-pub fn add_polyline_staged<P: Payload>(
+pub fn _add_polyline<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
@@ -131,7 +154,8 @@ pub fn add_polyline_staged<P: Payload>(
     add_segments(edit, &segments)
 }
 
-/// Appends an existing edge to the open end of a profile.
+/// Appends an existing edge to the open end of a profile and reports the
+/// profile it extended.
 ///
 /// The edge orientation is chosen from endpoint geometry: either stored edge
 /// direction may be appended as long as one endpoint coincides with the profile
@@ -141,16 +165,16 @@ pub fn append_edge<P: Payload>(
     g: &mut Model<P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
-) -> Result<(), PolylineError> {
-    g.transaction(|edit| append_edge_staged(edit, profile_key, edge_key))
+) -> Result<AppendEdge, PolylineError> {
+    g.transaction_result(|edit| _append_edge(edit, profile_key, edge_key))
 }
 
 /// Connects an edge to a profile and records any resulting vertex merge lineage.
-pub(crate) fn append_edge_staged<P: Payload>(
+pub(crate) fn _append_edge<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
-) -> Result<(), PolylineError> {
+) -> Result<AppendEdge, PolylineError> {
     let profile = edit
         .profile(profile_key)
         .ok_or(PolylineError::MissingProfile {
@@ -210,7 +234,10 @@ pub(crate) fn append_edge_staged<P: Payload>(
             .map_err(polyline_edit_error)?;
         edit.merge_vertices_into(close_merge.survivor, close_merge.removed);
     }
-    Ok(())
+    Ok(AppendEdge {
+        profile: profile_key,
+        revision: None,
+    })
 }
 
 fn append_orientation(
@@ -356,11 +383,11 @@ pub fn add_rectangle<P: Payload>(
     x_size: f64,
     y_size: f64,
 ) -> Result<ProfileKey, PolylineError> {
-    g.transaction(|edit| add_rectangle_staged(edit, plane, x_size, y_size))
+    g.transaction(|edit| _add_rectangle(edit, plane, x_size, y_size))
 }
 
 /// Builds the four rectangle edges and profile inside one transaction.
-pub(crate) fn add_rectangle_staged<P: Payload>(
+pub(crate) fn _add_rectangle<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     x_size: f64,
@@ -376,7 +403,7 @@ pub(crate) fn add_rectangle_staged<P: Payload>(
         plane.point_at(0.0, y_size),
         plane.point_at(0.0, 0.0),
     ];
-    add_polyline_staged(edit, &corners)
+    _add_polyline(edit, &corners)
 }
 
 /// Adds a closed square profile on `plane`.
@@ -388,7 +415,7 @@ pub fn add_square<P: Payload>(
     plane: Plane,
     size: f64,
 ) -> Result<ProfileKey, PolylineError> {
-    g.transaction(|edit| add_rectangle_staged(edit, plane, size, size))
+    g.transaction(|edit| _add_rectangle(edit, plane, size, size))
 }
 
 fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), PolylineError> {
@@ -400,7 +427,11 @@ fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), Polylin
 }
 
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
-pub fn add_profile_darts<P: Payload>(g: &mut Model<P>, count: usize, closed: bool) -> ProfileKey {
+pub(crate) fn _add_profile_darts<P: Payload>(
+    g: &mut Model<P>,
+    count: usize,
+    closed: bool,
+) -> ProfileKey {
     g.transaction(|edit| {
         let darts: Vec<Dart> = (0..count).map(|_| edit.add_dart()).collect();
         for i in 0..count {

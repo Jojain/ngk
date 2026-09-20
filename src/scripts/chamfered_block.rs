@@ -115,6 +115,7 @@ fn add_block(
     let face =
         add_face(g, profile).map_err(|err| format!("failed to fill {label} base face: {err:?}"))?;
     add_extruded_face(g, face, Vector3::new(0.0, 0.0, Z_SIZE))
+        .map(|extrusion| extrusion.solid)
         .map_err(|err| format!("failed to extrude {label}: {err:?}"))
 }
 

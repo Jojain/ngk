@@ -66,6 +66,7 @@ pub fn build(distance: f64) -> Result<ScriptResult, String> {
         add_face(&mut g, profile).map_err(|err| format!("failed to fill wavy profile: {err:?}"))?;
     let solid = add_extruded_face(&mut g, face, Vector3::new(0.0, 0.0, DEPTH))
         .map_err(|err| format!("failed to extrude wavy profile: {err:?}"))?;
+    let solid = solid.solid;
     let top_wavy_edge = g
         .solid_unchecked(solid)
         .edges()

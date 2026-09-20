@@ -1,3 +1,5 @@
+//! Edge operations and their edit-scoped implementations.
+
 use std::collections::{HashMap, HashSet};
 
 use crate::builders::errors::{EdgeCreationError, ModelEditFailure};
@@ -182,11 +184,11 @@ pub fn add_edge<P: Payload>(
     end: Point3,
     curve: Curve,
 ) -> Result<EdgeKey, EdgeCreationError> {
-    g.transaction(|edit| add_edge_staged(edit, start, end, curve))
+    g.transaction(|edit| _add_edge(edit, start, end, curve))
 }
 
 /// Builds an open edge without introducing an independent transaction boundary.
-pub(crate) fn add_edge_staged<P: Payload>(
+pub(crate) fn _add_edge<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     start: Point3,
     end: Point3,
@@ -209,7 +211,7 @@ pub fn add_line<P: Payload>(
     start: Point3,
     end: Point3,
 ) -> Result<EdgeKey, EdgeCreationError> {
-    g.transaction(|edit| add_edge_staged(edit, start, end, Curve::line(start, end)))
+    g.transaction(|edit| _add_edge(edit, start, end, Curve::line(start, end)))
 }
 
 /// Splits a profile-only edge at a parameter of its stored curve.
@@ -226,11 +228,11 @@ pub fn split_edge<P: Payload>(
     edge: EdgeKey,
     parameter: Fraction,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    g.transaction(|edit| split_edge_staged(edit, edge, parameter))
+    g.transaction(|edit| _split_edge(edit, edge, parameter))
 }
 
 /// Splits a profile-only edge inside an existing builder transaction.
-pub(crate) fn split_edge_staged<P: Payload>(
+pub(crate) fn _split_edge<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     parameter: Fraction,
@@ -542,11 +544,11 @@ pub fn add_arc<P: Payload>(
     start_angle: Rad64,
     end_angle: Rad64,
 ) -> Result<EdgeKey, EdgeCreationError> {
-    g.transaction(|edit| add_arc_staged(edit, plane, radius, start_angle, end_angle))
+    g.transaction(|edit| _add_arc(edit, plane, radius, start_angle, end_angle))
 }
 
 /// Validates and builds an arc inside the caller's active transaction.
-pub(crate) fn add_arc_staged<P: Payload>(
+pub(crate) fn _add_arc<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     radius: f64,
@@ -563,7 +565,7 @@ pub(crate) fn add_arc_staged<P: Payload>(
     } else {
         circle
     };
-    add_edge_staged(edit, start, end, curve)
+    _add_edge(edit, start, end, curve)
 }
 
 /// Adds a closed, single-edge circle on `plane`.
@@ -576,11 +578,11 @@ pub fn add_circle<P: Payload>(
     plane: Plane,
     radius: f64,
 ) -> Result<EdgeKey, EdgeCreationError> {
-    g.transaction(|edit| add_circle_staged(edit, plane, radius))
+    g.transaction(|edit| _add_circle(edit, plane, radius))
 }
 
 /// Builds a closed circular edge inside the caller's active transaction.
-pub(crate) fn add_circle_staged<P: Payload>(
+pub(crate) fn _add_circle<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plane: Plane,
     radius: f64,

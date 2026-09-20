@@ -45,7 +45,7 @@ fn failed_chamfer_builder_preserves_the_source_profile() {
 }
 
 #[test]
-fn profile_chamfer_mutates_in_place_without_returning_a_topology_handle() {
+fn profile_chamfer_reports_created_topology() {
     let mut g = Model::<StandardPayload>::new();
     let profile = add_polyline(
         &mut g,
@@ -61,7 +61,7 @@ fn profile_chamfer_mutates_in_place_without_returning_a_topology_handle() {
         .end()
         .key();
 
-    let result: Result<(), ChamferError> = chamfer(&mut g, corner, 0.25);
+    let result = chamfer(&mut g, corner, 0.25);
 
     result.expect("profile corner should chamfer");
     assert_eq!(g.iter_edges().count(), 3);
@@ -86,7 +86,7 @@ fn solid_edge_chamfer_replaces_a_block_edge_with_a_planar_face() {
         .expect("block should have a vertical edge")
         .key();
 
-    let result: Result<(), ChamferError> = chamfer(shape.model_mut(), edge, 0.25);
+    let result = chamfer(shape.model_mut(), edge, 0.25);
 
     result.expect("straight block edge should chamfer");
     assert_eq!(shape.solid().faces().len(), 7);
@@ -112,7 +112,7 @@ fn solid_vertex_chamfer_replaces_a_block_corner_with_a_planar_face() {
         .expect("block should have an origin vertex")
         .key();
 
-    let result: Result<(), ChamferError> = chamfer(shape.model_mut(), vertex, 0.25);
+    let result = chamfer(shape.model_mut(), vertex, 0.25);
 
     result.expect("trihedral block vertex should chamfer");
     assert_eq!(shape.solid().faces().len(), 7);
@@ -236,7 +236,8 @@ fn solid_edge_chamfer_supports_an_extruded_nurbs_profile_edge() {
     append_edge(&mut g, profile, closing_edge).expect("profile should close");
     let face = add_face(&mut g, profile).expect("wavy planar face should build");
     let solid = add_extruded_face(&mut g, face, Vector3::new(0.0, 0.0, 2.0))
-        .expect("wavy face should extrude");
+        .expect("wavy face should extrude")
+        .solid;
     let top_wavy_edge = g
         .solid_unchecked(solid)
         .edges()

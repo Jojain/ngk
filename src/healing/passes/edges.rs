@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::builders::profiles::curve_pcurve;
 use crate::builders::removal::{
-    CellRemovalError, MergeKind, MergedCell, is_removable, planned_merge, remove_cell_staged,
+    _remove_cell, CellRemovalError, MergeKind, MergedCell, is_removable, planned_merge,
 };
 use crate::geometry::{Plane, Surface};
 use crate::model::{Cell2, Model};
@@ -101,7 +101,7 @@ pub(in crate::healing::passes) fn plan<P: Payload>(
         // rather than two, and nothing to rejoin.
         [_] if bounds_a_free_side(g, dart) => return Err(SkipReason::NotBetweenTwoCells),
         [face] => (face, None),
-        // Matches the survivor rule of `remove_cell_staged`.
+        // Matches the survivor rule of `_remove_cell`.
         [first, second]
             if options.remove_filled_inner_loops && fills_inner_loop(g, dart, first, second) =>
         {
@@ -124,7 +124,7 @@ pub(in crate::healing::passes) fn plan<P: Payload>(
     let surfaces = match consumed {
         // A seam is the parameterization's own cut, not a slit, so removing it
         // does not close the boundary over — it lets the loop fall into the two
-        // wrapping loops the face really has. `remove_cell_staged` recognises
+        // wrapping loops the face really has. `_remove_cell` recognises
         // that shape and refuses any other two-way split, so the decision is
         // left to it rather than guarded by periodicity here.
         None => SurfaceMatch::Identical,
@@ -300,7 +300,7 @@ pub(in crate::healing::passes) fn apply<P: Payload>(
         _ => Vec::new(),
     };
 
-    let removal = remove_cell_staged(edit, fusion.dart, Dim::One)?;
+    let removal = _remove_cell(edit, fusion.dart, Dim::One)?;
     let (survivor, consumed, orientation) = match removal.merged {
         MergedCell::Faces {
             survivor,

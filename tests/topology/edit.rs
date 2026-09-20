@@ -92,7 +92,8 @@ fn solid_registration_requires_registered_shell_sheets() {
 fn commit_rejects_and_rolls_back_a_face_spanning_two_raw_cells() {
     let mut g = Model::<TestPayload>::new();
     let solid = ngk::builders::solids::add_sphere(&mut g, Frame::xyz(), 1.0)
-        .expect("a sphere should build");
+        .expect("a sphere should build")
+        .solid;
     let face = g.solid_unchecked(solid).faces()[0].key();
     let before_darts = g.dart_count();
 

@@ -18,7 +18,8 @@ fn extruded_annulus_orientation_accepts_inward_facing_shaft_walls() {
         ngk::builders::faces::add_annulus(&mut g, ngk::geometry::Plane::xy(), 2.0, 1.0).unwrap();
     let solid =
         ngk::builders::solids::add_extruded_face(&mut g, face, nalgebra::Vector3::z() * 3.0)
-            .unwrap();
+            .unwrap()
+            .solid;
     validate_solid_orientation(&g, solid)
         .expect("shaft walls point into the hole, not away from the shell center");
 }
@@ -50,7 +51,8 @@ fn revolved_triangle_validates_as_closed_manifold_shell() {
         Axis3::new(Point3::origin(), nalgebra::Vector3::z()),
         Rad64::QUARTER_TURN,
     )
-    .expect("revolved face should build");
+    .expect("revolved face should build")
+    .solid;
 
     validate_solid_manifold(&g, solid).expect("revolved triangle shell should be closed");
 }

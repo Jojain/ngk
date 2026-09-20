@@ -1,29 +1,72 @@
+//! Chamfer operations and edit-scoped implementations.
+
 use crate::geometry::TrimmedCurve2;
 use crate::geometry::parameter::{Fraction, NativeParam};
 use std::collections::{HashMap, HashSet};
 
-use crate::builders::edges::add_edge_staged;
+use crate::builders::edges::_add_edge;
 use crate::builders::errors::ChamferError;
-use crate::builders::faces::{
-    FaceImprint, add_face_staged, add_polygon_staged, split_face_by_imprints_staged,
-};
+use crate::builders::faces::{_add_face, _add_polygon, _split_face_by_imprints, FaceImprint};
 use crate::builders::profiles::curve_pcurve;
 use crate::geometry::{
     Curve, LINEAR_TOLERANCE, Point2, Point3, Rigid, RuledSurface, Surface, TrimmedCurve,
 };
-use crate::model::{Cell0, Cell1, Model};
+use crate::model::{Cell0, Cell1, Model, OpResult, StaleResult};
 use crate::topology::attributes::{FaceAttr, VertexAttr};
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, VertexKey};
 use crate::topology::{IsolatedDart, ModelEdit};
+use crate::topology::{edge::Edge as EdgeView, face::Face as FaceView};
 
 /// Orientation of a dart relative to the directed edge that owns it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CornerRole {
     IncomingEnd,
     OutgoingStart,
+}
+
+/// Faces created by a chamfer and the solid edges it replaced.
+#[derive(Debug)]
+pub struct Chamfer {
+    pub faces: Vec<FaceKey>,
+    pub replaced_edges: Vec<EdgeKey>,
+    revision: Option<u64>,
+}
+
+/// Borrowed views for a committed [`Chamfer`] result.
+pub struct ChamferView<'m, P: Payload> {
+    pub faces: Vec<FaceView<'m, P>>,
+    pub replaced_edges: Vec<EdgeView<'m, P>>,
+}
+
+impl OpResult for Chamfer {
+    fn stamp(&mut self, revision: u64) {
+        self.revision = Some(revision);
+    }
+}
+
+impl Chamfer {
+    /// Resolves the result against the model revision at which it committed.
+    pub fn view<'m, P: Payload>(
+        &self,
+        model: &'m Model<P>,
+    ) -> Result<ChamferView<'m, P>, StaleResult> {
+        StaleResult::check(self.revision, model)?;
+        Ok(ChamferView {
+            faces: self
+                .faces
+                .iter()
+                .map(|&key| model.face_unchecked(key))
+                .collect(),
+            replaced_edges: self
+                .replaced_edges
+                .iter()
+                .map(|&key| model.edge_unchecked(key))
+                .collect(),
+        })
+    }
 }
 
 /// Chamfers a topology selection in place.
@@ -51,26 +94,46 @@ pub fn chamfer<P: Payload, T: Into<ChamferTarget>>(
     g: &mut Model<P>,
     target: T,
     distance: f64,
-) -> Result<(), ChamferError> {
-    g.transaction(|edit| {
-        validate_distance(distance)?;
+) -> Result<Chamfer, ChamferError> {
+    g.transaction_result(|edit| _chamfer(edit, target, distance))
+}
 
-        match target.into() {
-            ChamferTarget::Edges(edges) => {
-                for edge in edges {
-                    chamfer_solid_edge(edit, edge, distance)?;
-                }
-                Ok(())
+/// Applies a chamfer inside an existing edit and reports its new faces.
+pub(crate) fn _chamfer<P: Payload, T: Into<ChamferTarget>>(
+    edit: &mut ModelEdit<'_, P>,
+    target: T,
+    distance: f64,
+) -> Result<Chamfer, ChamferError> {
+    validate_distance(distance)?;
+    let mut result = Chamfer {
+        faces: Vec::new(),
+        replaced_edges: Vec::new(),
+        revision: None,
+    };
+
+    match target.into() {
+        ChamferTarget::Edges(edges) => {
+            for edge in edges {
+                result.faces.push(chamfer_solid_edge(edit, edge, distance)?);
+                result.replaced_edges.push(edge);
             }
-            ChamferTarget::Profile(profile) => chamfer_profile(edit, profile, distance),
-            ChamferTarget::Vertices(vertices) => {
-                for vertex in vertices {
-                    chamfer_vertex(edit, vertex, distance)?;
-                }
-                Ok(())
-            }
+            Ok(result)
         }
-    })
+        ChamferTarget::Profile(profile) => {
+            result
+                .faces
+                .extend(chamfer_profile(edit, profile, distance)?);
+            Ok(result)
+        }
+        ChamferTarget::Vertices(vertices) => {
+            for vertex in vertices {
+                if let Some(face) = chamfer_vertex(edit, vertex, distance)? {
+                    result.faces.push(face);
+                }
+            }
+            Ok(result)
+        }
+    }
 }
 
 /// Replaces one standalone-profile 0-cell with two offset vertices and a new
@@ -115,7 +178,7 @@ fn chamfer_profile_corner<P: Payload>(
 
     // The new edge closes the gap by alpha1-sewing its two endpoints to the
     // now-distinct incoming and outgoing profile vertices.
-    let chamfer_edge = add_edge_staged(
+    let chamfer_edge = _add_edge(
         edit,
         incoming_offset,
         outgoing_offset,
@@ -198,7 +261,7 @@ fn chamfer_solid_edge<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     distance: f64,
-) -> Result<(), ChamferError> {
+) -> Result<FaceKey, ChamferError> {
     let mut prepared = prepare_solid_edge_chamfer(edit, edge, distance)?;
     orient_solid_edge_chamfer(edit, &mut prepared);
     let mut patch_faces = HashSet::new();
@@ -366,7 +429,7 @@ fn split_chamfer_face<P: Payload>(
     imprint: FaceImprint,
     is_patch: impl Fn(&Model<P>, FaceKey) -> bool,
 ) -> Result<(FaceKey, EdgeKey), ChamferError> {
-    let splits = split_face_by_imprints_staged(edit, face, &[imprint])
+    let splits = _split_face_by_imprints(edit, face, &[imprint])
         .map_err(|_| ChamferError::ChamferFaceSplitFailed { face })?;
     let split = splits
         .into_iter()
@@ -492,7 +555,7 @@ fn chamfer_profile<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     profile: ProfileKey,
     distance: f64,
-) -> Result<(), ChamferError> {
+) -> Result<Vec<FaceKey>, ChamferError> {
     let profile_view = edit
         .profile(profile)
         .ok_or(ChamferError::UnsupportedChamferTarget)?;
@@ -518,7 +581,7 @@ fn chamfer_profile<P: Payload>(
     for vertex in corner_vertices {
         chamfer_profile_corner(edit, vertex, distance)?;
     }
-    Ok(())
+    Ok(Vec::new())
 }
 
 /// Interprets a domain vertex by incidence: a vertex without faces is a 2D
@@ -527,16 +590,16 @@ fn chamfer_vertex<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     vertex: VertexKey,
     distance: f64,
-) -> Result<(), ChamferError> {
+) -> Result<Option<FaceKey>, ChamferError> {
     let is_standalone_profile_vertex = edit
         .vertex(vertex)
         .ok_or(ChamferError::MissingChamferVertex { vertex })?
         .faces()
         .is_empty();
     if is_standalone_profile_vertex {
-        chamfer_profile_corner(edit, vertex, distance)
+        chamfer_profile_corner(edit, vertex, distance).map(|_| None)
     } else {
-        chamfer_solid_vertex(edit, vertex, distance)
+        chamfer_solid_vertex(edit, vertex, distance).map(Some)
     }
 }
 
@@ -560,7 +623,7 @@ fn chamfer_solid_profile<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     profile: ProfileKey,
     distance: f64,
-) -> Result<(), ChamferError> {
+) -> Result<Vec<FaceKey>, ChamferError> {
     let prepared = prepare_solid_profile_chamfer(edit, profile, distance)?;
     let mut patch_faces = HashSet::from([prepared.target_face]);
     let mut section_edges = Vec::with_capacity(prepared.edges.len());
@@ -798,9 +861,11 @@ fn add_profile_chamfer_faces<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     prepared: &SolidProfileChamfer,
     boundary_darts: &[Dart],
-) -> Result<(), ChamferError> {
-    let top_profile = add_polygon_staged(edit, &prepared.inset_corners);
-    add_face_staged(edit, top_profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
+) -> Result<Vec<FaceKey>, ChamferError> {
+    let top_profile = _add_polygon(edit, &prepared.inset_corners);
+    let top_face =
+        _add_face(edit, top_profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
+    let mut faces = vec![top_face];
     let top_darts = edit
         .profile_unchecked(top_profile)
         .darts()
@@ -823,8 +888,9 @@ fn add_profile_chamfer_faces<P: Payload>(
         if candidate_normal.dot(&outward) < 0.0 {
             corners.reverse();
         }
-        let profile = add_polygon_staged(edit, &corners);
-        add_face_staged(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
+        let profile = _add_polygon(edit, &corners);
+        let face = _add_face(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
+        faces.push(face);
         chamfer_darts.push(
             edit.profile_unchecked(profile)
                 .darts()
@@ -847,7 +913,7 @@ fn add_profile_chamfer_faces<P: Payload>(
         )?;
         sew_matching_boundary(edit, diagonal, &chamfer_darts[next])?;
     }
-    Ok(())
+    Ok(faces)
 }
 
 /// Finds the geometrically coincident candidate edge, orients its dart to the
@@ -903,7 +969,7 @@ fn chamfer_solid_vertex<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     vertex: VertexKey,
     distance: f64,
-) -> Result<(), ChamferError> {
+) -> Result<FaceKey, ChamferError> {
     let vertex_view = edit
         .vertex(vertex)
         .ok_or(ChamferError::MissingChamferVertex { vertex })?;
@@ -1003,14 +1069,12 @@ fn replace_face_patch<P: Payload>(
     section_edges: &[EdgeKey],
     corners: &[Point3],
     curved_geometry: Option<CurvedChamferFace>,
-) -> Result<(), ChamferError> {
+) -> Result<FaceKey, ChamferError> {
     let boundary_darts = remove_face_patch(edit, patch_faces, section_edges)?;
-    let profile = add_polygon_staged(edit, corners);
-    match curved_geometry {
+    let profile = _add_polygon(edit, corners);
+    let face = match curved_geometry {
         Some(geometry) => add_curved_chamfer_face(edit, profile, corners, geometry)?,
-        None => {
-            add_face_staged(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?
-        }
+        None => _add_face(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?,
     };
     let candidates = edit
         .profile_unchecked(profile)
@@ -1020,7 +1084,7 @@ fn replace_face_patch<P: Payload>(
     for boundary in boundary_darts {
         sew_matching_boundary(edit, boundary, &candidates)?;
     }
-    Ok(())
+    Ok(face)
 }
 
 /// Detaches and deletes a connected set of faces while preserving the section

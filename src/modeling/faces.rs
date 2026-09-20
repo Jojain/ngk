@@ -1,7 +1,7 @@
 use crate::builders::errors::FaceCreationError;
 use crate::builders::faces::{
-    add_annulus, add_circle, add_face_staged, add_polygon_staged, add_polygon_with_holes,
-    add_rectangle, add_square,
+    _add_face, _add_polygon, add_annulus, add_circle, add_polygon_with_holes, add_rectangle,
+    add_square,
 };
 use crate::geometry::{Plane, Point3};
 use crate::model::Model;
@@ -56,8 +56,8 @@ pub fn polygon(points: &[Point3]) -> Result<Shape<FaceTag, StandardPayload>, Fac
 
     let mut g = Model::new();
     let face_key = g.transaction(|edit| {
-        let profile_key = add_polygon_staged(edit, points);
-        add_face_staged(edit, profile_key)
+        let profile_key = _add_polygon(edit, points);
+        _add_face(edit, profile_key)
     })?;
     Ok(Shape::new(g, face_key))
 }
@@ -75,7 +75,7 @@ pub fn from_profile<P: Payload>(
         let profile_key = Profile::from_dart(edit.model(), dart)
             .expect("a merged profile is registered under its own key")
             .key();
-        add_face_staged(edit, profile_key)
+        _add_face(edit, profile_key)
     })?;
     Ok(Shape::new(g, face_key))
 }

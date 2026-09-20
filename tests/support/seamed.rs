@@ -72,7 +72,8 @@ pub fn seamed_revolved_sphere(radius: f64) -> (Model<StandardPayload>, FaceKey, 
         ngk::geometry::axis::Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::FULL_TURN,
     )
-    .expect("a full revolution of the meridian should build");
+    .expect("a full revolution of the meridian should build")
+    .face;
     let solid = g
         .transaction(|edit| {
             let seed = edit
