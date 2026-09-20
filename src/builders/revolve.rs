@@ -25,7 +25,7 @@ use crate::topology::edge::Edge;
 use crate::topology::edit::{ModelEdit, ModelEditError};
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim};
-use crate::topology::payload::Payload;
+use crate::topology::payload::{DefaultPayload, Payload};
 use crate::topology::planar::{Planar, PlanarityError};
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceTag, Shape};
@@ -175,7 +175,7 @@ impl RevolvedSourceEdge {
 /// A whole turn of a *closed* source edge is a torus: closed in the sweep and
 /// closed in the profile, so the source loop is consumed and the face that comes
 /// back has no boundary at all.
-pub fn add_revolved_edge<P: Payload>(
+pub fn add_revolved_edge<P: DefaultPayload>(
     g: &mut Model<P>,
     edge: EdgeKey,
     axis: Axis3,
@@ -446,27 +446,17 @@ fn add_partial_revolved_edge_face<P: Payload>(
     edit.link(Dim::One, rotated_end_dart, start_arc_start)?;
     edit.link(Dim::One, start_arc_end, bottom_start)?;
 
-    edit.add_vertex(VertexAttr::new(end_arc_end, rotated_end, P::V::default()));
-    edit.add_vertex(VertexAttr::new(
-        rotated_end_dart,
-        rotated_start,
-        P::V::default(),
-    ));
+    edit.add_vertex(VertexAttr::new(end_arc_end, rotated_end));
+    edit.add_vertex(VertexAttr::new(rotated_end_dart, rotated_start));
 
     edit.add_edge(EdgeAttr::new(
         end_arc_start,
         revolve_circle_curve(axis, end, angle),
-        P::E::default(),
     ));
-    edit.add_edge(EdgeAttr::new(
-        rotated_end_dart,
-        rotated_curve,
-        P::E::default(),
-    ));
+    edit.add_edge(EdgeAttr::new(rotated_end_dart, rotated_curve));
     edit.add_edge(EdgeAttr::new(
         start_arc_end,
         revolve_circle_curve(axis, start, angle),
-        P::E::default(),
     ));
 
     let mut pcurves = HashMap::with_capacity(4);
@@ -499,10 +489,9 @@ fn add_partial_revolved_edge_face<P: Payload>(
         ),
     );
 
-    edit.add_profile(ProfileAttr::new(bottom_start, P::Profile::default()));
+    edit.add_profile(ProfileAttr::new(bottom_start));
     Ok(edit.add_face(FaceAttr::with_pcurves(
         surface,
-        P::F::default(),
         bottom_start,
         Vec::new(),
         pcurves,
@@ -565,12 +554,7 @@ fn add_full_revolved_closed_edge_face<P: Payload>(
     validate_consumable_closed_source_edge(edit, source)?;
     consume_closed_source_edge(edit, source)?;
     let cell = add_closed_face_cell(edit, &surface)?;
-    let face = edit.add_face(FaceAttr::closed(
-        surface,
-        P::F::default(),
-        cell.anchor(),
-        HashMap::new(),
-    ));
+    let face = edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
     cell.own(edit, face);
     Ok(face)
 }
@@ -607,13 +591,9 @@ fn add_full_revolved_apex_to_apex_face<P: Payload>(
     edit.link(Dim::One, seam_end, opposite_end)?;
     edit.link(Dim::One, opposite_start, seam_start)?;
 
-    edit.add_edge(EdgeAttr::new(
-        opposite_start,
-        source.curve.clone(),
-        P::E::default(),
-    ));
+    edit.add_edge(EdgeAttr::new(opposite_start, source.curve.clone()));
     if Profile::from_dart(edit, seam_start).is_none() {
-        edit.add_profile(ProfileAttr::new(seam_start, P::Profile::default()));
+        edit.add_profile(ProfileAttr::new(seam_start));
     }
 
     let mut pcurves = HashMap::with_capacity(2);
@@ -633,7 +613,6 @@ fn add_full_revolved_apex_to_apex_face<P: Payload>(
     );
     let face = edit.add_face(FaceAttr::with_pcurves(
         surface,
-        P::F::default(),
         seam_start,
         Vec::new(),
         pcurves,
@@ -784,12 +763,7 @@ fn add_full_revolved_open_edge_face<P: Payload>(
         }
     };
 
-    let key = edit.add_face(FaceAttr::with_loops(
-        surface,
-        P::F::default(),
-        loops,
-        pcurves,
-    ));
+    let key = edit.add_face(FaceAttr::with_loops(surface, loops, pcurves));
     // Two circles bound this band, and until something joins them they sit in
     // two 2-cells that nothing connects. The cut is where the source edge's two
     // swept copies would have met, so the band stays seamless as a shape while
@@ -920,9 +894,9 @@ fn consume_source_edge_as_closed_loop<P: Payload>(
     }
 
     edit.link(Dim::One, start, end)?;
-    edit.add_vertex(VertexAttr::new(start, point, P::V::default()));
-    edit.add_edge(EdgeAttr::new(start, curve, P::E::default()));
-    edit.add_profile(ProfileAttr::new(start, P::Profile::default()));
+    edit.add_vertex(VertexAttr::new(start, point));
+    edit.add_edge(EdgeAttr::new(start, curve));
+    edit.add_profile(ProfileAttr::new(start));
     Ok(start)
 }
 
@@ -935,9 +909,9 @@ fn add_closed_revolve_boundary_loop<P: Payload>(
     let second = edit.add_dart();
     edit.link(Dim::Zero, first, second)?;
     edit.link(Dim::One, first, second)?;
-    edit.add_vertex(VertexAttr::new(first, point, P::V::default()));
-    edit.add_edge(EdgeAttr::new(first, curve, P::E::default()));
-    edit.add_profile(ProfileAttr::new(first, P::Profile::default()));
+    edit.add_vertex(VertexAttr::new(first, point));
+    edit.add_edge(EdgeAttr::new(first, curve));
+    edit.add_profile(ProfileAttr::new(first));
     Ok(first)
 }
 
@@ -963,7 +937,7 @@ fn is_full_turn(angle: Rad64) -> bool {
 /// # Panics
 ///
 /// Panics if `profile` does not identify a registered profile.
-pub fn add_revolved_profile<P: Payload>(
+pub fn add_revolved_profile<P: DefaultPayload>(
     g: &mut Model<P>,
     profile: ProfileKey,
     axis: Axis3,
@@ -974,7 +948,7 @@ pub fn add_revolved_profile<P: Payload>(
 }
 
 /// Revolves a profile from an oriented traversal dart for internal callers.
-pub(crate) fn add_revolved_profile_from_dart<P: Payload>(
+pub(crate) fn add_revolved_profile_from_dart<P: DefaultPayload>(
     g: &mut Model<P>,
     profile_dart: Dart,
     axis: Axis3,
@@ -994,7 +968,7 @@ fn add_revolved_profile_from_dart_staged<P: Payload>(
     let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
     let close_ring = planar.inner().is_closed();
     let dart = add_revolved_profile_faces(edit, profile_dart, axis, angle, close_ring)?.swept_dart;
-    Ok(edit.add_sheet(SheetAttr::new(dart, P::Sheet::default())))
+    Ok(edit.add_sheet(SheetAttr::new(dart)))
 }
 
 struct RevolvedProfile {
@@ -1155,22 +1129,17 @@ fn add_revolved_quad_face<P: Payload>(
 
     for i in 0..4 {
         let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
-        edit.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
+        edit.add_vertex(VertexAttr::new(dart, corners[i]));
     }
 
     for i in 0..4 {
         let edge_dart = darts[2 * i];
-        edit.add_edge(EdgeAttr::new(
-            edge_dart,
-            boundary_curves[i].clone(),
-            P::E::default(),
-        ));
+        edit.add_edge(EdgeAttr::new(edge_dart, boundary_curves[i].clone()));
     }
 
-    edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default()));
+    edit.add_profile(ProfileAttr::new(darts[0]));
     let key = edit.add_face(FaceAttr::with_pcurves(
         surface,
-        P::F::default(),
         darts[0],
         Vec::new(),
         quad_pcurves(&pcurves, &darts),
@@ -1245,15 +1214,14 @@ fn add_full_revolved_band_face<P: Payload>(
         (start_first, ends[0], &circles[0]),
         (end_first, ends[1], &circles[1]),
     ] {
-        edit.add_vertex(VertexAttr::new(seed, point, P::V::default()));
-        edit.add_edge(EdgeAttr::new(seed, curve.clone(), P::E::default()));
-        edit.add_profile(ProfileAttr::new(seed, P::Profile::default()));
+        edit.add_vertex(VertexAttr::new(seed, point));
+        edit.add_edge(EdgeAttr::new(seed, curve.clone()));
+        edit.add_profile(ProfileAttr::new(seed));
     }
 
     let [start_pcurve, end_pcurve] = pcurves;
     let key = edit.add_face(FaceAttr::with_loops(
         surface,
-        P::F::default(),
         vec![
             LoopDefinition::from_kind(start_first, kinds[0]),
             LoopDefinition::from_kind(end_first, kinds[1]),
@@ -1436,7 +1404,7 @@ fn quad_pcurves(uv: &[TrimmedCurve2; 4], darts: &[Dart]) -> HashMap<Dart, Trimme
 /// Returns an error if the face is missing, its loops cannot be revolved, a
 /// partial turn uses an unsupported cap surface, or generated topology cannot
 /// be sewn.
-pub fn add_revolved_face<P: Payload>(
+pub fn add_revolved_face<P: DefaultPayload>(
     g: &mut Model<P>,
     face_key: FaceKey,
     axis: Axis3,
@@ -1446,7 +1414,7 @@ pub fn add_revolved_face<P: Payload>(
 }
 
 /// Builds caps and lateral sheets, then registers the resulting staged solid.
-fn add_revolved_face_staged<P: Payload>(
+fn add_revolved_face_staged<P: DefaultPayload>(
     edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     axis: Axis3,
@@ -1496,9 +1464,9 @@ fn add_revolved_face_staged<P: Payload>(
     // orientation just established for the source cap.
     let shell = edit.face_attr_unchecked(face_key).outer_unchecked();
     if edit.sheet_key(shell).is_none() {
-        edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
+        edit.add_sheet(SheetAttr::new(shell));
     }
-    Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
+    Ok(edit.add_solid(SolidAttr::new(shell, None)))
 }
 
 /// Returns the direction the revolution sweeps a point of `face`, `axis x r`.
@@ -1566,9 +1534,9 @@ fn add_full_revolved_face<P: Payload>(
     let shell = shell.expect("a face should have at least one boundary loop");
     let shell = consume_revolved_source_face(edit, face_key, &loops, shell)?;
     if edit.sheet_key(shell).is_none() {
-        edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
+        edit.add_sheet(SheetAttr::new(shell));
     }
-    Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
+    Ok(edit.add_solid(SolidAttr::new(shell, None)))
 }
 
 /// Deletes the source face and its boundary wire after a full turn.
@@ -1654,7 +1622,7 @@ fn sew_revolved_loop_to_caps<P: Payload>(
     Ok(revolved)
 }
 
-fn rotate_face<P: Payload>(
+fn rotate_face<P: DefaultPayload>(
     face: &Face<'_, P>,
     axis: Axis3,
     angle: Rad64,

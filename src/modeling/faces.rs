@@ -5,7 +5,7 @@ use crate::builders::faces::{
 };
 use crate::geometry::{Plane, Point3};
 use crate::model::Model;
-use crate::topology::payload::{Payload, StandardPayload};
+use crate::topology::payload::{DefaultPayload, StandardPayload};
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceTag, ProfileTag, Shape};
 
@@ -66,7 +66,7 @@ pub fn polygon(points: &[Point3]) -> Result<Shape<FaceTag, StandardPayload>, Fac
 ///
 /// The profile must be closed and planar. The returned shape owns a copy of
 /// the profile; the source shape is unchanged.
-pub fn from_profile<P: Payload>(
+pub fn from_profile<P: DefaultPayload>(
     profile: &Shape<ProfileTag, P>,
 ) -> Result<Shape<FaceTag, P>, FaceCreationError> {
     let mut g = Model::new();

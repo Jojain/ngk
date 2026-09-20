@@ -9,7 +9,7 @@ use nalgebra::Vector3;
 use thiserror::Error;
 
 use crate::{
-    Payload,
+    DefaultPayload, Payload,
     builders::errors::ClosedFaceCellError,
     builders::errors::ExtrudeError,
     builders::faces::reverse_face_winding,
@@ -59,7 +59,7 @@ pub enum TorusBuildError {
 ///
 /// The support's own parameterization already faces outward, so the face is
 /// stored unreversed.
-pub fn add_sphere<P: Payload>(
+pub fn add_sphere<P: DefaultPayload>(
     g: &mut Model<P>,
     frame: Frame,
     radius: f64,
@@ -67,16 +67,11 @@ pub fn add_sphere<P: Payload>(
     g.transaction(|edit| {
         let surface = Surface::Sphere(Sphere::new(frame, radius));
         let cell = add_closed_face_cell(edit, &surface)?;
-        let face = edit.add_face(FaceAttr::closed(
-            surface,
-            P::F::default(),
-            cell.anchor(),
-            HashMap::new(),
-        ));
+        let face = edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
         cell.own(edit, face);
         let shell = cell.anchor();
-        edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
-        Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
+        edit.add_sheet(SheetAttr::new(shell));
+        Ok(edit.add_solid(SolidAttr::new(shell, None)))
     })
 }
 
@@ -90,7 +85,7 @@ pub fn add_sphere<P: Payload>(
 ///
 /// `minor` must stay under `major`: a tube as wide as its offset reaches the
 /// axis, and one wider sweeps through itself.
-pub fn add_torus<P: Payload>(
+pub fn add_torus<P: DefaultPayload>(
     g: &mut Model<P>,
     frame: Frame,
     major: f64,
@@ -103,16 +98,11 @@ pub fn add_torus<P: Payload>(
     g.transaction(|edit| {
         let surface = Surface::Torus(Torus::new(frame, major, minor));
         let cell = add_closed_face_cell(edit, &surface)?;
-        let face = edit.add_face(FaceAttr::closed(
-            surface,
-            P::F::default(),
-            cell.anchor(),
-            HashMap::new(),
-        ));
+        let face = edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
         cell.own(edit, face);
         let shell = cell.anchor();
-        edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
-        Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
+        edit.add_sheet(SheetAttr::new(shell));
+        Ok(edit.add_solid(SolidAttr::new(shell, None)))
     })
 }
 
@@ -123,7 +113,7 @@ pub fn add_torus<P: Payload>(
 /// parameterisation. The source map is not modified.
 ///
 /// Returns an error for a zero direction.
-pub fn translate_face<P: Payload>(
+pub fn translate_face<P: DefaultPayload>(
     face: &Face<'_, P>,
     direction: Vector3<f64>,
 ) -> Result<Shape<FaceTag, P>, ExtrudeError> {
@@ -170,7 +160,7 @@ pub fn translate_face<P: Payload>(
 /// Returns an error when the face is missing, the direction is zero, required
 /// boundary geometry is absent, or a lateral face is degenerate or cannot be
 /// sewn into the shell.
-pub fn add_extruded_face<P: Payload>(
+pub fn add_extruded_face<P: DefaultPayload>(
     g: &mut Model<P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
@@ -179,7 +169,7 @@ pub fn add_extruded_face<P: Payload>(
 }
 
 /// Builds translated caps and lateral faces, then registers the staged solid.
-fn add_extruded_face_staged<P: Payload>(
+fn add_extruded_face_staged<P: DefaultPayload>(
     edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
@@ -217,9 +207,9 @@ fn add_extruded_face_staged<P: Payload>(
     // the outward orientation established for the bottom cap.
     let outer_shell = edit.face_attr_unchecked(face_key).outer_unchecked();
     if edit.sheet_key(outer_shell).is_none() {
-        edit.add_sheet(SheetAttr::new(outer_shell, P::Sheet::default()));
+        edit.add_sheet(SheetAttr::new(outer_shell));
     }
-    let solid = edit.add_solid(SolidAttr::new(P::S::default(), outer_shell, None));
+    let solid = edit.add_solid(SolidAttr::new(outer_shell, None));
     Ok(solid)
 }
 
@@ -330,7 +320,6 @@ fn sew_extruded_loop<P: Payload>(
         edit.add_edge(EdgeAttr::new(
             lateral.topology.end_vertical,
             Curve::line(lateral.vertical_start, lateral.vertical_end),
-            P::E::default(),
         ));
     }
 
@@ -386,12 +375,11 @@ fn sew_wrapping_lateral_face<P: Payload>(
     let [bottom_start, _bottom_end] = bottom_slot;
     let [top_start, top_end] = top_slot;
 
-    edit.add_profile(ProfileAttr::new(bottom_start, P::Profile::default()));
-    edit.add_profile(ProfileAttr::new(top_start, P::Profile::default()));
+    edit.add_profile(ProfileAttr::new(bottom_start));
+    edit.add_profile(ProfileAttr::new(top_start));
     let uv = prepared.uv;
     let face = edit.add_face(FaceAttr::with_loops(
         prepared.surface.clone(),
-        P::F::default(),
         vec![
             LoopDefinition::wrapping(bottom_start, axis),
             LoopDefinition::wrapping(top_start, axis),
@@ -516,10 +504,9 @@ fn add_lateral_face_attributes<P: Payload>(
     topology: &LateralFaceTopology,
     prepared: &PreparedLateralFace,
 ) {
-    edit.add_profile(ProfileAttr::new(topology.loop_dart, P::Profile::default()));
+    edit.add_profile(ProfileAttr::new(topology.loop_dart));
     edit.add_face(FaceAttr::with_pcurves(
         prepared.surface.clone(),
-        P::F::default(),
         topology.loop_dart,
         Vec::new(),
         quad_pcurves(&prepared.uv, &topology.darts),

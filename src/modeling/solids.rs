@@ -9,7 +9,7 @@ use crate::{
     modeling::faces,
     topology::{
         ModelEditError,
-        payload::Payload,
+        payload::DefaultPayload,
         shape::{FaceTag, Shape, SolidTag},
     },
 };
@@ -138,7 +138,7 @@ pub fn extruded(
 }
 
 /// Consumes two owned solid shapes and fuses them into one owned solid.
-pub fn fuse<P: Payload>(
+pub fn fuse<P: DefaultPayload>(
     first: Shape<SolidTag, P>,
     second: Shape<SolidTag, P>,
 ) -> Result<Shape<SolidTag, P>, BooleanError> {
@@ -146,7 +146,7 @@ pub fn fuse<P: Payload>(
 }
 
 /// Consumes two owned solid shapes and subtracts `tool` from `target`.
-pub fn cut<P: Payload>(
+pub fn cut<P: DefaultPayload>(
     target: Shape<SolidTag, P>,
     tool: Shape<SolidTag, P>,
 ) -> Result<Shape<SolidTag, P>, BooleanError> {
@@ -154,7 +154,7 @@ pub fn cut<P: Payload>(
 }
 
 /// Consumes two owned solid shapes and returns their common volume.
-pub fn intersect<P: Payload>(
+pub fn intersect<P: DefaultPayload>(
     first: Shape<SolidTag, P>,
     second: Shape<SolidTag, P>,
 ) -> Result<Shape<SolidTag, P>, BooleanError> {
@@ -162,7 +162,7 @@ pub fn intersect<P: Payload>(
 }
 
 /// Moves two owned shapes into one working map and evaluates one Boolean.
-fn combine_shapes<P: Payload>(
+fn combine_shapes<P: DefaultPayload>(
     target: Shape<SolidTag, P>,
     tool: Shape<SolidTag, P>,
     operation: BooleanOperation,
@@ -181,7 +181,7 @@ fn combine_shapes<P: Payload>(
 }
 
 /// Copies two borrowed solid views for language bindings and evaluates a Boolean.
-pub(crate) fn combine_views<P: Payload>(
+pub(crate) fn combine_views<P: DefaultPayload>(
     first: Solid<'_, P>,
     second: Solid<'_, P>,
     operation: BooleanOperation,

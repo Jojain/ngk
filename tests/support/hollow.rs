@@ -24,9 +24,9 @@ pub fn hollow_sphere(outer: f64, inner: f64) -> Shape<SolidTag, StandardPayload>
             let outer = sphere_face(edit, outer)?;
             let inner_face = sphere_face(edit, inner)?;
             let inner = edit.alpha(Dim::Zero, inner_face);
-            edit.add_sheet(SheetAttr::new(outer, ()));
-            edit.add_sheet(SheetAttr::new(inner, ()));
-            let solid = edit.add_solid(SolidAttr::new((), outer, Some(vec![inner])));
+            edit.add_sheet(SheetAttr::new(outer));
+            edit.add_sheet(SheetAttr::new(inner));
+            let solid = edit.add_solid(SolidAttr::new(outer, Some(vec![inner])));
             add_cavity_cut(edit, solid, outer, inner)?;
             Ok::<_, ModelEditError>(solid)
         })
@@ -54,7 +54,6 @@ fn sphere_face(
 
     let face = edit.add_face(FaceAttr::closed(
         Surface::Sphere(Sphere::new(Frame::xyz(), radius)),
-        (),
         d[0],
         HashMap::new(),
     ));

@@ -50,7 +50,7 @@ use crate::geometry::{
 };
 use crate::model::Model;
 use crate::topology::ModelEdit;
-use crate::topology::payload::Payload;
+use crate::topology::payload::{DefaultPayload, Payload};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
 use nalgebra::Vector2;
 use slotmap::Key;
@@ -120,7 +120,7 @@ impl Default for BooleanOptions {
 /// Consumes the operand boundary registrations on success. Empty and disconnected
 /// results, ambiguous classification, or incomplete geometric coverage roll back.
 /// The current certified classification path admits planar polygonal boundaries.
-pub fn boolean<P: Payload>(
+pub fn boolean<P: DefaultPayload>(
     map: &mut Model<P>,
     first: SolidKey,
     second: SolidKey,
@@ -488,7 +488,7 @@ fn event_use_for_cell<P: Payload>(
 }
 
 /// Applies a previously computed plan in one topology transaction.
-pub fn apply_boolean_splits<P: Payload>(
+pub fn apply_boolean_splits<P: DefaultPayload>(
     g: &mut Model<P>,
     plan: BooleanIntersectionPlan,
 ) -> Result<BooleanPreparation, BooleanError> {
@@ -496,7 +496,7 @@ pub fn apply_boolean_splits<P: Payload>(
 }
 
 /// Computes contacts and splits two operands already stored in the same map.
-pub fn prepare_boolean<P: Payload>(
+pub fn prepare_boolean<P: DefaultPayload>(
     g: &mut Model<P>,
     first: BooleanOperand,
     second: BooleanOperand,
@@ -510,7 +510,7 @@ pub fn prepare_boolean<P: Payload>(
 ///
 /// The source `tool_map` is only read. Import, contact computation, and all
 /// splits share one target-map transaction, so any failure removes the copy.
-pub fn prepare_boolean_with_external_tool<P: Payload>(
+pub fn prepare_boolean_with_external_tool<P: DefaultPayload>(
     target_map: &mut Model<P>,
     target: BooleanOperand,
     tool_map: &Model<P>,
@@ -526,7 +526,7 @@ pub fn prepare_boolean_with_external_tool<P: Payload>(
     })
 }
 
-fn apply_boolean_splits_staged<P: Payload>(
+fn apply_boolean_splits_staged<P: DefaultPayload>(
     edit: &mut ModelEdit<'_, P>,
     plan: BooleanIntersectionPlan,
     imported_second: bool,

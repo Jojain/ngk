@@ -12,7 +12,7 @@ use crate::topology::edge::Edge;
 use crate::topology::edit::ModelEditError;
 use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
-use crate::topology::payload::Payload;
+use crate::topology::payload::{DefaultPayload, Payload};
 use crate::topology::shape_keys::{EdgeKey, VertexKey};
 use radians::Rad64;
 use thiserror::Error;
@@ -176,7 +176,7 @@ struct PreparedAttachedEdgeSplit {
 /// does not verify that it interpolates `start` and `end`.
 ///
 /// Returns an error when the endpoints coincide within [`LINEAR_TOLERANCE`].
-pub fn add_edge<P: Payload>(
+pub fn add_edge<P: DefaultPayload>(
     g: &mut Model<P>,
     start: Point3,
     end: Point3,
@@ -196,15 +196,15 @@ pub(crate) fn add_edge_staged<P: Payload>(
     let d1 = edit.add_dart();
     let d2 = edit.add_dart();
     edit.link(Dim::Zero, d1, d2)?;
-    edit.add_vertex(VertexAttr::new(d1, start, P::V::default()));
-    edit.add_vertex(VertexAttr::new(d2, end, P::V::default()));
-    Ok(edit.add_edge(EdgeAttr::new(d1, curve, P::E::default())))
+    edit.add_vertex(VertexAttr::new(d1, start));
+    edit.add_vertex(VertexAttr::new(d2, end));
+    Ok(edit.add_edge(EdgeAttr::new(d1, curve)))
 }
 
 /// Adds an isolated straight edge between `start` and `end`.
 ///
 /// Returns an error when the endpoints coincide within [`LINEAR_TOLERANCE`].
-pub fn add_line<P: Payload>(
+pub fn add_line<P: DefaultPayload>(
     g: &mut Model<P>,
     start: Point3,
     end: Point3,
@@ -221,7 +221,7 @@ pub fn add_line<P: Payload>(
 ///
 /// This operation rejects edges attached to faces; use
 /// [`crate::builders::faces::split_face_edge`] for face-boundary edges.
-pub fn split_edge<P: Payload>(
+pub fn split_edge<P: DefaultPayload>(
     g: &mut Model<P>,
     edge: EdgeKey,
     parameter: Fraction,
@@ -273,7 +273,7 @@ fn mark_closed_edge<P: Payload>(
     cut: EdgeCut,
 ) -> EdgeSplit {
     edit.disown_cell(Dim::Zero, dart);
-    let vertex = edit.add_vertex(VertexAttr::new(dart, cut.point, P::V::default()));
+    let vertex = edit.add_vertex(VertexAttr::new(dart, cut.point));
     EdgeSplit::Marked { edge, vertex }
 }
 
@@ -291,12 +291,9 @@ fn split_edge_with_profile_links<P: Payload>(
     edit.link(Dim::Zero, second_mid, split.second_dart)?;
     edit.link(Dim::One, first_mid, second_mid)?;
 
-    let vertex = edit.add_vertex(VertexAttr::new(first_mid, split.cut.point, P::V::default()));
+    let vertex = edit.add_vertex(VertexAttr::new(first_mid, split.cut.point));
     edit.edge_attr_mut_unchecked(edge).curve = first_curve;
-    let second = edit.add_edge_split_from(
-        edge,
-        EdgeAttr::new(second_mid, second_curve, P::E::default()),
-    );
+    let second = edit.add_edge_split_from(edge, EdgeAttr::new(second_mid, second_curve));
 
     Ok(EdgeSplit::Separated {
         first: edge,
@@ -340,12 +337,11 @@ fn split_attached_edge_with_profile_links<P: Payload>(
     let vertex = edit.add_vertex(VertexAttr::new(
         mid_darts[&split.first_dart],
         split.cut.point,
-        P::V::default(),
     ));
     edit.edge_attr_mut_unchecked(edge).curve = first_curve;
     let second = edit.add_edge_split_from(
         edge,
-        EdgeAttr::new(mid_darts[&split.second_dart], second_curve, P::E::default()),
+        EdgeAttr::new(mid_darts[&split.second_dart], second_curve),
     );
 
     Ok(EdgeSplit::Separated {
@@ -539,7 +535,7 @@ fn check_split_parameter<P: Payload>(
 /// The endpoint positions are sampled from the circle at `start_angle` and
 /// `end_angle`. The radius must be positive and finite, both angles must be
 /// finite, and the resulting endpoints must not coincide.
-pub fn add_arc<P: Payload>(
+pub fn add_arc<P: DefaultPayload>(
     g: &mut Model<P>,
     plane: Plane,
     radius: f64,
@@ -575,7 +571,7 @@ pub(crate) fn add_arc_staged<P: Payload>(
 /// The edge has one topological vertex at the plane's positive x-axis and its
 /// two darts are alpha-0- and alpha-1-linked to form a closed profile. `radius`
 /// must be positive and finite.
-pub fn add_circle<P: Payload>(
+pub fn add_circle<P: DefaultPayload>(
     g: &mut Model<P>,
     plane: Plane,
     radius: f64,
@@ -595,7 +591,7 @@ pub(crate) fn add_circle_staged<P: Payload>(
     let curve = Curve::circle(plane, radius);
     edit.link(Dim::Zero, d1, d2)?;
     edit.link(Dim::One, d1, d2)?;
-    let key = edit.add_edge(EdgeAttr::new(d1, curve, P::E::default()));
+    let key = edit.add_edge(EdgeAttr::new(d1, curve));
     // The point where the circle closes is a fact about how the map is drawn,
     // not a feature of the shape: nothing meets there. It is classified inside
     // the edge, which is what makes an unmarked circle a vertex-free logical

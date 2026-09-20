@@ -75,8 +75,11 @@ migration record.
 - **Typed views** — `Vertex`, `Edge`, `Face`, `Profile`, `Sheet`, `Solid`, plus
   `Shape<K, P>` (owned model + primary handle, read with `model()` /
   `model_mut()` / `into_model()`). *Traverse with these, not raw darts.*
-- **`Payload` trait** — type-level bundle of user data per dimension;
-  `StandardPayload` = `()` everywhere. Most types are generic over `P: Payload`.
+- **`Payload` trait** — type-level bundle of user data per dimension, bounded
+  only `Clone + 'static`; `StandardPayload` = `()` everywhere. Most types are
+  generic over `P: Payload`. `DefaultPayload` (`Payload` plus `Default` at
+  every dimension) is what `Model::transaction` and `PreservePayload` need —
+  see "Transactions" below.
 - **Profiles = face boundary loops; Sheets = solid shells.** They must be
   **registered explicitly** (`add_profile` / `add_sheet`); commit rejects faces
   or solids referencing unregistered components.
@@ -375,11 +378,20 @@ mutation capability (`add_dart`, `remove_dart`, `link`, `unlink`, `sew`,
 - **Lineage**: `add_*` (`Origin::New`) / `add_*_split_from` (`Origin::Split`,
   same kind) / `add_*_derived_from` (`Origin::Derived`, one or more sources of
   any kind) / `merge_*_into` (explicit survivor) / `remove_*` (nothing
-  inherits). At commit, merge chains resolve and `EditPolicy`
-  (e.g. `PreservePayload`) runs only on net externally-visible changes.
-  `remove_*` and `merge_*_into` each record their own event, so commit rejects
-  a transaction-start attribute that goes missing without one explaining it
-  (`ModelEditError::UnexplainedRemoval`).
+  inherits). `remove_*` and `merge_*_into` each record their own event, so
+  commit rejects a transaction-start attribute that goes missing without one
+  explaining it (`ModelEditError::UnexplainedRemoval`).
+- **`EditPolicy`** has three hooks per kind: `*_created(key, origin, before)`
+  returns the new payload, `*_merged` folds a consumed payload into the
+  survivor, `*_consumed` disposes of one nothing inherits. At commit, every net
+  externally-visible creation, merge and consumption calls its hook once, in
+  declaration order, with `Origin`'s sources resolved against the
+  transaction-start snapshot. `Model::transaction` runs the default policy,
+  `PreservePayload` (clones a `Split`'s source, keeps the merge survivor, drops
+  on consume, defaults `New`/`Derived`), which requires every payload
+  dimension to implement `Default` (`DefaultPayload`); a payload without one
+  needs `Model::transaction_with_policy` and its own `EditPolicy`. `Payload`
+  itself requires only `Clone + 'static`.
 - **Identity reconciliation** picks one surviving key per final cell;
   transaction-start keys beat transaction-local ones. Local keys may vanish at commit.
 - Commit order: raw gmap axioms, embedding records, required registrations,

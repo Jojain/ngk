@@ -7,7 +7,7 @@
 use crate::geometry::transform::Rigid;
 use crate::model::Model;
 use crate::topology::edit::ModelEditError;
-use crate::topology::payload::Payload;
+use crate::topology::payload::DefaultPayload;
 
 /// Moves every piece of geometry in `model` by a rigid motion.
 ///
@@ -19,7 +19,7 @@ use crate::topology::payload::Payload;
 ///
 /// Returns nothing because there is nothing here that could fail. See
 /// [`Rigid`] for why.
-pub fn rigid<P: Payload>(model: &mut Model<P>, r: &Rigid) {
+pub fn rigid<P: DefaultPayload>(model: &mut Model<P>, r: &Rigid) {
     let vertices = model
         .iter_vertices()
         .map(|(key, _)| key)

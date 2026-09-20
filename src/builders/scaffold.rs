@@ -371,17 +371,17 @@ mod tests {
                     let surface = Surface::Sphere(Sphere::new(Frame::xyz(), radius));
                     let cell = add_closed_face_cell(edit, &surface)?;
                     let face =
-                        edit.add_face(FaceAttr::closed(surface, (), cell.anchor(), HashMap::new()));
+                        edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
                     cell.own(edit, face);
                     let root = if index == 0 {
                         cell.anchor()
                     } else {
                         edit.alpha(Dim::Zero, cell.anchor())
                     };
-                    edit.add_sheet(SheetAttr::new(root, ()));
+                    edit.add_sheet(SheetAttr::new(root));
                     roots.push(root);
                 }
-                let solid = edit.add_solid(SolidAttr::new((), roots[0], Some(roots[1..].to_vec())));
+                let solid = edit.add_solid(SolidAttr::new(roots[0], Some(roots[1..].to_vec())));
                 cut_between_shells(edit, solid, &roots)?;
                 Ok::<_, ClosedFaceCellError>(solid)
             })

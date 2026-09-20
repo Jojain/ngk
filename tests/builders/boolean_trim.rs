@@ -9,11 +9,9 @@ use ngk::topology::attributes::VertexAttr;
 fn add_isolated_vertex(map: &mut Model<ngk::StandardPayload>, point: Point3) -> BooleanOperand {
     map.transaction(|edit| {
         let dart = edit.add_dart();
-        Ok::<_, ModelEditError>(BooleanOperand::Vertex(edit.add_vertex(VertexAttr::new(
-            dart,
-            point,
-            (),
-        ))))
+        Ok::<_, ModelEditError>(BooleanOperand::Vertex(
+            edit.add_vertex(VertexAttr::new(dart, point)),
+        ))
     })
     .expect("isolated vertex should build")
 }

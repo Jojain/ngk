@@ -64,7 +64,6 @@ fn torus_patch(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey) {
                 edit.add_vertex(VertexAttr::new(
                     d[2 * pair],
                     torus.point_at(corner.x, corner.y),
-                    (),
                 ));
             }
 
@@ -93,9 +92,9 @@ fn torus_patch(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey) {
                         minor,
                     ))
                 };
-                edit.add_edge(EdgeAttr::new(d[2 * pair], curve, ()));
+                edit.add_edge(EdgeAttr::new(d[2 * pair], curve));
             }
-            edit.add_profile(ProfileAttr::new(d[0], ()));
+            edit.add_profile(ProfileAttr::new(d[0]));
 
             let pcurves = sides()
                 .enumerate()
@@ -103,7 +102,6 @@ fn torus_patch(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey) {
                 .collect::<HashMap<_, _>>();
             let face = edit.add_face(FaceAttr::with_pcurves(
                 surface.clone(),
-                (),
                 d[0],
                 Vec::new(),
                 pcurves,

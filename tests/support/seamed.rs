@@ -80,8 +80,8 @@ pub fn seamed_revolved_sphere(radius: f64) -> (Model<StandardPayload>, FaceKey, 
                 .expect("the revolved face is registered")
                 .dart();
             let shell = seed;
-            edit.add_sheet(SheetAttr::new(shell, ()));
-            Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new((), shell, None)))
+            edit.add_sheet(SheetAttr::new(shell));
+            Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new(shell, None)))
         })
         .expect("the revolved sphere should close into a solid");
     (g, face, solid)
@@ -114,8 +114,8 @@ pub fn seamed_spherical_cap(radius: f64, latitude: f64) -> (Model<StandardPayloa
 
             let seam_foot = sphere.point_at(0.0, latitude);
             let apex = sphere.point_at(0.0, pole);
-            edit.add_vertex(VertexAttr::new(d[0], seam_foot, ()));
-            edit.add_vertex(VertexAttr::new(d[3], apex, ()));
+            edit.add_vertex(VertexAttr::new(d[0], seam_foot));
+            edit.add_vertex(VertexAttr::new(d[3], apex));
 
             edit.add_edge(EdgeAttr::new(
                 d[0],
@@ -127,11 +127,10 @@ pub fn seamed_spherical_cap(radius: f64, latitude: f64) -> (Model<StandardPayloa
                     ),
                     radius * latitude.cos(),
                 )),
-                (),
             ));
             // One edge for both meridian sides: that is what makes it a seam.
-            edit.add_edge(EdgeAttr::new(d[2], Curve::line(seam_foot, apex), ()));
-            edit.add_profile(ProfileAttr::new(d[0], ()));
+            edit.add_edge(EdgeAttr::new(d[2], Curve::line(seam_foot, apex)));
+            edit.add_profile(ProfileAttr::new(d[0]));
 
             // The pole is a whole row of the domain collapsed to a point, so the
             // loop turns through it carrying no pcurve: the meridian's two
@@ -152,7 +151,6 @@ pub fn seamed_spherical_cap(radius: f64, latitude: f64) -> (Model<StandardPayloa
             ]);
             let face = edit.add_face(FaceAttr::with_pcurves(
                 surface.clone(),
-                (),
                 d[0],
                 Vec::new(),
                 pcurves,
@@ -196,8 +194,8 @@ pub fn seamed_cylinder_wall(radius: f64, height: f64) -> (Model<StandardPayload>
 
             let bottom = Point3::new(radius, 0.0, 0.0);
             let top = Point3::new(radius, 0.0, height);
-            edit.add_vertex(VertexAttr::new(d[0], bottom, ()));
-            edit.add_vertex(VertexAttr::new(d[4], top, ()));
+            edit.add_vertex(VertexAttr::new(d[0], bottom));
+            edit.add_vertex(VertexAttr::new(d[4], top));
 
             let circle = |z: f64| {
                 Curve::Circle(Circle::new(
@@ -205,11 +203,11 @@ pub fn seamed_cylinder_wall(radius: f64, height: f64) -> (Model<StandardPayload>
                     radius,
                 ))
             };
-            edit.add_edge(EdgeAttr::new(d[0], circle(0.0), ()));
-            edit.add_edge(EdgeAttr::new(d[4], circle(height), ()));
+            edit.add_edge(EdgeAttr::new(d[0], circle(0.0)));
+            edit.add_edge(EdgeAttr::new(d[4], circle(height)));
             // One edge for both vertical sides: that is what makes it a seam.
-            let seam = edit.add_edge(EdgeAttr::new(d[2], Curve::line(bottom, top), ()));
-            edit.add_profile(ProfileAttr::new(d[0], ()));
+            let seam = edit.add_edge(EdgeAttr::new(d[2], Curve::line(bottom, top)));
+            edit.add_profile(ProfileAttr::new(d[0]));
 
             let pcurves = HashMap::from([
                 (
@@ -231,7 +229,6 @@ pub fn seamed_cylinder_wall(radius: f64, height: f64) -> (Model<StandardPayload>
             ]);
             let face = edit.add_face(FaceAttr::with_pcurves(
                 surface.clone(),
-                (),
                 d[0],
                 Vec::new(),
                 pcurves,
@@ -275,7 +272,7 @@ pub fn seamed_torus(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey,
             // Both cuts pass through `(u, v) = (0, 0)`, so the quad's four
             // corners are one point.
             let corner = torus.point_at(0.0, 0.0);
-            edit.add_vertex(VertexAttr::new(d[0], corner, ()));
+            edit.add_vertex(VertexAttr::new(d[0], corner));
 
             // One edge for the bottom and top sides, one for the left and right:
             // that is what makes each of them a seam.
@@ -285,7 +282,6 @@ pub fn seamed_torus(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey,
                     Plane::from_xy(Point3::origin(), Vector3::x(), Vector3::y()),
                     major + minor,
                 )),
-                (),
             ));
             edit.add_edge(EdgeAttr::new(
                 d[2],
@@ -293,9 +289,8 @@ pub fn seamed_torus(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey,
                     Plane::from_xy(Point3::new(major, 0.0, 0.0), Vector3::x(), Vector3::z()),
                     minor,
                 )),
-                (),
             ));
-            edit.add_profile(ProfileAttr::new(d[0], ()));
+            edit.add_profile(ProfileAttr::new(d[0]));
 
             let pcurves = HashMap::from([
                 (
@@ -317,7 +312,6 @@ pub fn seamed_torus(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey,
             ]);
             let face = edit.add_face(FaceAttr::with_pcurves(
                 surface.clone(),
-                (),
                 d[0],
                 Vec::new(),
                 pcurves,
@@ -338,8 +332,8 @@ pub fn seamed_torus(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey,
                 .expect("the torus face is registered")
                 .dart();
             let shell = seed;
-            edit.add_sheet(SheetAttr::new(shell, ()));
-            Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new((), shell, None)))
+            edit.add_sheet(SheetAttr::new(shell));
+            Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new(shell, None)))
         })
         .expect("the seamed torus should close into a solid");
     (g, face, solid)

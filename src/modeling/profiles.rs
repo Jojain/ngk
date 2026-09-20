@@ -9,7 +9,7 @@ use crate::geometry::{Plane, Point3};
 use crate::model::{Cell1, Model};
 use crate::modeling::edges;
 use crate::topology::closed::Closeable;
-use crate::topology::payload::{Payload, StandardPayload};
+use crate::topology::payload::{DefaultPayload, StandardPayload};
 use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
 
 pub fn rectangle(
@@ -41,7 +41,7 @@ pub fn polyline(points: &[Point3]) -> Result<Shape<ProfileTag, StandardPayload>,
 ///
 /// The returned shape owns copies of the input edges. The source shapes remain
 /// unchanged. The edges must make one non-branching chain or cycle.
-pub fn from_edges<P: Payload>(
+pub fn from_edges<P: DefaultPayload>(
     edges: &[&Shape<EdgeTag, P>],
 ) -> Result<Shape<ProfileTag, P>, PolylineError> {
     let mut g = Model::new();
@@ -81,7 +81,7 @@ pub fn arc(
     Ok(edges::arc(plane, radius, start_angle, end_angle)?.into_profile())
 }
 
-impl<P: Payload> Shape<ProfileTag, P> {
+impl<P: DefaultPayload> Shape<ProfileTag, P> {
     pub fn add(&mut self, edge: &Shape<EdgeTag, P>) -> Result<(), PolylineError> {
         let profile_key = self.handle();
         let profile_dart = self.profile().dart;

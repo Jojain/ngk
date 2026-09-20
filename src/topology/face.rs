@@ -638,7 +638,7 @@ impl<'g, P: Payload> Face<'g, P> {
 
     /// Returns the user payload attached to this face.
     pub fn data(&self) -> &P::F {
-        &self.attr().data
+        self.attr().data()
     }
 
     /// Returns the pcurve assigned to a boundary dart, if present.

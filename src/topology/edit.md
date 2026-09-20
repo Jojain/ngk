@@ -5,10 +5,14 @@ Its closure receives a `ModelEdit`, which is the public mutation capability for
 the staged model. Returning an error, failing validation, failing identity
 reconciliation, or failing payload policy restores the complete
 transaction-start snapshot — the map, the entity stores, the embedding
-labelling and the revision counter alike.
+labelling and the revision counter alike. `Model::transaction` runs the
+default policy, `PreservePayload`, which requires every payload dimension to
+have a `Default`; a payload without one for some dimension cannot use this
+entry point at all and must supply its own policy instead.
 
 `Model::transaction_with_policy` uses the same boundary with a caller-provided
-`EditPolicy`. Policy event application happens only after the complete staged
+`EditPolicy`, which is what a payload without a `Default` at every dimension
+requires. Policy event application happens only after the complete staged
 operation passes topology validation and identity reconciliation.
 
 Transactions intentionally do not catch panics. Operation code uses `Result`
@@ -52,19 +56,31 @@ one explaining it -- see "Commit order" below. A copy made by `Model::merge`
 is recorded so reconciliation can see it, but it is neither a creation nor a
 removal and never reaches `EditPolicy`.
 
-At commit, merge chains are resolved to their final survivor. Policy is
-then applied only to net changes visible outside the operation:
+`EditPolicy` has three hook families per kind (vertex, edge, profile, face,
+sheet, solid): a `*_created` hook that returns the new payload, a `*_merged`
+hook that folds a consumed payload into the survivor, and a `*_consumed` hook
+that disposes of a payload nothing inherits. At commit, merge chains are
+resolved to their final survivor, an origin's sources are resolved to
+transaction-start identities (or reported as `Origin::New` when none survive
+that far back), and policy is applied only to net changes visible outside the
+operation:
 
-- a surviving split derived from a transaction-start identity;
+- every surviving creation, with its origin resolved against the
+  transaction-start snapshot;
+- a surviving merge's consumed identity;
 - an explicitly consumed transaction-start identity;
-- never a fresh or split identity that was created and discarded inside the
-  operation.
+- never a fresh, split, derived or consumed identity that was created and
+  discarded inside the operation.
 
-Policy callbacks run in declaration order and receive payloads from the
-transaction-start snapshot. `PreservePayload` clones split payloads and keeps
-the merge survivor payload; a `Derived` creation has no single source of the
-created entity's own kind to clone, so it defaults instead. A policy error
-restores topology and payloads.
+Policy callbacks run in declaration order. A `*_created` hook receives the
+model as the transaction found it, so it reads a named source's payload from
+there; a `*_merged` or `*_consumed` hook receives the removed identity's
+payload from that same snapshot. `PreservePayload` clones a `Split`'s source
+payload, keeps the merge survivor, drops on a consume, and defaults on both
+`New` and `Derived` — a derived entity's sources need not even share its kind,
+so there is no single payload of the right type to clone, and only a caller's
+own policy knows how to produce one. A policy error restores topology and
+payloads.
 
 ## Identity reconciliation
 

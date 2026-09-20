@@ -127,10 +127,8 @@ pub(crate) fn run<P: Payload>(
         // source when one is known; a component assembled purely from
         // healing or from a side with no prior sheet still gets a fresh one.
         let sheet = match sheet_sources.get(&component[0]) {
-            Some(&source) => {
-                edit.add_sheet_split_from(source, SheetAttr::new(root, P::Sheet::default()))
-            }
-            None => edit.add_sheet(SheetAttr::new(root, P::Sheet::default())),
+            Some(&source) => edit.add_sheet_split_from(source, SheetAttr::new(root)),
+            None => edit.add_sheet(SheetAttr::new(root)),
         };
         if Closed::new(edit.sheet_unchecked(sheet)).is_none() {
             return Err(BooleanError::OpenResultShell { face: component[0] });
@@ -168,10 +166,7 @@ pub(crate) fn run<P: Payload>(
             EditKey::Solid(context.second),
         ]
     };
-    let solid = edit.add_solid_derived_from(
-        sources,
-        SolidAttr::new(P::S::default(), outer[0], Some(inner)),
-    );
+    let solid = edit.add_solid_derived_from(sources, SolidAttr::new(outer[0], Some(inner)));
     cut_between_shells(edit, solid, &shell_roots)?;
     validate_gmap(edit.topology()).map_err(ModelValidationError::from)?;
     validate_solid_manifold(edit, solid)?;

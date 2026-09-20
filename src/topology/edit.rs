@@ -46,88 +46,30 @@ impl Origin {
 
 /// Controls how payloads are propagated for explicit semantic edit events.
 ///
-/// The edit layer does not infer merge or split lineage from topology. Builders
-/// must declare semantic events through methods such as
-/// [`ModelEdit::add_edge_split_from`] and
-/// [`ModelEdit::merge_edges_into`].
+/// The edit layer does not infer creation, merge or consumption lineage from
+/// topology. Builders must declare semantic events through methods such as
+/// [`ModelEdit::add_edge_split_from`], [`ModelEdit::add_edge_derived_from`],
+/// [`ModelEdit::merge_edges_into`] and [`ModelEdit::remove_edge`].
 pub trait EditPolicy<P: Payload> {
     /// Error returned when the policy rejects an edit.
     type Error: Error + Send + Sync + 'static;
 
-    /// Initializes a vertex payload created by splitting an existing vertex.
-    fn split_vertex_data(
+    /// Supplies the payload for a vertex this transaction created.
+    ///
+    /// `before` is the model as the transaction found it, so a policy reads a
+    /// source's payload from there for any origin that names one. A source the
+    /// transaction itself created is not in `before`; such an origin is
+    /// resolved to the transaction-start identities it descends from, or
+    /// reported as [`Origin::New`] when it descends from none.
+    fn vertex_created(
         &mut self,
-        _source: VertexKey,
-        source_data: &P::V,
-        _created: VertexKey,
-        created_data: &mut P::V,
-    ) -> Result<(), Self::Error> {
-        *created_data = source_data.clone();
-        Ok(())
-    }
+        key: VertexKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::V, Self::Error>;
 
-    /// Initializes an edge payload created by splitting an existing edge.
-    fn split_edge_data(
-        &mut self,
-        _source: EdgeKey,
-        source_data: &P::E,
-        _created: EdgeKey,
-        created_data: &mut P::E,
-    ) -> Result<(), Self::Error> {
-        *created_data = source_data.clone();
-        Ok(())
-    }
-
-    /// Initializes a profile payload created by splitting an existing profile.
-    fn split_profile_data(
-        &mut self,
-        _source: ProfileKey,
-        source_data: &P::Profile,
-        _created: ProfileKey,
-        created_data: &mut P::Profile,
-    ) -> Result<(), Self::Error> {
-        *created_data = source_data.clone();
-        Ok(())
-    }
-
-    /// Initializes a face payload created by splitting an existing face.
-    fn split_face_data(
-        &mut self,
-        _source: FaceKey,
-        source_data: &P::F,
-        _created: FaceKey,
-        created_data: &mut P::F,
-    ) -> Result<(), Self::Error> {
-        *created_data = source_data.clone();
-        Ok(())
-    }
-
-    /// Initializes a sheet payload created by splitting an existing sheet.
-    fn split_sheet_data(
-        &mut self,
-        _source: SheetKey,
-        source_data: &P::Sheet,
-        _created: SheetKey,
-        created_data: &mut P::Sheet,
-    ) -> Result<(), Self::Error> {
-        *created_data = source_data.clone();
-        Ok(())
-    }
-
-    /// Initializes a solid payload created by splitting an existing solid.
-    fn split_solid_data(
-        &mut self,
-        _source: SolidKey,
-        source_data: &P::S,
-        _created: SolidKey,
-        created_data: &mut P::S,
-    ) -> Result<(), Self::Error> {
-        *created_data = source_data.clone();
-        Ok(())
-    }
-
-    /// Merges a removed vertex payload into the surviving vertex payload.
-    fn merge_vertex_data(
+    /// Folds a consumed vertex payload into the one that survived it.
+    fn vertex_merged(
         &mut self,
         _survivor: VertexKey,
         _survivor_data: &mut P::V,
@@ -137,8 +79,22 @@ pub trait EditPolicy<P: Payload> {
         Ok(())
     }
 
-    /// Merges a removed edge payload into the surviving edge payload.
-    fn merge_edge_data(
+    /// Disposes of a vertex payload nothing inherits.
+    fn vertex_consumed(&mut self, _key: VertexKey, _data: P::V) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Supplies the payload for an edge this transaction created. See
+    /// [`Self::vertex_created`].
+    fn edge_created(
+        &mut self,
+        key: EdgeKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::E, Self::Error>;
+
+    /// Folds a consumed edge payload into the one that survived it.
+    fn edge_merged(
         &mut self,
         _survivor: EdgeKey,
         _survivor_data: &mut P::E,
@@ -148,8 +104,22 @@ pub trait EditPolicy<P: Payload> {
         Ok(())
     }
 
-    /// Merges a removed profile payload into the surviving profile payload.
-    fn merge_profile_data(
+    /// Disposes of an edge payload nothing inherits.
+    fn edge_consumed(&mut self, _key: EdgeKey, _data: P::E) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Supplies the payload for a profile this transaction created. See
+    /// [`Self::vertex_created`].
+    fn profile_created(
+        &mut self,
+        key: ProfileKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::Profile, Self::Error>;
+
+    /// Folds a consumed profile payload into the one that survived it.
+    fn profile_merged(
         &mut self,
         _survivor: ProfileKey,
         _survivor_data: &mut P::Profile,
@@ -159,8 +129,22 @@ pub trait EditPolicy<P: Payload> {
         Ok(())
     }
 
-    /// Merges a removed face payload into the surviving face payload.
-    fn merge_face_data(
+    /// Disposes of a profile payload nothing inherits.
+    fn profile_consumed(&mut self, _key: ProfileKey, _data: P::Profile) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Supplies the payload for a face this transaction created. See
+    /// [`Self::vertex_created`].
+    fn face_created(
+        &mut self,
+        key: FaceKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::F, Self::Error>;
+
+    /// Folds a consumed face payload into the one that survived it.
+    fn face_merged(
         &mut self,
         _survivor: FaceKey,
         _survivor_data: &mut P::F,
@@ -170,8 +154,22 @@ pub trait EditPolicy<P: Payload> {
         Ok(())
     }
 
-    /// Merges a removed sheet payload into the surviving sheet payload.
-    fn merge_sheet_data(
+    /// Disposes of a face payload nothing inherits.
+    fn face_consumed(&mut self, _key: FaceKey, _data: P::F) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Supplies the payload for a sheet this transaction created. See
+    /// [`Self::vertex_created`].
+    fn sheet_created(
+        &mut self,
+        key: SheetKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::Sheet, Self::Error>;
+
+    /// Folds a consumed sheet payload into the one that survived it.
+    fn sheet_merged(
         &mut self,
         _survivor: SheetKey,
         _survivor_data: &mut P::Sheet,
@@ -181,8 +179,22 @@ pub trait EditPolicy<P: Payload> {
         Ok(())
     }
 
-    /// Merges a removed solid payload into the surviving solid payload.
-    fn merge_solid_data(
+    /// Disposes of a sheet payload nothing inherits.
+    fn sheet_consumed(&mut self, _key: SheetKey, _data: P::Sheet) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Supplies the payload for a solid this transaction created. See
+    /// [`Self::vertex_created`].
+    fn solid_created(
+        &mut self,
+        key: SolidKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::S, Self::Error>;
+
+    /// Folds a consumed solid payload into the one that survived it.
+    fn solid_merged(
         &mut self,
         _survivor: SolidKey,
         _survivor_data: &mut P::S,
@@ -191,14 +203,133 @@ pub trait EditPolicy<P: Payload> {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    /// Disposes of a solid payload nothing inherits.
+    fn solid_consumed(&mut self, _key: SolidKey, _data: P::S) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 /// Default edit policy.
+///
+/// Preserves payload across a `Split`, keeps the merge survivor, drops on a
+/// consume, and defaults on both `New` and `Derived` — a derived entity's
+/// sources are of another kind, so there is no payload of the right type to
+/// clone, and only a caller's own policy knows how to produce one.
+///
+/// ```
+/// use ngk::model::Model;
+/// use ngk::topology::{ModelEditError, PreservePayload};
+/// use ngk::topology::payload::StandardPayload;
+///
+/// let mut g = Model::<StandardPayload>::new();
+/// g.transaction_with_policy(&mut PreservePayload, |_edit| {
+///     Ok::<_, ModelEditError>(())
+/// })
+/// .unwrap();
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PreservePayload;
 
-impl<P: Payload> EditPolicy<P> for PreservePayload {
+/// Resolves a creation's payload from `origin` under the split-clones,
+/// otherwise-defaults rule [`PreservePayload`] applies at every dimension.
+fn preserve_created<P, T>(
+    origin: Origin,
+    before: &Model<P>,
+    source_data: impl Fn(&Model<P>, EditKey) -> Option<T>,
+) -> T
+where
+    P: Payload,
+    T: Default,
+{
+    match origin {
+        Origin::Split(source) => source_data(before, source).unwrap_or_default(),
+        Origin::New | Origin::Derived(_) => T::default(),
+    }
+}
+
+impl<P: Payload> EditPolicy<P> for PreservePayload
+where
+    P::V: Default,
+    P::E: Default,
+    P::Profile: Default,
+    P::F: Default,
+    P::Sheet: Default,
+    P::S: Default,
+{
     type Error = Infallible;
+
+    fn vertex_created(
+        &mut self,
+        _key: VertexKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::V, Self::Error> {
+        Ok(preserve_created(origin, before, |m, key| match key {
+            EditKey::Vertex(key) => Some(m.vertex_attr_unchecked(key).data().clone()),
+            _ => None,
+        }))
+    }
+
+    fn edge_created(
+        &mut self,
+        _key: EdgeKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::E, Self::Error> {
+        Ok(preserve_created(origin, before, |m, key| match key {
+            EditKey::Edge(key) => Some(m.edge_attr_unchecked(key).data().clone()),
+            _ => None,
+        }))
+    }
+
+    fn profile_created(
+        &mut self,
+        _key: ProfileKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::Profile, Self::Error> {
+        Ok(preserve_created(origin, before, |m, key| match key {
+            EditKey::Profile(key) => Some(m.profile_attr_unchecked(key).data().clone()),
+            _ => None,
+        }))
+    }
+
+    fn face_created(
+        &mut self,
+        _key: FaceKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::F, Self::Error> {
+        Ok(preserve_created(origin, before, |m, key| match key {
+            EditKey::Face(key) => Some(m.face_attr_unchecked(key).data().clone()),
+            _ => None,
+        }))
+    }
+
+    fn sheet_created(
+        &mut self,
+        _key: SheetKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::Sheet, Self::Error> {
+        Ok(preserve_created(origin, before, |m, key| match key {
+            EditKey::Sheet(key) => Some(m.sheet_attr_unchecked(key).data().clone()),
+            _ => None,
+        }))
+    }
+
+    fn solid_created(
+        &mut self,
+        _key: SolidKey,
+        origin: Origin,
+        before: &Model<P>,
+    ) -> Result<P::S, Self::Error> {
+        Ok(preserve_created(origin, before, |m, key| match key {
+            EditKey::Solid(key) => Some(m.solid_attr_unchecked(key).data().clone()),
+            _ => None,
+        }))
+    }
 }
 
 /// Failure raised while applying a safe model mutation.
@@ -1048,7 +1179,7 @@ where
     validate_cell_occupancy(g).map_err(ModelEditError::InvalidCellOccupancy)?;
     g.invalidate_derived_indexes();
     let policy_events = resolve_policy_events(g, snapshot, events, &lineage);
-    apply_policy_events(g, snapshot, &policy_events, policy)?;
+    apply_policy_events(g, snapshot, policy_events, policy)?;
     g.materialize_derived_indexes();
     Ok(())
 }
@@ -1237,10 +1368,10 @@ impl TransactionLineage {
                     origins.insert(*key, CreationOrigin::SplitFrom(*source));
                     creation_order.entry(*key).or_insert(order);
                 }
-                // A derived creation has several sources of another kind, so
-                // there is no single parent to trace a split chain through.
-                // Stage 2's creation hook reads `Origin::Derived` off the
-                // event log directly; the reconciliation ordering below only
+                // A derived creation has several sources, each resolved to a
+                // transaction-start identity independently when the creation
+                // hook runs; there is no single parent to trace a chain
+                // through here, and the reconciliation ordering below only
                 // needs a creation order, which "fresh" already supplies.
                 EditEvent::Created {
                     key,
@@ -1275,16 +1406,17 @@ impl TransactionLineage {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum PolicyEvent {
-    Split { source: EditKey, created: EditKey },
-    Merge { survivor: EditKey, removed: EditKey },
+    Created { key: EditKey, origin: Origin },
+    Merged { survivor: EditKey, removed: EditKey },
+    Consumed { key: EditKey },
 }
 
 /// Reduces the raw journal to net changes visible outside the transaction.
 ///
-/// Transient local identities are omitted, split ancestry is traced back to the
-/// snapshot, and merge chains target their final surviving identity.
+/// Transient local identities are omitted, an origin's sources are traced back
+/// to the snapshot, and merge chains target their final surviving identity.
 fn resolve_policy_events<P: Payload>(
     g: &Model<P>,
     snapshot: &Model<P>,
@@ -1294,34 +1426,61 @@ fn resolve_policy_events<P: Payload>(
     events
         .iter()
         .filter_map(|event| match event {
-            // Only a split names a single source of the created entity's own
-            // kind, so only a split has a hook to route to in this vocabulary.
-            // `New` and `Derived` reach no policy call until a creation hook
-            // exists to receive them.
-            EditEvent::Created {
-                key: created,
-                origin: Origin::Split(source),
-            } => {
-                if !contains_edit_key(g, *created) {
+            EditEvent::Created { key, origin } => {
+                if !contains_edit_key(g, *key) {
                     return None;
                 }
-                transaction_start_origin(snapshot, &lineage.origins, *source).map(|source| {
-                    PolicyEvent::Split {
-                        source,
-                        created: *created,
-                    }
-                })
+                let origin = resolve_origin(snapshot, &lineage.origins, origin);
+                Some(PolicyEvent::Created { key: *key, origin })
             }
             EditEvent::Merged { survivor, removed } => {
                 let survivor = final_survivor(&lineage.merges, *survivor);
                 let removed = *removed;
                 // A spent merge has no surviving payload to merge into.
                 (contains_edit_key(snapshot, removed) && contains_edit_key(g, survivor))
-                    .then_some(PolicyEvent::Merge { survivor, removed })
+                    .then_some(PolicyEvent::Merged { survivor, removed })
             }
-            _ => None,
+            // A locally created-then-removed identity never reached the
+            // snapshot, so its consumption is not a net externally-visible
+            // change and reaches no hook -- the same rule a transient split
+            // or a spent merge follows.
+            EditEvent::Consumed { key } => {
+                contains_edit_key(snapshot, *key).then_some(PolicyEvent::Consumed { key: *key })
+            }
+            // A copy is transport, never a creation, and never reaches policy.
+            EditEvent::Copied { .. } => None,
         })
         .collect()
+}
+
+/// Resolves an origin's sources to transaction-start identities.
+///
+/// A source the transaction itself created is not in `snapshot`; such a
+/// source is traced back through its own origin until one is found, and
+/// dropped when it descends from none. An origin left with no source at all
+/// is reported as [`Origin::New`].
+fn resolve_origin<P: Payload>(
+    snapshot: &Model<P>,
+    origins: &HashMap<EditKey, CreationOrigin>,
+    origin: &Origin,
+) -> Origin {
+    match origin {
+        Origin::New => Origin::New,
+        Origin::Split(source) => transaction_start_origin(snapshot, origins, *source)
+            .map(Origin::Split)
+            .unwrap_or(Origin::New),
+        Origin::Derived(sources) => {
+            let resolved = sources
+                .iter()
+                .filter_map(|&source| transaction_start_origin(snapshot, origins, source))
+                .collect::<Vec<_>>();
+            if resolved.is_empty() {
+                Origin::New
+            } else {
+                Origin::Derived(resolved)
+            }
+        }
+    }
 }
 
 /// Collects all topology-associated attribute keys currently stored by the map.
@@ -1707,14 +1866,15 @@ fn remove_consumed_attributes<P: Payload>(g: &mut Model<P>, events: &[EditEvent]
     }
 }
 
-/// Applies net split and merge policy calls in journal order using snapshot inputs.
+/// Applies net creation, merge and consumption policy calls in journal order.
 ///
-/// Source and removed payloads always come from the transaction-start snapshot;
-/// only surviving staged payloads are mutated.
+/// A created identity's payload comes from the policy's return value; a
+/// removed or consumed one comes from the transaction-start snapshot. Only
+/// surviving staged payloads are mutated.
 fn apply_policy_events<P, Q>(
     g: &mut Model<P>,
     snapshot: &Model<P>,
-    events: &[PolicyEvent],
+    events: Vec<PolicyEvent>,
     policy: &mut Q,
 ) -> Result<(), ModelEditError>
 where
@@ -1722,125 +1882,167 @@ where
     Q: EditPolicy<P>,
 {
     for event in events {
-        match *event {
-            PolicyEvent::Split {
-                source: EditKey::Vertex(source),
-                created: EditKey::Vertex(created),
+        match event {
+            PolicyEvent::Created {
+                key: EditKey::Vertex(key),
+                origin,
             } => {
-                let source_data = snapshot.vertex_attr_unchecked(source).data.clone();
-                let created_data = &mut g.vertex_attr_mut_unchecked(created).data;
-                policy
-                    .split_vertex_data(source, &source_data, created, created_data)
+                let data = policy
+                    .vertex_created(key, origin, snapshot)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+                g.vertex_attr_mut_unchecked(key).set_data(data);
             }
-            PolicyEvent::Split {
-                source: EditKey::Edge(source),
-                created: EditKey::Edge(created),
+            PolicyEvent::Created {
+                key: EditKey::Edge(key),
+                origin,
             } => {
-                let source_data = snapshot.edge_attr_unchecked(source).data.clone();
-                let created_data = &mut g.edge_attr_mut_unchecked(created).data;
-                policy
-                    .split_edge_data(source, &source_data, created, created_data)
+                let data = policy
+                    .edge_created(key, origin, snapshot)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+                g.edge_attr_mut_unchecked(key).set_data(data);
             }
-            PolicyEvent::Split {
-                source: EditKey::Profile(source),
-                created: EditKey::Profile(created),
+            PolicyEvent::Created {
+                key: EditKey::Profile(key),
+                origin,
             } => {
-                let source_data = snapshot.profile_attr_unchecked(source).data.clone();
-                let created_data = &mut g.profile_attr_mut_unchecked(created).data;
-                policy
-                    .split_profile_data(source, &source_data, created, created_data)
+                let data = policy
+                    .profile_created(key, origin, snapshot)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+                g.profile_attr_mut_unchecked(key).set_data(data);
             }
-            PolicyEvent::Split {
-                source: EditKey::Face(source),
-                created: EditKey::Face(created),
+            PolicyEvent::Created {
+                key: EditKey::Face(key),
+                origin,
             } => {
-                let source_data = snapshot.face_attr_unchecked(source).data.clone();
-                let created_data = &mut g.face_attr_mut_unchecked(created).data;
-                policy
-                    .split_face_data(source, &source_data, created, created_data)
+                let data = policy
+                    .face_created(key, origin, snapshot)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+                g.face_attr_mut_unchecked(key).set_data(data);
             }
-            PolicyEvent::Split {
-                source: EditKey::Sheet(source),
-                created: EditKey::Sheet(created),
+            PolicyEvent::Created {
+                key: EditKey::Sheet(key),
+                origin,
             } => {
-                let source_data = snapshot.sheet_attr_unchecked(source).data.clone();
-                let created_data = &mut g.sheet_attr_mut_unchecked(created).data;
-                policy
-                    .split_sheet_data(source, &source_data, created, created_data)
+                let data = policy
+                    .sheet_created(key, origin, snapshot)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+                g.sheet_attr_mut_unchecked(key).set_data(data);
             }
-            PolicyEvent::Split {
-                source: EditKey::Solid(source),
-                created: EditKey::Solid(created),
+            PolicyEvent::Created {
+                key: EditKey::Solid(key),
+                origin,
             } => {
-                let source_data = snapshot.solid_attr_unchecked(source).data.clone();
-                let created_data = &mut g.solid_attr_mut_unchecked(created).data;
-                policy
-                    .split_solid_data(source, &source_data, created, created_data)
+                let data = policy
+                    .solid_created(key, origin, snapshot)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+                g.solid_attr_mut_unchecked(key).set_data(data);
             }
-            PolicyEvent::Merge {
+            PolicyEvent::Merged {
                 survivor: EditKey::Vertex(survivor),
                 removed: EditKey::Vertex(removed),
             } => {
-                let removed_data = snapshot.vertex_attr_unchecked(removed).data.clone();
-                let survivor_data = &mut g.vertex_attr_mut_unchecked(survivor).data;
+                let removed_data = snapshot.vertex_attr_unchecked(removed).data().clone();
+                let survivor_data = g.vertex_attr_mut_unchecked(survivor).data_mut();
                 policy
-                    .merge_vertex_data(survivor, survivor_data, removed, removed_data)
+                    .vertex_merged(survivor, survivor_data, removed, removed_data)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
             }
-            PolicyEvent::Merge {
+            PolicyEvent::Merged {
                 survivor: EditKey::Edge(survivor),
                 removed: EditKey::Edge(removed),
             } => {
-                let removed_data = snapshot.edge_attr_unchecked(removed).data.clone();
-                let survivor_data = &mut g.edge_attr_mut_unchecked(survivor).data;
+                let removed_data = snapshot.edge_attr_unchecked(removed).data().clone();
+                let survivor_data = g.edge_attr_mut_unchecked(survivor).data_mut();
                 policy
-                    .merge_edge_data(survivor, survivor_data, removed, removed_data)
+                    .edge_merged(survivor, survivor_data, removed, removed_data)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
             }
-            PolicyEvent::Merge {
+            PolicyEvent::Merged {
                 survivor: EditKey::Profile(survivor),
                 removed: EditKey::Profile(removed),
             } => {
-                let removed_data = snapshot.profile_attr_unchecked(removed).data.clone();
-                let survivor_data = &mut g.profile_attr_mut_unchecked(survivor).data;
+                let removed_data = snapshot.profile_attr_unchecked(removed).data().clone();
+                let survivor_data = g.profile_attr_mut_unchecked(survivor).data_mut();
                 policy
-                    .merge_profile_data(survivor, survivor_data, removed, removed_data)
+                    .profile_merged(survivor, survivor_data, removed, removed_data)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
             }
-            PolicyEvent::Merge {
+            PolicyEvent::Merged {
                 survivor: EditKey::Face(survivor),
                 removed: EditKey::Face(removed),
             } => {
-                let removed_data = snapshot.face_attr_unchecked(removed).data.clone();
-                let survivor_data = &mut g.face_attr_mut_unchecked(survivor).data;
+                let removed_data = snapshot.face_attr_unchecked(removed).data().clone();
+                let survivor_data = g.face_attr_mut_unchecked(survivor).data_mut();
                 policy
-                    .merge_face_data(survivor, survivor_data, removed, removed_data)
+                    .face_merged(survivor, survivor_data, removed, removed_data)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
             }
-            PolicyEvent::Merge {
+            PolicyEvent::Merged {
                 survivor: EditKey::Sheet(survivor),
                 removed: EditKey::Sheet(removed),
             } => {
-                let removed_data = snapshot.sheet_attr_unchecked(removed).data.clone();
-                let survivor_data = &mut g.sheet_attr_mut_unchecked(survivor).data;
+                let removed_data = snapshot.sheet_attr_unchecked(removed).data().clone();
+                let survivor_data = g.sheet_attr_mut_unchecked(survivor).data_mut();
                 policy
-                    .merge_sheet_data(survivor, survivor_data, removed, removed_data)
+                    .sheet_merged(survivor, survivor_data, removed, removed_data)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
             }
-            PolicyEvent::Merge {
+            PolicyEvent::Merged {
                 survivor: EditKey::Solid(survivor),
                 removed: EditKey::Solid(removed),
             } => {
-                let removed_data = snapshot.solid_attr_unchecked(removed).data.clone();
-                let survivor_data = &mut g.solid_attr_mut_unchecked(survivor).data;
+                let removed_data = snapshot.solid_attr_unchecked(removed).data().clone();
+                let survivor_data = g.solid_attr_mut_unchecked(survivor).data_mut();
                 policy
-                    .merge_solid_data(survivor, survivor_data, removed, removed_data)
+                    .solid_merged(survivor, survivor_data, removed, removed_data)
+                    .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+            }
+            PolicyEvent::Consumed {
+                key: EditKey::Vertex(key),
+            } => {
+                let data = snapshot.vertex_attr_unchecked(key).data().clone();
+                policy
+                    .vertex_consumed(key, data)
+                    .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+            }
+            PolicyEvent::Consumed {
+                key: EditKey::Edge(key),
+            } => {
+                let data = snapshot.edge_attr_unchecked(key).data().clone();
+                policy
+                    .edge_consumed(key, data)
+                    .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+            }
+            PolicyEvent::Consumed {
+                key: EditKey::Profile(key),
+            } => {
+                let data = snapshot.profile_attr_unchecked(key).data().clone();
+                policy
+                    .profile_consumed(key, data)
+                    .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+            }
+            PolicyEvent::Consumed {
+                key: EditKey::Face(key),
+            } => {
+                let data = snapshot.face_attr_unchecked(key).data().clone();
+                policy
+                    .face_consumed(key, data)
+                    .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+            }
+            PolicyEvent::Consumed {
+                key: EditKey::Sheet(key),
+            } => {
+                let data = snapshot.sheet_attr_unchecked(key).data().clone();
+                policy
+                    .sheet_consumed(key, data)
+                    .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
+            }
+            PolicyEvent::Consumed {
+                key: EditKey::Solid(key),
+            } => {
+                let data = snapshot.solid_attr_unchecked(key).data().clone();
+                policy
+                    .solid_consumed(key, data)
                     .map_err(|error| ModelEditError::Policy(Box::new(error)))?;
             }
             _ => unreachable!("edit lineage always preserves the attribute type"),
@@ -1878,11 +2080,7 @@ mod tests {
         let key = g
             .transaction(|edit| {
                 let dart = edit.add_dart();
-                Ok::<_, ModelEditError>(edit.add_vertex(VertexAttr::new(
-                    dart,
-                    Point3::origin(),
-                    (),
-                )))
+                Ok::<_, ModelEditError>(edit.add_vertex(VertexAttr::new(dart, Point3::origin())))
             })
             .unwrap();
 

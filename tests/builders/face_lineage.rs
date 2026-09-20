@@ -5,9 +5,9 @@ use ngk::builders::profiles::add_rectangle as add_rectangle_profile;
 use ngk::geometry::{Curve, Plane, Point2, Point3, TrimmedCurve2};
 use ngk::model::Model;
 use ngk::topology::ModelEditError;
-use ngk::topology::edit::EditPolicy;
+use ngk::topology::edit::{EditKey, EditPolicy, Origin};
 use ngk::topology::payload::Payload;
-use ngk::topology::shape_keys::{FaceKey, ProfileKey};
+use ngk::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 
 #[derive(Clone, Default)]
 struct FacePayload;
@@ -30,27 +30,75 @@ struct RecordFaceSplits {
 impl EditPolicy<FacePayload> for RecordFaceSplits {
     type Error = Infallible;
 
-    fn split_face_data(
+    fn vertex_created(
         &mut self,
-        source: FaceKey,
-        source_data: &String,
-        created: FaceKey,
-        created_data: &mut String,
+        _key: VertexKey,
+        _origin: Origin,
+        _before: &Model<FacePayload>,
     ) -> Result<(), Self::Error> {
-        self.splits.push((source, created));
-        *created_data = format!("{source_data}:split");
         Ok(())
     }
 
-    fn split_profile_data(
+    fn edge_created(
         &mut self,
-        source: ProfileKey,
-        source_data: &String,
-        created: ProfileKey,
-        created_data: &mut String,
+        _key: EdgeKey,
+        _origin: Origin,
+        _before: &Model<FacePayload>,
     ) -> Result<(), Self::Error> {
-        self.profile_splits.push((source, created));
-        *created_data = format!("{source_data}:split");
+        Ok(())
+    }
+
+    fn profile_created(
+        &mut self,
+        key: ProfileKey,
+        origin: Origin,
+        before: &Model<FacePayload>,
+    ) -> Result<String, Self::Error> {
+        match origin {
+            Origin::Split(EditKey::Profile(source)) => {
+                self.profile_splits.push((source, key));
+                Ok(format!(
+                    "{}:split",
+                    before.profile_attr_unchecked(source).data()
+                ))
+            }
+            _ => Ok(String::new()),
+        }
+    }
+
+    fn face_created(
+        &mut self,
+        key: FaceKey,
+        origin: Origin,
+        before: &Model<FacePayload>,
+    ) -> Result<String, Self::Error> {
+        match origin {
+            Origin::Split(EditKey::Face(source)) => {
+                self.splits.push((source, key));
+                Ok(format!(
+                    "{}:split",
+                    before.face_attr_unchecked(source).data()
+                ))
+            }
+            _ => Ok(String::new()),
+        }
+    }
+
+    fn sheet_created(
+        &mut self,
+        _key: SheetKey,
+        _origin: Origin,
+        _before: &Model<FacePayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn solid_created(
+        &mut self,
+        _key: SolidKey,
+        _origin: Origin,
+        _before: &Model<FacePayload>,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -73,13 +121,16 @@ fn boundary_chord_split_preserves_source_face_and_applies_payload_policy() {
 
     assert_eq!(splits.len(), 1);
     assert_eq!(splits[0].first, source);
-    assert_eq!(g.face_attr_unchecked(source).data, "source");
-    assert_eq!(g.face_attr_unchecked(splits[0].second).data, "source:split");
+    assert_eq!(g.face_attr_unchecked(source).data(), "source");
+    assert_eq!(
+        g.face_attr_unchecked(splits[0].second).data(),
+        "source:split"
+    );
     assert_eq!(policy.splits, vec![(source, splits[0].second)]);
     assert_eq!(policy.profile_splits.len(), 1);
     assert_eq!(policy.profile_splits[0].0, source_profile);
     assert_eq!(
-        g.profile_attr_unchecked(policy.profile_splits[0].1).data,
+        g.profile_attr_unchecked(policy.profile_splits[0].1).data(),
         "source profile:split"
     );
 }
@@ -109,8 +160,11 @@ fn closed_loop_split_declares_the_island_as_a_source_face_split() {
 
     assert_eq!(splits.len(), 1);
     assert_eq!(splits[0].first, source);
-    assert_eq!(g.face_attr_unchecked(source).data, "source");
-    assert_eq!(g.face_attr_unchecked(splits[0].second).data, "source:split");
+    assert_eq!(g.face_attr_unchecked(source).data(), "source");
+    assert_eq!(
+        g.face_attr_unchecked(splits[0].second).data(),
+        "source:split"
+    );
     assert_eq!(policy.splits, vec![(source, splits[0].second)]);
 }
 
@@ -130,7 +184,7 @@ fn late_face_policy_failure_restores_the_complete_source_face() {
     assert_eq!(g.dart_count(), original_dart_count);
     assert_eq!(g.iter_faces().count(), 1);
     assert_eq!(g.iter_edges().count(), 4);
-    assert_eq!(g.face_attr_unchecked(source).data, "source");
+    assert_eq!(g.face_attr_unchecked(source).data(), "source");
     assert_eq!(
         g.face_unchecked(source)
             .outer_loop()
@@ -146,14 +200,58 @@ struct RejectFaceSplit;
 impl EditPolicy<FacePayload> for RejectFaceSplit {
     type Error = std::io::Error;
 
-    fn split_face_data(
+    fn vertex_created(
         &mut self,
-        _source: FaceKey,
-        _source_data: &String,
-        _created: FaceKey,
-        _created_data: &mut String,
+        _key: VertexKey,
+        _origin: Origin,
+        _before: &Model<FacePayload>,
     ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn edge_created(
+        &mut self,
+        _key: EdgeKey,
+        _origin: Origin,
+        _before: &Model<FacePayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn profile_created(
+        &mut self,
+        _key: ProfileKey,
+        _origin: Origin,
+        _before: &Model<FacePayload>,
+    ) -> Result<String, Self::Error> {
+        Ok(String::new())
+    }
+
+    fn face_created(
+        &mut self,
+        _key: FaceKey,
+        _origin: Origin,
+        _before: &Model<FacePayload>,
+    ) -> Result<String, Self::Error> {
         Err(std::io::Error::other("reject face split"))
+    }
+
+    fn sheet_created(
+        &mut self,
+        _key: SheetKey,
+        _origin: Origin,
+        _before: &Model<FacePayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn solid_created(
+        &mut self,
+        _key: SolidKey,
+        _origin: Origin,
+        _before: &Model<FacePayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 
@@ -163,8 +261,8 @@ fn attributed_rectangle() -> Model<FacePayload> {
         .expect("rectangle profile should build");
     let face = add_face(&mut g, profile).expect("rectangle face should build");
     g.transaction(|edit| {
-        edit.profile_attr_mut_unchecked(profile).data = "source profile".to_owned();
-        edit.face_attr_mut_unchecked(face).data = "source".to_owned();
+        *edit.profile_attr_mut_unchecked(profile).data_mut() = "source profile".to_owned();
+        *edit.face_attr_mut_unchecked(face).data_mut() = "source".to_owned();
         Ok::<_, ModelEditError>(())
     })
     .unwrap();

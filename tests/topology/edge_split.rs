@@ -118,7 +118,7 @@ fn split_edge_initializes_split_edge_payload_from_source() {
     )
     .expect("line edge should build");
     g.transaction(|edit| {
-        edit.edge_attr_mut_unchecked(edge).data = "source".to_owned();
+        *edit.edge_attr_mut_unchecked(edge).data_mut() = "source".to_owned();
         Ok::<_, ModelEditError>(())
     })
     .unwrap();
@@ -126,7 +126,7 @@ fn split_edge_initializes_split_edge_payload_from_source() {
     let split = split_edge(&mut g, edge, Fraction::new(0.5)).expect("edge should split");
 
     for key in split.edges() {
-        assert_eq!(g.edge_attr_unchecked(key).data, "source");
+        assert_eq!(g.edge_attr_unchecked(key).data(), "source");
     }
 }
 

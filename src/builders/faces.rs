@@ -25,7 +25,7 @@ use crate::topology::edge::Edge;
 use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::orientation::Orientation;
-use crate::topology::payload::Payload;
+use crate::topology::payload::{DefaultPayload, Payload};
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, VertexKey};
@@ -525,7 +525,7 @@ struct RebasedFacePcurve {
 /// # Panics
 ///
 /// Panics if `profile` does not identify a registered profile.
-pub fn add_face<P: Payload>(
+pub fn add_face<P: DefaultPayload>(
     g: &mut Model<P>,
     profile: ProfileKey,
 ) -> Result<FaceKey, FaceCreationError> {
@@ -549,7 +549,6 @@ pub(crate) fn add_face_staged<P: Payload>(
 
     Ok(edit.add_face(FaceAttr::with_pcurves(
         Surface::Plane(plane),
-        P::F::default(),
         loop_dart,
         Vec::new(),
         pcurves,
@@ -594,7 +593,7 @@ pub fn add_square(
 /// faces sharing that edge are split at the corresponding surface points too.
 /// The returned [`EdgeSplit`] identifies both resulting edges and the inserted
 /// vertex; the original edge key is retained by the first segment.
-pub fn split_face_edge<P: Payload>(
+pub fn split_face_edge<P: DefaultPayload>(
     g: &mut Model<P>,
     face: FaceKey,
     edge: EdgeKey,
@@ -646,7 +645,7 @@ pub(crate) fn split_face_edge_staged<P: Payload>(
 /// Returns one [`FaceImprintSplit`] for each embedding that was applied.
 /// Imprints that do not define an applicable cut may produce no split rather
 /// than an error; invalid topology or missing geometry is reported as an error.
-pub fn split_face_by_imprints<P: Payload>(
+pub fn split_face_by_imprints<P: DefaultPayload>(
     g: &mut Model<P>,
     face: FaceKey,
     imprints: &[FaceImprint],
@@ -1079,7 +1078,7 @@ fn split_boundaryless_face_by_wrapping_chain<P: Payload>(
     let backward_loop = add_section_loop(edit, &old_face.surface, &backward);
     let section_edges = sew_section_loops(edit, face, &forward_loop, &backward_loop)?;
     for loop_ in [&forward_loop, &backward_loop] {
-        edit.add_profile(ProfileAttr::new(loop_.loop_dart, P::Profile::default()));
+        edit.add_profile(ProfileAttr::new(loop_.loop_dart));
     }
 
     // The forward copy travels the chain's own direction; the reversed one
@@ -1107,7 +1106,6 @@ fn split_boundaryless_face_by_wrapping_chain<P: Payload>(
         face,
         FaceAttr::with_loops(
             old_face.surface,
-            P::F::default(),
             cap(low, DomainSide::Low),
             low.pcurves.clone(),
         ),
@@ -1289,14 +1287,8 @@ fn split_ring_face_by_wrapping_chain<P: Payload>(
     let forward_loop = add_section_loop(edit, &old_face.surface, &forward);
     let backward_loop = add_section_loop(edit, &old_face.surface, &backward);
     let section_edges = sew_section_loops(edit, face, &forward_loop, &backward_loop)?;
-    edit.add_profile(ProfileAttr::new(
-        forward_loop.loop_dart,
-        P::Profile::default(),
-    ));
-    edit.add_profile(ProfileAttr::new(
-        backward_loop.loop_dart,
-        P::Profile::default(),
-    ));
+    edit.add_profile(ProfileAttr::new(forward_loop.loop_dart));
+    edit.add_profile(ProfileAttr::new(backward_loop.loop_dart));
 
     let seeds = old_face.wrapping().collect::<Vec<_>>();
     let [(first_seed, _), (second_seed, _)] = seeds[..] else {
@@ -1348,12 +1340,7 @@ fn split_ring_face_by_wrapping_chain<P: Payload>(
 
     let second = edit.add_face_split_from(
         face,
-        FaceAttr::with_loops(
-            old_face.surface,
-            P::F::default(),
-            second_boundary,
-            second_pcurves,
-        ),
+        FaceAttr::with_loops(old_face.surface, second_boundary, second_pcurves),
     );
     cut_between_loops(edit, second, second_seed, second_new.loop_dart)?;
 
@@ -1546,14 +1533,8 @@ fn finish_closed_imprint_split<P: Payload>(
     island_loop: SectionLoop,
 ) -> Result<FaceImprintSplit, FaceImprintSplitError> {
     let section_edges = sew_section_loops(edit, face, &outside_loop, &island_loop)?;
-    edit.add_profile(ProfileAttr::new(
-        outside_loop.loop_dart,
-        P::Profile::default(),
-    ));
-    edit.add_profile(ProfileAttr::new(
-        island_loop.loop_dart,
-        P::Profile::default(),
-    ));
+    edit.add_profile(ProfileAttr::new(outside_loop.loop_dart));
+    edit.add_profile(ProfileAttr::new(island_loop.loop_dart));
 
     // The face the island sits in reaches it along a cut it owns. Without one
     // the new hole would sit in a 2-cell of its own, leaving the face two
@@ -1571,7 +1552,6 @@ fn finish_closed_imprint_split<P: Payload>(
         face,
         FaceAttr::with_pcurves(
             old_face.surface,
-            P::F::default(),
             island_loop.loop_dart,
             Vec::new(),
             island_loop.pcurves,
@@ -1637,11 +1617,7 @@ fn add_section_loop<P: Payload>(
         for vertex in 0..n {
             let dart = edit.cell_representative(darts[2 * vertex], Dim::Zero);
             let uv = imprints[vertex].pcurve.point_at(Fraction::new(0.0));
-            edit.add_vertex(VertexAttr::new(
-                dart,
-                surface.point_at(uv.x, uv.y),
-                P::V::default(),
-            ));
+            edit.add_vertex(VertexAttr::new(dart, surface.point_at(uv.x, uv.y)));
         }
     }
 
@@ -1712,7 +1688,7 @@ fn sew_section_loops<P: Payload>(
         } else {
             outside_edge.curve.curve().clone()
         };
-        let key = edit.add_edge(EdgeAttr::new(outside_edge.dart, curve, P::E::default()));
+        let key = edit.add_edge(EdgeAttr::new(outside_edge.dart, curve));
         if closes_on_itself {
             edit.own_cell(Dim::Zero, outside_edge.dart, EntityOwner::Edge(key));
         }
@@ -1894,13 +1870,12 @@ fn add_circle_staged(
 ) -> Result<FaceKey, FaceCreationError> {
     let edge = add_circle_edge_staged(edit, plane.clone(), radius)?;
     let loop_dart = edit.edge_attr_unchecked(edge).dart;
-    edit.add_profile(ProfileAttr::new(loop_dart, ()));
+    edit.add_profile(ProfileAttr::new(loop_dart));
     let profile =
         Profile::from_dart(edit, loop_dart).expect("face loop must have a registered profile");
     let pcurves = profile_pcurves(&profile, &plane)?;
     let face_key = edit.add_face(FaceAttr::with_pcurves(
         Surface::Plane(plane),
-        (),
         loop_dart,
         Vec::new(),
         pcurves,
@@ -2348,11 +2323,7 @@ fn apply_face_chord_split<P: Payload>(
             edit.link(Dim::One, d, darts[index - 1][2])
                 .expect("reverse chain vertex");
             let uv = imprint.pcurve.point_at(Fraction::new(0.0));
-            edit.add_vertex(VertexAttr::new(
-                a,
-                old_face.surface.point_at(uv.x, uv.y),
-                P::V::default(),
-            ));
+            edit.add_vertex(VertexAttr::new(a, old_face.surface.point_at(uv.x, uv.y)));
         }
     }
     let ab_start = darts[0][0];
@@ -2379,16 +2350,10 @@ fn apply_face_chord_split<P: Payload>(
     let end_profile = edit.profile_key(end_dart);
     match (start_profile, end_profile) {
         (Some(key), None) if key == source_profile => {
-            edit.add_profile_split_from(
-                source_profile,
-                ProfileAttr::new(end_dart, P::Profile::default()),
-            );
+            edit.add_profile_split_from(source_profile, ProfileAttr::new(end_dart));
         }
         (None, Some(key)) if key == source_profile => {
-            edit.add_profile_split_from(
-                source_profile,
-                ProfileAttr::new(start_dart, P::Profile::default()),
-            );
+            edit.add_profile_split_from(source_profile, ProfileAttr::new(start_dart));
         }
         _ => panic!("a chord split must retain one source profile and create one split profile"),
     }
@@ -2466,11 +2431,7 @@ fn apply_face_chord_split<P: Payload>(
         .iter()
         .zip(&darts)
         .map(|((index, reversed, imprint), darts)| {
-            let edge = edit.add_edge(EdgeAttr::new(
-                darts[0],
-                imprint.curve.curve().clone(),
-                P::E::default(),
-            ));
+            let edge = edit.add_edge(EdgeAttr::new(darts[0], imprint.curve.curve().clone()));
             FaceImprintSection {
                 edge,
                 imprint: *index,
@@ -2537,12 +2498,7 @@ fn apply_face_chord_split<P: Payload>(
 
     let second = edit.add_face_split_from(
         original_face,
-        FaceAttr::with_loops(
-            old_face.surface,
-            P::F::default(),
-            created_loops,
-            created_pcurves,
-        ),
+        FaceAttr::with_loops(old_face.surface, created_loops, created_pcurves),
     );
 
     // The splice left each corner's cut on the half the walk arrived from,
@@ -2838,12 +2794,10 @@ fn add_annulus_staged(
     let outer_edge = edit.add_edge(EdgeAttr::new(
         outer_loop_slot[0],
         Curve::circle(plane.clone(), outer_radius),
-        (),
     ));
     let inner_edge = edit.add_edge(EdgeAttr::new(
         inner_loop_slot[0],
         Curve::circle(inner_plane, inner_radius),
-        (),
     ));
     // Each rim closes where the bridge meets it. That 0-cell is interior to the
     // rim, not a corner: nothing else meets there, and the rim stays unmarked.
@@ -2852,8 +2806,8 @@ fn add_annulus_staged(
 
     let outer_loop = outer_loop_slot[0];
     let inner_loop = inner_loop_slot[0];
-    edit.add_profile(ProfileAttr::new(outer_loop, ()));
-    edit.add_profile(ProfileAttr::new(inner_loop, ()));
+    edit.add_profile(ProfileAttr::new(outer_loop));
+    edit.add_profile(ProfileAttr::new(inner_loop));
 
     let outer_profile =
         Profile::from_dart(edit, outer_loop).expect("outer loop must have a registered profile");
@@ -2864,7 +2818,6 @@ fn add_annulus_staged(
 
     let face_key = edit.add_face(FaceAttr::with_pcurves(
         Surface::Plane(plane),
-        (),
         outer_loop,
         vec![inner_loop],
         pcurves,
@@ -3182,7 +3135,6 @@ fn add_polygon_with_holes_staged(
 
     let face_key = edit.add_face(FaceAttr::with_pcurves(
         Surface::Plane(plane),
-        (),
         outer_loop,
         inner_loops.clone(),
         pcurves,
@@ -3215,7 +3167,7 @@ fn validate_polygon(points: &[Point3]) -> Result<(), FaceCreationError> {
 /// returned with free boundary, ready to be stitched to neighbors.
 ///
 /// Returns the profile key whose stored dart defines the polygon's orientation.
-pub fn add_polygon<P: Payload>(
+pub fn add_polygon<P: DefaultPayload>(
     g: &mut Model<P>,
     corners: &[Point3],
 ) -> crate::topology::shape_keys::ProfileKey {
@@ -3249,18 +3201,15 @@ pub(crate) fn add_polygon_staged<P: Payload>(
 
     for i in 0..n {
         let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
-        edit.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
+        edit.add_vertex(VertexAttr::new(dart, corners[i]));
     }
 
     for i in 0..n {
         let edge_dart = darts[2 * i];
         let curve = Curve::line(corners[i], corners[(i + 1) % n]);
-        edit.add_edge(EdgeAttr::new(edge_dart, curve, P::E::default()));
+        edit.add_edge(EdgeAttr::new(edge_dart, curve));
     }
-    edit.add_profile(crate::topology::attributes::ProfileAttr::new(
-        darts[0],
-        P::Profile::default(),
-    ))
+    edit.add_profile(crate::topology::attributes::ProfileAttr::new(darts[0]))
 }
 
 /// Flips a face's orientation in place.

@@ -73,7 +73,7 @@ use crate::topology::edit::{ModelEdit, ModelEditError};
 use crate::topology::embedding::EntityOwner;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim};
-use crate::topology::payload::Payload;
+use crate::topology::payload::{DefaultPayload, Payload};
 use crate::topology::profile::Profile;
 use crate::topology::profile_curve::{
     ProfileCurve, ProfileCurveError, agree_directions, align_seams,
@@ -291,9 +291,9 @@ impl LoftSection for CappedSection {
         // orientation just established for the bottom cap.
         let shell = edit.face_attr_unchecked(caps[0]).outer_unchecked();
         if edit.sheet_key(shell).is_none() {
-            edit.add_sheet(SheetAttr::new(shell, P::Sheet::default()));
+            edit.add_sheet(SheetAttr::new(shell));
         }
-        Ok(edit.add_solid(SolidAttr::new(P::S::default(), shell, None)))
+        Ok(edit.add_solid(SolidAttr::new(shell, None)))
     }
 }
 
@@ -419,7 +419,7 @@ impl From<ModelEditError> for LoftError {
 /// give a [`SheetKey`], [`CappedSection`] a [`SolidKey`]. See the
 /// [module documentation](self) for how correspondence between sections is
 /// established.
-pub fn add_loft<S: LoftSection, P: Payload>(
+pub fn add_loft<S: LoftSection, P: DefaultPayload>(
     g: &mut Model<P>,
     sections: &[S],
     options: LoftOptions,
@@ -613,7 +613,7 @@ impl LoftColumns {
     /// Registers the lateral faces as one sheet.
     fn register_sheet<P: Payload>(&self, edit: &mut ModelEdit<'_, P>) -> SheetKey {
         let dart = self.faces[0].anchor;
-        edit.add_sheet(SheetAttr::new(dart, P::Sheet::default()))
+        edit.add_sheet(SheetAttr::new(dart))
     }
 
     /// Sews every column's section edge onto the cap it came from.
@@ -821,14 +821,10 @@ fn add_loft_quad_face<P: Payload>(
     }
     for i in 0..4 {
         let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
-        edit.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
+        edit.add_vertex(VertexAttr::new(dart, corners[i]));
     }
     for i in 0..4 {
-        edit.add_edge(EdgeAttr::new(
-            darts[2 * i],
-            boundary[i].clone(),
-            P::E::default(),
-        ));
+        edit.add_edge(EdgeAttr::new(darts[2 * i], boundary[i].clone()));
     }
 
     let pcurves = (0..4)
@@ -839,10 +835,9 @@ fn add_loft_quad_face<P: Payload>(
             )
         })
         .collect::<HashMap<_, _>>();
-    edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default()));
+    edit.add_profile(ProfileAttr::new(darts[0]));
     let key = edit.add_face(FaceAttr::with_pcurves(
         Surface::Nurbs(skin),
-        P::F::default(),
         darts[0],
         Vec::new(),
         pcurves,
@@ -903,27 +898,22 @@ fn add_loft_band_face<P: Payload>(
         let second = edit.add_dart();
         edit.link(Dim::Zero, first, second)?;
         edit.link(Dim::One, first, second)?;
-        let edge = edit.add_edge(EdgeAttr::new(
-            first,
-            boundary[slot].clone(),
-            P::E::default(),
-        ));
+        let edge = edit.add_edge(EdgeAttr::new(first, boundary[slot].clone()));
         match corners[slot] {
             Some(point) => {
-                edit.add_vertex(VertexAttr::new(first, point, P::V::default()));
+                edit.add_vertex(VertexAttr::new(first, point));
             }
             // Nothing meets where this loop closes, so the 0-cell there is
             // interior to the edge rather than a corner of the shape.
             None => edit.own_cell(Dim::Zero, first, EntityOwner::Edge(edge)),
         }
-        edit.add_profile(ProfileAttr::new(first, P::Profile::default()));
+        edit.add_profile(ProfileAttr::new(first));
         *darts = [first, second];
     }
     let seeds = [loops[0][0], loops[1][0]];
 
     let key = edit.add_face(FaceAttr::with_loops(
         Surface::Nurbs(skin),
-        P::F::default(),
         vec![
             LoopDefinition::from_kind(seeds[0], LoopKind::Wrapping { axis: Axis2::U }),
             LoopDefinition::from_kind(seeds[1], LoopKind::Wrapping { axis: Axis2::U }),

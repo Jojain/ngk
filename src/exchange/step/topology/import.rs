@@ -835,7 +835,7 @@ fn sew_solid(
     let mut roots = Vec::with_capacity(shells.len());
     for planned in shells {
         let root = sew_shell(edit, planned)?;
-        edit.add_sheet(SheetAttr::new(root, ()));
+        edit.add_sheet(SheetAttr::new(root));
         roots.push(root);
     }
 
@@ -843,7 +843,7 @@ fn sew_solid(
         unreachable!("a planned solid has at least one shell");
     };
     let inner = (!voids.is_empty()).then(|| voids.to_vec());
-    let solid = edit.add_solid(SolidAttr::new((), *outer, inner));
+    let solid = edit.add_solid(SolidAttr::new(*outer, inner));
     if heal_seams {
         // STEP's synthetic periodic cuts have to come off before the cavity
         // cut is attached. Once that solid-owned face turns through the same
@@ -885,7 +885,6 @@ fn sew_shell(
         let cell = add_closed_face_cell(edit, surface)?;
         let face = edit.add_face(FaceAttr::closed(
             surface.clone(),
-            (),
             cell.anchor(),
             HashMap::new(),
         ));
@@ -963,10 +962,10 @@ fn sew_shell(
                 let (start, end) = (darts[2 * index], darts[2 * index + 1]);
 
                 if vertices.insert(use_.start, ()).is_none() {
-                    edit.add_vertex(VertexAttr::new(start, use_.start_point, ()));
+                    edit.add_vertex(VertexAttr::new(start, use_.start_point));
                 }
                 if vertices.insert(use_.end, ()).is_none() {
-                    edit.add_vertex(VertexAttr::new(end, use_.end_point, ()));
+                    edit.add_vertex(VertexAttr::new(end, use_.end_point));
                 }
 
                 if edges.insert(use_.edge, ()).is_none() {
@@ -978,10 +977,10 @@ fn sew_shell(
                     // circle the other choice is the complementary arc, which
                     // is a different edge of a different shape.
                     let reference = if use_.forward { start } else { end };
-                    edit.add_edge(EdgeAttr::new(reference, use_.curve.clone(), ()));
+                    edit.add_edge(EdgeAttr::new(reference, use_.curve.clone()));
                 }
             }
-            edit.add_profile(ProfileAttr::new(darts[0], ()));
+            edit.add_profile(ProfileAttr::new(darts[0]));
         }
 
         let outer_seed = face_darts[*outer][0];
@@ -1005,7 +1004,6 @@ fn sew_shell(
 
         let face = edit.add_face(FaceAttr::with_pcurves(
             surface.clone(),
-            (),
             outer_seed,
             inner_seeds.clone(),
             pcurves,

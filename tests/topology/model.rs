@@ -42,7 +42,7 @@ fn profile_and_sheet_payloads_are_exposed_and_preserved_by_merge() {
         add_rectangle(&mut source, Plane::xy(), 2.0, 1.0).expect("profile should build");
     source
         .transaction(|edit| {
-            edit.profile_attr_mut_unchecked(profile_key).data = "profile".to_owned();
+            *edit.profile_attr_mut_unchecked(profile_key).data_mut() = "profile".to_owned();
             Ok::<_, ModelEditError>(())
         })
         .unwrap();
@@ -50,7 +50,7 @@ fn profile_and_sheet_payloads_are_exposed_and_preserved_by_merge() {
         add_extruded_profile(&mut source, profile_key, Vector3::z()).expect("sheet should build");
     source
         .transaction(|edit| {
-            edit.sheet_attr_mut_unchecked(sheet_key).data = "sheet".to_owned();
+            *edit.sheet_attr_mut_unchecked(sheet_key).data_mut() = "sheet".to_owned();
             Ok::<_, ModelEditError>(())
         })
         .unwrap();
@@ -60,8 +60,8 @@ fn profile_and_sheet_payloads_are_exposed_and_preserved_by_merge() {
 
     source
         .transaction(|edit| {
-            edit.profile_attr_mut_unchecked(profile_key).data = "updated profile".to_owned();
-            edit.sheet_attr_mut_unchecked(sheet_key).data = "updated sheet".to_owned();
+            *edit.profile_attr_mut_unchecked(profile_key).data_mut() = "updated profile".to_owned();
+            *edit.sheet_attr_mut_unchecked(sheet_key).data_mut() = "updated sheet".to_owned();
             Ok::<_, ModelEditError>(())
         })
         .unwrap();
@@ -78,11 +78,11 @@ fn profile_and_sheet_payloads_are_exposed_and_preserved_by_merge() {
         .unwrap();
 
     assert_eq!(
-        profile_target.iter_profiles().next().unwrap().1.data,
+        profile_target.iter_profiles().next().unwrap().1.data(),
         "updated profile"
     );
     assert_eq!(
-        sheet_target.iter_sheets().next().unwrap().1.data,
+        sheet_target.iter_sheets().next().unwrap().1.data(),
         "updated sheet"
     );
 }
@@ -150,7 +150,6 @@ fn merge_face_remaps_stored_darts_and_pcurves() {
                     Vector3::x(),
                     Vector3::y(),
                 )),
-                (),
                 loop_dart,
                 Vec::new(),
                 pcurves,
@@ -222,9 +221,7 @@ fn merge_profile_sheet_and_solid_return_remapped_darts() {
     assert_eq!(target.dart_count(), 6);
 
     let sheet_key = source
-        .transaction(|edit| {
-            Ok::<_, ModelEditError>(edit.add_sheet(SheetAttr::new(profile_dart, ())))
-        })
+        .transaction(|edit| Ok::<_, ModelEditError>(edit.add_sheet(SheetAttr::new(profile_dart))))
         .unwrap();
     let mut sheet_target = Model::<StandardPayload>::new();
     let merged_sheet = sheet_target
@@ -235,7 +232,7 @@ fn merge_profile_sheet_and_solid_return_remapped_darts() {
 
     let solid_key = source
         .transaction(|edit| {
-            Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new((), profile_dart, None)))
+            Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new(profile_dart, None)))
         })
         .unwrap();
     let mut second_target = Model::<StandardPayload>::new();
@@ -276,7 +273,6 @@ fn isolate_face_copies_it_into_a_fresh_map() {
                     Vector3::x(),
                     Vector3::y(),
                 )),
-                (),
                 loop_dart,
                 Vec::new(),
             )))

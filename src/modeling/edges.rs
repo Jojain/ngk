@@ -5,7 +5,7 @@ use crate::builders::errors::EdgeCreationError;
 use crate::geometry::{Plane, Point3};
 use crate::model::Model;
 use crate::topology::ModelEditError;
-use crate::topology::payload::{Payload, StandardPayload};
+use crate::topology::payload::{DefaultPayload, StandardPayload};
 use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
 
 /// Creates a line segment between two points in 3D space.
@@ -39,15 +39,15 @@ pub fn circle(
     Ok(Shape::new(g, edge_key))
 }
 
-impl<P: Payload> Shape<EdgeTag, P> {
+impl<P: DefaultPayload> Shape<EdgeTag, P> {
     pub fn into_profile(self) -> Shape<ProfileTag, P> {
         let (mut g, edge_key) = self.into_model();
         let dart = g.edge_attr_unchecked(edge_key).dart;
         let profile_key = g
             .transaction(|edit| {
-                Ok::<_, ModelEditError>(edit.add_profile(
-                    crate::topology::attributes::ProfileAttr::new(dart, P::Profile::default()),
-                ))
+                Ok::<_, ModelEditError>(
+                    edit.add_profile(crate::topology::attributes::ProfileAttr::new(dart)),
+                )
             })
             .expect("edge-to-profile conversion must commit");
         Shape::new(g, profile_key)

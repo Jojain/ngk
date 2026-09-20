@@ -289,9 +289,9 @@ fn a_cap_on_the_far_half_of_a_sphere_unwraps_onto_one_branch() {
 
             // Where the rim starts, where it ends a half-turn later, and the
             // pole the two meridians meet at.
-            edit.add_vertex(VertexAttr::new(d[0], sphere.point_at(PI, LATITUDE), ()));
-            edit.add_vertex(VertexAttr::new(d[2], sphere.point_at(0.0, LATITUDE), ()));
-            edit.add_vertex(VertexAttr::new(d[4], sphere.point_at(0.0, FRAC_PI_2), ()));
+            edit.add_vertex(VertexAttr::new(d[0], sphere.point_at(PI, LATITUDE)));
+            edit.add_vertex(VertexAttr::new(d[2], sphere.point_at(0.0, LATITUDE)));
+            edit.add_vertex(VertexAttr::new(d[4], sphere.point_at(0.0, FRAC_PI_2)));
 
             // The rim is a latitude circle; each meridian is a great circle in
             // the plane its own longitude and the polar axis span.
@@ -305,7 +305,6 @@ fn a_cap_on_the_far_half_of_a_sphere_unwraps_onto_one_branch() {
                     ),
                     radius * LATITUDE.cos(),
                 )),
-                (),
             ));
             for (dart, longitude) in [(d[2], 0.0), (d[4], PI)] {
                 let (sin, cos) = f64::sin_cos(longitude);
@@ -315,10 +314,9 @@ fn a_cap_on_the_far_half_of_a_sphere_unwraps_onto_one_branch() {
                         Plane::from_xy(Point3::origin(), Vector3::new(cos, sin, 0.0), Vector3::z()),
                         radius,
                     )),
-                    (),
                 ));
             }
-            edit.add_profile(ProfileAttr::new(d[0], ()));
+            edit.add_profile(ProfileAttr::new(d[0]));
 
             // The rim crosses the domain's far half, so the climb to the pole —
             // written at u = 0, as a writer naming the same meridian either way
@@ -343,7 +341,6 @@ fn a_cap_on_the_far_half_of_a_sphere_unwraps_onto_one_branch() {
             ]);
             let face = edit.add_face(FaceAttr::with_pcurves(
                 surface.clone(),
-                (),
                 d[0],
                 Vec::new(),
                 pcurves,

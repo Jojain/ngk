@@ -13,20 +13,62 @@ use crate::topology::shape_keys::EdgeKey;
 use crate::topology::vertex::Vertex;
 
 /// Stored data for a keyed vertex 0-cell.
+///
+/// `data` starts empty and is filled exactly once, by commit's creation hook,
+/// before any caller can observe the attribute again. See the module-level
+/// discussion on [`VertexAttr::data`] for why the slot is `Option` internally
+/// but never `Option` at the public API.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct VertexAttr<T> {
     /// Representative dart of the vertex orbit.
     pub dart: Dart,
     /// Geometric point attached to the vertex.
     pub point: Point3,
-    /// User payload attached to the vertex.
-    pub data: T,
+    data: Option<T>,
 }
 
 impl<T> VertexAttr<T> {
-    /// Creates a vertex attribute rooted at `dart`.
-    pub fn new(dart: Dart, point: Point3, data: T) -> Self {
-        Self { dart, point, data }
+    /// Creates a vertex attribute rooted at `dart`, with no payload yet.
+    ///
+    /// The payload is assigned once by commit's creation hook; see
+    /// [`Self::data`].
+    pub fn new(dart: Dart, point: Point3) -> Self {
+        Self {
+            dart,
+            point,
+            data: None,
+        }
+    }
+
+    /// Returns the user payload attached to this vertex.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the payload has not been assigned yet. This is unreachable
+    /// outside `model.rs`/`edit.rs`: commit only lets a transaction succeed
+    /// after every surviving entity's creation hook has run.
+    pub fn data(&self) -> &T {
+        self.data
+            .as_ref()
+            .expect("vertex attribute data should be assigned by commit before being read")
+    }
+
+    /// Returns mutable access to the user payload attached to this vertex.
+    ///
+    /// # Panics
+    ///
+    /// See [`Self::data`].
+    pub fn data_mut(&mut self) -> &mut T {
+        self.data
+            .as_mut()
+            .expect("vertex attribute data should be assigned by commit before being read")
+    }
+
+    /// Assigns this vertex's payload. Commit's creation hook is the only
+    /// caller: this is the one-time transition out of the empty slot
+    /// [`Self::new`] leaves.
+    pub(crate) fn set_data(&mut self, data: T) {
+        self.data = Some(data);
     }
 
     /// Returns a typed vertex view over this attribute in `model`.
@@ -39,22 +81,56 @@ impl<T> VertexAttr<T> {
 }
 
 /// Stored data for a keyed edge 1-cell.
+///
+/// `data` starts empty and is filled exactly once, by commit's creation hook;
+/// see [`VertexAttr::data`] for the full rationale.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EdgeAttr<T> {
     /// Representative dart of the edge orbit.
     pub dart: Dart,
     /// Geometric curve attached to the edge.
     pub curve: Curve,
-    /// User payload attached to the edge.
-    pub data: T,
+    data: Option<T>,
 }
 
 impl<T> EdgeAttr<T> {
-    /// Creates an edge attribute rooted at `dart`.
+    /// Creates an edge attribute rooted at `dart`, with no payload yet.
     ///
-    /// The caller's `dart` defines the edge's default orientation.
-    pub fn new(dart: Dart, curve: Curve, data: T) -> Self {
-        Self { dart, curve, data }
+    /// The caller's `dart` defines the edge's default orientation. The
+    /// payload is assigned once by commit's creation hook; see [`Self::data`].
+    pub fn new(dart: Dart, curve: Curve) -> Self {
+        Self {
+            dart,
+            curve,
+            data: None,
+        }
+    }
+
+    /// Returns the user payload attached to this edge.
+    ///
+    /// # Panics
+    ///
+    /// See [`VertexAttr::data`].
+    pub fn data(&self) -> &T {
+        self.data
+            .as_ref()
+            .expect("edge attribute data should be assigned by commit before being read")
+    }
+
+    /// Returns mutable access to the user payload attached to this edge.
+    ///
+    /// # Panics
+    ///
+    /// See [`VertexAttr::data`].
+    pub fn data_mut(&mut self) -> &mut T {
+        self.data
+            .as_mut()
+            .expect("edge attribute data should be assigned by commit before being read")
+    }
+
+    /// Assigns this edge's payload; see [`VertexAttr::set_data`].
+    pub(crate) fn set_data(&mut self, data: T) {
+        self.data = Some(data);
     }
 
     /// Returns a typed edge view over this attribute in `model`.
@@ -64,18 +140,51 @@ impl<T> EdgeAttr<T> {
 }
 
 /// Stored data and default orientation for a profile.
+///
+/// `data` starts empty and is filled exactly once, by commit's creation hook;
+/// see [`VertexAttr::data`] for the full rationale.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ProfileAttr<T> {
     /// Oriented dart used as the profile's default traversal root.
     pub dart: Dart,
-    /// User payload attached to the profile.
-    pub data: T,
+    data: Option<T>,
 }
 
 impl<T> ProfileAttr<T> {
-    /// Creates a profile attribute rooted at the given oriented dart.
-    pub fn new(dart: Dart, data: T) -> Self {
-        Self { dart, data }
+    /// Creates a profile attribute rooted at the given oriented dart, with no
+    /// payload yet.
+    ///
+    /// The payload is assigned once by commit's creation hook; see
+    /// [`Self::data`].
+    pub fn new(dart: Dart) -> Self {
+        Self { dart, data: None }
+    }
+
+    /// Returns the user payload attached to this profile.
+    ///
+    /// # Panics
+    ///
+    /// See [`VertexAttr::data`].
+    pub fn data(&self) -> &T {
+        self.data
+            .as_ref()
+            .expect("profile attribute data should be assigned by commit before being read")
+    }
+
+    /// Returns mutable access to the user payload attached to this profile.
+    ///
+    /// # Panics
+    ///
+    /// See [`VertexAttr::data`].
+    pub fn data_mut(&mut self) -> &mut T {
+        self.data
+            .as_mut()
+            .expect("profile attribute data should be assigned by commit before being read")
+    }
+
+    /// Assigns this profile's payload; see [`VertexAttr::set_data`].
+    pub(crate) fn set_data(&mut self, data: T) {
+        self.data = Some(data);
     }
 }
 
@@ -337,8 +446,7 @@ impl Drop for BoundaryEdit<'_> {
 pub struct FaceAttr<T> {
     /// Geometric support surface of the face.
     pub surface: Surface,
-    /// User payload attached to the face.
-    pub data: T,
+    data: Option<T>,
     /// What bounds this face, and where its one raw 2-cell is read from.
     pub(crate) boundary: FaceBoundary,
     /// Directed boundary pcurves keyed by their oriented boundary darts.
@@ -346,14 +454,15 @@ pub struct FaceAttr<T> {
 }
 
 impl<T> FaceAttr<T> {
-    /// Creates a face attribute without boundary pcurves.
+    /// Creates a face attribute without boundary pcurves, with no payload yet.
     ///
     /// The loop darts must follow the orientation contract documented on
-    /// [`FaceAttr`].
-    pub fn new(surface: Surface, data: T, outer_loop: Dart, inner_loops: Vec<Dart>) -> Self {
+    /// [`FaceAttr`]. The payload is assigned once by commit's creation hook;
+    /// see [`VertexAttr::data`](super::attributes::VertexAttr::data).
+    pub fn new(surface: Surface, outer_loop: Dart, inner_loops: Vec<Dart>) -> Self {
         Self {
             surface,
-            data,
+            data: None,
             boundary: FaceBoundary::Loops(
                 std::iter::once(LoopDefinition::outer(outer_loop))
                     .chain(inner_loops.into_iter().map(LoopDefinition::inner))
@@ -363,20 +472,20 @@ impl<T> FaceAttr<T> {
         }
     }
 
-    /// Creates a face attribute with explicit boundary pcurves.
+    /// Creates a face attribute with explicit boundary pcurves, with no
+    /// payload yet.
     ///
     /// The loop darts and pcurves must follow the orientation contract
-    /// documented on [`FaceAttr`].
+    /// documented on [`FaceAttr`]. See [`Self::new`] for the payload.
     pub fn with_pcurves(
         surface: Surface,
-        data: T,
         outer_loop: Dart,
         inner_loops: Vec<Dart>,
         pcurves: HashMap<Dart, TrimmedCurve2>,
     ) -> Self {
         Self {
             surface,
-            data,
+            data: None,
             boundary: FaceBoundary::Loops(
                 std::iter::once(LoopDefinition::outer(outer_loop))
                     .chain(inner_loops.into_iter().map(LoopDefinition::inner))
@@ -386,19 +495,20 @@ impl<T> FaceAttr<T> {
         }
     }
 
-    /// Creates a face attribute from explicit loop definitions.
+    /// Creates a face attribute from explicit loop definitions, with no
+    /// payload yet.
     ///
     /// This constructor supports faces with no outer loop, such as a ring
     /// bounded only by [`LoopDefinition::Wrapping`] loops. The face anchors at
     /// its first loop's seed; a face bounded by nothing at all has no loop to
-    /// take one from and is built with [`Self::closed`] instead.
+    /// take one from and is built with [`Self::closed`] instead. See
+    /// [`Self::new`] for the payload.
     ///
     /// # Panics
     ///
     /// Panics on an empty loop list.
     pub fn with_loops(
         surface: Surface,
-        data: T,
         loops: Vec<LoopDefinition>,
         pcurves: HashMap<Dart, TrimmedCurve2>,
     ) -> Self {
@@ -408,30 +518,55 @@ impl<T> FaceAttr<T> {
         );
         Self {
             surface,
-            data,
+            data: None,
             boundary: FaceBoundary::Loops(loops),
             pcurves,
         }
     }
 
-    /// Creates a face that bounds nothing, anchored at a dart of its 2-cell.
+    /// Creates a face that bounds nothing, anchored at a dart of its 2-cell,
+    /// with no payload yet.
     ///
     /// A whole sphere or a whole torus covers a closed support: every cell its
     /// 2-cell touches is embedded in the face, so its boundary walk emits
     /// nothing and it has no loop to store. It still occupies a raw 2-cell,
-    /// and `dart` is where that cell is read from.
-    pub fn closed(
-        surface: Surface,
-        data: T,
-        dart: Dart,
-        pcurves: HashMap<Dart, TrimmedCurve2>,
-    ) -> Self {
+    /// and `dart` is where that cell is read from. See [`Self::new`] for the
+    /// payload.
+    pub fn closed(surface: Surface, dart: Dart, pcurves: HashMap<Dart, TrimmedCurve2>) -> Self {
         Self {
             surface,
-            data,
+            data: None,
             boundary: FaceBoundary::Closed(dart),
             pcurves,
         }
+    }
+
+    /// Returns the user payload attached to this face.
+    ///
+    /// # Panics
+    ///
+    /// See [`VertexAttr::data`](super::attributes::VertexAttr::data).
+    pub fn data(&self) -> &T {
+        self.data
+            .as_ref()
+            .expect("face attribute data should be assigned by commit before being read")
+    }
+
+    /// Returns mutable access to the user payload attached to this face.
+    ///
+    /// # Panics
+    ///
+    /// See [`VertexAttr::data`](super::attributes::VertexAttr::data).
+    pub fn data_mut(&mut self) -> &mut T {
+        self.data
+            .as_mut()
+            .expect("face attribute data should be assigned by commit before being read")
+    }
+
+    /// Assigns this face's payload; see
+    /// [`VertexAttr::set_data`](super::attributes::VertexAttr::set_data).
+    pub(crate) fn set_data(&mut self, data: T) {
+        self.data = Some(data);
     }
 
     /// Replaces this face's boundaries, anchoring at `fallback` when there are
@@ -581,18 +716,50 @@ impl<T> FaceAttr<T> {
 }
 
 /// Stored data and default orientation for a sheet.
+///
+/// `data` starts empty and is filled exactly once, by commit's creation hook;
+/// see [`VertexAttr::data`] for the full rationale.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SheetAttr<T> {
     /// The dart the sheet is anchored at, carrying its traversal direction.
     pub root: Dart,
-    /// User payload attached to the sheet.
-    pub data: T,
+    data: Option<T>,
 }
 
 impl<T> SheetAttr<T> {
-    /// Creates a sheet attribute anchored at `root`.
-    pub fn new(root: Dart, data: T) -> Self {
-        Self { root, data }
+    /// Creates a sheet attribute anchored at `root`, with no payload yet.
+    ///
+    /// The payload is assigned once by commit's creation hook; see
+    /// [`Self::data`].
+    pub fn new(root: Dart) -> Self {
+        Self { root, data: None }
+    }
+
+    /// Returns the user payload attached to this sheet.
+    ///
+    /// # Panics
+    ///
+    /// See [`VertexAttr::data`].
+    pub fn data(&self) -> &T {
+        self.data
+            .as_ref()
+            .expect("sheet attribute data should be assigned by commit before being read")
+    }
+
+    /// Returns mutable access to the user payload attached to this sheet.
+    ///
+    /// # Panics
+    ///
+    /// See [`VertexAttr::data`].
+    pub fn data_mut(&mut self) -> &mut T {
+        self.data
+            .as_mut()
+            .expect("sheet attribute data should be assigned by commit before being read")
+    }
+
+    /// Assigns this sheet's payload; see [`VertexAttr::set_data`].
+    pub(crate) fn set_data(&mut self, data: T) {
+        self.data = Some(data);
     }
 
     /// Returns the sheet's anchoring dart.
@@ -606,10 +773,12 @@ impl<T> SheetAttr<T> {
 }
 
 /// Stored data for a keyed domain solid.
+///
+/// `data` starts empty and is filled exactly once, by commit's creation hook;
+/// see [`VertexAttr::data`] for the full rationale.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SolidAttr<T> {
-    /// User payload attached to the solid.
-    pub data: T,
+    data: Option<T>,
     /// The dart the outer shell is anchored at.
     pub outer_shell: Dart,
     /// The darts inner shells are anchored at, when cavities are stored.
@@ -617,13 +786,44 @@ pub struct SolidAttr<T> {
 }
 
 impl<T> SolidAttr<T> {
-    /// Creates a solid attribute from an outer shell and optional inner shells.
-    pub fn new(data: T, outer_shell: Dart, inner_shells: Option<Vec<Dart>>) -> Self {
+    /// Creates a solid attribute from an outer shell and optional inner
+    /// shells, with no payload yet.
+    ///
+    /// The payload is assigned once by commit's creation hook; see
+    /// [`Self::data`].
+    pub fn new(outer_shell: Dart, inner_shells: Option<Vec<Dart>>) -> Self {
         Self {
-            data,
+            data: None,
             outer_shell,
             inner_shells,
         }
+    }
+
+    /// Returns the user payload attached to this solid.
+    ///
+    /// # Panics
+    ///
+    /// See [`VertexAttr::data`].
+    pub fn data(&self) -> &T {
+        self.data
+            .as_ref()
+            .expect("solid attribute data should be assigned by commit before being read")
+    }
+
+    /// Returns mutable access to the user payload attached to this solid.
+    ///
+    /// # Panics
+    ///
+    /// See [`VertexAttr::data`].
+    pub fn data_mut(&mut self) -> &mut T {
+        self.data
+            .as_mut()
+            .expect("solid attribute data should be assigned by commit before being read")
+    }
+
+    /// Assigns this solid's payload; see [`VertexAttr::set_data`].
+    pub(crate) fn set_data(&mut self, data: T) {
+        self.data = Some(data);
     }
 
     /// Returns every shell's anchoring dart, the outer shell first.

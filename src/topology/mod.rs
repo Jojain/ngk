@@ -22,7 +22,7 @@ pub use attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr,
 pub use dart::{Dart, IsolatedDart};
 pub use edit::{EditKey, EditPolicy, ModelEdit, ModelEditError, Origin, PreservePayload};
 pub use orientation::Orientation;
-pub use payload::{Payload, StandardPayload};
+pub use payload::{DefaultPayload, Payload, StandardPayload};
 pub use profile_curve::{
     ProfileCurve, ProfileCurveError, ProfileSpan, agree_directions, align_seams,
 };

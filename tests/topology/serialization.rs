@@ -62,21 +62,31 @@ fn a_model_round_trips_through_json_without_losing_state() {
 #[test]
 fn a_model_round_trips_serializable_custom_payloads() {
     let mut model = Model::<SerializablePayload>::new();
-    model
+    let (start, end, edge) = model
         .transaction(|edit| {
-            let start = edit.add_dart();
-            let end = edit.add_dart();
-            edit.link(Dim::Zero, start, end)?;
-            edit.add_vertex(VertexAttr::new(start, Point3::origin(), 10));
-            edit.add_vertex(VertexAttr::new(end, Point3::new(1.0, 0.0, 0.0), 20));
-            edit.add_edge(EdgeAttr::new(
-                start,
+            let start_dart = edit.add_dart();
+            let end_dart = edit.add_dart();
+            edit.link(Dim::Zero, start_dart, end_dart)?;
+            let start = edit.add_vertex(VertexAttr::new(start_dart, Point3::origin()));
+            let end = edit.add_vertex(VertexAttr::new(end_dart, Point3::new(1.0, 0.0, 0.0)));
+            let edge = edit.add_edge(EdgeAttr::new(
+                start_dart,
                 Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-                30,
             ));
-            Ok::<_, ModelEditError>(())
+            Ok::<_, ModelEditError>((start, end, edge))
         })
         .expect("custom-payload edge should build");
+    // A fresh creation's payload is the default policy's to decide, so it
+    // defaults regardless of what the constructor above was given; setting it
+    // afterwards is a payload-only mutation, which reaches no hook.
+    model
+        .transaction(|edit| {
+            *edit.vertex_attr_mut_unchecked(start).data_mut() = 10;
+            *edit.vertex_attr_mut_unchecked(end).data_mut() = 20;
+            *edit.edge_attr_mut_unchecked(edge).data_mut() = 30;
+            Ok::<_, ModelEditError>(())
+        })
+        .expect("naming the custom payloads should commit");
 
     let serialized = serde_json::to_string(&model).expect("a model should serialize");
     let restored: Model<SerializablePayload> =
@@ -84,17 +94,17 @@ fn a_model_round_trips_serializable_custom_payloads() {
 
     let mut vertex_payloads = restored
         .iter_vertices()
-        .map(|(_, attr)| attr.data)
+        .map(|(_, attr)| *attr.data())
         .collect::<Vec<_>>();
     vertex_payloads.sort_unstable();
     assert_eq!(vertex_payloads, vec![10, 20]);
     assert_eq!(
-        restored
+        *restored
             .iter_edges()
             .next()
             .expect("edge should round-trip")
             .1
-            .data,
+            .data(),
         30
     );
 }

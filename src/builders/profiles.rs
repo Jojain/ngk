@@ -14,7 +14,7 @@ use crate::topology::attributes::{EdgeAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edit::ModelEditError;
 use crate::topology::gmap::{Dart, Dim};
-use crate::topology::payload::Payload;
+use crate::topology::payload::{DefaultPayload, Payload};
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, ProfileKey, VertexKey};
 
@@ -27,7 +27,7 @@ pub use crate::builders::errors::PolylineError;
 /// otherwise both ends remain open.
 ///
 /// At least two points are required.
-pub fn add_polyline<P: Payload>(
+pub fn add_polyline<P: DefaultPayload>(
     g: &mut Model<P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
@@ -40,7 +40,7 @@ pub fn add_polyline<P: Payload>(
 /// Coincident endpoints are joined within [`LINEAR_TOLERANCE`], and their
 /// logical vertices are merged as the profile is sewn. Disconnected input and
 /// branches are rejected without changing the model.
-pub fn add_profile_from_edges<P: Payload>(
+pub fn add_profile_from_edges<P: DefaultPayload>(
     g: &mut Model<P>,
     edges: &[EdgeKey],
 ) -> Result<ProfileKey, PolylineError> {
@@ -60,7 +60,7 @@ pub fn add_profile_from_edges_staged<P: Payload>(
     let first = edges.first().ok_or(PolylineError::EmptyPolyline)?;
 
     if edges.len() == 1 {
-        return Ok(edit.add_profile(ProfileAttr::new(first.start, P::Profile::default())));
+        return Ok(edit.add_profile(ProfileAttr::new(first.start)));
     }
 
     let endpoint_degrees = edges
@@ -108,10 +108,7 @@ pub fn add_profile_from_edges_staged<P: Payload>(
         ordered.push(edge);
     }
 
-    let profile = edit.add_profile(ProfileAttr::new(
-        ordered[0].dart_at(start),
-        P::Profile::default(),
-    ));
+    let profile = edit.add_profile(ProfileAttr::new(ordered[0].dart_at(start)));
     for edge in ordered.iter().skip(1) {
         append_edge_staged(edit, profile, edge.key)?;
     }
@@ -140,7 +137,7 @@ pub fn add_polyline_staged<P: Payload>(
 /// direction may be appended as long as one endpoint coincides with the profile
 /// end. If the appended edge's other endpoint coincides with the profile start,
 /// the profile is closed.
-pub fn append_edge<P: Payload>(
+pub fn append_edge<P: DefaultPayload>(
     g: &mut Model<P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
@@ -353,7 +350,7 @@ pub fn plane_uv(plane: &Plane, point: Point3) -> Point2 {
 /// 3-----2
 ///
 /// Returns the profile key whose stored dart starts at the first corner.
-pub fn add_rectangle<P: Payload>(
+pub fn add_rectangle<P: DefaultPayload>(
     g: &mut Model<P>,
     plane: Plane,
     x_size: f64,
@@ -386,7 +383,7 @@ pub(crate) fn add_rectangle_staged<P: Payload>(
 ///
 /// The first corner is the plane origin and the sides follow its positive x and
 /// y directions. `size` must be positive and finite.
-pub fn add_square<P: Payload>(
+pub fn add_square<P: DefaultPayload>(
     g: &mut Model<P>,
     plane: Plane,
     size: f64,
@@ -403,7 +400,11 @@ fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), Polylin
 }
 
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
-pub fn add_profile_darts<P: Payload>(g: &mut Model<P>, count: usize, closed: bool) -> ProfileKey {
+pub fn add_profile_darts<P: DefaultPayload>(
+    g: &mut Model<P>,
+    count: usize,
+    closed: bool,
+) -> ProfileKey {
     g.transaction(|edit| {
         let darts: Vec<Dart> = (0..count).map(|_| edit.add_dart()).collect();
         for i in 0..count {
@@ -415,7 +416,7 @@ pub fn add_profile_darts<P: Payload>(g: &mut Model<P>, count: usize, closed: boo
         if closed {
             edit.sew(Dim::Zero, darts[count - 1], darts[0])?;
         }
-        Ok::<_, ModelEditError>(edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default())))
+        Ok::<_, ModelEditError>(edit.add_profile(ProfileAttr::new(darts[0])))
     })
     .expect("fresh profile topology must commit")
 }
@@ -434,8 +435,8 @@ fn add_segments<P: Payload>(
         let end_dart = edit.add_dart();
         edit.link(Dim::Zero, start_dart, end_dart)
             .map_err(polyline_edit_error)?;
-        edit.add_vertex(VertexAttr::new(start_dart, *start_point, P::V::default()));
-        edit.add_edge(EdgeAttr::new(start_dart, curve.clone(), P::E::default()));
+        edit.add_vertex(VertexAttr::new(start_dart, *start_point));
+        edit.add_edge(EdgeAttr::new(start_dart, curve.clone()));
         segment_topology.push(SegmentTopology {
             start: start_dart,
             end: end_dart,
@@ -463,15 +464,11 @@ fn add_segments<P: Payload>(
         let last_topology = segment_topology
             .last()
             .expect("non-empty segment list should have a last segment");
-        edit.add_vertex(VertexAttr::new(
-            last_topology.end,
-            last_segment.1,
-            P::V::default(),
-        ));
+        edit.add_vertex(VertexAttr::new(last_topology.end, last_segment.1));
     }
 
     let first_start = segment_topology[0].start;
-    Ok(edit.add_profile(ProfileAttr::new(first_start, P::Profile::default())))
+    Ok(edit.add_profile(ProfileAttr::new(first_start)))
 }
 
 #[derive(Clone, Copy)]

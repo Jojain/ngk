@@ -87,7 +87,7 @@ impl<'a, P: Payload> Sheet<'a, P> {
 
     /// Returns the user payload attached to this sheet.
     pub fn data(&self) -> &P::Sheet {
-        &self.model.sheet_attr_unchecked(self.key).data
+        self.model.sheet_attr_unchecked(self.key).data()
     }
 
     /// Iterates every dart in this logical sheet.

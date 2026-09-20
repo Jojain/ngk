@@ -27,6 +27,7 @@ use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAtt
 use crate::topology::embedding::{EntityOwner, is_embedded_cell};
 use crate::topology::gmap::Dim;
 use crate::topology::orientation::Orientation;
+use crate::topology::payload::DefaultPayload;
 use crate::topology::profile::{Profile, ProfileIterator};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
 use crate::topology::{Dart, IsolatedDart, ModelEdit, ModelEditError, Payload};
@@ -413,7 +414,7 @@ impl Preflight {
 /// caller obligations. Because it commits immediately, use it only when the
 /// stale geometry it leaves behind does not matter — most callers want the
 /// staged form inside a healing pass.
-pub fn remove_cell<P: Payload>(
+pub fn remove_cell<P: DefaultPayload>(
     g: &mut Model<P>,
     dart: Dart,
     dim: Dim,
@@ -1047,10 +1048,8 @@ impl MergePlan {
                 edit.profile_attr_mut_unchecked(survivor_loop).dart = kept;
                 // The second loop is not a new boundary, it is the half of the
                 // old one the seam was hiding, so it descends from that identity.
-                let added_loop = edit.add_profile_split_from(
-                    survivor_loop,
-                    ProfileAttr::new(added, P::Profile::default()),
-                );
+                let added_loop =
+                    edit.add_profile_split_from(survivor_loop, ProfileAttr::new(added));
                 let mut loops = vec![
                     LoopDefinition::from_kind(kept, LoopKind::Wrapping { axis }),
                     LoopDefinition::from_kind(added, LoopKind::Wrapping { axis }),

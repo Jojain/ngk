@@ -14,7 +14,7 @@ use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, Ve
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim};
-use crate::topology::payload::Payload;
+use crate::topology::payload::{DefaultPayload, Payload};
 use crate::topology::shape_keys::{EdgeKey, ProfileKey, SheetKey, VertexKey};
 use crate::topology::vertex::Vertex;
 
@@ -26,7 +26,7 @@ use crate::topology::vertex::Vertex;
 /// # Panics
 ///
 /// Panics if `profile_key` does not identify a registered profile.
-pub fn add_extruded_profile<P: Payload>(
+pub fn add_extruded_profile<P: DefaultPayload>(
     g: &mut Model<P>,
     profile_key: ProfileKey,
     direction: Vector3<f64>,
@@ -61,7 +61,7 @@ pub fn add_extruded_profile<P: Payload>(
         let translated_dart =
             translated_dart.expect("profile dart must belong to one of its profile edges");
 
-        Ok(edit.add_sheet(SheetAttr::new(translated_dart, P::Sheet::default())))
+        Ok(edit.add_sheet(SheetAttr::new(translated_dart)))
     })
 }
 
@@ -186,7 +186,7 @@ fn add_extruded_edge_face<P: Payload>(
 
     for i in 0..4 {
         let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
-        edit.add_vertex(VertexAttr::new(dart, corners[i], P::V::default()));
+        edit.add_vertex(VertexAttr::new(dart, corners[i]));
     }
 
     for i in 0..4 {
@@ -194,14 +194,12 @@ fn add_extruded_edge_face<P: Payload>(
         edit.add_edge(EdgeAttr::new(
             edge_dart,
             surface_data.boundary_curves[i].clone(),
-            P::E::default(),
         ));
     }
 
-    edit.add_profile(ProfileAttr::new(darts[0], P::Profile::default()));
+    edit.add_profile(ProfileAttr::new(darts[0]));
     edit.add_face(FaceAttr::with_pcurves(
         surface_data.surface,
-        P::F::default(),
         darts[0],
         Vec::new(),
         quad_pcurves(&surface_data.uv, &darts),

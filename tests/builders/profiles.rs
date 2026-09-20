@@ -8,9 +8,10 @@ use ngk::builders::profiles::{
 use ngk::geometry::{Plane, Point3};
 use ngk::model::Model;
 use ngk::topology::closed::Closeable;
-use ngk::topology::edit::EditPolicy;
+use ngk::topology::edit::{EditPolicy, Origin};
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
+use ngk::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 
 #[test]
 fn add_rectangle_creates_closed_four_edge_profile() {
@@ -208,12 +209,66 @@ struct CountingPolicy {
 impl EditPolicy<StandardPayload> for CountingPolicy {
     type Error = Infallible;
 
-    /// Counts externally visible vertex merges without changing their payloads.
-    fn merge_vertex_data(
+    fn vertex_created(
         &mut self,
-        _survivor: ngk::topology::shape_keys::VertexKey,
+        _: VertexKey,
+        _: Origin,
+        _: &Model<StandardPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn edge_created(
+        &mut self,
+        _: EdgeKey,
+        _: Origin,
+        _: &Model<StandardPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn profile_created(
+        &mut self,
+        _: ProfileKey,
+        _: Origin,
+        _: &Model<StandardPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn face_created(
+        &mut self,
+        _: FaceKey,
+        _: Origin,
+        _: &Model<StandardPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn sheet_created(
+        &mut self,
+        _: SheetKey,
+        _: Origin,
+        _: &Model<StandardPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn solid_created(
+        &mut self,
+        _: SolidKey,
+        _: Origin,
+        _: &Model<StandardPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Counts externally visible vertex merges without changing their payloads.
+    fn vertex_merged(
+        &mut self,
+        _survivor: VertexKey,
         _survivor_data: &mut (),
-        _removed: ngk::topology::shape_keys::VertexKey,
+        _removed: VertexKey,
         _removed_data: (),
     ) -> Result<(), Self::Error> {
         self.calls += 1;

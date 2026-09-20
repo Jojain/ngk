@@ -64,7 +64,7 @@ impl<'g, P: Payload> Solid<'g, P> {
 
     /// Returns the user payload attached to this solid.
     pub fn data(&self) -> &P::S {
-        &self.model.solid_attr_unchecked(self.key).data
+        self.model.solid_attr_unchecked(self.key).data()
     }
 
     /// Returns the outer closed shell of the solid.

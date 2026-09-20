@@ -39,7 +39,7 @@ use crate::builders::loft::{
 use crate::model::{Cell2, Model};
 use crate::topology::closed::{Closeable, Closed};
 use crate::topology::face::Face;
-use crate::topology::payload::Payload;
+use crate::topology::payload::{DefaultPayload, Payload};
 use crate::topology::shape::{FaceTag, ProfileTag, Shape, ShapeKind, SheetTag, SolidTag};
 use crate::topology::shape_keys::{FaceKey, ProfileKey};
 
@@ -61,7 +61,7 @@ pub trait LoftInput: ShapeKind + Sized + sealed::Sealed {
     /// Skins the sections, copying each into one fresh model.
     ///
     /// Called through [`loft`], which is the name callers use.
-    fn loft_sections<P: Payload>(
+    fn loft_sections<P: DefaultPayload>(
         sections: &[&Shape<Self, P>],
         options: LoftOptions,
     ) -> Result<Shape<Self::Output, P>, LoftError>;
@@ -77,7 +77,7 @@ pub trait LoftInput: ShapeKind + Sized + sealed::Sealed {
 /// Faces loft to a solid, the two end faces becoming the caps. An
 /// intermediate face is consumed for its outer loop alone, since there is no
 /// cap in the middle of a loft.
-pub fn loft<K: LoftInput, P: Payload>(
+pub fn loft<K: LoftInput, P: DefaultPayload>(
     sections: &[&Shape<K, P>],
     options: LoftOptions,
 ) -> Result<Shape<K::Output, P>, LoftError> {
@@ -87,7 +87,7 @@ pub fn loft<K: LoftInput, P: Payload>(
 impl LoftInput for ProfileTag {
     type Output = SheetTag;
 
-    fn loft_sections<P: Payload>(
+    fn loft_sections<P: DefaultPayload>(
         sections: &[&Shape<Self, P>],
         options: LoftOptions,
     ) -> Result<Shape<SheetTag, P>, LoftError> {
@@ -118,7 +118,7 @@ impl LoftInput for ProfileTag {
 impl LoftInput for FaceTag {
     type Output = SolidTag;
 
-    fn loft_sections<P: Payload>(
+    fn loft_sections<P: DefaultPayload>(
         sections: &[&Shape<Self, P>],
         options: LoftOptions,
     ) -> Result<Shape<SolidTag, P>, LoftError> {
@@ -146,7 +146,7 @@ impl LoftInput for FaceTag {
 }
 
 /// Copies every profile into `model`, keeping the order they were given in.
-fn merge_profiles<P: Payload>(
+fn merge_profiles<P: DefaultPayload>(
     model: &mut Model<P>,
     sections: &[&Shape<ProfileTag, P>],
 ) -> Result<Vec<ProfileKey>, LoftError> {

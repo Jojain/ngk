@@ -29,7 +29,7 @@ use crate::topology::embedding::{
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim, GMap, IsolatedDart, SewableDarts};
 use crate::topology::orientation::Orientation;
-use crate::topology::payload::{Payload, StandardPayload};
+use crate::topology::payload::{DefaultPayload, Payload, StandardPayload};
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::Sheet;
@@ -194,6 +194,7 @@ pub trait MergeTopology<P: Payload> {
     fn isolate(self) -> (Model<P>, Dart)
     where
         Self: Sized,
+        P: DefaultPayload,
     {
         let mut isolated = Model::new();
         let handle = isolated
@@ -380,6 +381,7 @@ impl<P: Payload> Model<P> {
     where
         E: From<ModelEditError>,
         F: FnOnce(&mut ModelEdit<'_, P>) -> Result<T, E>,
+        P: DefaultPayload,
     {
         self.run_transaction(&mut PreservePayload, operation)
     }
@@ -1337,6 +1339,7 @@ impl<P: Payload> Model<P> {
     pub fn isolate<T>(topology: T) -> (Self, Dart)
     where
         T: MergeTopology<P>,
+        P: DefaultPayload,
     {
         topology.isolate()
     }

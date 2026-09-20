@@ -4,10 +4,10 @@ use ngk::geometry::{Curve, Frame, Plane, Point2, Point3, Surface, TrimmedCurve2}
 use ngk::model::{Cell1, Model};
 use ngk::topology::Dart;
 use ngk::topology::attributes::{EdgeAttr, FaceAttr, SolidAttr, VertexAttr};
-use ngk::topology::edit::{EditPolicy, ModelEditError, PreservePayload};
+use ngk::topology::edit::{EditKey, EditPolicy, ModelEditError, Origin, PreservePayload};
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::Payload;
-use ngk::topology::shape_keys::EdgeKey;
+use ngk::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use ngk::topology::validation::CellOccupancyError;
 
 #[derive(Clone, Default)]
@@ -29,7 +29,7 @@ fn failed_transaction_closure_rolls_back_the_complete_map() {
         .transaction(|edit| {
             let first = edit.add_dart();
             let second = edit.add_dart();
-            edit.add_vertex(VertexAttr::new(first, Point3::origin(), ()));
+            edit.add_vertex(VertexAttr::new(first, Point3::origin()));
             Ok::<_, ModelEditError>((first, second))
         })
         .unwrap();
@@ -55,7 +55,6 @@ fn face_registration_requires_registered_boundary_profiles() {
         let boundary = edit.add_dart();
         edit.add_face(FaceAttr::new(
             Surface::Plane(Plane::xy()),
-            (),
             boundary,
             Vec::new(),
         ));
@@ -75,7 +74,7 @@ fn solid_registration_requires_registered_shell_sheets() {
     let mut g = Model::<TestPayload>::new();
     let result = g.transaction(|edit| {
         let shell = edit.add_dart();
-        edit.add_solid(SolidAttr::new((), shell, None));
+        edit.add_solid(SolidAttr::new(shell, None));
         Ok::<_, ModelEditError>(())
     });
 
@@ -128,12 +127,10 @@ fn committing_topology_edit_reindexes_cells_after_explicit_merge() {
             let first_edge = edit.add_edge(EdgeAttr::new(
                 first,
                 Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-                "first".to_owned(),
             ));
             let second_edge = edit.add_edge(EdgeAttr::new(
                 second,
                 Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
-                "second".to_owned(),
             ));
             edit.sew(Dim::Two, first, second_end)
                 .expect("matching edges should sew");
@@ -191,12 +188,10 @@ fn add_two_test_edges(g: &mut Model<TestPayload>) -> (EdgeKey, EdgeKey) {
         let first = edit.add_edge(EdgeAttr::new(
             first_start,
             Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-            "first".to_owned(),
         ));
         let second = edit.add_edge(EdgeAttr::new(
             second_start,
             Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
-            "second".to_owned(),
         ));
         Ok::<_, ModelEditError>((first, second))
     })
@@ -235,16 +230,20 @@ fn explicit_edge_merge_uses_the_policy_and_removes_the_consumed_key() {
             let first_edge = edit.add_edge(EdgeAttr::new(
                 first,
                 Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-                "left".to_owned(),
             ));
             let second_edge = edit.add_edge(EdgeAttr::new(
                 second,
                 Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
-                "right".to_owned(),
             ));
             Ok::<_, ModelEditError>((first, second_end, first_edge, second_edge))
         })
         .unwrap();
+    g.transaction(|edit| {
+        *edit.edge_attr_mut_unchecked(first_edge).data_mut() = "left".to_owned();
+        *edit.edge_attr_mut_unchecked(second_edge).data_mut() = "right".to_owned();
+        Ok::<_, ModelEditError>(())
+    })
+    .unwrap();
 
     let mut policy = JoinEdgeNames;
     let result: Result<(), ModelEditError> = g.transaction_with_policy(&mut policy, |edit| {
@@ -255,7 +254,7 @@ fn explicit_edge_merge_uses_the_policy_and_removes_the_consumed_key() {
 
     result.expect("transaction should commit");
     let (_, edge) = g.iter_edges().next().expect("one edge should remain");
-    assert_eq!(edge.data, "left+right");
+    assert_eq!(edge.data(), "left+right");
     assert_eq!(g.iter_edges().count(), 1);
     assert!(!g.is_free(first, Dim::Two));
     assert!(!g.is_free(second_end, Dim::Two));
@@ -266,8 +265,62 @@ struct JoinEdgeNames;
 impl EditPolicy<TestPayload> for JoinEdgeNames {
     type Error = Infallible;
 
+    fn vertex_created(
+        &mut self,
+        _: VertexKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn edge_created(
+        &mut self,
+        _: EdgeKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<String, Self::Error> {
+        Ok(String::new())
+    }
+
+    fn profile_created(
+        &mut self,
+        _: ProfileKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn face_created(
+        &mut self,
+        _: FaceKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn sheet_created(
+        &mut self,
+        _: SheetKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn solid_created(
+        &mut self,
+        _: SolidKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     /// Makes the merge payload order visible in the surviving edge name.
-    fn merge_edge_data(
+    fn edge_merged(
         &mut self,
         _survivor: EdgeKey,
         survivor_data: &mut String,
@@ -291,11 +344,15 @@ fn explicit_edge_split_uses_the_policy() {
             let source = edit.add_edge(EdgeAttr::new(
                 start,
                 Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-                "source".to_owned(),
             ));
             Ok::<_, ModelEditError>((start, end, source))
         })
         .unwrap();
+    g.transaction(|edit| {
+        *edit.edge_attr_mut_unchecked(source).data_mut() = "source".to_owned();
+        Ok::<_, ModelEditError>(())
+    })
+    .unwrap();
 
     let mut policy = MarkSplit;
     let created = g
@@ -311,15 +368,14 @@ fn explicit_edge_split_uses_the_policy() {
                 EdgeAttr::new(
                     second_mid,
                     Curve::line(Point3::new(0.5, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)),
-                    "builder".to_owned(),
                 ),
             );
             Ok::<_, ModelEditError>(created)
         })
         .unwrap();
 
-    assert_eq!(g.edge_attr_unchecked(source).data, "source");
-    assert_eq!(g.edge_attr_unchecked(created).data, "source:split");
+    assert_eq!(g.edge_attr_unchecked(source).data(), "source");
+    assert_eq!(g.edge_attr_unchecked(created).data(), "source:split");
 }
 
 struct MarkSplit;
@@ -327,15 +383,64 @@ struct MarkSplit;
 impl EditPolicy<TestPayload> for MarkSplit {
     type Error = Infallible;
 
-    /// Replaces builder data with a value derived from the source snapshot.
-    fn split_edge_data(
+    fn vertex_created(
         &mut self,
-        _source: EdgeKey,
-        source_data: &String,
-        _created: EdgeKey,
-        created_data: &mut String,
+        _: VertexKey,
+        _: Origin,
+        _: &Model<TestPayload>,
     ) -> Result<(), Self::Error> {
-        *created_data = format!("{source_data}:split");
+        Ok(())
+    }
+
+    /// Replaces builder data with a value derived from the source snapshot.
+    fn edge_created(
+        &mut self,
+        _key: EdgeKey,
+        origin: Origin,
+        before: &Model<TestPayload>,
+    ) -> Result<String, Self::Error> {
+        match origin {
+            Origin::Split(EditKey::Edge(source)) => Ok(format!(
+                "{}:split",
+                before.edge_attr_unchecked(source).data()
+            )),
+            _ => Ok(String::new()),
+        }
+    }
+
+    fn profile_created(
+        &mut self,
+        _: ProfileKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn face_created(
+        &mut self,
+        _: FaceKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn sheet_created(
+        &mut self,
+        _: SheetKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn solid_created(
+        &mut self,
+        _: SolidKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -349,20 +454,70 @@ struct RecordEdgePolicy {
 impl EditPolicy<TestPayload> for RecordEdgePolicy {
     type Error = Infallible;
 
-    /// Records split arguments so tests can inspect the resolved net lineage.
-    fn split_edge_data(
+    fn vertex_created(
         &mut self,
-        source: EdgeKey,
-        source_data: &String,
-        created: EdgeKey,
-        _created_data: &mut String,
+        _: VertexKey,
+        _: Origin,
+        _: &Model<TestPayload>,
     ) -> Result<(), Self::Error> {
-        self.splits.push((source, source_data.clone(), created));
+        Ok(())
+    }
+
+    /// Records split arguments so tests can inspect the resolved net lineage.
+    fn edge_created(
+        &mut self,
+        created: EdgeKey,
+        origin: Origin,
+        before: &Model<TestPayload>,
+    ) -> Result<String, Self::Error> {
+        match origin {
+            Origin::Split(EditKey::Edge(source)) => {
+                let source_data = before.edge_attr_unchecked(source).data().clone();
+                self.splits.push((source, source_data.clone(), created));
+                Ok(source_data)
+            }
+            _ => Ok(String::new()),
+        }
+    }
+
+    fn profile_created(
+        &mut self,
+        _: ProfileKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn face_created(
+        &mut self,
+        _: FaceKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn sheet_created(
+        &mut self,
+        _: SheetKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn solid_created(
+        &mut self,
+        _: SolidKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 
     /// Records merge arguments so tests can inspect final survivors and payloads.
-    fn merge_edge_data(
+    fn edge_merged(
         &mut self,
         survivor: EdgeKey,
         _survivor_data: &mut String,
@@ -386,12 +541,10 @@ fn fresh_creation_followed_by_merge_does_not_call_policy() {
         let survivor = edit.add_edge(EdgeAttr::new(
             start,
             Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-            "survivor".to_owned(),
         ));
         let removed = edit.add_edge(EdgeAttr::new(
             start,
             Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-            "temporary".to_owned(),
         ));
         edit.merge_edges_into(survivor, removed);
         Ok::<_, ModelEditError>(())
@@ -419,7 +572,6 @@ fn surviving_split_calls_policy_once() {
                 EdgeAttr::new(
                     start,
                     Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
-                    "created".to_owned(),
                 ),
             ))
         })
@@ -441,7 +593,6 @@ fn transient_split_does_not_call_policy() {
             EdgeAttr::new(
                 dart,
                 Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-                "temporary".to_owned(),
             ),
         );
         edit.merge_edges_into(source, created);
@@ -489,8 +640,8 @@ fn policy_receives_transaction_start_source_and_removed_payloads() {
 
     let created = g
         .transaction_with_policy(&mut policy, |edit| {
-            edit.edge_attr_mut(source).unwrap().data = "source-staged".to_owned();
-            edit.edge_attr_mut(removed).unwrap().data = "removed-staged".to_owned();
+            *edit.edge_attr_mut(source).unwrap().data_mut() = "source-staged".to_owned();
+            *edit.edge_attr_mut(removed).unwrap().data_mut() = "removed-staged".to_owned();
             let start = edit.add_dart();
             let end = edit.add_dart();
             edit.link(Dim::Zero, start, end)?;
@@ -499,7 +650,6 @@ fn policy_receives_transaction_start_source_and_removed_payloads() {
                 EdgeAttr::new(
                     start,
                     Curve::line(Point3::new(6.0, 0.0, 0.0), Point3::new(7.0, 0.0, 0.0)),
-                    "created".to_owned(),
                 ),
             );
             edit.merge_edges_into(survivor, removed);
@@ -522,15 +672,59 @@ struct RejectEdgeSplit;
 impl EditPolicy<TestPayload> for RejectEdgeSplit {
     type Error = std::io::Error;
 
-    /// Forces policy application to fail after all structural commit work.
-    fn split_edge_data(
+    fn vertex_created(
         &mut self,
-        _source: EdgeKey,
-        _source_data: &String,
-        _created: EdgeKey,
-        _created_data: &mut String,
+        _: VertexKey,
+        _: Origin,
+        _: &Model<TestPayload>,
     ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Forces policy application to fail after all structural commit work.
+    fn edge_created(
+        &mut self,
+        _key: EdgeKey,
+        _origin: Origin,
+        _before: &Model<TestPayload>,
+    ) -> Result<String, Self::Error> {
         Err(std::io::Error::other("split rejected"))
+    }
+
+    fn profile_created(
+        &mut self,
+        _: ProfileKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn face_created(
+        &mut self,
+        _: FaceKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn sheet_created(
+        &mut self,
+        _: SheetKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn solid_created(
+        &mut self,
+        _: SolidKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 
@@ -542,7 +736,7 @@ fn policy_failure_restores_topology_and_payloads() {
     let mut policy = RejectEdgeSplit;
 
     let result = g.transaction_with_policy(&mut policy, |edit| {
-        edit.edge_attr_mut(source).unwrap().data = "source-staged".to_owned();
+        *edit.edge_attr_mut(source).unwrap().data_mut() = "source-staged".to_owned();
         let start = edit.add_dart();
         let end = edit.add_dart();
         edit.link(Dim::Zero, start, end)?;
@@ -551,7 +745,6 @@ fn policy_failure_restores_topology_and_payloads() {
             EdgeAttr::new(
                 start,
                 Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
-                "created".to_owned(),
             ),
         );
         Ok(())
@@ -560,26 +753,37 @@ fn policy_failure_restores_topology_and_payloads() {
     assert!(matches!(result, Err(ModelEditError::Policy(_))));
     assert_eq!(g.dart_count(), original_dart_count);
     assert_eq!(g.iter_edges().count(), 1);
-    assert_eq!(g.edge_attr_unchecked(source).data, "source-start");
+    assert_eq!(g.edge_attr_unchecked(source).data(), "source-start");
 }
 
 /// Creates a positioned edge whose payload makes reconciliation choices observable.
+///
+/// The name is written in a second transaction: a fresh creation's payload is
+/// the default policy's to decide, so a plain `add_edge` under `PreservePayload`
+/// defaults it regardless of what is passed to the constructor. Setting `data`
+/// afterwards is a payload-only mutation, which reaches no hook.
 fn add_named_test_edge(g: &mut Model<TestPayload>, start_x: f64, data: &str) -> (Dart, EdgeKey) {
+    let (start, key) = g
+        .transaction(|edit| {
+            let start = edit.add_dart();
+            let end = edit.add_dart();
+            edit.link(Dim::Zero, start, end)?;
+            let key = edit.add_edge(EdgeAttr::new(
+                start,
+                Curve::line(
+                    Point3::new(start_x, 0.0, 0.0),
+                    Point3::new(start_x + 1.0, 0.0, 0.0),
+                ),
+            ));
+            Ok::<_, ModelEditError>((start, key))
+        })
+        .expect("the edge should commit");
     g.transaction(|edit| {
-        let start = edit.add_dart();
-        let end = edit.add_dart();
-        edit.link(Dim::Zero, start, end)?;
-        let key = edit.add_edge(EdgeAttr::new(
-            start,
-            Curve::line(
-                Point3::new(start_x, 0.0, 0.0),
-                Point3::new(start_x + 1.0, 0.0, 0.0),
-            ),
-            data.to_owned(),
-        ));
-        Ok::<_, ModelEditError>((start, key))
+        *edit.edge_attr_mut_unchecked(key).data_mut() = data.to_owned();
+        Ok::<_, ModelEditError>(())
     })
-    .expect("the edge should commit")
+    .expect("naming the edge should commit");
+    (start, key)
 }
 
 #[test]
@@ -594,12 +798,10 @@ fn local_local_collision_keeps_the_earliest_created_key() {
             let earliest = edit.add_edge(EdgeAttr::new(
                 start,
                 Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-                "earliest".to_owned(),
             ));
             let later = edit.add_edge(EdgeAttr::new(
                 start,
                 Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-                "later".to_owned(),
             ));
             Ok::<_, ModelEditError>((earliest, later))
         })
@@ -620,7 +822,6 @@ fn local_existing_collision_keeps_the_existing_key() {
             Ok::<_, ModelEditError>(edit.add_edge(EdgeAttr::new(
                 dart,
                 Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-                "local".to_owned(),
             )))
         })
         .expect("the existing identity should win");
@@ -687,7 +888,6 @@ fn explicit_lineage_survivor_must_survive_reconciliation() {
         let local_survivor = edit.add_edge(EdgeAttr::new(
             existing_dart,
             Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-            "local".to_owned(),
         ));
         edit.merge_edges_into(local_survivor, removed);
         Ok(local_survivor)
@@ -716,7 +916,6 @@ fn split_discarded_by_reconciliation_does_not_call_policy() {
                 EdgeAttr::new(
                     existing_dart,
                     Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
-                    "split".to_owned(),
                 ),
             ))
         })
@@ -725,4 +924,228 @@ fn split_discarded_by_reconciliation_does_not_call_policy() {
     assert!(g.edge_attr(existing).is_some());
     assert!(g.edge_attr(created).is_none());
     assert!(policy.splits.is_empty());
+}
+
+#[derive(Default)]
+struct RecordConsumedEdges {
+    consumed: Vec<(EdgeKey, String)>,
+}
+
+impl EditPolicy<TestPayload> for RecordConsumedEdges {
+    type Error = Infallible;
+
+    fn vertex_created(
+        &mut self,
+        _: VertexKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn edge_created(
+        &mut self,
+        _: EdgeKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<String, Self::Error> {
+        Ok(String::new())
+    }
+
+    fn profile_created(
+        &mut self,
+        _: ProfileKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn face_created(
+        &mut self,
+        _: FaceKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn sheet_created(
+        &mut self,
+        _: SheetKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn solid_created(
+        &mut self,
+        _: SolidKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Records what a removal disposed of, since nothing inherits it.
+    fn edge_consumed(&mut self, key: EdgeKey, data: String) -> Result<(), Self::Error> {
+        self.consumed.push((key, data));
+        Ok(())
+    }
+}
+
+#[test]
+fn removing_an_edge_calls_the_consumed_hook_with_its_snapshot_payload() {
+    let mut g = Model::<TestPayload>::new();
+    let (_, removed) = add_named_test_edge(&mut g, 0.0, "gone");
+    let mut policy = RecordConsumedEdges::default();
+
+    g.transaction_with_policy(&mut policy, |edit| {
+        edit.remove_edge(removed);
+        Ok::<_, ModelEditError>(())
+    })
+    .expect("removing the edge should commit");
+
+    assert_eq!(policy.consumed, vec![(removed, "gone".to_owned())]);
+    assert!(g.edge_attr(removed).is_none());
+}
+
+#[derive(Default)]
+struct CombineDerivedEdges {
+    derived_from: Vec<(EdgeKey, Vec<EditKey>)>,
+}
+
+impl EditPolicy<TestPayload> for CombineDerivedEdges {
+    type Error = Infallible;
+
+    fn vertex_created(
+        &mut self,
+        _: VertexKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Concatenates every source's payload, in the order the builder named them.
+    fn edge_created(
+        &mut self,
+        key: EdgeKey,
+        origin: Origin,
+        before: &Model<TestPayload>,
+    ) -> Result<String, Self::Error> {
+        match origin {
+            Origin::Derived(sources) => {
+                self.derived_from.push((key, sources.clone()));
+                Ok(sources
+                    .iter()
+                    .map(|source| match source {
+                        EditKey::Edge(source) => before.edge_attr_unchecked(*source).data().clone(),
+                        _ => String::new(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("+"))
+            }
+            _ => Ok(String::new()),
+        }
+    }
+
+    fn profile_created(
+        &mut self,
+        _: ProfileKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn face_created(
+        &mut self,
+        _: FaceKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn sheet_created(
+        &mut self,
+        _: SheetKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn solid_created(
+        &mut self,
+        _: SolidKey,
+        _: Origin,
+        _: &Model<TestPayload>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+#[test]
+fn derived_creation_names_every_source_resolved_to_its_transaction_start_identity() {
+    let mut g = Model::<TestPayload>::new();
+    let (_, left) = add_named_test_edge(&mut g, 0.0, "left");
+    let (_, right) = add_named_test_edge(&mut g, 2.0, "right");
+    let mut policy = CombineDerivedEdges::default();
+
+    let created = g
+        .transaction_with_policy(&mut policy, |edit| {
+            let start = edit.add_dart();
+            let end = edit.add_dart();
+            edit.link(Dim::Zero, start, end)?;
+            Ok::<_, ModelEditError>(edit.add_edge_derived_from(
+                vec![EditKey::Edge(left), EditKey::Edge(right)],
+                EdgeAttr::new(
+                    start,
+                    Curve::line(Point3::new(4.0, 0.0, 0.0), Point3::new(5.0, 0.0, 0.0)),
+                ),
+            ))
+        })
+        .expect("the derived creation should commit");
+
+    assert_eq!(
+        policy.derived_from,
+        vec![(created, vec![EditKey::Edge(left), EditKey::Edge(right)])]
+    );
+    assert_eq!(g.edge_attr_unchecked(created).data(), "left+right");
+}
+
+#[test]
+fn a_derived_creation_with_only_local_sources_resolves_to_new() {
+    let mut g = Model::<TestPayload>::new();
+    let mut policy = CombineDerivedEdges::default();
+
+    let created = g
+        .transaction_with_policy(&mut policy, |edit| {
+            let source_start = edit.add_dart();
+            let source_end = edit.add_dart();
+            edit.link(Dim::Zero, source_start, source_end)?;
+            let local_source = edit.add_edge(EdgeAttr::new(
+                source_start,
+                Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+            ));
+            let start = edit.add_dart();
+            let end = edit.add_dart();
+            edit.link(Dim::Zero, start, end)?;
+            let created = edit.add_edge_derived_from(
+                vec![EditKey::Edge(local_source)],
+                EdgeAttr::new(
+                    start,
+                    Curve::line(Point3::new(4.0, 0.0, 0.0), Point3::new(5.0, 0.0, 0.0)),
+                ),
+            );
+            edit.remove_edge(local_source);
+            Ok::<_, ModelEditError>(created)
+        })
+        .expect("the derived creation should commit");
+
+    assert!(policy.derived_from.is_empty());
+    assert_eq!(g.edge_attr_unchecked(created).data(), "");
 }

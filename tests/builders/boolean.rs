@@ -22,7 +22,7 @@ fn isolated_vertex(point: Point3) -> (Model<ngk::StandardPayload>, VertexKey) {
     let key = map
         .transaction(|edit| {
             let dart = edit.add_dart();
-            Ok::<_, ModelEditError>(edit.add_vertex(VertexAttr::new(dart, point, ())))
+            Ok::<_, ModelEditError>(edit.add_vertex(VertexAttr::new(dart, point)))
         })
         .expect("isolated vertex");
     (map, key)

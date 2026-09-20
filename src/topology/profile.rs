@@ -76,7 +76,7 @@ impl<'a, P: Payload> Profile<'a, P> {
 
     /// Returns the user payload attached to this profile.
     pub fn data(&self) -> &P::Profile {
-        &self.model.profile_attr_unchecked(self.key).data
+        self.model.profile_attr_unchecked(self.key).data()
     }
 
     /// Iterates the darts of this profile in alternating alpha0/alpha1 order.
