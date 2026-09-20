@@ -31,15 +31,15 @@ pub use graph::{
 use graph::{IntersectionNetworkBuilder, edge_use, face_use, vertex_use};
 use operand::{BooleanContext, OperandCells, import_operand, operand_cells};
 pub use result::{
-    BooleanCell, BooleanLineage, BooleanOperand, BooleanOperation, BooleanPreparation,
-    BooleanResult, BooleanResultLineage, BooleanSide, PointContactKind,
+    BooleanCell, BooleanLineage, BooleanOperand, BooleanOperandPreparation, BooleanOperation,
+    BooleanSide, PointContactKind, SolidBoolean, SolidBooleanLineage,
 };
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use crate::builders::edges::split_edge_edit;
-use crate::builders::faces::{split_face_by_imprints_edit, split_face_edge_edit, FaceImprint};
+use crate::builders::faces::{FaceImprint, split_face_by_imprints_edit, split_face_edge_edit};
 use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveCurveIntersection,

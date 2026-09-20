@@ -335,8 +335,8 @@ In fact, region boundaries are currently created empty in
 
 #### 4.5 Imprinting is preparation, not Boolean evaluation
 
-`BooleanPreparation` remains available for split-only callers. The additive
-`boolean` entry point returns `BooleanResult` for union, intersection, and
+`BooleanOperandPreparation` remains available for split-only callers. The additive
+`boolean` entry point returns `SolidBoolean` for union, intersection, and
 difference. The `neighborhood`, `classify`, `select`, and `assemble` modules
 provide fragment adjacency, planar polygon classification, operation selection,
 tool-face reversal for subtraction, deletion, identity-based sewing, and
@@ -466,7 +466,7 @@ pub fn boolean<P: Payload>(
     second: SolidKey,
     operation: BooleanOperation,
     options: BooleanOptions,
-) -> Result<BooleanResult, BooleanError>;
+) -> Result<SolidBoolean, BooleanError>;
 ```
 
 The whole operation should remain one transaction, including import, imprint,

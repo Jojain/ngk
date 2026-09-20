@@ -6,7 +6,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::builders::edges::add_edge_edit;
 use crate::builders::errors::ChamferError;
-use crate::builders::faces::{add_face_edit, add_polygon_edit, split_face_by_imprints_edit, FaceImprint};
+use crate::builders::faces::{
+    FaceImprint, add_face_edit, add_polygon_edit, split_face_by_imprints_edit,
+};
 use crate::builders::profiles::curve_pcurve;
 use crate::geometry::{
     Curve, LINEAR_TOLERANCE, Point2, Point3, Rigid, RuledSurface, Surface, TrimmedCurve,
@@ -29,32 +31,32 @@ enum CornerRole {
 
 /// Faces created by a chamfer and the solid edges it replaced.
 #[derive(Debug)]
-pub struct Chamfer {
+pub struct TargetChamfer {
     pub faces: Vec<FaceKey>,
     pub replaced_edges: Vec<EdgeKey>,
     revision: Option<u64>,
 }
 
-/// Borrowed views for a committed [`Chamfer`] result.
-pub struct ChamferView<'m, P: Payload> {
+/// Borrowed views for a committed [`TargetChamfer`] result.
+pub struct TargetChamferView<'m, P: Payload> {
     pub faces: Vec<FaceView<'m, P>>,
     pub replaced_edges: Vec<EdgeView<'m, P>>,
 }
 
-impl OpResult for Chamfer {
+impl OpResult for TargetChamfer {
     fn stamp(&mut self, revision: u64) {
         self.revision = Some(revision);
     }
 }
 
-impl Chamfer {
+impl TargetChamfer {
     /// Resolves the result against the model revision at which it committed.
     pub fn view<'m, P: Payload>(
         &self,
         model: &'m Model<P>,
-    ) -> Result<ChamferView<'m, P>, StaleResult> {
+    ) -> Result<TargetChamferView<'m, P>, StaleResult> {
         StaleResult::check(self.revision, model)?;
-        Ok(ChamferView {
+        Ok(TargetChamferView {
             faces: self
                 .faces
                 .iter()
@@ -94,7 +96,7 @@ pub fn chamfer<P: Payload, T: Into<ChamferTarget>>(
     g: &mut Model<P>,
     target: T,
     distance: f64,
-) -> Result<Chamfer, ChamferError> {
+) -> Result<TargetChamfer, ChamferError> {
     g.transaction_result(|edit| chamfer_edit(edit, target, distance))
 }
 
@@ -103,9 +105,9 @@ pub(crate) fn chamfer_edit<P: Payload, T: Into<ChamferTarget>>(
     edit: &mut ModelEdit<'_, P>,
     target: T,
     distance: f64,
-) -> Result<Chamfer, ChamferError> {
+) -> Result<TargetChamfer, ChamferError> {
     validate_distance(distance)?;
-    let mut result = Chamfer {
+    let mut result = TargetChamfer {
         faces: Vec::new(),
         replaced_edges: Vec::new(),
         revision: None,
@@ -889,7 +891,8 @@ fn add_profile_chamfer_faces<P: Payload>(
             corners.reverse();
         }
         let profile = add_polygon_edit(edit, &corners);
-        let face = add_face_edit(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
+        let face =
+            add_face_edit(edit, profile).map_err(|_| ChamferError::UnsupportedChamferTarget)?;
         faces.push(face);
         chamfer_darts.push(
             edit.profile_unchecked(profile)

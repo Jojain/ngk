@@ -570,7 +570,7 @@ Un booléen détruit l'idée naïve qu'une face source survit toujours comme la 
 Le résultat doit donc exposer une lineage riche, par exemple :
 
 ```rust
-struct BooleanResult {
+struct SolidBoolean {
     solids: Vec<SolidKey>,
     kept_faces: Vec<FaceKey>,
     created_faces: Vec<FaceKey>,

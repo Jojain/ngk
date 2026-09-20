@@ -419,7 +419,7 @@ pub struct SplitSolidResult {
 For booleans:
 
 ```rust
-pub struct BooleanResult {
+pub struct SolidBoolean {
     pub result: SolidKey,
     pub consumed: Vec<SolidKey>,
     pub created_faces: Vec<FaceKey>,
@@ -658,7 +658,7 @@ class Model:
     def insert(self, shape) -> SolidHandle | FaceHandle | ProfileHandle: ...
     def remove(self, handle) -> None: ...
     def split_solid(self, solid, plane, policy=None) -> SplitSolidResult: ...
-    def boolean_union(self, a, b, policy=None) -> BooleanResult: ...
+    def boolean_union(self, a, b, policy=None) -> SolidBoolean: ...
 ```
 
 For Python, direct methods on `Model` may be more appropriate than exposing
@@ -812,4 +812,3 @@ These need design decisions later:
 8. Design the first payload policy trait around a real edit, probably split.
 9. Redesign Python around `Shape` constructors plus mutable `Model`, without
    preserving the current prototype API as a constraint.
-

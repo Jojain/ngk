@@ -49,7 +49,7 @@ pub struct BooleanLineage {
 
 /// Result of importing, intersecting, and splitting both operands.
 #[derive(Clone)]
-pub struct BooleanPreparation {
+pub struct BooleanOperandPreparation {
     pub first: BooleanOperand,
     pub second: BooleanOperand,
     /// The working-map handle of an imported external tool.
@@ -64,7 +64,7 @@ pub struct BooleanPreparation {
     pub second_lineage: BooleanLineage,
 }
 
-impl BooleanPreparation {
+impl BooleanOperandPreparation {
     /// Returns the final fragments derived from `source` on the selected side.
     pub fn edge_fragments(&self, side: BooleanSide, source: EdgeKey) -> &[EdgeKey] {
         self.lineage(side)
@@ -101,16 +101,16 @@ pub enum BooleanOperation {
 
 /// One successfully validated, committed solid boundary.
 #[derive(Debug)]
-pub struct BooleanResult {
+pub struct SolidBoolean {
     pub operation: BooleanOperation,
     pub solid: SolidKey,
-    pub lineage: BooleanResultLineage,
+    pub lineage: SolidBooleanLineage,
     pub diagnostics: BooleanDiagnostics,
 }
 
 /// Surviving source identities and pre-sewing intersection edge provenance.
 #[derive(Debug)]
-pub struct BooleanResultLineage {
+pub struct SolidBooleanLineage {
     pub first: BooleanLineage,
     pub second: BooleanLineage,
     /// Historical keys before sewing; a second-side key can be consumed at commit.

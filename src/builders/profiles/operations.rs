@@ -24,18 +24,18 @@ pub use crate::builders::errors::PolylineError;
 
 /// The profile extended by [`append_edge`].
 #[derive(Debug)]
-pub struct AppendEdge {
+pub struct ProfileAppend {
     pub profile: ProfileKey,
     revision: Option<u64>,
 }
 
-impl OpResult for AppendEdge {
+impl OpResult for ProfileAppend {
     fn stamp(&mut self, revision: u64) {
         self.revision = Some(revision);
     }
 }
 
-impl AppendEdge {
+impl ProfileAppend {
     /// Resolves the extended profile at the revision that produced this result.
     pub fn view<'m, P: Payload>(&self, model: &'m Model<P>) -> Result<Profile<'m, P>, StaleResult> {
         StaleResult::check(self.revision, model)?;
@@ -165,7 +165,7 @@ pub fn append_edge<P: Payload>(
     g: &mut Model<P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
-) -> Result<AppendEdge, PolylineError> {
+) -> Result<ProfileAppend, PolylineError> {
     g.transaction_result(|edit| append_edge_edit(edit, profile_key, edge_key))
 }
 
@@ -174,7 +174,7 @@ pub(crate) fn append_edge_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
-) -> Result<AppendEdge, PolylineError> {
+) -> Result<ProfileAppend, PolylineError> {
     let profile = edit
         .profile(profile_key)
         .ok_or(PolylineError::MissingProfile {
@@ -234,7 +234,7 @@ pub(crate) fn append_edge_edit<P: Payload>(
             .map_err(polyline_edit_error)?;
         edit.merge_vertices_into(close_merge.survivor, close_merge.removed);
     }
-    Ok(AppendEdge {
+    Ok(ProfileAppend {
         profile: profile_key,
         revision: None,
     })
@@ -562,7 +562,9 @@ mod tests {
     use crate::model::Model;
     use crate::topology::edit::{EditPolicy, Origin};
     use crate::topology::payload::StandardPayload;
-    use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
+    use crate::topology::shape_keys::{
+        EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey,
+    };
 
     #[derive(Default)]
     struct CountingPolicy {

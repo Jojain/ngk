@@ -72,7 +72,7 @@ pub struct Lateral {
 
 /// Everything learned while extruding a face.
 #[derive(Debug)]
-pub struct Extrusion {
+pub struct FaceExtrusion {
     /// The solid assembled by the operation.
     pub solid: SolidKey,
     /// The source face used as the start cap.
@@ -84,8 +84,8 @@ pub struct Extrusion {
     revision: Option<u64>,
 }
 
-/// Borrowed views for an [`Extrusion`] result.
-pub struct ExtrusionView<'m, P: Payload> {
+/// Borrowed views for a [`FaceExtrusion`] result.
+pub struct FaceExtrusionView<'m, P: Payload> {
     pub solid: SolidView<'m, P>,
     pub start_cap: FaceView<'m, P>,
     pub end_cap: FaceView<'m, P>,
@@ -145,22 +145,22 @@ impl ClosedSolid {
     }
 }
 
-impl OpResult for Extrusion {
+impl OpResult for FaceExtrusion {
     fn stamp(&mut self, revision: u64) {
         self.revision = Some(revision);
     }
 }
 
-impl Extrusion {
+impl FaceExtrusion {
     /// Resolves every key in the result against `model` at the result's
     /// committed revision.
     pub fn view<'m, P: Payload>(
         &self,
         model: &'m Model<P>,
-    ) -> Result<ExtrusionView<'m, P>, StaleResult> {
+    ) -> Result<FaceExtrusionView<'m, P>, StaleResult> {
         StaleResult::check(self.revision, model)?;
         let view = |key| model.face_unchecked(key);
-        Ok(ExtrusionView {
+        Ok(FaceExtrusionView {
             solid: model.solid_unchecked(self.solid),
             start_cap: view(self.start_cap),
             end_cap: view(self.end_cap),
@@ -320,7 +320,7 @@ pub fn add_extruded_face<P: Payload>(
     g: &mut Model<P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
-) -> Result<Extrusion, ExtrudeError> {
+) -> Result<FaceExtrusion, ExtrudeError> {
     g.transaction_result(|edit| add_extruded_face_edit(edit, face_key, direction))
 }
 
@@ -329,7 +329,7 @@ pub(crate) fn add_extruded_face_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
-) -> Result<Extrusion, ExtrudeError> {
+) -> Result<FaceExtrusion, ExtrudeError> {
     let bot_face = edit
         .face_attr(face_key)
         .map(|attr| attr.face(edit))
@@ -368,7 +368,7 @@ pub(crate) fn add_extruded_face_edit<P: Payload>(
         edit.add_sheet(SheetAttr::new(outer_shell));
     }
     let solid = edit.add_solid(SolidAttr::new(outer_shell, None));
-    Ok(Extrusion {
+    Ok(FaceExtrusion {
         solid,
         start_cap: face_key,
         end_cap: top_face_key,

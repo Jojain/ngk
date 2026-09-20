@@ -1,14 +1,14 @@
 //! Atomic deletion, canonical-span sewing, and result shell registration.
 
 use super::{
-    BooleanContext, BooleanError, BooleanPreparation, BooleanResult, BooleanResultLineage,
-    BooleanSide, IntersectionSpanId, neighborhood::FragmentGraph, select::SelectionPlan,
+    BooleanContext, BooleanError, BooleanOperandPreparation, BooleanSide, IntersectionSpanId,
+    SolidBoolean, SolidBooleanLineage, neighborhood::FragmentGraph, select::SelectionPlan,
 };
 use crate::builders::faces::reverse_face_winding_edit;
 use crate::builders::scaffold::cut_between_shells;
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{Point3, PointCoincidence};
-use crate::healing::{remove_redundant_cells_edit, HealingOptions, HealingScope};
+use crate::healing::{HealingOptions, HealingScope, remove_redundant_cells_edit};
 use crate::model::Model;
 use crate::topology::{
     EditKey, ModelEdit,
@@ -28,9 +28,9 @@ pub(crate) fn run<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     context: &BooleanContext,
     graph: &FragmentGraph,
-    mut prepared: BooleanPreparation,
+    mut prepared: BooleanOperandPreparation,
     selection: SelectionPlan,
-) -> Result<BooleanResult, BooleanError> {
+) -> Result<SolidBoolean, BooleanError> {
     if selection.kept.is_empty() {
         return Err(BooleanError::EmptyResult);
     }
@@ -204,11 +204,11 @@ pub(crate) fn run<P: Payload>(
     }
     prepared.diagnostics.fragments = graph.fragments.len();
     prepared.diagnostics.components = graph.components.len();
-    Ok(BooleanResult {
+    Ok(SolidBoolean {
         operation: context.operation,
         solid,
         diagnostics: prepared.diagnostics,
-        lineage: BooleanResultLineage {
+        lineage: SolidBooleanLineage {
             first: prepared.first_lineage,
             second: prepared.second_lineage,
             span_edges: prepared.span_edges,
@@ -228,7 +228,7 @@ fn heal_result<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     context: &BooleanContext,
     solid: SolidKey,
-    prepared: &mut BooleanPreparation,
+    prepared: &mut BooleanOperandPreparation,
 ) -> Result<(), BooleanError> {
     let report = remove_redundant_cells_edit(
         edit,

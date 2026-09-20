@@ -72,7 +72,7 @@ pub fn boolean<P: Payload>(
     second: SolidKey,
     operation: BooleanOperation,
     options: BooleanOptions,
-) -> Result<BooleanResult, BooleanError> {
+) -> Result<SolidBoolean, BooleanError> {
     let context = BooleanContext::admit(map, first, second, operation, options)?;
     map.transaction(|edit| {
         if first == second {
@@ -80,10 +80,10 @@ pub fn boolean<P: Payload>(
                 return Err(BooleanError::EmptyResult);
             }
             let cells = operand_cells(edit, BooleanOperand::Solid(first))?;
-            return Ok(BooleanResult {
+            return Ok(SolidBoolean {
                 operation,
                 solid: first,
-                lineage: BooleanResultLineage {
+                lineage: SolidBooleanLineage {
                     first: lineage_for(&cells, &HashMap::new(), &HashMap::new()),
                     second: BooleanLineage::default(),
                     span_edges: HashMap::new(),
@@ -437,7 +437,7 @@ fn event_use_for_cell<P: Payload>(
 pub fn apply_boolean_splits<P: Payload>(
     g: &mut Model<P>,
     plan: BooleanIntersectionPlan,
-) -> Result<BooleanPreparation, BooleanError> {
+) -> Result<BooleanOperandPreparation, BooleanError> {
     g.transaction(|edit| apply_boolean_splits_edit(edit, plan, false))
 }
 
@@ -447,7 +447,7 @@ pub fn prepare_boolean<P: Payload>(
     first: BooleanOperand,
     second: BooleanOperand,
     options: BooleanOptions,
-) -> Result<BooleanPreparation, BooleanError> {
+) -> Result<BooleanOperandPreparation, BooleanError> {
     let plan = compute_boolean_intersections(g, first, second, options)?;
     apply_boolean_splits(g, plan)
 }
@@ -462,7 +462,7 @@ pub fn prepare_boolean_with_external_tool<P: Payload>(
     tool_map: &Model<P>,
     tool: BooleanOperand,
     options: BooleanOptions,
-) -> Result<BooleanPreparation, BooleanError> {
+) -> Result<BooleanOperandPreparation, BooleanError> {
     operand_cells(target_map, target)?;
     operand_cells(tool_map, tool)?;
     target_map.transaction(|edit| {
@@ -476,7 +476,7 @@ fn apply_boolean_splits_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plan: BooleanIntersectionPlan,
     imported_second: bool,
-) -> Result<BooleanPreparation, BooleanError> {
+) -> Result<BooleanOperandPreparation, BooleanError> {
     // Revalidate source handles so applying an old plan fails atomically.
     revalidate_plan_operand(edit, plan.first)?;
     revalidate_plan_operand(edit, plan.second)?;
@@ -551,7 +551,7 @@ fn apply_boolean_splits_edit<P: Payload>(
 
     let first_lineage = lineage_for(&plan.first_cells, &edge_lineage, &face_lineage);
     let second_lineage = lineage_for(&plan.second_cells, &edge_lineage, &face_lineage);
-    Ok(BooleanPreparation {
+    Ok(BooleanOperandPreparation {
         first: plan.first,
         second: plan.second,
         imported_tool: imported_second.then_some(plan.second),
