@@ -5,7 +5,7 @@ use ngk::builders::profiles::add_rectangle as add_rectangle_profile;
 use ngk::geometry::{Curve, Plane, Point2, Point3, TrimmedCurve2};
 use ngk::model::Model;
 use ngk::topology::ModelEditError;
-use ngk::topology::edit::{EditKey, EditPolicy, Origin};
+use ngk::topology::edit::{EditKey, EditPolicy, Origin, PreservePayload};
 use ngk::topology::payload::Payload;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 
@@ -19,6 +19,8 @@ impl Payload for FacePayload {
     type F = String;
     type Sheet = ();
     type S = ();
+
+    type Policy = PreservePayload;
 }
 
 #[derive(Default)]

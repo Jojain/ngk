@@ -27,10 +27,10 @@ use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAtt
 use crate::topology::embedding::{EntityOwner, is_embedded_cell};
 use crate::topology::gmap::Dim;
 use crate::topology::orientation::Orientation;
-use crate::topology::payload::DefaultPayload;
+use crate::topology::payload::Payload;
 use crate::topology::profile::{Profile, ProfileIterator};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
-use crate::topology::{Dart, IsolatedDart, ModelEdit, ModelEditError, Payload};
+use crate::topology::{Dart, IsolatedDart, ModelEdit, ModelEditError};
 
 /// Failure raised while removing a cell from a staged map.
 #[derive(Debug, Error)]
@@ -414,7 +414,7 @@ impl Preflight {
 /// caller obligations. Because it commits immediately, use it only when the
 /// stale geometry it leaves behind does not matter — most callers want the
 /// staged form inside a healing pass.
-pub fn remove_cell<P: DefaultPayload>(
+pub fn remove_cell<P: Payload>(
     g: &mut Model<P>,
     dart: Dart,
     dim: Dim,

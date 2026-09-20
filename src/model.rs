@@ -19,8 +19,7 @@ use crate::topology::attributes::{
 };
 use crate::topology::edge::Edge;
 use crate::topology::edit::{
-    EditEvent, EditKey, EditPolicy, ModelEdit, ModelEditError, PreservePayload,
-    commit_model_transaction,
+    EditEvent, EditKey, EditPolicy, ModelEdit, ModelEditError, commit_model_transaction,
 };
 use crate::topology::embedding::{
     Embedding, EmbeddingError, EmbeddingIndex, EntityOwner, OwnerRemap, boundary_shells,
@@ -29,7 +28,7 @@ use crate::topology::embedding::{
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim, GMap, IsolatedDart, SewableDarts};
 use crate::topology::orientation::Orientation;
-use crate::topology::payload::{DefaultPayload, Payload, StandardPayload};
+use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::Sheet;
@@ -194,7 +193,6 @@ pub trait MergeTopology<P: Payload> {
     fn isolate(self) -> (Model<P>, Dart)
     where
         Self: Sized,
-        P: DefaultPayload,
     {
         let mut isolated = Model::new();
         let handle = isolated
@@ -377,16 +375,24 @@ impl<P: Payload> Model<P> {
     /// The operation receives the only capability that can mutate staged state.
     /// A returned error or failed commit restores the complete starting
     /// snapshot. Panics are not handled by this API.
+    ///
+    /// Payloads are supplied by `P::Policy`, the maintenance policy the payload
+    /// named for itself, so no call site has to say which one runs. Use
+    /// [`Self::transaction_with_policy`] when one particular operation has
+    /// something of its own to stamp or record.
     pub fn transaction<T, E, F>(&mut self, operation: F) -> Result<T, E>
     where
         E: From<ModelEditError>,
         F: FnOnce(&mut ModelEdit<'_, P>) -> Result<T, E>,
-        P: DefaultPayload,
     {
-        self.run_transaction(&mut PreservePayload, operation)
+        self.run_transaction(&mut P::Policy::default(), operation)
     }
 
     /// Runs one atomic operation with a caller-provided payload policy.
+    ///
+    /// This overrides `P::Policy` for one transaction, which is what a policy
+    /// carrying parameters in or state out needs: the payload's own policy is
+    /// default-constructed and dropped at commit, so it can do neither.
     ///
     /// Policy event application is performed only after the complete operation
     /// has passed topology validation and identity reconciliation.
@@ -1339,7 +1345,7 @@ impl<P: Payload> Model<P> {
     pub fn isolate<T>(topology: T) -> (Self, Dart)
     where
         T: MergeTopology<P>,
-        P: DefaultPayload,
+        P: Payload,
     {
         topology.isolate()
     }

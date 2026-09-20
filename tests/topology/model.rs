@@ -17,6 +17,7 @@ use ngk::model::{Cell0, Cell1, Cell2, MergeTopology, Model};
 use ngk::modeling::solids;
 use ngk::topology::ModelEditError;
 use ngk::topology::attributes::{FaceAttr, SheetAttr, SolidAttr};
+use ngk::topology::edit::PreservePayload;
 use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::payload::{Payload, StandardPayload};
 use ngk::topology::planar::Planar;
@@ -33,6 +34,8 @@ impl Payload for DataPayload {
     type F = ();
     type Sheet = String;
     type S = ();
+
+    type Policy = PreservePayload;
 }
 
 #[test]

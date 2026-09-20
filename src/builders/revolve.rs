@@ -25,7 +25,7 @@ use crate::topology::edge::Edge;
 use crate::topology::edit::{ModelEdit, ModelEditError};
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim};
-use crate::topology::payload::{DefaultPayload, Payload};
+use crate::topology::payload::Payload;
 use crate::topology::planar::{Planar, PlanarityError};
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceTag, Shape};
@@ -175,7 +175,7 @@ impl RevolvedSourceEdge {
 /// A whole turn of a *closed* source edge is a torus: closed in the sweep and
 /// closed in the profile, so the source loop is consumed and the face that comes
 /// back has no boundary at all.
-pub fn add_revolved_edge<P: DefaultPayload>(
+pub fn add_revolved_edge<P: Payload>(
     g: &mut Model<P>,
     edge: EdgeKey,
     axis: Axis3,
@@ -937,7 +937,7 @@ fn is_full_turn(angle: Rad64) -> bool {
 /// # Panics
 ///
 /// Panics if `profile` does not identify a registered profile.
-pub fn add_revolved_profile<P: DefaultPayload>(
+pub fn add_revolved_profile<P: Payload>(
     g: &mut Model<P>,
     profile: ProfileKey,
     axis: Axis3,
@@ -948,7 +948,7 @@ pub fn add_revolved_profile<P: DefaultPayload>(
 }
 
 /// Revolves a profile from an oriented traversal dart for internal callers.
-pub(crate) fn add_revolved_profile_from_dart<P: DefaultPayload>(
+pub(crate) fn add_revolved_profile_from_dart<P: Payload>(
     g: &mut Model<P>,
     profile_dart: Dart,
     axis: Axis3,
@@ -1404,7 +1404,7 @@ fn quad_pcurves(uv: &[TrimmedCurve2; 4], darts: &[Dart]) -> HashMap<Dart, Trimme
 /// Returns an error if the face is missing, its loops cannot be revolved, a
 /// partial turn uses an unsupported cap surface, or generated topology cannot
 /// be sewn.
-pub fn add_revolved_face<P: DefaultPayload>(
+pub fn add_revolved_face<P: Payload>(
     g: &mut Model<P>,
     face_key: FaceKey,
     axis: Axis3,
@@ -1414,7 +1414,7 @@ pub fn add_revolved_face<P: DefaultPayload>(
 }
 
 /// Builds caps and lateral sheets, then registers the resulting staged solid.
-fn add_revolved_face_staged<P: DefaultPayload>(
+fn add_revolved_face_staged<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     axis: Axis3,
@@ -1622,7 +1622,7 @@ fn sew_revolved_loop_to_caps<P: Payload>(
     Ok(revolved)
 }
 
-fn rotate_face<P: DefaultPayload>(
+fn rotate_face<P: Payload>(
     face: &Face<'_, P>,
     axis: Axis3,
     angle: Rad64,

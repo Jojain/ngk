@@ -76,10 +76,10 @@ migration record.
   `Shape<K, P>` (owned model + primary handle, read with `model()` /
   `model_mut()` / `into_model()`). *Traverse with these, not raw darts.*
 - **`Payload` trait** — type-level bundle of user data per dimension, bounded
-  only `Clone + 'static`; `StandardPayload` = `()` everywhere. Most types are
-  generic over `P: Payload`. `DefaultPayload` (`Payload` plus `Default` at
-  every dimension) is what `Model::transaction` and `PreservePayload` need —
-  see "Transactions" below.
+  only `Clone + 'static`, plus `type Policy: EditPolicy<Self> + Default`, the
+  rule that maintains it. `StandardPayload` = `()` everywhere with
+  `Policy = PreservePayload`. Everything is generic over `P: Payload`; there is
+  no `DefaultPayload` bound any more — see "Transactions" below.
 - **Profiles = face boundary loops; Sheets = solid shells.** They must be
   **registered explicitly** (`add_profile` / `add_sheet`); commit rejects faces
   or solids referencing unregistered components.
@@ -386,12 +386,18 @@ mutation capability (`add_dart`, `remove_dart`, `link`, `unlink`, `sew`,
   survivor, `*_consumed` disposes of one nothing inherits. At commit, every net
   externally-visible creation, merge and consumption calls its hook once, in
   declaration order, with `Origin`'s sources resolved against the
-  transaction-start snapshot. `Model::transaction` runs the default policy,
-  `PreservePayload` (clones a `Split`'s source, keeps the merge survivor, drops
-  on consume, defaults `New`/`Derived`), which requires every payload
-  dimension to implement `Default` (`DefaultPayload`); a payload without one
-  needs `Model::transaction_with_policy` and its own `EditPolicy`. `Payload`
-  itself requires only `Clone + 'static`.
+  transaction-start snapshot.
+  **Which policy runs is a property of the payload, not of the call site.**
+  `Model::transaction` runs `P::Policy::default()`, so a payload that named its
+  own policy gets it from every builder in the kernel with nothing said
+  anywhere. `StandardPayload::Policy = PreservePayload` (clones a `Split`'s
+  source, keeps the merge survivor, drops on consume, defaults `New`/`Derived`),
+  which is why a payload naming it must have `Default` at every dimension — an
+  obligation discharged at the `impl Payload` and carried by no builder
+  signature. `Model::transaction_with_policy` overrides it for one transaction,
+  which is what a policy carrying parameters in or state out needs, since
+  `P::Policy` is default-constructed and dropped at commit. See
+  `plan/payload.md`.
 - **Identity reconciliation** picks one surviving key per final cell;
   transaction-start keys beat transaction-local ones. Local keys may vanish at commit.
 - Commit order: raw gmap axioms, embedding records, required registrations,

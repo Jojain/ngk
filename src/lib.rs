@@ -9,7 +9,7 @@ pub mod tcv;
 pub mod tessellate;
 pub mod topology;
 pub mod viz;
-pub use topology::{DefaultPayload, Payload, StandardPayload};
+pub use topology::{Payload, StandardPayload};
 
 #[cfg(any(feature = "python", feature = "wasm"))]
 #[path = "../bindings/common/mod.rs"]

@@ -15,7 +15,7 @@ use crate::model::{Cell0, Cell1, Model};
 use crate::topology::attributes::{FaceAttr, VertexAttr};
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim};
-use crate::topology::payload::{DefaultPayload, Payload};
+use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, VertexKey};
 use crate::topology::{IsolatedDart, ModelEdit};
 
@@ -47,7 +47,7 @@ enum CornerRole {
 /// Returns [`ChamferError`] when the distance is invalid, the selection is not
 /// supported by the current geometry path, or the staged topology cannot be
 /// split and sewn consistently.
-pub fn chamfer<P: DefaultPayload, T: Into<ChamferTarget>>(
+pub fn chamfer<P: Payload, T: Into<ChamferTarget>>(
     g: &mut Model<P>,
     target: T,
     distance: f64,

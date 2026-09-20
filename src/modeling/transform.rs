@@ -28,17 +28,17 @@ use crate::builders::transform::rigid;
 use crate::geometry::axis::Axis3;
 use crate::geometry::dim3::frame::Frame;
 use crate::geometry::transform::Rigid;
-use crate::topology::payload::DefaultPayload;
+use crate::topology::payload::Payload;
 use crate::topology::shape::{Shape, ShapeKind};
 
 /// Returns `shape` moved by a rigid motion.
-pub fn moved<K: ShapeKind, P: DefaultPayload>(mut shape: Shape<K, P>, r: Rigid) -> Shape<K, P> {
+pub fn moved<K: ShapeKind, P: Payload>(mut shape: Shape<K, P>, r: Rigid) -> Shape<K, P> {
     rigid(shape.model_mut(), &r);
     shape
 }
 
 /// Returns `shape` translated along `offset`.
-pub fn translated<K: ShapeKind, P: DefaultPayload>(
+pub fn translated<K: ShapeKind, P: Payload>(
     shape: Shape<K, P>,
     offset: Vector3<f64>,
 ) -> Shape<K, P> {
@@ -46,7 +46,7 @@ pub fn translated<K: ShapeKind, P: DefaultPayload>(
 }
 
 /// Returns `shape` rotated by `angle` around `axis`.
-pub fn rotated<K: ShapeKind, P: DefaultPayload>(
+pub fn rotated<K: ShapeKind, P: Payload>(
     shape: Shape<K, P>,
     axis: Axis3,
     angle: Rad64,
@@ -57,7 +57,7 @@ pub fn rotated<K: ShapeKind, P: DefaultPayload>(
 /// Returns `shape` carried from the `from` frame onto the `to` frame.
 ///
 /// This is the spelling of "put this part where that mating face is".
-pub fn placed<K: ShapeKind, P: DefaultPayload>(
+pub fn placed<K: ShapeKind, P: Payload>(
     shape: Shape<K, P>,
     from: &Frame,
     to: &Frame,
@@ -70,7 +70,7 @@ pub fn placed<K: ShapeKind, P: DefaultPayload>(
 /// These exist as inherent methods precisely because they cannot fail; the
 /// fallible operations live as free functions beside every other fallible
 /// operation in the crate.
-impl<K: ShapeKind, P: DefaultPayload> Shape<K, P> {
+impl<K: ShapeKind, P: Payload> Shape<K, P> {
     /// This shape moved by a rigid motion.
     pub fn moved(self, r: Rigid) -> Self {
         moved(self, r)

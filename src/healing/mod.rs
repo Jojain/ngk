@@ -63,12 +63,12 @@ pub use report::{HealedCell, HealingReport, HealingSkip, SkipReason};
 
 use crate::model::Model;
 use crate::topology::ModelEdit;
-use crate::topology::payload::{DefaultPayload, Payload};
+use crate::topology::payload::Payload;
 
 /// Removes every cell in scope whose removal does not change the shape.
 ///
 /// The run is atomic: a failure restores the map exactly as it was.
-pub fn remove_redundant_cells<P: DefaultPayload>(
+pub fn remove_redundant_cells<P: Payload>(
     g: &mut Model<P>,
     options: HealingOptions,
 ) -> Result<HealingReport, HealingError> {

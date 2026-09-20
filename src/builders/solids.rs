@@ -9,7 +9,7 @@ use nalgebra::Vector3;
 use thiserror::Error;
 
 use crate::{
-    DefaultPayload, Payload,
+    Payload,
     builders::errors::ClosedFaceCellError,
     builders::errors::ExtrudeError,
     builders::faces::reverse_face_winding,
@@ -59,7 +59,7 @@ pub enum TorusBuildError {
 ///
 /// The support's own parameterization already faces outward, so the face is
 /// stored unreversed.
-pub fn add_sphere<P: DefaultPayload>(
+pub fn add_sphere<P: Payload>(
     g: &mut Model<P>,
     frame: Frame,
     radius: f64,
@@ -85,7 +85,7 @@ pub fn add_sphere<P: DefaultPayload>(
 ///
 /// `minor` must stay under `major`: a tube as wide as its offset reaches the
 /// axis, and one wider sweeps through itself.
-pub fn add_torus<P: DefaultPayload>(
+pub fn add_torus<P: Payload>(
     g: &mut Model<P>,
     frame: Frame,
     major: f64,
@@ -113,7 +113,7 @@ pub fn add_torus<P: DefaultPayload>(
 /// parameterisation. The source map is not modified.
 ///
 /// Returns an error for a zero direction.
-pub fn translate_face<P: DefaultPayload>(
+pub fn translate_face<P: Payload>(
     face: &Face<'_, P>,
     direction: Vector3<f64>,
 ) -> Result<Shape<FaceTag, P>, ExtrudeError> {
@@ -160,7 +160,7 @@ pub fn translate_face<P: DefaultPayload>(
 /// Returns an error when the face is missing, the direction is zero, required
 /// boundary geometry is absent, or a lateral face is degenerate or cannot be
 /// sewn into the shell.
-pub fn add_extruded_face<P: DefaultPayload>(
+pub fn add_extruded_face<P: Payload>(
     g: &mut Model<P>,
     face_key: FaceKey,
     direction: Vector3<f64>,
@@ -169,7 +169,7 @@ pub fn add_extruded_face<P: DefaultPayload>(
 }
 
 /// Builds translated caps and lateral faces, then registers the staged solid.
-fn add_extruded_face_staged<P: DefaultPayload>(
+fn add_extruded_face_staged<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     direction: Vector3<f64>,

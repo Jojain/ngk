@@ -25,7 +25,7 @@ use crate::topology::edge::Edge;
 use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::orientation::Orientation;
-use crate::topology::payload::{DefaultPayload, Payload};
+use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, VertexKey};
@@ -525,7 +525,7 @@ struct RebasedFacePcurve {
 /// # Panics
 ///
 /// Panics if `profile` does not identify a registered profile.
-pub fn add_face<P: DefaultPayload>(
+pub fn add_face<P: Payload>(
     g: &mut Model<P>,
     profile: ProfileKey,
 ) -> Result<FaceKey, FaceCreationError> {
@@ -593,7 +593,7 @@ pub fn add_square(
 /// faces sharing that edge are split at the corresponding surface points too.
 /// The returned [`EdgeSplit`] identifies both resulting edges and the inserted
 /// vertex; the original edge key is retained by the first segment.
-pub fn split_face_edge<P: DefaultPayload>(
+pub fn split_face_edge<P: Payload>(
     g: &mut Model<P>,
     face: FaceKey,
     edge: EdgeKey,
@@ -645,7 +645,7 @@ pub(crate) fn split_face_edge_staged<P: Payload>(
 /// Returns one [`FaceImprintSplit`] for each embedding that was applied.
 /// Imprints that do not define an applicable cut may produce no split rather
 /// than an error; invalid topology or missing geometry is reported as an error.
-pub fn split_face_by_imprints<P: DefaultPayload>(
+pub fn split_face_by_imprints<P: Payload>(
     g: &mut Model<P>,
     face: FaceKey,
     imprints: &[FaceImprint],
@@ -3167,7 +3167,7 @@ fn validate_polygon(points: &[Point3]) -> Result<(), FaceCreationError> {
 /// returned with free boundary, ready to be stitched to neighbors.
 ///
 /// Returns the profile key whose stored dart defines the polygon's orientation.
-pub fn add_polygon<P: DefaultPayload>(
+pub fn add_polygon<P: Payload>(
     g: &mut Model<P>,
     corners: &[Point3],
 ) -> crate::topology::shape_keys::ProfileKey {

@@ -3,7 +3,7 @@ use ngk::model::Model;
 use ngk::modeling::solids::block;
 use ngk::topology::StandardPayload;
 use ngk::topology::attributes::{EdgeAttr, VertexAttr};
-use ngk::topology::edit::ModelEditError;
+use ngk::topology::edit::{ModelEditError, PreservePayload};
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::Payload;
 
@@ -17,6 +17,8 @@ impl Payload for SerializablePayload {
     type F = u32;
     type Sheet = u32;
     type S = u32;
+
+    type Policy = PreservePayload;
 }
 
 #[test]

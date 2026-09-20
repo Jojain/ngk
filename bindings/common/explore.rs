@@ -8,7 +8,7 @@ use crate::topology::closed::{Closeable, Closed};
 use crate::topology::edge::{BoundedEdge, Edge};
 use crate::topology::face::{Face, Loop};
 use crate::topology::gmap::{Dart, Dim, GMAP_INVOLUTION_COUNT};
-use crate::topology::payload::{DefaultPayload, Payload, StandardPayload};
+use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
 use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
@@ -572,7 +572,7 @@ impl<P: Payload> SharedEdge<P> {
     }
 }
 
-impl<P: DefaultPayload> SharedEdge<P> {
+impl<P: Payload> SharedEdge<P> {
     /// Copies this edge into an owned shape for a modeling constructor.
     pub(crate) fn isolated_shape(&self) -> Result<Shape<EdgeTag, P>, ExploreError> {
         let (model, dart) = self.view()?.isolate();
@@ -662,7 +662,7 @@ impl<P: Payload> SharedProfile<P> {
     }
 }
 
-impl<P: DefaultPayload> SharedProfile<P> {
+impl<P: Payload> SharedProfile<P> {
     /// Copies this profile into an owned shape for a modeling constructor.
     pub(crate) fn isolated_shape(&self) -> Result<Shape<ProfileTag, P>, ExploreError> {
         let (model, dart) = self.view()?.isolate();
@@ -834,7 +834,7 @@ impl<P: Payload> SharedFace<P> {
     }
 }
 
-impl<P: DefaultPayload> SharedFace<P> {
+impl<P: Payload> SharedFace<P> {
     /// Copies this face into an owned shape for a modeling constructor.
     pub(crate) fn isolated_shape(&self) -> Result<Shape<FaceTag, P>, ExploreError> {
         let (model, dart) = self.view()?.isolate();
@@ -1081,7 +1081,7 @@ impl<P: Payload> SharedSolid<P> {
 /// entity's own darts into a fresh model and re-reads it there.
 macro_rules! shared_isolated {
     ($type:ident, $at:ident, $name:literal) => {
-        impl<P: DefaultPayload> $type<P> {
+        impl<P: Payload> $type<P> {
             /// This entity, copied into a model holding nothing else.
             pub(crate) fn isolated(&self) -> Result<Self, ExploreError> {
                 let (model, dart) = self.view()?.isolate();

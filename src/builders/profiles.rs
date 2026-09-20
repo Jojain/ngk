@@ -14,7 +14,7 @@ use crate::topology::attributes::{EdgeAttr, ProfileAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edit::ModelEditError;
 use crate::topology::gmap::{Dart, Dim};
-use crate::topology::payload::{DefaultPayload, Payload};
+use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, ProfileKey, VertexKey};
 
@@ -27,7 +27,7 @@ pub use crate::builders::errors::PolylineError;
 /// otherwise both ends remain open.
 ///
 /// At least two points are required.
-pub fn add_polyline<P: DefaultPayload>(
+pub fn add_polyline<P: Payload>(
     g: &mut Model<P>,
     points: &[Point3],
 ) -> Result<ProfileKey, PolylineError> {
@@ -40,7 +40,7 @@ pub fn add_polyline<P: DefaultPayload>(
 /// Coincident endpoints are joined within [`LINEAR_TOLERANCE`], and their
 /// logical vertices are merged as the profile is sewn. Disconnected input and
 /// branches are rejected without changing the model.
-pub fn add_profile_from_edges<P: DefaultPayload>(
+pub fn add_profile_from_edges<P: Payload>(
     g: &mut Model<P>,
     edges: &[EdgeKey],
 ) -> Result<ProfileKey, PolylineError> {
@@ -137,7 +137,7 @@ pub fn add_polyline_staged<P: Payload>(
 /// direction may be appended as long as one endpoint coincides with the profile
 /// end. If the appended edge's other endpoint coincides with the profile start,
 /// the profile is closed.
-pub fn append_edge<P: DefaultPayload>(
+pub fn append_edge<P: Payload>(
     g: &mut Model<P>,
     profile_key: ProfileKey,
     edge_key: EdgeKey,
@@ -350,7 +350,7 @@ pub fn plane_uv(plane: &Plane, point: Point3) -> Point2 {
 /// 3-----2
 ///
 /// Returns the profile key whose stored dart starts at the first corner.
-pub fn add_rectangle<P: DefaultPayload>(
+pub fn add_rectangle<P: Payload>(
     g: &mut Model<P>,
     plane: Plane,
     x_size: f64,
@@ -383,7 +383,7 @@ pub(crate) fn add_rectangle_staged<P: Payload>(
 ///
 /// The first corner is the plane origin and the sides follow its positive x and
 /// y directions. `size` must be positive and finite.
-pub fn add_square<P: DefaultPayload>(
+pub fn add_square<P: Payload>(
     g: &mut Model<P>,
     plane: Plane,
     size: f64,
@@ -400,11 +400,7 @@ fn validate_rectangle_size(axis: &'static str, value: f64) -> Result<(), Polylin
 }
 
 /// Adds the given number of darts and sews them together in a profile, the profile is closed if the given closed is true.
-pub fn add_profile_darts<P: DefaultPayload>(
-    g: &mut Model<P>,
-    count: usize,
-    closed: bool,
-) -> ProfileKey {
+pub fn add_profile_darts<P: Payload>(g: &mut Model<P>, count: usize, closed: bool) -> ProfileKey {
     g.transaction(|edit| {
         let darts: Vec<Dart> = (0..count).map(|_| edit.add_dart()).collect();
         for i in 0..count {

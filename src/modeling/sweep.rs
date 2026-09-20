@@ -3,11 +3,11 @@ use nalgebra::Vector3;
 use crate::builders::solids::add_extruded_face;
 use crate::builders::{errors::ExtrudeError, sheets::add_extruded_profile};
 use crate::model::MergeTopology;
-use crate::topology::payload::DefaultPayload;
+use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceTag, Shape, SheetTag, SolidTag};
 
-pub fn extrude_profile<P: DefaultPayload>(
+pub fn extrude_profile<P: Payload>(
     profile: Profile<'_, P>,
     direction: Vector3<f64>,
 ) -> Result<Shape<SheetTag, P>, ExtrudeError> {
@@ -17,7 +17,7 @@ pub fn extrude_profile<P: DefaultPayload>(
     Ok(Shape::new(g, sheet_dart))
 }
 
-pub fn extrude_face<P: DefaultPayload>(
+pub fn extrude_face<P: Payload>(
     face: Shape<FaceTag, P>,
     direction: Vector3<f64>,
 ) -> Result<Shape<SolidTag, P>, ExtrudeError> {

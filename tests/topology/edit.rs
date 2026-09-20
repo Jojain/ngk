@@ -20,6 +20,8 @@ impl Payload for TestPayload {
     type F = ();
     type Sheet = ();
     type S = ();
+
+    type Policy = PreservePayload;
 }
 
 #[test]

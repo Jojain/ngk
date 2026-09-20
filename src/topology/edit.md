@@ -5,15 +5,23 @@ Its closure receives a `ModelEdit`, which is the public mutation capability for
 the staged model. Returning an error, failing validation, failing identity
 reconciliation, or failing payload policy restores the complete
 transaction-start snapshot — the map, the entity stores, the embedding
-labelling and the revision counter alike. `Model::transaction` runs the
-default policy, `PreservePayload`, which requires every payload dimension to
-have a `Default`; a payload without one for some dimension cannot use this
-entry point at all and must supply its own policy instead.
+labelling and the revision counter alike.
+
+`Model::transaction` runs `P::Policy`, the maintenance policy the payload named
+for itself, default-constructed for this transaction. No call site chooses it:
+how a colour survives a split is a property of the data, so it is named once on
+the payload type and every builder here picks it up. `StandardPayload` names
+`PreservePayload`, which is why a payload naming that one needs `Default` at
+every dimension — an obligation discharged at its `impl Payload`, not carried by
+any signature in this module.
 
 `Model::transaction_with_policy` uses the same boundary with a caller-provided
-`EditPolicy`, which is what a payload without a `Default` at every dimension
-requires. Policy event application happens only after the complete staged
-operation passes topology validation and identity reconciliation.
+`EditPolicy`, overriding `P::Policy` for one transaction. That is what a policy
+carrying parameters *in* (this loft is feature 3) or state *out* (record what
+this boolean did) requires, since `P::Policy` is default-constructed and dropped
+at commit and can do neither. Policy event application happens only after the
+complete staged operation passes topology validation and identity
+reconciliation.
 
 Transactions intentionally do not catch panics. Operation code uses `Result`
 for recoverable failure.
@@ -81,6 +89,14 @@ payload, keeps the merge survivor, drops on a consume, and defaults on both
 so there is no single payload of the right type to clone, and only a caller's
 own policy knows how to produce one. A policy error restores topology and
 payloads.
+
+**A builder is only as informative as its declarations.** A hook handed
+`Origin::New` is told that nothing explains the entity, and can do nothing but
+invent a value; one handed `Origin::Derived([edge])` can read that edge out of
+`before` and carry its data across. So reach for the most specific constructor
+that is true — `add_*_derived_from` over `add_*_split_from` over `add_*` — and
+document the order the sources are named in, because a policy that cares reads
+position.
 
 ## Identity reconciliation
 

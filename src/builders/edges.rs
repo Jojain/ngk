@@ -12,7 +12,7 @@ use crate::topology::edge::Edge;
 use crate::topology::edit::ModelEditError;
 use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
-use crate::topology::payload::{DefaultPayload, Payload};
+use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, VertexKey};
 use radians::Rad64;
 use thiserror::Error;
@@ -176,7 +176,7 @@ struct PreparedAttachedEdgeSplit {
 /// does not verify that it interpolates `start` and `end`.
 ///
 /// Returns an error when the endpoints coincide within [`LINEAR_TOLERANCE`].
-pub fn add_edge<P: DefaultPayload>(
+pub fn add_edge<P: Payload>(
     g: &mut Model<P>,
     start: Point3,
     end: Point3,
@@ -204,7 +204,7 @@ pub(crate) fn add_edge_staged<P: Payload>(
 /// Adds an isolated straight edge between `start` and `end`.
 ///
 /// Returns an error when the endpoints coincide within [`LINEAR_TOLERANCE`].
-pub fn add_line<P: DefaultPayload>(
+pub fn add_line<P: Payload>(
     g: &mut Model<P>,
     start: Point3,
     end: Point3,
@@ -221,7 +221,7 @@ pub fn add_line<P: DefaultPayload>(
 ///
 /// This operation rejects edges attached to faces; use
 /// [`crate::builders::faces::split_face_edge`] for face-boundary edges.
-pub fn split_edge<P: DefaultPayload>(
+pub fn split_edge<P: Payload>(
     g: &mut Model<P>,
     edge: EdgeKey,
     parameter: Fraction,
@@ -535,7 +535,7 @@ fn check_split_parameter<P: Payload>(
 /// The endpoint positions are sampled from the circle at `start_angle` and
 /// `end_angle`. The radius must be positive and finite, both angles must be
 /// finite, and the resulting endpoints must not coincide.
-pub fn add_arc<P: DefaultPayload>(
+pub fn add_arc<P: Payload>(
     g: &mut Model<P>,
     plane: Plane,
     radius: f64,
@@ -571,7 +571,7 @@ pub(crate) fn add_arc_staged<P: Payload>(
 /// The edge has one topological vertex at the plane's positive x-axis and its
 /// two darts are alpha-0- and alpha-1-linked to form a closed profile. `radius`
 /// must be positive and finite.
-pub fn add_circle<P: DefaultPayload>(
+pub fn add_circle<P: Payload>(
     g: &mut Model<P>,
     plane: Plane,
     radius: f64,

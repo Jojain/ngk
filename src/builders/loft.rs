@@ -73,7 +73,7 @@ use crate::topology::edit::{ModelEdit, ModelEditError};
 use crate::topology::embedding::EntityOwner;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim};
-use crate::topology::payload::{DefaultPayload, Payload};
+use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::profile_curve::{
     ProfileCurve, ProfileCurveError, agree_directions, align_seams,
@@ -419,7 +419,7 @@ impl From<ModelEditError> for LoftError {
 /// give a [`SheetKey`], [`CappedSection`] a [`SolidKey`]. See the
 /// [module documentation](self) for how correspondence between sections is
 /// established.
-pub fn add_loft<S: LoftSection, P: DefaultPayload>(
+pub fn add_loft<S: LoftSection, P: Payload>(
     g: &mut Model<P>,
     sections: &[S],
     options: LoftOptions,

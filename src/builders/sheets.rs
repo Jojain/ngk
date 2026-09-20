@@ -14,7 +14,7 @@ use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, Ve
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim};
-use crate::topology::payload::{DefaultPayload, Payload};
+use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, ProfileKey, SheetKey, VertexKey};
 use crate::topology::vertex::Vertex;
 
@@ -26,7 +26,7 @@ use crate::topology::vertex::Vertex;
 /// # Panics
 ///
 /// Panics if `profile_key` does not identify a registered profile.
-pub fn add_extruded_profile<P: DefaultPayload>(
+pub fn add_extruded_profile<P: Payload>(
     g: &mut Model<P>,
     profile_key: ProfileKey,
     direction: Vector3<f64>,

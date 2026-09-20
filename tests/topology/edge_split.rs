@@ -9,6 +9,7 @@ use ngk::modeling::faces;
 use ngk::topology::ModelEditError;
 use ngk::topology::closed::Closeable;
 use ngk::topology::edge::Edge;
+use ngk::topology::edit::PreservePayload;
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::{Payload, StandardPayload};
 use ngk::topology::profile::Profile;
@@ -35,6 +36,8 @@ impl Payload for EdgePayload {
     type F = ();
     type Sheet = ();
     type S = ();
+
+    type Policy = PreservePayload;
 }
 
 #[test]
