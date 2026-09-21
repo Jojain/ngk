@@ -36,7 +36,7 @@ use crate::geometry::{
     Curve, LINEAR_TOLERANCE, NurbsError, Point2, Point3, Surface, SurfacePeriodicity,
     TrimmedCurve2, Vector2,
 };
-use crate::healing::{remove_redundant_cells_edit, HealingError, HealingOptions};
+use crate::healing::{HealingError, HealingOptions, remove_redundant_cells_edit};
 use crate::model::Model;
 use crate::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,

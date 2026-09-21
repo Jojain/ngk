@@ -11,6 +11,8 @@ mod boolean_budget;
 mod boolean_classify;
 #[path = "builders/boolean_clip.rs"]
 mod boolean_clip;
+#[path = "builders/boolean_faces.rs"]
+mod boolean_faces;
 #[path = "builders/boolean_network.rs"]
 mod boolean_network;
 #[path = "builders/boolean_trim.rs"]

@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::builders::profiles::curve_pcurve;
 use crate::builders::removal::{
-    remove_cell_edit, CellRemovalError, MergeKind, MergedCell, is_removable, planned_merge,
+    CellRemovalError, MergeKind, MergedCell, is_removable, planned_merge, remove_cell_edit,
 };
 use crate::geometry::{Plane, Surface};
 use crate::model::{Cell2, Model};

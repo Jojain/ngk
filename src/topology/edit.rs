@@ -834,6 +834,56 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
         }
     }
 
+    /// Exchanges which cells two faces name, keeping each key's own payload.
+    ///
+    /// A builder that cuts a face in two does not choose which half inherits
+    /// the source key: [`crate::builders::faces::split_face_by_imprints`]
+    /// retains it on whichever half it built first. An operation that goes on
+    /// to discard that half would rename the face it kept, breaking every
+    /// reference a caller still holds to the one it passed in. Swapping
+    /// afterwards puts the surviving geometry back under the surviving key.
+    ///
+    /// Both the boundary and the cells the two faces own move across; the
+    /// payload does not, since it belongs to the identity rather than to the
+    /// geometry. Neither key is created or removed, so no edit event is
+    /// recorded and payload propagation is untouched.
+    ///
+    /// Does nothing when either key is unknown, or when they are the same key.
+    pub fn swap_face_identities(&mut self, first: FaceKey, second: FaceKey) {
+        if first == second {
+            return;
+        }
+        let (Some(mut first_attr), Some(mut second_attr)) = (
+            self.model.faces.get(first).cloned(),
+            self.model.faces.get(second).cloned(),
+        ) else {
+            return;
+        };
+        // The payload belongs to the identity, not to the geometry, so it is
+        // swapped back: each key keeps the payload it already had.
+        first_attr.swap_data(&mut second_attr);
+        let owned = [first, second].map(|face| {
+            self.model
+                .embedding()
+                .records_of(EntityOwner::Face(face))
+                .collect::<Vec<_>>()
+        });
+        // Crossed: each key takes the other's boundary and keeps its own
+        // payload, which the swap above has already moved across.
+        self.model.faces[first] = second_attr;
+        self.model.faces[second] = first_attr;
+        for (records, owner) in owned.into_iter().zip([second, first]) {
+            for record in records {
+                self.model.own_cell(
+                    record.dimension,
+                    record.representative,
+                    EntityOwner::Face(owner),
+                );
+            }
+        }
+        self.model.invalidate_derived_indexes();
+    }
+
     /// Declares that `removed` merged into `survivor`, carrying its
     /// classification records across — see [`Self::merge_vertices_into`].
     pub fn merge_faces_into(&mut self, survivor: FaceKey, removed: FaceKey) {

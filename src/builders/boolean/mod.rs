@@ -6,7 +6,9 @@ mod classify;
 mod clip;
 mod contacts;
 mod diagnostics;
+mod domain;
 mod errors;
+mod face_boolean;
 mod neighborhood;
 mod select;
 pub use diagnostics::{BooleanDiagnostics, BooleanStageTimings};
@@ -14,7 +16,9 @@ mod graph;
 mod imprint;
 mod operand;
 mod pair;
+mod planar_domain;
 mod result;
+mod solid_domain;
 mod tolerance;
 mod trim;
 pub use tolerance::{BooleanTolerancePolicy, BooleanTolerances};
@@ -22,6 +26,7 @@ pub use tolerance::{BooleanTolerancePolicy, BooleanTolerances};
 pub use classify::solid_contains_point;
 use contacts::{compute_contacts, normalize_face_imprint_chains, reroute_boundary_imprints};
 pub use errors::BooleanError;
+pub use face_boolean::{FaceBoolean, face_boolean};
 pub use graph::{
     IntersectionEvent, IntersectionEventId, IntersectionEventLocation, IntersectionEventUse,
     IntersectionNetwork, IntersectionNetworkValidationError, IntersectionOrientation,
@@ -34,6 +39,7 @@ pub use result::{
     BooleanCell, BooleanLineage, BooleanOperand, BooleanOperandPreparation, BooleanOperation,
     BooleanSide, PointContactKind, SolidBoolean, SolidBooleanLineage,
 };
+use solid_domain::SolidDomain;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};

@@ -121,8 +121,9 @@ pub fn boolean<P: Payload>(
         let mut stage = StageClock::start();
         let mut prepared = apply_boolean_splits_edit(edit, plan, false)?;
         prepared.diagnostics.stages.splitting = stage.lap();
-        let graph = neighborhood::FragmentGraph::build(edit, &prepared);
-        let (classes, rays) = classify::run(edit, &graph, context.options, context.tolerances)?;
+        let graph = neighborhood::FragmentGraph::<SolidDomain>::build(edit, &prepared);
+        let (classes, rays) =
+            classify::run(edit, &prepared, &graph, context.options, context.tolerances)?;
         prepared.diagnostics.classification_rays = rays;
         prepared.diagnostics.stages.classification = stage.lap();
         let selection = select::run(operation, &graph, &classes);
@@ -472,7 +473,7 @@ pub fn prepare_boolean_with_external_tool<P: Payload>(
     })
 }
 
-fn apply_boolean_splits_edit<P: Payload>(
+pub(super) fn apply_boolean_splits_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plan: BooleanIntersectionPlan,
     imported_second: bool,

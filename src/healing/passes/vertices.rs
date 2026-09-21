@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use crate::builders::removal::{remove_cell_edit, MergedCell, is_removable};
+use crate::builders::removal::{MergedCell, is_removable, remove_cell_edit};
 use crate::geometry::{Curve, Point3, TrimmedCurve2};
 use crate::model::{Cell0, Model};
 use crate::topology::gmap::{Dart, Dim};

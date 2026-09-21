@@ -1,24 +1,35 @@
-//! Face-fragment identity and adjacency derived from the staged map.
+//! Fragment identity and adjacency derived from the staged map.
 
+use super::domain::BooleanDomain;
 use super::{BooleanOperandPreparation, BooleanSide};
 use crate::model::Model;
-use crate::topology::{payload::Payload, shape_keys::FaceKey};
+use crate::topology::payload::Payload;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-#[derive(Clone, Copy)]
-pub(crate) struct BoundaryFragment {
-    pub(crate) face: FaceKey,
-    pub(crate) source_face: FaceKey,
+/// One boundary cell of one operand after splitting, and where it came from.
+pub(crate) struct BoundaryFragment<D: BooleanDomain> {
+    pub(crate) fragment: D::Fragment,
+    pub(crate) source: D::Fragment,
     pub(crate) side: BooleanSide,
 }
 
-pub(crate) struct FragmentGraph {
-    pub(crate) fragments: Vec<BoundaryFragment>,
+// Derived implementations would demand `D: Clone` and `D: Copy`, which the
+// domain marker has no reason to satisfy; only the fragment is copied.
+impl<D: BooleanDomain> Clone for BoundaryFragment<D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<D: BooleanDomain> Copy for BoundaryFragment<D> {}
+
+pub(crate) struct FragmentGraph<D: BooleanDomain> {
+    pub(crate) fragments: Vec<BoundaryFragment<D>>,
     pub(crate) components: Vec<Vec<usize>>,
 }
 
-impl FragmentGraph {
-    /// Builds same-operand components, treating every known intersection edge as a barrier.
+impl<D: BooleanDomain> FragmentGraph<D> {
+    /// Builds same-operand components, treating every realized section cell as a barrier.
     pub(crate) fn build<P: Payload>(
         map: &Model<P>,
         preparation: &BooleanOperandPreparation,
@@ -28,32 +39,24 @@ impl FragmentGraph {
             (BooleanSide::First, &preparation.first_lineage),
             (BooleanSide::Second, &preparation.second_lineage),
         ] {
-            for (&source_face, faces) in &lineage.faces {
-                for &face in faces {
-                    ordered.insert(
-                        face,
-                        BoundaryFragment {
-                            face,
-                            source_face,
-                            side,
-                        },
-                    );
-                }
+            for (source, fragment) in D::fragments(lineage) {
+                ordered.insert(
+                    fragment,
+                    BoundaryFragment {
+                        fragment,
+                        source,
+                        side,
+                    },
+                );
             }
         }
         let fragments = ordered.into_values().collect::<Vec<_>>();
         let index = fragments
             .iter()
             .enumerate()
-            .map(|(i, f)| (f.face, i))
+            .map(|(i, f)| (f.fragment, i))
             .collect::<HashMap<_, _>>();
-        let barriers = preparation
-            .span_edges
-            .values()
-            .flatten()
-            .flatten()
-            .copied()
-            .collect::<HashSet<_>>();
+        let barriers = D::barriers(map, preparation);
         let mut visited = HashSet::new();
         let mut components = Vec::new();
         for seed in 0..fragments.len() {
@@ -67,12 +70,12 @@ impl FragmentGraph {
                     continue;
                 }
                 component.push(i);
-                for edge in map.face_unchecked(fragments[i].face).edges() {
-                    if barriers.contains(&edge.key()) {
+                for boundary in D::boundaries(map, fragments[i].fragment) {
+                    if barriers.contains(&boundary) {
                         continue;
                     }
-                    for face in edge.faces() {
-                        if let Some(&j) = index.get(&face.key())
+                    for neighbour in D::incident(map, boundary) {
+                        if let Some(&j) = index.get(&neighbour)
                             && fragments[j].side == fragments[i].side
                         {
                             pending.push(j);

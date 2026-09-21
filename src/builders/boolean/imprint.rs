@@ -4,7 +4,7 @@ use crate::model::Model;
 use std::collections::HashMap;
 
 use super::graph::SpanSubdivision;
-use crate::builders::faces::{split_face_edge_edit, FaceImprint, FaceImprintSection};
+use crate::builders::faces::{FaceImprint, FaceImprintSection, split_face_edge_edit};
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{Interval, Point3, PointCoincidence};
 use crate::topology::edge::Edge;

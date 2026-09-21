@@ -3,6 +3,7 @@
 use super::{
     BooleanContext, BooleanError, BooleanOperandPreparation, BooleanSide, IntersectionSpanId,
     SolidBoolean, SolidBooleanLineage, neighborhood::FragmentGraph, select::SelectionPlan,
+    solid_domain::SolidDomain,
 };
 use crate::builders::faces::reverse_face_winding_edit;
 use crate::builders::scaffold::cut_between_shells;
@@ -27,9 +28,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 pub(crate) fn run<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     context: &BooleanContext,
-    graph: &FragmentGraph,
+    graph: &FragmentGraph<SolidDomain>,
     mut prepared: BooleanOperandPreparation,
-    selection: SelectionPlan,
+    selection: SelectionPlan<SolidDomain>,
 ) -> Result<SolidBoolean, BooleanError> {
     if selection.kept.is_empty() {
         return Err(BooleanError::EmptyResult);
@@ -177,16 +178,16 @@ pub(crate) fn run<P: Payload>(
         }
     }
     for fragment in &graph.fragments {
-        if kept.contains(&fragment.face) {
+        if kept.contains(&fragment.fragment) {
             let lineage = match fragment.side {
                 BooleanSide::First => &mut prepared.first_lineage,
                 BooleanSide::Second => &mut prepared.second_lineage,
             };
             lineage
                 .faces
-                .entry(fragment.source_face)
+                .entry(fragment.source)
                 .or_default()
-                .push(fragment.face);
+                .push(fragment.fragment);
         }
     }
     for lineage in [&mut prepared.first_lineage, &mut prepared.second_lineage] {
@@ -291,7 +292,7 @@ fn remap_keys<K: Copy + Eq + std::hash::Hash + Ord>(keys: &mut Vec<K>, merges: &
 }
 
 /// Aligns only the endpoints of an already identified canonical-span pair.
-fn sew_pair<P: Payload>(
+pub(super) fn sew_pair<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     span: IntersectionSpanId,
     first: (EdgeKey, FaceKey),

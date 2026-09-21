@@ -1,9 +1,11 @@
 //! Deterministic ray classification and surface-evaluated interior fragment probes.
 
 use super::broad_phase::face_uv_bounds;
+use super::domain::{BooleanDomain, OperandClassifier, RelativeLocation};
 use super::{
-    BooleanError, BooleanOperand, BooleanOptions, BooleanSide, BooleanTolerances,
-    neighborhood::FragmentGraph, operand::operand_cells, trim::FaceTrimDomain,
+    BooleanCell, BooleanError, BooleanOperand, BooleanOperandPreparation, BooleanOptions,
+    BooleanSide, BooleanTolerances, neighborhood::FragmentGraph, operand::operand_cells,
+    trim::FaceTrimDomain,
 };
 use crate::geometry::axis::Axis3;
 use crate::geometry::{
@@ -18,14 +20,6 @@ use crate::topology::{
     shape_keys::{FaceKey, SolidKey},
 };
 use nalgebra::Vector3;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RelativeLocation {
-    Inside,
-    Outside,
-    OnBoundarySame,
-    OnBoundaryOpposite,
-}
 
 /// How a ray is counted against one face's support.
 enum RayPredicate {
@@ -74,8 +68,11 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
                 // meets it at the roots of a quadratic.
                 (Point3::origin(), Vector3::zeros(), RayPredicate::Analytic)
             } else {
-                let (u, v) = face_uv_bounds(&face)
-                    .ok_or(BooleanError::UncertifiedClassificationSurface { face: key })?;
+                let (u, v) = face_uv_bounds(&face).ok_or(
+                    BooleanError::UncertifiedClassificationSurface {
+                        cell: BooleanCell::Face(key),
+                    },
+                )?;
                 let prepared = PreparedSurface::over(face.surface(), u, v)?;
                 (
                     Point3::origin(),
@@ -135,7 +132,7 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
             }
         }
         Err(BooleanError::AmbiguousClassification {
-            face: source,
+            cell: BooleanCell::Face(source),
             point,
             directions: self.max_rays,
         })
@@ -357,7 +354,7 @@ fn periodic_uv(mut uv: Point2, center: Point2, periodicity: SurfacePeriodicity) 
 }
 
 /// Chooses a mesh-derived witness only after checking exact polygonal trim clearance.
-fn probe<P: Payload>(
+pub(crate) fn probe<P: Payload>(
     map: &Model<P>,
     face: FaceKey,
     tolerances: BooleanTolerances,
@@ -403,7 +400,9 @@ fn probe<P: Payload>(
     if let Some(uv) = interior_parameter(&trim, tolerances) {
         return Ok((view.point_at(uv.x, uv.y), uv));
     }
-    Err(BooleanError::MissingFragmentProbe { face })
+    Err(BooleanError::MissingFragmentProbe {
+        cell: BooleanCell::Face(face),
+    })
 }
 
 /// Searches a trim domain's own parameter box for its most interior point.
@@ -447,48 +446,45 @@ fn interior_parameter(trim: &FaceTrimDomain, tolerances: BooleanTolerances) -> O
 }
 
 /// Classifies each fragment independently, avoiding propagation across an incomplete barrier graph.
-pub(crate) fn run<P: Payload>(
+pub(crate) fn run<D: BooleanDomain, P: Payload>(
     map: &Model<P>,
-    graph: &FragmentGraph,
+    preparation: &BooleanOperandPreparation,
+    graph: &FragmentGraph<D>,
     options: BooleanOptions,
     tolerances: BooleanTolerances,
 ) -> Result<(Vec<RelativeLocation>, usize), BooleanError> {
-    let first = SolidRayCaster::new(
-        map,
-        graph
-            .fragments
-            .iter()
-            .filter(|f| f.side == BooleanSide::First)
-            .map(|f| f.face),
-        options,
-        tolerances,
-    )?;
-    let second = SolidRayCaster::new(
-        map,
-        graph
-            .fragments
-            .iter()
-            .filter(|f| f.side == BooleanSide::Second)
-            .map(|f| f.face),
-        options,
-        tolerances,
-    )?;
+    let first = D::classifier(map, &preparation.first_lineage, options, tolerances)?;
+    let second = D::classifier(map, &preparation.second_lineage, options, tolerances)?;
     let mut rays = 0;
     let mut result = Vec::new();
     for fragment in &graph.fragments {
-        let (point, uv) = probe(map, fragment.face, tolerances)?;
-        let normal = *map.face_unchecked(fragment.face).normal_at(uv.x, uv.y);
-        let caster = match fragment.side {
+        let (point, normal) = D::probe(map, fragment.fragment, tolerances)?;
+        // Each fragment is located against the *other* operand: that is the
+        // whole question the operation table then answers.
+        let classifier = match fragment.side {
             BooleanSide::First => &second,
             BooleanSide::Second => &first,
         };
-        let location = match caster.boundary(point, normal) {
-            Some(location) => location,
-            None => caster.classify(point, fragment.face, &mut rays)?,
-        };
-        result.push(location);
+        result.push(classifier.locate(point, normal, fragment.fragment, &mut rays)?);
     }
     Ok((result, rays))
+}
+
+impl<P: Payload> OperandClassifier<FaceKey> for SolidRayCaster<'_, P> {
+    /// Answers from the boundary test when the point lies on this solid's own
+    /// boundary, and from a certified ray cast otherwise.
+    fn locate(
+        &self,
+        point: Point3,
+        normal: Vector3<f64>,
+        source: FaceKey,
+        rays: &mut usize,
+    ) -> Result<RelativeLocation, BooleanError> {
+        match self.boundary(point, normal) {
+            Some(location) => Ok(location),
+            None => self.classify(point, source, rays),
+        }
+    }
 }
 
 /// Reports whether `point` lies inside a registered solid, using the same

@@ -579,6 +579,15 @@ impl<T> FaceAttr<T> {
             .expect("face attribute data should be assigned by commit before being read")
     }
 
+    /// Exchanges only the user payload with another face attribute.
+    ///
+    /// Cannot go through [`Self::data_mut`]: a face staged during the current
+    /// transaction has no payload until commit assigns one, and either side of
+    /// this exchange may be such a face.
+    pub(crate) fn swap_data(&mut self, other: &mut Self) {
+        std::mem::swap(&mut self.data, &mut other.data);
+    }
+
     /// Assigns this face's payload; see
     /// [`VertexAttr::set_data`](super::attributes::VertexAttr::set_data).
     pub(crate) fn set_data(&mut self, data: T) {

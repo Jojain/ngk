@@ -33,6 +33,8 @@ pub enum BooleanError {
         solid: SolidKey,
         source: ModelValidationError,
     },
+    #[error("faces {first:?} and {second:?} do not share one plane")]
+    OperandSupportsDiffer { first: FaceKey, second: FaceKey },
     #[error("distinct operands share registered boundary faces")]
     SharedOperandBoundary,
     #[error("regularized Boolean result is empty")]
@@ -45,15 +47,13 @@ pub enum BooleanError {
     IncompleteIntersections {
         diagnostics: Box<BooleanDiagnostics>,
     },
-    #[error("no certified ray/trim classifier is available for face {face:?}")]
-    UncertifiedClassificationSurface { face: FaceKey },
-    #[error("face {face:?} has no interior probe with sufficient clearance")]
-    MissingFragmentProbe { face: FaceKey },
-    #[error(
-        "classification of face {face:?} at {point:?} is ambiguous after {directions} directions"
-    )]
+    #[error("no certified classifier is available for {cell:?}")]
+    UncertifiedClassificationSurface { cell: BooleanCell },
+    #[error("{cell:?} has no interior probe with sufficient clearance")]
+    MissingFragmentProbe { cell: BooleanCell },
+    #[error("classification of {cell:?} at {point:?} is ambiguous after {directions} directions")]
     AmbiguousClassification {
-        face: FaceKey,
+        cell: BooleanCell,
         point: Point3,
         directions: usize,
     },
