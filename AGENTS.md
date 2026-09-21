@@ -12,6 +12,9 @@ clone with:
 New-Item -ItemType Junction -Path ".claude\skills" -Target "skills"
 ```
 
+OPUS AGENTS :
+Keep responses focused, brief, and concise. Keep disclaimers and caveats short, and spend most of the response on the main answer. When asked to explain something, give a high-level summary unless an in-depth explanation is specifically requested.
+
 ## What this project is
 
 NGK is an experimental **CAD geometric kernel written in Rust**, built around
