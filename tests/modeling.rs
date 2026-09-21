@@ -10,5 +10,7 @@ mod payload;
 mod profiles;
 #[path = "modeling/solids.rs"]
 mod solids;
+#[path = "modeling/sweep.rs"]
+mod sweep;
 #[path = "modeling/transform.rs"]
 mod transform;

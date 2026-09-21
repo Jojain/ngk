@@ -366,8 +366,8 @@ pub(crate) fn add_revolved_edge_edit<P: Payload>(
 /// of its own -- a cylinder's is `(angle, height)`, transposed and rescaled --
 /// so adopting the closed form means rewriting every pcurve corner through
 /// [`Self::map_pcurve_point`].
-struct RevolvedSupport {
-    surface: Surface,
+pub(crate) struct RevolvedSupport {
+    pub(crate) surface: Surface,
     map_pcurve_point: Box<dyn Fn(Point2) -> Point2>,
     sweep: SweptParameters,
 }
@@ -387,7 +387,7 @@ enum SweptParameters {
 
 impl RevolvedSupport {
     /// Maps one revolution-space corner into the support's parameters.
-    fn corner(&self, profile: f64, angle: f64) -> Point2 {
+    pub(crate) fn corner(&self, profile: f64, angle: f64) -> Point2 {
         (self.map_pcurve_point)(Point2::new(profile, angle))
     }
 
@@ -399,7 +399,7 @@ impl RevolvedSupport {
     /// so the swept circle runs straight there and a segment is its exact image;
     /// a plane's parameters are its own Cartesian ones, where the same circle is
     /// still a circle and a segment would quietly replace it with a chord.
-    fn swept(&self, profile: f64, from: f64, to: f64) -> TrimmedCurve2 {
+    pub(crate) fn swept(&self, profile: f64, from: f64, to: f64) -> TrimmedCurve2 {
         let start = self.corner(profile, from);
         let SweptParameters::Circular { center } = self.sweep else {
             return TrimmedCurve2::segment(start, self.corner(profile, to));
@@ -416,7 +416,7 @@ impl RevolvedSupport {
     ///
     /// A meridian is straight in every support recognized here, a plane's
     /// radial section included, so this is always a segment.
-    fn meridian(&self, angle: f64, from: f64, to: f64) -> TrimmedCurve2 {
+    pub(crate) fn meridian(&self, angle: f64, from: f64, to: f64) -> TrimmedCurve2 {
         TrimmedCurve2::segment(self.corner(from, angle), self.corner(to, angle))
     }
 
@@ -446,7 +446,7 @@ impl RevolvedSupport {
 /// Each recognized support carries how its parameters see the sweep, because a
 /// plane's see it as a circle where the others see a straight run — see
 /// [`SweptParameters`].
-fn revolved_support(curve: &Curve, axis: Axis3) -> RevolvedSupport {
+pub(crate) fn revolved_support(curve: &Curve, axis: Axis3) -> RevolvedSupport {
     let Some((profile_origin, profile_direction)) = linear_profile(curve) else {
         return RevolvedSupport::generic(curve, axis);
     };

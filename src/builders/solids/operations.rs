@@ -437,7 +437,7 @@ pub(crate) fn add_extruded_face_edit<P: Payload>(
     top_loop_darts.push(top_face_attr.outer_unchecked());
     top_loop_darts.extend(top_face_attr.inner());
 
-    orient_extruded_caps(edit, face_key, top_face_key, direction);
+    let laterals_face_outward = orient_extruded_caps(edit, face_key, top_face_key, direction);
 
     let mut laterals = Vec::new();
     for (bottom_loop_dart, top_loop_dart) in bottom_loop_darts.into_iter().zip(top_loop_darts) {
@@ -449,12 +449,17 @@ pub(crate) fn add_extruded_face_edit<P: Payload>(
         )?;
         laterals.extend(loop_laterals);
     }
+    if !laterals_face_outward {
+        for lateral in &laterals {
+            reverse_face_winding_edit(edit, lateral.face);
+        }
+    }
 
     // The shell dart is contextual: unlike a cell representative, it must retain
     // the outward orientation established for the bottom cap.
     let outer_shell = edit.face_attr_unchecked(face_key).outer_unchecked();
     if edit.sheet_key(outer_shell).is_none() {
-        edit.add_sheet(SheetAttr::new(outer_shell));
+        edit.add_sheet_derived_from(vec![EditKey::Face(face_key)], SheetAttr::new(outer_shell));
     }
     let solid = edit.add_solid_derived_from(
         vec![EditKey::Face(face_key)],
@@ -469,17 +474,31 @@ pub(crate) fn add_extruded_face_edit<P: Payload>(
     })
 }
 
+/// Turns the two caps so they face out of the extrusion, and reports whether
+/// the laterals will too.
+///
+/// The bottom cap must face against the run and the top with it, and exactly
+/// one of them is ever wrong, because the top is a translated copy of the
+/// bottom: turning whichever it is settles both.
+///
+/// The laterals are a third question, and this is where its answer is known.
+/// A lateral's winding follows the cap loop as the *source* face stores it,
+/// read before either cap is turned, so it is decided by the source's own
+/// winding and by nothing the caps do afterwards. A face wound with the run —
+/// the case that turns the bottom cap — grows laterals that already face out;
+/// one wound against it grows them all facing in. They share the one sign, so
+/// the caller turns all of them or none.
 fn orient_extruded_caps<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     bottom_face: FaceKey,
     top_face: FaceKey,
     direction: Vector3<f64>,
-) {
+) -> bool {
     let Some(bottom_normal_dot_direction) = edit
         .face_attr(bottom_face)
         .map(|attr| face_normal_dot_direction(edit, attr, direction))
     else {
-        return;
+        return true;
     };
 
     if bottom_normal_dot_direction > LINEAR_TOLERANCE {
@@ -487,6 +506,7 @@ fn orient_extruded_caps<P: Payload>(
     } else if bottom_normal_dot_direction < -LINEAR_TOLERANCE {
         reverse_face_winding_edit(edit, top_face);
     }
+    bottom_normal_dot_direction > 0.0
 }
 
 fn face_normal_dot_direction<P: Payload>(
@@ -668,12 +688,18 @@ fn sew_wrapping_lateral_face<P: Payload>(
     let [bottom_start, _bottom_end] = bottom_slot;
     let [top_start, top_end] = top_slot;
 
-    edit.add_profile(ProfileAttr::new(bottom_start));
-    edit.add_profile(ProfileAttr::new(top_start));
     let uv = prepared.uv;
     let source_edge = edit
         .cell_key::<Cell1>(*bottom_edge)
         .expect("wrapping lateral must have a source edge");
+    edit.add_profile_derived_from(
+        vec![EditKey::Edge(source_edge)],
+        ProfileAttr::new(bottom_start),
+    );
+    edit.add_profile_derived_from(
+        vec![EditKey::Edge(source_edge)],
+        ProfileAttr::new(top_start),
+    );
     let face = edit.add_face_derived_from(
         vec![EditKey::Edge(source_edge)],
         FaceAttr::with_loops(
@@ -805,7 +831,10 @@ fn add_lateral_face_attributes<P: Payload>(
     prepared: &PreparedLateralFace,
     swept_from: EdgeKey,
 ) -> FaceKey {
-    edit.add_profile(ProfileAttr::new(topology.loop_dart));
+    edit.add_profile_derived_from(
+        vec![EditKey::Edge(swept_from)],
+        ProfileAttr::new(topology.loop_dart),
+    );
     edit.add_face_derived_from(
         vec![EditKey::Edge(swept_from)],
         FaceAttr::with_pcurves(
@@ -817,7 +846,7 @@ fn add_lateral_face_attributes<P: Payload>(
     )
 }
 
-fn lateral_face_surface(
+pub(crate) fn lateral_face_surface(
     dart: Dart,
     curve: &Curve,
     start: Point3,
@@ -858,7 +887,7 @@ fn extruded_cylinder(curve: &Curve, direction: Vector3<f64>) -> Option<Cylinder>
     ))
 }
 
-fn lateral_face_uv(
+pub(crate) fn lateral_face_uv(
     surface: &Surface,
     curve: &Curve,
     start: Point3,
@@ -998,12 +1027,25 @@ mod tests {
             ));
         }
 
+        // A lateral's boundary loop comes from the edge that swept it, and the
+        // shell from the cap it closes — neither is something the extrusion
+        // invented, so neither is `New`.
+        for lateral in &result.laterals {
+            let loop_dart = model.face_attr_unchecked(lateral.face).outer_unchecked();
+            let profile = model
+                .profile_key(loop_dart)
+                .expect("a lateral's boundary loop is a registered profile");
+            expected.push((
+                EditKey::Profile(profile),
+                Origin::derived(EditKey::Edge(lateral.swept_from)),
+            ));
+        }
         expected.extend(
             recorder
                 .created
                 .iter()
-                .filter(|(key, _)| matches!(key, EditKey::Profile(_) | EditKey::Sheet(_)))
-                .map(|(key, _)| (*key, Origin::New)),
+                .filter(|(key, _)| matches!(key, EditKey::Sheet(_)))
+                .map(|(key, _)| (*key, Origin::derived(EditKey::Face(face)))),
         );
         recorder.assert_exact(&expected);
     }

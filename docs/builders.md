@@ -39,6 +39,7 @@ The canonical names are:
 | `RevolvedEdge` | `EdgeRevolution` | An edge was revolved. |
 | `RevolvedProfile` | `ProfileRevolution` | A profile was revolved. |
 | `RevolvedFace` | `FaceRevolution` | A face was revolved. |
+| `FaceSweep` | `FaceSweep` | A face was swept along a spine. |
 | `AppendEdge` | `ProfileAppend` | An edge was appended to a profile. |
 | `ClosedSolid` | `ClosedSolid` | Product-name exception for pure creation. |
 

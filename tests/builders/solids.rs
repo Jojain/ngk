@@ -126,3 +126,33 @@ fn extruded_face_with_a_hole_forms_one_complete_closed_shell() {
         assert_eq!(g.solid_key(face.dart()), Some(solid_key));
     }
 }
+
+#[test]
+fn an_extruded_shell_faces_outward_whichever_way_the_face_was_wound() {
+    // Which cap has to be turned depends on the sign, and so does whether the
+    // laterals come out facing in. A face wound against the run used to
+    // extrude an inside-out shell: the caps were corrected and the laterals
+    // were left alone.
+    for winding in [
+        [
+            Point3::new(-1.0, -1.0, 0.0),
+            Point3::new(1.0, -1.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+        ],
+        [
+            Point3::new(1.0, 1.0, 0.0),
+            Point3::new(1.0, -1.0, 0.0),
+            Point3::new(-1.0, -1.0, 0.0),
+        ],
+    ] {
+        let mut model = Model::<StandardPayload>::new();
+        let profile = add_polygon(&mut model, &winding);
+        let face = add_face(&mut model, profile).expect("face should build");
+        let extrusion = add_extruded_face(&mut model, face, Vector3::new(0.0, 0.0, 3.0))
+            .expect("extrusion should build");
+
+        validate_gmap(model.topology()).expect("gmap should stay valid");
+        validate_solid_orientation(&model, extrusion.solid)
+            .expect("every face of the shell should point out of the material");
+    }
+}

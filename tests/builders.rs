@@ -33,5 +33,7 @@ mod removal;
 mod revolve;
 #[path = "builders/solids.rs"]
 mod solids;
+#[path = "builders/sweep.rs"]
+mod sweep;
 #[path = "builders/transform.rs"]
 mod transform;

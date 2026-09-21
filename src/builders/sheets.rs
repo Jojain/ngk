@@ -13,6 +13,7 @@ use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
+use crate::topology::edit::EditKey;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, VertexKey};
@@ -133,7 +134,14 @@ pub(crate) fn add_extruded_profile_edit<P: Payload>(
         translated_dart.expect("profile dart must belong to one of its profile edges");
 
     Ok(ProfileExtrusion {
-        sheet: edit.add_sheet(SheetAttr::new(translated_dart)),
+        // A profile and a sheet are the same idea one dimension apart, and an
+        // extrusion is what carries one to the other. Each wall already
+        // records the edge it rose from, so naming those edges again here
+        // would restate that and lose the only fact this level holds.
+        sheet: edit.add_sheet_derived_from(
+            vec![EditKey::Profile(profile_key)],
+            SheetAttr::new(translated_dart),
+        ),
         laterals,
         revision: None,
     })
@@ -154,10 +162,18 @@ fn extrude_edge<P: Payload>(
         section.point_at(Fraction::new(1.0)),
     );
     let curve = edge.curve();
+    let key = edge.key();
+    let ends = match &edge {
+        Edge::Bounded(bounded) => {
+            let (first, last) = bounded.vertices();
+            Some((first.key(), last.key()))
+        }
+        _ => None,
+    };
 
     let corners = [start, end, end + direction, start + direction];
     let surface_data = extruded_edge_surface(edge.dart(), curve, start, end, direction)?;
-    add_extruded_edge_face(edit, corners, surface_data)
+    add_extruded_edge_face(edit, key, ends, corners, surface_data)
 }
 
 fn sew_extruded_faces<P: Payload>(
@@ -241,11 +257,27 @@ fn extruded_edge_surface(
     }
 }
 
+/// Adds the quad one edge of a profile extrudes into.
+///
+/// The two section copies are derived from the edge; the two verticals are
+/// the paths its *ends* traced, so each is derived from the vertex it rose
+/// from. An edge naming no corners has no vertex to credit and falls back to
+/// the edge.
 fn add_extruded_edge_face<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
+    key: EdgeKey,
+    ends: Option<(VertexKey, VertexKey)>,
     corners: [Point3; 4],
     surface_data: ExtrudedSurface,
 ) -> Result<ExtrudedFace, ExtrudeError> {
+    let from_edge = vec![EditKey::Edge(key)];
+    let (from_start, from_end) = match ends {
+        Some((first, last)) => (vec![EditKey::Vertex(first)], vec![EditKey::Vertex(last)]),
+        None => (from_edge.clone(), from_edge.clone()),
+    };
+    let corner_sources = [&from_start, &from_end, &from_end, &from_start];
+    let boundary_sources = [&from_edge, &from_end, &from_edge, &from_start];
+
     let darts: Vec<Dart> = (0..8).map(|_| edit.add_dart()).collect();
 
     for i in 0..4 {
@@ -262,24 +294,27 @@ fn add_extruded_edge_face<P: Payload>(
 
     for i in 0..4 {
         let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
-        edit.add_vertex(VertexAttr::new(dart, corners[i]));
+        edit.add_vertex_derived_from(corner_sources[i].clone(), VertexAttr::new(dart, corners[i]));
     }
 
     let edges = std::array::from_fn(|i| {
         let edge_dart = darts[2 * i];
-        edit.add_edge(EdgeAttr::new(
-            edge_dart,
-            surface_data.boundary_curves[i].clone(),
-        ))
+        edit.add_edge_derived_from(
+            boundary_sources[i].clone(),
+            EdgeAttr::new(edge_dart, surface_data.boundary_curves[i].clone()),
+        )
     });
 
-    edit.add_profile(ProfileAttr::new(darts[0]));
-    let face = edit.add_face(FaceAttr::with_pcurves(
-        surface_data.surface,
-        darts[0],
-        Vec::new(),
-        quad_pcurves(&surface_data.uv, &darts),
-    ));
+    edit.add_profile_derived_from(from_edge.clone(), ProfileAttr::new(darts[0]));
+    let face = edit.add_face_derived_from(
+        from_edge,
+        FaceAttr::with_pcurves(
+            surface_data.surface,
+            darts[0],
+            Vec::new(),
+            quad_pcurves(&surface_data.uv, &darts),
+        ),
+    );
 
     Ok(ExtrudedFace {
         start_side: darts[7],
@@ -659,5 +694,62 @@ mod tests {
     fn same_undirected_edge(a: (Point3, Point3), b: (Point3, Point3)) -> bool {
         (a.0.coincides(b.0, LINEAR_TOLERANCE) && a.1.coincides(b.1, LINEAR_TOLERANCE))
             || (a.0.coincides(b.1, LINEAR_TOLERANCE) && a.1.coincides(b.0, LINEAR_TOLERANCE))
+    }
+
+    #[test]
+    fn an_extruded_sheet_is_derived_from_the_profile_it_swept() {
+        use crate::builders::test_support::LineageRecorder;
+        use crate::topology::edit::{EditKey, Origin};
+
+        let mut model = Model::<StandardPayload>::new();
+        let profile = add_polygon(
+            &mut model,
+            &[
+                Point3::new(0.0, 0.0, 0.0),
+                Point3::new(2.0, 0.0, 0.0),
+                Point3::new(2.0, 2.0, 0.0),
+            ],
+        );
+        let mut recorder = LineageRecorder::default();
+
+        let result = model
+            .transaction_with_policy(&mut recorder, |edit| {
+                super::add_extruded_profile_edit(edit, profile, Vector3::z())
+            })
+            .expect("extrusion should commit");
+
+        // Not the profile's edges: every wall already records the edge it
+        // rose from, and only the sheet can record the aggregate.
+        assert!(
+            recorder.created.contains(&(
+                EditKey::Sheet(result.sheet),
+                Origin::derived(EditKey::Profile(profile)),
+            )),
+            "sheet lineage was {:?}",
+            recorder
+                .created
+                .iter()
+                .find(|(key, _)| matches!(key, EditKey::Sheet(_))),
+        );
+
+        // And a vertical is the path an end of its edge traced, so it comes
+        // from that vertex rather than from the edge.
+        let verticals = recorder
+            .created
+            .iter()
+            .filter(|(_, origin)| {
+                matches!(origin, Origin::Derived { sources } if
+                    matches!(sources.as_slice(), [EditKey::Vertex(_)]))
+            })
+            .filter(|(key, _)| matches!(key, EditKey::Edge(_)))
+            .count();
+        // Three, not six: the profile closes, so each vertical is shared by
+        // two walls and the pair is merged into one. An edge created and
+        // merged away inside one transaction is not a net creation, so only
+        // the survivors reach the policy.
+        assert_eq!(
+            verticals, 3,
+            "one vertical per corner, each named by the vertex it rose from",
+        );
     }
 }
