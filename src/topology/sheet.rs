@@ -7,6 +7,7 @@ use super::gmap::Dart;
 use super::orientation::Orientation;
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
+use crate::measure::{MeasureError, SurfaceProperties, sheet_surface_properties};
 use crate::model::{Cell2, MergeTopology, Model, TopologyMerge};
 use crate::topology::gmap::Dim;
 use crate::topology::shape_keys::SheetKey;
@@ -126,6 +127,16 @@ impl<'a, P: Payload> Sheet<'a, P> {
         }
 
         faces
+    }
+
+    /// Returns the total area of the sheet's faces.
+    pub fn area(&self) -> Result<f64, MeasureError> {
+        Ok(self.surface_properties()?.area)
+    }
+
+    /// Returns area, centroid and centroidal inertia for this sheet.
+    pub fn surface_properties(&self) -> Result<SurfaceProperties, MeasureError> {
+        sheet_surface_properties(self)
     }
 
     /// Returns the unique edges used by this sheet's faces.

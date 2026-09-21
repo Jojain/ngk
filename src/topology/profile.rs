@@ -3,6 +3,7 @@ use super::edge::Edge;
 use super::gmap::{Dart, Dim};
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
+use crate::measure::{LinearProperties, MeasureError, linear_properties_for_edges};
 use crate::model::{MergeTopology, Model, TopologyMerge};
 use crate::topology::embedding::{is_embedded_cell, turn_where};
 use crate::topology::shape_keys::ProfileKey;
@@ -117,6 +118,16 @@ impl<'a, P: Payload> Profile<'a, P> {
             .step_by(2)
             .filter_map(|d| Edge::from_dart(self.model, d))
             .collect()
+    }
+
+    /// Returns the sum of the lengths of the profile's edges.
+    pub fn length(&self) -> f64 {
+        self.edges().into_iter().map(|edge| edge.length()).sum()
+    }
+
+    /// Returns length, centroid and centroidal inertia for this profile.
+    pub fn linear_properties(&self) -> Result<LinearProperties, MeasureError> {
+        linear_properties_for_edges(self.edges())
     }
 
     /// Returns this profile's vertices in traversal order.

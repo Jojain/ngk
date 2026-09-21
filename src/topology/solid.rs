@@ -7,6 +7,10 @@ use super::gmap::Dart;
 use super::payload::{Payload, StandardPayload};
 use super::sheet::{Sheet, ShellRef};
 use super::vertex::Vertex;
+use crate::measure::{
+    MeasureError, SurfaceProperties, VolumeProperties, combine_surface_properties,
+    solid_volume_properties,
+};
 use crate::model::{MergeTopology, Model, TopologyMerge};
 use crate::topology::shape_keys::SolidKey;
 
@@ -52,6 +56,10 @@ impl<'g, P: Payload> Solid<'g, P> {
     /// index.
     pub fn key(&self) -> SolidKey {
         self.key
+    }
+
+    pub(crate) fn model(&self) -> &'g Model<P> {
+        self.model
     }
 
     /// Returns the dart through which this solid view was reached.
@@ -156,6 +164,38 @@ impl<'g, P: Payload> Solid<'g, P> {
             }
         }
         vertices
+    }
+
+    /// Returns the non-negative volume of this solid.
+    ///
+    /// The outer shell must be positively oriented and each cavity shell
+    /// negatively oriented. Curved supports use the computation tessellation,
+    /// while planar faces with linear boundaries are exact.
+    pub fn volume(&self) -> Result<f64, MeasureError> {
+        Ok(self.volume_properties()?.volume)
+    }
+
+    /// Returns volume, centroid and centroidal inertia for this solid.
+    pub fn volume_properties(&self) -> Result<VolumeProperties, MeasureError> {
+        solid_volume_properties(self)
+    }
+
+    /// Returns the total area of all shells bounding this solid.
+    pub fn area(&self) -> Result<f64, MeasureError> {
+        Ok(self.surface_properties()?.area)
+    }
+
+    /// Returns area, centroid and centroidal inertia for all solid shells.
+    pub fn surface_properties(&self) -> Result<SurfaceProperties, MeasureError> {
+        let mut total = None;
+        for shell in self.shells() {
+            let properties = shell.surface_properties()?;
+            total = Some(match total {
+                None => properties,
+                Some(previous) => combine_surface_properties(previous, properties),
+            });
+        }
+        total.ok_or(MeasureError::Degenerate)
     }
 }
 

@@ -414,48 +414,7 @@ fn shell_components<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> Vec<Vec<Fa
     result
 }
 
-/// Signed boundary integral for planar polygon loops, including concave loops and holes.
-///
-/// The integral is taken about an arbitrary reference point, which is read off
-/// a boundary dart rather than off a corner: a disc bounded by one unmarked
-/// circle has no vertex at all, and asking its vertices for one answers with
-/// nothing.
+/// Signed volume of an oriented face component during shell assembly.
 fn signed_volume<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> f64 {
-    let reference = map
-        .point_at_dart(map.face_unchecked(faces[0]).dart())
-        .expect("a face of a result shell sits on a boundary that has a position");
-    let mut volume = 0.0;
-
-    for &key in faces {
-        let face = map.face_unchecked(key);
-
-        if !matches!(face.surface(), crate::geometry::Surface::Plane(_))
-            || face.edges().iter().any(|edge| {
-                edge.curve()
-                    .to_nurbs()
-                    .is_ok_and(|curve| curve.degree().get() != 1)
-            })
-        {
-            volume += face
-                .signed_volume_contribution(reference)
-                .unwrap_or(f64::NAN);
-            continue;
-        }
-
-        for boundary in face.loops() {
-            let points = boundary
-                .edges()
-                .iter()
-                .map(|edge| edge.trimmed_curve().point_at(Fraction::new(0.0)))
-                .collect::<Vec<Point3>>();
-
-            for pair in points[1..].windows(2) {
-                volume += (points[0] - reference)
-                    .dot(&(pair[0] - reference).cross(&(pair[1] - reference)))
-                    / 6.0;
-            }
-        }
-    }
-
-    volume
+    crate::measure::signed_volume_for_faces(map, faces).unwrap_or(f64::NAN)
 }

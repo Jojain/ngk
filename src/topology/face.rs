@@ -4,10 +4,9 @@ use super::orientation::Orientation;
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 use crate::geometry::Surface;
-use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
-use crate::geometry::parameter::Fraction;
 use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3};
+use crate::measure::{MeasureError, SurfaceProperties, face_surface_properties};
 use crate::model::{Cell2, MergeTopology, Model, RealizationPurpose, TopologyMerge};
 use crate::topology::attributes::{FaceAttr, LoopKind};
 use crate::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
@@ -465,6 +464,20 @@ impl<'g, P: Payload> Face<'g, P> {
         &self.attr().surface
     }
 
+    /// Returns the area of this trimmed face.
+    ///
+    /// The area is computed from the tessellated support surface. Planar
+    /// faces with linear boundaries are exact; curved supports inherit the
+    /// computation tessellation's approximation error.
+    pub fn area(&self) -> Result<f64, MeasureError> {
+        Ok(self.surface_properties()?.area)
+    }
+
+    /// Returns area, centroid and centroidal inertia for this face.
+    pub fn surface_properties(&self) -> Result<SurfaceProperties, MeasureError> {
+        face_surface_properties(self)
+    }
+
     /// Evaluates the face's support surface at `(u, v)`.
     ///
     /// This does not test the face's trimming loops. The returned point is
@@ -472,125 +485,6 @@ impl<'g, P: Payload> Face<'g, P> {
     /// inside a hole.
     pub fn point_at(&self, u: f64, v: f64) -> Point3 {
         self.attr().surface.point_at(u, v)
-    }
-
-    /// Returns the support point at the middle of the surface's own domain.
-    ///
-    /// A boundaryless face has no vertex to name a point on it, so a caller
-    /// that only needs *some* point of the face reads one off the surface.
-    /// Returns `None` when the domain is unbounded in either direction, which
-    /// no closed surface is.
-    pub(crate) fn domain_center(&self) -> Option<Point3> {
-        let (u, v) = self.surface().domain();
-        (u.is_finite() && v.is_finite()).then(|| {
-            self.point_at(
-                u.at(Fraction::new(0.5)).value(),
-                v.at(Fraction::new(0.5)).value(),
-            )
-        })
-    }
-
-    /// Approximates this oriented face's signed tetrahedral volume contribution.
-    ///
-    /// Signed parameter-space triangle fans include concave boundaries and holes.
-    /// Curved triangles are subdivided on the support surface; this is an
-    /// orientation estimate, not a certified mass-property calculation.
-    pub(crate) fn signed_volume_contribution(&self, reference: Point3) -> Option<f64> {
-        // A face nothing encloses spans its whole support, and any loop it does
-        // carry is a hole in that. Fanning its loops alone would measure the
-        // bite taken out of a torus instead of what is left of it — and measure
-        // it with the wrong sign, a hole being wound against the face. Starting
-        // from the support and letting each hole's own fan take its region back
-        // off is the same statement the bounded case makes, from the other end.
-        let enclosed = self
-            .loops()
-            .iter()
-            .any(|boundary| !matches!(boundary.kind(), LoopKind::Inner));
-        let mut volume = match enclosed {
-            true => 0.0,
-            false => self.boundaryless_signed_volume(reference)?,
-        };
-        if self.attr().is_boundaryless() {
-            return volume.is_finite().then_some(volume);
-        }
-        let planar = matches!(self.surface(), Surface::Plane(_));
-        for boundary in self.loops() {
-            let mut uvs = Vec::new();
-            for edge in boundary.edges() {
-                let curve = self.pcurve(edge.dart())?;
-                // A straight pcurve is a straight 3D segment only on a plane.
-                // Elsewhere -- a sphere's seam meridian, say -- one sample per
-                // edge leaves the loop with too few points to span a fan at
-                // all, and the face contributes no volume at all.
-                let count = if planar && matches!(curve.curve(), Curve2::Line(_)) {
-                    1
-                } else {
-                    32
-                };
-                uvs.extend(curve.sample(count).into_iter().take(count));
-            }
-            let origin = *uvs.first()?;
-            for pair in uvs[1..].windows(2) {
-                let count = if planar { 1 } else { 16 };
-                let point = |i: usize, j: usize| {
-                    let uv = origin
-                        + (pair[0] - origin) * (i as f64 / count as f64)
-                        + (pair[1] - origin) * (j as f64 / count as f64);
-                    self.point_at(uv.x, uv.y) - reference
-                };
-                for i in 0..count {
-                    for j in 0..count - i {
-                        let (a, b, c) = (point(i, j), point(i + 1, j), point(i, j + 1));
-                        volume += a.dot(&b.cross(&c)) / 6.0;
-                        if i + j + 1 < count {
-                            volume += b.dot(&point(i + 1, j + 1).cross(&c)) / 6.0;
-                        }
-                    }
-                }
-            }
-        }
-        volume.is_finite().then_some(volume)
-    }
-
-    /// Signed tetrahedral volume of a face that covers its whole support.
-    ///
-    /// With no loops there is no boundary to fan from, and none is needed: the
-    /// surface's own domain *is* the region, so the integral runs over a grid
-    /// of it. The face's sense, which on a bounded face is carried by the
-    /// direction its pcurves run, has to be applied here explicitly — there are
-    /// no pcurves to carry it.
-    fn boundaryless_signed_volume(&self, reference: Point3) -> Option<f64> {
-        /// Grid cells per parameter direction. The integral converges on a
-        /// sign, not on a mass property, so a coarse grid is enough.
-        const STEPS: usize = 24;
-
-        let (u_span, v_span) = self.surface().domain();
-        if !u_span.is_finite() || !v_span.is_finite() {
-            return None;
-        }
-        let corner = |i: usize, j: usize| {
-            let u = u_span.at(Fraction::new(i as f64 / STEPS as f64));
-            let v = v_span.at(Fraction::new(j as f64 / STEPS as f64));
-            self.point_at(u.value(), v.value()) - reference
-        };
-        let mut volume = 0.0;
-        for i in 0..STEPS {
-            for j in 0..STEPS {
-                let (a, b, c, d) = (
-                    corner(i, j),
-                    corner(i + 1, j),
-                    corner(i + 1, j + 1),
-                    corner(i, j + 1),
-                );
-                volume += a.dot(&b.cross(&c)) / 6.0;
-                volume += a.dot(&c.cross(&d)) / 6.0;
-            }
-        }
-        let volume = match self.sense {
-            Orientation::Same => volume,
-            Orientation::Reversed => -volume,
-        };
-        volume.is_finite().then_some(volume)
     }
 
     /// Returns the oriented face normal at a surface parameter.

@@ -3,6 +3,7 @@ use std::ops::Deref;
 
 use crate::geometry::parameter::NativeParam;
 use crate::geometry::{Curve, Interval, PointCoincidence, TrimmedCurve};
+use crate::measure::{LinearProperties, MeasureError, linear_properties_for_edge};
 use crate::model::{Cell1, Cell2, MergeTopology, TopologyMerge};
 use crate::topology::attributes::EdgeAttr;
 use crate::topology::closed::Closeable;
@@ -364,6 +365,14 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     /// [`parameter_interval`](Self::parameter_interval).
     pub fn length(&self) -> f64 {
         self.trimmed_curve().length()
+    }
+
+    /// Returns length, centroid and centroidal inertia for this edge.
+    ///
+    /// The length uses the edge's exact trimmed-curve length. The centroid and
+    /// inertia use the computation tessellation of that same span.
+    pub fn linear_properties(&self) -> Result<LinearProperties, MeasureError> {
+        linear_properties_for_edge(self)
     }
 }
 

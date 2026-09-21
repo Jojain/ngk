@@ -2,6 +2,7 @@ pub mod builders;
 pub mod exchange;
 pub mod geometry;
 pub mod healing;
+pub mod measure;
 pub mod model;
 pub mod modeling;
 pub mod scripts;

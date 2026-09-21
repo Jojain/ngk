@@ -2,8 +2,6 @@ use std::collections::HashSet;
 
 use thiserror::Error;
 
-use crate::geometry::Surface;
-use crate::geometry::parameter::Fraction;
 use crate::topology::closed::Closed;
 
 use super::embedding::{EntityOwner, turn};
@@ -252,7 +250,6 @@ fn validate_oriented_shell_volume<P: Payload>(
         .collect::<Vec<_>>();
     let mut directed = HashSet::new();
     let mut owner = std::collections::HashMap::<Dart, FaceKey>::new();
-    let mut volume = 0.0;
     let unavailable = |face: &Face<'_, P>| ModelValidationError::SolidFaceOrientationUnavailable {
         solid,
         shell,
@@ -264,49 +261,11 @@ fn validate_oriented_shell_volume<P: Payload>(
     let [first, ..] = faces.as_slice() else {
         return Err(ModelValidationError::SolidShellHasNoFace { solid, shell });
     };
-    // Anywhere on the shell will do: the divergence integral is
-    // reference-independent for a closed one. A vertex is the cheapest source.
-    // A face whose rim is a whole circle has no vertex at all -- the point
-    // where the circle closes is inside the edge -- so its rim's own curve
-    // answers instead. A boundaryless face has neither, and the surface does.
-    let reference = first
-        .vertices()
-        .first()
-        .map(|vertex| *vertex.point())
-        .or_else(|| {
-            let boundary = faces[0].loops().into_iter().next()?;
-            let edge = boundary.edges().into_iter().next()?;
-            Some(edge.trimmed_curve().point_at(Fraction::new(0.0)))
-        })
-        .or_else(|| first.domain_center())
-        .ok_or_else(|| unavailable(first))?;
     for face in &faces {
-        let planar = matches!(face.surface(), Surface::Plane(_))
-            && face.edges().iter().all(|edge| {
-                edge.curve()
-                    .to_nurbs()
-                    .is_ok_and(|curve| curve.degree().get() == 1)
-            });
-        if !planar {
-            volume += face.signed_volume_contribution(reference).ok_or(
-                ModelValidationError::SolidFaceOrientationUnavailable {
-                    solid,
-                    shell,
-                    face: face.key(),
-                },
-            )?;
-        }
         for boundary in face.loops() {
-            let mut points = Vec::new();
             for edge in boundary.edges() {
                 directed.insert(edge.dart());
                 owner.insert(edge.dart(), face.key());
-                points.push(edge.trimmed_curve().point_at(Fraction::new(0.0)));
-            }
-            for pair in points[1..].windows(2).filter(|_| planar) {
-                volume += (points[0] - reference)
-                    .dot(&(pair[0] - reference).cross(&(pair[1] - reference)))
-                    / 6.0;
             }
         }
     }
@@ -327,6 +286,12 @@ fn validate_oriented_shell_volume<P: Payload>(
             }
         }
     }
+    let volume = crate::measure::signed_shell_volume(g, shell).map_err(|error| match error {
+        crate::measure::MeasureError::FaceTessellation { face, .. } => {
+            ModelValidationError::SolidFaceOrientationUnavailable { solid, shell, face }
+        }
+        _ => unavailable(first),
+    })?;
     let valid = volume.is_finite()
         && match side {
             ShellSide::Outer => volume > 0.0,
