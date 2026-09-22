@@ -47,7 +47,7 @@ pub enum SweepTransition {
     /// Accept only tangent-continuous junctions and add no corner geometry.
     #[default]
     Smooth,
-    /// Trim the two adjacent tapes to their common miter section.
+    /// Trim the two adjacent wall groups to their common miter section.
     Straight,
     /// Turn the arriving section around the junction axis before continuing.
     Rounded,
@@ -83,7 +83,7 @@ pub struct FaceSweep {
     pub start_cap: FaceKey,
     /// The moved copy used as the last cap.
     pub end_cap: FaceKey,
-    /// Faces in path order, and in section-loop order within each path tape.
+    /// Faces in path order, and in section-loop order within each wall group.
     pub laterals: Vec<FaceKey>,
     revision: Option<u64>,
 }
@@ -159,7 +159,7 @@ impl<P: Payload> SweepSpine for Profile<'_, P> {
 /// segments are NURBS-skinned through transported copies of each boundary
 /// edge. At a C0 junction, [`SweepTransition::Straight`] shares a section in
 /// the tangent-bisector plane and [`SweepTransition::Rounded`] inserts an
-/// exact surface-of-revolution tape.
+/// exact surface-of-revolution wall group.
 pub fn add_swept_face<P: Payload, S: SweepSpine + ?Sized>(
     model: &mut Model<P>,
     face: FaceKey,
@@ -193,17 +193,17 @@ struct SectionLoop {
 struct SweepPlan {
     face: FaceKey,
     loops: Vec<SectionLoop>,
-    tapes: Vec<Tape>,
+    wall_groups: Vec<WallGroup>,
     end_motion: Rigid,
     start_tangent: Vector3<f64>,
     end_tangent: Vector3<f64>,
 }
 
-enum Tape {
-    Skin {
+enum WallGroup {
+    AlongSpine {
         placements: Vec<Placement>,
     },
-    Round {
+    AroundCorner {
         axis: Axis3,
         angle: f64,
         start: Rigid,
@@ -299,18 +299,18 @@ impl SweepPlan {
                 .collect::<Result<Vec<_>, _>>()?;
 
         let PathPlan {
-            tapes,
+            wall_groups,
             end_motion,
             start_tangent,
             end_tangent,
-        } = plan_tapes(spine, options)?;
+        } = plan_wall_groups(spine, options)?;
         if face.normal_at(0.0, 0.0).dot(&start_tangent).abs() < 1.0 - ANGULAR_TOLERANCE {
             return Err(SweepError::SectionNotNormalToSpine);
         }
         Ok(Self {
             face: face_key,
             loops,
-            tapes,
+            wall_groups,
             end_motion,
             start_tangent,
             end_tangent,
@@ -331,33 +331,41 @@ impl SweepPlan {
             self.end_tangent,
         );
 
-        let mut built_tapes = Vec::with_capacity(self.tapes.len());
+        let mut built_wall_groups = Vec::with_capacity(self.wall_groups.len());
         let mut laterals = Vec::new();
-        for tape in &self.tapes {
+        for wall_group in &self.wall_groups {
             let mut loops = Vec::with_capacity(self.loops.len());
             for section_loop in &self.loops {
                 let faces = section_loop
                     .edges
                     .iter()
-                    .map(|edge| build_wall(edit, edge, tape))
+                    .map(|edge| build_wall(edit, edge, wall_group))
                     .collect::<Result<Vec<_>, _>>()?;
                 sew_loop_rails(edit, &faces)?;
-                laterals.extend(faces.iter().map(|face| face.key));
+                laterals.extend(faces.iter().flatten().map(|face| face.key));
                 loops.push(faces);
             }
-            built_tapes.push(loops);
+            built_wall_groups.push(loops);
         }
 
-        for pair in built_tapes.windows(2) {
-            for (before_loop, after_loop) in pair[0].iter().zip(&pair[1]) {
-                for (before, after) in before_loop.iter().zip(after_loop) {
-                    sew_edges(edit, before.last_section, after.first_section)?;
+        for loop_index in 0..self.loops.len() {
+            for edge_index in 0..self.loops[loop_index].edges.len() {
+                let walls = built_wall_groups
+                    .iter()
+                    .filter_map(|group| group[loop_index][edge_index].as_ref())
+                    .collect::<Vec<_>>();
+                for pair in walls.windows(2) {
+                    sew_edges(edit, pair[0].last_section, pair[1].first_section)?;
                 }
             }
         }
 
-        let first = built_tapes.first().expect("a nonempty spine builds a tape");
-        let last = built_tapes.last().expect("a nonempty spine builds a tape");
+        let first = built_wall_groups
+            .first()
+            .expect("a nonempty spine builds a wall group");
+        let last = built_wall_groups
+            .last()
+            .expect("a nonempty spine builds a wall group");
         sew_cap(edit, self.face, first, false)?;
         sew_cap(edit, end_cap, last, true)?;
 
@@ -384,13 +392,13 @@ impl SweepPlan {
 }
 
 struct PathPlan {
-    tapes: Vec<Tape>,
+    wall_groups: Vec<WallGroup>,
     end_motion: Rigid,
     start_tangent: Vector3<f64>,
     end_tangent: Vector3<f64>,
 }
 
-fn plan_tapes(spine: &[TrimmedCurve], options: SweepOptions) -> Result<PathPlan, SweepError> {
+fn plan_wall_groups(spine: &[TrimmedCurve], options: SweepOptions) -> Result<PathPlan, SweepError> {
     let first_tangent = tangent(&spine[0], Fraction::START)?;
     let first_point = spine[0].start();
     let mut current = match options.frame {
@@ -399,7 +407,7 @@ fn plan_tapes(spine: &[TrimmedCurve], options: SweepOptions) -> Result<PathPlan,
     };
     let base = current.clone();
     let mut pending_start = Placement::Rigid(Rigid::identity());
-    let mut tapes = Vec::new();
+    let mut wall_groups = Vec::new();
 
     for (index, segment) in spine.iter().enumerate() {
         let frames = segment_frames(segment, current.clone(), options)?;
@@ -415,9 +423,9 @@ fn plan_tapes(spine: &[TrimmedCurve], options: SweepOptions) -> Result<PathPlan,
 
         let Some(next) = spine.get(index + 1) else {
             let end_motion = Rigid::between_frames(&base, &incoming);
-            tapes.push(Tape::Skin { placements });
+            wall_groups.push(WallGroup::AlongSpine { placements });
             return Ok(PathPlan {
-                tapes,
+                wall_groups,
                 end_motion,
                 start_tangent: *base.z_dir,
                 end_tangent: *incoming.z_dir,
@@ -453,12 +461,12 @@ fn plan_tapes(spine: &[TrimmedCurve], options: SweepOptions) -> Result<PathPlan,
             }
         }
 
-        tapes.push(Tape::Skin { placements });
+        wall_groups.push(WallGroup::AlongSpine { placements });
         if angle > ANGULAR_TOLERANCE && options.transition == SweepTransition::Rounded {
             let inward = UnitVector3::new_normalize(
                 *outgoing.z_dir - *incoming.z_dir * incoming.z_dir.dot(&outgoing.z_dir),
             );
-            tapes.push(Tape::Round {
+            wall_groups.push(WallGroup::AroundCorner {
                 axis,
                 angle,
                 start: Rigid::between_frames(&base, &incoming),
@@ -582,17 +590,24 @@ struct WallFace {
     key: FaceKey,
     first_section: Dart,
     last_section: Dart,
-    start_rail: Dart,
-    end_rail: Dart,
+    start_rail: Option<Dart>,
+    end_rail: Option<Dart>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoundedWallShape {
+    Omitted,
+    Triangle { start_on_axis: bool },
+    Quad,
 }
 
 fn build_wall<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: &SectionEdge,
-    tape: &Tape,
-) -> Result<WallFace, SweepError> {
-    match tape {
-        Tape::Skin { placements } => {
+    wall_group: &WallGroup,
+) -> Result<Option<WallFace>, SweepError> {
+    match wall_group {
+        WallGroup::AlongSpine { placements } => {
             let mut sections = placements
                 .iter()
                 .map(|placement| placement.curve(&edge.curve))
@@ -612,17 +627,30 @@ fn build_wall<P: Payload>(
                     source,
                 }
             })?;
-            add_skinned_wall(edit, edge.key, surface)
+            add_skinned_wall(edit, edge.key, surface).map(Some)
         }
-        Tape::Round {
+        WallGroup::AroundCorner {
             axis,
             angle,
             start,
             inward,
         } => {
             let start_curve = edge.curve.map_control_points(|point| start.apply(point));
-            validate_round_radius(edge.key, &start_curve, *axis, *inward)?;
-            add_rounded_wall(edit, edge.key, start_curve, *axis, *angle)
+            match rounded_wall_shape(edge.key, &start_curve, *axis, *inward)? {
+                RoundedWallShape::Omitted => Ok(None),
+                RoundedWallShape::Triangle { start_on_axis } => add_rounded_triangle_wall(
+                    edit,
+                    edge.key,
+                    start_curve,
+                    *axis,
+                    *angle,
+                    start_on_axis,
+                )
+                .map(Some),
+                RoundedWallShape::Quad => {
+                    add_rounded_wall(edit, edge.key, start_curve, *axis, *angle).map(Some)
+                }
+            }
         }
     }
 }
@@ -691,6 +719,59 @@ fn add_rounded_wall<P: Payload>(
     )
 }
 
+fn add_rounded_triangle_wall<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    source: EdgeKey,
+    start: NurbsCurve,
+    axis: Axis3,
+    angle: f64,
+    start_on_axis: bool,
+) -> Result<WallFace, SweepError> {
+    let motion = Rigid::rotation(axis, Rad64::new(angle));
+    let end = start.map_control_points(|point| motion.apply(point));
+    let start_points = [start.point_at(0.0), start.point_at(1.0)];
+    let end_points = [end.point_at(0.0), end.point_at(1.0)];
+    let surface = Surface::Revolution(SurfaceOfRevolution::new(Curve::Nurbs(start.clone()), axis));
+
+    if start_on_axis {
+        add_triangle_wall(
+            edit,
+            source,
+            surface,
+            [
+                Curve::Nurbs(start),
+                corner_arc(axis, start_points[1], angle),
+                Curve::Nurbs(end.reversed()),
+            ],
+            [start_points[0], start_points[1], end_points[1]],
+            [
+                (Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
+                (Point2::new(1.0, 0.0), Point2::new(1.0, angle)),
+                (Point2::new(1.0, angle), Point2::new(0.0, angle)),
+            ],
+            true,
+        )
+    } else {
+        add_triangle_wall(
+            edit,
+            source,
+            surface,
+            [
+                Curve::Nurbs(start),
+                Curve::Nurbs(end.reversed()),
+                corner_arc(axis, end_points[0], -angle),
+            ],
+            [start_points[0], start_points[1], end_points[0]],
+            [
+                (Point2::new(0.0, 0.0), Point2::new(1.0, 0.0)),
+                (Point2::new(1.0, angle), Point2::new(0.0, angle)),
+                (Point2::new(0.0, angle), Point2::new(0.0, 0.0)),
+            ],
+            false,
+        )
+    }
+}
+
 fn corner_arc(axis: Axis3, point: Point3, angle: f64) -> Curve {
     let projected = axis.project(point);
     let direction = if angle < 0.0 {
@@ -707,29 +788,104 @@ fn corner_arc(axis: Axis3, point: Point3, angle: f64) -> Curve {
     Curve::circle(plane, radial.norm())
 }
 
-fn validate_round_radius(
+fn rounded_wall_shape(
     key: EdgeKey,
     curve: &NurbsCurve,
     axis: Axis3,
     inward: UnitVector3<f64>,
-) -> Result<(), SweepError> {
-    let first = curve.point_at(0.0) - axis.project(curve.point_at(0.0));
-    let first_direction = UnitVector3::try_new(first, LINEAR_TOLERANCE)
-        .ok_or(SweepError::SectionMeetsTheTurningAxis { key })?;
-    for point in curve
+) -> Result<RoundedWallShape, SweepError> {
+    let control_points = curve
         .control_points()
         .iter()
         .map(|point| point.to_cartesian())
-    {
-        let radial = point - axis.project(point);
-        if radial.dot(&first_direction) <= LINEAR_TOLERANCE {
+        .collect::<Vec<_>>();
+    let radial_vectors = control_points
+        .iter()
+        .map(|point| *point - axis.project(*point))
+        .collect::<Vec<_>>();
+    let Some(reference) = radial_vectors
+        .iter()
+        .find_map(|radial| UnitVector3::try_new(*radial, LINEAR_TOLERANCE))
+    else {
+        return Ok(RoundedWallShape::Omitted);
+    };
+
+    for radial in &radial_vectors {
+        if radial.norm() > LINEAR_TOLERANCE && radial.dot(&reference) <= LINEAR_TOLERANCE {
             return Err(SweepError::SectionMeetsTheTurningAxis { key });
         }
         if radial.dot(&inward) > LINEAR_TOLERANCE {
             return Err(SweepError::RoundedTransitionWouldSelfIntersect { key });
         }
     }
-    Ok(())
+    let start = curve.point_at(0.0);
+    let end = curve.point_at(1.0);
+    let start_on_axis = (start - axis.project(start)).norm() <= LINEAR_TOLERANCE;
+    let end_on_axis = (end - axis.project(end)).norm() <= LINEAR_TOLERANCE;
+    match (start_on_axis, end_on_axis) {
+        (true, true) => Err(SweepError::SectionMeetsTheTurningAxis { key }),
+        (true, false) => Ok(RoundedWallShape::Triangle {
+            start_on_axis: true,
+        }),
+        (false, true) => Ok(RoundedWallShape::Triangle {
+            start_on_axis: false,
+        }),
+        (false, false) => Ok(RoundedWallShape::Quad),
+    }
+}
+
+fn add_triangle_wall<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    source: EdgeKey,
+    surface: Surface,
+    boundary: [Curve; 3],
+    corners: [Point3; 3],
+    uv: [(Point2, Point2); 3],
+    start_on_axis: bool,
+) -> Result<WallFace, SweepError> {
+    let darts: [Dart; 6] = std::array::from_fn(|_| edit.add_dart());
+    for index in 0..3 {
+        edit.link(Dim::Zero, darts[2 * index], darts[2 * index + 1])?;
+        edit.link(
+            Dim::One,
+            darts[2 * index + 1],
+            darts[(2 * index + 2) % darts.len()],
+        )?;
+    }
+    let sources = vec![EditKey::Edge(source)];
+    for index in 0..3 {
+        let dart = edit.cell_representative(darts[2 * index], Dim::Zero);
+        edit.add_vertex_derived_from(sources.clone(), VertexAttr::new(dart, corners[index]));
+        edit.add_edge_derived_from(
+            sources.clone(),
+            EdgeAttr::new(darts[2 * index], boundary[index].clone()),
+        );
+    }
+    let pcurves = (0..3)
+        .map(|index| {
+            (
+                darts[2 * index],
+                TrimmedCurve2::segment(uv[index].0, uv[index].1),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    edit.add_profile_derived_from(sources.clone(), ProfileAttr::new(darts[0]));
+    let key = edit.add_face_derived_from(
+        sources,
+        FaceAttr::with_pcurves(surface, darts[0], Vec::new(), pcurves),
+    );
+    let (last_section, start_rail, end_rail) = if start_on_axis {
+        (darts[5], None, Some(darts[2]))
+    } else {
+        (darts[3], Some(darts[5]), None)
+    };
+    Ok(WallFace {
+        key,
+        first_section: darts[0],
+        last_section,
+        start_rail,
+        end_rail,
+    })
 }
 
 fn add_quad_wall<P: Payload>(
@@ -775,20 +931,23 @@ fn add_quad_wall<P: Payload>(
         key,
         first_section: darts[0],
         last_section: darts[5],
-        start_rail: darts[7],
-        end_rail: darts[2],
+        start_rail: Some(darts[7]),
+        end_rail: Some(darts[2]),
     })
 }
 
 fn sew_loop_rails<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
-    faces: &[WallFace],
+    faces: &[Option<WallFace>],
 ) -> Result<(), SweepError> {
-    for pair in faces.windows(2) {
-        sew_edges(edit, pair[0].end_rail, pair[1].start_rail)?;
-    }
-    if let (Some(first), Some(last)) = (faces.first(), faces.last()) {
-        sew_edges(edit, last.end_rail, first.start_rail)?;
+    for index in 0..faces.len() {
+        let current = faces[index].as_ref().and_then(|face| face.end_rail);
+        let next = faces[(index + 1) % faces.len()]
+            .as_ref()
+            .and_then(|face| face.start_rail);
+        if let (Some(current), Some(next)) = (current, next) {
+            sew_edges(edit, current, next)?;
+        }
     }
     Ok(())
 }
@@ -796,11 +955,11 @@ fn sew_loop_rails<P: Payload>(
 fn sew_cap<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     cap: FaceKey,
-    loops: &[Vec<WallFace>],
+    loops: &[Vec<Option<WallFace>>],
     end: bool,
 ) -> Result<(), SweepError> {
     for faces in loops {
-        for wall in faces {
+        for wall in faces.iter().flatten() {
             let side = if end {
                 wall.last_section
             } else {

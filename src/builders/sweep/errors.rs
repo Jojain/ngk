@@ -77,26 +77,26 @@ pub enum SweepError {
     #[error("edge {key:?} runs along the sweep and sweeps no area")]
     SectionRunsAlongTheSweep { key: EdgeKey },
 
-    /// A section edge meets the axis it is being turned about.
+    /// A section edge meets the turning axis in an unsupported way.
     ///
-    /// Every point of the section traces a circle about that axis, and a
-    /// point *on* it traces nothing: the wall pinches to a point there, and
-    /// the two sides of the section sweep into each other. A section
-    /// straddling the axis is the same fault twice over.
+    /// An edge wholly on the axis sweeps no wall and is omitted. An edge with
+    /// one endpoint on the axis sweeps a triangular wall. An edge that crosses
+    /// the axis, or leaves it and returns to it, makes the section sweep into
+    /// itself and is refused.
     ///
     /// The usual cause is a section centred on the spine at a sharp corner,
     /// where the corner's axis runs through the middle of it. A corner with
     /// no radius has no room to turn a section in; give the spine a fillet
     /// wider than the section reaches and sweep it
     /// [`Smooth`](super::SweepTransition::Smooth).
-    #[error("edge {key:?} meets the axis it is turned about, so the wall pinches")]
+    #[error("edge {key:?} crosses or returns to the axis it is turned about")]
     SectionMeetsTheTurningAxis { key: EdgeKey },
 
     /// Turning this section about the sharp corner would run it back through
-    /// one of the adjacent straight tapes.
+    /// one of the adjacent straight wall groups.
     ///
     /// A zero-radius rounded transition can revolve only the side of a section
-    /// outside the turn. Geometry on the inside needs the two straight tapes
+    /// outside the turn. Geometry on the inside needs the two straight wall groups
     /// intersected and trimmed. This builder performs a pure revolution, so it
     /// refuses that configuration instead of committing a self-intersecting
     /// solid.

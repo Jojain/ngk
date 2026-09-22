@@ -31,7 +31,7 @@ pub fn extrude_face<P: Payload>(
 ///
 /// The face is already placed at the first spine point and perpendicular to
 /// its first tangent. Sharp junctions follow `options.transition`; smooth
-/// junctions add no corner tape.
+/// junctions add no corner walls.
 pub fn sweep_face<P: Payload, S: SweepSpine + ?Sized>(
     face: Shape<FaceTag, P>,
     spine: &S,

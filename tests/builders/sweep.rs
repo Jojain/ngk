@@ -4,7 +4,7 @@ use ngk::builders::edges::{add_edge, add_line};
 use ngk::builders::faces::add_rectangle;
 use ngk::builders::profiles::add_polyline;
 use ngk::builders::sweep::{SweepError, SweepFrame, SweepOptions, SweepTransition, add_swept_face};
-use ngk::geometry::{Plane, Point3, TrimmedCurve};
+use ngk::geometry::{Plane, Point3, Surface, TrimmedCurve};
 use ngk::model::Model;
 use ngk::tessellate::{SurfaceOpts, TessellateOpts, tessellate_face};
 use ngk::topology::payload::StandardPayload;
@@ -210,7 +210,7 @@ fn rounded_transition_revolves_a_corner_band_into_a_valid_solid() {
         .expect("the rounded solid should measure");
 
     // The section lies outside the elbow, so the revolved corner adds one
-    // quarter-annulus sector between the two straight tapes.
+    // quarter-annulus sector between the two straight wall groups.
     let expected = 8.0 + 3.0 * std::f64::consts::PI / 4.0;
     assert!(
         (volume - expected).abs() <= 2.0e-2,
@@ -230,7 +230,7 @@ fn rounded_transition_refuses_an_inside_section_that_would_self_intersect() {
     let spine = spine_model.profile_unchecked(spine);
 
     let error = add_swept_face(&mut model, face, &spine, options)
-        .expect_err("the inside corner would overlap both straight tapes");
+        .expect_err("the inside corner would overlap both straight wall groups");
 
     assert!(matches!(
         error,
@@ -239,7 +239,7 @@ fn rounded_transition_refuses_an_inside_section_that_would_self_intersect() {
 }
 
 #[test]
-fn smooth_transition_adds_no_corner_tape_at_a_c1_junction() {
+fn smooth_transition_adds_no_corner_walls_at_a_c1_junction() {
     let mut model = Model::<StandardPayload>::new();
     let face = offset_section(&mut model);
     let (spine_model, spine) = polyline_spine(&[
@@ -254,7 +254,69 @@ fn smooth_transition_adds_no_corner_tape_at_a_c1_junction() {
 
     validate_solid_orientation(&model, sweep.solid)
         .expect("the smoothly joined shell should face outwards");
-    assert_eq!(sweep.laterals.len(), 8, "only the two path tapes are built");
+    assert_eq!(
+        sweep.laterals.len(),
+        8,
+        "only the two path wall groups are built"
+    );
+}
+
+#[test]
+fn rounded_transition_with_spine_on_left_edge_has_one_sharp_and_one_rounded_corner() {
+    let mut model = Model::<StandardPayload>::new();
+    let face = add_rectangle(
+        &mut model,
+        Plane::from_xy(Point3::new(0.0, -0.5, 0.0), Vector3::x(), Vector3::y()),
+        1.0,
+        1.0,
+    )
+    .expect("section should build");
+    let options = SweepOptions {
+        transition: SweepTransition::Rounded,
+        ..SweepOptions::default()
+    };
+    let (spine_model, spine) = polyline_spine(&[
+        Point3::origin(),
+        Point3::new(0.0, 0.0, 4.0),
+        Point3::new(-4.0, 0.0, 4.0),
+    ]);
+    let spine = spine_model.profile_unchecked(spine);
+
+    let sweep = add_swept_face(&mut model, face, &spine, options).expect(
+        "the section edge on the turn axis should stay sharp while the opposite edge rounds",
+    );
+    let _ = show(&model);
+
+    validate_gmap(model.topology()).expect("the sweep should keep a valid GMap");
+    validate_solid_orientation(&model, sweep.solid)
+        .expect("the partly rounded shell should face outwards");
+    assert_not_self_intersecting(&model, sweep.solid);
+
+    let rounded_walls = sweep
+        .laterals
+        .iter()
+        .filter(|face| {
+            matches!(
+                model.face_unchecked(**face).surface(),
+                Surface::Revolution(_)
+            )
+        })
+        .count();
+    assert_eq!(
+        rounded_walls, 3,
+        "the edge on the axis makes no wall; the other three section edges revolve"
+    );
+    assert_eq!(sweep.laterals.len(), 11);
+    assert_eq!(model.solid_unchecked(sweep.solid).faces().len(), 13);
+    let volume = model
+        .solid_unchecked(sweep.solid)
+        .volume()
+        .expect("the partly rounded solid should measure");
+    let expected = 8.0 + std::f64::consts::PI / 4.0;
+    assert!(
+        (volume - expected).abs() <= 2.0e-2,
+        "rounded volume was {volume}, expected {expected}"
+    );
 }
 
 #[test]
