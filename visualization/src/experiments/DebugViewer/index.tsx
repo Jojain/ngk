@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import VizSceneView, { type VizSelection } from "../../components/VizSceneView";
+import { VizSceneView, type VizSelection } from "@ngk/viewer";
 import { useVizControls } from "../../components/useVizControls";
 import {
   clearDebugDumps,

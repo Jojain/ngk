@@ -1,4 +1,4 @@
-import type { Vec3, VizAlphaLink, VizDart } from "../kernel/viz";
+import type { Vec3, VizAlphaLink, VizDart } from "./viz";
 
 const DART_FACE_LANE_RADIUS = 0.045;
 const DART_EDGE_LANE_RADIUS = 0.028;

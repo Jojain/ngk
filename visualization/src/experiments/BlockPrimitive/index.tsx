@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Html } from "@react-three/drei";
 import { useControls } from "leva";
-import VizSceneView from "../../components/VizSceneView";
+import { VizSceneView } from "@ngk/viewer";
 import { useVizControls } from "../../components/useVizControls";
 import { useKernel, type Kernel } from "../../kernel/useKernel";
 import { gmapConsoleApi, type ScriptResult } from "../../kernel/viz";

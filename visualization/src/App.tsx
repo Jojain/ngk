@@ -2,7 +2,7 @@ import { Suspense, useEffect, useState } from "react";
 import { Leva } from "leva";
 import ExperimentErrorBoundary from "./components/ExperimentErrorBoundary";
 import ExperimentSidebar from "./components/ExperimentSidebar";
-import SceneShell from "./components/SceneShell";
+import { SceneShell } from "@ngk/viewer";
 import { experiments } from "./experiments/registry";
 import { useKernel } from "./kernel/useKernel";
 

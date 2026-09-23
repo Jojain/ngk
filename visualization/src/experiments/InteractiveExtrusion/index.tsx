@@ -3,7 +3,7 @@ import { Line } from "@react-three/drei";
 import { useThree, type ThreeEvent } from "@react-three/fiber";
 import { useControls } from "leva";
 import * as THREE from "three";
-import VizSceneView from "../../components/VizSceneView";
+import { VizSceneView } from "@ngk/viewer";
 import { useVizControls } from "../../components/useVizControls";
 import { useKernel, type Kernel } from "../../kernel/useKernel";
 import {

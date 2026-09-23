@@ -1,4 +1,4 @@
-name: Deploy visualization to GitHub Pages
+name: Deploy NGK Pages
 
 on:
   push:
@@ -37,17 +37,26 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: visualization/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: visualization
         run: npm ci
 
       - name: Build visualization
-        working-directory: visualization
         env:
           VITE_BASE_PATH: /ngk/
-        run: npm run build
+        run: npm run build --workspace visualization
+
+      - name: Build sandbox
+        env:
+          VITE_BASE_PATH: /ngk/sandbox/
+        run: npm run build --workspace sandbox
+
+      - name: Assemble Pages site
+        run: |
+          mkdir -p pages/sandbox
+          cp -R visualization/dist/. pages/
+          cp -R sandbox/dist/. pages/sandbox/
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
@@ -55,7 +64,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: visualization/dist
+          path: pages
 
   deploy:
     environment:

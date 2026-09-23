@@ -1,5 +1,6 @@
 {
   "private": true,
+  "workspaces": ["viewer", "visualization", "sandbox"],
   "scripts": {
     "debug": "npm --prefix visualization run debug"
   }

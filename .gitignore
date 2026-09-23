@@ -32,8 +32,12 @@ private_doc/
 
 # Visualization frontend
 visualization/node_modules/
+node_modules/
 visualization/dist/
 visualization/src/wasm/
+sandbox/node_modules/
+sandbox/dist/
+sandbox/src/wasm/
 
 # Python local builds
 .venv/

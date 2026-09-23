@@ -4,6 +4,7 @@ mod assemble;
 mod broad_phase;
 mod classify;
 mod clip;
+mod clock;
 mod contacts;
 mod diagnostics;
 mod domain;
@@ -41,8 +42,9 @@ pub use result::{
 };
 use solid_domain::SolidDomain;
 
+use clock::Instant;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::builders::edges::split_edge_edit;
 use crate::builders::faces::{FaceImprint, split_face_by_imprints_edit, split_face_edge_edit};

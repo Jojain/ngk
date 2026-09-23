@@ -58,7 +58,9 @@ several snapshots without creating a registered visualization experiment.
 
 The repository deploys this app with GitHub Actions on every push to `master`.
 The workflow builds the wasm package, bundles the Vite app with the `/ngk/`
-base path, and publishes `visualization/dist/` to GitHub Pages.
+base path, and publishes the combined visualization and sandbox site to GitHub
+Pages. The visualization is available at `/ngk/`; the sandbox is available at
+`/ngk/sandbox/`.
 
 The published app will be available at:
 

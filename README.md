@@ -72,6 +72,10 @@ The visualization playground is published with GitHub Pages:
 
 https://jojain.github.io/ngk/
 
+The NGK Sandbox is published from the same Pages site:
+
+https://jojain.github.io/ngk/sandbox/
+
 It displays small interactive experiments for inspecting generated geometry and
 topology-backed modeling operations. The app is intentionally a playground: it
 is useful for trying ideas, checking behavior visually, and making the kernel's

@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import VizSceneView from "../../components/VizSceneView";
+import { VizSceneView } from "@ngk/viewer";
 import { useVizControls } from "../../components/useVizControls";
 import { useKernel } from "../../kernel/useKernel";
 import { gmapConsoleApi, runScript, type ScriptResult } from "../../kernel/viz";

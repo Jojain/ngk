@@ -10,7 +10,7 @@ import type {
   VizScene,
   VizVertex,
   Vec3,
-} from "../kernel/viz";
+} from "./viz";
 import { layoutDartLanes } from "./VizSceneView.layout";
 
 export type VizSelection =

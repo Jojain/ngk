@@ -1,10 +1,11 @@
+use nalgebra::{Unit, Vector3};
 use wasm_bindgen::prelude::*;
 
 use crate::builders::boolean::BooleanOperation;
 use crate::modeling;
 
 use super::super::geometry::WasmFrame;
-use super::super::topology::WasmSolid;
+use super::super::topology::{WasmFace, WasmSolid};
 use super::common::{js_err, wasm_solid};
 
 /// Builds an axis-aligned block and returns its read-only solid handle.
@@ -29,17 +30,42 @@ pub fn block_at(
 }
 
 /// Builds a cylinder and returns its read-only solid handle.
+///
+/// The optional frame matches the Python binding: omitted means `Frame::xyz()`.
 #[wasm_bindgen(js_name = cylinder)]
-pub fn cylinder(radius: f64, height: f64) -> Result<WasmSolid, JsValue> {
-    modeling::solids::cylinder(radius, height)
-        .map_err(js_err)
-        .and_then(wasm_solid)
+pub fn cylinder(radius: f64, height: f64, frame: Option<WasmFrame>) -> Result<WasmSolid, JsValue> {
+    match frame {
+        Some(frame) => modeling::solids::cylinder_at(frame.inner.clone(), radius, height),
+        None => modeling::solids::cylinder(radius, height),
+    }
+    .map_err(js_err)
+    .and_then(wasm_solid)
 }
 
 /// Builds a cylinder at an explicitly supplied placement frame.
 #[wasm_bindgen(js_name = cylinderAt)]
 pub fn cylinder_at(frame: &WasmFrame, radius: f64, height: f64) -> Result<WasmSolid, JsValue> {
     modeling::solids::cylinder_at(frame.inner.clone(), radius, height)
+        .map_err(js_err)
+        .and_then(wasm_solid)
+}
+
+/// Extrudes an owned face along a direction by the given distance.
+#[wasm_bindgen(js_name = extrudeFace)]
+pub fn extrude_face(
+    face: &WasmFace,
+    direction: &[f64],
+    distance: f64,
+) -> Result<WasmSolid, JsValue> {
+    if direction.len() != 3 || direction.iter().any(|value| !value.is_finite()) {
+        return Err(js_err(
+            "extrusion direction must contain three finite coordinates",
+        ));
+    }
+    let direction = Vector3::new(direction[0], direction[1], direction[2]);
+    let direction = Unit::try_new(direction, 0.0)
+        .ok_or_else(|| js_err("extrusion direction must be nonzero"))?;
+    modeling::solids::extruded(face.isolated_shape()?, direction, distance)
         .map_err(js_err)
         .and_then(wasm_solid)
 }
