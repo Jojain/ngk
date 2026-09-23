@@ -49,7 +49,7 @@ function ngkDebugViewerPlugin(): Plugin {
 }
 
 function readBody(req: {
-  setEncoding: (encoding: string) => void;
+  setEncoding: (encoding: BufferEncoding) => unknown;
   on: (event: string, callback: (chunk?: string) => void) => void;
 }) {
   return new Promise<string>((resolve, reject) => {
