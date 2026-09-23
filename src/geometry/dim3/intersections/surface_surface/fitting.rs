@@ -1,4 +1,4 @@
-use super::super::IntersectionOptions;
+﻿use super::super::IntersectionOptions;
 use super::simplification::{recognize_curve_3d, simplify_curve_2d};
 use super::tracer::TraceState;
 use crate::geometry::counters::count_branch_fit;
@@ -494,10 +494,15 @@ fn fit_knots(basis: &FitBasis<'_>) -> (KnotVector, usize) {
     let mut placed = 0;
     for (segment, window) in bounds.windows(2).enumerate() {
         let (start, end) = (window[0], window[1]);
+        // Each stretch takes what brings the running total to its end's share
+        // of the whole. Rounding every stretch on its own instead lets the
+        // rounding pile up: many equal stretches that each round up spend the
+        // budget before the branch ends, and its last stretches get no knot
+        // at all however many control points the round asks for.
         let share = if segment + 2 == bounds.len() {
             uniform - placed
         } else {
-            (((end - start) * uniform as f64).round() as usize).min(uniform - placed)
+            ((end * uniform as f64).round() as usize).clamp(placed, uniform) - placed
         };
         placed += share;
         for step in 1..=share {
@@ -736,4 +741,41 @@ fn validate_fit(
             max_fit_error.max((curve_3d.point_at(Fraction::new(parameter)) - state.point).norm());
     }
     max_fit_error
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FitBasis, FitBreak, fit_knots};
+    use crate::geometry::Degree;
+
+    #[test]
+    fn fit_knots_spread_the_free_knots_over_every_stretch_between_breaks() {
+        // A branch across a skinned surface crosses one knot line per
+        // section, evenly. Every stretch between two of them is as long as
+        // the next, so each has to get its share of the free knots -- the
+        // last one as much as the first.
+        let breaks = (1..133)
+            .map(|index| FitBreak {
+                parameter: index as f64 / 133.0,
+                multiplicity: 1,
+            })
+            .collect::<Vec<_>>();
+        for control_count in [256, 512, 1024] {
+            let (knots, _) = fit_knots(&FitBasis {
+                degree: Degree::new(3).unwrap(),
+                control_count,
+                breaks: &breaks,
+            });
+            let knots = knots.as_slice();
+            let widest = knots
+                .windows(2)
+                .map(|pair| pair[1] - pair[0])
+                .fold(0.0_f64, f64::max);
+            let interior = control_count - 4;
+            assert!(
+                widest <= 2.0 / interior as f64,
+                "{control_count} control points leave a knot span {widest} wide"
+            );
+        }
+    }
 }

@@ -2,7 +2,9 @@ use std::collections::HashSet;
 use std::ops::Deref;
 
 use crate::geometry::parameter::NativeParam;
-use crate::geometry::{Curve, Interval, PointCoincidence, TrimmedCurve};
+use crate::geometry::{
+    Curve, Interval, LINEAR_TOLERANCE, Periodicity, Point3, PointCoincidence, TrimmedCurve,
+};
 use crate::measure::{LinearProperties, MeasureError, linear_properties_for_edge};
 use crate::model::{Cell1, Cell2, MergeTopology, TopologyMerge};
 use crate::topology::attributes::EdgeAttr;
@@ -339,6 +341,18 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
             self.model.alpha(Dim::Zero, attr.dart),
         ));
         let reference = match ends {
+            // A marked edge on a closed support with no period -- a NURBS loop,
+            // clamped where its ends meet -- has its corner at that meeting
+            // point, the one place such a curve can start a whole turn from. It
+            // is the whole curve; the span between the corner and itself would
+            // be the empty one at an end of it.
+            Some((start, end))
+                if start.key() == end.key()
+                    && matches!(attr.curve.periodicity(), Periodicity::None)
+                    && closes_at(&attr.curve, *start.point()) =>
+            {
+                attr.curve.domain()
+            }
             Some((start, end)) => attr.curve.interval_between(*start.point(), *end.point()),
             // An unmarked edge is its support, and has no corner to ask.
             None => attr.curve.domain(),
@@ -374,6 +388,15 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     pub fn linear_properties(&self) -> Result<LinearProperties, MeasureError> {
         linear_properties_for_edge(self)
     }
+}
+
+/// Whether a bounded curve's two ends both meet at `point`.
+fn closes_at(curve: &Curve, point: Point3) -> bool {
+    let domain = curve.domain();
+    domain.is_finite()
+        && [domain.start, domain.end]
+            .into_iter()
+            .all(|end| curve.point_at(end).coincides(point, LINEAR_TOLERANCE))
 }
 
 /// Returns the two vertices at the ends of the edge occurrence at `dart`, or

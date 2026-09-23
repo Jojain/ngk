@@ -22,8 +22,9 @@ pub use curve_surface::{
 pub use error::IntersectionError;
 pub use options::IntersectionOptions;
 pub use surface_surface::{
-    analytic_intersections as analytic_surface_intersections, intersect_prepared_surfaces,
-    intersect_surfaces, intersect_surfaces_with_options,
+    analytic_intersections as analytic_surface_intersections,
+    analytic_intersections_within as analytic_surface_intersections_within,
+    intersect_prepared_surfaces, intersect_surfaces, intersect_surfaces_with_options,
 };
 
 /// Curve/curve observations plus an explicit coverage statement.

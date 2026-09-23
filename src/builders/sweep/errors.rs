@@ -22,6 +22,22 @@ pub enum SweepError {
     #[error("the section normal is not parallel to the spine's first tangent")]
     SectionNotNormalToSpine,
 
+    /// The section's plane runs along the spine instead of across it.
+    ///
+    /// An [`Axial`](super::SweepFrame::Axial) sweep carries the section
+    /// rigidly, so the section need not stand square to the spine -- but one
+    /// lying along it sweeps no volume.
+    #[error("the section lies along the spine and sweeps no volume")]
+    SectionAlongSpine,
+
+    /// The spine touches the axis of an [`Axial`](super::SweepFrame::Axial)
+    /// sweep.
+    ///
+    /// The frame's `x` runs out from the axis to the spine, and a point on the
+    /// axis names no direction out from it.
+    #[error("the spine meets the sweep axis at fraction {fraction}")]
+    SpineMeetsTheAxis { fraction: f64 },
+
     /// The spine stands still where a tangent was asked for.
     ///
     /// A section is carried perpendicular to the spine, so a point where the

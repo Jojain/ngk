@@ -1,4 +1,4 @@
-use crate::geometry::TrimmedCurve2;
+﻿use crate::geometry::TrimmedCurve2;
 use nalgebra::{Vector3, Vector4};
 
 use super::super::curve_surface::{

@@ -209,34 +209,31 @@ impl FaceTrimDomain {
 
     /// Winding membership across every image the query could occupy.
     ///
-    /// Where a loop encloses the face, one image landing inside it settles the
-    /// question: the images are one point of the surface, and the face's holes
-    /// are written on the same image its outer loop is. Where the *support*
-    /// encloses the face there is no such anchor — every image is enclosed, so
-    /// asking `any` would let the images that do not carry the hole answer for
-    /// the one that does, and a point in a bite taken out of a torus would come
-    /// back as a point of it. A hole has to miss on all of them.
+    /// The images are one point of the surface, so enclosure and holes are
+    /// asked separately. Something has to enclose the point on *some* image:
+    /// the outer loop where a loop encloses the face, or the support itself
+    /// where nothing does — a torus with a bite taken out of it. And a hole
+    /// has to miss on *all* of them, because a hole need not be written on the
+    /// branch the enclosure is. A band winding several turns round a cylinder,
+    /// cut out of its wall, is one hole running over several periods while the
+    /// wall's own loops span one; a point on the band's fifth turn has an
+    /// image inside the wall's period nowhere near the hole's branch, and
+    /// asking both questions of that one image would put it back on the wall.
     fn contains_in_quotient(&self, images: &[Point2]) -> bool {
-        match self.whole_support.is_some() {
-            true => !images.iter().any(|image| {
-                self.polygons
-                    .iter()
-                    .any(|hole| winding_contains(hole, *image))
-            }),
-            false => images.iter().any(|image| self.planar_contains(*image)),
-        }
-    }
-
-    /// Winding membership against an enclosing polygon and its holes, on one branch.
-    fn planar_contains(&self, point: Point2) -> bool {
-        self.polygons
-            .first()
-            .is_some_and(|outer| winding_contains(outer, point))
-            && self
-                .polygons
+        let (enclosed, holes) = match self.whole_support {
+            Some(_) => (true, &self.polygons[..]),
+            None => match self.polygons.split_first() {
+                Some((outer, holes)) => (
+                    images.iter().any(|image| winding_contains(outer, *image)),
+                    holes,
+                ),
+                None => (false, &[][..]),
+            },
+        };
+        enclosed
+            && !images
                 .iter()
-                .skip(1)
-                .all(|hole| !winding_contains(hole, point))
+                .any(|image| holes.iter().any(|hole| winding_contains(hole, *image)))
     }
 
     /// Strict interior membership; exact curve proximity excludes the boundary.

@@ -31,9 +31,10 @@ pub use dim3::intersections::{
     PreparedCurve, PreparedSurface, SurfaceIntersectionBranch, SurfaceIntersectionBranchKind,
     SurfaceIntersectionPoint, SurfaceIntersectionPointKind, SurfaceOverlapCandidate,
     SurfaceSurfaceIntersection, SurfaceSurfaceIntersections, analytic_surface_intersections,
-    intersect_analytic_curve_surface, intersect_analytic_curves, intersect_analytic_surfaces,
-    intersect_prepared_curve_surface, intersect_prepared_surfaces, intersect_surfaces,
-    intersect_surfaces_with_options, line_surface_is_analytic,
+    analytic_surface_intersections_within, intersect_analytic_curve_surface,
+    intersect_analytic_curves, intersect_analytic_surfaces, intersect_prepared_curve_surface,
+    intersect_prepared_surfaces, intersect_surfaces, intersect_surfaces_with_options,
+    line_surface_is_analytic,
 };
 pub use dim3::nurbs::tessellate::{
     sample_curve_uniform, tessellate_curve_adaptive, tessellate_surface_grid,

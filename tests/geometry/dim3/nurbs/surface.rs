@@ -343,3 +343,39 @@ mod skinning {
         }
     }
 }
+
+#[test]
+fn closest_parameter_finds_the_right_turn_of_a_long_helical_ribbon() {
+    // A thread flank: a radial segment carried seven turns round an axis. Any
+    // point on it lies a pitch away from the turns above and below it, so the
+    // search has to land on its own turn, not merely somewhere near.
+    let (turns, sections_per_turn, pitch) = (7.0, 16, 1.25);
+    let count = (turns * sections_per_turn as f64) as usize + 1;
+    let sections = (0..count)
+        .map(|index| {
+            let angle = std::f64::consts::TAU * index as f64 / sections_per_turn as f64;
+            let radial = Vector3::new(angle.cos(), angle.sin(), 0.0);
+            let height = Vector3::z() * (pitch * angle / std::f64::consts::TAU);
+            ngk::geometry::Curve::line(
+                Point3::from(radial * 2.4 + height),
+                Point3::from(radial * 3.0 + height),
+            )
+            .to_nurbs()
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let surface = NurbsSurface::skinned(&sections, Degree::new(3).unwrap()).unwrap();
+    let (domain_u, domain_v) = (surface.domain_u(), surface.domain_v());
+
+    for i in 1..8 {
+        for j in 1..40 {
+            let u = domain_u.at(Fraction::new(i as f64 / 8.0)).value();
+            let v = domain_v.at(Fraction::new(j as f64 / 40.0)).value();
+            let uv = surface.closest_parameter(surface.point_at(u, v));
+            assert!(
+                (uv.x - u).abs() <= 1.0e-8 && (uv.y - v).abs() <= 1.0e-8,
+                "({u}, {v}) came back as {uv:?}"
+            );
+        }
+    }
+}

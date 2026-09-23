@@ -32,13 +32,24 @@ use crate::topology::vertex::Vertex;
 use super::SweepError;
 
 /// How the section frame is carried along a smooth spine.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum SweepFrame {
     /// Carry the frame by the shortest rotation between successive tangents.
     #[default]
     Parallel,
     /// Use the spine tangent and principal normal as the moving frame.
     Frenet,
+    /// Turn the section about an axis and slide it along it, following the
+    /// spine: at every point the frame's `x` runs out from the axis and its
+    /// `z` along it.
+    ///
+    /// Along a helix round that axis this is the screw motion itself, so a
+    /// section drawn in a plane through the axis stays in one -- the way a
+    /// thread profile is drawn. The section is carried rigidly rather than
+    /// held perpendicular to the spine, so it need only cross the spine, not
+    /// stand square to it; and since the frame is read off the spine's
+    /// position alone, a junction needs no transition.
+    Axial(Axis3),
 }
 
 /// How a sweep crosses a junction that is only position-continuous.
@@ -54,7 +65,7 @@ pub enum SweepTransition {
 }
 
 /// Controls frame transport, corner treatment, and curved-spine resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SweepOptions {
     /// The moving frame used within smooth spine segments.
     pub frame: SweepFrame,
@@ -304,8 +315,16 @@ impl SweepPlan {
             start_tangent,
             end_tangent,
         } = plan_wall_groups(spine, options)?;
-        if face.normal_at(0.0, 0.0).dot(&start_tangent).abs() < 1.0 - ANGULAR_TOLERANCE {
-            return Err(SweepError::SectionNotNormalToSpine);
+        let crossing = face.normal_at(0.0, 0.0).dot(&start_tangent).abs();
+        match options.frame {
+            SweepFrame::Axial(_) if crossing <= ANGULAR_TOLERANCE => {
+                return Err(SweepError::SectionAlongSpine);
+            }
+            SweepFrame::Axial(_) => {}
+            SweepFrame::Parallel | SweepFrame::Frenet if crossing < 1.0 - ANGULAR_TOLERANCE => {
+                return Err(SweepError::SectionNotNormalToSpine);
+            }
+            SweepFrame::Parallel | SweepFrame::Frenet => {}
         }
         Ok(Self {
             face: face_key,
@@ -404,6 +423,7 @@ fn plan_wall_groups(spine: &[TrimmedCurve], options: SweepOptions) -> Result<Pat
     let mut current = match options.frame {
         SweepFrame::Parallel => initial_frame(first_point, first_tangent),
         SweepFrame::Frenet => frenet_frame(&spine[0], Fraction::START, first_tangent)?,
+        SweepFrame::Axial(axis) => axial_frame(axis, first_point, Fraction::START)?,
     };
     let base = current.clone();
     let mut pending_start = Placement::Rigid(Rigid::identity());
@@ -424,13 +444,28 @@ fn plan_wall_groups(spine: &[TrimmedCurve], options: SweepOptions) -> Result<Pat
         let Some(next) = spine.get(index + 1) else {
             let end_motion = Rigid::between_frames(&base, &incoming);
             wall_groups.push(WallGroup::AlongSpine { placements });
+            // An axial frame's `z` is the axis, not the spine, so the spine is
+            // asked for its own direction at the two ends.
+            let (start_tangent, end_tangent) = match options.frame {
+                SweepFrame::Axial(_) => (*first_tangent, *tangent(segment, Fraction::END)?),
+                SweepFrame::Parallel | SweepFrame::Frenet => (*base.z_dir, *incoming.z_dir),
+            };
             return Ok(PathPlan {
                 wall_groups,
                 end_motion,
-                start_tangent: *base.z_dir,
-                end_tangent: *incoming.z_dir,
+                start_tangent,
+                end_tangent,
             });
         };
+
+        // The axial frame at a junction is the one both segments read off the
+        // same point, so the next group starts exactly where this one ends.
+        if let SweepFrame::Axial(_) = options.frame {
+            wall_groups.push(WallGroup::AlongSpine { placements });
+            pending_start = Placement::Rigid(Rigid::between_frames(&base, &incoming));
+            current = incoming;
+            continue;
+        }
 
         let outgoing_tangent = tangent(next, Fraction::START)?;
         let (outgoing, angle, axis) = turn_frame(&incoming, outgoing_tangent, index + 1)?;
@@ -500,10 +535,11 @@ fn segment_frames(
     start: Frame,
     options: SweepOptions,
 ) -> Result<Vec<Frame>, SweepError> {
-    let intervals = if matches!(segment.curve(), Curve::Line(_)) {
-        1
-    } else {
-        options.samples_per_segment.max(2)
+    // A line carries a transported frame unchanged from end to end, but an
+    // axial frame turns along any line not parallel to the axis.
+    let intervals = match (segment.curve(), options.frame) {
+        (Curve::Line(_), SweepFrame::Parallel | SweepFrame::Frenet) => 1,
+        _ => options.samples_per_segment.max(2),
     };
     let mut frames = Vec::with_capacity(intervals + 1);
     let mut previous = start;
@@ -520,6 +556,7 @@ fn segment_frames(
                 }
             }
             SweepFrame::Frenet => frenet_frame(segment, fraction, direction)?,
+            SweepFrame::Axial(axis) => axial_frame(axis, point, fraction)?,
         };
         previous = frame.clone();
         frames.push(frame);
@@ -539,6 +576,16 @@ fn frenet_frame(
             fraction: fraction.value(),
         })?;
     Ok(Frame::from_xz(segment.point_at(fraction), normal, tangent))
+}
+
+/// The frame at `point` whose `x` runs out from `axis` and whose `z` along it.
+fn axial_frame(axis: Axis3, point: Point3, fraction: Fraction) -> Result<Frame, SweepError> {
+    let radial = UnitVector3::try_new(point - axis.project(point), LINEAR_TOLERANCE).ok_or(
+        SweepError::SpineMeetsTheAxis {
+            fraction: fraction.value(),
+        },
+    )?;
+    Ok(Frame::from_xz(point, radial, axis.direction))
 }
 
 fn transported_frame(

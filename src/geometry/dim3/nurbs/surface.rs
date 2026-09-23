@@ -9,6 +9,13 @@ use crate::geometry::nurbs::basis::{basis_function_derivatives, basis_functions}
 use crate::geometry::nurbs::error::{NurbsError, SkinningIncompatibility};
 use crate::geometry::{BBox, Interval, LINEAR_TOLERANCE, Point3};
 
+/// Fewest grid samples per direction a closest-point search starts from.
+const MIN_CLOSEST_SAMPLES: usize = 12;
+/// Most grid samples per direction a closest-point search starts from.
+const MAX_CLOSEST_SAMPLES: usize = 512;
+/// How many of the nearest grid samples a closest-point search refines.
+const CLOSEST_POINT_STARTS: usize = 4;
+
 /// One exact rational Bézier patch extracted from a parent NURBS surface.
 #[derive(Debug, Clone)]
 pub struct BezierSurface {
@@ -295,8 +302,27 @@ impl NurbsSurface {
         UnitVector3::new_normalize(du.cross(&dv))
     }
 
+    /// Returns the parameters of the point on the surface nearest `point`.
+    ///
+    /// Newton converges only from a start already in the right basin, and a
+    /// surface that folds back near itself -- a thread flank winding round
+    /// many turns -- has one basin per fold. The starts therefore come from a
+    /// grid as fine as the control net, which is what bounds how often the
+    /// surface can turn between two samples, and the few closest are all
+    /// refined, keeping whichever lands nearest.
     pub fn closest_parameter(&self, point: Point3) -> Point2<f64> {
-        let (mut u, mut v) = self.closest_sample_parameter(point, 12);
+        self.closest_sample_parameters(point)
+            .into_iter()
+            .map(|(u, v)| self.refine_closest_parameter(point, u, v))
+            .min_by(|a, b| {
+                let distance = |uv: &Point2<f64>| (self.point_at(uv.x, uv.y) - point).norm();
+                distance(a).total_cmp(&distance(b))
+            })
+            .expect("the sample grid is never empty")
+    }
+
+    /// Gauss-Newton from `(u, v)`, clamped to the domain.
+    fn refine_closest_parameter(&self, point: Point3, mut u: f64, mut v: f64) -> Point2<f64> {
         let domain_u = self.domain_u();
         let domain_v = self.domain_v();
 
@@ -328,27 +354,33 @@ impl NurbsSurface {
         Point2::new(u, v)
     }
 
-    fn closest_sample_parameter(&self, point: Point3, sample_count: usize) -> (f64, f64) {
-        let sample_count = sample_count.max(1);
+    /// The grid samples nearest `point`, closest first.
+    ///
+    /// Each direction takes two samples per control point, and never fewer
+    /// than [`MIN_CLOSEST_SAMPLES`], so a small patch is searched exactly as
+    /// finely as before while a long one is not searched more coarsely.
+    fn closest_sample_parameters(&self, point: Point3) -> Vec<(f64, f64)> {
+        let samples = |count: usize| (2 * count).clamp(MIN_CLOSEST_SAMPLES, MAX_CLOSEST_SAMPLES);
+        let samples_u = samples(self.control_points.nu());
+        let samples_v = samples(self.control_points.nv());
         let domain_u = self.domain_u();
         let domain_v = self.domain_v();
-        let mut closest = (domain_u.start.value(), domain_v.start.value());
-        let mut closest_distance = f64::INFINITY;
+        let mut candidates = Vec::with_capacity((samples_u + 1) * (samples_v + 1));
 
-        for i in 0..=sample_count {
-            let u = domain_u.start.value() + domain_u.length() * (i as f64 / sample_count as f64);
-            for j in 0..=sample_count {
-                let v =
-                    domain_v.start.value() + domain_v.length() * (j as f64 / sample_count as f64);
-                let distance = (self.point_at(u, v) - point).norm_squared();
-                if distance < closest_distance {
-                    closest = (u, v);
-                    closest_distance = distance;
-                }
+        for i in 0..=samples_u {
+            let u = domain_u.start.value() + domain_u.length() * (i as f64 / samples_u as f64);
+            for j in 0..=samples_v {
+                let v = domain_v.start.value() + domain_v.length() * (j as f64 / samples_v as f64);
+                candidates.push(((self.point_at(u, v) - point).norm_squared(), (u, v)));
             }
         }
 
-        closest
+        candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
+        candidates
+            .into_iter()
+            .take(CLOSEST_POINT_STARTS)
+            .map(|(_, uv)| uv)
+            .collect()
     }
 
     /// Returns `(dS/du, dS/dv)` in cartesian space.

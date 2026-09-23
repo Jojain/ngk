@@ -1875,3 +1875,83 @@ fn splitting_a_face_moves_the_bridges_it_owns_to_the_half_that_holds_them() {
         }
     }
 }
+
+#[test]
+fn a_cylinder_standing_flush_on_a_block_fuses_through_the_rim_they_share() {
+    // The cylinder's base rim is a whole circle with no corner, while the hole
+    // it leaves in the block's top face is reached by a bridge and so has one.
+    // Sewing the two rims together has to give both the same corner.
+    let block = solids::block(2.0, 2.0, 1.0).expect("block");
+    let cylinder =
+        solids::cylinder_at(Frame::at(Point3::new(1.0, 1.0, 1.0)), 0.5, 1.0).expect("cylinder");
+
+    let fused = solids::fuse(block, cylinder).expect("a flush cylinder should fuse");
+
+    validate_solid_manifold(fused.model(), fused.key()).unwrap();
+    ngk::topology::validation::validate_solid_orientation(fused.model(), fused.key()).unwrap();
+    let solid = fused.solid();
+    assert_eq!(solid.shells().len(), 1);
+    // Six block faces, the cylinder's wall and its top cap; the two faces that
+    // met flush are both interior now.
+    assert_eq!(solid.faces().len(), 8);
+    // The rim the two were sewn along is marked now, at the corner the block's
+    // side of it carried, and it is still the whole circle it was.
+    let circumference = std::f64::consts::TAU * 0.5;
+    let rims = fused
+        .model()
+        .iter_edges()
+        .map(|(key, _)| fused.model().edge_unchecked(key))
+        .filter(|edge| matches!(edge, Edge::Marked(_)))
+        .map(|edge| edge.length())
+        .collect::<Vec<_>>();
+    assert!(!rims.is_empty(), "the shared rim should carry a corner");
+    for length in rims {
+        assert!(
+            (length - circumference).abs() <= 1e-6,
+            "a marked rim should run the whole circle, runs {length}"
+        );
+    }
+    for (point, expected) in [
+        (Point3::new(1.0, 1.0, 0.5), true),
+        (Point3::new(1.0, 1.0, 1.5), true),
+        (Point3::new(1.8, 1.0, 1.5), false),
+    ] {
+        assert_eq!(
+            solid_contains_point(fused.model(), fused.key(), point, BooleanOptions::default())
+                .unwrap(),
+            expected,
+            "{point:?}"
+        );
+    }
+}
+
+#[test]
+fn coaxial_cylinders_standing_flush_fuse_into_a_stepped_shaft() {
+    // The thinner cylinder's base sits inside the wider one's top cap, whose
+    // only boundary is one whole circle. The imprint of the thinner rim has to
+    // be wound against that cap, or the disk it cuts out comes back facing
+    // the wrong way and is kept as though it were outside.
+    let wide = solids::cylinder(1.0, 1.0).expect("wide cylinder");
+    let thin = solids::cylinder_at(Frame::at(Point3::new(0.0, 0.0, 1.0)), 0.5, 1.0).expect("thin");
+
+    let fused = solids::fuse(wide, thin).expect("flush coaxial cylinders should fuse");
+
+    validate_solid_manifold(fused.model(), fused.key()).unwrap();
+    ngk::topology::validation::validate_solid_orientation(fused.model(), fused.key()).unwrap();
+    let solid = fused.solid();
+    assert_eq!(solid.shells().len(), 1);
+    // The base, both walls, the annular step and the thin cylinder's top.
+    assert_eq!(solid.faces().len(), 5);
+    for (point, expected) in [
+        (Point3::new(0.0, 0.0, 1.5), true),
+        (Point3::new(0.8, 0.0, 0.5), true),
+        (Point3::new(0.8, 0.0, 1.5), false),
+    ] {
+        assert_eq!(
+            solid_contains_point(fused.model(), fused.key(), point, BooleanOptions::default())
+                .unwrap(),
+            expected,
+            "{point:?}"
+        );
+    }
+}

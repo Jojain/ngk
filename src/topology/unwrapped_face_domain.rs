@@ -19,8 +19,8 @@ use thiserror::Error;
 
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{
-    Axis2, DomainSide, LINEAR_TOLERANCE, Point2, Surface, SurfacePeriodicity, TrimmedCurve2,
-    Vector2,
+    Axis2, DomainSide, LINEAR_TOLERANCE, Point2, Surface, SurfacePeriodicity, TrimmedCurve,
+    TrimmedCurve2, Vector2,
 };
 use crate::topology::attributes::LoopKind;
 use crate::topology::face::Face;
@@ -46,6 +46,8 @@ pub enum UnwrappedFaceDomainError {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnwrappedFaceDomainCurve {
     curve: TrimmedCurve2,
+    /// The edge this pcurve lies under, in 3D, traversed as the loop runs.
+    span: TrimmedCurve,
     offset: Vector2,
     corners: Vec<Point2>,
 }
@@ -54,6 +56,11 @@ impl UnwrappedFaceDomainCurve {
     /// Returns the pcurve as stored on the face, in its own branch.
     pub fn curve(&self) -> &TrimmedCurve2 {
         &self.curve
+    }
+
+    /// Returns the edge this pcurve lies under, in 3D, as the loop runs it.
+    pub fn span(&self) -> &TrimmedCurve {
+        &self.span
     }
 
     /// Returns the whole-period translation placing this pcurve in the unwrapped domain.
@@ -112,6 +119,51 @@ impl UnwrappedFaceDomainLoop {
     /// The polyline is cyclic: the final point does not repeat the first.
     pub fn polyline(&self, segments: usize) -> Vec<Point2> {
         self.flatten(|curve| curve.curve.sample(segments.max(1)))
+    }
+
+    /// Flattens the loop into an unwrapped-domain polyline through the points
+    /// its edges are drawn at.
+    ///
+    /// Each edge is cut into as many uniform pieces as `segments` asks of it,
+    /// in 3D, and each cut is found on the pcurve: near the same fraction of
+    /// it, at the point `surface` puts closest to the cut. A pcurve need not
+    /// share its edge's parameterization -- a straight line along a cylinder,
+    /// uniform in angle, under a rational circle that is not -- so reading it
+    /// at the edge's own fractions would land beside the edge, not on it. The
+    /// search stays on the pcurve and in order along it, so the boundary keeps
+    /// the shape the face was trimmed to.
+    ///
+    /// The polyline is cyclic: the final point does not repeat the first.
+    pub fn polyline_on(
+        &self,
+        surface: &Surface,
+        segments: impl Fn(&TrimmedCurve) -> usize,
+    ) -> Vec<Point2> {
+        self.flatten(|curve| {
+            let count = segments(&curve.span).max(1);
+            let step = 1.0 / count as f64;
+            let mut floor = 0.0_f64;
+            (0..=count)
+                .map(|index| {
+                    let target = curve.span.point_at(Fraction::new(index as f64 * step));
+                    let distance = |fraction: f64| {
+                        let uv = curve.curve.point_at(Fraction::new(fraction));
+                        (surface.point_at(uv.x, uv.y) - target).norm()
+                    };
+                    let fraction = match index {
+                        0 => 0.0,
+                        _ if index == count => 1.0,
+                        _ => nearest_on(
+                            distance,
+                            floor.max(index as f64 * step - step),
+                            (index as f64 * step + step).min(1.0),
+                        ),
+                    };
+                    floor = fraction;
+                    curve.curve.point_at(Fraction::new(fraction))
+                })
+                .collect()
+        })
     }
 
     /// Flattens the loop into an unwrapped-domain polyline within `chord` of the pcurves.
@@ -255,30 +307,81 @@ impl UnwrappedFaceDomain {
         if diagonal.is_finite() { diagonal } else { 0.0 }
     }
 
-    /// Returns `point` plus every whole-period translate of it.
+    /// Returns `point` plus every whole-period translate of it the loops reach.
     ///
     /// A query lives on the surface, where a periodic parameter names the same
     /// point at either end of its period; the unwrapped domain wrote the loops on one
     /// branch. Asking the same question once per branch the loops could have
     /// been written on answers in the quotient without leaving planar
     /// arithmetic.
+    ///
+    /// A loop need not stay within one period. A band winding round a
+    /// cylinder -- the strip a thread covers on its core -- is written as one
+    /// long parallelogram running over several periods of `u`, one turn per
+    /// period, and a point on its fifth turn is found only on the branch four
+    /// periods along. So the translates run over the whole extent of the
+    /// loops, and one period past it on either side, which is all a domain
+    /// written within a single period ever needed.
     pub fn images(&self, point: Point2) -> Vec<Point2> {
         let mut images = vec![point];
         for (axis, period) in self.periods.iter().enumerate() {
             let Some(period) = *period else {
                 continue;
             };
+            let (first, last) = self.translates(point[axis], axis, period);
             let existing = images.clone();
-            for shift in [-period, period] {
+            for turn in (first..=last).filter(|turn| *turn != 0) {
                 images.extend(existing.iter().map(|image| {
                     let mut moved = *image;
-                    moved[axis] += shift;
+                    moved[axis] += turn as f64 * period;
                     moved
                 }));
             }
         }
         images
     }
+
+    /// The whole-period shifts along `axis` that carry `value` into the loops'
+    /// extent, widened by one either side and always including `-1..=1`.
+    fn translates(&self, value: f64, axis: usize, period: f64) -> (i64, i64) {
+        let (min, max) = (self.min[axis], self.max[axis]);
+        if !(min.is_finite() && max.is_finite() && value.is_finite()) {
+            return (-1, 1);
+        }
+        let first = ((min - value) / period).floor() as i64 - 1;
+        let last = ((max - value) / period).ceil() as i64 + 1;
+        (first.min(-1), last.max(1))
+    }
+}
+
+/// Where `distance` is least on `[low, high]`, by golden-section search.
+///
+/// The window is one sample either side of where the point would be if the
+/// pcurve shared its edge's parameterization, which is narrow enough to hold
+/// one minimum.
+fn nearest_on(distance: impl Fn(f64) -> f64, low: f64, high: f64) -> f64 {
+    const RATIO: f64 = 0.618_033_988_749_894_9;
+    const STEPS: usize = 40;
+    let (mut low, mut high) = (low, high);
+    let mut left = high - RATIO * (high - low);
+    let mut right = low + RATIO * (high - low);
+    let (mut at_left, mut at_right) = (distance(left), distance(right));
+    for _ in 0..STEPS {
+        if at_left <= at_right {
+            high = right;
+            right = left;
+            at_right = at_left;
+            left = high - RATIO * (high - low);
+            at_left = distance(left);
+        } else {
+            low = left;
+            left = right;
+            at_left = at_right;
+            right = low + RATIO * (high - low);
+            at_right = distance(right);
+        }
+    }
+    0.5 * (low + high)
 }
 
 /// Reads a support's periods as a parameter-indexed pair.
@@ -317,6 +420,7 @@ fn place_loop<P: Payload>(
             });
         curves.push(UnwrappedFaceDomainCurve {
             curve,
+            span: edge.trimmed_curve(),
             offset: *offset,
             corners: corner.into_iter().collect(),
         });

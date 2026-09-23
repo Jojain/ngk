@@ -1,6 +1,6 @@
 //! `ShapeKey` → tessellated representation. Single dispatch entry point.
 
-use super::{IndexedMesh, Polyline3, TessellateOpts, tessellate_curve, tessellate_face_key};
+use super::{IndexedMesh, Polyline3, TessellateOpts, curve::tessellate_span, tessellate_face_key};
 use crate::geometry::Point3;
 use crate::model::Model;
 use crate::topology::payload::Payload;
@@ -42,12 +42,5 @@ pub fn tessellate_edge<P: Payload>(
 ) -> Option<Polyline3> {
     let attr = g.edge_attr(key)?;
     let edge = attr.edge(g, key);
-    let curve = edge.curve();
-    let interval = edge.parameter_interval();
-    Some(tessellate_curve(
-        curve,
-        interval.start.value(),
-        interval.end.value(),
-        opts.curve,
-    ))
+    Some(tessellate_span(&edge.trimmed_curve(), opts.curve))
 }

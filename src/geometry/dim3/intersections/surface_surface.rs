@@ -20,7 +20,9 @@ use super::{
 };
 use crate::geometry::counters::count_surface_surface_call;
 use crate::geometry::parameter::Fraction;
-use crate::geometry::{BBox, Curve, NurbsSurface, Point2, Surface};
+use crate::geometry::{
+    BBox, Curve, Interval, NurbsSurface, Point2, Surface, TrimmedCurve, TrimmedCurve2,
+};
 
 /// Intersects two surfaces with the default operation-scoped tolerances.
 pub fn intersect_surfaces(
@@ -79,7 +81,111 @@ pub fn analytic_intersections(
     {
         return None;
     }
-    Some(match analytic {
+    Some(presented(analytic, a, b, options))
+}
+
+/// As [`analytic_intersections`], for two surfaces known only over parameter
+/// boxes -- the faces a Boolean is intersecting.
+///
+/// An unbounded section is what makes the plain call decline: a line has no
+/// finite window to write a branch over. Within two boxes it has one. Each
+/// line is cut to the stretch whose parameters lie inside both boxes, which
+/// its straight pcurves give exactly, and a line missing either box is
+/// dropped. A plane through a cylinder's axis, cutting it in two rulings, is
+/// then answered in closed form rather than traced -- which matters where a
+/// ruling runs along the edge of the patch the tracer would have searched.
+///
+/// Still declines a line that neither box bounds, which no support in the
+/// table produces.
+pub fn analytic_intersections_within(
+    analytic: AnalyticSurfaceIntersection,
+    a: &Surface,
+    b: &Surface,
+    boxes: [(Interval, Interval); 2],
+    options: IntersectionOptions,
+) -> Option<SurfaceSurfaceIntersections> {
+    let analytic = match analytic {
+        AnalyticSurfaceIntersection::Sections(sections) => {
+            let mut kept = Vec::with_capacity(sections.len());
+            for section in sections {
+                kept.extend(within_boxes(section, boxes, options)?);
+            }
+            AnalyticSurfaceIntersection::Sections(kept)
+        }
+        other => other,
+    };
+    Some(presented(analytic, a, b, options))
+}
+
+/// A line section cut to the stretch inside both boxes, or `Some(None)` where
+/// it misses them; any other section as it is. `None` where no box bounds it.
+fn within_boxes(
+    section: AnalyticSection,
+    boxes: [(Interval, Interval); 2],
+    options: IntersectionOptions,
+) -> Option<Option<AnalyticSection>> {
+    let Curve::Line(_) = section.curve.curve() else {
+        return Some(Some(section));
+    };
+    let (mut first, mut last) = (f64::NEG_INFINITY, f64::INFINITY);
+    for (pcurve, (u, v)) in [&section.pcurve_a, &section.pcurve_b]
+        .into_iter()
+        .zip(boxes)
+    {
+        let (from, to) = (
+            pcurve.point_at(Fraction::new(0.0)),
+            pcurve.point_at(Fraction::new(1.0)),
+        );
+        for (axis, range) in [(0, u), (1, v)] {
+            let change = to[axis] - from[axis];
+            // A coordinate the line holds fixed bounds nothing along it; the
+            // trim decides afterwards whether that fixed value is on the face.
+            if change.abs() <= options.parameter_tolerance {
+                continue;
+            }
+            let ends = [
+                (range.start.value() - from[axis]) / change,
+                (range.end.value() - from[axis]) / change,
+            ];
+            first = first.max(ends[0].min(ends[1]));
+            last = last.min(ends[0].max(ends[1]));
+        }
+    }
+    if !(first.is_finite() && last.is_finite()) {
+        return None;
+    }
+    if last - first <= options.parameter_tolerance {
+        return Some(None);
+    }
+    let window = |pcurve: &TrimmedCurve2| {
+        TrimmedCurve2::segment(
+            pcurve.point_at(Fraction::new(first)),
+            pcurve.point_at(Fraction::new(last)),
+        )
+    };
+    let span = section.curve.interval();
+    Some(Some(AnalyticSection {
+        curve: TrimmedCurve::new(
+            section.curve.curve().clone(),
+            Interval::new(
+                span.at(Fraction::new(first)).value(),
+                span.at(Fraction::new(last)).value(),
+            ),
+        ),
+        pcurve_a: window(&section.pcurve_a),
+        pcurve_b: window(&section.pcurve_b),
+        fidelity: section.fidelity,
+    }))
+}
+
+/// Presents a closed-form answer whose sections are all bounded.
+fn presented(
+    analytic: AnalyticSurfaceIntersection,
+    a: &Surface,
+    b: &Surface,
+    options: IntersectionOptions,
+) -> SurfaceSurfaceIntersections {
+    match analytic {
         AnalyticSurfaceIntersection::Empty => {
             SurfaceSurfaceIntersections::new(Vec::new(), IntersectionCoverage::Complete)
         }
@@ -134,7 +240,7 @@ pub fn analytic_intersections(
                 },
             )
         }
-    })
+    }
 }
 
 /// Builds the branch record for one closed-form section.

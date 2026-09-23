@@ -177,3 +177,61 @@ fn rigid_translation_preserves_measures_and_moves_the_centroid() {
         1e-12,
     );
 }
+
+#[test]
+fn a_section_swept_round_a_helix_encloses_its_area_times_the_helix_length() {
+    // A section centred on its spine sweeps exactly its own area along every
+    // unit of the spine's length. Eight turns of a slender helix is long
+    // enough that a mesh sampling a face only at its corners would skip
+    // whole turns of it.
+    use ngk::builders::sweep::{SweepFrame, SweepOptions};
+    use ngk::geometry::{Helix, NativeParam, Plane};
+    use ngk::modeling::sweep::sweep_face;
+    use ngk::modeling::{edges, faces};
+    use radians::Rad64;
+
+    let (radius, pitch, turns, width, height) = (2.5, 1.25, 8.0, 0.4, 0.3);
+    let axis = Axis3::z();
+    let spine = edges::helix(
+        axis,
+        radius,
+        pitch,
+        Rad64::new(0.0),
+        Rad64::new(std::f64::consts::TAU * turns),
+    )
+    .expect("helix should build");
+    let helix = Helix::from_axis(axis, radius, pitch);
+    let start = helix.point_at(NativeParam::new(0.0));
+    let tangent = helix.derivative_at(NativeParam::new(0.0), 1).normalize();
+    let outward = (start - axis.origin).normalize();
+    let across = tangent.cross(&outward);
+    let section = faces::rectangle(
+        Plane::from_xy(
+            start - outward * (width / 2.0) - across * (height / 2.0),
+            outward,
+            across,
+        ),
+        width,
+        height,
+    )
+    .expect("section should build");
+    let solid = sweep_face(
+        section,
+        &spine.edge(),
+        SweepOptions {
+            frame: SweepFrame::Frenet,
+            samples_per_segment: 16 * turns as usize,
+            ..SweepOptions::default()
+        },
+    )
+    .expect("section should sweep");
+
+    let length = turns * (std::f64::consts::TAU * radius).hypot(pitch);
+    let expected = width * height * length;
+    let volume = solid
+        .solid()
+        .volume_properties()
+        .expect("swept volume")
+        .volume;
+    assert_close(volume, expected, 1e-2 * expected);
+}

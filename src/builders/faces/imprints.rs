@@ -282,7 +282,10 @@ pub(crate) fn add_closed_curve_imprint_loops<P: Payload>(
     imprints: &[&FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
     let boundary_uvs = face_boundary_uvs(edit, face)?;
-    let boundary_area = signed_area(&boundary_uvs);
+    // Read off the boundary's curves, not its corners: a face bounded by one
+    // whole circle has a single 0-cell, whose polygon encloses nothing and
+    // would state no winding at all.
+    let boundary_area = boundary_winding(edit, face);
     let mut splits = Vec::new();
 
     for (index, imprint) in imprints.iter().enumerate() {

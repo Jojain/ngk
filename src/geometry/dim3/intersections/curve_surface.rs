@@ -357,7 +357,9 @@ impl Search<'_> {
             // Hulls that still overlap without padding, around a candidate that
             // will not correct to tolerance, mean a tangential or singular
             // contact this solver does not resolve.
-            if !self.refine(&curve, &surface) && curve_bbox.intersects(&surface_bbox, 0.0) {
+            if self.refine(&curve, &surface) == Refined::Failed
+                && curve_bbox.intersects(&surface_bbox, 0.0)
+            {
                 self.report_unresolved(&curve);
             }
             return;
@@ -365,7 +367,9 @@ impl Search<'_> {
 
         // Once the candidate is small enough to hold a single root, correcting
         // is both cheaper and more accurate than subdividing to tolerance.
-        if curve.depth + surface.depth >= EARLY_REFINEMENT_DEPTH && self.refine(&curve, &surface) {
+        if curve.depth + surface.depth >= EARLY_REFINEMENT_DEPTH
+            && self.refine(&curve, &surface) == Refined::Inside
+        {
             return;
         }
 
@@ -380,7 +384,9 @@ impl Search<'_> {
         if !surface_leaf && let Some((left, right)) = surface.split() {
             self.visit(curve.clone(), left);
             self.visit(curve, right);
-        } else if !self.refine(&curve, &surface) && curve_bbox.intersects(&surface_bbox, 0.0) {
+        } else if self.refine(&curve, &surface) == Refined::Failed
+            && curve_bbox.intersects(&surface_bbox, 0.0)
+        {
             self.report_unresolved(&curve);
         }
     }
@@ -414,12 +420,27 @@ impl Search<'_> {
         })
     }
 
-    /// Corrects one isolated candidate against the original NURBS equations.
-    fn refine(&mut self, curve: &CurvePiece, surface: &SurfacePiece) -> bool {
+    /// Corrects one candidate against the original NURBS equations, starting
+    /// from the middle of the two pieces.
+    ///
+    /// Newton is free to leave the pieces. Two pieces whose boxes still overlap
+    /// can sit right beside a crossing that belongs to a neighbouring piece --
+    /// a line passing an oblique patch overlaps the boxes of every piece around
+    /// the one it crosses -- and a Newton held inside the piece would stall on
+    /// its edge and pass the neighbour's crossing off as a tangency it cannot
+    /// resolve. Any root it converges to is a root, and is recorded; whether
+    /// it lies in this pair of pieces is what the caller needs to decide
+    /// whether this pair is settled.
+    fn refine(&mut self, curve: &CurvePiece, surface: &SurfacePiece) -> Refined {
         let options = self.options;
         let curve_domain = curve.bezier.domain();
         let surface_domain_u = surface.patch.domain_u();
         let surface_domain_v = surface.patch.domain_v();
+        let (whole_curve, whole_u, whole_v) = (
+            self.curve.domain(),
+            self.surface.domain_u(),
+            self.surface.domain_v(),
+        );
         let mut curve_u = curve_domain.midpoint().value();
         let mut surface_u = surface_domain_u.midpoint().value();
         let mut surface_v = surface_domain_v.midpoint().value();
@@ -436,9 +457,9 @@ impl Search<'_> {
                 break;
             };
 
-            curve_u = clamp_interval(curve_u + delta.x, curve_domain);
-            surface_u = clamp_interval(surface_u + delta.y, surface_domain_u);
-            surface_v = clamp_interval(surface_v + delta.z, surface_domain_v);
+            curve_u = clamp_interval(curve_u + delta.x, whole_curve);
+            surface_u = clamp_interval(surface_u + delta.y, whole_u);
+            surface_v = clamp_interval(surface_v + delta.z, whole_v);
             if delta.norm() <= options.parameter_tolerance {
                 break;
             }
@@ -447,26 +468,33 @@ impl Search<'_> {
         let curve_point = self.curve.point_at(curve_u);
         let surface_point = self.surface.point_at(surface_u, surface_v);
         if (curve_point - surface_point).norm_squared() > options.linear_tolerance_squared() {
-            return false;
+            return Refined::Failed;
         }
 
         let point = Point3::from((curve_point.coords + surface_point.coords) * 0.5);
-        if self.points.iter().any(|existing| {
+        if !self.points.iter().any(|existing| {
             matches!(
                 existing,
                 CurveSurfaceIntersection::Point { point: existing, .. }
                     if existing.coincides(point, point_merge_tolerance(options))
             )
         }) {
-            return true;
+            self.points.push(CurveSurfaceIntersection::Point {
+                point,
+                curve_u,
+                surface_u,
+                surface_v,
+            });
         }
-        self.points.push(CurveSurfaceIntersection::Point {
-            point,
-            curve_u,
-            surface_u,
-            surface_v,
-        });
-        true
+        let slack = options.parameter_tolerance;
+        let inside = curve_domain.contains(NativeParam::new(curve_u), slack)
+            && surface_domain_u.contains(NativeParam::new(surface_u), slack)
+            && surface_domain_v.contains(NativeParam::new(surface_v), slack);
+        if inside {
+            Refined::Inside
+        } else {
+            Refined::Elsewhere
+        }
     }
 
     fn push_reason(&mut self, reason: IntersectionIncompleteReason) {
@@ -566,6 +594,17 @@ fn merge_intervals(intervals: &mut [Interval], options: IntersectionOptions) -> 
 
 fn point_merge_tolerance(options: IntersectionOptions) -> f64 {
     (options.linear_tolerance.sqrt() * 10.0).max(options.linear_tolerance)
+}
+
+/// What correcting one candidate found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refined {
+    /// A root inside the pair of pieces the correction started from.
+    Inside,
+    /// A root, but in some other piece: this pair is not settled by it.
+    Elsewhere,
+    /// No root near enough to converge to.
+    Failed,
 }
 
 fn clamp_interval(value: f64, interval: Interval) -> f64 {

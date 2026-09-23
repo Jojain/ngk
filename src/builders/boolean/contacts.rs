@@ -860,12 +860,33 @@ fn probe_general_face_pair<P: Payload>(
         b.surface(),
         options.intersections,
     ) {
-        Some(analytic) => crate::geometry::analytic_surface_intersections(
-            analytic?,
-            a.surface(),
-            b.surface(),
-            options.intersections,
-        ),
+        Some(analytic) => {
+            let analytic = analytic?;
+            // Within the two faces' own parameter boxes an unbounded section
+            // has a finite stretch, so a line need not send the pair to the
+            // tracer. The boxes are grown as the tracer's would be, so a
+            // section ends past the trim rather than on it.
+            match (
+                broad_phase::face_uv_bounds(&a).map(grown_box),
+                broad_phase::face_uv_bounds(&b).map(grown_box),
+            ) {
+                (Some(box_a), Some(box_b)) => {
+                    crate::geometry::analytic_surface_intersections_within(
+                        analytic,
+                        a.surface(),
+                        b.surface(),
+                        [box_a, box_b],
+                        options.intersections,
+                    )
+                }
+                _ => crate::geometry::analytic_surface_intersections(
+                    analytic,
+                    a.surface(),
+                    b.surface(),
+                    options.intersections,
+                ),
+            }
+        }
         None => None,
     };
     let intersections = match analytic {
@@ -924,6 +945,15 @@ fn probe_general_face_pair<P: Payload>(
 /// section be traced twice from opposite seeds. Overshooting the trim keeps
 /// every branch end transversal.
 const DOMAIN_MARGIN: f64 = 1.0e-2;
+
+/// A face's parameter box grown by [`DOMAIN_MARGIN`] on every side.
+fn grown_box((u, v): (Interval, Interval)) -> (Interval, Interval) {
+    let grow = |domain: Interval| {
+        let margin = (domain.end.value() - domain.start.value()) * DOMAIN_MARGIN;
+        Interval::new(domain.start.value() - margin, domain.end.value() + margin)
+    };
+    (grow(u), grow(v))
+}
 
 /// Prepares a face's surface over a parameter box that overshoots its trim.
 ///

@@ -22,6 +22,7 @@
 pub mod curve;
 pub mod face;
 pub mod shape;
+mod strips;
 pub mod surface;
 
 use crate::geometry::Point3;

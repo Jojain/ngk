@@ -434,3 +434,96 @@ fn edge_and_profile_views_supply_sweep_spines() {
     .expect("a profile view should supply its ordered edges as a spine");
     assert_not_self_intersecting(&swept_profile_model, profile_sweep.solid);
 }
+
+/// A helix of `turns` round the z axis, and the point it starts from.
+fn helix_spine(
+    radius: f64,
+    pitch: f64,
+    turns: f64,
+) -> (
+    Model<StandardPayload>,
+    ngk::topology::shape_keys::EdgeKey,
+    Point3,
+) {
+    use ngk::builders::edges::add_helix;
+    use ngk::geometry::{Axis3, Helix, NativeParam};
+    use radians::Rad64;
+
+    let mut model = Model::<StandardPayload>::new();
+    let axis = Axis3::z();
+    let edge = add_helix(
+        &mut model,
+        axis,
+        radius,
+        pitch,
+        Rad64::new(0.0),
+        Rad64::new(std::f64::consts::TAU * turns),
+    )
+    .expect("helix spine should build");
+    let start = Helix::from_axis(axis, radius, pitch).point_at(NativeParam::new(0.0));
+    (model, edge, start)
+}
+
+#[test]
+fn an_axial_sweep_keeps_a_section_in_a_plane_through_the_axis() {
+    // A thread profile is drawn in a plane through the bolt's axis, and a
+    // screw motion keeps it in one: after any number of turns the end cap is
+    // still a section through the axis, not one leaning with the helix.
+    let (radius, pitch, turns) = (2.0, 1.0, 2.5);
+    let (spine_model, spine, start) = helix_spine(radius, pitch, turns);
+    let spine = spine_model.edge_unchecked(spine);
+    let outward = Vector3::new(start.x, start.y, 0.0).normalize();
+    let (width, height) = (0.4, 0.5);
+
+    let mut model = Model::<StandardPayload>::new();
+    let face = add_rectangle(
+        &mut model,
+        Plane::from_xy(
+            start - outward * (width / 2.0) - Vector3::z() * (height / 2.0),
+            outward,
+            Vector3::z(),
+        ),
+        width,
+        height,
+    )
+    .expect("section should build");
+    let sweep = add_swept_face(
+        &mut model,
+        face,
+        &spine,
+        SweepOptions {
+            frame: SweepFrame::Axial(ngk::geometry::Axis3::z()),
+            samples_per_segment: 64,
+            ..SweepOptions::default()
+        },
+    )
+    .expect("the section should sweep round the axis");
+
+    validate_solid_orientation(&model, sweep.solid).expect("the sweep should face outwards");
+    let end_cap = model.face_unchecked(sweep.end_cap);
+    let normal = end_cap.normal_at(0.0, 0.0);
+    assert!(
+        normal.z.abs() <= 1e-9,
+        "the end cap should contain the axis direction, its normal is {normal:?}"
+    );
+    let corner = end_cap.edges()[0].trimmed_curve().start();
+    let radial = Vector3::new(corner.x, corner.y, 0.0);
+    assert!(
+        normal.dot(&radial).abs() <= 1e-9,
+        "the end cap should lie in a plane through the axis, its normal is {normal:?}"
+    );
+
+    // A section turned about an axis sweeps its area times the distance its
+    // centroid turns through; sliding along the axis, within the section's own
+    // plane, sweeps nothing more.
+    let expected = width * height * std::f64::consts::TAU * radius * turns;
+    let volume = model
+        .solid_unchecked(sweep.solid)
+        .volume_properties()
+        .expect("swept volume")
+        .volume;
+    assert!(
+        (volume - expected).abs() <= 1e-2 * expected,
+        "expected {expected}, got {volume}"
+    );
+}

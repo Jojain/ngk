@@ -16,7 +16,7 @@ use nalgebra::Vector3;
 use ngk::exchange::step::{StepReadOptions, read_step};
 use ngk::geometry::{Circle, Curve, Frame, Plane, Point2, Point3, Surface, Torus, TrimmedCurve2};
 use ngk::model::Model;
-use ngk::tessellate::{SurfaceOpts, TessellateOpts, face::tessellate_face_key};
+use ngk::tessellate::{CurveOpts, SurfaceOpts, TessellateOpts, face::tessellate_face_key};
 use ngk::topology::LoopKind;
 use ngk::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
 use ngk::topology::gmap::{Dart, Dim};
@@ -125,7 +125,11 @@ fn torus_patch(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey) {
 /// sit on the torus, so sitting on it is no evidence on its own; what a quad
 /// cannot do is get closer when asked for more triangles. So the assertion is on
 /// the chords: sample each triangle edge at its midpoint and require that
-/// halving the step pulls those midpoints back onto the tube.
+/// halving the step pulls those midpoints back onto the tube. The step is
+/// halved on the boundary as well as inside: a face's boundary is sampled as
+/// its edges are, by the curve resolution, so the edge lines drawn over it
+/// meet it, and asking only the surface for more leaves the boundary chords
+/// where they were.
 #[test]
 fn a_torus_patch_is_meshed_onto_the_tube() {
     let (major, minor) = (3.0, 1.0);
@@ -143,19 +147,11 @@ fn a_torus_patch_is_meshed_onto_the_tube() {
     // `major` in the plane `z = 0`.
     let off_tube =
         |point: &Point3| ((point.coords.xy().norm() - major).hypot(point.z) - minor).abs();
-    let mesh_at = |surface: SurfaceOpts| {
-        tessellate_face_key(
-            &g,
-            face,
-            TessellateOpts {
-                surface,
-                ..TessellateOpts::default()
-            },
-        )
-        .expect("a torus patch should tessellate")
+    let mesh_at = |opts: TessellateOpts| {
+        tessellate_face_key(&g, face, opts).expect("a torus patch should tessellate")
     };
-    let worst_chord = |surface: SurfaceOpts| {
-        let mesh = mesh_at(surface);
+    let worst_chord = |opts: TessellateOpts| {
+        let mesh = mesh_at(opts);
         mesh.indices
             .chunks_exact(3)
             .flat_map(|triangle| {
@@ -169,7 +165,10 @@ fn a_torus_patch_is_meshed_onto_the_tube() {
             .fold(0.0f64, f64::max)
     };
 
-    let coarse = SurfaceOpts { nu: 16, nv: 8 };
+    let coarse = TessellateOpts {
+        curve: CurveOpts { segments: 16 },
+        surface: SurfaceOpts { nu: 16, nv: 8 },
+    };
     assert!(
         mesh_at(coarse)
             .positions
@@ -180,7 +179,10 @@ fn a_torus_patch_is_meshed_onto_the_tube() {
 
     let (coarse, fine) = (
         worst_chord(coarse),
-        worst_chord(SurfaceOpts { nu: 32, nv: 16 }),
+        worst_chord(TessellateOpts {
+            curve: CurveOpts { segments: 32 },
+            surface: SurfaceOpts { nu: 32, nv: 16 },
+        }),
     );
     assert!(
         fine < 0.5 * coarse,
