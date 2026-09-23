@@ -33,8 +33,8 @@ use thiserror::Error;
 use crate::builders::errors::ClosedFaceCellError;
 use crate::builders::scaffold::{add_closed_face_cell, cut_between_loops, cut_between_shells};
 use crate::geometry::{
-    Curve, LINEAR_TOLERANCE, NurbsError, Point2, Point3, Surface, SurfacePeriodicity,
-    TrimmedCurve2, Vector2,
+    Curve, LINEAR_TOLERANCE, NurbsError, Periodicity, Point2, Point3, PointCoincidence, Surface,
+    SurfacePeriodicity, TrimmedCurve2, Vector2,
 };
 use crate::healing::{HealingError, HealingOptions, remove_redundant_cells_edit};
 use crate::model::Model;
@@ -499,7 +499,27 @@ fn plan_loop(
         let start_point = read_vertex(resolver, edge.origin, start)?;
         let end_point = read_vertex(resolver, edge.origin, end)?;
 
-        let span = if along_curve {
+        // A closed edge on a support with no period -- a circle written as a
+        // rational B-spline -- is the whole curve, and only from where its two
+        // ends meet: that is the one place such a curve can start a turn.
+        // Asked for the span between its corner and itself, `interval_between`
+        // answers the empty one, which reads a hole's rim as nothing at all.
+        let closed_without_period =
+            start == end && matches!(curve.periodicity(), Periodicity::None);
+        let span = if closed_without_period {
+            if !curve.closes_at(start_point) {
+                return Err(SchemaError::UnreadableUnit {
+                    origin: edge.origin,
+                    detail: "a closed edge on a curve with no period has its corner                              somewhere other than where the curve closes"
+                        .to_string(),
+                }
+                .into());
+            }
+            match along_curve {
+                true => curve.domain(),
+                false => curve.domain().reversed(),
+            }
+        } else if along_curve {
             curve.interval_between(start_point, end_point)
         } else {
             curve.interval_between(end_point, start_point).reversed()
@@ -535,6 +555,7 @@ fn plan_loop(
     }
 
     check_loop_closes(&uses, edge_loop.origin)?;
+    join_across_closing_edges(&mut uses, surface);
     let signed_area = signed_area(&uses, surface);
     Ok(PlannedLoop { uses, signed_area })
 }
@@ -731,6 +752,87 @@ fn unfold_cut_walk(loop_: &mut PlannedLoop, surface: &Surface, same_sense: bool)
             }
         }
     }
+}
+
+/// Moves a pcurve that inverted onto the wrong side of a closing edge.
+///
+/// A support can close on itself without a period -- a swept spline whose
+/// first and last columns are one row of points -- and a curve lying along
+/// that row inverts onto either column. A cut walked there both ways then
+/// comes back as two walks on one column, and the loop leaves a gap a whole
+/// domain wide at each end of one of them. Moving that one across the domain
+/// is free, because the two columns are one place on the surface, and it is
+/// taken only when it closes the gap on *both* sides: that is what says the
+/// walk was on the wrong column rather than somewhere else entirely.
+fn join_across_closing_edges(uses: &mut [PlannedUse], surface: &Surface) {
+    let count = uses.len();
+    if count < 2 {
+        return;
+    }
+    let spans = closing_spans(surface);
+    let meets = |a: Point2, b: Point2| (a - b).norm() <= LINEAR_TOLERANCE;
+    for index in 0..count {
+        let previous = uses[(index + count - 1) % count].pcurve.end();
+        let next = uses[(index + 1) % count].pcurve.start();
+        let current = &uses[index].pcurve;
+        if meets(previous, current.start()) && meets(current.end(), next) {
+            continue;
+        }
+        let mut shifts = Vec::new();
+        for (axis, span) in spans.iter().enumerate() {
+            let Some(span) = *span else {
+                continue;
+            };
+            for step in [span, -span] {
+                let mut shift = Vector2::zeros();
+                shift[axis] = step;
+                shifts.push(shift);
+            }
+        }
+        for shift in shifts {
+            let (start, end) = (current.start() + shift, current.end() + shift);
+            if meets(previous, start)
+                && meets(end, next)
+                && let Ok(moved) = current.translated(shift)
+            {
+                uses[index].pcurve = moved;
+                break;
+            }
+        }
+    }
+}
+
+/// How wide the domain is along each axis the support closes on without a
+/// period.
+///
+/// Closing is read off the surface: the two ends of the axis are one row of
+/// points, sampled across the other axis.
+fn closing_spans(surface: &Surface) -> [Option<f64>; 2] {
+    const SAMPLES: usize = 5;
+    let periods = periods_of(surface);
+    let (u, v) = surface.domain();
+    let domains = [u, v];
+    [0, 1].map(|axis| {
+        let (along, across) = (domains[axis], domains[1 - axis]);
+        if periods[axis].is_some() || !along.is_finite() || !across.is_finite() {
+            return None;
+        }
+        let (low, high) = (along.ordered().start.value(), along.ordered().end.value());
+        let closes = (0..=SAMPLES).all(|step| {
+            let other = across
+                .ordered()
+                .at(Fraction::new(step as f64 / SAMPLES as f64))
+                .value();
+            let at = |value: f64| {
+                let mut point = Point2::new(other, other);
+                point[axis] = value;
+                point[1 - axis] = other;
+                surface.point_at(point.x, point.y)
+            };
+            at(low).coincides(at(high), LINEAR_TOLERANCE)
+        });
+        closes.then_some(high - low)
+    })
 }
 
 /// The loop's uses with everything from `from` onward moved by `shift`.

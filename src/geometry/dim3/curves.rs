@@ -89,6 +89,20 @@ impl Curve {
                 .coincides(self.point_at(domain.end), LINEAR_TOLERANCE)
     }
 
+    /// Returns whether both ends of a bounded curve meet at `point`.
+    ///
+    /// This is where a closed curve with no period can start a whole turn
+    /// from: its span from `point` round to `point` is its whole domain, which
+    /// [`Self::interval_between`] cannot say, because for two coincident points
+    /// on a curve with no period it answers the empty span at one end.
+    pub fn closes_at(&self, point: Point3) -> bool {
+        let domain = self.domain();
+        domain.is_finite()
+            && [domain.start, domain.end]
+                .into_iter()
+                .all(|end| self.point_at(end).coincides(point, LINEAR_TOLERANCE))
+    }
+
     pub fn derivative_at(&self, t: NativeParam, order: usize) -> Vector3<f64> {
         match self {
             Curve::Line(l) => l.derivative_at(t, order),

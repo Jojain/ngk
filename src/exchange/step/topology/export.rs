@@ -27,7 +27,7 @@
 
 use std::collections::HashMap;
 
-use crate::geometry::{Axis2, LINEAR_TOLERANCE, Point2, Point3, SurfacePeriodicity};
+use crate::geometry::{Axis2, LINEAR_TOLERANCE, Periodicity, Point2, Point3, SurfacePeriodicity};
 use crate::model::Model;
 use crate::topology::edge::Edge;
 use crate::topology::face::Face;
@@ -471,11 +471,19 @@ fn write_seam<P: Payload>(
         surface.point_at(to.x, to.y),
     );
 
+    // A periodic iso-curve is parameterized by the surface parameter that
+    // varies, so it agrees with the walk exactly when that parameter grows —
+    // and `span` cannot say so, because it always reads a closed curve the
+    // increasing way round, which for a walk the other way is the long arc.
+    let same_sense = match curve.periodicity() {
+        Periodicity::Periodic(_) => increasing,
+        Periodicity::None => span.start.value() <= span.end.value(),
+    };
     let edge_curve = builder.add_entity(&entities::EdgeCurve {
         edge_start: start,
         edge_end: end,
         edge_geometry: geometry,
-        same_sense: span.start.value() <= span.end.value(),
+        same_sense,
     });
 
     cut.seams.insert(

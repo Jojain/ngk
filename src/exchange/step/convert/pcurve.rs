@@ -28,8 +28,8 @@
 use crate::builders::profiles::curve_pcurve;
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{
-    Axis2, Curve, Curve2, Interval, NurbsCurve2, NurbsError, Point2, Surface, TrimmedCurve,
-    TrimmedCurve2,
+    ANGULAR_TOLERANCE, Axis2, Curve, Curve2, Interval, LINEAR_TOLERANCE, NurbsCurve2, NurbsError,
+    Point2, PointCoincidence, Surface, TrimmedCurve, TrimmedCurve2,
 };
 
 /// How many points a lift inverts before it decides what it is looking at.
@@ -103,7 +103,71 @@ fn invert(
     }
     resolve_collapsed_rows(surface, &mut image);
     unwrap_periods(surface, &mut image);
+    resolve_closing_edges(surface, &mut image);
     Ok(image)
+}
+
+/// Puts every sample that sits where the support closes on one side of it.
+///
+/// A support can close on itself without a period: a swept or lofted spline
+/// whose first and last columns are one row of points. Inversion there returns
+/// either column, arbitrarily, so a whole-turn rim can come back as a walk out
+/// and back, and a cut running along the closing column as a zig-zag between
+/// the two. Moving a sample to the other column is free, because the two are
+/// one point of the surface, so each goes to the side its nearest sample off
+/// the column is on -- and a curve lying wholly along the column stays on the
+/// side it started on, which the loop it belongs to may later move across.
+fn resolve_closing_edges(surface: &Surface, image: &mut [Point2]) {
+    let (u, v) = surface.domain();
+    for (axis, span) in [(Axis2::U, u), (Axis2::V, v)] {
+        if periods(surface)[axis.index()].is_some() || !span.is_finite() {
+            continue;
+        }
+        let (low, high) = (span.ordered().start.value(), span.ordered().end.value());
+        let across = |point: Point2, value: f64| {
+            let mut moved = point;
+            moved[axis.index()] = value;
+            moved
+        };
+        // The other side of the closing column, for a sample that sits on it.
+        let other_side = |point: Point2| {
+            let at = point[axis.index()];
+            let other = if (at - low).abs() <= ANGULAR_TOLERANCE {
+                high
+            } else if (at - high).abs() <= ANGULAR_TOLERANCE {
+                low
+            } else {
+                return None;
+            };
+            let moved = across(point, other);
+            surface
+                .point_at(point.x, point.y)
+                .coincides(surface.point_at(moved.x, moved.y), LINEAR_TOLERANCE)
+                .then_some(other)
+        };
+
+        let on_column: Vec<bool> = image
+            .iter()
+            .map(|point| other_side(*point).is_some())
+            .collect();
+        let Some(first) = image.first().map(|point| point[axis.index()]) else {
+            continue;
+        };
+        for index in 0..image.len() {
+            let Some(other) = other_side(image[index]) else {
+                continue;
+            };
+            let heading = (1..image.len())
+                .flat_map(|step| [index.checked_sub(step), index.checked_add(step)])
+                .flatten()
+                .find(|near| *near < image.len() && !on_column[*near])
+                .map_or(first, |near| image[near][axis.index()]);
+            let at = image[index][axis.index()];
+            if (heading - other).abs() < (heading - at).abs() {
+                image[index] = across(image[index], other);
+            }
+        }
+    }
 }
 
 /// Replaces the parameter a collapsed row does not determine.

@@ -4,6 +4,7 @@
 //! text. It emits entity records through the same builder every other layer
 //! uses, and never formats a character itself.
 
+mod bridge;
 pub mod export;
 pub mod import;
 pub mod seam;

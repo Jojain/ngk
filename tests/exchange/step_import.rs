@@ -576,3 +576,30 @@ fn a_foreign_swept_surface_arrives_as_one_clamped_spline_wall() {
         "an unclamped patch should be clamped on the way in",
     );
 }
+
+#[test]
+fn a_closed_spline_rim_bounds_its_cap_with_the_whole_curve() {
+    // The sweep's rims are circles written as closed rational B-splines, each
+    // starting and ending at one vertex. With no period to say otherwise, the
+    // span from that vertex round to itself is the whole curve -- not the
+    // empty one at its end, which leaves a cap bounding nothing.
+    let import = read(OCCT_SWEPT_CIRCLE);
+    let solid = import.shapes[0].solid();
+
+    for face in solid.faces() {
+        if !matches!(face.surface(), ngk::geometry::Surface::Plane(_)) {
+            continue;
+        }
+        let rim = face.edges()[0]
+            .linear_properties()
+            .expect("the rim should measure")
+            .length;
+        let disc = rim * rim / (4.0 * std::f64::consts::PI);
+        // Measured on the cap's mesh, which is only as close as its facets.
+        let area = face.area().expect("the cap should measure");
+        assert!(
+            (area - disc).abs() <= 1e-2 * disc,
+            "a cap inside a rim {rim} long covers {disc}, got {area}"
+        );
+    }
+}

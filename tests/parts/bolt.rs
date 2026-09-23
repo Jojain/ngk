@@ -233,6 +233,27 @@ fn bolt_meshes_with_every_edge_lying_on_its_faces() {
 }
 
 #[test]
+fn bolt_writes_its_thread_strip_into_the_core_walls_outer_bound() {
+    // The strip the thread covers on the core winds round it 8.4 times, so a
+    // straight cut from rim to rim runs across it once a turn. The cut is
+    // routed through the strip instead, which leaves it no hole of the wall:
+    // the file's only holes are the body's footprint under the head and the
+    // core's on the body's end.
+    use ngk::exchange::step::{StepWriteOptions, step_to_string};
+
+    let bolt = fuse(
+        fuse(fuse(head(), body()).unwrap(), core()).unwrap(),
+        thread(),
+    )
+    .unwrap();
+    let text =
+        step_to_string(&bolt, &StepWriteOptions::named("BOLT")).expect("the bolt should write");
+
+    assert_eq!(text.matches("ADVANCED_FACE(").count(), 16);
+    assert_eq!(text.matches("FACE_BOUND(").count(), 2);
+}
+
+#[test]
 fn bolt_survives_a_step_round_trip() {
     // Written out, read back, and still the same bolt: one closed solid with
     // the volume it left with.
@@ -265,4 +286,3 @@ fn bolt_survives_a_step_round_trip() {
     assert_valid(read);
     assert_close(volume(read), volume(&bolt));
 }
-

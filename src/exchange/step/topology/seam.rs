@@ -38,6 +38,7 @@ use crate::topology::unwrapped_face_domain::{
 };
 
 use super::super::error::TopologyError;
+use super::bridge::bridge_crossing_holes;
 
 /// One piece of a seamed boundary, walked in the loop's own direction.
 #[derive(Debug, Clone)]
@@ -118,6 +119,11 @@ impl SeamedFace {
         for (hole, darts) in placed.zip(&hole_darts) {
             bounds.push(seamed_bound(face, hole, darts, false)?);
         }
+
+        // The cut is a straight line from rim to rim, which is only a cut
+        // while it runs across no hole. Where it does, it is routed through
+        // the hole instead.
+        bridge_crossing_holes(face, &domain, &hole_darts, &mut bounds)?;
 
         Ok(Self { bounds })
     }

@@ -2,9 +2,7 @@ use std::collections::HashSet;
 use std::ops::Deref;
 
 use crate::geometry::parameter::NativeParam;
-use crate::geometry::{
-    Curve, Interval, LINEAR_TOLERANCE, Periodicity, Point3, PointCoincidence, TrimmedCurve,
-};
+use crate::geometry::{Curve, Interval, Periodicity, PointCoincidence, TrimmedCurve};
 use crate::measure::{LinearProperties, MeasureError, linear_properties_for_edge};
 use crate::model::{Cell1, Cell2, MergeTopology, TopologyMerge};
 use crate::topology::attributes::EdgeAttr;
@@ -349,7 +347,7 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
             Some((start, end))
                 if start.key() == end.key()
                     && matches!(attr.curve.periodicity(), Periodicity::None)
-                    && closes_at(&attr.curve, *start.point()) =>
+                    && attr.curve.closes_at(*start.point()) =>
             {
                 attr.curve.domain()
             }
@@ -388,15 +386,6 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     pub fn linear_properties(&self) -> Result<LinearProperties, MeasureError> {
         linear_properties_for_edge(self)
     }
-}
-
-/// Whether a bounded curve's two ends both meet at `point`.
-fn closes_at(curve: &Curve, point: Point3) -> bool {
-    let domain = curve.domain();
-    domain.is_finite()
-        && [domain.start, domain.end]
-            .into_iter()
-            .all(|end| curve.point_at(end).coincides(point, LINEAR_TOLERANCE))
 }
 
 /// Returns the two vertices at the ends of the edge occurrence at `dart`, or
