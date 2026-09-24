@@ -9,6 +9,7 @@ use ngk::geometry::{
 use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
 use ngk::model::{Cell2, Model};
 use ngk::modeling::{faces, solids};
+use ngk::topology::embedding::EntityOwner;
 use ngk::topology::gmap::Dim;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 use ngk::topology::validation::validate_solid_manifold;
@@ -451,6 +452,16 @@ fn a_filled_inner_loop_heals_in_every_edge_order() {
             "order {order:?} left the filled inner loop"
         );
         assert_eq!(g.iter_edges().count(), 4, "order {order:?}");
+        assert_eq!(g.iter_vertices().count(), 4, "order {order:?}");
+        // The cut joined the hole to the outer loop; with the hole gone it has
+        // nothing left to join and must go too, rather than stay as a spur.
+        assert!(
+            g.embedding()
+                .records_of(EntityOwner::Face(healed))
+                .all(|record| record.dimension != Dim::One),
+            "order {order:?} left a cut embedded in the healed face"
+        );
+        assert_eq!(g.cells(Dim::One).count(), 4, "order {order:?}");
     }
 }
 

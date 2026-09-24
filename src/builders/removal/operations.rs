@@ -179,7 +179,8 @@ pub enum MergedCell {
 /// again.
 #[derive(Debug, Clone)]
 pub struct CellRemoval {
-    /// Darts of the removed cell, in their pre-removal numbering.
+    /// Darts of the removed cell, in their pre-removal numbering, together
+    /// with those of any cut the removal left joining nothing.
     pub removed: Vec<Dart>,
     /// The two identities the removal fused.
     pub merged: MergedCell,
@@ -374,6 +375,8 @@ pub fn can_remove_cell<P: Payload>(
 
 /// Everything the removal decides before it touches the map.
 struct Preflight {
+    /// Every dart the removal deletes: the cell, and any cut it leaves joining
+    /// nothing.
     cell: Vec<Dart>,
     cell_set: HashSet<Dart>,
     pairs: Vec<(Dart, Dart)>,
@@ -395,8 +398,30 @@ impl Preflight {
         let cell = g.orbit(dart, g.orbit_indices(dim)).collect::<Vec<_>>();
         let cell_set = cell.iter().copied().collect::<HashSet<_>>();
 
-        let Rewiring { pairs, abandoned } = removal_pairs(g, &cell, &cell_set, dim)
+        let rewiring = removal_pairs(g, &cell, &cell_set, dim)
             .ok_or(CellRemovalError::NotRemovable { dart, dim })?;
+        // A cut still folded after the rewiring had nowhere to slide: the edge
+        // was all that was left of the loop it joined, so the cut joins nothing
+        // and goes with it. Def. 59 over both cells then closes the outer loop
+        // at the cut's other foot, as removing the cut on its own would.
+        let stranded = stranded_cuts(g, &rewiring.pairs);
+        let (removed, removed_set, Rewiring { pairs, abandoned }) = match stranded.is_empty() {
+            true => (cell.clone(), cell_set.clone(), rewiring),
+            false => {
+                let mut removed = cell.clone();
+                let mut removed_set = cell_set.clone();
+                for cut in stranded {
+                    for d in g.orbit(cut, g.orbit_indices(Dim::One)) {
+                        if removed_set.insert(d) {
+                            removed.push(d);
+                        }
+                    }
+                }
+                let rewiring = removal_pairs(g, &removed, &removed_set, dim)
+                    .ok_or(CellRemovalError::NotRemovable { dart, dim })?;
+                (removed, removed_set, rewiring)
+            }
+        };
         // Read before the rewiring moves the cut's darts to another corner, and
         // with them whatever the vertex there was seeded on.
         let mut abandoned = abandoned
@@ -405,18 +430,20 @@ impl Preflight {
             .collect::<Vec<_>>();
         abandoned.sort();
         abandoned.dedup();
-        let seeds = replacement_seeds(g, &cell, &cell_set, dim);
+        let seeds = replacement_seeds(g, &removed, &removed_set, dim);
+        // The plan is about the boundary the edge was on, which a stranded cut
+        // never belonged to, so it reads the edge alone.
         let plan = MergePlan::build(g, dart, dim, &cell, &cell_set, &pairs)?;
         // Taking a face's last boundary does not take its darts: they stay as
         // cells embedded in the face, which is what the map of a whole sphere
         // is made of. Every other removal that would take the last dart really
         // does leave nothing behind, so the guard stands for all of them.
-        if cell_set.len() == g.dart_count() && !matches!(plan, MergePlan::Unbounded { .. }) {
+        if removed_set.len() == g.dart_count() && !matches!(plan, MergePlan::Unbounded { .. }) {
             return Err(CellRemovalError::WouldEmptyMap { dart, dim });
         }
         Ok(Self {
-            cell,
-            cell_set,
+            cell: removed,
+            cell_set: removed_set,
             pairs,
             abandoned,
             seeds,
@@ -1501,6 +1528,19 @@ struct Rewiring {
     /// standing there besides the removed edge, so the vertex at that corner
     /// bounds nothing once the removal is done.
     abandoned: Vec<Dart>,
+}
+
+/// A dart of each cut the rewiring still folds back on itself.
+///
+/// [`removal_pairs`] slides a cut off the removed edge whenever the edge's far
+/// end has somewhere to take it. A fold left in the pairs is one that had
+/// nowhere to go: the removed edge was the last of the loop the cut joined.
+fn stranded_cuts<P: Payload>(g: &Model<P>, pairs: &[(Dart, Dart)]) -> Vec<Dart> {
+    pairs
+        .iter()
+        .filter(|&&pair| folds_cut(g, pair))
+        .map(|&(linked, _)| linked)
+        .collect()
 }
 
 /// Reports whether a Def. 59 pair would link a cut's two uses to each other.
