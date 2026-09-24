@@ -6,6 +6,8 @@
 //! correction run against the original NURBS equations. No sampled polyline or
 //! triangulated surface grid takes part in finding candidates.
 
+use std::collections::HashMap;
+
 use nalgebra::{Matrix3, Vector3};
 
 use super::analytic::intersect_analytic_curve_surface;
@@ -187,6 +189,7 @@ pub fn intersect_prepared_curve_surface(
         overlaps: Vec::new(),
         reasons: Vec::new(),
         budget: SEARCH_NODE_BUDGET,
+        resting_spans: HashMap::new(),
     };
     for span in &curve.spans {
         for patch in &surface.patches {
@@ -293,6 +296,13 @@ struct Search<'a> {
     points: Vec<CurveSurfaceIntersection>,
     overlaps: Vec<Interval>,
     reasons: Vec<IntersectionIncompleteReason>,
+    /// Whether each span tested so far rests on the surface, by its domain.
+    ///
+    /// The answer is about the whole surface, not the patch a span meets it
+    /// in, yet the question is asked once per patch the span's hull touches
+    /// and again at every split of that patch. A domain names one piece of
+    /// this search's one curve, so it is the answer's whole key.
+    resting_spans: HashMap<(u64, u64), bool>,
     /// Remaining node visits for this query.
     ///
     /// Transverse candidates isolate in a handful of splits, but a tangential
@@ -400,16 +410,15 @@ impl Search<'_> {
     ///
     /// The projection is clamped to the surface's own parameter domain, so a
     /// span running alongside the surface but past its trim is not an overlap.
-    fn span_lies_on_surface(&self, span: &Bezier) -> bool {
+    fn span_lies_on_surface(&mut self, span: &Bezier) -> bool {
         let domain = span.domain();
-        (0..=OVERLAP_SAMPLE_COUNT).all(|index| {
-            let fraction = index as f64 / OVERLAP_SAMPLE_COUNT as f64;
-            let point = span.point_at(
-                domain.start.value() + (domain.end.value() - domain.start.value()) * fraction,
-            );
-            let uv = self.surface.closest_parameter(point);
-            (self.surface.point_at(uv.x, uv.y) - point).norm() <= self.options.residual_tolerance
-        })
+        let key = (domain.start.value().to_bits(), domain.end.value().to_bits());
+        if let Some(&rests) = self.resting_spans.get(&key) {
+            return rests;
+        }
+        let rests = span_rests_on(span, self.surface, self.options.residual_tolerance);
+        self.resting_spans.insert(key, rests);
+        rests
     }
 
     /// Corrects one candidate against the original NURBS equations, starting
@@ -524,6 +533,29 @@ impl Search<'_> {
 }
 
 /// A plane through a patch's control hull, when every control point lies on it.
+/// Whether every sample of `span` lies within `tolerance` of `surface`.
+///
+/// The samples are a short walk along the span, so each one's projection
+/// starts from the last one's parameters and searches the whole surface only
+/// when that start does not land on it. A landing within `tolerance` answers
+/// the sample exactly as the whole search would: the nearest foot can only be
+/// nearer.
+fn span_rests_on(span: &Bezier, surface: &NurbsSurface, tolerance: f64) -> bool {
+    let domain = span.domain();
+    let mut previous = None;
+    (0..=OVERLAP_SAMPLE_COUNT).all(|index| {
+        let fraction = index as f64 / OVERLAP_SAMPLE_COUNT as f64;
+        let point = span.point_at(
+            domain.start.value() + (domain.end.value() - domain.start.value()) * fraction,
+        );
+        let uv = previous
+            .and_then(|hint| surface.closest_parameter_near(point, hint, tolerance))
+            .unwrap_or_else(|| surface.closest_parameter(point));
+        previous = Some(uv);
+        (surface.point_at(uv.x, uv.y) - point).norm() <= tolerance
+    })
+}
+
 #[derive(Clone, Copy)]
 struct PatchPlane {
     origin: Point3,

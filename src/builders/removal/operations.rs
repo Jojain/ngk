@@ -31,7 +31,7 @@ use crate::topology::gmap::Dim;
 use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::profile::{Profile, ProfileIterator};
-use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, VertexKey};
 use crate::topology::{Dart, IsolatedDart, ModelEdit, ModelEditError};
 
 /// Failure raised while removing a cell from a staged map.
@@ -232,11 +232,15 @@ pub(crate) fn remove_cell_edit<P: Payload>(
         cell,
         cell_set,
         pairs,
+        abandoned,
         seeds,
         plan,
     } = preflight;
 
     drop_removed_cell_attribute(edit, &cell_set, dart, dim)?;
+    for key in abandoned {
+        edit.remove_vertex(key);
+    }
     reseed_attributes(edit, &cell_set, &seeds);
     drop_pcurves(edit, &cell_set);
 
@@ -373,6 +377,8 @@ struct Preflight {
     cell: Vec<Dart>,
     cell_set: HashSet<Dart>,
     pairs: Vec<(Dart, Dart)>,
+    /// Vertices left bounding nothing once a cut slides off the removed edge.
+    abandoned: Vec<VertexKey>,
     seeds: HashMap<Dart, Option<Dart>>,
     plan: MergePlan,
 }
@@ -389,8 +395,16 @@ impl Preflight {
         let cell = g.orbit(dart, g.orbit_indices(dim)).collect::<Vec<_>>();
         let cell_set = cell.iter().copied().collect::<HashSet<_>>();
 
-        let pairs = removal_pairs(g, &cell, &cell_set, dim)
+        let Rewiring { pairs, abandoned } = removal_pairs(g, &cell, &cell_set, dim)
             .ok_or(CellRemovalError::NotRemovable { dart, dim })?;
+        // Read before the rewiring moves the cut's darts to another corner, and
+        // with them whatever the vertex there was seeded on.
+        let mut abandoned = abandoned
+            .into_iter()
+            .filter_map(|corner| g.cell_key::<Cell0>(corner))
+            .collect::<Vec<_>>();
+        abandoned.sort();
+        abandoned.dedup();
         let seeds = replacement_seeds(g, &cell, &cell_set, dim);
         let plan = MergePlan::build(g, dart, dim, &cell, &cell_set, &pairs)?;
         // Taking a face's last boundary does not take its darts: they stay as
@@ -404,6 +418,7 @@ impl Preflight {
             cell,
             cell_set,
             pairs,
+            abandoned,
             seeds,
             plan,
         })
@@ -611,7 +626,7 @@ impl MergePlan {
             .filter(|d| !cell_set.contains(d))
             .collect::<HashSet<_>>();
         if surviving.is_empty() {
-            let profiles = g
+            let mut profiles = g
                 .iter_profiles()
                 .filter(|(_, attr)| cell_set.contains(&attr.dart))
                 .map(|(key, _)| key)
@@ -619,6 +634,21 @@ impl MergePlan {
             if profiles.is_empty() {
                 return Err(missing());
             }
+            // A key an earlier fusion merged into one of these describes the
+            // same chain, wherever its stale seed happens to sit, and a merge
+            // whose survivor is gone but whose consumed key stays has no
+            // identity left to reconcile into.
+            let survivors = profiles
+                .iter()
+                .map(|&key| g.staged_profile_survivor(key))
+                .collect::<HashSet<_>>();
+            profiles.extend(
+                g.iter_profiles()
+                    .map(|(key, _)| key)
+                    .filter(|key| !profiles.contains(key))
+                    .filter(|&key| survivors.contains(&g.staged_profile_survivor(key)))
+                    .collect::<Vec<_>>(),
+            );
             let face_aliases = g
                 .iter_faces()
                 .filter(|(_, attr)| attr.darts().any(|seed| cell_set.contains(&seed)))
@@ -1403,24 +1433,89 @@ fn removal_partner<P: Payload>(
 /// Each surviving dart linked to the cell has exactly one preimage inside it,
 /// so normalizing on dart id yields every unordered pair exactly once. A dart
 /// whose path returns to itself simply becomes `dim`-free.
+///
+/// One corner Def. 59 gets wrong is the foot of a cut. When the removed edge is
+/// the last boundary at the vertex a cut stands on, the path from one use of
+/// the cut arrives at the other, and linking them folds the cut back on itself:
+/// it no longer reaches the loop it joined, and that loop falls out of the
+/// face's 2-cell. The cut slides along the removed edge instead, to the corner
+/// the removal closes at the edge's far end.
 fn removal_pairs<P: Payload>(
     g: &Model<P>,
     cell: &[Dart],
     cell_set: &HashSet<Dart>,
     dim: Dim,
-) -> Option<Vec<(Dart, Dart)>> {
-    let mut pairs = Vec::new();
+) -> Option<Rewiring> {
+    let mut ends = HashMap::new();
     for &inner in cell {
         let linked = g.alpha(dim, inner);
         if cell_set.contains(&linked) {
             continue;
         }
         let partner = removal_partner(g, cell_set, dim, inner)?;
-        if linked.id() < partner.id() {
-            pairs.push((linked, partner));
+        ends.insert(inner, (linked, partner));
+    }
+    let mut pairs = cell
+        .iter()
+        .filter_map(|inner| ends.get(inner))
+        .filter(|(linked, partner)| linked.id() < partner.id())
+        .copied()
+        .collect::<Vec<_>>();
+    let mut abandoned = Vec::new();
+    if dim == Dim::One {
+        for &inner in cell {
+            let Some(&(cut, cut_partner)) = ends.get(&inner) else {
+                continue;
+            };
+            let Some(&(boundary, boundary_partner)) = ends.get(&g.alpha(Dim::Zero, inner)) else {
+                continue;
+            };
+            if !folds_cut(g, (cut, cut_partner)) || folds_cut(g, (boundary, boundary_partner)) {
+                continue;
+            }
+            // Each fold is reached from both uses of the cut; the first visit
+            // has already rewired it.
+            let stranded = ordered_by_id(cut, cut_partner);
+            let far = ordered_by_id(boundary, boundary_partner);
+            if !pairs.contains(&stranded) || !pairs.contains(&far) {
+                continue;
+            }
+            pairs.retain(|pair| *pair != stranded && *pair != far);
+            // `inner` and its `alpha0` image lie in opposite orientation
+            // classes, so their outside links do too, and so do the ends Def. 59
+            // reaches from them: each new pair joins opposite classes, as every
+            // `alpha1` link must.
+            pairs.push(ordered_by_id(cut, boundary));
+            pairs.push(ordered_by_id(cut_partner, boundary_partner));
+            abandoned.push(inner);
         }
     }
-    Some(pairs)
+    Some(Rewiring { pairs, abandoned })
+}
+
+/// The links a removal makes in place of the ones it breaks.
+struct Rewiring {
+    /// The Def. 59 pairs, with every cut foot slid off the removed edge.
+    pairs: Vec<(Dart, Dart)>,
+    /// A dart at each corner a cut slid away from. The cut was the last thing
+    /// standing there besides the removed edge, so the vertex at that corner
+    /// bounds nothing once the removal is done.
+    abandoned: Vec<Dart>,
+}
+
+/// Reports whether a Def. 59 pair would link a cut's two uses to each other.
+fn folds_cut<P: Payload>(g: &Model<P>, (linked, partner): (Dart, Dart)) -> bool {
+    g.alpha(Dim::Two, linked) == partner
+        && is_embedded_cell(g.topology(), g.embedding(), Dim::One, linked)
+}
+
+/// Orders a dart pair by id, the normal form [`removal_pairs`] emits.
+fn ordered_by_id(first: Dart, second: Dart) -> (Dart, Dart) {
+    if first.id() < second.id() {
+        (first, second)
+    } else {
+        (second, first)
+    }
 }
 
 /// Replacement reference darts for every seed the removal would invalidate.
