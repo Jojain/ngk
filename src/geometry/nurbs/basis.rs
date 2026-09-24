@@ -1,14 +1,23 @@
+use smallvec::{SmallVec, smallvec};
+
 use crate::geometry::dim3::nurbs::degree::Degree;
 use crate::geometry::dim3::nurbs::knots::KnotVector;
+
+/// `p + 1` basis values, held inline up to degree 7.
+///
+/// Evaluation is the innermost loop of every projection and sampling pass, and
+/// three heap allocations per call cost more than the recurrence itself. A
+/// higher degree is still answered, from the heap.
+pub type BasisValues = SmallVec<[f64; 8]>;
 
 /// Piegl & Tiller A2.2 — compute the `p+1` non-zero B-spline basis functions
 /// at parameter `u`, where `span = knots.find_span(n, degree, u)`.
 /// Returns `N[0..=p]`.
-pub fn basis_functions(span: usize, u: f64, degree: Degree, knots: &KnotVector) -> Vec<f64> {
+pub fn basis_functions(span: usize, u: f64, degree: Degree, knots: &KnotVector) -> BasisValues {
     let p = degree.get();
-    let mut n = vec![0.0f64; p + 1];
-    let mut left = vec![0.0f64; p + 1];
-    let mut right = vec![0.0f64; p + 1];
+    let mut n: BasisValues = smallvec![0.0; p + 1];
+    let mut left: BasisValues = smallvec![0.0; p + 1];
+    let mut right: BasisValues = smallvec![0.0; p + 1];
     n[0] = 1.0;
     for j in 1..=p {
         left[j] = u - knots.get(span + 1 - j);
