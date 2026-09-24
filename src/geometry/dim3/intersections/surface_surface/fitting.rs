@@ -39,9 +39,20 @@ pub(super) fn fit_branch(
 ) -> Result<SurfaceIntersectionBranch, IntersectionError> {
     count_branch_fit();
     canonicalize_states(&mut states, closed);
+    // The trace is ordered and finely stepped, so each state's parameters
+    // start the next one's projection. A state lies on both surfaces within
+    // its residual, which is how close a projection must land to be its own.
+    let mut previous: Option<(Point2, Point2)> = None;
     for state in &mut states {
-        let uv_a = a.param_at(state.point)?;
-        let uv_b = b.param_at(state.point)?;
+        let tolerance = state.residual.max(options.linear_tolerance);
+        let (uv_a, uv_b) = match previous {
+            Some((hint_a, hint_b)) => (
+                a.param_near(state.point, hint_a, tolerance)?,
+                b.param_near(state.point, hint_b, tolerance)?,
+            ),
+            None => (a.param_at(state.point)?, b.param_at(state.point)?),
+        };
+        previous = Some((uv_a, uv_b));
         state.parameters.x = uv_a.x;
         state.parameters.y = uv_a.y;
         state.parameters.z = uv_b.x;

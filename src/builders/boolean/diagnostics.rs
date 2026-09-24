@@ -126,6 +126,7 @@ impl BooleanDiagnostics {
              trace steps            {}\n  \
              newton iterations      {}\n  \
              branch fits            {}\n  \
+             surface projections    {} global, {} hinted\n  \
              prepared surfaces      {}\n  \
              prepared curves        {}\n  \
              trim domains           {}\n",
@@ -140,6 +141,8 @@ impl BooleanDiagnostics {
             self.solver.trace_steps,
             self.solver.newton_iterations,
             self.solver.branch_fits,
+            self.solver.global_surface_projections,
+            self.solver.hinted_surface_projections,
             self.solver.prepared_surfaces_built,
             self.solver.prepared_curves_built,
             self.trim_domains_built,

@@ -45,6 +45,10 @@ pub struct SolverCounters {
     pub prepared_curves_built: u64,
     /// Branch fits attempted, including retraced ones.
     pub branch_fits: u64,
+    /// Point projections onto a NURBS surface that searched its whole grid.
+    pub global_surface_projections: u64,
+    /// Point projections onto a NURBS surface answered from a hint alone.
+    pub hinted_surface_projections: u64,
 }
 
 impl SolverCounters {
@@ -62,6 +66,8 @@ impl SolverCounters {
         prepared_surfaces_built: 0,
         prepared_curves_built: 0,
         branch_fits: 0,
+        global_surface_projections: 0,
+        hinted_surface_projections: 0,
     };
 
     /// Returns the counters accumulated on this thread so far.
@@ -88,6 +94,10 @@ impl SolverCounters {
             prepared_surfaces_built: self.prepared_surfaces_built - earlier.prepared_surfaces_built,
             prepared_curves_built: self.prepared_curves_built - earlier.prepared_curves_built,
             branch_fits: self.branch_fits - earlier.branch_fits,
+            global_surface_projections: self.global_surface_projections
+                - earlier.global_surface_projections,
+            hinted_surface_projections: self.hinted_surface_projections
+                - earlier.hinted_surface_projections,
         }
     }
 
@@ -183,4 +193,16 @@ pub(crate) fn count_prepared_curve() {
 #[inline]
 pub(crate) fn count_branch_fit() {
     record(|counters| counters.branch_fits += 1);
+}
+
+/// Counts one point projection that searched a NURBS surface's whole grid.
+#[inline]
+pub(crate) fn count_global_surface_projection() {
+    record(|counters| counters.global_surface_projections += 1);
+}
+
+/// Counts one point projection answered from a hint alone.
+#[inline]
+pub(crate) fn count_hinted_surface_projection() {
+    record(|counters| counters.hinted_surface_projections += 1);
 }

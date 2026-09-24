@@ -5,6 +5,7 @@ use super::curve::{InterpolationSystem, KNOT_TOLERANCE, NurbsCurve};
 use super::degree::Degree;
 use super::knots::KnotVector;
 use super::points::{ControlNet, ControlPolygon, HPoint};
+use crate::geometry::counters::{count_global_surface_projection, count_hinted_surface_projection};
 use crate::geometry::nurbs::basis::{basis_function_derivatives, basis_functions};
 use crate::geometry::nurbs::error::{NurbsError, SkinningIncompatibility};
 use crate::geometry::{BBox, Interval, LINEAR_TOLERANCE, Point3};
@@ -311,6 +312,7 @@ impl NurbsSurface {
     /// surface can turn between two samples, and the few closest are all
     /// refined, keeping whichever lands nearest.
     pub fn closest_parameter(&self, point: Point3) -> Point2<f64> {
+        count_global_surface_projection();
         self.closest_sample_parameters(point)
             .into_iter()
             .map(|(u, v)| self.refine_closest_parameter(point, u, v))
@@ -319,6 +321,29 @@ impl NurbsSurface {
                 distance(a).total_cmp(&distance(b))
             })
             .expect("the sample grid is never empty")
+    }
+
+    /// Returns the parameters of `point` refined from `hint` alone, or `None`
+    /// when that start does not land within `tolerance` of it.
+    ///
+    /// [`Self::closest_parameter`] searches the whole grid because it knows
+    /// nothing of where `point` lies. A caller walking a curve on the surface
+    /// does: the previous point's parameters are a start inside the right
+    /// basin. Newton from a start on another fold still converges, to a foot
+    /// on that fold a fold's spacing away, so the answer is only kept when
+    /// the foot is the point itself. A point lies on one fold only, so a
+    /// foot within `tolerance` is its own.
+    pub fn closest_parameter_near(
+        &self,
+        point: Point3,
+        hint: Point2<f64>,
+        tolerance: f64,
+    ) -> Option<Point2<f64>> {
+        let uv = self.refine_closest_parameter(point, hint.x, hint.y);
+        ((self.point_at(uv.x, uv.y) - point).norm() <= tolerance).then(|| {
+            count_hinted_surface_projection();
+            uv
+        })
     }
 
     /// Gauss-Newton from `(u, v)`, clamped to the domain.

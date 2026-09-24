@@ -1,7 +1,7 @@
 use nalgebra::Vector3;
 use ngk::geometry::{
     ControlNet, Cylinder, Degree, Fraction, HPoint, KnotVector, LINEAR_TOLERANCE, NurbsSurface,
-    Point3, Surface,
+    Point2, Point3, Surface,
 };
 
 #[test]
@@ -344,11 +344,10 @@ mod skinning {
     }
 }
 
-#[test]
-fn closest_parameter_finds_the_right_turn_of_a_long_helical_ribbon() {
-    // A thread flank: a radial segment carried seven turns round an axis. Any
-    // point on it lies a pitch away from the turns above and below it, so the
-    // search has to land on its own turn, not merely somewhere near.
+/// A thread flank: a radial segment carried seven turns round an axis. Any
+/// point on it lies a pitch away from the turns above and below it, so a
+/// projection has to land on its own turn, not merely somewhere near.
+fn helical_ribbon() -> NurbsSurface {
     let (turns, sections_per_turn, pitch) = (7.0, 16, 1.25);
     let count = (turns * sections_per_turn as f64) as usize + 1;
     let sections = (0..count)
@@ -364,7 +363,12 @@ fn closest_parameter_finds_the_right_turn_of_a_long_helical_ribbon() {
             .unwrap()
         })
         .collect::<Vec<_>>();
-    let surface = NurbsSurface::skinned(&sections, Degree::new(3).unwrap()).unwrap();
+    NurbsSurface::skinned(&sections, Degree::new(3).unwrap()).unwrap()
+}
+
+#[test]
+fn closest_parameter_finds_the_right_turn_of_a_long_helical_ribbon() {
+    let surface = helical_ribbon();
     let (domain_u, domain_v) = (surface.domain_u(), surface.domain_v());
 
     for i in 1..8 {
@@ -378,4 +382,68 @@ fn closest_parameter_finds_the_right_turn_of_a_long_helical_ribbon() {
             );
         }
     }
+}
+
+#[test]
+fn closest_parameter_near_follows_a_walk_along_a_helical_ribbon() {
+    // A traced branch visits its points in order, each a short step from the
+    // last, so the previous answer is the hint for the next point.
+    let surface = helical_ribbon();
+    let (domain_u, domain_v) = (surface.domain_u(), surface.domain_v());
+    let u = domain_u.at(Fraction::new(0.5)).value();
+    let mut hint = Point2::new(u, domain_v.start.value());
+
+    for j in 0..=400 {
+        let v = domain_v.at(Fraction::new(j as f64 / 400.0)).value();
+        let uv = surface
+            .closest_parameter_near(surface.point_at(u, v), hint, LINEAR_TOLERANCE)
+            .unwrap_or_else(|| panic!("the step to ({u}, {v}) should stay on its turn"));
+        assert!(
+            (uv.x - u).abs() <= 1.0e-8 && (uv.y - v).abs() <= 1.0e-8,
+            "({u}, {v}) came back as {uv:?}"
+        );
+        hint = uv;
+    }
+}
+
+#[test]
+fn closest_parameter_near_refuses_a_hint_on_another_turn() {
+    // Started a full turn away, Newton settles on the hinted turn, a pitch
+    // from the point. That is a foot, but not the point's own.
+    let surface = helical_ribbon();
+    let (domain_u, domain_v) = (surface.domain_u(), surface.domain_v());
+    let u = domain_u.at(Fraction::new(0.5)).value();
+    let v = domain_v.at(Fraction::new(0.5)).value();
+    let one_turn = domain_v.length() / 7.0;
+
+    let near = surface.closest_parameter_near(
+        surface.point_at(u, v),
+        Point2::new(u, v + one_turn),
+        LINEAR_TOLERANCE,
+    );
+
+    assert_eq!(near, None);
+}
+
+#[test]
+fn surface_param_near_falls_back_to_the_global_search_on_a_bad_hint() {
+    let ribbon = helical_ribbon();
+    let (domain_u, domain_v) = (ribbon.domain_u(), ribbon.domain_v());
+    let u = domain_u.at(Fraction::new(0.5)).value();
+    let v = domain_v.at(Fraction::new(0.5)).value();
+    let one_turn = domain_v.length() / 7.0;
+    let surface = Surface::Nurbs(ribbon.clone());
+
+    let uv = surface
+        .param_near(
+            ribbon.point_at(u, v),
+            Point2::new(u, v + one_turn),
+            LINEAR_TOLERANCE,
+        )
+        .unwrap();
+
+    assert!(
+        (uv.x - u).abs() <= 1.0e-8 && (uv.y - v).abs() <= 1.0e-8,
+        "({u}, {v}) came back as {uv:?}"
+    );
 }
