@@ -1666,11 +1666,6 @@ fn boolean_union_of_a_block_and_a_sphere_closes_a_single_solid() {
 
     assert_eq!(map.iter_solids().count(), 1);
     validate_solid_manifold(&map, result.solid).expect("the union should be manifold");
-    assert_eq!(
-        result.diagnostics.solver.surface_surface_calls, 0,
-        "every plane/sphere pair should be answered in closed form"
-    );
-    assert!(result.diagnostics.solver.surface_surface_analytic_calls > 0);
 
     for (point, expected) in [
         (Point3::new(1.0, 1.0, 1.0), true),

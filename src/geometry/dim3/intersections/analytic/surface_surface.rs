@@ -11,7 +11,6 @@ use nalgebra::{UnitVector3, Vector2, Vector3};
 
 use super::{AnalyticSection, AnalyticSurfaceIntersection, PcurveFidelity};
 use crate::geometry::axis::Axis3;
-use crate::geometry::counters::count_surface_surface_analytic_call;
 use crate::geometry::dim3::intersections::error::IntersectionError;
 use crate::geometry::dim3::intersections::options::IntersectionOptions;
 use crate::geometry::parameter::{Fraction, NativeParam, Normalized};
@@ -80,10 +79,7 @@ pub fn intersect_analytic_surfaces(
         _ => return None,
     };
     match result {
-        Ok(Some(intersection)) => {
-            count_surface_surface_analytic_call();
-            Some(Ok(intersection))
-        }
+        Ok(Some(intersection)) => Some(Ok(intersection)),
         // The pair is in the table but this configuration has no closed form
         // the curve types can carry, so the caller still needs the solver.
         Ok(None) => None,

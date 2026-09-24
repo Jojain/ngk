@@ -134,8 +134,8 @@ fn run<P: Payload>(
         });
     }
     let prepared = apply_boolean_splits_edit(edit, plan, false)?;
-    let graph = FragmentGraph::<PlanarDomain>::build(edit, &prepared);
-    let (classes, _) = classify::run(edit, &prepared, &graph, options, tolerances)?;
+    let graph = FragmentGraph::<PlanarDomain>::build(&prepared);
+    let classes = classify::run(edit, &prepared, &graph, options, tolerances)?;
     let selection = select::run(operation, &graph, &classes);
     if selection.kept.is_empty() {
         return Err(BooleanError::EmptyResult);

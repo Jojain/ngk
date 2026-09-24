@@ -205,8 +205,6 @@ pub(crate) fn run<P: Payload>(
     if context.options.heal {
         heal_result(edit, context, solid, &mut prepared)?;
     }
-    prepared.diagnostics.fragments = graph.fragments.len();
-    prepared.diagnostics.components = graph.components.len();
     Ok(SolidBoolean {
         operation: context.operation,
         solid,

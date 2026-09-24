@@ -17,7 +17,6 @@
 //! written against `BooleanDomain` so that they need not know which of those
 //! two cases they are running.
 
-use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -28,8 +27,7 @@ use crate::model::Model;
 use crate::topology::payload::Payload;
 
 use super::{
-    BooleanError, BooleanLineage, BooleanOperandPreparation, BooleanOperation, BooleanOptions,
-    BooleanSide, BooleanTolerances,
+    BooleanError, BooleanLineage, BooleanOperation, BooleanOptions, BooleanSide, BooleanTolerances,
 };
 
 /// What the operation table does with one classified fragment.
@@ -68,14 +66,12 @@ pub(crate) trait OperandClassifier<F> {
     /// `normal` — relative to this classifier's operand.
     ///
     /// `source` names the fragment being probed and is used only to say which
-    /// one failed. `rays` counts rays cast, for diagnostics; a classifier that
-    /// answers in closed form leaves it alone.
+    /// one failed.
     fn locate(
         &self,
         point: Point3,
         normal: Vector3<f64>,
         source: F,
-        rays: &mut usize,
     ) -> Result<RelativeLocation, BooleanError>;
 }
 
@@ -92,12 +88,6 @@ pub(crate) trait BooleanDomain {
     /// boundary in one and a piece of a face in the other.
     type Fragment: Copy + Eq + Ord + Hash + Debug;
 
-    /// The cell that bounds a fragment, and that a section can bar a walk at.
-    ///
-    /// An `EdgeKey` where fragments are faces; a `VertexKey` where they would
-    /// be edges.
-    type Boundary: Copy + Eq + Hash + Debug;
-
     /// Answers whether a point lies inside one whole operand.
     type Classifier<'a, P: Payload + 'a>: OperandClassifier<Self::Fragment>;
 
@@ -107,19 +97,6 @@ pub(crate) trait BooleanDomain {
     /// record of which source each came from; a fragment that outlives
     /// assembly is reported against that source.
     fn fragments(lineage: &BooleanLineage) -> Vec<(Self::Fragment, Self::Fragment)>;
-
-    /// The boundary cells one fragment is bounded by.
-    fn boundaries<P: Payload>(map: &Model<P>, fragment: Self::Fragment) -> Vec<Self::Boundary>;
-
-    /// The fragments meeting at one boundary cell.
-    fn incident<P: Payload>(map: &Model<P>, boundary: Self::Boundary) -> Vec<Self::Fragment>;
-
-    /// The cells the section was realized as, which a walk grouping fragments
-    /// must not cross.
-    fn barriers<P: Payload>(
-        map: &Model<P>,
-        preparation: &BooleanOperandPreparation,
-    ) -> HashSet<Self::Boundary>;
 
     /// A point interior to `fragment`, and the outward normal there.
     ///

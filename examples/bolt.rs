@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use nalgebra::Vector3;
 use ngk::builders::sweep::{SweepFrame, SweepOptions};
-use ngk::geometry::{Axis3, Frame, Helix, NativeParam, Point3, SolverCounters};
+use ngk::geometry::{Axis3, Frame, Helix, NativeParam, Point3};
 use ngk::modeling::solids::{cylinder_at, extruded, fuse};
 use ngk::modeling::sweep::sweep_face;
 use ngk::modeling::{edges, faces};
@@ -101,13 +101,11 @@ fn thread() -> Solid {
 }
 
 fn main() {
-    let counters = SolverCounters::snapshot();
     let started = Instant::now();
     let bolt = fuse(head(), body()).expect("head and body should fuse");
     let bolt = fuse(bolt, core()).expect("body and core should fuse");
     let bolt = fuse(bolt, thread()).expect("thread should fuse onto the core");
     let elapsed = started.elapsed();
-    let counters = SolverCounters::snapshot().since(counters);
 
     validate_solid_orientation(bolt.model(), bolt.key()).expect("bolt should face outward");
     validate_solid_manifold(bolt.model(), bolt.key()).expect("bolt should be manifold");
@@ -117,10 +115,4 @@ fn main() {
         .expect("bolt volume should be measurable")
         .volume;
     println!("bolt built in {elapsed:.2?}, volume {volume:.6}");
-    println!(
-        "surface projections: {} global, {} hinted; branch fits {}",
-        counters.global_surface_projections,
-        counters.hinted_surface_projections,
-        counters.branch_fits
-    );
 }

@@ -4,7 +4,6 @@ mod assemble;
 mod broad_phase;
 mod classify;
 mod clip;
-mod clock;
 mod contacts;
 mod diagnostics;
 mod domain;
@@ -12,7 +11,7 @@ mod errors;
 mod face_boolean;
 mod neighborhood;
 mod select;
-pub use diagnostics::{BooleanDiagnostics, BooleanStageTimings};
+pub use diagnostics::BooleanDiagnostics;
 mod graph;
 mod imprint;
 mod operand;
@@ -42,9 +41,7 @@ pub use result::{
 };
 use solid_domain::SolidDomain;
 
-use clock::Instant;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::time::Duration;
 
 use crate::builders::edges::split_edge_edit;
 use crate::builders::faces::{FaceImprint, split_face_by_imprints_edit, split_face_edge_edit};
@@ -53,8 +50,8 @@ use crate::geometry::{
     ControlPolygon, ControlPolygon2, Curve, Curve2, CurveCurveIntersection,
     CurveSurfaceIntersection, Degree, HPoint, HPoint2, IntersectionOptions, Interval, KnotVector,
     NurbsCurve, NurbsCurve2, NurbsError, Periodicity, Point2, Point3, PointCoincidence,
-    PreparedCurve, PreparedSurface, SolverCounters, Surface, SurfaceSurfaceIntersection,
-    TrimmedCurve, intersect_prepared_curve_surface,
+    PreparedCurve, PreparedSurface, Surface, SurfaceSurfaceIntersection, TrimmedCurve,
+    intersect_prepared_curve_surface,
 };
 use crate::model::Model;
 use crate::topology::ModelEdit;

@@ -133,7 +133,6 @@ struct Probed {
     deferred: Vec<Deferred>,
     /// Reasons this pair's answer was not certified.
     coverage: Vec<IntersectionIncompleteReason>,
-    branches_found: usize,
     branches_uncertified: usize,
     /// Overlaps this surface pair reported that the solver could not resolve.
     unresolved_overlaps: usize,
@@ -178,18 +177,15 @@ pub(super) fn compute_contacts<P: Payload>(
     let mut prepared = PreparedGeometry::default();
     let mut trims = TrimCache::default();
     let graze = plan.diagnostics.tolerances.graze;
-    let mut timer = StageTimer::default();
     let mut deferred = Vec::new();
 
     for pair in pairs {
-        timer.enter(&mut plan.diagnostics.stages, timing_group(pair));
         let probed = probe(g, &mut prepared, &mut trims, pair, graze, options)?;
         for reason in probed.coverage {
             if !plan.diagnostics.coverage.contains(&reason) {
                 plan.diagnostics.coverage.push(reason);
             }
         }
-        plan.diagnostics.branches_found += probed.branches_found;
         plan.diagnostics.branches_uncertified += probed.branches_uncertified;
         if probed.unresolved_overlaps > 0 {
             if let (BooleanCell::Face(first), BooleanCell::Face(second)) = pair.ordered_cells() {
@@ -215,40 +211,10 @@ pub(super) fn compute_contacts<P: Payload>(
         })
         .collect::<Vec<_>>();
     for (pair, work) in deferred {
-        timer.enter(&mut plan.diagnostics.stages, timing_group(pair));
         let contacts = clip_deferred(g, &mut trims, pair, work, &anchors, graze, options)?;
         record(plan, pair, contacts);
     }
-    timer.finish(&mut plan.diagnostics.stages);
     Ok(())
-}
-
-/// Attributes elapsed time to whichever stage bucket is currently open.
-///
-/// Both phases walk pairs grouped by kind, so one lap per group change reports
-/// the same per-kind stages the four separate passes used to, without paying
-/// for a clock read on every pair.
-#[derive(Default)]
-struct StageTimer {
-    clock: Option<Instant>,
-    group: Option<usize>,
-}
-
-impl StageTimer {
-    fn enter(&mut self, stages: &mut BooleanStageTimings, group: usize) {
-        if self.group == Some(group) {
-            return;
-        }
-        self.finish(stages);
-        self.clock = Some(Instant::now());
-        self.group = Some(group);
-    }
-
-    fn finish(&mut self, stages: &mut BooleanStageTimings) {
-        if let (Some(clock), Some(group)) = (self.clock.take(), self.group.take()) {
-            *timing_slot(stages, group) += clock.elapsed();
-        }
-    }
 }
 
 /// Cuts one deferred section down to the region it really covers.
@@ -321,32 +287,6 @@ fn clip_deferred<P: Payload>(
         }
     }
     Ok(contacts)
-}
-
-/// Which reported stage a pair's work is attributed to.
-///
-/// The three vertex kinds share one bucket: they are one sweep over the same
-/// cheap coincidence tests, and splitting them would report noise.
-fn timing_group(kind: PairKind) -> usize {
-    match kind {
-        PairKind::VertexVertex(..)
-        | PairKind::VertexEdge(..)
-        | PairKind::EdgeVertex(..)
-        | PairKind::VertexFace(..)
-        | PairKind::FaceVertex(..) => 0,
-        PairKind::EdgeEdge(..) => 1,
-        PairKind::EdgeFace(..) | PairKind::FaceEdge(..) => 2,
-        PairKind::FaceFace(..) => 3,
-    }
-}
-
-fn timing_slot(stages: &mut BooleanStageTimings, group: usize) -> &mut Duration {
-    match group {
-        0 => &mut stages.vertex_contacts,
-        1 => &mut stages.edge_contacts,
-        2 => &mut stages.edge_face_contacts,
-        _ => &mut stages.face_contacts,
-    }
 }
 
 /// Selects and runs the probe the pair's cell kinds call for.
@@ -923,7 +863,6 @@ fn probe_general_face_pair<P: Payload>(
                 }
             }
             SurfaceSurfaceIntersection::Branch(branch) => {
-                probed.branches_found += 1;
                 probed.branches_uncertified += usize::from(!branch.quality.certified);
                 probed.deferred.push(Deferred::Branch {
                     branch: Box::new(branch.clone()),

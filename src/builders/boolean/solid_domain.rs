@@ -5,20 +5,17 @@
 //! Locating a point against the whole operand is a ray cast, which is the one
 //! expensive answer in the family — see [`super::classify::SolidRayCaster`].
 
-use std::collections::HashSet;
-
 use nalgebra::Vector3;
 
 use crate::geometry::Point3;
 use crate::model::Model;
 use crate::topology::payload::Payload;
-use crate::topology::shape_keys::{EdgeKey, FaceKey};
+use crate::topology::shape_keys::FaceKey;
 
 use super::classify::{SolidRayCaster, probe};
 use super::domain::{BooleanDomain, RelativeLocation, Selection};
 use super::{
-    BooleanError, BooleanLineage, BooleanOperandPreparation, BooleanOperation, BooleanOptions,
-    BooleanSide, BooleanTolerances,
+    BooleanError, BooleanLineage, BooleanOperation, BooleanOptions, BooleanSide, BooleanTolerances,
 };
 
 /// Marker for the solid domain; carries no state of its own.
@@ -26,7 +23,6 @@ pub(crate) struct SolidDomain;
 
 impl BooleanDomain for SolidDomain {
     type Fragment = FaceKey;
-    type Boundary = EdgeKey;
     type Classifier<'a, P: Payload + 'a> = SolidRayCaster<'a, P>;
 
     fn fragments(lineage: &BooleanLineage) -> Vec<(FaceKey, FaceKey)> {
@@ -34,38 +30,6 @@ impl BooleanDomain for SolidDomain {
             .faces
             .iter()
             .flat_map(|(&source, faces)| faces.iter().map(move |&face| (source, face)))
-            .collect()
-    }
-
-    fn boundaries<P: Payload>(map: &Model<P>, fragment: FaceKey) -> Vec<EdgeKey> {
-        map.face_unchecked(fragment)
-            .edges()
-            .into_iter()
-            .map(|edge| edge.key())
-            .collect()
-    }
-
-    fn incident<P: Payload>(map: &Model<P>, boundary: EdgeKey) -> Vec<FaceKey> {
-        map.edge(boundary)
-            .map(|edge| edge.faces().into_iter().map(|face| face.key()).collect())
-            .unwrap_or_default()
-    }
-
-    /// Every section edge, on both sides, bars the walk.
-    ///
-    /// A span's two sides are still separate edges at this point — sewing is
-    /// what later fuses them — so both are listed, and a fragment is grouped
-    /// only with fragments the section did not cut it away from.
-    fn barriers<P: Payload>(
-        _map: &Model<P>,
-        preparation: &BooleanOperandPreparation,
-    ) -> HashSet<EdgeKey> {
-        preparation
-            .span_edges
-            .values()
-            .flatten()
-            .flatten()
-            .copied()
             .collect()
     }
 

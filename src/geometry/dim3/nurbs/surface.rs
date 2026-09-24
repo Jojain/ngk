@@ -5,7 +5,6 @@ use super::curve::{InterpolationSystem, KNOT_TOLERANCE, NurbsCurve};
 use super::degree::Degree;
 use super::knots::KnotVector;
 use super::points::{ControlNet, ControlPolygon, HPoint};
-use crate::geometry::counters::{count_global_surface_projection, count_hinted_surface_projection};
 use crate::geometry::nurbs::basis::{basis_function_derivatives, basis_functions};
 use crate::geometry::nurbs::error::{NurbsError, SkinningIncompatibility};
 use crate::geometry::{BBox, Interval, LINEAR_TOLERANCE, Point3};
@@ -312,7 +311,6 @@ impl NurbsSurface {
     /// surface can turn between two samples, and the few closest are all
     /// refined, keeping whichever lands nearest.
     pub fn closest_parameter(&self, point: Point3) -> Point2<f64> {
-        count_global_surface_projection();
         self.closest_sample_parameters(point)
             .into_iter()
             .map(|(u, v)| self.refine_closest_parameter(point, u, v))
@@ -340,10 +338,7 @@ impl NurbsSurface {
         tolerance: f64,
     ) -> Option<Point2<f64>> {
         let uv = self.refine_closest_parameter(point, hint.x, hint.y);
-        ((self.point_at(uv.x, uv.y) - point).norm() <= tolerance).then(|| {
-            count_hinted_surface_projection();
-            uv
-        })
+        ((self.point_at(uv.x, uv.y) - point).norm() <= tolerance).then_some(uv)
     }
 
     /// Gauss-Newton from `(u, v)`, clamped to the domain.

@@ -7,9 +7,6 @@ use super::{
     CurveCurveIntersection, CurveCurveIntersections, IntersectionCoverage,
     IntersectionIncompleteReason,
 };
-use crate::geometry::counters::{
-    count_curve_curve_call, count_newton_iterations, count_subdivision_node,
-};
 use crate::geometry::{Bezier, Curve, Interval, LINEAR_TOLERANCE, Point3, PointCoincidence};
 
 const OVERLAP_SAMPLES: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
@@ -84,7 +81,6 @@ pub fn intersect_curves_with_options(
     if let Some(analytic) = intersect_analytic_curves(a, b, options) {
         return analytic;
     }
-    count_curve_curve_call();
 
     let spans_a = a
         .to_nurbs()?
@@ -144,7 +140,6 @@ impl Search {
 
     fn visit(&mut self, a: CurvePiece, b: CurvePiece) {
         let options = self.options;
-        count_subdivision_node();
         let Some(remaining) = self.budget.checked_sub(1) else {
             self.push_reason(IntersectionIncompleteReason::SubdivisionBudgetExhausted);
             return;
@@ -336,7 +331,6 @@ fn refine_point(
     let mut v = 0.5 * (b.domain().start.value() + b.domain().end.value());
 
     for _ in 0..options.newton_max_iterations {
-        count_newton_iterations(1);
         let point_a = a.point_at(u);
         let point_b = b.point_at(v);
         let residual = point_a - point_b;
