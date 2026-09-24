@@ -38,8 +38,8 @@ codegen-units = 1
 
 # Optimised like release, but emits the PDB that lets samply name the frames.
 # Thin LTO instead of fat so function boundaries survive into the call tree;
-# flip to `lto = true` when measuring the exact code that ships. `profile.ps1`
-# records against this profile.
+# flip to `lto = true` when measuring the exact code that ships. The `profile`
+# command records against this profile.
 [profile.profiling]
 inherits = "release"
 debug = true

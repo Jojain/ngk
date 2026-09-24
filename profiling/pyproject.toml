@@ -14,7 +14,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ngk-profile"
 version = "0.0.1"
-description = "Records a profile of a script driving the ngk kernel"
+description = "Records a profile of a Python script or Rust example using ngk"
 requires-python = ">=3.9"
 dependencies = ["typer>=0.15,<1"]
 

@@ -6,8 +6,7 @@ Repeating `main()` in one process pushes the kernel work far enough above that
 floor to dominate the profile; the startup cost stays a fixed one-off that a
 range selection in the profiler UI can exclude.
 
-Used by `profile.ps1`; usable directly as
-`python bindings/python/profile_runner.py <script.py> <count>`.
+Used by `profile` when repeating a Python script's main().
 """
 
 import runpy
