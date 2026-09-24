@@ -120,8 +120,14 @@ impl Primitive {
 enum Rotation {
     Identity,
     /// `eighths` × 45° about world axis `axis` (0 = x, 1 = y, 2 = z).
-    Snapped { axis: usize, eighths: i32 },
-    Free { axis: [f64; 3], angle: f64 },
+    Snapped {
+        axis: usize,
+        eighths: i32,
+    },
+    Free {
+        axis: [f64; 3],
+        angle: f64,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -180,12 +186,19 @@ fn length(min_quarters: i32, max_quarters: i32) -> impl Strategy<Value = f64> {
 
 fn primitive() -> impl Strategy<Value = Primitive> {
     prop_oneof![
-        (length(1, 8), length(1, 8), length(1, 8)).prop_map(|(x, y, z)| Primitive::Block { x, y, z }),
+        (length(1, 8), length(1, 8), length(1, 8)).prop_map(|(x, y, z)| Primitive::Block {
+            x,
+            y,
+            z
+        }),
         (length(1, 6), length(1, 8))
             .prop_map(|(radius, height)| Primitive::Cylinder { radius, height }),
         length(1, 6).prop_map(|radius| Primitive::Sphere { radius }),
         (length(3, 8), 0.15f64..0.85)
-            .prop_map(|(major, ratio)| Primitive::Torus { major, minor: major * ratio })
+            .prop_map(|(major, ratio)| Primitive::Torus {
+                major,
+                minor: major * ratio
+            })
             .prop_filter("minor radius must be positive", |t| match t {
                 Primitive::Torus { minor, .. } => *minor > 0.05,
                 _ => true,
@@ -210,16 +223,20 @@ fn rotation() -> impl Strategy<Value = Rotation> {
 }
 
 fn case() -> impl Strategy<Value = Case> {
-    (primitive(), primitive(), [coordinate(), coordinate(), coordinate()], rotation()).prop_map(
-        |(a, b, t, rotation)| Case {
+    (
+        primitive(),
+        primitive(),
+        [coordinate(), coordinate(), coordinate()],
+        rotation(),
+    )
+        .prop_map(|(a, b, t, rotation)| Case {
             a,
             b,
             pose_b: Pose {
                 translation: Vector3::from(t),
                 rotation,
             },
-        },
-    )
+        })
 }
 
 /// One independent, reproducible runner per case index.
@@ -348,8 +365,7 @@ fn inspect(shape: Shape<SolidTag>) -> Outcome {
     let validity = validate_solid_manifold(shape.model(), key)
         .and_then(|()| validate_solid_orientation(shape.model(), key))
         .map_err(|e| e.to_string());
-    let volume = catch(|| shape.solid().volume())
-        .and_then(|r| r.map_err(|e| e.to_string()));
+    let volume = catch(|| shape.solid().volume()).and_then(|r| r.map_err(|e| e.to_string()));
     Outcome::Solid {
         shape,
         volume,
@@ -358,16 +374,18 @@ fn inspect(shape: Shape<SolidTag>) -> Outcome {
 }
 
 fn run_op(case: &Case, op: Op) -> Outcome {
-    let result = catch(|| -> Result<Result<Shape<SolidTag>, BooleanError>, String> {
-        let a = case.a.build(&Pose::identity())?;
-        let b = case.b.build(&case.pose_b)?;
-        Ok(match op {
-            Op::Union => solids::fuse(a, b),
-            Op::Common => solids::intersect(a, b),
-            Op::AMinusB => solids::cut(a, b),
-            Op::BMinusA => solids::cut(b, a),
-        })
-    });
+    let result = catch(
+        || -> Result<Result<Shape<SolidTag>, BooleanError>, String> {
+            let a = case.a.build(&Pose::identity())?;
+            let b = case.b.build(&case.pose_b)?;
+            Ok(match op {
+                Op::Union => solids::fuse(a, b),
+                Op::Common => solids::intersect(a, b),
+                Op::AMinusB => solids::cut(a, b),
+                Op::BMinusA => solids::cut(b, a),
+            })
+        },
+    );
     match result {
         Err(panic) => Outcome::Panicked(panic),
         Ok(Err(build)) => Outcome::Panicked(build),
@@ -445,7 +463,12 @@ fn run_case(case: &Case, tol: f64) -> Report {
             };
         }
     };
-    let volume_of = |op: Op| outcomes.iter().find(|(o, _)| *o == op).and_then(|(_, r)| r.volume());
+    let volume_of = |op: Op| {
+        outcomes
+            .iter()
+            .find(|(o, _)| *o == op)
+            .and_then(|(_, r)| r.volume())
+    };
     let (union, common, a_minus_b, b_minus_a) = (
         volume_of(Op::Union),
         volume_of(Op::Common),
@@ -466,27 +489,57 @@ fn run_case(case: &Case, tol: f64) -> Report {
     };
 
     if let Some(u) = union {
-        check("V(A∪B) < max(V(A),V(B))", u, va.max(vb), u >= va.max(vb) - slack);
+        check(
+            "V(A∪B) < max(V(A),V(B))",
+            u,
+            va.max(vb),
+            u >= va.max(vb) - slack,
+        );
         check("V(A∪B) > V(A)+V(B)", u, va + vb, u <= va + vb + slack);
     }
     if let Some(c) = common {
-        check("V(A∩B) > min(V(A),V(B))", c, va.min(vb), c <= va.min(vb) + slack);
+        check(
+            "V(A∩B) > min(V(A),V(B))",
+            c,
+            va.min(vb),
+            c <= va.min(vb) + slack,
+        );
     }
     if let (Some(u), Some(c)) = (union, common) {
-        check("inclusion–exclusion", u + c, va + vb, (u + c - va - vb).abs() <= slack);
+        check(
+            "inclusion–exclusion",
+            u + c,
+            va + vb,
+            (u + c - va - vb).abs() <= slack,
+        );
     }
     if let (Some(d), Some(c)) = (a_minus_b, common) {
-        check("V(A−B) ≠ V(A) − V(A∩B)", d, va - c, (d - (va - c)).abs() <= slack);
+        check(
+            "V(A−B) ≠ V(A) − V(A∩B)",
+            d,
+            va - c,
+            (d - (va - c)).abs() <= slack,
+        );
     }
     if let (Some(d), Some(c)) = (b_minus_a, common) {
-        check("V(B−A) ≠ V(B) − V(A∩B)", d, vb - c, (d - (vb - c)).abs() <= slack);
+        check(
+            "V(B−A) ≠ V(B) − V(A∩B)",
+            d,
+            vb - c,
+            (d - (vb - c)).abs() <= slack,
+        );
     }
     if let (Some(u), Some(d1), Some(d2)) = (union, a_minus_b, b_minus_a) {
         // Holds even when the intersection itself is refused.
-        check("V(A∪B) ≠ V(A−B) + V(B−A) + V(A∩B)", u - d1 - d2, va + vb - u, {
-            let c = u - d1 - d2;
-            (c - (va + vb - u)).abs() <= slack
-        });
+        check(
+            "V(A∪B) ≠ V(A−B) + V(B−A) + V(A∩B)",
+            u - d1 - d2,
+            va + vb - u,
+            {
+                let c = u - d1 - d2;
+                (c - (va + vb - u)).abs() <= slack
+            },
+        );
     }
 
     Report {
@@ -550,8 +603,16 @@ fn describe_outcome(outcome: &Outcome) -> String {
 }
 
 fn print_report(case: &Case, report: &Report) {
-    println!("    A = {:?}  (analytic V={:.6})", case.a, case.a.analytic_volume());
-    println!("    B = {:?}  (analytic V={:.6})", case.b, case.b.analytic_volume());
+    println!(
+        "    A = {:?}  (analytic V={:.6})",
+        case.a,
+        case.a.analytic_volume()
+    );
+    println!(
+        "    B = {:?}  (analytic V={:.6})",
+        case.b,
+        case.b.analytic_volume()
+    );
     println!("    pose(B) = {:?}", case.pose_b);
     match &report.operand_volumes {
         Ok((va, vb)) => println!("    measured V(A)={va:.6} V(B)={vb:.6}"),
@@ -625,10 +686,7 @@ fn parse_args() -> Args {
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
-        let mut value = |name: &str| {
-            it.next()
-                .unwrap_or_else(|| panic!("{name} needs a value"))
-        };
+        let mut value = |name: &str| it.next().unwrap_or_else(|| panic!("{name} needs a value"));
         match arg.as_str() {
             "--cases" => args.cases = value("--cases").parse().expect("--cases N"),
             "--seed" => args.seed = value("--seed").parse().expect("--seed S"),
@@ -660,7 +718,11 @@ fn main() {
         indices.len(),
         args.seed,
         args.tol,
-        if args.show { ", showing bugs in the viewer" } else { "" }
+        if args.show {
+            ", showing bugs in the viewer"
+        } else {
+            ""
+        }
     );
 
     // Watchdog: a Boolean that never returns would otherwise look like a
@@ -714,7 +776,11 @@ fn main() {
         let cell = pairs.entry((case.a.kind(), case.b.kind())).or_default();
         if !report.bugs.is_empty() {
             cell[2] += 1;
-        } else if report.outcomes.iter().any(|(_, o)| matches!(o, Outcome::Refused { .. })) {
+        } else if report
+            .outcomes
+            .iter()
+            .any(|(_, o)| matches!(o, Outcome::Refused { .. }))
+        {
             cell[1] += 1;
         } else {
             cell[0] += 1;
@@ -756,14 +822,18 @@ fn main() {
         println!("  {op}  {}", row.join(" | "));
     }
 
-    println!("
-== refusals: one example each ==");
+    println!(
+        "
+== refusals: one example each =="
+    );
     for (variant, (index, op, message)) in &refusal_examples {
         println!("  {variant}: #{index} {op}: {message}");
     }
 
-    println!("
-== per pair: clean | some refused | bug ==");
+    println!(
+        "
+== per pair: clean | some refused | bug =="
+    );
     for ((a, b), [clean, refused, bug]) in &pairs {
         println!("  {:>8} × {:<8} {clean:>4} | {refused:>4} | {bug:>4}", a, b);
     }
@@ -775,7 +845,11 @@ fn main() {
 
     println!("\n== bugs ==");
     for (class, cases) in &bug_classes {
-        println!("  {class}: {} case(s), e.g. #{:?}", cases.len(), &cases[..cases.len().min(8)]);
+        println!(
+            "  {class}: {} case(s), e.g. #{:?}",
+            cases.len(),
+            &cases[..cases.len().min(8)]
+        );
     }
 
     // One representative per class, shrunk and shown; a case already shown
@@ -784,11 +858,16 @@ fn main() {
     for (class, cases) in &bug_classes {
         let index = cases[0];
         if !shown.insert(index) {
-            println!("
--- [{class}] first seen in case #{index}, already shown above");
+            println!(
+                "
+-- [{class}] first seen in case #{index}, already shown above"
+            );
             continue;
         }
-        println!("\n-- [{class}] case #{index}  (rerun: --seed {} --case {index})", args.seed);
+        println!(
+            "\n-- [{class}] case #{index}  (rerun: --seed {} --case {index})",
+            args.seed
+        );
         let tree = strategy
             .new_tree(&mut runner_for(args.seed, index))
             .expect("case generation");

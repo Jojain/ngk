@@ -24,7 +24,7 @@ pub use support::{
 
 pub(crate) use annulus::{
     assign_rebased_pcurve, assign_split_pcurves, closed_boundary_curve_reversed, face_edge_dart,
-    incident_face_pcurves, periodic_image_near_pcurve, rebased_face_pcurves,
+    incident_face_pcurves, periodic_image_near, periodic_image_near_pcurve, rebased_face_pcurves,
 };
 pub(crate) use circle::add_circle_edit;
 pub(crate) use face::add_face_edit;
@@ -36,5 +36,5 @@ pub(crate) use split::split_face_edge_edit;
 pub(crate) use support::{
     FaceImprintCut, IncidentFacePcurve, RebasedFacePcurve, apply_face_chord_split,
     boundary_edge_at_uv, bounding_loops, edge_curve, face_boundary_edges, face_boundary_uvs,
-    loop_boundary_edges, snap_boundary_corner, snap_boundary_corner_in,
+    loop_boundary_edges, snap_boundary_corner, snap_boundary_corner_in, snap_boundary_corner_on,
 };

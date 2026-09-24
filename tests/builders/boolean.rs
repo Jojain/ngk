@@ -1950,3 +1950,89 @@ fn coaxial_cylinders_standing_flush_fuse_into_a_stepped_shaft() {
         );
     }
 }
+
+#[test]
+fn two_overlapping_spheres_intersect_to_their_lens() {
+    // Neither operand has a vertex or an edge: the whole solid is one closed
+    // analytic face, so the Boolean has to size itself from the surfaces.
+    let first = solids::sphere(1.0).expect("first sphere");
+    let second =
+        solids::sphere_at(Frame::at(Point3::new(1.0, 0.0, 0.0)), 1.0).expect("second sphere");
+
+    let lens = solids::intersect(first, second).expect("overlapping spheres should intersect");
+
+    validate_solid_manifold(lens.model(), lens.key()).unwrap();
+    ngk::topology::validation::validate_solid_orientation(lens.model(), lens.key()).unwrap();
+    // Two unit spheres one radius apart: V = π(4r + d)(2r − d)² / 12.
+    let expected = std::f64::consts::PI * 5.0 / 12.0;
+    let volume = lens.solid().volume().expect("lens volume");
+    assert!(
+        (volume - expected).abs() <= 1e-2 * expected,
+        "lens volume {volume}, expected {expected}"
+    );
+}
+
+#[test]
+fn a_sphere_poking_out_of_a_larger_sphere_cuts_out_its_lens() {
+    // The tool lies almost wholly inside the target and breaks its surface
+    // only in a small cap on the target's equator, so the cut is a nearly
+    // closed pocket opening through a small hole. Neither sphere's pole is
+    // inside the section circle: each result face is its whole sphere less
+    // one disc in the middle of its parameter domain.
+    let target = solids::sphere(1.5).expect("target sphere");
+    let tool = solids::sphere_at(Frame::at(Point3::new(0.8, 0.0, 0.0)), 0.8).expect("tool sphere");
+
+    let pocketed = solids::cut(target, tool).expect("the poking sphere should cut");
+
+    validate_solid_manifold(pocketed.model(), pocketed.key()).unwrap();
+    ngk::topology::validation::validate_solid_orientation(pocketed.model(), pocketed.key())
+        .unwrap();
+    // Lens of spheres R = 1.5 and r = 0.8 whose centres are d = 0.8 apart:
+    // π(R + r − d)²(d² + 2dr − 3r² + 2dR + 6rR − 3R²) / 12d.
+    let (big, small, d) = (1.5_f64, 0.8_f64, 0.8_f64);
+    let lens = std::f64::consts::PI
+        * (big + small - d).powi(2)
+        * (d * d + 2.0 * d * small - 3.0 * small * small + 2.0 * d * big + 6.0 * small * big
+            - 3.0 * big * big)
+        / (12.0 * d);
+    let expected = 4.0 / 3.0 * std::f64::consts::PI * big.powi(3) - lens;
+    let volume = pocketed.solid().volume().expect("pocketed volume");
+    assert!(
+        (volume - expected).abs() <= 1e-2 * expected,
+        "pocketed volume {volume}, expected {expected}"
+    );
+}
+
+#[test]
+fn a_block_straddling_a_cylinders_rim_intersects_to_the_wedge_between_them() {
+    // The block's two side planes each cross the cylinder's top rim, so that
+    // rim is cut twice: the first cut only marks the closed circle, and the
+    // second cuts it in two. The wall's piece of the intersection is bounded
+    // by the short arc between the two cuts.
+    let cylinder =
+        solids::cylinder_at(Frame::at(Point3::new(0.0, 0.0, -0.25)), 1.0, 0.5).expect("cylinder");
+    let block =
+        solids::block_at(Frame::at(Point3::new(-1.25, 0.75, -0.125)), 1.0, 0.5, 1.25).expect("block");
+
+    let wedge = solids::intersect(cylinder, block).expect("the block should intersect the cylinder");
+
+    validate_solid_manifold(wedge.model(), wedge.key()).unwrap();
+    ngk::topology::validation::validate_solid_orientation(wedge.model(), wedge.key()).unwrap();
+    // The footprint is the part of the rectangle [-1.25, -0.25] × [0.75, 1.25]
+    // inside the unit disc, swept over the heights both solids share.
+    let steps = 200_000;
+    let dx = 1.0 / steps as f64;
+    let footprint: f64 = (0..steps)
+        .map(|i| {
+            let x = -1.25 + (i as f64 + 0.5) * dx;
+            let top = (1.0 - x * x).max(0.0).sqrt().min(1.25);
+            (top - 0.75).max(0.0) * dx
+        })
+        .sum();
+    let expected = footprint * (0.25 - -0.125);
+    let volume = wedge.solid().volume().expect("the wedge should be measurable");
+    assert!(
+        (volume - expected).abs() <= 1e-2 * expected,
+        "wedge volume {volume}, expected {expected}"
+    );
+}

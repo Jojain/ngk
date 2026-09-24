@@ -251,11 +251,17 @@ fn tessellate_boundaryless_face<P: Payload>(
         v.start.value(),
         v.end.value(),
     );
-    let ccw = face.sense() == Orientation::Same;
-    let mut mesh = surface_grid_over_bounds(face.surface(), bounds, ccw, opts);
     if face.loops().is_empty() {
-        return Ok(mesh);
+        let ccw = face.sense() == Orientation::Same;
+        return Ok(surface_grid_over_bounds(face.surface(), bounds, ccw, opts));
     }
+    // With holes, the side the material is on is written in how they wind;
+    // the view's sense alone misses a face the Boolean flipped by rewinding
+    // its loops.
+    let ccw = face
+        .boundary_signed_area()
+        .map_or(face.sense() == Orientation::Same, |area| area > 0.0);
+    let mut mesh = surface_grid_over_bounds(face.surface(), bounds, ccw, opts);
     let domain =
         UnwrappedFaceDomain::of_face(face).map_err(|_| TessellateError::UnreadableBoundary)?;
     let holes = domain
