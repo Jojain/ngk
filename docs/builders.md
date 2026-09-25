@@ -33,7 +33,8 @@ The canonical names are:
 | `CellRemoval` | `CellRemoval` | A cell was removed. |
 | `ProfileExtrusion` | `ProfileExtrusion` | A profile was extruded. |
 | `Extrusion` | `FaceExtrusion` | A face was extruded. |
-| `Chamfer` | `TargetChamfer` | A chamfer was applied to a `ChamferTarget`, which may be edges, profiles, or vertices. |
+| `Chamfer` | `TargetChamfer` | A chamfer was applied to a `BlendTarget`, which may mix vertices, edges, profiles and faces. |
+| `Fillet` | `TargetFillet` | A fillet was applied to a `BlendTarget`. |
 | `BooleanResult` | `SolidBoolean` | A Boolean operation acted on solids. |
 | `BooleanPreparation` | `BooleanOperandPreparation` | Boolean operand preparation was performed. |
 | `RevolvedEdge` | `EdgeRevolution` | An edge was revolved. |

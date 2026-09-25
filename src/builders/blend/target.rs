@@ -41,7 +41,7 @@ pub struct BlendTarget {
 }
 
 impl BlendTarget {
-    /// Creates a target selecting nothing yet.
+    /// Creates an empty target; [`Self::with`] adds selections to it.
     pub fn new() -> Self {
         Self::default()
     }
@@ -184,19 +184,15 @@ pub(crate) fn resolve<P: Payload>(
                     .profile(profile)
                     .ok_or(BlendError::MissingProfile { profile })?;
                 let profile_edges = view.edges();
-                if profile_edges.iter().any(|edge| edge.faces().len() == 2) {
-                    expand_solid_edges(model, &profile_edges, &mut edges)?;
-                } else if let Some(face) = profile_edges
+                let free_face = profile_edges
                     .iter()
                     .find_map(|edge| edge.faces().into_iter().next())
-                {
-                    let face = model.face_unchecked(face.key());
-                    let loop_ = face
-                        .loops()
-                        .into_iter()
-                        .find(|loop_| loop_.profile_key() == Some(profile))
-                        .ok_or(BlendError::MissingProfile { profile })?;
-                    expand_loop_corners(model, face.key(), loop_.darts().collect(), &mut corners)?;
+                    .map(|face| face.key());
+                if profile_edges.iter().any(|edge| edge.faces().len() == 2) {
+                    expand_solid_edges(model, &profile_edges, &mut edges)?;
+                } else if let Some(face) = free_face {
+                    let darts = profile_loop(model, face, profile)?;
+                    expand_loop_corners(model, face, darts, &mut corners)?;
                 } else {
                     expand_wire_corners(model, view.darts().collect(), &mut corners)?;
                 }
@@ -246,7 +242,8 @@ fn planar_corner<P: Payload>(
             let face = model.face_unchecked(face.key());
             let mut found = None;
             for loop_ in face.loops() {
-                for corner in loop_corners(model, face.key(), &loop_.darts().collect::<Vec<_>>()) {
+                let darts = loop_.darts().collect::<Vec<_>>();
+                for corner in loop_corners(model, face.key(), &darts) {
                     if corner.vertex == key {
                         if found.is_some() {
                             return Err(BlendError::AmbiguousCorner { vertex: key });
@@ -259,6 +256,21 @@ fn planar_corner<P: Payload>(
         }
         _ => Err(BlendError::AmbiguousCorner { vertex: key }),
     }
+}
+
+/// The darts of the loop of free face `face` that runs along `profile`.
+fn profile_loop<P: Payload>(
+    model: &Model<P>,
+    face: FaceKey,
+    profile: ProfileKey,
+) -> Result<Vec<Dart>, BlendError> {
+    model
+        .face_unchecked(face)
+        .loops()
+        .into_iter()
+        .find(|loop_| loop_.profile_key() == Some(profile))
+        .map(|loop_| loop_.darts().collect())
+        .ok_or(BlendError::MissingProfile { profile })
 }
 
 /// Resolves a wire vertex: the two edge ends that meet there.

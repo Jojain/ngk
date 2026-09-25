@@ -4,8 +4,11 @@ A blend replaces the neighbourhood of selected edges or corners with new
 geometry: a **chamfer** puts a ruled strip there, and a **fillet** puts the
 surface a ball of radius `r` sweeps while it touches both faces. Both take the
 same targets and differ only in the geometry they compute, so they share one
-engine. This plan replaces the chamfer prototype (`src/builders/chamfer/`,
-`docs/chamfer_architecture.md`) with that engine and adds fillet on top.
+engine.
+
+**Status:** the first iteration has landed, as `src/builders/blend/`. It is
+described as built in `docs/blend_architecture.md`. This plan keeps the
+reasoning behind the abstractions and what comes next.
 
 ## Decisions
 
@@ -21,21 +24,18 @@ engine. This plan replaces the chamfer prototype (`src/builders/chamfer/`,
    - more vertex configurations.
 3. **Solid vertex as a fillet target:** refused. Chamfer keeps its corner cut.
 
-## The prototype as it stands
+## What the first iteration replaced
 
-- Four unrelated algorithms (2D corner, solid edge, solid vertex, and a
-  batched one for a solid face's rim), dispatched from `ChamferTarget`.
-- Solid cases split the surrounding faces with imprints, delete the patch
-  touching the selection (`remove_face_patch`, which does its own locator
-  repair and dart compaction), then sew replacement faces by matching endpoint
-  coordinates.
-- `Vec<EdgeKey>` is applied one edge at a time. Two edges sharing a vertex fail
-  in either order: the first chamfer consumes the second edge's key. Only the
-  profile path is simultaneous.
-- It can only remove material. Splitting shrinks faces and cannot grow one, so
-  a concave edge is out of reach, because its end faces have to grow.
-- A solid edge's distance is measured along the neighbouring edges. That only
-  equals the perpendicular setback at square corners.
+The chamfer prototype had four unrelated algorithms and could only remove
+material:
+
+- It split the surrounding faces, deleted the patch touching the selection,
+  and sewed replacement faces back by matching coordinates.
+- It chamfered edge lists one edge at a time, so two edges sharing a vertex
+  failed.
+- It could not grow a face, so concave edges were out of reach.
+
+Cut, re-embed and fill removed all three limits.
 
 ## Pipeline
 
@@ -125,7 +125,7 @@ in the same shape as `intersect_analytic_*`:
 
 | faces | edge | chamfer | fillet |
 |---|---|---|---|
-| plane / plane | line | `Strip` (plane) | `Cylinder` (axis, radius, convexity) |
+| plane / plane | straight, whatever curve carries it | `Strip` (plane) | `Cylinder` (axis, radius, convexity) |
 | plane / extruded wall | translate of the wall's base | `Translated` (ruled) | refused |
 
 The extruded-wall chamfer keeps the prototype's semantics: both rails are
@@ -234,61 +234,50 @@ needs a new surgery operation: splitting an existing edge, or removing a face.
 - **An interaction a call cannot plan is refused,** with the vertex named. It is
   never degraded to applying the blends one at a time.
 
-## First iteration
+## First iteration (landed)
 
-In scope:
-
-- The engine above. Chamfer is ported onto it and keeps its coverage (2D line
-  corners, solid edges, the extruded NURBS edge, the corner cut, rims).
-  `Vec<EdgeKey>` becomes simultaneous, and concave edges now work too.
+- The engine above. Chamfer runs on it, with the prototype's coverage plus
+  adjacent and concave edges.
 - Fillet with one radius per call.
-  - 2D: corners of wires and free planar faces, for line–line, line–arc and
-    arc–arc corners.
-  - 3D: straight edges between planar faces, with the treatments in the
-    table above.
-- `TargetFillet` and `TargetChamfer`, which list the created faces and the
-  consumed edges.
-- `filleted_block` script and playground experiment.
-- `docs/blend_architecture.md`, which replaces `docs/chamfer_architecture.md`.
+  - 2D: line–line, line–arc and arc–arc corners of wires and free planar
+    faces.
+  - 3D: straight edges between planar faces, with run-outs (circle or
+    ellipse), same-angle mitres, and balls.
+- `TargetFillet` and `TargetChamfer`, the `filleted_block` script and
+  playground experiment, and `docs/blend_architecture.md`.
+- Tests check manifoldness, orientation and closed-form volumes. Among them: a
+  block's edge, rim and every edge; a concave edge; a rim with a reflex corner;
+  an oblique run-out; the chamfer's common points; that the result does not
+  depend on how the selection is spelled; and every refusal.
 
-Refused with a named error:
+Refused, each with a named error:
 
 - non-planar faces in 3D;
 - tangent chains;
-- vertices of valence other than 3, and mixed convexity at a vertex;
+- vertices of valence other than 3;
+- mixed convexity at a vertex;
 - asymmetric mitres;
 - a radius per edge, a variable radius, and setbacks;
 - sheets;
 - the distance–angle and two-distance chamfers.
 
-After that, in rough order of value:
+## Next
 
-1. torus sections, where a whole rim needs its seam;
-2. tangent chains and the G1 join;
-3. valence-4 vertices;
-4. a radius per edge;
-5. free-form sections.
+In rough order of value, each with where it slots in.
 
-## Tests
-
-Each 3D case is checked for manifoldness, orientation and exact volume.
-
-- **2D.**
-  - A rectangle wire, where the length is `2(a + b) - 8r + 2πr`.
-  - A free rectangle face, where the area is `ab - (4 - π)r²`.
-  - A line–arc corner.
-  - A radius that is too large leaves the model unchanged.
-- **One block edge.** The volume is `abc - (1 - π/4) r² L`.
-- **Top profile (four mitres).** The volume is
-  `abc - (1 - π/4) r² P + 4 (5/3 - π/2) r³`.
-- **All twelve edges.** The rounded-box closed form.
-- **L-extrusion, concave edge.** The volume is `V + (1 - π/4) r² h`.
-- **L-extrusion, top profile, with one reflex mitre.** Each convex corner
-  subtracts `(5/3 - π/2) r³` from the removed volume, and each reflex corner
-  adds it.
-- **Oblique end face (ellipse run-out).** The removed volume is
-  `∫∫_R (L - y cot φ) dA`.
-- **Chamfer, all twelve edges.** The volume is `abc - 2d²(a + b + c) + 6d³`.
-- **Spelling.** The same set given as a face, as its profiles, and as shuffled
-  edge lists gives identical results.
-- **Refusals.** Every refusal names its entity and leaves the model unchanged.
+1. **Torus sections.** Add plane–cylinder and plane–cone circular edges to the
+   section table. A whole rim is a closed edge, so capture must accept it and
+   the blend face needs a seam; this adds `Wrapping` loops to `NewFace`.
+   Re-trimming on curved faces already exists.
+2. **Tangent chains.** Tangent propagation is a resolution policy. The smooth
+   join is a mitre whose joint is the shared cross-section, a new treatment.
+3. **Valence-4 vertices.** The ring already covers them. A run-out across two
+   faces is corner insertions in both faces plus a new corner on the edge
+   between them.
+4. **A radius per edge.** The law is assigned per network edge. Treatments
+   already compare the sections they receive.
+5. **Free-form sections.** A general row in the section table, which marches
+   the rolling ball and skins a NURBS surface. Treatments fall back to general
+   surface intersections.
+6. **Roll-over and consumed faces.** These need two new surgery operations:
+   splitting an existing edge, and removing a face.

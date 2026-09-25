@@ -1,3 +1,5 @@
+#[path = "support/blend_shapes.rs"]
+mod blend_shapes;
 #[path = "support/seamed.rs"]
 mod seamed;
 

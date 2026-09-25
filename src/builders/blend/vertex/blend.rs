@@ -4,7 +4,7 @@ use nalgebra::Vector3;
 
 use super::super::errors::BlendError;
 use super::super::network::{BlendNetwork, NetworkVertex, RingSlot};
-use super::super::section::{EdgeSection, loop_darts};
+use super::super::section::{EdgeSection, is_straight, loop_darts};
 use crate::geometry::{LINEAR_TOLERANCE, Plane, Point3, Surface, TrimmedCurve};
 use crate::model::Model;
 use crate::topology::gmap::{Dart, Dim};
@@ -246,7 +246,7 @@ impl<P: Payload> VertexContext<'_, P> {
     /// the vertex in and its length.
     pub(crate) fn straight(&self, edge: EdgeKey) -> Result<(Vector3<f64>, f64), BlendError> {
         let span = self.model.edge_unchecked(edge).trimmed_curve();
-        if !matches!(span.curve(), crate::geometry::Curve::Line(_)) {
+        if !is_straight(&span) {
             return Err(self.unsupported("an edge around it is not straight"));
         }
         let (start, end) = (span.start(), span.end());

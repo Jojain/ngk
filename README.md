@@ -124,7 +124,7 @@ to PyPI itself.
 
 ## Architecture Notes
 
-- [Chamfer algorithm](docs/chamfer_architecture.md)
+- [Blend algorithm: chamfer and fillet](docs/blend_architecture.md)
 - [Model API direction](docs/model_api.md)
 - [Topology identity and orientation](docs/topology_orientation_refactor.md)
 

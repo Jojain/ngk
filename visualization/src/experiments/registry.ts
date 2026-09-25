@@ -82,6 +82,12 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./ChamferedBlock")),
   },
   {
+    id: "filleted-block",
+    title: "Rounded rims, edges and corners (3D)",
+    group: "Display",
+    component: lazy(() => import("./FilletedBlock")),
+  },
+  {
     id: "chamfered-wavy-edge",
     title: "Chamfered wavy NURBS edge (3D)",
     group: "Display",

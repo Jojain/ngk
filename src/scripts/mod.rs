@@ -11,6 +11,7 @@ pub mod cylinder;
 pub mod extruded_holed_pentagon;
 pub mod extruded_open_polyline;
 pub mod extruded_square;
+pub mod filleted_block;
 pub mod hollow_cylinder;
 pub mod interactive_extrusion;
 pub mod revolved_triangle;
@@ -33,6 +34,11 @@ pub const SCRIPTS: &[Script] = &[
         id: "chamfered_block",
         title: "Profile vs vertex chamfer (3D)",
         run: chamfered_block::run,
+    },
+    Script {
+        id: "filleted_block",
+        title: "Rounded rims, edges and corners (3D)",
+        run: filleted_block::run,
     },
     Script {
         id: "chamfered_wavy_edge",

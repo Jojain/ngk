@@ -98,3 +98,58 @@ pub(crate) fn fillet_edit<P: Payload, T: Into<BlendTarget>>(
         revision: None,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::fillet_edit;
+    use crate::builders::test_support::LineageRecorder;
+    use crate::modeling::solids::block;
+    use crate::topology::edit::{EditKey, Origin};
+
+    #[test]
+    fn a_round_derives_from_the_edge_and_vertices_it_replaces() {
+        let mut shape = block(2.0, 3.0, 4.0).expect("block should build");
+        let edge = shape
+            .solid()
+            .edges()
+            .into_iter()
+            .find(|edge| {
+                let bounded = edge.bounded_unchecked();
+                let (start, end) = (*bounded.start().point(), *bounded.end().point());
+                start.x.abs() + start.y.abs() + end.x.abs() + end.y.abs() < 1.0e-9
+            })
+            .expect("block should have a vertical edge at the origin");
+        let ends = [
+            EditKey::Vertex(edge.bounded_unchecked().start().key()),
+            EditKey::Vertex(edge.bounded_unchecked().end().key()),
+        ];
+        let edge = edge.key();
+        let mut recorder = LineageRecorder::default();
+
+        let result = shape
+            .model_mut()
+            .transaction_with_policy(&mut recorder, |edit| fillet_edit(edit, edge, 0.25))
+            .expect("block edge should round");
+
+        let from_edge = Origin::derived(EditKey::Edge(edge));
+        assert!(
+            recorder
+                .created
+                .contains(&(EditKey::Face(result.faces[0]), from_edge.clone()))
+        );
+        let rails = recorder
+            .created
+            .iter()
+            .filter(|(key, origin)| matches!(key, EditKey::Edge(_)) && *origin == from_edge)
+            .count();
+        assert_eq!(rails, 2, "each face's side of the edge becomes a rail");
+        for (key, origin) in &recorder.created {
+            if let EditKey::Vertex(_) = key {
+                let Origin::Derived { sources } = origin else {
+                    panic!("a blend's corner should derive from a vertex, got {origin:?}");
+                };
+                assert!(sources.len() == 1 && ends.contains(&sources[0]));
+            }
+        }
+    }
+}

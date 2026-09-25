@@ -108,7 +108,9 @@ pub(crate) fn solve_section<P: Payload>(
         .sides
         .map(|side| model.face_attr_unchecked(side.face).surface.clone());
     match (&surfaces[0], &surfaces[1], edge.span.curve(), law) {
-        (Surface::Plane(_), Surface::Plane(_), Curve::Line(_), _) => {
+        // Two planes meet in a line, whatever curve type carries it: a
+        // Boolean writes straight sections as NURBS as often as not.
+        (Surface::Plane(_), Surface::Plane(_), _, _) if is_straight(&edge.span) => {
             planar_section(model, edge, law)
         }
         (Surface::Plane(_), Surface::Ruled(_), Curve::Nurbs(_), BlendLaw::Chamfer(chamfer))
@@ -304,6 +306,22 @@ pub(crate) fn loop_darts<P: Payload>(model: &Model<P>, face: FaceKey) -> HashSet
         .iter()
         .flat_map(|loop_| loop_.darts())
         .collect()
+}
+
+/// Whether a span runs along its chord, whichever curve type carries it.
+pub(crate) fn is_straight(span: &TrimmedCurve) -> bool {
+    if matches!(span.curve(), Curve::Line(_)) {
+        return true;
+    }
+    let (start, end) = (span.start(), span.end());
+    let chord = end - start;
+    if chord.norm() <= LINEAR_TOLERANCE {
+        return false;
+    }
+    (1..8).all(|index| {
+        let point = span.point_at(Fraction::new(f64::from(index) / 8.0));
+        distance_to_line(point, start, chord) <= LINEAR_TOLERANCE
+    })
 }
 
 /// Where two lines meet, or `None` when they are parallel or miss each other.

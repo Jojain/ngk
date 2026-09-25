@@ -1,77 +1,23 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use nalgebra::Vector3;
 use ngk::builders::blend::{BlendError, BlendSelection, BlendTarget};
 use ngk::builders::edges::add_arc;
-use ngk::builders::faces::{add_face, add_rectangle as add_rectangle_face};
+use ngk::builders::faces::{add_polygon_with_holes, add_rectangle as add_rectangle_face};
 use ngk::builders::fillet::fillet;
 use ngk::builders::profiles::{add_polyline, add_rectangle, append_edge};
-use ngk::builders::solids::add_extruded_face;
 use ngk::geometry::{Curve, Plane, Point3, Surface};
 use ngk::model::Model;
 use ngk::modeling::solids::{block, cylinder};
 use ngk::topology::StandardPayload;
-use ngk::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
+use ngk::topology::shape_keys::SolidKey;
 use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
 use radians::Rad64;
 
+use super::blend_shapes::{
+    L_SHAPE, TRAPEZOID, edge_between, face_at_height, lens, prism, prism_with_hole,
+};
+
 const TOLERANCE: f64 = 1.0e-9;
-
-/// An L seen from above: five convex corners and one reflex corner at (1, 1).
-const L_SHAPE: [(f64, f64); 6] = [
-    (0.0, 0.0),
-    (2.0, 0.0),
-    (2.0, 1.0),
-    (1.0, 1.0),
-    (1.0, 2.0),
-    (0.0, 2.0),
-];
-
-/// A quadrilateral whose side from (4, 0) to (3, 2) leans away from square.
-const TRAPEZOID: [(f64, f64); 4] = [(0.0, 0.0), (4.0, 0.0), (3.0, 2.0), (0.0, 2.0)];
-
-/// Extrudes the closed polygon through `points` in the xy plane by `height`.
-fn prism(points: &[(f64, f64)], height: f64) -> (Model<StandardPayload>, SolidKey) {
-    let mut g = Model::<StandardPayload>::new();
-    let mut corners = points
-        .iter()
-        .map(|&(x, y)| Point3::new(x, y, 0.0))
-        .collect::<Vec<_>>();
-    corners.push(corners[0]);
-    let profile = add_polyline(&mut g, &corners).expect("polygon should build");
-    let face = add_face(&mut g, profile).expect("polygon face should build");
-    let solid = add_extruded_face(&mut g, face, Vector3::new(0.0, 0.0, height))
-        .expect("polygon should extrude")
-        .solid;
-    (g, solid)
-}
-
-fn edge_between(g: &Model<StandardPayload>, solid: SolidKey, a: Point3, b: Point3) -> EdgeKey {
-    g.solid_unchecked(solid)
-        .edges()
-        .into_iter()
-        .find(|edge| {
-            let bounded = edge.clone().bounded_unchecked();
-            let (start, end) = (*bounded.start().point(), *bounded.end().point());
-            ((start - a).norm() < TOLERANCE && (end - b).norm() < TOLERANCE)
-                || ((start - b).norm() < TOLERANCE && (end - a).norm() < TOLERANCE)
-        })
-        .expect("the solid should have this edge")
-        .key()
-}
-
-fn face_at_height(g: &Model<StandardPayload>, solid: SolidKey, z: f64) -> FaceKey {
-    g.solid_unchecked(solid)
-        .faces()
-        .into_iter()
-        .find(|face| {
-            face.vertices()
-                .iter()
-                .all(|vertex| (vertex.point().z - z).abs() < TOLERANCE)
-        })
-        .expect("the solid should have a face at this height")
-        .key()
-}
 
 fn assert_valid(g: &Model<StandardPayload>, solid: SolidKey) {
     validate_solid_manifold(g, solid).expect("the rounded solid should stay manifold");
@@ -257,9 +203,10 @@ fn fillet_rounds_one_block_edge_into_a_cylinder() {
     assert_eq!(result.consumed_edges, vec![edge]);
     assert_eq!(result.faces.len(), 1);
     let round = shape.model().face_unchecked(result.faces[0]);
-    assert!(
-        matches!(round.surface(), Surface::Cylinder(cylinder) if (cylinder.radius - radius).abs() < TOLERANCE)
-    );
+    let Surface::Cylinder(support) = round.surface() else {
+        panic!("a straight edge between planes should round into a cylinder");
+    };
+    assert!((support.radius - radius).abs() < TOLERANCE);
     assert_eq!(shape.solid().faces().len(), 7);
     assert_eq!(shape.solid().edges().len(), 15);
     assert_eq!(shape.solid().vertices().len(), 10);
@@ -316,7 +263,10 @@ fn fillet_closes_a_fully_rounded_block_with_balls() {
         .solid()
         .faces()
         .iter()
-        .filter(|face| matches!(face.surface(), Surface::Sphere(sphere) if (sphere.radius() - radius).abs() < TOLERANCE))
+        .filter(|face| match face.surface() {
+            Surface::Sphere(sphere) => (sphere.radius() - radius).abs() < TOLERANCE,
+            _ => false,
+        })
         .count();
     assert_eq!(balls, 8);
     assert_valid(shape.model(), solid);
@@ -581,4 +531,73 @@ fn fillet_refuses_a_convex_and_a_concave_round_meeting() {
         matches!(result, Err(BlendError::UnsupportedVertex { .. })),
         "unexpected result: {result:?}"
     );
+}
+
+#[test]
+fn fillet_rounds_the_corners_between_two_arcs() {
+    let mut g = Model::<StandardPayload>::new();
+    let (profile, centres) = lens(&mut g);
+    let radius = 0.1;
+
+    fillet(&mut g, profile, radius).expect("the lens's two corners should round");
+
+    assert_eq!(g.iter_edges().count(), 4);
+    let rounds = g
+        .iter_edges()
+        .filter_map(|(_, attr)| match &attr.curve {
+            Curve::Circle(circle) if (circle.radius() - radius).abs() < TOLERANCE => {
+                Some(circle.plane().origin())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(rounds.len(), 2);
+    // Inside both circles, so each round touches each arc from inside it.
+    for center in rounds {
+        for arc_center in centres {
+            let distance = (center - arc_center).norm();
+            assert!((distance - (2.0_f64.sqrt() - radius)).abs() < TOLERANCE);
+        }
+    }
+}
+
+#[test]
+fn fillet_rounds_the_hole_of_a_free_face_as_well_as_its_rim() {
+    let mut g = Model::<StandardPayload>::new();
+    let square = |size: f64, offset: f64| {
+        vec![
+            Point3::new(offset, offset, 0.0),
+            Point3::new(offset + size, offset, 0.0),
+            Point3::new(offset + size, offset + size, 0.0),
+            Point3::new(offset, offset + size, 0.0),
+        ]
+    };
+    let outer = square(4.0, 0.0);
+    let hole = square(2.0, 1.0);
+    let face = add_polygon_with_holes(&mut g, Plane::xy(), &outer, &[&hole])
+        .expect("holed face should build");
+
+    fillet(&mut g, face, 0.2).expect("every corner of the holed face should round");
+
+    let view = g.face_unchecked(face);
+    assert_eq!(view.loops().len(), 2);
+    assert_eq!(view.edges().len(), 16);
+    // The rim loses (4 - pi) r^2 and the hole shrinks by as much.
+    let area = view.area().expect("holed face should measure");
+    assert!((area - 12.0).abs() < 1.0e-3, "area {area} should be 12");
+}
+
+#[test]
+fn fillet_rounds_both_rims_of_a_hole_through_a_solid() {
+    let radius = 0.2;
+    let (mut g, solid) = prism_with_hole(4.0, 2.0, 1.0);
+    let top = face_at_height(&g, solid, 1.0);
+
+    fillet(&mut g, top, radius).expect("both rims of the holed top should round");
+
+    assert_valid(&g, solid);
+    // Four convex corners give back (5/3 - pi/2) r^3 each, and the hole's four
+    // reflex corners reach past their vertices by as much.
+    let removed = (1.0 - PI / 4.0) * radius * radius * 24.0;
+    assert_volume(&g, solid, 12.0 - removed, removed);
 }

@@ -140,7 +140,7 @@ pub(crate) fn capture<P: Payload>(
         let edge = model
             .edge(key)
             .ok_or(BlendError::MissingEdge { edge: key })?;
-        let Some(bounded) = edge.clone().bounded() else {
+        let Some(bounded) = edge.bounded() else {
             return Err(BlendError::UnsupportedEdge {
                 edge: key,
                 reason: "it is closed, and a blend of a closed edge needs a seam",
@@ -212,6 +212,15 @@ fn walk_ring<P: Payload>(
         reason: "its faces do not close around it",
     };
     let index = model.embedding_index();
+    // A vertex's anchor may sit on a bridge the face owns, which is scaffold
+    // and names no edge; the walk starts on a logical edge and turns across
+    // scaffold from there.
+    let dart = model
+        .orbit(dart, model.orbit_indices(Dim::Zero))
+        .find(|&candidate| {
+            model.cell_key::<Cell1>(candidate).is_some() && !index.is_embedded(Dim::One, candidate)
+        })
+        .ok_or_else(open)?;
     let mut ring = Vec::new();
     let mut seen = HashSet::new();
     let mut current = dart;
