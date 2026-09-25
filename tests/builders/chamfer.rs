@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use nalgebra::Vector3;
+use ngk::builders::blend::BlendError;
 use ngk::builders::chamfer::chamfer;
 use ngk::builders::edges::add_edge;
-use ngk::builders::errors::ChamferError;
 use ngk::builders::faces::add_face;
 use ngk::builders::profiles::{add_polyline, append_edge};
 use ngk::builders::solids::add_extruded_face;
@@ -12,6 +12,8 @@ use ngk::model::Model;
 use ngk::modeling::solids::block;
 use ngk::topology::StandardPayload;
 use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
+
+use super::blend_shapes::{L_SHAPE, edge_between, face_at_height, lens, prism, prism_with_hole};
 
 #[test]
 fn failed_chamfer_builder_preserves_the_source_profile() {
@@ -36,7 +38,7 @@ fn failed_chamfer_builder_preserves_the_source_profile() {
     let result = chamfer(&mut g, corner, -1.0);
 
     assert!(
-        matches!(result, Err(ChamferError::InvalidDistance { .. })),
+        matches!(result, Err(BlendError::InvalidDistance { .. })),
         "unexpected result: {result:?}"
     );
     assert_eq!(g.dart_count(), before_darts);
@@ -280,4 +282,138 @@ fn solid_edge_chamfer_supports_an_extruded_nurbs_profile_edge() {
     );
     validate_solid_manifold(&g, solid).expect("curved chamfer should remain manifold");
     validate_solid_orientation(&g, solid).expect("curved chamfer faces should remain outward");
+}
+
+#[test]
+fn chamfer_bevels_edges_sharing_a_vertex_together() {
+    let (a, b, c, distance) = (2.0, 3.0, 4.0, 0.25);
+    let mut shape = block(a, b, c).expect("block should build");
+    let solid = shape.key();
+    let origin = Point3::origin();
+    let edges = [
+        edge_between(shape.model(), solid, origin, Point3::new(a, 0.0, 0.0)),
+        edge_between(shape.model(), solid, origin, Point3::new(0.0, 0.0, c)),
+    ];
+
+    chamfer(shape.model_mut(), edges, distance).expect("edges sharing a vertex should chamfer");
+
+    validate_solid_manifold(shape.model(), solid).expect("mitred chamfer should remain manifold");
+    validate_solid_orientation(shape.model(), solid)
+        .expect("mitred chamfer faces should remain outward");
+    // Two bevels meeting at a square corner overlap in d^3 / 3 of what they cut.
+    let expected = a * b * c - distance * distance / 2.0 * (a + c) + distance.powi(3) / 3.0;
+    let volume = shape
+        .solid()
+        .volume()
+        .expect("chamfered block should measure");
+    assert!(
+        (volume - expected).abs() < 1.0e-9,
+        "volume {volume} should be {expected}"
+    );
+}
+
+#[test]
+fn chamfer_bevels_every_block_edge_to_common_points() {
+    let (a, b, c, distance) = (2.0, 3.0, 4.0, 0.25);
+    let mut shape = block(a, b, c).expect("block should build");
+    let solid = shape.key();
+    let edges = shape
+        .solid()
+        .edges()
+        .into_iter()
+        .map(|edge| edge.key())
+        .collect::<Vec<_>>();
+
+    chamfer(shape.model_mut(), edges, distance).expect("every block edge should chamfer");
+
+    assert_eq!(shape.solid().faces().len(), 18);
+    assert_eq!(shape.solid().edges().len(), 48);
+    assert_eq!(shape.solid().vertices().len(), 32);
+    validate_solid_manifold(shape.model(), solid).expect("chamfered block should remain manifold");
+    validate_solid_orientation(shape.model(), solid)
+        .expect("chamfered block faces should remain outward");
+    let expected = a * b * c - 2.0 * distance * distance * (a + b + c) + 6.0 * distance.powi(3);
+    let volume = shape
+        .solid()
+        .volume()
+        .expect("chamfered block should measure");
+    assert!(
+        (volume - expected).abs() < 1.0e-9,
+        "volume {volume} should be {expected}"
+    );
+}
+
+#[test]
+fn chamfer_fills_a_concave_edge() {
+    let distance = 0.2;
+    let (mut g, solid) = prism(&L_SHAPE, 1.0);
+    let edge = edge_between(
+        &g,
+        solid,
+        Point3::new(1.0, 1.0, 0.0),
+        Point3::new(1.0, 1.0, 1.0),
+    );
+
+    chamfer(&mut g, edge, distance).expect("concave edge should chamfer");
+
+    validate_solid_manifold(&g, solid).expect("filled edge should remain manifold");
+    validate_solid_orientation(&g, solid).expect("filled edge faces should remain outward");
+    let expected = 3.0 + distance * distance / 2.0;
+    let volume = g
+        .solid_unchecked(solid)
+        .volume()
+        .expect("filled solid should measure");
+    assert!(
+        (volume - expected).abs() < 1.0e-9,
+        "volume {volume} should be {expected}"
+    );
+}
+
+#[test]
+fn chamfer_cuts_the_corners_between_two_arcs_along_them() {
+    let mut g = Model::<StandardPayload>::new();
+    let (profile, centres) = lens(&mut g);
+    let distance = 0.1;
+
+    chamfer(&mut g, profile, distance).expect("the lens's two corners should chamfer");
+
+    assert_eq!(g.iter_edges().count(), 4);
+    // Each trim lies on its arc, an arc length `distance` from its corner.
+    for (_, attr) in g.iter_vertices() {
+        let point = attr.point;
+        let on_arc = centres
+            .iter()
+            .any(|centre| ((point - centre).norm() - 2.0_f64.sqrt()).abs() < 1.0e-9);
+        assert!(on_arc, "trim {point:?} should lie on one of the arcs");
+        let corner = Point3::new(point.x.signum(), 0.0, 0.0);
+        let chord = (point - corner).norm();
+        let arc = 2.0 * 2.0_f64.sqrt() * (chord / (2.0 * 2.0_f64.sqrt())).asin();
+        assert!(
+            (arc - distance).abs() < 1.0e-9,
+            "trim should be {distance} along its arc"
+        );
+    }
+}
+
+#[test]
+fn chamfer_bevels_the_rim_of_a_hole_through_a_solid() {
+    let distance = 0.2;
+    let (mut g, solid) = prism_with_hole(4.0, 2.0, 1.0);
+    let top = face_at_height(&g, solid, 1.0);
+
+    chamfer(&mut g, top, distance).expect("both rims of the holed top should chamfer");
+
+    validate_solid_manifold(&g, solid).expect("bevelled rims should remain manifold");
+    validate_solid_orientation(&g, solid).expect("bevelled rims should remain outward");
+    // Four convex corners give back d^3 / 3 each, and the hole's four reflex
+    // corners reach past their vertices by as much.
+    let expected = 12.0 - distance * distance / 2.0 * 24.0;
+    let volume = g
+        .solid_unchecked(solid)
+        .volume()
+        .expect("holed solid should measure");
+    assert!(
+        (volume - expected).abs() < 1.0e-9,
+        "volume {volume} should be {expected}"
+    );
 }

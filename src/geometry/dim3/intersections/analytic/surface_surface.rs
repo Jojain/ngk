@@ -91,6 +91,30 @@ pub fn intersect_analytic_surfaces(
     }
 }
 
+/// Writes the pcurve of a curve known to lie on `surface`, over the curve's
+/// own span and in its direction.
+///
+/// This is the trace every analytic section's pcurves come from, offered for a
+/// curve that was built on a support rather than found by intersecting two:
+/// exact where a closed form exists -- any curve on a plane, an isoline on a
+/// quadric -- and a measured fit otherwise. A fit is written on one branch of
+/// a periodic direction, chosen by the span's midpoint, so a caller whose face
+/// straddles the seam has to place the face away from it first.
+pub(crate) fn pcurve_on_surface(
+    curve: &TrimmedCurve,
+    surface: &Surface,
+    options: IntersectionOptions,
+) -> Result<(TrimmedCurve2, PcurveFidelity), IntersectionError> {
+    let trace = SectionTrace::build(
+        curve.curve(),
+        curve.interval(),
+        surface,
+        SECTION_DOMAIN,
+        options,
+    )?;
+    trace.pcurve_over(Interval::new(Fraction::START, Fraction::END), options)
+}
+
 /// Two planes meet in a line, are the same plane, or are parallel and apart.
 fn plane_plane(
     a: &Plane,

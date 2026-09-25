@@ -302,7 +302,7 @@ impl<'m, P: Payload> Ops<'m, P> {
     pub fn model(&self) -> &Model<P> { self.edit.model() }
     pub fn add_circle(&mut self, plane: Plane, radius: f64) -> Result<FaceKey, FaceCreationError>;
     pub fn extrude(&mut self, face: FaceKey, direction: Vector3<f64>) -> Result<Extrusion, ExtrudeError>;
-    pub fn chamfer(&mut self, edges: &[EdgeKey], distance: f64) -> Result<Chamfer, ChamferError>;
+    pub fn chamfer(&mut self, edges: &[EdgeKey], distance: f64) -> Result<TargetChamfer, BlendError>;
 }
 
 impl<P: Payload> Model<P> {

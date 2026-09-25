@@ -1,8 +1,10 @@
+pub mod blend;
 pub mod boolean;
 pub mod chamfer;
 pub mod edges;
 pub mod errors;
 pub mod faces;
+pub mod fillet;
 pub mod loft;
 pub mod profiles;
 pub mod removal;

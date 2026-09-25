@@ -25,6 +25,7 @@ mod surface_surface;
 pub use curve_curve::intersect_analytic_curves;
 pub use curve_surface::{intersect_analytic_curve_surface, line_surface_is_analytic};
 pub use surface_surface::intersect_analytic_surfaces;
+pub(crate) use surface_surface::pcurve_on_surface;
 
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{Point3, TrimmedCurve, TrimmedCurve2};

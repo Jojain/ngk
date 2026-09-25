@@ -1,3 +1,5 @@
+#[path = "support/blend_shapes.rs"]
+mod blend_shapes;
 #[path = "support/seamed.rs"]
 mod seamed;
 
@@ -23,6 +25,8 @@ mod chamfer;
 mod edges;
 #[path = "builders/faces.rs"]
 mod faces;
+#[path = "builders/fillet.rs"]
+mod fillet;
 #[path = "builders/loft.rs"]
 mod loft;
 #[path = "builders/profiles.rs"]
