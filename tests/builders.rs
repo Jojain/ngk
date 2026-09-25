@@ -23,6 +23,8 @@ mod chamfer;
 mod edges;
 #[path = "builders/faces.rs"]
 mod faces;
+#[path = "builders/fillet.rs"]
+mod fillet;
 #[path = "builders/loft.rs"]
 mod loft;
 #[path = "builders/profiles.rs"]

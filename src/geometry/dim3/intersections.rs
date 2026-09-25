@@ -10,6 +10,7 @@ use std::ops::Index;
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{Interval, Point2, Point3, TrimmedCurve, TrimmedCurve2};
 
+pub(crate) use analytic::pcurve_on_surface;
 pub use analytic::{
     AnalyticSection, AnalyticSurfaceIntersection, PcurveFidelity, intersect_analytic_curve_surface,
     intersect_analytic_curves, intersect_analytic_surfaces, line_surface_is_analytic,

@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use nalgebra::Vector3;
+use ngk::builders::blend::BlendError;
 use ngk::builders::chamfer::chamfer;
 use ngk::builders::edges::add_edge;
-use ngk::builders::errors::ChamferError;
 use ngk::builders::faces::add_face;
 use ngk::builders::profiles::{add_polyline, append_edge};
 use ngk::builders::solids::add_extruded_face;
@@ -36,7 +36,7 @@ fn failed_chamfer_builder_preserves_the_source_profile() {
     let result = chamfer(&mut g, corner, -1.0);
 
     assert!(
-        matches!(result, Err(ChamferError::InvalidDistance { .. })),
+        matches!(result, Err(BlendError::InvalidDistance { .. })),
         "unexpected result: {result:?}"
     );
     assert_eq!(g.dart_count(), before_darts);

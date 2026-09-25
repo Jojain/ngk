@@ -61,58 +61,6 @@ pub enum EdgeCreationError {
     ModelEditFailed(#[source] ModelEditFailure),
 }
 
-#[derive(Debug, Clone, Error, PartialEq)]
-pub enum ChamferError {
-    #[error("chamfer distance must be positive and finite, got {distance}")]
-    InvalidDistance { distance: f64 },
-    #[error("dart {dart:?} is an open-profile endpoint")]
-    EndpointVertex { dart: Dart },
-    #[error("dart {dart:?} does not identify an unambiguous profile corner")]
-    AmbiguousProfileVertex { dart: Dart },
-    #[error("missing vertex point for dart {dart:?}")]
-    MissingVertexPoint { dart: Dart },
-    #[error("missing edge curve for dart {dart:?}")]
-    MissingEdgeCurve { dart: Dart },
-    #[error("edge at dart {dart:?} is not a line")]
-    UnsupportedEdgeCurve { dart: Dart },
-    #[error("edge at dart {dart:?} has zero length")]
-    ZeroLengthEdge { dart: Dart },
-    #[error("distance {distance} is too large for edge {dart:?} of length {edge_length}")]
-    DistanceTooLarge {
-        dart: Dart,
-        distance: f64,
-        edge_length: f64,
-    },
-    #[error("darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
-    SewFailed { dim: Dim, first: Dart, second: Dart },
-    #[error("edge {edge:?} does not exist")]
-    MissingChamferEdge { edge: EdgeKey },
-    #[error("edge {edge:?} must have exactly two incident faces, got {count}")]
-    InvalidChamferEdgeIncidence { edge: EdgeKey, count: usize },
-    #[error("edge {edge:?} requires straight edges and planar incident faces")]
-    UnsupportedSolidChamferGeometry { edge: EdgeKey },
-    #[error("vertex {vertex:?} does not exist")]
-    MissingChamferVertex {
-        vertex: crate::topology::shape_keys::VertexKey,
-    },
-    #[error("vertex {vertex:?} requires a trihedral corner with straight edges and planar faces")]
-    UnsupportedSolidVertexChamferGeometry {
-        vertex: crate::topology::shape_keys::VertexKey,
-    },
-    #[error("failed to trim face {face:?} while building a chamfer")]
-    ChamferFaceSplitFailed { face: FaceKey },
-    #[error("chamfer target is not implemented by the planar builder yet")]
-    UnsupportedChamferTarget,
-    #[error("chamfer model edit failed")]
-    ModelEditFailed(#[source] ModelEditFailure),
-}
-
-impl From<ModelEditError> for ChamferError {
-    fn from(error: ModelEditError) -> Self {
-        Self::ModelEditFailed(ModelEditFailure::new(error))
-    }
-}
-
 impl From<ModelEditError> for EdgeCreationError {
     fn from(error: ModelEditError) -> Self {
         Self::ModelEditFailed(ModelEditFailure::new(error))
