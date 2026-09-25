@@ -12,7 +12,6 @@ use super::super::{
 };
 use super::normals::NormalCone;
 use super::tracer::TraceState;
-use crate::geometry::counters::{count_newton_iterations, count_subdivision_node};
 use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::geometry::{
     BBox, BezierSurface, ControlNet, ControlPolygon, ControlPolygon2, Curve, Curve2, HPoint2,
@@ -273,7 +272,6 @@ impl<'a> PlanarSeedSearch<'a> {
     }
 
     fn visit(&mut self, patch: BezierSurface, depth: usize) -> Result<(), IntersectionError> {
-        count_subdivision_node();
         let Some(remaining) = self.budget.checked_sub(1) else {
             self.report(IntersectionIncompleteReason::SubdivisionBudgetExhausted);
             return Ok(());
@@ -793,7 +791,6 @@ impl PairSeedSearch {
         b: &BezierSurface,
         depth: usize,
     ) -> Result<(), IntersectionError> {
-        count_subdivision_node();
         let Some(remaining) = self.budget.checked_sub(1) else {
             self.report(IntersectionIncompleteReason::SubdivisionBudgetExhausted);
             return Ok(());
@@ -1008,7 +1005,6 @@ fn isolate_edge_root(
         return None;
     }
     for _ in 0..options.newton_max_iterations * 4 {
-        count_newton_iterations(1);
         let midpoint = 0.5 * (lower + upper);
         let value = evaluate(midpoint);
         if value.abs() <= options.residual_tolerance || upper - lower <= options.parameter_tolerance

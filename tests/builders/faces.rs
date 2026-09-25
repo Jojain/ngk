@@ -373,6 +373,29 @@ fn repeated_cuts_on_a_circular_boundary_keep_each_pcurve_on_its_edge() {
     assert_eq!(g.iter_edges().count(), 3);
 }
 
+#[test]
+fn repeated_cuts_on_a_cylinder_rim_keep_each_wall_pcurve_on_its_edge() {
+    let cylinder = solids::cylinder(1.0, 0.5).expect("cylinder should build");
+    let (mut g, _) = cylinder.into_model();
+    let wall = g
+        .iter_faces()
+        .map(|(key, _)| key)
+        .find(|key| matches!(g.face_unchecked(*key).surface(), Surface::Cylinder(_)))
+        .expect("the cylinder has a wall");
+
+    // On the wall, the rim's pcurve is a line one period long: closed on the
+    // surface, though its two ends are a period apart in parameter space. The
+    // first cut only marks the rim, and has to turn that line to begin at the
+    // mark just as it turns a pcurve that closes in the plane.
+    for angle in [2.2935_f64, 1.8235] {
+        let point = Point3::new(angle.cos(), angle.sin(), 0.5);
+        let (edge, parameter) = boundary_edge_at(&g, wall, point);
+        split_face_edge(&mut g, wall, edge, parameter)
+            .unwrap_or_else(|error| panic!("the cut at {angle} rad should land: {error}"));
+        assert_pcurves_follow_edges(&g, wall, angle.to_degrees());
+    }
+}
+
 /// The boundary edge of `face` that `point` lies on, and where along it.
 fn boundary_edge_at(
     g: &Model<StandardPayload>,

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Profiles a Python script that drives the ngk kernel, with Rust frames named.
+"""Profiles a Python script or a Rust Cargo example, with Rust frames named.
 
-Builds the extension module with the `profiling` Cargo profile (release
-optimisation, symbols kept) and records a run of the target script.
+Builds the Python extension or Rust example with the `profiling` Cargo profile
+(release optimisation, symbols kept) and records a run of the target.
 
 `maturin develop` builds `dev` by default, and `[profile.dev]` is `opt-level = 0`
 -- a profile of that build measures bounds checks and un-inlined nalgebra
@@ -17,7 +17,7 @@ Two recorders, because they see different things:
 * `py-spy` walks the CPython frames, so hot lines of the .py itself are named.
   Its `--native` mode resolves Windows DLLs from the export table rather than
   the PDB, so on Windows it cannot see into the kernel -- all of ngk arrives as
-  one `PyInit__ngk` frame. Use it for the script, not for the kernel.
+  one `PyInit__ngk` frame. Use it for Python scripts, not Rust examples.
 
 Recording needs the privilege to profile the system: on Windows samply traces
 through ETW and raises a UAC prompt per run unless the terminal is already
@@ -36,6 +36,9 @@ Examples
     profile tie_plate            # one run of the tie_plate example
     profile tie_plate 20         # twenty runs in the one process
     profile bindings/python/examples/explore_block.py
+    profile examples/curved_support.rs
+    profile curved_support 20    # twenty executions in one recording
+    profile curved_support --no-open
     profile tie_plate --tool py-spy --skip-build
 """
 
@@ -88,7 +91,7 @@ def venv_paths(venv):
 def run(argv, **kwargs):
     """Runs a command, failing the script with its exit code if it fails."""
     printable = " ".join(str(a) for a in argv)
-    completed = subprocess.run([str(a) for a in argv], **kwargs)
+    completed = subprocess.run([str(a) for a in argv], check=False, **kwargs)
     if completed.returncode != 0:
         raise SystemExit(f"failed ({completed.returncode}): {printable}")
     return completed
@@ -123,26 +126,38 @@ def find_tool(name, env):
 
 
 EXAMPLES_DIR = REPO_ROOT / "bindings" / "python" / "examples"
+RUST_EXAMPLES_DIR = REPO_ROOT / "examples"
 
 
 def resolve_script(name):
-    """Accepts a path or the bare name of an example, and returns an absolute path.
+    """Accepts a Python script or Rust Cargo example and returns its absolute path.
 
-    Absolute because the recording runs the interpreter with `cwd=REPO_ROOT`,
-    not the directory the command was typed in. A relative path that resolved
-    here would be handed on for the child to resolve again against the repo
-    root, where `tie_plate.py` is not -- and samply records the resulting
-    `can't open file` exit as a profile of a process that died in startup.
+    Absolute paths keep Python scripts valid when the recording runs from the
+    repository root instead of the directory where the command was typed.
+    Rust files must be direct Cargo examples under `examples/`.
     """
-    given = Path(name)
-    if given.exists():
-        return given.resolve()
+    candidates = (
+        Path(name),
+        REPO_ROOT / name,
+        EXAMPLES_DIR / name,
+        EXAMPLES_DIR / f"{name}.py",
+        RUST_EXAMPLES_DIR / name,
+        RUST_EXAMPLES_DIR / f"{name}.rs",
+    )
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        script = candidate.resolve()
+        if script.suffix == ".py":
+            return script
+        if script.suffix == ".rs" and script.parent == RUST_EXAMPLES_DIR.resolve():
+            return script
+        raise SystemExit(f"unsupported script {script}; Rust files must be in {RUST_EXAMPLES_DIR}")
 
-    for candidate in (EXAMPLES_DIR / name, EXAMPLES_DIR / f"{name}.py"):
-        if candidate.exists():
-            return candidate.resolve()
-
-    known = sorted(p.stem for p in EXAMPLES_DIR.glob("*.py"))
+    known = sorted(
+        [p.stem for p in EXAMPLES_DIR.glob("*.py")]
+        + [p.stem for p in RUST_EXAMPLES_DIR.glob("*.rs")]
+    )
     raise SystemExit(f"no script {name!r}; examples are: {', '.join(known)}")
 
 
@@ -150,42 +165,56 @@ def resolve_script(name):
 def profile(
     script_name: Annotated[
         str,
-        typer.Argument(help="path or bare name of an example in bindings/python/examples"),
+        typer.Argument(help="Python script or Rust example path or bare name"),
     ],
     repeat: Annotated[
         int,
-        typer.Argument(help="number of in-process main() runs", min=1),
+        typer.Argument(help="Python main() calls or Rust executable runs", min=1),
     ] = 1,
     tool: Annotated[Profiler, typer.Option(help="recording backend")] = Profiler.samply,
     rate: Annotated[int, typer.Option(help="samples per second", min=1)] = 1000,
-    skip_build: Annotated[bool, typer.Option(help="do not rebuild the extension")] = False,
+    skip_build: Annotated[bool, typer.Option(help="do not rebuild the target")] = False,
     no_open: Annotated[bool, typer.Option(help="leave the recording on disk")] = False,
 ) -> None:
-    """Build the profiling extension and record one Python example."""
+    """Build and record one Python script or Rust Cargo example."""
     script = resolve_script(script_name)
+    is_rust = script.suffix == ".rs"
+    if is_rust and tool is Profiler.py_spy:
+        raise SystemExit("py-spy only profiles Python scripts; use samply for Rust examples")
+
     env = tool_env()
 
     env.setdefault("UV_CACHE_DIR", str(REPO_ROOT / ".uv-cache"))
     env.setdefault("UV_PYTHON_INSTALL_DIR", str(REPO_ROOT / ".uv-python"))
 
-    venv = REPO_ROOT / ".venv"
-    env["VIRTUAL_ENV"] = str(venv)
-    python, _ = venv_paths(venv)
-
-    if not python.exists():
-        raise SystemExit(f"no interpreter at {python}; run build.ps1 or create .venv first")
-
-    if not skip_build:
-        run([find_tool("maturin", env), "develop", "--profile", "profiling"], cwd=REPO_ROOT, env=env)
+    if is_rust:
+        executable = REPO_ROOT / "target" / "profiling" / "examples" / (
+            script.stem + (".exe" if IS_WINDOWS else "")
+        )
+        if not skip_build:
+            run(
+                [find_tool("cargo", env), "build", "--profile", "profiling", "--example", script.stem],
+                cwd=REPO_ROOT, env=env,
+            )
+        elif not executable.is_file():
+            raise SystemExit(f"no executable at {executable}; build it without --skip-build")
+        target = [executable]
+    else:
+        venv = REPO_ROOT / ".venv"
+        env["VIRTUAL_ENV"] = str(venv)
+        python, _ = venv_paths(venv)
+        if not python.exists():
+            raise SystemExit(f"no interpreter at {python}; run build.ps1 or create .venv first")
+        if not skip_build:
+            run([find_tool("maturin", env), "develop", "--profile", "profiling"], cwd=REPO_ROOT, env=env)
+        if repeat > 1:
+            target = [python, Path(__file__).resolve().parent / "runner.py", script, str(repeat)]
+        else:
+            target = [python, script]
 
     out_dir = REPO_ROOT / "target" / "profiles"
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{script.stem}-{time.strftime('%Y%m%d-%H%M%S')}"
-
-    if repeat > 1:
-        target = [Path(__file__).resolve().parent / "runner.py", script, str(repeat)]
-    else:
-        target = [script]
 
     if tool is Profiler.samply:
         out = out_dir / f"{stem}.json.gz"
@@ -194,25 +223,28 @@ def profile(
         # leaves the profile on disk to be patched before anything reads it.
         samply = find_tool("samply", env)
         record = [samply, "record", "--rate", str(rate), "--save-only", "--no-open"]
+        if is_rust and repeat > 1:
+            record += ["--iteration-count", str(repeat)]
         if MAIN_THREAD_ONLY:
             record.append("--main-thread-only")
-        record += ["--output", out, "--", python, *target]
+        record += ["--output", out, "--", *target]
         run(record, cwd=REPO_ROOT, env=env)
 
         fixed = absolutize_file(out)
         print(f"resolved {fixed} local debug-info path(s) in {out.name}")
 
-        # On Windows the kernel is the only module that records a bare PDB name,
-        # so nothing to absolutize means `_ngk.pyd` was never loaded: the target
-        # died before `import ngk`. samply exits 0 whatever the target did, so
-        # without this the run looks like a success and hands over a profile of
-        # CPython's startup and nothing else.
+        # samply exits 0 even when the target exits early, so a missing local
+        # PDB path warrants checking the recording before trusting its frames.
         if IS_WINDOWS and fixed == 0:
             print()
-            print("warning: no ngk.pdb in the recording -- the target never loaded")
-            print("         the kernel. Check the lines above for how the run")
-            print("         failed; a script path is resolved against the repo")
-            print("         root, not the directory you typed the command in.")
+            if is_rust:
+                print("warning: no local PDB path was resolved; check the target output")
+                print("         and Rust symbols in the recording.")
+            else:
+                print("warning: no ngk.pdb in the recording -- the target never loaded")
+                print("         the kernel. Check the lines above for how the run")
+                print("         failed; a script path is resolved against the repo")
+                print("         root, not the directory you typed the command in.")
 
         load = [samply, "load"]
         if IS_WINDOWS:

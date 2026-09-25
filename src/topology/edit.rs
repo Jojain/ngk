@@ -809,29 +809,7 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     /// identity instead, is what lets two removals rejoin overlapping sets of
     /// boundaries without either having to know about the other.
     pub(crate) fn merged_profile_survivor(&self, profile: ProfileKey) -> ProfileKey {
-        let mut current = EditKey::Profile(profile);
-        // A chain that closes on itself is a mistake, and commit names it
-        // `MergeCycle`. This walk only has to reach that report rather than
-        // spin, so it stops at the first key it sees twice.
-        let mut visited = HashSet::from([current]);
-        while let Some(survivor) =
-            self.model
-                .staged_edit_events()
-                .iter()
-                .find_map(|event| match event.merge_keys() {
-                    Some((survivor, removed)) if removed == current => Some(survivor),
-                    _ => None,
-                })
-        {
-            if !visited.insert(survivor) {
-                break;
-            }
-            current = survivor;
-        }
-        match current {
-            EditKey::Profile(key) => key,
-            _ => profile,
-        }
+        self.model.staged_profile_survivor(profile)
     }
 
     /// Exchanges which cells two faces name, keeping each key's own payload.

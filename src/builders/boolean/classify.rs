@@ -105,7 +105,6 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
         &self,
         point: Point3,
         source: FaceKey,
-        rays: &mut usize,
     ) -> Result<RelativeLocation, BooleanError> {
         let mut answer = None;
         let mut accepted = 0;
@@ -114,7 +113,6 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
             let angle = i as f64 * 2.399963229728653;
             let radius = (1.0 - z * z).sqrt();
             let direction = Vector3::new(radius * angle.cos(), radius * angle.sin(), z);
-            *rays += 1;
             let Some(inside) = self.ray(point, direction) else {
                 continue;
             };
@@ -452,10 +450,9 @@ pub(crate) fn run<D: BooleanDomain, P: Payload>(
     graph: &FragmentGraph<D>,
     options: BooleanOptions,
     tolerances: BooleanTolerances,
-) -> Result<(Vec<RelativeLocation>, usize), BooleanError> {
+) -> Result<Vec<RelativeLocation>, BooleanError> {
     let first = D::classifier(map, &preparation.first_lineage, options, tolerances)?;
     let second = D::classifier(map, &preparation.second_lineage, options, tolerances)?;
-    let mut rays = 0;
     let mut result = Vec::new();
     for fragment in &graph.fragments {
         let (point, normal) = D::probe(map, fragment.fragment, tolerances)?;
@@ -465,9 +462,9 @@ pub(crate) fn run<D: BooleanDomain, P: Payload>(
             BooleanSide::First => &second,
             BooleanSide::Second => &first,
         };
-        result.push(classifier.locate(point, normal, fragment.fragment, &mut rays)?);
+        result.push(classifier.locate(point, normal, fragment.fragment)?);
     }
-    Ok((result, rays))
+    Ok(result)
 }
 
 impl<P: Payload> OperandClassifier<FaceKey> for SolidRayCaster<'_, P> {
@@ -478,11 +475,10 @@ impl<P: Payload> OperandClassifier<FaceKey> for SolidRayCaster<'_, P> {
         point: Point3,
         normal: Vector3<f64>,
         source: FaceKey,
-        rays: &mut usize,
     ) -> Result<RelativeLocation, BooleanError> {
         match self.boundary(point, normal) {
             Some(location) => Ok(location),
-            None => self.classify(point, source, rays),
+            None => self.classify(point, source),
         }
     }
 }
@@ -508,6 +504,5 @@ pub fn solid_contains_point<P: Payload>(
             operand: BooleanOperand::Solid(solid),
         })?;
     let caster = SolidRayCaster::new(map, cells.faces.iter().copied(), options, tolerances)?;
-    let mut rays = 0;
-    Ok(caster.classify(point, source, &mut rays)? == RelativeLocation::Inside)
+    Ok(caster.classify(point, source)? == RelativeLocation::Inside)
 }

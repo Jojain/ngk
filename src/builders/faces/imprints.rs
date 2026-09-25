@@ -1191,7 +1191,12 @@ pub(crate) fn split_boundary_at_uv<P: Payload>(
     uv: Point2,
 ) -> Result<Option<VertexKey>, FaceImprintSplitError> {
     let boundary = face_boundary_edges(edit, face)?;
-    if let Some(index) = snap_boundary_corner_in(&boundary, uv) {
+    let support = edit
+        .face(face)
+        .ok_or(FaceImprintSplitError::MissingFace { face })?
+        .surface()
+        .clone();
+    if let Some(index) = snap_boundary_corner_on(&support, &boundary, uv) {
         return Ok(boundary[index].vertex);
     }
 
@@ -1225,7 +1230,8 @@ pub(crate) fn split_boundary_at_uv<P: Payload>(
         // already there, so the corner is the one the boundary now reports.
         Err(FaceEdgeSplitError::EdgeSplitFailed(EdgeSplitError::DegenerateSplit { .. })) => {
             let boundary = face_boundary_edges(edit, face)?;
-            Ok(snap_boundary_corner_in(&boundary, uv).and_then(|index| boundary[index].vertex))
+            Ok(snap_boundary_corner_on(&support, &boundary, uv)
+                .and_then(|index| boundary[index].vertex))
         }
         Err(error) => Err(error.into()),
     }

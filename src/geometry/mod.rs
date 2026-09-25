@@ -1,5 +1,4 @@
 pub mod axis;
-pub mod counters;
 pub mod dim2;
 pub mod dim3;
 pub mod interval;
@@ -11,7 +10,6 @@ pub mod traits;
 pub mod transform;
 
 pub use axis::{Axis, Axis3};
-pub use counters::SolverCounters;
 pub use dim2::curves::{Circle2, Curve2, Ellipse2, Line2};
 pub use dim2::intersections::{
     CurveCurveIntersection2, CurveCurveIntersections2, CurveIntersectionError,

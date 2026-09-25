@@ -14,7 +14,6 @@ use std::f64::consts::TAU;
 use nalgebra::Vector3;
 
 use super::roots::{harmonic_roots, quadratic_roots, wrapped};
-use crate::geometry::counters::count_curve_surface_analytic_call;
 use crate::geometry::dim3::intersections::error::IntersectionError;
 use crate::geometry::dim3::intersections::options::IntersectionOptions;
 use crate::geometry::parameter::NativeParam;
@@ -64,7 +63,6 @@ pub fn intersect_analytic_curve_surface(
     if matches!(solved, Solved::Contained) && matches!(restriction, Restriction::Whole) {
         return None;
     }
-    count_curve_surface_analytic_call();
     Some(Ok(restriction.apply(solved, curve, surface, options)))
 }
 

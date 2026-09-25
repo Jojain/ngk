@@ -321,6 +321,26 @@ impl NurbsSurface {
             .expect("the sample grid is never empty")
     }
 
+    /// Returns the parameters of `point` refined from `hint` alone, or `None`
+    /// when that start does not land within `tolerance` of it.
+    ///
+    /// [`Self::closest_parameter`] searches the whole grid because it knows
+    /// nothing of where `point` lies. A caller walking a curve on the surface
+    /// does: the previous point's parameters are a start inside the right
+    /// basin. Newton from a start on another fold still converges, to a foot
+    /// on that fold a fold's spacing away, so the answer is only kept when
+    /// the foot is the point itself. A point lies on one fold only, so a
+    /// foot within `tolerance` is its own.
+    pub fn closest_parameter_near(
+        &self,
+        point: Point3,
+        hint: Point2<f64>,
+        tolerance: f64,
+    ) -> Option<Point2<f64>> {
+        let uv = self.refine_closest_parameter(point, hint.x, hint.y);
+        ((self.point_at(uv.x, uv.y) - point).norm() <= tolerance).then_some(uv)
+    }
+
     /// Gauss-Newton from `(u, v)`, clamped to the domain.
     fn refine_closest_parameter(&self, point: Point3, mut u: f64, mut v: f64) -> Point2<f64> {
         let domain_u = self.domain_u();

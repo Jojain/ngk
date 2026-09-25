@@ -9,6 +9,7 @@ use ngk::geometry::{
 use ngk::healing::{HealingOptions, HealingScope, remove_redundant_cells};
 use ngk::model::{Cell2, Model};
 use ngk::modeling::{faces, solids};
+use ngk::topology::embedding::EntityOwner;
 use ngk::topology::gmap::Dim;
 use ngk::topology::shape_keys::{EdgeKey, FaceKey};
 use ngk::topology::validation::validate_solid_manifold;
@@ -398,6 +399,87 @@ fn imprinted_face_inner_loop_gets_removed() {
         result.removed_edges
     );
     assert_eq!(result.fused_faces.len(), 1);
+}
+
+/// The island heals away whichever order its edges are offered in.
+///
+/// The hole is joined to the outer loop by a cut standing on one corner of it.
+/// Once the first removal fuses the island, the rest of the interface is a
+/// chain the face bounds on both sides, and removing the last edge at the
+/// cut's corner used to fold the cut back on itself: the chain fell out of the
+/// face's 2-cell and the commit refused the face. Only some orders reach that
+/// corner early, and a Boolean hands healing its edges in hash order, so the
+/// failure came and went between identical runs.
+#[test]
+fn a_filled_inner_loop_heals_in_every_edge_order() {
+    let (g, face) = rectangle_with_filled_inner_loop();
+    let island = g
+        .iter_faces()
+        .map(|(key, _)| key)
+        .find(|&key| key != face)
+        .unwrap();
+    let mut edges = g
+        .face_unchecked(island)
+        .edges()
+        .iter()
+        .map(|edge| edge.key())
+        .collect::<Vec<_>>();
+    edges.sort();
+    assert_eq!(edges.len(), 4);
+
+    for order in permutations(&edges) {
+        let mut g = g.clone();
+        let result = remove_redundant_cells(
+            &mut g,
+            HealingOptions {
+                scope: HealingScope::Cells {
+                    vertices: Vec::new(),
+                    edges: order.clone(),
+                },
+                ..HealingOptions::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("healing in order {order:?} failed: {error:?}"));
+        assert_eq!(
+            g.iter_faces().count(),
+            1,
+            "order {order:?} left the island; skips were {:?}",
+            result.skipped
+        );
+        let healed = g.iter_faces().next().unwrap().0;
+        assert!(
+            g.face_unchecked(healed).inner_loops().is_empty(),
+            "order {order:?} left the filled inner loop"
+        );
+        assert_eq!(g.iter_edges().count(), 4, "order {order:?}");
+        assert_eq!(g.iter_vertices().count(), 4, "order {order:?}");
+        // The cut joined the hole to the outer loop; with the hole gone it has
+        // nothing left to join and must go too, rather than stay as a spur.
+        assert!(
+            g.embedding()
+                .records_of(EntityOwner::Face(healed))
+                .all(|record| record.dimension != Dim::One),
+            "order {order:?} left a cut embedded in the healed face"
+        );
+        assert_eq!(g.cells(Dim::One).count(), 4, "order {order:?}");
+    }
+}
+
+/// Every ordering of `items`.
+fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
+    if items.is_empty() {
+        return vec![Vec::new()];
+    }
+    (0..items.len())
+        .flat_map(|index| {
+            let mut rest = items.to_vec();
+            let first = rest.remove(index);
+            permutations(&rest).into_iter().map(move |mut tail| {
+                tail.insert(0, first.clone());
+                tail
+            })
+        })
+        .collect()
 }
 
 #[test]

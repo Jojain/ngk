@@ -8,7 +8,6 @@ use std::f64::consts::TAU;
 use nalgebra::Vector3;
 
 use super::roots::{harmonic_roots, quadratic_roots, wrapped};
-use crate::geometry::counters::count_curve_curve_analytic_call;
 use crate::geometry::dim3::intersections::error::IntersectionError;
 use crate::geometry::dim3::intersections::options::IntersectionOptions;
 use crate::geometry::parameter::NativeParam;
@@ -47,7 +46,6 @@ pub fn intersect_analytic_curves(
     if matches!(solved, Solved::Coincident) {
         return None;
     }
-    count_curve_curve_analytic_call();
     Some(Ok(report(solved, &first, &second, a, b, options)))
 }
 

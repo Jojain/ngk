@@ -134,8 +134,8 @@ fn run<P: Payload>(
         });
     }
     let prepared = apply_boolean_splits_edit(edit, plan, false)?;
-    let graph = FragmentGraph::<PlanarDomain>::build(edit, &prepared);
-    let (classes, _) = classify::run(edit, &prepared, &graph, options, tolerances)?;
+    let graph = FragmentGraph::<PlanarDomain>::build(&prepared);
+    let classes = classify::run(edit, &prepared, &graph, options, tolerances)?;
     let selection = select::run(operation, &graph, &classes);
     if selection.kept.is_empty() {
         return Err(BooleanError::EmptyResult);
@@ -338,11 +338,13 @@ fn fuse_seams<P: Payload>(
     merges: &SeamMerges,
     tolerances: BooleanTolerances,
 ) -> Result<Vec<(FaceKey, FaceKey)>, BooleanError> {
-    let edges = prepared
-        .span_edges
-        .values()
-        .flatten()
-        .flatten()
+    // Healing removes edges in the order it is offered them, so the spans are
+    // walked by id rather than in the hash order the map happens to hold them.
+    let mut spans = prepared.span_edges.iter().collect::<Vec<_>>();
+    spans.sort_by_key(|(span, _)| span.0);
+    let edges = spans
+        .into_iter()
+        .flat_map(|(_, sides)| sides.iter().flatten())
         .map(|edge| *merges.edges.get(edge).unwrap_or(edge))
         .filter(|&edge| edit.edge(edge).is_some())
         .collect::<Vec<_>>();

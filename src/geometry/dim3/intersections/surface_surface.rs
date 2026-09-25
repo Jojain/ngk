@@ -18,7 +18,6 @@ use super::{
     SurfaceIntersectionPointKind, SurfaceOverlapCandidate, SurfaceSurfaceIntersection,
     SurfaceSurfaceIntersections,
 };
-use crate::geometry::counters::count_surface_surface_call;
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{
     BBox, Curve, Interval, NurbsSurface, Point2, Surface, TrimmedCurve, TrimmedCurve2,
@@ -309,7 +308,6 @@ fn intersect_nurbs_surfaces(
     b: &NurbsSurface,
     options: IntersectionOptions,
 ) -> Result<SurfaceSurfaceIntersections, IntersectionError> {
-    count_surface_surface_call();
     if !has_supported_weights(a) || !has_supported_weights(b) {
         return Ok(SurfaceSurfaceIntersections::new(
             Vec::new(),

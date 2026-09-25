@@ -28,6 +28,8 @@ serde-wasm-bindgen = { version = "0.6", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 slotmap = { version = "1.1.1", features = ["serde"] }
 radians = "0.3.1"
+rayon = "1.12"
+smallvec = "1.15"
 thiserror = "2.0.18"
 winnow = "1.0.4"
 
@@ -38,8 +40,8 @@ codegen-units = 1
 
 # Optimised like release, but emits the PDB that lets samply name the frames.
 # Thin LTO instead of fat so function boundaries survive into the call tree;
-# flip to `lto = true` when measuring the exact code that ships. `profile.ps1`
-# records against this profile.
+# flip to `lto = true` when measuring the exact code that ships. The `profile`
+# command records against this profile.
 [profile.profiling]
 inherits = "release"
 debug = true
@@ -52,6 +54,15 @@ debug = 2
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 slotmap = "1.1.1"
+proptest = "1"
+
+# Property-based Boolean fuzzing. `test = false` keeps it out of plain
+# `cargo test`; run it with `cargo test --release --test boolean_fuzz`.
+[[test]]
+name = "boolean_fuzz"
+path = "tests/fuzz/boolean.rs"
+harness = false
+test = false
 
 [[bench]]
 name = "booleans"

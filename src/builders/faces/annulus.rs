@@ -274,10 +274,12 @@ pub(crate) fn rebased_face_pcurves<P: Payload>(
 
 /// One face's pcurve for a closed edge, turned to begin at `mark`.
 ///
-/// `None` where there is nothing to turn: a pcurve that does not close in
-/// parameter space runs between two distinct ends — a seam crossing, where the
-/// face's own domain is what pins them — and only a closed one is free to say
-/// where it starts.
+/// `None` where there is nothing to turn: a pcurve that does not close on the
+/// surface runs between two distinct ends — a seam crossing, where the face's
+/// own domain is what pins them — and only a closed one is free to say where
+/// it starts. Closed on the surface includes a pcurve whose ends lie one
+/// period apart: a rim running once round a cylinder wall is a line in
+/// parameter space, yet the same closed curve as its edge.
 pub(crate) fn rebased_face_pcurve<P: Payload>(
     g: &Model<P>,
     face: FaceKey,
@@ -290,18 +292,29 @@ pub(crate) fn rebased_face_pcurve<P: Payload>(
     let pcurve = face_view
         .pcurve(dart)
         .ok_or(FaceEdgeSplitError::MissingPcurve { face, dart })?;
-    if !pcurve.is_closed() {
+    let surface = face_view.surface();
+    if !pcurve.is_closed() && !runs_one_period(surface, &pcurve) {
         return Ok(None);
     }
-    let surface = face_view.surface();
     let uv = periodic_image_near_pcurve(surface, &pcurve, surface.param_at(mark)?);
     if !pcurve.contains(uv, LINEAR_TOLERANCE) {
         return Err(FaceEdgeSplitError::SplitPointNotOnPcurve { face, dart });
     }
     // The span keeps its length and direction and only moves its ends, so the
-    // turned pcurve still runs the whole closed curve once.
-    let start = pcurve.native_parameter_at(uv);
-    let span = Interval::new(start, start + pcurve.interval().delta());
+    // turned pcurve still runs the whole closed curve once. Its new start is
+    // taken within its old span: a pcurve one period long reads a mark on
+    // either of its ends as the same point, and a start a period along would
+    // write the whole boundary onto the next image of the domain, away from
+    // everything else the face holds.
+    let old = pcurve.interval();
+    let delta = old.delta();
+    let along = (pcurve.native_parameter_at(uv) - old.start) / delta;
+    let mut along = along - along.floor();
+    if (1.0 - along) * delta.abs() <= LINEAR_TOLERANCE {
+        along = 0.0;
+    }
+    let start = old.start + along * delta;
+    let span = Interval::new(start, start + delta);
     Ok(Some(RebasedFacePcurve {
         face,
         dart: stored_pcurve_dart(g, face, dart).unwrap_or(dart),
@@ -337,14 +350,37 @@ pub(crate) fn assign_rebased_pcurve<P: Payload>(
     Ok(())
 }
 
+/// Whether `pcurve`'s ends lie exactly one period apart along one periodic
+/// axis of `surface`, and together along the other: once round the surface.
+fn runs_one_period(surface: &Surface, pcurve: &TrimmedCurve2) -> bool {
+    let offset = pcurve.point_at(Fraction::new(1.0)) - pcurve.point_at(Fraction::new(0.0));
+    let (u_period, v_period) = match surface.periodicity() {
+        SurfacePeriodicity::None => return false,
+        SurfacePeriodicity::UPeriodic(u) => (Some(u), None),
+        SurfacePeriodicity::VPeriodic(v) => (None, Some(v)),
+        SurfacePeriodicity::UVPeriodic(u, v) => (Some(u), Some(v)),
+    };
+    let one_period = |delta: f64, period: Option<f64>| {
+        period.is_some_and(|period| (delta.abs() - period).abs() <= LINEAR_TOLERANCE)
+    };
+    let still = |delta: f64| delta.abs() <= LINEAR_TOLERANCE;
+    (one_period(offset.x, u_period) && still(offset.y))
+        || (one_period(offset.y, v_period) && still(offset.x))
+}
+
 pub(crate) fn periodic_image_near_pcurve(
     surface: &Surface,
     pcurve: &TrimmedCurve2,
-    mut uv: Point2,
+    uv: Point2,
 ) -> Point2 {
     let start = pcurve.point_at(Fraction::new(0.0));
     let end = pcurve.point_at(Fraction::new(1.0));
     let center = Point2::from((start.coords + end.coords) * 0.5);
+    periodic_image_near(surface, center, uv)
+}
+
+/// The image of `uv`, shifted by whole periods of `surface`, nearest `center`.
+pub(crate) fn periodic_image_near(surface: &Surface, center: Point2, mut uv: Point2) -> Point2 {
     match surface.periodicity() {
         SurfacePeriodicity::UPeriodic(period) => {
             uv.x += ((center.x - uv.x) / period).round() * period;

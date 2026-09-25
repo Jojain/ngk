@@ -1,6 +1,6 @@
 //! One immutable tolerance budget for a Boolean operation.
 
-use crate::geometry::{IntersectionOptions, Point3, Surface};
+use crate::geometry::{IntersectionOptions, Point3};
 use crate::model::Model;
 use crate::topology::payload::Payload;
 
@@ -121,15 +121,16 @@ impl BooleanTolerances {
                         .map(|point| point.to_cartesian()),
                 );
             }
+            // A closed analytic face (a whole sphere or torus) has no vertex
+            // and no edge, so its support's own box is the only extent it
+            // offers. Unbounded supports return no box; their faces are
+            // bounded by the edges already collected.
             for &face in &cells.faces {
-                if let Surface::Nurbs(surface) = map.face_unchecked(face).surface() {
-                    points.extend(
-                        surface
-                            .control_points()
-                            .as_slice()
-                            .iter()
-                            .map(|point| point.to_cartesian()),
-                    );
+                let face = map.face_unchecked(face);
+                let surface = face.surface();
+                let (u, v) = surface.domain();
+                if let Some(corners) = surface.bbox_over(u, v).and_then(|bbox| bbox.corners()) {
+                    points.extend(corners);
                 }
             }
         }

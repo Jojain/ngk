@@ -78,10 +78,7 @@ fn scenes() -> Vec<Scene> {
     ]
 }
 
-/// Runs one Boolean and returns its stage profile, whether or not it succeeded.
-///
-/// A Boolean that aborts on incomplete coverage still carries the diagnostics
-/// that say where the work went, and that is exactly the case worth profiling.
+/// Runs one Boolean and reports how long it took, whether or not it succeeded.
 fn run_once(scene: &Scene) -> Result<String, String> {
     let (mut map, first, second) = (scene.build)();
     let started = Instant::now();
@@ -94,18 +91,10 @@ fn run_once(scene: &Scene) -> Result<String, String> {
     );
     let elapsed = started.elapsed();
     match outcome {
-        Ok(result) => Ok(format!(
-            "{} ok in {:?}\n{}",
-            scene.name,
-            elapsed,
-            result.diagnostics.profile()
-        )),
+        Ok(_) => Ok(format!("{} ok in {elapsed:?}", scene.name)),
         Err(BooleanError::IncompleteIntersections { diagnostics }) => Err(format!(
-            "{} incomplete in {:?} ({:?})\n{}",
-            scene.name,
-            elapsed,
-            diagnostics.coverage,
-            diagnostics.profile()
+            "{} incomplete in {elapsed:?} ({:?})",
+            scene.name, diagnostics.coverage
         )),
         Err(error) => Err(format!("{} failed in {elapsed:?}: {error}", scene.name)),
     }

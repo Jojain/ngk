@@ -27,21 +27,19 @@
 //! are as good a pair as two faces on one plane; what admission requires is
 //! that both operands sit on the *same* support surface, not that it is flat.
 
-use std::collections::HashSet;
-
 use nalgebra::Vector3;
 
 use crate::geometry::{Point2, Point3, Surface};
 use crate::model::Model;
 use crate::topology::payload::Payload;
-use crate::topology::shape_keys::{EdgeKey, FaceKey};
+use crate::topology::shape_keys::FaceKey;
 
 use super::domain::{BooleanDomain, OperandClassifier, RelativeLocation, Selection};
 use super::solid_domain::SolidDomain;
 use super::trim::FaceTrimDomain;
 use super::{
-    BooleanCell, BooleanError, BooleanLineage, BooleanOperandPreparation, BooleanOperation,
-    BooleanOptions, BooleanSide, BooleanTolerances,
+    BooleanCell, BooleanError, BooleanLineage, BooleanOperation, BooleanOptions, BooleanSide,
+    BooleanTolerances,
 };
 
 /// Marker for the face-pair domain; carries no state of its own.
@@ -76,14 +74,13 @@ impl OperandClassifier<FaceKey> for PlanarOperandClassifier {
     /// boundary. The answer is therefore always `Inside` or `Outside`, which is
     /// why [`PlanarDomain::keeps`] has no `OnBoundary` rows to write.
     ///
-    /// `normal` and `rays` go unused: this is a closed-form winding query, with
-    /// no ray to cast and no second orientation to compare against.
+    /// `normal` goes unused: this is a closed-form winding query, with no ray
+    /// to cast and no second orientation to compare against.
     fn locate(
         &self,
         point: Point3,
         _normal: Vector3<f64>,
         source: FaceKey,
-        _rays: &mut usize,
     ) -> Result<RelativeLocation, BooleanError> {
         let uv = self
             .surface
@@ -100,7 +97,6 @@ impl OperandClassifier<FaceKey> for PlanarOperandClassifier {
 
 impl BooleanDomain for PlanarDomain {
     type Fragment = FaceKey;
-    type Boundary = EdgeKey;
     type Classifier<'a, P: Payload + 'a> = PlanarOperandClassifier;
 
     // Fragments are faces, and faces are bounded by edges, here exactly as for
@@ -110,21 +106,6 @@ impl BooleanDomain for PlanarDomain {
 
     fn fragments(lineage: &BooleanLineage) -> Vec<(FaceKey, FaceKey)> {
         SolidDomain::fragments(lineage)
-    }
-
-    fn boundaries<P: Payload>(map: &Model<P>, fragment: FaceKey) -> Vec<EdgeKey> {
-        SolidDomain::boundaries(map, fragment)
-    }
-
-    fn incident<P: Payload>(map: &Model<P>, boundary: EdgeKey) -> Vec<FaceKey> {
-        SolidDomain::incident(map, boundary)
-    }
-
-    fn barriers<P: Payload>(
-        map: &Model<P>,
-        preparation: &BooleanOperandPreparation,
-    ) -> HashSet<EdgeKey> {
-        SolidDomain::barriers(map, preparation)
     }
 
     fn probe<P: Payload>(

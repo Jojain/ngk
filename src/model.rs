@@ -549,8 +549,28 @@ impl<P: Payload> Model<P> {
     /// its attribute. Algorithms that take several passes over that topology
     /// use this to keep reading the final surviving face identity meanwhile.
     pub(crate) fn staged_face_survivor(&self, face: FaceKey) -> FaceKey {
-        let target = EditKey::Face(face);
-        let mut current = target;
+        match self.staged_survivor(EditKey::Face(face)) {
+            EditKey::Face(key) => key,
+            _ => face,
+        }
+    }
+
+    /// Follows profile merges already declared in the active transaction, the
+    /// profile counterpart of [`Self::staged_face_survivor`].
+    pub(crate) fn staged_profile_survivor(&self, profile: ProfileKey) -> ProfileKey {
+        match self.staged_survivor(EditKey::Profile(profile)) {
+            EditKey::Profile(key) => key,
+            _ => profile,
+        }
+    }
+
+    /// Follows the merges declared so far to the identity `key` will be
+    /// reconciled into, which is `key` itself when none names it.
+    fn staged_survivor(&self, key: EditKey) -> EditKey {
+        let mut current = key;
+        // A chain that closes on itself is a mistake, and commit names it
+        // `MergeCycle`. This walk only has to reach that report rather than
+        // spin, so it stops at the first key it sees twice.
         let mut visited = HashSet::from([current]);
         while let Some(survivor) =
             self.staged_edit_events()
@@ -565,10 +585,7 @@ impl<P: Payload> Model<P> {
             }
             current = survivor;
         }
-        match current {
-            EditKey::Face(key) => key,
-            _ => face,
-        }
+        current
     }
 
     /// Records one semantic event in the active edit session.

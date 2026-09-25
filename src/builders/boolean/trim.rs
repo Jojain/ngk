@@ -70,7 +70,6 @@ impl FaceTrimDomain {
         face: &Face<'_, P>,
         tolerance: f64,
     ) -> Result<Self, BooleanError> {
-        super::diagnostics::count_trim_domain_built();
         let domain = UnwrappedFaceDomain::of_face(face).map_err(|error| match error {
             UnwrappedFaceDomainError::MissingPcurve { face, edge } => {
                 BooleanError::MissingTrimCurve { face, edge }

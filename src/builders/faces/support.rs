@@ -1,13 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
-use super::{chord_loop_kinds, periodic_image_near_pcurve};
+use super::{chord_loop_kinds, periodic_image_near, periodic_image_near_pcurve};
 use crate::builders::edges::EdgeSplitError;
 use crate::builders::errors::ModelEditFailure;
 use crate::builders::scaffold::CutAttachment;
 use crate::geometry::parameter::{Fraction, Normalized};
 use crate::geometry::{
     Curve, CurveCurveIntersection2, CurveIntersectionError, Interval, LINEAR_TOLERANCE, NurbsError,
-    Point2, Point3, TrimmedCurve, TrimmedCurve2,
+    Point2, Point3, Surface, TrimmedCurve, TrimmedCurve2,
 };
 use crate::model::{Cell1, Model};
 use crate::topology::attributes::{
@@ -692,12 +692,11 @@ pub(crate) fn loop_boundary_edges<P: Payload>(
             let pcurve = face_view
                 .pcurve(dart)
                 .ok_or(FaceImprintSplitError::MissingPcurve { face, dart })?;
-            // Where the corner is, asked of the corner. A marked edge's corner
-            // need not sit where its pcurve starts -- marking says where a
-            // closed edge now begins, while the pcurve keeps its own anchoring
-            // -- so reading the pcurve would put the corner in the wrong place.
-            // An unmarked loop has no corner at all, and the pcurve's start is
-            // then the only place to begin the walk from.
+            // Where the corner is, asked of the corner. Marking turns a closed
+            // pcurve to begin at the mark, but only to within the image of the
+            // domain it was written on, and the corner is what says which
+            // point that is. An unmarked loop has no corner at all, and the
+            // pcurve's start is then the only place to begin the walk from.
             let corner = Vertex::from_dart(g, dart);
             let uv = corner
                 .as_ref()
@@ -739,6 +738,10 @@ pub(crate) fn boundary_edge_at_uv<P: Payload>(
                 face,
                 dart: edge.dart(),
             })?;
+        // Asked on the image of `uv` beside the pcurve: a rim arc crossing a
+        // periodic face's seam is written across it, and the point it passes
+        // through may arrive a period away.
+        let uv = periodic_image_near_pcurve(face_view.surface(), &pcurve, uv);
         let Some(fraction) = pcurve_fraction_at(&pcurve, uv) else {
             continue;
         };
@@ -781,6 +784,25 @@ pub(crate) fn snap_boundary_corner_in(boundary: &[BoundaryCorner], uv: Point2) -
         .enumerate()
         .filter_map(|(index, corner)| {
             let distance = (corner.uv - uv).norm();
+            (distance <= LINEAR_TOLERANCE).then_some((distance, index))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, index)| index)
+}
+
+/// [`snap_boundary_corner_in`] on the surface rather than in one image of its
+/// domain: each corner is compared with the image of `uv` nearest it, so a
+/// corner written a period away from where `uv` was is still found.
+pub(crate) fn snap_boundary_corner_on(
+    surface: &Surface,
+    boundary: &[BoundaryCorner],
+    uv: Point2,
+) -> Option<usize> {
+    boundary
+        .iter()
+        .enumerate()
+        .filter_map(|(index, corner)| {
+            let distance = (corner.uv - periodic_image_near(surface, corner.uv, uv)).norm();
             (distance <= LINEAR_TOLERANCE).then_some((distance, index))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))

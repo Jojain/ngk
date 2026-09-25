@@ -254,6 +254,27 @@ impl Surface {
         }
     }
 
+    /// Returns the parameters of `point`, starting from `hint`: the parameters
+    /// of a point known to lie a short step away on this surface.
+    ///
+    /// Only a NURBS surface searches for its projection, and that search is
+    /// what the hint replaces; it is kept only when it lands within
+    /// `tolerance` of `point`, and the whole search answers otherwise. Every
+    /// other surface projects in closed form and ignores the hint.
+    pub fn param_near(
+        &self,
+        point: Point3,
+        hint: Point2,
+        tolerance: f64,
+    ) -> Result<Point2, NurbsError> {
+        match self {
+            Surface::Nurbs(surface) => Ok(surface
+                .closest_parameter_near(point, hint, tolerance)
+                .unwrap_or_else(|| surface.closest_parameter(point))),
+            _ => self.param_at(point),
+        }
+    }
+
     /// Returns the outward normal at `(u, v)`.
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         match self {

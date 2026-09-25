@@ -5,9 +5,6 @@ use super::bezier::Bezier2;
 use super::curves::Curve2;
 use super::nurbs::NurbsCurve2;
 use super::trimmed::TrimmedCurve2;
-use crate::geometry::counters::{
-    count_curve_curve_2d_call, count_newton_iterations, count_subdivision_node,
-};
 use crate::geometry::parameter::{Fraction, NativeParam, Normalized};
 use crate::geometry::{
     IntersectionCoverage, IntersectionIncompleteReason, Interval, LINEAR_TOLERANCE, NurbsError,
@@ -294,7 +291,6 @@ pub fn intersect_curves_with_options(
     if !options.validate() {
         return Err(CurveIntersectionError::InvalidOptions);
     }
-    count_curve_curve_2d_call();
 
     let nurbs_a = a.to_nurbs()?;
     let nurbs_b = b.to_nurbs()?;
@@ -360,7 +356,6 @@ impl Search {
 
     fn visit(&mut self, a: CurvePiece, b: CurvePiece) {
         let options = self.options;
-        count_subdivision_node();
         let Some(remaining) = self.budget.checked_sub(1) else {
             self.push_reason(IntersectionIncompleteReason::SubdivisionBudgetExhausted);
             return;
@@ -575,7 +570,6 @@ fn refine_point(a: &Bezier2, b: &Bezier2, options: CurveIntersectionOptions) -> 
     let mut v = 0.5 * (b.domain().start.value() + b.domain().end.value());
 
     for _ in 0..options.newton_max_iterations {
-        count_newton_iterations(1);
         let point_a = a.point_at(u);
         let point_b = b.point_at(v);
         let residual = point_a - point_b;

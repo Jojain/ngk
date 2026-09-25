@@ -517,17 +517,23 @@ impl<'g, P: Payload> Face<'g, P> {
     /// and the winding is read from the closed result. That is the same
     /// rectangle a stored seam used to spell out, computed rather than
     /// recorded.
+    ///
+    /// A face nothing encloses but that carries holes — a closed support with
+    /// bites taken out of it — has no outer boundary, yet its holes still wind
+    /// against its material side. The first hole's area, negated, answers for
+    /// the boundary it lacks, so a flipped face of this kind reads flipped.
     pub(crate) fn boundary_signed_area(&self) -> Option<f64> {
         let realization = self
             .model
             .realize_face(self.key, self.sense, RealizationPurpose::Geometry)
             .ok()?;
-        let points = realization
-            .domain()
-            .loops()
-            .first()?
-            .polyline(BOUNDARY_WINDING_SAMPLES);
-        (!points.is_empty()).then(|| signed_area(&points))
+        let mut loops = realization.domain().loops().iter();
+        let outer = loops.next()?.polyline(BOUNDARY_WINDING_SAMPLES);
+        if !outer.is_empty() {
+            return Some(signed_area(&outer));
+        }
+        let hole = loops.next()?.polyline(BOUNDARY_WINDING_SAMPLES);
+        (!hole.is_empty()).then(|| -signed_area(&hole))
     }
 
     /// Returns the user payload attached to this face.
