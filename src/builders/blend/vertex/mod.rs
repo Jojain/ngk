@@ -5,6 +5,7 @@ mod conic;
 mod corner_cut;
 mod mitre;
 mod run_out;
+mod smooth;
 mod treat;
 mod trihedral;
 

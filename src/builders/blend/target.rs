@@ -6,19 +6,28 @@
 //! incidence, never from the call. A face, its profiles and the list of its
 //! edges therefore resolve to the same set, and a set has no order, so no
 //! spelling of a selection can change the result.
+//!
+//! A solid edge brings the edges it runs on into without a corner: a blend
+//! cannot stop part way along a smooth crease, so a slot's straight rim and
+//! the arcs it runs into are blended together whichever of them is named.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use nalgebra::Vector3;
+
 use super::errors::BlendError;
 use super::law::BlendLaw;
+use crate::geometry::ANGULAR_TOLERANCE;
 use crate::geometry::parameter::Fraction;
-use crate::geometry::{ANGULAR_TOLERANCE, Surface};
 use crate::model::Model;
 use crate::topology::edge::Edge;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, VertexKey};
 use crate::topology::vertex::Vertex;
+
+/// Fractions of an edge at which its two faces are compared for tangency.
+const FLATNESS_SAMPLES: [f64; 3] = [0.25, 0.5, 0.75];
 
 /// One element of a blend target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -217,11 +226,68 @@ pub(crate) fn resolve<P: Payload>(
         }
     }
 
+    grow_tangent_chains(model, &mut edges);
     Ok(Resolution {
         corners: corners.into_values().collect(),
         edges: edges.into_iter().collect(),
         corner_cuts: corner_cuts.into_iter().collect(),
     })
+}
+
+/// Adds to `edges` every solid edge that runs on without a corner from one
+/// already there, until each chain closes or ends at a corner.
+///
+/// An edge runs on from another at a vertex where it leaves along the tangent
+/// the other arrives on. Where two edges would, the chain is ambiguous there
+/// and does not grow.
+fn grow_tangent_chains<P: Payload>(model: &Model<P>, edges: &mut BTreeSet<EdgeKey>) {
+    let mut pending = edges.iter().copied().collect::<Vec<_>>();
+    while let Some(key) = pending.pop() {
+        let Some(bounded) = model.edge_unchecked(key).bounded() else {
+            continue;
+        };
+        for vertex in [bounded.start().key(), bounded.end().key()] {
+            let Some(arriving) = leaving(model, key, vertex).map(|direction| -direction) else {
+                continue;
+            };
+            let Some(view) = model.vertex(vertex) else {
+                continue;
+            };
+            let continuations = view
+                .edges()
+                .into_iter()
+                .filter(|edge| edge.key() != key && edge.faces().len() == 2)
+                .filter(|edge| {
+                    leaving(model, edge.key(), vertex).is_some_and(|direction| {
+                        direction.dot(&arriving) >= 1.0 - ANGULAR_TOLERANCE.sqrt()
+                    })
+                })
+                .collect::<Vec<_>>();
+            let [next] = continuations.as_slice() else {
+                continue;
+            };
+            if !is_flat_edge(model, next) && edges.insert(next.key()) {
+                pending.push(next.key());
+            }
+        }
+    }
+}
+
+/// The unit tangent a bounded edge leaves `vertex` along, if it ends there
+/// once.
+fn leaving<P: Payload>(model: &Model<P>, edge: EdgeKey, vertex: VertexKey) -> Option<Vector3<f64>> {
+    let view = model.edge_unchecked(edge);
+    let bounded = view.bounded()?;
+    let span = view.trimmed_curve();
+    let direction = match (
+        bounded.start().key() == vertex,
+        bounded.end().key() == vertex,
+    ) {
+        (true, false) => span.derivative_at(Fraction::START, 1),
+        (false, true) => -span.derivative_at(Fraction::END, 1),
+        _ => return None,
+    };
+    (direction.norm() > 0.0).then(|| direction.normalize())
 }
 
 /// Whether a vertex is where solid faces meet rather than a planar corner.
@@ -396,7 +462,9 @@ fn is_flat_corner<P: Payload>(model: &Model<P>, corner: &CornerRef) -> bool {
     arriving.cross(&leaving).norm() <= ANGULAR_TOLERANCE.sqrt() && arriving.dot(&leaving) > 0.0
 }
 
-/// Whether both faces of an edge lie in one plane, so it is no crease at all.
+/// Whether an edge's two faces continue each other all along it, so it is no
+/// crease at all: two faces of one plane, or a round and the face it runs
+/// tangent into.
 ///
 /// Normals are read in each face's stored orientation, which is outward on a
 /// consistently oriented shell; a view's own sense depends on the dart it was
@@ -406,12 +474,19 @@ fn is_flat_edge<P: Payload>(model: &Model<P>, edge: &Edge<'_, P>) -> bool {
     let [first, second] = faces.as_slice() else {
         return false;
     };
-    match (first.surface(), second.surface()) {
-        (Surface::Plane(_), Surface::Plane(_)) => {
-            let first_normal = model.face_unchecked(first.key()).normal_at(0.0, 0.0);
-            let second_normal = model.face_unchecked(second.key()).normal_at(0.0, 0.0);
-            first_normal.dot(&second_normal) >= 1.0 - ANGULAR_TOLERANCE.sqrt()
-        }
-        _ => false,
-    }
+    let [first, second] = [first.key(), second.key()].map(|key| model.face_unchecked(key));
+    let span = edge.trimmed_curve();
+    FLATNESS_SAMPLES.iter().all(|&fraction| {
+        let point = span.point_at(Fraction::new(fraction));
+        let normals = [&first, &second].map(|face| {
+            face.surface()
+                .param_at(point)
+                .ok()
+                .map(|uv| face.normal_at(uv.x, uv.y))
+        });
+        let [Some(first_normal), Some(second_normal)] = normals else {
+            return false;
+        };
+        first_normal.dot(&second_normal) >= 1.0 - ANGULAR_TOLERANCE.sqrt()
+    })
 }

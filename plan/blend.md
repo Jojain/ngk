@@ -6,21 +6,23 @@ surface a ball of radius `r` sweeps while it touches both faces. Both take the
 same targets and differ only in the geometry they compute, so they share one
 engine.
 
-**Status:** the first iteration has landed, as `src/builders/blend/`. It is
-described as built in `docs/blend_architecture.md`. This plan keeps the
-reasoning behind the abstractions and what comes next.
+**Status:** two iterations have landed, as `src/builders/blend/`: planar
+faces and straight edges first, then any edge curve between any two faces,
+closed edges and tangent chains. The engine is described as built in
+`docs/blend_architecture.md`. This plan keeps the reasoning behind the
+abstractions and what comes next.
 
 ## Decisions
 
 1. **Execution model:** cut, re-embed, fill. It replaces split, remove and
    sew-by-matching.
-2. **Scope:** the first iteration stays with planar faces and straight edges.
-   The abstractions below are chosen so that everything after it slots in
-   without reshaping the engine:
-   - torus sections;
+2. **Scope:** the first iteration stayed with planar faces and straight
+   edges. The abstractions below were chosen so that everything after it
+   slots in without reshaping the engine, and the second iteration bore that
+   out: torus and free-form sections, closed edges and tangent chains each
+   landed as a new row, a new treatment or a new kind of face boundary. Still
+   to slot in:
    - variable radius;
-   - free-form rolling-ball sections;
-   - tangent chains;
    - more vertex configurations.
 3. **Solid vertex as a fillet target:** refused. Chamfer keeps its corner cut.
 
@@ -75,8 +77,9 @@ profiles, and its edges therefore resolve to the same thing.
 When expanding a profile or a face, flat corners and flat edges are skipped,
 because they have nothing to blend. Named explicitly, they are refused.
 
-*Extension:* tangent-chain propagation is a resolution policy that grows the
-edge set. It touches nothing below.
+Tangent-chain propagation is a resolution policy that grows the edge set: a
+solid edge brings every edge it runs on into without a corner. It touches
+nothing below.
 
 ### Law
 
@@ -127,17 +130,18 @@ in the same shape as `intersect_analytic_*`:
 |---|---|---|---|
 | plane / plane | straight, whatever curve carries it | `Strip` (plane) | `Cylinder` (axis, radius, convexity) |
 | plane / extruded wall | translate of the wall's base | `Translated` (ruled) | refused |
+| surfaces of revolution about the edge's axis | a circle | `Revolved` (cone or cylinder) | `Revolved` (torus) |
+| anything else | anything | `Swept` (skinned bevel) | `Swept` (skinned round) |
 
 The extruded-wall chamfer keeps the prototype's semantics: both rails are
 translates of the edge. On the plane, the translation is perpendicular to the
 edge's chord, so this is not a true constant setback.
 
-*Extension:*
-
-- Plane–cylinder and plane–cone circular edges become `Torus` rows.
-- Free-form edges become a general row that marches the rolling ball and skins
-  a NURBS surface through its cross-sections, using the sweep's skinning.
-- Nothing downstream needs to know which row answered.
+The last two rows share one pair of cross-section solvers, which ask a face
+only where a point lands on it and its normal there. `Revolved` solves one
+section and turns it about the axis; `Swept` marches the rolling ball, or the
+chamfer's setback, along the edge and skins a rational NURBS surface through
+the sections. Nothing downstream needs to know which row answered.
 
 ### `VertexBlend` (treat)
 
@@ -156,15 +160,17 @@ It is dispatched by configuration, closed form first:
 | configuration | chamfer | fillet |
 |---|---|---|
 | run-out: 1 selected edge, trihedral | line on the end face | circle or ellipse on the end face |
+| smooth: 2 selected edges running on into each other, trihedral | their shared segment | their shared arc |
 | mitre: 2 selected edges, trihedral, same-angle | line | ellipse in the plane bisecting the axes |
 | corner: 3 selected edges, trihedral, same convexity | three mitres meeting at the planes' common point | spherical triangle (ball) |
 | corner cut: a solid vertex target | triangle | refused |
 
 *Extension:*
 
-- An asymmetric mitre, a valence-4 run-out that crosses two faces, a smooth
-  (G1) join on a tangent chain, and setback patches are all new treatments.
-  Each emits the same vocabulary, so none of them changes the executor.
+- An asymmetric mitre, a valence-4 run-out that crosses two faces, and
+  setback patches are all new treatments. Each emits the same vocabulary, so
+  none of them changes the executor — the smooth join on a tangent chain was
+  the first to prove it.
 - The closed forms here all use `SectionForm`. A general treatment would
   intersect the sections' surfaces with each other and with the end faces
   instead.
@@ -250,12 +256,36 @@ needs a new surgery operation: splitting an existing edge, or removing a face.
   an oblique run-out; the chamfer's common points; that the result does not
   depend on how the selection is spelled; and every refusal.
 
+## Second iteration (landed)
+
+- **Any edge curve between any two faces.** The section table gained two
+  rows below the closed forms, both built on one pair of cross-section
+  solvers that ask a face only where a point lands on it:
+  - `Revolved`: a circle between surfaces of revolution about its axis — a
+    boss on a block, a bore's rim, a cylinder's rim — is one section turned
+    about the axis: a torus round, a cone or cylinder bevel, circles for
+    rails, exact.
+  - `Swept`: everything else is sectioned along the edge and skinned into a
+    rational NURBS surface, quintic along the edge so a whole turn takes a
+    handful of spans, refined until the section half way between samples
+    lies on the skin.
+- **Closed edges.** An unmarked closed edge is cut along its two whole rails
+  and filled with a band: two wrapping loops joined by a scaffold cut. Each
+  rail owns the 0-cell where it closes.
+- **Tangent chains.** A solid edge brings every edge it runs on into without
+  a corner, and two selected edges running on into each other are joined by
+  the `smooth` treatment along their shared section. A slot's rim rounds as
+  cylinders and tori joined smoothly.
+- Flat-edge detection reads tangency on curved faces, so expanding a round's
+  face skips its rails.
+
 Refused, each with a named error:
 
-- non-planar faces in 3D;
-- tangent chains;
+- a revolved or swept blend ending at a corner: a run-out, mitre or ball for
+  anything but planes and straight edges;
+- a marked closed edge: a rim some other edge meets at its one corner;
 - vertices of valence other than 3;
-- mixed convexity at a vertex;
+- mixed convexity at a vertex, or along one edge;
 - asymmetric mitres;
 - a radius per edge, a variable radius, and setbacks;
 - sheets;
@@ -265,19 +295,18 @@ Refused, each with a named error:
 
 In rough order of value, each with where it slots in.
 
-1. **Torus sections.** Add plane–cylinder and plane–cone circular edges to the
-   section table. A whole rim is a closed edge, so capture must accept it and
-   the blend face needs a seam; this adds `Wrapping` loops to `NewFace`.
-   Re-trimming on curved faces already exists.
-2. **Tangent chains.** Tangent propagation is a resolution policy. The smooth
-   join is a mitre whose joint is the shared cross-section, a new treatment.
+1. **Curved blends ending at corners.** A run-out of a revolved or swept
+   blend is where its surface meets the end face, and a mitre where two blend
+   surfaces meet each other: the general surface/surface intersection,
+   clipped between the landings. A rail landing beyond its edge's end needs
+   the section solved past the edge, which a line or a conic can give and a
+   NURBS edge cannot without extending its faces.
+2. **Marked closed edges.** A corner other edges meet on a closed edge is a
+   vertex like any other once the treatments above exist.
 3. **Valence-4 vertices.** The ring already covers them. A run-out across two
    faces is corner insertions in both faces plus a new corner on the edge
    between them.
 4. **A radius per edge.** The law is assigned per network edge. Treatments
    already compare the sections they receive.
-5. **Free-form sections.** A general row in the section table, which marches
-   the rolling ball and skins a NURBS surface. Treatments fall back to general
-   surface intersections.
-6. **Roll-over and consumed faces.** These need two new surgery operations:
+5. **Roll-over and consumed faces.** These need two new surgery operations:
    splitting an existing edge, and removing a face.

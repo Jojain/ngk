@@ -66,6 +66,9 @@ pub(crate) fn run_out<P: Payload>(
                 near,
             )
             .ok_or_else(|| context.unsupported("its round does not cut the face it runs out on")),
+            SectionForm::Revolved { .. } | SectionForm::Swept { .. } => {
+                Err(context.unsupported("its blend has no closed-form run-out"))
+            }
         },
     )?;
 

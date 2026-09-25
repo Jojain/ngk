@@ -57,6 +57,14 @@ pub fn fillet_block(radius: f64) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+/// Builds the rounded boss, leaning boss and slot scene from a live fillet
+/// radius.
+#[wasm_bindgen(js_name = filletBoss)]
+pub fn fillet_boss(radius: f64) -> Result<JsValue, JsValue> {
+    let result = scripts::filleted_boss::build(radius).map_err(|e| JsValue::from_str(&e))?;
+    serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 /// Builds the 2D whole-profile versus single-vertex chamfer comparison from a
 /// live chamfer distance.
 #[wasm_bindgen(js_name = chamferRectangleComparison)]

@@ -53,17 +53,24 @@ impl TargetFillet {
 ///
 /// - a corner of a wire or free planar face is replaced by the arc of radius
 ///   `radius` tangent to both of its edges, which may be lines or arcs;
-/// - a solid edge between two planar faces is replaced by the cylinder a ball
-///   of radius `radius` sweeps touching both faces, on convex and concave
-///   edges alike;
+/// - a solid edge is replaced by the surface a ball of radius `radius`
+///   sweeps rolling along it touching both faces, on convex and concave
+///   edges alike, whatever its faces and curve: a cylinder along a straight
+///   edge between planes, a torus round a circle between surfaces turning
+///   about its axis — a boss on a block, a bore's rim — and a skinned NURBS
+///   round anywhere else;
 /// - a solid profile or face selects every edge of it.
 ///
-/// Selected edges sharing a vertex are rounded together. Where one ends
-/// against an unselected face the round runs out on it; two meeting at a
-/// vertex are mitred along the curve their cylinders share; three meeting at
-/// a corner are closed by the sphere the ball touches all three faces with.
-/// The whole selection is planned against the model as it was before the
-/// call, so the order it is listed in cannot change the result.
+/// A solid edge brings every edge it runs on into without a corner, since a
+/// round cannot stop part way along a smooth crease. Selected edges sharing
+/// a vertex are rounded together. Where one ends against an unselected face
+/// the round runs out on it; two meeting at a corner are mitred along the
+/// curve their cylinders share, and two running on into each other join
+/// along their shared section; three meeting at a corner are closed by the
+/// sphere the ball touches all three faces with. A closed edge — a rim
+/// nothing meets — is rounded all the way round. The whole selection is
+/// planned against the model as it was before the call, so the order it is
+/// listed in cannot change the result.
 ///
 /// A solid vertex on its own is refused: rounding a corner means rounding the
 /// edges that meet there, which is a selection of edges.

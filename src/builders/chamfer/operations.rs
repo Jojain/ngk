@@ -53,18 +53,23 @@ impl TargetChamfer {
 ///
 /// - a corner of a wire or free planar face is cut by a straight edge between
 ///   the points `distance` along each of its edges;
-/// - a solid edge between two planar faces becomes a planar bevel whose rails
-///   lie `distance` from the edge inside each face, on convex and concave
-///   edges alike; an edge where a plane meets an extruded wall becomes a ruled
-///   bevel between translated copies of the edge;
+/// - a solid edge becomes a bevel whose rails lie `distance` from the edge
+///   inside each face, measured square to the edge, on convex and concave
+///   edges alike, whatever its faces and curve: a planar strip between two
+///   planes, a cone round a circle between surfaces turning about its axis,
+///   and a skinned NURBS bevel anywhere else. An edge where a plane meets an
+///   extruded wall becomes a ruled bevel between translated copies of it;
 /// - a solid profile or face selects every edge of it;
 /// - a solid vertex selected on its own has its corner cut off by a triangle
 ///   through the points `distance` along its three edges.
 ///
-/// Selected edges sharing a vertex are chamfered together: bevels meeting at
-/// a vertex are mitred, and three meeting at a corner meet at the point their
-/// planes share. The whole selection is planned against the model as it was
-/// before the call, so the order it is listed in cannot change the result.
+/// A solid edge brings every edge it runs on into without a corner. Selected
+/// edges sharing a vertex are chamfered together: bevels meeting at a corner
+/// are mitred, bevels running on into each other join along their shared
+/// section, and three meeting at a corner meet at the point their planes
+/// share. A closed edge — a rim nothing meets — is bevelled all the way
+/// round. The whole selection is planned against the model as it was before
+/// the call, so the order it is listed in cannot change the result.
 ///
 /// # Errors
 ///

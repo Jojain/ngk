@@ -19,8 +19,8 @@ use thiserror::Error;
 
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{
-    Axis2, DomainSide, LINEAR_TOLERANCE, Point2, Surface, SurfacePeriodicity, TrimmedCurve,
-    TrimmedCurve2, Vector2,
+    Axis2, Curve, Curve2, DomainSide, LINEAR_TOLERANCE, Point2, Surface, SurfacePeriodicity,
+    TrimmedCurve, TrimmedCurve2, Vector2,
 };
 use crate::topology::attributes::LoopKind;
 use crate::topology::face::Face;
@@ -494,7 +494,10 @@ impl RingCut {
     ///
     /// Left as it was where the pcurve does not run once round the ring at a
     /// steady pace along the axis, since the place to start would then be a
-    /// guess.
+    /// guess. Left as it was, too, where the cut falls part way along a NURBS
+    /// support: a line extrapolates and a conic closes, so either can be read
+    /// from anywhere, but a NURBS curve has nothing past its knot domain, and
+    /// a span shifted off it evaluates to its clamped end.
     fn anchor(
         self,
         surface: &Surface,
@@ -520,7 +523,21 @@ impl RingCut {
             crate::geometry::Interval::new(start, start + delta)
         };
         let point = surface.point_at(at.x, at.y);
-        let span_along = span.parameter_at(point).value();
+        // A closed span starts and ends at the same point, so its end reads
+        // as a whole turn along; that is no shift at all.
+        let span_along = span.parameter_at(point).value().rem_euclid(1.0);
+        let slack = span.parameter_slack(LINEAR_TOLERANCE);
+        let span_along = if span_along <= slack || 1.0 - span_along <= slack {
+            0.0
+        } else {
+            span_along
+        };
+        let pcurve_shifts = along > LINEAR_TOLERANCE && along < 1.0 - LINEAR_TOLERANCE;
+        let shifted_nurbs = (pcurve_shifts && matches!(curve.curve(), Curve2::Nurbs(_)))
+            || (span_along != 0.0 && matches!(span.curve(), Curve::Nurbs(_)));
+        if shifted_nurbs {
+            return (curve, span);
+        }
         (
             TrimmedCurve2::new(curve.curve().clone(), reanchored(curve.interval(), along)),
             TrimmedCurve::new(

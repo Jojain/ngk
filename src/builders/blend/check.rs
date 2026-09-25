@@ -12,6 +12,7 @@ use nalgebra::Vector2;
 use super::errors::BlendError;
 use super::execute::Executed;
 use super::surgery::Surgery;
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{Curve2, LINEAR_TOLERANCE, Point2};
 use crate::model::Model;
 use crate::topology::payload::Payload;
@@ -23,21 +24,31 @@ const CURVED_SAMPLES: usize = 16;
 
 /// Records the winding of every face the surgery can change, before it does.
 ///
-/// Every face a blend changes meets a vertex it consumes, so those faces are
-/// the ones whose winding is worth remembering.
+/// A face a blend changes either meets a vertex it consumes, or runs along an
+/// edge it cuts: a closed edge is cut with no vertex to consume, and a rail
+/// run past the far rim of its face turns that face inside out without
+/// crossing anything.
 pub(crate) fn record_windings<P: Payload>(
     model: &Model<P>,
     surgery: &Surgery,
 ) -> HashMap<FaceKey, f64> {
-    let mut windings = HashMap::new();
+    let mut faces = surgery
+        .cuts
+        .iter()
+        .flat_map(|cut| cut.sides.iter().map(|side| side.face))
+        .collect::<Vec<_>>();
     for &vertex in &surgery.consumed_vertices {
-        let Some(view) = model.vertex(vertex) else {
+        if let Some(view) = model.vertex(vertex) {
+            faces.extend(view.faces().iter().map(|face| face.key()));
+        }
+    }
+    let mut windings = HashMap::new();
+    for face in faces {
+        if windings.contains_key(&face) {
             continue;
-        };
-        for face in view.faces() {
-            if let Some(area) = model.face_unchecked(face.key()).boundary_signed_area() {
-                windings.insert(face.key(), area);
-            }
+        }
+        if let Some(area) = model.face_unchecked(face).boundary_signed_area() {
+            windings.insert(face, area);
         }
     }
     windings
@@ -63,7 +74,7 @@ pub(crate) fn check_faces<P: Payload>(
             .loops()
             .iter()
             .map(|loop_| {
-                loop_
+                let mut points = loop_
                     .darts()
                     .filter_map(|dart| attr.pcurves.get(&dart))
                     .flat_map(|pcurve| {
@@ -75,7 +86,20 @@ pub(crate) fn check_faces<P: Payload>(
                         points.pop();
                         points
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                // A wrapping loop runs one period and closes only on the
+                // surface: its last point is where it began, a period on.
+                let closed = !loop_.is_wrapping();
+                if !closed
+                    && let Some(end) = loop_.darts().last().and_then(|dart| {
+                        attr.pcurves
+                            .get(&dart)
+                            .map(|pcurve| pcurve.point_at(Fraction::END))
+                    })
+                {
+                    points.push(end);
+                }
+                Polyline { points, closed }
             })
             .collect::<Vec<_>>();
         if boundaries_cross(&loops) {
@@ -99,13 +123,27 @@ pub(crate) fn check_solids<P: Payload>(
     Ok(())
 }
 
-/// Whether any two non-adjacent chords of the closed polylines meet.
-fn boundaries_cross(loops: &[Vec<Point2>]) -> bool {
+/// One boundary loop sampled in the parameter plane.
+struct Polyline {
+    points: Vec<Point2>,
+    /// Whether the last point joins back to the first; a wrapping loop's
+    /// does not.
+    closed: bool,
+}
+
+/// Whether any two non-adjacent chords of the polylines meet.
+fn boundaries_cross(loops: &[Polyline]) -> bool {
     let chords = loops
         .iter()
         .enumerate()
-        .flat_map(|(loop_index, points)| {
-            (0..points.len()).map(move |index| {
+        .flat_map(|(loop_index, polyline)| {
+            let points = &polyline.points;
+            let count = if polyline.closed {
+                points.len()
+            } else {
+                points.len().saturating_sub(1)
+            };
+            (0..count).map(move |index| {
                 (
                     loop_index,
                     index,

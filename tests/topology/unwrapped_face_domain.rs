@@ -435,3 +435,53 @@ fn a_seamed_sphere_keeps_the_cut_its_loop_closes_across() {
         v_max - v_min
     );
 }
+
+/// A ring read from a cut away from its rims keeps every rim whole.
+///
+/// A hole where the rims start moves the cut clear of it, so each rim is read
+/// from part way round. A circle can be read from anywhere, but a NURBS rim
+/// has nothing past its knot domain: shifted along like a circle it would be
+/// read off its own curve, and the ring would lose its boundary.
+#[test]
+fn a_ring_cut_clear_of_a_hole_keeps_its_nurbs_rims_whole() {
+    let wall_hole = solids::block_at(Frame::at(Point3::new(0.7, -0.2, 0.8)), 0.6, 0.4, 0.4)
+        .expect("hole tool should build");
+    let cylinder = solids::cylinder(1.0, 2.0).expect("cylinder should build");
+    let (mut model, solid) = solids::cut(cylinder, wall_hole)
+        .expect("the hole should cut the wall")
+        .into_model();
+    let rims = model
+        .solid_unchecked(solid)
+        .edges()
+        .iter()
+        .filter(|edge| matches!(edge.curve(), Curve::Circle(_)) && edge.bounded().is_none())
+        .map(|edge| edge.key())
+        .collect::<Vec<_>>();
+    assert_eq!(rims.len(), 2, "the cylinder should keep both rims");
+    model
+        .transaction(|edit| {
+            for &rim in &rims {
+                let attr = edit.edge_attr_mut_unchecked(rim);
+                attr.curve = Curve::Nurbs(attr.curve.to_nurbs().expect("a circle converts"));
+            }
+            Ok::<(), ngk::topology::ModelEditError>(())
+        })
+        .expect("rims should convert to NURBS");
+    let wall = model
+        .solid_unchecked(solid)
+        .faces()
+        .into_iter()
+        .find(|face| matches!(face.surface(), Surface::Cylinder(_)))
+        .expect("cylinder should have a lateral face");
+
+    let domain = UnwrappedFaceDomain::of_face(&wall).expect("cylinder wall should unwrap");
+
+    let circumference = 2.0 * PI;
+    for curve in domain.loops()[0].curves() {
+        let length = curve.span().length();
+        assert!(
+            (length - circumference).abs() < 1.0e-6,
+            "a rim read from the cut should run once round, runs {length}"
+        );
+    }
+}

@@ -5,6 +5,7 @@ use nalgebra::Vector3;
 use super::super::errors::BlendError;
 use super::super::network::{BlendNetwork, NetworkVertex, RingSlot};
 use super::super::section::{EdgeSection, is_straight, loop_darts};
+use crate::geometry::parameter::Fraction;
 use crate::geometry::{LINEAR_TOLERANCE, Plane, Point3, Surface, TrimmedCurve};
 use crate::model::Model;
 use crate::topology::gmap::{Dart, Dim};
@@ -227,6 +228,42 @@ impl<P: Payload> VertexContext<'_, P> {
         } else {
             -along
         }
+    }
+
+    /// The unit tangent network edge `edge` leaves this vertex along.
+    ///
+    /// Read off the edge's curve at this end, unlike [`Self::leaving`]'s
+    /// chord, so a curved edge answers for its end rather than its middle.
+    pub(crate) fn tangent_leaving(&self, edge: usize) -> Vector3<f64> {
+        let span = &self.network.edges[edge].span;
+        if self.end_of(edge) == 0 {
+            span.derivative_at(Fraction::START, 1).normalize()
+        } else {
+            -span.derivative_at(Fraction::END, 1).normalize()
+        }
+    }
+
+    /// A face's outward unit normal at `point`, read in its stored
+    /// orientation, or `None` where the point cannot be located on it.
+    pub(crate) fn outward(&self, face: FaceKey, point: Point3) -> Option<Vector3<f64>> {
+        let view = self.model.face_unchecked(face);
+        let uv = view.surface().param_at(point).ok()?;
+        Some(*view.normal_at(uv.x, uv.y))
+    }
+
+    /// Refuses a point that is not on the unselected edge `edge`, strictly
+    /// between its ends.
+    pub(crate) fn on_edge(&self, edge: EdgeKey, point: Point3) -> Result<(), BlendError> {
+        let span = self.model.edge_unchecked(edge).trimmed_curve();
+        if (span.curve().project(point) - point).norm() > LINEAR_TOLERANCE.sqrt() {
+            return Err(self.unsupported("a rail does not meet the edge beside it"));
+        }
+        let along = span.parameter_at(point).value();
+        let slack = span.parameter_slack(LINEAR_TOLERANCE.sqrt());
+        if along <= slack || along >= 1.0 - slack {
+            return Err(self.does_not_fit("a rail runs off the edge beside it"));
+        }
+        Ok(())
     }
 
     /// The support plane of a face, or a refusal when it is not planar.

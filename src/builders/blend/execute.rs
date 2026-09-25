@@ -8,22 +8,29 @@
 //!
 //! No dart is removed, so nothing that points at the map needs repairing: the
 //! surgery only ever adds darts and changes links.
+//!
+//! A band — the blend of a closed edge — is laid down as two one-edge loops,
+//! each sewn to one face's side of the cut, and joined by a scaffold cut so
+//! it occupies one 2-cell, as a lofted band is. Each of its rails is closed
+//! with no corner, so the 0-cell where it closes is interior to it.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use super::errors::BlendError;
-use super::surgery::{BoundKind, CornerId, Surgery};
+use super::pcurve::onto_branch;
+use super::surgery::{BoundKind, CornerId, NewBoundary, RailEnds, Surgery};
 use crate::builders::profiles::curve_pcurve;
+use crate::builders::scaffold::cut_between_loops;
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{
-    IntersectionError, Interval, LINEAR_TOLERANCE, Point2, Surface, SurfacePeriodicity,
-    TrimmedCurve2,
+    Axis2, IntersectionError, Interval, LINEAR_TOLERANCE, Point3, Surface, TrimmedCurve2,
 };
 use crate::model::{Cell1, Cell2};
 use crate::topology::ModelEdit;
-use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
+use crate::topology::attributes::{EdgeAttr, FaceAttr, LoopDefinition, ProfileAttr, VertexAttr};
 use crate::topology::edge::Edge;
 use crate::topology::edit::EditKey;
+use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
@@ -100,8 +107,10 @@ pub(crate) fn execute<P: Payload>(
     let mut corner_darts = vec![Vec::new(); surgery.corners.len()];
     for cut in &surgery.cuts {
         for side in &cut.sides {
-            corner_darts[side.corners[0]].push(side.start);
-            corner_darts[side.corners[1]].push(edit.alpha(Dim::Zero, side.start));
+            if let RailEnds::Corners(corners) = side.ends {
+                corner_darts[corners[0]].push(side.start);
+                corner_darts[corners[1]].push(edit.alpha(Dim::Zero, side.start));
+            }
         }
     }
 
@@ -136,10 +145,12 @@ pub(crate) fn execute<P: Payload>(
     }
 
     // Fill: lay each new face's walk down, then sew it to what it borders.
+    // A walk links each bound to the next; a band's two rails each close on
+    // themselves, and the cut joining them comes once the face is registered.
     let mut walks = Vec::with_capacity(surgery.faces.len());
     for face in &surgery.faces {
-        let walk = face
-            .boundary
+        let bounds = face.boundary.bounds();
+        let walk = bounds
             .iter()
             .map(|_| {
                 let start = edit.add_dart();
@@ -147,18 +158,28 @@ pub(crate) fn execute<P: Payload>(
                 edit.link(Dim::Zero, start, end).map(|()| [start, end])
             })
             .collect::<Result<Vec<_>, _>>()?;
-        for index in 0..walk.len() {
-            edit.link(Dim::One, walk[index][1], walk[(index + 1) % walk.len()][0])?;
+        match face.boundary {
+            NewBoundary::Walk(_) => {
+                for index in 0..walk.len() {
+                    edit.link(Dim::One, walk[index][1], walk[(index + 1) % walk.len()][0])?;
+                }
+            }
+            NewBoundary::Band(_) => {
+                for [start, end] in &walk {
+                    edit.link(Dim::One, *start, *end)?;
+                }
+            }
         }
-        for (bound, darts) in face.boundary.iter().zip(&walk) {
+        for (bound, darts) in bounds.iter().zip(&walk) {
             let own = if bound.reversed {
                 [darts[1], darts[0]]
             } else {
                 *darts
             };
-            let corners = surgery.bound_corners(bound.kind);
-            corner_darts[corners[0]].push(own[0]);
-            corner_darts[corners[1]].push(own[1]);
+            if let Some(corners) = surgery.bound_corners(bound.kind) {
+                corner_darts[corners[0]].push(own[0]);
+                corner_darts[corners[1]].push(own[1]);
+            }
             match bound.kind {
                 BoundKind::Rail { cut, side } => {
                     edit.sew(Dim::Two, own[0], surgery.cuts[cut].sides[side].start)?;
@@ -187,10 +208,16 @@ pub(crate) fn execute<P: Payload>(
     let mut fresh_edges = HashSet::new();
     for cut in &surgery.cuts {
         for side in &cut.sides {
-            fresh_edges.insert(edit.add_edge_derived_from(
+            let rail = edit.add_edge_derived_from(
                 vec![EditKey::Edge(cut.edge)],
                 EdgeAttr::new(side.start, side.rail.curve().clone()),
-            ));
+            );
+            // Nothing meets where a closed rail closes, so that 0-cell is
+            // interior to the rail rather than a corner of the shape.
+            if side.ends == RailEnds::Closed {
+                edit.own_cell(Dim::Zero, side.start, EntityOwner::Edge(rail));
+            }
+            fresh_edges.insert(rail);
         }
     }
     for (id, joint) in surgery.joints.iter().enumerate() {
@@ -206,6 +233,7 @@ pub(crate) fn execute<P: Payload>(
         let directed = |index: usize| walk[index][usize::from(flip)];
         let pcurves = face
             .boundary
+            .bounds()
             .iter()
             .enumerate()
             .map(|(index, bound)| {
@@ -217,12 +245,36 @@ pub(crate) fn execute<P: Payload>(
                 (directed(index), pcurve)
             })
             .collect();
-        let seed = directed(0);
-        edit.add_profile_derived_from(face.sources.clone(), ProfileAttr::new(seed));
-        faces.push(edit.add_face_derived_from(
-            face.sources.clone(),
-            FaceAttr::with_pcurves(face.surface.clone(), seed, Vec::new(), pcurves),
-        ));
+        let key = match face.boundary {
+            NewBoundary::Walk(_) => {
+                let seed = directed(0);
+                edit.add_profile_derived_from(face.sources.clone(), ProfileAttr::new(seed));
+                edit.add_face_derived_from(
+                    face.sources.clone(),
+                    FaceAttr::with_pcurves(face.surface.clone(), seed, Vec::new(), pcurves),
+                )
+            }
+            NewBoundary::Band(_) => {
+                let seeds = [directed(0), directed(1)];
+                for seed in seeds {
+                    edit.add_profile_derived_from(face.sources.clone(), ProfileAttr::new(seed));
+                }
+                let key = edit.add_face_derived_from(
+                    face.sources.clone(),
+                    FaceAttr::with_loops(
+                        face.surface.clone(),
+                        seeds
+                            .iter()
+                            .map(|&seed| LoopDefinition::wrapping(seed, Axis2::U))
+                            .collect(),
+                        pcurves,
+                    ),
+                );
+                cut_between_loops(edit, key, seeds[0], seeds[1])?;
+                key
+            }
+        };
+        faces.push(key);
     }
 
     let corner_cells = register_corners(edit, surgery, &corner_darts)?;
@@ -369,7 +421,7 @@ fn orient_faces<P: Payload>(
 ) -> Result<Vec<bool>, BlendError> {
     let mut joint_faces = HashMap::<usize, Vec<(usize, usize)>>::new();
     for (face_index, face) in surgery.faces.iter().enumerate() {
-        for (bound_index, bound) in face.boundary.iter().enumerate() {
+        for (bound_index, bound) in face.boundary.bounds().iter().enumerate() {
             if let BoundKind::Joint(id) = bound.kind {
                 joint_faces
                     .entry(id)
@@ -382,7 +434,8 @@ fn orient_faces<P: Payload>(
     let mut reversed: Vec<Option<bool>> = vec![None; surgery.faces.len()];
     let neighbour_directed = |reversed: &[Option<bool>], face: usize, bound: usize| match surgery
         .faces[face]
-        .boundary[bound]
+        .boundary
+        .bounds()[bound]
         .kind
     {
         BoundKind::Rail { cut, side } => Some(directions.sides[cut][side]),
@@ -417,7 +470,7 @@ fn orient_faces<P: Payload>(
             if reversed[face].is_some() {
                 continue;
             }
-            for bound in 0..surgery.faces[face].boundary.len() {
+            for bound in 0..surgery.faces[face].boundary.bounds().len() {
                 if let Some(neighbour) = neighbour_directed(&reversed, face, bound) {
                     reversed[face] = Some(flip_against(face, bound, neighbour)?);
                     progressed = true;
@@ -440,7 +493,7 @@ fn orient_faces<P: Payload>(
         .collect::<Result<Vec<_>, _>>()?;
     let decided = reversed.iter().copied().map(Some).collect::<Vec<_>>();
     for (face, &flip) in reversed.iter().enumerate() {
-        for bound in 0..surgery.faces[face].boundary.len() {
+        for bound in 0..surgery.faces[face].boundary.bounds().len() {
             if let Some(neighbour) = neighbour_directed(&decided, face, bound)
                 && flip_against(face, bound, neighbour)? != flip
             {
@@ -535,7 +588,7 @@ fn retrimmed_pcurve<P: Payload>(
             edge,
             reason: "it has no pcurve on a face its end moves on",
         })?;
-    let fraction_of = |point: crate::geometry::Point3| -> Result<f64, BlendError> {
+    let fraction_of = |point: Point3| -> Result<f64, BlendError> {
         let uv = attr
             .surface
             .param_at(point)
@@ -554,25 +607,6 @@ fn retrimmed_pcurve<P: Payload>(
     let start = fraction_of(span.start())?;
     let end = fraction_of(span.end())?;
     Ok(old.sub(Interval::new(start, end)))
-}
-
-/// Shifts `uv` by whole periods to the branch nearest `reference`.
-fn onto_branch(surface: &Surface, uv: Point2, reference: Point2) -> Point2 {
-    let nearest =
-        |value: f64, target: f64, period: f64| value + ((target - value) / period).round() * period;
-    match surface.periodicity() {
-        SurfacePeriodicity::None => uv,
-        SurfacePeriodicity::UPeriodic(period) => {
-            Point2::new(nearest(uv.x, reference.x, period), uv.y)
-        }
-        SurfacePeriodicity::VPeriodic(period) => {
-            Point2::new(uv.x, nearest(uv.y, reference.y, period))
-        }
-        SurfacePeriodicity::UVPeriodic(u_period, v_period) => Point2::new(
-            nearest(uv.x, reference.x, u_period),
-            nearest(uv.y, reference.y, v_period),
-        ),
-    }
 }
 
 fn write_pcurve<P: Payload>(

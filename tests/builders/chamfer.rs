@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::f64::consts::PI;
 
 use nalgebra::Vector3;
 use ngk::builders::blend::BlendError;
@@ -11,9 +12,25 @@ use ngk::geometry::{Curve, NurbsCurve, Point3, Surface};
 use ngk::model::Model;
 use ngk::modeling::solids::block;
 use ngk::topology::StandardPayload;
+use ngk::topology::shape_keys::SolidKey;
 use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
 
-use super::blend_shapes::{L_SHAPE, edge_between, face_at_height, lens, prism, prism_with_hole};
+use super::blend_shapes::{
+    L_SHAPE, boss_on_block, edge_between, face_at_height, lens, oblique_boss_on_block,
+    plate_with_bore, prism, prism_with_hole, slot_prism,
+};
+
+const TOLERANCE: f64 = 1.0e-9;
+
+/// How far a skinned blend may stray from the sections it was solved from:
+/// the share of the fitting tolerance the skin is held to, with room for
+/// evaluation.
+const SKIN_TOLERANCE: f64 = 1.0e-5;
+
+fn assert_valid(g: &Model<StandardPayload>, solid: SolidKey) {
+    validate_solid_manifold(g, solid).expect("the bevelled solid should stay manifold");
+    validate_solid_orientation(g, solid).expect("the bevelled solid's faces should stay outward");
+}
 
 #[test]
 fn failed_chamfer_builder_preserves_the_source_profile() {
@@ -415,5 +432,154 @@ fn chamfer_bevels_the_rim_of_a_hole_through_a_solid() {
     assert!(
         (volume - expected).abs() < 1.0e-9,
         "volume {volume} should be {expected}"
+    );
+}
+
+/// A boss fused onto a block meets it in a concave circle; its chamfer is
+/// the cone between a circle on the block's top and one on the boss's wall,
+/// each `distance` from the joint.
+#[test]
+fn chamfer_bevels_the_circle_where_a_boss_meets_a_block() {
+    let (mut g, solid, joint) = boss_on_block();
+    let before = g
+        .solid_unchecked(solid)
+        .volume()
+        .expect("the boss should measure");
+    let distance = 0.25;
+
+    let result = chamfer(&mut g, joint, distance).expect("the joint should bevel");
+
+    assert_valid(&g, solid);
+    assert_eq!(result.faces.len(), 1);
+    assert_eq!(result.consumed_edges, vec![joint]);
+    assert!(matches!(
+        g.face_attr_unchecked(result.faces[0]).surface,
+        Surface::Cone(_)
+    ));
+    let mut rails = g
+        .face_unchecked(result.faces[0])
+        .edges()
+        .iter()
+        .map(|edge| match edge.curve() {
+            Curve::Circle(circle) => (circle.radius(), circle.plane().origin().z),
+            other => panic!("a rail should be a circle, got {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    rails.sort_by(|a, b| a.0.total_cmp(&b.0));
+    assert_eq!(rails.len(), 2);
+    assert!(
+        (rails[0].0 - 1.0).abs() < TOLERANCE && (rails[0].1 - (2.0 + distance)).abs() < TOLERANCE
+    );
+    assert!(
+        (rails[1].0 - (1.0 + distance)).abs() < TOLERANCE && (rails[1].1 - 2.0).abs() < TOLERANCE
+    );
+    // The triangle the bevel fills, turned about the axis at its centroid.
+    let added = 2.0 * PI * (1.0 + distance / 3.0) * distance * distance / 2.0;
+    let after = g
+        .solid_unchecked(solid)
+        .volume()
+        .expect("the bevelled solid should measure");
+    assert!(
+        (after - before - added).abs() <= 0.05 * added,
+        "the volume changed by {}, should by {added}",
+        after - before
+    );
+}
+
+/// Both rims of a bore bevel in one call, each its own cone.
+#[test]
+fn chamfer_bevels_both_rims_of_a_bore() {
+    let (mut g, solid, rims) = plate_with_bore(4.0, 2.0);
+
+    let result = chamfer(&mut g, rims.to_vec(), 0.25).expect("both rims should bevel");
+
+    assert_valid(&g, solid);
+    assert_eq!(result.faces.len(), 2);
+    for &face in &result.faces {
+        assert!(matches!(
+            g.face_attr_unchecked(face).surface,
+            Surface::Cone(_)
+        ));
+    }
+}
+
+/// A boss leaning into the block meets it in an ellipse, which no closed
+/// form covers: the bevel is marched along it and skinned, its rails a true
+/// `distance` from the edge on each face.
+#[test]
+fn chamfer_bevels_the_ellipse_where_an_oblique_boss_meets_a_block() {
+    let (mut g, solid, joint) = oblique_boss_on_block();
+    let edge = g.edge_unchecked(joint).trimmed_curve();
+    let distance = 0.25;
+
+    let result = chamfer(&mut g, joint, distance).expect("the joint should bevel");
+
+    assert_valid(&g, solid);
+    assert_eq!(result.faces.len(), 1);
+    let Surface::Nurbs(skin) = &g.face_attr_unchecked(result.faces[0]).surface else {
+        panic!("an ellipse's bevel should be skinned");
+    };
+    let tilt = 15.0_f64.to_radians();
+    let axis = Vector3::new(tilt.sin(), 0.0, tilt.cos());
+    let from_axis = |point: Point3| {
+        let offset = point - Point3::new(1.7, 2.1, 0.5);
+        (offset - axis * offset.dot(&axis)).norm()
+    };
+    for index in 0..=64 {
+        let u = f64::from(index) / 64.0;
+        let on_block = skin.point_at(u, 0.0);
+        let on_wall = skin.point_at(u, 1.0);
+        assert!((on_block.z - 2.0).abs() < SKIN_TOLERANCE, "{on_block:?}");
+        assert!(
+            (from_axis(on_wall) - 0.9).abs() < SKIN_TOLERANCE,
+            "{on_wall:?}"
+        );
+        for rail in [on_block, on_wall] {
+            let setback = (rail - edge.curve().project(rail)).norm();
+            assert!(
+                (setback - distance).abs() < SKIN_TOLERANCE,
+                "a rail point at {u} lies {setback} from the edge"
+            );
+        }
+    }
+}
+
+/// A slot's rim runs straight into arcs with no corner anywhere: each side is
+/// bevelled by a strip, each end by a cone, and each pair joins along the
+/// segment their bevels share where the rim turns from straight to curved.
+#[test]
+fn chamfer_bevels_the_smooth_rim_of_a_slot() {
+    let (length, slot_radius, height) = (2.0, 1.0, 1.0);
+    let (mut g, solid) = slot_prism(length, slot_radius, height);
+    let top = face_at_height(&g, solid, height);
+    let before = g
+        .solid_unchecked(solid)
+        .volume()
+        .expect("the slot should measure");
+    let distance = 0.25;
+
+    let result = chamfer(&mut g, top, distance).expect("the slot's rim should bevel");
+
+    assert_valid(&g, solid);
+    assert_eq!(result.faces.len(), 4);
+    let cones = result
+        .faces
+        .iter()
+        .filter(|&&face| matches!(g.face_attr_unchecked(face).surface, Surface::Cone(_)))
+        .count();
+    assert_eq!(cones, 2);
+    // The triangle the bevel cuts away, swept along both sides and turned
+    // about both ends' axes at its centroid.
+    let path = 2.0 * length + 2.0 * PI * (slot_radius - distance / 3.0);
+    let removed = distance * distance / 2.0 * path;
+    let after = g
+        .solid_unchecked(solid)
+        .volume()
+        .expect("the bevelled slot should measure");
+    assert!(
+        (before - after - removed).abs() <= 0.05 * removed,
+        "the volume changed by {}, should by {}",
+        after - before,
+        -removed
     );
 }

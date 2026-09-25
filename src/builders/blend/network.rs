@@ -33,9 +33,11 @@ pub(crate) struct NetworkEdge {
     /// The two faces, each with its dart on the edge at the edge's start.
     pub(crate) sides: [EdgeSide; 2],
     /// Indices into [`BlendNetwork::vertices`] of the vertex at the edge's
-    /// start, then at its end.
-    pub(crate) ends: [usize; 2],
-    /// The edge's span, from its start to its end.
+    /// start, then at its end; `None` for a closed edge with no corner, which
+    /// no vertex treatment ever closes.
+    pub(crate) ends: Option<[usize; 2]>,
+    /// The edge's span, from its start to its end. A closed edge's runs once
+    /// round from where its curve closes.
     pub(crate) span: TrimmedCurve,
 }
 
@@ -96,7 +98,7 @@ impl NetworkEdge {
 
     /// Which end of this edge the network vertex `vertex` is.
     pub(crate) fn end_at(&self, vertex: usize) -> usize {
-        usize::from(self.ends[0] != vertex)
+        usize::from(self.ends.is_some_and(|ends| ends[0] != vertex))
     }
 }
 
@@ -140,13 +142,19 @@ pub(crate) fn capture<P: Payload>(
         let edge = model
             .edge(key)
             .ok_or(BlendError::MissingEdge { edge: key })?;
-        let Some(bounded) = edge.bounded() else {
-            return Err(BlendError::UnsupportedEdge {
-                edge: key,
-                reason: "it is closed, and a blend of a closed edge needs a seam",
-            });
+        let corners = match &edge {
+            Edge::Bounded(bounded) => {
+                let (start, end) = bounded.vertices();
+                Some([start.key(), end.key()])
+            }
+            Edge::Unmarked(_) => None,
+            Edge::Marked(_) => {
+                return Err(BlendError::UnsupportedEdge {
+                    edge: key,
+                    reason: "it closes on a corner, where its blend would meet itself",
+                });
+            }
         };
-        let (start_vertex, end_vertex) = bounded.vertices();
         let start = model.edge_attr_unchecked(key).dart;
         let across = model.alpha(Dim::Two, start);
         let turned = turn(model.topology(), model.embedding_index(), Dim::Two, start);
@@ -172,10 +180,13 @@ pub(crate) fn capture<P: Payload>(
                 reason: "its faces bound no solid",
             });
         }
-        let ends = [
-            vertex_at(model, start_vertex.key(), false)?,
-            vertex_at(model, end_vertex.key(), false)?,
-        ];
+        let ends = match corners {
+            Some([start, end]) => Some([
+                vertex_at(model, start, false)?,
+                vertex_at(model, end, false)?,
+            ]),
+            None => None,
+        };
         network_edges.push(NetworkEdge {
             key,
             sides: [

@@ -3,7 +3,9 @@
 //!
 //! A surgery says what happens to the map in four words — cut an edge open,
 //! insert an edge at a corner, add a face, and the corners all of those meet
-//! at — and carries the geometry of each. Planning writes it; the executor
+//! at — and carries the geometry of each. A closed edge is cut like any other
+//! but has no corner, and the face that fills it is a band between its two
+//! rails rather than a walk round corners. Planning writes it; the executor
 //! builds it without computing anything. Every treatment of a vertex, every
 //! section of an edge and every 2D corner is written in this vocabulary, so a
 //! new one extends what can be planned without changing how it is built.
@@ -41,12 +43,33 @@ pub(crate) struct CutSide {
     pub(crate) face: FaceKey,
     /// This face's dart on the edge, at the edge's start.
     pub(crate) start: Dart,
-    /// The rail's corners: at the edge's start, then at its end.
-    pub(crate) corners: [CornerId; 2],
-    /// The rail, running from `corners[0]` to `corners[1]`.
+    /// Where the rail ends.
+    pub(crate) ends: RailEnds,
+    /// The rail, running from its first corner to its second, or once round
+    /// from where it closes.
     pub(crate) rail: TrimmedCurve,
     /// The rail's pcurve on `face`, in the rail's direction.
     pub(crate) pcurve: TrimmedCurve2,
+}
+
+/// Where one side of a cut edge ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RailEnds {
+    /// At two corners: at the edge's start, then at its end.
+    Corners([CornerId; 2]),
+    /// Nowhere: the rail is a closed edge with no corner, as the cut edge
+    /// was. The 0-cell where it closes is interior to it.
+    Closed,
+}
+
+impl RailEnds {
+    /// The corners, when the rail has any.
+    pub(crate) fn corners(self) -> Option<[CornerId; 2]> {
+        match self {
+            Self::Corners(corners) => Some(corners),
+            Self::Closed => None,
+        }
+    }
 }
 
 /// An edge the surgery adds, other than a rail.
@@ -81,8 +104,29 @@ pub(crate) struct Insertion {
 pub(crate) struct NewFace {
     pub(crate) surface: Surface,
     pub(crate) sources: Vec<EditKey>,
-    /// Its boundary, walked once round.
-    pub(crate) boundary: Vec<Bound>,
+    pub(crate) boundary: NewBoundary,
+}
+
+/// How a new face is bounded.
+#[derive(Debug, Clone)]
+pub(crate) enum NewBoundary {
+    /// One loop, walked once round.
+    Walk(Vec<Bound>),
+    /// Two closed rails, each running once round the surface's `u`, with the
+    /// face the band between them: the blend of a closed edge. The first is
+    /// walked with its rail and the second against it, so the band lies on
+    /// one side of both. A scaffold cut joins them so the face is one 2-cell.
+    Band(Box<[Bound; 2]>),
+}
+
+impl NewBoundary {
+    /// Every boundary edge, in walk order.
+    pub(crate) fn bounds(&self) -> &[Bound] {
+        match self {
+            Self::Walk(bounds) => bounds,
+            Self::Band(bounds) => bounds.as_slice(),
+        }
+    }
 }
 
 /// One edge of a new face's boundary walk.
@@ -129,11 +173,11 @@ impl Surgery {
         self.joints.len() - 1
     }
 
-    /// The corners a bound's own direction runs between.
-    pub(crate) fn bound_corners(&self, kind: BoundKind) -> [CornerId; 2] {
+    /// The corners a bound's own direction runs between, when it has any.
+    pub(crate) fn bound_corners(&self, kind: BoundKind) -> Option<[CornerId; 2]> {
         match kind {
-            BoundKind::Rail { cut, side } => self.cuts[cut].sides[side].corners,
-            BoundKind::Joint(joint) => self.joints[joint].corners,
+            BoundKind::Rail { cut, side } => self.cuts[cut].sides[side].ends.corners(),
+            BoundKind::Joint(joint) => Some(self.joints[joint].corners),
         }
     }
 }
