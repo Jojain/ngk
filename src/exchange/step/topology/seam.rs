@@ -97,17 +97,14 @@ impl SeamedFace {
 
         // `UnwrappedFaceDomain` fuses every non-hole loop into its first
         // boundary and keeps the holes apart, each in the order the face lists
-        // them. Replaying that split is what pairs a placed curve back with the
-        // edge it was placed from.
-        let mut outer_darts = Vec::new();
-        let mut hole_darts = Vec::new();
-        for loop_ in face.loops() {
-            let darts: Vec<Dart> = loop_.edges().iter().map(|edge| edge.dart()).collect();
-            match loop_.kind() {
-                LoopKind::Inner => hole_darts.push(darts),
-                _ => outer_darts.extend(darts),
-            }
-        }
+        // them. Each placed curve names the edge it was placed from; the holes'
+        // own darts are still wanted for routing the cut through them.
+        let hole_darts: Vec<Vec<Dart>> = face
+            .loops()
+            .iter()
+            .filter(|loop_| loop_.kind() == LoopKind::Inner)
+            .map(|loop_| loop_.edges().iter().map(|edge| edge.dart()).collect())
+            .collect();
 
         let mut bounds = Vec::with_capacity(1 + hole_darts.len());
         let mut placed = domain.loops().iter();
@@ -115,9 +112,9 @@ impl SeamedFace {
             face: face.key(),
             detail: "an unwrapped domain has no boundaries at all".to_string(),
         })?;
-        bounds.push(seamed_bound(face, outer, &outer_darts, true)?);
-        for (hole, darts) in placed.zip(&hole_darts) {
-            bounds.push(seamed_bound(face, hole, darts, false)?);
+        bounds.push(seamed_bound(face, outer, true));
+        for hole in placed {
+            bounds.push(seamed_bound(face, hole, false));
         }
 
         // The cut is a straight line from rim to rim, which is only a cut
@@ -176,31 +173,16 @@ fn domain_bound<P: Payload>(face: &Face<'_, P>) -> Result<SeamedBound, TopologyE
     Ok(SeamedBound { outer: true, edges })
 }
 
-/// Pairs one placed boundary with the darts it was placed from.
+/// One placed boundary, each curve paired with the dart it was placed from.
 fn seamed_bound<P: Payload>(
     face: &Face<'_, P>,
     placed: &UnwrappedFaceDomainLoop,
-    darts: &[Dart],
     outer: bool,
-) -> Result<SeamedBound, TopologyError> {
+) -> SeamedBound {
     let curves = placed.curves();
-    if curves.len() != darts.len() {
-        // The pairing is positional, so a count that does not line up means
-        // the domain placed something this walk did not produce. Refusing is
-        // the only safe answer: carrying on would attach a pcurve to the wrong
-        // edge, which no validator downstream can catch.
-        return Err(TopologyError::UncuttableFace {
-            face: face.key(),
-            detail: format!(
-                "the unwrapped domain placed {} curves for {} boundary edges",
-                curves.len(),
-                darts.len(),
-            ),
-        });
-    }
-
     let mut edges = Vec::with_capacity(curves.len());
-    for (curve, &dart) in curves.iter().zip(darts) {
+    for curve in curves {
+        let dart = curve.dart();
         // A curve's corners are the points the boundary turns through on its
         // way from the previous curve's end to this one's start. The first is
         // that previous end; the rest are places the cut bends, such as the
@@ -219,7 +201,7 @@ fn seamed_bound<P: Payload>(
         edges.push(SeamedEdge::Real { dart });
     }
 
-    Ok(SeamedBound { outer, edges })
+    SeamedBound { outer, edges }
 }
 
 /// Whether a stretch of cut bounds nothing, and so carries no edge.

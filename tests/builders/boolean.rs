@@ -2011,10 +2011,11 @@ fn a_block_straddling_a_cylinders_rim_intersects_to_the_wedge_between_them() {
     // by the short arc between the two cuts.
     let cylinder =
         solids::cylinder_at(Frame::at(Point3::new(0.0, 0.0, -0.25)), 1.0, 0.5).expect("cylinder");
-    let block =
-        solids::block_at(Frame::at(Point3::new(-1.25, 0.75, -0.125)), 1.0, 0.5, 1.25).expect("block");
+    let block = solids::block_at(Frame::at(Point3::new(-1.25, 0.75, -0.125)), 1.0, 0.5, 1.25)
+        .expect("block");
 
-    let wedge = solids::intersect(cylinder, block).expect("the block should intersect the cylinder");
+    let wedge =
+        solids::intersect(cylinder, block).expect("the block should intersect the cylinder");
 
     validate_solid_manifold(wedge.model(), wedge.key()).unwrap();
     ngk::topology::validation::validate_solid_orientation(wedge.model(), wedge.key()).unwrap();
@@ -2030,9 +2031,128 @@ fn a_block_straddling_a_cylinders_rim_intersects_to_the_wedge_between_them() {
         })
         .sum();
     let expected = footprint * (0.25 - -0.125);
-    let volume = wedge.solid().volume().expect("the wedge should be measurable");
+    let volume = wedge
+        .solid()
+        .volume()
+        .expect("the wedge should be measurable");
     assert!(
         (volume - expected).abs() <= 1e-2 * expected,
         "wedge volume {volume}, expected {expected}"
+    );
+}
+
+#[test]
+fn a_block_notching_a_cylinder_from_below_leaves_a_measurable_wall() {
+    // The block's side faces cross the wall on both sides of the angle where
+    // its end face does, so the wall keeps a strip down to the floor between
+    // two notches. Its lower loop, cut at the marks the block left, starts
+    // at a different angle from the untouched upper rim, and the two loops
+    // bound one ring face together.
+    let cylinder = solids::cylinder(1.0, 0.5).expect("cylinder");
+    let block =
+        solids::block_at(Frame::at(Point3::new(-0.9, -0.6, -0.5)), 1.15, 1.2, 0.75).expect("block");
+
+    let notched = solids::cut(cylinder, block).expect("the block should notch the cylinder");
+
+    validate_solid_manifold(notched.model(), notched.key()).unwrap();
+    ngk::topology::validation::validate_solid_orientation(notched.model(), notched.key()).unwrap();
+    // The pocket is the part of the rectangle [-0.9, 0.25] × [-0.6, 0.6]
+    // inside the unit disc, from the floor up to the block's top at 0.25.
+    let steps = 200_000;
+    let dx = 1.15 / steps as f64;
+    let footprint: f64 = (0..steps)
+        .map(|i| {
+            let x = -0.9 + (i as f64 + 0.5) * dx;
+            2.0 * (1.0 - x * x).max(0.0).sqrt().min(0.6) * dx
+        })
+        .sum();
+    let expected = std::f64::consts::PI * 0.5 - footprint * 0.25;
+    let volume = notched
+        .solid()
+        .volume()
+        .expect("the notched cylinder should be measurable");
+    assert!(
+        (volume - expected).abs() <= 1e-2 * expected,
+        "notched volume {volume}, expected {expected}"
+    );
+}
+
+#[test]
+fn a_sphere_biting_all_but_a_strip_of_a_rod_leaves_its_wall_measurable() {
+    // The sphere takes in every angle of the rod's wall except a thin strip
+    // on its far side, so the wall is a ring with one hole running nearly all
+    // the way round -- across the angle where the wall's own pcurves begin,
+    // and only just past it, so a domain cut open there has the hole poking
+    // out of one end.
+    let volume = |shape: &ngk::topology::shape::Shape<ngk::topology::shape::SolidTag>| {
+        shape
+            .solid()
+            .volume()
+            .expect("every result should be measurable")
+    };
+    let rod =
+        || solids::cylinder_at(Frame::at(Point3::new(0.0, 0.0, -1.0)), 0.25, 2.0).expect("rod");
+    let ball = || {
+        solids::sphere_at(Frame::at(Point3::new(-0.75, -0.5, 0.0)), 1.1255542791014304)
+            .expect("ball")
+    };
+
+    let union = solids::fuse(rod(), ball()).expect("the ball should fuse to the rod");
+    let common = solids::intersect(rod(), ball()).expect("the ball should meet the rod");
+    let rest = solids::cut(rod(), ball()).expect("a strip keeps the rod in one piece");
+
+    for shape in [&union, &common, &rest] {
+        validate_solid_manifold(shape.model(), shape.key()).unwrap();
+        ngk::topology::validation::validate_solid_orientation(shape.model(), shape.key()).unwrap();
+    }
+    let rod_volume = std::f64::consts::PI * 0.25 * 0.25 * 2.0;
+    let ball_volume = 4.0 / 3.0 * std::f64::consts::PI * 1.1255542791014304_f64.powi(3);
+    let (union, common, rest) = (volume(&union), volume(&common), volume(&rest));
+    assert!(
+        (union + common - rod_volume - ball_volume).abs() <= 1e-2 * ball_volume,
+        "union {union} and common {common} should add up to rod {rod_volume} and ball {ball_volume}"
+    );
+    assert!(
+        (rest + common - rod_volume).abs() <= 1e-2 * rod_volume,
+        "rest {rest} and common {common} should add up to the rod {rod_volume}"
+    );
+}
+
+#[test]
+fn a_tilted_bar_notching_a_disc_edge_leaves_its_wall_measurable() {
+    // A bar tipped over on its side bites the rim of a flat cylinder. The
+    // notch it leaves in the wall overhangs one of its own corners: a cut
+    // across the ring from that corner would run through the notch.
+    let disc = || {
+        solids::cylinder_at(Frame::at(Point3::new(0.0, 0.0, -0.125)), 0.966, 0.25).expect("disc")
+    };
+    let bar = || {
+        let angle = 1.25 * std::f64::consts::PI;
+        let x_dir = Vector3::new(angle.cos(), 0.0, -angle.sin());
+        let z_dir = Vector3::new(angle.sin(), 0.0, angle.cos());
+        let centre = Point3::new(0.0, -0.884, -0.25);
+        let origin = centre - x_dir * 0.125 - Vector3::y() * 0.125 - z_dir * 0.375;
+        solids::block_at(Frame::from_xz(origin, x_dir, z_dir), 0.25, 0.25, 0.75).expect("bar")
+    };
+
+    let rest = solids::cut(disc(), bar()).expect("the bar should notch the disc");
+    let common = solids::intersect(disc(), bar()).expect("the bar should meet the disc");
+
+    for shape in [&rest, &common] {
+        validate_solid_manifold(shape.model(), shape.key()).unwrap();
+        ngk::topology::validation::validate_solid_orientation(shape.model(), shape.key()).unwrap();
+    }
+    let disc_volume = std::f64::consts::PI * 0.966 * 0.966 * 0.25;
+    let rest = rest
+        .solid()
+        .volume()
+        .expect("the notched disc should be measurable");
+    let common = common
+        .solid()
+        .volume()
+        .expect("the bitten piece should be measurable");
+    assert!(
+        (rest + common - disc_volume).abs() <= 1e-2 * disc_volume,
+        "rest {rest} and common {common} should add up to the disc {disc_volume}"
     );
 }

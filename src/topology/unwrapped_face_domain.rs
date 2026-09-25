@@ -25,6 +25,7 @@ use crate::geometry::{
 use crate::topology::attributes::LoopKind;
 use crate::topology::face::Face;
 use crate::topology::face::Loop;
+use crate::topology::gmap::Dart;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 
@@ -45,6 +46,8 @@ pub enum UnwrappedFaceDomainError {
 /// the other.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnwrappedFaceDomainCurve {
+    /// The boundary dart of the edge this pcurve was read from.
+    dart: Dart,
     curve: TrimmedCurve2,
     /// The edge this pcurve lies under, in 3D, traversed as the loop runs.
     span: TrimmedCurve,
@@ -53,6 +56,15 @@ pub struct UnwrappedFaceDomainCurve {
 }
 
 impl UnwrappedFaceDomainCurve {
+    /// Returns the boundary dart of the edge this pcurve was placed from.
+    ///
+    /// Carried rather than recovered by position: a loop is placed from
+    /// whichever of its corners cuts the domain cleanly, so its curves need
+    /// not come out in the order the face lists its edges.
+    pub fn dart(&self) -> Dart {
+        self.dart
+    }
+
     /// Returns the pcurve as stored on the face, in its own branch.
     pub fn curve(&self) -> &TrimmedCurve2 {
         &self.curve
@@ -229,23 +241,35 @@ impl UnwrappedFaceDomain {
         let mut outer_offset = Vector2::zeros();
         let mut holes: Vec<UnwrappedFaceDomainLoop> = Vec::new();
         let mut capped = None;
-        for loop_ in face.loops() {
+        let loops = face.loops();
+        // Holes first: where they lie decides where a ring may be cut open.
+        for loop_ in loops.iter().filter(|loop_| loop_.kind() == LoopKind::Inner) {
+            let mut curves = Vec::new();
+            let mut offset = Vector2::zeros();
+            place_loop(face, loop_, periods, None, &mut curves, &mut offset)?;
+            rebranch_across_degenerate_row(face.surface(), &mut curves, periods);
+            close_loop(&mut curves);
+            holes.push(UnwrappedFaceDomainLoop { curves });
+        }
+        let cut = ring_cut(face, &loops, &holes);
+        if let Some(cut) = cut {
+            for hole in &mut holes {
+                cut.bring_inside(hole);
+            }
+        }
+        for loop_ in &loops {
             match loop_.kind() {
-                LoopKind::Outer | LoopKind::Wrapping { .. } => {
-                    place_loop(face, &loop_, periods, &mut outer, &mut outer_offset)?;
+                LoopKind::Wrapping { .. } => {
+                    place_loop(face, loop_, periods, cut, &mut outer, &mut outer_offset)?;
+                }
+                LoopKind::Outer => {
+                    place_loop(face, loop_, periods, None, &mut outer, &mut outer_offset)?;
                 }
                 LoopKind::Capping { axis, side } => {
-                    place_loop(face, &loop_, periods, &mut outer, &mut outer_offset)?;
+                    place_loop(face, loop_, periods, None, &mut outer, &mut outer_offset)?;
                     capped = Some((axis, side));
                 }
-                LoopKind::Inner => {
-                    let mut curves = Vec::new();
-                    let mut offset = Vector2::zeros();
-                    place_loop(face, &loop_, periods, &mut curves, &mut offset)?;
-                    rebranch_across_degenerate_row(face.surface(), &mut curves, periods);
-                    close_loop(&mut curves);
-                    holes.push(UnwrappedFaceDomainLoop { curves });
-                }
+                LoopKind::Inner => {}
             }
         }
         match capped {
@@ -402,16 +426,31 @@ fn place_loop<P: Payload>(
     face: &Face<'_, P>,
     loop_: &Loop<'_, P>,
     periods: [Option<f64>; 2],
+    cut: Option<RingCut>,
     curves: &mut Vec<UnwrappedFaceDomainCurve>,
     offset: &mut Vector2,
 ) -> Result<(), UnwrappedFaceDomainError> {
-    for edge in loop_.edges() {
+    let mut edges = loop_.edges();
+    let lone = edges.len() == 1;
+    if let Some(cut) = cut.filter(|_| !lone) {
+        let start = cut.start_index(face, &edges);
+        edges.rotate_left(start);
+    }
+    for edge in edges {
         let curve =
             face.pcurve(edge.dart())
                 .ok_or_else(|| UnwrappedFaceDomainError::MissingPcurve {
                     face: face.key(),
                     edge: edge.key(),
                 })?;
+        let span = edge.trimmed_curve();
+        // A loop that is one closed edge has no corner to start from, so it
+        // is read from the ring's cut instead of from where its pcurve
+        // happens to begin.
+        let (curve, span) = match cut.filter(|_| lone) {
+            Some(cut) => cut.anchor(face.surface(), curve, span),
+            None => (curve, span),
+        };
         let corner = curves
             .last()
             .map(UnwrappedFaceDomainCurve::end)
@@ -419,13 +458,301 @@ fn place_loop<P: Payload>(
                 place_after(previous, curve.start(), face.surface(), periods, offset)
             });
         curves.push(UnwrappedFaceDomainCurve {
+            dart: edge.dart(),
             curve,
-            span: edge.trimmed_curve(),
+            span,
             offset: *offset,
             corners: corner.into_iter().collect(),
         });
     }
     Ok(())
+}
+
+/// Where a ring face's two wrapping loops are joined across the unwrapped domain.
+///
+/// The domain closes a ring by running from the end of one wrapping loop to the
+/// start of the next, and back. Those two runs are the cut, and they are only
+/// straight across the ring when both loops start at the same place along the
+/// axis they wrap. A loop whose first corner sits anywhere else turns the cut
+/// into a slant, and a slant can run through a notch the other loop takes out
+/// of the face -- the boundary then crosses itself and bounds nothing.
+///
+/// A loop with corners starts at one of them, and moving it would reorder its
+/// edges. A loop that is one closed edge -- a rim nothing has cut -- starts
+/// wherever its pcurve was written, and is free to start anywhere. So the cut
+/// is taken at the first corner of a cornered loop, and every lone closed loop
+/// is read from there.
+#[derive(Debug, Clone, Copy)]
+struct RingCut {
+    axis: Axis2,
+    at: f64,
+    period: f64,
+}
+
+impl RingCut {
+    /// Re-reads a lone closed loop's pcurve, and its edge, from the cut.
+    ///
+    /// Left as it was where the pcurve does not run once round the ring at a
+    /// steady pace along the axis, since the place to start would then be a
+    /// guess.
+    fn anchor(
+        self,
+        surface: &Surface,
+        curve: TrimmedCurve2,
+        span: TrimmedCurve,
+    ) -> (TrimmedCurve2, TrimmedCurve) {
+        let axis = self.axis.index();
+        let (start, end) = (curve.start()[axis], curve.end()[axis]);
+        let run = end - start;
+        if ((run.abs() - self.period).abs()) > LINEAR_TOLERANCE {
+            return (curve, span);
+        }
+        let along = (self.at - start) / run;
+        let along = along - along.floor();
+        let at = curve.point_at(Fraction::new(along));
+        let turns = (at[axis] - self.at) / self.period;
+        if (turns - turns.round()).abs() * self.period > LINEAR_TOLERANCE {
+            return (curve, span);
+        }
+        let reanchored = |interval: crate::geometry::Interval, fraction: f64| {
+            let delta = interval.delta();
+            let start = interval.start + fraction * delta;
+            crate::geometry::Interval::new(start, start + delta)
+        };
+        let point = surface.point_at(at.x, at.y);
+        let span_along = span.parameter_at(point).value();
+        (
+            TrimmedCurve2::new(curve.curve().clone(), reanchored(curve.interval(), along)),
+            TrimmedCurve::new(
+                span.curve().clone(),
+                reanchored(span.interval(), span_along),
+            ),
+        )
+    }
+}
+
+/// The cut a ring face's lone closed loops are read from, if the face is a ring.
+///
+/// A loop with corners fixes the cut at its first one. Where every wrapping
+/// loop is one closed edge the cut is free, and it is kept off the holes: a
+/// hole the cut runs through is split across the two ends of the unwrapped
+/// domain and sticks out of it at one of them. The place the rims were
+/// written from is kept while it is clear, and otherwise the middle of the
+/// widest gap the holes leave round the ring is taken.
+fn ring_cut<P: Payload>(
+    face: &Face<'_, P>,
+    loops: &[Loop<'_, P>],
+    holes: &[UnwrappedFaceDomainLoop],
+) -> Option<RingCut> {
+    let periods = periods_of(face.surface());
+    let wrapping = loops.iter().filter_map(|loop_| match loop_.kind() {
+        LoopKind::Wrapping { axis } => Some((loop_, axis)),
+        _ => None,
+    });
+    let mut lone = None;
+    for (loop_, axis) in wrapping {
+        let period = periods[axis.index()]?;
+        let edges = loop_.edges();
+        let first = face.pcurve(edges.first()?.dart())?;
+        let at = first.start()[axis.index()].min(first.end()[axis.index()]);
+        let cut = RingCut { axis, at, period };
+        if edges.len() >= 2 {
+            let corners = edges
+                .iter()
+                .filter_map(|edge| face.pcurve(edge.dart()))
+                .map(|pcurve| pcurve.start())
+                .collect::<Vec<_>>();
+            let mut boundary = edges
+                .iter()
+                .filter_map(|edge| face.pcurve(edge.dart()))
+                .map(|pcurve| pcurve.sample(RingCut::CUT_SAMPLES))
+                .collect::<Vec<_>>();
+            boundary.extend(holes.iter().map(|hole| {
+                let mut points = hole.polyline(RingCut::CUT_SAMPLES);
+                points.extend(points.first().copied());
+                points
+            }));
+            // The cut runs from the corner across to the next wrapping loop,
+            // which lies at one height across the ring.
+            let toward = loops
+                .iter()
+                .filter(|other| {
+                    !std::ptr::eq(*other, loop_)
+                        && matches!(other.kind(), LoopKind::Wrapping { .. })
+                })
+                .find_map(|other| face.pcurve(other.edges().first()?.dart()))
+                .map(|pcurve| pcurve.start()[axis.transverse().index()]);
+            let corner = corners
+                .iter()
+                .copied()
+                .find(|corner| cut.runs_clear(*corner, toward, &boundary))
+                .unwrap_or(first.start());
+            return Some(RingCut {
+                at: corner[axis.index()],
+                ..cut
+            });
+        }
+        lone.get_or_insert(cut);
+    }
+    let cut = lone?;
+    Some(RingCut {
+        at: cut.clear_of(holes),
+        ..cut
+    })
+}
+
+impl RingCut {
+    /// Samples per pcurve when checking where a cut may run.
+    const CUT_SAMPLES: usize = 32;
+
+    /// The wrapped offset of `value` from the cut, in `(-period / 2, period / 2]`.
+    fn offset_of(self, value: f64) -> f64 {
+        let offset = (value - self.at).rem_euclid(self.period);
+        if offset > 0.5 * self.period {
+            offset - self.period
+        } else {
+            offset
+        }
+    }
+
+    /// Whether a cut straight across the ring from `corner` to the height
+    /// `toward` meets the boundary only at `corner` itself.
+    ///
+    /// A loop's corners are not all equally good places to cut it open: a
+    /// notch that overhangs one of them, or a hole standing over it, is run
+    /// through by a cut from there, and the boundary then crosses itself.
+    /// Only the stretch the cut covers counts; with no height to run to, the
+    /// whole line does.
+    fn runs_clear(self, corner: Point2, toward: Option<f64>, boundary: &[Vec<Point2>]) -> bool {
+        let cut = RingCut {
+            at: corner[self.axis.index()],
+            ..self
+        };
+        let (along, across) = (self.axis.index(), self.axis.transverse().index());
+        let off_cut = |point: Point2| {
+            let near_corner = cut.offset_of(point[along]).abs() <= LINEAR_TOLERANCE
+                && (point[across] - corner[across]).abs() <= LINEAR_TOLERANCE;
+            let beyond = toward.is_some_and(|toward| {
+                let (low, high) = if toward < corner[across] {
+                    (toward, corner[across])
+                } else {
+                    (corner[across], toward)
+                };
+                point[across] < low - LINEAR_TOLERANCE || point[across] > high + LINEAR_TOLERANCE
+            });
+            near_corner || beyond
+        };
+        boundary.iter().all(|polyline| {
+            polyline.windows(2).all(|pair| {
+                let (p, q) = (pair[0], pair[1]);
+                if (q[along] - p[along]).abs() > 0.5 * self.period {
+                    return true;
+                }
+                let (fp, fq) = (cut.offset_of(p[along]), cut.offset_of(q[along]));
+                if fp.abs() <= LINEAR_TOLERANCE {
+                    return off_cut(p);
+                }
+                // Offsets that change sign across half a period have passed
+                // the point opposite the cut, not the cut.
+                if fp * fq >= 0.0
+                    || fq.abs() <= LINEAR_TOLERANCE
+                    || (fp - fq).abs() > 0.5 * self.period
+                {
+                    return true;
+                }
+                let t = fp / (fp - fq);
+                off_cut(p + (q - p) * t)
+            })
+        })
+    }
+
+    /// Which of a cornered loop's edges starts at the cut, or the first.
+    fn start_index<P: Payload>(
+        self,
+        face: &Face<'_, P>,
+        edges: &[crate::topology::edge::Edge<'_, P>],
+    ) -> usize {
+        edges
+            .iter()
+            .position(|edge| {
+                face.pcurve(edge.dart()).is_some_and(|pcurve| {
+                    self.offset_of(pcurve.start()[self.axis.index()]).abs() <= LINEAR_TOLERANCE
+                })
+            })
+            .unwrap_or(0)
+    }
+
+    /// Each hole's extent along the ring, as `(start, length)`.
+    fn hole_spans(self, holes: &[UnwrappedFaceDomainLoop]) -> Vec<(f64, f64)> {
+        let axis = self.axis.index();
+        holes
+            .iter()
+            .filter_map(|hole| {
+                let points = hole.polyline(Self::HOLE_SAMPLES);
+                let low = points.iter().map(|point| point[axis]).reduce(f64::min)?;
+                let high = points.iter().map(|point| point[axis]).reduce(f64::max)?;
+                Some((low, high - low))
+            })
+            .collect()
+    }
+
+    const HOLE_SAMPLES: usize = 16;
+
+    /// How far `at` is outside every hole along the ring, negative inside one.
+    fn clearance(self, at: f64, spans: &[(f64, f64)]) -> f64 {
+        spans
+            .iter()
+            .map(|&(start, length)| {
+                let into = (at - start).rem_euclid(self.period);
+                if into < length {
+                    -(into.min(length - into))
+                } else {
+                    (into - length).min(self.period - into)
+                }
+            })
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    /// `self.at` if no hole covers it, else the middle of the widest gap.
+    fn clear_of(self, holes: &[UnwrappedFaceDomainLoop]) -> f64 {
+        let spans = self.hole_spans(holes);
+        if spans.iter().any(|(_, length)| *length >= self.period)
+            || self.clearance(self.at, &spans) > LINEAR_TOLERANCE
+        {
+            return self.at;
+        }
+        const CANDIDATES: usize = 720;
+        (0..CANDIDATES)
+            .map(|step| self.at + self.period * step as f64 / CANDIDATES as f64)
+            .max_by(|a, b| {
+                self.clearance(*a, &spans)
+                    .total_cmp(&self.clearance(*b, &spans))
+            })
+            .unwrap_or(self.at)
+    }
+
+    /// Moves `hole` by whole periods to lie between the cut and one period on.
+    fn bring_inside(self, hole: &mut UnwrappedFaceDomainLoop) {
+        let Some(&(start, _)) = self.hole_spans(std::slice::from_ref(hole)).first() else {
+            return;
+        };
+        let turns = ((start - self.at) / self.period).floor();
+        if turns == 0.0 {
+            return;
+        }
+        let mut shift = Vector2::zeros();
+        shift[self.axis.index()] = -turns * self.period;
+        slide_tail(&mut hole.curves, 0, shift);
+        for corner in hole
+            .curves
+            .first_mut()
+            .map(|curve| &mut curve.corners)
+            .into_iter()
+            .flatten()
+        {
+            *corner += shift;
+        }
+    }
 }
 
 /// Extends `offset` so a pcurve starting at `start` continues from `previous`.
