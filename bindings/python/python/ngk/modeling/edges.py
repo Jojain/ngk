@@ -1,5 +1,5 @@
 """Standalone edge constructors."""
 
-from ..core.modeling.edges import arc, circle, helix, line
+from ..core.modeling.edges import EdgeSplitResult, arc, circle, helix, line, split
 
-__all__ = ["arc", "circle", "helix", "line"]
+__all__ = ["EdgeSplitResult", "arc", "circle", "helix", "line", "split"]

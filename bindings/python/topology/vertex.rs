@@ -15,7 +15,7 @@ use super::sheet::PySheet;
 #[pyclass(name = "Vertex", module = "ngk")]
 #[derive(Clone)]
 pub struct PyVertex {
-    inner: SharedVertex<StandardPayload>,
+    pub(crate) inner: SharedVertex<StandardPayload>,
 }
 
 entity_methods!(PyVertex, SharedVertex<StandardPayload>, "vertex", {

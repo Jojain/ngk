@@ -1,11 +1,24 @@
 use radians::Rad64;
 
-use crate::builders::revolve::{RevolveError, add_revolved_face, add_revolved_profile};
+use crate::builders::revolve::{
+    RevolveError, add_revolved_edge, add_revolved_face, add_revolved_profile,
+};
 use crate::geometry::axis::Axis3;
 use crate::model::MergeTopology;
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
-use crate::topology::shape::{FaceTag, Shape, SheetTag, SolidTag};
+use crate::topology::shape::{EdgeTag, FaceTag, Shape, SheetTag, SolidTag};
+
+/// Revolves an owned edge around an axis to make one face.
+pub fn revolve_edge<P: Payload>(
+    edge: Shape<EdgeTag, P>,
+    axis: Axis3,
+    angle: Rad64,
+) -> Result<Shape<FaceTag, P>, RevolveError> {
+    let (mut model, edge_key) = edge.into_model();
+    let face = add_revolved_edge(&mut model, edge_key, axis, angle)?;
+    Ok(Shape::new(model, face.face))
+}
 
 pub fn revolve_profile<P: Payload>(
     profile: Profile<'_, P>,

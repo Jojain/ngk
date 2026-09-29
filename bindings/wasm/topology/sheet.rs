@@ -72,12 +72,18 @@ impl WasmShell {
 #[wasm_bindgen(js_name = Sheet)]
 #[derive(Clone)]
 pub struct WasmSheet {
-    inner: SharedSheet<StandardPayload>,
+    pub(crate) inner: SharedSheet<StandardPayload>,
 }
 
 impl WasmSheet {
     pub(crate) fn from_inner(inner: SharedSheet<StandardPayload>) -> Self {
         Self { inner }
+    }
+
+    pub(crate) fn isolated_shape(
+        &self,
+    ) -> Result<crate::topology::shape::Shape<crate::topology::shape::SheetTag>, JsValue> {
+        self.inner.isolated_shape().map_err(js_err)
     }
 }
 

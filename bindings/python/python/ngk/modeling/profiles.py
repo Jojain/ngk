@@ -1,5 +1,5 @@
 """Profile constructors."""
 
-from ..core.modeling.profiles import from_edges, polygon, rectangle
+from ..core.modeling.profiles import appended, arc, from_edge, from_edges, polygon, polyline, rectangle, square
 
-__all__ = ["from_edges", "polygon", "rectangle"]
+__all__ = ["appended", "arc", "from_edge", "from_edges", "polygon", "polyline", "rectangle", "square"]

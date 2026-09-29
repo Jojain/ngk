@@ -10,7 +10,7 @@ use crate::topology::face::{Face, Loop};
 use crate::topology::gmap::{Dart, Dim, GMAP_INVOLUTION_COUNT};
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
-use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape};
+use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape, SheetTag, SolidTag};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::sheet::{Sheet, ShellRef};
 use crate::topology::solid::Solid;
@@ -287,6 +287,13 @@ impl<P: Payload> SharedModel<P> {
         let dart = self.checked_dart(dart)?;
         Ok(Solid::from_dart(self.model(), dart)
             .map(|view| SharedSolid::from_view(self.clone(), view)))
+    }
+
+    /// Resolves a registered vertex from its stable key.
+    pub(crate) fn vertex_by_key(&self, key: VertexKey) -> Option<SharedVertex<P>> {
+        self.model
+            .vertex(key)
+            .map(|view| SharedVertex::from_view(self.clone(), view))
     }
 
     /// Resolves a registered edge from its stable key.
@@ -759,7 +766,7 @@ impl<P: Payload> SharedFace<P> {
         }
     }
 
-    fn view(&self) -> Result<Face<'_, P>, ExploreError> {
+    pub(crate) fn view(&self) -> Result<Face<'_, P>, ExploreError> {
         Face::from_dart(self.model.model(), self.dart)
             .filter(|view| view.key() == self.key)
             .ok_or_else(|| missing("face", format!("{:?}", self.key)))
@@ -854,6 +861,15 @@ pub(crate) struct SharedSheet<P: Payload = StandardPayload> {
 shared_identity!(SharedSheet, SheetKey);
 
 impl<P: Payload> SharedSheet<P> {
+    /// Copies this sheet into an owned shape for a modeling operation.
+    pub(crate) fn isolated_shape(&self) -> Result<Shape<SheetTag, P>, ExploreError> {
+        let (model, dart) = self.view()?.isolate();
+        let key = Sheet::from_dart(&model, dart)
+            .ok_or_else(|| missing("sheet", dart.id()))?
+            .key();
+        Ok(Shape::new(model, key))
+    }
+
     fn contextual_dart_id(&self) -> Option<usize> {
         Some(self.dart.id())
     }
@@ -995,6 +1011,15 @@ pub(crate) struct SharedSolid<P: Payload = StandardPayload> {
 shared_identity!(SharedSolid, SolidKey);
 
 impl<P: Payload> SharedSolid<P> {
+    /// Copies this solid into an owned shape for a modeling operation.
+    pub(crate) fn isolated_shape(&self) -> Result<Shape<SolidTag, P>, ExploreError> {
+        let (model, dart) = self.view()?.isolate();
+        let key = Solid::from_dart(&model, dart)
+            .ok_or_else(|| missing("solid", dart.id()))?
+            .key();
+        Ok(Shape::new(model, key))
+    }
+
     fn contextual_dart_id(&self) -> Option<usize> {
         Some(self.dart.id())
     }

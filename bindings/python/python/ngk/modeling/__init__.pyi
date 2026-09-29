@@ -1,1 +1,1 @@
-from . import booleans, edges, faces, profiles, solids
+from . import blend, booleans, edges, faces, heal, loft, profiles, revolve, solids, sweep, transform

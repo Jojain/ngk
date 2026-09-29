@@ -64,7 +64,7 @@ entity_methods!(PyShell, SharedShell<StandardPayload>, "shell", {
 #[pyclass(name = "Sheet", module = "ngk")]
 #[derive(Clone)]
 pub struct PySheet {
-    inner: SharedSheet<StandardPayload>,
+    pub(crate) inner: SharedSheet<StandardPayload>,
 }
 
 entity_methods!(PySheet, SharedSheet<StandardPayload>, "sheet", {

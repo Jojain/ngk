@@ -1,5 +1,5 @@
 """High-level shape construction and modification."""
 
-from . import booleans, edges, faces, loft, profiles, solids
+from . import blend, booleans, edges, faces, heal, loft, profiles, revolve, solids, sweep, transform
 
-__all__ = ["booleans", "edges", "faces", "loft", "profiles", "solids"]
+__all__ = ["blend", "booleans", "edges", "faces", "heal", "loft", "profiles", "revolve", "solids", "sweep", "transform"]

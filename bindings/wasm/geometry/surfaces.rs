@@ -12,6 +12,29 @@ pub struct WasmPlane {
 
 #[wasm_bindgen]
 impl WasmPlane {
+    /// Creates a plane from an origin, in-plane x direction, and normal.
+    #[wasm_bindgen(constructor)]
+    pub fn new(origin: &WasmPoint3, x_dir: &WasmVector3, normal: &WasmVector3) -> Self {
+        Self {
+            inner: Plane::new(origin.inner, x_dir.inner, normal.inner),
+        }
+    }
+
+    /// Returns the world XY plane.
+    pub fn xy() -> Self {
+        Self { inner: Plane::xy() }
+    }
+
+    /// Returns the world XZ plane.
+    pub fn xz() -> Self {
+        Self { inner: Plane::xz() }
+    }
+
+    /// Returns the world YZ plane.
+    pub fn yz() -> Self {
+        Self { inner: Plane::yz() }
+    }
+
     /// Returns the plane origin.
     #[wasm_bindgen(getter)]
     pub fn origin(&self) -> WasmPoint3 {

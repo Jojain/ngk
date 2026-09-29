@@ -14,7 +14,7 @@ use super::sheet::WasmSheet;
 #[wasm_bindgen(js_name = Vertex)]
 #[derive(Clone)]
 pub struct WasmVertex {
-    inner: SharedVertex<StandardPayload>,
+    pub(crate) inner: SharedVertex<StandardPayload>,
 }
 
 impl WasmVertex {

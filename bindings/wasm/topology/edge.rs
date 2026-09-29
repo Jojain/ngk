@@ -14,7 +14,7 @@ use super::vertex::WasmVertex;
 #[wasm_bindgen(js_name = Edge)]
 #[derive(Clone)]
 pub struct WasmEdge {
-    inner: SharedEdge<StandardPayload>,
+    pub(crate) inner: SharedEdge<StandardPayload>,
 }
 
 impl WasmEdge {

@@ -37,9 +37,16 @@ it when you want to display shapes through `ocp_vscode`:
 pip install "ngk[ocp]"
 ```
 
-The Python API follows the kernel's domain structure. Primitive solid builders
-and the current solid Boolean operations live under `ngk.modeling`; the latter
-are intentionally solid-only for now.
+The Python API follows the kernel's domain structure. `ngk.modeling` exposes
+edge, profile, face, sheet, and solid construction and operations: sweep,
+revolve, loft, rigid motion, blending, healing, edge splitting, and face and
+solid Booleans. Face Booleans and edge splits return one model together with
+all result handles. `ngk.measurement` exposes length, area, volume, centroid,
+and inertia. STEP text exchange is available under `ngk.exchange.step`.
+
+The WASM binding exposes the same modeling, measurement, rigid-motion, and
+STEP text capabilities. Its browser API uses camel-case exports and omits
+filesystem-only STEP functions.
 
 ```python
 from ngk.geometry import Frame, Point, Vector
@@ -62,9 +69,8 @@ ocp.show(result)
 not bundled with the wheel: start it separately from an NGK checkout before
 using that bridge.
 
-The current Python surface is useful for primitive solids, solid Booleans,
-topology inspection, experimental STEP exchange, and visualization. It is not
-yet a complete build123d or OCCT replacement.
+The bindings are experimental and the kernel is not yet a complete build123d
+or OCCT replacement.
 
 ## Experiments
 

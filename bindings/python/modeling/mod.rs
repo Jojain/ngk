@@ -1,10 +1,15 @@
+mod blend;
 mod booleans;
 mod common;
 mod edges;
 mod faces;
+mod heal;
 mod loft;
 mod profiles;
+mod revolve;
 mod solids;
+mod sweep;
+mod transform;
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
@@ -26,6 +31,10 @@ pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     booleans::register(&booleans_module)?;
     modeling.add_submodule(&booleans_module)?;
 
+    let blend_module = new_submodule(py, "blend", &modeling_qualname)?;
+    blend::register(&blend_module)?;
+    modeling.add_submodule(&blend_module)?;
+
     let edges_module = new_submodule(py, "edges", &modeling_qualname)?;
     edges::register(&edges_module)?;
     modeling.add_submodule(&edges_module)?;
@@ -34,9 +43,25 @@ pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     profiles::register(&profiles_module)?;
     modeling.add_submodule(&profiles_module)?;
 
+    let revolve_module = new_submodule(py, "revolve", &modeling_qualname)?;
+    revolve::register(&revolve_module)?;
+    modeling.add_submodule(&revolve_module)?;
+
+    let sweep_module = new_submodule(py, "sweep", &modeling_qualname)?;
+    sweep::register(&sweep_module)?;
+    modeling.add_submodule(&sweep_module)?;
+
+    let transform_module = new_submodule(py, "transform", &modeling_qualname)?;
+    transform::register(&transform_module)?;
+    modeling.add_submodule(&transform_module)?;
+
     let faces_module = new_submodule(py, "faces", &modeling_qualname)?;
     faces::register(&faces_module)?;
     modeling.add_submodule(&faces_module)?;
+
+    let heal_module = new_submodule(py, "heal", &modeling_qualname)?;
+    heal::register(&heal_module)?;
+    modeling.add_submodule(&heal_module)?;
 
     let loft_module = new_submodule(py, "loft", &modeling_qualname)?;
     loft::register(&loft_module)?;

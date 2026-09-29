@@ -64,7 +64,7 @@ impl WasmLoop {
 #[wasm_bindgen(js_name = Profile)]
 #[derive(Clone)]
 pub struct WasmProfile {
-    inner: SharedProfile<StandardPayload>,
+    pub(crate) inner: SharedProfile<StandardPayload>,
 }
 
 impl WasmProfile {

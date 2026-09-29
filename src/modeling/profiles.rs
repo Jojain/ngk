@@ -74,6 +74,15 @@ pub fn from_edges<P: Payload>(
     Ok(Shape::new(g, profile))
 }
 
+/// Returns a profile extended by a connected edge, preserving the input edge.
+pub fn appended<P: Payload>(
+    mut profile: Shape<ProfileTag, P>,
+    edge: &Shape<EdgeTag, P>,
+) -> Result<Shape<ProfileTag, P>, PolylineError> {
+    profile.add(edge)?;
+    Ok(profile)
+}
+
 /// Creates a closed polygon profile from the supplied corners.
 pub fn polygon(points: &[Point3]) -> Result<Shape<ProfileTag>, PolylineError> {
     polygon_with::<StandardPayload>(points)

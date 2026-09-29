@@ -1,7 +1,11 @@
+pub mod blend;
 mod common;
 pub mod edges;
 pub mod faces;
+pub mod heal;
 pub mod loft;
 pub mod profiles;
+pub mod revolve;
 pub mod solids;
 pub mod sweep;
+pub mod transform;

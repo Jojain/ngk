@@ -2,6 +2,7 @@ mod convert;
 mod curves;
 mod nurbs;
 mod surfaces;
+mod transform;
 mod values;
 
 use pyo3::prelude::*;
@@ -13,6 +14,7 @@ pub(crate) use nurbs::{PyNurbsCurve, PyNurbsSurface};
 pub(crate) use surfaces::{
     PyCone, PyCylinder, PyPlane, PyRuledSurface, PySphere, PySurfaceOfRevolution, PyTorus,
 };
+pub(crate) use transform::PyRigid;
 pub(crate) use values::{
     PyAxis3, PyFrame, PyPoint2, PyPoint3, PyVector2, PyVector3, point, unit_vector, vector,
 };
@@ -24,6 +26,7 @@ pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVector3>()?;
     m.add_class::<PyAxis3>()?;
     m.add_class::<PyFrame>()?;
+    m.add_class::<PyRigid>()?;
     m.add_class::<PyLine>()?;
     m.add_class::<PyCircle>()?;
     m.add_class::<PyEllipse>()?;

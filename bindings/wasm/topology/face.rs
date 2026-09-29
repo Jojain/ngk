@@ -15,7 +15,7 @@ use super::vertex::WasmVertex;
 #[wasm_bindgen(js_name = Face)]
 #[derive(Clone)]
 pub struct WasmFace {
-    inner: SharedFace<StandardPayload>,
+    pub(crate) inner: SharedFace<StandardPayload>,
 }
 
 impl WasmFace {

@@ -63,6 +63,18 @@ fn from_edges_orders_connected_edge_shapes() {
 }
 
 #[test]
+fn appended_returns_a_profile_with_the_new_edge() {
+    let first = edges::line(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0))
+        .expect("first edge should build");
+    let second = edges::line(Point3::new(1.0, 0.0, 0.0), Point3::new(1.0, 1.0, 0.0))
+        .expect("second edge should build");
+    let profile = first.into_profile();
+
+    let extended = profiles::appended(profile, &second).expect("connected edge should append");
+    assert_eq!(extended.profile().edges().len(), 2);
+}
+
+#[test]
 fn add_copies_an_edge_shape_into_the_profile() {
     let arc = edges::arc(Plane::xy(), 2.0, Rad64::ZERO, Rad64::QUARTER_TURN)
         .expect("arc edge should build");

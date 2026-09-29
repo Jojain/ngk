@@ -1,6 +1,7 @@
 use ngk::builders::errors::EdgeCreationError;
 use std::f64::consts::TAU;
 
+use ngk::geometry::Fraction;
 use ngk::geometry::{Axis3, Curve, Interval, Plane, Point3};
 use ngk::modeling::edges;
 use ngk::topology::closed::Closeable;
@@ -17,6 +18,15 @@ fn line_returns_owned_line_edge_shape() {
     assert_eq!(*edge.bounded_unchecked().start().point(), start);
     assert_eq!(*edge.bounded_unchecked().end().point(), end);
     assert!(matches!(edge.curve(), Curve::Line(_)));
+}
+
+#[test]
+fn cut_owned_edge_returns_one_model_with_two_edges_and_a_corner() {
+    let edge = edges::line(Point3::origin(), Point3::new(2.0, 0.0, 0.0)).expect("line");
+    let result = edges::split(edge, Fraction::new(0.5)).expect("split");
+    assert_eq!(result.edge_keys().len(), 2);
+    assert_eq!(result.model().iter_edges().count(), 2);
+    assert!(result.model().vertex(result.vertex_key()).is_some());
 }
 
 #[test]

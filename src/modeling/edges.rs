@@ -1,12 +1,15 @@
 use radians::Rad64;
 
-use crate::builders::edges::{add_arc, add_circle, add_helix, add_line};
+use crate::builders::edges::{
+    EdgeSplit, EdgeSplitError, add_arc, add_circle, add_helix, add_line, split_edge,
+};
 use crate::builders::errors::EdgeCreationError;
 use crate::builders::profiles::add_profile_from_edges;
-use crate::geometry::{Axis3, Plane, Point3};
-use crate::topology::ModelEditError;
+use crate::geometry::{Axis3, Fraction, Plane, Point3};
+use crate::model::Model;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
 
 /// Creates a line segment between two points in 3D space.
 pub fn line(
@@ -89,4 +92,46 @@ impl<P: Payload> Shape<EdgeTag, P> {
             .expect("valid edge can always be converted in a profile");
         Shape::new(g, profile_key)
     }
+}
+
+/// A cut edge's one model and its resulting edge and corner handles.
+pub struct EdgeSplitResult<P: Payload = StandardPayload> {
+    pub(crate) model: Model<P>,
+    pub(crate) split: EdgeSplit,
+    pub(crate) face: Option<FaceKey>,
+}
+
+impl<P: Payload> EdgeSplitResult<P> {
+    pub fn model(&self) -> &Model<P> {
+        &self.model
+    }
+    pub fn edge_keys(&self) -> Vec<EdgeKey> {
+        self.split.edges().collect()
+    }
+    pub fn vertex_key(&self) -> VertexKey {
+        self.split.vertex()
+    }
+    pub fn face_key(&self) -> Option<FaceKey> {
+        self.face
+    }
+    pub fn split(&self) -> EdgeSplit {
+        self.split
+    }
+    pub fn into_model(self) -> (Model<P>, EdgeSplit, Option<FaceKey>) {
+        (self.model, self.split, self.face)
+    }
+}
+
+/// Cuts an owned profile-only edge at a fraction of its span.
+pub fn split<P: Payload>(
+    edge: Shape<EdgeTag, P>,
+    fraction: Fraction,
+) -> Result<EdgeSplitResult<P>, EdgeSplitError> {
+    let (mut model, key) = edge.into_model();
+    let split = split_edge(&mut model, key, fraction)?;
+    Ok(EdgeSplitResult {
+        model,
+        split,
+        face: None,
+    })
 }

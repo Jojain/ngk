@@ -13,6 +13,7 @@ from ..core import (
     Point as Point,
     Point2 as Point2,
     RuledSurface as RuledSurface,
+    Rigid as Rigid,
     Sphere as Sphere,
     SurfaceOfRevolution as SurfaceOfRevolution,
     Torus as Torus,

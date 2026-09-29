@@ -12,8 +12,10 @@
 //! could infer the payload. Operations that receive a `Shape` infer `P` and
 //! therefore remain single generic functions.
 
+pub mod blend;
 pub mod edges;
 pub mod faces;
+pub mod heal;
 pub mod loft;
 pub mod profiles;
 pub mod revolve;

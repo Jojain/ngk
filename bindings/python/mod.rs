@@ -3,6 +3,7 @@
 
 mod exchange;
 mod geometry;
+mod measurement;
 mod modeling;
 mod topology;
 mod visualization;
@@ -14,6 +15,7 @@ use pyo3::types::PyModule;
 pub fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     exchange::register(m)?;
     geometry::register(m)?;
+    measurement::register(m)?;
     modeling::register(m)?;
     topology::register(m)?;
     visualization::register(m)?;

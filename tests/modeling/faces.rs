@@ -1,3 +1,5 @@
+use nalgebra::Vector3;
+use ngk::geometry::Fraction;
 use ngk::geometry::Plane;
 use ngk::geometry::Point3;
 use ngk::modeling::faces;
@@ -133,4 +135,40 @@ fn face_edges_and_vertices_include_inner_loops() {
     );
     assert_eq!(face.edges().len(), 8);
     assert_eq!(face.vertices().len(), 8);
+}
+
+#[test]
+fn face_intersection_returns_one_model_and_all_result_handles() {
+    let first = faces::square(Plane::xy(), 2.0).expect("first face");
+    let second = faces::square(
+        Plane::new(
+            Point3::new(1.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, 1.0),
+        ),
+        2.0,
+    )
+    .expect("second face");
+
+    let result = faces::intersect(first, second).expect("intersection");
+    assert_eq!(result.face_keys().len(), 1);
+    assert_eq!(result.model().iter_faces().count(), 1);
+    assert!((result.faces()[0].area().expect("area") - 1.0).abs() < 1e-9);
+}
+
+#[test]
+fn face_boundary_split_keeps_the_face_and_new_edges_in_one_model() {
+    let face = faces::rectangle(Plane::xy(), 2.0, 2.0).expect("face");
+    let edge = face.face().edges()[0].key();
+    let result = faces::split_boundary_edge(face, edge, Fraction::new(0.5)).expect("split");
+    assert_eq!(result.edge_keys().len(), 2);
+    assert_eq!(
+        result
+            .model()
+            .face(result.face_key().expect("face key"))
+            .unwrap()
+            .edges()
+            .len(),
+        5
+    );
 }

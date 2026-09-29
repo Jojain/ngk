@@ -78,10 +78,10 @@ def test_a_block_round_trips_through_build123d(tmp_path):
     path = str(tmp_path / "block.step")
     step.write_step(solids.block(10.0, 20.0, 30.0), path, name="BLOCK")
 
-    solids = _b3d.import_step(path).solids()
-    assert len(solids) == 1
+    imported_solids = _b3d.import_step(path).solids()
+    assert len(imported_solids) == 1
 
-    solid = solids[0]
+    solid = imported_solids[0]
     assert solid.is_valid
     assert solid.volume == pytest.approx(6000.0)
     assert solid.area == pytest.approx(2200.0)
