@@ -185,6 +185,17 @@ impl WasmFrame {
             .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
+    #[wasm_bindgen(js_name = fromYZ)]
+    pub fn from_yz(
+        origin: &WasmPoint3,
+        y_dir: &WasmVector3,
+        z_dir: &WasmVector3,
+    ) -> Result<WasmFrame, JsValue> {
+        Frame::try_from_yz(origin.inner, y_dir.inner, z_dir.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
     #[wasm_bindgen(getter)]
     pub fn origin(&self) -> WasmPoint3 {
         point(self.inner.origin)

@@ -74,6 +74,16 @@ impl Frame {
     pub fn from_xz(origin: Point3, x_dir: impl IntoUnit<3>, z_dir: impl IntoUnit<3>) -> Self {
         Self::try_from_xz(origin, x_dir, z_dir).unwrap_or_else(|error| panic!("{error}"))
     }
+    /// Creates a frame at the given origin from its y and z axes. Z is kept; y is
+    /// replaced by its component perpendicular to z, and x completes the frame.
+    ///
+    /// # Panics
+    ///
+    /// When either direction is zero or the two are parallel; [`Frame::try_from_yz`]
+    /// reports the same cases as an error.
+    pub fn from_yz(origin: Point3, y_dir: impl IntoUnit<3>, z_dir: impl IntoUnit<3>) -> Self {
+        Self::try_from_yz(origin, y_dir, z_dir).unwrap_or_else(|error| panic!("{error}"))
+    }
     /// [`Frame::from_xy`], refusing a zero direction or two that are parallel.
     pub fn try_from_xy(
         origin: Point3,
@@ -99,6 +109,22 @@ impl Frame {
         let (x_dir, z_dir) = spanning_directions(x_dir, z_dir)?;
         let y_dir = UnitVector3::new_normalize(z_dir.cross(&x_dir));
         let x_dir = UnitVector3::new_normalize(y_dir.cross(&z_dir));
+        Ok(Self {
+            origin,
+            x_dir,
+            y_dir,
+            z_dir,
+        })
+    }
+    /// [`Frame::from_yz`], refusing a zero direction or two that are parallel.
+    pub fn try_from_yz(
+        origin: Point3,
+        y_dir: impl IntoUnit<3>,
+        z_dir: impl IntoUnit<3>,
+    ) -> Result<Self, FrameError> {
+        let (y_dir, z_dir) = spanning_directions(y_dir, z_dir)?;
+        let x_dir = UnitVector3::new_normalize(y_dir.cross(&z_dir));
+        let y_dir = UnitVector3::new_normalize(z_dir.cross(&x_dir));
         Ok(Self {
             origin,
             x_dir,

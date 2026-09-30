@@ -231,6 +231,13 @@ impl PyFrame {
             .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
+    #[staticmethod]
+    fn from_yz(origin: PyPoint3, y_dir: PyVector3, z_dir: PyVector3) -> PyResult<Self> {
+        Frame::try_from_yz(origin.point, y_dir.vector, z_dir.vector)
+            .map(|frame| Self { frame })
+            .map_err(|error| PyValueError::new_err(error.to_string()))
+    }
+
     #[getter]
     fn origin(&self) -> PyPoint3 {
         point(self.frame.origin)

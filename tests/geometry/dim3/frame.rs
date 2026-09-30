@@ -116,3 +116,56 @@ fn from_xz_panics_on_parallel_directions() {
 fn from_xy_panics_on_a_zero_direction() {
     Frame::from_xy(Point3::origin(), Vector3::zeros(), Vector3::y());
 }
+
+#[test]
+fn try_from_yz_refuses_directions_that_span_no_plane() {
+    let origin = Point3::origin();
+
+    assert_eq!(
+        Frame::try_from_yz(origin, Vector3::y(), Vector3::new(0.0, 5.0, 0.0)),
+        Err(FrameError::ParallelDirections)
+    );
+    assert_eq!(
+        Frame::try_from_yz(origin, Vector3::zeros(), Vector3::z()),
+        Err(FrameError::ZeroDirection)
+    );
+    assert_eq!(
+        Frame::try_from_yz(origin, Vector3::y(), Vector3::zeros()),
+        Err(FrameError::ZeroDirection)
+    );
+}
+
+#[test]
+fn try_from_yz_builds_the_frame_its_directions_describe() {
+    let frame = Frame::try_from_yz(
+        Point3::new(1.0, 2.0, 3.0),
+        Vector3::new(0.0, 2.0, 0.0),
+        Vector3::new(0.0, 0.0, 3.0),
+    )
+    .unwrap();
+
+    assert_eq!(frame.origin, Point3::new(1.0, 2.0, 3.0));
+    assert_eq!(*frame.x_dir, Vector3::new(1.0, 0.0, 0.0));
+    assert_eq!(*frame.y_dir, Vector3::new(0.0, 1.0, 0.0));
+    assert_eq!(*frame.z_dir, Vector3::new(0.0, 0.0, 1.0));
+}
+
+#[test]
+fn try_from_yz_keeps_z_and_projects_y_onto_the_plane_perpendicular_to_it() {
+    let frame = Frame::try_from_yz(
+        Point3::origin(),
+        Vector3::new(0.0, 1.0, 1.0),
+        Vector3::new(0.0, 0.0, 1.0),
+    )
+    .unwrap();
+
+    assert!((*frame.z_dir - Vector3::z()).norm() <= LINEAR_TOLERANCE);
+    assert!((*frame.y_dir - Vector3::y()).norm() <= LINEAR_TOLERANCE);
+    assert!((*frame.x_dir - Vector3::x()).norm() <= LINEAR_TOLERANCE);
+}
+
+#[test]
+#[should_panic(expected = "frame directions are parallel")]
+fn from_yz_panics_on_parallel_directions() {
+    Frame::from_yz(Point3::origin(), Vector3::y(), Vector3::y());
+}

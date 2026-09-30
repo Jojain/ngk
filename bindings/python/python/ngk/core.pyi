@@ -116,6 +116,9 @@ class Frame:
     @staticmethod
     def from_xz(origin: Point, x_dir: Vector, z_dir: Vector) -> Frame:
         """Raises ValueError when a direction is zero or the two are parallel."""
+    @staticmethod
+    def from_yz(origin: Point, y_dir: Vector, z_dir: Vector) -> Frame:
+        """Raises ValueError when a direction is zero or the two are parallel."""
 
 class Line: ...
 class Circle: ...
