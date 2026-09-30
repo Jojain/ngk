@@ -148,10 +148,14 @@ pub struct WasmFrame {
 impl WasmFrame {
     /// Creates a frame from its origin and local x/y directions.
     #[wasm_bindgen(constructor)]
-    pub fn new(origin: &WasmPoint3, x_dir: &WasmVector3, y_dir: &WasmVector3) -> Self {
-        Self {
-            inner: Frame::from_xy(origin.inner, x_dir.inner, y_dir.inner),
-        }
+    pub fn new(
+        origin: &WasmPoint3,
+        x_dir: &WasmVector3,
+        y_dir: &WasmVector3,
+    ) -> Result<WasmFrame, JsValue> {
+        Frame::try_from_xy(origin.inner, x_dir.inner, y_dir.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
     /// Returns the world XY frame.
@@ -162,15 +166,23 @@ impl WasmFrame {
     }
 
     #[wasm_bindgen(js_name = fromXY)]
-    pub fn from_xy(origin: &WasmPoint3, x_dir: &WasmVector3, y_dir: &WasmVector3) -> Self {
+    pub fn from_xy(
+        origin: &WasmPoint3,
+        x_dir: &WasmVector3,
+        y_dir: &WasmVector3,
+    ) -> Result<WasmFrame, JsValue> {
         Self::new(origin, x_dir, y_dir)
     }
 
     #[wasm_bindgen(js_name = fromXZ)]
-    pub fn from_xz(origin: &WasmPoint3, x_dir: &WasmVector3, z_dir: &WasmVector3) -> Self {
-        Self {
-            inner: Frame::from_xz(origin.inner, x_dir.inner, z_dir.inner),
-        }
+    pub fn from_xz(
+        origin: &WasmPoint3,
+        x_dir: &WasmVector3,
+        z_dir: &WasmVector3,
+    ) -> Result<WasmFrame, JsValue> {
+        Frame::try_from_xz(origin.inner, x_dir.inner, z_dir.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
     #[wasm_bindgen(getter)]

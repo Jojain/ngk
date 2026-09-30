@@ -1,4 +1,5 @@
 use nalgebra::{Point2, UnitVector3, Vector2, Vector3};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::geometry::axis::Axis3;
@@ -205,10 +206,10 @@ pub(crate) struct PyFrame {
 impl PyFrame {
     #[new]
     #[pyo3(signature = (origin, x_dir, y_dir))]
-    fn new(origin: PyPoint3, x_dir: PyVector3, y_dir: PyVector3) -> Self {
-        Self {
-            frame: Frame::from_xy(origin.point, x_dir.vector, y_dir.vector),
-        }
+    fn new(origin: PyPoint3, x_dir: PyVector3, y_dir: PyVector3) -> PyResult<Self> {
+        Frame::try_from_xy(origin.point, x_dir.vector, y_dir.vector)
+            .map(|frame| Self { frame })
+            .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
     #[staticmethod]
@@ -219,15 +220,15 @@ impl PyFrame {
     }
 
     #[staticmethod]
-    fn from_xy(origin: PyPoint3, x_dir: PyVector3, y_dir: PyVector3) -> Self {
+    fn from_xy(origin: PyPoint3, x_dir: PyVector3, y_dir: PyVector3) -> PyResult<Self> {
         Self::new(origin, x_dir, y_dir)
     }
 
     #[staticmethod]
-    fn from_xz(origin: PyPoint3, x_dir: PyVector3, z_dir: PyVector3) -> Self {
-        Self {
-            frame: Frame::from_xz(origin.point, x_dir.vector, z_dir.vector),
-        }
+    fn from_xz(origin: PyPoint3, x_dir: PyVector3, z_dir: PyVector3) -> PyResult<Self> {
+        Frame::try_from_xz(origin.point, x_dir.vector, z_dir.vector)
+            .map(|frame| Self { frame })
+            .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
     #[getter]

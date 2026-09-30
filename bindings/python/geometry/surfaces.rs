@@ -1,3 +1,4 @@
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use crate::geometry::{Cone, Cylinder, Plane, RuledSurface, Sphere, SurfaceOfRevolution, Torus};
@@ -14,10 +15,10 @@ pub(crate) struct PyPlane {
 impl PyPlane {
     #[new]
     #[pyo3(signature = (origin, x_dir, normal))]
-    fn new(origin: PyPoint3, x_dir: PyVector3, normal: PyVector3) -> Self {
-        Self {
-            plane: Plane::new(origin.point, x_dir.vector, normal.vector),
-        }
+    fn new(origin: PyPoint3, x_dir: PyVector3, normal: PyVector3) -> PyResult<Self> {
+        Plane::try_new(origin.point, x_dir.vector, normal.vector)
+            .map(|plane| Self { plane })
+            .map_err(|error| PyValueError::new_err(error.to_string()))
     }
 
     #[staticmethod]

@@ -1,6 +1,6 @@
 use super::bbox::BBox;
 use super::curves::{Circle, Curve, Periodicity, circle_nurbs_control_points, circle_nurbs_knots};
-use super::frame::Frame;
+use super::frame::{Frame, FrameError};
 use super::intersections::{
     CurveCurveIntersection, IntersectionError, IntersectionOptions, SurfaceSurfaceIntersections,
     intersect_curves, intersect_surfaces, intersect_surfaces_with_options,
@@ -385,10 +385,27 @@ pub struct Plane {
 }
 
 impl Plane {
+    /// A plane through `origin` with the given normal; `x_dir` is replaced by its
+    /// component in the plane.
+    ///
+    /// # Panics
+    ///
+    /// When either direction is zero or `x_dir` is parallel to `normal`;
+    /// [`Plane::try_new`] reports the same cases as an error.
     pub fn new(origin: Point3, x_dir: impl IntoUnit<3>, normal: impl IntoUnit<3>) -> Self {
         Self {
             frame: Frame::from_xz(origin, x_dir, normal),
         }
+    }
+    /// [`Plane::new`], refusing a zero direction or an `x_dir` parallel to `normal`.
+    pub fn try_new(
+        origin: Point3,
+        x_dir: impl IntoUnit<3>,
+        normal: impl IntoUnit<3>,
+    ) -> Result<Self, FrameError> {
+        Ok(Self {
+            frame: Frame::try_from_xz(origin, x_dir, normal)?,
+        })
     }
     pub fn from_frame(frame: Frame) -> Self {
         Self { frame }

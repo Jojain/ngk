@@ -38,10 +38,15 @@ impl PointCoincidence<&Point3> for Point3 {
 
 pub trait IntoUnit<const D: usize> {
     fn normalized(self) -> Unit<OVector<f64, Const<D>>>;
+    /// The unit direction, or `None` when the vector is no longer than `min_norm`.
+    fn try_normalized(self, min_norm: f64) -> Option<Unit<OVector<f64, Const<D>>>>;
 }
 impl<const D: usize> IntoUnit<D> for OVector<f64, Const<D>> {
     fn normalized(self) -> Unit<OVector<f64, Const<D>>> {
         Unit::new_normalize(self)
+    }
+    fn try_normalized(self, min_norm: f64) -> Option<Unit<OVector<f64, Const<D>>>> {
+        Unit::try_new(self, min_norm)
     }
 }
 
@@ -49,11 +54,17 @@ impl IntoUnit<2> for UnitVector2<f64> {
     fn normalized(self) -> UnitVector2<f64> {
         self
     }
+    fn try_normalized(self, _min_norm: f64) -> Option<UnitVector2<f64>> {
+        Some(self)
+    }
 }
 
 impl IntoUnit<3> for UnitVector3<f64> {
     fn normalized(self) -> UnitVector3<f64> {
         self
+    }
+    fn try_normalized(self, _min_norm: f64) -> Option<UnitVector3<f64>> {
+        Some(self)
     }
 }
 

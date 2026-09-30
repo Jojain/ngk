@@ -14,10 +14,14 @@ pub struct WasmPlane {
 impl WasmPlane {
     /// Creates a plane from an origin, in-plane x direction, and normal.
     #[wasm_bindgen(constructor)]
-    pub fn new(origin: &WasmPoint3, x_dir: &WasmVector3, normal: &WasmVector3) -> Self {
-        Self {
-            inner: Plane::new(origin.inner, x_dir.inner, normal.inner),
-        }
+    pub fn new(
+        origin: &WasmPoint3,
+        x_dir: &WasmVector3,
+        normal: &WasmVector3,
+    ) -> Result<WasmPlane, JsValue> {
+        Plane::try_new(origin.inner, x_dir.inner, normal.inner)
+            .map(|inner| Self { inner })
+            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
     /// Returns the world XY plane.

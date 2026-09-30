@@ -21,7 +21,7 @@ pub use dim2::utils::{Axis2, DomainSide, Point2, Vector2};
 pub use dim3::bbox::BBox;
 pub use dim3::curves::{Circle, Curve, Ellipse, Helix, Line, Periodicity};
 
-pub use dim3::frame::Frame;
+pub use dim3::frame::{Frame, FrameError};
 pub(crate) use dim3::intersections::pcurve_on_surface;
 pub use dim3::intersections::{
     AnalyticSection, AnalyticSurfaceIntersection, CurveCurveIntersection, CurveCurveIntersections,

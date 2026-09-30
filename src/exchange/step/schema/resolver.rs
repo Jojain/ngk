@@ -14,6 +14,8 @@ use std::ops::Deref;
 
 use thiserror::Error;
 
+use crate::geometry::FrameError;
+
 use super::super::part21::{EntityId, Instance, Record, StepExchange, Value};
 use super::entities::{Entity, Measure};
 use super::units::{Units, read_units};
@@ -90,6 +92,15 @@ pub enum SchemaError {
         index: usize,
         /// What was needed there.
         expected: &'static str,
+    },
+
+    /// A placement whose directions span no frame.
+    #[error("{origin}: {source}")]
+    DegeneratePlacement {
+        /// Where it was.
+        origin: Origin,
+        /// Which way its directions fail to span a frame.
+        source: FrameError,
     },
 
     /// A unit the exchange layer cannot convert to millimetres or radians.

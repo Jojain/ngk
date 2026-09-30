@@ -108,8 +108,9 @@ pub fn read_direction(
 /// Reads an `AXIS2_PLACEMENT_3D` as a frame.
 ///
 /// `ref_direction` need not be perpendicular to `axis`, and STEP takes its
-/// component in the plane. [`Frame::from_xz`] does exactly that, which is why
-/// nothing is orthonormalized here.
+/// component in the plane. [`Frame::try_from_xz`] does exactly that, which is
+/// why nothing is orthonormalized here. A `ref_direction` parallel to `axis`
+/// has no such component, so the placement is refused.
 pub fn read_placement(
     resolver: &Resolver<'_>,
     from: Origin,
@@ -127,7 +128,12 @@ pub fn read_placement(
         None => any_perpendicular(axis),
     };
 
-    Ok(Frame::from_xz(location, reference, axis))
+    Frame::try_from_xz(location, reference, axis).map_err(|source| {
+        SchemaError::DegeneratePlacement {
+            origin: placement.origin,
+            source,
+        }
+    })
 }
 
 /// Writes an `AXIS1_PLACEMENT` for an axis, shared by value.

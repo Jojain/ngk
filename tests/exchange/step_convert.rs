@@ -14,11 +14,12 @@
 
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_4, PI, TAU};
 
+use ngk::exchange::step::StepError;
 use ngk::exchange::step::convert::pcurve::lift_pcurve;
 use ngk::exchange::step::convert::surfaces::{MappedSurface, read_surface};
 use ngk::exchange::step::convert::uv_map::UvMap;
 use ngk::exchange::step::part21::{EntityId, parse_exchange};
-use ngk::exchange::step::schema::resolver::{Origin, Resolver};
+use ngk::exchange::step::schema::resolver::{Origin, Resolver, SchemaError};
 use ngk::geometry::{
     Circle, Curve, Curve2, Cylinder, Fraction, Interval, LINEAR_TOLERANCE, Line, Plane, Point2,
     Point3, Surface, TrimmedCurve2, Vector2,
@@ -588,5 +589,28 @@ fn a_b_spline_surface_is_read_at_the_points_its_control_net_places() {
             (got - expected).norm() <= LINEAR_TOLERANCE,
             "at ({u}, {v}): got {got:?}, expected {expected:?}",
         );
+    }
+}
+
+#[test]
+fn a_placement_whose_reference_runs_along_its_axis_is_refused() {
+    let source = "ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n\
+#10 = CARTESIAN_POINT('',(1.0,-2.0,3.0));
+#11 = DIRECTION('',(0.0,0.6,0.8));
+#12 = DIRECTION('',(0.0,-1.2,-1.6));
+#13 = AXIS2_PLACEMENT_3D('',#10,#11,#12);
+#1 = PLANE('',#13);
+ENDSEC;\nEND-ISO-10303-21;\n";
+    let exchange = parse_exchange(source).expect("the exchange structure should parse");
+    let resolver = Resolver::new(&exchange, None).expect("a file with no unit block is metric");
+    let from = Origin {
+        id: EntityId(1),
+        line: 1,
+    };
+
+    match read_surface(&resolver, from, EntityId(1)) {
+        Err(StepError::Schema(SchemaError::DegeneratePlacement { .. })) => {}
+        Err(other) => panic!("refused for the wrong reason: {other}"),
+        Ok(_) => panic!("a placement with no plane was accepted"),
     }
 }

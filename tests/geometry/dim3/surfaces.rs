@@ -2,8 +2,8 @@ use std::f64::consts::FRAC_PI_2;
 
 use nalgebra::{Rotation3, Vector3};
 use ngk::geometry::{
-    Circle, Curve, Cylinder, Fraction, Interval, LINEAR_TOLERANCE, Plane, Point2, Point3,
-    PointCoincidence, Rigid, RuledSurface, Surface, SurfaceGeometry, SurfaceOfRevolution,
+    Circle, Curve, Cylinder, Fraction, FrameError, Interval, LINEAR_TOLERANCE, Plane, Point2,
+    Point3, PointCoincidence, Rigid, RuledSurface, Surface, SurfaceGeometry, SurfaceOfRevolution,
     SurfacePeriodicity, axis::Axis3,
 };
 use radians::Rad64;
@@ -428,4 +428,28 @@ fn revolution_closest_parameter_reads_both_sides_of_the_seam() {
             );
         }
     }
+}
+
+#[test]
+fn plane_try_new_refuses_an_x_direction_along_the_normal() {
+    let origin = Point3::origin();
+
+    assert_eq!(
+        Plane::try_new(origin, Vector3::z(), Vector3::new(0.0, 0.0, 2.0)),
+        Err(FrameError::ParallelDirections)
+    );
+    assert_eq!(
+        Plane::try_new(origin, Vector3::zeros(), Vector3::z()),
+        Err(FrameError::ZeroDirection)
+    );
+    assert_eq!(
+        Plane::try_new(origin, Vector3::x(), Vector3::zeros()),
+        Err(FrameError::ZeroDirection)
+    );
+}
+
+#[test]
+#[should_panic(expected = "frame directions are parallel")]
+fn plane_new_panics_on_an_x_direction_along_the_normal() {
+    Plane::new(Point3::origin(), Vector3::z(), Vector3::z());
 }
