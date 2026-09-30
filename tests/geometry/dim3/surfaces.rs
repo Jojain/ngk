@@ -16,16 +16,15 @@ fn assert_point_near(actual: Point3, expected: Point3) {
 }
 
 #[test]
-fn plane_new_orthonormalizes_frame() {
+fn plane_new_keeps_the_directions_it_is_given() {
     let plane = Plane::new(
         Point3::new(0.0, 0.0, 0.0),
-        Vector3::new(1.0, 0.0, 1.0),
-        Vector3::new(0.0, 0.0, 1.0),
+        Vector3::new(2.0, 0.0, 0.0),
+        Vector3::new(0.0, 0.0, 5.0),
     );
 
-    assert!(plane.frame.x_dir.dot(&plane.frame.z_dir).abs() < 1e-10);
-    assert!(plane.x_dir().dot(&plane.normal()).abs() < 1e-10);
-    assert!(plane.y_dir().dot(&plane.normal()).abs() < 1e-10);
+    assert_eq!(*plane.frame.x_dir, Vector3::x());
+    assert_eq!(*plane.frame.z_dir, Vector3::z());
     assert_point_near(plane.point_at(2.0, 3.0), Point3::new(2.0, 3.0, 0.0));
 }
 
@@ -445,6 +444,14 @@ fn plane_try_new_refuses_an_x_direction_along_the_normal() {
     assert_eq!(
         Plane::try_new(origin, Vector3::x(), Vector3::zeros()),
         Err(FrameError::ZeroDirection)
+    );
+}
+
+#[test]
+fn plane_try_new_refuses_an_x_direction_that_is_not_perpendicular_to_the_normal() {
+    assert_eq!(
+        Plane::try_new(Point3::origin(), Vector3::new(1.0, 0.0, 1.0), Vector3::z()),
+        Err(FrameError::NotPerpendicular)
     );
 }
 

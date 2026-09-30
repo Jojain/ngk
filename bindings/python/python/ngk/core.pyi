@@ -112,13 +112,22 @@ class Frame:
     def xyz() -> Frame: ...
     @staticmethod
     def from_xy(origin: Point, x_dir: Vector, y_dir: Vector) -> Frame:
-        """Raises ValueError when a direction is zero or the two are parallel."""
+        """Builds a frame from its x and y axes, used as given (only normalized); z completes the right-handed frame.
+
+        Raises ValueError when a direction is zero, or the two are parallel or not perpendicular.
+        """
     @staticmethod
     def from_xz(origin: Point, x_dir: Vector, z_dir: Vector) -> Frame:
-        """Raises ValueError when a direction is zero or the two are parallel."""
+        """Builds a frame from its x and z axes, used as given (only normalized); y completes the right-handed frame.
+
+        Raises ValueError when a direction is zero, or the two are parallel or not perpendicular.
+        """
     @staticmethod
     def from_yz(origin: Point, y_dir: Vector, z_dir: Vector) -> Frame:
-        """Raises ValueError when a direction is zero or the two are parallel."""
+        """Builds a frame from its y and z axes, used as given (only normalized); x completes the right-handed frame.
+
+        Raises ValueError when a direction is zero, or the two are parallel or not perpendicular.
+        """
 
 class Line: ...
 class Circle: ...
@@ -126,7 +135,10 @@ class Ellipse: ...
 class NurbsCurve: ...
 class Plane:
     def __init__(self, origin: Point, x_dir: Vector, normal: Vector) -> None:
-        """Raises ValueError when a direction is zero or x_dir is parallel to normal."""
+        """Builds a plane from its x direction and normal, used as given (only normalized).
+
+        Raises ValueError when a direction is zero, or x_dir is parallel or not perpendicular to normal.
+        """
     @staticmethod
     def xy() -> Plane: ...
     @staticmethod

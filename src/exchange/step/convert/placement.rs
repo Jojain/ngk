@@ -2,9 +2,10 @@
 //!
 //! `Frame::from_xz(location, ref_direction, axis)` and STEP's
 //! `AXIS2_PLACEMENT_3D(name, location, axis, ref_direction)` are the same
-//! construction with the last two arguments swapped — both take the normal and
-//! an in-plane reference and derive the third axis — so this mapping is exact
-//! in both directions and needs no orthonormalization of its own.
+//! construction with the last two arguments swapped, so writing a frame is
+//! exact. Reading is not: STEP keeps `axis` and takes the in-plane component of
+//! `ref_direction`, while a frame takes its directions as given, so the
+//! projection is done here before the frame is built.
 //!
 //! This is also where the document's length unit is applied, and where it is
 //! deliberately *not*: a position is scaled, a direction is a ratio and is
@@ -13,7 +14,7 @@
 use nalgebra::{UnitVector3, Vector3};
 
 use crate::geometry::axis::Axis3;
-use crate::geometry::{Frame, Point3};
+use crate::geometry::{Frame, Point3, perpendicular_component};
 
 use super::super::builder::InstanceBuilder;
 use super::super::part21::EntityId;
@@ -108,9 +109,9 @@ pub fn read_direction(
 /// Reads an `AXIS2_PLACEMENT_3D` as a frame.
 ///
 /// `ref_direction` need not be perpendicular to `axis`, and STEP takes its
-/// component in the plane. [`Frame::try_from_xz`] does exactly that, which is
-/// why nothing is orthonormalized here. A `ref_direction` parallel to `axis`
-/// has no such component, so the placement is refused.
+/// component in the plane, which is projected here because a frame never adjusts
+/// the directions it is given. A `ref_direction` parallel to `axis` has no such
+/// component, so the placement is refused.
 pub fn read_placement(
     resolver: &Resolver<'_>,
     from: Origin,
@@ -128,7 +129,8 @@ pub fn read_placement(
         None => any_perpendicular(axis),
     };
 
-    Frame::try_from_xz(location, reference, axis).map_err(|source| {
+    let in_plane = perpendicular_component(reference.into_inner(), axis.into_inner());
+    Frame::try_from_xz(location, in_plane, axis).map_err(|source| {
         SchemaError::DegeneratePlacement {
             origin: placement.origin,
             source,

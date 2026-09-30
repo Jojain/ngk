@@ -7,6 +7,7 @@ use nalgebra::Vector3;
 use crate::builders::errors::ExtrudeError;
 use crate::geometry::{
     Curve, LINEAR_TOLERANCE, Plane, Point2, Point3, Rigid, RuledSurface, Surface,
+    perpendicular_component,
 };
 use crate::model::{Cell1, Model, OpResult, StaleResult};
 use crate::topology::ModelEdit;
@@ -409,7 +410,8 @@ fn lateral_plane(
     if edge.cross(&direction).norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
         return Err(ExtrudeError::DegenerateSweep { dart });
     }
-    Ok(Plane::from_xy(start, edge, direction))
+    let in_plane = perpendicular_component(direction, edge);
+    Ok(Plane::from_xy(start, edge, in_plane))
 }
 
 fn quad_pcurves(uv: &[Point2; 4], darts: &[Dart]) -> HashMap<Dart, TrimmedCurve2> {

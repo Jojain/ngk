@@ -385,19 +385,20 @@ pub struct Plane {
 }
 
 impl Plane {
-    /// A plane through `origin` with the given normal; `x_dir` is replaced by its
-    /// component in the plane.
+    /// A plane through `origin` with the given normal and x direction, used as
+    /// given (only normalized).
     ///
     /// # Panics
     ///
-    /// When either direction is zero or `x_dir` is parallel to `normal`;
-    /// [`Plane::try_new`] reports the same cases as an error.
+    /// When either direction is zero, or `x_dir` is parallel or not perpendicular
+    /// to `normal`; [`Plane::try_new`] reports the same cases as an error.
     pub fn new(origin: Point3, x_dir: impl IntoUnit<3>, normal: impl IntoUnit<3>) -> Self {
         Self {
             frame: Frame::from_xz(origin, x_dir, normal),
         }
     }
-    /// [`Plane::new`], refusing a zero direction or an `x_dir` parallel to `normal`.
+    /// [`Plane::new`], refusing a zero direction, or an `x_dir` parallel or not
+    /// perpendicular to `normal`.
     pub fn try_new(
         origin: Point3,
         x_dir: impl IntoUnit<3>,

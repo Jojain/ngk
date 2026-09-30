@@ -19,7 +19,7 @@ use crate::{
     builders::scaffold::add_closed_face_cell,
     geometry::{
         ANGULAR_TOLERANCE, Axis2, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3,
-        Rigid, RuledSurface, Sphere, Surface, SurfacePeriodicity, Torus,
+        Rigid, RuledSurface, Sphere, Surface, SurfacePeriodicity, Torus, perpendicular_component,
     },
     topology::{
         Dart, ModelEdit, SheetAttr, SolidAttr,
@@ -940,7 +940,8 @@ fn lateral_plane(
     if edge.cross(&direction).norm_squared() <= LINEAR_TOLERANCE * LINEAR_TOLERANCE {
         return Err(ExtrudeError::DegenerateSweep { dart });
     }
-    Ok(Plane::from_xy(start, edge, direction))
+    let in_plane = perpendicular_component(direction, edge);
+    Ok(Plane::from_xy(start, edge, in_plane))
 }
 
 fn plane_uv(surface: &Plane, point: Point3) -> Point2 {

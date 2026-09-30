@@ -44,7 +44,7 @@ fn frame() -> (Point3, Vector3<f64>, Vector3<f64>, Vector3<f64>) {
     let axis = Vector3::new(0.0, 0.6, 0.8).normalize();
     let reference = Vector3::new(1.0, 0.0, 0.0);
     // STEP takes the reference direction's component in the plane normal to
-    // the axis, which is what `Frame::from_xz` does.
+    // the axis.
     let x = (reference - axis * reference.dot(&axis)).normalize();
     (location, x, axis.cross(&x), axis)
 }
@@ -613,4 +613,18 @@ ENDSEC;\nEND-ISO-10303-21;\n";
         Err(other) => panic!("refused for the wrong reason: {other}"),
         Ok(_) => panic!("a placement with no plane was accepted"),
     }
+}
+
+#[test]
+fn a_placement_whose_reference_is_not_perpendicular_keeps_its_axis_and_takes_the_in_plane_reference()
+ {
+    let Surface::Plane(plane) = surface("#1 = PLANE('',#13);").surface else {
+        panic!("a PLANE should read as a plane");
+    };
+    let (location, x, y, axis) = frame();
+
+    assert_eq!(plane.frame.origin, location);
+    assert!((*plane.frame.z_dir - axis).norm() <= LINEAR_TOLERANCE);
+    assert!((*plane.frame.x_dir - x).norm() <= LINEAR_TOLERANCE);
+    assert!((*plane.frame.y_dir - y).norm() <= LINEAR_TOLERANCE);
 }

@@ -47,7 +47,7 @@ pub use dim3::surfaces::{
     Torus,
 };
 pub use dim3::trimmed::TrimmedCurve;
-pub use dim3::utils::{IntoUnit, Point3, PointCoincidence};
+pub use dim3::utils::{IntoUnit, Point3, PointCoincidence, perpendicular_component};
 pub use interval::Interval;
 pub use nurbs::error::{NurbsError, SkinningIncompatibility};
 pub use parameter::{Fraction, Native, NativeParam, Normalized, Param};

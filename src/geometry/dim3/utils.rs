@@ -3,10 +3,21 @@ use nalgebra::OVector;
 use nalgebra::Point2 as NPoint2;
 use nalgebra::Point3 as NPoint3;
 use nalgebra::Unit;
+use nalgebra::Vector3;
 use nalgebra::{UnitVector2, UnitVector3};
 
 pub type Point2 = NPoint2<f64>;
 pub type Point3 = NPoint3<f64>;
+
+/// The component of `vector` perpendicular to `direction`.
+///
+/// Frames and planes take their directions as given, so a caller holding a
+/// direction that is only a hint (an edge and a sweep direction, a STEP
+/// reference direction) projects it with this before building one.
+/// `direction` need not be normalized, but must not be zero.
+pub fn perpendicular_component(vector: Vector3<f64>, direction: Vector3<f64>) -> Vector3<f64> {
+    vector - direction * (vector.dot(&direction) / direction.norm_squared())
+}
 
 pub trait PointCoincidence<Rhs = Self> {
     fn coincides(&self, other: Rhs, tol: f64) -> bool;

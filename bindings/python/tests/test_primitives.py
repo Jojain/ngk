@@ -38,3 +38,16 @@ def test_invalid_sizes_are_rejected():
         solids.sphere(-1.0)
     with pytest.raises(ValueError):
         solids.torus(1.0, 0.0)
+
+
+def test_frame_constructors_refuse_directions_that_are_not_perpendicular():
+    origin = Point(0.0, 0.0, 0.0)
+    x = Vector(2.0, 0.0, 0.0)
+    slanted = Vector(1.0, 0.0, 1.0)
+
+    with pytest.raises(ValueError, match="not perpendicular"):
+        Frame.from_xy(origin, x, slanted)
+    with pytest.raises(ValueError, match="not perpendicular"):
+        Frame.from_xz(origin, x, slanted)
+    with pytest.raises(ValueError, match="not perpendicular"):
+        Frame.from_yz(origin, x, slanted)

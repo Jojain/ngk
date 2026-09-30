@@ -4,7 +4,7 @@ use nalgebra::Vector3;
 use thiserror::Error;
 
 use crate::geometry::parameter::NativeParam;
-use crate::geometry::{Curve, LINEAR_TOLERANCE, Plane, Point3, Surface};
+use crate::geometry::{Curve, LINEAR_TOLERANCE, Plane, Point3, Surface, perpendicular_component};
 use crate::topology::face::Face;
 
 use super::closed::Closed;
@@ -236,7 +236,8 @@ fn fit_plane(points: &[PointOnDart], tolerance: f64) -> Result<Plane, PlanarityE
             fallback_plane_y_dir(x_dir),
         ));
     };
-    let y_dir = third.point - origin.point;
+    let offset = third.point - origin.point;
+    let y_dir = perpendicular_component(offset, x_dir);
     let plane = Plane::from_xy(origin.point, x_dir, y_dir);
     check_points_on_plane(points, &plane, tolerance)?;
     Ok(plane)
