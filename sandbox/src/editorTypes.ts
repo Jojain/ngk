@@ -13,15 +13,23 @@ declare global {
       Frame: typeof Wasm.Frame;
     };
     modeling: {
+      blend: {
+        BlendTarget: typeof Wasm.BlendTarget;
+        chamfered_solid: typeof Wasm.chamferedSolid;
+        filleted_solid: typeof Wasm.filletedSolid;
+      };
       edges: { helix: typeof Wasm.helix };
       faces: { polygon: typeof Wasm.polygonFace };
       solids: {
+        block: typeof Wasm.block;
         cylinder_at: (radius: number, height: number, frame?: Wasm.Frame) => Wasm.Solid;
         cylinder: (radius: number, height: number, frame?: Wasm.Frame) => Wasm.Solid;
-        extruded: (face: Wasm.Face, direction: Wasm.Vector3, distance: number) => Wasm.Solid;
+        extruded: typeof Wasm.extruded;
         fuse: typeof Wasm.fuse;
+        cut: typeof Wasm.cut;
+        intersect: typeof Wasm.intersect;
       };
-      sweep: { sweep_face: typeof Wasm.sweepFaceAxial };
+      sweep: { sweep_face: typeof Wasm.sweepFaceAlongEdge };
     };
   };
   function show(shape: Wasm.Model | Wasm.Solid | Wasm.Face | Wasm.Edge): void;

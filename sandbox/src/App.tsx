@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent } from "react";
 import Editor, { type BeforeMount } from "@monaco-editor/react";
 import { SceneShell, VizSceneView, type VizScene } from "@ngk/viewer";
 import { boltExample } from "./bolt";
+import { bearingHousingExample } from "./bearingHousing";
 import { ngkModuleTypes, scriptTypes } from "./editorTypes";
 import type { WorkerRequest, WorkerResponse } from "./protocol";
 import { codeFromUrl, shareCode } from "./urlCodec";
@@ -144,6 +145,7 @@ export default function App() {
         <div className="toolbar-actions">
           <span className="status">{status}</span>
           <button onClick={() => setCode(boltExample)} title="Load the bolt example">Bolt example</button>
+          <button onClick={() => setCode(bearingHousingExample)} title="Load the bearing housing example">Bearing housing</button>
           <button onClick={() => void share()} title="Copy a compressed URL for this script">Share</button>
           {running ? <button className="cancel" onClick={stop}>Cancel</button> : <button className="run" onClick={run}>Run</button>}
         </div>

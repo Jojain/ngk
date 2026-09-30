@@ -19,16 +19,23 @@ export const ngk = {
     Frame: wasm.Frame,
   },
   modeling: {
+    blend: {
+      BlendTarget: wasm.BlendTarget,
+      chamfered_solid: wasm.chamferedSolid,
+      filleted_solid: wasm.filletedSolid,
+    },
     edges: { helix: wasm.helix },
     faces: { polygon: wasm.polygonFace },
     solids: {
+      block: wasm.block,
       cylinder_at: cylinderAt,
       cylinder: cylinderAt,
-      extruded: (face: wasm.Face, direction: wasm.Vector3, distance: number) =>
-        wasm.extrudeFace(face, direction.toArray(), distance),
+      extruded: wasm.extruded,
       fuse: wasm.fuse,
+      cut: wasm.cut,
+      intersect: wasm.intersect,
     },
-    sweep: { sweep_face: wasm.sweepFaceAxial },
+    sweep: { sweep_face: wasm.sweepFaceAlongEdge },
   },
 } as const;
 
