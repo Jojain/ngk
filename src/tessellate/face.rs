@@ -808,15 +808,26 @@ fn build_simple_polygon(
         polygon.reverse();
     }
 
-    for hole in inner_uv {
-        let mut hole = clean_loop(surface, hole);
-        if hole.len() < 3 {
-            continue;
-        }
-        if signed_area(&hole) > 0.0 {
-            hole.reverse();
-        }
-        polygon = bridge_hole(&polygon, &hole)?;
+    let mut holes = inner_uv
+        .iter()
+        .map(|hole| clean_loop(surface, hole))
+        .filter(|hole| hole.len() >= 3)
+        .map(|mut hole| {
+            if signed_area(&hole) > 0.0 {
+                hole.reverse();
+            }
+            hole
+        })
+        .collect::<Vec<_>>();
+    // Rightmost hole first: each bridge then runs right, towards boundary
+    // already joined, and only the holes still waiting can stand in its way —
+    // which is why they are checked too.
+    holes.sort_by(|a, b| {
+        let right = |hole: &[Point2]| hole[rightmost_vertex(hole)].x;
+        right(b).total_cmp(&right(a))
+    });
+    for (index, hole) in holes.iter().enumerate() {
+        polygon = bridge_hole(&polygon, hole, &holes[index + 1..])?;
     }
 
     Some(polygon)
@@ -900,11 +911,25 @@ fn chord_follows_surface(
     (surface.point_at(curr.x, curr.y).coords - chord).norm() <= tolerance
 }
 
-fn bridge_hole(polygon: &[Point2], hole: &[Point2]) -> Option<Vec<Point2>> {
+/// Joins `hole` into `polygon` by a bridge from its rightmost point that
+/// crosses neither of them nor any of the `waiting` holes not joined yet.
+fn bridge_hole(
+    polygon: &[Point2],
+    hole: &[Point2],
+    waiting: &[Vec<Point2>],
+) -> Option<Vec<Point2>> {
     let hole_idx = rightmost_vertex(hole);
     let hole_point = hole[hole_idx];
     let polygon_idx = (0..polygon.len())
         .filter(|idx| bridge_is_visible(hole_point, hole_idx, polygon[*idx], *idx, polygon, hole))
+        .filter(|idx| {
+            waiting.iter().all(|other| {
+                (0..other.len()).all(|i| {
+                    let j = (i + 1) % other.len();
+                    !segments_intersect_strict(hole_point, polygon[*idx], other[i], other[j])
+                })
+            })
+        })
         .min_by(|a, b| {
             let da = (polygon[*a] - hole_point).norm_squared();
             let db = (polygon[*b] - hole_point).norm_squared();
