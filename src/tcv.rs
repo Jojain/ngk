@@ -1,27 +1,14 @@
-use std::collections::HashSet;
-
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::geometry::Point3;
-use crate::geometry::parameter::Fraction;
-use crate::model::{Cell1, Model};
-use crate::tessellate::{
-    IndexedMesh, Polyline3, TessellateOpts, tessellate_edge, tessellate_face_key,
-};
-use crate::topology::edge::Edge;
-use crate::topology::face::{Face, Loop};
-use crate::topology::gmap::Dim;
+use crate::tessellate::{Tessellate, TessellateOpts, Tessellation, TessellationError};
 use crate::topology::payload::Payload;
-use crate::topology::profile::Profile;
 use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape, SolidTag};
-use crate::topology::shape_keys::{EdgeKey, FaceKey};
-use crate::topology::solid::Solid;
 
 #[derive(Debug, Clone, Error)]
 pub enum TcvError {
-    #[error("missing topology for TCV export")]
-    MissingTopology,
+    #[error(transparent)]
+    Tessellation(#[from] TessellationError),
 }
 
 #[derive(Debug, Clone)]
@@ -47,10 +34,7 @@ impl TcvOptions {
     pub fn viewer(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            tessellate: TessellateOpts {
-                curve: crate::tessellate::CurveOpts { segments: 64 },
-                surface: crate::tessellate::SurfaceOpts { nu: 64, nv: 32 },
-            },
+            tessellate: crate::tessellate::VIEWER,
             ..Self::default()
         }
     }
@@ -135,52 +119,71 @@ pub fn to_tcv<T: ToTcv>(shape: &T, opts: TcvOptions) -> Result<TcvNode, TcvError
 
 impl<P: Payload> ToTcv for Shape<EdgeTag, P> {
     fn to_tcv(&self, opts: TcvOptions) -> Result<TcvNode, TcvError> {
-        let mut shape = TcvShape::default();
-        append_edge(self.model(), self.handle(), opts.tessellate, &mut shape)?;
-        let attr = self
-            .model()
-            .edge_attr(self.handle())
-            .ok_or(TcvError::MissingTopology)?;
-        append_edge_vertices(&attr.edge(self.model(), self.handle()), &mut shape);
+        let shape = tcv_shape(self.edge().tessellate_with(opts.tessellate)?);
         Ok(root_with_leaf(edge_leaf(&opts, shape), opts.name))
     }
 }
 
 impl<P: Payload> ToTcv for Shape<ProfileTag, P> {
     fn to_tcv(&self, opts: TcvOptions) -> Result<TcvNode, TcvError> {
-        let mut shape = TcvShape::default();
-        let profile = self.profile();
-        append_profile(self.model(), &profile, opts.tessellate, &mut shape)?;
-        append_profile_vertices(&profile, &mut shape);
+        let shape = tcv_shape(self.profile().tessellate_with(opts.tessellate)?);
         Ok(root_with_leaf(edge_leaf(&opts, shape), opts.name))
     }
 }
 
 impl<P: Payload> ToTcv for Shape<FaceTag, P> {
     fn to_tcv(&self, opts: TcvOptions) -> Result<TcvNode, TcvError> {
-        let mut shape = TcvShape::default();
-        append_face_mesh(self.model(), self.handle(), opts.tessellate, &mut shape)?;
-        let attr = self
-            .model()
-            .face_attr(self.handle())
-            .ok_or(TcvError::MissingTopology)?;
-        let face = attr.face(self.model());
-        for loop_ in face.loops() {
-            append_loop(self.model(), &loop_, opts.tessellate, &mut shape)?;
-        }
-        append_face_vertices(&face, &mut shape);
+        let shape = tcv_shape(self.face().tessellate_with(opts.tessellate)?);
         Ok(root_with_leaf(shape_leaf(&opts, "face", shape), opts.name))
     }
 }
 
 impl<P: Payload> ToTcv for Shape<SolidTag, P> {
     fn to_tcv(&self, opts: TcvOptions) -> Result<TcvNode, TcvError> {
-        let mut shape = TcvShape::default();
-        let solid = self.solid();
-        append_solid(self.model(), &solid, opts.tessellate, &mut shape)?;
-        append_all_vertices(self.model(), &mut shape);
+        let shape = tcv_shape(self.solid().tessellate_with(opts.tessellate)?);
         Ok(root_with_leaf(shape_leaf(&opts, "solid", shape), opts.name))
     }
+}
+
+/// Lays a keyed tessellation out the way TCV reads it: triangle counts per
+/// face, each edge's polyline as segment pairs, and the vertices as points.
+fn tcv_shape(tessellation: Tessellation) -> TcvShape {
+    let Tessellation {
+        mesh,
+        faces,
+        edge_points,
+        edges,
+        vertices,
+    } = tessellation;
+    let mut shape = TcvShape {
+        vertices: mesh
+            .positions
+            .iter()
+            .flat_map(|p| [p.x, p.y, p.z])
+            .collect(),
+        normals: mesh.normals.iter().flat_map(|n| [n.x, n.y, n.z]).collect(),
+        triangles: mesh.indices,
+        triangles_per_face: faces.iter().map(|range| (range.count / 3) as u32).collect(),
+        face_types: vec![0; faces.len()],
+        edge_types: vec![0; edges.len()],
+        obj_vertices: vertices
+            .iter()
+            .flat_map(|vertex| [vertex.point.x, vertex.point.y, vertex.point.z])
+            .collect(),
+        ..TcvShape::default()
+    };
+    for range in &edges {
+        let polyline = &edge_points[range.start..range.start + range.count];
+        for pair in polyline.windows(2) {
+            shape.edges.extend([
+                pair[0].x, pair[0].y, pair[0].z, pair[1].x, pair[1].y, pair[1].z,
+            ]);
+        }
+        shape
+            .segments_per_edge
+            .push(range.count.saturating_sub(1) as u32);
+    }
+    shape
 }
 
 fn root_with_leaf(leaf: TcvNode, name: String) -> TcvNode {
@@ -242,159 +245,6 @@ fn leaf(
     }
 }
 
-fn append_solid<P: Payload>(
-    g: &Model<P>,
-    _solid: &Solid<'_, P>,
-    opts: TessellateOpts,
-    shape: &mut TcvShape,
-) -> Result<(), TcvError> {
-    for (key, _) in g.iter_faces() {
-        append_face_mesh(g, key, opts, shape)?;
-    }
-    for key in unique_edge_keys(g) {
-        append_edge(g, key, opts, shape)?;
-    }
-    Ok(())
-}
-
-fn append_face_mesh<P: Payload>(
-    g: &Model<P>,
-    key: FaceKey,
-    opts: TessellateOpts,
-    shape: &mut TcvShape,
-) -> Result<(), TcvError> {
-    let mesh = tessellate_face_key(g, key, opts).map_err(|_| TcvError::MissingTopology)?;
-    append_mesh(&mesh, shape);
-    shape.face_types.push(0);
-    Ok(())
-}
-
-fn append_mesh(mesh: &IndexedMesh, shape: &mut TcvShape) {
-    let offset = (shape.vertices.len() / 3) as u32;
-    for position in &mesh.positions {
-        push_point(&mut shape.vertices, position);
-    }
-    for normal in &mesh.normals {
-        shape.normals.extend([normal.x, normal.y, normal.z]);
-    }
-    shape
-        .triangles
-        .extend(mesh.indices.iter().map(|index| index + offset));
-    shape
-        .triangles_per_face
-        .push((mesh.indices.len() / 3) as u32);
-}
-
-/// Appends every edge one face loop runs along, in traversal order.
-fn append_loop<P: Payload>(
-    g: &Model<P>,
-    boundary: &Loop<'_, P>,
-    opts: TessellateOpts,
-    shape: &mut TcvShape,
-) -> Result<(), TcvError> {
-    for edge in boundary.edges() {
-        let key = edge_key_from_edge(g, &edge).ok_or(TcvError::MissingTopology)?;
-        append_edge(g, key, opts, shape)?;
-    }
-    Ok(())
-}
-
-fn append_profile<P: Payload>(
-    g: &Model<P>,
-    profile: &Profile<'_, P>,
-    opts: TessellateOpts,
-    shape: &mut TcvShape,
-) -> Result<(), TcvError> {
-    for edge in profile.edges() {
-        let key = edge_key_from_edge(g, &edge).ok_or(TcvError::MissingTopology)?;
-        append_edge(g, key, opts, shape)?;
-    }
-    Ok(())
-}
-
-fn append_edge<P: Payload>(
-    g: &Model<P>,
-    key: EdgeKey,
-    opts: TessellateOpts,
-    shape: &mut TcvShape,
-) -> Result<(), TcvError> {
-    let attr = g.edge_attr(key).ok_or(TcvError::MissingTopology)?;
-    let edge = attr.edge(g, key);
-    let polyline = tessellate_edge(g, key, opts).filter(|line| !line.is_empty());
-    let polyline = polyline.unwrap_or_else(|| fallback_chord(&edge));
-    append_polyline(&polyline, shape);
-    shape.edge_types.push(0);
-    Ok(())
-}
-
-fn append_polyline(polyline: &Polyline3, shape: &mut TcvShape) {
-    let mut segments = 0;
-    for pair in polyline.points.windows(2) {
-        push_point(&mut shape.edges, &pair[0]);
-        push_point(&mut shape.edges, &pair[1]);
-        segments += 1;
-    }
-    shape.segments_per_edge.push(segments);
-}
-
-fn fallback_chord<P: Payload>(edge: &Edge<'_, P>) -> Polyline3 {
-    let section = edge.trimmed_curve();
-    let points = vec![
-        section.point_at(Fraction::new(0.0)),
-        section.point_at(Fraction::new(1.0)),
-    ];
-    Polyline3::new(points)
-}
-
-fn append_edge_vertices<P: Payload>(edge: &Edge<'_, P>, shape: &mut TcvShape) {
-    for vertex in edge.vertices() {
-        push_point(&mut shape.obj_vertices, vertex.point());
-    }
-}
-
-fn append_profile_vertices<P: Payload>(profile: &Profile<'_, P>, shape: &mut TcvShape) {
-    for vertex in profile.vertices() {
-        push_point(&mut shape.obj_vertices, vertex.point());
-    }
-}
-
-fn append_face_vertices<P: Payload>(face: &Face<'_, P>, shape: &mut TcvShape) {
-    for vertex in face.vertices() {
-        push_point(&mut shape.obj_vertices, vertex.point());
-    }
-    for loop_ in face.inner_loops() {
-        for vertex in loop_.vertices() {
-            push_point(&mut shape.obj_vertices, vertex.point());
-        }
-    }
-}
-
-fn append_all_vertices<P: Payload>(g: &Model<P>, shape: &mut TcvShape) {
-    let mut seen = HashSet::new();
-    for (_, attr) in g.iter_vertices() {
-        let repr = g.cell_representative(attr.dart, Dim::Zero);
-        if seen.insert(repr) {
-            push_point(&mut shape.obj_vertices, &attr.point);
-        }
-    }
-}
-
-fn unique_edge_keys<P: Payload>(g: &Model<P>) -> Vec<EdgeKey> {
-    let mut seen = HashSet::new();
-    let mut keys = Vec::new();
-    for (key, attr) in g.iter_edges() {
-        let repr = g.cell_representative(attr.dart, Dim::One);
-        if seen.insert(repr) {
-            keys.push(key);
-        }
-    }
-    keys
-}
-
-fn push_point(values: &mut Vec<f64>, point: &Point3) {
-    values.extend([point.x, point.y, point.z]);
-}
-
 fn bounding_box(shape: &TcvShape) -> Option<TcvBoundingBox> {
     let mut chunks = shape
         .vertices
@@ -418,8 +268,4 @@ fn bounding_box(shape: &TcvShape) -> Option<TcvBoundingBox> {
         bb.zmax = bb.zmax.max(chunk[2]);
     }
     Some(bb)
-}
-
-fn edge_key_from_edge<P: Payload>(g: &Model<P>, edge: &Edge<'_, P>) -> Option<EdgeKey> {
-    g.cell_key::<Cell1>(edge.dart())
 }

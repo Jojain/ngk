@@ -5,6 +5,7 @@ mod exchange;
 mod geometry;
 mod measurement;
 mod modeling;
+mod tessellation;
 mod topology;
 mod visualization;
 
@@ -17,6 +18,7 @@ pub fn core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     geometry::register(m)?;
     measurement::register(m)?;
     modeling::register(m)?;
+    tessellation::register(m)?;
     topology::register(m)?;
     visualization::register(m)?;
     Ok(())

@@ -18,9 +18,12 @@
 //! - [`tessellate_face_key`]: raw map/key bridge for callers that are still
 //!   iterating a [`Model`](crate::model::Model) directly.
 //! - [`tessellate_shape`]: dispatch on a [`ShapeKey`](crate::topology::shape_keys::ShapeKey).
+//! - [`tessellate`]: a whole shape → one [`Tessellation`], every face range,
+//!   edge polyline and vertex point keyed by its cell. The public entry point.
 
 pub mod curve;
 pub mod face;
+mod keyed;
 pub mod shape;
 mod strips;
 pub mod surface;
@@ -97,7 +100,7 @@ impl Polyline3 {
 }
 
 /// An indexed triangle mesh: positions, per-vertex normals, triangle indices.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct IndexedMesh {
     pub positions: Vec<Point3>,
     pub normals: Vec<UnitVector3<f64>>,
@@ -147,5 +150,8 @@ pub type TessellateResult<T> = Result<T, TessellateError>;
 
 pub use curve::tessellate_curve;
 pub use face::{tessellate_face, tessellate_face_key};
+pub use keyed::{
+    KeyedPoint, KeyedRange, Tessellate, Tessellation, TessellationError, VIEWER, tessellate,
+};
 pub use shape::{ShapeMesh, tessellate_edge, tessellate_shape, tessellate_vertex};
 pub use surface::tessellate_surface_patch;
