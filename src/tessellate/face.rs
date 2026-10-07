@@ -72,19 +72,7 @@ fn mesh_face<P: Payload>(
     {
         return tessellate_boundaryless_face(face, opts);
     }
-    let domain =
-        UnwrappedFaceDomain::of_face(face).map_err(|_| TessellateError::UnreadableBoundary)?;
-    // Each pcurve is cut as its edge is, so the edge line and every face along
-    // it meet at the same points.
-    let mut boundary = domain.loops().iter().map(|boundary| {
-        boundary.polyline_on(face.surface(), |span| segments_for(span, opts.curve))
-    });
-    let outer_uv = boundary.next().ok_or(TessellateError::UnreadableBoundary)?;
-    if outer_uv.len() < 3 {
-        return Err(TessellateError::UnreadableBoundary);
-    }
-
-    let inner_uv: Vec<Vec<Point2>> = boundary.filter(|loop_| !loop_.is_empty()).collect();
+    let (domain, outer_uv, inner_uv) = boundary_polygons(face, opts)?;
 
     let signed_outer_area = signed_area(&outer_uv);
     let ccw = signed_outer_area > 0.0;
@@ -134,6 +122,66 @@ fn mesh_face<P: Payload>(
         opts,
         &[],
         tolerance,
+    )
+}
+
+/// The face's loops as the mesher reads them, the enclosing one first.
+///
+/// Each pcurve is cut as its edge is, so the edge line and every face along it
+/// meet at the same points.
+fn boundary_polygons<P: Payload>(
+    face: &Face<'_, P>,
+    opts: TessellateOpts,
+) -> TessellateResult<(UnwrappedFaceDomain, Vec<Point2>, Vec<Vec<Point2>>)> {
+    let domain =
+        UnwrappedFaceDomain::of_face(face).map_err(|_| TessellateError::UnreadableBoundary)?;
+    let mut boundary = domain.loops().iter().map(|boundary| {
+        boundary.polyline_on(face.surface(), |span| segments_for(span, opts.curve))
+    });
+    let outer_uv = boundary.next().ok_or(TessellateError::UnreadableBoundary)?;
+    if outer_uv.len() < 3 {
+        return Err(TessellateError::UnreadableBoundary);
+    }
+    let inner_uv = boundary.filter(|loop_| !loop_.is_empty()).collect();
+    Ok((domain, outer_uv, inner_uv))
+}
+
+/// Signed area of the mesh [`tessellate_face`] gives a planar face, read off
+/// its boundary without meshing it.
+///
+/// The triangles of a planar face tile its boundary polygon exactly, whatever
+/// the triangulation, so their area is the enclosing loop's less its holes'.
+/// It is positive when the mesh faces along the plane's normal, as the mesh's
+/// own winding follows the enclosing loop's. The loops are sampled as the
+/// mesher samples them, so this is the area of that mesh and not merely
+/// close to it.
+///
+/// `None` for a face the mesher does not take the polygon path for: one off a
+/// plane, or one nothing encloses. Errors where the mesher would refuse the
+/// boundary before triangulating it.
+pub(crate) fn planar_mesh_area<P: Payload>(
+    face: &Face<'_, P>,
+    opts: TessellateOpts,
+) -> Option<TessellateResult<f64>> {
+    let encloses = face
+        .loops()
+        .iter()
+        .any(|boundary| !matches!(boundary.kind(), LoopKind::Inner));
+    if !matches!(face.surface(), Surface::Plane(_)) || !encloses {
+        return None;
+    }
+    Some(
+        boundary_polygons(face, opts).and_then(|(_, outer_uv, inner_uv)| {
+            let outer = signed_area(&outer_uv);
+            if outer.abs() <= EPS {
+                return Err(TessellateError::DegenerateBoundary);
+            }
+            let holes = inner_uv
+                .iter()
+                .map(|hole| signed_area(hole).abs())
+                .sum::<f64>();
+            Ok(outer.signum() * (outer.abs() - holes))
+        }),
     )
 }
 
@@ -920,21 +968,26 @@ fn bridge_hole(
 ) -> Option<Vec<Point2>> {
     let hole_idx = rightmost_vertex(hole);
     let hole_point = hole[hole_idx];
-    let polygon_idx = (0..polygon.len())
-        .filter(|idx| bridge_is_visible(hole_point, hole_idx, polygon[*idx], *idx, polygon, hole))
-        .filter(|idx| {
-            waiting.iter().all(|other| {
+    // The nearest visible vertex, found by trying the nearest first: a
+    // visibility test walks every segment, and the nearest vertex is nearly
+    // always visible, so testing them all before choosing made each bridge
+    // quadratic in the boundary and a face with many holes cubic. The sort is
+    // stable, so equally near vertices are still tried in boundary order.
+    let mut candidates = (0..polygon.len()).collect::<Vec<_>>();
+    candidates.sort_by(|a, b| {
+        let da = (polygon[*a] - hole_point).norm_squared();
+        let db = (polygon[*b] - hole_point).norm_squared();
+        da.total_cmp(&db)
+    });
+    let polygon_idx = candidates.into_iter().find(|idx| {
+        bridge_is_visible(hole_point, hole_idx, polygon[*idx], *idx, polygon, hole)
+            && waiting.iter().all(|other| {
                 (0..other.len()).all(|i| {
                     let j = (i + 1) % other.len();
                     !segments_intersect_strict(hole_point, polygon[*idx], other[i], other[j])
                 })
             })
-        })
-        .min_by(|a, b| {
-            let da = (polygon[*a] - hole_point).norm_squared();
-            let db = (polygon[*b] - hole_point).norm_squared();
-            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-        })?;
+    })?;
 
     let mut bridged = Vec::with_capacity(polygon.len() + hole.len() + 2);
     bridged.extend_from_slice(&polygon[..=polygon_idx]);

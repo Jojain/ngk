@@ -6,8 +6,9 @@ use crate::geometry::parameter::Fraction;
 use crate::geometry::{Point3, Surface};
 use crate::model::Model;
 use crate::tessellate::{
-    CurveOpts, IndexedMesh, TessellateError, TessellateOpts, curve::tessellate_curve,
-    face::tessellate_face,
+    CurveOpts, IndexedMesh, TessellateError, TessellateOpts,
+    curve::tessellate_curve,
+    face::{planar_mesh_area, tessellate_face},
 };
 use crate::topology::attributes::LoopKind;
 use crate::topology::edge::{Edge, EdgeCore};
@@ -462,20 +463,58 @@ fn fallback_signed_volume<P: Payload>(faces: &[Face<'_, P>]) -> Result<f64, Meas
         })
 }
 
+/// The volume `face`'s mesh contributes about `reference`, meshing the face
+/// only when it is not planar.
+///
+/// Every triangle of a planar face lies at the plane's height above
+/// `reference`, so together they contribute that height times their area over
+/// three, and [`planar_mesh_area`] reads that area off the boundary. Validation
+/// asks this of every face of every Boolean result, and meshing a plane with
+/// many holes just to learn its area is what made it cost more with each hole.
+fn face_signed_volume<P: Payload>(
+    face: &Face<'_, P>,
+    reference: Point3,
+) -> Result<f64, MeasureError> {
+    let tessellation = |source| MeasureError::FaceTessellation {
+        face: face.key(),
+        source,
+    };
+    if let Surface::Plane(plane) = face.surface()
+        && let Some(area) = planar_mesh_area(face, COMPUTATION_TESSELLATION)
+    {
+        let height = (plane.origin() - reference).dot(&plane.normal());
+        return area.map(|area| height * area / 3.0).map_err(tessellation);
+    }
+    let mesh = mesh_for_face(face)?;
+    Ok(triangle_volume_moments(&mesh, reference).measure)
+}
+
+/// Signed volume enclosed by oriented faces, falling back to the pcurve fan
+/// where some face cannot be read the way the mesher reads it.
+fn signed_volume_of<P: Payload>(faces: &[Face<'_, P>]) -> Result<f64, MeasureError> {
+    let reference = faces
+        .iter()
+        .find_map(face_reference)
+        .ok_or(MeasureError::Degenerate)?;
+    let volume = faces
+        .iter()
+        .map(|face| face_signed_volume(face, reference))
+        .sum::<Result<f64, _>>();
+    match volume {
+        Ok(volume) => volume
+            .is_finite()
+            .then_some(volume)
+            .ok_or(MeasureError::NonFinite),
+        Err(_) => fallback_signed_volume(faces),
+    }
+}
+
 /// Computes the signed volume of one oriented shell for validation.
 pub(crate) fn signed_shell_volume<P: Payload>(
     model: &Model<P>,
     shell: Dart,
 ) -> Result<f64, MeasureError> {
-    let faces = shell_faces(model, shell);
-    let meshes = faces
-        .iter()
-        .map(mesh_for_face)
-        .collect::<Result<Vec<_>, _>>();
-    match meshes {
-        Ok(meshes) => signed_volume_from_meshes(&meshes),
-        Err(_) => fallback_signed_volume(&faces),
-    }
+    signed_volume_of(&shell_faces(model, shell))
 }
 
 /// Computes the signed volume of a set of oriented faces during assembly.
@@ -487,14 +526,7 @@ pub(crate) fn signed_volume_for_faces<P: Payload>(
         .iter()
         .map(|&key| model.face_unchecked(key))
         .collect::<Vec<_>>();
-    let meshes = views
-        .iter()
-        .map(mesh_for_face)
-        .collect::<Result<Vec<_>, _>>();
-    match meshes {
-        Ok(meshes) => signed_volume_from_meshes(&meshes),
-        Err(_) => fallback_signed_volume(&views),
-    }
+    signed_volume_of(&views)
 }
 
 /// Computes non-negative volume properties for a solid and its oriented shells.

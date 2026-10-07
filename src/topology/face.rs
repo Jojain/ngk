@@ -403,20 +403,24 @@ impl<'g, P: Payload> Face<'g, P> {
         // cycle, and letting it would leave another cycle unnamed and silently
         // read as an outer boundary.
         let mut claimed = vec![false; definitions.len()];
+        // Each seed's 1-cell is found once, and each walk's 1-cells once, so
+        // pairing them is a lookup: comparing every dart of every walk with
+        // every seed made a face with many holes quadratic in them on every
+        // call, and healing asks once per edge.
+        let seeds = definitions
+            .iter()
+            .map(|definition| self.model.cell_representative(definition.seed(), Dim::One))
+            .collect::<Vec<_>>();
         let mut loops: Vec<Loop<'g, P>> = self
             .boundary_walks()
             .into_iter()
             .map(|darts| {
-                let matched = definitions
+                let cells = darts
                     .iter()
-                    .enumerate()
-                    .position(|(index, definition)| {
-                        !claimed[index]
-                            && darts.iter().any(|&dart| {
-                                self.model.cell_representative(dart, Dim::One)
-                                    == self.model.cell_representative(definition.seed(), Dim::One)
-                            })
-                    });
+                    .map(|&dart| self.model.cell_representative(dart, Dim::One))
+                    .collect::<HashSet<_>>();
+                let matched = (0..definitions.len())
+                    .position(|index| !claimed[index] && cells.contains(&seeds[index]));
                 let kind = match matched {
                     Some(index) => {
                         claimed[index] = true;
