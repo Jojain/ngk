@@ -15,6 +15,9 @@ class FaceBooleanResult:
 # entity of it keeps its key. A tool from that same model is used in place; any
 # other tool contributes only its own solid or face. A tool passed twice is one
 # tool.
+#
+# A face Boolean with no area left (a face cut by one covering it, disjoint
+# faces intersected) returns a result whose faces() is empty.
 def fuse(target: Solid, tools: Solid | Sequence[Solid]) -> Solid: ...
 def cut(target: Solid, tools: Solid | Sequence[Solid]) -> Solid: ...
 def intersect(target: Solid, tools: Solid | Sequence[Solid]) -> Solid: ...

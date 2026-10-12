@@ -106,3 +106,20 @@ def test_a_tool_in_the_target_model_is_used_in_place():
     # changes.
     again = booleans.fuse_faces(first, second)
     assert len(again.model.faces()) == 2
+
+
+def test_a_face_boolean_with_no_area_left_returns_no_faces():
+    def xy(x, y):
+        return Plane(Point(x, y, 0), Vector(1, 0, 0), Vector(0, 0, 1))
+
+    small = faces.rectangle(10, 10)
+    large = faces.rectangle(100, 100, xy(-50, -50))
+    far = faces.rectangle(10, 10, xy(50, 0))
+    assert booleans.cut_faces(small, large).faces() == []
+    assert booleans.intersect_faces(small, far).faces() == []
+
+
+def test_a_face_boolean_of_faces_on_different_planes_still_raises():
+    tilted = faces.rectangle(10, 10, Plane(Point(0, 0, 0), Vector(1, 0, 0), Vector(0, 1, 0)))
+    with pytest.raises(ValueError):
+        booleans.cut_faces(faces.rectangle(10, 10), tilted)

@@ -357,47 +357,62 @@ fn edge_to_edge_squares() -> (Model, FaceKey, FaceKey) {
 /// What the two share is a segment, which is not a face: the answer would be a
 /// cell of lower dimension than the operands, and a regularized Boolean has no
 /// such answer. Every face of the target lies outside the tool, so selection
-/// keeps nothing and the operation reports an empty result rather than
-/// returning the seam.
+/// keeps nothing and the answer is no face at all, both operands consumed.
 #[test]
-fn intersecting_faces_that_only_touch_is_empty() {
+fn intersecting_faces_that_only_touch_leaves_no_face() {
     let (mut map, first, second) = edge_to_edge_squares();
-    let error = face_boolean(
+    let result = face_boolean(
         &mut map,
         first,
         &[second],
         BooleanOperation::Intersection,
         BooleanOptions::default(),
     )
-    .expect_err("a shared edge is not an area");
-    assert!(
-        matches!(error, BooleanError::EmptyResult),
-        "expected an empty result, got {error:?}"
+    .expect("an empty intersection is an answer");
+    assert!(result.faces.is_empty(), "{:?}", result.faces);
+    assert!(result.lineage.target.faces.is_empty());
+    assert_eq!(map.iter_faces().count(), 0, "both operands are consumed");
+}
+
+/// A face cut by one that covers it leaves nothing of it, and the rest of the
+/// model is untouched.
+#[test]
+fn a_covered_face_cut_away_keeps_the_models_other_faces() {
+    let (mut map, outer, inner) = nested_squares();
+    let (far_map, far) = square_at(10.0, 0.0, 1.0);
+    let far = merge_face(&mut map, &far_map, far);
+    let result = face_boolean(
+        &mut map,
+        inner,
+        &[outer],
+        BooleanOperation::Difference,
+        BooleanOptions::default(),
+    )
+    .expect("an empty difference is an answer");
+    assert!(result.faces.is_empty(), "{:?}", result.faces);
+    assert!(map.face(inner).is_none(), "the target is consumed");
+    assert!(map.face(outer).is_none(), "the tool is consumed");
+    assert_eq!(
+        map.iter_faces().map(|(key, _)| key).collect::<Vec<_>>(),
+        vec![far],
+        "the other face keeps its key"
     );
 }
 
-/// A failed operation leaves the model exactly as it was.
-///
-/// Preparation splits both operands before selection can find the answer empty,
-/// so the rollback is what keeps an empty intersection from consuming them.
+/// A face less itself is empty.
 #[test]
-fn an_empty_intersection_rolls_back_both_operands() {
-    let (mut map, first, second) = edge_to_edge_squares();
-    let before = map.iter_faces().count();
-    let _ = face_boolean(
+fn a_face_minus_itself_leaves_no_face() {
+    let (mut map, face) = square_at(0.0, 0.0, 2.0);
+    let result = face_boolean(
         &mut map,
-        first,
-        &[second],
-        BooleanOperation::Intersection,
+        face,
+        &[face],
+        BooleanOperation::Difference,
         BooleanOptions::default(),
-    );
-    assert_eq!(
-        map.iter_faces().count(),
-        before,
-        "rollback left faces behind"
-    );
-    assert!(map.face(first).is_some(), "the target was consumed");
-    assert!(map.face(second).is_some(), "the tool was consumed");
+    )
+    .expect("T minus T is an answer");
+    assert!(result.faces.is_empty(), "{:?}", result.faces);
+    assert_eq!(map.iter_faces().count(), 0);
 }
 
 /// Subtracting a face that only touches changes nothing.

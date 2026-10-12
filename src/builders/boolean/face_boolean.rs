@@ -50,7 +50,8 @@ use super::{
 pub struct FaceBoolean {
     pub operation: BooleanOperation,
     /// The faces the answer is made of, all of them descended from the
-    /// operands. Several where the answer falls in disconnected parts.
+    /// operands. Several where the answer falls in disconnected parts, none
+    /// where it has no area.
     pub faces: Vec<FaceKey>,
     /// Which source face each survivor came from, per input.
     pub lineage: FaceBooleanLineage,
@@ -78,8 +79,11 @@ pub struct FaceBooleanLineage {
 ///
 /// Every tool is consumed: each face descended from one is removed or, under a
 /// union, welded into the answer. The answer keeps `target`'s key on one of its
-/// faces, and every other face of the map keeps its key. Anything the
-/// preparation cannot certify rolls the whole transaction back.
+/// faces, and every other face of the map keeps its key. An answer with no
+/// area -- a face cut by one covering it, two faces that do not overlap
+/// intersected -- is no face at all: every operand is consumed and `faces` is
+/// empty. Anything the preparation cannot certify rolls the whole transaction
+/// back.
 pub fn face_boolean<P: Payload>(
     map: &mut Model<P>,
     target: FaceKey,
@@ -90,7 +94,17 @@ pub fn face_boolean<P: Payload>(
     let operands = Operands::new(target, tools);
     let tolerances = admit(map, &operands, options)?;
     if operation == BooleanOperation::Difference && operands.target_is_a_tool() {
-        return Err(BooleanError::EmptyResult);
+        // `target` less a union that holds it is empty whatever the other
+        // tools are, so there is nothing to arrange.
+        let consumed = operands.keys().collect::<Vec<_>>();
+        let diagnostics = BooleanDiagnostics {
+            tolerances,
+            ..Default::default()
+        };
+        return map.transaction(|edit| {
+            edit.remove_faces(&consumed)?;
+            Ok(no_face(&operands, operation, diagnostics))
+        });
     }
     if operands.operands.len() == 1 {
         let mut lineage = BooleanLineage::default();
@@ -109,6 +123,22 @@ pub fn face_boolean<P: Payload>(
         });
     }
     map.transaction(|edit| run(edit, &operands, operation, options, tolerances))
+}
+
+/// The answer with no area: no face survives, so no face has a source.
+fn no_face(
+    operands: &Operands<FaceKey>,
+    operation: BooleanOperation,
+    diagnostics: BooleanDiagnostics,
+) -> FaceBoolean {
+    let (target, tools) =
+        operands.per_input(vec![BooleanLineage::default(); operands.operands.len()]);
+    FaceBoolean {
+        operation,
+        faces: Vec::new(),
+        lineage: FaceBooleanLineage { target, tools },
+        diagnostics,
+    }
 }
 
 /// Checks every operand exists and shares the target's plane, and fixes the
@@ -177,7 +207,8 @@ fn run<P: Payload>(
     )?;
     let selection = select::run(operation, faces.len(), &graph, &classes);
     if selection.kept.is_empty() {
-        return Err(BooleanError::EmptyResult);
+        edit.remove_faces(&selection.dropped)?;
+        return Ok(no_face(operands, operation, arrangement.diagnostics));
     }
 
     // Every tool face but those a union keeps outside the target is dropped,
