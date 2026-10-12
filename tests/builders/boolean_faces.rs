@@ -5,12 +5,15 @@
 //! answer's area says which faces survived without depending on which keys the
 //! splitter happened to hand out.
 
+use std::f64::consts::PI;
+
 use nalgebra::Vector3;
 use ngk::builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, face_boolean};
-use ngk::geometry::{Plane, Point3};
+use ngk::geometry::{Curve, Plane, Point3};
 use ngk::model::{Cell2, Model};
 use ngk::modeling::faces;
 use ngk::topology::ModelEditError;
+use ngk::topology::shape::{FaceTag, Shape};
 use ngk::topology::shape_keys::FaceKey;
 
 /// Builds the overlapping pair in one model and returns both face keys.
@@ -435,4 +438,95 @@ fn union_of_touching_faces_covers_both() {
         reported_area(&map, &result.faces)
     );
     assert_eq!(result.faces.len(), 1, "the two squares fuse into one face");
+}
+
+/// The curve kind of every edge of the faces a Boolean returned.
+fn curve_kinds(result: &faces::FaceBooleanResult) -> Vec<&'static str> {
+    result
+        .faces()
+        .iter()
+        .flat_map(|face| face.edges())
+        .map(|edge| match edge.curve() {
+            Curve::Line(_) => "Line",
+            Curve::Circle(_) => "Circle",
+            Curve::Ellipse(_) => "Ellipse",
+            Curve::Helix(_) => "Helix",
+            Curve::Nurbs(_) => "Nurbs",
+        })
+        .collect()
+}
+
+/// Checks a result's area against the exact one, within the mesh tolerance
+/// the area is measured at: a circle is measured as its inscribed polygon. An
+/// arc on the wrong side of its corners would be off by far more.
+fn assert_area(result: &faces::FaceBooleanResult, expected: f64) {
+    let area = reported_area(result.model(), result.face_keys());
+    assert!(
+        (area - expected).abs() < 5e-3 * expected,
+        "expected an area of {expected}, got {area}"
+    );
+}
+
+/// The 40 x 30 rectangle centred on the origin of issue #28.
+fn centred_rectangle() -> Shape<FaceTag> {
+    faces::rectangle(
+        Plane::new(Point3::new(-20.0, -15.0, 0.0), Vector3::x(), Vector3::z()),
+        40.0,
+        30.0,
+    )
+    .expect("rectangle")
+}
+
+fn disk(x: f64, y: f64, radius: f64) -> Shape<FaceTag> {
+    faces::circle(
+        Plane::new(Point3::new(x, y, 0.0), Vector3::x(), Vector3::z()),
+        radius,
+    )
+    .expect("disk")
+}
+
+/// A circle cut out of a face stays a closed circle edge.
+#[test]
+fn a_cut_keeps_the_hole_a_circle() {
+    let result = faces::cut(centred_rectangle(), [&disk(0.0, 0.0, 5.0)]).expect("cut");
+    let mut kinds = curve_kinds(&result);
+    kinds.sort();
+    assert_eq!(kinds, ["Circle", "Line", "Line", "Line", "Line"]);
+    assert_area(&result, 1200.0 - 25.0 * PI);
+}
+
+/// The arcs a fuse keeps of a circle are trimmed circles, not NURBS.
+#[test]
+fn a_fuse_keeps_the_boss_arcs_circles() {
+    let result = faces::fuse(centred_rectangle(), [&disk(20.0, 0.0, 10.0)]).expect("fuse");
+    let kinds = curve_kinds(&result);
+    assert!(
+        kinds.iter().all(|kind| matches!(*kind, "Line" | "Circle")),
+        "{kinds:?}"
+    );
+    assert!(kinds.contains(&"Circle"), "{kinds:?}");
+    assert_area(&result, 1200.0 + 50.0 * PI);
+}
+
+/// The arc an intersection keeps of a circle is a trimmed circle.
+#[test]
+fn an_intersection_keeps_the_arc_a_circle() {
+    let result =
+        faces::intersect(centred_rectangle(), [&disk(20.0, 0.0, 10.0)]).expect("intersect");
+    let kinds = curve_kinds(&result);
+    assert!(
+        kinds.iter().all(|kind| matches!(*kind, "Line" | "Circle")),
+        "{kinds:?}"
+    );
+    assert!(kinds.contains(&"Circle"), "{kinds:?}");
+    assert_area(&result, 50.0 * PI);
+}
+
+/// Two overlapping disks fuse into a boundary of two circular arcs.
+#[test]
+fn two_fused_disks_are_bounded_by_two_circle_arcs() {
+    let result = faces::fuse(disk(0.0, 0.0, 5.0), [&disk(6.0, 0.0, 5.0)]).expect("fuse");
+    assert_eq!(curve_kinds(&result), ["Circle", "Circle"]);
+    let lens = 50.0 * 0.6_f64.acos() - 24.0;
+    assert_area(&result, 50.0 * PI - lens);
 }

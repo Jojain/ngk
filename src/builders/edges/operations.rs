@@ -468,15 +468,23 @@ fn check_attached_edge<P: Payload>(
 /// Cuts `curve` into the part of the edge's span before the cut and the part
 /// beyond it.
 ///
-/// Both ends of the span and the cut itself are native on `curve`, so each
-/// piece is named directly. Going through a fraction would have to say a
-/// fraction of what, and the edge's span is not the support's own extent: the
-/// two agree only on an edge that covers the whole support.
+/// A line, circle or ellipse is kept whole on both pieces: an edge's span is
+/// read off its corners, so each piece still covers only its own part, and it
+/// keeps the support it lies on instead of the NURBS that represents that part.
+///
+/// Any other curve is cut down. Both ends of the span and the cut itself are
+/// native on `curve`, so each piece is named directly. Going through a fraction
+/// would have to say a fraction of what, and the edge's span is not the
+/// support's own extent: the two agree only on an edge that covers the whole
+/// support.
 fn split_curve_at_parameter(
     edge: EdgeKey,
     curve: &Curve,
     cut: EdgeCut,
 ) -> Result<(Curve, Curve), EdgeSplitError> {
+    if matches!(curve, Curve::Line(_) | Curve::Circle(_) | Curve::Ellipse(_)) {
+        return Ok((curve.clone(), curve.clone()));
+    }
     let trim = |interval| {
         curve
             .trimmed_native(interval)

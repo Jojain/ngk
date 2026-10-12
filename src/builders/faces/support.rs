@@ -145,9 +145,9 @@ pub struct FaceImprintSplit {
 /// The two halves are **synchronized**: the same normalized fraction of
 /// `curve` and of `pcurve` is the same point. That is a stronger requirement
 /// than each half merely being correct, and it constrains which support may be
-/// kept — a `Circle` spans its arc in angle while the rational quadratic its
-/// pcurve is fitted from does not, so an imprint of an arc carries the section
-/// as NURBS rather than as the circle it came from.
+/// kept — a `Circle` spans its arc in angle while a rational quadratic fitted
+/// to it does not, so a circle is kept only where its pcurve is a circle too
+/// (on a plane); elsewhere the imprint carries the section as NURBS.
 #[derive(Clone)]
 pub struct FaceImprint {
     pub curve: TrimmedCurve,

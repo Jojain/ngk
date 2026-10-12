@@ -686,8 +686,10 @@ fn probe_edge_face<P: Payload>(
             CurveSurfaceIntersection::Overlap { curve_interval } => {
                 // The analytic solve covers the whole support; the edge's
                 // vertices select the part that belongs to this topological edge.
+                // The section is kept on the edge's own support, so a circle
+                // overlapping a face imprints it as the circle it is.
                 let section = if analytic_parameters {
-                    curve.trimmed_native(edge_interval)?
+                    TrimmedCurve::new(curve.clone(), edge_interval)
                 } else {
                     // The numeric solver answers in the prepared curve's knot
                     // domain, so the overlap is clipped and spent there -- to
@@ -713,7 +715,10 @@ fn probe_edge_face<P: Payload>(
                     {
                         continue;
                     }
-                    graph::nurbs_subcurve(curve, overlap)?
+                    TrimmedCurve::new(
+                        graph::nurbs_subcurve(curve, overlap)?,
+                        Interval::new(0.0, 1.0),
+                    )
                 };
                 let Some(imprint) = section_imprint(&face, &section, options)? else {
                     continue;
@@ -1061,22 +1066,23 @@ const SECTION_SAMPLE_COUNT: usize = 32;
 /// Builds the parameter-space image of a section already resting on `face`.
 ///
 /// A planar face maps model space to its parameter space affinely, so the
-/// section's own control points carry over exactly. On a curved surface a
-/// section whose projection stays collinear — a ruling, say — is still exact;
-/// anything else is carried by the interpolating polyline the face splitter
-/// consumes. `None` means the section does not project onto the surface at all.
+/// section's support projects exactly and keeps its parameter: a circle stays a
+/// circle in both halves of the imprint. On a curved surface a section whose
+/// projection stays collinear — a ruling, say — is still exact; anything else
+/// is carried by the interpolating polyline the face splitter consumes. `None`
+/// means the section does not project onto the surface at all.
 fn section_imprint<P: Payload>(
     face: &crate::topology::face::Face<'_, P>,
-    section: &Curve,
+    section: &TrimmedCurve,
     options: BooleanOptions,
 ) -> Result<Option<FaceImprint>, BooleanError> {
     if let Surface::Plane(plane) = face.surface() {
-        // The section already *is* its span, so its own `[0, 1]` window is what
-        // the pcurve covers.
-        let span = TrimmedCurve::new(section.clone(), Interval::new(0.0, 1.0));
-        let pcurve = crate::builders::profiles::curve_pcurve(&span, plane)?;
-        return Ok(Some(FaceImprint::new(section.clone(), pcurve)));
+        let pcurve = crate::builders::profiles::curve_pcurve(section, plane)?;
+        return Ok(Some(FaceImprint::with_section(section.clone(), pcurve)));
     }
+    // Off a plane the 3D half is paired with sampled or straight pcurves over
+    // `[0, 1]`, so it is cut down to a curve that is its own span.
+    let section = &section.to_curve()?;
     let mut points = Vec::with_capacity(SECTION_SAMPLE_COUNT + 1);
     let mut uv_points = Vec::with_capacity(SECTION_SAMPLE_COUNT + 1);
     for index in 0..=SECTION_SAMPLE_COUNT {
