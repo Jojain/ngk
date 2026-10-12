@@ -85,6 +85,14 @@ pub enum ExtrudeError {
     SewFailed { dim: Dim, first: Dart, second: Dart },
     #[error("missing face for key {dart:?}")]
     MissingFace { dart: FaceKey },
+    #[error("closed edge {edge:?} could not take the corner its wall's seam starts from")]
+    SeamCornerFailed {
+        edge: EdgeKey,
+        #[source]
+        source: Box<crate::builders::edges::EdgeSplitError>,
+    },
+    #[error("the wall swept from dart {dart:?} has no vertex for its side edge to start from")]
+    MissingSweptVertex { dart: Dart },
     #[error("extrusion model edit failed")]
     ModelEditFailed(#[source] ModelEditFailure),
 }

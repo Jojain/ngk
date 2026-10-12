@@ -13,13 +13,15 @@ use thiserror::Error;
 
 use crate::{
     Payload,
+    builders::edges::split_face_boundary_edge,
     builders::errors::ClosedFaceCellError,
     builders::errors::ExtrudeError,
     builders::faces::{add_circle_edit, add_rectangle_edit, reverse_face_winding_edit},
     builders::scaffold::add_closed_face_cell,
     geometry::{
-        ANGULAR_TOLERANCE, Axis2, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Plane, Point2, Point3,
-        Rigid, RuledSurface, Sphere, Surface, SurfacePeriodicity, Torus, perpendicular_component,
+        ANGULAR_TOLERANCE, Axis2, Curve, Cylinder, Frame, LINEAR_TOLERANCE, Periodicity, Plane,
+        Point2, Point3, Rigid, RuledSurface, Sphere, Surface, SurfacePeriodicity, Torus,
+        perpendicular_component,
     },
     topology::{
         Dart, ModelEdit, SheetAttr, SolidAttr,
@@ -436,6 +438,11 @@ pub(crate) fn add_extruded_face_edit<P: Payload>(
     let mut top_loop_darts = Vec::with_capacity(1 + top_face_attr.inner().count());
     top_loop_darts.push(top_face_attr.outer_unchecked());
     top_loop_darts.extend(top_face_attr.inner());
+    // Marked only once the top cap is copied: the copy can only carry
+    // vertices the model already committed, and both caps take the corner at
+    // the same point of the same curve.
+    mark_seam_corners(edit, face_key)?;
+    mark_seam_corners(edit, top_face_key)?;
 
     let laterals_face_outward = orient_extruded_caps(edit, face_key, top_face_key, direction);
 
@@ -472,6 +479,41 @@ pub(crate) fn add_extruded_face_edit<P: Payload>(
         laterals,
         revision: None,
     })
+}
+
+/// Gives each closed edge of `face` whose wall needs a seam the corner that
+/// seam starts from.
+///
+/// A closed edge with no vertex sweeps into a wall that closes on itself. Over
+/// a periodic support -- a circle, an ellipse -- the wall's surface has the
+/// period too and wraps with no seam. A closed NURBS loop has none, so its wall
+/// is one quad whose two sides meet at a seam, and the seam runs from a corner:
+/// the point where the loop is clamped, the one place such a curve can start a
+/// whole turn from.
+fn mark_seam_corners<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    face: FaceKey,
+) -> Result<(), ExtrudeError> {
+    let unmarked = edit
+        .face(face)
+        .ok_or(ExtrudeError::MissingFace { dart: face })?
+        .edges()
+        .into_iter()
+        .filter(|edge| {
+            matches!(edge, Edge::Unmarked(_))
+                && matches!(edge.curve().periodicity(), Periodicity::None)
+        })
+        .map(|edge| edge.key())
+        .collect::<Vec<_>>();
+    for edge in unmarked {
+        split_face_boundary_edge(edit, edge, Fraction::START, false).map_err(|source| {
+            ExtrudeError::SeamCornerFailed {
+                edge,
+                source: Box::new(source),
+            }
+        })?;
+    }
+    Ok(())
 }
 
 /// Turns the two caps so they face out of the extrusion, and reports whether
@@ -614,18 +656,19 @@ fn sew_extruded_loop<P: Payload>(
     let vertical_edges = laterals
         .iter()
         .map(|lateral| {
-            edit.add_edge_derived_from(
-                vec![EditKey::Vertex(
-                    edit.cell_key::<Cell0>(lateral.topology.end_vertical)
-                        .expect("vertical edge must meet a swept vertex"),
-                )],
+            let dart = lateral.topology.end_vertical;
+            let vertex = edit
+                .cell_key::<Cell0>(dart)
+                .ok_or(ExtrudeError::MissingSweptVertex { dart })?;
+            Ok(edit.add_edge_derived_from(
+                vec![EditKey::Vertex(vertex)],
                 EdgeAttr::new(
-                    lateral.topology.end_vertical,
+                    dart,
                     Curve::line(lateral.vertical_start, lateral.vertical_end),
                 ),
-            )
+            ))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, ExtrudeError>>()?;
     let representative = laterals
         .first()
         .map(|lateral| lateral.topology.bottom_edge)

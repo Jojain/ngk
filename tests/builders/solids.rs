@@ -1,11 +1,15 @@
+use std::f64::consts::PI;
+
 use nalgebra::Vector3;
 use ngk::builders::edges::add_edge;
 use ngk::builders::faces::{add_face, add_polygon};
 use ngk::builders::solids::{add_extruded_face, translate_face};
-use ngk::geometry::{Curve, LINEAR_TOLERANCE, Plane, Point3, Surface};
+use ngk::geometry::{Curve, Curve2, LINEAR_TOLERANCE, Plane, Point3, Surface, TrimmedCurve2};
 use ngk::model::Model;
 use ngk::modeling::faces;
+use ngk::topology::ModelEditError;
 use ngk::topology::payload::StandardPayload;
+use ngk::topology::shape::{FaceTag, Shape};
 use ngk::topology::validation::{validate_gmap, validate_solid_orientation};
 use ngk::viz::debug_viewer::show;
 
@@ -155,4 +159,82 @@ fn an_extruded_shell_faces_outward_whichever_way_the_face_was_wound() {
         validate_solid_orientation(&model, extrusion.solid)
             .expect("every face of the shell should point out of the material");
     }
+}
+
+/// Rewrites every curve bounding `face` as the NURBS that represents it.
+///
+/// A closed circle becomes a closed NURBS edge with no vertex, the boundary a
+/// face Boolean or a STEP import can hand over.
+fn with_nurbs_boundary(face: Shape<FaceTag>) -> Shape<FaceTag> {
+    let (mut model, key) = face.into_model();
+    let edges = model
+        .iter_edges()
+        .map(|(edge, attr)| {
+            (
+                edge,
+                Curve::Nurbs(attr.curve.to_nurbs().expect("edge nurbs")),
+            )
+        })
+        .collect::<Vec<_>>();
+    let pcurves = model
+        .face_attr_unchecked(key)
+        .pcurves
+        .iter()
+        .map(|(&dart, pcurve)| {
+            let nurbs = pcurve.to_nurbs().expect("pcurve nurbs");
+            let domain = nurbs.domain();
+            (dart, TrimmedCurve2::new(Curve2::Nurbs(nurbs), domain))
+        })
+        .collect::<Vec<_>>();
+    model
+        .transaction(|edit| {
+            for (edge, curve) in edges {
+                edit.edge_attr_mut_unchecked(edge).curve = curve;
+            }
+            for (dart, pcurve) in pcurves {
+                edit.face_attr_mut_unchecked(key)
+                    .pcurves
+                    .insert(dart, pcurve);
+            }
+            Ok::<_, ModelEditError>(())
+        })
+        .expect("rewrite the boundary as NURBS");
+    Shape::new(model, key)
+}
+
+fn extrudes_to(face: Shape<FaceTag>, height: f64, expected: f64) {
+    let (mut model, key) = face.into_model();
+    let extrusion = add_extruded_face(&mut model, key, Vector3::new(0.0, 0.0, height))
+        .expect("a closed NURBS loop with no vertex extrudes");
+    validate_gmap(model.topology()).expect("gmap should stay valid");
+    validate_solid_orientation(&model, extrusion.solid).expect("the shell faces outward");
+    let volume = model
+        .solid_unchecked(extrusion.solid)
+        .volume()
+        .expect("volume");
+    assert!(
+        (volume - expected).abs() < 5e-3 * expected,
+        "expected a volume of {expected}, got {volume}"
+    );
+}
+
+#[test]
+fn a_disk_bounded_by_a_closed_nurbs_edge_extrudes() {
+    let disk = with_nurbs_boundary(faces::circle(Plane::xy(), 5.0).expect("disk"));
+    extrudes_to(disk, 8.0, 25.0 * PI * 8.0);
+}
+
+#[test]
+fn a_hole_bounded_by_a_closed_nurbs_edge_extrudes() {
+    let rectangle = faces::rectangle(
+        Plane::new(Point3::new(-20.0, -15.0, 0.0), Vector3::x(), Vector3::z()),
+        40.0,
+        30.0,
+    )
+    .expect("rectangle");
+    let hole = faces::circle(Plane::xy(), 5.0).expect("hole");
+    let holed = faces::cut(rectangle, [&hole]).expect("cut");
+    let (model, keys) = holed.into_model();
+    let holed = with_nurbs_boundary(Shape::new(model, keys[0]));
+    extrudes_to(holed, 8.0, (1200.0 - 25.0 * PI) * 8.0);
 }
