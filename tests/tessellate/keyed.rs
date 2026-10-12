@@ -16,7 +16,7 @@ fn holed_block() -> Shape<SolidTag> {
     let frame = Frame::from_xz(Point3::new(10.0, 10.0, -1.0), Vector3::x(), Vector3::z());
     let tool = solids::cylinder_at(frame, 4.0, 12.0).expect("cylinder builds");
     let block = solids::block(30.0, 20.0, 10.0).expect("block builds");
-    solids::cut(block, tool).expect("cut builds")
+    solids::cut(block, [&tool]).expect("cut builds")
 }
 
 fn filleted_block() -> Shape<SolidTag> {

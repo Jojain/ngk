@@ -11,7 +11,7 @@ use crate::topology::ModelEditError;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
 use crate::topology::validation::ModelValidationError;
 
-use super::{BooleanCell, BooleanOperand, IntersectionNetworkValidationError};
+use super::{BooleanCell, BooleanInput, BooleanOperand, IntersectionNetworkValidationError};
 
 /// Failure returned by Boolean preparation.
 #[derive(Debug, Error)]
@@ -28,15 +28,34 @@ pub enum BooleanError {
     OpenIntersectionLoop { event: usize, point: Point3 },
     #[error("coincident faces {first:?} and {second:?} have no bounded overlap")]
     RegionWithoutBoundary { first: FaceKey, second: FaceKey },
-    #[error("solid {solid:?} is not a closed, consistently oriented operand")]
+    #[error("{input} (solid {solid:?}) is not a closed, consistently oriented operand")]
     InvalidOperand {
+        input: BooleanInput,
         solid: SolidKey,
         source: ModelValidationError,
     },
-    #[error("faces {first:?} and {second:?} do not share one plane")]
-    OperandSupportsDiffer { first: FaceKey, second: FaceKey },
-    #[error("distinct operands share registered boundary faces")]
-    SharedOperandBoundary,
+    #[error("{input} (face {face:?}) does not share the target face {target:?}'s plane")]
+    OperandSupportsDiffer {
+        input: BooleanInput,
+        target: FaceKey,
+        face: FaceKey,
+    },
+    #[error("{first} and {second} are distinct operands sharing registered boundary faces")]
+    SharedOperandBoundary {
+        first: BooleanInput,
+        second: BooleanInput,
+    },
+    #[error("{input} is not registered in the map")]
+    MissingInput {
+        input: BooleanInput,
+        operand: BooleanOperand,
+    },
+    /// Intersecting or imprinting two operands on each other failed.
+    #[error("imprinting {} and {} on each other failed", inputs[0], inputs[1])]
+    Imprint {
+        inputs: [BooleanInput; 2],
+        source: Box<BooleanError>,
+    },
     #[error("regularized Boolean result is empty")]
     EmptyResult,
     #[error("healing the Boolean result failed")]

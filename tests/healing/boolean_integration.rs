@@ -44,7 +44,7 @@ fn evaluate(
     let result = boolean(
         &mut map,
         block,
-        cylinder,
+        &[cylinder],
         operation,
         BooleanOptions {
             heal,
@@ -134,7 +134,7 @@ fn boolean_results_are_healed_by_default() {
         let result = boolean(
             &mut map,
             block,
-            cylinder,
+            &[cylinder],
             BooleanOperation::Union,
             BooleanOptions::default(),
         )

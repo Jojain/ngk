@@ -98,7 +98,7 @@ fn boss(origin: Point3) -> Result<(Model<StandardPayload>, SolidKey), String> {
     let centre = origin + Vector3::new(BLOCK[0] / 2.0, BLOCK[1] / 2.0, BLOCK[2] - 1.0);
     let boss = cylinder_at(Frame::at(centre), BOSS_RADIUS, 2.0)
         .map_err(|err| format!("failed to build the boss: {err:?}"))?;
-    fuse(base, boss)
+    fuse(base, [&boss])
         .map(|shape| shape.into_model())
         .map_err(|err| format!("failed to fuse the boss: {err:?}"))
 }
@@ -113,7 +113,7 @@ fn oblique_boss(origin: Point3) -> Result<(Model<StandardPayload>, SolidKey), St
     let frame = Frame::from_xz(foot, Vector3::y().cross(&axis), axis);
     let boss = cylinder_at(frame, 0.9, 3.0)
         .map_err(|err| format!("failed to build the leaning boss: {err:?}"))?;
-    fuse(base, boss)
+    fuse(base, [&boss])
         .map(|shape| shape.into_model())
         .map_err(|err| format!("failed to fuse the leaning boss: {err:?}"))
 }

@@ -529,5 +529,5 @@ fn a_written_spline_names_one_control_point_per_weight() {
 fn cut_block() -> Shape<SolidTag, StandardPayload> {
     let block = solids::block(10.0, 10.0, 10.0).expect("a block should build");
     let tool = solids::block(4.0, 4.0, 30.0).expect("a tool should build");
-    solids::cut(block, tool).expect("a through cut should build")
+    solids::cut(block, [&tool]).expect("a through cut should build")
 }

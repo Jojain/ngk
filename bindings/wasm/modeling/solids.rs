@@ -2,7 +2,7 @@ use js_sys::Array;
 use wasm_bindgen::prelude::*;
 
 use crate::binding_common::explore::SharedModel;
-use crate::binding_common::modeling::extrusion_direction;
+use crate::binding_common::modeling::{extrusion_direction, face_boolean, solid_boolean};
 use crate::builders::boolean::BooleanOperation;
 use crate::modeling;
 use crate::topology::shape_keys::FaceKey;
@@ -113,36 +113,44 @@ pub fn torus_at(frame: &WasmFrame, major: f64, minor: f64) -> Result<WasmSolid, 
         .and_then(wasm_solid)
 }
 
-/// Fuses two solids into a new result without mutating either input.
+/// Fuses every tool into `target`: `target ∪ t₁ ∪ … ∪ tₙ`.
+///
+/// The result is built in a copy of `target`'s model, kept whole, so the input
+/// model is never mutated and every other entity of it keeps its key. A tool
+/// from that same model is used in place; any other contributes only its own
+/// solid. The order of the tools does not matter.
+///
+/// As for every array of handles wasm-bindgen accepts, the handles in `tools`
+/// are moved into the call and cannot be used afterwards on the JS side; the
+/// solids they named are untouched and can be fetched again from their model.
 #[wasm_bindgen(js_name = fuse)]
-pub fn fuse(first: &WasmSolid, second: &WasmSolid) -> Result<WasmSolid, JsValue> {
-    combine(first, second, BooleanOperation::Union)
+pub fn fuse(target: &WasmSolid, tools: Vec<WasmSolid>) -> Result<WasmSolid, JsValue> {
+    combine(target, tools, BooleanOperation::Union)
 }
 
-/// Subtracts `tool` from `target` into a new result.
+/// Subtracts every tool from `target`: `target − (t₁ ∪ … ∪ tₙ)`, built as
+/// [`fuse`] builds its result.
 #[wasm_bindgen(js_name = cut)]
-pub fn cut(target: &WasmSolid, tool: &WasmSolid) -> Result<WasmSolid, JsValue> {
-    combine(target, tool, BooleanOperation::Difference)
+pub fn cut(target: &WasmSolid, tools: Vec<WasmSolid>) -> Result<WasmSolid, JsValue> {
+    combine(target, tools, BooleanOperation::Difference)
 }
 
-/// Returns the common volume of two solids as a new result.
+/// The volume `target` shares with every tool: `target ∩ t₁ ∩ … ∩ tₙ`, built
+/// as [`fuse`] builds its result.
 #[wasm_bindgen(js_name = intersect)]
-pub fn intersect(first: &WasmSolid, second: &WasmSolid) -> Result<WasmSolid, JsValue> {
-    combine(first, second, BooleanOperation::Intersection)
+pub fn intersect(target: &WasmSolid, tools: Vec<WasmSolid>) -> Result<WasmSolid, JsValue> {
+    combine(target, tools, BooleanOperation::Intersection)
 }
 
 fn combine(
-    first: &WasmSolid,
-    second: &WasmSolid,
+    target: &WasmSolid,
+    tools: Vec<WasmSolid>,
     operation: BooleanOperation,
 ) -> Result<WasmSolid, JsValue> {
-    modeling::solids::combine_views(
-        first.inner.view().map_err(js_err)?,
-        second.inner.view().map_err(js_err)?,
-        operation,
-    )
-    .map_err(js_err)
-    .and_then(wasm_solid)
+    let tools = tools.into_iter().map(|tool| tool.inner).collect::<Vec<_>>();
+    solid_boolean(&target.inner, &tools, operation)
+        .map_err(js_err)
+        .and_then(wasm_solid)
 }
 
 /// One face Boolean answer with all result faces in a shared model.
@@ -173,35 +181,43 @@ impl WasmFaceBooleanResult {
     }
 }
 
+/// Fuses every coplanar tool face into `target`, on the model rules of
+/// [`fuse`].
 #[wasm_bindgen(js_name = fuseFaces)]
-pub fn fuse_faces(first: &WasmFace, second: &WasmFace) -> Result<WasmFaceBooleanResult, JsValue> {
-    combine_faces(first, second, BooleanOperation::Union)
+pub fn fuse_faces(
+    target: &WasmFace,
+    tools: Vec<WasmFace>,
+) -> Result<WasmFaceBooleanResult, JsValue> {
+    combine_faces(target, tools, BooleanOperation::Union)
 }
 
+/// Subtracts every coplanar tool face from `target`, on the model rules of
+/// [`fuse`].
 #[wasm_bindgen(js_name = cutFaces)]
-pub fn cut_faces(first: &WasmFace, second: &WasmFace) -> Result<WasmFaceBooleanResult, JsValue> {
-    combine_faces(first, second, BooleanOperation::Difference)
+pub fn cut_faces(
+    target: &WasmFace,
+    tools: Vec<WasmFace>,
+) -> Result<WasmFaceBooleanResult, JsValue> {
+    combine_faces(target, tools, BooleanOperation::Difference)
 }
 
+/// The area `target` shares with every coplanar tool face, on the model rules
+/// of [`fuse`].
 #[wasm_bindgen(js_name = intersectFaces)]
 pub fn intersect_faces(
-    first: &WasmFace,
-    second: &WasmFace,
+    target: &WasmFace,
+    tools: Vec<WasmFace>,
 ) -> Result<WasmFaceBooleanResult, JsValue> {
-    combine_faces(first, second, BooleanOperation::Intersection)
+    combine_faces(target, tools, BooleanOperation::Intersection)
 }
 
 fn combine_faces(
-    first: &WasmFace,
-    second: &WasmFace,
+    target: &WasmFace,
+    tools: Vec<WasmFace>,
     operation: BooleanOperation,
 ) -> Result<WasmFaceBooleanResult, JsValue> {
-    let result = modeling::faces::combine_views(
-        first.inner.view().map_err(js_err)?,
-        second.inner.view().map_err(js_err)?,
-        operation,
-    )
-    .map_err(js_err)?;
+    let tools = tools.into_iter().map(|tool| tool.inner).collect::<Vec<_>>();
+    let result = face_boolean(&target.inner, &tools, operation).map_err(js_err)?;
     let (model, faces) = result.into_model();
     Ok(WasmFaceBooleanResult {
         model: SharedModel::from_model(model),

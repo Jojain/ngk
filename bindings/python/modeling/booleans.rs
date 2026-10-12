@@ -3,13 +3,13 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use crate::binding_common::explore::SharedModel;
+use crate::binding_common::modeling::{face_boolean, solid_boolean};
 use crate::builders::boolean::BooleanOperation;
-use crate::modeling;
 
 use super::super::topology::{PyFace, PyModel, PySolid};
 use super::common::py_solid;
 
-/// Registers the current solid Boolean operations.
+/// Registers the solid and face Boolean operations.
 ///
 /// They live in the Boolean namespace rather than the solids namespace so
 /// later dimension-generic operations keep the same Python import path.
@@ -22,6 +22,22 @@ pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(cut_faces, module)?)?;
     module.add_function(wrap_pyfunction!(intersect_faces, module)?)?;
     Ok(())
+}
+
+/// One tool, or a sequence of them.
+#[derive(FromPyObject)]
+pub(crate) enum Tools<T> {
+    One(T),
+    Many(Vec<T>),
+}
+
+impl<T> Tools<T> {
+    fn into_vec(self) -> Vec<T> {
+        match self {
+            Self::One(tool) => vec![tool],
+            Self::Many(tools) => tools,
+        }
+    }
 }
 
 /// A face Boolean result whose handles share one model.
@@ -52,37 +68,35 @@ impl PyFaceBooleanResult {
 }
 
 #[pyfunction]
-pub(crate) fn fuse_faces(first: &PyFace, second: &PyFace) -> PyResult<PyFaceBooleanResult> {
-    combine_faces(first, second, BooleanOperation::Union)
+pub(crate) fn fuse_faces(target: &PyFace, tools: Tools<PyFace>) -> PyResult<PyFaceBooleanResult> {
+    combine_faces(target, tools, BooleanOperation::Union)
 }
 
 #[pyfunction]
-pub(crate) fn cut_faces(first: &PyFace, second: &PyFace) -> PyResult<PyFaceBooleanResult> {
-    combine_faces(first, second, BooleanOperation::Difference)
+pub(crate) fn cut_faces(target: &PyFace, tools: Tools<PyFace>) -> PyResult<PyFaceBooleanResult> {
+    combine_faces(target, tools, BooleanOperation::Difference)
 }
 
 #[pyfunction]
-pub(crate) fn intersect_faces(first: &PyFace, second: &PyFace) -> PyResult<PyFaceBooleanResult> {
-    combine_faces(first, second, BooleanOperation::Intersection)
+pub(crate) fn intersect_faces(
+    target: &PyFace,
+    tools: Tools<PyFace>,
+) -> PyResult<PyFaceBooleanResult> {
+    combine_faces(target, tools, BooleanOperation::Intersection)
 }
 
 fn combine_faces(
-    first: &PyFace,
-    second: &PyFace,
+    target: &PyFace,
+    tools: Tools<PyFace>,
     operation: BooleanOperation,
 ) -> PyResult<PyFaceBooleanResult> {
-    let result = modeling::faces::combine_views(
-        first
-            .inner
-            .view()
-            .map_err(|error| PyValueError::new_err(error.to_string()))?,
-        second
-            .inner
-            .view()
-            .map_err(|error| PyValueError::new_err(error.to_string()))?,
-        operation,
-    )
-    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let tools = tools
+        .into_vec()
+        .into_iter()
+        .map(|tool| tool.inner)
+        .collect::<Vec<_>>();
+    let result = face_boolean(&target.inner, &tools, operation)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
     let (model, faces) = result.into_model();
     Ok(PyFaceBooleanResult {
         model: SharedModel::from_model(model),
@@ -91,32 +105,31 @@ fn combine_faces(
 }
 
 #[pyfunction]
-pub(crate) fn fuse(first: &PySolid, second: &PySolid) -> PyResult<PySolid> {
-    combine(first, second, BooleanOperation::Union)
+pub(crate) fn fuse(target: &PySolid, tools: Tools<PySolid>) -> PyResult<PySolid> {
+    combine(target, tools, BooleanOperation::Union)
 }
 
 #[pyfunction]
-pub(crate) fn cut(target: &PySolid, tool: &PySolid) -> PyResult<PySolid> {
-    combine(target, tool, BooleanOperation::Difference)
+pub(crate) fn cut(target: &PySolid, tools: Tools<PySolid>) -> PyResult<PySolid> {
+    combine(target, tools, BooleanOperation::Difference)
 }
 
 #[pyfunction]
-pub(crate) fn intersect(first: &PySolid, second: &PySolid) -> PyResult<PySolid> {
-    combine(first, second, BooleanOperation::Intersection)
+pub(crate) fn intersect(target: &PySolid, tools: Tools<PySolid>) -> PyResult<PySolid> {
+    combine(target, tools, BooleanOperation::Intersection)
 }
 
-fn combine(first: &PySolid, second: &PySolid, operation: BooleanOperation) -> PyResult<PySolid> {
-    modeling::solids::combine_views(
-        first
-            .inner
-            .view()
-            .map_err(|error| PyValueError::new_err(error.to_string()))?,
-        second
-            .inner
-            .view()
-            .map_err(|error| PyValueError::new_err(error.to_string()))?,
-        operation,
-    )
-    .map_err(|error| PyValueError::new_err(error.to_string()))
-    .and_then(py_solid)
+fn combine(
+    target: &PySolid,
+    tools: Tools<PySolid>,
+    operation: BooleanOperation,
+) -> PyResult<PySolid> {
+    let tools = tools
+        .into_vec()
+        .into_iter()
+        .map(|tool| tool.inner)
+        .collect::<Vec<_>>();
+    solid_boolean(&target.inner, &tools, operation)
+        .map_err(|error| PyValueError::new_err(error.to_string()))
+        .and_then(py_solid)
 }

@@ -11,12 +11,33 @@ use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use slotmap::Key;
 
 #[derive(Clone, Copy)]
-struct Bounds {
+pub(crate) struct Bounds {
     min: Point3,
     max: Point3,
 }
 
 impl Bounds {
+    /// Conservative bounds of every face in `faces`, padded by `padding`.
+    ///
+    /// `None` when any one face offers no certified bound, so a caller never
+    /// rules anything out on unverified data.
+    pub(crate) fn of_faces<P: Payload>(
+        map: &Model<P>,
+        faces: impl IntoIterator<Item = FaceKey>,
+        padding: f64,
+    ) -> Option<Self> {
+        faces
+            .into_iter()
+            .map(|face| enclosing_bounds(map.face_unchecked(face), padding))
+            .reduce(|a, b| Some(a?.union(b?)))
+            .flatten()
+    }
+
+    /// Whether `point` lies inside these bounds or on them.
+    pub(crate) fn contains(self, point: Point3) -> bool {
+        (0..3).all(|axis| self.min[axis] <= point[axis] && point[axis] <= self.max[axis])
+    }
+
     /// Includes all supplied points; invalid data forces the unbounded fallback.
     fn from_points(points: impl IntoIterator<Item = Point3>, padding: f64) -> Option<Self> {
         let mut points = points.into_iter();
@@ -43,7 +64,7 @@ impl Bounds {
         Some(bounds)
     }
 
-    fn overlaps(self, other: Self) -> bool {
+    pub(crate) fn overlaps(self, other: Self) -> bool {
         (0..3).all(|axis| self.min[axis] <= other.max[axis] && other.min[axis] <= self.max[axis])
     }
 
@@ -183,6 +204,32 @@ fn face_bounds<P: Payload>(face: Face<'_, P>, padding: f64) -> Option<Bounds> {
         }
     }
     Bounds::from_points(points, padding)
+}
+
+/// Bounds that contain the whole face, wherever its region reaches.
+///
+/// The trim box [`face_bounds`] reads off the pcurves holds the face only when
+/// some loop encloses it from outside. A face whose loops are all holes covers
+/// the rest of its support, and a cap runs past its one loop to a pole, so both
+/// reach beyond every pcurve; those are bounded by their whole support's
+/// domain, which only a closed support offers.
+fn enclosing_bounds<P: Payload>(face: Face<'_, P>, padding: f64) -> Option<Bounds> {
+    let loops = face.loops();
+    let encloses = loops
+        .iter()
+        .any(|boundary| matches!(boundary.kind(), LoopKind::Outer | LoopKind::Wrapping { .. }));
+    let caps = loops
+        .iter()
+        .any(|boundary| matches!(boundary.kind(), LoopKind::Capping { .. }));
+    if encloses && !caps {
+        return face_bounds(face, padding);
+    }
+    let (u, v) = face.surface().domain();
+    let (u, v) = (u.ordered(), v.ordered());
+    if !(u.is_finite() && v.is_finite()) {
+        return None;
+    }
+    Bounds::from_points(face.surface().bbox_over(u, v)?.corners()?, padding)
 }
 
 struct FaceBvh {

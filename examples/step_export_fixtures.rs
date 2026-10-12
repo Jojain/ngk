@@ -82,7 +82,7 @@ fn main() {
     // than recognized.
     let block = solids::block(10.0, 10.0, 10.0).expect("a block should build");
     let tool = solids::block(4.0, 4.0, 30.0).expect("a tool should build");
-    let cut = solids::cut(block, tool).expect("a through cut should build");
+    let cut = solids::cut(block, [&tool]).expect("a through cut should build");
     write(
         "cut_block.step",
         step_to_string(&cut, &StepWriteOptions::named("CUT_BLOCK"))

@@ -17,6 +17,8 @@ mod boolean_clip;
 mod boolean_faces;
 #[path = "builders/boolean_network.rs"]
 mod boolean_network;
+#[path = "builders/boolean_tools.rs"]
+mod boolean_tools;
 #[path = "builders/boolean_trim.rs"]
 mod boolean_trim;
 #[path = "builders/chamfer.rs"]

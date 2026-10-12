@@ -102,9 +102,9 @@ fn thread() -> Solid {
 
 fn main() {
     let started = Instant::now();
-    let bolt = fuse(head(), body()).expect("head and body should fuse");
-    let bolt = fuse(bolt, core()).expect("body and core should fuse");
-    let bolt = fuse(bolt, thread()).expect("thread should fuse onto the core");
+    let bolt = fuse(head(), [&body()]).expect("head and body should fuse");
+    let bolt = fuse(bolt, [&core()]).expect("body and core should fuse");
+    let bolt = fuse(bolt, [&thread()]).expect("thread should fuse onto the core");
     let elapsed = started.elapsed();
 
     validate_solid_orientation(bolt.model(), bolt.key()).expect("bolt should face outward");

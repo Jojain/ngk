@@ -150,7 +150,7 @@ fn assert_close(actual: f64, expected: f64) {
 #[test]
 fn hex_head_fuses_flush_onto_the_body() {
     let expected = volume(&head()) + volume(&body());
-    let fused = fuse(head(), body()).expect("head and body should fuse");
+    let fused = fuse(head(), [&body()]).expect("head and body should fuse");
 
     assert_valid(&fused);
     assert_close(volume(&fused), expected);
@@ -159,7 +159,7 @@ fn hex_head_fuses_flush_onto_the_body() {
 #[test]
 fn stepped_shank_fuses_flush_between_two_coaxial_cylinders() {
     let expected = volume(&body()) + volume(&core());
-    let fused = fuse(body(), core()).expect("body and core should fuse");
+    let fused = fuse(body(), [&core()]).expect("body and core should fuse");
 
     assert_valid(&fused);
     assert_close(volume(&fused), expected);
@@ -169,8 +169,8 @@ fn stepped_shank_fuses_flush_between_two_coaxial_cylinders() {
 fn thread_fuses_onto_the_core() {
     show(&thread());
     let expected = volume(&core()) + volume(&thread());
-    let common = volume(&intersect(core(), thread()).expect("core and thread should intersect"));
-    let fused = fuse(core(), thread()).expect("core and thread should fuse");
+    let common = volume(&intersect(core(), [&thread()]).expect("core and thread should intersect"));
+    let fused = fuse(core(), [&thread()]).expect("core and thread should fuse");
     show(&fused);
     assert_valid(&fused);
     assert!(common > 0.0, "the thread's base is sunk into the core");
@@ -179,9 +179,9 @@ fn thread_fuses_onto_the_core() {
 
 #[test]
 fn bolt_is_one_closed_solid() {
-    let bolt = fuse(head(), body()).expect("head and body should fuse");
-    let bolt = fuse(bolt, core()).expect("body and core should fuse");
-    let bolt = fuse(bolt, thread()).expect("thread should fuse onto the core");
+    let bolt = fuse(head(), [&body()]).expect("head and body should fuse");
+    let bolt = fuse(bolt, [&core()]).expect("body and core should fuse");
+    let bolt = fuse(bolt, [&thread()]).expect("thread should fuse onto the core");
     show(&bolt);
 
     assert_valid(&bolt);
@@ -207,8 +207,8 @@ fn bolt_meshes_with_every_edge_lying_on_its_faces() {
         surface: SurfaceOpts { nu: 64, nv: 32 },
     };
     let bolt = fuse(
-        fuse(fuse(head(), body()).unwrap(), core()).unwrap(),
-        thread(),
+        fuse(fuse(head(), [&body()]).unwrap(), [&core()]).unwrap(),
+        [&thread()],
     )
     .unwrap();
     let model = bolt.model();
@@ -242,8 +242,8 @@ fn bolt_writes_its_thread_strip_into_the_core_walls_outer_bound() {
     use ngk::exchange::step::{StepWriteOptions, step_to_string};
 
     let bolt = fuse(
-        fuse(fuse(head(), body()).unwrap(), core()).unwrap(),
-        thread(),
+        fuse(fuse(head(), [&body()]).unwrap(), [&core()]).unwrap(),
+        [&thread()],
     )
     .unwrap();
     let text =
@@ -260,8 +260,8 @@ fn bolt_survives_a_step_round_trip() {
     use ngk::exchange::step::{StepReadOptions, StepWriteOptions, read_step_file, write_step_file};
 
     let bolt = fuse(
-        fuse(fuse(head(), body()).unwrap(), core()).unwrap(),
-        thread(),
+        fuse(fuse(head(), [&body()]).unwrap(), [&core()]).unwrap(),
+        [&thread()],
     )
     .unwrap();
     let path = std::env::temp_dir().join("ngk_part_bolt.step");

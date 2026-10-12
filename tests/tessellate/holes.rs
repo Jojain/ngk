@@ -23,7 +23,7 @@ fn drilled(plate: Shape<SolidTag>, hole: usize) -> Shape<SolidTag> {
         Vector3::z(),
     );
     let tool = solids::cylinder_at(frame, RADIUS, 12.0).expect("cylinder builds");
-    solids::cut(plate, tool).expect("cut builds")
+    solids::cut(plate, [&tool]).expect("cut builds")
 }
 
 fn hole_centres(holes: usize) -> impl Iterator<Item = (f64, f64)> {

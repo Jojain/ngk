@@ -86,7 +86,7 @@ fn a_cylinder_fused_onto_a_block_meets_the_rims_it_shares_with_it() {
     let block = solids::block(2.0, 2.0, 1.0).expect("block");
     let cylinder =
         solids::cylinder_at(Frame::at(Point3::new(1.0, 1.0, 0.5)), 0.5, 1.5).expect("cylinder");
-    let fused = solids::fuse(block, cylinder).expect("fuse");
+    let fused = solids::fuse(block, [&cylinder]).expect("fuse");
 
     assert_edges_are_face_vertices(fused.model(), 1e-9);
 }

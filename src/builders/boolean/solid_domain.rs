@@ -13,10 +13,8 @@ use crate::topology::payload::Payload;
 use crate::topology::shape_keys::FaceKey;
 
 use super::classify::{SolidRayCaster, probe};
-use super::domain::{BooleanDomain, RelativeLocation, Selection};
-use super::{
-    BooleanError, BooleanLineage, BooleanOperation, BooleanOptions, BooleanSide, BooleanTolerances,
-};
+use super::domain::{BooleanDomain, Membership, RelativeLocation};
+use super::{BooleanError, BooleanLineage, BooleanOptions, BooleanTolerances};
 
 /// Marker for the solid domain; carries no state of its own.
 pub(crate) struct SolidDomain;
@@ -43,34 +41,20 @@ impl BooleanDomain for SolidDomain {
         Ok((point, normal))
     }
 
-    /// The regularized boundary table, retaining A's copy of same-oriented
-    /// coincidence.
-    ///
-    /// Every rule is about which side of the *other* solid a piece of boundary
-    /// falls on, because the result's boundary is assembled from exactly those
-    /// pieces. A difference borrows the second operand's boundary and must
-    /// turn it around, which is the one reversal in the family.
-    fn keeps(
-        operation: BooleanOperation,
-        side: BooleanSide,
-        location: RelativeLocation,
-    ) -> Selection {
-        use BooleanOperation::{Difference, Intersection, Union};
-        use BooleanSide::{First, Second};
-        use RelativeLocation::{Inside, OnBoundaryOpposite, OnBoundarySame, Outside};
-        let keep = matches!(
-            (operation, side, location),
-            (Union, _, Outside)
-                | (Union, First, OnBoundarySame)
-                | (Intersection, _, Inside)
-                | (Intersection, First, OnBoundarySame)
-                | (Difference, First, Outside | OnBoundaryOpposite)
-                | (Difference, Second, Inside)
-        );
-        match (keep, operation == Difference && side == Second) {
-            (true, true) => Selection::KeepReversed,
-            (true, false) => Selection::Keep,
-            (false, _) => Selection::Drop,
+    /// A piece of boundary has the other solid on both of its sides, on
+    /// neither, or -- where the two boundaries coincide -- on exactly one,
+    /// which their relative facing names.
+    fn membership(location: RelativeLocation) -> Membership {
+        let (front, behind, coincident) = match location {
+            RelativeLocation::Inside => (true, true, false),
+            RelativeLocation::Outside => (false, false, false),
+            RelativeLocation::OnBoundarySame => (false, true, true),
+            RelativeLocation::OnBoundaryOpposite => (true, false, true),
+        };
+        Membership {
+            front,
+            behind,
+            coincident,
         }
     }
 

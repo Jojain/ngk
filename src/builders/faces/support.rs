@@ -524,68 +524,101 @@ pub(crate) struct FaceImprintCut {
 }
 
 impl FaceImprintCut {
-    /// Follows a nonbranching path from one boundary corner to another.
+    /// Follows a path of imprints from one boundary corner to another.
+    ///
+    /// A path that branches nowhere is preferred, so imprints that are plain
+    /// chords are cut as they stand. Only when none is left is a path walked
+    /// through a junction: imprints that meet inside the face -- the edges two
+    /// adjacent faces of one operand share, imprinted on another face -- form
+    /// a tree no single chord covers. Any path through it from boundary to
+    /// boundary still splits the face, and the corners it leaves on the new
+    /// boundary are where the remaining branches start their own chords.
     pub(crate) fn from_chain(
         imprints: &[FaceImprint],
         boundary: &[BoundaryCorner],
         placed: &[[Option<VertexKey>; 2]],
     ) -> Result<Option<Self>, NurbsError> {
-        for (index, imprint) in imprints.iter().enumerate() {
-            for reversed in [false, true] {
-                let slot = usize::from(reversed);
-                let uv = imprint
-                    .pcurve
-                    .point_at(Fraction::new(if reversed { 1.0 } else { 0.0 }));
-                let Some(start) = imprint_endpoint_corner(boundary, placed[index][slot], uv) else {
-                    continue;
-                };
-                if let Some(cut) = Self::follow(imprints, boundary, placed, start, index, reversed)?
-                {
-                    return Ok(Some(cut));
+        for through_junctions in [false, true] {
+            for (index, imprint) in imprints.iter().enumerate() {
+                for reversed in [false, true] {
+                    let slot = usize::from(reversed);
+                    let uv =
+                        imprint
+                            .pcurve
+                            .point_at(Fraction::new(if reversed { 1.0 } else { 0.0 }));
+                    let Some(start) = imprint_endpoint_corner(boundary, placed[index][slot], uv)
+                    else {
+                        continue;
+                    };
+                    let mut path = ChordPath {
+                        imprints,
+                        boundary,
+                        placed,
+                        start,
+                        through_junctions,
+                        visited: HashSet::new(),
+                        sections: Vec::new(),
+                    };
+                    if let Some(cut) = path.follow((index, reversed))? {
+                        return Ok(Some(cut));
+                    }
                 }
             }
         }
         Ok(None)
     }
+}
 
-    /// Stops at boundary vertices or ambiguous junctions rather than inventing a path.
-    pub(crate) fn follow(
-        imprints: &[FaceImprint],
-        boundary: &[BoundaryCorner],
-        placed: &[[Option<VertexKey>; 2]],
-        start: usize,
-        index: usize,
-        reversed: bool,
-    ) -> Result<Option<Self>, NurbsError> {
-        let mut next = (index, reversed);
-        let mut sections = Vec::new();
-        let mut visited = HashSet::new();
-        loop {
-            let (index, reversed) = next;
-            if !visited.insert(index) {
-                return Ok(None);
+/// One walk from a boundary corner along imprints, in progress.
+struct ChordPath<'a> {
+    imprints: &'a [FaceImprint],
+    boundary: &'a [BoundaryCorner],
+    placed: &'a [[Option<VertexKey>; 2]],
+    start: usize,
+    /// Whether a junction is walked through, each branch in turn, rather than
+    /// ending the walk.
+    through_junctions: bool,
+    visited: HashSet<usize>,
+    sections: Vec<(usize, bool, FaceImprint)>,
+}
+
+impl ChordPath<'_> {
+    /// Extends the walk by `next`, and on to a boundary corner if one is
+    /// reachable.
+    ///
+    /// Stops at boundary vertices rather than inventing a path, and at a
+    /// junction too unless junctions are being walked through.
+    fn follow(
+        &mut self,
+        (index, reversed): (usize, bool),
+    ) -> Result<Option<FaceImprintCut>, NurbsError> {
+        if !self.visited.insert(index) {
+            return Ok(None);
+        }
+        let imprint = if reversed {
+            self.imprints[index].reversed()?
+        } else {
+            self.imprints[index].clone()
+        };
+        let end_uv = imprint.pcurve.point_at(Fraction::new(1.0));
+        self.sections.push((index, reversed, imprint));
+        let end_slot = usize::from(!reversed);
+        if let Some(end) =
+            imprint_endpoint_corner(self.boundary, self.placed[index][end_slot], end_uv)
+        {
+            if valid_chord(self.start, end, self.boundary, &self.sections) {
+                return Ok(Some(FaceImprintCut {
+                    start_corner: self.start,
+                    end_corner: end,
+                    sections: self.sections.clone(),
+                }));
             }
-            let imprint = if reversed {
-                imprints[index].reversed()?
-            } else {
-                imprints[index].clone()
-            };
-            let end_uv = imprint.pcurve.point_at(Fraction::new(1.0));
-            sections.push((index, reversed, imprint));
-            let end_slot = usize::from(!reversed);
-            if let Some(end) = imprint_endpoint_corner(boundary, placed[index][end_slot], end_uv) {
-                return Ok(
-                    valid_chord(start, end, boundary, &sections).then_some(Self {
-                        start_corner: start,
-                        end_corner: end,
-                        sections,
-                    }),
-                );
-            }
-            let candidates = imprints
+        } else {
+            let candidates = self
+                .imprints
                 .iter()
                 .enumerate()
-                .filter(|(index, _)| !visited.contains(index))
+                .filter(|(index, _)| !self.visited.contains(index))
                 .flat_map(|(index, imprint)| {
                     [false, true].into_iter().filter_map(move |reversed| {
                         ((imprint.pcurve.point_at(if reversed {
@@ -599,11 +632,17 @@ impl FaceImprintCut {
                     })
                 })
                 .collect::<Vec<_>>();
-            if candidates.len() != 1 {
-                return Ok(None);
+            if candidates.len() == 1 || self.through_junctions {
+                for candidate in candidates {
+                    if let Some(cut) = self.follow(candidate)? {
+                        return Ok(Some(cut));
+                    }
+                }
             }
-            next = candidates[0];
         }
+        self.sections.pop();
+        self.visited.remove(&index);
+        Ok(None)
     }
 }
 

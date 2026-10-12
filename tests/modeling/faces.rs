@@ -150,7 +150,7 @@ fn face_intersection_returns_one_model_and_all_result_handles() {
     )
     .expect("second face");
 
-    let result = faces::intersect(first, second).expect("intersection");
+    let result = faces::intersect(first, [&second]).expect("intersection");
     assert_eq!(result.face_keys().len(), 1);
     assert_eq!(result.model().iter_faces().count(), 1);
     assert!((result.faces()[0].area().expect("area") - 1.0).abs() < 1e-9);

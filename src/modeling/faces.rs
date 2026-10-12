@@ -8,7 +8,8 @@ use crate::geometry::{Fraction, Plane, Point3};
 use crate::model::Cell2;
 use crate::model::Model;
 use crate::modeling::edges::EdgeSplitResult;
-use crate::topology::ModelEditError;
+use crate::modeling::import::import_tools;
+use crate::topology::ModelEdit;
 use crate::topology::face::Face;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
@@ -140,6 +141,10 @@ pub struct FaceBooleanResult<P: Payload = StandardPayload> {
 }
 
 impl<P: Payload> FaceBooleanResult<P> {
+    pub(crate) fn new(model: Model<P>, faces: Vec<FaceKey>) -> Self {
+        Self { model, faces }
+    }
+
     pub fn model(&self) -> &Model<P> {
         &self.model
     }
@@ -160,80 +165,69 @@ impl<P: Payload> FaceBooleanResult<P> {
     }
 }
 
-/// Fuses two owned coplanar faces, returning every surviving face in one model.
-pub fn fuse<P: Payload>(
-    first: Shape<FaceTag, P>,
-    second: Shape<FaceTag, P>,
+/// Fuses every tool into `target`, all on one plane: `target ∪ t₁ ∪ … ∪ tₙ`.
+///
+/// Called as `fuse(target, [&tool])` for one tool. The result is built in
+/// `target`'s model, kept whole, so every other face of it is still there with
+/// its key; each tool contributes only its face, copied in. Every surviving
+/// face is returned.
+pub fn fuse<'a, P: Payload>(
+    target: Shape<FaceTag, P>,
+    tools: impl IntoIterator<Item = &'a Shape<FaceTag, P>>,
 ) -> Result<FaceBooleanResult<P>, BooleanError> {
-    combine_shapes(first, second, BooleanOperation::Union)
+    combine(target, tools, BooleanOperation::Union)
 }
 
-/// Subtracts the second owned coplanar face from the first.
-pub fn cut<P: Payload>(
-    first: Shape<FaceTag, P>,
-    second: Shape<FaceTag, P>,
+/// Subtracts every tool from `target`: `target − (t₁ ∪ … ∪ tₙ)`.
+///
+/// See [`fuse`] for where the result is built.
+pub fn cut<'a, P: Payload>(
+    target: Shape<FaceTag, P>,
+    tools: impl IntoIterator<Item = &'a Shape<FaceTag, P>>,
 ) -> Result<FaceBooleanResult<P>, BooleanError> {
-    combine_shapes(first, second, BooleanOperation::Difference)
+    combine(target, tools, BooleanOperation::Difference)
 }
 
-/// Intersects two owned coplanar faces.
-pub fn intersect<P: Payload>(
-    first: Shape<FaceTag, P>,
-    second: Shape<FaceTag, P>,
+/// The area `target` shares with every tool: `target ∩ t₁ ∩ … ∩ tₙ`.
+///
+/// See [`fuse`] for where the result is built.
+pub fn intersect<'a, P: Payload>(
+    target: Shape<FaceTag, P>,
+    tools: impl IntoIterator<Item = &'a Shape<FaceTag, P>>,
 ) -> Result<FaceBooleanResult<P>, BooleanError> {
-    combine_shapes(first, second, BooleanOperation::Intersection)
+    combine(target, tools, BooleanOperation::Intersection)
 }
 
-fn combine_shapes<P: Payload>(
-    first: Shape<FaceTag, P>,
-    second: Shape<FaceTag, P>,
+/// Copies each tool's face into `target`'s model and evaluates one Boolean
+/// there.
+fn combine<'a, P: Payload>(
+    target: Shape<FaceTag, P>,
+    tools: impl IntoIterator<Item = &'a Shape<FaceTag, P>>,
     operation: BooleanOperation,
 ) -> Result<FaceBooleanResult<P>, BooleanError> {
-    let (mut model, first_key) = first.into_model();
-    let (second_model, second_key) = second.into_model();
-    let second_key = model.transaction(|edit| {
-        let dart = edit.merge(second_model.face_unchecked(second_key));
-        Ok::<_, ModelEditError>(edit.cell_key_unchecked::<Cell2>(dart))
-    })?;
+    let (mut model, target) = target.into_model();
+    let tools = tools.into_iter().collect::<Vec<_>>();
+    let tools = import_tools(
+        &mut model,
+        &tools,
+        |a, b| std::ptr::eq(*a, *b),
+        |edit, tool| copy_face(edit, tool.face()),
+    )?;
     let result = face_boolean(
         &mut model,
-        first_key,
-        second_key,
+        target,
+        &tools,
         operation,
         BooleanOptions::default(),
     )?;
-    Ok(FaceBooleanResult {
-        model,
-        faces: result.faces,
-    })
+    Ok(FaceBooleanResult::new(model, result.faces))
 }
 
-/// Copies two borrowed face views and evaluates their Boolean in one model.
-pub(crate) fn combine_views<P: Payload>(
-    first: Face<'_, P>,
-    second: Face<'_, P>,
-    operation: BooleanOperation,
-) -> Result<FaceBooleanResult<P>, BooleanError> {
-    let mut model = Model::new();
-    let (first_key, second_key) = model.transaction(|edit| {
-        let first_dart = edit.merge(first);
-        let second_dart = edit.merge(second);
-        Ok::<_, ModelEditError>((
-            edit.cell_key_unchecked::<Cell2>(first_dart),
-            edit.cell_key_unchecked::<Cell2>(second_dart),
-        ))
-    })?;
-    let result = face_boolean(
-        &mut model,
-        first_key,
-        second_key,
-        operation,
-        BooleanOptions::default(),
-    )?;
-    Ok(FaceBooleanResult {
-        model,
-        faces: result.faces,
-    })
+/// Copies one face, with the entities that bound it and nothing else of its model, and
+/// returns its key in the model being edited.
+pub(crate) fn copy_face<P: Payload>(edit: &mut ModelEdit<'_, P>, face: Face<'_, P>) -> FaceKey {
+    let dart = edit.merge(face);
+    edit.cell_key_unchecked::<Cell2>(dart)
 }
 
 /// Cuts a boundary edge and all incident face pcurves in one owned model.

@@ -1,10 +1,10 @@
 //! What one Boolean operation runs on, stated without naming a dimension.
 //!
-//! An operation has two operands. Splitting replaces each operand's cells with
-//! the pieces the other operand cut them into, and `BooleanLineage` records
-//! which source cell each piece came from. The boolean code calls one such
-//! piece a **fragment**, and `BoundaryFragment` in `super::neighborhood` is the
-//! record of one.
+//! An operation has one target and any number of tools, and every one of them
+//! is an operand. Splitting replaces each operand's cells with the pieces every
+//! other operand cut them into, and `BooleanLineage` records which source cell
+//! each piece came from. The boolean code calls one such piece a **fragment**,
+//! and `BoundaryFragment` in `super::neighborhood` is the record of one.
 //!
 //! Which cells those are depends on the operand. `operand_cells` gives a solid
 //! its boundary faces, so a solid's fragments are pieces of its boundary. It
@@ -13,7 +13,7 @@
 //! `super::planar_domain` for what follows from the difference.
 //!
 //! The stages between splitting and assembly -- grouping fragments, locating
-//! each one against the other operand, and deciding which survive -- are
+//! each one against the other operands, and deciding which survive -- are
 //! written against `BooleanDomain` so that they need not know which of those
 //! two cases they are running.
 
@@ -26,24 +26,22 @@ use crate::geometry::Point3;
 use crate::model::Model;
 use crate::topology::payload::Payload;
 
-use super::{
-    BooleanError, BooleanLineage, BooleanOperation, BooleanOptions, BooleanSide, BooleanTolerances,
-};
+use super::{BooleanError, BooleanLineage, BooleanOptions, BooleanTolerances};
 
-/// What the operation table does with one classified fragment.
+/// What the operation does with one classified fragment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Selection {
     Keep,
     /// Kept, but bounding the result the other way round than it bounds its
-    /// own operand — the second operand's boundary under a difference.
+    /// own operand — a tool's boundary under a difference.
     KeepReversed,
     Drop,
 }
 
 /// Where a point sits relative to one whole operand.
 ///
-/// The same four answers serve a solid and a face, so every domain's table
-/// reads them without knowing which kind of operand produced them.
+/// The same four answers serve a solid and a face, so selection reads them
+/// without knowing which kind of operand produced them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RelativeLocation {
     Inside,
@@ -52,6 +50,29 @@ pub(crate) enum RelativeLocation {
     OnBoundarySame,
     /// On the operand's boundary, with the two boundaries facing opposite ways.
     OnBoundaryOpposite,
+}
+
+/// Whether the points just either side of a fragment belong to one operand.
+///
+/// "In front" is the side the fragment's own operand faces away from, "behind"
+/// the side it encloses. Selection evaluates the operation on both sides, and a
+/// fragment bounds the result exactly where the two answers differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Membership {
+    pub(crate) front: bool,
+    pub(crate) behind: bool,
+    /// The fragment also lies on this operand's own boundary, so this operand
+    /// holds a copy of it and only one of the copies may be kept.
+    pub(crate) coincident: bool,
+}
+
+impl Membership {
+    /// A fragment's own operand: outside in front of it, inside behind it.
+    pub(crate) const OWN: Self = Self {
+        front: false,
+        behind: true,
+        coincident: false,
+    };
 }
 
 /// Answers where a point lies relative to the operand it was built from.
@@ -75,12 +96,11 @@ pub(crate) trait OperandClassifier<F> {
     ) -> Result<RelativeLocation, BooleanError>;
 }
 
-/// One kind of operand pair a regularized Boolean is defined on.
+/// One kind of operand a regularized Boolean is defined on.
 ///
 /// Implementors supply what the shared stages cannot derive: which cells an
-/// operand's fragments are, how two fragments are adjacent, which cells the
-/// section barred between them, how to ask the other operand where a point
-/// lies, and which fragments each operation keeps.
+/// operand's fragments are, how to ask another operand where a point lies, and
+/// what a location says about the points either side of a fragment.
 pub(crate) trait BooleanDomain {
     /// One piece an operand's cell was split into, kept or dropped whole.
     ///
@@ -109,13 +129,9 @@ pub(crate) trait BooleanDomain {
         tolerances: BooleanTolerances,
     ) -> Result<(Point3, Vector3<f64>), BooleanError>;
 
-    /// Whether a fragment on `side`, located at `location`, survives
-    /// `operation`.
-    fn keeps(
-        operation: BooleanOperation,
-        side: BooleanSide,
-        location: RelativeLocation,
-    ) -> Selection;
+    /// What a fragment located at `location` against another operand says
+    /// about that operand on either side of the fragment.
+    fn membership(location: RelativeLocation) -> Membership;
 
     /// Builds the classifier for the operand `lineage` describes.
     fn classifier<'a, P: Payload>(

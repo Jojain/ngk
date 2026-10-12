@@ -31,7 +31,7 @@ fn overlapping_squares() -> (Model, FaceKey, FaceKey) {
             let dart = edit.merge(second_map.face_unchecked(second));
             Ok::<_, ModelEditError>(edit.cell_key_unchecked::<Cell2>(dart))
         })
-        .expect("merge second operand");
+        .expect("merge the tool");
     (map, first, second)
 }
 
@@ -49,7 +49,7 @@ fn intersection_keeps_only_the_shared_square() {
     let result = face_boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Intersection,
         BooleanOptions::default(),
     )
@@ -63,12 +63,12 @@ fn intersection_keeps_only_the_shared_square() {
 }
 
 #[test]
-fn difference_keeps_only_the_first_operands_l_shape() {
+fn difference_keeps_only_the_targets_l_shape() {
     let (mut map, first, second) = overlapping_squares();
     let result = face_boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )
@@ -80,25 +80,25 @@ fn difference_keeps_only_the_first_operands_l_shape() {
     );
 }
 
-/// The second operand is consumed, and nothing of it is left behind.
+/// The tool is consumed, and nothing of it is left behind.
 ///
-/// Both surviving rules drop every face descended from the second operand, so
-/// after either operation the model holds only the answer.
+/// Neither operation keeps any area of the tool's, so every face descended from
+/// it is dropped and the model holds only the answer.
 #[test]
-fn the_second_operand_is_removed_entirely() {
+fn the_tool_is_removed_entirely() {
     for operation in [BooleanOperation::Intersection, BooleanOperation::Difference] {
         let (mut map, first, second) = overlapping_squares();
         let result = face_boolean(
             &mut map,
             first,
-            second,
+            &[second],
             operation,
             BooleanOptions::default(),
         )
         .expect("operation");
         assert!(
             map.face(second).is_none(),
-            "{operation:?} left the second operand registered"
+            "{operation:?} left the tool registered"
         );
         assert_eq!(
             map.iter_faces().count(),
@@ -108,45 +108,55 @@ fn the_second_operand_is_removed_entirely() {
     }
 }
 
-/// Every reported face descends from the first operand, and says so.
+/// Every reported face descends from the target, and says so.
 #[test]
 fn survivors_are_reported_against_their_source_face() {
     let (mut map, first, second) = overlapping_squares();
     let result = face_boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )
     .expect("difference");
-    let sources = result.lineage.faces.keys().copied().collect::<Vec<_>>();
-    assert_eq!(sources, vec![first], "only the first operand is a source");
-    let reported = result.lineage.faces[&first].clone();
+    let sources = result
+        .lineage
+        .target
+        .faces
+        .keys()
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(sources, vec![first], "only the target is a source");
+    assert!(
+        result.lineage.tools[0].faces.is_empty(),
+        "only the target is a source"
+    );
+    let reported = result.lineage.target.faces[&first].clone();
     assert_eq!(reported, result.faces, "lineage and answer must agree");
 }
 
-/// The first operand keeps its identity: trimming it does not rename it.
+/// The target keeps its identity: trimming it does not rename it.
 ///
 /// `split_face_by_imprints` retains the source face's key on one of the two
-/// pieces it makes, so an operation that only trims the first operand can hand
+/// pieces it makes, so an operation that only trims the target can hand
 /// back the same `FaceKey` the caller passed in. Whichever piece inherits that
 /// key must be one the operation kept.
 #[test]
-fn the_first_operand_keeps_its_key() {
+fn the_target_keeps_its_key() {
     for operation in [BooleanOperation::Intersection, BooleanOperation::Difference] {
         let (mut map, first, second) = overlapping_squares();
         let result = face_boolean(
             &mut map,
             first,
-            second,
+            &[second],
             operation,
             BooleanOptions::default(),
         )
         .expect("operation");
         assert!(
             result.faces.contains(&first),
-            "{operation:?} dropped the first operand's own key; kept {:?}",
+            "{operation:?} dropped the target's own key; kept {:?}",
             result.faces
         );
     }
@@ -164,11 +174,11 @@ fn faces_on_different_planes_are_refused() {
             let dart = edit.merge(second_map.face_unchecked(second));
             Ok::<_, ModelEditError>(edit.cell_key_unchecked::<Cell2>(dart))
         })
-        .expect("merge second operand");
+        .expect("merge the tool");
     let error = face_boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Intersection,
         BooleanOptions::default(),
     )
@@ -190,7 +200,7 @@ fn union_covers_both_operands_as_one_face() {
     let result = face_boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )
@@ -214,12 +224,19 @@ fn union_reports_both_operands_as_sources() {
     let result = face_boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )
     .expect("union");
-    let mut sources = result.lineage.faces.keys().copied().collect::<Vec<_>>();
+    let mut sources = result
+        .lineage
+        .target
+        .faces
+        .keys()
+        .chain(result.lineage.tools[0].faces.keys())
+        .copied()
+        .collect::<Vec<_>>();
     sources.sort();
     let mut expected = vec![first, second];
     expected.sort();
@@ -268,7 +285,7 @@ fn difference_with_a_contained_face_leaves_a_hole() {
     let result = face_boolean(
         &mut map,
         outer,
-        inner,
+        &[inner],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )
@@ -288,7 +305,7 @@ fn intersection_with_a_contained_face_returns_the_inner_square() {
     let result = face_boolean(
         &mut map,
         outer,
-        inner,
+        &[inner],
         BooleanOperation::Intersection,
         BooleanOptions::default(),
     )
@@ -302,16 +319,16 @@ fn intersection_with_a_contained_face_returns_the_inner_square() {
 
 /// Uniting with a contained face changes nothing about the outer one.
 ///
-/// Every face of the second operand lies inside the first, so the union rule
-/// keeps none of them, and healing fuses the two pieces the imprint made back
-/// into the face they came from.
+/// Every face of the tool lies inside the target, which already holds that
+/// area, so selection keeps none of them, and healing fuses the two pieces the
+/// imprint made back into the face they came from.
 #[test]
 fn union_with_a_contained_face_returns_the_outer_square() {
     let (mut map, outer, inner) = nested_squares();
     let result = face_boolean(
         &mut map,
         outer,
-        inner,
+        &[inner],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )
@@ -336,8 +353,8 @@ fn edge_to_edge_squares() -> (Model, FaceKey, FaceKey) {
 ///
 /// What the two share is a segment, which is not a face: the answer would be a
 /// cell of lower dimension than the operands, and a regularized Boolean has no
-/// such answer. Every face of the first operand lies outside the second, so the
-/// table keeps nothing and the operation reports an empty result rather than
+/// such answer. Every face of the target lies outside the tool, so selection
+/// keeps nothing and the operation reports an empty result rather than
 /// returning the seam.
 #[test]
 fn intersecting_faces_that_only_touch_is_empty() {
@@ -345,7 +362,7 @@ fn intersecting_faces_that_only_touch_is_empty() {
     let error = face_boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Intersection,
         BooleanOptions::default(),
     )
@@ -358,7 +375,7 @@ fn intersecting_faces_that_only_touch_is_empty() {
 
 /// A failed operation leaves the model exactly as it was.
 ///
-/// Preparation splits both operands before the table can find the answer empty,
+/// Preparation splits both operands before selection can find the answer empty,
 /// so the rollback is what keeps an empty intersection from consuming them.
 #[test]
 fn an_empty_intersection_rolls_back_both_operands() {
@@ -367,7 +384,7 @@ fn an_empty_intersection_rolls_back_both_operands() {
     let _ = face_boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Intersection,
         BooleanOptions::default(),
     );
@@ -376,11 +393,8 @@ fn an_empty_intersection_rolls_back_both_operands() {
         before,
         "rollback left faces behind"
     );
-    assert!(map.face(first).is_some(), "the first operand was consumed");
-    assert!(
-        map.face(second).is_some(),
-        "the second operand was consumed"
-    );
+    assert!(map.face(first).is_some(), "the target was consumed");
+    assert!(map.face(second).is_some(), "the tool was consumed");
 }
 
 /// Subtracting a face that only touches changes nothing.
@@ -390,15 +404,15 @@ fn difference_with_a_touching_face_is_unchanged() {
     let result = face_boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )
     .expect("difference");
-    assert_eq!(result.faces, vec![first], "the first operand is untouched");
+    assert_eq!(result.faces, vec![first], "the target is untouched");
     assert!(
         (reported_area(&map, &result.faces) - 4.0).abs() < 1e-9,
-        "expected the first operand's own area, got {}",
+        "expected the target's own area, got {}",
         reported_area(&map, &result.faces)
     );
 }
@@ -410,7 +424,7 @@ fn union_of_touching_faces_covers_both() {
     let result = face_boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )

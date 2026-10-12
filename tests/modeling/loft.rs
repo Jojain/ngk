@@ -113,7 +113,7 @@ fn two_crossing_lofts_fuse_into_one_closed_solid() {
         1.0,
     );
 
-    let fused = fuse(upright, sideways).expect("two crossing lofts should fuse");
+    let fused = fuse(upright, [&sideways]).expect("two crossing lofts should fuse");
 
     assert_eq!(fused.solid().faces().len(), 16);
     validate_solid_manifold(fused.model(), fused.key()).expect("the fusion should be manifold");

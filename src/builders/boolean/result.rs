@@ -99,6 +99,40 @@ pub enum BooleanOperation {
     Difference,
 }
 
+/// One operand of a Boolean, named by its place in the call.
+///
+/// A Boolean takes one target and any number of tools, and everything it
+/// reports per operand -- lineage, sections, errors -- is indexed this way, so
+/// `Tool(i)` is always `tools[i]` as the caller passed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum BooleanInput {
+    Target,
+    Tool(usize),
+}
+
+impl std::fmt::Display for BooleanInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Target => f.write_str("the target"),
+            Self::Tool(index) => write!(f, "tools[{index}]"),
+        }
+    }
+}
+
+/// The edges one intersection span left on each of the two operands it joins.
+///
+/// Each pair of operands is imprinted on the other in its own pass, so a span
+/// id is only unique together with the two inputs that produced it. The edges
+/// are the ones left after every pass, so a later operand that crossed the
+/// section has split them further. Keys are historical: sewing consumes one
+/// side of each pair, and healing may fuse what is left.
+#[derive(Debug, Clone)]
+pub struct BooleanSection {
+    pub inputs: [BooleanInput; 2],
+    pub span: IntersectionSpanId,
+    pub edges: [Vec<EdgeKey>; 2],
+}
+
 /// One successfully validated, committed solid boundary.
 #[derive(Debug)]
 pub struct SolidBoolean {
@@ -111,9 +145,9 @@ pub struct SolidBoolean {
 /// Surviving source identities and pre-sewing intersection edge provenance.
 #[derive(Debug)]
 pub struct SolidBooleanLineage {
-    pub first: BooleanLineage,
-    pub second: BooleanLineage,
-    /// Historical keys before sewing; a second-side key can be consumed at commit.
-    pub span_edges: HashMap<IntersectionSpanId, [Vec<EdgeKey>; 2]>,
+    pub target: BooleanLineage,
+    /// One lineage per tool, in the order the tools were passed.
+    pub tools: Vec<BooleanLineage>,
+    pub sections: Vec<BooleanSection>,
     pub discarded_faces: Vec<FaceKey>,
 }

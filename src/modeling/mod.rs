@@ -16,6 +16,7 @@ pub mod blend;
 pub mod edges;
 pub mod faces;
 pub mod heal;
+pub(crate) mod import;
 pub mod loft;
 pub mod profiles;
 pub mod revolve;

@@ -677,7 +677,7 @@ fn boolean_disjoint_results_follow_the_single_solid_contract() {
         let result = boolean(
             &mut map,
             first,
-            second,
+            &[second],
             operation,
             BooleanOptions::default(),
         );
@@ -710,7 +710,7 @@ fn boolean_nested_difference_registers_a_closed_cavity() {
     let result = boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )
@@ -729,7 +729,7 @@ fn boolean_overlapping_boxes_union_produces_one_closed_solid() {
     let result = boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )
@@ -753,7 +753,7 @@ fn boolean_overlapping_boxes_intersection_and_difference_are_closed() {
         let result = boolean(
             &mut map,
             first,
-            second,
+            &[second],
             operation,
             BooleanOptions::default(),
         )
@@ -766,10 +766,10 @@ fn boolean_overlapping_boxes_intersection_and_difference_are_closed() {
             assert!(
                 result
                     .lineage
-                    .first
+                    .target
                     .faces
                     .values()
-                    .chain(result.lineage.second.faces.values())
+                    .chain(result.lineage.tools[0].faces.values())
                     .any(|descendants| descendants.contains(&face.key()))
             );
         }
@@ -789,7 +789,7 @@ fn boolean_union_preserves_topology_under_scale_and_operand_swap() {
         let result = boolean(
             &mut map,
             second,
-            first,
+            &[first],
             BooleanOperation::Union,
             BooleanOptions::default(),
         )
@@ -812,7 +812,7 @@ fn boolean_result_can_be_consumed_by_a_second_operation() {
     let union = boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )
@@ -834,7 +834,7 @@ fn boolean_result_can_be_consumed_by_a_second_operation() {
     let result = boolean(
         &mut map,
         union.solid,
-        cavity,
+        &[cavity],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )
@@ -859,7 +859,7 @@ fn boolean_intersection_is_closed_for_faces_larger_than_the_unit_patch() {
     let result = boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Intersection,
         BooleanOptions::default(),
     )
@@ -906,7 +906,7 @@ fn boolean_union_of_boxes_sharing_a_full_face_closes_across_the_contact() {
     let result = boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )
@@ -932,7 +932,7 @@ fn boolean_difference_of_boxes_sharing_a_full_face_keeps_the_first_operand() {
     let result = boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )
@@ -951,7 +951,7 @@ fn boolean_union_of_boxes_meeting_on_a_coplanar_partial_face_is_closed() {
     let result = boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )
@@ -978,7 +978,7 @@ fn boolean_rejects_operands_meeting_only_on_an_edge_or_a_vertex() {
             let result = boolean(
                 &mut map,
                 first,
-                second,
+                &[second],
                 operation,
                 BooleanOptions::default(),
             );
@@ -1013,7 +1013,7 @@ fn boolean_coplanar_partial_contact_keeps_each_operand_whole_under_difference() 
         let result = boolean(
             &mut map,
             minuend,
-            subtrahend,
+            &[subtrahend],
             BooleanOperation::Difference,
             BooleanOptions::default(),
         )
@@ -1032,7 +1032,7 @@ fn boolean_coplanar_partial_contact_keeps_each_operand_whole_under_difference() 
         boolean(
             &mut map,
             first,
-            second,
+            &[second],
             BooleanOperation::Intersection,
             BooleanOptions::default(),
         ),
@@ -1053,7 +1053,7 @@ fn boolean_of_nested_boxes_selects_the_enclosing_or_enclosed_boundary() {
         let result = boolean(
             &mut map,
             first,
-            second,
+            &[second],
             operation,
             BooleanOptions::default(),
         )
@@ -1073,7 +1073,7 @@ fn boolean_of_nested_boxes_selects_the_enclosing_or_enclosed_boundary() {
         boolean(
             &mut map,
             second,
-            first,
+            &[first],
             BooleanOperation::Difference,
             BooleanOptions::default(),
         ),
@@ -1096,7 +1096,7 @@ fn boolean_difference_is_computed_in_both_operand_orders() {
         let result = boolean(
             &mut map,
             minuend,
-            subtrahend,
+            &[subtrahend],
             BooleanOperation::Difference,
             BooleanOptions::default(),
         )
@@ -1150,7 +1150,7 @@ fn boolean_difference_supports_a_cylindrical_through_hole() {
     let result = boolean(
         &mut map,
         block,
-        cylinder,
+        &[cylinder],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )
@@ -1213,7 +1213,7 @@ fn boolean_difference_leaves_a_through_bore_rim_uncut() {
     let result = boolean(
         &mut map,
         block,
-        cylinder,
+        &[cylinder],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )
@@ -1248,7 +1248,7 @@ fn boolean_intersection_of_a_block_and_a_through_cylinder_is_the_common_core() {
     let result = boolean(
         &mut map,
         block,
-        cylinder,
+        &[cylinder],
         BooleanOperation::Intersection,
         BooleanOptions::default(),
     )
@@ -1288,7 +1288,7 @@ fn boolean_union_of_a_block_and_a_protruding_cylinder_opens_one_inner_loop() {
     let result = boolean(
         &mut map,
         block,
-        cylinder,
+        &[cylinder],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )
@@ -1358,7 +1358,7 @@ fn boolean_union_shells_are_euler_two_and_resolve_to_operand_faces() {
     let result = boolean(
         &mut map,
         first,
-        second,
+        &[second],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )
@@ -1373,10 +1373,10 @@ fn boolean_union_shells_are_euler_two_and_resolve_to_operand_faces() {
 
     let sources = result
         .lineage
-        .first
+        .target
         .faces
         .values()
-        .chain(result.lineage.second.faces.values())
+        .chain(result.lineage.tools[0].faces.values())
         .flatten()
         .copied()
         .collect::<Vec<_>>();
@@ -1452,7 +1452,7 @@ fn boolean_results_classify_sample_points_like_the_mathematical_set() {
         let result = boolean(
             &mut map,
             first,
-            second,
+            &[second],
             operation,
             BooleanOptions::default(),
         )
@@ -1504,7 +1504,7 @@ fn boolean_union_topology_is_stable_under_face_reparameterization() {
         let result = boolean(
             &mut map,
             first,
-            second,
+            &[second],
             BooleanOperation::Union,
             BooleanOptions::default(),
         )
@@ -1552,7 +1552,7 @@ fn boolean_difference_of_a_through_slot_opens_an_inner_loop_on_both_caps() {
     let result = boolean(
         &mut map,
         block,
-        slot,
+        &[slot],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )
@@ -1613,7 +1613,7 @@ fn block_fused_with_cylinder_tangent_to_block_faces() {
     boolean(
         &mut map,
         block_key,
-        cylinder,
+        &[cylinder],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )
@@ -1658,7 +1658,7 @@ fn boolean_union_of_a_block_and_a_sphere_closes_a_single_solid() {
     let result = boolean(
         &mut map,
         block,
-        sphere,
+        &[sphere],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )
@@ -1686,7 +1686,7 @@ fn boolean_difference_of_a_block_and_a_sphere_dishes_its_top_face() {
     let result = boolean(
         &mut map,
         block,
-        sphere,
+        &[sphere],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )
@@ -1827,10 +1827,10 @@ fn stepped_web_with_a_bolt_hole() -> SolidShape {
     .expect("pentagon prism");
     let thickness = solids::fuse(
         block(40.0, 130.0, -4.0, 4.0, -30.0, 30.0),
-        block(85.0, 130.0, -10.0, 10.0, -30.0, 30.0),
+        [&block(85.0, 130.0, -10.0, 10.0, -30.0, 30.0)],
     )
     .expect("stepped thickness");
-    let web = solids::intersect(web, thickness).expect("web trimmed to its thickness");
+    let web = solids::intersect(web, [&thickness]).expect("web trimmed to its thickness");
     let bolt = solids::cylinder_at(
         Frame::from_xy(
             Point3::new(111.0, -20.0, -5.0),
@@ -1841,7 +1841,7 @@ fn stepped_web_with_a_bolt_hole() -> SolidShape {
         40.0,
     )
     .expect("bolt hole");
-    solids::cut(web, bolt).expect("web with its bolt hole")
+    solids::cut(web, [&bolt]).expect("web with its bolt hole")
 }
 
 #[test]
@@ -1858,7 +1858,7 @@ fn splitting_a_face_moves_the_bridges_it_owns_to_the_half_that_holds_them() {
     )
     .expect("plate");
 
-    let part = solids::fuse(plate, stepped_web_with_a_bolt_hole()).expect("plate fused to web");
+    let part = solids::fuse(plate, [&stepped_web_with_a_bolt_hole()]).expect("plate fused to web");
 
     let (map, solid) = part.into_model();
     validate_solid_manifold(&map, solid).unwrap();
@@ -1880,7 +1880,7 @@ fn a_cylinder_standing_flush_on_a_block_fuses_through_the_rim_they_share() {
     let cylinder =
         solids::cylinder_at(Frame::at(Point3::new(1.0, 1.0, 1.0)), 0.5, 1.0).expect("cylinder");
 
-    let fused = solids::fuse(block, cylinder).expect("a flush cylinder should fuse");
+    let fused = solids::fuse(block, [&cylinder]).expect("a flush cylinder should fuse");
 
     validate_solid_manifold(fused.model(), fused.key()).unwrap();
     ngk::topology::validation::validate_solid_orientation(fused.model(), fused.key()).unwrap();
@@ -1929,7 +1929,7 @@ fn coaxial_cylinders_standing_flush_fuse_into_a_stepped_shaft() {
     let wide = solids::cylinder(1.0, 1.0).expect("wide cylinder");
     let thin = solids::cylinder_at(Frame::at(Point3::new(0.0, 0.0, 1.0)), 0.5, 1.0).expect("thin");
 
-    let fused = solids::fuse(wide, thin).expect("flush coaxial cylinders should fuse");
+    let fused = solids::fuse(wide, [&thin]).expect("flush coaxial cylinders should fuse");
 
     validate_solid_manifold(fused.model(), fused.key()).unwrap();
     ngk::topology::validation::validate_solid_orientation(fused.model(), fused.key()).unwrap();
@@ -1959,7 +1959,7 @@ fn two_overlapping_spheres_intersect_to_their_lens() {
     let second =
         solids::sphere_at(Frame::at(Point3::new(1.0, 0.0, 0.0)), 1.0).expect("second sphere");
 
-    let lens = solids::intersect(first, second).expect("overlapping spheres should intersect");
+    let lens = solids::intersect(first, [&second]).expect("overlapping spheres should intersect");
 
     validate_solid_manifold(lens.model(), lens.key()).unwrap();
     ngk::topology::validation::validate_solid_orientation(lens.model(), lens.key()).unwrap();
@@ -1982,7 +1982,7 @@ fn a_sphere_poking_out_of_a_larger_sphere_cuts_out_its_lens() {
     let target = solids::sphere(1.5).expect("target sphere");
     let tool = solids::sphere_at(Frame::at(Point3::new(0.8, 0.0, 0.0)), 0.8).expect("tool sphere");
 
-    let pocketed = solids::cut(target, tool).expect("the poking sphere should cut");
+    let pocketed = solids::cut(target, [&tool]).expect("the poking sphere should cut");
 
     validate_solid_manifold(pocketed.model(), pocketed.key()).unwrap();
     ngk::topology::validation::validate_solid_orientation(pocketed.model(), pocketed.key())
@@ -2015,7 +2015,7 @@ fn a_block_straddling_a_cylinders_rim_intersects_to_the_wedge_between_them() {
         .expect("block");
 
     let wedge =
-        solids::intersect(cylinder, block).expect("the block should intersect the cylinder");
+        solids::intersect(cylinder, [&block]).expect("the block should intersect the cylinder");
 
     validate_solid_manifold(wedge.model(), wedge.key()).unwrap();
     ngk::topology::validation::validate_solid_orientation(wedge.model(), wedge.key()).unwrap();
@@ -2052,7 +2052,7 @@ fn a_block_notching_a_cylinder_from_below_leaves_a_measurable_wall() {
     let block =
         solids::block_at(Frame::at(Point3::new(-0.9, -0.6, -0.5)), 1.15, 1.2, 0.75).expect("block");
 
-    let notched = solids::cut(cylinder, block).expect("the block should notch the cylinder");
+    let notched = solids::cut(cylinder, [&block]).expect("the block should notch the cylinder");
 
     validate_solid_manifold(notched.model(), notched.key()).unwrap();
     ngk::topology::validation::validate_solid_orientation(notched.model(), notched.key()).unwrap();
@@ -2097,9 +2097,9 @@ fn a_sphere_biting_all_but_a_strip_of_a_rod_leaves_its_wall_measurable() {
             .expect("ball")
     };
 
-    let union = solids::fuse(rod(), ball()).expect("the ball should fuse to the rod");
-    let common = solids::intersect(rod(), ball()).expect("the ball should meet the rod");
-    let rest = solids::cut(rod(), ball()).expect("a strip keeps the rod in one piece");
+    let union = solids::fuse(rod(), [&ball()]).expect("the ball should fuse to the rod");
+    let common = solids::intersect(rod(), [&ball()]).expect("the ball should meet the rod");
+    let rest = solids::cut(rod(), [&ball()]).expect("a strip keeps the rod in one piece");
 
     for shape in [&union, &common, &rest] {
         validate_solid_manifold(shape.model(), shape.key()).unwrap();
@@ -2135,8 +2135,8 @@ fn a_tilted_bar_notching_a_disc_edge_leaves_its_wall_measurable() {
         solids::block_at(Frame::from_xz(origin, x_dir, z_dir), 0.25, 0.25, 0.75).expect("bar")
     };
 
-    let rest = solids::cut(disc(), bar()).expect("the bar should notch the disc");
-    let common = solids::intersect(disc(), bar()).expect("the bar should meet the disc");
+    let rest = solids::cut(disc(), [&bar()]).expect("the bar should notch the disc");
+    let common = solids::intersect(disc(), [&bar()]).expect("the bar should meet the disc");
 
     for shape in [&rest, &common] {
         validate_solid_manifold(shape.model(), shape.key()).unwrap();

@@ -447,7 +447,7 @@ fn a_ring_cut_clear_of_a_hole_keeps_its_nurbs_rims_whole() {
     let wall_hole = solids::block_at(Frame::at(Point3::new(0.7, -0.2, 0.8)), 0.6, 0.4, 0.4)
         .expect("hole tool should build");
     let cylinder = solids::cylinder(1.0, 2.0).expect("cylinder should build");
-    let (mut model, solid) = solids::cut(cylinder, wall_hole)
+    let (mut model, solid) = solids::cut(cylinder, [&wall_hole])
         .expect("the hole should cut the wall")
         .into_model();
     let rims = model

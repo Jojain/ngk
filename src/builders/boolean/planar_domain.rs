@@ -1,4 +1,4 @@
-//! The Boolean domain for two faces on one shared support surface.
+//! The Boolean domain for faces on one shared support surface.
 //!
 //! Both domains read the same field, `BooleanLineage::faces`, and both get
 //! `FaceKey`s out of it. What differs is what those faces *are*.
@@ -6,21 +6,21 @@
 //! `operand_cells` returns a solid's boundary faces, so for a solid operand the
 //! fragments are pieces of the solid's boundary. It returns a face operand as
 //! itself, so here the fragments are pieces of **that face** — pieces of its
-//! area, which splitting cut it into where the other operand's boundary crossed
+//! area, which splitting cut it into where another operand's boundary crossed
 //! it.
 //!
 //! Two overlapping squares on one plane make this concrete. With A the square
 //! [0,2]x[0,2] and B the square [1,3]x[1,3], splitting replaces each of them
 //! with two faces: A becomes [1,2]x[1,2] plus an L-shape, and B becomes its own
 //! [1,2]x[1,2] plus the other L-shape. Both copies of the overlap are present,
-//! under different `FaceKey`s, which is why every rule in
-//! [`PlanarDomain::keeps`] keeps at most one of them.
+//! under different `FaceKey`s, which is why [`PlanarDomain::membership`] calls
+//! an overlap a coincidence, and selection keeps at most one of them.
 //!
-//! That is also why the solid table cannot be reused. It keeps boundary pieces
-//! lying outside the other operand and drops the ones inside, because an inside
-//! piece would fall in the interior of the answer rather than on its boundary.
-//! Applied here it would drop A's copy of the overlap, and the union of two
-//! faces would come back missing the area the two share.
+//! That is also why the solid reading cannot be reused. It takes a fragment
+//! inside another operand to have that operand on both of its sides, because a
+//! piece of boundary inside a solid lies in its interior. Applied here it would
+//! drop A's copy of the overlap, and the union of two faces would come back
+//! missing the area the two share.
 //!
 //! Nothing here is specific to a plane. Containment is decided in the support
 //! surface's own parameter space, so two faces on one cylinder or one sphere
@@ -34,13 +34,10 @@ use crate::model::Model;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::FaceKey;
 
-use super::domain::{BooleanDomain, OperandClassifier, RelativeLocation, Selection};
+use super::domain::{BooleanDomain, Membership, OperandClassifier, RelativeLocation};
 use super::solid_domain::SolidDomain;
 use super::trim::FaceTrimDomain;
-use super::{
-    BooleanCell, BooleanError, BooleanLineage, BooleanOperation, BooleanOptions, BooleanSide,
-    BooleanTolerances,
-};
+use super::{BooleanCell, BooleanError, BooleanLineage, BooleanOptions, BooleanTolerances};
 
 /// Marker for the face-pair domain; carries no state of its own.
 pub(crate) struct PlanarDomain;
@@ -72,7 +69,7 @@ impl OperandClassifier<FaceKey> for PlanarOperandClassifier {
     /// `probe` picks a point interior to the fragment, chosen for clearance
     /// from every edge of it, so the point never lands on this operand's
     /// boundary. The answer is therefore always `Inside` or `Outside`, which is
-    /// why [`PlanarDomain::keeps`] has no `OnBoundary` rows to write.
+    /// why [`PlanarDomain::membership`] has no `OnBoundary` reading of its own.
     ///
     /// `normal` goes unused: this is a closed-form winding query, with no ray
     /// to cast and no second orientation to compare against.
@@ -100,9 +97,9 @@ impl BooleanDomain for PlanarDomain {
     type Classifier<'a, P: Payload + 'a> = PlanarOperandClassifier;
 
     // Fragments are faces, and faces are bounded by edges, here exactly as for
-    // a solid — so these four read the same cells out of the same places. Only
-    // `classifier` and `keeps` differ, and they differ because the faces mean
-    // something else.
+    // a solid — so these read the same cells out of the same places. Only
+    // `classifier` and `membership` differ, and they differ because the faces
+    // mean something else.
 
     fn fragments(lineage: &BooleanLineage) -> Vec<(FaceKey, FaceKey)> {
         SolidDomain::fragments(lineage)
@@ -137,41 +134,31 @@ impl BooleanDomain for PlanarDomain {
         })
     }
 
-    /// Which faces of which operand the answer is made of.
+    /// A face fragment is a piece of area, not of boundary, so it is read as
+    /// a sheet with nothing in front of it and its area behind it.
     ///
-    /// Where the two operands overlap, that area is present twice — once among
-    /// the first operand's faces and once among the second's — so every rule
-    /// keeps at most one of the two. The first operand is the one kept, which
-    /// is the convention the solid table already follows for coincident
-    /// boundary.
-    ///
-    /// - **Union**: all of the first operand, plus the second's faces that lie
-    ///   outside the first.
-    /// - **Intersection**: the first operand's faces that lie inside the
-    ///   second. The second's copies of that same area are dropped.
-    /// - **Difference**: the first operand's faces that lie outside the second,
-    ///   and none of the second's.
-    ///
-    /// Nothing is reversed. A face already bounds its own area the right way
-    /// round, unlike a boundary face borrowed from the other solid.
-    fn keeps(
-        operation: BooleanOperation,
-        side: BooleanSide,
-        location: RelativeLocation,
-    ) -> Selection {
-        use BooleanOperation::{Difference, Intersection, Union};
-        use BooleanSide::{First, Second};
-        use RelativeLocation::{Inside, Outside};
-        let keep = matches!(
-            (operation, side, location),
-            (Union, First, _)
-                | (Union, Second, Outside)
-                | (Intersection, First, Inside)
-                | (Difference, First, Outside)
-        );
-        match keep {
-            true => Selection::Keep,
-            false => Selection::Drop,
+    /// The other operand then either covers that area or does not. Where it
+    /// does, the area is present twice — once among each operand's faces — so
+    /// the location is also a coincidence, and selection keeps one copy. In
+    /// front of the sheet nothing belongs to any operand, so no operation is
+    /// true there, and nothing is ever reversed: a face already bounds its own
+    /// area the right way round, unlike a boundary face borrowed from another
+    /// solid.
+    fn membership(location: RelativeLocation) -> Membership {
+        match location {
+            RelativeLocation::Inside => Membership {
+                front: false,
+                behind: true,
+                coincident: true,
+            },
+            RelativeLocation::Outside => Membership {
+                front: false,
+                behind: false,
+                coincident: false,
+            },
+            RelativeLocation::OnBoundarySame | RelativeLocation::OnBoundaryOpposite => {
+                unreachable!("a face operand's classifier answers only inside or outside")
+            }
         }
     }
 }

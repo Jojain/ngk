@@ -641,6 +641,14 @@ fn probe_edge_face<P: Payload>(
                     ) {
                         continue;
                     }
+                } else if !edge
+                    .trimmed_curve()
+                    .contains(point, options.intersections.linear_tolerance)
+                {
+                    // The numeric solver searched the whole support too: an
+                    // edge cut from a longer section curve meets things the
+                    // edge itself never reaches.
+                    continue;
                 }
                 if !trim.contains(Point2::new(surface_u, surface_v)) {
                     continue;
@@ -682,15 +690,30 @@ fn probe_edge_face<P: Payload>(
                     curve.trimmed_native(edge_interval)?
                 } else {
                     // The numeric solver answers in the prepared curve's knot
-                    // domain, so the overlap is clipped and spent there.
+                    // domain, so the overlap is clipped and spent there -- to
+                    // the edge's own span as well as to the knots, since the
+                    // support can run past the edge's vertices.
                     let knots = curve.to_nurbs()?.domain();
-                    graph::nurbs_subcurve(
-                        curve,
-                        Interval::new(
-                            curve_interval.start.clamp(knots.start, knots.end),
-                            curve_interval.end.clamp(knots.start, knots.end),
-                        ),
-                    )?
+                    let reparam = curve.nurbs_param_map();
+                    let edge_knots = Interval::new(
+                        reparam.map(edge_interval.start.value()),
+                        reparam.map(edge_interval.end.value()),
+                    )
+                    .ordered();
+                    let (low, high) = (
+                        knots.start.max(edge_knots.start),
+                        knots.end.min(edge_knots.end),
+                    );
+                    let overlap = Interval::new(
+                        curve_interval.start.clamp(low, high),
+                        curve_interval.end.clamp(low, high),
+                    );
+                    if (overlap.end.value() - overlap.start.value()).abs()
+                        <= options.intersections.parameter_tolerance
+                    {
+                        continue;
+                    }
+                    graph::nurbs_subcurve(curve, overlap)?
                 };
                 let Some(imprint) = section_imprint(&face, &section, options)? else {
                     continue;
@@ -975,16 +998,18 @@ fn clip_overlap_to_edges(
     second: (&TrimmedCurve, Interval),
     tolerance: f64,
 ) -> Option<(Interval, Interval)> {
+    // Clipped to each edge's exact bounds: the ends of the shared span become
+    // events, and an end widened past the vertex it stands for would sit
+    // beside that vertex's own event instead of on it.
     let carried = |(edge, overlap): (&TrimmedCurve, Interval)| {
         let overlap = aligned_with_edge(edge, overlap);
         if overlap.delta().abs() <= f64::EPSILON {
             return None;
         }
-        let slack = edge.parameter_slack(tolerance);
         let bounds = edge.interval().ordered();
         let span = Interval::new(
-            overlap.fraction_of(bounds.start - slack),
-            overlap.fraction_of(bounds.end + slack),
+            overlap.fraction_of(bounds.start),
+            overlap.fraction_of(bounds.end),
         )
         .ordered();
         Some((

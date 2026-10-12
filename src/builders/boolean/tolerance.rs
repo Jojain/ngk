@@ -99,15 +99,15 @@ impl BooleanTolerances {
         Ok(result)
     }
 
-    /// Estimates combined model extent from geometric control hulls, never just vertices.
-    pub(crate) fn from_cells<P: Payload>(
+    /// Estimates the operands' combined model extent from geometric control
+    /// hulls, never just vertices.
+    pub(crate) fn from_operands<'a, P: Payload>(
         map: &Model<P>,
-        first: &OperandCells,
-        second: &OperandCells,
+        operands: impl IntoIterator<Item = &'a OperandCells>,
         policy: BooleanTolerancePolicy,
     ) -> Result<Self, BooleanError> {
         let mut points = Vec::new();
-        for cells in [first, second] {
+        for cells in operands {
             for &vertex in &cells.vertices {
                 points.push(*map.vertex_unchecked(vertex).point());
             }

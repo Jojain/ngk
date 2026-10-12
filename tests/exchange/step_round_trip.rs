@@ -279,7 +279,7 @@ fn a_boolean_result_survives_a_round_trip() {
     // solid whose geometry is NGK's own NURBS rather than a file's.
     let block = solids::block(10.0, 10.0, 10.0).expect("a block should build");
     let tool = solids::block(4.0, 4.0, 30.0).expect("a tool should build");
-    let cut = solids::cut(block, tool).expect("a through cut should build");
+    let cut = solids::cut(block, [&tool]).expect("a through cut should build");
 
     let splines = cut
         .solid()

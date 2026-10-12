@@ -131,7 +131,7 @@ fn a_block_shaped_cavity_subtracts_volume_and_adds_inner_surface() {
         2.0,
     )
     .expect("inner block");
-    let cavity = cut(outer, inner).expect("cut should build a cavity");
+    let cavity = cut(outer, [&inner]).expect("cut should build a cavity");
     let properties = cavity
         .solid()
         .volume_properties()

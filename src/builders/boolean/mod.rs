@@ -1,5 +1,8 @@
-//! Boolean preparation: contact computation and two-sided B-Rep splitting.
+//! Regularized Booleans of a target with any number of tools: contact
+//! computation and B-Rep splitting between every pair of operands, then one
+//! classification, selection and assembly over all of them.
 
+mod arrangement;
 mod assemble;
 mod broad_phase;
 mod classify;
@@ -26,7 +29,7 @@ pub use tolerance::{BooleanTolerancePolicy, BooleanTolerances};
 pub use classify::solid_contains_point;
 use contacts::{compute_contacts, normalize_face_imprint_chains, reroute_boundary_imprints};
 pub use errors::BooleanError;
-pub use face_boolean::{FaceBoolean, face_boolean};
+pub use face_boolean::{FaceBoolean, FaceBooleanLineage, face_boolean};
 pub use graph::{
     IntersectionEvent, IntersectionEventId, IntersectionEventLocation, IntersectionEventUse,
     IntersectionNetwork, IntersectionNetworkValidationError, IntersectionOrientation,
@@ -36,8 +39,9 @@ pub use graph::{
 use graph::{IntersectionNetworkBuilder, edge_use, face_use, vertex_use};
 use operand::{BooleanContext, OperandCells, import_operand, operand_cells};
 pub use result::{
-    BooleanCell, BooleanLineage, BooleanOperand, BooleanOperandPreparation, BooleanOperation,
-    BooleanSide, PointContactKind, SolidBoolean, SolidBooleanLineage,
+    BooleanCell, BooleanInput, BooleanLineage, BooleanOperand, BooleanOperandPreparation,
+    BooleanOperation, BooleanSection, BooleanSide, PointContactKind, SolidBoolean,
+    SolidBooleanLineage,
 };
 use solid_domain::SolidDomain;
 

@@ -1,10 +1,10 @@
 //! Deterministic ray classification and surface-evaluated interior fragment probes.
 
-use super::broad_phase::face_uv_bounds;
+use super::broad_phase::{Bounds, face_uv_bounds};
 use super::domain::{BooleanDomain, OperandClassifier, RelativeLocation};
 use super::{
-    BooleanCell, BooleanError, BooleanOperand, BooleanOperandPreparation, BooleanOptions,
-    BooleanSide, BooleanTolerances, neighborhood::FragmentGraph, operand::operand_cells,
+    BooleanCell, BooleanError, BooleanLineage, BooleanOperand, BooleanOperation, BooleanOptions,
+    BooleanTolerances, neighborhood::FragmentGraph, operand::operand_cells, select,
     trim::FaceTrimDomain,
 };
 use crate::geometry::axis::Axis3;
@@ -46,6 +46,8 @@ struct RayFace {
 pub(crate) struct SolidRayCaster<'a, P: Payload> {
     map: &'a Model<P>,
     faces: Vec<RayFace>,
+    /// A certified box around the whole solid, when every face offers one.
+    bounds: Option<Bounds>,
     tolerances: BooleanTolerances,
     max_rays: usize,
 }
@@ -58,6 +60,8 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
         options: BooleanOptions,
         tolerances: BooleanTolerances,
     ) -> Result<Self, BooleanError> {
+        let keys = keys.into_iter().collect::<Vec<_>>();
+        let bounds = Bounds::of_faces(map, keys.iter().copied(), tolerances.linear);
         let mut faces = Vec::new();
         for key in keys {
             let face = map.face_unchecked(key);
@@ -95,6 +99,7 @@ impl<'a, P: Payload> SolidRayCaster<'a, P> {
         Ok(Self {
             map,
             faces,
+            bounds,
             tolerances,
             max_rays: options.max_classification_rays,
         })
@@ -444,25 +449,40 @@ fn interior_parameter(trim: &FaceTrimDomain, tolerances: BooleanTolerances) -> O
 }
 
 /// Classifies each fragment independently, avoiding propagation across an incomplete barrier graph.
+///
+/// `lineages` is indexed by operand, the target first. Each fragment is
+/// located against every *other* operand, in that order, and the answers are
+/// returned by operand index: that is the whole question selection then
+/// answers. Asking stops at the first answer that already drops the fragment
+/// ([`select::settles`]), which is what keeps a fragment far from most tools
+/// from paying for a ray cast against each of them.
 pub(crate) fn run<D: BooleanDomain, P: Payload>(
     map: &Model<P>,
-    preparation: &BooleanOperandPreparation,
+    lineages: &[BooleanLineage],
     graph: &FragmentGraph<D>,
+    operation: BooleanOperation,
     options: BooleanOptions,
     tolerances: BooleanTolerances,
-) -> Result<Vec<RelativeLocation>, BooleanError> {
-    let first = D::classifier(map, &preparation.first_lineage, options, tolerances)?;
-    let second = D::classifier(map, &preparation.second_lineage, options, tolerances)?;
-    let mut result = Vec::new();
+) -> Result<Vec<Vec<(usize, RelativeLocation)>>, BooleanError> {
+    let classifiers = lineages
+        .iter()
+        .map(|lineage| D::classifier(map, lineage, options, tolerances))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut result = Vec::with_capacity(graph.fragments.len());
     for fragment in &graph.fragments {
         let (point, normal) = D::probe(map, fragment.fragment, tolerances)?;
-        // Each fragment is located against the *other* operand: that is the
-        // whole question the operation table then answers.
-        let classifier = match fragment.side {
-            BooleanSide::First => &second,
-            BooleanSide::Second => &first,
-        };
-        result.push(classifier.locate(point, normal, fragment.fragment)?);
+        let mut locations = Vec::new();
+        for (operand, classifier) in classifiers.iter().enumerate() {
+            if operand == fragment.operand {
+                continue;
+            }
+            let location = classifier.locate(point, normal, fragment.fragment)?;
+            locations.push((operand, location));
+            if select::settles::<D>(operation, fragment.operand, operand, location) {
+                break;
+            }
+        }
+        result.push(locations);
     }
     Ok(result)
 }
@@ -470,12 +490,18 @@ pub(crate) fn run<D: BooleanDomain, P: Payload>(
 impl<P: Payload> OperandClassifier<FaceKey> for SolidRayCaster<'_, P> {
     /// Answers from the boundary test when the point lies on this solid's own
     /// boundary, and from a certified ray cast otherwise.
+    ///
+    /// A point outside the solid's certified box is outside the solid, and on
+    /// none of its faces, without either test being run.
     fn locate(
         &self,
         point: Point3,
         normal: Vector3<f64>,
         source: FaceKey,
     ) -> Result<RelativeLocation, BooleanError> {
+        if self.bounds.is_some_and(|bounds| !bounds.contains(point)) {
+            return Ok(RelativeLocation::Outside);
+        }
         match self.boundary(point, normal) {
             Some(location) => Ok(location),
             None => self.classify(point, source),
@@ -495,7 +521,7 @@ pub fn solid_contains_point<P: Payload>(
     options: BooleanOptions,
 ) -> Result<bool, BooleanError> {
     let cells = operand_cells(map, BooleanOperand::Solid(solid))?;
-    let tolerances = BooleanTolerances::from_cells(map, &cells, &cells, options.tolerances)?;
+    let tolerances = BooleanTolerances::from_operands(map, [&cells], options.tolerances)?;
     let source = *cells
         .faces
         .iter()

@@ -1,26 +1,28 @@
-//! Regularized Booleans on two faces that share one plane.
+//! Regularized Booleans on faces that share one plane.
 //!
-//! Splitting replaces each operand with the faces the other operand's boundary
-//! cut it into, so after preparation the two overlapping squares A=[0,2]x[0,2]
-//! and B=[1,3]x[1,3] are held as four faces: A's [1,2]x[1,2] and L-shape, and
-//! B's own [1,2]x[1,2] and the other L-shape. The shared area is there twice,
-//! once per operand.
+//! Splitting replaces each operand with the faces the other operands'
+//! boundaries cut it into, so after preparation the two overlapping squares
+//! A=[0,2]x[0,2] and B=[1,3]x[1,3] are held as four faces: A's [1,2]x[1,2] and
+//! L-shape, and B's own [1,2]x[1,2] and the other L-shape. The shared area is
+//! there twice, once per operand.
 //!
-//! Two of the three operations never look at the second operand's faces at all:
+//! Two of the three operations never keep a tool's faces at all:
 //!
 //! - `a & b` is the faces of `a` that lie inside `b`;
 //! - `a - b` is the faces of `a` that lie outside `b`.
 //!
-//! Neither reads one face of `b`'s family, so neither meets the duplicate and
-//! neither has anything to sew. Both are `remove_faces` over what the table
+//! Neither keeps one face of `b`'s family, so neither meets the duplicate and
+//! neither has anything to sew. Both are `remove_faces` over what selection
 //! dropped — which includes every face of `b`, so `b` is gone and `a` is what
 //! is left, exactly as its lineage says.
 //!
 //! `a + b` is the one that needs `b`'s faces: it is all of `a` plus the parts
 //! of `b` outside it, and those parts arrive as faces of `b` that are not sewn
-//! to anything of `a`'s. Joining them is [`sew_union`], which welds each face
-//! of `b` onto the face of `a` across the section, and healing then fuses the
-//! coplanar neighbours the weld left sharing a shape-free edge.
+//! to anything of `a`'s. Joining them is [`sew_union_plan`] and [`weld`], which
+//! weld each face of `b` onto the face of `a` across the section, and healing
+//! then fuses the coplanar neighbours the weld left sharing a shape-free edge.
+//! With several tools, each one's surviving area is welded onto whichever
+//! operand's face meets it across a section.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -31,86 +33,128 @@ use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
 
-use super::assemble::sew_pair;
+use super::arrangement::{self, Arrangement, section_edges};
+use super::assemble::{section_pairs, sew_pair};
 use super::neighborhood::FragmentGraph;
-use super::operations::apply_boolean_splits_edit;
+use super::operand::{Operand, Operands, operands_cells, reject_shared_faces};
 use super::planar_domain::PlanarDomain;
 use super::select::SelectionPlan;
 use super::{
-    BooleanDiagnostics, BooleanError, BooleanLineage, BooleanOperand, BooleanOperandPreparation,
+    BooleanDiagnostics, BooleanError, BooleanInput, BooleanLineage, BooleanOperand,
     BooleanOperation, BooleanOptions, BooleanTolerancePolicy, BooleanTolerances,
-    IntersectionSpanId, classify, compute_boolean_intersections, operand_cells, select,
+    IntersectionSpanId, classify, select,
 };
 
 /// One committed face Boolean.
 #[derive(Debug)]
 pub struct FaceBoolean {
     pub operation: BooleanOperation,
-    /// The faces the answer is made of, all of them descended from the first
-    /// operand. Several where the answer falls in disconnected parts.
+    /// The faces the answer is made of, all of them descended from the
+    /// operands. Several where the answer falls in disconnected parts.
     pub faces: Vec<FaceKey>,
-    /// Which source face each survivor came from.
-    pub lineage: BooleanLineage,
+    /// Which source face each survivor came from, per input.
+    pub lineage: FaceBooleanLineage,
     pub diagnostics: BooleanDiagnostics,
 }
 
-/// Evaluates one regularized Boolean on two coplanar faces, in one transaction.
+/// Which source face of each input the surviving faces came from.
 ///
-/// The second operand is consumed: every face descended from it is removed, so
-/// on success only the first operand's surviving faces remain. Anything the
+/// Only a union keeps area from the tools, so under the other two operations
+/// every tool's lineage is empty.
+#[derive(Debug, Clone, Default)]
+pub struct FaceBooleanLineage {
+    pub target: BooleanLineage,
+    /// One lineage per tool, in the order the tools were passed.
+    pub tools: Vec<BooleanLineage>,
+}
+
+/// Evaluates one regularized Boolean of `target` with every one of `tools`,
+/// all on one support surface, in one transaction.
+///
+/// The sets are the solid Boolean's, read as areas: `target − (t₁ ∪ … ∪ tₙ)`,
+/// `target ∪ t₁ ∪ … ∪ tₙ` or `target ∩ t₁ ∩ … ∩ tₙ`, whatever order the tools
+/// come in. Tools may overlap each other, and a key passed twice is one
+/// operand; with no tools, `target` is returned as it is.
+///
+/// Every tool is consumed: each face descended from one is removed or, under a
+/// union, welded into the answer. The answer keeps `target`'s key on one of its
+/// faces, and every other face of the map keeps its key. Anything the
 /// preparation cannot certify rolls the whole transaction back.
-///
 pub fn face_boolean<P: Payload>(
     map: &mut Model<P>,
-    first: FaceKey,
-    second: FaceKey,
+    target: FaceKey,
+    tools: &[FaceKey],
     operation: BooleanOperation,
     options: BooleanOptions,
 ) -> Result<FaceBoolean, BooleanError> {
-    let tolerances = admit(map, first, second, options)?;
-    map.transaction(|edit| run(edit, first, second, operation, options, tolerances))
+    let operands = Operands::new(target, tools);
+    let tolerances = admit(map, &operands, options)?;
+    if operation == BooleanOperation::Difference && operands.target_is_a_tool() {
+        return Err(BooleanError::EmptyResult);
+    }
+    if operands.operands.len() == 1 {
+        let mut lineage = BooleanLineage::default();
+        lineage.faces.insert(target, vec![target]);
+        return Ok(FaceBoolean {
+            operation,
+            faces: vec![target],
+            lineage: FaceBooleanLineage {
+                tools: vec![lineage.clone(); tools.len()],
+                target: lineage,
+            },
+            diagnostics: BooleanDiagnostics {
+                tolerances,
+                ..Default::default()
+            },
+        });
+    }
+    map.transaction(|edit| run(edit, &operands, operation, options, tolerances))
 }
 
-/// Checks both operands exist and share one plane, and fixes the budget.
+/// Checks every operand exists and shares the target's plane, and fixes the
+/// budget.
 ///
-/// Coplanarity is what makes the two operands comparable at all: containment is
+/// Coplanarity is what makes the operands comparable at all: containment is
 /// decided in one surface's parameter space, and a point of one face has no
-/// place in the other's unless the supports agree.
+/// place in another's unless the supports agree.
 fn admit<P: Payload>(
     map: &Model<P>,
-    first: FaceKey,
-    second: FaceKey,
+    operands: &Operands<FaceKey>,
     options: BooleanOptions,
 ) -> Result<BooleanTolerances, BooleanError> {
-    if first == second {
-        return Err(BooleanError::SharedOperandBoundary);
-    }
-    let first_cells = operand_cells(map, BooleanOperand::Face(first))?;
-    let second_cells = operand_cells(map, BooleanOperand::Face(second))?;
-    let tolerances =
-        BooleanTolerances::from_cells(map, &first_cells, &second_cells, options.tolerances)?;
+    let cells = operands_cells(map, operands, BooleanOperand::Face)?;
+    reject_shared_faces(operands, &cells)?;
+    let tolerances = BooleanTolerances::from_operands(map, &cells, options.tolerances)?;
     // `Planar` is the type that says "this view lies on this plane", so the
     // support is taken from it rather than read off the surface: a face whose
     // stored surface is a plane but whose boundary wanders off it is not a
     // planar operand, and only the check knows the difference.
-    let planes = [first, second]
-        .map(|face| Planar::new(map.face_unchecked(face)).map(|planar| planar.plane().clone()));
-    let (Ok(a), Ok(b)) = (&planes[0], &planes[1]) else {
-        return Err(BooleanError::OperandSupportsDiffer { first, second });
+    let plane = |face| Planar::new(map.face_unchecked(face)).map(|planar| planar.plane().clone());
+    let target = operands.target();
+    let differs = |input, face| BooleanError::OperandSupportsDiffer {
+        input,
+        target,
+        face,
     };
-    let parallel = a.normal().cross(&b.normal()).norm() <= tolerances.angular;
-    let coincident = (b.origin() - a.origin()).dot(&a.normal()).abs() <= tolerances.linear;
-    if !parallel || !coincident {
-        return Err(BooleanError::OperandSupportsDiffer { first, second });
+    let reference = plane(target).map_err(|_| differs(BooleanInput::Target, target))?;
+    for &Operand { key: face, input } in &operands.operands[1..] {
+        let other = plane(face).map_err(|_| differs(input, face))?;
+        let parallel = reference.normal().cross(&other.normal()).norm() <= tolerances.angular;
+        let coincident = (other.origin() - reference.origin())
+            .dot(&reference.normal())
+            .abs()
+            <= tolerances.linear;
+        if !parallel || !coincident {
+            return Err(differs(input, face));
+        }
     }
     Ok(tolerances)
 }
 
-/// Prepares, classifies, selects, and removes everything the table dropped.
+/// Prepares, classifies, selects, and removes everything selection dropped.
 fn run<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
-    first: FaceKey,
-    second: FaceKey,
+    operands: &Operands<FaceKey>,
     operation: BooleanOperation,
     options: BooleanOptions,
     tolerances: BooleanTolerances,
@@ -119,31 +163,26 @@ fn run<P: Payload>(
     tolerances.apply(&mut options.intersections);
     options.tolerances = BooleanTolerancePolicy::Fixed(tolerances);
 
-    let plan = compute_boolean_intersections(
+    let target = operands.target();
+    let faces = operands.map(BooleanOperand::Face);
+    let arrangement = arrangement::arrange(edit, &faces, options, tolerances)?;
+    let graph = FragmentGraph::<PlanarDomain>::build(&arrangement.lineages);
+    let classes = classify::run(
         edit,
-        BooleanOperand::Face(first),
-        BooleanOperand::Face(second),
+        &arrangement.lineages,
+        &graph,
+        operation,
         options,
+        tolerances,
     )?;
-    if !plan.diagnostics.coverage.is_empty()
-        || plan.diagnostics.branches_uncertified > 0
-        || !plan.diagnostics.unresolved_overlaps.is_empty()
-    {
-        return Err(BooleanError::IncompleteIntersections {
-            diagnostics: Box::new(plan.diagnostics),
-        });
-    }
-    let prepared = apply_boolean_splits_edit(edit, plan, false)?;
-    let graph = FragmentGraph::<PlanarDomain>::build(&prepared);
-    let classes = classify::run(edit, &prepared, &graph, options, tolerances)?;
-    let selection = select::run(operation, &graph, &classes);
+    let selection = select::run(operation, faces.len(), &graph, &classes);
     if selection.kept.is_empty() {
         return Err(BooleanError::EmptyResult);
     }
 
-    // Every face of the second operand is dropped by both surviving rules, so
-    // this removes the operand itself along with the first operand's discarded
-    // faces. A face the table kept still holds its own darts on the edges it
+    // Every tool face but those a union keeps outside the target is dropped,
+    // so this removes the tools themselves along with the target's discarded
+    // faces. A face selection kept still holds its own darts on the edges it
     // shared with a removed neighbour, so those edges survive as free boundary.
     // The splitter retains the source key on whichever half it built first,
     // which need not be a half this operation keeps. Putting it back on a
@@ -151,17 +190,17 @@ fn run<P: Payload>(
     // using the key it passed in.
     let mut selection = selection;
     if let Some(&heir) = selection.kept.first()
-        && selection.dropped.contains(&first)
+        && selection.dropped.contains(&target)
     {
-        edit.swap_face_identities(first, heir);
+        edit.swap_face_identities(target, heir);
         for face in selection
             .kept
             .iter_mut()
             .chain(selection.dropped.iter_mut())
         {
             *face = match *face {
-                key if key == first => heir,
-                key if key == heir => first,
+                key if key == target => heir,
+                key if key == heir => target,
                 key => key,
             };
         }
@@ -171,13 +210,13 @@ fn run<P: Payload>(
     // assembly uses, and for the same reason.
     let union = operation == BooleanOperation::Union;
     let seam = union
-        .then(|| sew_union_plan(edit, &prepared, &selection))
+        .then(|| sew_union_plan(edit, &arrangement, &selection, tolerances))
         .transpose()?
         .unwrap_or_default();
     edit.remove_faces(&selection.dropped)?;
     let merges = weld(edit, seam, tolerances)?;
     let fused = union
-        .then(|| fuse_seams(edit, &prepared, &merges, tolerances))
+        .then(|| fuse_seams(edit, &arrangement, &merges, tolerances))
         .transpose()?
         .unwrap_or_default();
 
@@ -185,9 +224,16 @@ fn run<P: Payload>(
     // sources of the one it consumed. Tracking that here rather than in the
     // lineage maps keeps one entry per surviving face while it is being
     // rewritten, and the maps are rebuilt from it once nothing moves again.
-    let mut sources = source_index(&prepared.first_lineage);
-    if union {
-        sources.extend(source_index(&prepared.second_lineage));
+    // Sources are tagged with their operand, because a face can carry on from
+    // several operands at once.
+    let mut sources = HashMap::<FaceKey, BTreeSet<(usize, FaceKey)>>::new();
+    for (operand, lineage) in arrangement.lineages.iter().enumerate() {
+        if operand == 0 || union {
+            for (face, origins) in source_index(lineage) {
+                let tagged = origins.into_iter().map(|source| (operand, source));
+                sources.entry(face).or_default().extend(tagged);
+            }
+        }
     }
     let mut kept = selection.kept.clone();
     for (survivor, consumed) in fused {
@@ -203,13 +249,12 @@ fn run<P: Payload>(
         return Err(BooleanError::EmptyResult);
     }
     kept.sort();
-    let lineage = lineage_of(&sources, &kept);
-    let faces = kept;
+    let (target, tools) = operands.per_input(lineages_of(&sources, &kept, faces.len()));
     Ok(FaceBoolean {
         operation,
-        faces,
-        lineage,
-        diagnostics: prepared.diagnostics,
+        faces: kept,
+        lineage: FaceBooleanLineage { target, tools },
+        diagnostics: arrangement.diagnostics,
     })
 }
 
@@ -228,63 +273,48 @@ fn source_index(lineage: &BooleanLineage) -> HashMap<FaceKey, BTreeSet<FaceKey>>
     index
 }
 
-/// Rebuilds a source-first lineage over the faces that survived.
-fn lineage_of(sources: &HashMap<FaceKey, BTreeSet<FaceKey>>, kept: &[FaceKey]) -> BooleanLineage {
-    let mut lineage = BooleanLineage::default();
+/// Rebuilds one source-first lineage per operand over the faces that survived.
+fn lineages_of(
+    sources: &HashMap<FaceKey, BTreeSet<(usize, FaceKey)>>,
+    kept: &[FaceKey],
+    operands: usize,
+) -> Vec<BooleanLineage> {
+    let mut lineages = vec![BooleanLineage::default(); operands];
     for &face in kept {
-        for &source in sources.get(&face).into_iter().flatten() {
-            lineage.faces.entry(source).or_default().push(face);
+        for &(operand, source) in sources.get(&face).into_iter().flatten() {
+            lineages[operand]
+                .faces
+                .entry(source)
+                .or_default()
+                .push(face);
         }
     }
-    lineage
+    lineages
 }
 
-/// Pairs each section span's two edges with the face that still keeps them.
+/// Pairs each section's two edges with the face that still keeps them.
 ///
-/// A union is the only operation that keeps faces from both operands, and they
-/// arrive unjoined: where the two boundaries coincide, each operand carries its
-/// own edge. This finds those pairs while the faces are all still present; the
-/// welding itself happens after the discarded faces are gone.
+/// A union is the only operation that keeps faces from several operands, and
+/// they arrive unjoined: where two boundaries coincide, each operand carries
+/// its own edge. This finds those pairs while the faces are all still present;
+/// the welding itself happens after the discarded faces are gone.
 ///
 /// An edge bounding two kept faces is already interior to the answer and is
-/// skipped, so only the seam between the operands is paired.
+/// skipped, so only the seams between operands are paired.
 fn sew_union_plan<P: Payload>(
     edit: &ModelEdit<'_, P>,
-    prepared: &BooleanOperandPreparation,
+    arrangement: &Arrangement,
     selection: &SelectionPlan<PlanarDomain>,
+    tolerances: BooleanTolerances,
 ) -> Result<Vec<SeamPair>, BooleanError> {
     let kept = selection.kept.iter().copied().collect::<HashSet<_>>();
-    let mut spans = prepared.span_edges.iter().collect::<Vec<_>>();
-    spans.sort_by_key(|(span, _)| span.0);
-    let mut pairs = Vec::new();
-    for (&span, sides) in spans {
-        let seam = sides.each_ref().map(|side| {
-            side.iter()
-                .copied()
-                .filter_map(|edge| {
-                    let faces = edit.edge(edge)?.faces();
-                    let mut kept_faces = faces.iter().filter(|face| kept.contains(&face.key()));
-                    let face = kept_faces.next()?.key();
-                    kept_faces.next().is_none().then_some((edge, face))
-                })
-                .collect::<Vec<_>>()
-        });
-        if seam[0].len() != seam[1].len() {
-            return Err(BooleanError::NonIsomorphicSpanSubdivision {
-                span,
-                first: seam[0].len(),
-                second: seam[1].len(),
-            });
-        }
-        pairs.extend(
-            seam[0]
-                .iter()
-                .copied()
-                .zip(seam[1].iter().copied())
-                .map(|(a, b)| SeamPair { span, a, b }),
-        );
-    }
-    Ok(pairs)
+    section_pairs(
+        edit,
+        &arrangement.sections,
+        &kept,
+        tolerances.linear,
+        |span, a, b| SeamPair { span, a, b },
+    )
 }
 
 /// Sews every paired seam edge, one dimension up from what it joins.
@@ -334,19 +364,22 @@ struct SeamMerges {
 /// to the operation rather than to the model.
 fn fuse_seams<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
-    prepared: &BooleanOperandPreparation,
+    arrangement: &Arrangement,
     merges: &SeamMerges,
     tolerances: BooleanTolerances,
 ) -> Result<Vec<(FaceKey, FaceKey)>, BooleanError> {
-    // Healing removes edges in the order it is offered them, so the spans are
-    // walked by id rather than in the hash order the map happens to hold them.
-    let mut spans = prepared.span_edges.iter().collect::<Vec<_>>();
-    spans.sort_by_key(|(span, _)| span.0);
-    let edges = spans
+    // Healing removes edges in the order it is offered them, so the sections
+    // are walked in the order the passes made them.
+    let mut offered = HashSet::new();
+    let edges = section_edges(&arrangement.sections)
         .into_iter()
-        .flat_map(|(_, sides)| sides.iter().flatten())
-        .map(|edge| *merges.edges.get(edge).unwrap_or(edge))
-        .filter(|&edge| edit.edge(edge).is_some())
+        .map(|mut edge| {
+            while let Some(&survivor) = merges.edges.get(&edge) {
+                edge = survivor;
+            }
+            edge
+        })
+        .filter(|&edge| edit.edge(edge).is_some() && offered.insert(edge))
         .collect::<Vec<_>>();
     let vertices = edges
         .iter()

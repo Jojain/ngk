@@ -9,11 +9,12 @@ use crate::{
         add_extruded_face, add_sphere, add_torus,
     },
     geometry::Frame,
-    model::Model,
+    modeling::import::import_tools,
     topology::{
-        ModelEditError,
+        ModelEdit,
         payload::Payload,
         shape::{FaceTag, Shape, SolidTag},
+        shape_keys::SolidKey,
     },
 };
 
@@ -157,72 +158,70 @@ pub fn extruded<P: Payload>(
     })
 }
 
-/// Consumes two owned solid shapes and fuses them into one owned solid.
-pub fn fuse<P: Payload>(
-    first: Shape<SolidTag, P>,
-    second: Shape<SolidTag, P>,
-) -> Result<Shape<SolidTag, P>, BooleanError> {
-    combine_shapes(first, second, BooleanOperation::Union)
-}
-
-/// Consumes two owned solid shapes and subtracts `tool` from `target`.
-pub fn cut<P: Payload>(
+/// Fuses every tool into `target`: `target ∪ t₁ ∪ … ∪ tₙ`.
+///
+/// Called as `fuse(target, [&tool])` for one tool. The result is built in
+/// `target`'s model, kept whole; each tool contributes only its solid, copied
+/// in. Only the final result must be one connected solid, so the tools may be
+/// passed in any order.
+pub fn fuse<'a, P: Payload>(
     target: Shape<SolidTag, P>,
-    tool: Shape<SolidTag, P>,
+    tools: impl IntoIterator<Item = &'a Shape<SolidTag, P>>,
 ) -> Result<Shape<SolidTag, P>, BooleanError> {
-    combine_shapes(target, tool, BooleanOperation::Difference)
+    combine(target, tools, BooleanOperation::Union)
 }
 
-/// Consumes two owned solid shapes and returns their common volume.
-pub fn intersect<P: Payload>(
-    first: Shape<SolidTag, P>,
-    second: Shape<SolidTag, P>,
-) -> Result<Shape<SolidTag, P>, BooleanError> {
-    combine_shapes(first, second, BooleanOperation::Intersection)
-}
-
-/// Moves two owned shapes into one working map and evaluates one Boolean.
-fn combine_shapes<P: Payload>(
+/// Subtracts every tool from `target`: `target − (t₁ ∪ … ∪ tₙ)`.
+///
+/// Called as `cut(target, [&tool])` for one tool; see [`fuse`] for where the
+/// result is built.
+pub fn cut<'a, P: Payload>(
     target: Shape<SolidTag, P>,
-    tool: Shape<SolidTag, P>,
+    tools: impl IntoIterator<Item = &'a Shape<SolidTag, P>>,
+) -> Result<Shape<SolidTag, P>, BooleanError> {
+    combine(target, tools, BooleanOperation::Difference)
+}
+
+/// The volume `target` shares with every tool: `target ∩ t₁ ∩ … ∩ tₙ`.
+///
+/// Called as `intersect(target, [&tool])` for one tool; see [`fuse`] for where
+/// the result is built.
+pub fn intersect<'a, P: Payload>(
+    target: Shape<SolidTag, P>,
+    tools: impl IntoIterator<Item = &'a Shape<SolidTag, P>>,
+) -> Result<Shape<SolidTag, P>, BooleanError> {
+    combine(target, tools, BooleanOperation::Intersection)
+}
+
+/// Copies each tool's solid into `target`'s model and evaluates one Boolean
+/// there.
+fn combine<'a, P: Payload>(
+    target: Shape<SolidTag, P>,
+    tools: impl IntoIterator<Item = &'a Shape<SolidTag, P>>,
     operation: BooleanOperation,
 ) -> Result<Shape<SolidTag, P>, BooleanError> {
-    let (mut map, target) = target.into_model();
-    let (tool_map, tool) = tool.into_model();
-    let tool = map.transaction(|edit| {
-        let handle = edit.merge(tool_map.solid_unchecked(tool));
-        Ok::<_, ModelEditError>(
-            edit.solid_key(handle)
-                .expect("copied tool solid must retain its registration"),
-        )
-    })?;
-    let result = boolean(&mut map, target, tool, operation, BooleanOptions::default())?;
-    Ok(Shape::new(map, result.solid))
-}
-
-/// Copies two borrowed solid views for language bindings and evaluates a Boolean.
-pub(crate) fn combine_views<P: Payload>(
-    first: Solid<'_, P>,
-    second: Solid<'_, P>,
-    operation: BooleanOperation,
-) -> Result<Shape<SolidTag, P>, BooleanError> {
-    let mut map = Model::new();
-    let (first, second) = map.transaction(|edit| {
-        let first_handle = edit.merge(first);
-        let second_handle = edit.merge(second);
-        Ok::<_, ModelEditError>((
-            edit.solid_key(first_handle)
-                .expect("copied first solid must retain its registration"),
-            edit.solid_key(second_handle)
-                .expect("copied second solid must retain its registration"),
-        ))
-    })?;
+    let (mut model, target) = target.into_model();
+    let tools = tools.into_iter().collect::<Vec<_>>();
+    let tools = import_tools(
+        &mut model,
+        &tools,
+        |a, b| std::ptr::eq(*a, *b),
+        |edit, tool| copy_solid(edit, tool.solid()),
+    )?;
     let result = boolean(
-        &mut map,
-        first,
-        second,
+        &mut model,
+        target,
+        &tools,
         operation,
         BooleanOptions::default(),
     )?;
-    Ok(Shape::new(map, result.solid))
+    Ok(Shape::new(model, result.solid))
+}
+
+/// Copies one solid, with the entities that bound it and nothing else of its model, and
+/// returns its key in the model being edited.
+pub(crate) fn copy_solid<P: Payload>(edit: &mut ModelEdit<'_, P>, solid: Solid<'_, P>) -> SolidKey {
+    let handle = edit.merge(solid);
+    edit.solid_key(handle)
+        .expect("copied tool solid must retain its registration")
 }

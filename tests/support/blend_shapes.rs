@@ -85,7 +85,7 @@ pub fn prism_with_hole(size: f64, hole: f64, height: f64) -> (Model<StandardPayl
         2.0 * height,
     )
     .expect("hole tool should build");
-    cut(slab, tool)
+    cut(slab, [&tool])
         .expect("the hole should cut through")
         .into_model()
 }
@@ -126,7 +126,7 @@ pub fn boss_on_block() -> (Model<StandardPayload>, SolidKey, EdgeKey) {
     let base = block(BLOCK[0], BLOCK[1], BLOCK[2]).expect("block should build");
     let boss =
         cylinder_at(Frame::at(Point3::new(2.0, 2.0, 1.0)), 1.0, 2.0).expect("boss should build");
-    let (g, solid) = fuse(base, boss).expect("boss should fuse").into_model();
+    let (g, solid) = fuse(base, [&boss]).expect("boss should fuse").into_model();
     let joint = closed_edge_at_height(&g, solid, 2.0);
     (g, solid, joint)
 }
@@ -140,7 +140,7 @@ pub fn oblique_boss_on_block() -> (Model<StandardPayload>, SolidKey, EdgeKey) {
     let axis = Vector3::new(tilt.sin(), 0.0, tilt.cos());
     let frame = Frame::from_xz(Point3::new(1.7, 2.1, 0.5), Vector3::y().cross(&axis), axis);
     let boss = cylinder_at(frame, 0.9, 3.0).expect("boss should build");
-    let (g, solid) = fuse(base, boss).expect("boss should fuse").into_model();
+    let (g, solid) = fuse(base, [&boss]).expect("boss should fuse").into_model();
     let joint = closed_edge_at_height(&g, solid, 2.0);
     (g, solid, joint)
 }
@@ -157,7 +157,7 @@ pub fn plate_with_bore(size: f64, height: f64) -> (Model<StandardPayload>, Solid
         height + 2.0,
     )
     .expect("bore tool should build");
-    let (g, solid) = cut(plate, tool)
+    let (g, solid) = cut(plate, [&tool])
         .expect("the bore should cut through")
         .into_model();
     let rims = [0.0, height].map(|z| closed_edge_at_height(&g, solid, z));

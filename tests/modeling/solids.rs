@@ -352,9 +352,9 @@ fn solid_boolean_modeling_operations_accept_owned_shapes_and_return_closed_shape
         .expect("second block");
 
         let result = match operation {
-            "fuse" => fuse(first, second),
-            "intersect" => intersect(first, second),
-            "cut" => cut(first, second),
+            "fuse" => fuse(first, [&second]),
+            "intersect" => intersect(first, [&second]),
+            "cut" => cut(first, [&second]),
             _ => unreachable!(),
         }
         .expect("Boolean should succeed");
@@ -522,7 +522,7 @@ fn a_cylinder_bored_from_above_its_floor_is_a_cup() {
     let outer = cylinder_at(frame_at(0.0, 0.0, 0.0), 20.0, 30.0).expect("outer cylinder");
     let inner = cylinder_at(frame_at(0.0, 0.0, 4.0), 16.0, 28.0).expect("boring tool");
 
-    let cup = cut(outer, inner).expect("boring a cylinder should succeed");
+    let cup = cut(outer, [&inner]).expect("boring a cylinder should succeed");
 
     validate_solid_manifold(cup.model(), cup.key()).expect("the cup should be manifold");
     validate_solid_orientation(cup.model(), cup.key()).expect("the cup should be outward oriented");
@@ -600,7 +600,7 @@ fn a_bar_flush_with_a_cylinders_top_fuses_across_the_rims_period() {
     let cylinder = cylinder(20.0, 30.0).expect("cylinder primitive should build");
     let bar = block_at(frame_at(-30.0, -3.0, 24.0), 12.5, 6.0, 6.0).expect("bar primitive");
 
-    let result = fuse(cylinder, bar).expect("a flush bar should fuse");
+    let result = fuse(cylinder, [&bar]).expect("a flush bar should fuse");
 
     validate_solid_manifold(result.model(), result.key()).expect("the fusion should be manifold");
     validate_solid_orientation(result.model(), result.key())
@@ -627,9 +627,9 @@ fn a_handle_that_bores_and_notches_one_wall_fuses_to_a_mug() {
     let lower = block_at(frame_at(-30.0, -3.0, 8.0), 12.5, 6.0, 6.0).expect("lower bar");
     let upper = block_at(frame_at(-30.0, -3.0, 24.0), 12.5, 6.0, 6.0).expect("upper bar");
     let spine = block_at(frame_at(-30.0, -3.0, 8.0), 6.0, 6.0, 22.0).expect("handle spine");
-    let handle = fuse(fuse(lower, spine).expect("handle base"), upper).expect("handle");
+    let handle = fuse(fuse(lower, [&spine]).expect("handle base"), [&upper]).expect("handle");
 
-    let mug = fuse(cup, handle).expect("a handle should fuse onto a cup");
+    let mug = fuse(cup, [&handle]).expect("a handle should fuse onto a cup");
 
     validate_solid_manifold(mug.model(), mug.key()).expect("the mug should be manifold");
     validate_solid_orientation(mug.model(), mug.key()).expect("the mug should be outward oriented");

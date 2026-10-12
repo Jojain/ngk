@@ -1,12 +1,19 @@
 use nalgebra::{Unit, Vector3};
 use thiserror::Error;
 
+use crate::builders;
 use crate::builders::blend::{BlendSelection, BlendTarget};
+use crate::builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, boolean};
 use crate::builders::sweep::{SweepFrame, SweepOptions, SweepTransition};
 use crate::geometry::Axis3;
+use crate::modeling::faces::{FaceBooleanResult, copy_face};
+use crate::modeling::import::import_tools;
+use crate::modeling::solids::copy_solid;
+use crate::topology::ModelEditError;
 use crate::topology::payload::{Payload, StandardPayload};
+use crate::topology::shape::{Shape, SolidTag};
 
-use super::explore::SharedModel;
+use super::explore::{ExploreError, SharedFace, SharedModel, SharedSolid};
 
 #[derive(Debug, Error)]
 pub(crate) enum SelectionError {
@@ -96,6 +103,86 @@ pub(crate) fn sweep_options(
         transition,
         samples_per_segment,
     })
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum BindingBooleanError {
+    #[error(transparent)]
+    Handle(#[from] ExploreError),
+    #[error(transparent)]
+    Import(#[from] ModelEditError),
+    #[error(transparent)]
+    Boolean(#[from] BooleanError),
+}
+
+/// Evaluates one solid Boolean for both bindings.
+///
+/// A binding never mutates the model its handles share, so the Boolean runs in
+/// a copy of the target's model, kept whole: every other entity of it is still
+/// there, under the same key. A tool held in that same model is used in place
+/// by its key; any other tool contributes only its own solid, copied in.
+pub(crate) fn solid_boolean<P: Payload>(
+    target: &SharedSolid<P>,
+    tools: &[SharedSolid<P>],
+    operation: BooleanOperation,
+) -> Result<Shape<SolidTag, P>, BindingBooleanError> {
+    target.view()?;
+    let shared = target.model();
+    let mut model = shared.model().clone();
+    let views = tools
+        .iter()
+        .map(|tool| Ok((tool, tool.view()?)))
+        .collect::<Result<Vec<_>, ExploreError>>()?;
+    let keys = import_tools(
+        &mut model,
+        &views,
+        |(a, _), (b, _)| a.same_entity(b),
+        |edit, (tool, view)| match tool.model().ptr_eq(&shared) {
+            true => tool.key(),
+            false => copy_solid(edit, view.clone()),
+        },
+    )?;
+    let result = boolean(
+        &mut model,
+        target.key(),
+        &keys,
+        operation,
+        BooleanOptions::default(),
+    )?;
+    Ok(Shape::new(model, result.solid))
+}
+
+/// Evaluates one face Boolean for both bindings, on the model rules of
+/// [`solid_boolean`].
+pub(crate) fn face_boolean<P: Payload>(
+    target: &SharedFace<P>,
+    tools: &[SharedFace<P>],
+    operation: BooleanOperation,
+) -> Result<FaceBooleanResult<P>, BindingBooleanError> {
+    target.view()?;
+    let shared = target.model();
+    let mut model = shared.model().clone();
+    let views = tools
+        .iter()
+        .map(|tool| Ok((tool, tool.view()?)))
+        .collect::<Result<Vec<_>, ExploreError>>()?;
+    let keys = import_tools(
+        &mut model,
+        &views,
+        |(a, _), (b, _)| a.same_entity(b),
+        |edit, (tool, view)| match tool.model().ptr_eq(&shared) {
+            true => tool.key(),
+            false => copy_face(edit, view.clone()),
+        },
+    )?;
+    let result = builders::boolean::face_boolean(
+        &mut model,
+        target.key(),
+        &keys,
+        operation,
+        BooleanOptions::default(),
+    )?;
+    Ok(FaceBooleanResult::new(model, result.faces))
 }
 
 #[derive(Debug, Error)]

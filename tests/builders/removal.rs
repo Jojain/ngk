@@ -251,7 +251,7 @@ fn tangent_union() -> (Model<StandardPayload>, ngk::topology::shape_keys::SolidK
     let result = boolean(
         &mut map,
         block_key,
-        cylinder,
+        &[cylinder],
         BooleanOperation::Union,
         BooleanOptions {
             heal: false,

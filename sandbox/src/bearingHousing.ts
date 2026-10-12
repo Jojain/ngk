@@ -17,14 +17,14 @@ function frameAt(x: number, y: number, z: number) {
 console.log("Building the square mounting plate and boss…");
 const plate = block(PLATE_SIZE, PLATE_SIZE, PLATE_THICKNESS);
 const boss = cylinder_at(BOSS_RADIUS, BOSS_HEIGHT, frameAt(7, 7, PLATE_THICKNESS));
-let housing = fuse(plate, boss);
+let housing = fuse(plate, [boss]);
 
 console.log("Cutting the shaft bore and four mounting holes…");
-housing = cut(housing, cylinder_at(BORE_RADIUS, 5.2, frameAt(7, 7, -0.2)));
+housing = cut(housing, [cylinder_at(BORE_RADIUS, 5.2, frameAt(7, 7, -0.2))]);
 
 for (const x of [7 - HOLE_OFFSET, 7 + HOLE_OFFSET]) {
   for (const y of [7 - HOLE_OFFSET, 7 + HOLE_OFFSET]) {
-    housing = cut(housing, cylinder_at(HOLE_RADIUS, 1.8, frameAt(x, y, -0.2)));
+    housing = cut(housing, [cylinder_at(HOLE_RADIUS, 1.8, frameAt(x, y, -0.2))]);
   }
 }
 

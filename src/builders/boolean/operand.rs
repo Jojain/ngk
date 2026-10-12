@@ -1,6 +1,6 @@
 //! Resolution, validation, and import of Boolean operands.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::model::{Cell0, Cell1, Cell2, Model};
 use crate::topology::ModelEdit;
@@ -8,8 +8,8 @@ use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
 
 use super::{
-    BooleanError, BooleanOperand, BooleanOperation, BooleanOptions, BooleanTolerancePolicy,
-    BooleanTolerances,
+    BooleanError, BooleanInput, BooleanOperand, BooleanOperation, BooleanOptions,
+    BooleanTolerancePolicy, BooleanTolerances,
 };
 use crate::topology::shape_keys::SolidKey;
 use crate::topology::validation::{validate_solid_manifold, validate_solid_orientation};
@@ -156,48 +156,168 @@ fn unique<T: Copy + Eq + std::hash::Hash>(values: impl IntoIterator<Item = T>) -
         .collect()
 }
 
+/// The distinct operands of one call, the target first.
+///
+/// A key passed more than once is one operand: the set rules collapse it
+/// (`T ∪ T = T`, `T ∩ T = T`), so it is intersected and classified once, and
+/// every input that named it reports that one operand's lineage.
+pub(crate) struct Operands<K> {
+    /// In index order, the target first.
+    pub(crate) operands: Vec<Operand<K>>,
+    /// For each tool, the index of the operand it is.
+    tools: Vec<usize>,
+}
+
+/// One distinct operand, and the input it was first passed as.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Operand<K> {
+    pub(crate) key: K,
+    pub(crate) input: BooleanInput,
+}
+
+impl<K: Copy + Eq> Operands<K> {
+    pub(crate) fn new(target: K, tools: &[K]) -> Self {
+        let mut operands = Self {
+            operands: vec![Operand {
+                key: target,
+                input: BooleanInput::Target,
+            }],
+            tools: Vec::with_capacity(tools.len()),
+        };
+        for (index, &tool) in tools.iter().enumerate() {
+            let existing = operands
+                .operands
+                .iter()
+                .position(|operand| operand.key == tool);
+            let operand = existing.unwrap_or_else(|| {
+                operands.operands.push(Operand {
+                    key: tool,
+                    input: BooleanInput::Tool(index),
+                });
+                operands.operands.len() - 1
+            });
+            operands.tools.push(operand);
+        }
+        operands
+    }
+
+    pub(crate) fn target(&self) -> K {
+        self.operands[0].key
+    }
+
+    pub(crate) fn keys(&self) -> impl Iterator<Item = K> + '_ {
+        self.operands.iter().map(|operand| operand.key)
+    }
+
+    /// The same operands, each key turned into another of the same operand.
+    pub(crate) fn map<T>(&self, f: impl Fn(K) -> T) -> Vec<Operand<T>> {
+        self.operands
+            .iter()
+            .map(|operand| Operand {
+                key: f(operand.key),
+                input: operand.input,
+            })
+            .collect()
+    }
+
+    /// Whether some tool is the target itself.
+    pub(crate) fn target_is_a_tool(&self) -> bool {
+        self.tools.contains(&0)
+    }
+
+    /// Spreads one value per operand back over the inputs: the target's, then
+    /// one per tool in the order the tools were passed.
+    pub(crate) fn per_input<T: Clone>(&self, mut values: Vec<T>) -> (T, Vec<T>) {
+        let tools = self
+            .tools
+            .iter()
+            .map(|&operand| values[operand].clone())
+            .collect();
+        (values.swap_remove(0), tools)
+    }
+}
+
+/// Resolves every operand's cells, naming the input that is missing.
+pub(crate) fn operands_cells<P: Payload, K: Copy>(
+    map: &Model<P>,
+    operands: &Operands<K>,
+    operand: impl Fn(K) -> BooleanOperand,
+) -> Result<Vec<OperandCells>, BooleanError> {
+    operands
+        .operands
+        .iter()
+        .map(|&Operand { key, input }| {
+            operand_cells(map, operand(key)).map_err(|error| match error {
+                BooleanError::MissingOperand { operand } => {
+                    BooleanError::MissingInput { input, operand }
+                }
+                other => other,
+            })
+        })
+        .collect()
+}
+
+/// Rejects two distinct operands registering the same boundary face.
+///
+/// `cells` holds each operand's cells, in the operands' order.
+pub(crate) fn reject_shared_faces<K>(
+    operands: &Operands<K>,
+    cells: &[OperandCells],
+) -> Result<(), BooleanError> {
+    let mut owners = HashMap::<FaceKey, usize>::new();
+    for (operand, cells) in cells.iter().enumerate() {
+        for &face in &cells.faces {
+            if let Some(&owner) = owners.get(&face)
+                && owner != operand
+            {
+                return Err(BooleanError::SharedOperandBoundary {
+                    first: operands.operands[owner].input,
+                    second: operands.operands[operand].input,
+                });
+            }
+            owners.insert(face, operand);
+        }
+    }
+    Ok(())
+}
+
 pub(crate) struct BooleanContext {
-    pub(crate) first: SolidKey,
-    pub(crate) second: SolidKey,
+    pub(crate) operands: Operands<SolidKey>,
     pub(crate) operation: BooleanOperation,
     pub(crate) options: BooleanOptions,
     pub(crate) tolerances: BooleanTolerances,
 }
 
 impl BooleanContext {
-    /// Validates both closed oriented operands before any mutation and fixes the budget.
+    /// Validates every closed oriented operand before any mutation and fixes
+    /// one budget for all of them.
     pub(crate) fn admit<P: Payload>(
         map: &Model<P>,
-        first: SolidKey,
-        second: SolidKey,
+        target: SolidKey,
+        tools: &[SolidKey],
         operation: BooleanOperation,
         mut options: BooleanOptions,
     ) -> Result<Self, BooleanError> {
         if !options.intersections.validate() || options.max_classification_rays < 2 {
             return Err(crate::geometry::IntersectionError::InvalidOptions.into());
         }
-        let first_cells = operand_cells(map, BooleanOperand::Solid(first))?;
-        let second_cells = operand_cells(map, BooleanOperand::Solid(second))?;
-        for solid in [first, second] {
+        let operands = Operands::new(target, tools);
+        let cells = operands_cells(map, &operands, BooleanOperand::Solid)?;
+        for &Operand { key: solid, input } in &operands.operands {
             validate_solid_manifold(map, solid)
                 .and_then(|()| validate_solid_orientation(map, solid))
-                .map_err(|source| BooleanError::InvalidOperand { solid, source })?;
+                .map_err(|source| BooleanError::InvalidOperand {
+                    input,
+                    solid,
+                    source,
+                })?;
         }
-        if first != second
-            && first_cells
-                .faces
-                .iter()
-                .any(|face| second_cells.faces.contains(face))
-        {
-            return Err(BooleanError::SharedOperandBoundary);
-        }
-        let tolerances =
-            BooleanTolerances::from_cells(map, &first_cells, &second_cells, options.tolerances)?;
+        reject_shared_faces(&operands, &cells)?;
+        let tolerances = BooleanTolerances::from_operands(map, &cells, options.tolerances)?;
         tolerances.apply(&mut options.intersections);
         options.tolerances = BooleanTolerancePolicy::Fixed(tolerances);
         Ok(Self {
-            first,
-            second,
+            operands,
             operation,
             options,
             tolerances,

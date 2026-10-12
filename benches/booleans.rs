@@ -85,11 +85,17 @@ fn run_once(scene: &Scene) -> Result<String, String> {
     let outcome = boolean(
         &mut map,
         first,
-        second,
+        &[second],
         scene.operation,
         BooleanOptions::default(),
     );
     let elapsed = started.elapsed();
+    // Incomplete coverage is reported against the pair of operands it was
+    // found between; the bench names the scene instead.
+    let outcome = outcome.map_err(|error| match error {
+        BooleanError::Imprint { source, .. } => *source,
+        other => other,
+    });
     match outcome {
         Ok(_) => Ok(format!("{} ok in {elapsed:?}", scene.name)),
         Err(BooleanError::IncompleteIntersections { diagnostics }) => Err(format!(
@@ -150,7 +156,7 @@ fn boolean_benches(criterion: &mut Criterion) {
                 let _ = boolean(
                     &mut map,
                     first,
-                    second,
+                    &[second],
                     scene.operation,
                     BooleanOptions::default(),
                 );

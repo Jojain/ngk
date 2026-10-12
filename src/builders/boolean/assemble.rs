@@ -1,9 +1,9 @@
 //! Atomic deletion, canonical-span sewing, and result shell registration.
 
 use super::{
-    BooleanContext, BooleanError, BooleanOperandPreparation, BooleanSide, IntersectionSpanId,
-    SolidBoolean, SolidBooleanLineage, neighborhood::FragmentGraph, select::SelectionPlan,
-    solid_domain::SolidDomain,
+    BooleanContext, BooleanError, BooleanSection, IntersectionSpanId, SolidBoolean,
+    SolidBooleanLineage, arrangement::Arrangement, neighborhood::FragmentGraph,
+    select::SelectionPlan, solid_domain::SolidDomain,
 };
 use crate::builders::edges::split_face_boundary_edge;
 use crate::builders::faces::reverse_face_winding_edit;
@@ -26,28 +26,41 @@ use crate::topology::{
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-/// Forms result shells, requiring a complete positional pairing for every surviving span.
-pub(crate) fn run<P: Payload>(
-    edit: &mut ModelEdit<'_, P>,
-    context: &BooleanContext,
-    graph: &FragmentGraph<SolidDomain>,
-    mut prepared: BooleanOperandPreparation,
-    selection: SelectionPlan<SolidDomain>,
-) -> Result<SolidBoolean, BooleanError> {
-    if selection.kept.is_empty() {
-        return Err(BooleanError::EmptyResult);
-    }
-    let kept = selection.kept.iter().copied().collect::<HashSet<_>>();
+/// One section edge the result keeps, and the one kept face that runs along it.
+pub(super) type SeamSide = (EdgeKey, FaceKey);
+
+/// Pairs the two sides of every section the result keeps.
+///
+/// A section edge is on the result's boundary when exactly one kept face runs
+/// along it; an edge between two kept faces is already interior to one
+/// operand's surviving boundary, and one with none is gone. Both sides of a
+/// section must keep the same number of edges, and each edge on one side is
+/// sewn to the one on the other that covers the same piece of the section.
+///
+/// Partners are chosen within one section only, so geometry decides which
+/// piece of one intersection curve meets which, never which curve: two
+/// fragments are the same piece when their ends coincide, and when a closed
+/// section was cut into pieces sharing both ends, when a point partway along
+/// one lies on the other. An edge already paired by an earlier section, as
+/// where three operands share one line, is not offered again.
+///
+/// The kept face is carried alongside its edge: it is what says which way the
+/// fragment runs, and looking it up again after the sewing has started would
+/// be asking a map that has moved on.
+pub(super) fn section_pairs<P: Payload, F>(
+    edit: &ModelEdit<'_, P>,
+    sections: &[BooleanSection],
+    kept: &HashSet<FaceKey>,
+    tolerance: f64,
+    mut pair: impl FnMut(IntersectionSpanId, SeamSide, SeamSide) -> F,
+) -> Result<Vec<F>, BooleanError> {
+    let mut claimed = HashSet::new();
     let mut pairs = Vec::new();
-    let mut spans = prepared.span_edges.iter().collect::<Vec<_>>();
-    spans.sort_by_key(|(span, _)| span.0);
-    for (&span, sides) in spans {
-        // The one kept face is carried alongside its edge: it is what says
-        // which way the fragment runs, and looking it up again after the
-        // sewing has started would be asking a map that has moved on.
-        let boundary = sides.each_ref().map(|side| {
+    for section in sections {
+        let boundary = section.edges.each_ref().map(|side| {
             side.iter()
                 .copied()
+                .filter(|edge| !claimed.contains(edge))
                 .filter_map(|edge| {
                     let faces = edit.edge(edge)?.faces();
                     let mut kept_faces = faces.iter().filter(|face| kept.contains(&face.key()));
@@ -56,6 +69,7 @@ pub(crate) fn run<P: Payload>(
                 })
                 .collect::<Vec<_>>()
         });
+        let span = section.span;
         if boundary[0].len() != boundary[1].len() {
             return Err(BooleanError::NonIsomorphicSpanSubdivision {
                 span,
@@ -63,14 +77,85 @@ pub(crate) fn run<P: Payload>(
                 second: boundary[1].len(),
             });
         }
-        pairs.extend(
-            boundary[0]
-                .iter()
-                .copied()
-                .zip(boundary[1].iter().copied())
-                .map(|(a, b)| (span, a, b)),
-        );
+        let mut partners = boundary[1].clone();
+        for &a in &boundary[0] {
+            let at = partner(edit, a.0, &partners, tolerance).ok_or(
+                BooleanError::NonIsomorphicSpanSubdivision {
+                    span,
+                    first: boundary[0].len(),
+                    second: boundary[1].len(),
+                },
+            )?;
+            let b = partners.swap_remove(at);
+            claimed.insert(a.0);
+            claimed.insert(b.0);
+            pairs.push(pair(span, a, b));
+        }
     }
+    Ok(pairs)
+}
+
+/// The index of the one candidate that covers the same piece of a section as
+/// `edge`, if exactly one does.
+fn partner<P: Payload>(
+    edit: &ModelEdit<'_, P>,
+    edge: EdgeKey,
+    candidates: &[SeamSide],
+    tolerance: f64,
+) -> Option<usize> {
+    let piece = edit.edge_unchecked(edge).trimmed_curve();
+    let (start, end) = (piece.start(), piece.end());
+    let closed = start.coincides(end, tolerance);
+    let same_ends = |other: &crate::geometry::TrimmedCurve| {
+        let (a, b) = (other.start(), other.end());
+        if closed {
+            a.coincides(b, tolerance)
+        } else {
+            (a.coincides(start, tolerance) && b.coincides(end, tolerance))
+                || (a.coincides(end, tolerance) && b.coincides(start, tolerance))
+        }
+    };
+    let matching = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &(candidate, _))| {
+            let other = edit.edge_unchecked(candidate).trimmed_curve();
+            same_ends(&other).then_some((index, other))
+        })
+        .collect::<Vec<_>>();
+    match matching.as_slice() {
+        [(index, _)] => Some(*index),
+        [] => None,
+        _ => {
+            let middle = piece.point_at(Fraction::new(0.5));
+            let mut on = matching
+                .iter()
+                .filter(|(_, other)| other.contains(middle, tolerance));
+            let (index, _) = on.next()?;
+            on.next().is_none().then_some(*index)
+        }
+    }
+}
+
+/// Forms result shells, requiring a complete pairing for every surviving section.
+pub(crate) fn run<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    context: &BooleanContext,
+    graph: &FragmentGraph<SolidDomain>,
+    mut arrangement: Arrangement,
+    selection: SelectionPlan<SolidDomain>,
+) -> Result<SolidBoolean, BooleanError> {
+    if selection.kept.is_empty() {
+        return Err(BooleanError::EmptyResult);
+    }
+    let kept = selection.kept.iter().copied().collect::<HashSet<_>>();
+    let pairs = section_pairs(
+        edit,
+        &arrangement.sections,
+        &kept,
+        context.tolerances.linear,
+        |span, a, b| (span, a, b),
+    )?;
     for &face in &selection.reversed {
         reverse_face_winding_edit(edit, face);
     }
@@ -85,23 +170,24 @@ pub(crate) fn run<P: Payload>(
             edit.sheet_key(dart).map(|sheet| (face, sheet))
         })
         .collect::<HashMap<_, _>>();
-    let sheets = [context.first, context.second]
-        .into_iter()
-        .flat_map(|solid| {
+    let solids = context.operands.keys().collect::<Vec<_>>();
+    let sheets = solids
+        .iter()
+        .flat_map(|&solid| {
             edit.solid_unchecked(solid)
                 .shells()
                 .into_iter()
                 .map(|shell| shell.key())
         })
         .collect::<BTreeSet<_>>();
-    // Both operands' shells are about to be torn apart and reassembled, so
-    // neither can stay staged until commit the way a `merge_*_into` survivor
+    // Every operand's shells are about to be torn apart and reassembled, so
+    // none can stay staged until commit the way a `merge_*_into` survivor
     // would need to: `validate_required_domain_attributes` runs before
     // reconciliation and would reject a solid still pointing at shells the
-    // rebuild below has stripped of their sheet registration. Both are
-    // removed immediately instead, and the result solid names both as its
-    // `Derived` origin below, so a caller's policy sees where it came from.
-    for solid in [context.first, context.second] {
+    // rebuild below has stripped of their sheet registration. They are all
+    // removed immediately instead, and the result solid names every one as
+    // its `Derived` origin below, so a caller's policy sees where it came from.
+    for &solid in &solids {
         edit.remove_solid(solid);
     }
     for sheet in sheets {
@@ -157,42 +243,32 @@ pub(crate) fn run<P: Payload>(
     let mut shell_roots = Vec::with_capacity(1 + inner.len());
     shell_roots.push(outer[0]);
     shell_roots.extend(inner.iter().copied());
-    // A same-kind, two-source `Derived` rather than a `Split`: the result is
-    // not `first` continuing, it is a new solid the whole operation produced,
-    // and naming both operands is what lets a policy combine their payloads
-    // instead of one arbitrarily standing in for both.
-    let sources = if context.first == context.second {
-        vec![EditKey::Solid(context.first)]
-    } else {
-        vec![
-            EditKey::Solid(context.first),
-            EditKey::Solid(context.second),
-        ]
-    };
+    // A same-kind, many-source `Derived` rather than a `Split`: the result is
+    // not the target continuing, it is a new solid the whole operation
+    // produced, and naming every operand is what lets a policy combine their
+    // payloads instead of one arbitrarily standing in for all.
+    let sources = solids.iter().map(|&solid| EditKey::Solid(solid)).collect();
     let solid = edit.add_solid_derived_from(sources, SolidAttr::new(outer[0], Some(inner)));
     cut_between_shells(edit, solid, &shell_roots)?;
     validate_gmap(edit.topology()).map_err(ModelValidationError::from)?;
     validate_solid_manifold(edit, solid)?;
     validate_solid_orientation(edit, solid)?;
-    for lineage in [&mut prepared.first_lineage, &mut prepared.second_lineage] {
+    let lineages = &mut arrangement.lineages;
+    for lineage in lineages.iter_mut() {
         for faces in lineage.faces.values_mut() {
             faces.clear();
         }
     }
     for fragment in &graph.fragments {
         if kept.contains(&fragment.fragment) {
-            let lineage = match fragment.side {
-                BooleanSide::First => &mut prepared.first_lineage,
-                BooleanSide::Second => &mut prepared.second_lineage,
-            };
-            lineage
+            lineages[fragment.operand]
                 .faces
                 .entry(fragment.source)
                 .or_default()
                 .push(fragment.fragment);
         }
     }
-    for lineage in [&mut prepared.first_lineage, &mut prepared.second_lineage] {
+    for lineage in lineages.iter_mut() {
         for edges in lineage.edges.values_mut() {
             remap_keys(edges, &edge_merges);
             edges.retain(|edge| edit.edge(*edge).is_some());
@@ -203,16 +279,17 @@ pub(crate) fn run<P: Payload>(
         }
     }
     if context.options.heal {
-        heal_result(edit, context, solid, &mut prepared)?;
+        heal_result(edit, context, solid, &mut arrangement)?;
     }
+    let (target, tools) = context.operands.per_input(arrangement.lineages);
     Ok(SolidBoolean {
         operation: context.operation,
         solid,
-        diagnostics: prepared.diagnostics,
+        diagnostics: arrangement.diagnostics,
         lineage: SolidBooleanLineage {
-            first: prepared.first_lineage,
-            second: prepared.second_lineage,
-            span_edges: prepared.span_edges,
+            target,
+            tools,
+            sections: arrangement.sections,
             discarded_faces: selection.dropped,
         },
     })
@@ -229,7 +306,7 @@ fn heal_result<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     context: &BooleanContext,
     solid: SolidKey,
-    prepared: &mut BooleanOperandPreparation,
+    arrangement: &mut Arrangement,
 ) -> Result<(), BooleanError> {
     let report = remove_redundant_cells_edit(
         edit,
@@ -246,7 +323,7 @@ fn heal_result<P: Payload>(
 
     let faces = fusion_map(&report.fused_faces);
     let edges = fusion_map(&report.fused_edges);
-    for lineage in [&mut prepared.first_lineage, &mut prepared.second_lineage] {
+    for lineage in &mut arrangement.lineages {
         for keys in lineage.faces.values_mut() {
             remap_keys(keys, &faces);
             keys.retain(|face| edit.face(*face).is_some());
@@ -259,8 +336,8 @@ fn heal_result<P: Payload>(
             keys.retain(|vertex| edit.vertex(*vertex).is_some());
         }
     }
-    for sides in prepared.span_edges.values_mut() {
-        for side in sides.iter_mut() {
+    for section in &mut arrangement.sections {
+        for side in section.edges.iter_mut() {
             remap_keys(side, &edges);
             side.retain(|edge| edit.edge(*edge).is_some());
         }

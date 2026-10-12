@@ -60,10 +60,10 @@ function thread() {
 }
 
 console.log("Building head and shank…");
-let bolt = fuse(head(), body());
-bolt = fuse(bolt, core());
+let bolt = fuse(head(), [body()]);
+bolt = fuse(bolt, [core()]);
 console.log("Sweeping and fusing the thread…");
-bolt = fuse(bolt, thread());
+bolt = fuse(bolt, [thread()]);
 show(bolt);
 console.log("Bolt ready: " + bolt.faceCount + " faces");
 `;

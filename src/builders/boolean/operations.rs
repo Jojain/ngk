@@ -62,59 +62,66 @@ impl Default for BooleanOptions {
     }
 }
 
-/// Evaluates one regularized Boolean inside a single transaction.
-/// Consumes the operand boundary registrations on success. Empty and disconnected
-/// results, ambiguous classification, or incomplete geometric coverage roll back.
-/// The current certified classification path admits planar polygonal boundaries.
+/// Evaluates one regularized Boolean of `target` with every one of `tools`,
+/// inside a single transaction.
+///
+/// The result is `target − (t₁ ∪ … ∪ tₙ)` for a difference, `target ∪ t₁ ∪ … ∪
+/// tₙ` for a union and `target ∩ t₁ ∩ … ∩ tₙ` for an intersection, whatever
+/// order the tools come in: every operand is imprinted on every other first,
+/// and the result is decided once, so only the final solid has to be one
+/// connected closed solid. Tools may overlap each other. A key passed twice is
+/// one operand, so a tool equal to the target leaves a union or intersection
+/// unchanged and empties a difference. With no tools, `target` is returned as
+/// it is.
+///
+/// Consumes every operand's boundary registration on success. Every other
+/// entity of the map keeps its key. Empty and disconnected results, ambiguous
+/// classification, or incomplete geometric coverage roll back. The current
+/// certified classification path admits planar polygonal boundaries.
 pub fn boolean<P: Payload>(
     map: &mut Model<P>,
-    first: SolidKey,
-    second: SolidKey,
+    target: SolidKey,
+    tools: &[SolidKey],
     operation: BooleanOperation,
     options: BooleanOptions,
 ) -> Result<SolidBoolean, BooleanError> {
-    let context = BooleanContext::admit(map, first, second, operation, options)?;
+    let context = BooleanContext::admit(map, target, tools, operation, options)?;
+    if operation == BooleanOperation::Difference && context.operands.target_is_a_tool() {
+        return Err(BooleanError::EmptyResult);
+    }
+    if context.operands.operands.len() == 1 {
+        let cells = operand_cells(map, BooleanOperand::Solid(target))?;
+        let lineage = lineage_for(&cells, &HashMap::new(), &HashMap::new());
+        return Ok(SolidBoolean {
+            operation,
+            solid: target,
+            lineage: SolidBooleanLineage {
+                tools: vec![lineage.clone(); tools.len()],
+                target: lineage,
+                sections: Vec::new(),
+                discarded_faces: Vec::new(),
+            },
+            diagnostics: BooleanDiagnostics {
+                tolerances: context.tolerances,
+                ..Default::default()
+            },
+        });
+    }
+    let operands = context.operands.map(BooleanOperand::Solid);
     map.transaction(|edit| {
-        if first == second {
-            if operation == BooleanOperation::Difference {
-                return Err(BooleanError::EmptyResult);
-            }
-            let cells = operand_cells(edit, BooleanOperand::Solid(first))?;
-            return Ok(SolidBoolean {
-                operation,
-                solid: first,
-                lineage: SolidBooleanLineage {
-                    first: lineage_for(&cells, &HashMap::new(), &HashMap::new()),
-                    second: BooleanLineage::default(),
-                    span_edges: HashMap::new(),
-                    discarded_faces: Vec::new(),
-                },
-                diagnostics: BooleanDiagnostics {
-                    tolerances: context.tolerances,
-                    ..Default::default()
-                },
-            });
-        }
-        let plan = compute_boolean_intersections(
+        let arrangement =
+            arrangement::arrange(edit, &operands, context.options, context.tolerances)?;
+        let graph = neighborhood::FragmentGraph::<SolidDomain>::build(&arrangement.lineages);
+        let classes = classify::run(
             edit,
-            BooleanOperand::Solid(first),
-            BooleanOperand::Solid(second),
+            &arrangement.lineages,
+            &graph,
+            operation,
             context.options,
+            context.tolerances,
         )?;
-        if !plan.diagnostics.coverage.is_empty()
-            || plan.diagnostics.branches_uncertified > 0
-            || !plan.diagnostics.unresolved_overlaps.is_empty()
-        {
-            return Err(BooleanError::IncompleteIntersections {
-                diagnostics: Box::new(plan.diagnostics),
-            });
-        }
-        validate_solid_network(edit, &plan.network, context.tolerances)?;
-        let prepared = apply_boolean_splits_edit(edit, plan, false)?;
-        let graph = neighborhood::FragmentGraph::<SolidDomain>::build(&prepared);
-        let classes = classify::run(edit, &prepared, &graph, context.options, context.tolerances)?;
-        let selection = select::run(operation, &graph, &classes);
-        assemble::run(edit, &context, &graph, prepared, selection)
+        let selection = select::run(operation, operands.len(), &graph, &classes);
+        assemble::run(edit, &context, &graph, arrangement, selection)
     })
 }
 /// A non-mutating contact plan for two operands already in one map.
@@ -148,13 +155,26 @@ pub fn compute_boolean_intersections<P: Payload>(
     second: BooleanOperand,
     options: BooleanOptions,
 ) -> Result<BooleanIntersectionPlan, BooleanError> {
+    let first_cells = operand_cells(g, first)?;
+    let second_cells = operand_cells(g, second)?;
+    compute_cell_intersections(g, [first, second], [first_cells, second_cells], options)
+}
+
+/// As [`compute_boolean_intersections`], over cells the caller gathered.
+///
+/// An operand split by an earlier pass is several cells where it was one, and
+/// only the caller knows them all: a face operand's key names one fragment.
+pub(super) fn compute_cell_intersections<P: Payload>(
+    g: &Model<P>,
+    [first, second]: [BooleanOperand; 2],
+    [first_cells, second_cells]: [OperandCells; 2],
+    options: BooleanOptions,
+) -> Result<BooleanIntersectionPlan, BooleanError> {
     if !options.intersections.validate() {
         return Err(crate::geometry::IntersectionError::InvalidOptions.into());
     }
-    let first_cells = operand_cells(g, first)?;
-    let second_cells = operand_cells(g, second)?;
     let tolerances =
-        BooleanTolerances::from_cells(g, &first_cells, &second_cells, options.tolerances)?;
+        BooleanTolerances::from_operands(g, [&first_cells, &second_cells], options.tolerances)?;
     let mut options = options;
     tolerances.apply(&mut options.intersections);
     let mut observations = IntersectionAccumulator {
@@ -542,7 +562,7 @@ fn revalidate_plan_operand<P: Payload>(
         })
 }
 
-fn lineage_for(
+pub(super) fn lineage_for(
     cells: &OperandCells,
     edges: &HashMap<EdgeKey, Vec<EdgeKey>>,
     faces: &HashMap<FaceKey, Vec<FaceKey>>,

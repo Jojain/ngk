@@ -100,7 +100,7 @@ fn dart_shafts_stay_on_a_drilled_bore() {
     boolean(
         &mut map,
         block,
-        cylinder,
+        &[cylinder],
         BooleanOperation::Difference,
         BooleanOptions::default(),
     )

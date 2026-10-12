@@ -85,3 +85,23 @@ The convention applies to the logical subject named by the operation. It does
 not change the distinction between logical entities and raw GMap cells: a
 result describing an edge uses an `EdgeKey`, while a result about a raw map
 cell must say so explicitly.
+
+## Which model an operation's result lives in
+
+The owned-`Shape` facade (`modeling`) and the language bindings follow one set
+of rules about models:
+
+1. A `Shape<K>` is a model plus its primary `K` entity. The model may hold
+   other entities besides it.
+2. An operation with a primary input produces its result in that input's
+   model, kept whole. Rust consumes the input shape and edits its model in
+   place; Python and wasm clone it, so the input model is never mutated.
+3. A secondary input — a Boolean's tool — contributes only its primary entity
+   and the entities that bound it, copied in.
+4. A tool already in the target's model is used in place: by key at the
+   builder level, by model identity in the bindings.
+5. An operation with no primary input, such as a loft, builds a fresh model.
+
+Every entity of the model the operation does not touch keeps its key, so a
+caller holding the key of a face an earlier operation produced can still find
+it after a later one.

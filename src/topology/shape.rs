@@ -58,6 +58,20 @@ impl ShapeKind for SolidTag {
 /// Builders return `Shape` when they create a standalone topology. The
 /// [`Model`] is owned by the shape, while the marker type records which view
 /// should be considered the primary result.
+///
+/// The model may hold other entities besides the primary one, and operations
+/// keep it whole:
+///
+/// - an operation with a primary input produces its result in that input's
+///   model — consuming the shape and editing its model in place — so every
+///   entity it does not touch keeps its key;
+/// - a secondary input, such as a Boolean's tool, contributes only its primary
+///   entity and the entities that bound it, copied in;
+/// - an operation with no primary input, such as a loft, builds a fresh model.
+///
+/// The language bindings follow the same rules on a clone of the input's
+/// model, so the model their handles share is never mutated, and use a tool
+/// already in that model in place.
 pub struct Shape<K: ShapeKind = SheetTag, P: Payload = StandardPayload> {
     model: Model<P>,
     handle: K::Handle,

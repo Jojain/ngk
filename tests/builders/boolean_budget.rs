@@ -49,10 +49,14 @@ fn terminates(name: &str, build: fn() -> Operands, operation: BooleanOperation) 
         let outcome = boolean(
             &mut map,
             first,
-            second,
+            &[second],
             operation,
             BooleanOptions::default(),
         );
+        let outcome = outcome.map_err(|error| match error {
+            BooleanError::Imprint { source, .. } => *source,
+            other => other,
+        });
         let _ = sender.send(match outcome {
             Ok(_) => "ok".to_string(),
             Err(BooleanError::IncompleteIntersections { diagnostics }) => {

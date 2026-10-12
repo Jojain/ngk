@@ -120,7 +120,7 @@ fn fused_support() -> Result<(Model, SolidKey), Box<dyn Error>> {
     let first_union = boolean(
         &mut map,
         web_key,
-        large_key,
+        &[large_key],
         BooleanOperation::Union,
         BooleanOptions::default(),
     )?;
@@ -133,7 +133,7 @@ fn fused_support() -> Result<(Model, SolidKey), Box<dyn Error>> {
     let second_union = boolean(
         &mut map,
         first_union.solid,
-        small_key,
+        &[small_key],
         BooleanOperation::Union,
         options,
     )?;
