@@ -1,9 +1,9 @@
-export const boltExample = `// NGK bolt: hex head, shank, core, and swept helical thread.
+// NGK bolt: hex head, shank, core, and swept helical thread.
 const { Point, Vector, Axis, Frame } = ngk.geometry;
 const { polygon } = ngk.modeling.faces;
 const { cylinder_at, extruded, fuse } = ngk.modeling.solids;
 const { helix } = ngk.modeling.edges;
-const { sweep_face } = ngk.modeling.sweep;
+const { SweepOptions, sweep_face } = ngk.modeling.sweep;
 
 const TAU = 2 * Math.PI;
 const HEAD_ACROSS_FLATS = 10;
@@ -56,7 +56,7 @@ function thread() {
     new Point(radialX * crestRadius, radialY * crestRadius, start.z),
     new Point(radialX * baseRadius, radialY * baseRadius, start.z + half),
   ]);
-  return sweep_face(profile, spine, axis, Math.ceil(turns * 16));
+  return sweep_face(profile, spine, new SweepOptions("axial", axis, "smooth", Math.ceil(turns * 16)));
 }
 
 console.log("Building head and shank…");
@@ -66,4 +66,3 @@ console.log("Sweeping and fusing the thread…");
 bolt = fuse(bolt, [thread()]);
 show(bolt);
 console.log("Bolt ready: " + bolt.faceCount + " faces");
-`;

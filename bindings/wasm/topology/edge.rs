@@ -52,7 +52,7 @@ impl WasmEdge {
     }
 
     /// Returns the attached curve as its concrete geometry class.
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "Curve | null")]
     pub fn curve(&self) -> Result<JsValue, JsValue> {
         match self.inner.curve().map_err(js_err)? {
             Some(curve) => curve_to_js(curve),

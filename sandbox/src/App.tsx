@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent } from "react";
 import Editor, { type BeforeMount } from "@monaco-editor/react";
 import { SceneShell, VizSceneView, type VizScene } from "@ngk/viewer";
-import { boltExample } from "./bolt";
-import { bearingHousingExample } from "./bearingHousing";
+import boltExample from "../examples/bolt.ts?raw";
+import bearingHousingExample from "../examples/bearing-housing.ts?raw";
 import { ngkModuleTypes, scriptTypes } from "./editorTypes";
 import type { WorkerRequest, WorkerResponse } from "./protocol";
 import { codeFromUrl, shareCode } from "./urlCodec";

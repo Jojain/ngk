@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "ESNext.Disposable", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "strict": true,
+    "noEmit": true,
+    "types": [],
+    "paths": { "ngk-wasm": ["../src/wasm/ngk.d.ts"] }
+  },
+  "include": ["*.ts"]
+}

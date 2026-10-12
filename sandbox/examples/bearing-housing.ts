@@ -1,5 +1,5 @@
-export const bearingHousingExample = `// Bearing housing: build a plate, fuse a boss, then cut six holes.
-const { Point, Vector, Frame } = ngk.geometry;
+// Bearing housing: build a plate, fuse a boss, then cut six holes.
+const { Point, Vector, Frame, Line, Circle, Plane } = ngk.geometry;
 const { block, cylinder_at, fuse, cut } = ngk.modeling.solids;
 
 const PLATE_SIZE = 14;
@@ -30,10 +30,11 @@ for (const x of [7 - HOLE_OFFSET, 7 + HOLE_OFFSET]) {
 
 console.log("Adding a chamfer to the boss rim and a fillet to the plate top…");
 const topBossEdge = housing.edges().find((edge) => {
-  const curve = edge.curve as { radius?: number; plane?: { origin?: { z?: number } } };
+  const curve = edge.curve;
   return (
-    curve?.radius === BOSS_RADIUS &&
-    Math.abs((curve.plane?.origin?.z ?? Number.NaN) - (PLATE_THICKNESS + BOSS_HEIGHT)) < 1e-6
+    curve instanceof Circle &&
+    curve.radius === BOSS_RADIUS &&
+    Math.abs(curve.plane.origin.z - (PLATE_THICKNESS + BOSS_HEIGHT)) < 1e-6
   );
 });
 if (!topBossEdge) throw new Error("Top boss circular edge not found");
@@ -42,20 +43,13 @@ chamferTarget.addEdge(topBossEdge);
 housing = ngk.modeling.blend.chamfered_solid(housing, chamferTarget, 0.35);
 
 const plateTopFace = housing.faces().find((face) => {
-  const surface = face.surface as {
-    origin?: { z?: number };
-    normal?: { z?: number };
-  };
-  return (
-    surface?.normal !== undefined &&
-    Math.abs((surface.origin?.z ?? Number.NaN) - PLATE_THICKNESS) < 1e-6
-  );
+  const surface = face.surface;
+  return surface instanceof Plane && Math.abs(surface.origin.z - PLATE_THICKNESS) < 1e-6;
 });
 if (!plateTopFace) throw new Error("Plate top face not found");
-const plateBoundaryEdges = plateTopFace.edges().filter((edge) => {
-  const curve = edge.curve as { constructor?: { name?: string } };
-  return curve?.constructor?.name === "Line" && Math.abs(edge.length - PLATE_SIZE) < 1e-6;
-});
+const plateBoundaryEdges = plateTopFace.edges().filter((edge) =>
+  edge.curve instanceof Line && Math.abs((edge.length ?? Number.NaN) - PLATE_SIZE) < 1e-6
+);
 if (plateBoundaryEdges.length !== 4) throw new Error("Plate top boundary edges not found");
 const filletTarget = new ngk.modeling.blend.BlendTarget();
 for (const edge of plateBoundaryEdges) filletTarget.addEdge(edge);
@@ -63,4 +57,3 @@ housing = ngk.modeling.blend.filleted_solid(housing, filletTarget, 0.25);
 
 show(housing);
 console.log("Bearing housing ready: " + housing.faceCount + " faces, " + housing.edgeCount + " edges");
-`;

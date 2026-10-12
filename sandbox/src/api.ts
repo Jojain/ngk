@@ -17,6 +17,9 @@ export const ngk = {
     Vector: wasm.Vector3,
     Axis: wasm.Axis3,
     Frame: wasm.Frame,
+    Line: wasm.Line,
+    Circle: wasm.Circle,
+    Plane: wasm.Plane,
   },
   modeling: {
     blend: {
@@ -35,7 +38,7 @@ export const ngk = {
       cut: wasm.cut,
       intersect: wasm.intersect,
     },
-    sweep: { sweep_face: wasm.sweepFaceAlongEdge },
+    sweep: { SweepOptions: wasm.SweepOptions, sweep_face: wasm.sweepFaceAlongEdge },
   },
 } as const;
 

@@ -12,6 +12,19 @@ use super::edge::WasmEdge;
 use super::profile::WasmLoop;
 use super::vertex::WasmVertex;
 
+#[wasm_bindgen(typescript_custom_section)]
+const FACE_PCURVE: &'static str = r#"
+/** One boundary dart's pcurve, as returned by `Face.pcurves()`. */
+export interface FacePcurve {
+    loopIndex: number;
+    dartId: number;
+    edgeKey: string;
+    startVertexKey: string;
+    endVertexKey: string;
+    curve: Curve2;
+}
+"#;
+
 #[wasm_bindgen(js_name = Face)]
 #[derive(Clone)]
 pub struct WasmFace {
@@ -35,7 +48,7 @@ entity_common!(WasmFace);
 #[wasm_bindgen]
 impl WasmFace {
     /// Returns the support surface as its concrete geometry class.
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "Surface")]
     pub fn surface(&self) -> Result<JsValue, JsValue> {
         Ok(surface_to_js(self.inner.surface().map_err(js_err)?))
     }

@@ -275,7 +275,7 @@ pub struct WasmRuledSurface {
 #[wasm_bindgen]
 impl WasmRuledSurface {
     /// Returns the generating curve.
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "Curve")]
     pub fn curve(&self) -> Result<JsValue, JsValue> {
         curve_to_js(self.inner.curve().clone())
     }
@@ -308,7 +308,7 @@ pub struct WasmSurfaceOfRevolution {
 #[wasm_bindgen]
 impl WasmSurfaceOfRevolution {
     /// Returns the generating curve.
-    #[wasm_bindgen(getter)]
+    #[wasm_bindgen(getter, unchecked_return_type = "Curve")]
     pub fn curve(&self) -> Result<JsValue, JsValue> {
         curve_to_js(self.inner.curve().clone())
     }

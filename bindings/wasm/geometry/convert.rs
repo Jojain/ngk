@@ -10,6 +10,14 @@ use super::surfaces::{
     WasmTorus,
 };
 
+// The unions name exactly the classes the converters below can return.
+#[wasm_bindgen(typescript_custom_section)]
+const GEOMETRY_UNIONS: &'static str = r#"
+export type Curve = Line | Circle | Ellipse | Helix | NurbsCurve;
+export type Curve2 = Line2 | Circle2 | Ellipse2 | NurbsCurve2;
+export type Surface = Plane | Cylinder | Sphere | Cone | Torus | RuledSurface | SurfaceOfRevolution | NurbsSurface;
+"#;
+
 /// Converts a polymorphic kernel curve to a concrete JavaScript class.
 pub(crate) fn curve_to_js(curve: Curve) -> Result<JsValue, JsValue> {
     match curve {
