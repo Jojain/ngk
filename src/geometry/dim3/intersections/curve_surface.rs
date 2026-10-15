@@ -451,7 +451,7 @@ impl Search<'_> {
             let surface_point = self.surface.point_at(surface_u, surface_v);
             let residual = curve_point - surface_point;
             let curve_derivative = self.curve.derivative_at(curve_u, 1);
-            let (surface_du, surface_dv) = self.surface.derivatives_uv(surface_u, surface_v);
+            let (surface_du, surface_dv) = self.surface.derivative_at(surface_u, surface_v);
             let jacobian = Matrix3::from_columns(&[curve_derivative, -surface_du, -surface_dv]);
             let Some(delta) = jacobian.lu().solve(&(-residual)) else {
                 break;

@@ -935,15 +935,25 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
                 (key, replacement)
             })
             .collect::<Vec<_>>();
+        // A vertex the removed faces were the only link around falls apart
+        // into one 0-cell per stretch of what survives -- two faces that touch
+        // only at a corner once the face between them is gone, or one face
+        // that touches itself there. Each piece is a vertex of its own, at the
+        // same point, so the key stays on one and the others split from it.
+        let around_vertex = self.model.orbit_indices(Dim::Zero);
         let vertices = self
             .model
             .iter_vertices()
             .map(|(key, attr)| {
+                let surviving = self
+                    .model
+                    .orbit(attr.dart, around_vertex.clone())
+                    .filter(|dart| !removed.contains(dart))
+                    .collect::<HashSet<_>>();
                 (
                     key,
-                    self.model
-                        .orbit(attr.dart, self.model.orbit_indices(Dim::Zero))
-                        .find(|dart| !removed.contains(dart)),
+                    attr.point,
+                    pieces_without(self.model, surviving, &around_vertex),
                 )
             })
             .collect::<Vec<_>>();
@@ -966,13 +976,16 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
                 }
             }
         }
-        for (key, dart) in vertices {
-            match dart {
+        let mut splits = Vec::new();
+        for (key, point, pieces) in vertices {
+            let mut pieces = pieces.into_iter();
+            match pieces.next() {
                 Some(dart) => self.vertex_attr_mut_unchecked(key).dart = dart,
                 None => {
                     self.remove_vertex(key);
                 }
             }
+            splits.extend(pieces.map(|dart| (key, VertexAttr::new(dart, point))));
         }
         let mut darts = removed.into_iter().collect::<Vec<_>>();
         darts.sort_by_key(|dart| dart.id());
@@ -982,6 +995,11 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
                     self.unlink(dim, dart)?;
                 }
             }
+        }
+        // Only once the removed darts are cut loose is each piece a 0-cell of
+        // its own for a vertex to occupy.
+        for (source, vertex) in splits {
+            self.add_vertex_split_from(source, vertex);
         }
         self.remove_isolated_darts(darts.into_iter().map(super::IsolatedDart::new).collect());
         Ok(())
@@ -1155,6 +1173,34 @@ impl<P: Payload> Deref for ModelEdit<'_, P> {
     fn deref(&self) -> &Self::Target {
         self.model
     }
+}
+
+/// The orbits `darts` fall into under `involutions` once every link leaving
+/// the set is cut, one dart from each, lowest id first.
+///
+/// A link between two darts that both survive a removal survives it too, so
+/// this answers, before anything is removed, how many cells what is left of
+/// one cell will be.
+fn pieces_without<P: Payload>(
+    g: &Model<P>,
+    mut darts: HashSet<Dart>,
+    involutions: &[usize],
+) -> Vec<Dart> {
+    let mut pieces = Vec::new();
+    while let Some(&anchor) = darts.iter().min_by_key(|dart| dart.id()) {
+        darts.remove(&anchor);
+        pieces.push(anchor);
+        let mut pending = vec![anchor];
+        while let Some(dart) = pending.pop() {
+            for &index in involutions {
+                let next = g.alpha(Dim::from_index(index), dart);
+                if darts.remove(&next) {
+                    pending.push(next);
+                }
+            }
+        }
+    }
+    pieces
 }
 
 fn validate_required_domain_attributes<P: Payload>(g: &Model<P>) -> Result<(), ModelEditError> {

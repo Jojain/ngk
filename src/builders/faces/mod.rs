@@ -29,12 +29,12 @@ pub(crate) use annulus::{
 pub(crate) use circle::add_circle_edit;
 pub(crate) use face::add_face_edit;
 pub(crate) use face::add_rectangle_edit;
-pub(crate) use imprints::{chord_loop_kinds, split_face_by_imprints_edit};
+pub(crate) use imprints::{chord_loop_kinds, signed_area, split_face_by_imprints_edit};
 pub(crate) use polygon::add_polygon_edit;
 pub(crate) use polygon::reverse_face_winding_edit;
 pub(crate) use split::split_face_edge_edit;
 pub(crate) use support::{
-    FaceImprintCut, IncidentFacePcurve, RebasedFacePcurve, apply_face_chord_split,
-    boundary_edge_at_uv, bounding_loops, edge_curve, face_boundary_edges, face_boundary_uvs,
-    loop_boundary_edges, snap_boundary_corner, snap_boundary_corner_on,
+    BoundaryCorner, FaceImprintCut, IncidentFacePcurve, RebasedFacePcurve, apply_face_chord_split,
+    boundary_edge_at_uv, bounding_loops, edge_curve, face_boundary_edges, loop_boundary_edges,
+    snap_boundary_corner_on, support_along,
 };

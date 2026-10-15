@@ -1,3 +1,4 @@
+use super::imprints::signed_area;
 use crate::builders::errors::FaceCreationError;
 use crate::builders::profiles::profile_pcurves;
 use crate::builders::scaffold::cut_between_loops;
@@ -38,7 +39,25 @@ pub(crate) fn add_polygon_with_holes_edit<P: Payload>(
         Profile::from_dart(edit, outer_loop).expect("outer loop must have a registered profile");
     let mut pcurves = profile_pcurves(&outer_profile, &plane)?;
 
+    // A face's material lies left of its boundary, so a hole runs the other
+    // way round from the outer polygon, whichever way the caller listed it.
+    let winding = |points: &[Point3]| {
+        let uvs = points
+            .iter()
+            .map(|point| plane.parameter_at(*point))
+            .collect::<Vec<_>>();
+        signed_area(&uvs)
+    };
+    let outer_winding = winding(outer);
     for hole in holes {
+        let reversed;
+        let hole = match winding(hole).signum() == outer_winding.signum() {
+            true => {
+                reversed = hole.iter().rev().copied().collect::<Vec<_>>();
+                reversed.as_slice()
+            }
+            false => hole,
+        };
         let inner_profile = add_polygon_edit(edit, hole);
         let inner_loop = edit.profile_attr_unchecked(inner_profile).dart;
         let inner_profile = Profile::from_dart(edit, inner_loop)

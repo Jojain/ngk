@@ -158,6 +158,25 @@ pub trait SurfaceGeometry: Sized {
     /// the limit taken along the meridian through `u`.
     fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64>;
 
+    /// The point at `(u, v)` with the partial derivatives `dS/du` and `dS/dv`
+    /// there, evaluated in one pass.
+    ///
+    /// The point and its derivatives share their work -- an analytic
+    /// surface's sines and cosines, a NURBS patch's basis functions -- and a
+    /// caller integrating over the surface wants all three at every node.
+    /// The cross product of the derivatives points the way
+    /// [`Self::normal_at`] does, and its length is the area the surface lays
+    /// over a unit of parameter area; at a degenerate row one derivative
+    /// vanishes, and that area with it.
+    fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>);
+
+    /// The partial derivatives `(dS/du, dS/dv)` at `(u, v)`; see
+    /// [`Self::point_and_derivative_at`].
+    fn derivative_at(&self, u: f64, v: f64) -> (Vector3<f64>, Vector3<f64>) {
+        let (_, du, dv) = self.point_and_derivative_at(u, v);
+        (du, dv)
+    }
+
     /// Whether the surface's parameterization collapses at `(u, v)`.
     fn is_degenerate_at(&self, u: f64, v: f64) -> bool;
 

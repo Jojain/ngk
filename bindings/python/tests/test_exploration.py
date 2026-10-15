@@ -1,5 +1,10 @@
+import pytest
+
+from ngk.geometry import Vector
+from ngk.measurement import solid_properties
 from ngk.model import Model
-from ngk.modeling import profiles, solids
+from ngk.modeling import faces, profiles, solids
+from ngk.tessellation import tessellate
 
 
 def test_model_serialization_and_raw_topology_exploration():
@@ -65,3 +70,40 @@ def test_all_typed_objects_retain_their_shared_model():
     assert vertex.model.dart_count == solid.model.dart_count
     assert profile.model.profiles()[0] == profile
 
+
+
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a.as_tuple(), b.as_tuple()))
+
+
+@pytest.mark.parametrize(
+    "solid",
+    [solids.block(10.0, 20.0, 30.0), solids.cylinder(4.0, 10.0), solids.sphere(5.0)],
+    ids=["block", "cylinder", "sphere"],
+)
+def test_a_solid_face_normal_points_out_of_the_solid(solid):
+    centroid = solid_properties(solid).centroid
+    for face in solid.faces():
+        point = face.surface.point_at(0.3, 0.4)
+        offset = Vector(*(p - c for p, c in zip(point.as_tuple(), centroid.as_tuple())))
+        assert _dot(offset, face.normal_at(0.3, 0.4)) > 0.0
+
+
+def test_a_face_normal_is_the_tessellation_normal_even_against_its_surface():
+    block = solids.block(10.0, 20.0, 30.0)
+    heights = {face.surface.point_at(0.0, 0.0).z: face for face in block.faces() if abs(face.surface.normal.z) == 1.0}
+
+    assert heights[0.0].surface.normal.as_tuple() == (0.0, 0.0, 1.0)
+    assert heights[0.0].normal_at(0.0, 0.0).as_tuple() == (0.0, 0.0, -1.0)
+    assert heights[30.0].normal_at(0.0, 0.0).as_tuple() == (0.0, 0.0, 1.0)
+    for face in block.faces():
+        normals = tessellate(face).normals
+        for i in range(0, len(normals), 3):
+            assert normals[i : i + 3] == pytest.approx(list(face.normal_at(0.0, 0.0).as_tuple()))
+
+
+def test_a_reversed_face_flips_its_normal():
+    face = faces.rectangle(2.0, 3.0)
+
+    assert face.normal_at(0.0, 0.0).as_tuple() == face.surface.normal.as_tuple()
+    assert face.reversed().normal_at(0.0, 0.0).as_tuple() == tuple(-c for c in face.surface.normal.as_tuple())

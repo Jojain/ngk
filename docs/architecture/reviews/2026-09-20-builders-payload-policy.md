@@ -1,5 +1,7 @@
 # Builders, payload, policy
 
+> **Status: accepted in part.** Review of `builders`, `modeling` and the payload/policy mechanism. Sections 1-4 are decisions; section 5 and "Ideas to keep in mind" are not decided.
+
 Conclusions from an architecture review of the two user-facing layers
 (`src/builders/`, `src/modeling/`) and the payload/policy mechanism they run
 under. Decisions are recorded here; the "Ideas to keep in mind" section is
@@ -260,7 +262,7 @@ a hook for a surviving entity whose extent changed.
 
 ### Other frictions visible in the current tree
 
-- **Two contradictory rules about who chooses the policy.** `edit.md` states
+- **Two contradictory rules about who chooses the policy.** `docs/architecture/transactions.md` (then `src/topology/edit.md`) states
   that no call site chooses it, and then documents the call site that does. The
   reason `transaction_with_policy` exists is real — `P::Policy` is
   default-constructed and dropped at commit, so it can carry neither parameters

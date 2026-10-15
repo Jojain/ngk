@@ -169,8 +169,8 @@ impl<'g, P: Payload> Solid<'g, P> {
     /// Returns the non-negative volume of this solid.
     ///
     /// The outer shell must be positively oriented and each cavity shell
-    /// negatively oriented. Curved supports use the computation tessellation,
-    /// while planar faces with linear boundaries are exact.
+    /// negatively oriented. The volume is integrated along the faces'
+    /// boundaries to a relative tolerance of `1e-10`; see [`crate::measure`].
     pub fn volume(&self) -> Result<f64, MeasureError> {
         Ok(self.volume_properties()?.volume)
     }

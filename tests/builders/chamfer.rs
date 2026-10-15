@@ -480,7 +480,7 @@ fn chamfer_bevels_the_circle_where_a_boss_meets_a_block() {
         .volume()
         .expect("the bevelled solid should measure");
     assert!(
-        (after - before - added).abs() <= 0.05 * added,
+        (after - before - added).abs() <= 1e-9 * after,
         "the volume changed by {}, should by {added}",
         after - before
     );
@@ -577,7 +577,7 @@ fn chamfer_bevels_the_smooth_rim_of_a_slot() {
         .volume()
         .expect("the bevelled slot should measure");
     assert!(
-        (before - after - removed).abs() <= 0.05 * removed,
+        (before - after - removed).abs() <= 1e-9 * after,
         "the volume changed by {}, should by {}",
         after - before,
         -removed

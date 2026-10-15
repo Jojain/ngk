@@ -9,7 +9,7 @@ engine.
 **Status:** two iterations have landed, as `src/builders/blend/`: planar
 faces and straight edges first, then any edge curve between any two faces,
 closed edges and tangent chains. The engine is described as built in
-`docs/blend_architecture.md`. This plan keeps the reasoning behind the
+`docs/architecture/blend.md`. This plan keeps the reasoning behind the
 abstractions and what comes next.
 
 ## Decisions
@@ -250,7 +250,7 @@ needs a new surgery operation: splitting an existing edge, or removing a face.
   - 3D: straight edges between planar faces, with run-outs (circle or
     ellipse), same-angle mitres, and balls.
 - `TargetFillet` and `TargetChamfer`, the `filleted_block` script and
-  playground experiment, and `docs/blend_architecture.md`.
+  playground experiment, and `docs/architecture/blend.md`.
 - Tests check manifoldness, orientation and closed-form volumes. Among them: a
   block's edge, rim and every edge; a concave edge; a rim with a reflex corner;
   an oblique run-out; the chamfer's common points; that the result does not
