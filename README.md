@@ -130,9 +130,9 @@ to PyPI itself.
 
 ## Architecture Notes
 
-- [Blend algorithm: chamfer and fillet](docs/blend_architecture.md)
-- [Model API direction](docs/model_api.md)
-- [Topology identity and orientation](docs/topology_orientation_refactor.md)
+- [Architecture index](docs/architecture/README.md): subsystems, reviews and
+  decisions
+- [Vocabulary](CONTEXT.md)
 
 ## License
 

@@ -34,6 +34,16 @@ work. A composite builder calls other `_edit` operations with the same edit
 capability, so the whole modeling operation has one snapshot, one journal, and
 one commit.
 
+The public wrapper is a one-line transaction boundary; the `_edit` operation
+owns validation and construction and is `pub(crate)`. The suffix names the
+parameter that makes it composable (an already-open `&mut ModelEdit`). It
+replaced a leading underscore, which also hid the item from `dead_code`: an
+`_edit` operation orphaned by the deletion of its public wrapper is now reported
+like any other unused item.
+
+Operation results are stamped with `transaction_result` only after commit.
+Their view methods reject an unstamped or stale result.
+
 Raw map mutation is model-internal. `Model::topology()` hands out `&GMap` and
 nothing hands out `&mut GMap`, so builders can inspect the map through the
 immutable access exposed by `ModelEdit` but cannot bypass the transaction when

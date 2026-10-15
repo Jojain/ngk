@@ -1,5 +1,7 @@
 # BOOLE and ngk: paper summary and integration roadmap
 
+> **Status: reference.** A summary of the BOOLE paper compared against the Boolean code as it stood on this date. The roadmap section is a proposal, not a decision.
+
 ## Scope
 
 This note summarizes **“BOOLE: A Boundary Evaluation System for Boolean
@@ -246,14 +248,14 @@ modern solution to every degenerate Boolean.
 
 The current code has a promising separation of concerns:
 
-- operand resolution/import in [`operand.rs`](../src/builders/boolean/operand.rs);
-- a broad-phase boundary in [`broad_phase.rs`](../src/builders/boolean/broad_phase.rs);
-- narrow-phase observations in [`contacts.rs`](../src/builders/boolean/contacts.rs);
-- a canonical common network in [`graph.rs`](../src/builders/boolean/graph.rs);
-- network-driven subdivision input in [`imprint.rs`](../src/builders/boolean/imprint.rs);
-- public preparation and lineage types in [`result.rs`](../src/builders/boolean/result.rs);
+- operand resolution/import in [`operand.rs`](../../../src/builders/boolean/operand.rs);
+- a broad-phase boundary in [`broad_phase.rs`](../../../src/builders/boolean/broad_phase.rs);
+- narrow-phase observations in [`contacts.rs`](../../../src/builders/boolean/contacts.rs);
+- a canonical common network in [`graph.rs`](../../../src/builders/boolean/graph.rs);
+- network-driven subdivision input in [`imprint.rs`](../../../src/builders/boolean/imprint.rs);
+- public preparation and lineage types in [`result.rs`](../../../src/builders/boolean/result.rs);
 - atomic mutation through a GMap transaction in
-  [`mod.rs`](../src/builders/boolean/mod.rs#L240).
+  [`mod.rs`](../../../src/builders/boolean/mod.rs#L240).
 
 The `IntersectionNetwork` already distinguishes:
 
@@ -277,13 +279,13 @@ partial overlap, external-tool import, and rollback.
 
 #### 4.1 Broad phase is exhaustive
 
-[`candidate_face_pairs`](../src/builders/boolean/broad_phase.rs#L10) currently
+[`candidate_face_pairs`](../../../src/builders/boolean/broad_phase.rs#L10) currently
 returns the Cartesian product of the two face sets. This is correct as a
 placeholder but gives no pruning and becomes prohibitive for real solids.
 
 #### 4.2 General surface intersection is a mesh approximation
 
-[`surface_surface.rs`](../src/geometry/dim3/intersections/surface_surface.rs#L26)
+[`surface_surface.rs`](../../../src/geometry/dim3/intersections/surface_surface.rs#L26)
 converts both surfaces to NURBS, samples each into a fixed grid, tests every
 triangle from one grid against every triangle from the other, deduplicates the
 hit points, then sorts all points along the coordinate axis with the greatest
@@ -306,7 +308,7 @@ This is the largest blocker to a correct curved-solid Boolean.
 
 #### 4.3 Trimming currently filters samples instead of splitting branches
 
-For general face pairs, [`contacts.rs`](../src/builders/boolean/contacts.rs#L579)
+For general face pairs, [`contacts.rs`](../../../src/builders/boolean/contacts.rs#L579)
 projects each sampled 3D point to both faces and keeps only the samples inside
 both trim regions. The surviving samples are then interpolated as one curve.
 
@@ -317,7 +319,7 @@ and split the branch into intervals before applying inside/outside tests.
 
 #### 4.4 The common network is only structurally validated
 
-[`IntersectionNetwork::validate`](../src/builders/boolean/graph.rs#L131) checks
+[`IntersectionNetwork::validate`](../../../src/builders/boolean/graph.rs#L131) checks
 that events and spans have uses, endpoint IDs exist, and the 3D curve meets its
 endpoints. It does not yet check:
 
@@ -331,7 +333,7 @@ endpoints. It does not yet check:
 - that every overlap region has a valid oriented boundary.
 
 In fact, region boundaries are currently created empty in
-[`mod.rs`](../src/builders/boolean/mod.rs#L179).
+[`mod.rs`](../../../src/builders/boolean/mod.rs#L179).
 
 #### 4.5 Imprinting is preparation, not Boolean evaluation
 
