@@ -7,7 +7,7 @@ use super::model::PyModel;
 use crate::binding_common::explore::SharedFace;
 use crate::topology::StandardPayload;
 
-use super::super::geometry::surface_to_py;
+use super::super::geometry::{PyVector3, surface_to_py, unit_vector};
 use super::edge::PyEdge;
 use super::profile::PyLoop;
 use super::vertex::PyVertex;
@@ -27,6 +27,14 @@ entity_methods!(PyFace, SharedFace<StandardPayload>, "face", {
     #[getter]
     fn surface(&self, py: Python<'_>) -> PyResult<PyObject> {
         surface_to_py(py, self.inner.surface().map_err(py_err)?)
+    }
+
+    /// The face's own normal at `(u, v)` on its surface: outward for a face of
+    /// a solid, and opposite to `surface.normal_at(u, v)` where the face is
+    /// reversed against its surface. `(u, v)` is not tested against the
+    /// face's loops.
+    fn normal_at(&self, u: f64, v: f64) -> PyResult<PyVector3> {
+        Ok(unit_vector(self.inner.view().map_err(py_err)?.normal_at(u, v)))
     }
 
     #[getter]
