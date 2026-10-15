@@ -146,45 +146,6 @@ fn boundary_polygons<P: Payload>(
     Ok((domain, outer_uv, inner_uv))
 }
 
-/// Signed area of the mesh [`tessellate_face`] gives a planar face, read off
-/// its boundary without meshing it.
-///
-/// The triangles of a planar face tile its boundary polygon exactly, whatever
-/// the triangulation, so their area is the enclosing loop's less its holes'.
-/// It is positive when the mesh faces along the plane's normal, as the mesh's
-/// own winding follows the enclosing loop's. The loops are sampled as the
-/// mesher samples them, so this is the area of that mesh and not merely
-/// close to it.
-///
-/// `None` for a face the mesher does not take the polygon path for: one off a
-/// plane, or one nothing encloses. Errors where the mesher would refuse the
-/// boundary before triangulating it.
-pub(crate) fn planar_mesh_area<P: Payload>(
-    face: &Face<'_, P>,
-    opts: TessellateOpts,
-) -> Option<TessellateResult<f64>> {
-    let encloses = face
-        .loops()
-        .iter()
-        .any(|boundary| !matches!(boundary.kind(), LoopKind::Inner));
-    if !matches!(face.surface(), Surface::Plane(_)) || !encloses {
-        return None;
-    }
-    Some(
-        boundary_polygons(face, opts).and_then(|(_, outer_uv, inner_uv)| {
-            let outer = signed_area(&outer_uv);
-            if outer.abs() <= EPS {
-                return Err(TessellateError::DegenerateBoundary);
-            }
-            let holes = inner_uv
-                .iter()
-                .map(|hole| signed_area(hole).abs())
-                .sum::<f64>();
-            Ok(outer.signum() * (outer.abs() - holes))
-        }),
-    )
-}
-
 /// The periodic axis some loop of `domain` runs more than one period along.
 ///
 /// A face written within one period spans at most that period; a wrapping

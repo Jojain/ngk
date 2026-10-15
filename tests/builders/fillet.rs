@@ -26,18 +26,17 @@ fn assert_valid(g: &Model<StandardPayload>, solid: SolidKey) {
     validate_solid_orientation(g, solid).expect("the rounded solid's faces should stay outward");
 }
 
-/// Compares a tessellated volume with its closed form.
+/// Compares a blended solid's volume with its closed form.
 ///
-/// Curved faces are measured on their tessellation, so the tolerance is a
-/// small share of the volume the blend changed: tight enough that a wrong
-/// radius or a misplaced rail fails it.
-fn assert_volume(g: &Model<StandardPayload>, solid: SolidKey, expected: f64, changed: f64) {
+/// The rounds are tori and cylinders, which the measure integrates exactly,
+/// so the tolerance is the measure's own.
+fn assert_volume(g: &Model<StandardPayload>, solid: SolidKey, expected: f64) {
     let volume = g
         .solid_unchecked(solid)
         .volume()
         .expect("the rounded solid should measure");
     assert!(
-        (volume - expected).abs() <= 0.01 * changed.abs(),
+        (volume - expected).abs() <= 1e-9 * expected.abs(),
         "volume {volume} should be {expected}"
     );
 }
@@ -57,19 +56,15 @@ fn spandrel(radius: f64) -> f64 {
     radius * radius * (1.0 - PI / 4.0)
 }
 
-/// Compares a tessellated change of volume with its closed form.
-///
-/// Both volumes are measured on one tessellation, so much of its error
-/// cancels; but a curved face changes shape under a blend and the rest does
-/// not, and five percent of the change is what that leaves — well short of
-/// what a wrong radius or a misplaced rail would move it.
+/// Compares a blend's change of volume with its closed form, to the
+/// measure's own tolerance.
 fn assert_volume_change(g: &Model<StandardPayload>, solid: SolidKey, before: f64, expected: f64) {
     let after = g
         .solid_unchecked(solid)
         .volume()
         .expect("the blended solid should measure");
     assert!(
-        (after - before - expected).abs() <= 0.05 * expected.abs(),
+        (after - before - expected).abs() <= 1e-9 * after.abs(),
         "the volume changed by {}, should by {expected}",
         after - before
     );
@@ -299,7 +294,7 @@ fn fillet_rounds_one_block_edge_into_a_cylinder() {
     assert_eq!(shape.solid().vertices().len(), 10);
     assert_valid(shape.model(), solid);
     let removed = (1.0 - PI / 4.0) * radius * radius * c;
-    assert_volume(shape.model(), solid, a * b * c - removed, removed);
+    assert_volume(shape.model(), solid, a * b * c - removed);
 }
 
 #[test]
@@ -327,7 +322,7 @@ fn fillet_mitres_the_rounds_around_a_block_face() {
     // Each corner's two rounds overlap in (5/3 - pi/2) r^3 of what they remove.
     let removed = (1.0 - PI / 4.0) * radius * radius * 2.0 * (a + b)
         - 4.0 * (5.0 / 3.0 - PI / 2.0) * radius.powi(3);
-    assert_volume(shape.model(), solid, a * b * c - removed, removed);
+    assert_volume(shape.model(), solid, a * b * c - removed);
 }
 
 #[test]
@@ -362,7 +357,7 @@ fn fillet_closes_a_fully_rounded_block_with_balls() {
         + 2.0 * radius * (x * y + y * z + x * z)
         + PI * radius * radius * (x + y + z)
         + 4.0 / 3.0 * PI * radius.powi(3);
-    assert_volume(shape.model(), solid, rounded, a * b * c - rounded);
+    assert_volume(shape.model(), solid, rounded);
 }
 
 #[test]
@@ -380,7 +375,7 @@ fn fillet_grows_the_caps_of_a_concave_edge() {
 
     assert_valid(&g, solid);
     let added = (1.0 - PI / 4.0) * radius * radius;
-    assert_volume(&g, solid, 3.0 + added, added);
+    assert_volume(&g, solid, 3.0 + added);
 }
 
 #[test]
@@ -396,7 +391,7 @@ fn fillet_mitres_the_reflex_corner_of_a_face_rim() {
     // reflex one reaches past its vertex by the same amount.
     let removed =
         (1.0 - PI / 4.0) * radius * radius * 8.0 - 4.0 * (5.0 / 3.0 - PI / 2.0) * radius.powi(3);
-    assert_volume(&g, solid, 3.0 - removed, removed);
+    assert_volume(&g, solid, 3.0 - removed);
 }
 
 #[test]
@@ -422,7 +417,7 @@ fn fillet_runs_out_along_an_ellipse_on_an_oblique_face() {
     // from the edge, so the removed volume loses half the section's first moment.
     let removed =
         4.0 * (1.0 - PI / 4.0) * radius * radius - 0.5 * (5.0 / 6.0 - PI / 4.0) * radius.powi(3);
-    assert_volume(&g, solid, 7.0 - removed, removed);
+    assert_volume(&g, solid, 7.0 - removed);
 }
 
 #[test]
@@ -892,7 +887,7 @@ fn fillet_rounds_the_hole_of_a_free_face_as_well_as_its_rim() {
     assert_eq!(view.edges().len(), 16);
     // The rim loses (4 - pi) r^2 and the hole shrinks by as much.
     let area = view.area().expect("holed face should measure");
-    assert!((area - 12.0).abs() < 1.0e-3, "area {area} should be 12");
+    assert!((area - 12.0).abs() < 1.0e-9, "area {area} should be 12");
 }
 
 #[test]
@@ -907,7 +902,7 @@ fn fillet_rounds_both_rims_of_a_hole_through_a_solid() {
     // Four convex corners give back (5/3 - pi/2) r^3 each, and the hole's four
     // reflex corners reach past their vertices by as much.
     let removed = (1.0 - PI / 4.0) * radius * radius * 24.0;
-    assert_volume(&g, solid, 12.0 - removed, removed);
+    assert_volume(&g, solid, 12.0 - removed);
 }
 
 /// A slot's rim runs straight into arcs with no corner anywhere: each side is

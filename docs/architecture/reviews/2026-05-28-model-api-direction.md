@@ -1,5 +1,7 @@
 # NGK Model API Direction
 
+> **Status: superseded.** The API direction proposed before `Model<P>` owned the map and transactions existed. What was built is described in [../overview.md](../overview.md), [../transactions.md](../transactions.md) and [../builders.md](../builders.md). Kept as a record of the options weighed.
+
 This document captures the API direction discussed for NGK's modeling layer.
 It is a target design note, not a description of the current API. The current
 Rust and Python APIs are prototypes and can be reshaped to match this model.

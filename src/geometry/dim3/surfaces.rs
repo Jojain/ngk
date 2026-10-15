@@ -289,6 +289,26 @@ impl Surface {
         }
     }
 
+    /// Returns the partial derivatives `(dS/du, dS/dv)` at `(u, v)`.
+    pub fn derivative_at(&self, u: f64, v: f64) -> (Vector3<f64>, Vector3<f64>) {
+        let (_, du, dv) = self.point_and_derivative_at(u, v);
+        (du, dv)
+    }
+
+    /// Returns the point at `(u, v)` with [`Self::derivative_at`] there.
+    pub fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>) {
+        match self {
+            Surface::Plane(surface) => SurfaceGeometry::point_and_derivative_at(surface, u, v),
+            Surface::Cylinder(surface) => SurfaceGeometry::point_and_derivative_at(surface, u, v),
+            Surface::Sphere(surface) => SurfaceGeometry::point_and_derivative_at(surface, u, v),
+            Surface::Cone(surface) => SurfaceGeometry::point_and_derivative_at(surface, u, v),
+            Surface::Torus(surface) => SurfaceGeometry::point_and_derivative_at(surface, u, v),
+            Surface::Ruled(surface) => SurfaceGeometry::point_and_derivative_at(surface, u, v),
+            Surface::Revolution(surface) => SurfaceGeometry::point_and_derivative_at(surface, u, v),
+            Surface::Nurbs(surface) => SurfaceGeometry::point_and_derivative_at(surface, u, v),
+        }
+    }
+
     pub fn intersect_surface(
         &self,
         other: &Surface,
@@ -344,6 +364,10 @@ impl SurfaceGeometry for Surface {
 
     fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         Surface::normal_at(self, u, v)
+    }
+
+    fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>) {
+        Surface::point_and_derivative_at(self, u, v)
     }
 
     fn is_degenerate_at(&self, u: f64, v: f64) -> bool {
@@ -1017,27 +1041,9 @@ impl SurfaceOfRevolution {
     /// Degenerates on the axis, where `dS/dv` vanishes and the surface has an
     /// apex rather than a tangent plane; the axis direction is returned there.
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
-        let du = self.partial_u(u, v);
-        let dv = self.partial_v(u, v);
+        let (_, du, dv) = SurfaceGeometry::point_and_derivative_at(self, u, v);
         let n = du.cross(&dv);
         UnitVector3::try_new(n, LINEAR_TOLERANCE).unwrap_or(self.axis.direction)
-    }
-
-    /// Analytic `dS/du`: the profile tangent carried around the axis by `v`.
-    ///
-    /// Rotating about the axis is a rigid motion independent of `u`, so it
-    /// commutes with differentiation along the profile.
-    fn partial_u(&self, u: f64, v: f64) -> Vector3<f64> {
-        Rotation3::from_axis_angle(&self.axis.direction, v)
-            * self.curve.derivative_at(NativeParam::new(u), 1)
-    }
-
-    /// Analytic `dS/dv`: the rotational velocity `axis x radius`.
-    fn partial_v(&self, u: f64, v: f64) -> Vector3<f64> {
-        let point = self.point_at(u, v);
-        self.axis
-            .direction
-            .cross(&(point - self.axis.project(point)))
     }
 
     pub fn to_nurbs(&self) -> Result<NurbsSurface, NurbsError> {
@@ -1119,6 +1125,11 @@ impl SurfaceGeometry for Plane {
         self.normal()
     }
 
+    fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>) {
+        let (x, y) = (*self.frame.x_dir, *self.frame.y_dir);
+        (self.frame.origin + x * u + y * v, x, y)
+    }
+
     fn is_degenerate_at(&self, _u: f64, _v: f64) -> bool {
         false
     }
@@ -1177,6 +1188,20 @@ impl SurfaceGeometry for Cylinder {
 
     fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         Cylinder::normal_at(self, u, v)
+    }
+
+    fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>) {
+        let (sin_u, cos_u) = u.sin_cos();
+        let x = *self.x_dir();
+        let axis = *self.axis();
+        let y = axis.cross(&x);
+        let radial = x * cos_u + y * sin_u;
+        let tangent = y * cos_u - x * sin_u;
+        (
+            self.origin() + radial * self.radius + axis * v,
+            tangent * self.radius,
+            axis,
+        )
     }
 
     fn is_degenerate_at(&self, _u: f64, _v: f64) -> bool {
@@ -1249,6 +1274,19 @@ impl SurfaceGeometry for Sphere {
 
     fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         Sphere::normal_at(self, u, v)
+    }
+
+    fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>) {
+        let (sin_u, cos_u) = u.sin_cos();
+        let (sin_v, cos_v) = v.sin_cos();
+        let frame = &self.frame;
+        let radial = *frame.x_dir * cos_u + *frame.y_dir * sin_u;
+        let tangent = *frame.y_dir * cos_u - *frame.x_dir * sin_u;
+        (
+            frame.origin + (radial * cos_v + *frame.z_dir * sin_v) * self.radius,
+            tangent * (self.radius * cos_v),
+            (*frame.z_dir * cos_v - radial * sin_v) * self.radius,
+        )
     }
 
     fn is_degenerate_at(&self, _u: f64, v: f64) -> bool {
@@ -1327,6 +1365,20 @@ impl SurfaceGeometry for Cone {
 
     fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         Cone::normal_at(self, u, v)
+    }
+
+    fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>) {
+        let (sin_u, cos_u) = u.sin_cos();
+        let frame = &self.frame;
+        let radial = *frame.x_dir * cos_u + *frame.y_dir * sin_u;
+        let tangent = *frame.y_dir * cos_u - *frame.x_dir * sin_u;
+        let (sin_a, cos_a) = self.half_angle.sin_cos();
+        let radius = self.radius_at(v);
+        (
+            frame.origin + radial * radius + *frame.z_dir * (v * cos_a),
+            tangent * radius,
+            radial * sin_a + *frame.z_dir * cos_a,
+        )
     }
 
     fn is_degenerate_at(&self, _u: f64, v: f64) -> bool {
@@ -1541,6 +1593,20 @@ impl SurfaceGeometry for Torus {
         Torus::normal_at(self, u, v)
     }
 
+    fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>) {
+        let (sin_u, cos_u) = u.sin_cos();
+        let (sin_v, cos_v) = v.sin_cos();
+        let frame = &self.frame;
+        let radial = *frame.x_dir * cos_u + *frame.y_dir * sin_u;
+        let tangent = *frame.y_dir * cos_u - *frame.x_dir * sin_u;
+        let ring = self.major_radius + self.minor_radius * cos_v;
+        (
+            frame.origin + radial * ring + *frame.z_dir * (self.minor_radius * sin_v),
+            tangent * ring,
+            (*frame.z_dir * cos_v - radial * sin_v) * self.minor_radius,
+        )
+    }
+
     fn is_degenerate_at(&self, _u: f64, _v: f64) -> bool {
         false
     }
@@ -1596,6 +1662,15 @@ impl SurfaceGeometry for RuledSurface {
 
     fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         RuledSurface::normal_at(self, u, v)
+    }
+
+    fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>) {
+        let u = NativeParam::new(u);
+        (
+            self.curve.point_at(u) + self.direction * v,
+            self.curve.derivative_at(u, 1),
+            self.direction,
+        )
     }
 
     fn is_degenerate_at(&self, _u: f64, _v: f64) -> bool {
@@ -1680,6 +1755,20 @@ impl SurfaceGeometry for SurfaceOfRevolution {
 
     /// The parameterization collapses wherever the profile curve meets the
     /// axis: every `v` maps to the same point there.
+    fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>) {
+        // Rotating about the axis is a rigid motion independent of `u`, so it
+        // commutes with differentiation along the profile; along `v` the
+        // point moves with the rotational velocity `axis × radius`.
+        let along_profile = Rotation3::from_axis_angle(&self.axis.direction, v)
+            * self.curve.derivative_at(NativeParam::new(u), 1);
+        let point = SurfaceOfRevolution::point_at(self, u, v);
+        let around_axis = self
+            .axis
+            .direction
+            .cross(&(point - self.axis.project(point)));
+        (point, along_profile, around_axis)
+    }
+
     fn is_degenerate_at(&self, u: f64, v: f64) -> bool {
         let point = self.point_at(u, v);
         (point - self.axis.project(point)).norm() <= LINEAR_TOLERANCE
@@ -1756,6 +1845,10 @@ impl SurfaceGeometry for NurbsSurface {
         NurbsSurface::normal_at(self, u, v)
     }
 
+    fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>) {
+        NurbsSurface::point_and_derivative_at(self, u, v)
+    }
+
     fn is_degenerate_at(&self, _u: f64, _v: f64) -> bool {
         false
     }
@@ -1814,4 +1907,70 @@ fn angular_extrema(interval: Interval, step: f64) -> Vec<f64> {
     let first = (ordered.start.value() / step).ceil() as i64;
     let last = (ordered.end.value() / step).floor() as i64;
     (first..=last).map(|index| index as f64 * step).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every support's partials match central differences of its own points,
+    /// and their cross product points where its normal does.
+    #[test]
+    fn partials_differentiate_the_point_and_orient_the_normal() {
+        let frame = Frame::from_xy(
+            Point3::new(0.3, -1.2, 0.7),
+            Vector3::new(1.0, 1.0, 0.0),
+            Vector3::new(-1.0, 1.0, 0.5),
+        );
+        let arc = Curve::circle(
+            Plane::from_xy(Point3::new(2.0, 0.0, 0.0), Vector3::x(), Vector3::z()),
+            0.5,
+        );
+        let surfaces = [
+            Surface::Plane(Plane::from_frame(frame.clone())),
+            Surface::Cylinder(Cylinder::new(frame.origin, frame.x_dir, frame.z_dir, 1.5)),
+            Surface::Sphere(Sphere::new(frame.clone(), 2.0)),
+            Surface::Cone(Cone::new(frame.clone(), 1.0, 0.4)),
+            Surface::Torus(Torus::new(frame.clone(), 3.0, 1.0)),
+            Surface::Ruled(RuledSurface::new(arc.clone(), Vector3::new(0.2, 0.1, 1.0))),
+            Surface::Revolution(SurfaceOfRevolution::new(arc, Axis3::z())),
+            Surface::Torus(Torus::new(frame, 3.0, 1.0))
+                .to_nurbs()
+                .map(Surface::Nurbs)
+                .expect("a torus has an exact NURBS form"),
+        ];
+        let step = 1e-6;
+        for surface in &surfaces {
+            let (u_domain, v_domain) = surface.domain();
+            let at = |domain: Interval, fraction: f64| match domain.is_finite() {
+                true => domain.at(Fraction::new(fraction)).value(),
+                false => 4.0 * fraction - 1.0,
+            };
+            for (fu, fv) in [(0.13, 0.41), (0.57, 0.69), (0.83, 0.22)] {
+                let (u, v) = (at(u_domain, fu), at(v_domain, fv));
+                let (point, du, dv) = surface.point_and_derivative_at(u, v);
+                assert!(
+                    (point - surface.point_at(u, v)).norm() <= 1e-12,
+                    "{surface:?}"
+                );
+                let central_u =
+                    (surface.point_at(u + step, v) - surface.point_at(u - step, v)) / (2.0 * step);
+                let central_v =
+                    (surface.point_at(u, v + step) - surface.point_at(u, v - step)) / (2.0 * step);
+                assert!(
+                    (du - central_u).norm() <= 1e-6 * du.norm().max(1.0),
+                    "{surface:?}"
+                );
+                assert!(
+                    (dv - central_v).norm() <= 1e-6 * dv.norm().max(1.0),
+                    "{surface:?}"
+                );
+                let normal = du.cross(&dv).normalize();
+                assert!(
+                    normal.dot(&surface.normal_at(u, v)) > 1.0 - 1e-9,
+                    "{surface:?} at ({u}, {v})"
+                );
+            }
+        }
+    }
 }

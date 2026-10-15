@@ -381,8 +381,8 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
 
     /// Returns length, centroid and centroidal inertia for this edge.
     ///
-    /// The length uses the edge's exact trimmed-curve length. The centroid and
-    /// inertia use the computation tessellation of that same span.
+    /// All three are integrated along the edge's span to a relative tolerance
+    /// of `1e-10`; see [`crate::measure`].
     pub fn linear_properties(&self) -> Result<LinearProperties, MeasureError> {
         linear_properties_for_edge(self)
     }

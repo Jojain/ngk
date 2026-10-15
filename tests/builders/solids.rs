@@ -213,7 +213,7 @@ fn extrudes_to(face: Shape<FaceTag>, height: f64, expected: f64) {
         .volume()
         .expect("volume");
     assert!(
-        (volume - expected).abs() < 5e-3 * expected,
+        (volume - expected).abs() < 1e-9 * expected,
         "expected a volume of {expected}, got {volume}"
     );
 }

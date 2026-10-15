@@ -595,11 +595,151 @@ fn a_closed_spline_rim_bounds_its_cap_with_the_whole_curve() {
             .expect("the rim should measure")
             .length;
         let disc = rim * rim / (4.0 * std::f64::consts::PI);
-        // Measured on the cap's mesh, which is only as close as its facets.
+        // A rational spline writes the circle exactly, so the cap and its
+        // rim agree to the measuring tolerance.
         let area = face.area().expect("the cap should measure");
         assert!(
-            (area - disc).abs() <= 1e-2 * disc,
+            (area - disc).abs() <= 1e-9 * disc,
             "a cap inside a rim {rim} long covers {disc}, got {area}"
         );
+    }
+}
+
+#[test]
+fn imported_solids_measure_what_occt_measures() {
+    // Volume and area of every foreign fixture, from OCCT's `BRepGProp` at
+    // `1e-12` through build123d. The primitives agree to rounding; parts whose
+    // faces are trimmed by fitted spline pcurves agree to a few parts in ten
+    // million, which is as closely as those pcurves pin the faces down.
+    let fixtures: [(&str, &str, f64, f64); 19] = [
+        (
+            "box",
+            include_str!("foreign/files/box.step"),
+            6000.0,
+            2200.0,
+        ),
+        (
+            "buffer_stand",
+            include_str!("foreign/files/buffer_stand.step"),
+            228126.319267605,
+            51740.9986188027,
+        ),
+        (
+            "curved_support",
+            include_str!("foreign/files/curved_support.step"),
+            165914.071880336,
+            38781.0151745394,
+        ),
+        (
+            "cylinder",
+            include_str!("foreign/files/cylinder.step"),
+            785.398163397448,
+            471.238898038469,
+        ),
+        (
+            "frustum",
+            include_str!("foreign/files/frustum.step"),
+            408.407044966561,
+            320.700518561394,
+        ),
+        (
+            "holed_slab",
+            include_str!("foreign/files/holed_slab.step"),
+            33.0,
+            76.0,
+        ),
+        (
+            "lofted",
+            include_str!("foreign/files/lofted.step"),
+            1529.60976644364,
+            819.829798822049,
+        ),
+        (
+            "ppp0101",
+            include_str!("foreign/files/ppp0101_bearing_bracket.step"),
+            102198.224177614,
+            30243.246536351,
+        ),
+        (
+            "ppp0102",
+            include_str!("foreign/files/ppp0102_post_cap.step"),
+            42248.4519594644,
+            15159.8932179648,
+        ),
+        (
+            "ppp0103",
+            include_str!("foreign/files/ppp0103_c_clamp_base.step"),
+            35605.5469351842,
+            10058.4549135511,
+        ),
+        (
+            "ppp0104",
+            include_str!("foreign/files/ppp0104_angle_bracket.step"),
+            39743.2112022661,
+            12314.2380453425,
+        ),
+        (
+            "ppp0105",
+            include_str!("foreign/files/ppp0105_paste_sleeve.step"),
+            55617.5280161174,
+            38127.2399643934,
+        ),
+        (
+            "ppp0106",
+            include_str!("foreign/files/ppp0106_bearing_jig.step"),
+            42053.8277417559,
+            15572.097224296,
+        ),
+        (
+            "ppp0108",
+            include_str!("foreign/files/ppp0108_tie_plate.step"),
+            434238.267353818,
+            80718.1977856091,
+        ),
+        (
+            "ppp0109",
+            include_str!("foreign/files/ppp0109_corner_tie.step"),
+            113789.263882685,
+            27962.4888083649,
+        ),
+        (
+            "ppp0110",
+            include_str!("foreign/files/ppp0110_light_cap.step"),
+            207159.364065855,
+            47394.6132945034,
+        ),
+        (
+            "sphere",
+            include_str!("foreign/files/sphere.step"),
+            523.598775598299,
+            314.159265358979,
+        ),
+        (
+            "swept_circle",
+            include_str!("foreign/files/swept_circle.step"),
+            187.448170342692,
+            217.846885828131,
+        ),
+        (
+            "torus",
+            include_str!("foreign/files/torus.step"),
+            59.217626406536,
+            118.435252813072,
+        ),
+    ];
+    for (name, text, volume, area) in fixtures {
+        let import = read_step(text, &StepReadOptions::default()).expect("fixture imports");
+        let solid = import.shapes[0].solid();
+        let measured_volume = solid.volume().expect("imported volume");
+        let measured_area = solid.area().expect("imported area");
+        for (what, measured, expected) in [
+            ("volume", measured_volume, volume),
+            ("area", measured_area, area),
+        ] {
+            assert!(
+                (measured - expected).abs() <= 1e-6 * expected,
+                "{name}: {what} {measured}, OCCT measures {expected}"
+            );
+        }
     }
 }
