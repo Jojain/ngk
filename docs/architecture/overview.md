@@ -58,4 +58,6 @@ see [transactions.md](transactions.md).
 - [geometry.md](geometry.md): supports and spans, parameter spaces,
   intersection dispatch.
 - [builders.md](builders.md): builder naming and result contract.
+- [measure.md](measure.md): length, area, volume and inertia by boundary
+  integral.
 - [blend.md](blend.md): the chamfer and fillet engine.

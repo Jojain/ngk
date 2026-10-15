@@ -470,9 +470,8 @@ impl<'g, P: Payload> Face<'g, P> {
 
     /// Returns the area of this trimmed face.
     ///
-    /// The area is computed from the tessellated support surface. Planar
-    /// faces with linear boundaries are exact; curved supports inherit the
-    /// computation tessellation's approximation error.
+    /// The area is integrated along the face's pcurves to a relative
+    /// tolerance of `1e-10`; see [`crate::measure`].
     pub fn area(&self) -> Result<f64, MeasureError> {
         Ok(self.surface_properties()?.area)
     }

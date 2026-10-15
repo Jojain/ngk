@@ -1,50 +1,81 @@
-use nalgebra::{Matrix3, Vector3};
+use nalgebra::{Matrix3, SVector, Vector3};
 use thiserror::Error;
 
-use crate::geometry::dim2::curves::Curve2;
 use crate::geometry::parameter::Fraction;
-use crate::geometry::{Point3, Surface};
+use crate::geometry::{Point3, TrimmedCurve};
 use crate::model::Model;
-use crate::tessellate::{
-    CurveOpts, IndexedMesh, TessellateError, TessellateOpts,
-    curve::tessellate_curve,
-    face::{planar_mesh_area, tessellate_face},
-};
-use crate::topology::attributes::LoopKind;
 use crate::topology::edge::{Edge, EdgeCore};
 use crate::topology::face::Face;
 use crate::topology::gmap::Dart;
 use crate::topology::payload::Payload;
-use crate::topology::shape_keys::FaceKey;
+use crate::topology::shape_keys::{EdgeKey, FaceKey};
 use crate::topology::sheet::Sheet;
 use crate::topology::solid::Solid;
+use crate::topology::unwrapped_face_domain::UnwrappedFaceDomainError;
 
+use super::green::{FaceDomain, curve_breaks};
+use super::quadrature::{Quadrature, integrate};
 use super::types::{Inertia, LinearProperties, SurfaceProperties, VolumeProperties};
 
-const COMPUTATION_TESSELLATION: TessellateOpts = TessellateOpts {
-    curve: CurveOpts { segments: 64 },
-    surface: crate::tessellate::SurfaceOpts { nu: 64, nv: 32 },
-};
+/// What the public properties are evaluated to: each moment's error within
+/// this fraction of the integral of its magnitude.
+const PROPERTIES: Quadrature = Quadrature::Adaptive(1e-10);
 
 /// Why a mass-property integration could not produce a finite result.
 #[derive(Debug, Error)]
 pub enum MeasureError {
-    #[error("face {face:?} could not be tessellated: {source}")]
-    FaceTessellation {
+    #[error("face {face:?} has no readable parameter-space boundary: {source}")]
+    UnreadableBoundary {
         face: FaceKey,
         #[source]
-        source: TessellateError,
+        source: UnwrappedFaceDomainError,
     },
+    #[error("face {face:?} is bounded by no loop and its support's domain is unbounded")]
+    UnboundedFace { face: FaceKey },
+    #[error("face {face:?} did not reach the measuring tolerance")]
+    FaceUnconverged { face: FaceKey },
+    #[error("edge {edge:?} did not reach the measuring tolerance")]
+    EdgeUnconverged { edge: EdgeKey },
     #[error("edge {edge:?} has an unbounded parameter interval")]
-    UnboundedEdge {
-        edge: crate::topology::shape_keys::EdgeKey,
-    },
+    UnboundedEdge { edge: EdgeKey },
     #[error("the measured geometry has no non-degenerate measure")]
     Degenerate,
     #[error("the measured geometry produced a non-finite result")]
     NonFinite,
     #[error("shell {shell} has the wrong orientation for its solid side")]
     InvalidOrientation { shell: usize, signed_volume: f64 },
+}
+
+/// Zeroth, first and second moments about a reference point, in the order
+/// `1, x, y, z, x², y², z², xy, xz, yz`.
+type MomentVector = SVector<f64, 10>;
+
+/// The moments of `weight` placed at `offset` from the reference point.
+fn weighted_moments(offset: Vector3<f64>, weight: f64) -> MomentVector {
+    let [x, y, z] = [offset.x, offset.y, offset.z];
+    MomentVector::from([1.0, x, y, z, x * x, y * y, z * z, x * y, x * z, y * z]) * weight
+}
+
+/// The flux through a surface element of one vector field per volume moment.
+///
+/// By the divergence theorem a solid's integral of `φ` is the flux out of it of
+/// any field whose divergence is `φ`. Each field here points along one axis,
+/// so its flux needs one normal component.
+fn volume_moments(offset: Vector3<f64>, normal: Vector3<f64>) -> MomentVector {
+    let [x, y, z] = [offset.x, offset.y, offset.z];
+    let [nx, ny, nz] = [normal.x, normal.y, normal.z];
+    MomentVector::from([
+        x * nx,
+        x * x / 2.0 * nx,
+        y * y / 2.0 * ny,
+        z * z / 2.0 * nz,
+        x * x * x / 3.0 * nx,
+        y * y * y / 3.0 * ny,
+        z * z * z / 3.0 * nz,
+        x * x * y / 2.0 * nx,
+        x * x * z / 2.0 * nx,
+        y * y * z / 2.0 * ny,
+    ])
 }
 
 #[derive(Default)]
@@ -60,11 +91,16 @@ impl Moments {
         self.first += centroid * measure;
         self.second += second;
     }
+}
 
-    fn merge(&mut self, other: Self) {
-        self.measure += other.measure;
-        self.first += other.first;
-        self.second += other.second;
+impl From<MomentVector> for Moments {
+    fn from(moments: MomentVector) -> Self {
+        let m = moments;
+        Self {
+            measure: m[0],
+            first: Vector3::new(m[1], m[2], m[3]),
+            second: Matrix3::new(m[4], m[7], m[8], m[7], m[5], m[9], m[8], m[9], m[6]),
+        }
     }
 }
 
@@ -95,80 +131,119 @@ fn inertia_from_moments<D>(
     ))
 }
 
-fn triangle_surface_moments(mesh: &IndexedMesh, reference: Point3) -> Moments {
-    let mut moments = Moments::default();
-    for triangle in mesh.indices.chunks_exact(3) {
-        let points = [
-            mesh.positions[triangle[0] as usize] - reference,
-            mesh.positions[triangle[1] as usize] - reference,
-            mesh.positions[triangle[2] as usize] - reference,
-        ];
-        let area = 0.5
-            * (points[1] - points[0])
-                .cross(&(points[2] - points[0]))
-                .norm();
-        if area <= f64::EPSILON {
-            continue;
+/// The point and length the moments are taken about and measured in.
+///
+/// Any point gives the same properties in exact arithmetic. The centre of the
+/// box around the shape keeps the moments the size of the shape rather than of
+/// its distance from the origin, so nothing large cancels when they are moved
+/// to the centroid. Offsets are taken in units of half the box's diagonal, so
+/// the measure and its first and second moments are all about the same size
+/// and one relative tolerance holds every one of them to the shape's scale.
+#[derive(Debug, Clone, Copy)]
+struct Reference {
+    centre: Point3,
+    scale: f64,
+}
+
+impl Reference {
+    fn around(points: impl IntoIterator<Item = Point3>) -> Result<Self, MeasureError> {
+        let mut points = points.into_iter();
+        let first = points.next().ok_or(MeasureError::Degenerate)?;
+        let (low, high) = points.fold((first, first), |(low, high), point| {
+            (low.inf(&point), high.sup(&point))
+        });
+        let scale = 0.5 * (high - low).norm();
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(MeasureError::Degenerate);
         }
-        let sum = points[0] + points[1] + points[2];
-        let second = (outer(points[0], points[0])
-            + outer(points[1], points[1])
-            + outer(points[2], points[2])
-            + outer(sum, sum))
-            * (area / 12.0);
-        moments.add(area, sum / 3.0, second);
+        Ok(Self {
+            centre: nalgebra::center(&low, &high),
+            scale,
+        })
     }
-    moments
-}
 
-fn triangle_volume_moments(mesh: &IndexedMesh, reference: Point3) -> Moments {
-    let mut moments = Moments::default();
-    for triangle in mesh.indices.chunks_exact(3) {
-        let points = [
-            mesh.positions[triangle[0] as usize] - reference,
-            mesh.positions[triangle[1] as usize] - reference,
-            mesh.positions[triangle[2] as usize] - reference,
-        ];
-        let signed_volume = points[0].dot(&points[1].cross(&points[2])) / 6.0;
-        let sum = points[0] + points[1] + points[2];
-        let second = (outer(points[0], points[0])
-            + outer(points[1], points[1])
-            + outer(points[2], points[2])
-            + outer(sum, sum))
-            * (signed_volume / 20.0);
-        moments.add(signed_volume, sum / 4.0, second);
+    /// `point`'s offset from the centre, in units of the scale.
+    fn offset(&self, point: Point3) -> Vector3<f64> {
+        (point - self.centre) / self.scale
     }
-    moments
-}
 
-fn segment_linear_moments(points: &[Point3], reference: Point3) -> Moments {
-    let mut moments = Moments::default();
-    for pair in points.windows(2) {
-        let a = pair[0] - reference;
-        let b = pair[1] - reference;
-        let length = (b - a).norm();
-        if length <= f64::EPSILON {
-            continue;
+    /// Moments taken in scaled offsets, back in world units, where the
+    /// measure itself carries `power` factors of the scale.
+    fn unscale(&self, moments: MomentVector, power: i32) -> MomentVector {
+        let [zeroth, first, second] = [power, power + 1, power + 2].map(|p| self.scale.powi(p));
+        let mut moments = moments;
+        moments[0] *= zeroth;
+        for index in 1..4 {
+            moments[index] *= first;
         }
-        let second =
-            (outer(a, a) * 2.0 + outer(b, b) * 2.0 + outer(a, b) + outer(b, a)) * (length / 6.0);
-        moments.add(length, (a + b) / 2.0, second);
-    }
-    moments
-}
-
-fn first_point(mesh: &IndexedMesh) -> Option<Point3> {
-    mesh.indices
-        .first()
-        .map(|index| mesh.positions[*index as usize])
-}
-
-fn mesh_for_face<P: Payload>(face: &Face<'_, P>) -> Result<IndexedMesh, MeasureError> {
-    tessellate_face(face, COMPUTATION_TESSELLATION).map_err(|source| {
-        MeasureError::FaceTessellation {
-            face: face.key(),
-            source,
+        for index in 4..10 {
+            moments[index] *= second;
         }
+        moments
+    }
+}
+
+/// Reads every face's domain, keyed for the errors that name it.
+fn face_domains<'f, P: Payload>(
+    faces: &'f [Face<'_, P>],
+) -> Result<Vec<(FaceKey, FaceDomain<'f>)>, MeasureError> {
+    faces
+        .iter()
+        .map(|face| Ok((face.key(), FaceDomain::of_face(face)?)))
+        .collect()
+}
+
+fn domains_reference(domains: &[(FaceKey, FaceDomain<'_>)]) -> Result<Reference, MeasureError> {
+    Reference::around(
+        domains
+            .iter()
+            .flat_map(|(_, domain)| domain.sample_points()),
+    )
+}
+
+/// Positive area moments of one face about `reference`, in world units.
+fn face_area_moments(
+    face: FaceKey,
+    domain: &FaceDomain<'_>,
+    reference: Reference,
+) -> Result<MomentVector, MeasureError> {
+    let integral = domain
+        .integrate(PROPERTIES, |point, du, dv| {
+            weighted_moments(reference.offset(point), du.cross(&dv).norm())
+        })
+        .map_err(|_| MeasureError::FaceUnconverged { face })?;
+    // The loops wind with the face's sense, and an area has none.
+    let moments = match integral.value[0] < 0.0 {
+        true => -integral.value,
+        false => integral.value,
+    };
+    Ok(reference.unscale(moments, 0))
+}
+
+/// Signed volume moments one face contributes about `reference`, in world
+/// units.
+fn face_volume_moments(
+    face: FaceKey,
+    domain: &FaceDomain<'_>,
+    reference: Reference,
+) -> Result<MomentVector, MeasureError> {
+    domain
+        .integrate(PROPERTIES, |point, du, dv| {
+            volume_moments(reference.offset(point), du.cross(&dv))
+        })
+        .map(|integral| reference.unscale(integral.value, 1))
+        .map_err(|_| MeasureError::FaceUnconverged { face })
+}
+
+fn surface_properties_from(
+    moments: MomentVector,
+    reference: Reference,
+) -> Result<SurfaceProperties, MeasureError> {
+    let (area, centroid, inertia) = inertia_from_moments(moments.into(), reference.centre)?;
+    Ok(SurfaceProperties {
+        area,
+        centroid,
+        inertia,
     })
 }
 
@@ -176,102 +251,86 @@ fn mesh_for_face<P: Payload>(face: &Face<'_, P>) -> Result<IndexedMesh, MeasureE
 pub(crate) fn face_surface_properties<P: Payload>(
     face: &Face<'_, P>,
 ) -> Result<SurfaceProperties, MeasureError> {
-    let mesh = mesh_for_face(face)?;
-    let reference = first_point(&mesh).ok_or(MeasureError::Degenerate)?;
-    let moments = triangle_surface_moments(&mesh, reference);
-    let (area, centroid, inertia) = inertia_from_moments(moments, reference)?;
-    Ok(SurfaceProperties {
-        area,
-        centroid,
-        inertia,
-    })
+    sheet_faces_surface_properties(std::slice::from_ref(face))
 }
 
 /// Computes positive area properties for all faces of one sheet.
 pub(crate) fn sheet_surface_properties<P: Payload>(
     sheet: &Sheet<'_, P>,
 ) -> Result<SurfaceProperties, MeasureError> {
-    let meshes = sheet
-        .faces()
-        .into_iter()
-        .map(|face| mesh_for_face(&face))
-        .collect::<Result<Vec<_>, _>>()?;
-    surface_properties_from_meshes(&meshes)
+    sheet_faces_surface_properties(&sheet.faces())
 }
 
-fn surface_properties_from_meshes(
-    meshes: &[IndexedMesh],
+fn sheet_faces_surface_properties<P: Payload>(
+    faces: &[Face<'_, P>],
 ) -> Result<SurfaceProperties, MeasureError> {
-    let reference = meshes
-        .iter()
-        .find_map(first_point)
-        .ok_or(MeasureError::Degenerate)?;
-    let moments = meshes.iter().fold(Moments::default(), |mut total, mesh| {
-        let part = triangle_surface_moments(mesh, reference);
-        if part.measure > 0.0 {
-            total.add(part.measure, part.first / part.measure, part.second);
-        }
-        total
-    });
-    let (area, centroid, inertia) = inertia_from_moments(moments, reference)?;
-    Ok(SurfaceProperties {
-        area,
-        centroid,
-        inertia,
-    })
+    let domains = face_domains(faces)?;
+    let reference = domains_reference(&domains)?;
+    let mut total = MomentVector::zeros();
+    for (face, domain) in &domains {
+        total += face_area_moments(*face, domain, reference)?;
+    }
+    surface_properties_from(total, reference)
 }
 
 /// Computes linear properties for one oriented edge.
 pub(crate) fn linear_properties_for_edge<P: Payload>(
     edge: &EdgeCore<'_, P>,
 ) -> Result<LinearProperties, MeasureError> {
-    let interval = edge.parameter_interval();
-    if !interval.is_finite() {
-        return Err(MeasureError::UnboundedEdge { edge: edge.key() });
-    }
-    let polyline = tessellate_curve(
-        edge.curve(),
-        interval.start.value(),
-        interval.end.value(),
-        COMPUTATION_TESSELLATION.curve,
-    );
-    let reference = *polyline.points.first().ok_or(MeasureError::Degenerate)?;
-    let moments = segment_linear_moments(&polyline.points, reference);
-    let exact_length = edge.length();
-    let scale = exact_length / moments.measure;
-    let moments = Moments {
-        measure: exact_length,
-        first: moments.first * scale,
-        second: moments.second * scale,
-    };
-    let (length, centroid, inertia) = inertia_from_moments(moments, reference)?;
-    Ok(LinearProperties {
-        length,
-        centroid,
-        inertia,
-    })
+    linear_properties_for_spans(&[(edge.key(), edge_span(edge)?)])
 }
 
 /// Computes linear properties for every edge in a profile.
 pub(crate) fn linear_properties_for_edges<'a, P: Payload>(
     edges: impl IntoIterator<Item = Edge<'a, P>>,
 ) -> Result<LinearProperties, MeasureError> {
-    let edges = edges.into_iter().collect::<Vec<_>>();
-    let mut all = Moments::default();
-    let mut reference = None;
-    for edge in edges {
-        let properties = linear_properties_for_edge(&edge)?;
-        let origin = reference.get_or_insert(properties.centroid);
-        let local_centroid = properties.centroid - *origin;
-        let central = inverse_inertia(properties.inertia);
-        all.add(
-            properties.length,
-            local_centroid,
-            central + properties.length * outer(local_centroid, local_centroid),
-        );
+    let spans = edges
+        .into_iter()
+        .map(|edge| Ok((edge.key(), edge_span(&edge)?)))
+        .collect::<Result<Vec<_>, MeasureError>>()?;
+    linear_properties_for_spans(&spans)
+}
+
+fn edge_span<P: Payload>(edge: &EdgeCore<'_, P>) -> Result<TrimmedCurve, MeasureError> {
+    if !edge.parameter_interval().is_finite() {
+        return Err(MeasureError::UnboundedEdge { edge: edge.key() });
     }
-    let reference = reference.ok_or(MeasureError::Degenerate)?;
-    let (length, centroid, inertia) = inertia_from_moments(all, reference)?;
+    Ok(edge.trimmed_curve())
+}
+
+/// Length moments of the curves, integrated along each one's 3D span.
+fn linear_properties_for_spans(
+    spans: &[(EdgeKey, TrimmedCurve)],
+) -> Result<LinearProperties, MeasureError> {
+    const SAMPLES: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+    let reference = Reference::around(spans.iter().flat_map(|(_, span)| {
+        SAMPLES
+            .iter()
+            .map(|fraction| span.point_at(Fraction::new(*fraction)))
+    }))?;
+    let mut total = MomentVector::zeros();
+    for (edge, span) in spans {
+        let interval = span.interval();
+        let mut breaks = vec![0.0];
+        breaks.extend(
+            curve_breaks(span.curve(), interval)
+                .into_iter()
+                .map(|parameter| interval.fraction_of(parameter).value()),
+        );
+        breaks.push(1.0);
+        breaks.sort_by(f64::total_cmp);
+        let integral = integrate(PROPERTIES, &breaks, |fraction| {
+            let fraction = Fraction::new(fraction);
+            let speed = span.derivative_at(fraction, 1).norm();
+            Ok(weighted_moments(
+                reference.offset(span.point_at(fraction)),
+                speed,
+            ))
+        })
+        .map_err(|_| MeasureError::EdgeUnconverged { edge: *edge })?;
+        total += reference.unscale(integral.value, 0);
+    }
+    let (length, centroid, inertia) = inertia_from_moments(total.into(), reference.centre)?;
     Ok(LinearProperties {
         length,
         centroid,
@@ -325,188 +384,25 @@ fn shell_faces<P: Payload>(model: &Model<P>, shell: Dart) -> Vec<Face<'_, P>> {
         .collect()
 }
 
-fn shell_meshes<P: Payload>(
-    model: &Model<P>,
-    shell: Dart,
-) -> Result<Vec<IndexedMesh>, MeasureError> {
-    shell_faces(model, shell)
-        .iter()
-        .map(mesh_for_face)
-        .collect()
-}
-
-fn signed_volume_from_meshes(meshes: &[IndexedMesh]) -> Result<f64, MeasureError> {
-    let reference = meshes
-        .iter()
-        .find_map(first_point)
-        .ok_or(MeasureError::Degenerate)?;
-    let volume = meshes
-        .iter()
-        .map(|mesh| triangle_volume_moments(mesh, reference).measure)
-        .sum::<f64>();
+/// Signed volume enclosed by oriented faces, at the fixed low order.
+///
+/// Only the sign and the rough size are asked of it, so no panel is refined.
+fn signed_volume_of<P: Payload>(faces: &[Face<'_, P>]) -> Result<f64, MeasureError> {
+    let domains = face_domains(faces)?;
+    let centre = domains_reference(&domains)?.centre;
+    let mut volume = 0.0;
+    for (face, domain) in &domains {
+        volume += domain
+            .integrate(Quadrature::Fixed, |point, du, dv| {
+                SVector::<f64, 1>::new((point.x - centre.x) * du.cross(&dv).x)
+            })
+            .map_err(|_| MeasureError::FaceUnconverged { face: *face })?
+            .value[0];
+    }
     volume
         .is_finite()
         .then_some(volume)
         .ok_or(MeasureError::NonFinite)
-}
-
-fn face_reference<P: Payload>(face: &Face<'_, P>) -> Option<Point3> {
-    face.vertices()
-        .first()
-        .map(|vertex| *vertex.point())
-        .or_else(|| {
-            face.loops()
-                .into_iter()
-                .next()?
-                .edges()
-                .into_iter()
-                .next()
-                .map(|edge| edge.trimmed_curve().point_at(Fraction::new(0.0)))
-        })
-        .or_else(|| {
-            let (u, v) = face.surface().domain();
-            (u.is_finite() && v.is_finite()).then(|| {
-                face.point_at(
-                    u.at(Fraction::new(0.5)).value(),
-                    v.at(Fraction::new(0.5)).value(),
-                )
-            })
-        })
-}
-
-/// Retains the sign-only pcurve fan for faces whose imported UV boundary is
-/// not readable by the general tessellator. It is used only as a validation
-/// fallback; public mass properties report the tessellation error instead.
-fn fallback_face_signed_volume<P: Payload>(face: &Face<'_, P>, reference: Point3) -> Option<f64> {
-    let enclosed = face
-        .loops()
-        .iter()
-        .any(|boundary| !matches!(boundary.kind(), LoopKind::Inner));
-    let mut volume = if enclosed {
-        0.0
-    } else {
-        let (u_span, v_span) = face.surface().domain();
-        if !u_span.is_finite() || !v_span.is_finite() {
-            return None;
-        }
-        const STEPS: usize = 24;
-        let point = |i: usize, j: usize| {
-            let u = u_span.at(Fraction::new(i as f64 / STEPS as f64));
-            let v = v_span.at(Fraction::new(j as f64 / STEPS as f64));
-            face.point_at(u.value(), v.value()) - reference
-        };
-        let mut volume = 0.0;
-        for i in 0..STEPS {
-            for j in 0..STEPS {
-                let (a, b, c, d) = (
-                    point(i, j),
-                    point(i + 1, j),
-                    point(i + 1, j + 1),
-                    point(i, j + 1),
-                );
-                volume += a.dot(&b.cross(&c)) / 6.0;
-                volume += a.dot(&c.cross(&d)) / 6.0;
-            }
-        }
-        volume
-    };
-
-    let planar = matches!(face.surface(), Surface::Plane(_));
-    for boundary in face.loops() {
-        let mut uvs = Vec::new();
-        for edge in boundary.edges() {
-            let curve = face.pcurve(edge.dart())?;
-            let count = if planar && matches!(curve.curve(), Curve2::Line(_)) {
-                1
-            } else {
-                32
-            };
-            uvs.extend(curve.sample(count).into_iter().take(count));
-        }
-        let origin = *uvs.first()?;
-        for pair in uvs[1..].windows(2) {
-            let count = if planar { 1 } else { 16 };
-            let point = |i: usize, j: usize| {
-                let uv = origin
-                    + (pair[0] - origin) * (i as f64 / count as f64)
-                    + (pair[1] - origin) * (j as f64 / count as f64);
-                face.point_at(uv.x, uv.y) - reference
-            };
-            for i in 0..count {
-                for j in 0..count - i {
-                    let (a, b, c) = (point(i, j), point(i + 1, j), point(i, j + 1));
-                    volume += a.dot(&b.cross(&c)) / 6.0;
-                    if i + j + 1 < count {
-                        volume += b.dot(&point(i + 1, j + 1).cross(&c)) / 6.0;
-                    }
-                }
-            }
-        }
-    }
-    let volume = match face.sense() {
-        crate::topology::orientation::Orientation::Same => volume,
-        crate::topology::orientation::Orientation::Reversed => -volume,
-    };
-    volume.is_finite().then_some(volume)
-}
-
-fn fallback_signed_volume<P: Payload>(faces: &[Face<'_, P>]) -> Result<f64, MeasureError> {
-    let reference = faces
-        .iter()
-        .find_map(face_reference)
-        .ok_or(MeasureError::Degenerate)?;
-    faces
-        .iter()
-        .map(|face| fallback_face_signed_volume(face, reference).ok_or(MeasureError::Degenerate))
-        .try_fold(0.0, |total, contribution| {
-            contribution.map(|value| total + value)
-        })
-}
-
-/// The volume `face`'s mesh contributes about `reference`, meshing the face
-/// only when it is not planar.
-///
-/// Every triangle of a planar face lies at the plane's height above
-/// `reference`, so together they contribute that height times their area over
-/// three, and [`planar_mesh_area`] reads that area off the boundary. Validation
-/// asks this of every face of every Boolean result, and meshing a plane with
-/// many holes just to learn its area is what made it cost more with each hole.
-fn face_signed_volume<P: Payload>(
-    face: &Face<'_, P>,
-    reference: Point3,
-) -> Result<f64, MeasureError> {
-    let tessellation = |source| MeasureError::FaceTessellation {
-        face: face.key(),
-        source,
-    };
-    if let Surface::Plane(plane) = face.surface()
-        && let Some(area) = planar_mesh_area(face, COMPUTATION_TESSELLATION)
-    {
-        let height = (plane.origin() - reference).dot(&plane.normal());
-        return area.map(|area| height * area / 3.0).map_err(tessellation);
-    }
-    let mesh = mesh_for_face(face)?;
-    Ok(triangle_volume_moments(&mesh, reference).measure)
-}
-
-/// Signed volume enclosed by oriented faces, falling back to the pcurve fan
-/// where some face cannot be read the way the mesher reads it.
-fn signed_volume_of<P: Payload>(faces: &[Face<'_, P>]) -> Result<f64, MeasureError> {
-    let reference = faces
-        .iter()
-        .find_map(face_reference)
-        .ok_or(MeasureError::Degenerate)?;
-    let volume = faces
-        .iter()
-        .map(|face| face_signed_volume(face, reference))
-        .sum::<Result<f64, _>>();
-    match volume {
-        Ok(volume) => volume
-            .is_finite()
-            .then_some(volume)
-            .ok_or(MeasureError::NonFinite),
-        Err(_) => fallback_signed_volume(faces),
-    }
 }
 
 /// Computes the signed volume of one oriented shell for validation.
@@ -533,19 +429,31 @@ pub(crate) fn signed_volume_for_faces<P: Payload>(
 pub(crate) fn solid_volume_properties<P: Payload>(
     solid: &Solid<'_, P>,
 ) -> Result<VolumeProperties, MeasureError> {
-    let shells = solid.shells();
-    let meshes = shells
+    let shells = solid
+        .shells()
         .iter()
-        .map(|shell| shell_meshes(solid.model(), shell.dart()))
+        .map(|shell| shell_faces(solid.model(), shell.dart()))
+        .collect::<Vec<_>>();
+    let domains = shells
+        .iter()
+        .map(|faces| face_domains(faces))
         .collect::<Result<Vec<_>, _>>()?;
-    let reference = meshes
-        .iter()
-        .flat_map(|shell| shell.iter().filter_map(first_point))
-        .next()
-        .ok_or(MeasureError::Degenerate)?;
-    let mut moments = Moments::default();
-    for (index, shell_meshes) in meshes.iter().enumerate() {
-        let signed_volume = signed_volume_from_meshes(shell_meshes)?;
+    let reference = Reference::around(
+        domains
+            .iter()
+            .flatten()
+            .flat_map(|(_, domain)| domain.sample_points()),
+    )?;
+    let mut total = MomentVector::zeros();
+    for (index, shell) in domains.iter().enumerate() {
+        let mut moments = MomentVector::zeros();
+        for (face, domain) in shell {
+            moments += face_volume_moments(*face, domain, reference)?;
+        }
+        let signed_volume = moments[0];
+        if !signed_volume.is_finite() {
+            return Err(MeasureError::NonFinite);
+        }
         let expected_positive = index == 0;
         if (expected_positive && signed_volume <= 0.0)
             || (!expected_positive && signed_volume >= 0.0)
@@ -555,15 +463,55 @@ pub(crate) fn solid_volume_properties<P: Payload>(
                 signed_volume,
             });
         }
-        for mesh in shell_meshes {
-            let part = triangle_volume_moments(mesh, reference);
-            moments.merge(part);
-        }
+        total += moments;
     }
-    let (volume, centroid, inertia) = inertia_from_moments(moments, reference)?;
+    let (volume, centroid, inertia) = inertia_from_moments(total.into(), reference.centre)?;
     Ok(VolumeProperties {
         volume,
         centroid,
         inertia,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builders::faces::reverse_face_winding_edit;
+    use crate::modeling::solids::block;
+    use crate::topology::ModelEditError;
+    use crate::topology::validation::validate_solid_orientation;
+
+    #[test]
+    fn an_inside_out_solid_is_refused_rather_than_measured_negative() {
+        let mut shape = block(2.0, 3.0, 4.0).expect("block should build");
+        let solid = shape.key();
+        let faces = shape
+            .solid()
+            .faces()
+            .iter()
+            .map(Face::key)
+            .collect::<Vec<_>>();
+        shape
+            .model_mut()
+            .transaction(|edit| {
+                for face in &faces {
+                    reverse_face_winding_edit(edit, *face);
+                }
+                Ok::<_, ModelEditError>(())
+            })
+            .expect("turning every face over commits");
+
+        let model = shape.model();
+        let shell = model.solid_unchecked(solid).shells()[0].dart();
+        let signed = signed_shell_volume(model, shell).expect("the shell still measures");
+        assert!(
+            (signed + 24.0).abs() <= 1e-9,
+            "an inside-out block encloses minus its volume, got {signed}"
+        );
+        assert!(validate_solid_orientation(model, solid).is_err());
+        assert!(matches!(
+            model.solid_unchecked(solid).volume(),
+            Err(MeasureError::InvalidOrientation { shell: 0, signed_volume }) if signed_volume < 0.0
+        ));
+    }
 }

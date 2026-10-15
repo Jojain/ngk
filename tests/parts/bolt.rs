@@ -116,11 +116,10 @@ fn thread() -> Solid {
     .expect("thread should sweep")
 }
 
-/// A solid's volume, measured on its tessellation.
+/// A solid's volume.
 ///
-/// The measure is approximate on curved faces, so volumes are compared with
-/// the measured volumes of the parts rather than with closed forms: the
-/// fused solid meshes the same surfaces its parts did.
+/// Volumes are compared with the measured volumes of the parts rather than
+/// with closed forms, which the thread's swept flanks do not have.
 fn volume(solid: &Solid) -> f64 {
     solid
         .solid()
@@ -141,7 +140,7 @@ fn assert_valid(solid: &Solid) {
 
 fn assert_close(actual: f64, expected: f64) {
     assert!(
-        (actual - expected).abs() <= 1e-3 * expected,
+        (actual - expected).abs() <= 1e-9 * expected,
         "expected {expected}, got {actual} (error {})",
         (actual - expected).abs()
     );
@@ -284,5 +283,11 @@ fn bolt_survives_a_step_round_trip() {
     assert_eq!(import.shapes.len(), 1, "the file holds one solid");
     let read = &import.shapes[0];
     assert_valid(read);
-    assert_close(volume(read), volume(&bolt));
+    // The refitted pcurves trim the helical faces a little differently, and
+    // the measure is exact only to the pcurves it is given.
+    let (read, written) = (volume(read), volume(&bolt));
+    assert!(
+        (read - written).abs() <= 1e-5 * written,
+        "the bolt read back holds {read}, against {written} written"
+    );
 }

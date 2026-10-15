@@ -471,13 +471,13 @@ fn curve_kinds(result: &faces::FaceBooleanResult) -> Vec<&'static str> {
         .collect()
 }
 
-/// Checks a result's area against the exact one, within the mesh tolerance
-/// the area is measured at: a circle is measured as its inscribed polygon. An
-/// arc on the wrong side of its corners would be off by far more.
+/// Checks a result's area against the exact one. A circle's area is
+/// integrated along its own arc, so an arc on the wrong side of its corners
+/// shows as a whole lens of difference.
 fn assert_area(result: &faces::FaceBooleanResult, expected: f64) {
     let area = reported_area(result.model(), result.face_keys());
     assert!(
-        (area - expected).abs() < 5e-3 * expected,
+        (area - expected).abs() < 1e-9 * expected,
         "expected an area of {expected}, got {area}"
     );
 }

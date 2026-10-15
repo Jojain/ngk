@@ -213,7 +213,7 @@ fn rounded_transition_revolves_a_corner_band_into_a_valid_solid() {
     // quarter-annulus sector between the two straight wall groups.
     let expected = 8.0 + 3.0 * std::f64::consts::PI / 4.0;
     assert!(
-        (volume - expected).abs() <= 2.0e-2,
+        (volume - expected).abs() <= 1.0e-9,
         "rounded volume was {volume}, expected {expected}"
     );
 }
@@ -314,7 +314,7 @@ fn rounded_transition_with_spine_on_left_edge_has_one_sharp_and_one_rounded_corn
         .expect("the partly rounded solid should measure");
     let expected = 8.0 + std::f64::consts::PI / 4.0;
     assert!(
-        (volume - expected).abs() <= 2.0e-2,
+        (volume - expected).abs() <= 1.0e-9,
         "rounded volume was {volume}, expected {expected}"
     );
 }

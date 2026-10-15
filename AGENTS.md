@@ -35,6 +35,10 @@ https://jojain.github.io/ngk/
 - **[docs/architecture/reviews/](docs/architecture/README.md#reviews)**: dated
   surveys and reviews behind the decisions.
 - **[plan/](plan/)**: work not done yet.
+- **[docs/architecture/refactors/](docs/architecture/refactors/README.md)**:
+  refactors noticed in passing and not yet looked into. Read the entries for
+  your area before working there, and add one when you notice a refactor you
+  are not going to pursue.
 
 A change that alters what an architecture document describes updates that
 document in the same change. A decision that is hard to reverse, surprising

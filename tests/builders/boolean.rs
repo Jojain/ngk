@@ -1951,6 +1951,11 @@ fn coaxial_cylinders_standing_flush_fuse_into_a_stepped_shaft() {
     }
 }
 
+/// How closely a Boolean result with curved intersections measures: the
+/// intersection pcurves are fitted to the square root of the linear tolerance,
+/// and the measure is exact only to them.
+const FITTED: f64 = 1e-5;
+
 #[test]
 fn two_overlapping_spheres_intersect_to_their_lens() {
     // Neither operand has a vertex or an edge: the whole solid is one closed
@@ -1967,7 +1972,7 @@ fn two_overlapping_spheres_intersect_to_their_lens() {
     let expected = std::f64::consts::PI * 5.0 / 12.0;
     let volume = lens.solid().volume().expect("lens volume");
     assert!(
-        (volume - expected).abs() <= 1e-2 * expected,
+        (volume - expected).abs() <= 1e-9 * expected,
         "lens volume {volume}, expected {expected}"
     );
 }
@@ -1998,7 +2003,7 @@ fn a_sphere_poking_out_of_a_larger_sphere_cuts_out_its_lens() {
     let expected = 4.0 / 3.0 * std::f64::consts::PI * big.powi(3) - lens;
     let volume = pocketed.solid().volume().expect("pocketed volume");
     assert!(
-        (volume - expected).abs() <= 1e-2 * expected,
+        (volume - expected).abs() <= FITTED * expected,
         "pocketed volume {volume}, expected {expected}"
     );
 }
@@ -2036,7 +2041,7 @@ fn a_block_straddling_a_cylinders_rim_intersects_to_the_wedge_between_them() {
         .volume()
         .expect("the wedge should be measurable");
     assert!(
-        (volume - expected).abs() <= 1e-2 * expected,
+        (volume - expected).abs() <= 1e-9 * expected,
         "wedge volume {volume}, expected {expected}"
     );
 }
@@ -2072,7 +2077,7 @@ fn a_block_notching_a_cylinder_from_below_leaves_a_measurable_wall() {
         .volume()
         .expect("the notched cylinder should be measurable");
     assert!(
-        (volume - expected).abs() <= 1e-2 * expected,
+        (volume - expected).abs() <= 1e-9 * expected,
         "notched volume {volume}, expected {expected}"
     );
 }
@@ -2109,11 +2114,11 @@ fn a_sphere_biting_all_but_a_strip_of_a_rod_leaves_its_wall_measurable() {
     let ball_volume = 4.0 / 3.0 * std::f64::consts::PI * 1.1255542791014304_f64.powi(3);
     let (union, common, rest) = (volume(&union), volume(&common), volume(&rest));
     assert!(
-        (union + common - rod_volume - ball_volume).abs() <= 1e-2 * ball_volume,
+        (union + common - rod_volume - ball_volume).abs() <= FITTED * ball_volume,
         "union {union} and common {common} should add up to rod {rod_volume} and ball {ball_volume}"
     );
     assert!(
-        (rest + common - rod_volume).abs() <= 1e-2 * rod_volume,
+        (rest + common - rod_volume).abs() <= FITTED * rod_volume,
         "rest {rest} and common {common} should add up to the rod {rod_volume}"
     );
 }
@@ -2152,7 +2157,7 @@ fn a_tilted_bar_notching_a_disc_edge_leaves_its_wall_measurable() {
         .volume()
         .expect("the bitten piece should be measurable");
     assert!(
-        (rest + common - disc_volume).abs() <= 1e-2 * disc_volume,
+        (rest + common - disc_volume).abs() <= FITTED * disc_volume,
         "rest {rest} and common {common} should add up to the disc {disc_volume}"
     );
 }

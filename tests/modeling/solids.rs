@@ -11,7 +11,7 @@ use ngk::model::Cell2;
 use ngk::modeling::solids::{
     block, block_at, cut, cylinder, cylinder_at, fuse, intersect, sphere, torus,
 };
-use ngk::tessellate::{CurveOpts, SurfaceOpts, TessellateOpts, face::tessellate_face_key};
+use ngk::tessellate::{TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
 use ngk::topology::gmap::Dim;
 use ngk::topology::shape::{Shape, SolidTag};
@@ -473,30 +473,6 @@ fn frame_at(x: f64, y: f64, z: f64) -> Frame {
     Frame::from_xy(Point3::new(x, y, z), Vector3::x(), Vector3::y())
 }
 
-/// The volume a solid's meshed boundary encloses, by the divergence theorem.
-///
-/// Sampled finely, because a meshed circle is a polygon inscribed in it and so
-/// measures a little short: at these settings a rim is a 128-gon, which holds
-/// 99.96% of its circle's area, and the assertion below leaves a percent of
-/// room for that. This is a check on which side of each face the material was
-/// kept, not a mass property.
-fn meshed_volume(shape: &Shape<SolidTag, StandardPayload>) -> f64 {
-    let opts = TessellateOpts {
-        curve: CurveOpts { segments: 128 },
-        surface: SurfaceOpts { nu: 128, nv: 16 },
-    };
-    let mut volume = 0.0;
-    for face in shape.solid().faces() {
-        let mesh = tessellate_face_key(shape.model(), face.key(), opts)
-            .unwrap_or_else(|error| panic!("face {:?} should mesh: {error}", face.key()));
-        for triangle in mesh.indices.chunks_exact(3) {
-            let corner = |slot: usize| mesh.positions[triangle[slot] as usize].coords;
-            volume += corner(0).dot(&corner(1).cross(&corner(2))) / 6.0;
-        }
-    }
-    volume
-}
-
 /// Every planar face the solid carries whose support sits at height `z`.
 fn planes_at_height(shape: &Shape<SolidTag, StandardPayload>, z: f64) -> Vec<FaceKey> {
     shape
@@ -580,9 +556,9 @@ fn a_cylinder_bored_from_above_its_floor_is_a_cup() {
     }
 
     let expected = std::f64::consts::PI * (400.0 * 30.0 - 256.0 * 26.0);
-    let volume = meshed_volume(&cup);
+    let volume = cup.solid().volume().expect("the cup should measure");
     assert!(
-        (volume - expected).abs() <= 0.01 * expected,
+        (volume - expected).abs() <= 1e-9 * expected,
         "a cup of these sizes holds {expected}, not {volume}, \
          so a face was kept on the wrong side"
     );

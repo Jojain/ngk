@@ -1,6 +1,6 @@
 # Area and volume algorithms: ngk, OCCT, SMLib, literature
 
-> **Status: accepted.** Option B was chosen; see [ADR 0001](../../adr/0001-mass-properties-by-green-boundary-integral.md) and [plan/mass_properties.md](../../../plan/mass_properties.md).
+> **Status: accepted and built.** Option B was chosen; see [ADR 0001](../../adr/0001-mass-properties-by-green-boundary-integral.md) and [measure.md](../measure.md).
 
 A survey to decide how `src/measure/` should integrate. It covers what ngk
 does now, what OCCT and SMLib (NVIDIA USD BRep, open-sourced October 2026)

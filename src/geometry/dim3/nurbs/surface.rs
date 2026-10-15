@@ -298,7 +298,7 @@ impl NurbsSurface {
     /// Unit surface normal at `(u, v)` using first partial derivatives in
     /// homogeneous space, then the quotient rule for the w-divide.
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
-        let (du, dv) = self.derivatives_uv(u, v);
+        let (du, dv) = self.derivative_at(u, v);
         UnitVector3::new_normalize(du.cross(&dv))
     }
 
@@ -349,7 +349,7 @@ impl NurbsSurface {
         for _ in 0..10 {
             let surface_point = self.point_at(u, v);
             let residual = surface_point - point;
-            let (du, dv) = self.derivatives_uv(u, v);
+            let (du, dv) = self.derivative_at(u, v);
             let uu = du.dot(&du);
             let uv = du.dot(&dv);
             let vv = dv.dot(&dv);
@@ -404,7 +404,14 @@ impl NurbsSurface {
     }
 
     /// Returns `(dS/du, dS/dv)` in cartesian space.
-    pub fn derivatives_uv(&self, u: f64, v: f64) -> (Vector3<f64>, Vector3<f64>) {
+    pub fn derivative_at(&self, u: f64, v: f64) -> (Vector3<f64>, Vector3<f64>) {
+        let (_, du, dv) = self.point_and_derivative_at(u, v);
+        (du, dv)
+    }
+
+    /// Returns the point at `(u, v)` with `dS/du` and `dS/dv` there, from one
+    /// pass over the control net.
+    pub fn point_and_derivative_at(&self, u: f64, v: f64) -> (Point3, Vector3<f64>, Vector3<f64>) {
         let domain_u = self.domain_u();
         let domain_v = self.domain_v();
         let u = u.clamp(domain_u.start.value(), domain_u.end.value());
@@ -443,7 +450,7 @@ impl NurbsSurface {
         let ds_v_xyz = Vector3::new(s_v.x, s_v.y, s_v.z);
         let du = (ds_u_xyz - s_xyz * (s_u.w / w)) / w;
         let dv = (ds_v_xyz - s_xyz * (s_v.w / w)) / w;
-        (du, dv)
+        (Point3::from(s_xyz / w), du, dv)
     }
 
     /// Decomposes this surface exactly into rational Bézier knot spans.

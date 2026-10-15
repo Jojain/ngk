@@ -6,7 +6,8 @@ use ngk::builders::edges::{add_arc, add_line};
 use ngk::builders::errors::{FaceCreationError, PolylineError};
 use ngk::builders::faces::{
     FaceEdgeSplitError, FaceImprint, FaceImprintGraph, FaceImprintSplitError, add_annulus,
-    add_circle, add_face, add_polygon, add_rectangle, split_face_by_imprints, split_face_edge,
+    add_circle, add_face, add_polygon, add_polygon_with_holes, add_rectangle,
+    split_face_by_imprints, split_face_edge,
 };
 use ngk::builders::profiles::{add_polyline, add_profile_from_edges};
 use ngk::builders::sheets::add_extruded_profile;
@@ -1100,6 +1101,36 @@ fn a_period_spanning_imprint_cuts_a_boundaryless_face_into_two_caps() {
         assert!(
             face.normal_at(middle.x, middle.y).dot(&point.coords) > 0.0,
             "a cap of a sphere still faces outward"
+        );
+    }
+}
+
+#[test]
+fn a_hole_listed_either_way_round_cuts_its_face() {
+    // A face's material lies left of its boundary, so a hole has to run the
+    // other way round from its outer polygon, whichever way it was listed.
+    let square = |size: f64, offset: f64| {
+        vec![
+            Point3::new(offset, offset, 0.0),
+            Point3::new(offset + size, offset, 0.0),
+            Point3::new(offset + size, offset + size, 0.0),
+            Point3::new(offset, offset + size, 0.0),
+        ]
+    };
+    let outer = square(4.0, 0.0);
+    let along = square(2.0, 1.0);
+    let against = along.iter().rev().copied().collect::<Vec<_>>();
+    for hole in [along, against] {
+        let mut g = Model::<StandardPayload>::new();
+        let face = add_polygon_with_holes(&mut g, Plane::xy(), &outer, &[&hole])
+            .expect("holed face should build");
+        let area = g
+            .face_unchecked(face)
+            .area()
+            .expect("holed face should measure");
+        assert!(
+            (area - 12.0).abs() <= 1e-12,
+            "the hole should be cut out, got {area}"
         );
     }
 }

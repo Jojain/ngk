@@ -287,7 +287,9 @@ fn validate_oriented_shell_volume<P: Payload>(
         }
     }
     let volume = crate::measure::signed_shell_volume(g, shell).map_err(|error| match error {
-        crate::measure::MeasureError::FaceTessellation { face, .. } => {
+        crate::measure::MeasureError::UnreadableBoundary { face, .. }
+        | crate::measure::MeasureError::UnboundedFace { face }
+        | crate::measure::MeasureError::FaceUnconverged { face } => {
             ModelValidationError::SolidFaceOrientationUnavailable { solid, shell, face }
         }
         _ => unavailable(first),

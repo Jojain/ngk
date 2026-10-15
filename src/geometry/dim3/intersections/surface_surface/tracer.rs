@@ -249,8 +249,8 @@ fn correct_boundary_state(
         if residual.norm() <= options.residual_tolerance {
             return Some(TraceState::new(a, b, parameters));
         }
-        let (a_u, a_v) = a.derivatives_uv(parameters.x, parameters.y);
-        let (b_u, b_v) = b.derivatives_uv(parameters.z, parameters.w);
+        let (a_u, a_v) = a.derivative_at(parameters.x, parameters.y);
+        let (b_u, b_v) = b.derivative_at(parameters.z, parameters.w);
         let columns = [a_u, a_v, -b_u, -b_v];
         let free = (0..4).filter(|index| *index != fixed).collect::<Vec<_>>();
         let jacobian =
@@ -289,8 +289,8 @@ fn parameter_tangent(
     parameters: Vector4<f64>,
     options: IntersectionOptions,
 ) -> Option<Vector4<f64>> {
-    let (a_u, a_v) = a.derivatives_uv(parameters.x, parameters.y);
-    let (b_u, b_v) = b.derivatives_uv(parameters.z, parameters.w);
+    let (a_u, a_v) = a.derivative_at(parameters.x, parameters.y);
+    let (b_u, b_v) = b.derivative_at(parameters.z, parameters.w);
     let normal_a = a_u.cross(&a_v);
     let normal_b = b_u.cross(&b_v);
     let tangent_3d = normal_a.cross(&normal_b);
@@ -349,8 +349,8 @@ fn correct_state(
             return Some(TraceState::new(a, b, parameters));
         }
 
-        let (a_u, a_v) = a.derivatives_uv(parameters.x, parameters.y);
-        let (b_u, b_v) = b.derivatives_uv(parameters.z, parameters.w);
+        let (a_u, a_v) = a.derivative_at(parameters.x, parameters.y);
+        let (b_u, b_v) = b.derivative_at(parameters.z, parameters.w);
         let jacobian = Matrix4::new(
             a_u.x, a_v.x, -b_u.x, -b_v.x, a_u.y, a_v.y, -b_u.y, -b_v.y, a_u.z, a_v.z, -b_u.z,
             -b_v.z, tangent.x, tangent.y, tangent.z, tangent.w,
