@@ -15,6 +15,7 @@ pub mod shape;
 pub mod shape_keys;
 pub mod sheet;
 pub mod solid;
+pub(crate) mod trim_domain;
 pub mod unwrapped_face_domain;
 pub mod validation;
 pub mod vertex;

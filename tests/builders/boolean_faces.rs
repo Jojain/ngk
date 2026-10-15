@@ -545,3 +545,70 @@ fn two_fused_disks_are_bounded_by_two_circle_arcs() {
     let lens = 50.0 * 0.6_f64.acos() - 24.0;
     assert_area(&result, 50.0 * PI - lens);
 }
+
+/// A disk of radius 5 on the origin, against a `width` x `height` rectangle
+/// whose bottom side is the line y = -5 the disk touches. Issue #32.
+fn tangent_rectangle(width: f64, height: f64) -> Shape<FaceTag> {
+    faces::rectangle(
+        Plane::new(
+            Point3::new(-width / 2.0, -5.0, 0.0),
+            Vector3::x(),
+            Vector3::z(),
+        ),
+        width,
+        height,
+    )
+    .expect("rectangle")
+}
+
+/// One rectangle per tangency count: the disk touches its bottom side only,
+/// its bottom and top, or all four sides.
+fn tangent_cases() -> [(&'static str, Shape<FaceTag>, f64, usize); 3] {
+    [
+        ("one side", tangent_rectangle(30.0, 20.0), 600.0, 1),
+        ("two sides", tangent_rectangle(30.0, 10.0), 300.0, 2),
+        ("four sides", tangent_rectangle(10.0, 10.0), 100.0, 4),
+    ]
+}
+
+/// A disk tangent to a side adds nothing a fuse can see: the answer is the
+/// rectangle.
+#[test]
+fn a_fuse_with_a_tangent_disk_is_the_rectangle() {
+    for (case, rectangle, area, _) in tangent_cases() {
+        let result = faces::fuse(rectangle, [&disk(0.0, 0.0, 5.0)])
+            .unwrap_or_else(|error| panic!("{case}: {error:?}"));
+        assert_eq!(result.faces().len(), 1, "{case}");
+        assert_area(&result, area);
+    }
+}
+
+/// The disk lies inside the rectangle, so an intersection is the disk.
+#[test]
+fn an_intersection_with_a_tangent_disk_is_the_disk() {
+    for (case, rectangle, _, _) in tangent_cases() {
+        let result = faces::intersect(rectangle, [&disk(0.0, 0.0, 5.0)])
+            .unwrap_or_else(|error| panic!("{case}: {error:?}"));
+        assert_eq!(result.faces().len(), 1, "{case}");
+        assert_area(&result, 25.0 * PI);
+    }
+}
+
+/// Cutting the disk out leaves the rectangle less its area, in one piece per
+/// gap between consecutive tangency points.
+#[test]
+fn a_cut_by_a_tangent_disk_splits_at_the_tangency_points() {
+    for (case, rectangle, area, pieces) in tangent_cases() {
+        let result = faces::cut(rectangle, [&disk(0.0, 0.0, 5.0)])
+            .unwrap_or_else(|error| panic!("{case}: {error:?}"));
+        assert_eq!(result.faces().len(), pieces, "{case}");
+        // The mesh error is the disk's, measured as its inscribed polygon, so
+        // it is bounded by the disk's area rather than by what is left.
+        let left = reported_area(result.model(), result.face_keys());
+        let expected = area - 25.0 * PI;
+        assert!(
+            (left - expected).abs() < 5e-3 * 25.0 * PI,
+            "{case}: expected an area of {expected}, got {left}"
+        );
+    }
+}

@@ -8,6 +8,7 @@ use crate::builders::faces::{FaceEdgeSplitError, FaceImprintSplitError};
 use crate::geometry::Point3;
 use crate::geometry::{CurveIntersectionError, IntersectionError, NurbsError};
 use crate::topology::ModelEditError;
+use crate::topology::UnwrappedFaceDomainError;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
 use crate::topology::validation::ModelValidationError;
 
@@ -116,4 +117,14 @@ pub enum BooleanError {
     Topology(#[from] ModelEditError),
     #[error("Boolean intersection network is inconsistent")]
     InvalidNetwork(#[from] IntersectionNetworkValidationError),
+}
+
+impl From<UnwrappedFaceDomainError> for BooleanError {
+    fn from(error: UnwrappedFaceDomainError) -> Self {
+        match error {
+            UnwrappedFaceDomainError::MissingPcurve { face, edge } => {
+                BooleanError::MissingTrimCurve { face, edge }
+            }
+        }
+    }
 }

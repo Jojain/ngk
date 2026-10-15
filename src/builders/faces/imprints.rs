@@ -20,6 +20,7 @@ use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
+use crate::topology::trim_domain::FaceTrimDomain;
 
 pub fn split_face_by_imprints<P: Payload>(
     g: &mut Model<P>,
@@ -217,6 +218,27 @@ pub(crate) fn period_offset(
         .then_some(offset)
 }
 
+/// The face's support and its bounding corners, for asking whether a closed
+/// imprint touches the boundary.
+///
+/// Asked on the surface, not in one image of its domain: imprints are
+/// rewritten onto one image of a periodic domain together, and that need not
+/// be the image the boundary's corners are read on. A closed chain through a
+/// corner a whole period away from where it was written is still a chain
+/// through that corner, and taking it for a free island cuts a hole whose loop
+/// runs along the face's own boundary.
+fn boundary_corners<P: Payload>(
+    edit: &ModelEdit<'_, P>,
+    face: FaceKey,
+) -> Result<(Surface, Vec<BoundaryCorner>), FaceImprintSplitError> {
+    let support = edit
+        .face(face)
+        .ok_or(FaceImprintSplitError::MissingFace { face })?
+        .surface()
+        .clone();
+    Ok((support, face_boundary_edges(edit, face)?))
+}
+
 /// Restores original input indices after partitioning closed and open curves.
 pub(crate) fn remap_section_indices(splits: &mut [FaceImprintSplit], indices: &[usize]) {
     for section in splits.iter_mut().flat_map(|split| &mut split.sections) {
@@ -245,6 +267,12 @@ pub(crate) fn split_open_imprints<P: Payload>(
             next_faces.push(split.second);
             splits.push(split);
             progressed = true;
+            if splits.len() > imprints.len() {
+                return Err(FaceImprintSplitError::SplitDidNotSettle {
+                    face,
+                    imprints: imprints.len(),
+                });
+            }
         }
 
         if !progressed {
@@ -281,7 +309,7 @@ pub(crate) fn add_closed_curve_imprint_loops<P: Payload>(
     face: FaceKey,
     imprints: &[&FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
-    let boundary_uvs = face_boundary_uvs(edit, face)?;
+    let (support, boundary) = boundary_corners(edit, face)?;
     // Read off the boundary's curves, not its corners: a face bounded by one
     // whole circle has a single 0-cell, whose polygon encloses nothing and
     // would state no winding at all.
@@ -298,7 +326,7 @@ pub(crate) fn add_closed_curve_imprint_loops<P: Payload>(
         if samples.len() < 4
             || samples
                 .iter()
-                .any(|point| snap_boundary_corner(&boundary_uvs, *point).is_some())
+                .any(|point| snap_boundary_corner_on(&support, &boundary, *point).is_some())
         {
             continue;
         }
@@ -840,7 +868,7 @@ pub(crate) fn add_closed_imprint_loops<P: Payload>(
     graph: &FaceImprintGraph,
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
-    let boundary_uvs = face_boundary_uvs(edit, face)?;
+    let (support, boundary) = boundary_corners(edit, face)?;
     // The winding every hole added here must turn against, read once before
     // any of them is added and while the face is still whole.
     let boundary_area = boundary_winding(edit, face);
@@ -865,7 +893,7 @@ pub(crate) fn add_closed_imprint_loops<P: Payload>(
         if uvs.len() < 2
             || uvs
                 .iter()
-                .any(|uv| snap_boundary_corner(&boundary_uvs, *uv).is_some())
+                .any(|uv| snap_boundary_corner_on(&support, &boundary, *uv).is_some())
         {
             continue;
         }
@@ -1083,15 +1111,9 @@ pub(crate) fn sew_section_loops<P: Payload>(
         // The edge's default traversal follows the section, including its
         // directed source interval. Orient the support to that traversal before
         // discarding the span: a marked circle's corner cannot encode direction.
-        let interval = outside_edge.curve.interval();
-        let curve = if interval.end.value() < interval.start.value() {
-            outside_edge.curve.curve().reversed()
-        } else {
-            outside_edge.curve.curve().clone()
-        };
         let key = edit.add_edge_derived_from(
             vec![EditKey::Face(face)],
-            EdgeAttr::new(outside_edge.dart, curve),
+            EdgeAttr::new(outside_edge.dart, support_along(&outside_edge.curve)),
         );
         if closes_on_itself {
             edit.own_cell(Dim::Zero, outside_edge.dart, EntityOwner::Edge(key));
@@ -1248,12 +1270,18 @@ pub(crate) fn split_one_face_by_imprints<P: Payload>(
         .ok_or(FaceImprintSplitError::MissingFace { face })?;
 
     let old_face = face_attr.clone();
+    let trim = FaceTrimDomain::new(&edit.face_unchecked(face), LINEAR_TOLERANCE)
+        .map_err(|source| FaceImprintSplitError::UnreadableTrim { face, source })?;
     // A chord runs between two corners of one loop, so each bounding loop is
     // tried on its own: a ring has two, and the imprint chord lands on one.
     let bounding = bounding_loops(old_face.loops());
     for chorded in bounding {
         let boundary = loop_boundary_edges(edit, face, chorded.seed())?;
-        let Some(cut) = FaceImprintCut::from_chain(imprints, &boundary, placed)? else {
+        let closing_winding =
+            (chorded.kind() == LoopKind::Outer).then(|| boundary_winding(edit, face));
+        let Some(cut) =
+            FaceImprintCut::from_chain(imprints, &boundary, &trim, closing_winding, placed)?
+        else {
             continue;
         };
         let split = apply_face_chord_split(edit, face, old_face, chorded, &cut)?;

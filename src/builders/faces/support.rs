@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use super::{chord_loop_kinds, periodic_image_near, periodic_image_near_pcurve};
+use super::{chord_loop_kinds, periodic_image_near, periodic_image_near_pcurve, signed_area};
 use crate::builders::edges::EdgeSplitError;
 use crate::builders::errors::ModelEditFailure;
 use crate::builders::scaffold::CutAttachment;
@@ -19,6 +19,8 @@ use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
+use crate::topology::trim_domain::{FaceTrimDomain, TrimLocation};
+use crate::topology::unwrapped_face_domain::UnwrappedFaceDomainError;
 use crate::topology::vertex::Vertex;
 use crate::topology::{EditKey, ModelEdit, ModelEditError};
 use thiserror::Error;
@@ -81,6 +83,20 @@ pub enum FaceImprintSplitError {
     },
     #[error("imprint {imprint} of face {face:?} was not realized by any section")]
     ImprintNotRealized { face: FaceKey, imprint: usize },
+    /// Cutting the face went on past one cut per imprint.
+    ///
+    /// Every cut realizes at least one imprint that no earlier cut realized, so
+    /// a face with `imprints` open imprints is done within that many cuts. One
+    /// more means a chord was taken that the face did not contain, and the
+    /// pieces it left would have been cut again without end.
+    #[error("cutting face {face:?} by {imprints} open imprints did not settle within one cut each")]
+    SplitDidNotSettle { face: FaceKey, imprints: usize },
+    #[error("the trim of face {face:?} could not be read")]
+    UnreadableTrim {
+        face: FaceKey,
+        #[source]
+        source: UnwrappedFaceDomainError,
+    },
     #[error("failed to convert imprint curve geometry")]
     ImprintCurveConversion(#[from] NurbsError),
     #[error("failed to intersect face imprint pcurves")]
@@ -198,6 +214,21 @@ impl FaceImprint {
             self.curve.reversed(),
             self.pcurve.reversed(),
         ))
+    }
+}
+
+/// The support of `section`, turned to run the way the section does.
+///
+/// An edge stores no span: it is derived from the edge's corners, read along
+/// the support's own direction. A section running backwards along its support
+/// would then name the other arc between the same two corners, so the support
+/// an edge is given must run the way the section traverses it.
+pub(crate) fn support_along(section: &TrimmedCurve) -> Curve {
+    let interval = section.interval();
+    if interval.end.value() < interval.start.value() {
+        section.curve().reversed()
+    } else {
+        section.curve().clone()
     }
 }
 
@@ -533,9 +564,17 @@ impl FaceImprintCut {
     /// a tree no single chord covers. Any path through it from boundary to
     /// boundary still splits the face, and the corners it leaves on the new
     /// boundary are where the remaining branches start their own chords.
+    ///
+    /// `boundary` is the loop being chorded, on the face whose trim is `trim`;
+    /// see [`valid_chord`] for what is asked of a path before it is cut.
+    /// `closing_winding` is the face's winding when the chorded loop closes in
+    /// parameter space, which is what lets a chord leave a corner and come
+    /// back to it.
     pub(crate) fn from_chain(
         imprints: &[FaceImprint],
         boundary: &[BoundaryCorner],
+        trim: &FaceTrimDomain,
+        closing_winding: Option<f64>,
         placed: &[[Option<VertexKey>; 2]],
     ) -> Result<Option<Self>, NurbsError> {
         for through_junctions in [false, true] {
@@ -553,6 +592,8 @@ impl FaceImprintCut {
                     let mut path = ChordPath {
                         imprints,
                         boundary,
+                        trim,
+                        closing_winding,
                         placed,
                         start,
                         through_junctions,
@@ -573,6 +614,8 @@ impl FaceImprintCut {
 struct ChordPath<'a> {
     imprints: &'a [FaceImprint],
     boundary: &'a [BoundaryCorner],
+    trim: &'a FaceTrimDomain,
+    closing_winding: Option<f64>,
     placed: &'a [[Option<VertexKey>; 2]],
     start: usize,
     /// Whether a junction is walked through, each branch in turn, rather than
@@ -606,7 +649,13 @@ impl ChordPath<'_> {
         if let Some(end) =
             imprint_endpoint_corner(self.boundary, self.placed[index][end_slot], end_uv)
         {
-            if valid_chord(self.start, end, self.boundary, &self.sections) {
+            if valid_chord(
+                (self.start, end),
+                self.boundary,
+                self.trim,
+                self.closing_winding,
+                &self.sections,
+            ) {
                 return Ok(Some(FaceImprintCut {
                     start_corner: self.start,
                     end_corner: end,
@@ -651,16 +700,6 @@ pub(crate) struct BoundaryEdgeTarget {
     pub(crate) edge: EdgeKey,
 }
 
-pub(crate) fn face_boundary_uvs<P: Payload>(
-    g: &Model<P>,
-    face: FaceKey,
-) -> Result<Vec<Point2>, FaceImprintSplitError> {
-    Ok(face_boundary_edges(g, face)?
-        .into_iter()
-        .map(|corner| corner.uv)
-        .collect())
-}
-
 /// Every bounding-loop corner with the pcurve leaving it, in loop order.
 ///
 /// A wrapping loop bounds its face exactly as an outer loop does, so a query
@@ -690,8 +729,7 @@ pub(crate) fn face_boundary_edges<P: Payload>(
     Ok(boundary)
 }
 
-/// Each corner of the loop seeded at `loop_dart`, with the pcurve leaving it.
-/// One corner of a face's bounding loop, with the pcurve leaving it.
+/// One corner of a face's bounding loop.
 ///
 /// The vertex is carried rather than re-found from `uv`, because the two are
 /// derived by different routes: `uv` projects the vertex onto the surface,
@@ -702,7 +740,6 @@ pub(crate) fn face_boundary_edges<P: Payload>(
 #[derive(Clone)]
 pub(crate) struct BoundaryCorner {
     pub(crate) uv: Point2,
-    pub(crate) pcurve: TrimmedCurve2,
     pub(crate) vertex: Option<VertexKey>,
 }
 
@@ -745,7 +782,6 @@ pub(crate) fn loop_boundary_edges<P: Payload>(
                 .unwrap_or_else(|| pcurve.point_at(Fraction::new(0.0)));
             Ok(BoundaryCorner {
                 uv,
-                pcurve,
                 vertex: corner.map(|vertex| vertex.key()),
             })
         })
@@ -871,55 +907,103 @@ pub(crate) fn imprint_endpoint_corner(
         .or_else(|| snap_boundary_corner_in(boundary, uv))
 }
 
-pub(crate) fn snap_boundary_corner(boundary_uvs: &[Point2], uv: Point2) -> Option<usize> {
-    boundary_uvs
-        .iter()
-        .enumerate()
-        .filter_map(|(index, boundary_uv)| {
-            let distance = (*boundary_uv - uv).norm();
-            (distance <= LINEAR_TOLERANCE).then_some((distance, index))
-        })
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, index)| index)
-}
-
 /// Whether two boundary corners can bound a chord.
 ///
-/// The ends have to be two distinct corners. Neighbouring corners are allowed —
-/// the chord that cuts a lens off a disc joins two of them — as long as the
-/// chain does not simply retrace the one boundary edge between them. That case
-/// would leave a fragment with no interior, and, because the chord it produces
-/// is itself that boundary edge, would let the splitter cut the same face
-/// forever.
+/// The ends are normally two distinct corners. Neighbouring corners are
+/// allowed — the chord that cuts a lens off a disc joins two of them. A chain
+/// may also leave a corner and come back to it — a circle tangent to a side
+/// from inside — when `closing_winding` says the loop closes in parameter
+/// space and the chain winds against it, so the face walking along it keeps
+/// the island it cuts off on its right.
+///
+/// Whatever its ends, the chain must run through the face's interior, which
+/// [`place_chain`] decides.
 pub(crate) fn valid_chord(
-    start: usize,
-    end: usize,
+    (start, end): (usize, usize),
     boundary: &[BoundaryCorner],
+    trim: &FaceTrimDomain,
+    closing_winding: Option<f64>,
     sections: &[(usize, bool, FaceImprint)],
 ) -> bool {
-    boundary.len() >= 2 && start != end && !retraces_boundary(boundary, sections)
+    let ends = if start == end {
+        closing_winding.is_some_and(|winding| winds_against(winding, sections))
+    } else {
+        boundary.len() >= 2
+    };
+    ends && place_chain(trim, sections) == ChainPlacement::Inside
 }
 
-/// Whether a chain already runs along the face's own boundary.
-///
-/// This is what bounds the splitter's work: cutting a face turns the chain into
-/// boundary edges of both fragments, so the same chain is refused on everything
-/// it has already produced.
-pub(crate) fn retraces_boundary(
-    boundary: &[BoundaryCorner],
-    sections: &[(usize, bool, FaceImprint)],
-) -> bool {
-    sections.iter().all(|(_, _, imprint)| {
-        [0.25, 0.5, 0.75].iter().all(|fraction| {
-            let uv = imprint.pcurve.point_at(Fraction::new(*fraction));
-            boundary.iter().any(|corner| {
-                corner
-                    .pcurve
-                    .try_parameter_at(uv, LINEAR_TOLERANCE)
-                    .is_some()
-            })
+/// Whether a closed chain turns the other way round from a face whose
+/// boundary winds as `winding` says, by a measurable area.
+fn winds_against(winding: f64, sections: &[(usize, bool, FaceImprint)]) -> bool {
+    // The walk joined the sections end to end by position, so they are
+    // written on one image of the domain and close without a jump.
+    let chain = sections
+        .iter()
+        .flat_map(|(_, _, imprint)| {
+            let mut samples = imprint.pcurve.sample(16);
+            samples.pop();
+            samples
         })
-    })
+        .collect::<Vec<_>>();
+    let area = signed_area(&chain);
+    area.abs() > LINEAR_TOLERANCE && area.signum() != winding.signum()
+}
+
+/// Where a chain of imprints lies against the face it would chord.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChainPlacement {
+    /// Through the face's interior: a chord.
+    Inside,
+    /// Outside the face, though it may end on two of its corners.
+    Outside,
+    /// Along the face's own boundary.
+    Boundary,
+    /// Too close to the boundary for the trim to tell which side it is on.
+    Undecided,
+}
+
+/// Places a chain against the face's trim.
+///
+/// Corners alone do not place a chain on a face. Two arcs of one circle
+/// joining the same two tangency points both end on every face either arc
+/// leaves those corners on; cutting a face along the arc that lies outside it
+/// leaves pieces that still have both corners, so the splitter would go on
+/// cutting forever. A chain that already runs along the face's boundary is the
+/// other case to refuse: cutting along it leaves a piece with no interior, and
+/// the cut it makes is itself that boundary edge.
+///
+/// The trim answers in the support's quotient, holes included, so a loop whose
+/// pcurves are written on different images of a periodic domain is read as the
+/// face it bounds. A chain that never crosses the boundary between its ends is
+/// inside or outside as a whole, so the first probe the trim places with a
+/// margin beyond its own resolution answers for all of it. Probes on the
+/// boundary are skipped: a chain running partly along an existing edge is
+/// judged by the part that does not. A chain the trim cannot place clear of
+/// its boundary anywhere is refused rather than guessed.
+pub(crate) fn place_chain(
+    trim: &FaceTrimDomain,
+    sections: &[(usize, bool, FaceImprint)],
+) -> ChainPlacement {
+    let resolution = trim.boundary_epsilon();
+    let mut placement = ChainPlacement::Boundary;
+    for (_, _, imprint) in sections {
+        for fraction in [0.5, 0.25, 0.75] {
+            match trim.classify(imprint.pcurve.point_at(Fraction::new(fraction))) {
+                TrimLocation::OnBoundary { .. } => {}
+                TrimLocation::Inside { margin } if margin > resolution => {
+                    return ChainPlacement::Inside;
+                }
+                TrimLocation::Outside { margin } if margin > resolution => {
+                    return ChainPlacement::Outside;
+                }
+                TrimLocation::Inside { .. } | TrimLocation::Outside { .. } => {
+                    placement = ChainPlacement::Undecided;
+                }
+            }
+        }
+    }
+    placement
 }
 
 /// The cut a chord corner hands the boundary walk over on, when there is one.
@@ -944,6 +1028,10 @@ pub(crate) fn corner_cut<P: Payload>(
 /// spanning the period and bounds the other in that axis, so exactly one half
 /// stays a ring and the other becomes a disk — which is what an imprint chording
 /// a cylinder wall produces, with no seam anywhere in the answer.
+///
+/// A chord whose two ends are one corner cuts an island off the face instead:
+/// the island is bounded by the chord alone, and the face's loop runs along the
+/// chord's other side, passing that corner twice.
 pub(crate) fn apply_face_chord_split<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     original_face: FaceKey,
@@ -971,6 +1059,7 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
             dart: chorded.seed(),
         })?
         .corners();
+    let pinched = cut.start_corner == cut.end_corner;
     let start = &corners[cut.start_corner];
     let end = &corners[cut.end_corner];
     let start_dart = start.outgoing().dart();
@@ -1035,16 +1124,37 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
 
     edit.unlink(Dim::One, start_entry)
         .expect("split start corner must be alpha1-linked");
-    edit.unlink(Dim::One, end_entry)
-        .expect("split end corner must be alpha1-linked");
+    if !pinched {
+        edit.unlink(Dim::One, end_entry)
+            .expect("split end corner must be alpha1-linked");
+    }
     edit.link(Dim::One, start_entry, ab_start)
         .expect("split start must be alpha1-free after unlink");
     edit.link(Dim::One, ab_end, end_dart)
         .expect("section endpoint must be alpha1-free");
-    edit.link(Dim::One, end_entry, ba_start)
-        .expect("split end must be alpha1-free after unlink");
-    edit.link(Dim::One, ba_end, start_dart)
-        .expect("section endpoint must be alpha1-free");
+    // Each half is named by one dart of its loop, with the chord side it runs
+    // along. Two corners give each half one side of the chord and a stretch of
+    // the old loop. One corner gives the old loop both of the chord's ends, so
+    // the loop runs out along one side and back, and the other side closes on
+    // itself round the island.
+    let (start_half, end_half) = if pinched {
+        edit.link(Dim::One, ba_end, ba_start)
+            .expect("section endpoint must be alpha1-free");
+        (
+            (start_dart, ab_start, &pcurve_ab),
+            (ba_start, ba_start, &pcurve_ba),
+        )
+    } else {
+        edit.link(Dim::One, end_entry, ba_start)
+            .expect("split end must be alpha1-free after unlink");
+        edit.link(Dim::One, ba_end, start_dart)
+            .expect("section endpoint must be alpha1-free");
+        (
+            (start_dart, ba_start, &pcurve_ba),
+            (end_dart, ab_start, &pcurve_ab),
+        )
+    };
+    let (start_dart, end_dart) = (start_half.0, end_half.0);
 
     let start_profile = edit.profile_key(start_dart);
     let end_profile = edit.profile_key(end_dart);
@@ -1058,22 +1168,17 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
         _ => panic!("a chord split must retain one source profile and create one split profile"),
     }
 
-    let start_pcurves = split_face_pcurves(
-        edit,
-        original_face,
-        &old_face.pcurves,
-        start_dart,
-        ba_start,
-        &pcurve_ba,
-    )?;
-    let end_pcurves = split_face_pcurves(
-        edit,
-        original_face,
-        &old_face.pcurves,
-        end_dart,
-        ab_start,
-        &pcurve_ab,
-    )?;
+    let [start_pcurves, end_pcurves] = [start_half, end_half].map(|(loop_dart, side, pcurve)| {
+        split_face_pcurves(
+            edit,
+            original_face,
+            &old_face.pcurves,
+            loop_dart,
+            side,
+            pcurve,
+        )
+    });
+    let (start_pcurves, end_pcurves) = (start_pcurves?, end_pcurves?);
     // The source keeps the half its chorded loop was seeded on. Asking the
     // 2-cell which face is registered in it would not say: a cut carries the
     // face's other loops into one of the halves, and those loops are seeded on
@@ -1133,7 +1238,7 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
         .map(|((index, reversed, imprint), darts)| {
             let edge = edit.add_edge_derived_from(
                 vec![EditKey::Face(original_face)],
-                EdgeAttr::new(darts[0], imprint.curve.curve().clone()),
+                EdgeAttr::new(darts[0], support_along(&imprint.curve)),
             );
             FaceImprintSection {
                 edge,
@@ -1209,7 +1314,13 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
     // too. A cut has no identity, so following the loop is one relink; the
     // label follows as well, because a cut is scaffold of whichever face's
     // 2-cell its word runs through.
-    for (attachment, splice_half) in [(start_cut, end_dart), (end_cut, start_dart)] {
+    // One corner has one cut, and the splice put it on the face's own loop.
+    let spliced = if pinched {
+        vec![(start_cut, start_dart)]
+    } else {
+        vec![(start_cut, end_dart), (end_cut, start_dart)]
+    };
+    for (attachment, splice_half) in spliced {
         let Some(attachment) = attachment else {
             continue;
         };

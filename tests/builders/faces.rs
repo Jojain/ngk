@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::f64::consts::{FRAC_PI_2, TAU};
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 use nalgebra::Vector3;
 use ngk::builders::edges::{add_arc, add_line};
@@ -1101,5 +1101,224 @@ fn a_period_spanning_imprint_cuts_a_boundaryless_face_into_two_caps() {
             face.normal_at(middle.x, middle.y).dot(&point.coords) > 0.0,
             "a cap of a sphere still faces outward"
         );
+    }
+}
+
+/// A patch of a unit cylinder over angles `[-0.3, 0.3]` and heights `[0, 2]`,
+/// whose left side's pcurve is stored one whole turn over, at `2π - 0.3`.
+///
+/// Both images name the same points of the surface, so the face is the same
+/// face whichever one a loop's pcurve is written on; only a reader that takes
+/// the stored loop as one planar polygon sees a jump across the domain.
+fn cylinder_patch_with_a_shifted_side() -> (Model<StandardPayload>, FaceKey) {
+    use ngk::geometry::Cylinder;
+    use ngk::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, VertexAttr};
+    use ngk::topology::gmap::Dart;
+    use std::collections::HashMap;
+
+    let (half, height) = (0.3_f64, 2.0);
+    let surface = Surface::Cylinder(Cylinder::new(
+        Point3::origin(),
+        Vector3::x(),
+        Vector3::z(),
+        1.0,
+    ));
+    let at = |u: f64, z: f64| Point3::new(u.cos(), u.sin(), z);
+    let mut g = Model::<StandardPayload>::new();
+    let face = g
+        .transaction(|edit| {
+            // Bottom arc, right side up, top arc, left side down.
+            let d: [Dart; 8] = std::array::from_fn(|_| edit.add_dart());
+            for pair in 0..4 {
+                edit.link(Dim::Zero, d[2 * pair], d[2 * pair + 1])?;
+                edit.link(Dim::One, d[2 * pair + 1], d[(2 * pair + 2) % 8])?;
+            }
+            for (dart, point) in [
+                (d[0], at(-half, 0.0)),
+                (d[2], at(half, 0.0)),
+                (d[4], at(half, height)),
+                (d[6], at(-half, height)),
+            ] {
+                edit.add_vertex(VertexAttr::new(dart, point));
+            }
+            // The bottom arc runs the circle's own way; the top one against it.
+            let rim = |z: f64, y: Vector3<f64>| {
+                Curve::Circle(Circle::new(
+                    Plane::from_xy(Point3::new(0.0, 0.0, z), Vector3::x(), y),
+                    1.0,
+                ))
+            };
+            edit.add_edge(EdgeAttr::new(d[0], rim(0.0, Vector3::y())));
+            edit.add_edge(EdgeAttr::new(
+                d[2],
+                Curve::line(at(half, 0.0), at(half, height)),
+            ));
+            edit.add_edge(EdgeAttr::new(d[4], rim(height, -Vector3::y())));
+            edit.add_edge(EdgeAttr::new(
+                d[6],
+                Curve::line(at(-half, height), at(-half, 0.0)),
+            ));
+            edit.add_profile(ProfileAttr::new(d[0]));
+            let shifted = TAU - half;
+            let pcurves = HashMap::from([
+                (
+                    d[0],
+                    TrimmedCurve2::segment(Point2::new(-half, 0.0), Point2::new(half, 0.0)),
+                ),
+                (
+                    d[2],
+                    TrimmedCurve2::segment(Point2::new(half, 0.0), Point2::new(half, height)),
+                ),
+                (
+                    d[4],
+                    TrimmedCurve2::segment(Point2::new(half, height), Point2::new(-half, height)),
+                ),
+                (
+                    d[6],
+                    TrimmedCurve2::segment(Point2::new(shifted, height), Point2::new(shifted, 0.0)),
+                ),
+            ]);
+            Ok::<_, ModelEditError>(edit.add_face(FaceAttr::with_pcurves(
+                surface.clone(),
+                d[0],
+                Vec::new(),
+                pcurves,
+            )))
+        })
+        .expect("the patch should commit");
+    (g, face)
+}
+
+/// A segment of the unit cylinder's parameter space, with the helix it maps to.
+fn helical_imprint(from: Point2, to: Point2) -> FaceImprint {
+    use ngk::geometry::{Frame, Interval, TrimmedCurve};
+
+    let pitch = TAU * (to.y - from.y) / (to.x - from.x);
+    let base = Point3::new(0.0, 0.0, from.y - pitch * from.x / TAU);
+    FaceImprint::with_section(
+        TrimmedCurve::new(
+            Curve::helix(Frame::at(base), 1.0, pitch),
+            Interval::new(from.x, to.x),
+        ),
+        TrimmedCurve2::segment(from, to),
+    )
+}
+
+/// Two chords joining the same two corners, on a face whose loop is stored
+/// across two images of a periodic domain.
+///
+/// The straight chord cuts the patch first. The bent one lies in the right
+/// half, but it also joins two corners of the left half, and the left half's
+/// loop, read as stored, encloses the whole stretch of the domain between its
+/// shifted side and the rest of it. Asked on that polygon, the bent chord looks
+/// inside the left half as well -- and cutting a face along a chord outside it
+/// leaves pieces that still have both corners, so the splitter never stops.
+#[test]
+fn chords_sharing_both_ends_on_a_shifted_periodic_loop_split_the_patch_once_each() {
+    let (mut g, patch) = cylinder_patch_with_a_shifted_side();
+    let imprints = [
+        wall_line(Point2::new(0.0, 0.0), Point2::new(0.0, 2.0)),
+        helical_imprint(Point2::new(0.0, 0.0), Point2::new(0.2, 1.0)),
+        helical_imprint(Point2::new(0.2, 1.0), Point2::new(0.0, 2.0)),
+    ];
+    let splits = split_face_by_imprints(&mut g, patch, &imprints).expect("the patch splits");
+    assert_eq!(splits.len(), 2, "one split per chord");
+    assert_eq!(g.iter_faces().count(), 3);
+    let area = g
+        .iter_faces()
+        .map(|(face, _)| g.face_unchecked(face).area().expect("face area"))
+        .sum::<f64>();
+    assert!(
+        (area - 1.2).abs() < 1e-3,
+        "the pieces cover the patch, got {area}"
+    );
+}
+
+/// One image of the unit cylinder's parameter space: a line segment.
+fn wall_line(from: Point2, to: Point2) -> FaceImprint {
+    let at = |uv: Point2| Point3::new(uv.x.cos(), uv.x.sin(), uv.y);
+    FaceImprint::new(
+        Curve::line(at(from), at(to)),
+        TrimmedCurve2::segment(from, to),
+    )
+}
+
+/// The unit cylinder's circle at height `z`, from angle `from` to angle `to`.
+fn wall_arc(z: f64, from: f64, to: f64) -> FaceImprint {
+    use ngk::geometry::{Interval, TrimmedCurve};
+
+    FaceImprint::with_section(
+        TrimmedCurve::new(
+            Curve::Circle(Circle::new(
+                Plane::new(Point3::new(0.0, 0.0, z), Vector3::x(), Vector3::z()),
+                1.0,
+            )),
+            Interval::new(from, to),
+        ),
+        TrimmedCurve2::segment(Point2::new(from, z), Point2::new(to, z)),
+    )
+}
+
+/// Two chains joining the same two points of a cylinder wall's bottom rim, cut
+/// into the wall whichever image of the domain they are written on and
+/// whichever is taken first.
+///
+/// A U-shaped chain and a low bent one both run from angle 1 to angle 2 on the
+/// rim, the bent one inside the U. Written on the same image, each is a chord;
+/// written a period apart, the imprints are first brought onto one image
+/// together -- the bent chain's when it comes first -- and that need not be the
+/// image the rim's corners are read on. The rim is either a ring's wrapping
+/// loop or, on a seamed wall, part of one outer loop.
+#[test]
+fn chains_sharing_both_ends_split_a_cylinder_wall_on_any_image() {
+    let walls: [(&str, fn() -> (Model<StandardPayload>, FaceKey)); 2] = [
+        ("ring", || {
+            let (g, _) = solids::cylinder(1.0, 3.0).unwrap().into_model();
+            let wall = g
+                .iter_faces()
+                .find(|(_, attr)| matches!(attr.surface, Surface::Cylinder(_)))
+                .map(|(key, _)| key)
+                .unwrap();
+            (g, wall)
+        }),
+        ("seamed", || seamed_cylinder_wall(1.0, 3.0)),
+    ];
+    let p = Point2::new;
+    for (wall_kind, wall) in walls {
+        for shift in [0.0, TAU, -TAU] {
+            for bent_first in [false, true] {
+                let case =
+                    format!("{wall_kind} wall, bent chain {shift:+.2} over, first: {bent_first}");
+                let (mut g, wall) = wall();
+                let u_chain = [
+                    wall_line(p(1.0, 0.0), p(1.0, 1.0)),
+                    wall_arc(1.0, 1.0, 2.0),
+                    wall_line(p(2.0, 1.0), p(2.0, 0.0)),
+                ];
+                let bent = [
+                    helical_imprint(p(1.0 + shift, 0.0), p(1.5 + shift, 0.5)),
+                    helical_imprint(p(1.5 + shift, 0.5), p(2.0 + shift, 0.0)),
+                ];
+                let imprints = if bent_first {
+                    bent.into_iter().chain(u_chain).collect::<Vec<_>>()
+                } else {
+                    u_chain.into_iter().chain(bent).collect::<Vec<_>>()
+                };
+                let splits = split_face_by_imprints(&mut g, wall, &imprints)
+                    .unwrap_or_else(|error| panic!("{case}: {error:?}"));
+                assert_eq!(splits.len(), 2, "{case}: one split per chain");
+                let pieces = g
+                    .iter_faces()
+                    .filter(|(_, attr)| matches!(attr.surface, Surface::Cylinder(_)))
+                    .map(|(face, _)| g.face_unchecked(face).area().expect("face area"))
+                    .collect::<Vec<_>>();
+                assert_eq!(pieces.len(), 3, "{case}: the wall is in three pieces");
+                let area = pieces.iter().sum::<f64>();
+                assert!(
+                    (area - 6.0 * PI).abs() < 1e-2,
+                    "{case}: the pieces cover the wall once, got {area}"
+                );
+            }
+        }
     }
 }
