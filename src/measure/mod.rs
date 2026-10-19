@@ -39,6 +39,7 @@
 //! Validation and Boolean shell assembly ask only for the sign and rough size
 //! of a shell's volume, and run the same face integral at a fixed low order.
 
+mod bounding_box;
 mod green;
 mod integrate;
 mod quadrature;
@@ -54,5 +55,7 @@ pub(crate) use integrate::{
     linear_properties_for_edges, sheet_surface_properties, signed_shell_volume,
     signed_volume_for_faces, solid_volume_properties,
 };
+
+pub(crate) use bounding_box::{edge_bounding_box, edges_bounding_box, faces_bounding_box};
 
 pub use integrate::MeasureError;

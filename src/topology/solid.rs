@@ -7,9 +7,10 @@ use super::gmap::Dart;
 use super::payload::{Payload, StandardPayload};
 use super::sheet::{Sheet, ShellRef};
 use super::vertex::Vertex;
+use crate::geometry::{BBox, Frame};
 use crate::measure::{
     MeasureError, SurfaceProperties, VolumeProperties, combine_surface_properties,
-    solid_volume_properties,
+    faces_bounding_box, solid_volume_properties,
 };
 use crate::model::{MergeTopology, Model, TopologyMerge};
 use crate::topology::shape_keys::SolidKey;
@@ -196,6 +197,18 @@ impl<'g, P: Payload> Solid<'g, P> {
             });
         }
         total.ok_or(MeasureError::Degenerate)
+    }
+
+    /// Returns the tightest box around this solid whose ranges run along the
+    /// world axes, exact to rounding; see [`crate::measure`].
+    pub fn bounding_box(&self) -> Result<BBox, MeasureError> {
+        self.bounding_box_in(&Frame::xyz())
+    }
+
+    /// Returns the tightest box around this solid whose ranges run along
+    /// `frame`'s axes, exact to rounding; see [`crate::measure`].
+    pub fn bounding_box_in(&self, frame: &Frame) -> Result<BBox, MeasureError> {
+        faces_bounding_box(self.faces(), frame)
     }
 }
 

@@ -2,8 +2,10 @@ use std::collections::HashSet;
 use std::ops::Deref;
 
 use crate::geometry::parameter::NativeParam;
-use crate::geometry::{Curve, Interval, Periodicity, PointCoincidence, TrimmedCurve};
-use crate::measure::{LinearProperties, MeasureError, linear_properties_for_edge};
+use crate::geometry::{BBox, Curve, Frame, Interval, Periodicity, PointCoincidence, TrimmedCurve};
+use crate::measure::{
+    LinearProperties, MeasureError, edge_bounding_box, linear_properties_for_edge,
+};
 use crate::model::{Cell1, Cell2, MergeTopology, TopologyMerge};
 use crate::topology::attributes::EdgeAttr;
 use crate::topology::closed::Closeable;
@@ -385,6 +387,18 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     /// of `1e-10`; see [`crate::measure`].
     pub fn linear_properties(&self) -> Result<LinearProperties, MeasureError> {
         linear_properties_for_edge(self)
+    }
+
+    /// Returns the tightest box around this edge whose ranges run along the
+    /// world axes, exact to rounding; see [`crate::measure`].
+    pub fn bounding_box(&self) -> Result<BBox, MeasureError> {
+        self.bounding_box_in(&Frame::xyz())
+    }
+
+    /// Returns the tightest box around this edge whose ranges run along
+    /// `frame`'s axes, exact to rounding; see [`crate::measure`].
+    pub fn bounding_box_in(&self, frame: &Frame) -> Result<BBox, MeasureError> {
+        edge_bounding_box(self, frame)
     }
 }
 

@@ -3,7 +3,10 @@ use super::edge::Edge;
 use super::gmap::{Dart, Dim};
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
-use crate::measure::{LinearProperties, MeasureError, linear_properties_for_edges};
+use crate::geometry::{BBox, Frame};
+use crate::measure::{
+    LinearProperties, MeasureError, edges_bounding_box, linear_properties_for_edges,
+};
 use crate::model::{MergeTopology, Model, TopologyMerge};
 use crate::topology::embedding::{is_embedded_cell, turn_where};
 use crate::topology::shape_keys::ProfileKey;
@@ -128,6 +131,18 @@ impl<'a, P: Payload> Profile<'a, P> {
     /// Returns length, centroid and centroidal inertia for this profile.
     pub fn linear_properties(&self) -> Result<LinearProperties, MeasureError> {
         linear_properties_for_edges(self.edges())
+    }
+
+    /// Returns the tightest box around this profile whose ranges run along the
+    /// world axes, exact to rounding; see [`crate::measure`].
+    pub fn bounding_box(&self) -> Result<BBox, MeasureError> {
+        self.bounding_box_in(&Frame::xyz())
+    }
+
+    /// Returns the tightest box around this profile whose ranges run along
+    /// `frame`'s axes, exact to rounding; see [`crate::measure`].
+    pub fn bounding_box_in(&self, frame: &Frame) -> Result<BBox, MeasureError> {
+        edges_bounding_box(self.edges(), frame)
     }
 
     /// Returns this profile's vertices in traversal order.

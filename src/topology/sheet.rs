@@ -7,7 +7,10 @@ use super::gmap::Dart;
 use super::orientation::Orientation;
 use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
-use crate::measure::{MeasureError, SurfaceProperties, sheet_surface_properties};
+use crate::geometry::{BBox, Frame};
+use crate::measure::{
+    MeasureError, SurfaceProperties, faces_bounding_box, sheet_surface_properties,
+};
 use crate::model::{Cell2, MergeTopology, Model, TopologyMerge};
 use crate::topology::gmap::Dim;
 use crate::topology::shape_keys::SheetKey;
@@ -137,6 +140,18 @@ impl<'a, P: Payload> Sheet<'a, P> {
     /// Returns area, centroid and centroidal inertia for this sheet.
     pub fn surface_properties(&self) -> Result<SurfaceProperties, MeasureError> {
         sheet_surface_properties(self)
+    }
+
+    /// Returns the tightest box around this sheet whose ranges run along the
+    /// world axes, exact to rounding; see [`crate::measure`].
+    pub fn bounding_box(&self) -> Result<BBox, MeasureError> {
+        self.bounding_box_in(&Frame::xyz())
+    }
+
+    /// Returns the tightest box around this sheet whose ranges run along
+    /// `frame`'s axes, exact to rounding; see [`crate::measure`].
+    pub fn bounding_box_in(&self, frame: &Frame) -> Result<BBox, MeasureError> {
+        faces_bounding_box(self.faces(), frame)
     }
 
     /// Returns the unique edges used by this sheet's faces.

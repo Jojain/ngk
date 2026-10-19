@@ -25,6 +25,19 @@ at density one. Measurement is a read of `&Model<P>` and opens no transaction.
 `Edge::length()` is the trimmed curve's own length (`TrimmedCurve::length`);
 `linear_properties().length` is integrated with the centroid and inertia.
 
+### Bounding box
+
+`Edge`, `Profile`, `Face`, `Sheet` and `Solid` have `bounding_box()` →
+`BBox`, the tightest box along the world axes, and `bounding_box_in(&Frame)`,
+the tightest box whose ranges run along that frame's axes. It is not integrated but solved: an
+extreme along an axis lies at a vertex, at an edge point whose tangent is square
+to the axis, or at a face point whose normal is parallel to it, and those
+points have closed forms on lines, conics, helices and the analytic surfaces
+(`bounding_box.rs` lists each case). Interior face points are kept only where
+the face's trim holds them. NURBS curves and surfaces, and revolutions of a
+profile other than a line, circle or ellipse in a meridian plane, are refused
+with `EdgeBoundingBoxNotImplemented` or `FaceBoundingBoxNotImplemented`.
+
 ## Method
 
 **Curves** are integrated along their 3D span: `|c'(t)|` times the moment

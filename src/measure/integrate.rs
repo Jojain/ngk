@@ -44,6 +44,13 @@ pub enum MeasureError {
     NonFinite,
     #[error("shell {shell} has the wrong orientation for its solid side")]
     InvalidOrientation { shell: usize, signed_volume: f64 },
+    #[error("the bounding box of edge {edge:?} on a {curve} is not implemented yet")]
+    EdgeBoundingBoxNotImplemented { edge: EdgeKey, curve: &'static str },
+    #[error("the bounding box of face {face:?} on a {surface} is not implemented yet")]
+    FaceBoundingBoxNotImplemented {
+        face: FaceKey,
+        surface: &'static str,
+    },
 }
 
 /// Zeroth, first and second moments about a reference point, in the order
