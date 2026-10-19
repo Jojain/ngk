@@ -279,3 +279,133 @@ fn a_revolved_skew_line_is_refused() {
         "{error}"
     );
 }
+
+/// Asserts an oriented box's extents, longest first, and that its frame is
+/// centred on `centre`.
+fn assert_oriented(bbox: &BBox, sizes: Vector3<f64>, centre: Point3) {
+    assert_ranges(bbox, -sizes / 2.0, sizes / 2.0);
+    assert!(
+        (bbox.frame().origin - centre).amax() <= TOLERANCE,
+        "expected the box centred on {centre:?}, got {:?}",
+        bbox.frame().origin
+    );
+}
+
+fn parallel(a: Vector3<f64>, b: Vector3<f64>) -> bool {
+    a.normalize().cross(&b.normalize()).norm() <= TOLERANCE
+}
+
+/// A block placed in an oblique frame, as shapes from a sketch on a tilted
+/// plane are.
+fn oblique_block() -> (
+    ngk::topology::shape::Shape<ngk::topology::shape::SolidTag>,
+    Frame,
+) {
+    let placed = Frame::from_xz(
+        Point3::new(1.0, 2.0, 3.0),
+        Vector3::new(1.0, 1.0, 0.0),
+        Vector3::new(-1.0, 1.0, 1.0),
+    );
+    let shape = block_at(placed.clone(), 2.0, 3.0, 4.0).expect("block");
+    (shape, placed)
+}
+
+#[test]
+fn an_oblique_block_is_its_own_oriented_box() {
+    let (shape, placed) = oblique_block();
+
+    let bbox = shape.solid().oriented_bounding_box().expect("oriented box");
+
+    let centre = placed.point_at(Vector3::new(1.0, 1.5, 2.0));
+    assert_oriented(&bbox, Vector3::new(4.0, 3.0, 2.0), centre);
+    assert!(parallel(*bbox.frame().x_dir, *placed.z_dir));
+    assert!(parallel(*bbox.frame().y_dir, *placed.y_dir));
+}
+
+#[test]
+fn the_oriented_box_is_the_same_on_every_call() {
+    let (shape, _) = oblique_block();
+    let solid = shape.solid();
+
+    let first = solid.oriented_bounding_box().expect("oriented box");
+    let second = solid.oriented_bounding_box().expect("oriented box");
+
+    assert_eq!(first, second);
+}
+
+#[test]
+fn a_tilted_cylinder_is_boxed_along_its_axis() {
+    let (radius, height) = (2.0, 5.0);
+    let axis = Vector3::new(1.0, 0.0, 2.0).normalize();
+    let base = Point3::new(1.0, -1.0, 0.5);
+    let shape = cylinder_at(
+        Frame::from_xz(base, Vector3::new(2.0, 0.0, -1.0), axis),
+        radius,
+        height,
+    )
+    .expect("cylinder");
+
+    let bbox = shape.solid().oriented_bounding_box().expect("oriented box");
+
+    assert_oriented(&bbox, Vector3::new(5.0, 4.0, 4.0), base + axis * 2.5);
+    assert!(parallel(*bbox.frame().x_dir, axis));
+}
+
+#[test]
+fn a_tilted_torus_is_boxed_square_to_its_axis() {
+    let axis = Vector3::new(0.0, 1.0, 1.0).normalize();
+    let centre = Point3::new(3.0, 0.0, -1.0);
+    let shape = torus_at(Frame::from_xz(centre, Vector3::x(), axis), 10.0, 2.0).expect("torus");
+    let solid = shape.solid();
+
+    let bbox = solid.oriented_bounding_box().expect("oriented box");
+
+    assert_oriented(&bbox, Vector3::new(24.0, 24.0, 4.0), centre);
+    assert!(parallel(*bbox.frame().z_dir, axis));
+    let world = solid.bounding_box().expect("world box");
+    assert!(bbox.size().product() < world.size().product());
+}
+
+#[test]
+fn a_sphere_is_boxed_by_its_diameter() {
+    let centre = Point3::new(1.0, 2.0, -3.0);
+    let shape = sphere_at(Frame::from_xy(centre, Vector3::x(), Vector3::y()), 5.0).expect("sphere");
+
+    let bbox = shape.solid().oriented_bounding_box().expect("oriented box");
+
+    assert_oriented(&bbox, Vector3::repeat(10.0), centre);
+}
+
+/// Every frame lying in the face's plane gives it a zero volume, so the
+/// smaller face area of its box decides.
+#[test]
+fn a_turned_rectangle_is_boxed_along_its_sides() {
+    let angle: f64 = 0.4;
+    let side = Vector3::new(angle.cos(), angle.sin(), 0.0);
+    let shape = faces::rectangle(
+        Plane::new(Point3::new(1.0, 1.0, 0.0), side, Vector3::z()),
+        2.0,
+        3.0,
+    )
+    .expect("rectangle");
+
+    let bbox = shape.face().oriented_bounding_box().expect("oriented box");
+
+    let across = Vector3::z().cross(&side);
+    let centre = Point3::new(1.0, 1.0, 0.0) + side * 1.0 + across * 1.5;
+    assert_oriented(&bbox, Vector3::new(3.0, 2.0, 0.0), centre);
+    assert!(parallel(*bbox.frame().x_dir, across));
+}
+
+#[test]
+fn an_oblique_segment_is_boxed_along_itself() {
+    let shape = edges::line(Point3::origin(), Point3::new(1.0, 2.0, 2.0)).expect("line");
+
+    let bbox = shape.edge().oriented_bounding_box().expect("oriented box");
+
+    assert_oriented(
+        &bbox,
+        Vector3::new(3.0, 0.0, 0.0),
+        Point3::new(0.5, 1.0, 1.0),
+    );
+}

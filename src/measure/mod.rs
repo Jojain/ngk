@@ -56,6 +56,8 @@ pub(crate) use integrate::{
     signed_volume_for_faces, solid_volume_properties,
 };
 
-pub(crate) use bounding_box::{edge_bounding_box, edges_bounding_box, faces_bounding_box};
+pub(crate) use bounding_box::{
+    Extremes, edge_bounding_box, edges_bounding_box, faces_bounding_box,
+};
 
 pub use integrate::MeasureError;

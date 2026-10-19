@@ -29,7 +29,14 @@ at density one. Measurement is a read of `&Model<P>` and opens no transaction.
 
 `Edge`, `Profile`, `Face`, `Sheet` and `Solid` have `bounding_box()` →
 `BBox`, the tightest box along the world axes, and `bounding_box_in(&Frame)`,
-the tightest box whose ranges run along that frame's axes. It is not integrated but solved: an
+the tightest box whose ranges run along that frame's axes. `oriented_bounding_box()`
+is the smallest of the exact boxes over a fixed list of candidate frames -- the
+directions the geometry names (plane normals, straight edges, the axes of
+conics, cylinders, cones, tori, helices, revolutions and extrusions), the
+principal axes of inertia and the world axes, paired with each other -- centred
+on the box with its axes from the longest extent to the shortest. Its extents
+are exact; its orientation is the best candidate, not a proven minimum, and the
+same input always gives the same box. It is not integrated but solved: an
 extreme along an axis lies at a vertex, at an edge point whose tangent is square
 to the axis, or at a face point whose normal is parallel to it, and those
 points have closed forms on lines, conics, helices and the analytic surfaces

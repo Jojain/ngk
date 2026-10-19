@@ -7,7 +7,7 @@ use crate::geometry::Surface;
 use crate::geometry::dim2::trimmed::TrimmedCurve2;
 use crate::geometry::{BBox, Frame, LINEAR_TOLERANCE, Point2, Point3};
 use crate::measure::{
-    MeasureError, SurfaceProperties, face_surface_properties, faces_bounding_box,
+    Extremes, MeasureError, SurfaceProperties, face_surface_properties, faces_bounding_box,
 };
 use crate::model::{Cell2, MergeTopology, Model, RealizationPurpose, TopologyMerge};
 use crate::topology::attributes::{FaceAttr, LoopKind};
@@ -493,6 +493,14 @@ impl<'g, P: Payload> Face<'g, P> {
     /// `frame`'s axes, exact to rounding; see [`crate::measure`].
     pub fn bounding_box_in(&self, frame: &Frame) -> Result<BBox, MeasureError> {
         faces_bounding_box([self.clone()], frame)
+    }
+
+    /// Returns the smallest of this face's exact boxes over a fixed list of
+    /// candidate frames, centred on the box with its axes from the longest
+    /// extent to the shortest; see [`crate::measure`] for the candidates.
+    pub fn oriented_bounding_box(&self) -> Result<BBox, MeasureError> {
+        let principal = self.surface_properties()?.inertia.principal().axes();
+        Extremes::of_faces([self.clone()])?.oriented_box(principal)
     }
 
     /// Evaluates the face's support surface at `(u, v)`.

@@ -9,7 +9,7 @@ use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 use crate::geometry::{BBox, Frame};
 use crate::measure::{
-    MeasureError, SurfaceProperties, faces_bounding_box, sheet_surface_properties,
+    Extremes, MeasureError, SurfaceProperties, faces_bounding_box, sheet_surface_properties,
 };
 use crate::model::{Cell2, MergeTopology, Model, TopologyMerge};
 use crate::topology::gmap::Dim;
@@ -152,6 +152,14 @@ impl<'a, P: Payload> Sheet<'a, P> {
     /// `frame`'s axes, exact to rounding; see [`crate::measure`].
     pub fn bounding_box_in(&self, frame: &Frame) -> Result<BBox, MeasureError> {
         faces_bounding_box(self.faces(), frame)
+    }
+
+    /// Returns the smallest of this sheet's exact boxes over a fixed list of
+    /// candidate frames, centred on the box with its axes from the longest
+    /// extent to the shortest; see [`crate::measure`] for the candidates.
+    pub fn oriented_bounding_box(&self) -> Result<BBox, MeasureError> {
+        let principal = self.surface_properties()?.inertia.principal().axes();
+        Extremes::of_faces(self.faces())?.oriented_box(principal)
     }
 
     /// Returns the unique edges used by this sheet's faces.

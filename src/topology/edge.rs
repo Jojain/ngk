@@ -4,7 +4,7 @@ use std::ops::Deref;
 use crate::geometry::parameter::NativeParam;
 use crate::geometry::{BBox, Curve, Frame, Interval, Periodicity, PointCoincidence, TrimmedCurve};
 use crate::measure::{
-    LinearProperties, MeasureError, edge_bounding_box, linear_properties_for_edge,
+    Extremes, LinearProperties, MeasureError, edge_bounding_box, linear_properties_for_edge,
 };
 use crate::model::{Cell1, Cell2, MergeTopology, TopologyMerge};
 use crate::topology::attributes::EdgeAttr;
@@ -399,6 +399,14 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
     /// `frame`'s axes, exact to rounding; see [`crate::measure`].
     pub fn bounding_box_in(&self, frame: &Frame) -> Result<BBox, MeasureError> {
         edge_bounding_box(self, frame)
+    }
+
+    /// Returns the smallest of this edge's exact boxes over a fixed list of
+    /// candidate frames, centred on the box with its axes from the longest
+    /// extent to the shortest; see [`crate::measure`] for the candidates.
+    pub fn oriented_bounding_box(&self) -> Result<BBox, MeasureError> {
+        let principal = self.linear_properties()?.inertia.principal().axes();
+        Extremes::of_edge(self)?.oriented_box(principal)
     }
 }
 

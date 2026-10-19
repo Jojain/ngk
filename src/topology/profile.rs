@@ -5,7 +5,7 @@ use super::payload::{Payload, StandardPayload};
 use super::vertex::Vertex;
 use crate::geometry::{BBox, Frame};
 use crate::measure::{
-    LinearProperties, MeasureError, edges_bounding_box, linear_properties_for_edges,
+    Extremes, LinearProperties, MeasureError, edges_bounding_box, linear_properties_for_edges,
 };
 use crate::model::{MergeTopology, Model, TopologyMerge};
 use crate::topology::embedding::{is_embedded_cell, turn_where};
@@ -143,6 +143,14 @@ impl<'a, P: Payload> Profile<'a, P> {
     /// `frame`'s axes, exact to rounding; see [`crate::measure`].
     pub fn bounding_box_in(&self, frame: &Frame) -> Result<BBox, MeasureError> {
         edges_bounding_box(self.edges(), frame)
+    }
+
+    /// Returns the smallest of this profile's exact boxes over a fixed list of
+    /// candidate frames, centred on the box with its axes from the longest
+    /// extent to the shortest; see [`crate::measure`] for the candidates.
+    pub fn oriented_bounding_box(&self) -> Result<BBox, MeasureError> {
+        let principal = self.linear_properties()?.inertia.principal().axes();
+        Extremes::of_edges(self.edges())?.oriented_box(principal)
     }
 
     /// Returns this profile's vertices in traversal order.

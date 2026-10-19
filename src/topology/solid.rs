@@ -9,7 +9,7 @@ use super::sheet::{Sheet, ShellRef};
 use super::vertex::Vertex;
 use crate::geometry::{BBox, Frame};
 use crate::measure::{
-    MeasureError, SurfaceProperties, VolumeProperties, combine_surface_properties,
+    Extremes, MeasureError, SurfaceProperties, VolumeProperties, combine_surface_properties,
     faces_bounding_box, solid_volume_properties,
 };
 use crate::model::{MergeTopology, Model, TopologyMerge};
@@ -209,6 +209,14 @@ impl<'g, P: Payload> Solid<'g, P> {
     /// `frame`'s axes, exact to rounding; see [`crate::measure`].
     pub fn bounding_box_in(&self, frame: &Frame) -> Result<BBox, MeasureError> {
         faces_bounding_box(self.faces(), frame)
+    }
+
+    /// Returns the smallest of this solid's exact boxes over a fixed list of
+    /// candidate frames, centred on the box with its axes from the longest
+    /// extent to the shortest; see [`crate::measure`] for the candidates.
+    pub fn oriented_bounding_box(&self) -> Result<BBox, MeasureError> {
+        let principal = self.volume_properties()?.inertia.principal().axes();
+        Extremes::of_faces(self.faces())?.oriented_box(principal)
     }
 }
 
