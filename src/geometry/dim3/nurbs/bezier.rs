@@ -66,6 +66,7 @@ impl Bezier {
 
     pub fn bbox(&self) -> BBox {
         BBox::from_points(self.control_points.iter().map(|point| point.to_cartesian()))
+            .expect("a Bezier has control points")
     }
 
     pub fn subdivide(&self, u: f64) -> Result<(Self, Self), NurbsError> {

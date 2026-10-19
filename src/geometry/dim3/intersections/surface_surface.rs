@@ -507,6 +507,9 @@ fn control_hulls_are_disjoint(
             .iter()
             .map(|point| point.to_cartesian()),
     );
+    let (Some(bbox_a), Some(bbox_b)) = (bbox_a, bbox_b) else {
+        return false;
+    };
     !bbox_a.intersects(&bbox_b, options.bbox_tolerance)
 }
 

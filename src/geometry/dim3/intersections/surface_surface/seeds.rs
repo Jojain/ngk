@@ -720,6 +720,7 @@ fn control_bbox(surface: &NurbsSurface) -> BBox {
             .iter()
             .map(|point| point.to_cartesian()),
     )
+    .expect("a NURBS surface has control points")
 }
 
 fn plane_equation(surface: &NurbsSurface, tolerance: f64) -> Option<PlaneEquation> {

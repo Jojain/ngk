@@ -1154,7 +1154,7 @@ impl SurfaceGeometry for Plane {
         if !u.is_finite() || !v.is_finite() {
             return None;
         }
-        Some(BBox::from_points_in_frame(
+        BBox::from_points_in_frame(
             self.frame.clone(),
             [
                 self.point_at(u.start.value(), v.start.value()),
@@ -1162,7 +1162,7 @@ impl SurfaceGeometry for Plane {
                 self.point_at(u.start.value(), v.end.value()),
                 self.point_at(u.end.value(), v.end.value()),
             ],
-        ))
+        )
     }
 
     fn moved(&self, r: &Rigid) -> Self {
@@ -1236,7 +1236,7 @@ impl SurfaceGeometry for Cylinder {
         let first = (ordered.start.value() / std::f64::consts::FRAC_PI_2).ceil() as i64;
         let last = (ordered.end.value() / std::f64::consts::FRAC_PI_2).floor() as i64;
         angles.extend((first..=last).map(|index| index as f64 * std::f64::consts::FRAC_PI_2));
-        Some(BBox::from_points_in_frame(
+        BBox::from_points_in_frame(
             self.frame.clone(),
             [v.start.value(), v.end.value()]
                 .into_iter()
@@ -1245,7 +1245,7 @@ impl SurfaceGeometry for Cylinder {
                         .iter()
                         .map(move |&angle| self.point_at(angle, height))
                 }),
-        ))
+        )
     }
 
     fn moved(&self, r: &Rigid) -> Self {
@@ -1332,14 +1332,14 @@ impl SurfaceGeometry for Sphere {
         let mut latitudes = angular_extrema(v, std::f64::consts::FRAC_PI_2);
         longitudes.extend([u.start.value(), u.end.value()]);
         latitudes.extend([v.start.value(), v.end.value()]);
-        Some(BBox::from_points_in_frame(
+        BBox::from_points_in_frame(
             self.frame.clone(),
             latitudes.into_iter().flat_map(|latitude| {
                 longitudes
                     .iter()
                     .map(move |&longitude| self.point_at(longitude, latitude))
             }),
-        ))
+        )
     }
 
     fn moved(&self, r: &Rigid) -> Self {
@@ -1420,7 +1420,7 @@ impl SurfaceGeometry for Cone {
         }
         let mut angles = angular_extrema(u, std::f64::consts::FRAC_PI_2);
         angles.extend([u.start.value(), u.end.value()]);
-        Some(BBox::from_points_in_frame(
+        BBox::from_points_in_frame(
             self.frame.clone(),
             [v.start.value(), v.end.value()]
                 .into_iter()
@@ -1429,7 +1429,7 @@ impl SurfaceGeometry for Cone {
                         .iter()
                         .map(move |&parameter_u| self.point_at(parameter_u, parameter_v))
                 }),
-        ))
+        )
     }
 
     fn moved(&self, r: &Rigid) -> Self {
@@ -1703,8 +1703,8 @@ impl SurfaceGeometry for RuledSurface {
             return None;
         }
         let curve_bounds = self.curve.bbox_over(u)?;
-        let corners = curve_bounds.corners()?;
-        Some(BBox::from_points(
+        let corners = curve_bounds.corners();
+        BBox::from_points(
             [v.start.value(), v.end.value()]
                 .into_iter()
                 .flat_map(|parameter| {
@@ -1712,7 +1712,7 @@ impl SurfaceGeometry for RuledSurface {
                         .iter()
                         .map(move |point| *point + self.direction * parameter)
                 }),
-        ))
+        )
     }
 
     /// The ruling direction is a vector, so only the rotation reaches it.
@@ -1899,6 +1899,7 @@ fn positive_surface_control_bounds(surface: &NurbsSurface) -> Option<BBox> {
                     .map(|point| point.to_cartesian()),
             )
         })
+        .flatten()
 }
 
 /// Interior multiples of `step` inside an angular interval.

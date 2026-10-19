@@ -900,10 +900,10 @@ impl CurveGeometry for Line {
         if !interval.is_finite() {
             return None;
         }
-        Some(BBox::from_points([
+        BBox::from_points([
             self.point_at(interval.start),
             self.point_at(interval.end),
-        ]))
+        ])
     }
 
     /// The affine `scale` rides along: a rigid motion cannot change a length,
@@ -966,12 +966,12 @@ impl CurveGeometry for Circle {
         if !interval.is_finite() {
             return None;
         }
-        Some(BBox::from_points_in_frame(
+        BBox::from_points_in_frame(
             self.plane.frame.clone(),
             conic_extrema_parameters(interval)
                 .into_iter()
                 .map(|parameter| self.point_at(parameter)),
-        ))
+        )
     }
 
     fn moved(&self, r: &Rigid) -> Self {
@@ -1016,12 +1016,12 @@ impl CurveGeometry for Ellipse {
         if !interval.is_finite() {
             return None;
         }
-        Some(BBox::from_points_in_frame(
+        BBox::from_points_in_frame(
             self.frame.clone(),
             conic_extrema_parameters(interval)
                 .into_iter()
                 .map(|parameter| self.point_at(parameter)),
-        ))
+        )
     }
 
     fn moved(&self, r: &Rigid) -> Self {
@@ -1066,12 +1066,12 @@ impl CurveGeometry for Helix {
         if !interval.is_finite() {
             return None;
         }
-        Some(BBox::from_points_in_frame(
+        BBox::from_points_in_frame(
             self.frame.clone(),
             conic_extrema_parameters(interval)
                 .into_iter()
                 .map(|parameter| self.point_at(parameter)),
-        ))
+        )
     }
 
     fn moved(&self, r: &Rigid) -> Self {
@@ -1123,6 +1123,7 @@ impl CurveGeometry for NurbsCurve {
                         .map(|point| point.to_cartesian()),
                 )
             })
+            .flatten()
     }
 
     /// An affine map of a rational NURBS is again a rational NURBS with the

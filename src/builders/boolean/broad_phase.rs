@@ -171,7 +171,7 @@ fn face_bounds<P: Payload>(face: Face<'_, P>, padding: f64) -> Option<Bounds> {
         let bbox = face
             .surface()
             .bbox_over(Interval::new(u_min, u_max), Interval::new(v_min, v_max))?;
-        return Bounds::from_points(bbox.corners()?, padding);
+        return Bounds::from_points(bbox.corners(), padding);
     }
 
     let Surface::Nurbs(surface) = face.surface() else {
@@ -229,7 +229,7 @@ fn enclosing_bounds<P: Payload>(face: Face<'_, P>, padding: f64) -> Option<Bound
     if !(u.is_finite() && v.is_finite()) {
         return None;
     }
-    Bounds::from_points(face.surface().bbox_over(u, v)?.corners()?, padding)
+    Bounds::from_points(face.surface().bbox_over(u, v)?.corners(), padding)
 }
 
 struct FaceBvh {

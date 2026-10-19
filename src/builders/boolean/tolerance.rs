@@ -129,7 +129,7 @@ impl BooleanTolerances {
                 let face = map.face_unchecked(face);
                 let surface = face.surface();
                 let (u, v) = surface.domain();
-                if let Some(corners) = surface.bbox_over(u, v).and_then(|bbox| bbox.corners()) {
+                if let Some(corners) = surface.bbox_over(u, v).map(|bbox| bbox.corners()) {
                     points.extend(corners);
                 }
             }

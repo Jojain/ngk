@@ -61,6 +61,7 @@ impl BezierSurface {
                 .iter()
                 .map(|point| point.to_cartesian()),
         )
+        .expect("a Bezier patch has control points")
     }
 
     /// Returns whether every control weight is finite and positive.

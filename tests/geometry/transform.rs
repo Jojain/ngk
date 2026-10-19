@@ -346,15 +346,12 @@ fn a_moved_bbox_keeps_its_extents_and_moves_its_centre() {
     let bounds = BBox::from_points_in_frame(
         Frame::xyz(),
         [Point3::new(-1.0, -2.0, -3.0), Point3::new(1.0, 2.0, 3.0)],
-    );
+    )
+    .expect("two points have a box");
     let moved = bounds.moved(&r);
 
     assert_eq!(moved.size(), bounds.size());
-    assert_point_near(
-        moved.center().expect("a non-empty box has a centre"),
-        r.apply(bounds.center().expect("a non-empty box has a centre")),
-    );
-    assert!(BBox::empty().moved(&r).is_empty());
+    assert_point_near(moved.center(), r.apply(bounds.center()));
 }
 
 /// Delegating the rotation to nalgebra is only correct if the sense agrees

@@ -6,148 +6,136 @@ use super::frame::Frame;
 use super::utils::Point3;
 use crate::geometry::transform::Rigid;
 
-/// A 3D bounding box that may be empty.
+/// One end of a box's range along a frame axis, for picking a [`BBox::corner`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bound {
+    Min,
+    Max,
+}
+
+/// An oriented 3D bounding box: a frame and a range along each of its axes.
 ///
-/// Non-empty boxes are oriented: their `frame` stores the center and axes, and
-/// `size` stores the box length along each frame axis. `from_points` chooses the
-/// initial frame with PCA so sampled point clouds can produce an oriented box.
-#[derive(Clone)]
-pub enum BBox {
-    /// A box with no contained geometry.
-    Empty,
-    /// A centered oriented box with extents along its frame axes.
-    NonEmpty {
-        /// Center and orientation of the box.
-        frame: Frame,
-        /// Full box length along `frame.x_dir`, `frame.y_dir`, and `frame.z_dir`.
-        size: Vector3<f64>,
-    },
+/// The frame is kept as given, origin included; the box is the set of points
+/// whose coordinates in that frame lie between `min` and `max`. A box built in
+/// [`Frame::xyz`] is therefore an axis-aligned box whose corners are the
+/// world-space minimum and maximum, read without any round trip through a
+/// centre and a size. A box always contains something: constructors over no
+/// points return `None`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BBox {
+    frame: Frame,
+    min: Vector3<f64>,
+    max: Vector3<f64>,
 }
 
 impl BBox {
-    /// Creates an empty box suitable for incremental construction with `extend`.
-    pub fn empty() -> Self {
-        Self::Empty
-    }
-
-    /// Builds an oriented bounding box from a point cloud.
+    /// A box in `frame` spanning `min` to `max`, both in frame coordinates.
     ///
-    /// Empty input returns `BBox::Empty`. A single point returns a non-empty
-    /// zero-size box centered on that point. For larger point clouds, the frame
-    /// orientation is estimated from the principal axes of the point covariance.
-    pub fn from_points(points: impl IntoIterator<Item = Point3>) -> Self {
-        let points = points.into_iter().collect::<Vec<_>>();
-        Self::fit_points(&points)
+    /// # Panics
+    ///
+    /// When `min` exceeds `max` along any axis, or either is not finite.
+    pub fn new(frame: Frame, min: Vector3<f64>, max: Vector3<f64>) -> Self {
+        assert!(
+            (0..3).all(|axis| min[axis].is_finite()
+                && max[axis].is_finite()
+                && min[axis] <= max[axis]),
+            "a box's ranges must be finite and ordered, got {min:?} to {max:?}"
+        );
+        Self { frame, min, max }
     }
 
-    /// Builds a box in a caller-selected frame and expands it over `points`.
+    /// Builds an oriented bounding box from a point cloud, or `None` when there
+    /// are no points.
+    ///
+    /// The frame's axes are the principal axes of the point covariance, longest
+    /// spread first, and its origin is the centroid. A single point gets the
+    /// world axes at that point.
+    pub fn from_points(points: impl IntoIterator<Item = Point3>) -> Option<Self> {
+        let points = points.into_iter().collect::<Vec<_>>();
+        let frame = match points.as_slice() {
+            [] => return None,
+            [point] => Frame::from_xy(*point, Vector3::x(), Vector3::y()),
+            _ => Self::principal_frame(&points),
+        };
+        Self::from_points_in_frame(frame, points)
+    }
+
+    /// Builds the box of `points` in `frame`, or `None` when there are no points.
     ///
     /// Analytic supports use their natural frame so extrema in parameter space
     /// produce an exact oriented box rather than a sampled PCA approximation.
-    pub fn from_points_in_frame(frame: Frame, points: impl IntoIterator<Item = Point3>) -> Self {
-        let points = points.into_iter().collect::<Vec<_>>();
-        if points.is_empty() {
-            Self::Empty
-        } else {
-            Self::fit_points_in_frame(&points, frame)
+    pub fn from_points_in_frame(
+        frame: Frame,
+        points: impl IntoIterator<Item = Point3>,
+    ) -> Option<Self> {
+        let mut points = points.into_iter();
+        let first = frame.coordinates_of(points.next()?);
+        let mut bbox = Self {
+            frame,
+            min: first,
+            max: first,
+        };
+        for point in points {
+            bbox.extend(point);
         }
+        Some(bbox)
     }
 
     /// Returns this box under a rigid motion.
     ///
-    /// Exact: an oriented box is a frame and three extents, and a rigid motion
-    /// moves the frame without changing any extent.
+    /// Exact: the frame moves and the ranges along its axes do not change.
     pub fn moved(&self, r: &Rigid) -> Self {
-        match self {
-            Self::Empty => Self::Empty,
-            Self::NonEmpty { frame, size } => Self::NonEmpty {
-                frame: frame.moved(r),
-                size: *size,
-            },
+        Self {
+            frame: self.frame.moved(r),
+            min: self.min,
+            max: self.max,
         }
     }
 
-    /// Returns true when the box contains no points.
-    pub fn is_empty(&self) -> bool {
-        matches!(self, Self::Empty)
+    /// Returns the frame the box's ranges are measured in.
+    pub fn frame(&self) -> &Frame {
+        &self.frame
     }
 
-    /// Returns the negative local-space corner of the box.
+    /// Returns the corner at the lower end of every range.
     ///
-    /// For an oriented box this is not necessarily the component-wise minimum in
-    /// world coordinates. It is the corner at `(-x_size/2, -y_size/2, -z_size/2)`
-    /// in the box frame.
-    pub fn min(&self) -> Option<Point3> {
-        match self {
-            Self::Empty => None,
-            Self::NonEmpty { frame, size } => Some(frame.point_at(-size / 2.0)),
-        }
+    /// In [`Frame::xyz`] this is the component-wise world minimum; in any other
+    /// frame it is the corner at the frame-local minimum.
+    pub fn min(&self) -> Point3 {
+        self.frame.point_at(self.min)
     }
 
-    /// Returns the positive local-space corner of the box.
+    /// Returns the corner at the upper end of every range.
     ///
-    /// For an oriented box this is not necessarily the component-wise maximum in
-    /// world coordinates. It is the corner at `(x_size/2, y_size/2, z_size/2)` in
-    /// the box frame.
-    pub fn max(&self) -> Option<Point3> {
-        match self {
-            Self::Empty => None,
-            Self::NonEmpty { frame, size } => Some(frame.point_at(size / 2.0)),
-        }
+    /// In [`Frame::xyz`] this is the component-wise world maximum; in any other
+    /// frame it is the corner at the frame-local maximum.
+    pub fn max(&self) -> Point3 {
+        self.frame.point_at(self.max)
     }
 
-    /// Returns the centered frame of a non-empty box.
-    pub fn frame(&self) -> Option<&Frame> {
-        match self {
-            Self::Empty => None,
-            Self::NonEmpty { frame, .. } => Some(frame),
-        }
-    }
-
-    /// Returns the full box size along each local frame axis.
+    /// Returns the box size along each frame axis.
     pub fn size(&self) -> Vector3<f64> {
-        match self {
-            Self::Empty => Vector3::zeros(),
-            Self::NonEmpty { size, .. } => *size,
-        }
+        self.max - self.min
     }
 
-    /// Returns the full box size along the local x axis.
+    /// Returns the box size along the frame's x axis.
     pub fn x_size(&self) -> f64 {
-        self.size().x
+        self.max.x - self.min.x
     }
 
-    /// Returns the full box size along the local y axis.
+    /// Returns the box size along the frame's y axis.
     pub fn y_size(&self) -> f64 {
-        self.size().y
+        self.max.y - self.min.y
     }
 
-    /// Returns the full box size along the local z axis.
+    /// Returns the box size along the frame's z axis.
     pub fn z_size(&self) -> f64 {
-        self.size().z
+        self.max.z - self.min.z
     }
 
-    /// Returns half the box size along the local x axis.
-    pub fn x_half_size(&self) -> f64 {
-        self.x_size() / 2.
-    }
-
-    /// Returns half the box size along the local y axis.
-    pub fn y_half_size(&self) -> f64 {
-        self.y_size() / 2.
-    }
-
-    /// Returns half the box size along the local z axis.
-    pub fn z_half_size(&self) -> f64 {
-        self.z_size() / 2.
-    }
-
-    /// Returns the center of a non-empty box.
-    pub fn center(&self) -> Option<Point3> {
-        match self {
-            Self::Empty => None,
-            Self::NonEmpty { frame, .. } => Some(frame.origin),
-        }
+    /// Returns the centre of the box.
+    pub fn center(&self) -> Point3 {
+        self.frame.point_at((self.min + self.max) / 2.0)
     }
 
     /// Returns the length of the box diagonal.
@@ -155,59 +143,32 @@ impl BBox {
         self.size().norm()
     }
 
-    /// Returns a box expanded by `tolerance` in every local direction.
+    /// Returns a box grown by `tolerance` at both ends of every range.
     pub fn expanded(&self, tolerance: f64) -> Self {
-        match self {
-            Self::Empty => Self::Empty,
-            Self::NonEmpty { frame, size } => {
-                let delta = 2.0 * tolerance.max(0.0);
-                Self::NonEmpty {
-                    frame: frame.clone(),
-                    size: size + Vector3::repeat(delta),
-                }
-            }
+        let delta = Vector3::repeat(tolerance.max(0.0));
+        Self {
+            frame: self.frame.clone(),
+            min: self.min - delta,
+            max: self.max + delta,
         }
     }
 
     /// Returns true when `point` lies inside this box within `tolerance`.
     pub fn contains_point(&self, point: Point3, tolerance: f64) -> bool {
-        match self {
-            Self::Empty => false,
-            Self::NonEmpty { frame, size } => {
-                let tolerance = tolerance.max(0.0);
-                let half_size = *size / 2.0 + Vector3::repeat(tolerance);
-                let local = frame.coordinates_of(point);
-                local.x >= -half_size.x
-                    && local.x <= half_size.x
-                    && local.y >= -half_size.y
-                    && local.y <= half_size.y
-                    && local.z >= -half_size.z
-                    && local.z <= half_size.z
-            }
-        }
+        let tolerance = tolerance.max(0.0);
+        let local = self.frame.coordinates_of(point);
+        (0..3).all(|axis| {
+            self.min[axis] - tolerance <= local[axis] && local[axis] <= self.max[axis] + tolerance
+        })
     }
 
     /// Returns true when two oriented boxes overlap within `tolerance`.
     pub fn intersects(&self, other: &Self, tolerance: f64) -> bool {
-        let (
-            Self::NonEmpty {
-                frame: frame_a,
-                size: size_a,
-            },
-            Self::NonEmpty {
-                frame: frame_b,
-                size: size_b,
-            },
-        ) = (self, other)
-        else {
-            return false;
-        };
-
         let tolerance = tolerance.max(0.0);
-        let half_a = *size_a / 2.0 + Vector3::repeat(tolerance);
-        let half_b = *size_b / 2.0 + Vector3::repeat(tolerance);
-        let axes_a = frame_axes(frame_a);
-        let axes_b = frame_axes(frame_b);
+        let half_a = self.size() / 2.0 + Vector3::repeat(tolerance);
+        let half_b = other.size() / 2.0 + Vector3::repeat(tolerance);
+        let axes_a = frame_axes(&self.frame);
+        let axes_b = frame_axes(&other.frame);
 
         let mut rotation = [[0.0; 3]; 3];
         let mut abs_rotation = [[0.0; 3]; 3];
@@ -218,7 +179,7 @@ impl BBox {
             }
         }
 
-        let center_delta = frame_b.origin - frame_a.origin;
+        let center_delta = other.center() - self.center();
         let translation = Vector3::new(
             center_delta.dot(&axes_a[0]),
             center_delta.dot(&axes_a[1]),
@@ -268,121 +229,84 @@ impl BBox {
         true
     }
 
-    /// Expands the box to contain one more point.
-    ///
-    /// Extending an existing non-empty box preserves its current frame
-    /// orientation and grows the local extents. It does not recompute PCA,
-    /// because the box does not store the original point cloud.
+    /// Grows the ranges to contain one more point; the frame does not change.
     pub fn extend(&mut self, point: Point3) {
-        match self {
-            Self::Empty => {
-                *self = Self::from_point(point);
-            }
-            Self::NonEmpty { frame, size } => {
-                let half_size = *size / 2.0;
-                let local = frame.coordinates_of(point);
-                let min = Vector3::new(
-                    (-half_size.x).min(local.x),
-                    (-half_size.y).min(local.y),
-                    (-half_size.z).min(local.z),
-                );
-                let max = Vector3::new(
-                    half_size.x.max(local.x),
-                    half_size.y.max(local.y),
-                    half_size.z.max(local.z),
-                );
-                let center_local = (min + max) / 2.0;
-                let new_center = frame.point_at(center_local);
-
-                frame.origin = new_center;
-                *size = max - min;
-            }
-        }
+        let local = self.frame.coordinates_of(point);
+        self.min = self.min.inf(&local);
+        self.max = self.max.sup(&local);
     }
 
-    /// Expands this box to contain another box.
+    /// Grows this box to contain `other`; this box's frame does not change.
     ///
-    /// If both boxes are non-empty, the receiver keeps its current frame and is
-    /// extended by the other box corners.
+    /// When both boxes share a frame the ranges merge directly, so the result
+    /// is the exact smallest box of both. Otherwise this box grows to `other`'s
+    /// corners: it contains `other`, but bounds `other`'s geometry only as
+    /// tightly as `other` itself does, seen from this frame.
     pub fn merge(&mut self, other: &Self) {
-        match (&mut *self, other) {
-            (_, Self::Empty) => {}
-            (this @ Self::Empty, _) => {
-                *this = other.clone();
-            }
-            (Self::NonEmpty { .. }, Self::NonEmpty { .. }) => {
-                for corner in other.corners().expect("non-empty boxes have corners") {
-                    self.extend(corner);
-                }
+        if self.frame == other.frame {
+            self.min = self.min.inf(&other.min);
+            self.max = self.max.sup(&other.max);
+        } else {
+            for corner in other.corners() {
+                self.extend(corner);
             }
         }
     }
 
-    /// Returns the union of this box and another box.
-    pub fn union(mut self, other: &Self) -> Self {
-        self.merge(other);
-        self
+    /// Returns the corner at the given end of each of the frame's ranges.
+    pub fn corner(&self, x: Bound, y: Bound, z: Bound) -> Point3 {
+        let pick = |bound, axis: usize| match bound {
+            Bound::Min => self.min[axis],
+            Bound::Max => self.max[axis],
+        };
+        self.frame
+            .point_at(Vector3::new(pick(x, 0), pick(y, 1), pick(z, 2)))
     }
 
-    fn fit_points(points: &[Point3]) -> Self {
-        match points {
-            [] => Self::Empty,
-            [point] => Self::from_point(*point),
-            _ => {
-                let centroid = Self::centroid(points);
-                let covariance = Self::covariance(points, centroid);
-                let eigens = SymmetricEigen::new(covariance);
-                let mut axes = [
-                    (
-                        eigens.eigenvalues[0],
-                        eigens.eigenvectors.column(0).into_owned(),
-                    ),
-                    (
-                        eigens.eigenvalues[1],
-                        eigens.eigenvectors.column(1).into_owned(),
-                    ),
-                    (
-                        eigens.eigenvalues[2],
-                        eigens.eigenvectors.column(2).into_owned(),
-                    ),
-                ];
-
-                axes.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(Ordering::Equal));
-
-                let frame = Frame::from_xy(centroid, axes[0].1, axes[1].1);
-                Self::fit_points_in_frame(points, frame)
-            }
-        }
+    /// Returns the eight corners of the box, x slowest and z fastest, each from
+    /// its minimum to its maximum: `corners()[0]` is [`min`](Self::min) and
+    /// `corners()[7]` is [`max`](Self::max).
+    pub fn corners(&self) -> [Point3; 8] {
+        use Bound::{Max, Min};
+        [
+            self.corner(Min, Min, Min),
+            self.corner(Min, Min, Max),
+            self.corner(Min, Max, Min),
+            self.corner(Min, Max, Max),
+            self.corner(Max, Min, Min),
+            self.corner(Max, Min, Max),
+            self.corner(Max, Max, Min),
+            self.corner(Max, Max, Max),
+        ]
     }
 
-    fn from_point(point: Point3) -> Self {
-        Self::NonEmpty {
-            frame: Frame::from_xy(point, Vector3::x(), Vector3::y()),
-            size: Vector3::zeros(),
-        }
+    // The principal axes of at least two points, at their centroid.
+    fn principal_frame(points: &[Point3]) -> Frame {
+        let centroid = Self::centroid(points);
+        let covariance = Self::covariance(points, centroid);
+        let eigens = SymmetricEigen::new(covariance);
+        let mut axes = [
+            (
+                eigens.eigenvalues[0],
+                eigens.eigenvectors.column(0).into_owned(),
+            ),
+            (
+                eigens.eigenvalues[1],
+                eigens.eigenvectors.column(1).into_owned(),
+            ),
+            (
+                eigens.eigenvalues[2],
+                eigens.eigenvectors.column(2).into_owned(),
+            ),
+        ];
+
+        axes.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(Ordering::Equal));
+
+        Frame::from_xy(centroid, axes[0].1, axes[1].1)
     }
 
-    fn fit_points_in_frame(points: &[Point3], frame: Frame) -> Self {
-        let mut min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
-        let mut max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-
-        for point in points {
-            let local = frame.coordinates_of(*point);
-            min = Vector3::new(min.x.min(local.x), min.y.min(local.y), min.z.min(local.z));
-            max = Vector3::new(max.x.max(local.x), max.y.max(local.y), max.z.max(local.z));
-        }
-
-        let center = frame.point_at((min + max) / 2.0);
-
-        Self::NonEmpty {
-            frame: Frame::from_xy(center, frame.x_dir, frame.y_dir),
-            size: max - min,
-        }
-    }
-
-    // Computes the point cloud centroid. PCA uses this as the origin of the
-    // covariance measurement, and the final box center is fitted afterward from
-    // the min/max projected coordinates.
+    // Computes the point cloud centroid, the origin of the covariance
+    // measurement and of the principal frame.
     fn centroid(points: &[Point3]) -> Point3 {
         let sum: Vector3<f64> = points.iter().map(|point| point.coords).sum();
         Point3::from(sum / points.len() as f64)
@@ -404,34 +328,6 @@ impl BBox {
             covariance += offset * offset.transpose();
         }
         covariance / points.len() as f64
-    }
-
-    /// Returns the eight corners of a non-empty box.
-    pub fn corners(&self) -> Option<[Point3; 8]> {
-        match self {
-            Self::Empty => None,
-            Self::NonEmpty { frame, size } => {
-                let half_size = *size / 2.0;
-                let signs = [
-                    Vector3::new(-1.0, -1.0, -1.0),
-                    Vector3::new(-1.0, -1.0, 1.0),
-                    Vector3::new(-1.0, 1.0, -1.0),
-                    Vector3::new(-1.0, 1.0, 1.0),
-                    Vector3::new(1.0, -1.0, -1.0),
-                    Vector3::new(1.0, -1.0, 1.0),
-                    Vector3::new(1.0, 1.0, -1.0),
-                    Vector3::new(1.0, 1.0, 1.0),
-                ];
-
-                Some(signs.map(|sign| frame.point_at(sign.component_mul(&half_size))))
-            }
-        }
-    }
-}
-
-impl Default for BBox {
-    fn default() -> Self {
-        Self::empty()
     }
 }
 
