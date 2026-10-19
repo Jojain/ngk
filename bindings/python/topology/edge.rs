@@ -7,12 +7,14 @@ use super::model::PyModel;
 use crate::binding_common::explore::SharedEdge;
 use crate::topology::StandardPayload;
 
+use super::super::geometry::PyFrame;
 use super::super::geometry::curve_to_py;
-use super::super::measurement::{self, PyLinearProperties};
-use crate::binding_common::measurement as binding_measurement;
+use super::super::measurement::{self, PyBoundingBox, PyLinearProperties};
 use super::face::PyFace;
 use super::sheet::PySheet;
 use super::vertex::PyVertex;
+use crate::binding_common::measurement as binding_measurement;
+use crate::binding_common::measurement::BoxRequest;
 
 #[pyclass(name = "Edge", module = "ngk")]
 #[derive(Clone)]
@@ -91,6 +93,22 @@ entity_methods!(PyEdge, SharedEdge<StandardPayload>, "edge", {
     #[getter]
     fn linear_properties(&self) -> PyResult<PyLinearProperties> {
         measurement::linear(binding_measurement::edge(&self.inner))
+    }
+
+    #[pyo3(signature = (frame=None))]
+    fn bounding_box(&self, frame: Option<PyFrame>) -> PyResult<PyBoundingBox> {
+        let frame = frame.map(|frame| frame.frame);
+        measurement::bounding_box(binding_measurement::edge_box(
+            &self.inner,
+            BoxRequest::Aligned(frame.as_ref()),
+        ))
+    }
+
+    fn oriented_bounding_box(&self) -> PyResult<PyBoundingBox> {
+        measurement::bounding_box(binding_measurement::edge_box(
+            &self.inner,
+            BoxRequest::Oriented,
+        ))
     }
 
     fn __repr__(&self) -> String {

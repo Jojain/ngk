@@ -1,3 +1,5 @@
-from ..core import LinearProperties, SurfaceProperties, VolumeProperties
+from ..core import Bound, BoundingBox, LinearProperties, SurfaceProperties, VolumeProperties
 
-__all__ = ["LinearProperties", "SurfaceProperties", "VolumeProperties"]
+__all__ = [
+    "Bound", "BoundingBox", "LinearProperties", "SurfaceProperties", "VolumeProperties",
+]

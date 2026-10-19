@@ -43,7 +43,10 @@ revolve, loft, rigid motion, blending, healing, edge splitting, and face and
 solid Booleans. Face Booleans and edge splits return one model together with
 all result handles. Entities measure themselves: `edge.linear_properties`,
 `profile.length`, `face.area`, `solid.volume`, `solid.volume_properties`, and
-so on, each bundle with its centroid and inertia. STEP text exchange is available under `ngk.exchange.step`.
+so on, each bundle with its centroid and inertia, and `bounding_box(frame=None)`
+and `oriented_bounding_box()` give exact boxes along the world axes, a chosen
+frame, or the frame that fits the entity best. STEP text exchange is available
+under `ngk.exchange.step`.
 
 The WASM binding exposes the same modeling, measurement, rigid-motion, and
 STEP text capabilities. Its browser API uses camel-case exports and omits

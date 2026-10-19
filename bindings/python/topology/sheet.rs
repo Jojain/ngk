@@ -7,11 +7,13 @@ use super::model::PyModel;
 use crate::binding_common::explore::{SharedSheet, SharedShell};
 use crate::topology::StandardPayload;
 
-use super::super::measurement::{self, PySurfaceProperties};
-use crate::binding_common::measurement as binding_measurement;
+use super::super::geometry::PyFrame;
+use super::super::measurement::{self, PyBoundingBox, PySurfaceProperties};
 use super::edge::PyEdge;
 use super::face::PyFace;
 use super::vertex::PyVertex;
+use crate::binding_common::measurement as binding_measurement;
+use crate::binding_common::measurement::BoxRequest;
 
 #[pyclass(name = "Shell", module = "ngk")]
 #[derive(Clone)]
@@ -128,5 +130,21 @@ entity_methods!(PySheet, SharedSheet<StandardPayload>, "sheet", {
     #[getter]
     fn surface_properties(&self) -> PyResult<PySurfaceProperties> {
         measurement::surface(binding_measurement::sheet(&self.inner))
+    }
+
+    #[pyo3(signature = (frame=None))]
+    fn bounding_box(&self, frame: Option<PyFrame>) -> PyResult<PyBoundingBox> {
+        let frame = frame.map(|frame| frame.frame);
+        measurement::bounding_box(binding_measurement::sheet_box(
+            &self.inner,
+            BoxRequest::Aligned(frame.as_ref()),
+        ))
+    }
+
+    fn oriented_bounding_box(&self) -> PyResult<PyBoundingBox> {
+        measurement::bounding_box(binding_measurement::sheet_box(
+            &self.inner,
+            BoxRequest::Oriented,
+        ))
     }
 });

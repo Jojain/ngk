@@ -7,10 +7,12 @@ use super::model::PyModel;
 use crate::binding_common::explore::{SharedLoop, SharedProfile};
 use crate::topology::StandardPayload;
 
-use super::super::measurement::{self, PyLinearProperties};
-use crate::binding_common::measurement as binding_measurement;
+use super::super::geometry::PyFrame;
+use super::super::measurement::{self, PyBoundingBox, PyLinearProperties};
 use super::edge::PyEdge;
 use super::vertex::PyVertex;
+use crate::binding_common::measurement as binding_measurement;
+use crate::binding_common::measurement::BoxRequest;
 
 #[pyclass(name = "Loop", module = "ngk")]
 #[derive(Clone)]
@@ -83,6 +85,22 @@ entity_methods!(PyProfile, SharedProfile<StandardPayload>, "profile", {
     #[getter]
     fn linear_properties(&self) -> PyResult<PyLinearProperties> {
         measurement::linear(binding_measurement::profile(&self.inner))
+    }
+
+    #[pyo3(signature = (frame=None))]
+    fn bounding_box(&self, frame: Option<PyFrame>) -> PyResult<PyBoundingBox> {
+        let frame = frame.map(|frame| frame.frame);
+        measurement::bounding_box(binding_measurement::profile_box(
+            &self.inner,
+            BoxRequest::Aligned(frame.as_ref()),
+        ))
+    }
+
+    fn oriented_bounding_box(&self) -> PyResult<PyBoundingBox> {
+        measurement::bounding_box(binding_measurement::profile_box(
+            &self.inner,
+            BoxRequest::Oriented,
+        ))
     }
 
     fn darts(&self) -> PyResult<Vec<usize>> {

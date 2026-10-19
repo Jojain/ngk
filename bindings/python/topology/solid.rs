@@ -7,12 +7,14 @@ use super::model::PyModel;
 use crate::binding_common::explore::SharedSolid;
 use crate::topology::StandardPayload;
 
-use super::super::measurement::{self, PySurfaceProperties, PyVolumeProperties};
-use crate::binding_common::measurement as binding_measurement;
+use super::super::geometry::PyFrame;
+use super::super::measurement::{self, PyBoundingBox, PySurfaceProperties, PyVolumeProperties};
 use super::edge::PyEdge;
 use super::face::PyFace;
 use super::sheet::PyShell;
 use super::vertex::PyVertex;
+use crate::binding_common::measurement as binding_measurement;
+use crate::binding_common::measurement::BoxRequest;
 
 #[pyclass(name = "Solid", module = "ngk")]
 #[derive(Clone)]
@@ -120,6 +122,22 @@ entity_methods!(PySolid, SharedSolid<StandardPayload>, "solid", {
     #[getter]
     fn volume_properties(&self) -> PyResult<PyVolumeProperties> {
         measurement::volume(binding_measurement::solid(&self.inner))
+    }
+
+    #[pyo3(signature = (frame=None))]
+    fn bounding_box(&self, frame: Option<PyFrame>) -> PyResult<PyBoundingBox> {
+        let frame = frame.map(|frame| frame.frame);
+        measurement::bounding_box(binding_measurement::solid_box(
+            &self.inner,
+            BoxRequest::Aligned(frame.as_ref()),
+        ))
+    }
+
+    fn oriented_bounding_box(&self) -> PyResult<PyBoundingBox> {
+        measurement::bounding_box(binding_measurement::solid_box(
+            &self.inner,
+            BoxRequest::Oriented,
+        ))
     }
 
     fn __repr__(&self) -> String {

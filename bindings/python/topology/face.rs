@@ -7,12 +7,14 @@ use super::model::PyModel;
 use crate::binding_common::explore::SharedFace;
 use crate::topology::StandardPayload;
 
+use super::super::geometry::PyFrame;
 use super::super::geometry::{PyVector3, surface_to_py, unit_vector};
-use super::super::measurement::{self, PySurfaceProperties};
-use crate::binding_common::measurement as binding_measurement;
+use super::super::measurement::{self, PyBoundingBox, PySurfaceProperties};
 use super::edge::PyEdge;
 use super::profile::PyLoop;
 use super::vertex::PyVertex;
+use crate::binding_common::measurement as binding_measurement;
+use crate::binding_common::measurement::BoxRequest;
 
 #[pyclass(name = "Face", module = "ngk")]
 #[derive(Clone)]
@@ -36,7 +38,9 @@ entity_methods!(PyFace, SharedFace<StandardPayload>, "face", {
     /// reversed against its surface. `(u, v)` is not tested against the
     /// face's loops.
     fn normal_at(&self, u: f64, v: f64) -> PyResult<PyVector3> {
-        Ok(unit_vector(self.inner.view().map_err(py_err)?.normal_at(u, v)))
+        Ok(unit_vector(
+            self.inner.view().map_err(py_err)?.normal_at(u, v),
+        ))
     }
 
     #[getter]
@@ -98,6 +102,22 @@ entity_methods!(PyFace, SharedFace<StandardPayload>, "face", {
     #[getter]
     fn surface_properties(&self) -> PyResult<PySurfaceProperties> {
         measurement::surface(binding_measurement::face(&self.inner))
+    }
+
+    #[pyo3(signature = (frame=None))]
+    fn bounding_box(&self, frame: Option<PyFrame>) -> PyResult<PyBoundingBox> {
+        let frame = frame.map(|frame| frame.frame);
+        measurement::bounding_box(binding_measurement::face_box(
+            &self.inner,
+            BoxRequest::Aligned(frame.as_ref()),
+        ))
+    }
+
+    fn oriented_bounding_box(&self) -> PyResult<PyBoundingBox> {
+        measurement::bounding_box(binding_measurement::face_box(
+            &self.inner,
+            BoxRequest::Oriented,
+        ))
     }
 
     fn __repr__(&self) -> String {
