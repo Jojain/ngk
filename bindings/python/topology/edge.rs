@@ -8,6 +8,8 @@ use crate::binding_common::explore::SharedEdge;
 use crate::topology::StandardPayload;
 
 use super::super::geometry::curve_to_py;
+use super::super::measurement::{self, PyLinearProperties};
+use crate::binding_common::measurement as binding_measurement;
 use super::face::PyFace;
 use super::sheet::PySheet;
 use super::vertex::PyVertex;
@@ -84,6 +86,11 @@ entity_methods!(PyEdge, SharedEdge<StandardPayload>, "edge", {
 
     fn reversed(&self) -> PyResult<Self> {
         Ok(Self::from_inner(self.inner.reversed().map_err(py_err)?))
+    }
+
+    #[getter]
+    fn linear_properties(&self) -> PyResult<PyLinearProperties> {
+        measurement::linear(binding_measurement::edge(&self.inner))
     }
 
     fn __repr__(&self) -> String {

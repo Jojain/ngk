@@ -1,7 +1,6 @@
 import pytest
 
 from ngk import geometry as g
-from ngk.measurement import face_properties
 from ngk.modeling import booleans, edges, faces, profiles, solids
 from ngk.tessellation import Range, Tessellation, tessellate
 
@@ -38,7 +37,7 @@ def test_a_picked_triangle_names_the_face_it_lies_on():
     solid = holed_block()
     mesh = tessellate(solid)
     by_key = {face.key: face for face in solid.faces()}
-    top = next(f for f in solid.faces() if face_properties(f).centroid.as_tuple()[2] == pytest.approx(10))
+    top = next(f for f in solid.faces() if f.surface_properties.centroid.as_tuple()[2] == pytest.approx(10))
 
     hits = [r for r in mesh.faces if r.key == top.key]
     assert len(hits) == 1

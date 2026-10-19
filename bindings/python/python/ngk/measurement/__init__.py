@@ -1,15 +1,10 @@
-"""Length, area, volume, centroid, and centroidal inertia."""
+"""The bundles that topology entities return from their measures.
 
-from ..core.measurement import (
-    MeasuredProperties,
-    edge_properties,
-    face_properties,
-    profile_properties,
-    sheet_properties,
-    solid_properties,
-)
+Edge and Profile have ``linear_properties``; Face, Sheet and Solid have
+``area`` and ``surface_properties``; Solid also has ``volume`` and
+``volume_properties``.
+"""
 
-__all__ = [
-    "MeasuredProperties", "edge_properties", "face_properties", "profile_properties",
-    "sheet_properties", "solid_properties",
-]
+from ..core.measurement import LinearProperties, SurfaceProperties, VolumeProperties
+
+__all__ = ["LinearProperties", "SurfaceProperties", "VolumeProperties"]

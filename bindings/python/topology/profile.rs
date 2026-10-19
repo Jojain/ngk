@@ -7,6 +7,8 @@ use super::model::PyModel;
 use crate::binding_common::explore::{SharedLoop, SharedProfile};
 use crate::topology::StandardPayload;
 
+use super::super::measurement::{self, PyLinearProperties};
+use crate::binding_common::measurement as binding_measurement;
 use super::edge::PyEdge;
 use super::vertex::PyVertex;
 
@@ -71,6 +73,16 @@ entity_methods!(PyProfile, SharedProfile<StandardPayload>, "profile", {
     #[getter]
     fn end(&self) -> PyResult<PyVertex> {
         Ok(PyVertex::from_inner(self.inner.end().map_err(py_err)?))
+    }
+
+    #[getter]
+    fn length(&self) -> PyResult<f64> {
+        binding_measurement::profile_length(&self.inner).map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    fn linear_properties(&self) -> PyResult<PyLinearProperties> {
+        measurement::linear(binding_measurement::profile(&self.inner))
     }
 
     fn darts(&self) -> PyResult<Vec<usize>> {

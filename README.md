@@ -41,8 +41,9 @@ The Python API follows the kernel's domain structure. `ngk.modeling` exposes
 edge, profile, face, sheet, and solid construction and operations: sweep,
 revolve, loft, rigid motion, blending, healing, edge splitting, and face and
 solid Booleans. Face Booleans and edge splits return one model together with
-all result handles. `ngk.measurement` exposes length, area, volume, centroid,
-and inertia. STEP text exchange is available under `ngk.exchange.step`.
+all result handles. Entities measure themselves: `edge.linear_properties`,
+`profile.length`, `face.area`, `solid.volume`, `solid.volume_properties`, and
+so on, each bundle with its centroid and inertia. STEP text exchange is available under `ngk.exchange.step`.
 
 The WASM binding exposes the same modeling, measurement, rigid-motion, and
 STEP text capabilities. Its browser API uses camel-case exports and omits

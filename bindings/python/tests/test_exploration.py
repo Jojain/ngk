@@ -1,7 +1,6 @@
 import pytest
 
 from ngk.geometry import Vector
-from ngk.measurement import solid_properties
 from ngk.model import Model
 from ngk.modeling import faces, profiles, solids
 from ngk.tessellation import tessellate
@@ -82,7 +81,7 @@ def _dot(a, b):
     ids=["block", "cylinder", "sphere"],
 )
 def test_a_solid_face_normal_points_out_of_the_solid(solid):
-    centroid = solid_properties(solid).centroid
+    centroid = solid.volume_properties.centroid
     for face in solid.faces():
         point = face.surface.point_at(0.3, 0.4)
         offset = Vector(*(p - c for p, c in zip(point.as_tuple(), centroid.as_tuple())))

@@ -4,7 +4,6 @@ import itertools
 
 import pytest
 
-from ngk import measurement
 from ngk.geometry import Frame, Plane, Point, Vector
 from ngk.modeling import booleans, faces, solids
 
@@ -14,7 +13,7 @@ def at(x, y, z):
 
 
 def volume(solid):
-    return measurement.solid_properties(solid).amount
+    return solid.volume
 
 
 def test_tools_bridged_only_by_a_later_tool_fuse_the_same_in_every_order():

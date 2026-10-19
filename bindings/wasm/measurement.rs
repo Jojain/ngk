@@ -2,7 +2,8 @@
 
 use wasm_bindgen::prelude::*;
 
-use crate::binding_common::measurement::{self, MeasuredProperties};
+use crate::binding_common::measurement::{self, tensor};
+use crate::measure::{Area, Length, LinearProperties, SurfaceProperties, Volume, VolumeProperties};
 
 use super::geometry::{WasmPoint3, point};
 use super::topology::{WasmEdge, WasmFace, WasmProfile, WasmSheet, WasmSolid};
@@ -11,16 +12,16 @@ fn js_err(error: impl ToString) -> JsValue {
     JsValue::from_str(&error.to_string())
 }
 
-#[wasm_bindgen(js_name = MeasuredProperties)]
-pub struct WasmMeasuredProperties {
-    inner: MeasuredProperties,
+#[wasm_bindgen(js_name = LinearProperties)]
+pub struct WasmLinearProperties {
+    inner: LinearProperties,
 }
 
 #[wasm_bindgen]
-impl WasmMeasuredProperties {
+impl WasmLinearProperties {
     #[wasm_bindgen(getter)]
-    pub fn amount(&self) -> f64 {
-        self.inner.amount
+    pub fn length(&self) -> f64 {
+        self.inner.length
     }
     #[wasm_bindgen(getter)]
     pub fn centroid(&self) -> WasmPoint3 {
@@ -28,33 +29,124 @@ impl WasmMeasuredProperties {
     }
     #[wasm_bindgen(getter)]
     pub fn inertia(&self) -> Vec<f64> {
-        self.inner.inertia.to_vec()
+        tensor::<Length>(self.inner.inertia).to_vec()
     }
 }
 
-fn wrap(value: Result<MeasuredProperties, String>) -> Result<WasmMeasuredProperties, JsValue> {
-    value
-        .map(|inner| WasmMeasuredProperties { inner })
-        .map_err(js_err)
+#[wasm_bindgen(js_name = SurfaceProperties)]
+pub struct WasmSurfaceProperties {
+    inner: SurfaceProperties,
 }
 
-#[wasm_bindgen(js_name = edgeProperties)]
-pub fn edge_properties(value: &WasmEdge) -> Result<WasmMeasuredProperties, JsValue> {
-    wrap(measurement::edge(&value.inner))
+#[wasm_bindgen]
+impl WasmSurfaceProperties {
+    #[wasm_bindgen(getter)]
+    pub fn area(&self) -> f64 {
+        self.inner.area
+    }
+    #[wasm_bindgen(getter)]
+    pub fn centroid(&self) -> WasmPoint3 {
+        point(self.inner.centroid)
+    }
+    #[wasm_bindgen(getter)]
+    pub fn inertia(&self) -> Vec<f64> {
+        tensor::<Area>(self.inner.inertia).to_vec()
+    }
 }
-#[wasm_bindgen(js_name = profileProperties)]
-pub fn profile_properties(value: &WasmProfile) -> Result<WasmMeasuredProperties, JsValue> {
-    wrap(measurement::profile(&value.inner))
+
+#[wasm_bindgen(js_name = VolumeProperties)]
+pub struct WasmVolumeProperties {
+    inner: VolumeProperties,
 }
-#[wasm_bindgen(js_name = faceProperties)]
-pub fn face_properties(value: &WasmFace) -> Result<WasmMeasuredProperties, JsValue> {
-    wrap(measurement::face(&value.inner))
+
+#[wasm_bindgen]
+impl WasmVolumeProperties {
+    #[wasm_bindgen(getter)]
+    pub fn volume(&self) -> f64 {
+        self.inner.volume
+    }
+    #[wasm_bindgen(getter)]
+    pub fn centroid(&self) -> WasmPoint3 {
+        point(self.inner.centroid)
+    }
+    #[wasm_bindgen(getter)]
+    pub fn inertia(&self) -> Vec<f64> {
+        tensor::<Volume>(self.inner.inertia).to_vec()
+    }
 }
-#[wasm_bindgen(js_name = sheetProperties)]
-pub fn sheet_properties(value: &WasmSheet) -> Result<WasmMeasuredProperties, JsValue> {
-    wrap(measurement::sheet(&value.inner))
+
+#[wasm_bindgen]
+impl WasmEdge {
+    #[wasm_bindgen(getter, js_name = linearProperties)]
+    pub fn linear_properties(&self) -> Result<WasmLinearProperties, JsValue> {
+        let inner = measurement::edge(&self.inner).map_err(js_err)?;
+        Ok(WasmLinearProperties { inner })
+    }
 }
-#[wasm_bindgen(js_name = solidProperties)]
-pub fn solid_properties(value: &WasmSolid) -> Result<WasmMeasuredProperties, JsValue> {
-    wrap(measurement::solid(&value.inner))
+
+#[wasm_bindgen]
+impl WasmProfile {
+    #[wasm_bindgen(getter)]
+    pub fn length(&self) -> Result<f64, JsValue> {
+        measurement::profile_length(&self.inner).map_err(js_err)
+    }
+
+    #[wasm_bindgen(getter, js_name = linearProperties)]
+    pub fn linear_properties(&self) -> Result<WasmLinearProperties, JsValue> {
+        let inner = measurement::profile(&self.inner).map_err(js_err)?;
+        Ok(WasmLinearProperties { inner })
+    }
+}
+
+#[wasm_bindgen]
+impl WasmFace {
+    #[wasm_bindgen(getter)]
+    pub fn area(&self) -> Result<f64, JsValue> {
+        Ok(self.surface_properties()?.area())
+    }
+
+    #[wasm_bindgen(getter, js_name = surfaceProperties)]
+    pub fn surface_properties(&self) -> Result<WasmSurfaceProperties, JsValue> {
+        let inner = measurement::face(&self.inner).map_err(js_err)?;
+        Ok(WasmSurfaceProperties { inner })
+    }
+}
+
+#[wasm_bindgen]
+impl WasmSheet {
+    #[wasm_bindgen(getter)]
+    pub fn area(&self) -> Result<f64, JsValue> {
+        Ok(self.surface_properties()?.area())
+    }
+
+    #[wasm_bindgen(getter, js_name = surfaceProperties)]
+    pub fn surface_properties(&self) -> Result<WasmSurfaceProperties, JsValue> {
+        let inner = measurement::sheet(&self.inner).map_err(js_err)?;
+        Ok(WasmSurfaceProperties { inner })
+    }
+}
+
+#[wasm_bindgen]
+impl WasmSolid {
+    #[wasm_bindgen(getter)]
+    pub fn area(&self) -> Result<f64, JsValue> {
+        Ok(self.surface_properties()?.area())
+    }
+
+    #[wasm_bindgen(getter, js_name = surfaceProperties)]
+    pub fn surface_properties(&self) -> Result<WasmSurfaceProperties, JsValue> {
+        let inner = measurement::solid_surface(&self.inner).map_err(js_err)?;
+        Ok(WasmSurfaceProperties { inner })
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn volume(&self) -> Result<f64, JsValue> {
+        Ok(self.volume_properties()?.volume())
+    }
+
+    #[wasm_bindgen(getter, js_name = volumeProperties)]
+    pub fn volume_properties(&self) -> Result<WasmVolumeProperties, JsValue> {
+        let inner = measurement::solid(&self.inner).map_err(js_err)?;
+        Ok(WasmVolumeProperties { inner })
+    }
 }

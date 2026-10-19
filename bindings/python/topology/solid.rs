@@ -7,6 +7,8 @@ use super::model::PyModel;
 use crate::binding_common::explore::SharedSolid;
 use crate::topology::StandardPayload;
 
+use super::super::measurement::{self, PySurfaceProperties, PyVolumeProperties};
+use crate::binding_common::measurement as binding_measurement;
 use super::edge::PyEdge;
 use super::face::PyFace;
 use super::sheet::PyShell;
@@ -94,6 +96,30 @@ entity_methods!(PySolid, SharedSolid<StandardPayload>, "solid", {
     #[getter]
     fn vertex_count(&self) -> PyResult<usize> {
         Ok(self.inner.vertices().map_err(py_err)?.len())
+    }
+
+    #[getter]
+    fn area(&self) -> PyResult<f64> {
+        binding_measurement::solid_surface(&self.inner)
+            .map(|properties| properties.area)
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    fn surface_properties(&self) -> PyResult<PySurfaceProperties> {
+        measurement::surface(binding_measurement::solid_surface(&self.inner))
+    }
+
+    #[getter]
+    fn volume(&self) -> PyResult<f64> {
+        binding_measurement::solid(&self.inner)
+            .map(|properties| properties.volume)
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    fn volume_properties(&self) -> PyResult<PyVolumeProperties> {
+        measurement::volume(binding_measurement::solid(&self.inner))
     }
 
     fn __repr__(&self) -> String {

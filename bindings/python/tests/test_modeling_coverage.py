@@ -109,19 +109,33 @@ def test_edge_split_exposes_one_model_and_all_handles():
     assert result.vertex().model == result.model
 
 
-def test_measurements_expose_centroid_and_inertia():
-    from ngk import measurement
-    from ngk.modeling import solids
+def test_each_entity_measures_itself():
+    from ngk.modeling import loft, solids
+
+    edge = edges.line((0, 0, 0), (3, 4, 0))
+    assert edge.linear_properties.length == pytest.approx(5)
+    assert edge.linear_properties.centroid.as_tuple() == pytest.approx((1.5, 2, 0))
+
+    profile = profiles.rectangle(2, 3)
+    assert profile.length == pytest.approx(10)
+    assert profile.linear_properties.length == pytest.approx(10)
 
     face = faces.rectangle(2, 3)
-    solid = solids.block(2, 3, 4)
+    assert face.area == pytest.approx(6)
+    assert face.surface_properties.area == pytest.approx(6)
 
-    area = measurement.face_properties(face)
-    volume = measurement.solid_properties(solid)
-    assert area.amount == pytest.approx(6)
-    assert volume.amount == pytest.approx(24)
-    assert len(volume.inertia) == 9
-    assert volume.centroid.as_tuple() == pytest.approx((1, 1.5, 2))
+    top = profiles.square(1, Plane(Point(0, 0, 2), Vector(1, 0, 0), Vector(0, 0, 1)))
+    sheet = loft.profiles([profiles.square(1), top])
+    assert sheet.area == pytest.approx(8)
+
+    solid = solids.block(2, 3, 4)
+    assert solid.volume == pytest.approx(24)
+    assert solid.area == pytest.approx(2 * (6 + 8 + 12))
+    properties = solid.volume_properties
+    assert properties.volume == pytest.approx(24)
+    assert len(properties.inertia) == 9
+    assert properties.centroid.as_tuple() == pytest.approx((1, 1.5, 2))
+    assert solid.surface_properties.centroid.as_tuple() == pytest.approx((1, 1.5, 2))
 
 
 def test_face_boundary_split_updates_the_face_in_one_model():

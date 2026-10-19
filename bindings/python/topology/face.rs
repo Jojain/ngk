@@ -8,6 +8,8 @@ use crate::binding_common::explore::SharedFace;
 use crate::topology::StandardPayload;
 
 use super::super::geometry::{PyVector3, surface_to_py, unit_vector};
+use super::super::measurement::{self, PySurfaceProperties};
+use crate::binding_common::measurement as binding_measurement;
 use super::edge::PyEdge;
 use super::profile::PyLoop;
 use super::vertex::PyVertex;
@@ -84,6 +86,18 @@ entity_methods!(PyFace, SharedFace<StandardPayload>, "face", {
 
     fn reversed(&self) -> PyResult<Self> {
         Ok(Self::from_inner(self.inner.reversed().map_err(py_err)?))
+    }
+
+    #[getter]
+    fn area(&self) -> PyResult<f64> {
+        binding_measurement::face(&self.inner)
+            .map(|properties| properties.area)
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    fn surface_properties(&self) -> PyResult<PySurfaceProperties> {
+        measurement::surface(binding_measurement::face(&self.inner))
     }
 
     fn __repr__(&self) -> String {

@@ -7,6 +7,8 @@ use super::model::PyModel;
 use crate::binding_common::explore::{SharedSheet, SharedShell};
 use crate::topology::StandardPayload;
 
+use super::super::measurement::{self, PySurfaceProperties};
+use crate::binding_common::measurement as binding_measurement;
 use super::edge::PyEdge;
 use super::face::PyFace;
 use super::vertex::PyVertex;
@@ -114,5 +116,17 @@ entity_methods!(PySheet, SharedSheet<StandardPayload>, "sheet", {
 
     fn reversed(&self) -> PyResult<Self> {
         Ok(Self::from_inner(self.inner.reversed().map_err(py_err)?))
+    }
+
+    #[getter]
+    fn area(&self) -> PyResult<f64> {
+        binding_measurement::sheet(&self.inner)
+            .map(|properties| properties.area)
+            .map_err(PyValueError::new_err)
+    }
+
+    #[getter]
+    fn surface_properties(&self) -> PyResult<PySurfaceProperties> {
+        measurement::surface(binding_measurement::sheet(&self.inner))
     }
 });
