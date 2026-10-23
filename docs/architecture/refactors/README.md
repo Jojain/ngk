@@ -21,4 +21,5 @@ properly, then do it, reject it, or record what you learned.
 
 | Date | Entry | Area |
 |---|---|---|
+| 2026-10-23 | [Revolution and rounded sweep walls](2026-10-23-revolution-and-rounded-sweep-walls.md) | `builders::revolve`, `builders::sweep` |
 | 2026-10-15 | [One boundary walk for face domains](2026-10-15-face-domain-boundary-walk.md) | `topology::unwrapped_face_domain`, `measure`, `tessellate`, `topology::trim_domain` |

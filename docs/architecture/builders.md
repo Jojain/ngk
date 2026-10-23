@@ -81,6 +81,33 @@ Queries and preflight checks are not builders and keep ordinary return types.
 For example, `is_removable` may return `bool`, and `planned_merge` may return
 `Result<MergeKind, CellRemovalError>`.
 
+## Revolution sections
+
+A face or profile revolution uses a planar meridian section: the revolution
+axis lies in the section plane and the whole boundary stays on one side of it.
+The side can be either side; the axis origin can be anywhere along the same
+line. `SectionCrossesAxis` refuses a section spanning both sides instead of
+returning overlapping walls. The builder does not split or combine positive
+and negative radial regions.
+
+The preflight bounds each actual curve span with its positive-weight NURBS
+control hull, including curved interiors and inner loops. This is conservative:
+an ambiguous control hull or unsupported weights are also refused, even if
+the curve itself might stay on one side. `AxisOutsideSectionPlane` refuses an
+axis outside the meridian plane. Refusals leave the model unchanged.
+
+A section edge wholly on the axis sweeps no wall. In a partial turn the two
+caps meet directly along that edge; in a full turn the source section is
+consumed. An edge with one end on the axis contributes a triangular wall for
+a partial turn, or a face bounded by one circular rim for a full turn.
+Curved section edges with both ends on the axis are refused by the profile
+and face builders. The isolated-edge builder has its own full-turn apex
+construction; partial isolated-edge apex sweeps are refused.
+
+Circular trajectories keep the requested angular span, including angles over
+half a turn. A returning boundary circle is oriented against the sweep so its
+span agrees with its pcurve rather than selecting the complementary arc.
+
 The convention applies to the logical subject named by the operation. It does
 not change the distinction between logical entities and raw GMap cells: a
 result describing an edge uses an `EdgeKey`, while a result about a raw map

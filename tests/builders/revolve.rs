@@ -3,12 +3,16 @@ use std::collections::HashSet;
 use nalgebra::Vector3;
 use radians::Rad64;
 
-use ngk::builders::edges::{add_circle, add_edge, split_edge};
+use ngk::builders::edges::{add_arc, add_circle, add_edge, add_line, split_edge};
 use ngk::builders::faces::{add_face, add_polygon};
-use ngk::builders::revolve::{RevolveError, add_revolved_edge, add_revolved_face};
+use ngk::builders::profiles::add_profile_from_edges;
+use ngk::builders::revolve::{
+    RevolveError, add_revolved_edge, add_revolved_face, add_revolved_profile,
+};
 use ngk::geometry::axis::Axis3;
 use ngk::geometry::{
-    Axis2, Curve, Curve2, Fraction, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface,
+    Axis2, Curve, Curve2, Fraction, LINEAR_TOLERANCE, Plane, Point3, PointCoincidence, Rigid,
+    Surface,
 };
 use ngk::model::Model;
 use ngk::tessellate::{TessellateOpts, tessellate_face_key};
@@ -18,6 +22,236 @@ use ngk::topology::validation::{
     validate_all_solid_manifolds, validate_gmap, validate_solid_manifold,
     validate_solid_orientation,
 };
+
+#[test]
+fn a_section_crossing_the_axis_is_refused_without_changing_the_model() {
+    for angle in [Rad64::QUARTER_TURN, Rad64::FULL_TURN] {
+        let mut model = Model::<StandardPayload>::new();
+        let profile = add_polygon(
+            &mut model,
+            &[
+                Point3::new(-1.0, 0.0, 0.0),
+                Point3::new(2.0, 0.0, 0.0),
+                Point3::new(2.0, 0.0, 1.0),
+                Point3::new(-1.0, 0.0, 1.0),
+            ],
+        );
+        let face = add_face(&mut model, profile).unwrap();
+        let before = serde_json::to_value(&model).unwrap();
+        assert!(
+            add_revolved_face(&mut model, face, Axis3::z(), angle).is_err(),
+            "a section straddling the axis must not produce overlapping walls"
+        );
+        assert_eq!(serde_json::to_value(&model).unwrap(), before);
+    }
+}
+
+#[test]
+fn a_meridian_edge_crossing_the_axis_is_refused() {
+    for angle in [Rad64::QUARTER_TURN, Rad64::FULL_TURN] {
+        let mut model = Model::<StandardPayload>::new();
+        let start = Point3::new(-1.0, 0.0, 0.0);
+        let end = Point3::new(2.0, 0.0, 1.0);
+        let edge = add_edge(&mut model, start, end, Curve::line(start, end)).unwrap();
+        assert!(matches!(
+            add_revolved_edge(&mut model, edge, Axis3::z(), angle),
+            Err(RevolveError::SectionCrossesAxis)
+        ));
+    }
+}
+
+#[test]
+fn profile_revolution_respects_the_section_half_plane_and_axis_boundary() {
+    for inner in [-1.0, 0.0, 1.0] {
+        let mut model = Model::<StandardPayload>::new();
+        let profile = add_polygon(
+            &mut model,
+            &[
+                Point3::new(inner, 0.0, 0.0),
+                Point3::new(2.0, 0.0, 0.0),
+                Point3::new(2.0, 0.0, 3.0),
+                Point3::new(inner, 0.0, 3.0),
+            ],
+        );
+        let angle = 1.5 * std::f64::consts::PI;
+        let result = add_revolved_profile(&mut model, profile, Axis3::z(), Rad64::new(angle));
+        if inner < 0.0 {
+            assert!(matches!(result, Err(RevolveError::SectionCrossesAxis)));
+            continue;
+        }
+        let result = result.unwrap();
+        assert_eq!(result.faces.len(), if inner == 0.0 { 3 } else { 4 });
+        validate_gmap(model.topology()).unwrap();
+        for face in result.view(&model).unwrap().faces {
+            for edge in face.edges() {
+                if let Curve::Circle(circle) = edge.curve() {
+                    assert!((edge.length() - circle.radius() * angle).abs() < 1e-7);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_curved_section_crossing_between_its_vertices_is_refused() {
+    use std::f64::consts::FRAC_PI_2;
+    let mut model = Model::<StandardPayload>::new();
+    let plane = Plane::new(Point3::new(0.5, 0.0, 0.0), Vector3::x(), Vector3::y());
+    let arc = add_arc(
+        &mut model,
+        plane,
+        1.0,
+        Rad64::new(FRAC_PI_2),
+        Rad64::new(3.0 * FRAC_PI_2),
+    )
+    .unwrap();
+    let edge = model.edge_unchecked(arc).bounded_unchecked();
+    let (start, end) = (*edge.start().point(), *edge.end().point());
+    assert!(start.x > 0.0 && end.x > 0.0);
+    let chord = add_line(&mut model, end, start).unwrap();
+    let profile = add_profile_from_edges(&mut model, &[arc, chord]).unwrap();
+    let face = add_face(&mut model, profile).unwrap();
+    assert!(matches!(
+        add_revolved_face(&mut model, face, Axis3::z(), Rad64::FULL_TURN),
+        Err(RevolveError::SectionCrossesAxis)
+    ));
+}
+
+#[test]
+fn an_axis_boundary_is_independent_of_the_axis_origin_and_direction() {
+    let motion = Rigid::rotation(
+        Axis3::new(Point3::new(4.0, -2.0, 3.0), Vector3::new(1.0, 2.0, 3.0)),
+        Rad64::new(0.7),
+    );
+    // Moving the origin along an axis names the same line.
+    let axis = Axis3::new(Point3::new(0.0, 0.0, 100.0), Vector3::z()).moved(&motion);
+    for angle in [Rad64::QUARTER_TURN, Rad64::FULL_TURN] {
+        let mut model = Model::<StandardPayload>::new();
+        let points = [
+            Point3::origin(),
+            Point3::new(2.0, 0.0, 0.0),
+            Point3::new(2.0, 0.0, 3.0),
+            Point3::new(0.0, 0.0, 3.0),
+        ]
+        .map(|point| motion.apply(point));
+        let profile = add_polygon(&mut model, &points);
+        let face = add_face(&mut model, profile).unwrap();
+        let solid = add_revolved_face(&mut model, face, axis, angle)
+            .unwrap()
+            .solid;
+        validate_solid_manifold(&model, solid).unwrap();
+        validate_solid_orientation(&model, solid).unwrap();
+        assert!(
+            (model
+                .solid_unchecked(solid)
+                .volume_properties()
+                .unwrap()
+                .volume
+                - 6.0 * angle.val())
+            .abs()
+                < 1e-6
+        );
+    }
+}
+
+#[test]
+fn revolved_rectangles_keep_the_requested_circular_arcs() {
+    use std::f64::consts::{PI, TAU};
+    for angle in [0.5 * PI, PI, PI + 0.01, 1.5 * PI, TAU - 0.01] {
+        for inner in [0.0, 1.0] {
+            for reversed in [false, true] {
+                let mut model = Model::<StandardPayload>::new();
+                let mut points = vec![
+                    Point3::new(inner, 0.0, 0.0),
+                    Point3::new(2.0, 0.0, 0.0),
+                    Point3::new(2.0, 0.0, 3.0),
+                    Point3::new(inner, 0.0, 3.0),
+                ];
+                if reversed {
+                    points.reverse();
+                }
+                let profile = add_polygon(&mut model, &points);
+                let face = add_face(&mut model, profile).unwrap();
+                let solid = add_revolved_face(&mut model, face, Axis3::z(), Rad64::new(angle))
+                    .unwrap()
+                    .solid;
+                validate_solid_manifold(&model, solid).unwrap();
+                validate_solid_orientation(&model, solid).unwrap();
+                let solid = model.solid_unchecked(solid);
+                for face in solid.faces() {
+                    for edge in face.edges() {
+                        let pcurve = face.pcurve(edge.dart()).expect("boundary pcurve");
+                        for fraction in [0.25, 0.5, 0.75].map(Fraction::new) {
+                            let uv = pcurve.point_at(fraction);
+                            let on_surface = face.surface().point_at(uv.x, uv.y);
+                            assert!(
+                                edge.trimmed_curve()
+                                    .point_at(fraction)
+                                    .coincides(on_surface, LINEAR_TOLERANCE),
+                                "edge span must agree with its face pcurve at angle {angle}"
+                            );
+                        }
+                    }
+                }
+                for edge in solid.edges() {
+                    let Curve::Circle(circle) = edge.curve() else {
+                        continue;
+                    };
+                    let midpoint = edge.trimmed_curve().point_at(Fraction::new(0.5));
+                    let expected = Point3::new(
+                        circle.radius() * (angle / 2.0).cos(),
+                        circle.radius() * (angle / 2.0).sin(),
+                        midpoint.z,
+                    );
+                    assert!(
+                        midpoint.coincides(expected, LINEAR_TOLERANCE),
+                        "angle={angle}, inner={inner}, reversed={reversed}: arc midpoint {midpoint:?}, expected {expected:?}"
+                    );
+                    assert!((edge.length() - circle.radius() * angle).abs() < 1e-7);
+                }
+                let volume = solid.volume_properties().unwrap().volume;
+                assert!(
+                    (volume - 0.5 * angle * (4.0 - inner * inner) * 3.0).abs() < 1e-6,
+                    "incorrect swept volume {volume} at {angle}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_section_bounded_by_the_axis_sweeps_a_valid_cylinder() {
+    for angle in [Rad64::QUARTER_TURN, Rad64::FULL_TURN] {
+        for side in [-1.0, 1.0] {
+            for reversed in [false, true] {
+                let mut model = Model::<StandardPayload>::new();
+                let mut points = vec![
+                    Point3::origin(),
+                    Point3::new(side * 2.0, 0.0, 0.0),
+                    Point3::new(side * 2.0, 0.0, 3.0),
+                    Point3::new(0.0, 0.0, 3.0),
+                ];
+                if reversed {
+                    points.reverse();
+                }
+                let profile = add_polygon(&mut model, &points);
+                let face = add_face(&mut model, profile).unwrap();
+                let solid = add_revolved_face(&mut model, face, Axis3::z(), angle)
+                    .expect("an axis boundary sweeps no wall and must be omitted")
+                    .solid;
+                validate_solid_manifold(&model, solid).unwrap();
+                validate_solid_orientation(&model, solid).unwrap();
+                let faces = model.solid_unchecked(solid).faces();
+                assert_eq!(faces.len(), if angle == Rad64::FULL_TURN { 3 } else { 5 });
+                for face in faces {
+                    let mesh =
+                        tessellate_face_key(&model, face.key(), TessellateOpts::default()).unwrap();
+                    assert!(!mesh.is_empty());
+                }
+            }
+        }
+    }
+}
 
 #[test]
 fn revolve_edge_partial_turn_creates_four_edge_face() {
@@ -267,7 +501,7 @@ fn revolve_closed_edge_crossing_the_axis_is_refused() {
                 Axis3::new(Point3::origin(), Vector3::z()),
                 Rad64::FULL_TURN,
             ),
-            Err(RevolveError::EdgeOnRevolutionAxis { .. })
+            Err(RevolveError::SectionCrossesAxis)
         ),
         "a profile straddling the axis sweeps no torus"
     );
@@ -759,7 +993,7 @@ fn partially_revolving_an_edge_touching_the_axis_is_rejected() {
         Axis3::new(Point3::origin(), Vector3::z()),
         Rad64::QUARTER_TURN,
     )
-    .expect_err("a partial turn cannot build the apex yet");
+    .expect_err("an isolated edge's partial turn refuses an apex");
 
     assert!(matches!(error, RevolveError::ApexRevolveUnsupported { .. }));
 }

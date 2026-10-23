@@ -59,6 +59,16 @@ pub enum RevolveError {
     #[error("Edge {key:?} lies on the revolution axis and sweeps no area")]
     EdgeOnRevolutionAxis { key: EdgeKey },
 
+    /// The section cannot be certified to remain on one side of the axis.
+    #[error("the section crosses the revolution axis or its curve bounds cannot certify one side")]
+    SectionCrossesAxis,
+
+    #[error("the revolution axis must lie in the section plane")]
+    AxisOutsideSectionPlane,
+
+    #[error("failed to bound the revolution section")]
+    SectionGeometry(#[from] crate::geometry::NurbsError),
+
     /// A marked closed profile swept a whole turn.
     ///
     /// An unmarked circle sweeps a torus with no boundary anywhere, and the
@@ -70,7 +80,7 @@ pub enum RevolveError {
     #[error("edge {key:?} carries a corner, which a whole turn sweeps into a boundary")]
     MarkedProfileRevolve { key: EdgeKey },
 
-    #[error("Edge {key:?} touches the revolution axis; apex faces are not supported yet")]
+    #[error("Edge {key:?} touches the revolution axis in an unsupported configuration")]
     ApexRevolveUnsupported { key: EdgeKey },
 
     #[error("failed to build the 2-cell of a boundaryless revolved face")]
@@ -342,6 +352,7 @@ pub(crate) fn add_revolved_edge_edit<P: Payload>(
     angle: Rad64,
 ) -> Result<EdgeRevolution, RevolveError> {
     let source = RevolvedSourceEdge::from_key(edit, edge)?;
+    validate_meridian_side(&source, axis)?;
     let angle = angle.clamp(Angle::ZERO, Angle::FULL_TURN);
     let face = if is_full_turn(angle) {
         add_full_revolved_edge_face(edit, &source, axis, angle)?
@@ -1160,6 +1171,7 @@ fn add_revolved_profile_from_dart_edit<P: Payload>(
     let profile = Profile::from_dart(edit, profile_dart)
         .expect("profile dart must belong to a registered profile");
     let planar = Planar::new(profile).map_err(RevolveError::PlanarError)?;
+    validate_planar_section(edit, planar.plane(), planar.inner().edges(), axis)?;
     let close_ring = planar.inner().is_closed();
     add_revolved_profile_faces(edit, profile_dart, axis, angle, close_ring)
 }
@@ -1186,8 +1198,8 @@ struct RevolvedFaceBuild {
     /// the matching cap edge dart, which also sits at `rotated_start`. `None`
     /// for a whole turn, for the same reason as `bottom_edge`.
     top_edge: Option<Dart>,
-    start_side: Dart,
-    end_side: Dart,
+    start_side: Option<Dart>,
+    end_side: Option<Dart>,
     outer_loop: Dart,
     key: FaceKey,
 }
@@ -1211,6 +1223,9 @@ fn add_revolved_profile_faces<P: Payload>(
 
     let mut faces = Vec::with_capacity(source_edges.len());
     for source in &source_edges {
+        if source_on_axis(source, axis)? {
+            continue;
+        }
         faces.push(add_revolved_edge_face(edit, source, axis, angle)?);
     }
 
@@ -1230,7 +1245,11 @@ fn add_revolved_edge_face<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<RevolvedFaceBuild, RevolveError> {
-    validate_revolvable_radii(axis, source)?;
+    let start_on_axis = revolve_radius(axis, source.start.point) <= LINEAR_TOLERANCE;
+    let end_on_axis = revolve_radius(axis, source.end.point) <= LINEAR_TOLERANCE;
+    if start_on_axis || end_on_axis {
+        return add_axis_revolved_face(edit, source, axis, angle, start_on_axis, end_on_axis);
+    }
 
     let start = source.start.point;
     let end = source.end.point;
@@ -1238,7 +1257,7 @@ fn add_revolved_edge_face<P: Payload>(
     let rotated_start = rotate_point(axis, start, angle);
     let rotated_end = rotate_point(axis, end, angle);
     let rotated_curve = curve.moved(&Rigid::rotation(axis, angle));
-    let start_arc = revolve_circle_curve(axis, start, angle);
+    let start_arc = revolve_circle_curve(axis, rotated_start, Rad64::new(-angle.val()));
     let end_arc = revolve_circle_curve(axis, end, angle);
     let interval = curve.interval_between(start, end);
     let support = revolved_support(&curve, axis);
@@ -1259,10 +1278,8 @@ fn add_revolved_edge_face<P: Payload>(
     // sewing it back on. What the two circles bound — a ring or an annulus —
     // is the support's answer, not a reason to build the band differently.
     //
-    // `validate_revolvable_radii` has already refused any edge touching the
-    // axis, so both radii are non-zero here today. The check is kept because it
-    // is the real precondition: a band with an end on the axis sweeps no circle
-    // there, and is closed by that degeneracy rather than by a second loop.
+    // An edge with an end on the axis has a collapsed side and is handled by
+    // `add_axis_revolved_face`; this band has two non-degenerate circles.
     //
     // The two swept circles are each traversed as the quad loop traverses its
     // arc: the end arc with the sweep, the start arc against it, so that the
@@ -1312,6 +1329,148 @@ fn add_revolved_edge_face<P: Payload>(
     )
 }
 
+/// Builds the non-degenerate boundary of an edge meeting the axis at one end.
+fn add_axis_revolved_face<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    source: &RevolvedSourceEdge,
+    axis: Axis3,
+    angle: Rad64,
+    start_on_axis: bool,
+    end_on_axis: bool,
+) -> Result<RevolvedFaceBuild, RevolveError> {
+    if start_on_axis && end_on_axis {
+        return Err(RevolveError::ApexRevolveUnsupported { key: source.key });
+    }
+    let interval = source
+        .curve
+        .interval_between(source.start.point, source.end.point);
+    let support = revolved_support(&source.curve, axis);
+    let start = source.start.point;
+    let end = source.end.point;
+    if is_full_turn(angle) {
+        let (point, parameter, collapse, sweep, origin) = if start_on_axis {
+            (
+                end,
+                interval.end.value(),
+                interval.start.value(),
+                angle,
+                endpoint_origin(source, &source.end),
+            )
+        } else {
+            (
+                start,
+                interval.start.value(),
+                interval.end.value(),
+                Rad64::new(-angle.val()),
+                endpoint_origin(source, &source.start),
+            )
+        };
+        let rim = add_closed_revolve_boundary_loop(
+            edit,
+            origin,
+            point,
+            revolve_circle_curve(axis, point, sweep),
+        )?;
+        let pcurve = if start_on_axis {
+            support.swept(parameter, 0.0, angle.val())
+        } else {
+            support.swept(parameter, angle.val(), 0.0)
+        };
+        let definition = match swept_period_axis(&support.surface, [&pcurve, &pcurve]) {
+            Some(periodic) => {
+                let transverse = periodic.transverse();
+                let at = transverse.of(support.corner(parameter, 0.0));
+                let degenerate = transverse.of(support.corner(collapse, 0.0));
+                LoopDefinition::capping(rim, periodic, DomainSide::of(at, degenerate))
+            }
+            None => LoopDefinition::outer(rim),
+        };
+        let key = edit.add_face_derived_from(
+            vec![EditKey::Edge(source.key)],
+            FaceAttr::with_loops(
+                support.surface,
+                vec![definition],
+                HashMap::from([(rim, pcurve)]),
+            ),
+        );
+        return Ok(RevolvedFaceBuild {
+            bottom_edge: None,
+            top_edge: None,
+            start_side: (!start_on_axis).then(|| edit.alpha(Dim::Zero, rim)),
+            end_side: start_on_axis.then_some(rim),
+            outer_loop: rim,
+            key,
+        });
+    }
+    let rotated_start = rotate_point(axis, start, angle);
+    let rotated_end = rotate_point(axis, end, angle);
+    let rotated_curve = source.curve.moved(&Rigid::rotation(axis, angle));
+    let a = interval.start.value();
+    let b = interval.end.value();
+    let (corners, curves, pcurves) = if start_on_axis {
+        (
+            [start, end, rotated_end],
+            [
+                source.curve.clone(),
+                revolve_circle_curve(axis, end, angle),
+                rotated_curve,
+            ],
+            [
+                support.meridian(0.0, a, b),
+                support.swept(b, 0.0, angle.val()),
+                support.meridian(angle.val(), b, a),
+            ],
+        )
+    } else {
+        (
+            [start, end, rotated_start],
+            [
+                source.curve.clone(),
+                rotated_curve,
+                revolve_circle_curve(axis, rotated_start, Rad64::new(-angle.val())),
+            ],
+            [
+                support.meridian(0.0, a, b),
+                support.meridian(angle.val(), b, a),
+                support.swept(a, angle.val(), 0.0),
+            ],
+        )
+    };
+    let darts: [Dart; 6] = std::array::from_fn(|_| edit.add_dart());
+    for i in 0..3 {
+        edit.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
+        edit.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % 6])?;
+        let origin = if i == 0 || (i == 2 && !start_on_axis) {
+            endpoint_origin(source, &source.start)
+        } else {
+            endpoint_origin(source, &source.end)
+        };
+        edit.add_vertex_derived_from(vec![origin], VertexAttr::new(darts[2 * i], corners[i]));
+        edit.add_edge_derived_from(
+            vec![EditKey::Edge(source.key)],
+            EdgeAttr::new(darts[2 * i], curves[i].clone()),
+        );
+    }
+    edit.add_profile_derived_from(vec![EditKey::Edge(source.key)], ProfileAttr::new(darts[0]));
+    let key = edit.add_face_derived_from(
+        vec![EditKey::Edge(source.key)],
+        FaceAttr::with_pcurves(
+            support.surface,
+            darts[0],
+            Vec::new(),
+            (0..3).map(|i| (darts[2 * i], pcurves[i].clone())).collect(),
+        ),
+    );
+    Ok(RevolvedFaceBuild {
+        bottom_edge: Some(darts[0]),
+        top_edge: Some(if start_on_axis { darts[5] } else { darts[3] }),
+        start_side: (!start_on_axis).then_some(darts[5]),
+        end_side: start_on_axis.then_some(darts[2]),
+        outer_loop: darts[0],
+        key,
+    })
+}
+
 fn add_revolved_quad_face<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     corners: [Point3; 4],
@@ -1359,8 +1518,8 @@ fn add_revolved_quad_face<P: Payload>(
         // darts[4] is at `rotated_end`; darts[5] is its alpha0 partner at
         // `rotated_start`, which is the vertex the cap edge dart carries.
         top_edge: Some(darts[5]),
-        start_side: darts[7],
-        end_side: darts[2],
+        start_side: Some(darts[7]),
+        end_side: Some(darts[2]),
         outer_loop: darts[0],
         key,
     })
@@ -1462,8 +1621,8 @@ fn add_full_revolved_band_face<P: Payload>(
         // `alpha0`, which is what a consistently oriented shell means. The two
         // ends are therefore offered asymmetrically, as a swept wrapping face
         // offers its bottom and top.
-        start_side: start_second,
-        end_side: end_first,
+        start_side: Some(start_second),
+        end_side: Some(end_first),
         outer_loop: start_first,
         key,
     })
@@ -1475,11 +1634,16 @@ fn sew_revolved_faces<P: Payload>(
     close_ring: bool,
 ) -> Result<(), RevolveError> {
     for i in 0..faces.len().saturating_sub(1) {
-        sew_revolved_side_edges(edit, faces[i].end_side, faces[i + 1].start_side)?;
+        if let (Some(end), Some(start)) = (faces[i].end_side, faces[i + 1].start_side) {
+            sew_revolved_side_edges(edit, end, start)?;
+        }
     }
 
-    if close_ring && !faces.is_empty() {
-        sew_revolved_side_edges(edit, faces[0].start_side, faces[faces.len() - 1].end_side)?;
+    if close_ring
+        && !faces.is_empty()
+        && let (Some(start), Some(end)) = (faces[0].start_side, faces[faces.len() - 1].end_side)
+    {
+        sew_revolved_side_edges(edit, start, end)?;
     }
 
     Ok(())
@@ -1609,6 +1773,101 @@ fn revolve_radius(axis: Axis3, point: Point3) -> f64 {
     distance(&axis.project(point), &point)
 }
 
+/// Bounds the actual edge span, including the interior of curved edges.
+fn section_control_points(source: &RevolvedSourceEdge) -> Result<Vec<Point3>, RevolveError> {
+    let interval = source
+        .curve
+        .interval_between(source.start.point, source.end.point);
+    let nurbs = source.curve.trimmed_native(interval)?.to_nurbs()?;
+    if nurbs
+        .control_points()
+        .iter()
+        .any(|point| point.weight() <= 0.0 || !point.weight().is_finite())
+    {
+        return Err(RevolveError::SectionCrossesAxis);
+    }
+    Ok(nurbs
+        .control_points()
+        .iter()
+        .map(|point| point.to_cartesian())
+        .collect())
+}
+
+/// Refuses a meridian whose control hull spans both sides, preserving skew sweeps.
+fn validate_meridian_side(source: &RevolvedSourceEdge, axis: Axis3) -> Result<(), RevolveError> {
+    let points = section_control_points(source)?;
+    let radial = points
+        .iter()
+        .map(|point| *point - axis.project(*point))
+        .collect::<Vec<_>>();
+    let Some(reference) = radial
+        .iter()
+        .find(|vector| vector.norm() > LINEAR_TOLERANCE)
+    else {
+        return Ok(());
+    };
+    let reference = reference.normalize();
+    if radial
+        .iter()
+        .all(|vector| vector.cross(&reference).norm() <= LINEAR_TOLERANCE)
+        && radial
+            .iter()
+            .any(|vector| vector.dot(&reference) < -LINEAR_TOLERANCE)
+    {
+        return Err(RevolveError::SectionCrossesAxis);
+    }
+    Ok(())
+}
+
+/// An edge wholly on the axis contributes no lateral area.
+fn source_on_axis(source: &RevolvedSourceEdge, axis: Axis3) -> Result<bool, RevolveError> {
+    Ok(section_control_points(source)?
+        .into_iter()
+        .all(|point| revolve_radius(axis, point) <= LINEAR_TOLERANCE))
+}
+
+/// A meridian section must stay in one closed half-plane bounded by the axis.
+/// The NURBS control hull gives a conservative certificate over whole spans.
+fn validate_section_axis<P: Payload>(
+    model: &Model<P>,
+    face: &Face<'_, P>,
+    axis: Axis3,
+) -> Result<(), RevolveError> {
+    let Surface::Plane(plane) = face.surface() else {
+        return Err(RevolveError::PlanarError(PlanarityError::NonPlanarSurface));
+    };
+    validate_planar_section(model, plane, face.edges(), axis)
+}
+
+/// Certifies that all boundary spans lie in one meridian half-plane.
+fn validate_planar_section<P: Payload>(
+    model: &Model<P>,
+    plane: &Plane,
+    edges: Vec<Edge<'_, P>>,
+    axis: Axis3,
+) -> Result<(), RevolveError> {
+    if plane.normal().dot(&axis.direction).abs() > ANGULAR_TOLERANCE
+        || plane.normal().dot(&(axis.origin - plane.origin())).abs() > LINEAR_TOLERANCE
+    {
+        return Err(RevolveError::AxisOutsideSectionPlane);
+    }
+    let radial = plane.normal().cross(&axis.direction);
+    let mut positive = false;
+    let mut negative = false;
+    for edge in edges {
+        let source = RevolvedSourceEdge::from_edge(model, edge)?;
+        for point in section_control_points(&source)? {
+            let signed = radial.dot(&(point - axis.origin));
+            positive |= signed > LINEAR_TOLERANCE;
+            negative |= signed < -LINEAR_TOLERANCE;
+            if positive && negative {
+                return Err(RevolveError::SectionCrossesAxis);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn quad_pcurves(uv: &[TrimmedCurve2; 4], darts: &[Dart]) -> HashMap<Dart, TrimmedCurve2> {
     let mut pcurves = HashMap::with_capacity(4);
     for i in 0..4 {
@@ -1623,10 +1882,12 @@ fn quad_pcurves(uv: &[TrimmedCurve2; 4], darts: &[Dart]) -> HashMap<Dart, Trimme
 /// revolved boundary loops form the lateral shell. A full turn omits coincident
 /// caps and builds the shell directly from the face's outer and inner loops.
 /// `angle` is clamped between zero and one full turn.
+/// The axis lies in the planar section's plane, and the section stays on one
+/// side of it. Boundary edges on the axis are omitted from the lateral shell.
 ///
 /// Returns an error if the face is missing, its loops cannot be revolved, a
-/// partial turn uses an unsupported cap surface, or generated topology cannot
-/// be sewn.
+/// curve's control hull cannot certify that half-plane, or generated topology
+/// cannot be sewn. The transaction leaves the input unchanged on error.
 pub fn add_revolved_face<P: Payload>(
     g: &mut Model<P>,
     face_key: FaceKey,
@@ -1648,6 +1909,7 @@ pub(crate) fn add_revolved_face_edit<P: Payload>(
         .face_attr(face_key)
         .map(|attr| attr.face(edit))
         .ok_or(RevolveError::MissingFace { key: face_key })?;
+    validate_section_axis(edit, &face, axis)?;
     let loops = face
         .loops()
         .into_iter()
@@ -1712,8 +1974,12 @@ pub(crate) fn add_revolved_face_edit<P: Payload>(
 fn revolve_sweep_direction<P: Payload>(axis: Axis3, face: &Face<'_, P>) -> Vector3<f64> {
     let point = face
         .edges()
-        .first()
-        .map(|edge| edge.trimmed_curve().point_at(Fraction::new(0.0)))
+        .into_iter()
+        .flat_map(|edge| {
+            [Fraction::new(0.0), Fraction::new(0.5), Fraction::new(1.0)]
+                .map(|fraction| edge.trimmed_curve().point_at(fraction))
+        })
+        .find(|point| revolve_radius(axis, *point) > LINEAR_TOLERANCE)
         .unwrap_or(axis.origin);
     axis.direction.cross(&(point - axis.project(point)))
 }
@@ -1833,18 +2099,24 @@ fn sew_revolved_loop_to_caps<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<RevolvedProfileBuild, RevolveError> {
-    let bottom_edges = Profile::from_dart(edit, bottom_loop)
+    let bottom = Profile::from_dart(edit, bottom_loop)
         .expect("bottom loop must have a registered profile")
-        .edges()
-        .into_iter()
-        .map(|edge| edge.dart())
-        .collect::<Vec<_>>();
-    let top_edges = Profile::from_dart(edit, top_loop)
+        .edges();
+    let top = Profile::from_dart(edit, top_loop)
         .expect("top loop must have a registered profile")
-        .edges()
-        .into_iter()
-        .map(|edge| edge.dart())
-        .collect::<Vec<_>>();
+        .edges();
+    let mut bottom_edges = Vec::new();
+    let mut top_edges = Vec::new();
+    let mut axis_pairs = Vec::new();
+    for (bottom, top) in bottom.into_iter().zip(top) {
+        let source = RevolvedSourceEdge::from_edge(edit, bottom)?;
+        if source_on_axis(&source, axis)? {
+            axis_pairs.push((bottom.dart(), top.dart()));
+        } else {
+            bottom_edges.push(bottom.dart());
+            top_edges.push(top.dart());
+        }
+    }
     let revolved = add_revolved_profile_faces(edit, bottom_loop, axis, angle, true)?;
 
     // `Profile::edges` yields the dart at each edge's traversal start, and
@@ -1856,6 +2128,11 @@ fn sew_revolved_loop_to_caps<P: Payload>(
     }
     for (&cap_edge, &side_edge) in top_edges.iter().zip(revolved.top_edges.iter()) {
         sew_revolved_alpha2_edges(edit, side_edge, cap_edge, cap_edge, side_edge)?;
+    }
+
+    // Axis edges sweep no wall. The two caps meet directly along them.
+    for (bottom, top) in axis_pairs {
+        sew_revolved_side_edges(edit, bottom, top)?;
     }
 
     Ok(revolved)
