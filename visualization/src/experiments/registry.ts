@@ -5,10 +5,18 @@ export type ExperimentMeta = {
   id: string;
   title: string;
   group?: string;
+  surface?: "scene" | "panel";
   component: ComponentType;
 };
 
 export const experiments: ExperimentMeta[] = [
+  {
+    id: "solver-2d",
+    title: "Solveur 2D",
+    group: "Contraintes",
+    surface: "panel",
+    component: lazy(() => import("./Solver2d")),
+  },
   {
     id: "debug-viewer",
     title: "Debug viewer",

@@ -39,14 +39,16 @@ export default function App() {
       />
       <div className="viewport">
         {!kernel && <div className="loading">loading kernel…</div>}
-        <Leva collapsed={false} />
+        <Leva collapsed={false} hidden={active?.surface === "panel"} />
         {Active && kernel ? (
           <ExperimentErrorBoundary resetKey={activeId}>
-            <SceneShell>
+            {active?.surface === "panel" ? (
+              <Suspense fallback={<div className="loading">chargement…</div>}><Active /></Suspense>
+            ) : <SceneShell>
               <Suspense fallback={null}>
                 <Active />
               </Suspense>
-            </SceneShell>
+            </SceneShell>}
           </ExperimentErrorBoundary>
         ) : (
           <SceneShell />

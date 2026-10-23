@@ -6,6 +6,7 @@ pub mod measure;
 pub mod model;
 pub mod modeling;
 pub mod scripts;
+pub mod solver;
 pub mod tcv;
 pub mod tessellate;
 pub mod topology;

@@ -25,6 +25,7 @@ landed and its lasting content has moved here or into an ADR.
   lineage, payload policy, identity reconciliation.
 - [geometry.md](geometry.md): supports and spans, parameter spaces,
   intersection dispatch.
+- [solver.md](solver.md): editable 2D constraint systems, local solving and diagnostics.
 - [builders.md](builders.md): builder result names and the return contract.
 - [blend.md](blend.md): the chamfer and fillet engine.
 - [measure.md](measure.md): mass properties by Green boundary integral.
@@ -33,6 +34,8 @@ landed and its lasting content has moved here or into an ADR.
 
 | Date | Review | Status |
 |---|---|---|
+| 2026-10-22 | [Constraint solvers: representations and CAD integration](reviews/2026-10-22-constraint-solvers-survey.md) | reference: exploratory architecture survey |
+| 2026-10-22 | [Boolean kernels: NGK, OCCT and SMLib](reviews/2026-10-22-boolean-kernels-comparison.md) | reference: source comparison and NGK verification |
 | 2026-10-15 | [Mass properties algorithms](reviews/2026-10-15-mass-properties-algorithms.md) | accepted: [ADR 0001](../adr/0001-mass-properties-by-green-boundary-integral.md) |
 | 2026-09-20 | [Builders, payload, policy](reviews/2026-09-20-builders-payload-policy.md) | accepted in part |
 | 2026-09-04 | [BOOLE paper and ngk](reviews/2026-09-04-boole-paper.md) | reference |
