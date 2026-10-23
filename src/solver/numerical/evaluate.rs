@@ -1,16 +1,19 @@
 use super::super::{
-    Constraint2d, ConstraintKey, GeometryKey, PointRef, SolveOptions, TangencyMode, Target2d,
+    Constraint2d, ConstraintKey, GeometryKey, PointRef, SegmentKey, SolveOptions, TangencyMode,
+    Target2d,
 };
 use super::super::{
     constraints::{StoredConstraint, TargetLocation},
     keys::PointRole,
-    primitives::Kind,
+    primitives::{Kind, Param, Quantity},
 };
 use super::{
-    differentiate::{Jet, V2},
+    curve::Curve,
+    differentiate::{Jet, JetVector2},
     prepare::Component,
 };
 use crate::geometry::dim2::utils::Point2;
+use Constraint2d::*;
 use nalgebra::{DMatrix, DVector};
 use std::ops::Range;
 
@@ -123,7 +126,7 @@ fn angular(expression: Jet) -> Row {
         angular: true,
     }
 }
-fn pair(v: V2) -> Vec<Row> {
+fn pair(v: JetVector2) -> Vec<Row> {
     vec![linear(v.x), linear(v.y)]
 }
 
@@ -133,103 +136,106 @@ struct Context<'a> {
     world: bool,
 }
 impl Context<'_> {
-    fn parameter(&self, key: GeometryKey, index: usize) -> Jet {
-        let index = self.component.entry(key).offset + index;
+    /// A parameter as a differentiable expression of the unknowns. In world
+    /// mode `x` holds every parameter slot directly, without reduction.
+    fn parameter(&self, key: GeometryKey, param: Param) -> Jet {
+        let slot = self.component.slot(key, param);
         if self.world {
-            Jet::variable(self.x[index], index)
-        } else if let Some(column) = self.component.columns[index] {
-            Jet::variable(self.x[column], column) * self.component.multipliers[index]
-                + self.component.offsets[index]
+            Jet::variable(self.x[slot], slot)
+        } else if let Some(column) = self.component.columns[slot] {
+            Jet::variable(self.x[column], column) * self.component.multipliers[slot]
+                + self.component.offsets[slot]
         } else {
-            Jet::constant(self.component.offsets[index])
+            Jet::constant(self.component.offsets[slot])
         }
     }
-    fn center(&self, key: GeometryKey) -> V2 {
-        V2 {
-            x: self.parameter(key, 0),
-            y: self.parameter(key, 1),
+    fn coordinates(&self, key: GeometryKey, x: Param, y: Param) -> JetVector2 {
+        JetVector2 {
+            x: self.parameter(key, x),
+            y: self.parameter(key, y),
         }
     }
-    fn point(&self, point: PointRef) -> V2 {
-        let key = point.geometry;
+    fn center(&self, key: GeometryKey) -> JetVector2 {
+        self.coordinates(key, Param::X, Param::Y)
+    }
+    fn radius(&self, key: GeometryKey) -> Jet {
+        self.parameter(key, Param::Radius)
+    }
+    /// A curve primitive with its shape read from the unknowns.
+    fn curve(&self, key: GeometryKey) -> Curve {
         let primitive = &self.component.entry(key).primitive;
-        match (primitive.kind, point.role) {
-            (Kind::Segment, PointRole::End) => V2 {
-                x: self.parameter(key, 2),
-                y: self.parameter(key, 3),
+        match primitive.kind {
+            Kind::Segment => Curve::Segment {
+                start: self.coordinates(key, Param::X, Param::Y),
+                end: self.coordinates(key, Param::EndX, Param::EndY),
             },
-            (Kind::Arc, PointRole::Start) => self.arc_point(key, 0.),
-            (Kind::Arc, PointRole::End) => self.arc_point(key, 1.),
-            _ => self.center(key),
+            Kind::Circle => Curve::Circle {
+                center: self.center(key),
+                radius: self.radius(key),
+                axis: primitive.circle_axis,
+                sense: primitive.sense,
+            },
+            Kind::Arc => Curve::Arc {
+                center: self.center(key),
+                radius: self.radius(key),
+                start_angle: self.parameter(key, Param::StartAngle),
+                sweep: self.parameter(key, Param::Sweep),
+                sense: primitive.sense,
+            },
+            Kind::Point => unreachable!("typed keys never use a point as a curve"),
         }
     }
-    fn arc_point(&self, key: GeometryKey, fraction: f64) -> V2 {
-        let primitive = &self.component.entry(key).primitive;
-        let angle = self.parameter(key, 3) + self.parameter(key, 4) * (primitive.sense * fraction);
-        let radial = V2 {
-            x: angle.clone().cos(),
-            y: angle.sin(),
+    /// Stored points are read directly; an arc's endpoints lie on its curve.
+    fn point(&self, point: PointRef) -> JetVector2 {
+        let key = point.geometry;
+        let kind = self.component.entry(key).primitive.kind;
+        match kind.point_params(point.role) {
+            Some((x, y)) => self.coordinates(key, x, y),
+            None => {
+                let t = if point.role == PointRole::Start {
+                    0.
+                } else {
+                    1.
+                };
+                self.curve(key).point_at(Jet::constant(t))
+            }
         }
-        .scale(self.parameter(key, 2));
-        self.center(key) + radial
     }
-    fn direction(&self, line: super::super::SegmentKey) -> V2 {
-        self.point(line.end()) - self.point(line.start())
+    /// A segment's derivative is the same everywhere: its end minus its start.
+    fn direction(&self, line: SegmentKey) -> JetVector2 {
+        self.curve(line.0).derivative_at(Jet::constant(0.))
     }
-    fn constant_point(&self, p: Point2) -> V2 {
+    fn constant_point(&self, p: Point2) -> JetVector2 {
         if self.world {
-            return V2 {
+            return JetVector2 {
                 x: Jet::constant(p.x),
                 y: Jet::constant(p.y),
             };
         }
-        V2 {
+        JetVector2 {
             x: Jet::constant((p.x - self.component.origin.x) / self.component.scale),
             y: Jet::constant((p.y - self.component.origin.y) / self.component.scale),
         }
     }
-    fn line_distance(&self, point: V2, line: super::super::SegmentKey) -> Jet {
+    fn line_distance(&self, point: JetVector2, line: SegmentKey) -> Jet {
         self.direction(line)
             .unit()
             .cross(point - self.point(line.start()))
     }
-    fn target(&self, target: &Target2d) -> V2 {
+    fn target(&self, target: &Target2d) -> JetVector2 {
         match target.location {
             TargetLocation::Point(p) => self.point(p),
-            TargetLocation::Sample(key, t) => {
-                let primitive = &self.component.entry(key).primitive;
-                match primitive.kind {
-                    Kind::Segment => {
-                        let start = self.center(key);
-                        let end = V2 {
-                            x: self.parameter(key, 2),
-                            y: self.parameter(key, 3),
-                        };
-                        start.clone() + (end - start).scale(Jet::constant(t))
-                    }
-                    Kind::Arc => self.arc_point(key, t),
-                    Kind::Circle => {
-                        let a = &primitive.circle_axis;
-                        let radial = V2 {
-                            x: Jet::constant(a.x * t.cos() - primitive.sense * a.y * t.sin()),
-                            y: Jet::constant(a.y * t.cos() + primitive.sense * a.x * t.sin()),
-                        };
-                        self.center(key) + radial.scale(self.parameter(key, 2))
-                    }
-                    Kind::Point => self.center(key),
-                }
-            }
+            TargetLocation::Sample(key, t) => self.curve(key).point_at(Jet::constant(t)),
         }
     }
     /// Emits geometric residuals and exact local derivatives with permanent-row provenance.
     fn constraint(&self, c: &StoredConstraint) -> Vec<Row> {
         let scale = if self.world { 1. } else { self.component.scale };
-        use Constraint2d::*;
         match &c.definition {
             Coincident(a, b) => pair(self.point(*a) - self.point(*b)),
             PointOnLine(p, l) => vec![linear(self.line_distance(self.point(*p), *l))],
             PointOnCircle(p, r) => vec![linear(
-                (self.point(*p) - self.center(r.0)).norm() - self.parameter(r.0, 2),
+                (self.point(*p) - self.center(r.0)).norm() - self.radius(r.0),
             )],
             Horizontal(l) | Vertical(l) => {
                 let direction = self.direction(*l);
@@ -255,11 +261,11 @@ impl Context<'_> {
             OffsetX(a, b, v) => vec![linear(self.point(*b).x - self.point(*a).x - *v / scale)],
             OffsetY(a, b, v) => vec![linear(self.point(*b).y - self.point(*a).y - *v / scale)],
             Length(l, v) => vec![linear(self.direction(*l).norm() - *v / scale)],
-            Radius(r, v) => vec![linear(self.parameter(r.0, 2) - *v / scale)],
+            Radius(r, v) => vec![linear(self.radius(r.0) - *v / scale)],
             EqualLength(a, b) => vec![linear(
                 self.direction(*a).norm() - self.direction(*b).norm(),
             )],
-            EqualRadius(a, b) => vec![linear(self.parameter(a.0, 2) - self.parameter(b.0, 2))],
+            EqualRadius(a, b) => vec![linear(self.radius(a.0) - self.radius(b.0))],
             Parallel(a, b) | Perpendicular(a, b) => {
                 let first = self.direction(*a).unit();
                 let second = self.direction(*b).unit();
@@ -324,32 +330,32 @@ impl Context<'_> {
                 self.point(*p) - self.constant_point(Point2::new(c.captured[0], c.captured[1])),
             ),
             Fixed(key) => {
-                let kind = self.component.entry(*key).primitive.kind;
-                c.captured
+                let layout = self.component.entry(*key).primitive.kind.layout();
+                layout
                     .iter()
-                    .enumerate()
-                    .map(|(i, value)| {
+                    .zip(&c.captured)
+                    .map(|(&param, &value)| {
                         let constant = if self.world {
-                            *value
+                            value
                         } else {
-                            self.component.normalized(*value, kind, i)
+                            self.component.normalized(value, param)
                         };
-                        let residual = self.parameter(*key, i) - constant;
-                        if kind == Kind::Arc && i >= 3 {
-                            angular(if i == 3 { residual.wrapped() } else { residual })
-                        } else {
-                            linear(residual)
+                        let residual = self.parameter(*key, param) - constant;
+                        match param {
+                            Param::StartAngle => angular(residual.wrapped()),
+                            _ if param.quantity() == Quantity::Angle => angular(residual),
+                            _ => linear(residual),
                         }
                     })
                     .collect()
             }
             TangentLineCircle(l, r) => vec![linear(
-                self.line_distance(self.center(r.0), *l) - self.parameter(r.0, 2) * c.side,
+                self.line_distance(self.center(r.0), *l) - self.radius(r.0) * c.side,
             )],
             TangentCircles { first, second, .. } => {
                 let separation = (self.center(second.0) - self.center(first.0)).norm();
-                let a = self.parameter(first.0, 2);
-                let b = self.parameter(second.0, 2);
+                let a = self.radius(first.0);
+                let b = self.radius(second.0);
                 let radii = match c.tangency {
                     TangencyMode::FirstContainsSecond => a - b,
                     TangencyMode::SecondContainsFirst => b - a,

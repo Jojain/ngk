@@ -169,12 +169,14 @@ impl Div<f64> for Jet {
     }
 }
 
+/// A plane vector whose coordinates are [`Jet`]s, so it carries its
+/// derivatives with respect to the unknowns.
 #[derive(Clone, Debug)]
-pub(super) struct V2 {
+pub(super) struct JetVector2 {
     pub x: Jet,
     pub y: Jet,
 }
-impl V2 {
+impl JetVector2 {
     pub fn dot(self, b: Self) -> Jet {
         self.x * b.x + self.y * b.y
     }
@@ -198,7 +200,7 @@ impl V2 {
         }
     }
 }
-impl Add for V2 {
+impl Add for JetVector2 {
     type Output = Self;
     fn add(self, b: Self) -> Self {
         Self {
@@ -207,7 +209,7 @@ impl Add for V2 {
         }
     }
 }
-impl Sub for V2 {
+impl Sub for JetVector2 {
     type Output = Self;
     fn sub(self, b: Self) -> Self {
         Self {

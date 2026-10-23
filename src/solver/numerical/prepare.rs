@@ -2,7 +2,7 @@ use super::super::{ConstraintKey, GeometryKey, Target2d};
 use super::super::{
     constraints::StoredConstraint,
     keys::{ConstraintSlot, GeometrySlot},
-    primitives::{Kind, Primitive},
+    primitives::{Kind, Param, Primitive, Quantity},
 };
 use crate::geometry::dim2::utils::Point2;
 use nalgebra::DVector;
@@ -21,7 +21,11 @@ pub(super) struct Component {
     pub targets: Vec<(usize, Target2d)>,
     pub origin: Point2,
     pub scale: f64,
+    /// The seed as solver unknowns, one per column.
     pub initial: DVector<f64>,
+    /// Per parameter slot (see [`Component::slot`]), the normalized value is
+    /// `offsets + multipliers * x[columns]`, or the constant `offsets` when
+    /// the column is `None`.
     pub columns: Vec<Option<usize>>,
     pub offsets: Vec<f64>,
     pub multipliers: Vec<f64>,
@@ -109,15 +113,19 @@ fn root(parents: &mut [usize], mut i: usize) -> usize {
 }
 impl Component {
     fn new(primitives: Vec<(GeometryKey, Primitive)>) -> Self {
-        let origin = Point2::new(primitives[0].1.values[0], primitives[0].1.values[1]);
+        let first = &primitives[0].1;
+        let origin = Point2::new(first.get(Param::X), first.get(Param::Y));
         let mut scale = 0_f64;
         for (_, p) in &primitives {
-            scale = scale.max((p.values[0] - origin.x).hypot(p.values[1] - origin.y));
+            scale = scale.max((p.get(Param::X) - origin.x).hypot(p.get(Param::Y) - origin.y));
             match p.kind {
                 Kind::Segment => {
-                    scale = scale.max((p.values[2] - p.values[0]).hypot(p.values[3] - p.values[1]))
+                    scale = scale.max(
+                        (p.get(Param::EndX) - p.get(Param::X))
+                            .hypot(p.get(Param::EndY) - p.get(Param::Y)),
+                    )
                 }
-                Kind::Circle | Kind::Arc => scale = scale.max(p.values[2]),
+                Kind::Circle | Kind::Arc => scale = scale.max(p.get(Param::Radius)),
                 Kind::Point => {}
             }
         }
@@ -129,8 +137,8 @@ impl Component {
         let mut values = vec![];
         for (key, p) in primitives {
             let offset = values.len();
-            for (i, v) in p.values.iter().enumerate() {
-                values.push(normalize(*v, p.kind, i, origin, scale));
+            for (param, v) in p.kind.layout().iter().zip(&p.values) {
+                values.push(normalize(*v, param.quantity(), origin, scale));
             }
             lookup.insert(key, entries.len());
             entries.push(Entry {
@@ -157,22 +165,35 @@ impl Component {
     pub fn entry(&self, key: GeometryKey) -> &Entry {
         &self.entries[self.lookup[&key]]
     }
-    pub fn normalized(&self, value: f64, kind: Kind, index: usize) -> f64 {
-        normalize(value, kind, index, self.origin, self.scale)
+    /// A parameter's position among the component's parameter slots, which
+    /// lay every primitive's values end to end.
+    pub fn slot(&self, key: GeometryKey, param: Param) -> usize {
+        self.entry(key).offset + param.index()
     }
-    pub fn value(&self, index: usize, x: &DVector<f64>) -> f64 {
-        self.offsets[index]
-            + self.columns[index].map_or(0., |column| x[column] * self.multipliers[index])
+    pub fn normalized(&self, value: f64, param: Param) -> f64 {
+        normalize(value, param.quantity(), self.origin, self.scale)
+    }
+    /// A slot's normalized value at the unknowns `x`.
+    pub fn value(&self, slot: usize, x: &DVector<f64>) -> f64 {
+        self.offsets[slot]
+            + self.columns[slot].map_or(0., |column| x[column] * self.multipliers[slot])
+    }
+    pub fn parameter(&self, key: GeometryKey, param: Param, x: &DVector<f64>) -> f64 {
+        self.value(self.slot(key, param), x)
     }
     pub fn physical_values(&self, entry: &Entry, x: &DVector<f64>) -> Vec<f64> {
-        (0..entry.primitive.values.len())
-            .map(|i| {
-                let value = self.value(entry.offset + i, x);
-                match coordinate(entry.primitive.kind, i) {
-                    Some(0) => value * self.scale + self.origin.x,
-                    Some(_) => value * self.scale + self.origin.y,
-                    None if entry.primitive.kind == Kind::Arc && i >= 3 => value,
-                    None => value * self.scale,
+        entry
+            .primitive
+            .kind
+            .layout()
+            .iter()
+            .map(|param| {
+                let value = self.value(entry.offset + param.index(), x);
+                match param.quantity() {
+                    Quantity::X => value * self.scale + self.origin.x,
+                    Quantity::Y => value * self.scale + self.origin.y,
+                    Quantity::Length => value * self.scale,
+                    Quantity::Angle => value,
                 }
             })
             .collect()
@@ -183,30 +204,27 @@ impl Component {
             return false;
         }
         self.entries.iter().all(|e| {
-            let p: Vec<_> = (0..e.primitive.values.len())
-                .map(|i| self.value(e.offset + i, x))
-                .collect();
+            let v = |param: Param| self.value(e.offset + param.index(), x);
             match e.primitive.kind {
                 Kind::Point => true,
-                Kind::Segment => (p[2] - p[0]).hypot(p[3] - p[1]) > 1e-14,
-                Kind::Circle => p[2] > 0.,
-                Kind::Arc => p[2] > 0. && p[4] > 0. && p[4] < std::f64::consts::TAU,
+                Kind::Segment => {
+                    (v(Param::EndX) - v(Param::X)).hypot(v(Param::EndY) - v(Param::Y)) > 1e-14
+                }
+                Kind::Circle => v(Param::Radius) > 0.,
+                Kind::Arc => {
+                    v(Param::Radius) > 0.
+                        && v(Param::Sweep) > 0.
+                        && v(Param::Sweep) < std::f64::consts::TAU
+                }
             }
         })
     }
 }
-fn coordinate(kind: Kind, index: usize) -> Option<usize> {
-    if index < 2 || kind == Kind::Segment {
-        Some(index % 2)
-    } else {
-        None
-    }
-}
-fn normalize(value: f64, kind: Kind, index: usize, origin: Point2, scale: f64) -> f64 {
-    match coordinate(kind, index) {
-        Some(0) => (value - origin.x) / scale,
-        Some(_) => (value - origin.y) / scale,
-        None if kind == Kind::Arc && index >= 3 => value,
-        None => value / scale,
+fn normalize(value: f64, quantity: Quantity, origin: Point2, scale: f64) -> f64 {
+    match quantity {
+        Quantity::X => (value - origin.x) / scale,
+        Quantity::Y => (value - origin.y) / scale,
+        Quantity::Length => value / scale,
+        Quantity::Angle => value,
     }
 }

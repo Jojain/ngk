@@ -6,10 +6,11 @@ use super::{
     constraints::{StoredConstraint, TargetLocation},
     keys::{ConstraintSlot, GeometrySlot},
     numerical,
-    primitives::{Kind, Primitive},
+    primitives::{Kind, Param, Primitive},
     solution::SolutionData,
 };
 use crate::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
+use Constraint2d::*;
 use slotmap::SlotMap;
 use std::sync::{
     Arc,
@@ -353,7 +354,6 @@ impl System2d {
             side: 1.,
             tangency: TangencyMode::External,
         };
-        use Constraint2d::*;
         match &result.definition {
             Horizontal(line) | Vertical(line) => {
                 let line = self.segment(*line)?;
@@ -413,7 +413,7 @@ impl System2d {
                 let d = (a.point_at(super::keys::PointRole::Center)
                     - b.point_at(super::keys::PointRole::Center))
                 .norm();
-                let (r1, r2) = (a.values[2], b.values[2]);
+                let (r1, r2) = (a.get(Param::Radius), b.get(Param::Radius));
                 let mode = if *mode == TangencyMode::Automatic {
                     if (d - (r1 + r2)).abs() <= (d - (r1 - r2).abs()).abs() {
                         TangencyMode::External

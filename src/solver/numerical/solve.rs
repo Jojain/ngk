@@ -5,12 +5,13 @@ use super::super::{
 use super::super::{
     constraints::StoredConstraint,
     keys::{ConstraintSlot, GeometrySlot},
-    primitives::Primitive,
+    primitives::{Param, Primitive},
 };
 use super::{
     evaluate::{self, Evaluation},
     prepare::{self, Component},
 };
+use Constraint2d::*;
 use nalgebra::{DMatrix, DVector};
 use slotmap::SlotMap;
 
@@ -329,13 +330,16 @@ fn contacts_valid(component: &Component, x: &DVector<f64>) -> bool {
         let Constraint2d::TangentCircles { first, second, .. } = c.definition else {
             return true;
         };
-        let a_offset = component.entry(first.0).offset;
-        let b_offset = component.entry(second.0).offset;
-        let a: Vec<_> = (0..3).map(|i| component.value(a_offset + i, x)).collect();
-        let b: Vec<_> = (0..3).map(|i| component.value(b_offset + i, x)).collect();
+        let a = |param| component.parameter(first.0, param, x);
+        let b = |param| component.parameter(second.0, param, x);
+        let distinct_centers = a(Param::X) != b(Param::X) || a(Param::Y) != b(Param::Y);
         match c.tangency {
-            TangencyMode::FirstContainsSecond => a[2] > b[2] && (a[0] != b[0] || a[1] != b[1]),
-            TangencyMode::SecondContainsFirst => b[2] > a[2] && (a[0] != b[0] || a[1] != b[1]),
+            TangencyMode::FirstContainsSecond => {
+                a(Param::Radius) > b(Param::Radius) && distinct_centers
+            }
+            TangencyMode::SecondContainsFirst => {
+                b(Param::Radius) > a(Param::Radius) && distinct_centers
+            }
             _ => true,
         }
     })
@@ -406,7 +410,6 @@ fn check_conflicts(component: &Component, options: &SolveOptions) -> Result<(), 
     Ok(())
 }
 fn contradictory(a: &StoredConstraint, b: &StoredConstraint, options: &SolveOptions) -> bool {
-    use Constraint2d::*;
     let linear = 2. * options.linear_tolerance;
     match (&a.definition, &b.definition) {
         (Length(a, x), Length(b, y)) if a == b => (x - y).abs() > linear,

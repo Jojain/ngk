@@ -80,6 +80,10 @@ coincidence removes its equation, allowing the two original points to separate.
 | Circle | center x/y, radius |
 | Arc | center x/y, radius, start angle, positive sweep |
 
+Code names each parameter with `primitives::Param` rather than its position.
+A parameter sits at the same position in every kind that has it, so the name
+resolves to a constant; debug builds check that the kind has it.
+
 Arc direction is discrete metadata; its sweep satisfies `0 < sweep < 2*pi`.
 Endpoints are evaluated from these five parameters and differentiated through
 them. Major and clockwise arcs retain their direction and sweep. A full circle
@@ -150,6 +154,12 @@ weights preserve the original minimum-motion metric. Public keys and original
 equations remain separate; removing a constraint rebuilds the reduction and
 restores its freedom. If projecting the seed would create invalid geometry,
 that component uses its full parameter space instead.
+
+Curve primitives are evaluated through one `Curve` interface: `point_at(t)` and
+`derivative_at(t)`, differentiable through both `t` and the curve's shape. Arc
+endpoints, segment directions and curve targets all use it. Circle relations
+keep their closed forms (distance to centre, radius sums), which need no curve
+parameter.
 
 Geometric expressions carry sparse forward derivatives. Their arithmetic and
 trigonometry use the chain rule; no finite differencing is used in resolution.
@@ -232,6 +242,7 @@ workloads. Measurements are observations, not timing assertions in the tests.
 - `numerical/prepare.rs`: components and scaled parameter layouts.
 - `numerical/reduce.rs`: weighted affine aliases and constant elimination.
 - `numerical/differentiate.rs`, `evaluate.rs`: sparse derivatives and residuals.
+- `numerical/curve.rs`: segments, circles and arcs as differentiable maps of their own parameter.
 - `numerical/solve.rs`: feasibility, targets, rank and diagnostics.
 
 The module reuses NGK geometry types and existing dependencies. Its parametric

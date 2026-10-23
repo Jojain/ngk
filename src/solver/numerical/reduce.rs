@@ -1,6 +1,7 @@
+use super::super::primitives::Param;
 use super::super::{Constraint2d, PointRef};
-use super::super::{keys::PointRole, primitives::Kind};
 use super::prepare::Component;
+use Constraint2d::*;
 use nalgebra::DVector;
 use std::collections::HashMap;
 
@@ -9,77 +10,59 @@ pub(super) fn reduce(component: &mut Component) {
     let original = component.initial.clone();
     let count = component.initial.len();
     let mut aliases = Aliases::new(count);
-    let mut directions = HashMap::new();
+    // Aligned segments: the parameters their length runs along, and its sign.
+    let mut aligned = HashMap::new();
     for (key, c) in &component.constraints {
         let before = aliases.merges;
-        use Constraint2d::*;
+        let slot = |key, param| component.slot(key, param);
         match &c.definition {
             Coincident(a, b) | Distance(a, b, 0.) => {
-                if let (Some(a), Some(b)) =
-                    (point_indices(component, *a), point_indices(component, *b))
+                if let (Some(a), Some(b)) = (point_slots(component, *a), point_slots(component, *b))
                 {
-                    aliases.join(a[0], b[0], 0.);
-                    aliases.join(a[1], b[1], 0.);
+                    aliases.join(a.x, b.x, 0.);
+                    aliases.join(a.y, b.y, 0.);
                 }
             }
             Horizontal(line) => {
-                let offset = component.entry(line.0).offset;
-                aliases.join(offset + 1, offset + 3, 0.);
-                directions.insert(line.0, (0, c.side));
+                aliases.join(slot(line.0, Param::Y), slot(line.0, Param::EndY), 0.);
+                aligned.insert(line.0, (Param::X, Param::EndX, c.side));
             }
             Vertical(line) => {
-                let offset = component.entry(line.0).offset;
-                aliases.join(offset, offset + 2, 0.);
-                directions.insert(line.0, (1, c.side));
+                aliases.join(slot(line.0, Param::X), slot(line.0, Param::EndX), 0.);
+                aligned.insert(line.0, (Param::Y, Param::EndY, c.side));
             }
             OffsetX(a, b, value) | OffsetY(a, b, value) => {
-                if let (Some(a), Some(b)) =
-                    (point_indices(component, *a), point_indices(component, *b))
+                if let (Some(a), Some(b)) = (point_slots(component, *a), point_slots(component, *b))
                 {
-                    let axis = usize::from(matches!(c.definition, OffsetY(..)));
-                    aliases.join(a[axis], b[axis], value / component.scale);
+                    let (a, b) = if matches!(c.definition, OffsetX(..)) {
+                        (a.x, b.x)
+                    } else {
+                        (a.y, b.y)
+                    };
+                    aliases.join(a, b, value / component.scale);
                 }
             }
             Concentric(a, b) => {
-                let a = component.entry(a.0).offset;
-                let b = component.entry(b.0).offset;
-                aliases.join(a, b, 0.);
-                aliases.join(a + 1, b + 1, 0.);
+                aliases.join(slot(a.0, Param::X), slot(b.0, Param::X), 0.);
+                aliases.join(slot(a.0, Param::Y), slot(b.0, Param::Y), 0.);
             }
             FixedPoint(p) => {
-                if let Some(indices) = point_indices(component, *p) {
-                    aliases.join(
-                        count,
-                        indices[0],
-                        (c.captured[0] - component.origin.x) / component.scale,
-                    );
-                    aliases.join(
-                        count,
-                        indices[1],
-                        (c.captured[1] - component.origin.y) / component.scale,
-                    );
+                if let Some(p) = point_slots(component, *p) {
+                    aliases.fix(p.x, component.normalized(c.captured[0], Param::X));
+                    aliases.fix(p.y, component.normalized(c.captured[1], Param::Y));
                 }
             }
             Fixed(g) => {
-                let entry = component.entry(*g);
-                for (i, value) in c.captured.iter().enumerate() {
-                    aliases.join(
-                        count,
-                        entry.offset + i,
-                        component.normalized(*value, entry.primitive.kind, i),
-                    );
+                let layout = component.entry(*g).primitive.kind.layout();
+                for (param, value) in layout.iter().zip(&c.captured) {
+                    aliases.fix(slot(*g, *param), component.normalized(*value, *param));
                 }
             }
             Radius(g, value) => {
-                let entry = component.entry(g.0);
-                aliases.join(count, entry.offset + 2, value / component.scale);
+                aliases.fix(slot(g.0, Param::Radius), value / component.scale);
             }
             EqualRadius(a, b) => {
-                aliases.join(
-                    component.entry(a.0).offset + 2,
-                    component.entry(b.0).offset + 2,
-                    0.,
-                );
+                aliases.join(slot(a.0, Param::Radius), slot(b.0, Param::Radius), 0.);
             }
             _ => {}
         }
@@ -90,13 +73,12 @@ pub(super) fn reduce(component: &mut Component) {
     // An aligned segment's positive length is an affine endpoint offset on its selected branch.
     for (key, c) in &component.constraints {
         if let Constraint2d::Length(line, length) = c.definition
-            && let Some(&(axis, side)) = directions.get(&line.0)
+            && let Some(&(start, end, side)) = aligned.get(&line.0)
         {
             let before = aliases.merges;
-            let offset = component.entry(line.0).offset;
             aliases.join(
-                offset + axis,
-                offset + axis + 2,
+                component.slot(line.0, start),
+                component.slot(line.0, end),
                 side * length / component.scale,
             );
             *component.eliminated_rows.entry(*key).or_default() += aliases.merges - before;
@@ -107,7 +89,7 @@ pub(super) fn reduce(component: &mut Component) {
     for i in 0..count {
         let (root, offset) = aliases.find(i);
         component.offsets[i] = offset;
-        if root == count {
+        if root == aliases.anchor {
             component.columns[i] = None;
             continue;
         }
@@ -141,16 +123,26 @@ pub(super) fn reduce(component: &mut Component) {
     }
 }
 
-fn point_indices(component: &Component, point: PointRef) -> Option<[usize; 2]> {
-    let entry = component.entry(point.geometry);
-    match (entry.primitive.kind, point.role) {
-        (Kind::Arc, PointRole::Start | PointRole::End) => None,
-        (Kind::Segment, PointRole::End) => Some([entry.offset + 2, entry.offset + 3]),
-        _ => Some([entry.offset, entry.offset + 1]),
-    }
+/// The slots of a stored point's coordinates.
+struct PointSlots {
+    x: usize,
+    y: usize,
+}
+/// An arc's endpoints are evaluated, not stored, so they have no slots.
+fn point_slots(component: &Component, point: PointRef) -> Option<PointSlots> {
+    let (x, y) = component
+        .entry(point.geometry)
+        .primitive
+        .kind
+        .point_params(point.role)?;
+    Some(PointSlots {
+        x: component.slot(point.geometry, x),
+        y: component.slot(point.geometry, y),
+    })
 }
 
-/// Weighted union-find where each edge stores x_child - x_parent.
+/// Weighted union-find where each edge stores x_child - x_parent. The extra
+/// `anchor` element stands for zero: whatever joins it becomes a constant.
 struct Aliases {
     parents: Vec<usize>,
     offsets: Vec<f64>,
@@ -175,6 +167,10 @@ impl Aliases {
         self.offsets[index] += offset;
         self.parents[index] = root;
         (root, self.offsets[index])
+    }
+    /// Imposes x_slot = value.
+    fn fix(&mut self, slot: usize, value: f64) {
+        self.join(self.anchor, slot, value);
     }
     /// Imposes x_b - x_a = delta. Cycles remain explicit equations for final validation.
     fn join(&mut self, a: usize, b: usize, delta: f64) {

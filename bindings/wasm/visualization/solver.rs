@@ -3,6 +3,7 @@ use crate::solver::{
     ArcKey, CircleKey, CircularKey, Constraint2d as C, ConstraintKey, GeometryKey, PointKey,
     PointRef, SegmentKey, SolveError, SolveReport, System2d, TangencyMode, Target2d,
 };
+use RelationKind::*;
 use nalgebra::Vector2;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -230,7 +231,6 @@ impl SolverPlayground {
         let b = || r.b.ok_or_else(|| "Select reference B".to_string());
         let c = || r.c.ok_or_else(|| "Select reference C".to_string());
         let value = || r.value.ok_or_else(|| "Enter a dimension".to_string());
-        use RelationKind::*;
         Ok(match r.kind {
             Coincident => C::coincident(self.point(r.a)?, self.point(b()?)?),
             Distance => C::distance(self.point(r.a)?, self.point(b()?)?, value()?),

@@ -1,5 +1,6 @@
 use super::{ArcKey, CircleKey, CircularKey, GeometryKey, PointRef, SegmentKey};
 use crate::geometry::dim2::utils::Point2;
+use Constraint2d::*;
 use nalgebra::Vector2;
 use std::f64::consts::PI;
 
@@ -198,7 +199,6 @@ impl Constraint2d {
 
     /// Lists owning primitives; computed points do not introduce extra ownership.
     pub(crate) fn geometries(&self) -> Vec<GeometryKey> {
-        use Constraint2d::*;
         match self {
             Coincident(a, b) | Distance(a, b, _) | OffsetX(a, b, _) | OffsetY(a, b, _) => {
                 vec![a.geometry, b.geometry]
@@ -239,7 +239,6 @@ impl Constraint2d {
         }
     }
     pub(crate) fn valid_values(&self) -> bool {
-        use Constraint2d::*;
         match self {
             Length(_, v) | Radius(_, v) => v.is_finite() && *v > 0.,
             Distance(_, _, v) | DistanceToLine(_, _, v) => v.is_finite() && *v >= 0.,

@@ -1,4 +1,8 @@
-use super::{evaluate, prepare};
+use super::{
+    curve::Curve,
+    differentiate::{Jet, JetVector2},
+    evaluate, prepare,
+};
 use crate::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
 use crate::solver::{Constraint2d as C, System2d, TangencyMode, Target2d};
 use nalgebra::Vector2;
@@ -93,5 +97,99 @@ fn geometric_jacobians_match_independent_centered_differences() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn curve_points_and_derivatives_match_centered_differences() {
+    let shapes: [&[f64]; 3] = [&[1., 2., 7., -3.], &[-2., 4., 3.], &[5., -4., 2., 1.1, 2.4]];
+    for shape in shapes {
+        let t = 0.35;
+        let t_index = shape.len();
+        let at = |p: &[f64], t: f64, derivative: bool| {
+            let curve = curve(p, t_index);
+            let t = Jet::variable(t, t_index);
+            if derivative {
+                curve.derivative_at(t)
+            } else {
+                curve.point_at(t)
+            }
+        };
+        let step = 1e-6;
+        // The hand-written derivative is the point's rate of change along t.
+        let ahead = at(shape, t + step, false);
+        let behind = at(shape, t - step, false);
+        let tangent = at(shape, t, true);
+        for (actual, (a, b)) in [
+            (&tangent.x, (&ahead.x, &behind.x)),
+            (&tangent.y, (&ahead.y, &behind.y)),
+        ] {
+            let expected = (a.value - b.value) / (2. * step);
+            assert!(
+                (actual.value - expected).abs() < 1e-6 * expected.abs().max(1.),
+                "{shape:?}: derivative {} != {expected}",
+                actual.value
+            );
+        }
+        // Both evaluations differentiate exactly through t and every shape parameter.
+        for derivative in [false, true] {
+            let baseline = at(shape, t, derivative);
+            for unknown in 0..=t_index {
+                let shifted = |delta: f64| {
+                    let mut p = shape.to_vec();
+                    if unknown < t_index {
+                        p[unknown] += delta;
+                        at(&p, t, derivative)
+                    } else {
+                        at(&p, t + delta, derivative)
+                    }
+                };
+                let (plus, minus) = (shifted(step), shifted(-step));
+                for (actual, (a, b)) in [
+                    (&baseline.x, (&plus.x, &minus.x)),
+                    (&baseline.y, (&plus.y, &minus.y)),
+                ] {
+                    let expected = (a.value - b.value) / (2. * step);
+                    let slope = actual
+                        .gradient
+                        .iter()
+                        .find(|(index, _)| *index == unknown)
+                        .map_or(0., |(_, slope)| *slope);
+                    assert!(
+                        (slope - expected).abs() < 2e-6 * expected.abs().max(1.),
+                        "{shape:?}, derivative={derivative}, unknown {unknown}: {slope} != {expected}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A segment, circle or arc, told apart by its parameter count, with every
+/// shape parameter an unknown numbered from 0.
+fn curve(p: &[f64], count: usize) -> Curve {
+    let v = |i: usize| Jet::variable(p[i], i);
+    let point = |i: usize| JetVector2 {
+        x: v(i),
+        y: v(i + 1),
+    };
+    match count {
+        4 => Curve::Segment {
+            start: point(0),
+            end: point(2),
+        },
+        3 => Curve::Circle {
+            center: point(0),
+            radius: v(2),
+            axis: Vector2::new(0.6, 0.8),
+            sense: -1.,
+        },
+        _ => Curve::Arc {
+            center: point(0),
+            radius: v(2),
+            start_angle: v(3),
+            sweep: v(4),
+            sense: -1.,
+        },
     }
 }

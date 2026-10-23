@@ -1,3 +1,4 @@
+mod curve;
 mod differentiate;
 mod evaluate;
 mod prepare;
