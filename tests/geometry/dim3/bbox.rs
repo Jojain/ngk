@@ -58,7 +58,10 @@ fn bbox_in_the_world_frame_reads_back_exact_extremes() {
     let high = Point3::new(0.3, 0.2, 7.9);
     let bbox = BBox::from_points_in_frame(
         Frame::xyz(),
-        [Point3::new(low.x, high.y, low.z), Point3::new(high.x, low.y, high.z)],
+        [
+            Point3::new(low.x, high.y, low.z),
+            Point3::new(high.x, low.y, high.z),
+        ],
     )
     .expect("two points have a box");
 
@@ -86,8 +89,12 @@ fn bbox_from_points_orients_frame_from_principal_axes() {
     let z_axis = Vector3::z();
     let half_size = Vector3::new(3.0, 1.0, 0.5);
 
-    let bbox = BBox::from_points(oriented_box_points(center, [x_axis, y_axis, z_axis], half_size))
-        .expect("eight points have a box");
+    let bbox = BBox::from_points(oriented_box_points(
+        center,
+        [x_axis, y_axis, z_axis],
+        half_size,
+    ))
+    .expect("eight points have a box");
 
     assert_point_near(bbox.frame().origin, center);
     assert_point_near(bbox.center(), center);
@@ -117,7 +124,11 @@ fn bbox_new_spans_the_given_ranges_in_the_given_frame() {
 #[test]
 #[should_panic(expected = "ordered")]
 fn bbox_new_refuses_a_reversed_range() {
-    BBox::new(Frame::xyz(), Vector3::new(1.0, 0.0, 0.0), Vector3::new(0.0, 1.0, 1.0));
+    BBox::new(
+        Frame::xyz(),
+        Vector3::new(1.0, 0.0, 0.0),
+        Vector3::new(0.0, 1.0, 1.0),
+    );
 }
 
 #[test]
@@ -202,8 +213,12 @@ fn bbox_contains_point_checks_oriented_local_coordinates() {
     let z_axis = Vector3::z();
     let half_size = Vector3::new(2.0, 1.0, 0.25);
 
-    let bbox = BBox::from_points(oriented_box_points(center, [x_axis, y_axis, z_axis], half_size))
-        .expect("eight points have a box");
+    let bbox = BBox::from_points(oriented_box_points(
+        center,
+        [x_axis, y_axis, z_axis],
+        half_size,
+    ))
+    .expect("eight points have a box");
 
     assert!(bbox.contains_point(center + x_axis * 0.5 + y_axis * 0.5, LINEAR_TOLERANCE));
     assert!(!bbox.contains_point(center + x_axis * 2.2, LINEAR_TOLERANCE));

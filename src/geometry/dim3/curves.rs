@@ -900,10 +900,7 @@ impl CurveGeometry for Line {
         if !interval.is_finite() {
             return None;
         }
-        BBox::from_points([
-            self.point_at(interval.start),
-            self.point_at(interval.end),
-        ])
+        BBox::from_points([self.point_at(interval.start), self.point_at(interval.end)])
     }
 
     /// The affine `scale` rides along: a rigid motion cannot change a length,
