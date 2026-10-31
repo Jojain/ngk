@@ -145,15 +145,20 @@ fn recognize_circle_3d(
         return None;
     }
 
-    let first_radial = points.first()? - center;
+    // The first point is only within `tolerance` of the fitted plane; its
+    // radial direction is taken in the plane so it can be the circle's x axis.
+    let first_offset = points.first()? - center;
+    let first_radial = first_offset - normal * first_offset.dot(&normal);
     if first_radial.norm() <= tolerance {
         return None;
     }
+    // The signed area the samples sweep round the centre. A single sample's
+    // turn from the first one cannot say it: a closed loop reaches the same
+    // largest turn on both sides, a quarter round each way.
     let orientation = points
-        .iter()
-        .skip(1)
-        .map(|point| first_radial.cross(&(point - center)).dot(&normal))
-        .max_by(|left, right| left.abs().total_cmp(&right.abs()))?;
+        .windows(2)
+        .map(|pair| (pair[0] - center).cross(&(pair[1] - center)).dot(&normal))
+        .sum::<f64>();
     if orientation < 0.0 {
         normal = -normal;
     }
@@ -289,4 +294,59 @@ fn parameters_are_ordered(parameters: &[f64], tolerance: f64) -> bool {
         && parameters
             .windows(2)
             .all(|window| window[1] + tolerance >= window[0])
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f64::consts::TAU;
+
+    use nalgebra::Vector4;
+
+    use super::{TraceState, recognize_circle_3d};
+    use crate::geometry::parameter::NativeParam;
+    use crate::geometry::{Curve, Point3};
+
+    fn circle_states(radius: f64, count: usize, turn: f64) -> Vec<TraceState> {
+        (0..=count)
+            .map(|i| {
+                let angle = turn * TAU * i as f64 / count as f64;
+                TraceState {
+                    parameters: Vector4::zeros(),
+                    point: Point3::new(radius * angle.cos(), radius * angle.sin(), 0.0),
+                    residual: 0.0,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn closed_circle_is_recognized_in_either_traversal_direction() {
+        // Evenly spaced samples turn a quarter round both ways from the first
+        // one, so the direction has to come from the whole loop.
+        for turn in [1.0, -1.0] {
+            let states = circle_states(0.5, 32, turn);
+            let recognized = recognize_circle_3d(&states, true, 1.0e-6)
+                .unwrap_or_else(|| panic!("no circle for turn {turn}"));
+            let second = recognized
+                .curve
+                .point_at(NativeParam::new(recognized.parameters[1] * TAU));
+            assert!((second - states[1].point).norm() <= 1.0e-6);
+        }
+    }
+
+    #[test]
+    fn circle_is_recognized_when_its_first_sample_sits_off_the_fitted_plane() {
+        // Every sample is within tolerance of the circle, but the first one
+        // leaves the fitted plane by far more than a frame's perpendicularity
+        // check allows between its radial direction and the normal.
+        let (radius, tolerance) = (0.5, 1.0e-4);
+        let mut states = circle_states(radius, 32, 1.0);
+        states[0].point.z = 0.5 * tolerance;
+
+        let recognized = recognize_circle_3d(&states, true, tolerance).expect("a circle");
+        let Curve::Circle(circle) = recognized.curve else {
+            panic!("expected a circle, got {:?}", recognized.curve);
+        };
+        assert!((circle.radius() - radius).abs() <= tolerance);
+    }
 }

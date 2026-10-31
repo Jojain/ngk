@@ -105,6 +105,13 @@ components commensurate so one relative tolerance holds each of them to the
 shape's size. Inertia is assembled about that centre and moved to the
 centroid by the parallel-axis theorem.
 
+A face's volume moments can vanish identically: a plane through the centre
+carries no flux, and its moments come out as rounding noise that no tolerance
+relative to themselves can meet. Each face's area is integrated alongside its
+volume moments as an eleventh component and dropped afterwards; it only sets
+the scale the error is held to, which the moments, in scaled offsets, never
+exceed.
+
 A solid's outer shell must enclose positive volume and each cavity shell
 negative; anything else is `MeasureError::InvalidOrientation`, never a
 negative volume.

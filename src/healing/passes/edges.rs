@@ -170,7 +170,9 @@ pub(in crate::healing::passes) fn plan<P: Payload>(
         CellRemovalError::LoopWouldSplit { .. } => SkipReason::LoopWouldSplit,
         CellRemovalError::WouldLeaveWrappingLoop { .. } => SkipReason::PeriodicSurface,
         CellRemovalError::WouldUnboundFace { .. } => SkipReason::WouldUnboundFace,
-        CellRemovalError::NotRemovable { .. } => SkipReason::NotRemovable,
+        CellRemovalError::NotRemovable { .. } | CellRemovalError::FaceWithoutOuterLoop { .. } => {
+            SkipReason::NotRemovable
+        }
         _ => SkipReason::Unregistered,
     })?;
 

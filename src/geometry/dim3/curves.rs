@@ -373,6 +373,12 @@ pub(crate) fn circle_nurbs_knots() -> Result<KnotVector, NurbsError> {
     ])
 }
 
+/// Samples the curve for the nearest point, then refines it by Newton.
+///
+/// On a closed curve the two domain ends are one point and sample it equally
+/// well, so a nearest sample at one end is refined from the other end too: a
+/// point just behind the seam is only reached from the far side, and a step
+/// from the near one is stopped at the seam itself.
 fn closest_sample_parameter(curve: &NurbsCurve, point: Point3) -> f64 {
     let domain = curve.domain();
     let (domain_start, domain_end) = (domain.start.value(), domain.end.value());
@@ -389,24 +395,41 @@ fn closest_sample_parameter(curve: &NurbsCurve, point: Point3) -> f64 {
         }
     }
 
-    for _ in 0..16 {
-        let residual = curve.point_at(best_u) - point;
-        let first = curve.derivative_at(best_u, 1);
-        let second = curve.derivative_at(best_u, 2);
-        let gradient = residual.dot(&first);
-        let curvature = first.dot(&first) + residual.dot(&second);
-        if curvature.abs() <= 1.0e-14 {
-            break;
+    let closed = curve
+        .point_at(domain_start)
+        .coincides(curve.point_at(domain_end), LINEAR_TOLERANCE);
+    let twin = match best_u {
+        u if closed && u == domain_start => Some(domain_end),
+        u if closed && u == domain_end => Some(domain_start),
+        _ => None,
+    };
+    let refine = |mut u: f64| {
+        for _ in 0..16 {
+            let residual = curve.point_at(u) - point;
+            let first = curve.derivative_at(u, 1);
+            let second = curve.derivative_at(u, 2);
+            let gradient = residual.dot(&first);
+            let curvature = first.dot(&first) + residual.dot(&second);
+            if curvature.abs() <= 1.0e-14 {
+                break;
+            }
+            let next = (u - gradient / curvature).clamp(domain_start, domain_end);
+            if (next - u).abs() <= 1.0e-12 {
+                u = next;
+                break;
+            }
+            u = next;
         }
-        let next = (best_u - gradient / curvature).clamp(domain_start, domain_end);
-        if (next - best_u).abs() <= 1.0e-12 {
-            best_u = next;
-            break;
-        }
-        best_u = next;
+        u
+    };
+    let distance = |u: f64| (curve.point_at(u) - point).norm();
+    let near = refine(best_u);
+    // A point on the seam is as near from either end; it keeps the end its
+    // nearest sample named, which is where callers splitting there expect it.
+    match twin.map(refine) {
+        Some(far) if distance(far) + LINEAR_TOLERANCE < distance(near) => far,
+        _ => near,
     }
-
-    best_u
 }
 
 #[cfg(test)]
@@ -416,6 +439,7 @@ mod tests {
     use nalgebra::Vector3;
 
     use super::{Circle, Curve};
+    use crate::geometry::parameter::NativeParam;
     use crate::geometry::{ANGULAR_TOLERANCE, Plane, Point3};
 
     #[test]
@@ -430,6 +454,25 @@ mod tests {
 
         assert!(interval.start.value().abs() <= ANGULAR_TOLERANCE);
         assert!((interval.end.value() - TAU).abs() <= ANGULAR_TOLERANCE);
+    }
+
+    #[test]
+    fn closed_nurbs_curve_projects_a_point_just_before_its_seam_onto_itself() {
+        // Both domain ends sample the seam equally well, and the first wins;
+        // the point lies behind the seam, so only the other end reaches it.
+        let circle = Circle::new(
+            Plane::new(Point3::origin(), Vector3::x(), Vector3::z()),
+            1.0,
+        );
+        let curve = Curve::Nurbs(circle.to_nurbs().expect("a NURBS circle"));
+        let point = circle.point_at(NativeParam::new(TAU - 0.02));
+
+        let projected = curve.point_at(curve.parameter_at(point));
+
+        assert!(
+            (projected - point).norm() <= 1.0e-9,
+            "projected {projected:?} for {point:?}"
+        );
     }
 }
 

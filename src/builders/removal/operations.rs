@@ -75,6 +75,13 @@ pub enum CellRemovalError {
     /// face running off the edge of its domain.
     #[error("removing the edge at dart {dart:?} would unbound its face")]
     WouldUnboundFace { dart: Dart },
+    /// The edge separates two faces and one of them has no outer loop -- a
+    /// face on a closed support bounded only by holes or wrapping loops.
+    /// Fusing two faces carries the consumed face's other loops over as holes
+    /// of the survivor, read against both faces' outer loops, so it has
+    /// nothing to read them against.
+    #[error("removing the edge at dart {dart:?} would fuse {face:?}, which has no outer loop")]
+    FaceWithoutOuterLoop { dart: Dart, face: FaceKey },
     /// Removing the cell would delete every dart of the map.
     #[error("removing the {dim:?}-cell at dart {dart:?} would empty the map")]
     WouldEmptyMap { dart: Dart, dim: Dim },
@@ -984,6 +991,11 @@ impl MergePlan {
         let attr = g
             .face_attr(consumed)
             .ok_or(CellRemovalError::UnregisteredIncidence { dart, dim })?;
+        for (face, face_attr) in [(survivor, survivor_attr), (consumed, attr)] {
+            if face_attr.outer_seed().is_none() {
+                return Err(CellRemovalError::FaceWithoutOuterLoop { dart, face });
+            }
+        }
         let transferred = attr
             .darts()
             .filter(|&seed| g.profile_key(seed) != Some(consumed_loop))
@@ -1279,6 +1291,10 @@ fn merge_rejoined_profiles<P: Payload>(edit: &mut ModelEdit<'_, P>, survivor: Pr
 }
 
 /// Classifies the loop of `face` touched by `cell` as outer or inner.
+///
+/// A face on a closed support need have no outer loop -- a sphere with a hole
+/// cut in it, a ring between two wrapping loops -- and then none of its loops
+/// is the outer one.
 fn incident_loop_is_outer<P: Payload>(g: &Model<P>, cell: &[Dart], face: FaceKey) -> Option<bool> {
     let profile = cell
         .iter()
@@ -1286,7 +1302,8 @@ fn incident_loop_is_outer<P: Payload>(g: &Model<P>, cell: &[Dart], face: FaceKey
         .filter(|&dart| g.cell_key::<Cell2>(dart) == Some(face))
         .find_map(|dart| g.profile_key(dart))?;
     let attr = g.face_attr(face)?;
-    Some(g.profile_key(attr.outer_unchecked()) == Some(profile))
+    let outer = attr.outer_seed().and_then(|seed| g.profile_key(seed));
+    Some(outer.is_some() && outer == Some(profile))
 }
 
 /// Returns the two distinct `(dim + 1)`-cell identities incident to the cell.

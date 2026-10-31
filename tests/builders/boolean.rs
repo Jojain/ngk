@@ -2161,3 +2161,226 @@ fn a_tilted_bar_notching_a_disc_edge_leaves_its_wall_measurable() {
         "rest {rest} and common {common} should add up to the disc {disc_volume}"
     );
 }
+
+/// A frame turned by `angle` about `axis`, with its origin at `origin`.
+fn turned_frame(origin: Point3, axis: Vector3<f64>, angle: f64) -> Frame {
+    let rotation =
+        nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Unit::new_normalize(axis), angle);
+    Frame::from_xz(origin, rotation * Vector3::x(), rotation * Vector3::z())
+}
+
+#[test]
+fn a_tilted_rod_through_a_ring_is_cut_by_it_along_one_loop() {
+    // The rod crosses the ring's tube in one closed loop. Tracing the
+    // intersection finds that loop from two seeds, the second just behind
+    // the first's starting point; it has to be recognised as the same loop,
+    // or the rod is cut twice along it and loses the bitten piece twice.
+    let (height, radius) = (1.8219581429723979, 0.589884808179269);
+    let ring = || solids::torus(1.2915590021924739, 0.30862218083394705).expect("ring");
+    let rod = || {
+        let axis = Vector3::new(0.7593785541712356, 0.9840859778012193, -0.7072897349925271);
+        let centred = turned_frame(Point3::origin(), axis, -1.0964456365838824);
+        let centre = Point3::new(-1.25, 0.5196651089034199, 0.3956556087442059);
+        let origin = centre - *centred.z_dir * (height / 2.0);
+        let frame = Frame::from_xz(origin, centred.x_dir, centred.z_dir);
+        solids::cylinder_at(frame, radius, height).expect("rod")
+    };
+
+    let rest = solids::cut(rod(), [&ring()]).expect("the ring should bite the rod");
+    let common = solids::intersect(rod(), [&ring()]).expect("the ring should meet the rod");
+
+    for shape in [&rest, &common] {
+        validate_solid_manifold(shape.model(), shape.key()).unwrap();
+        ngk::topology::validation::validate_solid_orientation(shape.model(), shape.key()).unwrap();
+    }
+    let rod_volume = std::f64::consts::PI * radius * radius * height;
+    let rest = rest
+        .solid()
+        .volume()
+        .expect("the bitten rod should be measurable");
+    let common = common
+        .solid()
+        .volume()
+        .expect("the bitten piece should be measurable");
+    assert!(
+        (rest + common - rod_volume).abs() <= FITTED * rod_volume,
+        "rest {rest} and common {common} should add up to the rod {rod_volume}"
+    );
+}
+
+#[test]
+fn a_ball_swallowing_a_rods_top_cuts_its_wall_along_one_wrapping_loop() {
+    // The ball takes in the rod's whole top cap, so its wall is cut round
+    // into two rings along one closed loop. That loop starts a hair short of
+    // a whole turn from where the lower ring is cut open, which must read as
+    // no turn at all rather than move its pcurve a period off its domain.
+    let (height, radius) = (1.968889783044814, 0.29461629830741454);
+    let ball_radius = 1.4473506171253936;
+    let rod = || {
+        solids::cylinder_at(
+            Frame::at(Point3::new(0.0, 0.0, -height / 2.0)),
+            radius,
+            height,
+        )
+        .expect("rod")
+    };
+    let ball = || {
+        let frame = turned_frame(
+            Point3::new(0.67328882758853, 0.75, 1.0),
+            Vector3::y(),
+            0.75 * std::f64::consts::PI,
+        );
+        solids::sphere_at(frame, ball_radius).expect("ball")
+    };
+
+    let union = solids::fuse(rod(), [&ball()]).expect("the ball should fuse to the rod");
+    let common = solids::intersect(rod(), [&ball()]).expect("the ball should meet the rod");
+    let rest = solids::cut(rod(), [&ball()]).expect("the ball should cut the rod's top off");
+
+    for shape in [&union, &common, &rest] {
+        validate_solid_manifold(shape.model(), shape.key()).unwrap();
+        ngk::topology::validation::validate_solid_orientation(shape.model(), shape.key()).unwrap();
+    }
+    let volume = |shape: &ngk::topology::shape::Shape<ngk::topology::shape::SolidTag>| {
+        shape
+            .solid()
+            .volume()
+            .expect("every result should be measurable")
+    };
+    let rod_volume = std::f64::consts::PI * radius * radius * height;
+    let ball_volume = 4.0 / 3.0 * std::f64::consts::PI * ball_radius.powi(3);
+    let (union, common, rest) = (volume(&union), volume(&common), volume(&rest));
+    assert!(
+        (union + common - rod_volume - ball_volume).abs() <= FITTED * ball_volume,
+        "union {union} and common {common} should add up to rod {rod_volume} and ball {ball_volume}"
+    );
+    assert!(
+        (rest + common - rod_volume).abs() <= FITTED * rod_volume,
+        "rest {rest} and common {common} should add up to the rod {rod_volume}"
+    );
+}
+
+#[test]
+fn a_rod_cap_slicing_a_ball_through_its_box_centre_leaves_it_measurable() {
+    // The rod's end cap cuts the ball in the plane through the centre of the
+    // box round the piece they share, so the cap carries no flux about that
+    // point: its moments are rounding noise, which no relative tolerance on
+    // them alone can meet.
+    let ball_radius = 0.3904123455432594;
+    let (radius, height) = (1.4826059041795785, 1.844354806131885);
+    let ball = || solids::sphere(ball_radius).expect("ball");
+    let rod = || {
+        let centred = turned_frame(Point3::origin(), Vector3::y(), 1.5 * std::f64::consts::PI);
+        let centre = Point3::new(1.0, -0.15899098360886754, -1.0);
+        let origin = centre - *centred.z_dir * (height / 2.0);
+        solids::cylinder_at(
+            Frame::from_xz(origin, centred.x_dir, centred.z_dir),
+            radius,
+            height,
+        )
+        .expect("rod")
+    };
+
+    let common = solids::intersect(ball(), [&rod()]).expect("the rod should meet the ball");
+    let rest = solids::cut(ball(), [&rod()]).expect("the rod should cut the ball");
+
+    let ball_volume = 4.0 / 3.0 * std::f64::consts::PI * ball_radius.powi(3);
+    let common = common
+        .solid()
+        .volume()
+        .expect("the shared piece should be measurable");
+    let rest = rest
+        .solid()
+        .volume()
+        .expect("the rest of the ball should be measurable");
+    assert!(
+        (rest + common - ball_volume).abs() <= FITTED * ball_volume,
+        "rest {rest} and common {common} should add up to the ball {ball_volume}"
+    );
+}
+
+#[test]
+fn a_tilted_ring_poking_through_a_discs_top_keeps_its_section_edges_on_the_disc() {
+    // The ring's tube crosses the disc's top face in one closed loop, which
+    // the rim cuts into an arc inside the face and one outside it. The inner
+    // arc runs across the loop's seam, so it is two pieces meeting there; the
+    // piece ending at the seam must keep to its own arc, not the outer one.
+    let (radius, height) = (1.0, 1.9369744361804977);
+    let disc = || {
+        solids::cylinder_at(
+            Frame::at(Point3::new(0.0, 0.0, -height / 2.0)),
+            radius,
+            height,
+        )
+        .expect("disc")
+    };
+    let ring = || {
+        let frame = turned_frame(
+            Point3::new(-0.25, -0.14505973120262552, 0.5),
+            Vector3::y(),
+            0.25 * std::f64::consts::PI,
+        );
+        solids::torus_at(frame, 0.75, 0.1477510186638526).expect("ring")
+    };
+
+    let common = solids::intersect(disc(), [&ring()]).expect("the ring should meet the disc");
+
+    for edge in common.solid().edges() {
+        let span = edge.trimmed_curve();
+        for i in 0..=32 {
+            let point = span.point_at(Fraction::new(i as f64 / 32.0));
+            assert!(
+                point.x.hypot(point.y) <= radius + 1e-6 && point.z.abs() <= height / 2.0 + 1e-6,
+                "{:?} leaves the disc at {point:?}",
+                edge.key()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_ball_swallowing_most_of_a_disc_fuses_with_it_without_panicking() {
+    // Healing the union tries to fuse faces across edges the Boolean left
+    // behind, and some of those faces lie on the ball's closed support with
+    // only holes for loops: there is no outer loop to fuse them against.
+    let (radius, height) = (1.0, 1.8670014931328227);
+    let ball_radius = 1.5;
+    let disc = || {
+        solids::cylinder_at(
+            Frame::at(Point3::new(0.0, 0.0, -height / 2.0)),
+            radius,
+            height,
+        )
+        .expect("disc")
+    };
+    let ball = || {
+        let frame = turned_frame(
+            Point3::new(-0.20983598427180966, 0.0, -0.5),
+            Vector3::y(),
+            0.5 * std::f64::consts::PI,
+        );
+        solids::sphere_at(frame, ball_radius).expect("ball")
+    };
+
+    let union = solids::fuse(disc(), [&ball()]).expect("the ball should fuse to the disc");
+    let common = solids::intersect(disc(), [&ball()]).expect("the ball should meet the disc");
+
+    for shape in [&union, &common] {
+        validate_solid_manifold(shape.model(), shape.key()).unwrap();
+        ngk::topology::validation::validate_solid_orientation(shape.model(), shape.key()).unwrap();
+    }
+    let disc_volume = std::f64::consts::PI * radius * radius * height;
+    let ball_volume = 4.0 / 3.0 * std::f64::consts::PI * ball_radius.powi(3);
+    let union = union
+        .solid()
+        .volume()
+        .expect("the union should be measurable");
+    let common = common
+        .solid()
+        .volume()
+        .expect("the common piece should be measurable");
+    assert!(
+        (union + common - disc_volume - ball_volume).abs() <= FITTED * ball_volume,
+        "union {union} and common {common} should add up to disc {disc_volume} and ball {ball_volume}"
+    );
+}

@@ -512,6 +512,14 @@ impl RingCut {
         }
         let along = (self.at - start) / run;
         let along = along - along.floor();
+        // A whole turn along, give or take rounding, is no shift: reading the
+        // pcurve from there would move its interval a whole period off its
+        // support's domain.
+        let along = if along <= LINEAR_TOLERANCE || 1.0 - along <= LINEAR_TOLERANCE {
+            0.0
+        } else {
+            along
+        };
         let at = curve.point_at(Fraction::new(along));
         let turns = (at[axis] - self.at) / self.period;
         if (turns - turns.round()).abs() * self.period > LINEAR_TOLERANCE {
@@ -532,8 +540,7 @@ impl RingCut {
         } else {
             span_along
         };
-        let pcurve_shifts = along > LINEAR_TOLERANCE && along < 1.0 - LINEAR_TOLERANCE;
-        let shifted_nurbs = (pcurve_shifts && matches!(curve.curve(), Curve2::Nurbs(_)))
+        let shifted_nurbs = (along != 0.0 && matches!(curve.curve(), Curve2::Nurbs(_)))
             || (span_along != 0.0 && matches!(span.curve(), Curve::Nurbs(_)));
         if shifted_nurbs {
             return (curve, span);

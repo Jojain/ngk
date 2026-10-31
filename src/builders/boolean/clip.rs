@@ -100,6 +100,18 @@ pub(crate) fn clip_branch(
         }
         let interval = Interval::new(pair[0], pair[1]);
         let mut curve = branch.curve_3d.sub(interval);
+        // An edge's span is read off its vertices, and on a closed loop with
+        // no period the seam is both ends of the domain: a fragment ending
+        // there would name either arc. A fitted fragment gets a support of its
+        // own, as a split edge does; an analytic one keeps its exact support.
+        if let Curve::Nurbs(_) = curve.curve()
+            && curve.curve().is_closed()
+            && !(pair[0] == Fraction::START && pair[1] == Fraction::END)
+        {
+            let own = curve.to_curve()?;
+            let domain = own.domain();
+            curve = TrimmedCurve::new(own, domain);
+        }
         let mut pcurve_a = pcurve_a.sub(interval);
         let mut pcurve_b = pcurve_b.sub(interval);
         for (index, at_start) in [(0usize, true), (1usize, false)] {

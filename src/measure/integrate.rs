@@ -234,11 +234,20 @@ fn face_volume_moments(
     domain: &FaceDomain<'_>,
     reference: Reference,
 ) -> Result<MomentVector, MeasureError> {
+    // A face's flux can vanish identically -- a plane through the reference
+    // point carries none -- and a tolerance relative to nothing is never met.
+    // Its area is integrated alongside as the scale the error is held to: the
+    // moments are at most that large, offsets being in units of the scale.
     domain
         .integrate(PROPERTIES, |point, du, dv| {
-            volume_moments(reference.offset(point), du.cross(&dv))
+            let normal = du.cross(&dv);
+            let moments = volume_moments(reference.offset(point), normal);
+            SVector::<f64, 11>::from_fn(|index, _| match index {
+                10 => normal.norm(),
+                index => moments[index],
+            })
         })
-        .map(|integral| reference.unscale(integral.value, 1))
+        .map(|integral| reference.unscale(integral.value.fixed_rows::<10>(0).into_owned(), 1))
         .map_err(|_| MeasureError::FaceUnconverged { face })
 }
 
