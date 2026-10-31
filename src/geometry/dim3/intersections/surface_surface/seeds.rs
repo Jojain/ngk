@@ -853,19 +853,20 @@ impl PairSeedSearch {
     }
 }
 
-/// Chooses the patch whose embedding is most likely to separate the cones.
+/// Chooses the patch whose embedding is most likely to separate the pair.
 ///
-/// A patch with no cone at all is the blocker; otherwise the wider cone is.
+/// Where both have a cone, the wider one is split. A patch with no cone -- one
+/// touching a pole, where a row of its normal field vanishes -- keeps having
+/// none however finely it is split, so no cone test will ever clear it; only
+/// boxes that stop overlapping can, and the larger patch is split for that.
 fn split_first(
     a: &BezierSurface,
     b: &BezierSurface,
     cones: (Option<NormalCone>, Option<NormalCone>),
 ) -> bool {
     match cones {
-        (None, Some(_)) => true,
-        (Some(_), None) => false,
         (Some(first), Some(second)) => first.width() >= second.width(),
-        (None, None) => a.bbox().diagonal_length() >= b.bbox().diagonal_length(),
+        _ => a.bbox().diagonal_length() >= b.bbox().diagonal_length(),
     }
 }
 

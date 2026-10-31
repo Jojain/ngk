@@ -27,7 +27,10 @@ use crate::geometry::{
 const INITIAL_FIT_SAMPLES: usize = 33;
 
 /// Fitting attempts before a pcurve is reported at whatever it reached.
-const MAX_FIT_REFINEMENTS: usize = 3;
+///
+/// A circle passing close to a sphere's pole turns fast in longitude there,
+/// and evenly spaced samples need several doublings to follow it.
+const MAX_FIT_REFINEMENTS: usize = 5;
 
 /// Narrowest piece a split may leave, as a fraction of the section.
 ///

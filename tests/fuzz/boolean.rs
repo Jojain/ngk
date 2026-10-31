@@ -372,6 +372,17 @@ fn variant_name(error: &BooleanError) -> String {
     if let BooleanError::Imprint { source, .. } = error {
         return format!("Imprint/{}", variant_name(source));
     }
+    // Incomplete coverage has many causes; the first one decides the class.
+    if let BooleanError::IncompleteIntersections { diagnostics } = error {
+        let cause = if let Some(reason) = diagnostics.coverage.first() {
+            format!("{reason:?}")
+        } else if diagnostics.branches_uncertified > 0 {
+            "BranchUncertified".to_string()
+        } else {
+            "UnresolvedOverlap".to_string()
+        };
+        return format!("IncompleteIntersections({cause})");
+    }
     let debug = format!("{error:?}");
     let end = debug
         .find(|c: char| !(c.is_alphanumeric() || c == '_'))

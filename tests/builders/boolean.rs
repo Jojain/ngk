@@ -2384,3 +2384,69 @@ fn a_ball_swallowing_most_of_a_disc_fuses_with_it_without_panicking() {
         "union {union} and common {common} should add up to disc {disc_volume} and ball {ball_volume}"
     );
 }
+
+#[test]
+fn two_spheres_meeting_near_a_pole_intersect_to_their_lens() {
+    // The circle the spheres share passes close to the first one's pole, where
+    // longitude turns fast along it: its pcurve takes many more samples than
+    // the circle's own curvature asks for before it reaches the fit tolerance.
+    let (r, big_r) = (1.0259661130072646, 1.3111817198411702);
+    let centre = Point3::new(0.75, 1.0, 0.5);
+    let d = centre.coords.norm();
+    let small = || solids::sphere(r).expect("small sphere");
+    let big = || solids::sphere_at(Frame::at(centre), big_r).expect("big sphere");
+
+    let lens = solids::intersect(small(), [&big()]).expect("the spheres should overlap");
+
+    validate_solid_manifold(lens.model(), lens.key()).unwrap();
+    let expected = std::f64::consts::PI
+        * (big_r + r - d).powi(2)
+        * (d * d + 2.0 * d * r - 3.0 * r * r + 2.0 * d * big_r + 6.0 * r * big_r
+            - 3.0 * big_r * big_r)
+        / (12.0 * d);
+    let volume = lens
+        .solid()
+        .volume()
+        .expect("the lens should be measurable");
+    assert!(
+        (volume - expected).abs() <= FITTED * expected,
+        "lens {volume} should be {expected}"
+    );
+}
+
+#[test]
+fn a_ball_biting_a_rings_tube_is_cut_by_it() {
+    // The ball's poles lie inside the ring's box, where the ball's normal
+    // field vanishes: the patches there have no normal cone, so only
+    // splitting the ring's patches can separate them from the ball's.
+    let ball_radius = 0.75;
+    let ring = || solids::torus(1.5, 0.640756417778177).expect("ring");
+    let ball = || {
+        let frame = turned_frame(
+            Point3::new(0.7999556420294371, -0.75, 0.0),
+            Vector3::z(),
+            0.75 * std::f64::consts::PI,
+        );
+        solids::sphere_at(frame, ball_radius).expect("ball")
+    };
+
+    let rest = solids::cut(ball(), [&ring()]).expect("the ring should bite the ball");
+    let common = solids::intersect(ball(), [&ring()]).expect("the ring should meet the ball");
+
+    for shape in [&rest, &common] {
+        validate_solid_manifold(shape.model(), shape.key()).unwrap();
+    }
+    let ball_volume = 4.0 / 3.0 * std::f64::consts::PI * ball_radius.powi(3);
+    let rest = rest
+        .solid()
+        .volume()
+        .expect("the bitten ball should be measurable");
+    let common = common
+        .solid()
+        .volume()
+        .expect("the bitten piece should be measurable");
+    assert!(
+        (rest + common - ball_volume).abs() <= FITTED * ball_volume,
+        "rest {rest} and common {common} should add up to the ball {ball_volume}"
+    );
+}
