@@ -6,6 +6,7 @@
 //! ```text
 //! cargo test --release --test boolean_fuzz -- [--cases N] [--seed S] [--case I]
 //!                                             [--show] [--no-shrink] [--tol T]
+//!                                             [--strict] [--faces] [--slow S]
 //! ```
 //!
 //! Each case builds a block, cylinder, sphere or torus `A` centred on the
@@ -19,11 +20,18 @@
 //! - **ok**: the result is a valid, outward-oriented solid.
 //! - **refused**: the Boolean returned a typed [`BooleanError`]. That is a
 //!   named gap, not a wrong answer; runs tally them by variant.
-//! - **bug**: a panic, an `Ok` result that fails validation or measurement,
-//!   or volumes that break inclusion–exclusion (`V(A∪B) + V(A∩B) = V(A) +
+//! - **bug**: a panic, an `Ok` result that fails validation or measurement
+//!   or whose pcurves and edges trace different boundaries, an operation
+//!   slower than `--slow` seconds (30 by default), or volumes that break
+//!   inclusion–exclusion (`V(A∪B) + V(A∩B) = V(A) +
 //!   V(B)`, `V(A−B) = V(A) − V(A∩B)`) or the obvious bounds. `EmptyResult`
 //!   counts as volume 0, so a wrongly empty intersection or cut shows up as a
 //!   volume mismatch whenever the other operations succeeded.
+//!
+//! `--strict` counts every refusal but `DisconnectedResult` as a bug too, so
+//! the gaps get shrunk to small reproductions like the bugs do. `--faces`
+//! lists every face of each reported result with its loops as the measure
+//! unwraps them, and `RUST_BACKTRACE=1` keeps each panic's stack.
 //!
 //! Bugs are shrunk with proptest's value trees towards a smaller case failing
 //! the same way, printed as a reproducible `--seed S --case I` line, and with
@@ -35,13 +43,16 @@ use std::f64::consts::PI;
 use std::fmt;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use nalgebra::{Unit, UnitQuaternion, Vector3};
 use ngk::builders::boolean::BooleanError;
+use ngk::geometry::parameter::Fraction;
 use ngk::geometry::{Frame, Point3};
 use ngk::modeling::solids;
+use ngk::topology::UnwrappedFaceDomain;
+use ngk::topology::edge::Edge;
 use ngk::topology::shape::{Shape, SolidTag};
 use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
 use ngk::viz::debug_viewer::{
@@ -314,6 +325,13 @@ impl Outcome {
     }
 }
 
+/// `--strict`: a refusal counts as a bug, so it is shrunk like one.
+static STRICT: AtomicBool = AtomicBool::new(false);
+/// `--faces`: reports list every face of each result.
+static FACES: AtomicBool = AtomicBool::new(false);
+/// `--slow S`: an operation taking longer than this many seconds is a bug.
+static SLOW_SECONDS: AtomicUsize = AtomicUsize::new(30);
+
 thread_local! {
     static LAST_PANIC: RefCell<Option<String>> = const { RefCell::new(None) };
 }
@@ -330,7 +348,14 @@ fn install_quiet_panic_hook() {
             .location()
             .map(|l| format!("{}:{}", l.file(), l.line()))
             .unwrap_or_default();
-        LAST_PANIC.with(|p| *p.borrow_mut() = Some(format!("{message} @ {location}")));
+        // `RUST_BACKTRACE=1` keeps the stack, which is what locates a panic
+        // raised from a shared helper such as `Frame::from_xz`.
+        let backtrace = std::backtrace::Backtrace::capture();
+        let backtrace = match backtrace.status() {
+            std::backtrace::BacktraceStatus::Captured => format!("\n{backtrace}"),
+            _ => String::new(),
+        };
+        LAST_PANIC.with(|p| *p.borrow_mut() = Some(format!("{message} @ {location}{backtrace}")));
     }));
 }
 
@@ -343,6 +368,10 @@ fn catch<T>(f: impl FnOnce() -> T) -> Result<T, String> {
 }
 
 fn variant_name(error: &BooleanError) -> String {
+    // The pair wrapper says which inputs failed, not why; name its source.
+    if let BooleanError::Imprint { source, .. } = error {
+        return format!("Imprint/{}", variant_name(source));
+    }
     let debug = format!("{error:?}");
     let end = debug
         .find(|c: char| !(c.is_alphanumeric() || c == '_'))
@@ -360,11 +389,112 @@ fn variant_name(error: &BooleanError) -> String {
     name.to_string()
 }
 
+/// The error and every source below it, outermost first.
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(inner) = source {
+        message.push_str(": ");
+        message.push_str(&inner.to_string());
+        source = inner.source();
+    }
+    message
+}
+
+/// How far a face's pcurve may stray from its edge before the two describe
+/// different boundaries.
+const PCURVE_TOLERANCE: f64 = 1.0e-3;
+
+/// Checks every pcurve of every face against its edge.
+///
+/// The topology checks cannot see this: a face whose pcurve runs elsewhere
+/// than its edge is still a closed, oriented shell, but it trims a different
+/// region than its edges bound, and its area and volume follow the pcurve.
+fn pcurves_agree(shape: &Shape<SolidTag>) -> Result<(), String> {
+    const SAMPLES: usize = 16;
+    const EDGE_SAMPLES: usize = 256;
+    for face in shape.solid().faces() {
+        let surface = face.surface();
+        for dart in face
+            .loops()
+            .iter()
+            .flat_map(|l| l.darts().collect::<Vec<_>>())
+        {
+            let Some(edge) = Edge::from_dart(shape.model(), dart) else {
+                continue;
+            };
+            let curve = edge.trimmed_curve();
+            let Some(pcurve) = face.pcurve(dart) else {
+                return Err(format!(
+                    "{:?} has no pcurve for {:?}",
+                    face.key(),
+                    edge.key()
+                ));
+            };
+            let polyline = (0..=EDGE_SAMPLES)
+                .map(|i| curve.point_at(Fraction::new(i as f64 / EDGE_SAMPLES as f64)))
+                .collect::<Vec<_>>();
+            for i in 0..=SAMPLES {
+                let uv = pcurve.point_at(Fraction::new(i as f64 / SAMPLES as f64));
+                let point = surface.point_at(uv.x, uv.y);
+                let projected = (curve.point_at(curve.parameter_at(point)) - point).norm();
+                let sampled = polyline
+                    .iter()
+                    .map(|q| (q - point).norm())
+                    .fold(f64::INFINITY, f64::min);
+                let distance = projected.min(sampled);
+                if distance > PCURVE_TOLERANCE {
+                    return Err(format!(
+                        "{:?}'s pcurve for {:?} strays {distance:.3e} from the edge at {point:?}",
+                        face.key(),
+                        edge.key()
+                    ));
+                }
+            }
+            // And the other way: the pcurve has to run the whole edge, not a
+            // stretch of it.
+            let image = (0..=EDGE_SAMPLES)
+                .map(|i| {
+                    let uv = pcurve.point_at(Fraction::new(i as f64 / EDGE_SAMPLES as f64));
+                    surface.point_at(uv.x, uv.y)
+                })
+                .collect::<Vec<_>>();
+            for i in 0..=SAMPLES {
+                let point = curve.point_at(Fraction::new(i as f64 / SAMPLES as f64));
+                let distance = image
+                    .iter()
+                    .map(|q| (q - point).norm())
+                    .fold(f64::INFINITY, f64::min);
+                if distance > PCURVE_TOLERANCE.max(4.0 * curve.length() / EDGE_SAMPLES as f64) {
+                    let ends = edge
+                        .vertices()
+                        .iter()
+                        .map(|v| *v.point())
+                        .collect::<Vec<_>>();
+                    return Err(format!(
+                        "{:?}'s pcurve for {:?} misses the edge by {distance:.3e} at {point:?}                          (span {:?} runs {:?} -> {:?}, vertices {:?}, pcurve image {:?} -> {:?})",
+                        face.key(),
+                        edge.key(),
+                        curve.interval(),
+                        curve.point_at(Fraction::new(0.0)),
+                        curve.point_at(Fraction::new(1.0)),
+                        ends,
+                        image.first(),
+                        image.last(),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn inspect(shape: Shape<SolidTag>) -> Outcome {
     let key = shape.key();
     let validity = validate_solid_manifold(shape.model(), key)
         .and_then(|()| validate_solid_orientation(shape.model(), key))
-        .map_err(|e| e.to_string());
+        .map_err(|e| e.to_string())
+        .and_then(|()| pcurves_agree(&shape));
     let volume = catch(|| shape.solid().volume()).and_then(|r| r.map_err(|e| e.to_string()));
     Outcome::Solid {
         shape,
@@ -379,10 +509,10 @@ fn run_op(case: &Case, op: Op) -> Outcome {
             let a = case.a.build(&Pose::identity())?;
             let b = case.b.build(&case.pose_b)?;
             Ok(match op {
-                Op::Union => solids::fuse(a, b),
-                Op::Common => solids::intersect(a, b),
-                Op::AMinusB => solids::cut(a, b),
-                Op::BMinusA => solids::cut(b, a),
+                Op::Union => solids::fuse(a, [&b]),
+                Op::Common => solids::intersect(a, [&b]),
+                Op::AMinusB => solids::cut(a, [&b]),
+                Op::BMinusA => solids::cut(b, [&a]),
             })
         },
     );
@@ -396,7 +526,7 @@ fn run_op(case: &Case, op: Op) -> Outcome {
         Ok(Ok(Err(BooleanError::EmptyResult))) => Outcome::Empty,
         Ok(Ok(Err(error))) => Outcome::Refused {
             variant: variant_name(&error),
-            message: error.to_string(),
+            message: error_chain(&error),
         },
     }
 }
@@ -423,7 +553,22 @@ fn run_case(case: &Case, tol: f64) -> Report {
     let mut bugs = Vec::new();
     let operand_volumes = operand_volume(&case.a, &Pose::identity())
         .and_then(|va| operand_volume(&case.b, &case.pose_b).map(|vb| (va, vb)));
-    let outcomes: Vec<(Op, Outcome)> = Op::ALL.iter().map(|&op| (op, run_op(case, op))).collect();
+    let slow = Duration::from_secs(SLOW_SECONDS.load(Ordering::Relaxed) as u64);
+    let outcomes: Vec<(Op, Outcome)> = Op::ALL
+        .iter()
+        .map(|&op| {
+            let started = Instant::now();
+            let outcome = run_op(case, op);
+            let elapsed = started.elapsed();
+            if elapsed > slow {
+                bugs.push(Bug {
+                    class: format!("slow {op}"),
+                    detail: format!("took {elapsed:.1?}"),
+                });
+            }
+            (op, outcome)
+        })
+        .collect();
 
     for (op, outcome) in &outcomes {
         match outcome {
@@ -441,6 +586,16 @@ fn run_case(case: &Case, tol: f64) -> Report {
                 class: format!("unmeasurable solid from {op}"),
                 detail: e.clone(),
             }),
+            // `DisconnectedResult` is a correct answer the API cannot return
+            // as one solid, not a gap in the Boolean.
+            Outcome::Refused { variant, message }
+                if STRICT.load(Ordering::Relaxed) && variant != "DisconnectedResult" =>
+            {
+                bugs.push(Bug {
+                    class: format!("refused {variant}"),
+                    detail: format!("{op}: {message}"),
+                })
+            }
             Outcome::Empty if *op == Op::Union => bugs.push(Bug {
                 class: "empty union".into(),
                 detail: "a union of two non-empty solids came back empty".into(),
@@ -585,10 +740,17 @@ fn shrink(
 fn describe_outcome(outcome: &Outcome) -> String {
     match outcome {
         Outcome::Solid {
-            volume, validity, ..
+            shape,
+            volume,
+            validity,
         } => {
+            let solid = shape.solid();
             let volume = match volume {
-                Ok(v) => format!("V={v:.6}"),
+                Ok(v) => format!(
+                    "V={v:.6}, {} shell(s), {} face(s)",
+                    solid.shells().len(),
+                    solid.faces().len()
+                ),
                 Err(e) => format!("volume failed: {e}"),
             };
             match validity {
@@ -620,6 +782,87 @@ fn print_report(case: &Case, report: &Report) {
     }
     for (op, outcome) in &report.outcomes {
         println!("    {op}: {}", describe_outcome(outcome));
+        if let Outcome::Solid { shape, .. } = outcome
+            && FACES.load(Ordering::Relaxed)
+        {
+            for face in shape.solid().faces() {
+                let area = face
+                    .area()
+                    .map_or_else(|e| e.to_string(), |a| format!("{a:.6}"));
+                println!(
+                    "        {:?} {:?} {}: area {area}, {} loop(s), {} edge(s)",
+                    face.key(),
+                    face.sense(),
+                    format!("{:?}", face.surface())
+                        .split(|c: char| !c.is_alphanumeric())
+                        .next()
+                        .unwrap_or_default(),
+                    face.loops().len(),
+                    face.edges().len()
+                );
+                let kinds = face
+                    .loops()
+                    .iter()
+                    .map(|l| format!("{:?}", l.kind()))
+                    .collect::<Vec<_>>();
+                println!("          loops {}", kinds.join(", "));
+                match UnwrappedFaceDomain::of_face(&face) {
+                    Ok(domain) => {
+                        for placed in domain.loops() {
+                            let polygon = placed.polyline(256);
+                            let area = 0.5
+                                * polygon
+                                    .iter()
+                                    .zip(polygon.iter().cycle().skip(1))
+                                    .map(|(a, b)| a.x * b.y - b.x * a.y)
+                                    .sum::<f64>();
+                            let (lo, hi) = polygon.iter().fold(
+                                ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]),
+                                |(lo, hi), p| {
+                                    (
+                                        [lo[0].min(p.x), lo[1].min(p.y)],
+                                        [hi[0].max(p.x), hi[1].max(p.y)],
+                                    )
+                                },
+                            );
+                            println!(
+                                "          unwrapped loop: {} curve(s), uv area {area:.6}, u {:.4}..{:.4}, v {:.4}..{:.4}",
+                                placed.curves().len(),
+                                lo[0],
+                                hi[0],
+                                lo[1],
+                                hi[1]
+                            );
+                            for placed_curve in placed.curves() {
+                                let pts = (0..=64)
+                                    .map(|i| placed_curve.point_at(i as f64 / 64.0))
+                                    .collect::<Vec<_>>();
+                                let vs = pts.iter().map(|p| p.y);
+                                let (vlo, vhi) = vs
+                                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), v| {
+                                        (a.min(v), b.max(v))
+                                    });
+                                println!(
+                                    "            curve {:?} {} {:?} span {:?}: {:?} -> {:?}, v {vlo:.4}..{vhi:.4}, span length {:.4}, offset {:?}",
+                                    placed_curve.dart(),
+                                    format!("{:?}", placed_curve.curve().curve())
+                                        .chars()
+                                        .take(12)
+                                        .collect::<String>(),
+                                    placed_curve.curve().interval(),
+                                    placed_curve.span().interval(),
+                                    placed_curve.start(),
+                                    placed_curve.end(),
+                                    placed_curve.span().length(),
+                                    placed_curve.offset()
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => println!("          unwrapped domain: {e}"),
+                }
+            }
+        }
     }
     for bug in &report.bugs {
         println!("    BUG [{}] {}", bug.class, bug.detail);
@@ -697,6 +940,12 @@ fn parse_args() -> Args {
             }
             "--show" => args.show = true,
             "--no-shrink" => args.shrink = false,
+            "--strict" => STRICT.store(true, Ordering::Relaxed),
+            "--faces" => FACES.store(true, Ordering::Relaxed),
+            "--slow" => SLOW_SECONDS.store(
+                value("--slow").parse().expect("--slow S"),
+                Ordering::Relaxed,
+            ),
             // Flags cargo's own harness would take; ignore rather than fail.
             _ => {}
         }
