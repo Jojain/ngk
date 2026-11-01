@@ -85,6 +85,49 @@ pub fn boolean<P: Payload>(
     operation: BooleanOperation,
     options: BooleanOptions,
 ) -> Result<SolidBoolean, BooleanError> {
+    boolean_recorded(
+        map,
+        target,
+        tools,
+        operation,
+        options,
+        &mut BooleanTrace::disabled(),
+    )
+}
+
+/// As [`boolean`], recording each stage it reaches.
+///
+/// The trace is returned whatever the outcome: on a failure its last stage
+/// holds the model as it stood when the Boolean gave up, before the rollback
+/// that leaves `map` as it was.
+pub fn boolean_traced<P: Payload>(
+    map: &mut Model<P>,
+    target: SolidKey,
+    tools: &[SolidKey],
+    operation: BooleanOperation,
+    options: BooleanOptions,
+) -> (Result<SolidBoolean, BooleanError>, BooleanTrace<P>)
+where
+    P::V: Default,
+    P::E: Default,
+    P::Profile: Default,
+    P::F: Default,
+    P::Sheet: Default,
+    P::S: Default,
+{
+    let mut trace = BooleanTrace::recording();
+    let result = boolean_recorded(map, target, tools, operation, options, &mut trace);
+    (result, trace)
+}
+
+fn boolean_recorded<P: Payload>(
+    map: &mut Model<P>,
+    target: SolidKey,
+    tools: &[SolidKey],
+    operation: BooleanOperation,
+    options: BooleanOptions,
+    trace: &mut BooleanTrace<P>,
+) -> Result<SolidBoolean, BooleanError> {
     let context = BooleanContext::admit(map, target, tools, operation, options)?;
     if operation == BooleanOperation::Difference && context.operands.target_is_a_tool() {
         return Err(BooleanError::EmptyResult);
@@ -109,19 +152,41 @@ pub fn boolean<P: Payload>(
     }
     let operands = context.operands.map(BooleanOperand::Solid);
     map.transaction(|edit| {
-        let arrangement =
-            arrangement::arrange(edit, &operands, context.options, context.tolerances)?;
-        let graph = neighborhood::FragmentGraph::<SolidDomain>::build(&arrangement.lineages);
-        let classes = classify::run(
-            edit,
-            &arrangement.lineages,
-            &graph,
-            operation,
-            context.options,
-            context.tolerances,
-        )?;
-        let selection = select::run(operation, operands.len(), &graph, &classes);
-        assemble::run(edit, &context, &graph, arrangement, selection)
+        trace.record(|| BooleanTraceStage::named("operands").with_model(edit.model()));
+        let result = (|| {
+            let arrangement =
+                arrangement::arrange(edit, &operands, context.options, context.tolerances, trace)?;
+            trace.record(|| BooleanTraceStage::named("imprinted").with_model(edit.model()));
+            let graph = neighborhood::FragmentGraph::<SolidDomain>::build(&arrangement.lineages);
+            let classes = classify::run(
+                edit,
+                &arrangement.lineages,
+                &graph,
+                operation,
+                context.options,
+                context.tolerances,
+            )?;
+            let selection = select::run(operation, operands.len(), &graph, &classes);
+            trace.record(|| {
+                let kept = selection.kept.iter().copied().collect::<HashSet<_>>();
+                let (kept, dropped) = graph
+                    .fragments
+                    .iter()
+                    .map(|fragment| fragment.fragment)
+                    .partition(|fragment| kept.contains(fragment));
+                BooleanTraceStage::named("selected")
+                    .with_model(edit.model())
+                    .with_faces("kept", kept)
+                    .with_faces("dropped", dropped)
+            });
+            assemble::run(edit, &context, &graph, arrangement, selection)
+        })();
+        if let Err(error) = &result {
+            trace.record(|| {
+                BooleanTraceStage::named(format!("failed: {error}")).with_model(edit.model())
+            });
+        }
+        result
     })
 }
 /// A non-mutating contact plan for two operands already in one map.
@@ -157,7 +222,13 @@ pub fn compute_boolean_intersections<P: Payload>(
 ) -> Result<BooleanIntersectionPlan, BooleanError> {
     let first_cells = operand_cells(g, first)?;
     let second_cells = operand_cells(g, second)?;
-    compute_cell_intersections(g, [first, second], [first_cells, second_cells], options)
+    compute_cell_intersections(
+        g,
+        [first, second],
+        [first_cells, second_cells],
+        options,
+        &mut BooleanTrace::disabled(),
+    )
 }
 
 /// As [`compute_boolean_intersections`], over cells the caller gathered.
@@ -169,6 +240,7 @@ pub(super) fn compute_cell_intersections<P: Payload>(
     [first, second]: [BooleanOperand; 2],
     [first_cells, second_cells]: [OperandCells; 2],
     options: BooleanOptions,
+    trace: &mut BooleanTrace<P>,
 ) -> Result<BooleanIntersectionPlan, BooleanError> {
     if !options.intersections.validate() {
         return Err(crate::geometry::IntersectionError::InvalidOptions.into());
@@ -193,6 +265,7 @@ pub(super) fn compute_cell_intersections<P: Payload>(
     compute_contacts(g, &mut observations, options)?;
     reroute_boundary_imprints(g, &mut observations, options);
     normalize_face_imprint_chains(g, &mut observations, options)?;
+    trace.record(|| contacts_stage(&observations));
     let observed_network = build_intersection_network(g, &observations, options)?;
     let mut face_imprints = imprint::face_imprints(&observed_network);
     let (mut network, embedding) = graph::finalize_network(
@@ -214,6 +287,18 @@ pub(super) fn compute_cell_intersections<P: Payload>(
             }
         }
     }
+    trace.record(|| {
+        BooleanTraceStage::named("sections")
+            .with_curves(
+                "sections",
+                network
+                    .spans()
+                    .iter()
+                    .map(|span| (*span.curve).clone())
+                    .collect(),
+            )
+            .with_points(network.events().iter().map(|event| event.point).collect())
+    });
     Ok(BooleanIntersectionPlan {
         diagnostics: observations.diagnostics,
         face_imprints,
@@ -224,6 +309,35 @@ pub(super) fn compute_cell_intersections<P: Payload>(
         first_cells: observations.first_cells,
         second_cells: observations.second_cells,
     })
+}
+
+/// What the narrow phase found, before it is joined into one network.
+///
+/// Each operand's imprints are kept apart, so a section one side traced and
+/// the other did not -- an open loop, a curve found twice -- shows as a curve
+/// with no partner.
+fn contacts_stage<P: Payload>(observations: &IntersectionAccumulator) -> BooleanTraceStage<P> {
+    let imprints = |cells: &OperandCells| {
+        cells
+            .faces
+            .iter()
+            .filter_map(|face| observations.face_imprints.get(face))
+            .flatten()
+            .map(|imprint| imprint.curve.clone())
+            .collect::<Vec<_>>()
+    };
+    let points = observations
+        .contacts
+        .iter()
+        .filter_map(|contact| match contact {
+            RawIntersection::Point { point, .. } => Some(*point),
+            _ => None,
+        })
+        .collect();
+    BooleanTraceStage::named("contacts")
+        .with_curves("first imprints", imprints(&observations.first_cells))
+        .with_curves("second imprints", imprints(&observations.second_cells))
+        .with_points(points)
 }
 
 /// Canonicalizes the raw narrow-phase observations into the shared network.
@@ -411,7 +525,9 @@ pub fn apply_boolean_splits<P: Payload>(
     g: &mut Model<P>,
     plan: BooleanIntersectionPlan,
 ) -> Result<BooleanOperandPreparation, BooleanError> {
-    g.transaction(|edit| apply_boolean_splits_edit(edit, plan, false))
+    g.transaction(|edit| {
+        apply_boolean_splits_edit(edit, plan, false, &mut BooleanTrace::disabled())
+    })
 }
 
 /// Computes contacts and splits two operands already stored in the same map.
@@ -441,7 +557,7 @@ pub fn prepare_boolean_with_external_tool<P: Payload>(
     target_map.transaction(|edit| {
         let imported = import_operand(edit, tool_map, tool)?;
         let plan = compute_boolean_intersections(edit, target, imported, options)?;
-        apply_boolean_splits_edit(edit, plan, true)
+        apply_boolean_splits_edit(edit, plan, true, &mut BooleanTrace::disabled())
     })
 }
 
@@ -449,6 +565,7 @@ pub(super) fn apply_boolean_splits_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     plan: BooleanIntersectionPlan,
     imported_second: bool,
+    trace: &mut BooleanTrace<P>,
 ) -> Result<BooleanOperandPreparation, BooleanError> {
     // Revalidate source handles so applying an old plan fails atomically.
     revalidate_plan_operand(edit, plan.first)?;
@@ -499,7 +616,17 @@ pub(super) fn apply_boolean_splits_edit<P: Payload>(
             .iter()
             .map(|imprint| imprint.imprint.clone())
             .collect::<Vec<_>>();
-        let splits = split_face_by_imprints_edit(edit, source, &curves)?;
+        let splits = split_face_by_imprints_edit(edit, source, &curves).inspect_err(|error| {
+            trace.record(|| {
+                BooleanTraceStage::named(format!("face split failed: {error}"))
+                    .with_model(edit.model())
+                    .with_faces("face", vec![source])
+                    .with_curves(
+                        "imprints",
+                        curves.iter().map(|imprint| imprint.curve.clone()).collect(),
+                    )
+            });
+        })?;
         for section in splits.iter().flat_map(|split| &split.sections) {
             let imprint = &imprints[section.imprint];
             let side = match imprint.side {

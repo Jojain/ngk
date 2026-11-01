@@ -1,7 +1,7 @@
 use nalgebra::Vector3;
 use ngk::builders::boolean::{
     BooleanCell, BooleanOperand, BooleanOperation, BooleanOptions, BooleanSide,
-    IntersectionSpanUse, boolean, compute_boolean_intersections, prepare_boolean,
+    IntersectionSpanUse, boolean, boolean_traced, compute_boolean_intersections, prepare_boolean,
     prepare_boolean_with_external_tool, solid_contains_point,
 };
 
@@ -2472,11 +2472,18 @@ fn a_slab_slicing_a_rings_tube_off_center_cuts_it_into_two_rings() {
     // Pappus: the tube's section is symmetric about the major radius, so
     // each part sweeps its share of the section disc round a circle of
     // radius `major`.
-    let cap = minor * minor * (height / minor).acos() - height * (minor * minor - height * height).sqrt();
+    let cap =
+        minor * minor * (height / minor).acos() - height * (minor * minor - height * height).sqrt();
     let below = 2.0 * std::f64::consts::PI * major * (std::f64::consts::PI * minor * minor - cap);
     let above = 2.0 * std::f64::consts::PI * major * cap;
-    let rest = rest.solid().volume().expect("the sliced ring should be measurable");
-    let common = common.solid().volume().expect("the sliced cap should be measurable");
+    let rest = rest
+        .solid()
+        .volume()
+        .expect("the sliced ring should be measurable");
+    let common = common
+        .solid()
+        .volume()
+        .expect("the sliced cap should be measurable");
     assert!(
         (rest - below).abs() <= FITTED * below,
         "the ring below the slab should hold {below}, not {rest}"
@@ -2493,11 +2500,19 @@ fn two_rings_crossing_along_wavy_circles_fuse_facing_outward() {
     // ring's axis, waving across the tube by more than the gap between them:
     // the middle of the lower one sits above the middle of the upper one,
     // and taking it for the upper one turns both rings inside out.
-    let ring_volume = |major: f64, minor: f64| 2.0 * std::f64::consts::PI.powi(2) * major * minor * minor;
-    let (small, large) = ((1.75, 0.8325919038231584), (1.9113034047962085, 1.612232038652283));
+    let ring_volume =
+        |major: f64, minor: f64| 2.0 * std::f64::consts::PI.powi(2) * major * minor * minor;
+    let (small, large) = (
+        (1.75, 0.8325919038231584),
+        (1.9113034047962085, 1.612232038652283),
+    );
     let first = || solids::torus(small.0, small.1).expect("first ring");
     let second = || {
-        let frame = turned_frame(Point3::new(0.75, -1.25, 1.25), Vector3::x(), std::f64::consts::PI);
+        let frame = turned_frame(
+            Point3::new(0.75, -1.25, 1.25),
+            Vector3::x(),
+            std::f64::consts::PI,
+        );
         solids::torus_at(frame, large.0, large.1).expect("second ring")
     };
 
@@ -2507,11 +2522,91 @@ fn two_rings_crossing_along_wavy_circles_fuse_facing_outward() {
     for shape in [&union, &common] {
         validate_solid_manifold(shape.model(), shape.key()).unwrap();
     }
-    let union = union.solid().volume().expect("the fused rings should be measurable");
-    let common = common.solid().volume().expect("their common part should be measurable");
+    let union = union
+        .solid()
+        .volume()
+        .expect("the fused rings should be measurable");
+    let common = common
+        .solid()
+        .volume()
+        .expect("their common part should be measurable");
     let total = ring_volume(small.0, small.1) + ring_volume(large.0, large.1);
     assert!(
         (union + common - total).abs() <= FITTED * total,
         "union {union} and common {common} should add up to both rings, {total}"
+    );
+}
+
+#[test]
+fn a_traced_boolean_records_each_stage_it_passes_through() {
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 2.0, Point3::new(1.0, 1.0, 1.0), 2.0);
+
+    let (result, trace) = boolean_traced(
+        &mut map,
+        first,
+        &[second],
+        BooleanOperation::Union,
+        BooleanOptions::default(),
+    );
+
+    result.expect("overlapping blocks should fuse");
+    let names = trace
+        .stages()
+        .iter()
+        .map(|stage| stage.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        ["operands", "contacts", "sections", "imprinted", "selected"]
+    );
+    let sections = &trace.stages()[2];
+    assert!(
+        sections.curves.iter().any(|(_, curves)| !curves.is_empty()),
+        "the blocks' faces cross, so the trace should hold the sections they cross along"
+    );
+    let selected = &trace.stages()[4];
+    let kept = selected
+        .faces
+        .iter()
+        .find(|(name, _)| name == "kept")
+        .expect("kept faces");
+    assert!(
+        !kept.1.is_empty(),
+        "a union keeps the faces outside the other block"
+    );
+}
+
+#[test]
+fn a_traced_boolean_keeps_the_model_it_gave_up_on() {
+    // Two blocks apart fuse into two solids, which a Boolean refuses: the
+    // trace still holds the model as it stood, both blocks in it, although
+    // the rollback has left the map as it was.
+    let (mut map, first, second) =
+        two_blocks(Point3::origin(), 1.0, Point3::new(5.0, 0.0, 0.0), 1.0);
+
+    let (result, trace) = boolean_traced(
+        &mut map,
+        first,
+        &[second],
+        BooleanOperation::Union,
+        BooleanOptions::default(),
+    );
+
+    assert!(
+        result.is_err(),
+        "two blocks apart do not fuse into one solid"
+    );
+    let last = trace.stages().last().expect("the failure is recorded");
+    assert!(
+        last.name.starts_with("failed: "),
+        "the last stage is the failure, not {}",
+        last.name
+    );
+    let model = last.model.as_ref().expect("the failure keeps the model");
+    assert_eq!(
+        model.iter_faces().count(),
+        12,
+        "both blocks are still in it"
     );
 }

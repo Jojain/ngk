@@ -41,6 +41,19 @@ export type DebugNodePayload = {
   name: string;
   object?: SerializedDebugObject;
   children?: DebugNodePayload[];
+  style?: DebugNodeStyle;
+  hidden?: boolean;
+};
+
+/**
+ * How a node's geometry is drawn. Each field overrides the viewer's default
+ * for everything below the node, and a descendant's own style overrides its
+ * ancestor's field by field.
+ */
+export type DebugNodeStyle = {
+  color?: string;
+  opacity?: number;
+  width?: number;
 };
 
 export type DebugObjectKind =
@@ -157,6 +170,9 @@ export type HydratedDebugNode = {
   model: Model | null;
   scene: VizScene | null;
   children: HydratedDebugNode[];
+  style: DebugNodeStyle | null;
+  /** Whether the sender asked for the node to arrive unchecked. */
+  startsHidden: boolean;
 };
 
 export type DebugEntityEntry<T> = {
@@ -326,14 +342,47 @@ export function debugNodeLeaves(node: HydratedDebugNode): HydratedDebugNode[] {
   return node.children.flatMap(debugNodeLeaves);
 }
 
+/** The nodes their sender asked to arrive unchecked. */
+export function debugInitiallyHidden(nodes: readonly HydratedDebugNode[]): Set<string> {
+  const hidden = new Set<string>();
+  const visit = (node: HydratedDebugNode) => {
+    if (node.startsHidden) hidden.add(node.id);
+    node.children.forEach(visit);
+  };
+  nodes.forEach(visit);
+  return hidden;
+}
+
 function appendVisibleNode(
   node: HydratedDebugNode,
   hidden: ReadonlySet<string>,
   target: VizScene,
+  inherited: DebugNodeStyle = {},
 ) {
   if (hidden.has(node.id)) return;
-  if (node.scene) appendScene(target, node.scene);
-  for (const child of node.children) appendVisibleNode(child, hidden, target);
+  const style = { ...inherited, ...node.style };
+  if (node.scene) appendScene(target, styledScene(node.scene, style));
+  for (const child of node.children) appendVisibleNode(child, hidden, target, style);
+}
+
+/** The scene with every field `style` sets applied to its elements. */
+function styledScene(scene: VizScene, style: DebugNodeStyle): VizScene {
+  const { color, opacity, width } = style;
+  if (color === undefined && opacity === undefined && width === undefined) return scene;
+  return {
+    ...scene,
+    vertices: scene.vertices.map((vertex) => ({ ...vertex, color: color ?? vertex.color })),
+    edges: scene.edges.map((edge) => ({
+      ...edge,
+      color: color ?? edge.color,
+      width: width ?? edge.width,
+    })),
+    faces: scene.faces.map((face) => ({
+      ...face,
+      color: color ?? face.color,
+      opacity: opacity ?? face.opacity,
+    })),
+  };
 }
 
 function hydrateNode(
@@ -351,7 +400,14 @@ function hydrateNode(
       value: leaf.value,
       model: leaf.model ?? undefined,
     });
-    return { id, name: node.name, children: [], ...leaf };
+    return {
+      id,
+      name: node.name,
+      children: [],
+      style: node.style ?? null,
+      startsHidden: node.hidden ?? false,
+      ...leaf,
+    };
   }
   return {
     id,
@@ -360,6 +416,8 @@ function hydrateNode(
     value: null,
     model: null,
     scene: null,
+    style: node.style ?? null,
+    startsHidden: node.hidden ?? false,
     children: (node.children ?? []).map((child, index) =>
       hydrateNode(child, `${id}/${index}`, kernel, selection, bases, hydrated),
     ),

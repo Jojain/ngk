@@ -2,7 +2,9 @@ use nalgebra::{Unit, Vector3};
 
 use crate::{
     StandardPayload,
-    builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, boolean},
+    builders::boolean::{
+        BooleanError, BooleanOperation, BooleanOptions, BooleanTrace, boolean, boolean_traced,
+    },
     builders::errors::ExtrudeError,
     builders::solids::{
         BlockError, CylinderError, SphereBuildError, TorusBuildError, add_block, add_cylinder,
@@ -18,6 +20,7 @@ use crate::{
     },
 };
 
+use crate::model::Model;
 use crate::topology::solid::Solid;
 
 /// Creates a block (rectangular prism) at the given frame with the specified dimensions.
@@ -193,6 +196,54 @@ pub fn intersect<'a, P: Payload>(
     combine(target, tools, BooleanOperation::Intersection)
 }
 
+/// As [`fuse`], [`cut`] or [`intersect`], recording each stage the Boolean
+/// reaches.
+///
+/// The trace comes back whatever the outcome, which is what it is for: when
+/// the Boolean fails, its stages show the sections it traced and the faces it
+/// had split up to the point where it gave up.
+pub fn traced<'a, P: Payload>(
+    target: Shape<SolidTag, P>,
+    tools: impl IntoIterator<Item = &'a Shape<SolidTag, P>>,
+    operation: BooleanOperation,
+) -> (Result<Shape<SolidTag, P>, BooleanError>, BooleanTrace<P>)
+where
+    P::V: Default,
+    P::E: Default,
+    P::Profile: Default,
+    P::F: Default,
+    P::Sheet: Default,
+    P::S: Default,
+{
+    let (mut model, target) = target.into_model();
+    let tools = match import(&mut model, tools) {
+        Ok(tools) => tools,
+        Err(error) => return (Err(error), BooleanTrace::recording()),
+    };
+    let (result, trace) = boolean_traced(
+        &mut model,
+        target,
+        &tools,
+        operation,
+        BooleanOptions::default(),
+    );
+    (result.map(|result| Shape::new(model, result.solid)), trace)
+}
+
+/// Copies each tool's solid into `model`, returning their keys there.
+fn import<'a, P: Payload>(
+    model: &mut Model<P>,
+    tools: impl IntoIterator<Item = &'a Shape<SolidTag, P>>,
+) -> Result<Vec<SolidKey>, BooleanError> {
+    let tools = tools.into_iter().collect::<Vec<_>>();
+    Ok(import_tools(
+        model,
+        &tools,
+        |a, b| std::ptr::eq(*a, *b),
+        |edit, tool| copy_solid(edit, tool.solid()),
+    )?)
+}
+
 /// Copies each tool's solid into `target`'s model and evaluates one Boolean
 /// there.
 fn combine<'a, P: Payload>(
@@ -201,13 +252,7 @@ fn combine<'a, P: Payload>(
     operation: BooleanOperation,
 ) -> Result<Shape<SolidTag, P>, BooleanError> {
     let (mut model, target) = target.into_model();
-    let tools = tools.into_iter().collect::<Vec<_>>();
-    let tools = import_tools(
-        &mut model,
-        &tools,
-        |a, b| std::ptr::eq(*a, *b),
-        |edit, tool| copy_solid(edit, tool.solid()),
-    )?;
+    let tools = import(&mut model, tools)?;
     let result = boolean(
         &mut model,
         target,

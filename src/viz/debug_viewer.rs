@@ -93,6 +93,30 @@ pub struct DebugNode {
     pub object: Option<SerializedDebugObject>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<DebugNode>,
+    /// How the node's geometry is drawn, for it and everything below it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<DebugStyle>,
+    /// Whether the node arrives unchecked, drawn only once the viewer asks.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
+}
+
+/// How a node's geometry is drawn.
+///
+/// Every field left out keeps the viewer's default, or the style of an
+/// enclosing node: a descendant's style overrides its ancestors' field by
+/// field.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct DebugStyle {
+    /// A CSS colour, for faces, edges and vertices alike.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Face opacity, from 0 to 1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f64>,
+    /// Edge width, in the viewer's units.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
 }
 
 impl DebugNode {
@@ -102,6 +126,8 @@ impl DebugNode {
             name: name.into(),
             object: Some(object),
             children: Vec::new(),
+            style: None,
+            hidden: false,
         }
     }
 
@@ -111,7 +137,21 @@ impl DebugNode {
             name: name.into(),
             object: None,
             children,
+            style: None,
+            hidden: false,
         }
+    }
+
+    /// The node drawn with `style`.
+    pub fn styled(mut self, style: DebugStyle) -> Self {
+        self.style = Some(style);
+        self
+    }
+
+    /// The node arriving unchecked.
+    pub fn hidden(mut self) -> Self {
+        self.hidden = true;
+        self
     }
 }
 

@@ -25,7 +25,7 @@ use super::operand::{Operand, OperandCells};
 use super::operations::{apply_boolean_splits_edit, compute_cell_intersections, lineage_for};
 use super::{
     BooleanDiagnostics, BooleanError, BooleanLineage, BooleanOperand, BooleanOptions,
-    BooleanSection, BooleanTolerances, operand_cells, validate_solid_network,
+    BooleanSection, BooleanTolerances, BooleanTrace, operand_cells, validate_solid_network,
 };
 use crate::topology::ModelEdit;
 use crate::topology::payload::Payload;
@@ -50,6 +50,7 @@ pub(crate) fn arrange<P: Payload>(
     operands: &[Operand<BooleanOperand>],
     options: BooleanOptions,
     tolerances: BooleanTolerances,
+    trace: &mut BooleanTrace<P>,
 ) -> Result<Arrangement, BooleanError> {
     let mut lineages = Vec::with_capacity(operands.len());
     let mut bounds = Vec::with_capacity(operands.len());
@@ -77,12 +78,18 @@ pub(crate) fn arrange<P: Payload>(
             {
                 continue;
             }
-            imprint(edit, &mut arrangement, operands, [first, second], options).map_err(
-                |source| BooleanError::Imprint {
-                    inputs: [operands[first].input, operands[second].input],
-                    source: Box::new(source),
-                },
-            )?;
+            imprint(
+                edit,
+                &mut arrangement,
+                operands,
+                [first, second],
+                options,
+                trace,
+            )
+            .map_err(|source| BooleanError::Imprint {
+                inputs: [operands[first].input, operands[second].input],
+                source: Box::new(source),
+            })?;
         }
     }
     Ok(arrangement)
@@ -96,6 +103,7 @@ fn imprint<P: Payload>(
     operands: &[Operand<BooleanOperand>],
     pair: [usize; 2],
     options: BooleanOptions,
+    trace: &mut BooleanTrace<P>,
 ) -> Result<(), BooleanError> {
     let inputs = pair.map(|index| operands[index].input);
     let keys = pair.map(|index| operands[index].key);
@@ -103,7 +111,7 @@ fn imprint<P: Payload>(
         current_cells(edit, keys[0], &arrangement.lineages[pair[0]])?,
         current_cells(edit, keys[1], &arrangement.lineages[pair[1]])?,
     ];
-    let plan = compute_cell_intersections(edit, keys, cells, options)?;
+    let plan = compute_cell_intersections(edit, keys, cells, options, trace)?;
     if !plan.diagnostics.coverage.is_empty()
         || plan.diagnostics.branches_uncertified > 0
         || !plan.diagnostics.unresolved_overlaps.is_empty()
@@ -115,7 +123,7 @@ fn imprint<P: Payload>(
     if matches!(keys[0], BooleanOperand::Solid(_)) {
         validate_solid_network(edit, &plan.network, arrangement.diagnostics.tolerances)?;
     }
-    let prepared = apply_boolean_splits_edit(edit, plan, false)?;
+    let prepared = apply_boolean_splits_edit(edit, plan, false, trace)?;
     let passes = [&prepared.first_lineage, &prepared.second_lineage];
 
     for (operand, pass) in pair.into_iter().zip(passes) {

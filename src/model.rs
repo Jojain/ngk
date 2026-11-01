@@ -305,6 +305,45 @@ struct TransactionState<P: Payload> {
     events: Vec<EditEvent>,
 }
 
+impl<P: Payload> Model<P>
+where
+    P::V: Default,
+    P::E: Default,
+    P::Profile: Default,
+    P::F: Default,
+    P::Sheet: Default,
+    P::S: Default,
+{
+    /// Gives every entity still waiting for its payload the default one.
+    ///
+    /// Commit assigns a payload to everything an edit created; a copy of a
+    /// model taken part way through an edit has entities that never got one,
+    /// and copying topology out of it would then take them for derived from
+    /// keys of a model they are no longer in. The data filled here stands in
+    /// for what commit would have assigned, so a copy taken to be looked at
+    /// can be handled like a committed model.
+    pub(crate) fn fill_missing_data(&mut self) {
+        for (_, attr) in self.vertices.iter_mut().filter(|(_, attr)| !attr.has_data()) {
+            attr.set_data(P::V::default());
+        }
+        for (_, attr) in self.edges.iter_mut().filter(|(_, attr)| !attr.has_data()) {
+            attr.set_data(P::E::default());
+        }
+        for (_, attr) in self.profiles.iter_mut().filter(|(_, attr)| !attr.has_data()) {
+            attr.set_data(P::Profile::default());
+        }
+        for (_, attr) in self.faces.iter_mut().filter(|(_, attr)| !attr.has_data()) {
+            attr.set_data(P::F::default());
+        }
+        for (_, attr) in self.sheets.iter_mut().filter(|(_, attr)| !attr.has_data()) {
+            attr.set_data(P::Sheet::default());
+        }
+        for (_, attr) in self.solids.iter_mut().filter(|(_, attr)| !attr.has_data()) {
+            attr.set_data(P::S::default());
+        }
+    }
+}
+
 impl<P: Payload> Clone for Model<P> {
     fn clone(&self) -> Self {
         Self {

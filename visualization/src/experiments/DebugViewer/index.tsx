@@ -5,6 +5,7 @@ import { VizSceneView, type VizSelection } from "@ngk/viewer";
 import { useVizControls } from "../../components/useVizControls";
 import {
   clearDebugDumps,
+  debugInitiallyHidden,
   debugNodeLeaves,
   debugScene,
   debugSelectionForTopology,
@@ -102,7 +103,7 @@ export default function DebugViewer() {
   useEffect(() => {
     setSelected(null);
     setHovered(null);
-    setHidden(new Set());
+    setHidden(debugInitiallyHidden(hydrated.dump?.nodes ?? []));
     setCollapsed(autoCollapsed(hydrated.dump?.nodes ?? []));
   }, [active?.sequence, hydrated.dump]);
 

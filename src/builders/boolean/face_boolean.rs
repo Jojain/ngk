@@ -41,7 +41,7 @@ use super::planar_domain::PlanarDomain;
 use super::select::SelectionPlan;
 use super::{
     BooleanDiagnostics, BooleanError, BooleanInput, BooleanLineage, BooleanOperand,
-    BooleanOperation, BooleanOptions, BooleanTolerancePolicy, BooleanTolerances,
+    BooleanOperation, BooleanOptions, BooleanTolerancePolicy, BooleanTolerances, BooleanTrace,
     IntersectionSpanId, classify, select,
 };
 
@@ -195,7 +195,13 @@ fn run<P: Payload>(
 
     let target = operands.target();
     let faces = operands.map(BooleanOperand::Face);
-    let arrangement = arrangement::arrange(edit, &faces, options, tolerances)?;
+    let arrangement = arrangement::arrange(
+        edit,
+        &faces,
+        options,
+        tolerances,
+        &mut BooleanTrace::disabled(),
+    )?;
     let graph = FragmentGraph::<PlanarDomain>::build(&arrangement.lineages);
     let classes = classify::run(
         edit,

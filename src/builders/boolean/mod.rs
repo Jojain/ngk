@@ -23,8 +23,10 @@ mod planar_domain;
 mod result;
 mod solid_domain;
 mod tolerance;
+mod trace;
 mod trim;
 pub use tolerance::{BooleanTolerancePolicy, BooleanTolerances};
+pub use trace::{BooleanTrace, BooleanTraceStage};
 
 pub use classify::solid_contains_point;
 use contacts::{compute_contacts, normalize_face_imprint_chains, reroute_boundary_imprints};
