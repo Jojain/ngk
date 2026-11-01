@@ -2450,3 +2450,68 @@ fn a_ball_biting_a_rings_tube_is_cut_by_it() {
         "rest {rest} and common {common} should add up to the ball {ball_volume}"
     );
 }
+
+#[test]
+fn a_slab_slicing_a_rings_tube_off_center_cuts_it_into_two_rings() {
+    // The slab's face crosses the tube along two circles round the ring's
+    // axis, so the ring's one boundaryless face is cut into two rings, and
+    // the one below the slab spans more than half the tube's turn.
+    let (major, minor, height) = (2.0, 0.5, 0.2);
+    let ring = || solids::torus(major, minor).expect("ring");
+    let slab = || {
+        let frame = Frame::from_xy(Point3::new(-5.0, -5.0, height), Vector3::x(), Vector3::y());
+        solids::block_at(frame, 10.0, 10.0, 10.0).expect("slab")
+    };
+
+    let rest = solids::cut(ring(), [&slab()]).expect("the slab should slice the ring");
+    let common = solids::intersect(ring(), [&slab()]).expect("the slab should meet the ring");
+
+    for shape in [&rest, &common] {
+        validate_solid_manifold(shape.model(), shape.key()).unwrap();
+    }
+    // Pappus: the tube's section is symmetric about the major radius, so
+    // each part sweeps its share of the section disc round a circle of
+    // radius `major`.
+    let cap = minor * minor * (height / minor).acos() - height * (minor * minor - height * height).sqrt();
+    let below = 2.0 * std::f64::consts::PI * major * (std::f64::consts::PI * minor * minor - cap);
+    let above = 2.0 * std::f64::consts::PI * major * cap;
+    let rest = rest.solid().volume().expect("the sliced ring should be measurable");
+    let common = common.solid().volume().expect("the sliced cap should be measurable");
+    assert!(
+        (rest - below).abs() <= FITTED * below,
+        "the ring below the slab should hold {below}, not {rest}"
+    );
+    assert!(
+        (common - above).abs() <= FITTED * above,
+        "the ring inside the slab should hold {above}, not {common}"
+    );
+}
+
+#[test]
+fn two_rings_crossing_along_wavy_circles_fuse_facing_outward() {
+    // Each ring's face is cut along two closed sections running round the
+    // ring's axis, waving across the tube by more than the gap between them:
+    // the middle of the lower one sits above the middle of the upper one,
+    // and taking it for the upper one turns both rings inside out.
+    let ring_volume = |major: f64, minor: f64| 2.0 * std::f64::consts::PI.powi(2) * major * minor * minor;
+    let (small, large) = ((1.75, 0.8325919038231584), (1.9113034047962085, 1.612232038652283));
+    let first = || solids::torus(small.0, small.1).expect("first ring");
+    let second = || {
+        let frame = turned_frame(Point3::new(0.75, -1.25, 1.25), Vector3::x(), std::f64::consts::PI);
+        solids::torus_at(frame, large.0, large.1).expect("second ring")
+    };
+
+    let union = solids::fuse(first(), [&second()]).expect("the rings should fuse");
+    let common = solids::intersect(first(), [&second()]).expect("the rings should meet");
+
+    for shape in [&union, &common] {
+        validate_solid_manifold(shape.model(), shape.key()).unwrap();
+    }
+    let union = union.solid().volume().expect("the fused rings should be measurable");
+    let common = common.solid().volume().expect("their common part should be measurable");
+    let total = ring_volume(small.0, small.1) + ring_volume(large.0, large.1);
+    assert!(
+        (union + common - total).abs() <= FITTED * total,
+        "union {union} and common {common} should add up to both rings, {total}"
+    );
+}

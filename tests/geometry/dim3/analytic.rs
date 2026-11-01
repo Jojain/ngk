@@ -199,6 +199,39 @@ fn a_tilted_plane_through_a_sphere_fits_its_spherical_pcurve_and_measures_it() {
 }
 
 #[test]
+fn a_plane_grazing_a_spheres_pole_reports_how_far_its_pcurve_strays() {
+    // The circle passes a hair from the pole, where its longitude swings
+    // through half a turn almost at once. A fitted pcurve pinned to evenly
+    // spaced samples follows that swing only at the samples, and the deviation
+    // it reports has to be the one between them too, or a Boolean takes it for
+    // a pcurve within tolerance and builds an edge its face does not trace.
+    let plane = Surface::Plane(Plane::from_xy(
+        Point3::new(0.0, -0.006_970_870_717_469_51, 0.0),
+        Vector3::x(),
+        Vector3::z(),
+    ));
+    let radius = 0.803_054_443_033_731_6;
+    let sphere = unit_sphere_at(Point3::origin(), radius);
+    let intersection = analytic(&plane, &sphere);
+
+    for section in intersection.sections() {
+        let reported = section.fidelity.deviation();
+        let samples = 4096;
+        let worst = (0..=samples)
+            .map(|index| {
+                let t = index as f64 / samples as f64;
+                let uv = section.pcurve_b.point_at(Fraction::new(t));
+                (sphere.point_at(uv.x, uv.y) - section.point_at(t)).norm()
+            })
+            .fold(0.0_f64, f64::max);
+        assert!(
+            worst <= 1.5 * reported + LINEAR_TOLERANCE,
+            "the spherical pcurve strays {worst} but reports {reported}"
+        );
+    }
+}
+
+#[test]
 fn a_plane_missing_a_sphere_is_certified_empty() {
     let plane = Surface::Plane(Plane::from_xy(
         Point3::new(0.0, 0.0, 5.0),

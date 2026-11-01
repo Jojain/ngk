@@ -246,7 +246,7 @@ impl UnwrappedFaceDomain {
         for loop_ in loops.iter().filter(|loop_| loop_.kind() == LoopKind::Inner) {
             let mut curves = Vec::new();
             let mut offset = Vector2::zeros();
-            place_loop(face, loop_, periods, None, &mut curves, &mut offset)?;
+            place_loop(face, loop_, periods, None, None, &mut curves, &mut offset)?;
             rebranch_across_degenerate_row(face.surface(), &mut curves, periods);
             close_loop(&mut curves);
             holes.push(UnwrappedFaceDomainLoop { curves });
@@ -257,16 +257,24 @@ impl UnwrappedFaceDomain {
                 cut.bring_inside(hole);
             }
         }
+        let mut across = None;
         for loop_ in &loops {
             match loop_.kind() {
-                LoopKind::Wrapping { .. } => {
-                    place_loop(face, loop_, periods, cut, &mut outer, &mut outer_offset)?;
+                LoopKind::Wrapping { axis } => {
+                    let first = outer.len();
+                    place_loop(face, loop_, periods, cut, across, &mut outer, &mut outer_offset)?;
+                    let transverse = axis.transverse().index();
+                    if across.is_none() && periods[transverse].is_some() {
+                        across = outer
+                            .get(first)
+                            .map(|curve| (transverse, curve.offset[transverse]));
+                    }
                 }
                 LoopKind::Outer => {
-                    place_loop(face, loop_, periods, None, &mut outer, &mut outer_offset)?;
+                    place_loop(face, loop_, periods, None, None, &mut outer, &mut outer_offset)?;
                 }
                 LoopKind::Capping { axis, side } => {
-                    place_loop(face, loop_, periods, None, &mut outer, &mut outer_offset)?;
+                    place_loop(face, loop_, periods, None, None, &mut outer, &mut outer_offset)?;
                     capped = Some((axis, side));
                 }
                 LoopKind::Inner => {}
@@ -422,11 +430,20 @@ fn periods_of(surface: &Surface) -> [Option<f64>; 2] {
 ///
 /// `offset` and `curves` carry across calls so that consecutive wrapping loops
 /// are placed as one continuous walk rather than each from scratch.
+///
+/// `across` holds one axis at the translation the ring's first wrapping loop
+/// was placed with, for the loop it is joined to across the cut. Along the axis
+/// the loops wrap, the nearest image is the continuous one. Across it, on a
+/// support periodic that way too, it is not: the two loops of a ring on a torus
+/// bound one band round the tube and the complementary band equally well, and
+/// only the branch the second loop was written on says which. Placing it
+/// nearest would take the narrower band, whichever the face is.
 fn place_loop<P: Payload>(
     face: &Face<'_, P>,
     loop_: &Loop<'_, P>,
     periods: [Option<f64>; 2],
     cut: Option<RingCut>,
+    across: Option<(usize, f64)>,
     curves: &mut Vec<UnwrappedFaceDomainCurve>,
     offset: &mut Vector2,
 ) -> Result<(), UnwrappedFaceDomainError> {
@@ -436,7 +453,7 @@ fn place_loop<P: Payload>(
         let start = cut.start_index(face, &edges);
         edges.rotate_left(start);
     }
-    for edge in edges {
+    for (index, edge) in edges.into_iter().enumerate() {
         let curve =
             face.pcurve(edge.dart())
                 .ok_or_else(|| UnwrappedFaceDomainError::MissingPcurve {
@@ -451,12 +468,18 @@ fn place_loop<P: Payload>(
             Some(cut) => cut.anchor(face.surface(), curve, span),
             None => (curve, span),
         };
-        let corner = curves
+        let mut corner = curves
             .last()
             .map(UnwrappedFaceDomainCurve::end)
             .and_then(|previous| {
                 place_after(previous, curve.start(), face.surface(), periods, offset)
             });
+        if let (0, Some((axis, held)), Some(previous)) =
+            (index, across, curves.last().map(UnwrappedFaceDomainCurve::end))
+        {
+            offset[axis] = held;
+            corner = (curve.start() + *offset != previous).then_some(previous);
+        }
         curves.push(UnwrappedFaceDomainCurve {
             dart: edge.dart(),
             curve,

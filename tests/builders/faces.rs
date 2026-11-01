@@ -12,8 +12,8 @@ use ngk::builders::faces::{
 use ngk::builders::profiles::{add_polyline, add_profile_from_edges};
 use ngk::builders::sheets::add_extruded_profile;
 use ngk::geometry::{
-    Circle, Curve, Curve2, Fraction, LINEAR_TOLERANCE, NativeParam, NurbsCurve2, Plane, Point2,
-    Point3, PointCoincidence, Surface, TrimmedCurve2,
+    Circle, Circle2, Curve, Curve2, Fraction, Interval, LINEAR_TOLERANCE, NativeParam,
+    NurbsCurve2, Plane, Point2, Point3, PointCoincidence, Surface, TrimmedCurve2, Vector2,
 };
 
 use ngk::modeling::solids;
@@ -22,6 +22,7 @@ use radians::Rad64;
 use super::seamed::seamed_cylinder_wall;
 use ngk::model::Cell0;
 use ngk::model::Model;
+use ngk::topology::LoopKind;
 use ngk::topology::ModelEditError;
 use ngk::topology::embedding::{EntityOwner, recover_region};
 use ngk::topology::gmap::Dim;
@@ -1350,6 +1351,110 @@ fn a_hole_listed_either_way_round_cuts_its_face() {
         assert!(
             (area - 12.0).abs() <= 1e-12,
             "the hole should be cut out, got {area}"
+        );
+    }
+}
+
+/// Two imprints round a torus's tube cut its boundaryless face into two rings.
+///
+/// Nothing closes a torus on either side of one such loop, so a single one
+/// cannot part it; two do, into the band between them and the rest, each
+/// bounded by one copy of either loop. The rest spans more than half the
+/// ring's turn, and still has to come back as that band and face the way the
+/// torus did.
+#[test]
+fn two_imprints_round_a_tori_tube_cut_its_face_into_two_rings() {
+    let (major, minor) = (2.0, 0.5);
+    let (mut g, solid) = solids::torus(major, minor).expect("torus").into_model();
+    let face = g.solid_unchecked(solid).faces()[0].key();
+    assert!(g.face_unchecked(face).loops().is_empty());
+
+    let surface = g.face_unchecked(face).surface().clone();
+    let round_the_tube = |u: f64| {
+        let start = surface.point_at(u, 0.0);
+        let centre = nalgebra::center(&start, &surface.point_at(u, PI));
+        let x_dir = start - centre;
+        let y_dir = surface.point_at(u, FRAC_PI_2) - centre;
+        let circle = Circle::new(Plane::new(centre, x_dir, x_dir.cross(&y_dir)), minor);
+        FaceImprint::new(
+            Curve::Circle(circle),
+            TrimmedCurve2::segment(Point2::new(u, 0.0), Point2::new(u, TAU)),
+        )
+    };
+    let (low, high) = (0.5, 2.0);
+    let outward = |u: f64| g.face_unchecked(face).normal_at(u, 1.0);
+    let normals = [outward(0.5 * (low + high)), outward(high + 1.0)];
+
+    let splits = split_face_by_imprints(&mut g, face, &[round_the_tube(low), round_the_tube(high)])
+        .expect("two loops round the tube should cut the torus");
+
+    assert_eq!(g.iter_faces().count(), 2);
+    let total = 4.0 * PI * PI * major * minor;
+    let between = total * (high - low) / TAU;
+    let rings = [(splits[0].first, 0.5 * (low + high)), (splits[0].second, high + 1.0)];
+    let mut areas = Vec::new();
+    for ((key, u), normal) in rings.into_iter().zip(normals) {
+        let face = g.face_unchecked(key);
+        assert_eq!(face.loops().len(), 2, "a ring has two loops");
+        assert!(
+            face.loops()
+                .iter()
+                .all(|loop_| matches!(loop_.kind(), LoopKind::Wrapping { .. }))
+        );
+        assert!(
+            face.normal_at(u, 1.0).dot(&normal) > 0.0,
+            "each ring should face the way the torus did"
+        );
+        areas.push(face.area().expect("a ring should be measurable"));
+    }
+    for (area, expected) in areas.iter().zip([between, total - between]) {
+        assert!(
+            (area - expected).abs() <= 1e-9 * total,
+            "ring area {area} should be {expected}"
+        );
+    }
+}
+
+/// Two concentric circles imprinted together cut a plate into three faces.
+///
+/// The inner circle lies on the island the outer one leaves, not on the face
+/// round both: cut from that face, it would make it a face with two holes and
+/// leave the island a whole disc covering the inner one.
+#[test]
+fn concentric_circles_imprinted_together_nest_their_islands() {
+    let (outer, inner) = (2.0, 1.0);
+    let mut g = Model::<StandardPayload>::new();
+    let corners = [(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0)]
+        .map(|(x, y)| Point3::new(x, y, 0.0));
+    let plate = add_polygon_with_holes(&mut g, Plane::xy(), &corners, &[]).expect("plate");
+    let circle = |radius: f64| {
+        FaceImprint::new(
+            Curve::Circle(Circle::new(Plane::xy(), radius)),
+            TrimmedCurve2::new(
+                Curve2::Circle(Circle2::new(Point2::origin(), Vector2::x(), radius)),
+                Interval::new(0.0, TAU),
+            ),
+        )
+    };
+
+    split_face_by_imprints(&mut g, plate, &[circle(inner), circle(outer)])
+        .expect("two concentric circles should cut the plate");
+
+    let mut areas = g
+        .iter_faces()
+        .map(|(key, _)| g.face_unchecked(key).area().expect("each piece should measure"))
+        .collect::<Vec<_>>();
+    areas.sort_by(f64::total_cmp);
+    let expected = [
+        PI * inner * inner,
+        PI * (outer * outer - inner * inner),
+        100.0 - PI * outer * outer,
+    ];
+    assert_eq!(areas.len(), expected.len());
+    for (area, expected) in areas.iter().zip(expected) {
+        assert!(
+            (area - expected).abs() <= 1e-9,
+            "piece area {area} should be {expected}"
         );
     }
 }

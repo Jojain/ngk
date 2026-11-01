@@ -678,7 +678,7 @@ impl SectionTrace {
             let curve = TrimmedCurve2::new(Curve2::Nurbs(fitted), span);
             // The measured error is against the section itself, in model units,
             // so it means the same thing as any other linear tolerance here.
-            let deviation = self.fit_deviation(&curve, piece);
+            let deviation = self.fit_deviation(&curve, piece, samples);
             let improved = best.as_ref().is_none_or(|(_, best)| deviation < *best);
             if improved {
                 best = Some((curve, deviation));
@@ -742,9 +742,17 @@ impl SectionTrace {
     ///
     /// Measured after lifting the pcurve back onto the support, so the number
     /// is a distance in the model rather than in a parameter space whose scale
-    /// varies across the surface.
-    fn fit_deviation(&self, pcurve: &TrimmedCurve2, piece: Interval<Normalized>) -> f64 {
-        let samples = 4 * INITIAL_FIT_SAMPLES;
+    /// varies across the surface. Read at four times the density of the
+    /// `fitted` samples: an interpolant passes through every one of them, so a
+    /// check no denser than the fit sees only where it was pinned, not how it
+    /// swings between -- which near a sphere's pole is far.
+    fn fit_deviation(
+        &self,
+        pcurve: &TrimmedCurve2,
+        piece: Interval<Normalized>,
+        fitted: usize,
+    ) -> f64 {
+        let samples = 4 * fitted;
         (0..=samples)
             .map(|index| {
                 let local = Fraction::new(index as f64 / samples as f64);
