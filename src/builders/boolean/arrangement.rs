@@ -25,11 +25,22 @@ use super::operand::{Operand, OperandCells};
 use super::operations::{apply_boolean_splits_edit, compute_cell_intersections, lineage_for};
 use super::{
     BooleanDiagnostics, BooleanError, BooleanLineage, BooleanOperand, BooleanOptions,
-    BooleanSection, BooleanTolerances, BooleanTrace, operand_cells, validate_solid_network,
+    BooleanSection, BooleanSide, BooleanTolerances, BooleanTrace, operand_cells,
+    validate_solid_network,
 };
 use crate::topology::ModelEdit;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::EdgeKey;
+
+/// Which operands an arrangement cuts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Imprinted {
+    /// Every operand, along every other's boundary.
+    Every,
+    /// The target alone: the tools are intersected with it but stay whole, as
+    /// a sheet cutting a sheet must, since the section is an open slit in it.
+    TargetOnly,
+}
 
 /// Every operand split against every other, and what the splitting left.
 pub(crate) struct Arrangement {
@@ -48,6 +59,7 @@ pub(crate) struct Arrangement {
 pub(crate) fn arrange<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     operands: &[Operand<BooleanOperand>],
+    imprinted: Imprinted,
     options: BooleanOptions,
     tolerances: BooleanTolerances,
     trace: &mut BooleanTrace<P>,
@@ -83,6 +95,7 @@ pub(crate) fn arrange<P: Payload>(
                 &mut arrangement,
                 operands,
                 [first, second],
+                imprinted,
                 options,
                 trace,
             )
@@ -102,6 +115,7 @@ fn imprint<P: Payload>(
     arrangement: &mut Arrangement,
     operands: &[Operand<BooleanOperand>],
     pair: [usize; 2],
+    imprinted: Imprinted,
     options: BooleanOptions,
     trace: &mut BooleanTrace<P>,
 ) -> Result<(), BooleanError> {
@@ -111,7 +125,7 @@ fn imprint<P: Payload>(
         current_cells(edit, keys[0], &arrangement.lineages[pair[0]])?,
         current_cells(edit, keys[1], &arrangement.lineages[pair[1]])?,
     ];
-    let plan = compute_cell_intersections(edit, keys, cells, options, trace)?;
+    let mut plan = compute_cell_intersections(edit, keys, cells, options, trace)?;
     if !plan.diagnostics.coverage.is_empty()
         || plan.diagnostics.branches_uncertified > 0
         || !plan.diagnostics.unresolved_overlaps.is_empty()
@@ -122,6 +136,16 @@ fn imprint<P: Payload>(
     }
     if matches!(keys[0], BooleanOperand::Solid(_)) {
         validate_solid_network(edit, &plan.network, arrangement.diagnostics.tolerances)?;
+    }
+    if imprinted == Imprinted::TargetOnly {
+        for (side, operand) in [BooleanSide::First, BooleanSide::Second]
+            .into_iter()
+            .zip(pair)
+        {
+            if operand != 0 {
+                plan.leave_whole(side);
+            }
+        }
     }
     let prepared = apply_boolean_splits_edit(edit, plan, false, trace)?;
     let passes = [&prepared.first_lineage, &prepared.second_lineage];

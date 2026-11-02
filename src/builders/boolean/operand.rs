@@ -310,22 +310,19 @@ impl BooleanContext {
         )
     }
 
-    /// As [`Self::admit`], for a solid cut along a sheet.
+    /// As [`Self::admit`], for a target cut along a sheet.
     ///
-    /// The sheet bounds no region, so only the solid is validated as one.
+    /// The sheet bounds no region, so only a solid target is validated as one.
     pub(crate) fn admit_split<P: Payload>(
         map: &Model<P>,
-        target: SolidKey,
+        target: BooleanOperand,
         tool: SheetKey,
         operation: BooleanOperation,
         options: BooleanOptions,
     ) -> Result<Self, BooleanError> {
         Self::admit_operands(
             map,
-            Operands::new(
-                BooleanOperand::Solid(target),
-                &[BooleanOperand::Sheet(tool)],
-            ),
+            Operands::new(target, &[BooleanOperand::Sheet(tool)]),
             operation,
             options,
         )

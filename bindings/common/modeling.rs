@@ -4,17 +4,20 @@ use thiserror::Error;
 use crate::builders;
 use crate::builders::blend::{BlendSelection, BlendTarget};
 use crate::builders::boolean::{
-    BooleanError, BooleanOperation, BooleanOptions, SolidSplit, boolean, split_solid,
+    BooleanError, BooleanOperation, BooleanOptions, Split, boolean, split_face, split_sheet,
+    split_solid,
 };
 use crate::builders::sweep::{SweepFrame, SweepOptions, SweepTransition};
 use crate::geometry::Axis3;
 use crate::model::Model;
 use crate::modeling::faces::{FaceBooleanResult, copy_face};
 use crate::modeling::import::import_tools;
+use crate::modeling::sheets::copy_sheet;
 use crate::modeling::solids::copy_solid;
 use crate::topology::ModelEditError;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::shape::{Shape, SolidTag};
+use crate::topology::shape_keys::{FaceKey, SheetKey, SolidKey};
 
 use super::explore::{ExploreError, SharedFace, SharedModel, SharedSheet, SharedSolid};
 
@@ -160,25 +163,58 @@ pub(crate) fn solid_boolean<P: Payload>(
 pub(crate) fn solid_split<P: Payload>(
     target: &SharedSolid<P>,
     tool: &SharedSheet<P>,
-) -> Result<(Model<P>, SolidSplit), BindingBooleanError> {
+) -> Result<(Model<P>, Split<SolidKey>), BindingBooleanError> {
     target.view()?;
     let shared = target.model();
     let mut model = shared.model().clone();
-    let tool = match tool.model().ptr_eq(&shared) {
-        true => tool.key(),
-        false => {
-            let view = tool.view()?;
-            model.transaction(|edit| {
-                let dart = edit.merge(view);
-                Ok::<_, ModelEditError>(
-                    edit.sheet_key(dart)
-                        .expect("a copied sheet keeps its registration"),
-                )
-            })?
-        }
-    };
+    let tool = sheet_in(&mut model, &shared, tool)?;
     let parts = split_solid(&mut model, target.key(), tool, BooleanOptions::default())?;
     Ok((model, parts))
+}
+
+/// Splits a sheet along another for both bindings, on the model rules of
+/// [`solid_split`].
+pub(crate) fn sheet_split<P: Payload>(
+    target: &SharedSheet<P>,
+    tool: &SharedSheet<P>,
+) -> Result<(Model<P>, Split<SheetKey>), BindingBooleanError> {
+    target.view()?;
+    let shared = target.model();
+    let mut model = shared.model().clone();
+    let tool = sheet_in(&mut model, &shared, tool)?;
+    let parts = split_sheet(&mut model, target.key(), tool, BooleanOptions::default())?;
+    Ok((model, parts))
+}
+
+/// Splits a face along a sheet for both bindings.
+///
+/// A face may be one of a solid's, which cutting in place would tear, so the
+/// parts are built in a model holding copies of the face alone and the sheet.
+pub(crate) fn face_split<P: Payload>(
+    target: &SharedFace<P>,
+    tool: &SharedSheet<P>,
+) -> Result<(Model<P>, Split<FaceKey>), BindingBooleanError> {
+    let (face, sheet) = (target.view()?, tool.view()?);
+    let mut model = Model::new();
+    let (face, sheet) = model.transaction(|edit| {
+        Ok::<_, ModelEditError>((copy_face(edit, face), copy_sheet(edit, sheet)))
+    })?;
+    let parts = split_face(&mut model, face, sheet, BooleanOptions::default())?;
+    Ok((model, parts))
+}
+
+/// `tool`'s key in `model`, a copy of `shared`: its own when it lives there,
+/// a fresh copy of it otherwise.
+fn sheet_in<P: Payload>(
+    model: &mut Model<P>,
+    shared: &SharedModel<P>,
+    tool: &SharedSheet<P>,
+) -> Result<SheetKey, BindingBooleanError> {
+    if tool.model().ptr_eq(shared) {
+        return Ok(tool.key());
+    }
+    let view = tool.view()?;
+    Ok(model.transaction(|edit| Ok::<_, ModelEditError>(copy_sheet(edit, view)))?)
 }
 
 /// Evaluates one face Boolean for both bindings, on the model rules of

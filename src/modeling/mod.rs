@@ -24,3 +24,26 @@ pub mod sheets;
 pub mod solids;
 pub mod sweep;
 pub mod transform;
+
+use crate::builders::boolean::Split;
+use crate::model::Model;
+use crate::topology::payload::Payload;
+use crate::topology::shape::{Shape, ShapeKind};
+
+/// The two parts a shape was split into, each owning a copy of one model.
+pub struct SplitShapes<K: ShapeKind, P: Payload> {
+    /// The part on the side the sheet's normals point to.
+    pub front: Shape<K, P>,
+    /// The part behind the sheet.
+    pub back: Shape<K, P>,
+}
+
+impl<K: ShapeKind, P: Payload> SplitShapes<K, P> {
+    /// Hands each part its own copy of the model both were built in.
+    pub(crate) fn new(model: Model<P>, parts: Split<K::Handle>) -> Self {
+        Self {
+            front: Shape::new(model.clone(), parts.front),
+            back: Shape::new(model, parts.back),
+        }
+    }
+}

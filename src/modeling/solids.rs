@@ -13,11 +13,13 @@ use crate::{
         add_torus,
     },
     geometry::Frame,
+    modeling::SplitShapes,
     modeling::import::import_tools,
+    modeling::sheets::copy_sheet,
     topology::{
         ModelEdit,
         payload::Payload,
-        shape::{FaceTag, Shape, ShapeKind, SheetTag, SolidTag},
+        shape::{FaceTag, Shape, SheetTag, SolidTag},
         shape_keys::SolidKey,
     },
 };
@@ -174,24 +176,14 @@ pub fn from_sheets<P: Payload>(
 ) -> Result<Shape<SolidTag, P>, SolidFromSheetsError> {
     let mut g = Model::new();
     let solid = g.transaction(|edit| {
-        let mut copy = |sheet: &Shape<SheetTag, P>| {
-            let dart = edit.merge(sheet.sheet());
-            edit.sheet_key(dart)
-                .expect("a copied sheet keeps its registration")
-        };
-        let outer = copy(outer);
-        let voids = voids.iter().map(|&void| copy(void)).collect::<Vec<_>>();
+        let outer = copy_sheet(edit, outer.sheet());
+        let voids = voids
+            .iter()
+            .map(|&void| copy_sheet(edit, void.sheet()))
+            .collect::<Vec<_>>();
         add_solid_from_sheets_edit(edit, outer, &voids)
     })?;
     Ok(Shape::new(g, solid))
-}
-
-/// The two parts a shape was split into, each in a model of its own.
-pub struct SplitShapes<K: ShapeKind, P: Payload> {
-    /// The part on the side the sheet's normals point to.
-    pub front: Shape<K, P>,
-    /// The part behind the sheet.
-    pub back: Shape<K, P>,
 }
 
 /// Splits `target` along `tool` into the parts in front of and behind it.
@@ -204,18 +196,9 @@ pub fn split<P: Payload>(
     tool: &Shape<SheetTag, P>,
 ) -> Result<SplitShapes<SolidTag, P>, BooleanError> {
     let mut model = target.model().clone();
-    let tool = model.transaction(|edit| {
-        let dart = edit.merge(tool.sheet());
-        Ok::<_, BooleanError>(
-            edit.sheet_key(dart)
-                .expect("a copied sheet keeps its registration"),
-        )
-    })?;
+    let tool = model.transaction(|edit| Ok::<_, BooleanError>(copy_sheet(edit, tool.sheet())))?;
     let parts = split_solid(&mut model, target.key(), tool, BooleanOptions::default())?;
-    Ok(SplitShapes {
-        front: Shape::new(model.clone(), parts.front),
-        back: Shape::new(model, parts.back),
-    })
+    Ok(SplitShapes::new(model, parts))
 }
 
 /// Fuses every tool into `target`: `target ∪ t₁ ∪ … ∪ tₙ`.

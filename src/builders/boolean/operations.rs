@@ -154,8 +154,14 @@ fn boolean_recorded<P: Payload>(
     map.transaction(|edit| {
         trace.record(|| BooleanTraceStage::named("operands").with_model(edit.model()));
         let result = (|| {
-            let arrangement =
-                arrangement::arrange(edit, &operands, context.options, context.tolerances, trace)?;
+            let arrangement = arrangement::arrange(
+                edit,
+                &operands,
+                arrangement::Imprinted::Every,
+                context.options,
+                context.tolerances,
+                trace,
+            )?;
             trace.record(|| BooleanTraceStage::named("imprinted").with_model(edit.model()));
             let graph = neighborhood::FragmentGraph::<SolidDomain>::build(&arrangement.lineages);
             let classes = classify::run(
@@ -200,6 +206,20 @@ pub struct BooleanIntersectionPlan {
     face_imprints: HashMap<FaceKey, Vec<imprint::SpanImprint>>,
     first_cells: OperandCells,
     second_cells: OperandCells,
+}
+
+impl BooleanIntersectionPlan {
+    /// Drops every imprint on one operand's faces, so applying the plan cuts
+    /// only the other.
+    pub(super) fn leave_whole(&mut self, side: BooleanSide) {
+        let cells = match side {
+            BooleanSide::First => &self.first_cells,
+            BooleanSide::Second => &self.second_cells,
+        };
+        for face in &cells.faces {
+            self.face_imprints.remove(face);
+        }
+    }
 }
 
 /// Mutable narrow-phase observations discarded after network canonicalization.

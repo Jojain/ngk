@@ -386,7 +386,7 @@ pub(super) fn sew_pair<P: Payload>(
 }
 
 /// Discovers connected face sets using current typed incidence after all compaction/sewing.
-fn shell_components<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> Vec<Vec<FaceKey>> {
+pub(super) fn shell_components<P: Payload>(map: &Model<P>, faces: &[FaceKey]) -> Vec<Vec<FaceKey>> {
     let mut remaining = faces.iter().copied().collect::<BTreeSet<_>>();
     let mut result = Vec::new();
     while let Some(&seed) = remaining.first() {

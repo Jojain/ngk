@@ -1,5 +1,7 @@
 #[path = "support/cube_faces.rs"]
 mod cube_faces;
+#[path = "support/quad_sheet.rs"]
+mod quad_sheet;
 
 #[path = "modeling/blend.rs"]
 mod blend;

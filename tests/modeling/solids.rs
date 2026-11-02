@@ -14,6 +14,7 @@ use ngk::modeling::solids::{
 };
 
 use crate::cube_faces::{Winding, cube_faces, refs};
+use crate::quad_sheet::quad_sheet;
 use ngk::tessellate::{TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
 use ngk::topology::gmap::Dim;
@@ -736,22 +737,6 @@ fn from_sheets_rebuilds_a_cylinder_from_its_faces() {
 
     let volume = solid.solid().volume().expect("the solid should measure");
     assert!((volume - 2.0 * std::f64::consts::PI).abs() <= 1e-6);
-}
-
-/// A sheet of planar quads, each listed counter-clockwise seen from the side
-/// its normal points to.
-fn quad_sheet(quads: &[[(f64, f64, f64); 4]]) -> Shape<ngk::topology::shape::SheetTag> {
-    let faces = quads
-        .iter()
-        .map(|quad| {
-            let points = quad
-                .iter()
-                .map(|&(x, y, z)| Point3::new(x, y, z))
-                .collect::<Vec<_>>();
-            ngk::modeling::faces::polygon(&points).expect("a quad should build")
-        })
-        .collect::<Vec<_>>();
-    ngk::modeling::sheets::from_faces(&faces.iter().collect::<Vec<_>>()).expect("quads join")
 }
 
 fn volume_of(shape: &Shape<SolidTag>) -> f64 {

@@ -3,8 +3,12 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use crate::binding_common::explore::SharedModel;
-use crate::binding_common::modeling::{face_boolean, solid_boolean, solid_split};
-use crate::builders::boolean::BooleanOperation;
+use crate::binding_common::modeling::{
+    BindingBooleanError, face_boolean, face_split, sheet_split, solid_boolean, solid_split,
+};
+use crate::builders::boolean::{BooleanOperation, Split};
+use crate::model::Model;
+use crate::topology::shape_keys::{FaceKey, SheetKey, SolidKey};
 
 use super::super::topology::{PyFace, PyModel, PySheet, PySolid};
 use super::common::py_solid;
@@ -136,20 +140,55 @@ fn combine(
         .and_then(py_solid)
 }
 
+/// What a split can cut.
+#[derive(FromPyObject)]
+pub(crate) enum SplitTarget {
+    Solid(PySolid),
+    Sheet(PySheet),
+    Face(PyFace),
+}
+
+/// One part of a split, of the target's own kind.
+#[derive(Debug, Clone, Copy)]
+enum SplitPart {
+    Solid(SolidKey),
+    Sheet(SheetKey),
+    Face(FaceKey),
+}
+
 /// The two parts a split produced, sharing one model.
 #[pyclass(name = "SplitResult", module = "ngk")]
 pub struct PySplitResult {
     model: SharedModel,
-    front: crate::topology::shape_keys::SolidKey,
-    back: crate::topology::shape_keys::SolidKey,
+    front: SplitPart,
+    back: SplitPart,
 }
 
 impl PySplitResult {
-    fn part(&self, key: crate::topology::shape_keys::SolidKey) -> PyResult<PySolid> {
-        self.model
-            .solid_by_key(key)
-            .map(PySolid::from_inner)
-            .ok_or_else(|| PyValueError::new_err(format!("missing solid {key:?}")))
+    fn new<K>(model: Model, parts: Split<K>, part: fn(K) -> SplitPart) -> Self {
+        Self {
+            model: SharedModel::from_model(model),
+            front: part(parts.front),
+            back: part(parts.back),
+        }
+    }
+
+    fn part(&self, py: Python<'_>, part: SplitPart) -> PyResult<PyObject> {
+        let missing = || PyValueError::new_err(format!("missing part {:?}", part));
+        Ok(match part {
+            SplitPart::Solid(key) => {
+                let solid = self.model.solid_by_key(key).ok_or_else(missing)?;
+                PySolid::from_inner(solid).into_py(py)
+            }
+            SplitPart::Sheet(key) => {
+                let sheet = self.model.sheet_by_key(key).ok_or_else(missing)?;
+                PySheet::from_inner(sheet).into_py(py)
+            }
+            SplitPart::Face(key) => {
+                let face = self.model.face_by_key(key).ok_or_else(missing)?;
+                PyFace::from_inner(face).into_py(py)
+            }
+        })
     }
 }
 
@@ -162,25 +201,34 @@ impl PySplitResult {
 
     /// The part on the side the sheet's normals point to.
     #[getter]
-    fn front(&self) -> PyResult<PySolid> {
-        self.part(self.front)
+    fn front(&self, py: Python<'_>) -> PyResult<PyObject> {
+        self.part(py, self.front)
     }
 
     /// The part behind the sheet.
     #[getter]
-    fn back(&self) -> PyResult<PySolid> {
-        self.part(self.back)
+    fn back(&self, py: Python<'_>) -> PyResult<PyObject> {
+        self.part(py, self.back)
     }
 }
 
-/// Splits a solid along a sheet into the parts in front of and behind it.
+/// Splits a solid, a sheet or a face along a sheet into the parts in front of
+/// and behind it, each of the target's own kind.
 #[pyfunction]
-pub(crate) fn split(target: &PySolid, tool: &PySheet) -> PyResult<PySplitResult> {
-    let (model, parts) = solid_split(&target.inner, &tool.inner)
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
-    Ok(PySplitResult {
-        model: SharedModel::from_model(model),
-        front: parts.front,
-        back: parts.back,
+pub(crate) fn split(target: SplitTarget, tool: &PySheet) -> PyResult<PySplitResult> {
+    let error = |error: BindingBooleanError| PyValueError::new_err(error.to_string());
+    Ok(match target {
+        SplitTarget::Solid(target) => {
+            let (model, parts) = solid_split(&target.inner, &tool.inner).map_err(error)?;
+            PySplitResult::new(model, parts, SplitPart::Solid)
+        }
+        SplitTarget::Sheet(target) => {
+            let (model, parts) = sheet_split(&target.inner, &tool.inner).map_err(error)?;
+            PySplitResult::new(model, parts, SplitPart::Sheet)
+        }
+        SplitTarget::Face(target) => {
+            let (model, parts) = face_split(&target.inner, &tool.inner).map_err(error)?;
+            PySplitResult::new(model, parts, SplitPart::Face)
+        }
     })
 }

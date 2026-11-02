@@ -59,24 +59,32 @@ pub enum BooleanError {
     },
     #[error("regularized Boolean result is empty")]
     EmptyResult,
-    /// The sheet a solid is split along crosses none of its boundary.
-    #[error("the sheet does not cross the solid")]
+    /// The sheet a target is split along crosses none of it.
+    #[error("the sheet does not cross the target")]
     SplitMissesTarget,
-    /// Nothing of the solid lies on one side of the sheet.
-    #[error("nothing of the solid lies on the {side:?} side of the sheet")]
+    /// Nothing of the target lies on one side of the sheet.
+    #[error("nothing of the target lies on the {side:?} side of the sheet")]
     SplitSideEmpty { side: SplitSide },
-    /// A section on the solid's boundary has no piece of the sheet inside the
-    /// solid running along it, so which side its faces are on is unknown.
-    #[error("section edge {edge:?} has no piece of the sheet inside the solid along it")]
+    /// What lies on one side of the sheet falls apart into several pieces,
+    /// where a split answers one part per side.
+    #[error("the {side:?} side of the sheet holds {components} disconnected pieces")]
+    SplitSideDisconnected { side: SplitSide, components: usize },
+    /// A section on the target has no piece of the sheet along it to say
+    /// which side its faces are on.
+    #[error("section edge {edge:?} has no piece of the sheet along it")]
     SplitSectionUnpaired { edge: EdgeKey },
-    /// A face of the solid reads as lying on both sides of the sheet, as one
-    /// does where the sheet stops inside the solid.
-    #[error("face {face:?} of the solid lies on both sides of the sheet")]
+    /// A face of the target reads as lying on both sides of the sheet, or on
+    /// neither: the sheet stops inside the target, or only touches it.
+    #[error("face {face:?} of the target lies on no single side of the sheet")]
     SplitSideAmbiguous { face: FaceKey },
-    /// A face of the solid no section reaches, such as one on a void the sheet
-    /// misses: no section says which side it is on.
-    #[error("face {face:?} of the solid is reached by no section of the sheet")]
+    /// A face of the target no section reaches, such as one on a void the
+    /// sheet misses: no section says which side it is on.
+    #[error("face {face:?} of the target is reached by no section of the sheet")]
     SplitBoundaryUncut { face: FaceKey },
+    /// A face split on its own is joined to a neighbour, so it belongs to a
+    /// sheet or a solid that cutting it alone would tear.
+    #[error("face {face:?} is joined to other faces; split its sheet or solid instead")]
+    SplitFaceNotLoose { face: FaceKey },
     #[error("healing the Boolean result failed")]
     Healing(#[from] crate::healing::HealingError),
     #[error("regularized Boolean result has {components} disconnected solids")]

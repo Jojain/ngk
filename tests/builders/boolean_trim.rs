@@ -88,3 +88,35 @@ fn planar_section_crosses_a_curved_trim_at_exact_pcurve_points() {
         assert!((point.coords.norm() - 2.0).abs() <= 1.0e-10, "{point:?}");
     }
 }
+
+#[test]
+fn planar_section_through_a_disc_centre_reaches_its_widest_points() {
+    let shape = faces::circle(Plane::xy(), 2.0).expect("circle face should build");
+    let (mut map, circle) = shape.into_model();
+    // Along y = 0 the circle is at its widest, where no vertex of the
+    // polygon flattened from it need sit.
+    let section = add_rectangle(
+        &mut map,
+        Plane::from_xy(Point3::new(-3.0, 0.0, -1.0), Vector3::x(), Vector3::z()),
+        6.0,
+        2.0,
+    )
+    .expect("section face should build");
+
+    let plan = compute_boolean_intersections(
+        &map,
+        BooleanOperand::Face(circle),
+        BooleanOperand::Face(section),
+        BooleanOptions::default(),
+    )
+    .expect("planar section should intersect the circle");
+
+    assert_eq!(plan.network.spans().len(), 1);
+    let span = &plan.network.spans()[0];
+    for point in [
+        span.point_at(Fraction::new(0.0)),
+        span.point_at(Fraction::new(1.0)),
+    ] {
+        assert!((point.coords.norm() - 2.0).abs() <= 1.0e-10, "{point:?}");
+    }
+}

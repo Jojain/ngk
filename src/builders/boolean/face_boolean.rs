@@ -34,7 +34,7 @@ use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 
-use super::arrangement::{self, Arrangement, section_edges};
+use super::arrangement::{self, Arrangement, Imprinted, section_edges};
 use super::assemble::{section_pairs, sew_pair};
 use super::neighborhood::FragmentGraph;
 use super::operand::{Operand, Operands, operands_cells, reject_shared_faces};
@@ -199,6 +199,7 @@ fn run<P: Payload>(
     let arrangement = arrangement::arrange(
         edit,
         &faces,
+        Imprinted::Every,
         options,
         tolerances,
         &mut BooleanTrace::disabled(),

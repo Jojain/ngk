@@ -152,3 +152,41 @@ def test_split_swaps_parts_with_the_sheet_normal():
 def test_split_refuses_a_sheet_missing_the_solid():
     with pytest.raises(ValueError, match="does not cross"):
         booleans.split(solids.block(10.0, 10.0, 10.0), _plane_sheet(40.0))
+
+
+def _wall(x: float, facing_plus_x: bool = True):
+    corners = [(x, -1.0, -1.0), (x, 3.0, -1.0), (x, 3.0, 1.0), (x, -1.0, 1.0)]
+    if not facing_plus_x:
+        corners.reverse()
+    return sheets.from_faces([faces.polygon(corners)])
+
+
+def test_split_cuts_a_sheet_into_sheets():
+    beside = Plane(Point(1, 0, 0), Vector(1, 0, 0), Vector(0, 0, 1))
+    strip = sheets.from_faces([faces.rectangle(1.0, 2.0), faces.rectangle(1.0, 2.0, beside)])
+
+    parts = booleans.split(strip, _wall(0.5))
+
+    assert math.isclose(parts.front.area, 3.0, rel_tol=1e-9)
+    assert math.isclose(parts.back.area, 1.0, rel_tol=1e-9)
+    assert len(parts.front.faces()) == 2
+    assert math.isclose(strip.area, 4.0, rel_tol=1e-9)
+
+
+def test_split_cuts_a_face_into_faces():
+    face = faces.rectangle(2.0, 2.0)
+
+    parts = booleans.split(face, _wall(0.5, facing_plus_x=False))
+
+    assert math.isclose(parts.front.area, 1.0, rel_tol=1e-9)
+    assert math.isclose(parts.back.area, 3.0, rel_tol=1e-9)
+
+
+def test_split_cuts_a_face_of_a_solid_without_touching_the_solid():
+    block = solids.block(2.0, 2.0, 2.0)
+    bottom = next(face for face in block.faces() if face.bounding_box().max.z < 1e-9)
+
+    parts = booleans.split(bottom, _wall(0.5))
+
+    assert math.isclose(parts.front.area + parts.back.area, 4.0, rel_tol=1e-9)
+    assert math.isclose(block.volume, 8.0, rel_tol=1e-9)

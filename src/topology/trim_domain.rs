@@ -279,8 +279,14 @@ impl FaceTrimDomain {
             }
         };
         let parameter_tolerance = self.tolerance / direction_norm;
-        let padding =
-            2.0 * parameter_tolerance + 64.0 * f64::EPSILON * start.abs().max(end.abs()).max(1.0);
+        // The polygons' vertices lie on the loops, but a loop bulges past the
+        // chord between two of them: a circle's widest point along the line is
+        // rarely a vertex. So the range reaches out by as far as the polygons
+        // may stray, or a line grazing that bulge -- a chord through a disc's
+        // centre -- is clipped short of the very crossings that bound it.
+        let padding = 2.0 * parameter_tolerance
+            + self.boundary_epsilon() / direction_norm
+            + 64.0 * f64::EPSILON * start.abs().max(end.abs()).max(1.0);
         start -= padding;
         end += padding;
 

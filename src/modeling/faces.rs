@@ -1,4 +1,6 @@
-use crate::builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, face_boolean};
+use crate::builders::boolean::{
+    BooleanError, BooleanOperation, BooleanOptions, face_boolean, split_face,
+};
 use crate::builders::errors::FaceCreationError;
 use crate::builders::faces::{
     FaceEdgeSplitError, add_annulus, add_circle, add_face_edit, add_polygon_edit,
@@ -7,13 +9,15 @@ use crate::builders::faces::{
 use crate::geometry::{Fraction, Plane, Point3};
 use crate::model::Cell2;
 use crate::model::Model;
+use crate::modeling::SplitShapes;
 use crate::modeling::edges::EdgeSplitResult;
 use crate::modeling::import::import_tools;
+use crate::modeling::sheets::copy_sheet;
 use crate::topology::ModelEdit;
 use crate::topology::face::Face;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
-use crate::topology::shape::{FaceTag, ProfileTag, Shape};
+use crate::topology::shape::{FaceTag, ProfileTag, Shape, SheetTag};
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 
 /// Creates a planar rectangular face whose first corner is `plane.origin()`.
@@ -221,6 +225,26 @@ fn combine<'a, P: Payload>(
         BooleanOptions::default(),
     )?;
     Ok(FaceBooleanResult::new(model, result.faces))
+}
+
+/// Splits `target` along `tool` into the faces in front of and behind it.
+///
+/// Both parts are built in a model holding copies of `target` alone and of
+/// `tool`; the inputs are unchanged. See
+/// [`crate::builders::boolean::split_face`] for what the tool must satisfy.
+pub fn split<P: Payload>(
+    target: &Shape<FaceTag, P>,
+    tool: &Shape<SheetTag, P>,
+) -> Result<SplitShapes<FaceTag, P>, BooleanError> {
+    let mut model = Model::new();
+    let (target, tool) = model.transaction(|edit| {
+        Ok::<_, BooleanError>((
+            copy_face(edit, target.face()),
+            copy_sheet(edit, tool.sheet()),
+        ))
+    })?;
+    let parts = split_face(&mut model, target, tool, BooleanOptions::default())?;
+    Ok(SplitShapes::new(model, parts))
 }
 
 /// Copies one face, with the entities that bound it and nothing else of its model, and
