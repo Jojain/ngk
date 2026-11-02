@@ -326,7 +326,7 @@ impl<'g, P: Payload> Face<'g, P> {
     /// face is something builders do half way through an edit, where the
     /// classification is allowed to be inconsistent and a region walk has
     /// nothing to report — and where a wrong answer would silently copy part of
-    /// a face. Every 2-cell the face's own loops touch is the whole of it,
+    /// a face. Every 2-cell the face's seed or its own loops touch is the whole of it,
     /// whether the scaffold joins them into one cell or not yet.
     pub(crate) fn region_darts(&self) -> Vec<Dart> {
         let mut seen = HashSet::new();
@@ -336,10 +336,14 @@ impl<'g, P: Payload> Face<'g, P> {
         // classification is allowed to be inconsistent and a boundary walk has
         // nothing to report -- and where a wrong answer silently copies part of
         // a face. A cut the face owns lies in the same 2-cell and travels with
-        // it without being asked for separately.
+        // it without being asked for separately. The face's own seed is read
+        // too: a face that bounds nothing has no loop, and its whole 2-cell is
+        // the polygon its seed sits in.
         let within = self.model.topology().orbit_indices(Dim::Two);
-        for loop_ in self.attr().loops() {
-            for dart in self.model.topology().orbit(loop_.seed(), within.clone()) {
+        let seeds = std::iter::once(self.attr().seed())
+            .chain(self.attr().loops().iter().map(|loop_| loop_.seed()));
+        for seed in seeds {
+            for dart in self.model.topology().orbit(seed, within.clone()) {
                 if seen.insert(dart) {
                     darts.push(dart);
                 }

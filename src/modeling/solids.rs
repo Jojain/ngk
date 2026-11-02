@@ -7,15 +7,16 @@ use crate::{
     },
     builders::errors::ExtrudeError,
     builders::solids::{
-        BlockError, CylinderError, SphereBuildError, TorusBuildError, add_block, add_cylinder,
-        add_extruded_face, add_sphere, add_torus,
+        BlockError, CylinderError, SolidFromSheetsError, SphereBuildError, TorusBuildError,
+        add_block, add_cylinder, add_extruded_face, add_solid_from_sheets_edit, add_sphere,
+        add_torus,
     },
     geometry::Frame,
     modeling::import::import_tools,
     topology::{
         ModelEdit,
         payload::Payload,
-        shape::{FaceTag, Shape, SolidTag},
+        shape::{FaceTag, Shape, SheetTag, SolidTag},
         shape_keys::SolidKey,
     },
 };
@@ -159,6 +160,29 @@ pub fn extruded<P: Payload>(
     face.then(|model, face_key| {
         add_extruded_face(model, face_key, direction).map(|extrusion| extrusion.solid)
     })
+}
+
+/// Builds an owned solid bounded by `outer`, less the regions `voids` bound.
+///
+/// The returned shape owns copies of the input sheets. The source shapes
+/// remain unchanged. Every sheet must be closed and the sheets disjoint, each
+/// void inside `outer`; see [`crate::builders::solids::add_solid_from_sheets`].
+pub fn from_sheets<P: Payload>(
+    outer: &Shape<SheetTag, P>,
+    voids: &[&Shape<SheetTag, P>],
+) -> Result<Shape<SolidTag, P>, SolidFromSheetsError> {
+    let mut g = Model::new();
+    let solid = g.transaction(|edit| {
+        let mut copy = |sheet: &Shape<SheetTag, P>| {
+            let dart = edit.merge(sheet.sheet());
+            edit.sheet_key(dart)
+                .expect("a copied sheet keeps its registration")
+        };
+        let outer = copy(outer);
+        let voids = voids.iter().map(|&void| copy(void)).collect::<Vec<_>>();
+        add_solid_from_sheets_edit(edit, outer, &voids)
+    })?;
+    Ok(Shape::new(g, solid))
 }
 
 /// Fuses every tool into `target`: `target ∪ t₁ ∪ … ∪ tₙ`.

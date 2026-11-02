@@ -28,6 +28,7 @@ mod trim;
 pub use tolerance::{BooleanTolerancePolicy, BooleanTolerances};
 pub use trace::{BooleanTrace, BooleanTraceStage};
 
+pub(crate) use classify::shell_encloses_point;
 pub use classify::solid_contains_point;
 use contacts::{compute_contacts, normalize_face_imprint_chains, reroute_boundary_imprints};
 pub use errors::BooleanError;

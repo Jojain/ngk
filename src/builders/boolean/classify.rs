@@ -17,7 +17,7 @@ use crate::model::Model;
 use crate::tessellate::{TessellateOpts, tessellate_face_key};
 use crate::topology::{
     payload::Payload,
-    shape_keys::{FaceKey, SolidKey},
+    shape_keys::{FaceKey, SheetKey, SolidKey},
 };
 use nalgebra::Vector3;
 
@@ -520,15 +520,34 @@ pub fn solid_contains_point<P: Payload>(
     point: Point3,
     options: BooleanOptions,
 ) -> Result<bool, BooleanError> {
-    let cells = operand_cells(map, BooleanOperand::Solid(solid))?;
+    operand_encloses_point(map, BooleanOperand::Solid(solid), point, options)
+}
+
+/// As [`solid_contains_point`], for the region a closed sheet bounds.
+///
+/// The sheet must be wound outward, as the outer shell of a solid is.
+pub(crate) fn shell_encloses_point<P: Payload>(
+    map: &Model<P>,
+    shell: SheetKey,
+    point: Point3,
+    options: BooleanOptions,
+) -> Result<bool, BooleanError> {
+    operand_encloses_point(map, BooleanOperand::Sheet(shell), point, options)
+}
+
+fn operand_encloses_point<P: Payload>(
+    map: &Model<P>,
+    operand: BooleanOperand,
+    point: Point3,
+    options: BooleanOptions,
+) -> Result<bool, BooleanError> {
+    let cells = operand_cells(map, operand)?;
     let tolerances = BooleanTolerances::from_operands(map, [&cells], options.tolerances)?;
     let source = *cells
         .faces
         .iter()
         .next()
-        .ok_or(BooleanError::MissingOperand {
-            operand: BooleanOperand::Solid(solid),
-        })?;
+        .ok_or(BooleanError::MissingOperand { operand })?;
     let caster = SolidRayCaster::new(map, cells.faces.iter().copied(), options, tolerances)?;
     Ok(caster.classify(point, source)? == RelativeLocation::Inside)
 }

@@ -3,14 +3,16 @@ use std::collections::HashMap;
 use nalgebra::Vector3;
 use ngk::StandardPayload;
 use ngk::builders::errors::{FaceCreationError, PolylineError};
-use ngk::builders::solids::{BlockError, TorusBuildError};
+use ngk::builders::solids::{BlockError, SolidFromSheetsError, TorusBuildError};
 use ngk::geometry::{
     Curve, Frame, LINEAR_TOLERANCE, Point3, PointCoincidence, Surface, SurfacePeriodicity,
 };
 use ngk::model::Cell2;
 use ngk::modeling::solids::{
-    block, block_at, cut, cylinder, cylinder_at, fuse, intersect, sphere, torus,
+    block, block_at, cut, cylinder, cylinder_at, from_sheets, fuse, intersect, sphere, torus,
 };
+
+use crate::cube_faces::{Winding, cube_faces, refs};
 use ngk::tessellate::{TessellateOpts, face::tessellate_face_key};
 use ngk::topology::closed::Closed;
 use ngk::topology::gmap::Dim;
@@ -636,4 +638,101 @@ fn a_handle_that_bores_and_notches_one_wall_fuses_to_a_mug() {
         1,
         "the rim and the upper bar top are coplanar and adjacent, so they are one face"
     );
+}
+
+fn cube_sheet(min: Point3, size: f64, winding: Winding) -> Shape<ngk::topology::shape::SheetTag> {
+    let faces = cube_faces(min, size, winding);
+    ngk::modeling::sheets::from_faces(&refs(&faces)).expect("the cube faces should join")
+}
+
+#[test]
+fn from_sheets_bounds_a_solid_with_a_closed_sheet() {
+    let outer = cube_sheet(Point3::origin(), 2.0, Winding::Outward);
+
+    let solid = from_sheets(&outer, &[]).expect("a closed sheet should bound a solid");
+
+    let volume = solid.solid().volume().expect("the solid should measure");
+    assert!((volume - 8.0).abs() <= 1e-9);
+    validate_solid_orientation(solid.model(), solid.key()).expect("faces should point out");
+}
+
+#[test]
+fn from_sheets_winds_each_sheet_by_its_role() {
+    let outer = cube_sheet(Point3::origin(), 4.0, Winding::Inward);
+    let void = cube_sheet(Point3::new(1.0, 1.0, 1.0), 2.0, Winding::Outward);
+
+    let solid = from_sheets(&outer, &[&void]).expect("the shells should bound a hollow solid");
+
+    let volume = solid.solid().volume().expect("the solid should measure");
+    assert!((volume - 56.0).abs() <= 1e-9);
+    validate_solid_manifold(solid.model(), solid.key()).expect("the solid should be manifold");
+    validate_solid_orientation(solid.model(), solid.key()).expect("faces should point out");
+}
+
+#[test]
+fn from_sheets_refuses_an_open_sheet() {
+    let faces = cube_faces(Point3::origin(), 1.0, Winding::Outward);
+    let open =
+        ngk::modeling::sheets::from_faces(&refs(&faces[..5])).expect("five cube faces should join");
+
+    assert!(matches!(
+        from_sheets(&open, &[]),
+        Err(SolidFromSheetsError::OpenSheet { .. })
+    ));
+}
+
+#[test]
+fn from_sheets_refuses_a_void_outside_the_outer_sheet() {
+    let outer = cube_sheet(Point3::origin(), 2.0, Winding::Outward);
+    let void = cube_sheet(Point3::new(5.0, 0.0, 0.0), 1.0, Winding::Outward);
+
+    assert!(matches!(
+        from_sheets(&outer, &[&void]),
+        Err(SolidFromSheetsError::VoidOutside { .. })
+    ));
+}
+
+#[test]
+fn from_sheets_refuses_a_void_touching_the_outer_sheet() {
+    let outer = cube_sheet(Point3::origin(), 2.0, Winding::Outward);
+    let void = cube_sheet(Point3::origin(), 1.0, Winding::Outward);
+
+    assert!(matches!(
+        from_sheets(&outer, &[&void]),
+        Err(SolidFromSheetsError::SheetsTouch { .. })
+    ));
+}
+
+#[test]
+fn from_sheets_refuses_a_void_inside_another_void() {
+    let outer = cube_sheet(Point3::origin(), 6.0, Winding::Outward);
+    let wide = cube_sheet(Point3::new(1.0, 1.0, 1.0), 4.0, Winding::Outward);
+    let narrow = cube_sheet(Point3::new(2.0, 2.0, 2.0), 2.0, Winding::Outward);
+
+    assert!(matches!(
+        from_sheets(&outer, &[&wide, &narrow]),
+        Err(SolidFromSheetsError::NestedVoid { .. })
+    ));
+}
+
+#[test]
+fn from_sheets_rebuilds_a_cylinder_from_its_faces() {
+    let source = cylinder(1.0, 2.0).expect("the cylinder should build");
+    let faces = source
+        .solid()
+        .faces()
+        .into_iter()
+        .map(|face| {
+            let (model, dart) = ngk::model::Model::isolate(face);
+            let key = model.cell_key_unchecked::<Cell2>(dart);
+            Shape::<ngk::topology::shape::FaceTag>::new(model, key)
+        })
+        .collect::<Vec<_>>();
+    let sheet =
+        ngk::modeling::sheets::from_faces(&faces.iter().collect::<Vec<_>>()).expect("faces join");
+
+    let solid = from_sheets(&sheet, &[]).expect("the cylinder's sheet should bound a solid");
+
+    let volume = solid.solid().volume().expect("the solid should measure");
+    assert!((volume - 2.0 * std::f64::consts::PI).abs() <= 1e-6);
 }

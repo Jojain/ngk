@@ -4,6 +4,7 @@ from ..core.modeling.solids import (
     block,
     cylinder,
     extruded,
+    from_sheets,
     sphere,
     torus,
 )
@@ -14,4 +15,5 @@ __all__ = [
     "sphere",
     "torus",
     "extruded",
+    "from_sheets",
 ]

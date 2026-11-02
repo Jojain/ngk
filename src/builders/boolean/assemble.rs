@@ -5,21 +5,18 @@ use super::{
     SolidBooleanLineage, arrangement::Arrangement, neighborhood::FragmentGraph,
     select::SelectionPlan, solid_domain::SolidDomain,
 };
-use crate::builders::edges::split_face_boundary_edge;
-use crate::builders::faces::reverse_face_winding_edit;
+use crate::builders::faces::{FaceSewError, SewMerges, reverse_face_winding_edit, sew_faces_along};
 use crate::builders::scaffold::cut_between_shells;
+use crate::geometry::PointCoincidence;
 use crate::geometry::parameter::Fraction;
-use crate::geometry::{Point3, PointCoincidence};
 use crate::healing::{HealingOptions, HealingScope, remove_redundant_cells_edit};
 use crate::model::Model;
 use crate::topology::{
     EditKey, ModelEdit,
     attributes::{SheetAttr, SolidAttr},
     closed::Closed,
-    edge::Edge,
-    gmap::{Dart, Dim},
     payload::Payload,
-    shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey},
+    shape_keys::{EdgeKey, FaceKey, SolidKey},
     validation::{
         ModelValidationError, validate_gmap, validate_solid_manifold, validate_solid_orientation,
     },
@@ -194,18 +191,9 @@ pub(crate) fn run<P: Payload>(
         edit.remove_sheet(sheet);
     }
     edit.remove_faces(&selection.dropped)?;
-    let mut edge_merges = HashMap::new();
-    let mut vertex_merges = HashMap::new();
+    let mut merges = SewMerges::default();
     for (span, a, b) in pairs {
-        sew_pair(
-            edit,
-            span,
-            a,
-            b,
-            context.tolerances.linear,
-            &mut edge_merges,
-            &mut vertex_merges,
-        )?;
+        sew_pair(edit, span, a, b, context.tolerances.linear, &mut merges)?;
     }
     let components = shell_components(edit, &selection.kept);
     let mut outer = Vec::new();
@@ -270,11 +258,11 @@ pub(crate) fn run<P: Payload>(
     }
     for lineage in lineages.iter_mut() {
         for edges in lineage.edges.values_mut() {
-            remap_keys(edges, &edge_merges);
+            remap_keys(edges, &merges.edges);
             edges.retain(|edge| edit.edge(*edge).is_some());
         }
         for vertices in lineage.vertices.values_mut() {
-            remap_keys(vertices, &vertex_merges);
+            remap_keys(vertices, &merges.vertices);
             vertices.retain(|vertex| edit.vertex(*vertex).is_some());
         }
     }
@@ -368,136 +356,21 @@ fn remap_keys<K: Copy + Eq + std::hash::Hash + Ord>(keys: &mut Vec<K>, merges: &
     keys.dedup();
 }
 
-/// Aligns only the endpoints of an already identified canonical-span pair.
+/// Welds one canonical-span pair, its two sides already identified.
 pub(super) fn sew_pair<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     span: IntersectionSpanId,
     first: (EdgeKey, FaceKey),
     second: (EdgeKey, FaceKey),
     tolerance: f64,
-    edge_merges: &mut HashMap<EdgeKey, EdgeKey>,
-    vertex_merges: &mut HashMap<VertexKey, VertexKey>,
+    merges: &mut SewMerges,
 ) -> Result<(), BooleanError> {
-    let ((first, first_face), (second, second_face)) = (first, second);
-    mark_to_match(edit, first, second)?;
-    // Which way each fragment runs is a question about the face that keeps it,
-    // not about the edge: an edge's own reference dart is whichever one it was
-    // built from, and a fragment copied in from the other operand's map need
-    // not have been built from the same side as one made here. Reading the
-    // direction off the edge instead of off the loop is then right exactly half
-    // the time — the half where the two happen to agree — and sews the second
-    // operand's faces on backwards whenever they disagree.
-    let (da, av, [a0, a1, aq]) = loop_traversal(edit, first, first_face)
-        .ok_or(BooleanError::SpanEndpointMismatch { span })?;
-    let (mut db, mut bv, [b0, b1, bq]) = loop_traversal(edit, second, second_face)
-        .ok_or(BooleanError::SpanEndpointMismatch { span })?;
-    let reversed = if a0.coincides(a1, tolerance) {
-        // A closed span: its ends coincide, so only a point partway along can
-        // say whether the other side runs with it or against it.
-        if !aq.coincides(b0, tolerance) && !b0.coincides(a0, tolerance) {
-            return Err(BooleanError::SpanEndpointMismatch { span });
-        }
-        !aq.coincides(bq, tolerance)
-    } else if a0.coincides(b1, tolerance) && a1.coincides(b0, tolerance) {
-        true
-    } else if a0.coincides(b0, tolerance) && a1.coincides(b1, tolerance) {
-        false
-    } else {
-        return Err(BooleanError::SpanEndpointMismatch { span });
-    };
-    if reversed {
-        db = edit.alpha(Dim::Zero, db);
-        bv.swap(0, 1);
+    match sew_faces_along(edit, first, second, tolerance, merges) {
+        Ok(_) => Ok(()),
+        Err(FaceSewError::Mismatch) => Err(BooleanError::SpanEndpointMismatch { span }),
+        Err(FaceSewError::EdgeSplit(error)) => Err(error.into()),
+        Err(FaceSewError::ModelEdit(error)) => Err(error.into()),
     }
-    if !edit.is_free(da, Dim::Two) || !edit.is_free(db, Dim::Two) {
-        return Err(BooleanError::SpanEndpointMismatch { span });
-    }
-    edit.sew(Dim::Two, da, db)?;
-    edit.merge_edges_into(first, second);
-    edge_merges.insert(second, first);
-    for (a, b) in av.into_iter().zip(bv) {
-        // Nothing to reconcile where an end carries no logical vertex: the two
-        // sides meet along the edge, not at a corner either of them has.
-        let (Some(mut a), Some(mut b)) = (a, b) else {
-            continue;
-        };
-        while let Some(&next) = vertex_merges.get(&a) {
-            a = next;
-        }
-        while let Some(&next) = vertex_merges.get(&b) {
-            b = next;
-        }
-        if a != b {
-            edit.merge_vertices_into(a, b);
-            vertex_merges.insert(b, a);
-        }
-    }
-    Ok(())
-}
-
-/// The dart `face` traverses `edge` with, and the edge's ends in that order.
-///
-/// The points always exist; the vertex keys need not. A whole circle with
-/// nothing marked on it is bounded by no vertex at all, and both its ends are
-/// the one place it closes -- so there is a span to match the other side
-/// against, and nothing to merge.
-fn loop_traversal<P: Payload>(
-    edit: &ModelEdit<'_, P>,
-    edge: EdgeKey,
-    face: FaceKey,
-) -> Option<(Dart, [Option<VertexKey>; 2], [Point3; 3])> {
-    let traversed = edit
-        .face_unchecked(face)
-        .loops()
-        .into_iter()
-        .flat_map(|boundary| boundary.edges())
-        .find(|candidate| candidate.key() == edge)?;
-    let dart = traversed.dart();
-    let section = traversed.trimmed_curve();
-    // The quarter sample is what orients a closed edge. Its two ends are the
-    // same point, so they cannot say which way round the other side runs; a
-    // point partway along can, and agrees with the ends everywhere else.
-    let samples = [
-        section.point_at(Fraction::new(0.0)),
-        section.point_at(Fraction::new(1.0)),
-        section.point_at(Fraction::new(0.25)),
-    ];
-    let keys = match traversed {
-        Edge::Bounded(bounded) => {
-            let (start, end) = bounded.vertices();
-            [Some(start.key()), Some(end.key())]
-        }
-        Edge::Marked(marked) => [Some(marked.corner().key()); 2],
-        Edge::Unmarked(_) => [None, None],
-    };
-    Some((dart, keys, samples))
-}
-
-/// Gives both sides of a closed span a corner when only one side has it.
-///
-/// Sewing the two sides joins the 0-cells they close at into one orbit. With
-/// one side marked and the other unmarked, that orbit would be held by the
-/// marked side's corner and owned by the unmarked edge's interior at once. So
-/// the unmarked side is marked first, where the other side's corner sits:
-/// marking is a pure relabel of its own closing 0-cell, and afterwards both
-/// sides close at one point that both call a corner.
-fn mark_to_match<P: Payload>(
-    edit: &mut ModelEdit<'_, P>,
-    first: EdgeKey,
-    second: EdgeKey,
-) -> Result<(), BooleanError> {
-    for (marked, unmarked) in [(first, second), (second, first)] {
-        let corner = match edit.edge_unchecked(marked) {
-            Edge::Marked(edge) => *edge.corner().point(),
-            Edge::Bounded(_) | Edge::Unmarked(_) => continue,
-        };
-        let Edge::Unmarked(edge) = edit.edge_unchecked(unmarked) else {
-            continue;
-        };
-        let fraction = edge.trimmed_curve().parameter_at(corner);
-        split_face_boundary_edge(edit, unmarked, fraction, false)?;
-    }
-    Ok(())
 }
 
 /// Discovers connected face sets using current typed incidence after all compaction/sewing.

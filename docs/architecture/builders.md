@@ -113,6 +113,28 @@ not change the distinction between logical entities and raw GMap cells: a
 result describing an edge uses an `EdgeKey`, while a result about a raw map
 cell must say so explicitly.
 
+## Assembling a shape from the one below it
+
+Each kind of shape can be assembled from shapes of the kind below it:
+`add_profile_from_edges` joins edges, `add_sheet_from_faces` joins faces and
+`add_solid_from_sheets` bounds a solid with closed sheets. A face from a closed
+profile is `add_face`.
+
+Joining matches pieces by geometry, never by key: two edges join where their
+ends coincide, two faces where each runs a boundary edge covering the same
+span. Faces are welded with the same `sew_faces_along` the Boolean assembly
+uses. Only whole spans join; edges that partly overlap are left apart rather
+than imprinted.
+
+The builders refuse what they cannot read one way. Disconnected pieces, an edge
+run by more than two faces, or two faces wound against each other are errors:
+reversing one face would decide which side of the sheet is its front, which
+only the caller knows. A closed sheet's winding is decided by its role instead:
+the outer sheet of a solid is wound outward and each void inward, whichever way
+it arrived. The sheets must be disjoint, which the Boolean contact search
+certifies, and each void must lie inside the outer sheet and outside every
+other void.
+
 ## Which model an operation's result lives in
 
 The owned-`Shape` facade (`modeling`) and the language bindings follow one set

@@ -8,6 +8,7 @@ mod circle;
 mod face;
 mod imprints;
 mod polygon;
+mod sew;
 mod split;
 mod support;
 
@@ -32,6 +33,7 @@ pub(crate) use face::add_rectangle_edit;
 pub(crate) use imprints::{chord_loop_kinds, signed_area, split_face_by_imprints_edit};
 pub(crate) use polygon::add_polygon_edit;
 pub(crate) use polygon::reverse_face_winding_edit;
+pub(crate) use sew::{FaceSewError, SewMerges, Traversal, sew_faces_along};
 pub(crate) use split::split_face_edge_edit;
 pub(crate) use support::{
     BoundaryCorner, FaceImprintCut, IncidentFacePcurve, RebasedFacePcurve, apply_face_chord_split,

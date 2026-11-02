@@ -1,3 +1,4 @@
+use crate::builders::edges::EdgeSplitError;
 use crate::topology::ModelEditError;
 use std::error::Error;
 use std::fmt;
@@ -181,6 +182,41 @@ pub enum FaceCreationError {
 }
 
 impl From<ModelEditError> for FaceCreationError {
+    fn from(error: ModelEditError) -> Self {
+        Self::ModelEditFailed(ModelEditFailure::new(error))
+    }
+}
+
+/// Why a set of faces could not be joined into one sheet.
+#[derive(Debug, Clone, Error, PartialEq)]
+pub enum SheetFromFacesError {
+    #[error("a sheet needs at least one face")]
+    NoFaces,
+    #[error("face {face:?} does not exist")]
+    MissingFace { face: FaceKey },
+    /// The face is already joined to another across one of its edges, so it
+    /// belongs to a sheet the call does not own.
+    #[error("face {face:?} is already joined to another face")]
+    FaceNotLoose { face: FaceKey },
+    /// More than two face boundaries run along the same edge.
+    #[error("more than two faces meet along the edge through {point:?}")]
+    NonManifoldEdge { point: Point3 },
+    /// Two neighbours run their shared edge the same way, so their normals
+    /// point to opposite sides of the sheet.
+    #[error("faces {first:?} and {second:?} are wound against each other")]
+    InconsistentOrientation { first: FaceKey, second: FaceKey },
+    /// The faces fall into several groups no shared edge joins.
+    #[error("the faces fall into {components} groups no shared edge joins")]
+    Disconnected { components: usize },
+    #[error("faces {first:?} and {second:?} could not be joined along their shared edge")]
+    JoinFailed { first: FaceKey, second: FaceKey },
+    #[error("failed to mark an edge to match its neighbour")]
+    EdgeSplit(#[from] EdgeSplitError),
+    #[error("sheet model edit failed")]
+    ModelEditFailed(#[source] ModelEditFailure),
+}
+
+impl From<ModelEditError> for SheetFromFacesError {
     fn from(error: ModelEditError) -> Self {
         Self::ModelEditFailed(ModelEditFailure::new(error))
     }

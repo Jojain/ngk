@@ -9,4 +9,6 @@ from ..core import (
     Vertex as Vertex,
 )
 
+type Shape = Vertex | Edge | Profile | Face | Sheet | Solid
+
 __all__: list[str]

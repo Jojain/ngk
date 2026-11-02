@@ -7,6 +7,7 @@ mod heal;
 mod loft;
 mod profiles;
 mod revolve;
+mod sheets;
 mod solids;
 mod sweep;
 mod transform;
@@ -66,6 +67,10 @@ pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let loft_module = new_submodule(py, "loft", &modeling_qualname)?;
     loft::register(&loft_module)?;
     modeling.add_submodule(&loft_module)?;
+
+    let sheets_module = new_submodule(py, "sheets", &modeling_qualname)?;
+    sheets::register(&sheets_module)?;
+    modeling.add_submodule(&sheets_module)?;
 
     let solids_module = new_submodule(py, "solids", &modeling_qualname)?;
     solids::register(&solids_module)?;

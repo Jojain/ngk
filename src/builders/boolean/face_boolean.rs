@@ -26,12 +26,13 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use crate::builders::faces::SewMerges;
 use crate::healing::{HealingOptions, HealingScope, remove_redundant_cells_edit};
 use crate::model::Model;
 use crate::topology::ModelEdit;
 use crate::topology::payload::Payload;
 use crate::topology::planar::Planar;
-use crate::topology::shape_keys::{EdgeKey, FaceKey, VertexKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey};
 
 use super::arrangement::{self, Arrangement, section_edges};
 use super::assemble::{section_pairs, sew_pair};
@@ -362,8 +363,8 @@ fn weld<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     pairs: Vec<SeamPair>,
     tolerances: BooleanTolerances,
-) -> Result<SeamMerges, BooleanError> {
-    let mut merges = SeamMerges::default();
+) -> Result<SewMerges, BooleanError> {
+    let mut merges = SewMerges::default();
     for pair in pairs {
         sew_pair(
             edit,
@@ -371,8 +372,7 @@ fn weld<P: Payload>(
             pair.a,
             pair.b,
             tolerances.linear,
-            &mut merges.edges,
-            &mut merges.vertices,
+            &mut merges,
         )?;
     }
     Ok(merges)
@@ -385,13 +385,6 @@ struct SeamPair {
     b: (EdgeKey, FaceKey),
 }
 
-/// The cell identities a seam consumed, survivor keyed by consumed.
-#[derive(Default)]
-struct SeamMerges {
-    edges: HashMap<EdgeKey, EdgeKey>,
-    vertices: HashMap<VertexKey, VertexKey>,
-}
-
 /// Fuses the coplanar neighbours a seam left sharing a shape-free edge.
 ///
 /// After welding, the answer is held as several faces meeting along the section
@@ -402,7 +395,7 @@ struct SeamMerges {
 fn fuse_seams<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     arrangement: &Arrangement,
-    merges: &SeamMerges,
+    merges: &SewMerges,
     tolerances: BooleanTolerances,
 ) -> Result<Vec<(FaceKey, FaceKey)>, BooleanError> {
     // Healing removes edges in the order it is offered them, so the sections

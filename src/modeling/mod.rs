@@ -20,6 +20,7 @@ pub(crate) mod import;
 pub mod loft;
 pub mod profiles;
 pub mod revolve;
+pub mod sheets;
 pub mod solids;
 pub mod sweep;
 pub mod transform;

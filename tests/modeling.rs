@@ -1,3 +1,6 @@
+#[path = "support/cube_faces.rs"]
+mod cube_faces;
+
 #[path = "modeling/blend.rs"]
 mod blend;
 #[path = "modeling/edges.rs"]
@@ -14,6 +17,8 @@ mod payload;
 mod profiles;
 #[path = "modeling/revolve.rs"]
 mod revolve;
+#[path = "modeling/sheets.rs"]
+mod sheets;
 #[path = "modeling/solids.rs"]
 mod solids;
 #[path = "modeling/sweep.rs"]

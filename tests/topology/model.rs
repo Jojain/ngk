@@ -303,6 +303,23 @@ fn isolate_face_copies_it_into_a_fresh_map() {
 }
 
 #[test]
+fn isolating_a_face_that_bounds_nothing_copies_its_whole_cell() {
+    for source in [
+        solids::sphere(1.0).expect("the sphere should build"),
+        solids::torus(3.0, 1.0).expect("the torus should build"),
+    ] {
+        let face = source.solid().faces()[0].clone();
+        let darts = source.model().dart_count();
+
+        let (isolated, isolated_dart) = face.isolate();
+
+        assert_eq!(isolated.iter_faces().count(), 1);
+        assert_eq!(isolated.dart_count(), darts);
+        assert!(isolated.attribute::<Cell2>(isolated_dart).is_some());
+    }
+}
+
+#[test]
 fn isolate_associated_function_accepts_any_merge_topology() {
     let mut source = Model::<StandardPayload>::new();
     let profile_key = add_polygon(
