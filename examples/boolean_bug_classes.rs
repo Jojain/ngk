@@ -106,6 +106,15 @@ fn cases() -> Vec<Case> {
         )
         .expect("tube")
     };
+    let block = || solids::block(30.0, 20.0, 10.0).expect("block");
+    // A 40 × 20 × 5 plate with a hole of radius 3 drilled through its middle.
+    let drilled = move || {
+        solids::cut(
+            solids::block(40.0, 20.0, 5.0).expect("plate"),
+            [&solids::cylinder_at(at(20.0, 10.0, -1.0), 3.0, 7.0).expect("drill")],
+        )
+        .expect("drilled plate")
+    };
     let solids_case = |class, title, operation, build: Box<dyn Fn() -> (Solid, Solid)>| Case {
         class,
         title,
@@ -157,73 +166,111 @@ fn cases() -> Vec<Case> {
                 )
             })),
         },
-        // B. An edge of one operand lies on the other's surface.
+        // B1. An imprint bridges two boundary loops of a face.
         solids_case(
             'B',
-            "cylinder axis on a block edge, ends coplanar (#3)",
+            "B1 bridge: cylinder axis on a block edge, ends coplanar (#3)",
             BooleanOperation::Difference,
-            Box::new(|| {
-                (
-                    solids::block(30.0, 20.0, 10.0).expect("block"),
-                    solids::cylinder(4.0, 10.0).expect("cylinder"),
-                )
-            }),
+            Box::new(move || (block(), solids::cylinder(4.0, 10.0).expect("cylinder"))),
         ),
         solids_case(
             'B',
-            "cylinder axis on a block edge, top above the block (#37)",
-            BooleanOperation::Difference,
-            Box::new(move || {
-                (
-                    solids::block(30.0, 20.0, 10.0).expect("block"),
-                    solids::cylinder_at(at(0.0, 0.0, 5.0), 4.0, 10.0).expect("cylinder"),
-                )
-            }),
-        ),
-        solids_case(
-            'B',
-            "cylinder axis on a block edge, fused (#37)",
+            "B1 bridge: cylinder axis on a block edge, ends coplanar, fused (#37)",
             BooleanOperation::Union,
-            Box::new(|| {
-                (
-                    solids::block(30.0, 20.0, 10.0).expect("block"),
-                    solids::cylinder(4.0, 10.0).expect("cylinder"),
-                )
-            }),
+            Box::new(move || (block(), solids::cylinder(4.0, 10.0).expect("cylinder"))),
         ),
         solids_case(
             'B',
-            "cylinder axis on a block face, ends coplanar",
+            "B1 bridge: cylinder off a block face, ends coplanar",
             BooleanOperation::Difference,
             Box::new(move || {
-                (
-                    solids::block(30.0, 20.0, 10.0).expect("block"),
-                    solids::cylinder_at(at(15.0, 0.0, 0.0), 4.0, 10.0).expect("cylinder"),
-                )
+                let cylinder =
+                    solids::cylinder_at(at(15.0, 0.5, 0.0), 4.0, 10.0).expect("cylinder");
+                (block(), cylinder)
             }),
         ),
         solids_case(
             'B',
-            "cylinder tangent to a block face",
+            "B1 bridge: slot across a drilled plate",
+            BooleanOperation::Difference,
+            Box::new(move || {
+                let slot = solids::block_at(at(-1.0, 9.0, 3.0), 42.0, 2.0, 3.0).expect("slot");
+                (drilled(), slot)
+            }),
+        ),
+        // B2. A sampled boundary polygon taken for a conservative bound.
+        solids_case(
+            'B',
+            "B2 polygon bound: cylinder axis on a block edge, top above (#37)",
+            BooleanOperation::Difference,
+            Box::new(move || {
+                let cylinder = solids::cylinder_at(at(0.0, 0.0, 5.0), 4.0, 10.0).expect("cylinder");
+                (block(), cylinder)
+            }),
+        ),
+        solids_case(
+            'B',
+            "B2 polygon bound: cylinder axis on a block face, bottom inside",
+            BooleanOperation::Difference,
+            Box::new(move || {
+                let cylinder =
+                    solids::cylinder_at(at(15.0, 0.0, 5.0), 4.0, 10.0).expect("cylinder");
+                (block(), cylinder)
+            }),
+        ),
+        solids_case(
+            'B',
+            "B2 polygon bound: the same, axis 0.5 off the face (works)",
+            BooleanOperation::Difference,
+            Box::new(move || {
+                let cylinder =
+                    solids::cylinder_at(at(15.0, 0.5, 5.0), 4.0, 10.0).expect("cylinder");
+                (block(), cylinder)
+            }),
+        ),
+        solids_case(
+            'B',
+            "B1 bridge: pocket whose sides cross a drilled plate's hole",
+            BooleanOperation::Difference,
+            Box::new(move || {
+                let pocket =
+                    solids::block_at(at(10.0, 10.0, 2.0), 20.0, 15.0, 5.0).expect("pocket");
+                (drilled(), pocket)
+            }),
+        ),
+        // B3. A line contact imprinted as a slit.
+        solids_case(
+            'B',
+            "B3 tangent: cylinder touching a block face, fused",
             BooleanOperation::Union,
             Box::new(move || {
-                (
-                    solids::block(30.0, 20.0, 10.0).expect("block"),
-                    solids::cylinder_at(at(15.0, -4.0, 2.0), 4.0, 6.0).expect("cylinder"),
-                )
+                let cylinder =
+                    solids::cylinder_at(at(15.0, -4.0, 2.0), 4.0, 6.0).expect("cylinder");
+                (block(), cylinder)
             }),
         ),
         solids_case(
             'B',
-            "lying cylinder whose wall holds a block's top edge",
+            "B3 tangent: cylinder touching a block face, cut",
+            BooleanOperation::Difference,
+            Box::new(move || {
+                let cylinder =
+                    solids::cylinder_at(at(15.0, -4.0, 2.0), 4.0, 6.0).expect("cylinder");
+                (block(), cylinder)
+            }),
+        ),
+        // An edge on the other operand's surface that already works.
+        solids_case(
+            'B',
+            "lying cylinder whose wall holds a block's top edge (works)",
             BooleanOperation::Union,
-            Box::new(|| {
+            Box::new(move || {
                 // The wall's circle passes through the edge's corner, and its
                 // disc bites into the block below and behind the edge.
                 let frame =
                     Frame::from_xz(Point3::new(-5.0, 1.0, 11.0), Vector3::y(), Vector3::x());
                 (
-                    solids::block(30.0, 20.0, 10.0).expect("block"),
+                    block(),
                     solids::cylinder_at(frame, 2.0_f64.sqrt(), 40.0).expect("cylinder"),
                 )
             }),
