@@ -339,6 +339,9 @@ where
 pub enum ModelEditError {
     #[error("cannot delete dart {dart:?} while it is a registered sheet or solid root")]
     ReferencedDartDeletion { dart: Dart },
+    /// An edge deleted on its own is part of a face's boundary.
+    #[error("cannot delete edge {edge:?} on its own while a face runs along it")]
+    BoundingEdgeDeletion { edge: EdgeKey },
     /// A split or merge references an attribute that is not staged.
     #[error("model edit lineage references missing attribute {key:?}")]
     MissingLineageAttribute { key: EditKey },
@@ -910,6 +913,43 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
             // no longer have anything on the other side.
             removed.extend(face.region_darts());
         }
+        self.remove_darts(removed, faces)
+    }
+
+    /// Deletes edges no face runs along, and the vertices only they reached,
+    /// in one compaction pass.
+    ///
+    /// An edge a face runs along is part of that face's boundary, which this
+    /// would tear; such an edge is refused before anything changes. Profile
+    /// registrations rooted on a deleted edge go with it. All cached darts are
+    /// invalid afterwards; resolve surviving cells from their keys.
+    pub fn remove_edges(&mut self, edges: &[EdgeKey]) -> Result<(), ModelEditError> {
+        let mut removed = HashSet::new();
+        for &key in edges {
+            let edge = self
+                .model
+                .edge(key)
+                .ok_or(ModelEditError::MissingLineageAttribute {
+                    key: EditKey::Edge(key),
+                })?;
+            if !edge.faces().is_empty() {
+                return Err(ModelEditError::BoundingEdgeDeletion { edge: key });
+            }
+            removed.extend(
+                self.model
+                    .orbit(edge.dart(), self.model.orbit_indices(Dim::One)),
+            );
+        }
+        self.remove_darts(removed, &[])
+    }
+
+    /// Deletes `removed`, which covers exactly `faces` and any loose edges,
+    /// and every cell left with nothing to stand on.
+    fn remove_darts(
+        &mut self,
+        removed: HashSet<Dart>,
+        faces: &[FaceKey],
+    ) -> Result<(), ModelEditError> {
         for root in self
             .model
             .iter_sheets()

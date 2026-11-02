@@ -4,13 +4,13 @@ use pyo3::types::PyModule;
 
 use crate::binding_common::explore::SharedModel;
 use crate::binding_common::modeling::{
-    BindingBooleanError, face_boolean, face_split, sheet_split, solid_boolean, solid_split,
+    BindingBooleanError, face_boolean, solid_boolean, split_alone, split_in_place,
 };
 use crate::builders::boolean::{BooleanOperation, Split};
 use crate::model::Model;
-use crate::topology::shape_keys::{FaceKey, SheetKey, SolidKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey};
 
-use super::super::topology::{PyFace, PyModel, PySheet, PySolid};
+use super::super::topology::{PyEdge, PyFace, PyModel, PyProfile, PySheet, PySolid};
 use super::common::py_solid;
 
 /// Registers the solid and face Boolean operations.
@@ -146,6 +146,8 @@ pub(crate) enum SplitTarget {
     Solid(PySolid),
     Sheet(PySheet),
     Face(PyFace),
+    Profile(PyProfile),
+    Edge(PyEdge),
 }
 
 /// One part of a split, of the target's own kind.
@@ -154,6 +156,8 @@ enum SplitPart {
     Solid(SolidKey),
     Sheet(SheetKey),
     Face(FaceKey),
+    Profile(ProfileKey),
+    Edge(EdgeKey),
 }
 
 /// The two parts a split produced, sharing one model.
@@ -174,7 +178,7 @@ impl PySplitResult {
     }
 
     fn part(&self, py: Python<'_>, part: SplitPart) -> PyResult<PyObject> {
-        let missing = || PyValueError::new_err(format!("missing part {:?}", part));
+        let missing = || PyValueError::new_err(format!("missing part {part:?}"));
         Ok(match part {
             SplitPart::Solid(key) => {
                 let solid = self.model.solid_by_key(key).ok_or_else(missing)?;
@@ -187,6 +191,14 @@ impl PySplitResult {
             SplitPart::Face(key) => {
                 let face = self.model.face_by_key(key).ok_or_else(missing)?;
                 PyFace::from_inner(face).into_py(py)
+            }
+            SplitPart::Profile(key) => {
+                let profile = self.model.profile_by_key(key).ok_or_else(missing)?;
+                PyProfile::from_inner(profile).into_py(py)
+            }
+            SplitPart::Edge(key) => {
+                let edge = self.model.edge_by_key(key).ok_or_else(missing)?;
+                PyEdge::from_inner(edge).into_py(py)
             }
         })
     }
@@ -212,23 +224,50 @@ impl PySplitResult {
     }
 }
 
-/// Splits a solid, a sheet or a face along a sheet into the parts in front of
-/// and behind it, each of the target's own kind.
+/// Splits a shape along a sheet into the parts in front of and behind it,
+/// each of the target's own kind.
 #[pyfunction]
 pub(crate) fn split(target: SplitTarget, tool: &PySheet) -> PyResult<PySplitResult> {
-    let error = |error: BindingBooleanError| PyValueError::new_err(error.to_string());
+    let raise = |error: BindingBooleanError| PyValueError::new_err(error.to_string());
+    let tool = &tool.inner;
     Ok(match target {
         SplitTarget::Solid(target) => {
-            let (model, parts) = solid_split(&target.inner, &tool.inner).map_err(error)?;
+            let target = &target.inner;
+            target.view().map_err(|error| raise(error.into()))?;
+            let (model, parts) =
+                split_in_place(&target.model(), target.key(), tool).map_err(raise)?;
             PySplitResult::new(model, parts, SplitPart::Solid)
         }
         SplitTarget::Sheet(target) => {
-            let (model, parts) = sheet_split(&target.inner, &tool.inner).map_err(error)?;
+            let target = &target.inner;
+            target.view().map_err(|error| raise(error.into()))?;
+            let (model, parts) =
+                split_in_place(&target.model(), target.key(), tool).map_err(raise)?;
             PySplitResult::new(model, parts, SplitPart::Sheet)
         }
         SplitTarget::Face(target) => {
-            let (model, parts) = face_split(&target.inner, &tool.inner).map_err(error)?;
+            let shape = target
+                .inner
+                .isolated_shape()
+                .map_err(|error| raise(error.into()))?;
+            let (model, parts) = split_alone(shape, tool).map_err(raise)?;
             PySplitResult::new(model, parts, SplitPart::Face)
+        }
+        SplitTarget::Profile(target) => {
+            let shape = target
+                .inner
+                .isolated_shape()
+                .map_err(|error| raise(error.into()))?;
+            let (model, parts) = split_alone(shape, tool).map_err(raise)?;
+            PySplitResult::new(model, parts, SplitPart::Profile)
+        }
+        SplitTarget::Edge(target) => {
+            let shape = target
+                .inner
+                .isolated_shape()
+                .map_err(|error| raise(error.into()))?;
+            let (model, parts) = split_alone(shape, tool).map_err(raise)?;
+            PySplitResult::new(model, parts, SplitPart::Edge)
         }
     })
 }

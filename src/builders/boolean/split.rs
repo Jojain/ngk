@@ -1,5 +1,5 @@
-//! Cutting a solid, a sheet or a face along a sheet into the parts on either
-//! side of it.
+//! Cutting a solid, a sheet, a face, a profile or an edge along a sheet into
+//! the parts on either side of it.
 //!
 //! Where a sheet cuts a target it separates two sides: the one its faces'
 //! normals point into, the **front**, and the one behind them, the **back**.
@@ -26,9 +26,14 @@
 //! the target is cut: on the sheet the section is an open slit, and nothing of
 //! the sheet is kept.
 //!
+//! A profile or an edge meets the sheet at points instead: it is cut where it
+//! crosses, each piece leaves a crossing towards one side of the sheet's
+//! normal, and the side spreads across every vertex off the sheet.
+//!
 //! Each part is built on its own copy of the operands.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::hash::Hash;
 
 use nalgebra::Vector3;
 
@@ -39,18 +44,19 @@ use super::neighborhood::FragmentGraph;
 use super::operand::BooleanContext;
 use super::solid_domain::SolidDomain;
 use super::{
-    BooleanError, BooleanOperand, BooleanOperation, BooleanOptions, BooleanSection,
+    BooleanCell, BooleanError, BooleanOperand, BooleanOperation, BooleanOptions, BooleanSection,
     BooleanTolerances, BooleanTrace, assemble, select,
 };
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{Point3, PointCoincidence};
-use crate::model::{Cell2, Model};
+use crate::model::{Cell1, Cell2, Model};
 use crate::topology::ModelEdit;
-use crate::topology::attributes::SheetAttr;
+use crate::topology::attributes::{ProfileAttr, SheetAttr};
 use crate::topology::gmap::Dim;
 use crate::topology::payload::Payload;
-use crate::topology::shape_keys::{EdgeKey, FaceKey, SheetKey, SolidKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::trim_domain::{FaceTrimDomain, TrimLocation};
+use sealed::Splitter;
 
 /// The two parts a target was cut into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,160 +74,34 @@ pub enum SplitSide {
     Back,
 }
 
+/// An entity [`split`] can cut: a solid, a sheet, a face, a profile or an
+/// edge, by its key.
+pub trait SplitTarget: sealed::Splitter {}
+
+impl SplitTarget for SolidKey {}
+impl SplitTarget for SheetKey {}
+impl SplitTarget for FaceKey {}
+impl SplitTarget for ProfileKey {}
+impl SplitTarget for EdgeKey {}
+
 /// Cuts `target` along `tool` into the parts in front of and behind it, in
-/// one transaction.
+/// one transaction. Each part is of the target's own kind.
 ///
-/// The sheet must reach past the solid everywhere it crosses it: a sheet that
-/// ends inside the solid leaves an open section, which is refused. Each part
-/// must be one connected solid; a side falling in several pieces is refused as
-/// [`BooleanError::SplitSideDisconnected`]. Both inputs are consumed, and
-/// every other entity of the map keeps its key.
-pub fn split_solid<P: Payload>(
-    map: &mut Model<P>,
-    target: SolidKey,
-    tool: SheetKey,
-    options: BooleanOptions,
-) -> Result<Split<SolidKey>, BooleanError> {
-    split(map, target, tool, options)
-}
-
-/// Cuts the sheet `target` along `tool` into the sheets in front of and
-/// behind it, in one transaction.
-///
-/// As for [`split_solid`], the tool must reach past the target wherever it
-/// crosses it, and each side must be one connected sheet. Both inputs are
-/// consumed, and every other entity of the map keeps its key.
-pub fn split_sheet<P: Payload>(
-    map: &mut Model<P>,
-    target: SheetKey,
-    tool: SheetKey,
-    options: BooleanOptions,
-) -> Result<Split<SheetKey>, BooleanError> {
-    split(map, target, tool, options)
-}
-
-/// Cuts the face `target` along `tool` into the faces in front of and behind
-/// it, in one transaction.
-///
-/// The face must be loose: a face joined to a neighbour belongs to a sheet or
-/// a solid, which is what should be split instead. Each side must be a single
-/// face. Both inputs are consumed, and every other entity of the map keeps its
-/// key.
-pub fn split_face<P: Payload>(
-    map: &mut Model<P>,
-    target: FaceKey,
-    tool: SheetKey,
-    options: BooleanOptions,
-) -> Result<Split<FaceKey>, BooleanError> {
-    if let Some(face) = map.face(target)
-        && face
-            .edges()
-            .iter()
-            .any(|edge| !map.is_free(edge.dart(), Dim::Two))
-    {
-        return Err(BooleanError::SplitFaceNotLoose { face: target });
-    }
-    split(map, target, tool, options)
-}
-
-/// One kind of entity a split can cut, and how it builds one part.
-trait SplitTarget: Copy {
-    fn operand(self) -> BooleanOperand;
-
-    /// Copies `key` out of `source` into the edit.
-    fn copy<P: Payload>(edit: &mut ModelEdit<'_, P>, source: &Model<P>, key: Self) -> Self;
-
-    /// Builds the part of `target` on one `side` of `tool`, consuming both.
-    fn part<P: Payload>(
-        edit: &mut ModelEdit<'_, P>,
-        target: Self,
-        tool: SheetKey,
-        side: SplitSide,
-        options: BooleanOptions,
-    ) -> Result<Self, BooleanError>;
-}
-
-impl SplitTarget for SolidKey {
-    fn operand(self) -> BooleanOperand {
-        BooleanOperand::Solid(self)
-    }
-
-    fn copy<P: Payload>(edit: &mut ModelEdit<'_, P>, source: &Model<P>, key: Self) -> Self {
-        let dart = edit.merge(source.solid_unchecked(key));
-        edit.solid_key(dart)
-            .expect("a copied solid keeps its registration")
-    }
-
-    fn part<P: Payload>(
-        edit: &mut ModelEdit<'_, P>,
-        target: Self,
-        tool: SheetKey,
-        side: SplitSide,
-        options: BooleanOptions,
-    ) -> Result<Self, BooleanError> {
-        solid_part(edit, target, tool, side, options)
-    }
-}
-
-impl SplitTarget for SheetKey {
-    fn operand(self) -> BooleanOperand {
-        BooleanOperand::Sheet(self)
-    }
-
-    fn copy<P: Payload>(edit: &mut ModelEdit<'_, P>, source: &Model<P>, key: Self) -> Self {
-        let dart = edit.merge(source.sheet_unchecked(key));
-        edit.sheet_key(dart)
-            .expect("a copied sheet keeps its registration")
-    }
-
-    fn part<P: Payload>(
-        edit: &mut ModelEdit<'_, P>,
-        target: Self,
-        tool: SheetKey,
-        side: SplitSide,
-        options: BooleanOptions,
-    ) -> Result<Self, BooleanError> {
-        let faces = surface_part(edit, target.operand(), tool, side, options)?;
-        let root = edit.face_unchecked(faces[0]).dart();
-        Ok(edit.add_sheet_split_from(target, SheetAttr::new(root)))
-    }
-}
-
-impl SplitTarget for FaceKey {
-    fn operand(self) -> BooleanOperand {
-        BooleanOperand::Face(self)
-    }
-
-    fn copy<P: Payload>(edit: &mut ModelEdit<'_, P>, source: &Model<P>, key: Self) -> Self {
-        let dart = edit.merge(source.face_unchecked(key));
-        edit.cell_key_unchecked::<Cell2>(dart)
-    }
-
-    fn part<P: Payload>(
-        edit: &mut ModelEdit<'_, P>,
-        target: Self,
-        tool: SheetKey,
-        side: SplitSide,
-        options: BooleanOptions,
-    ) -> Result<Self, BooleanError> {
-        match surface_part(edit, target.operand(), tool, side, options)?.as_slice() {
-            &[face] => Ok(face),
-            faces => Err(BooleanError::SplitSideDisconnected {
-                side,
-                components: faces.len(),
-            }),
-        }
-    }
-}
-
-/// Cuts `target` along `tool`: the back from the inputs themselves, the front
-/// from copies of them.
-fn split<P: Payload, K: SplitTarget>(
+/// The sheet must reach past the target everywhere it crosses it: a sheet that
+/// ends inside a solid, a sheet or a face leaves an open section, which is
+/// refused. Each part must be one connected piece; a side falling in several
+/// is refused as [`BooleanError::SplitSideDisconnected`], and a face or an edge
+/// must stay one face or one edge per side. A face, a profile or an edge must
+/// be loose -- joined to nothing it is only part of -- since cutting it alone
+/// would tear what holds it. Both inputs are consumed, and every other entity
+/// of the map keeps its key.
+pub fn split<P: Payload, K: SplitTarget>(
     map: &mut Model<P>,
     target: K,
     tool: SheetKey,
     options: BooleanOptions,
 ) -> Result<Split<K>, BooleanError> {
+    K::admit(map, target)?;
     BooleanContext::admit_split(
         map,
         target.operand(),
@@ -237,6 +117,220 @@ fn split<P: Payload, K: SplitTarget>(
         let front = K::part(edit, target_copy, tool_copy, SplitSide::Front, options)?;
         Ok(Split { front, back })
     })
+}
+
+mod sealed {
+    use super::*;
+
+    /// How one kind of target is admitted, copied and cut into one part.
+    pub trait Splitter: Copy {
+        fn operand(self) -> BooleanOperand;
+
+        /// Refuses a target that cannot be cut on its own.
+        fn admit<P: Payload>(_model: &Model<P>, _key: Self) -> Result<(), BooleanError> {
+            Ok(())
+        }
+
+        /// Copies `key` out of `source` into the edit.
+        fn copy<P: Payload>(edit: &mut ModelEdit<'_, P>, source: &Model<P>, key: Self) -> Self;
+
+        /// Builds the part of `target` on one `side` of `tool`, consuming both.
+        fn part<P: Payload>(
+            edit: &mut ModelEdit<'_, P>,
+            target: Self,
+            tool: SheetKey,
+            side: SplitSide,
+            options: BooleanOptions,
+        ) -> Result<Self, BooleanError>;
+    }
+
+    impl Splitter for SolidKey {
+        fn operand(self) -> BooleanOperand {
+            BooleanOperand::Solid(self)
+        }
+
+        fn copy<P: Payload>(edit: &mut ModelEdit<'_, P>, source: &Model<P>, key: Self) -> Self {
+            let dart = edit.merge(source.solid_unchecked(key));
+            edit.solid_key(dart)
+                .expect("a copied solid keeps its registration")
+        }
+
+        fn part<P: Payload>(
+            edit: &mut ModelEdit<'_, P>,
+            target: Self,
+            tool: SheetKey,
+            side: SplitSide,
+            options: BooleanOptions,
+        ) -> Result<Self, BooleanError> {
+            solid_part(edit, target, tool, side, options)
+        }
+    }
+
+    impl Splitter for SheetKey {
+        fn operand(self) -> BooleanOperand {
+            BooleanOperand::Sheet(self)
+        }
+
+        fn copy<P: Payload>(edit: &mut ModelEdit<'_, P>, source: &Model<P>, key: Self) -> Self {
+            let dart = edit.merge(source.sheet_unchecked(key));
+            edit.sheet_key(dart)
+                .expect("a copied sheet keeps its registration")
+        }
+
+        fn part<P: Payload>(
+            edit: &mut ModelEdit<'_, P>,
+            target: Self,
+            tool: SheetKey,
+            side: SplitSide,
+            options: BooleanOptions,
+        ) -> Result<Self, BooleanError> {
+            let faces = surface_part(edit, target.operand(), tool, side, options)?;
+            let root = edit.face_unchecked(faces[0]).dart();
+            Ok(edit.add_sheet_split_from(target, SheetAttr::new(root)))
+        }
+    }
+
+    impl Splitter for FaceKey {
+        fn operand(self) -> BooleanOperand {
+            BooleanOperand::Face(self)
+        }
+
+        /// A face joined to a neighbour belongs to a sheet or a solid.
+        fn admit<P: Payload>(model: &Model<P>, key: Self) -> Result<(), BooleanError> {
+            let joined = model.face(key).is_some_and(|face| {
+                face.edges()
+                    .iter()
+                    .any(|edge| !model.is_free(edge.dart(), Dim::Two))
+            });
+            match joined {
+                true => Err(BooleanError::SplitTargetNotLoose {
+                    cell: BooleanCell::Face(key),
+                }),
+                false => Ok(()),
+            }
+        }
+
+        fn copy<P: Payload>(edit: &mut ModelEdit<'_, P>, source: &Model<P>, key: Self) -> Self {
+            let dart = edit.merge(source.face_unchecked(key));
+            edit.cell_key_unchecked::<Cell2>(dart)
+        }
+
+        fn part<P: Payload>(
+            edit: &mut ModelEdit<'_, P>,
+            target: Self,
+            tool: SheetKey,
+            side: SplitSide,
+            options: BooleanOptions,
+        ) -> Result<Self, BooleanError> {
+            let faces = surface_part(edit, target.operand(), tool, side, options)?;
+            single(faces, side)
+        }
+    }
+
+    impl Splitter for ProfileKey {
+        fn operand(self) -> BooleanOperand {
+            BooleanOperand::Profile(self)
+        }
+
+        /// A profile a face runs along is that face's boundary.
+        fn admit<P: Payload>(model: &Model<P>, key: Self) -> Result<(), BooleanError> {
+            let bounding = model.profile(key).and_then(|profile| {
+                profile
+                    .edges()
+                    .into_iter()
+                    .find(|edge| !edge.faces().is_empty())
+            });
+            match bounding {
+                Some(edge) => Err(BooleanError::SplitTargetNotLoose {
+                    cell: BooleanCell::Edge(edge.key()),
+                }),
+                None => Ok(()),
+            }
+        }
+
+        fn copy<P: Payload>(edit: &mut ModelEdit<'_, P>, source: &Model<P>, key: Self) -> Self {
+            let dart = edit.merge(source.profile_unchecked(key));
+            edit.profile_key_unchecked(dart)
+        }
+
+        fn part<P: Payload>(
+            edit: &mut ModelEdit<'_, P>,
+            target: Self,
+            tool: SheetKey,
+            side: SplitSide,
+            options: BooleanOptions,
+        ) -> Result<Self, BooleanError> {
+            let edges = curve_part(edit, target.operand(), tool, side, options)?;
+            // A profile is walked forward from its root, so an open one is
+            // rooted at an end or the walk would miss what lies behind it.
+            let darts = edges
+                .iter()
+                .flat_map(|&edge| {
+                    let dart = edit.edge_unchecked(edge).dart();
+                    [dart, edit.alpha(Dim::Zero, dart)]
+                })
+                .collect::<Vec<_>>();
+            let root = darts
+                .iter()
+                .copied()
+                .find(|&dart| edit.is_free(dart, Dim::One))
+                .unwrap_or(darts[0]);
+            Ok(edit.add_profile_split_from(target, ProfileAttr::new(root)))
+        }
+    }
+
+    impl Splitter for EdgeKey {
+        fn operand(self) -> BooleanOperand {
+            BooleanOperand::Edge(self)
+        }
+
+        /// An edge joined at an end to another, or run along by a face, is
+        /// part of a profile or a face. A closed edge joined to itself is not.
+        fn admit<P: Payload>(model: &Model<P>, key: Self) -> Result<(), BooleanError> {
+            let joined = model.edge(key).is_some_and(|edge| {
+                let own = model
+                    .orbit(edge.dart(), model.orbit_indices(Dim::One))
+                    .collect::<HashSet<_>>();
+                !edge.faces().is_empty()
+                    || own
+                        .iter()
+                        .any(|&dart| !own.contains(&model.alpha(Dim::One, dart)))
+            });
+            match joined {
+                true => Err(BooleanError::SplitTargetNotLoose {
+                    cell: BooleanCell::Edge(key),
+                }),
+                false => Ok(()),
+            }
+        }
+
+        fn copy<P: Payload>(edit: &mut ModelEdit<'_, P>, source: &Model<P>, key: Self) -> Self {
+            let dart = edit.merge(source.edge_unchecked(key));
+            edit.cell_key_unchecked::<Cell1>(dart)
+        }
+
+        fn part<P: Payload>(
+            edit: &mut ModelEdit<'_, P>,
+            target: Self,
+            tool: SheetKey,
+            side: SplitSide,
+            options: BooleanOptions,
+        ) -> Result<Self, BooleanError> {
+            let edges = curve_part(edit, target.operand(), tool, side, options)?;
+            single(edges, side)
+        }
+    }
+
+    /// The one piece a side of a face or an edge must be.
+    fn single<K: Copy>(pieces: Vec<K>, side: SplitSide) -> Result<K, BooleanError> {
+        match pieces.as_slice() {
+            &[piece] => Ok(piece),
+            pieces => Err(BooleanError::SplitSideDisconnected {
+                side,
+                components: pieces.len(),
+            }),
+        }
+    }
 }
 
 /// Imprints `tool` on `target`, and `target` on `tool` too unless it is to
@@ -258,10 +352,16 @@ fn arrange<P: Payload>(
         context.tolerances,
         &mut BooleanTrace::disabled(),
     )?;
-    if arrangement.sections.is_empty() {
-        return Err(BooleanError::SplitMissesTarget);
-    }
     Ok((context, arrangement))
+}
+
+/// Refuses an arrangement in which the sheet cut nothing of a solid, a sheet
+/// or a face.
+fn crossed(arrangement: &Arrangement) -> Result<(), BooleanError> {
+    match arrangement.sections.is_empty() {
+        true => Err(BooleanError::SplitMissesTarget),
+        false => Ok(()),
+    }
 }
 
 /// Builds the part of the solid `target` on one `side` of `tool`.
@@ -284,6 +384,7 @@ fn solid_part<P: Payload>(
         operation,
         options,
     )?;
+    crossed(&arrangement)?;
     let graph = FragmentGraph::<SolidDomain>::build(&arrangement.lineages);
     let classes = locate(
         edit,
@@ -325,6 +426,7 @@ fn surface_part<P: Payload>(
         BooleanOperation::Difference,
         options,
     )?;
+    crossed(&arrangement)?;
     let fragments = |operand: usize| {
         arrangement.lineages[operand]
             .faces
@@ -364,6 +466,169 @@ fn surface_part<P: Payload>(
         return Err(BooleanError::SplitSideDisconnected { side, components });
     }
     Ok(kept)
+}
+
+/// Keeps the edges of the profile or edge `target` on one `side` of `tool`
+/// and removes everything else of both, returning the edges kept.
+///
+/// A curve meets the sheet at points, not along sections: each piece leaves a
+/// point on the sheet towards one side of the sheet's normal there, and every
+/// other piece takes the side of the pieces it shares a vertex off the sheet
+/// with.
+fn curve_part<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    target: BooleanOperand,
+    tool: SheetKey,
+    side: SplitSide,
+    options: BooleanOptions,
+) -> Result<Vec<EdgeKey>, BooleanError> {
+    let (context, arrangement) = arrange(
+        edit,
+        target,
+        tool,
+        Imprinted::TargetOnly,
+        BooleanOperation::Difference,
+        options,
+    )?;
+    let tolerances = context.tolerances;
+    let target_edges = arrangement.lineages[0]
+        .edges
+        .values()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+    let tool_faces = arrangement.lineages[1]
+        .faces
+        .values()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+
+    let model: &Model<P> = edit;
+    let mut ends = HashMap::<VertexKey, Vec<EdgeKey>>::new();
+    let mut on_sheet = HashSet::new();
+    let mut sides = HashMap::new();
+    let mut pending = Vec::new();
+    for &edge in &target_edges {
+        for vertex in model.edge_unchecked(edge).vertices() {
+            ends.entry(vertex.key()).or_default().push(edge);
+            let point = *vertex.point();
+            let Some(sheet_face) = face_at(model, &tool_faces, point, tolerances)? else {
+                continue;
+            };
+            on_sheet.insert(vertex.key());
+            let ambiguous = || BooleanError::SplitSideAmbiguous {
+                cell: BooleanCell::Edge(edge),
+            };
+            let leaving = leaving_direction(model, edge, point)
+                .try_normalize(0.0)
+                .ok_or_else(ambiguous)?;
+            let reach = leaving.dot(&normal_at(model, sheet_face, point)?);
+            if reach.abs() <= tolerances.angular {
+                return Err(ambiguous());
+            }
+            let seen = if reach > 0.0 {
+                SplitSide::Front
+            } else {
+                SplitSide::Back
+            };
+            assign(
+                &mut sides,
+                &mut pending,
+                edge,
+                seen,
+                BooleanCell::Edge(edge),
+            )?;
+        }
+    }
+    if on_sheet.is_empty() {
+        return Err(BooleanError::SplitMissesTarget);
+    }
+    while let Some(edge) = pending.pop() {
+        let seen = sides[&edge];
+        for vertex in model.edge_unchecked(edge).vertices() {
+            if on_sheet.contains(&vertex.key()) {
+                continue;
+            }
+            for &neighbour in &ends[&vertex.key()] {
+                if neighbour != edge {
+                    assign(
+                        &mut sides,
+                        &mut pending,
+                        neighbour,
+                        seen,
+                        BooleanCell::Edge(neighbour),
+                    )?;
+                }
+            }
+        }
+    }
+    if let Some(&edge) = target_edges.iter().find(|edge| !sides.contains_key(edge)) {
+        return Err(BooleanError::SplitBoundaryUncut {
+            cell: BooleanCell::Edge(edge),
+        });
+    }
+
+    let (kept, dropped): (Vec<_>, Vec<_>) = target_edges
+        .iter()
+        .copied()
+        .partition(|edge| sides[edge] == side);
+    let components = curve_components(model, &kept, &ends);
+    let profiles = target_edges
+        .iter()
+        .filter_map(|&edge| edit.profile_key(edit.edge_unchecked(edge).dart()))
+        .collect::<BTreeSet<_>>();
+    let sheets = tool_faces
+        .iter()
+        .filter_map(|&face| edit.sheet_key(edit.face_unchecked(face).dart()))
+        .collect::<BTreeSet<_>>();
+    for profile in profiles {
+        edit.remove_profile(profile);
+    }
+    for sheet in sheets {
+        edit.remove_sheet(sheet);
+    }
+    edit.remove_faces(&tool_faces)?;
+    edit.remove_edges(&dropped)?;
+    if kept.is_empty() {
+        return Err(BooleanError::SplitSideEmpty { side });
+    }
+    if components > 1 {
+        return Err(BooleanError::SplitSideDisconnected { side, components });
+    }
+    Ok(kept)
+}
+
+/// How many pieces `edges` fall into, joined where they share an end.
+fn curve_components<P: Payload>(
+    model: &Model<P>,
+    edges: &[EdgeKey],
+    ends: &HashMap<VertexKey, Vec<EdgeKey>>,
+) -> usize {
+    let mut remaining = edges.iter().copied().collect::<BTreeSet<_>>();
+    let mut components = 0;
+    while let Some(&seed) = remaining.first() {
+        components += 1;
+        let mut pending = vec![seed];
+        while let Some(edge) = pending.pop() {
+            if !remaining.remove(&edge) {
+                continue;
+            }
+            for vertex in model.edge_unchecked(edge).vertices() {
+                pending.extend(&ends[&vertex.key()]);
+            }
+        }
+    }
+    components
+}
+
+/// The direction `edge` leaves `point`, one of its ends, along its curve.
+fn leaving_direction<P: Payload>(model: &Model<P>, edge: EdgeKey, point: Point3) -> Vector3<f64> {
+    const STEP: f64 = 1e-3;
+    let curve = model.edge_unchecked(edge).trimmed_curve();
+    let at = curve.parameter_at(point).value();
+    let toward = if at < 0.5 { at + STEP } else { at - STEP };
+    curve.point_at(Fraction::new(toward)) - point
 }
 
 /// Where every fragment lies against the other operand: a sheet fragment
@@ -452,7 +717,13 @@ fn target_sides<P: Payload>(
                 let face = face.key();
                 if fragments.contains(&face) {
                     let side = side_along(section, edge, middle, face)?;
-                    assign(&mut sides, &mut pending, face, side)?;
+                    assign(
+                        &mut sides,
+                        &mut pending,
+                        face,
+                        side,
+                        BooleanCell::Face(face),
+                    )?;
                 }
             }
         }
@@ -467,13 +738,16 @@ fn target_sides<P: Payload>(
             for neighbour in edge.faces() {
                 let neighbour = neighbour.key();
                 if neighbour != face && fragments.contains(&neighbour) {
-                    assign(&mut sides, &mut pending, neighbour, side)?;
+                    let cell = BooleanCell::Face(neighbour);
+                    assign(&mut sides, &mut pending, neighbour, side, cell)?;
                 }
             }
         }
     }
     if let Some(&face) = fragments.iter().find(|face| !sides.contains_key(face)) {
-        return Err(BooleanError::SplitBoundaryUncut { face });
+        return Err(BooleanError::SplitBoundaryUncut {
+            cell: BooleanCell::Face(face),
+        });
     }
     Ok(sides)
 }
@@ -536,10 +810,14 @@ fn surface_side<P: Payload>(
     let inward = normal_at(model, face, middle)?
         .cross(&own)
         .try_normalize(0.0)
-        .ok_or(BooleanError::SplitSideAmbiguous { face })?;
+        .ok_or(BooleanError::SplitSideAmbiguous {
+            cell: BooleanCell::Face(face),
+        })?;
     let reach = inward.dot(&sheet);
     if reach.abs() <= tolerances.angular {
-        return Err(BooleanError::SplitSideAmbiguous { face });
+        return Err(BooleanError::SplitSideAmbiguous {
+            cell: BooleanCell::Face(face),
+        });
     }
     Ok(if reach > 0.0 {
         SplitSide::Front
@@ -575,20 +853,21 @@ fn face_at<P: Payload>(
     Ok(None)
 }
 
-/// Records `face`'s side, refusing a face both sides reach.
-fn assign(
-    sides: &mut HashMap<FaceKey, SplitSide>,
-    pending: &mut Vec<FaceKey>,
-    face: FaceKey,
+/// Records `key`'s side, refusing a piece both sides reach.
+fn assign<K: Copy + Eq + Hash>(
+    sides: &mut HashMap<K, SplitSide>,
+    pending: &mut Vec<K>,
+    key: K,
     side: SplitSide,
+    cell: BooleanCell,
 ) -> Result<(), BooleanError> {
-    match sides.insert(face, side) {
+    match sides.insert(key, side) {
         None => {
-            pending.push(face);
+            pending.push(key);
             Ok(())
         }
         Some(previous) if previous == side => Ok(()),
-        Some(_) => Err(BooleanError::SplitSideAmbiguous { face }),
+        Some(_) => Err(BooleanError::SplitSideAmbiguous { cell }),
     }
 }
 

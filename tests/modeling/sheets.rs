@@ -1,9 +1,9 @@
-use ngk::builders::boolean::{BooleanError, BooleanOptions, split_face};
+use ngk::builders::boolean::{self, BooleanCell, BooleanError, BooleanOptions};
 use ngk::builders::errors::SheetFromFacesError;
 use ngk::builders::faces::FaceImprintSplitError;
 use ngk::geometry::{LINEAR_TOLERANCE, Point3};
 use ngk::model::{Cell2, Model};
-use ngk::modeling::{faces, sheets, solids};
+use ngk::modeling::{faces, sheets, solids, split};
 use ngk::topology::closed::Closeable;
 use ngk::topology::shape::{FaceTag, Shape, SheetTag};
 
@@ -168,7 +168,7 @@ fn area_of(sheet: &Shape<SheetTag>) -> f64 {
 fn split_cuts_a_sheet_along_a_crossing_plane() {
     let target = strip();
 
-    let parts = sheets::split(&target, &wall(0.5, true)).expect("the plane should split the strip");
+    let parts = split(&target, &wall(0.5, true)).expect("the plane should split the strip");
 
     assert!((area_of(&parts.front) - 1.5).abs() <= LINEAR_TOLERANCE);
     assert!((area_of(&parts.back) - 0.5).abs() <= LINEAR_TOLERANCE);
@@ -182,7 +182,7 @@ fn split_cuts_a_sheet_along_a_crossing_plane() {
 
 #[test]
 fn split_swaps_the_sheet_parts_with_the_tool_normal() {
-    let parts = sheets::split(&strip(), &wall(0.5, false)).expect("the plane should split");
+    let parts = split(&strip(), &wall(0.5, false)).expect("the plane should split");
 
     assert!((area_of(&parts.front) - 0.5).abs() <= LINEAR_TOLERANCE);
     assert!((area_of(&parts.back) - 1.5).abs() <= LINEAR_TOLERANCE);
@@ -191,7 +191,7 @@ fn split_swaps_the_sheet_parts_with_the_tool_normal() {
 #[test]
 fn split_refuses_a_tool_that_misses_the_sheet() {
     assert!(matches!(
-        sheets::split(&strip(), &wall(5.0, true)),
+        split(&strip(), &wall(5.0, true)),
         Err(BooleanError::SplitMissesTarget)
     ));
 }
@@ -206,7 +206,7 @@ fn split_refuses_a_tool_that_stops_inside_the_sheet() {
     ]]);
 
     // The section is an open slit in the strip, which no face split makes.
-    let result = sheets::split(&strip(), &short);
+    let result = split(&strip(), &short);
 
     assert!(
         matches!(
@@ -225,10 +225,10 @@ fn split_face_refuses_a_face_joined_into_a_sheet() {
     let mut model = target.model().clone();
     let face = target.sheet().faces()[0].key();
 
-    let result = split_face(&mut model, face, target.key(), BooleanOptions::default());
+    let result = boolean::split(&mut model, face, target.key(), BooleanOptions::default());
 
     assert!(matches!(
         result,
-        Err(BooleanError::SplitFaceNotLoose { face: refused }) if refused == face
+        Err(BooleanError::SplitTargetNotLoose { cell: BooleanCell::Face(refused) }) if refused == face
     ));
 }

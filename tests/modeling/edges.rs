@@ -1,11 +1,15 @@
+use ngk::builders::boolean::{BooleanCell, BooleanError};
 use ngk::builders::errors::EdgeCreationError;
 use std::f64::consts::TAU;
 
 use ngk::geometry::Fraction;
 use ngk::geometry::{Axis3, Curve, Interval, Plane, Point3};
-use ngk::modeling::edges;
+use ngk::modeling::{edges, faces, split};
 use ngk::topology::closed::Closeable;
+use ngk::topology::shape::{EdgeTag, Shape, SheetTag};
 use radians::Rad64;
+
+use crate::quad_sheet::quad_sheet;
 
 #[test]
 fn line_returns_owned_line_edge_shape() {
@@ -110,4 +114,60 @@ fn helix_returns_owned_helical_edge_shape() {
     let end = *edge.bounded_unchecked().end().point();
     let expected = edge.curve().point_at(ngk::geometry::NativeParam::new(TAU));
     assert!((end - expected).norm() <= 1.0e-12);
+}
+
+/// The plane x = `x` across y in [-2, 3], facing `+x`.
+fn wall(x: f64) -> Shape<SheetTag> {
+    quad_sheet(&[[
+        (x, -2.0, -1.0),
+        (x, 3.0, -1.0),
+        (x, 3.0, 1.0),
+        (x, -2.0, 1.0),
+    ]])
+}
+
+#[test]
+fn split_cuts_a_line_where_it_crosses_the_sheet() {
+    let target = edges::line(Point3::new(0.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0))
+        .expect("line should build");
+
+    let parts = split(&target, &wall(0.5)).expect("the plane should split the line");
+
+    assert!((parts.front.edge().length() - 1.5).abs() <= 1e-9);
+    assert!((parts.back.edge().length() - 0.5).abs() <= 1e-9);
+    assert!((target.edge().length() - 2.0).abs() <= 1e-9);
+}
+
+#[test]
+fn split_cuts_a_circle_into_two_arcs() {
+    let target = edges::circle(Plane::xy(), 1.0).expect("circle should build");
+
+    let parts = split(&target, &wall(0.0)).expect("the plane should split the circle");
+
+    let half = std::f64::consts::PI;
+    assert!((parts.front.edge().length() - half).abs() <= 1e-6);
+    assert!((parts.back.edge().length() - half).abs() <= 1e-6);
+}
+
+#[test]
+fn split_refuses_a_line_the_sheet_misses() {
+    let target = edges::line(Point3::new(0.0, 0.0, 0.0), Point3::new(2.0, 0.0, 0.0))
+        .expect("line should build");
+
+    assert!(matches!(
+        split(&target, &wall(5.0)),
+        Err(BooleanError::SplitMissesTarget)
+    ));
+}
+
+#[test]
+fn split_refuses_an_edge_a_face_runs_along() {
+    let face = faces::rectangle(Plane::xy(), 2.0, 2.0).expect("rectangle should build");
+    let edge = face.face().edges()[0].key();
+    let target = Shape::<EdgeTag>::new(face.model().clone(), edge);
+
+    assert!(matches!(
+        split(&target, &wall(0.5)),
+        Err(BooleanError::SplitTargetNotLoose { cell: BooleanCell::Edge(refused) }) if refused == edge
+    ));
 }

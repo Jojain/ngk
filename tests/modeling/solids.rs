@@ -10,8 +10,9 @@ use ngk::geometry::{
 };
 use ngk::model::Cell2;
 use ngk::modeling::solids::{
-    block, block_at, cut, cylinder, cylinder_at, from_sheets, fuse, intersect, sphere, split, torus,
+    block, block_at, cut, cylinder, cylinder_at, from_sheets, fuse, intersect, sphere, torus,
 };
+use ngk::modeling::split;
 
 use crate::cube_faces::{Winding, cube_faces, refs};
 use crate::quad_sheet::quad_sheet;

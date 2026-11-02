@@ -48,7 +48,7 @@ pub use result::{
     SolidBooleanLineage,
 };
 use solid_domain::SolidDomain;
-pub use split::{Split, SplitSide, split_face, split_sheet, split_solid};
+pub use split::{Split, SplitSide, SplitTarget, split};
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 

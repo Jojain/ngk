@@ -73,18 +73,19 @@ pub enum BooleanError {
     /// which side its faces are on.
     #[error("section edge {edge:?} has no piece of the sheet along it")]
     SplitSectionUnpaired { edge: EdgeKey },
-    /// A face of the target reads as lying on both sides of the sheet, or on
-    /// neither: the sheet stops inside the target, or only touches it.
-    #[error("face {face:?} of the target lies on no single side of the sheet")]
-    SplitSideAmbiguous { face: FaceKey },
-    /// A face of the target no section reaches, such as one on a void the
-    /// sheet misses: no section says which side it is on.
-    #[error("face {face:?} of the target is reached by no section of the sheet")]
-    SplitBoundaryUncut { face: FaceKey },
-    /// A face split on its own is joined to a neighbour, so it belongs to a
-    /// sheet or a solid that cutting it alone would tear.
-    #[error("face {face:?} is joined to other faces; split its sheet or solid instead")]
-    SplitFaceNotLoose { face: FaceKey },
+    /// A piece of the target reads as lying on both sides of the sheet, or
+    /// on neither: the sheet stops inside the target, or only touches it.
+    #[error("{cell:?} of the target lies on no single side of the sheet")]
+    SplitSideAmbiguous { cell: BooleanCell },
+    /// A piece of the target nothing the sheet cut reaches, such as a face on
+    /// a void the sheet misses: nothing says which side it is on.
+    #[error("{cell:?} of the target is reached by no cut of the sheet")]
+    SplitBoundaryUncut { cell: BooleanCell },
+    /// A face, profile or edge split on its own is joined into something
+    /// larger -- a sheet, a solid, a face's boundary -- that cutting it alone
+    /// would tear.
+    #[error("{cell:?} is joined into a larger shape; split that shape instead")]
+    SplitTargetNotLoose { cell: BooleanCell },
     #[error("healing the Boolean result failed")]
     Healing(#[from] crate::healing::HealingError),
     #[error("regularized Boolean result has {components} disconnected solids")]

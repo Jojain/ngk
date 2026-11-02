@@ -1,7 +1,6 @@
 from collections.abc import Sequence
-from typing import overload
 
-from ..topology import Face, Model, Sheet, Solid
+from ..topology import Edge, Face, Model, Profile, Sheet, Solid
 
 class FaceBooleanResult:
     @property
@@ -26,7 +25,7 @@ def fuse_faces(target: Face, tools: Face | Sequence[Face]) -> FaceBooleanResult:
 def cut_faces(target: Face, tools: Face | Sequence[Face]) -> FaceBooleanResult: ...
 def intersect_faces(target: Face, tools: Face | Sequence[Face]) -> FaceBooleanResult: ...
 
-class SplitResult[T: (Solid, Sheet, Face)]:
+class SplitResult[T: (Solid, Sheet, Face, Profile, Edge)]:
     @property
     def model(self) -> Model: ...
     # The part on the side the sheet's normals point to.
@@ -36,15 +35,12 @@ class SplitResult[T: (Solid, Sheet, Face)]:
     @property
     def back(self) -> T: ...
 
-# Cuts the target along the sheet, into two parts of the target's own kind.
-# The sheet must reach past the target everywhere it crosses it; a sheet that
-# misses the target, stops inside it or leaves one side empty raises, as does
-# a side falling in several pieces. A solid or a sheet is cut in one copy of
-# its model, a face in a model of its own: a face may be one of a solid's,
-# which cutting in place would tear. The inputs are unchanged.
-@overload
-def split(target: Solid, tool: Sheet) -> SplitResult[Solid]: ...
-@overload
-def split(target: Sheet, tool: Sheet) -> SplitResult[Sheet]: ...
-@overload
-def split(target: Face, tool: Sheet) -> SplitResult[Face]: ...
+# Cuts the target along the sheet, into two parts of the target's own kind:
+# any shape but a vertex, which has no side to fall on. The sheet must reach
+# past the target everywhere it crosses it; a sheet that misses the target,
+# stops inside it or leaves one side empty raises, as does a side falling in
+# several pieces. A solid or a sheet is cut in one copy of its model; a face,
+# a profile or an edge in a model of its own, since it may be part of
+# something larger that cutting it in place would tear. The inputs are
+# unchanged.
+def split[T: (Solid, Sheet, Face, Profile, Edge)](target: T, tool: Sheet) -> SplitResult[T]: ...

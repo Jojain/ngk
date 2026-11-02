@@ -6,7 +6,7 @@ use ngk::geometry::Point3;
 use ngk::geometry::Surface;
 use ngk::model::{Cell2, Model};
 use ngk::modeling::profiles;
-use ngk::modeling::{faces, sheets, solids};
+use ngk::modeling::{faces, sheets, solids, split};
 use ngk::topology::shape::{FaceTag, Shape};
 
 use crate::quad_sheet::quad_sheet;
@@ -193,7 +193,7 @@ fn split_cuts_a_face_along_a_crossing_plane() {
         (0.5, -1.0, 1.0),
     ]]);
 
-    let parts = faces::split(&target, &wall).expect("the plane should split the face");
+    let parts = split(&target, &wall).expect("the plane should split the face");
 
     assert!((area_of(&parts.front) - 3.0).abs() <= 1e-9);
     assert!((area_of(&parts.back) - 1.0).abs() <= 1e-9);
@@ -210,7 +210,7 @@ fn split_cuts_a_disc_into_halves() {
         (0.0, -2.0, 1.0),
     ]]);
 
-    let parts = faces::split(&target, &wall).expect("the plane should split the disc");
+    let parts = split(&target, &wall).expect("the plane should split the disc");
 
     let half = std::f64::consts::FRAC_PI_2;
     assert!((area_of(&parts.front) - half).abs() <= 1e-6);
@@ -244,7 +244,7 @@ fn split_cuts_a_disc_out_where_a_tube_crosses_the_face() {
     ])
     .expect("the square should build");
 
-    let parts = faces::split(&target, &tube).expect("the tube should split the face");
+    let parts = split(&target, &tube).expect("the tube should split the face");
 
     // The tube faces outwards: the disc it encloses is behind it.
     let disc = std::f64::consts::PI;
@@ -279,7 +279,7 @@ fn split_refuses_a_side_that_falls_in_two() {
     ]);
 
     assert!(matches!(
-        faces::split(&target, &channel),
+        split(&target, &channel),
         Err(BooleanError::SplitSideDisconnected {
             side: SplitSide::Back,
             components: 2

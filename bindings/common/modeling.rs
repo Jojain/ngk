@@ -4,8 +4,7 @@ use thiserror::Error;
 use crate::builders;
 use crate::builders::blend::{BlendSelection, BlendTarget};
 use crate::builders::boolean::{
-    BooleanError, BooleanOperation, BooleanOptions, Split, boolean, split_face, split_sheet,
-    split_solid,
+    BooleanError, BooleanOperation, BooleanOptions, Split, SplitTarget, boolean, split,
 };
 use crate::builders::sweep::{SweepFrame, SweepOptions, SweepTransition};
 use crate::geometry::Axis3;
@@ -16,8 +15,8 @@ use crate::modeling::sheets::copy_sheet;
 use crate::modeling::solids::copy_solid;
 use crate::topology::ModelEditError;
 use crate::topology::payload::{Payload, StandardPayload};
-use crate::topology::shape::{Shape, SolidTag};
-use crate::topology::shape_keys::{FaceKey, SheetKey, SolidKey};
+use crate::topology::shape::{Shape, ShapeKind, SolidTag};
+use crate::topology::shape_keys::SheetKey;
 
 use super::explore::{ExploreError, SharedFace, SharedModel, SharedSheet, SharedSolid};
 
@@ -158,48 +157,36 @@ pub(crate) fn solid_boolean<P: Payload>(
     Ok(Shape::new(model, result.solid))
 }
 
-/// Splits a solid along a sheet for both bindings, on the model rules of
-/// [`solid_boolean`]: both parts are built in one copy of the target's model.
-pub(crate) fn solid_split<P: Payload>(
-    target: &SharedSolid<P>,
+/// Splits a solid or a sheet along a sheet for both bindings, on the model
+/// rules of [`solid_boolean`]: both parts are built in one copy of the
+/// target's model.
+pub(crate) fn split_in_place<P: Payload, K: SplitTarget>(
+    shared: &SharedModel<P>,
+    target: K,
     tool: &SharedSheet<P>,
-) -> Result<(Model<P>, Split<SolidKey>), BindingBooleanError> {
-    target.view()?;
-    let shared = target.model();
+) -> Result<(Model<P>, Split<K>), BindingBooleanError> {
     let mut model = shared.model().clone();
-    let tool = sheet_in(&mut model, &shared, tool)?;
-    let parts = split_solid(&mut model, target.key(), tool, BooleanOptions::default())?;
+    let tool = sheet_in(&mut model, shared, tool)?;
+    let parts = split(&mut model, target, tool, BooleanOptions::default())?;
     Ok((model, parts))
 }
 
-/// Splits a sheet along another for both bindings, on the model rules of
-/// [`solid_split`].
-pub(crate) fn sheet_split<P: Payload>(
-    target: &SharedSheet<P>,
-    tool: &SharedSheet<P>,
-) -> Result<(Model<P>, Split<SheetKey>), BindingBooleanError> {
-    target.view()?;
-    let shared = target.model();
-    let mut model = shared.model().clone();
-    let tool = sheet_in(&mut model, &shared, tool)?;
-    let parts = split_sheet(&mut model, target.key(), tool, BooleanOptions::default())?;
-    Ok((model, parts))
-}
-
-/// Splits a face along a sheet for both bindings.
+/// Splits a face, a profile or an edge along a sheet for both bindings.
 ///
-/// A face may be one of a solid's, which cutting in place would tear, so the
-/// parts are built in a model holding copies of the face alone and the sheet.
-pub(crate) fn face_split<P: Payload>(
-    target: &SharedFace<P>,
+/// Such a target may be part of something larger -- a solid's face, a face's
+/// boundary -- which cutting it in place would tear, so the parts are built
+/// in a model holding copies of the target alone and of the sheet.
+pub(crate) fn split_alone<P: Payload, K: ShapeKind>(
+    target: Shape<K, P>,
     tool: &SharedSheet<P>,
-) -> Result<(Model<P>, Split<FaceKey>), BindingBooleanError> {
-    let (face, sheet) = (target.view()?, tool.view()?);
-    let mut model = Model::new();
-    let (face, sheet) = model.transaction(|edit| {
-        Ok::<_, ModelEditError>((copy_face(edit, face), copy_sheet(edit, sheet)))
-    })?;
-    let parts = split_face(&mut model, face, sheet, BooleanOptions::default())?;
+) -> Result<(Model<P>, Split<K::Handle>), BindingBooleanError>
+where
+    K::Handle: SplitTarget,
+{
+    let view = tool.view()?;
+    let (mut model, target) = target.into_model();
+    let tool = model.transaction(|edit| Ok::<_, ModelEditError>(copy_sheet(edit, view)))?;
+    let parts = split(&mut model, target, tool, BooleanOptions::default())?;
     Ok((model, parts))
 }
 

@@ -4,7 +4,6 @@ use crate::{
     StandardPayload,
     builders::boolean::{
         BooleanError, BooleanOperation, BooleanOptions, BooleanTrace, boolean, boolean_traced,
-        split_solid,
     },
     builders::errors::ExtrudeError,
     builders::solids::{
@@ -13,7 +12,6 @@ use crate::{
         add_torus,
     },
     geometry::Frame,
-    modeling::SplitShapes,
     modeling::import::import_tools,
     modeling::sheets::copy_sheet,
     topology::{
@@ -184,21 +182,6 @@ pub fn from_sheets<P: Payload>(
         add_solid_from_sheets_edit(edit, outer, &voids)
     })?;
     Ok(Shape::new(g, solid))
-}
-
-/// Splits `target` along `tool` into the parts in front of and behind it.
-///
-/// Both parts are built in a copy of `target`'s model, with `tool` copied in;
-/// the inputs are unchanged. See [`crate::builders::boolean::split_solid`] for
-/// what the sheet must satisfy.
-pub fn split<P: Payload>(
-    target: &Shape<SolidTag, P>,
-    tool: &Shape<SheetTag, P>,
-) -> Result<SplitShapes<SolidTag, P>, BooleanError> {
-    let mut model = target.model().clone();
-    let tool = model.transaction(|edit| Ok::<_, BooleanError>(copy_sheet(edit, tool.sheet())))?;
-    let parts = split_solid(&mut model, target.key(), tool, BooleanOptions::default())?;
-    Ok(SplitShapes::new(model, parts))
 }
 
 /// Fuses every tool into `target`: `target ∪ t₁ ∪ … ∪ tₙ`.

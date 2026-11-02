@@ -6,7 +6,7 @@ import math
 import pytest
 
 from ngk.geometry import Frame, Plane, Point, Vector
-from ngk.modeling import booleans, faces, sheets, solids
+from ngk.modeling import booleans, edges, faces, profiles, sheets, solids
 
 
 def at(x, y, z):
@@ -190,3 +190,31 @@ def test_split_cuts_a_face_of_a_solid_without_touching_the_solid():
 
     assert math.isclose(parts.front.area + parts.back.area, 4.0, rel_tol=1e-9)
     assert math.isclose(block.volume, 8.0, rel_tol=1e-9)
+
+
+def test_split_cuts_a_profile_into_profiles():
+    polyline = profiles.polyline([(0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (2.0, 2.0, 0.0)])
+
+    parts = booleans.split(polyline, _wall(1.0))
+
+    assert math.isclose(parts.front.length, 3.0, rel_tol=1e-9)
+    assert math.isclose(parts.back.length, 1.0, rel_tol=1e-9)
+
+
+def test_split_cuts_an_edge_into_edges():
+    line = edges.line((0.0, 0.0, 0.0), (2.0, 0.0, 0.0))
+
+    parts = booleans.split(line, _wall(0.5))
+
+    assert math.isclose(parts.front.length, 1.5, rel_tol=1e-9)
+    assert math.isclose(parts.back.length, 0.5, rel_tol=1e-9)
+
+
+def test_split_cuts_an_edge_of_a_face_without_touching_the_face():
+    face = faces.rectangle(2.0, 2.0)
+    bottom = next(edge for edge in face.edges() if edge.bounding_box().max.y < 1e-9)
+
+    parts = booleans.split(bottom, _wall(0.5))
+
+    assert math.isclose(parts.front.length + parts.back.length, 2.0, rel_tol=1e-9)
+    assert math.isclose(face.area, 4.0, rel_tol=1e-9)

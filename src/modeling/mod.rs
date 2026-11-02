@@ -25,10 +25,11 @@ pub mod solids;
 pub mod sweep;
 pub mod transform;
 
-use crate::builders::boolean::Split;
+use crate::builders::boolean::{self, BooleanError, BooleanOptions, Split, SplitTarget};
 use crate::model::Model;
+use crate::modeling::sheets::copy_sheet;
 use crate::topology::payload::Payload;
-use crate::topology::shape::{Shape, ShapeKind};
+use crate::topology::shape::{Shape, ShapeKind, SheetTag};
 
 /// The two parts a shape was split into, each owning a copy of one model.
 pub struct SplitShapes<K: ShapeKind, P: Payload> {
@@ -46,4 +47,26 @@ impl<K: ShapeKind, P: Payload> SplitShapes<K, P> {
             back: Shape::new(model, parts.back),
         }
     }
+}
+
+/// Splits `target` along `tool` into the parts in front of and behind it,
+/// each of the target's own kind: a solid, a sheet, a face, a profile or an
+/// edge.
+///
+/// Both parts are built in a copy of `target`'s model, with `tool` copied in;
+/// the inputs are unchanged. See [`crate::builders::boolean::split`] for what
+/// the sheet and the target must satisfy.
+pub fn split<K, P>(
+    target: &Shape<K, P>,
+    tool: &Shape<SheetTag, P>,
+) -> Result<SplitShapes<K, P>, BooleanError>
+where
+    K: ShapeKind,
+    K::Handle: SplitTarget,
+    P: Payload,
+{
+    let mut model = target.model().clone();
+    let tool = model.transaction(|edit| Ok::<_, BooleanError>(copy_sheet(edit, tool.sheet())))?;
+    let parts = boolean::split(&mut model, target.handle(), tool, BooleanOptions::default())?;
+    Ok(SplitShapes::new(model, parts))
 }
