@@ -47,12 +47,14 @@ use super::{
     BooleanCell, BooleanError, BooleanOperand, BooleanOperation, BooleanOptions, BooleanSection,
     BooleanTolerances, BooleanTrace, assemble, select,
 };
+use crate::builders::faces::reverse_face_winding_edit;
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{Point3, PointCoincidence};
 use crate::model::{Cell1, Cell2, Model};
 use crate::topology::ModelEdit;
 use crate::topology::attributes::{ProfileAttr, SheetAttr};
 use crate::topology::gmap::Dim;
+use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
 use crate::topology::trim_domain::{FaceTrimDomain, TrimLocation};
@@ -113,10 +115,41 @@ pub fn split<P: Payload, K: SplitTarget>(
     map.transaction(|edit| {
         let target_copy = K::copy(edit, &source, target);
         let tool_copy = SheetKey::copy(edit, &source, tool);
+        for operand in [
+            target.operand(),
+            target_copy.operand(),
+            tool.operand(),
+            tool_copy.operand(),
+        ] {
+            align_faces(edit, operand);
+        }
         let back = K::part(edit, target, tool, SplitSide::Back, options)?;
         let front = K::part(edit, target_copy, tool_copy, SplitSide::Front, options)?;
         Ok(Split { front, back })
     })
+}
+
+/// Rewinds every face `operand` runs against its stored orientation.
+///
+/// A face's orientation is the one its sheet or shell gives it, and a face
+/// key names only the stored one, which may run the other way -- an extruded
+/// profile's faces do. Everything downstream reads faces by key, so the
+/// stored orientation is made the sheet's or the shell's first: otherwise a
+/// sheet's front would be read off the wrong side of such a face.
+fn align_faces<P: Payload>(edit: &mut ModelEdit<'_, P>, operand: BooleanOperand) {
+    let faces = match operand {
+        BooleanOperand::Sheet(sheet) => edit.sheet_unchecked(sheet).faces(),
+        BooleanOperand::Solid(solid) => edit.solid_unchecked(solid).faces(),
+        _ => Vec::new(),
+    };
+    let reversed = faces
+        .into_iter()
+        .filter(|face| face.sense() == Orientation::Reversed)
+        .map(|face| face.key())
+        .collect::<Vec<_>>();
+    for face in reversed {
+        reverse_face_winding_edit(edit, face);
+    }
 }
 
 mod sealed {
@@ -890,7 +923,10 @@ fn passes_through<P: Payload>(
         .coincides(point, tolerance)
 }
 
-/// `face`'s oriented normal at `point`, which lies on its support.
+/// `face`'s own normal at `point`, which lies on its support.
+///
+/// Never the support's: a support's orientation is arbitrary, and a face may
+/// run against it. Which side is front is the face's to say.
 fn normal_at<P: Payload>(
     model: &Model<P>,
     face: FaceKey,

@@ -9,7 +9,7 @@ use ngk::modeling::profiles;
 use ngk::modeling::{faces, sheets, solids, split};
 use ngk::topology::shape::{FaceTag, Shape};
 
-use crate::quad_sheet::quad_sheet;
+use crate::quad_sheet::{quad_sheet, reversed_bottom_face};
 
 #[test]
 fn rectangle_returns_owned_face_shape() {
@@ -285,4 +285,22 @@ fn split_refuses_a_side_that_falls_in_two() {
             components: 2
         })
     ));
+}
+
+#[test]
+fn split_reads_a_target_face_by_its_own_normal_not_its_support() {
+    // The target faces down while its support plane faces up; which side of
+    // the wall each half is on must not depend on that.
+    let target = reversed_bottom_face();
+    let wall = quad_sheet(&[[
+        (0.25, -1.0, -1.0),
+        (0.25, 2.0, -1.0),
+        (0.25, 2.0, 1.0),
+        (0.25, -1.0, 1.0),
+    ]]);
+
+    let parts = split(&target, &wall).expect("the wall should split the face");
+
+    assert!((area_of(&parts.front) - 0.75).abs() <= 1e-9);
+    assert!((area_of(&parts.back) - 0.25).abs() <= 1e-9);
 }

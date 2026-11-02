@@ -4,12 +4,12 @@ use std::f64::consts::TAU;
 
 use ngk::geometry::Fraction;
 use ngk::geometry::{Axis3, Curve, Interval, Plane, Point3};
-use ngk::modeling::{edges, faces, split};
+use ngk::modeling::{edges, faces, sheets, split};
 use ngk::topology::closed::Closeable;
 use ngk::topology::shape::{EdgeTag, Shape, SheetTag};
 use radians::Rad64;
 
-use crate::quad_sheet::quad_sheet;
+use crate::quad_sheet::{quad_sheet, reversed_bottom_face};
 
 #[test]
 fn line_returns_owned_line_edge_shape() {
@@ -170,4 +170,18 @@ fn split_refuses_an_edge_a_face_runs_along() {
         split(&target, &wall(0.5)),
         Err(BooleanError::SplitTargetNotLoose { cell: BooleanCell::Edge(refused) }) if refused == edge
     ));
+}
+
+#[test]
+fn split_reads_front_off_the_tool_face_normal_not_its_support() {
+    // The tool faces down while its support plane faces up: front is below.
+    let face = reversed_bottom_face();
+    let tool = sheets::from_faces(&[&face]).expect("one face is a sheet");
+    let target = edges::line(Point3::new(0.5, 0.5, -1.0), Point3::new(0.5, 0.5, 3.0))
+        .expect("line should build");
+
+    let parts = split(&target, &tool).expect("the face should split the line");
+
+    assert!((parts.front.edge().length() - 1.0).abs() <= 1e-9);
+    assert!((parts.back.edge().length() - 3.0).abs() <= 1e-9);
 }

@@ -2,7 +2,7 @@ use crate::builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, f
 use crate::builders::errors::FaceCreationError;
 use crate::builders::faces::{
     FaceEdgeSplitError, add_annulus, add_circle, add_face_edit, add_polygon_edit,
-    add_polygon_with_holes, add_rectangle, add_square, split_face_edge,
+    add_polygon_with_holes, add_rectangle, add_square, reverse_face_winding_edit, split_face_edge,
 };
 use crate::geometry::{Fraction, Plane, Point3};
 use crate::model::Cell2;
@@ -11,6 +11,7 @@ use crate::modeling::edges::EdgeSplitResult;
 use crate::modeling::import::import_tools;
 use crate::topology::ModelEdit;
 use crate::topology::face::Face;
+use crate::topology::orientation::Orientation;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceTag, ProfileTag, Shape};
@@ -225,9 +226,19 @@ fn combine<'a, P: Payload>(
 
 /// Copies one face, with the entities that bound it and nothing else of its model, and
 /// returns its key in the model being edited.
+///
+/// The copy faces the way the view does. A key names a face's stored
+/// orientation, so a view reversed against it -- a face its sheet or shell
+/// runs the other way, or one the caller reversed -- is rewound in the copy;
+/// otherwise the copy would quietly face back the way it was stored.
 pub(crate) fn copy_face<P: Payload>(edit: &mut ModelEdit<'_, P>, face: Face<'_, P>) -> FaceKey {
+    let reversed = face.sense() == Orientation::Reversed;
     let dart = edit.merge(face);
-    edit.cell_key_unchecked::<Cell2>(dart)
+    let key = edit.cell_key_unchecked::<Cell2>(dart);
+    if reversed {
+        reverse_face_winding_edit(edit, key);
+    }
+    key
 }
 
 /// Cuts a boundary edge and all incident face pcurves in one owned model.

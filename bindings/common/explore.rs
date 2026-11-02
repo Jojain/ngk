@@ -4,6 +4,9 @@ use thiserror::Error;
 
 use crate::geometry::{Curve, Point3, Surface, TrimmedCurve2};
 use crate::model::{Cell1, Cell2, MergeTopology, Model};
+use crate::modeling::faces::copy_face;
+use crate::modeling::sheets::copy_sheet;
+use crate::topology::ModelEditError;
 use crate::topology::closed::{Closeable, Closed};
 use crate::topology::edge::{BoundedEdge, Edge};
 use crate::topology::face::{Face, Loop};
@@ -844,8 +847,11 @@ impl<P: Payload> SharedFace<P> {
 impl<P: Payload> SharedFace<P> {
     /// Copies this face into an owned shape for a modeling constructor.
     pub(crate) fn isolated_shape(&self) -> Result<Shape<FaceTag, P>, ExploreError> {
-        let (model, dart) = self.view()?.isolate();
-        let key = model.cell_key_unchecked::<Cell2>(dart);
+        let view = self.view()?;
+        let mut model = Model::new();
+        let key = model
+            .transaction(|edit| Ok::<_, ModelEditError>(copy_face(edit, view)))
+            .expect("copying one face into an empty model is a valid edit");
         Ok(Shape::new(model, key))
     }
 }
@@ -863,10 +869,11 @@ shared_identity!(SharedSheet, SheetKey);
 impl<P: Payload> SharedSheet<P> {
     /// Copies this sheet into an owned shape for a modeling operation.
     pub(crate) fn isolated_shape(&self) -> Result<Shape<SheetTag, P>, ExploreError> {
-        let (model, dart) = self.view()?.isolate();
-        let key = Sheet::from_dart(&model, dart)
-            .ok_or_else(|| missing("sheet", dart.id()))?
-            .key();
+        let view = self.view()?;
+        let mut model = Model::new();
+        let key = model
+            .transaction(|edit| Ok::<_, ModelEditError>(copy_sheet(edit, view)))
+            .expect("copying one sheet into an empty model is a valid edit");
         Ok(Shape::new(model, key))
     }
 

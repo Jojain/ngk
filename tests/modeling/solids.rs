@@ -826,3 +826,31 @@ fn split_refuses_a_sheet_that_misses_the_solid() {
         Err(BooleanError::SplitMissesTarget)
     ));
 }
+
+#[test]
+fn split_reads_front_off_a_face_its_sheet_runs_reversed() {
+    // An extruded line's face is stored one way and run the other by its
+    // sheet, which faces -x: the front is short of x = 4.
+    let line = ngk::modeling::profiles::polyline(&[
+        Point3::new(4.0, -20.0, -10.0),
+        Point3::new(4.0, 30.0, -10.0),
+    ])
+    .expect("the line should build");
+    let wall = ngk::modeling::sweep::extrude_profile(line.profile(), Vector3::new(0.0, 0.0, 40.0))
+        .expect("the line should extrude");
+    let face = &wall.sheet().faces()[0];
+    assert_eq!(face.sense(), ngk::topology::Orientation::Reversed);
+    assert!(face.normal_at(0.0, 0.0).x < -0.5);
+    let target = block(10.0, 10.0, 10.0).expect("the block should build");
+
+    let parts = split(&target, &wall).expect("the wall should split the block");
+
+    assert!((volume_of(&parts.front) - 400.0).abs() <= 1e-6);
+    assert!((volume_of(&parts.back) - 600.0).abs() <= 1e-6);
+    let front = parts
+        .front
+        .solid()
+        .bounding_box()
+        .expect("the front should bound");
+    assert!((front.max().x - 4.0).abs() <= 1e-9);
+}

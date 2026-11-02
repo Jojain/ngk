@@ -6,7 +6,7 @@ import math
 import pytest
 
 from ngk.geometry import Frame, Plane, Point, Vector
-from ngk.modeling import booleans, edges, faces, profiles, sheets, solids
+from ngk.modeling import booleans, edges, faces, profiles, sheets, solids, sweep
 
 
 def at(x, y, z):
@@ -218,3 +218,24 @@ def test_split_cuts_an_edge_of_a_face_without_touching_the_face():
 
     assert math.isclose(parts.front.length + parts.back.length, 2.0, rel_tol=1e-9)
     assert math.isclose(face.area, 4.0, rel_tol=1e-9)
+
+
+def test_split_reads_front_off_a_reversed_face_not_its_surface():
+    plane = Plane(Point(-15, -15, 4), Vector(1, 0, 0), Vector(0, 0, 1))
+    down = faces.square(40, plane).reversed()
+
+    parts = booleans.split(solids.block(10, 10, 10), sheets.from_faces([down]))
+
+    assert math.isclose(parts.front.volume, 400.0, rel_tol=1e-9)
+    assert parts.front.bounding_box().max.z <= 4.0 + 1e-9
+
+
+def test_split_reads_front_off_an_extruded_wall_face():
+    line = profiles.polyline([(4, -20, -10), (4, 30, -10)])
+    wall = sweep.extrude_profile(line, Vector(0, 0, 40))
+
+    parts = booleans.split(solids.block(10, 10, 10), wall)
+
+    assert wall.faces()[0].normal_at(0.5, 0.5).x < 0
+    assert parts.front.bounding_box().max.x <= 4.0 + 1e-9
+

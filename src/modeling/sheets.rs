@@ -34,8 +34,15 @@ pub fn from_faces<P: Payload>(
 
 /// Copies one sheet, with the entities that bound it and nothing else of its
 /// model, and returns its key in the model being edited.
+///
+/// The copy faces the way the view does: it is anchored at the view's own
+/// dart, which carries its direction, rather than at the stored root a
+/// reversed view runs against.
 pub(crate) fn copy_sheet<P: Payload>(edit: &mut ModelEdit<'_, P>, sheet: Sheet<'_, P>) -> SheetKey {
     let dart = edit.merge(sheet);
-    edit.sheet_key(dart)
-        .expect("a copied sheet keeps its registration")
+    let key = edit
+        .sheet_key(dart)
+        .expect("a copied sheet keeps its registration");
+    edit.sheet_attr_mut_unchecked(key).root = dart;
+    key
 }
