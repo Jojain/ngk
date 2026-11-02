@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use nalgebra::Vector3;
 use ngk::StandardPayload;
+use ngk::builders::boolean::BooleanError;
 use ngk::builders::errors::{FaceCreationError, PolylineError};
 use ngk::builders::solids::{BlockError, SolidFromSheetsError, TorusBuildError};
 use ngk::geometry::{
@@ -9,7 +10,7 @@ use ngk::geometry::{
 };
 use ngk::model::Cell2;
 use ngk::modeling::solids::{
-    block, block_at, cut, cylinder, cylinder_at, from_sheets, fuse, intersect, sphere, torus,
+    block, block_at, cut, cylinder, cylinder_at, from_sheets, fuse, intersect, sphere, split, torus,
 };
 
 use crate::cube_faces::{Winding, cube_faces, refs};
@@ -735,4 +736,107 @@ fn from_sheets_rebuilds_a_cylinder_from_its_faces() {
 
     let volume = solid.solid().volume().expect("the solid should measure");
     assert!((volume - 2.0 * std::f64::consts::PI).abs() <= 1e-6);
+}
+
+/// A sheet of planar quads, each listed counter-clockwise seen from the side
+/// its normal points to.
+fn quad_sheet(quads: &[[(f64, f64, f64); 4]]) -> Shape<ngk::topology::shape::SheetTag> {
+    let faces = quads
+        .iter()
+        .map(|quad| {
+            let points = quad
+                .iter()
+                .map(|&(x, y, z)| Point3::new(x, y, z))
+                .collect::<Vec<_>>();
+            ngk::modeling::faces::polygon(&points).expect("a quad should build")
+        })
+        .collect::<Vec<_>>();
+    ngk::modeling::sheets::from_faces(&faces.iter().collect::<Vec<_>>()).expect("quads join")
+}
+
+fn volume_of(shape: &Shape<SolidTag>) -> f64 {
+    validate_solid_manifold(shape.model(), shape.key()).expect("the part should be manifold");
+    validate_solid_orientation(shape.model(), shape.key()).expect("faces should point out");
+    shape.solid().volume().expect("the part should measure")
+}
+
+#[test]
+fn split_cuts_a_block_along_a_plane_into_front_and_back() {
+    let target = block(10.0, 10.0, 10.0).expect("the block should build");
+    let up = quad_sheet(&[[
+        (-5.0, -5.0, 4.0),
+        (15.0, -5.0, 4.0),
+        (15.0, 15.0, 4.0),
+        (-5.0, 15.0, 4.0),
+    ]]);
+
+    let parts = split(&target, &up).expect("the plane should split the block");
+
+    assert!((volume_of(&parts.front) - 600.0).abs() <= 1e-6);
+    assert!((volume_of(&parts.back) - 400.0).abs() <= 1e-6);
+    let front_box = parts
+        .front
+        .solid()
+        .bounding_box()
+        .expect("the front part should bound");
+    assert!((front_box.min().z - 4.0).abs() <= 1e-9);
+    assert!((target.solid().volume().expect("the block should measure") - 1000.0).abs() <= 1e-6);
+}
+
+#[test]
+fn split_swaps_front_and_back_with_the_sheet_normal() {
+    let target = block(10.0, 10.0, 10.0).expect("the block should build");
+    let down = quad_sheet(&[[
+        (-5.0, -5.0, 4.0),
+        (-5.0, 15.0, 4.0),
+        (15.0, 15.0, 4.0),
+        (15.0, -5.0, 4.0),
+    ]]);
+
+    let parts = split(&target, &down).expect("the plane should split the block");
+
+    assert!((volume_of(&parts.front) - 400.0).abs() <= 1e-6);
+    assert!((volume_of(&parts.back) - 600.0).abs() <= 1e-6);
+}
+
+#[test]
+fn split_follows_a_sheet_of_two_faces() {
+    let target = block(10.0, 10.0, 10.0).expect("the block should build");
+    // Faces up over z = 4, then turns up at x = 5 facing -x: the front is the
+    // quarter above z = 4 and short of x = 5.
+    let bent = quad_sheet(&[
+        [
+            (-5.0, -5.0, 4.0),
+            (5.0, -5.0, 4.0),
+            (5.0, 15.0, 4.0),
+            (-5.0, 15.0, 4.0),
+        ],
+        [
+            (5.0, -5.0, 4.0),
+            (5.0, -5.0, 15.0),
+            (5.0, 15.0, 15.0),
+            (5.0, 15.0, 4.0),
+        ],
+    ]);
+
+    let parts = split(&target, &bent).expect("the bent sheet should split the block");
+
+    assert!((volume_of(&parts.front) - 300.0).abs() <= 1e-6);
+    assert!((volume_of(&parts.back) - 700.0).abs() <= 1e-6);
+}
+
+#[test]
+fn split_refuses_a_sheet_that_misses_the_solid() {
+    let target = block(10.0, 10.0, 10.0).expect("the block should build");
+    let above = quad_sheet(&[[
+        (-5.0, -5.0, 40.0),
+        (15.0, -5.0, 40.0),
+        (15.0, 15.0, 40.0),
+        (-5.0, 15.0, 40.0),
+    ]]);
+
+    assert!(matches!(
+        split(&target, &above),
+        Err(BooleanError::SplitMissesTarget)
+    ));
 }

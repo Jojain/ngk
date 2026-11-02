@@ -3,9 +3,12 @@ use thiserror::Error;
 
 use crate::builders;
 use crate::builders::blend::{BlendSelection, BlendTarget};
-use crate::builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, boolean};
+use crate::builders::boolean::{
+    BooleanError, BooleanOperation, BooleanOptions, SolidSplit, boolean, split_solid,
+};
 use crate::builders::sweep::{SweepFrame, SweepOptions, SweepTransition};
 use crate::geometry::Axis3;
+use crate::model::Model;
 use crate::modeling::faces::{FaceBooleanResult, copy_face};
 use crate::modeling::import::import_tools;
 use crate::modeling::solids::copy_solid;
@@ -13,7 +16,7 @@ use crate::topology::ModelEditError;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::shape::{Shape, SolidTag};
 
-use super::explore::{ExploreError, SharedFace, SharedModel, SharedSolid};
+use super::explore::{ExploreError, SharedFace, SharedModel, SharedSheet, SharedSolid};
 
 #[derive(Debug, Error)]
 pub(crate) enum SelectionError {
@@ -150,6 +153,32 @@ pub(crate) fn solid_boolean<P: Payload>(
         BooleanOptions::default(),
     )?;
     Ok(Shape::new(model, result.solid))
+}
+
+/// Splits a solid along a sheet for both bindings, on the model rules of
+/// [`solid_boolean`]: both parts are built in one copy of the target's model.
+pub(crate) fn solid_split<P: Payload>(
+    target: &SharedSolid<P>,
+    tool: &SharedSheet<P>,
+) -> Result<(Model<P>, SolidSplit), BindingBooleanError> {
+    target.view()?;
+    let shared = target.model();
+    let mut model = shared.model().clone();
+    let tool = match tool.model().ptr_eq(&shared) {
+        true => tool.key(),
+        false => {
+            let view = tool.view()?;
+            model.transaction(|edit| {
+                let dart = edit.merge(view);
+                Ok::<_, ModelEditError>(
+                    edit.sheet_key(dart)
+                        .expect("a copied sheet keeps its registration"),
+                )
+            })?
+        }
+    };
+    let parts = split_solid(&mut model, target.key(), tool, BooleanOptions::default())?;
+    Ok((model, parts))
 }
 
 /// Evaluates one face Boolean for both bindings, on the model rules of

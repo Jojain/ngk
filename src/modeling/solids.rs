@@ -4,6 +4,7 @@ use crate::{
     StandardPayload,
     builders::boolean::{
         BooleanError, BooleanOperation, BooleanOptions, BooleanTrace, boolean, boolean_traced,
+        split_solid,
     },
     builders::errors::ExtrudeError,
     builders::solids::{
@@ -16,7 +17,7 @@ use crate::{
     topology::{
         ModelEdit,
         payload::Payload,
-        shape::{FaceTag, Shape, SheetTag, SolidTag},
+        shape::{FaceTag, Shape, ShapeKind, SheetTag, SolidTag},
         shape_keys::SolidKey,
     },
 };
@@ -183,6 +184,38 @@ pub fn from_sheets<P: Payload>(
         add_solid_from_sheets_edit(edit, outer, &voids)
     })?;
     Ok(Shape::new(g, solid))
+}
+
+/// The two parts a shape was split into, each in a model of its own.
+pub struct SplitShapes<K: ShapeKind, P: Payload> {
+    /// The part on the side the sheet's normals point to.
+    pub front: Shape<K, P>,
+    /// The part behind the sheet.
+    pub back: Shape<K, P>,
+}
+
+/// Splits `target` along `tool` into the parts in front of and behind it.
+///
+/// Both parts are built in a copy of `target`'s model, with `tool` copied in;
+/// the inputs are unchanged. See [`crate::builders::boolean::split_solid`] for
+/// what the sheet must satisfy.
+pub fn split<P: Payload>(
+    target: &Shape<SolidTag, P>,
+    tool: &Shape<SheetTag, P>,
+) -> Result<SplitShapes<SolidTag, P>, BooleanError> {
+    let mut model = target.model().clone();
+    let tool = model.transaction(|edit| {
+        let dart = edit.merge(tool.sheet());
+        Ok::<_, BooleanError>(
+            edit.sheet_key(dart)
+                .expect("a copied sheet keeps its registration"),
+        )
+    })?;
+    let parts = split_solid(&mut model, target.key(), tool, BooleanOptions::default())?;
+    Ok(SplitShapes {
+        front: Shape::new(model.clone(), parts.front),
+        back: Shape::new(model, parts.back),
+    })
 }
 
 /// Fuses every tool into `target`: `target ∪ t₁ ∪ … ∪ tₙ`.

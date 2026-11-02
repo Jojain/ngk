@@ -3,10 +3,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use crate::binding_common::explore::SharedModel;
-use crate::binding_common::modeling::{face_boolean, solid_boolean};
+use crate::binding_common::modeling::{face_boolean, solid_boolean, solid_split};
 use crate::builders::boolean::BooleanOperation;
 
-use super::super::topology::{PyFace, PyModel, PySolid};
+use super::super::topology::{PyFace, PyModel, PySheet, PySolid};
 use super::common::py_solid;
 
 /// Registers the solid and face Boolean operations.
@@ -21,6 +21,8 @@ pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(fuse_faces, module)?)?;
     module.add_function(wrap_pyfunction!(cut_faces, module)?)?;
     module.add_function(wrap_pyfunction!(intersect_faces, module)?)?;
+    module.add_class::<PySplitResult>()?;
+    module.add_function(wrap_pyfunction!(split, module)?)?;
     Ok(())
 }
 
@@ -132,4 +134,53 @@ fn combine(
     solid_boolean(&target.inner, &tools, operation)
         .map_err(|error| PyValueError::new_err(error.to_string()))
         .and_then(py_solid)
+}
+
+/// The two parts a split produced, sharing one model.
+#[pyclass(name = "SplitResult", module = "ngk")]
+pub struct PySplitResult {
+    model: SharedModel,
+    front: crate::topology::shape_keys::SolidKey,
+    back: crate::topology::shape_keys::SolidKey,
+}
+
+impl PySplitResult {
+    fn part(&self, key: crate::topology::shape_keys::SolidKey) -> PyResult<PySolid> {
+        self.model
+            .solid_by_key(key)
+            .map(PySolid::from_inner)
+            .ok_or_else(|| PyValueError::new_err(format!("missing solid {key:?}")))
+    }
+}
+
+#[pymethods]
+impl PySplitResult {
+    #[getter]
+    fn model(&self) -> PyModel {
+        PyModel::from_inner(self.model.clone())
+    }
+
+    /// The part on the side the sheet's normals point to.
+    #[getter]
+    fn front(&self) -> PyResult<PySolid> {
+        self.part(self.front)
+    }
+
+    /// The part behind the sheet.
+    #[getter]
+    fn back(&self) -> PyResult<PySolid> {
+        self.part(self.back)
+    }
+}
+
+/// Splits a solid along a sheet into the parts in front of and behind it.
+#[pyfunction]
+pub(crate) fn split(target: &PySolid, tool: &PySheet) -> PyResult<PySplitResult> {
+    let (model, parts) = solid_split(&target.inner, &tool.inner)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    Ok(PySplitResult {
+        model: SharedModel::from_model(model),
+        front: parts.front,
+        back: parts.back,
+    })
 }

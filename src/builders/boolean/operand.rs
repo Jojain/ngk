@@ -11,7 +11,7 @@ use super::{
     BooleanError, BooleanInput, BooleanOperand, BooleanOperation, BooleanOptions,
     BooleanTolerancePolicy, BooleanTolerances,
 };
-use crate::topology::shape_keys::SolidKey;
+use crate::topology::shape_keys::{SheetKey, SolidKey};
 use crate::topology::validation::{validate_solid_manifold, validate_solid_orientation};
 
 #[derive(Clone, Default)]
@@ -282,7 +282,7 @@ pub(crate) fn reject_shared_faces<K>(
 }
 
 pub(crate) struct BooleanContext {
-    pub(crate) operands: Operands<SolidKey>,
+    pub(crate) operands: Operands<BooleanOperand>,
     pub(crate) operation: BooleanOperation,
     pub(crate) options: BooleanOptions,
     pub(crate) tolerances: BooleanTolerances,
@@ -296,14 +296,55 @@ impl BooleanContext {
         target: SolidKey,
         tools: &[SolidKey],
         operation: BooleanOperation,
+        options: BooleanOptions,
+    ) -> Result<Self, BooleanError> {
+        let tools = tools
+            .iter()
+            .map(|&tool| BooleanOperand::Solid(tool))
+            .collect::<Vec<_>>();
+        Self::admit_operands(
+            map,
+            Operands::new(BooleanOperand::Solid(target), &tools),
+            operation,
+            options,
+        )
+    }
+
+    /// As [`Self::admit`], for a solid cut along a sheet.
+    ///
+    /// The sheet bounds no region, so only the solid is validated as one.
+    pub(crate) fn admit_split<P: Payload>(
+        map: &Model<P>,
+        target: SolidKey,
+        tool: SheetKey,
+        operation: BooleanOperation,
+        options: BooleanOptions,
+    ) -> Result<Self, BooleanError> {
+        Self::admit_operands(
+            map,
+            Operands::new(
+                BooleanOperand::Solid(target),
+                &[BooleanOperand::Sheet(tool)],
+            ),
+            operation,
+            options,
+        )
+    }
+
+    fn admit_operands<P: Payload>(
+        map: &Model<P>,
+        operands: Operands<BooleanOperand>,
+        operation: BooleanOperation,
         mut options: BooleanOptions,
     ) -> Result<Self, BooleanError> {
         if !options.intersections.validate() || options.max_classification_rays < 2 {
             return Err(crate::geometry::IntersectionError::InvalidOptions.into());
         }
-        let operands = Operands::new(target, tools);
-        let cells = operands_cells(map, &operands, BooleanOperand::Solid)?;
-        for &Operand { key: solid, input } in &operands.operands {
+        let cells = operands_cells(map, &operands, |operand| operand)?;
+        for &Operand { key, input } in &operands.operands {
+            let BooleanOperand::Solid(solid) = key else {
+                continue;
+            };
             validate_solid_manifold(map, solid)
                 .and_then(|()| validate_solid_orientation(map, solid))
                 .map_err(|source| BooleanError::InvalidOperand {

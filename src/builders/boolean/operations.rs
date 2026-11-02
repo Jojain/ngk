@@ -150,7 +150,7 @@ fn boolean_recorded<P: Payload>(
             },
         });
     }
-    let operands = context.operands.map(BooleanOperand::Solid);
+    let operands = context.operands.operands.clone();
     map.transaction(|edit| {
         trace.record(|| BooleanTraceStage::named("operands").with_model(edit.model()));
         let result = (|| {

@@ -1268,10 +1268,16 @@ fn validate_edit_events<P: Payload>(
 ) -> Result<(), ModelEditError> {
     let mut merges = HashMap::new();
 
+    // A copy is a transaction-local identity as much as a creation is: a later
+    // pass may split it and consume it before commit.
     let created_within = |key: EditKey| {
-        events
-            .iter()
-            .any(|candidate| matches!(candidate, EditEvent::Created { key: created, .. } if *created == key))
+        events.iter().any(|candidate| {
+            matches!(
+                candidate,
+                EditEvent::Created { key: created, .. } | EditEvent::Copied { key: created }
+                    if *created == key
+            )
+        })
     };
     let check_source = |source: EditKey| -> Result<(), ModelEditError> {
         if !contains_edit_key(g, source)
@@ -2173,5 +2179,26 @@ mod tests {
             g.vertices.contains_key(key),
             "a rejected commit should restore the transaction-start snapshot"
         );
+    }
+
+    /// A copy taken inside a transaction can be built on and then consumed
+    /// before commit, as a created identity can: splitting a solid cuts each
+    /// part from its own copy of the operands.
+    #[test]
+    fn a_copy_consumed_in_its_own_transaction_still_explains_what_came_from_it() {
+        let source = crate::modeling::faces::square(crate::geometry::Plane::xy(), 1.0)
+            .expect("a square should build");
+        let mut g = Model::<StandardPayload>::new();
+
+        let result = g.transaction(|edit| {
+            let dart = edit.merge(source.face());
+            let face = edit.cell_key_unchecked::<crate::model::Cell2>(dart);
+            let sheet =
+                edit.add_sheet_derived_from(vec![EditKey::Face(face)], SheetAttr::new(dart));
+            edit.remove_sheet(sheet);
+            edit.remove_faces(&[face])
+        });
+
+        assert!(result.is_ok(), "{result:?}");
     }
 }

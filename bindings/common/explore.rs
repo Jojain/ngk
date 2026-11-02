@@ -882,7 +882,7 @@ impl<P: Payload> SharedSheet<P> {
         }
     }
 
-    fn view(&self) -> Result<Sheet<'_, P>, ExploreError> {
+    pub(crate) fn view(&self) -> Result<Sheet<'_, P>, ExploreError> {
         Sheet::from_dart(self.model.model(), self.dart)
             .filter(|view| view.key() == self.key)
             .ok_or_else(|| missing("sheet", format!("{:?}", self.key)))

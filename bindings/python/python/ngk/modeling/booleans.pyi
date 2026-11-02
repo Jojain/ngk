@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from ..topology import Face, Model, Solid
+from ..topology import Face, Model, Sheet, Solid
 
 class FaceBooleanResult:
     @property
@@ -24,3 +24,19 @@ def intersect(target: Solid, tools: Solid | Sequence[Solid]) -> Solid: ...
 def fuse_faces(target: Face, tools: Face | Sequence[Face]) -> FaceBooleanResult: ...
 def cut_faces(target: Face, tools: Face | Sequence[Face]) -> FaceBooleanResult: ...
 def intersect_faces(target: Face, tools: Face | Sequence[Face]) -> FaceBooleanResult: ...
+
+class SplitResult:
+    @property
+    def model(self) -> Model: ...
+    # The part on the side the sheet's normals point to.
+    @property
+    def front(self) -> Solid: ...
+    # The part behind the sheet.
+    @property
+    def back(self) -> Solid: ...
+
+# Cuts the target along the sheet. The sheet must reach past the solid
+# everywhere it crosses it; a sheet that misses the solid, stops inside it or
+# leaves one side empty raises, as does a side falling in several pieces. Both
+# parts live in one copy of the target's model; the inputs are unchanged.
+def split(target: Solid, tool: Sheet) -> SplitResult: ...

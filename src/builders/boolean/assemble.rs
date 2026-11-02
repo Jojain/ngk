@@ -1,7 +1,7 @@
 //! Atomic deletion, canonical-span sewing, and result shell registration.
 
 use super::{
-    BooleanContext, BooleanError, BooleanSection, IntersectionSpanId, SolidBoolean,
+    BooleanContext, BooleanError, BooleanOperand, BooleanSection, IntersectionSpanId, SolidBoolean,
     SolidBooleanLineage, arrangement::Arrangement, neighborhood::FragmentGraph,
     select::SelectionPlan, solid_domain::SolidDomain,
 };
@@ -167,14 +167,26 @@ pub(crate) fn run<P: Payload>(
             edit.sheet_key(dart).map(|sheet| (face, sheet))
         })
         .collect::<HashMap<_, _>>();
-    let solids = context.operands.keys().collect::<Vec<_>>();
-    let sheets = solids
-        .iter()
-        .flat_map(|&solid| {
-            edit.solid_unchecked(solid)
+    let solids = context
+        .operands
+        .keys()
+        .filter_map(|operand| match operand {
+            BooleanOperand::Solid(solid) => Some(solid),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let sheets = context
+        .operands
+        .keys()
+        .flat_map(|operand| match operand {
+            BooleanOperand::Solid(solid) => edit
+                .solid_unchecked(solid)
                 .shells()
                 .into_iter()
                 .map(|shell| shell.key())
+                .collect(),
+            BooleanOperand::Sheet(sheet) => vec![sheet],
+            _ => Vec::new(),
         })
         .collect::<BTreeSet<_>>();
     // Every operand's shells are about to be torn apart and reassembled, so

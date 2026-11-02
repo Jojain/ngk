@@ -1,11 +1,12 @@
 """Booleans take one target and any number of tools, in a copy of the target's model."""
 
 import itertools
+import math
 
 import pytest
 
 from ngk.geometry import Frame, Plane, Point, Vector
-from ngk.modeling import booleans, faces, solids
+from ngk.modeling import booleans, faces, sheets, solids
 
 
 def at(x, y, z):
@@ -122,3 +123,32 @@ def test_a_face_boolean_of_faces_on_different_planes_still_raises():
     tilted = faces.rectangle(10, 10, Plane(Point(0, 0, 0), Vector(1, 0, 0), Vector(0, 1, 0)))
     with pytest.raises(ValueError):
         booleans.cut_faces(faces.rectangle(10, 10), tilted)
+
+
+def _plane_sheet(z: float, up: bool = True):
+    corners = [(-5.0, -5.0, z), (15.0, -5.0, z), (15.0, 15.0, z), (-5.0, 15.0, z)]
+    if not up:
+        corners.reverse()
+    return sheets.from_faces([faces.polygon(corners)])
+
+
+def test_split_cuts_a_block_into_front_and_back():
+    block = solids.block(10.0, 10.0, 10.0)
+
+    parts = booleans.split(block, _plane_sheet(4.0))
+
+    assert math.isclose(parts.front.volume, 600.0, rel_tol=1e-9)
+    assert math.isclose(parts.back.volume, 400.0, rel_tol=1e-9)
+    assert math.isclose(block.volume, 1000.0, rel_tol=1e-9)
+
+
+def test_split_swaps_parts_with_the_sheet_normal():
+    parts = booleans.split(solids.block(10.0, 10.0, 10.0), _plane_sheet(4.0, up=False))
+
+    assert math.isclose(parts.front.volume, 400.0, rel_tol=1e-9)
+    assert math.isclose(parts.back.volume, 600.0, rel_tol=1e-9)
+
+
+def test_split_refuses_a_sheet_missing_the_solid():
+    with pytest.raises(ValueError, match="does not cross"):
+        booleans.split(solids.block(10.0, 10.0, 10.0), _plane_sheet(40.0))

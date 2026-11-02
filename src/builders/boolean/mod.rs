@@ -22,6 +22,7 @@ mod pair;
 mod planar_domain;
 mod result;
 mod solid_domain;
+mod split;
 mod tolerance;
 mod trace;
 mod trim;
@@ -47,6 +48,7 @@ pub use result::{
     SolidBooleanLineage,
 };
 use solid_domain::SolidDomain;
+pub use split::{SolidSplit, SplitSide, split_solid};
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
