@@ -246,6 +246,7 @@ dependencies = [
  "nalgebra",
  "radians",
  "rayon",
+ "robust",
  "serde",
  "serde_json",
  "slotmap",
@@ -367,6 +368,12 @@ name = "real_float"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3dee308ef52b7603c018d9a0c2ff03fe65fb064bb8605a8c7ac99fb2dfb7542f"
+
+[[package]]
+name = "robust"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e27ee8bb91ca0adcf0ecb116293afa12d393f9c2b9b9cd54d33e8078fe19839"
 
 [[package]]
 name = "safe_arch"

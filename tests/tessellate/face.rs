@@ -70,14 +70,22 @@ fn torus_patch(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey) {
             // A side at constant `v` runs along a circle about the main axis,
             // widened by the tube and lifted off the equatorial plane; a side at
             // constant `u` is the tube circle itself, in the plane the radial
-            // direction at `u` and the main axis span.
+            // direction at `u` and the main axis span. A circle runs forward
+            // counter-clockwise in its plane, so a side the boundary walks
+            // against the parameter is drawn on the circle's mirror image,
+            // which makes the short way round the forward one.
             for (pair, (from, to)) in sides().enumerate() {
+                let sign = if (to.x - from.x) + (to.y - from.y) < 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                };
                 let curve = if from.y == to.y {
                     Curve::Circle(Circle::new(
                         Plane::from_xy(
                             Point3::new(0.0, 0.0, minor * from.y.sin()),
                             Vector3::x(),
-                            Vector3::y(),
+                            Vector3::y() * sign,
                         ),
                         major + minor * from.y.cos(),
                     ))
@@ -87,7 +95,7 @@ fn torus_patch(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey) {
                         Plane::from_xy(
                             Point3::new(major * cos, major * sin, 0.0),
                             Vector3::new(cos, sin, 0.0),
-                            Vector3::z(),
+                            Vector3::z() * sign,
                         ),
                         minor,
                     ))
@@ -303,3 +311,4 @@ fn point_in_polygon(polygon: &[Point2], point: Point2) -> bool {
     }
     inside
 }
+

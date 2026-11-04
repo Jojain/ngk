@@ -6,3 +6,7 @@ mod face;
 mod holes;
 #[path = "tessellate/keyed.rs"]
 mod keyed;
+#[path = "tessellate/watertight.rs"]
+mod watertight;
+#[path = "tessellate/quality.rs"]
+mod quality;

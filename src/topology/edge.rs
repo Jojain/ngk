@@ -242,6 +242,11 @@ impl<'a, P: Payload> EdgeCore<'a, P> {
         self.key
     }
 
+    /// Returns the model this view reads.
+    pub(crate) fn model(&self) -> &'a Model<P> {
+        self.model
+    }
+
     /// Returns the store edge attribute
     pub fn attr(&self) -> &EdgeAttr<P::E> {
         self.model.edge_attr_unchecked(self.key)

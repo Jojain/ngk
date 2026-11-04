@@ -270,6 +270,11 @@ impl<'g, P: Payload> Face<'g, P> {
         self.sense
     }
 
+    /// Returns the model this view reads.
+    pub(crate) fn model(&self) -> &'g Model<P> {
+        self.model
+    }
+
     /// Returns a boundary dart carrying this face view's contextual orientation.
     ///
     /// This is the face's seed loop — the outer loop when it has one, its first
