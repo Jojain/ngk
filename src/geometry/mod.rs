@@ -42,6 +42,7 @@ pub use dim3::nurbs::{
     Bezier, BezierSurface, ControlNet, ControlPolygon, Degree, HPoint, InterpolationSystem,
     KNOT_TOLERANCE, KnotVector, NurbsCurve, NurbsSurface, interpolate_with_knots, make_compatible,
 };
+pub use dim3::offset::{OFFSET_FIT_TOLERANCE, OffsetError};
 pub use dim3::surfaces::{
     Cone, Cylinder, Plane, RuledSurface, Sphere, Surface, SurfaceOfRevolution, SurfacePeriodicity,
     Torus,

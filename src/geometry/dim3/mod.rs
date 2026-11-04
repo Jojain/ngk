@@ -4,6 +4,7 @@ pub mod curves;
 pub mod frame;
 pub mod intersections;
 pub mod nurbs;
+pub mod offset;
 pub mod surfaces;
 pub mod trimmed;
 pub mod utils;
