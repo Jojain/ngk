@@ -10,10 +10,11 @@
 //!
 //! - **Exact** where the offset is the same kind of support: a plane moves, a
 //!   cylinder, sphere or torus changes radius, a cone moves and changes its
-//!   reference radius; a line moves and a circle changes radius. An extrusion
-//!   or a revolution whose profile lies in the plane its normals sweep offsets
-//!   its profile in that plane, which is exact whenever the profile's own
-//!   offset is.
+//!   reference radius; a line moves, and a circle or helix offset along its
+//!   axis changes radius. An extrusion offsets its profile along the
+//!   extrusion direction, and a revolution whose profile lies in a plane
+//!   through its axis offsets the profile within that plane; both are exact
+//!   whenever the profile's own offset is.
 //! - **Fitted** otherwise: a cubic interpolation of offset samples taken at
 //!   the source's own native parameters, refined until it stays within
 //!   [`OFFSET_FIT_TOLERANCE`] between the samples.
@@ -29,11 +30,14 @@
 //!
 //! - A surface moves along [`Surface::normal_at`]: a positive distance grows a
 //!   sphere, a negative one shrinks it.
-//! - A planar curve moves along `T × n`, the tangent crossed with the normal
-//!   of its plane: a positive distance moves a loop running counter-clockwise
-//!   about `n` outward, and moves a line to its right when seen from `n`.
+//! - A curve moves along the unit vector `T × D`, its tangent crossed with a
+//!   reference direction the caller names. It is defined for every curve
+//!   wherever the tangent does not run along `D`, planar or not. For a curve
+//!   in a plane normal to `D` it is the in-plane offset: a positive distance
+//!   moves a loop running counter-clockwise about `D` outward, and moves a
+//!   line to its right when seen from `D`.
 
-use super::curves::{Circle, Curve};
+use super::curves::{Circle, Curve, Helix};
 use super::nurbs::{ControlNet, ControlPolygon, Degree};
 use super::nurbs::{HPoint, InterpolationSystem, KnotVector, NurbsCurve, NurbsSurface};
 use super::surfaces::{Cone, Cylinder, RuledSurface, Sphere, Surface, SurfaceOfRevolution, Torus};
@@ -74,10 +78,10 @@ pub enum OffsetError {
     /// moves toward, so the offset turns inside out near these parameters.
     #[error("offset by {distance} folds the support near parameters ({u}, {v})")]
     Folded { distance: f64, u: f64, v: f64 },
-    /// A curve offset in a plane must lie in a plane normal to it; a line must
-    /// at least run perpendicular to it.
-    #[error("the curve does not lie in a plane normal to the offset direction")]
-    NotPlanar,
+    /// The curve's tangent runs along the reference direction at this
+    /// parameter, so `T × D` names no direction to move in.
+    #[error("the curve's tangent runs along the offset direction at parameter {t}")]
+    TangentAlongDirection { t: f64 },
     /// A fitted offset needs a finite parameter window, and the support's
     /// domain is unbounded.
     #[error("a fitted offset needs a finite window; the support is unbounded")]
@@ -97,26 +101,23 @@ pub enum OffsetError {
 }
 
 impl Curve {
-    /// The curve moved `distance` along `T × normal` at every point.
+    /// The curve moved `distance` along the unit vector `T × direction` at
+    /// every point.
     ///
-    /// The curve must lie in a plane normal to `normal` (a line need only run
-    /// perpendicular to it). A line and a circle offset exactly; anything
-    /// else is fitted over its domain, which must then be finite. See the
-    /// [module documentation](self) for sign and parameterization.
-    pub fn offset_in_plane(
-        &self,
-        normal: UnitVector3<f64>,
-        distance: f64,
-    ) -> Result<Curve, OffsetError> {
+    /// A line, and a circle or helix whose axis runs along `direction`,
+    /// offset exactly; anything else is fitted over the curve's domain, which
+    /// must then be finite. See the [module documentation](self) for sign and
+    /// parameterization.
+    pub fn offset(&self, direction: UnitVector3<f64>, distance: f64) -> Result<Curve, OffsetError> {
         let domain = self.domain();
-        self.offset_in_plane_over(normal, distance, domain)
+        self.offset_over(direction, distance, domain)
     }
 
-    /// [`Self::offset_in_plane`], fitting over `window` where the offset is
-    /// not exact. An exact offset ignores the window.
-    pub fn offset_in_plane_over(
+    /// [`Self::offset`], fitting over `window` where the offset is not exact.
+    /// An exact offset ignores the window.
+    pub fn offset_over(
         &self,
-        normal: UnitVector3<f64>,
+        direction: UnitVector3<f64>,
         distance: f64,
         window: Interval,
     ) -> Result<Curve, OffsetError> {
@@ -125,53 +126,60 @@ impl Curve {
         }
         match self {
             Curve::Line(line) => {
-                let side = line.direction().cross(&normal);
-                if (side.norm() - 1.0).abs() > ANGULAR_TOLERANCE.sqrt() {
-                    return Err(OffsetError::NotPlanar);
-                }
-                Ok(self.moved(&Rigid::translation(side * distance)))
+                let side = line.direction().cross(&direction);
+                let Some(side) = UnitVector3::try_new(side, ANGULAR_TOLERANCE.sqrt()) else {
+                    return Err(OffsetError::TangentAlongDirection { t: 0.0 });
+                };
+                Ok(self.moved(&Rigid::translation(*side * distance)))
             }
             Curve::Circle(circle) => {
-                let alignment = circle.plane().normal().dot(&normal);
-                if (alignment.abs() - 1.0).abs() > ANGULAR_TOLERANCE.sqrt() {
-                    return Err(OffsetError::NotPlanar);
+                let alignment = circle.plane().normal().dot(&direction);
+                if !is_parallel(alignment) {
+                    return fit_curve_offset(self, direction, distance, window);
                 }
-                // Counter-clockwise about `normal`, `T × normal` points away
-                // from the centre; clockwise, toward it.
-                let radius = circle.radius() + alignment.signum() * distance;
-                if radius <= LINEAR_TOLERANCE {
-                    return Err(OffsetError::Collapsed {
-                        distance,
-                        radius: circle.radius(),
-                    });
-                }
+                // Counter-clockwise about `direction`, `T × direction` points
+                // away from the centre; clockwise, toward it.
+                let radius =
+                    grown_radius(circle.radius(), alignment.signum() * distance).map_err(|_| {
+                        OffsetError::Collapsed {
+                            distance,
+                            radius: circle.radius(),
+                        }
+                    })?;
                 Ok(Curve::Circle(Circle::new(circle.plane().clone(), radius)))
             }
-            Curve::Ellipse(ellipse) => {
-                let alignment = ellipse.frame().z_dir.dot(&normal);
-                if (alignment.abs() - 1.0).abs() > ANGULAR_TOLERANCE.sqrt() {
-                    return Err(OffsetError::NotPlanar);
+            Curve::Helix(helix) => {
+                // The axial part of the tangent drops out of `T × axis`, which
+                // is the radial direction, outward for a helix turning
+                // counter-clockwise about `direction`.
+                let alignment = helix.frame().z_dir.dot(&direction);
+                if !is_parallel(alignment) {
+                    return fit_curve_offset(self, direction, distance, window);
                 }
-                fit_planar_curve_offset(self, normal, distance, window)
+                let radius =
+                    grown_radius(helix.radius(), alignment.signum() * distance).map_err(|_| {
+                        OffsetError::Collapsed {
+                            distance,
+                            radius: helix.radius(),
+                        }
+                    })?;
+                Ok(Curve::Helix(Helix::new(
+                    helix.frame().clone(),
+                    radius,
+                    helix.pitch(),
+                )))
             }
-            Curve::Helix(_) => Err(OffsetError::NotPlanar),
-            Curve::Nurbs(nurbs) => {
-                let points = nurbs.control_points();
-                let origin = points.as_slice()[0].to_cartesian();
-                let scale = points
-                    .iter()
-                    .map(|point| (point.to_cartesian() - origin).norm())
-                    .fold(1.0, f64::max);
-                let planar = points.iter().all(|point| {
-                    (point.to_cartesian() - origin).dot(&normal).abs() <= LINEAR_TOLERANCE * scale
-                });
-                if !planar {
-                    return Err(OffsetError::NotPlanar);
-                }
-                fit_planar_curve_offset(self, normal, distance, window)
+            Curve::Ellipse(_) | Curve::Nurbs(_) => {
+                fit_curve_offset(self, direction, distance, window)
             }
         }
     }
+}
+
+/// Whether a dot product of two unit vectors says they are parallel or
+/// opposite.
+fn is_parallel(dot: f64) -> bool {
+    (dot.abs() - 1.0).abs() <= ANGULAR_TOLERANCE.sqrt()
 }
 
 impl Surface {
@@ -267,12 +275,11 @@ fn offset_cone(cone: &Cone, distance: f64) -> Cone {
     )
 }
 
-/// The offset of an extrusion whose profile lies in a plane normal to its
-/// direction, or `None` when it does not.
+/// The offset of an extrusion, or `None` when its direction is zero.
 ///
-/// The extrusion's normal is `C' × d`, which is the profile's own in-plane
-/// offset direction about `d`; so the offset is the profile's offset in that
-/// plane, extruded the same way.
+/// The extrusion's normal is `C' × D` normalized, the same at every height,
+/// which is the profile's own offset direction about `D`; so the offset is the
+/// profile's offset along `D`, extruded the same way.
 fn offset_extrusion(
     ruled: &RuledSurface,
     distance: f64,
@@ -281,17 +288,11 @@ fn offset_extrusion(
     let Some(direction) = UnitVector3::try_new(ruled.direction(), LINEAR_TOLERANCE) else {
         return Ok(None);
     };
-    match ruled
-        .curve()
-        .offset_in_plane_over(direction, distance, window)
-    {
-        Ok(profile) => Ok(Some(Surface::Ruled(RuledSurface::new(
-            profile,
-            ruled.direction(),
-        )))),
-        Err(OffsetError::NotPlanar | OffsetError::Unbounded) => Ok(None),
-        Err(error) => Err(error),
-    }
+    let profile = ruled.curve().offset_over(direction, distance, window)?;
+    Ok(Some(Surface::Ruled(RuledSurface::new(
+        profile,
+        ruled.direction(),
+    ))))
 }
 
 /// The offset of a revolution whose profile lies in a plane through its axis,
@@ -319,23 +320,47 @@ fn offset_revolution(
     else {
         return Ok(None);
     };
+    if !lies_in_plane(profile, revolution.axis.origin, meridian) {
+        return Ok(None);
+    }
     let in_plane = tangent.cross(&meridian);
     let normal = revolution.normal_at(middle.value(), 0.0);
     let side = in_plane.dot(&normal).signum();
-    match profile.offset_in_plane_over(meridian, side * distance, window) {
-        Ok(offset) => Ok(Some(Surface::Revolution(SurfaceOfRevolution::new(
-            offset,
-            revolution.axis,
-        )))),
-        Err(OffsetError::NotPlanar | OffsetError::Unbounded) => Ok(None),
-        Err(error) => Err(error),
+    let offset = profile.offset_over(meridian, side * distance, window)?;
+    Ok(Some(Surface::Revolution(SurfaceOfRevolution::new(
+        offset,
+        revolution.axis,
+    ))))
+}
+
+/// Whether `curve` lies in the plane through `origin` normal to `normal`.
+fn lies_in_plane(curve: &Curve, origin: Point3, normal: UnitVector3<f64>) -> bool {
+    let on_plane = |point: Point3| (point - origin).dot(&normal).abs() <= LINEAR_TOLERANCE;
+    match curve {
+        Curve::Line(line) => {
+            line.direction().dot(&normal).abs() <= ANGULAR_TOLERANCE && on_plane(line.origin())
+        }
+        Curve::Circle(circle) => {
+            is_parallel(circle.plane().normal().dot(&normal)) && on_plane(circle.plane().origin())
+        }
+        Curve::Ellipse(ellipse) => {
+            is_parallel(ellipse.frame().z_dir.dot(&normal)) && on_plane(ellipse.frame().origin)
+        }
+        Curve::Helix(_) => false,
+        // A NURBS curve lies in the convex hull of its control points, so
+        // control points in the plane put the whole curve there.
+        Curve::Nurbs(nurbs) => nurbs
+            .control_points()
+            .iter()
+            .all(|point| on_plane(point.to_cartesian())),
     }
 }
 
-/// Fits the in-plane offset of `curve` over `window` at its native parameters.
-fn fit_planar_curve_offset(
+/// Fits the offset of `curve` along `T × direction` over `window`, at its
+/// native parameters.
+fn fit_curve_offset(
     curve: &Curve,
-    normal: UnitVector3<f64>,
+    direction: UnitVector3<f64>,
     distance: f64,
     window: Interval,
 ) -> Result<Curve, OffsetError> {
@@ -346,26 +371,27 @@ fn fit_planar_curve_offset(
         let parameter = NativeParam::new(t);
         let first = curve.derivative_at(parameter, 1);
         let second = curve.derivative_at(parameter, 2);
-        let speed = first.norm();
-        if speed <= LINEAR_TOLERANCE {
+        let side = first.cross(&direction);
+        let length = side.norm();
+        if length <= ANGULAR_TOLERANCE.sqrt() * first.norm().max(LINEAR_TOLERANCE) {
+            return Err(OffsetError::TangentAlongDirection { t });
+        }
+        let unit = side / length;
+        // The offset's own tangent is `C' + d·(dU/dt)`, with `U` the unit
+        // side vector. Where it stops running the source's way the offset has
+        // a cusp, and past it runs backwards: for a curve in a plane normal to
+        // `D` this is `|C'|²·(1 + d·κ)`, the curvature signed about `D`.
+        let side_rate = second.cross(&direction);
+        let unit_rate = (side_rate - unit * unit.dot(&side_rate)) / length;
+        let advance = (first + unit_rate * distance).dot(&first);
+        if advance <= ANGULAR_TOLERANCE.sqrt() * first.norm_squared() {
             return Err(OffsetError::Folded {
                 distance,
                 u: t,
                 v: 0.0,
             });
         }
-        // Moving along `T × n` stretches the curve by `1 + d·κ`, with `κ` the
-        // curvature signed positive where the curve turns counter-clockwise
-        // about `n`. At zero the offset has a cusp; below, it runs backwards.
-        let curvature = first.cross(&second).dot(&normal) / speed.powi(3);
-        if 1.0 + distance * curvature <= ANGULAR_TOLERANCE.sqrt() {
-            return Err(OffsetError::Folded {
-                distance,
-                u: t,
-                v: 0.0,
-            });
-        }
-        Ok(curve.point_at(parameter) + first.cross(&normal) * (distance / speed))
+        Ok(curve.point_at(parameter) + unit * distance)
     };
 
     let mut count = INITIAL_CURVE_SAMPLES;

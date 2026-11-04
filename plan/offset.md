@@ -27,9 +27,13 @@ each on the one before:
 2. **A fold is refused at the geometry level, never trimmed there.** Which
    part of a self-intersecting offset survives is a topological decision
    that needs the entity; the geometry reports where it folds.
-3. **Sign follows `Surface::normal_at` and `T × n`.** A face whose sense is
+3. **Sign follows `Surface::normal_at` and `T × D`.** A face whose sense is
    reversed against its surface flips the distance before asking the
    geometry; the geometry knows nothing of faces.
+5. **Every offset is total over its type's variants.** A curve offsets along
+   `T × D` for a reference direction `D`, which is defined for planar and
+   non-planar curves alike, so no variant fails for being the variant it is;
+   only geometry (a collapsed radius, a fold, a tangent along `D`) refuses.
 4. **Edges between offset faces are joined in one of two modes**, named by
    the caller, as every kernel does:
    - **intersection**: extend the neighbouring offsets until they meet. The
@@ -44,8 +48,8 @@ each on the one before:
 
 `offset_profile(model, profile, distance, join) -> ProfileOffset`.
 
-- The profile must be planar; its plane's normal is the `n` of
-  `Curve::offset_in_plane`. A closed profile's winding decides which side is
+- The profile must be planar (a property of the profile, checked here, not
+  of a curve type); its plane's normal is the `D` of `Curve::offset`. A closed profile's winding decides which side is
   outward, so a positive distance grows the region it bounds.
 - Each edge's support is offset; consecutive offsets are joined at the
   corner: **intersection** trims or extends both to their 2D intersection in

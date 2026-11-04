@@ -34,15 +34,15 @@ fn assert_surface_offset(
 fn assert_curve_offset(
     source: &Curve,
     offset: &Curve,
-    normal: UnitVector3<f64>,
+    direction: UnitVector3<f64>,
     distance: f64,
     window: Interval,
     tolerance: f64,
 ) {
     for i in 0..=40 {
         let t = NativeParam::new(window.start.value() + window.length() * i as f64 / 40.0);
-        let tangent = source.derivative_at(t, 1).normalize();
-        let expected = source.point_at(t) + tangent.cross(&normal) * distance;
+        let side = source.derivative_at(t, 1).cross(&direction).normalize();
+        let expected = source.point_at(t) + side * distance;
         let actual = offset.point_at(t);
         assert!(
             (actual - expected).norm() <= tolerance,
@@ -230,75 +230,97 @@ fn a_free_form_offset_past_its_curvature_radius_folds() {
 }
 
 #[test]
-fn a_line_moves_to_its_right_seen_from_the_normal() {
+fn a_line_moves_to_its_right_seen_from_the_direction() {
     let line = Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0));
-    let offset = line.offset_in_plane(Vector3::z_axis(), 2.0).unwrap();
+    let offset = line.offset(Vector3::z_axis(), 2.0).unwrap();
     assert!(matches!(offset, Curve::Line(_)));
     let start = offset.point_at(NativeParam::new(0.0));
     assert!((start - Point3::new(0.0, -2.0, 0.0)).norm() <= LINEAR_TOLERANCE);
-    assert_curve_offset(
-        &line,
-        &offset,
-        Vector3::z_axis(),
-        2.0,
-        Interval::new(-3.0, 3.0),
-        1e-12,
-    );
+    let window = Interval::new(-3.0, 3.0);
+    assert_curve_offset(&line, &offset, Vector3::z_axis(), 2.0, window, 1e-12);
 
+    // Off the plane normal to the direction, it still moves a unit `T × D`.
     let rising = Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 1.0));
-    assert_eq!(
-        rising.offset_in_plane(Vector3::z_axis(), 1.0),
-        Err(OffsetError::NotPlanar)
-    );
+    let offset = rising.offset(Vector3::z_axis(), 1.0).unwrap();
+    assert_curve_offset(&rising, &offset, Vector3::z_axis(), 1.0, window, 1e-12);
+}
+
+#[test]
+fn a_tangent_along_the_direction_names_no_side() {
+    let vertical = Curve::line(Point3::origin(), Point3::new(0.0, 0.0, 1.0));
+    assert!(matches!(
+        vertical.offset(Vector3::z_axis(), 1.0),
+        Err(OffsetError::TangentAlongDirection { .. })
+    ));
+    // A circle seen edge-on runs along the direction at two of its points.
+    let circle = Curve::Circle(Circle::new(Plane::xy(), 2.0));
+    assert!(matches!(
+        circle.offset(Vector3::x_axis(), 0.1),
+        Err(OffsetError::TangentAlongDirection { .. })
+    ));
 }
 
 #[test]
 fn a_circle_grows_counter_clockwise_and_shrinks_clockwise() {
     let circle = Curve::Circle(Circle::new(Plane::xy(), 2.0));
-    let up = circle.offset_in_plane(Vector3::z_axis(), 0.5).unwrap();
-    let down = circle.offset_in_plane(-Vector3::z_axis(), 0.5).unwrap();
+    let up = circle.offset(Vector3::z_axis(), 0.5).unwrap();
+    let down = circle.offset(-Vector3::z_axis(), 0.5).unwrap();
     assert!(matches!(up, Curve::Circle(ref c) if (c.radius() - 2.5).abs() < 1e-12));
     assert!(matches!(down, Curve::Circle(ref c) if (c.radius() - 1.5).abs() < 1e-12));
     let whole = Interval::new(0.0, TAU);
     assert_curve_offset(&circle, &up, Vector3::z_axis(), 0.5, whole, 1e-12);
     assert_curve_offset(&circle, &down, -Vector3::z_axis(), 0.5, whole, 1e-12);
     assert!(matches!(
-        circle.offset_in_plane(Vector3::z_axis(), -2.0),
+        circle.offset(Vector3::z_axis(), -2.0),
         Err(OffsetError::Collapsed { .. })
     ));
+}
+
+#[test]
+fn a_tilted_direction_fits_a_circle_offset() {
+    let circle = Curve::Circle(Circle::new(Plane::xy(), 2.0));
+    let tilted = UnitVector3::new_normalize(Vector3::new(0.3, 0.0, 1.0));
+    let offset = circle.offset(tilted, 0.2).unwrap();
+    assert!(matches!(offset, Curve::Nurbs(_)));
+    let whole = Interval::new(0.0, TAU);
+    assert_curve_offset(&circle, &offset, tilted, 0.2, whole, OFFSET_FIT_TOLERANCE);
+}
+
+#[test]
+fn a_helix_along_its_axis_changes_radius_exactly() {
+    let helix = Curve::Helix(Helix::new(Frame::xyz(), 1.0, 0.5));
+    let offset = helix.offset(Vector3::z_axis(), 0.25).unwrap();
+    assert!(matches!(offset, Curve::Helix(ref h) if (h.radius() - 1.25).abs() < 1e-12));
+    let turns = Interval::new(0.0, 2.0 * TAU);
+    assert_curve_offset(&helix, &offset, Vector3::z_axis(), 0.25, turns, 1e-12);
+    assert!(matches!(
+        helix.offset(Vector3::z_axis(), -1.0),
+        Err(OffsetError::Collapsed { .. })
+    ));
+    // Any other direction is fitted.
+    let tilted = UnitVector3::new_normalize(Vector3::new(0.2, 0.1, 1.0));
+    let fitted = helix.offset_over(tilted, 0.1, turns).unwrap();
+    assert_curve_offset(&helix, &fitted, tilted, 0.1, turns, OFFSET_FIT_TOLERANCE);
 }
 
 #[test]
 fn an_ellipse_is_fitted_and_folds_past_its_tightest_curvature() {
     let ellipse = Curve::Ellipse(Ellipse::new(Frame::xyz(), 2.0, 1.0));
     let whole = Interval::new(0.0, TAU);
-    let outward = ellipse.offset_in_plane(Vector3::z_axis(), 0.4).unwrap();
-    assert_curve_offset(
-        &ellipse,
-        &outward,
-        Vector3::z_axis(),
-        0.4,
-        whole,
-        OFFSET_FIT_TOLERANCE,
-    );
+    let up = Vector3::z_axis();
+    let outward = ellipse.offset(up, 0.4).unwrap();
+    assert_curve_offset(&ellipse, &outward, up, 0.4, whole, OFFSET_FIT_TOLERANCE);
     // Inward, still short of the tightest radius of curvature b²/a = 0.5.
-    let inward = ellipse.offset_in_plane(Vector3::z_axis(), -0.45).unwrap();
-    assert_curve_offset(
-        &ellipse,
-        &inward,
-        Vector3::z_axis(),
-        -0.45,
-        whole,
-        OFFSET_FIT_TOLERANCE,
-    );
+    let inward = ellipse.offset(up, -0.45).unwrap();
+    assert_curve_offset(&ellipse, &inward, up, -0.45, whole, OFFSET_FIT_TOLERANCE);
     assert!(matches!(
-        ellipse.offset_in_plane(Vector3::z_axis(), -0.6),
+        ellipse.offset(up, -0.6),
         Err(OffsetError::Folded { .. })
     ));
 }
 
 #[test]
-fn a_planar_nurbs_curve_is_fitted_and_a_helix_is_refused() {
+fn a_nurbs_curve_is_fitted_at_its_own_parameters() {
     let points = [
         Point3::new(0.0, 0.0, 1.0),
         Point3::new(1.0, 2.0, 1.0),
@@ -313,23 +335,29 @@ fn a_planar_nurbs_curve_is_fitted_and_a_helix_is_refused() {
         )
         .unwrap(),
     );
-    let offset = curve.offset_in_plane(Vector3::z_axis(), 0.1).unwrap();
+    let offset = curve.offset(Vector3::z_axis(), 0.1).unwrap();
+    let domain = curve.domain();
     assert_curve_offset(
         &curve,
         &offset,
         Vector3::z_axis(),
         0.1,
-        curve.domain(),
+        domain,
         OFFSET_FIT_TOLERANCE,
     );
-    assert_eq!(
-        curve.offset_in_plane(Vector3::x_axis(), 0.1),
-        Err(OffsetError::NotPlanar)
-    );
+}
 
+#[test]
+fn an_extrusion_of_any_profile_offsets_its_profile_along_the_extrusion() {
+    // A helix is not planar, yet its extrusion along its axis is a cylinder
+    // wall wound round, and its offset an exact helix of the grown radius.
     let helix = Curve::Helix(Helix::new(Frame::xyz(), 1.0, 0.5));
-    assert_eq!(
-        helix.offset_in_plane(Vector3::z_axis(), 0.1),
-        Err(OffsetError::NotPlanar)
-    );
+    let extrusion = Surface::Ruled(RuledSurface::new(helix, Vector3::new(0.0, 0.0, 0.3)));
+    let offset = extrusion.offset(0.2).unwrap();
+    let Surface::Ruled(ref ruled) = offset else {
+        panic!("an extrusion offsets to an extrusion, got {offset:?}");
+    };
+    assert!(matches!(ruled.curve(), Curve::Helix(h) if (h.radius() - 1.2).abs() < 1e-12));
+    let (u, v) = (Interval::new(0.0, TAU), Interval::new(0.0, 1.0));
+    assert_surface_offset(&extrusion, &offset, 0.2, u, v, 1e-12);
 }
