@@ -7,7 +7,9 @@
 //! and each piece of topology is registered with the lineage the plan gave it.
 //!
 //! No dart is removed, so nothing that points at the map needs repairing: the
-//! surgery only ever adds darts and changes links.
+//! surgery only ever adds darts and changes links. From the first cut to the
+//! last registered corner it runs in one deferred block, which reads the map
+//! and nothing derived from the labelling; the block's close checks both.
 //!
 //! A band — the blend of a closed edge — is laid down as two one-edge loops,
 //! each sewn to one face's side of the cut, and joined by a scaffold cut so
@@ -20,20 +22,20 @@ use super::errors::BlendError;
 use super::pcurve::onto_branch;
 use super::surgery::{BoundKind, CornerId, NewBoundary, RailEnds, Surgery};
 use crate::builders::profiles::curve_pcurve;
-use crate::builders::scaffold::cut_between_loops;
+use crate::builders::scaffold::splice_cut_between_loops;
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{
     Axis2, IntersectionError, Interval, LINEAR_TOLERANCE, Point3, Surface, TrimmedCurve2,
 };
 use crate::model::{Cell1, Cell2};
-use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, FaceAttr, LoopDefinition, ProfileAttr, VertexAttr};
 use crate::topology::edge::Edge;
 use crate::topology::edit::EditKey;
 use crate::topology::embedding::EntityOwner;
-use crate::topology::gmap::{Dart, Dim};
+use crate::topology::gmap::{Dart, Dim, GMap};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
+use crate::topology::{ModelEdit, RawEdit};
 
 /// What building a surgery added and disturbed.
 #[derive(Debug, Default)]
@@ -84,208 +86,230 @@ pub(crate) fn execute<P: Payload>(
         }
     }
 
-    for cut in &surgery.cuts {
-        edit.remove_edge(cut.edge);
-    }
-    for &vertex in &surgery.consumed_vertices {
-        edit.remove_vertex(vertex);
-    }
-
-    // Cut: each selected edge's two faces let go of each other.
-    for cut in &surgery.cuts {
-        let [first, second] = &cut.sides;
-        if edit.alpha(Dim::Two, first.start) != second.start {
-            return Err(BlendError::InconsistentSurgery {
-                reason: "a cut's two sides are not sewn to each other",
-            });
-        }
-        let end = edit.alpha(Dim::Zero, first.start);
-        edit.unlink(Dim::Two, first.start)?;
-        edit.unlink(Dim::Two, end)?;
-    }
-
-    let mut corner_darts = vec![Vec::new(); surgery.corners.len()];
-    for cut in &surgery.cuts {
-        for side in &cut.sides {
-            if let RailEnds::Corners(corners) = side.ends {
-                corner_darts[corners[0]].push(side.start);
-                corner_darts[corners[1]].push(edit.alpha(Dim::Zero, side.start));
+    // Cut, insert, fill, sew and register: from the first unlink to the last
+    // corner, the map holds faces no labelling describes yet, so it all runs
+    // in one deferred block, checked once every new piece has its key.
+    let (joint_uses, inserted_directed, fresh_edges, faces, corner_cells) =
+        edit.deferred(|raw| {
+            for cut in &surgery.cuts {
+                raw.remove_edge(cut.edge);
             }
-        }
-    }
+            for &vertex in &surgery.consumed_vertices {
+                raw.remove_vertex(vertex);
+            }
 
-    // Insert: every joint closing an existing corner is spliced in after the
-    // corner's incoming edge, whatever follows it, so a bridge attached at
-    // the corner stays attached to the corner's far side.
-    let mut joint_uses = vec![Vec::<[Dart; 2]>::new(); surgery.joints.len()];
-    let mut inserted_directed = HashMap::new();
-    for (id, joint) in surgery.joints.iter().enumerate() {
-        let Some(insertion) = &joint.insertion else {
-            continue;
-        };
-        if edit.is_free(insertion.after, Dim::One) {
-            return Err(BlendError::InconsistentSurgery {
-                reason: "an insertion names a corner that is not closed",
-            });
-        }
-        let next = edit.alpha(Dim::One, insertion.after);
-        edit.unlink(Dim::One, insertion.after)?;
-        let first = edit.add_dart();
-        let second = edit.add_dart();
-        edit.link(Dim::Zero, first, second)?;
-        edit.link(Dim::One, insertion.after, first)?;
-        edit.link(Dim::One, second, next)?;
-        joint_uses[id].push([first, second]);
-        corner_darts[joint.corners[0]].push(first);
-        corner_darts[joint.corners[1]].push(second);
-        if insertion.face.is_some() {
-            let forward = directions.insertions[&id];
-            inserted_directed.insert(id, if forward { first } else { second });
-        }
-    }
+            // Cut: each selected edge's two faces let go of each other.
+            for cut in &surgery.cuts {
+                let [first, second] = &cut.sides;
+                if raw.topology().alpha(Dim::Two, first.start) != second.start {
+                    return Err(BlendError::InconsistentSurgery {
+                        reason: "a cut's two sides are not sewn to each other",
+                    });
+                }
+                let end = raw.topology().alpha(Dim::Zero, first.start);
+                raw.unlink(Dim::Two, first.start)?;
+                raw.unlink(Dim::Two, end)?;
+            }
 
-    // Fill: lay each new face's walk down, then sew it to what it borders.
-    // A walk links each bound to the next; a band's two rails each close on
-    // themselves, and the cut joining them comes once the face is registered.
-    let mut walks = Vec::with_capacity(surgery.faces.len());
-    for face in &surgery.faces {
-        let bounds = face.boundary.bounds();
-        let walk = bounds
-            .iter()
-            .map(|_| {
-                let start = edit.add_dart();
-                let end = edit.add_dart();
-                edit.link(Dim::Zero, start, end).map(|()| [start, end])
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        match face.boundary {
-            NewBoundary::Walk(_) => {
-                for index in 0..walk.len() {
-                    edit.link(Dim::One, walk[index][1], walk[(index + 1) % walk.len()][0])?;
+            let mut corner_darts = vec![Vec::new(); surgery.corners.len()];
+            for cut in &surgery.cuts {
+                for side in &cut.sides {
+                    if let RailEnds::Corners(corners) = side.ends {
+                        corner_darts[corners[0]].push(side.start);
+                        corner_darts[corners[1]].push(raw.topology().alpha(Dim::Zero, side.start));
+                    }
                 }
             }
-            NewBoundary::Band(_) => {
-                for [start, end] in &walk {
-                    edit.link(Dim::One, *start, *end)?;
+
+            // Insert: every joint closing an existing corner is spliced in after the
+            // corner's incoming edge, whatever follows it, so a bridge attached at
+            // the corner stays attached to the corner's far side.
+            let mut joint_uses = vec![Vec::<[Dart; 2]>::new(); surgery.joints.len()];
+            let mut inserted_directed = HashMap::new();
+            for (id, joint) in surgery.joints.iter().enumerate() {
+                let Some(insertion) = &joint.insertion else {
+                    continue;
+                };
+                if raw.topology().is_free(insertion.after, Dim::One) {
+                    return Err(BlendError::InconsistentSurgery {
+                        reason: "an insertion names a corner that is not closed",
+                    });
+                }
+                let next = raw.topology().alpha(Dim::One, insertion.after);
+                raw.unlink(Dim::One, insertion.after)?;
+                let first = raw.add_dart();
+                let second = raw.add_dart();
+                raw.link(Dim::Zero, first, second)?;
+                raw.link(Dim::One, insertion.after, first)?;
+                raw.link(Dim::One, second, next)?;
+                joint_uses[id].push([first, second]);
+                corner_darts[joint.corners[0]].push(first);
+                corner_darts[joint.corners[1]].push(second);
+                if insertion.face.is_some() {
+                    let forward = directions.insertions[&id];
+                    inserted_directed.insert(id, if forward { first } else { second });
                 }
             }
-        }
-        for (bound, darts) in bounds.iter().zip(&walk) {
-            let own = if bound.reversed {
-                [darts[1], darts[0]]
-            } else {
-                *darts
-            };
-            if let Some(corners) = surgery.bound_corners(bound.kind) {
-                corner_darts[corners[0]].push(own[0]);
-                corner_darts[corners[1]].push(own[1]);
-            }
-            match bound.kind {
-                BoundKind::Rail { cut, side } => {
-                    edit.sew(Dim::Two, own[0], surgery.cuts[cut].sides[side].start)?;
+
+            // Fill: lay each new face's walk down, then sew it to what it borders.
+            // A walk links each bound to the next; a band's two rails each close on
+            // themselves, and the cut joining them comes once the face is registered.
+            let mut walks = Vec::with_capacity(surgery.faces.len());
+            for face in &surgery.faces {
+                let bounds = face.boundary.bounds();
+                let walk = bounds
+                    .iter()
+                    .map(|_| {
+                        let start = raw.add_dart();
+                        let end = raw.add_dart();
+                        raw.link(Dim::Zero, start, end).map(|()| [start, end])
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                match face.boundary {
+                    NewBoundary::Walk(_) => {
+                        for index in 0..walk.len() {
+                            raw.link(Dim::One, walk[index][1], walk[(index + 1) % walk.len()][0])?;
+                        }
+                    }
+                    NewBoundary::Band(_) => {
+                        for [start, end] in &walk {
+                            raw.link(Dim::One, *start, *end)?;
+                        }
+                    }
                 }
-                BoundKind::Joint(id) => joint_uses[id].push(own),
+                for (bound, darts) in bounds.iter().zip(&walk) {
+                    let own = if bound.reversed {
+                        [darts[1], darts[0]]
+                    } else {
+                        *darts
+                    };
+                    if let Some(corners) = surgery.bound_corners(bound.kind) {
+                        corner_darts[corners[0]].push(own[0]);
+                        corner_darts[corners[1]].push(own[1]);
+                    }
+                    match bound.kind {
+                        BoundKind::Rail { cut, side } => {
+                            raw.sew(Dim::Two, own[0], surgery.cuts[cut].sides[side].start)?;
+                        }
+                        BoundKind::Joint(id) => joint_uses[id].push(own),
+                    }
+                }
+                walks.push(walk);
             }
-        }
-        walks.push(walk);
-    }
-    for (id, uses) in joint_uses.iter().enumerate() {
-        match uses.as_slice() {
-            [_] if surgery.joints[id].insertion.is_some() => {}
-            [first, second] => edit.sew(Dim::Two, first[0], second[0])?,
-            _ => {
+            for (id, uses) in joint_uses.iter().enumerate() {
+                match uses.as_slice() {
+                    [_] if surgery.joints[id].insertion.is_some() => {}
+                    [first, second] => raw.sew(Dim::Two, first[0], second[0])?,
+                    _ => {
+                        return Err(BlendError::InconsistentSurgery {
+                            reason: "a joint is not bounded by one or two faces",
+                        });
+                    }
+                }
+            }
+
+            let reversed = orient_faces(
+                raw.topology(),
+                surgery,
+                &walks,
+                &directions,
+                &inserted_directed,
+            )?;
+
+            // Register: rails and joints first, so every new edge has its key before
+            // the surviving edges are told apart from the fresh ones.
+            let mut fresh_edges = HashSet::new();
+            for cut in &surgery.cuts {
+                for side in &cut.sides {
+                    let rail = raw.add_edge_derived_from(
+                        vec![EditKey::Edge(cut.edge)],
+                        EdgeAttr::new(side.start, side.rail.curve().clone()),
+                    );
+                    // Nothing meets where a closed rail closes, so that 0-cell is
+                    // interior to the rail rather than a corner of the shape.
+                    if side.ends == RailEnds::Closed {
+                        raw.own_cell(Dim::Zero, side.start, EntityOwner::Edge(rail));
+                    }
+                    fresh_edges.insert(rail);
+                }
+            }
+            for (id, joint) in surgery.joints.iter().enumerate() {
+                let dart = joint_uses[id][0][0];
+                fresh_edges.insert(raw.add_edge_derived_from(
+                    joint.sources.clone(),
+                    EdgeAttr::new(dart, joint.curve.curve().clone()),
+                ));
+            }
+
+            let mut faces = Vec::with_capacity(surgery.faces.len());
+            for ((face, walk), &flip) in surgery.faces.iter().zip(&walks).zip(&reversed) {
+                let directed = |index: usize| walk[index][usize::from(flip)];
+                let pcurves = face
+                    .boundary
+                    .bounds()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, bound)| {
+                        let pcurve = if flip {
+                            bound.pcurve.reversed()
+                        } else {
+                            bound.pcurve.clone()
+                        };
+                        (directed(index), pcurve)
+                    })
+                    .collect();
+                let key = match face.boundary {
+                    NewBoundary::Walk(_) => {
+                        let seed = directed(0);
+                        raw.add_profile_derived_from(face.sources.clone(), ProfileAttr::new(seed));
+                        raw.add_face_derived_from(
+                            face.sources.clone(),
+                            FaceAttr::with_pcurves(face.surface.clone(), seed, Vec::new(), pcurves),
+                        )
+                    }
+                    NewBoundary::Band(_) => {
+                        let seeds = [directed(0), directed(1)];
+                        for seed in seeds {
+                            raw.add_profile_derived_from(
+                                face.sources.clone(),
+                                ProfileAttr::new(seed),
+                            );
+                        }
+                        let key = raw.add_face_derived_from(
+                            face.sources.clone(),
+                            FaceAttr::with_loops(
+                                face.surface.clone(),
+                                seeds
+                                    .iter()
+                                    .map(|&seed| LoopDefinition::wrapping(seed, Axis2::U))
+                                    .collect(),
+                                pcurves,
+                            ),
+                        );
+                        splice_cut_between_loops(raw, key, seeds[0], seeds[1])?;
+                        key
+                    }
+                };
+                faces.push(key);
+            }
+
+            let corner_cells = register_corners(raw, surgery, &corner_darts)?;
+            if consumed_darts
+                .iter()
+                .any(|&dart| !corner_cells.contains_key(&raw.cell_representative(dart, Dim::Zero)))
+            {
                 return Err(BlendError::InconsistentSurgery {
-                    reason: "a joint is not bounded by one or two faces",
+                    reason: "a piece of a consumed vertex was left without a corner",
                 });
             }
-        }
-    }
-
-    let reversed = orient_faces(edit, surgery, &walks, &directions, &inserted_directed)?;
-
-    // Register: rails and joints first, so every new edge has its key before
-    // the surviving edges are told apart from the fresh ones.
-    let mut fresh_edges = HashSet::new();
-    for cut in &surgery.cuts {
-        for side in &cut.sides {
-            let rail = edit.add_edge_derived_from(
-                vec![EditKey::Edge(cut.edge)],
-                EdgeAttr::new(side.start, side.rail.curve().clone()),
-            );
-            // Nothing meets where a closed rail closes, so that 0-cell is
-            // interior to the rail rather than a corner of the shape.
-            if side.ends == RailEnds::Closed {
-                edit.own_cell(Dim::Zero, side.start, EntityOwner::Edge(rail));
-            }
-            fresh_edges.insert(rail);
-        }
-    }
-    for (id, joint) in surgery.joints.iter().enumerate() {
-        let dart = joint_uses[id][0][0];
-        fresh_edges.insert(edit.add_edge_derived_from(
-            joint.sources.clone(),
-            EdgeAttr::new(dart, joint.curve.curve().clone()),
-        ));
-    }
-
-    let mut faces = Vec::with_capacity(surgery.faces.len());
-    for ((face, walk), &flip) in surgery.faces.iter().zip(&walks).zip(&reversed) {
-        let directed = |index: usize| walk[index][usize::from(flip)];
-        let pcurves = face
-            .boundary
-            .bounds()
-            .iter()
-            .enumerate()
-            .map(|(index, bound)| {
-                let pcurve = if flip {
-                    bound.pcurve.reversed()
-                } else {
-                    bound.pcurve.clone()
-                };
-                (directed(index), pcurve)
-            })
-            .collect();
-        let key = match face.boundary {
-            NewBoundary::Walk(_) => {
-                let seed = directed(0);
-                edit.add_profile_derived_from(face.sources.clone(), ProfileAttr::new(seed));
-                edit.add_face_derived_from(
-                    face.sources.clone(),
-                    FaceAttr::with_pcurves(face.surface.clone(), seed, Vec::new(), pcurves),
-                )
-            }
-            NewBoundary::Band(_) => {
-                let seeds = [directed(0), directed(1)];
-                for seed in seeds {
-                    edit.add_profile_derived_from(face.sources.clone(), ProfileAttr::new(seed));
-                }
-                let key = edit.add_face_derived_from(
-                    face.sources.clone(),
-                    FaceAttr::with_loops(
-                        face.surface.clone(),
-                        seeds
-                            .iter()
-                            .map(|&seed| LoopDefinition::wrapping(seed, Axis2::U))
-                            .collect(),
-                        pcurves,
-                    ),
-                );
-                cut_between_loops(edit, key, seeds[0], seeds[1])?;
-                key
-            }
-        };
-        faces.push(key);
-    }
-
-    let corner_cells = register_corners(edit, surgery, &corner_darts)?;
-    if consumed_darts
-        .iter()
-        .any(|&dart| !corner_cells.contains_key(&edit.cell_representative(dart, Dim::Zero)))
-    {
-        return Err(BlendError::InconsistentSurgery {
-            reason: "a piece of a consumed vertex was left without a corner",
-        });
-    }
+            Ok::<_, BlendError>((
+                joint_uses,
+                inserted_directed,
+                fresh_edges,
+                faces,
+                corner_cells,
+            ))
+        })?;
 
     // Pcurves of existing faces: rails and inserted joints are written as
     // planned, in each face's own direction.
@@ -412,8 +436,8 @@ fn read_directions<P: Payload>(
 ///
 /// Existing faces anchor the answer; a new face bordered only by new faces —
 /// a ball's patch — is decided from them once they are.
-fn orient_faces<P: Payload>(
-    edit: &ModelEdit<'_, P>,
+fn orient_faces(
+    map: &GMap,
     surgery: &Surgery,
     walks: &[Vec<[Dart; 2]>],
     directions: &Directions,
@@ -453,9 +477,9 @@ fn orient_faces<P: Payload>(
     };
     let flip_against = |face: usize, bound: usize, neighbour: Dart| {
         let [start, end] = walks[face][bound];
-        if neighbour == edit.alpha(Dim::Two, end) {
+        if neighbour == map.alpha(Dim::Two, end) {
             Ok(false)
-        } else if neighbour == edit.alpha(Dim::Two, start) {
+        } else if neighbour == map.alpha(Dim::Two, start) {
             Ok(true)
         } else {
             Err(BlendError::InconsistentSurgery {
@@ -510,7 +534,7 @@ fn orient_faces<P: Payload>(
 ///
 /// Returns each corner's 0-cell representative.
 fn register_corners<P: Payload>(
-    edit: &mut ModelEdit<'_, P>,
+    raw: &mut RawEdit<'_, '_, P>,
     surgery: &Surgery,
     corner_darts: &[Vec<Dart>],
 ) -> Result<HashMap<Dart, CornerId>, BlendError> {
@@ -521,10 +545,10 @@ fn register_corners<P: Payload>(
                 reason: "a planned corner is named by nothing",
             });
         };
-        let cell = edit.cell_representative(first, Dim::Zero);
+        let cell = raw.cell_representative(first, Dim::Zero);
         if corner_darts[id]
             .iter()
-            .any(|&dart| edit.cell_representative(dart, Dim::Zero) != cell)
+            .any(|&dart| raw.cell_representative(dart, Dim::Zero) != cell)
         {
             return Err(BlendError::InconsistentSurgery {
                 reason: "a planned corner spans several vertices",
@@ -537,9 +561,9 @@ fn register_corners<P: Payload>(
         }
         let attr = VertexAttr::new(first, corner.point);
         if corner.sources.is_empty() {
-            edit.add_vertex(attr);
+            raw.add_vertex(attr);
         } else {
-            edit.add_vertex_derived_from(corner.sources.clone(), attr);
+            raw.add_vertex_derived_from(corner.sources.clone(), attr);
         }
     }
     Ok(cells)
