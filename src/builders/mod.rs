@@ -6,6 +6,7 @@ pub mod errors;
 pub mod faces;
 pub mod fillet;
 pub mod loft;
+pub mod offset;
 pub mod profiles;
 pub mod removal;
 pub mod revolve;

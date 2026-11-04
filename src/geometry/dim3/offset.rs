@@ -393,7 +393,22 @@ fn fit_curve_offset(
         }
         Ok(curve.point_at(parameter) + unit * distance)
     };
+    fit_curve(window, exact)
+}
 
+/// Fits a cubic through `exact` sampled at native parameters spanning
+/// `window`, refining until it stays within [`OFFSET_FIT_TOLERANCE`] of
+/// `exact` between the samples.
+///
+/// The fitted curve's domain is `window` itself, so it is parameterized like
+/// the curve `exact` reads from.
+pub(crate) fn fit_curve(
+    window: Interval,
+    exact: impl Fn(f64) -> Result<Point3, OffsetError>,
+) -> Result<Curve, OffsetError> {
+    if !window.is_finite() {
+        return Err(OffsetError::Unbounded);
+    }
     let mut count = INITIAL_CURVE_SAMPLES;
     let mut deviation = f64::INFINITY;
     while count <= MAX_CURVE_SAMPLES {

@@ -42,6 +42,7 @@ The canonical names are:
 | `RevolvedFace` | `FaceRevolution` | A face was revolved. |
 | `FaceSweep` | `FaceSweep` | A face was swept along a spine. |
 | `AppendEdge` | `ProfileAppend` | An edge was appended to a profile. |
+| — | `EdgeOffset`, `ProfileOffset`, `FaceOffset`, `SheetOffset`, `SolidOffset` | An entity was offset into a moved copy. |
 | `ClosedSolid` | `ClosedSolid` | Product-name exception for pure creation. |
 
 ## Pure creation exception

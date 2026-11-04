@@ -22,3 +22,4 @@ properly, then do it, reject it, or record what you learned.
 | Date | Entry | Area |
 |---|---|---|
 | 2026-10-15 | [One boundary walk for face domains](2026-10-15-face-domain-boundary-walk.md) | `topology::unwrapped_face_domain`, `measure`, `tessellate`, `topology::trim_domain` |
+| 2026-11-04 | [One home for writing a curve's pcurve](2026-11-04-shared-pcurve-writing.md) | `builders::blend::pcurve`, `builders::offset` |

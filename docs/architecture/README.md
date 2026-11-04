@@ -27,6 +27,7 @@ landed and its lasting content has moved here or into an ADR.
   intersection dispatch.
 - [builders.md](builders.md): builder result names and the return contract.
 - [blend.md](blend.md): the chamfer and fillet engine.
+- [offset.md](offset.md): offsets of edges, profiles, faces, sheets and solids.
 - [measure.md](measure.md): mass properties by Green boundary integral.
 
 ## Reviews
