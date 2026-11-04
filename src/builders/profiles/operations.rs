@@ -194,7 +194,9 @@ pub(crate) fn append_edge_edit<P: Payload>(
     let profile_end = profile
         .darts()
         .last()
-        .expect("non-empty profile should have an end dart");
+        .ok_or(PolylineError::MissingProfile {
+            profile: profile_key,
+        })?;
     let profile_start_point = vertex_point(edit, profile_start)?;
     let profile_end_point = vertex_point(edit, profile_end)?;
     let default_edge_start = edit
@@ -232,14 +234,20 @@ pub(crate) fn append_edge_edit<P: Payload>(
         })
         .transpose()?;
 
-    edit.sew(Dim::One, profile_end, edge_dart)
-        .map_err(polyline_edit_error)?;
-    edit.merge_vertices_into(append_merge.survivor, append_merge.removed);
-    if let Some(close_merge) = close_merge {
-        edit.sew(Dim::One, edge_end, profile_start)
+    // Each sew fuses two 0-cells that both carry a vertex, and the merge that
+    // follows says which key survives; the pair runs in a deferred block,
+    // checked once the corners are settled.
+    edit.deferred(|raw| {
+        raw.sew(Dim::One, profile_end, edge_dart)
             .map_err(polyline_edit_error)?;
-        edit.merge_vertices_into(close_merge.survivor, close_merge.removed);
-    }
+        raw.merge_vertices_into(append_merge.survivor, append_merge.removed);
+        if let Some(close_merge) = close_merge {
+            raw.sew(Dim::One, edge_end, profile_start)
+                .map_err(polyline_edit_error)?;
+            raw.merge_vertices_into(close_merge.survivor, close_merge.removed);
+        }
+        Ok::<_, PolylineError>(())
+    })?;
     Ok(ProfileAppend {
         profile: profile_key,
         revision: None,
