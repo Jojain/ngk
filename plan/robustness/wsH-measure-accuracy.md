@@ -1,6 +1,8 @@
 # WS H: measure accuracy on fitted pcurves
 
 **Status:** deferred (D7 to be studied later).
+**Status: postponed** (D7, 2026-11-04).
+
 **Owns:** `src/measure/`, and the pcurve fitting it relies on.
 **Decision:** D7. **Bench:** `boolean/sphere-lens`, `tangent/thin-lens`.
 

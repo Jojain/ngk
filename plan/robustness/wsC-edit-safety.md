@@ -62,6 +62,20 @@ exposes no views, validated when it closes, like a database's deferred
 constraints. (a) remains as the last net; (c) remains good practice; (d)
 becomes unnecessary.
 
+**Prior art, for orientation only (NGK writes its own).** CGoGN, the
+combinatorial-maps library from Strasbourg, splits every operator in two: a
+protected `*_topo` half that only rewires darts (`cut_edge_topo` unsews,
+splits, re-sews) and a public half that calls it and updates every embedded
+orbit in the same call (`cut_edge` in `cmap2.h`: new vertex and edge
+embeddings, face and volume embeddings copied). The raw sews and `_topo`
+operations are reachable only through a separate builder class
+(`CMap2Builder_T`, a friend of the map) used by importers and surgery, and
+`check_map_integrity` validates topology and embeddings afterwards. In
+CGoGN 3 the same split is a `set_indices` flag on each operator, with
+`check_integrity` for GMaps. The proposal above is the same shape: public
+operators that keep labelling and index in step, a builder-like deferred
+block for raw surgery, and a check when the block closes.
+
 Whatever is chosen, fix the builders that leave the labelling inconsistent
 (WS B1 for unmarked edges).
 
