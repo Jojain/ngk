@@ -1,35 +1,47 @@
 # WS 0: brep-bench and the probe corpus as a regression gate
 
-**Owns:** `brep-bench/`, CI workflow. **Depends on:** nothing. **Size:** small.
+**Status:** landed. The gate (`brep-bench/gate.py`, run in CI by
+`.github/workflows/brep-bench.yml`) and the reproduction suite
+(`tests/robustness.rs`, one module per workstream) exist; `brep-bench/README.md`
+says how to run both. What is left is upkeep, below.
 
-## Why first
+**Owns:** `brep-bench/`, CI workflow, `tests/robustness*`, `tests/support/robust.rs`.
+**Depends on:** nothing. **Size:** small.
 
-Every other workstream proves its fix on a family of cases and must not break
-what already passes. The bench gives 231 independently specified cases with
-closed-form answers and a strict grader; the probes in `probes/` give the
-reduced reproductions each class was diagnosed with.
+## What each workstream does with it
 
-## Tasks
+- Every workstream starts by un-ignoring the reproductions of its class in
+  `tests/robustness/<area>.rs` (red first), and is done when they are green. The
+  `#[ignore]` reason names the class and the workstream file it belongs to; the
+  change that fixes the class deletes the attribute, and re-reads the reasons
+  of the tests next to it.
+- A reproduction that needs an operation the suite cannot spell yet (a loft
+  with an explicit pairing, a section stored as a procedural curve, a face on a
+  given NURBS surface such as the saddle drum or the groin vault) is added by
+  the workstream that adds the operation.
+- Every workstream's pull request runs `python3 brep-bench/gate.py`, and when
+  cases moved forward commits the new `brep-bench/results/ngk.json` with
+  `--update`, stating the cases that moved.
+- WS A's mesh check, `assert_closed_mesh` in `tests/support/robust.rs`, is the
+  check to apply to every solid a test builds; the ignored tessellation tests
+  are its first uses.
 
-1. Keep the runner in `brep-bench/kernels/ngk` building against this tree
-   (`ngk = { path = "../../.." }`), with a clone of upstream brep-bench's
-   `harness/` and `cases/` vendored or fetched by a script at a pinned commit.
-2. A script that runs the whole suite and compares against the last
-   committed `brep-bench/results/ngk.json`: it fails when a case that passed
-   no longer does, and prints the cases that moved either way.
-3. CI: run it on every push to main and on pull requests touching `src/`
-   (about four minutes in release). Commit the new `results/ngk.json` when a
-   change moves cases forward.
-4. Drop `probes/boolean_probe.rs` into the runner as a case file and expose
-   each probe by name (`PROBE=<name>`), so a workstream can rerun the exact
-   reproductions this plan was written from. Then turn each family listed in
-   a workstream file into ordinary `cargo test` tests next to the code it
-   exercises; the probe file is a starting point, not the tests.
-5. Fix the runner itself where it hid information: refusals now carry the
-   whole error chain and a Boolean's coverage diagnostics (done on
-   2026-11-04); keep that.
-6. When the bench passes a case that needed a workaround, drop the
-   workaround (`workarounds.toml`) so the board reflects the kernel.
+## Upkeep
+
+1. When the bench passes a case that needed a workaround, drop the workaround
+   (`brep-bench/kernels/ngk/workarounds.toml`) so the board reflects the kernel.
+2. Move `brep-bench/UPSTREAM` to a newer brep-bench commit when its cases
+   change, and run `--update` in the same change, so a moved pin is never read
+   as a regression.
+3. Keep the refusals' full error chains and the Boolean's coverage diagnostics
+   in the runner (`brep-bench/kernels/ngk/src/bench.rs`): they are what makes a
+   refused case explain itself.
+4. Turn the remaining families listed in the workstream files into tests as
+   their operations appear, in the module of their workstream. Not yet written:
+   the loft pairing options (WS B5), the helix's start angle (WS B4), the
+   saddle face, groin vault and lofted wall of WS E (they need a face on a
+   NURBS surface), the family cross-products of WS F and G beyond the cases in
+   the modules, and WS C's property test of random builder sequences.
 
 ## Done when
 

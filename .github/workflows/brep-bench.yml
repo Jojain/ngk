@@ -1,5 +1,7 @@
 name: brep-bench gate
 
+# Builds the brep-bench runner against this tree, runs the 231 cases and fails when a case the
+# baseline (brep-bench/results/ngk.json) grades pass or built no longer does.
 on:
   pull_request:
     paths:
@@ -16,6 +18,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: brep-bench-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gate:
     runs-on: ubuntu-24.04
@@ -23,15 +29,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v6
+      # The runner is its own package with its own target directory; ngk, a path dependency, is
+      # rebuilt on every run and the registry crates come from the cache.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: brep-bench/kernels/ngk
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            brep-bench/kernels/ngk/target
-          key: brep-bench-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'brep-bench/kernels/ngk/Cargo.lock') }}
+      # Fetches brep-bench at the commit in brep-bench/UPSTREAM from GitHub.
       - name: Run brep-bench and compare with the baseline
         run: python3 brep-bench/gate.py

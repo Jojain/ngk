@@ -7,7 +7,7 @@
 //! one) and `CASES`, the table from case id to its `build`, its error made a `Refusal`. Adding a
 //! case is adding its file.
 //!
-//! It also sets `KERNEL_VERSION` to the version of `kentron` in `Cargo.lock`.
+//! It also sets `KERNEL_VERSION` to the version of `ngk` in `Cargo.lock`.
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
