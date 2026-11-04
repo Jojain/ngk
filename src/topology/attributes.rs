@@ -462,7 +462,19 @@ pub struct FaceAttr<T> {
     /// What bounds this face, and where its one raw 2-cell is read from.
     pub(crate) boundary: FaceBoundary,
     /// Directed boundary pcurves keyed by their oriented boundary darts.
+    ///
+    /// Written in dart order, so a model serializes to the same string every
+    /// time rather than in the hash map's per-process iteration order.
+    #[serde(serialize_with = "serialize_in_dart_order")]
     pub pcurves: HashMap<Dart, TrimmedCurve2>,
+}
+
+fn serialize_in_dart_order<S: serde::Serializer>(
+    pcurves: &HashMap<Dart, TrimmedCurve2>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let ordered: std::collections::BTreeMap<_, _> = pcurves.iter().collect();
+    serializer.collect_map(ordered)
 }
 
 impl<T> FaceAttr<T> {

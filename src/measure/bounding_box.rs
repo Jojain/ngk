@@ -23,8 +23,17 @@
 //!   of that plane, at the two angles where the axis direction meets the
 //!   meridian square on.
 //!
-//! NURBS curves and surfaces, and revolutions of any other profile, are refused
-//! with [`MeasureError::EdgeBoundingBoxNotImplemented`] or
+//! - **NURBS curves** have no closed form. The edge's piece of the curve is cut
+//!   into Bezier spans, and each lies inside the hull of its control points
+//!   while its weights are positive. A span whose control points reach no
+//!   further along the axis than its higher end, to within
+//!   [`NURBS_EXTREME_TOLERANCE`], peaks at that end; any other is halved and
+//!   each half asked again. A straight span, as a Boolean's section edges
+//!   often are, is settled at once. A curve with a weight that is not positive
+//!   has no such hull and is refused with
+//!   [`MeasureError::EdgeBoundingBoxNotImplemented`].
+//!
+//! NURBS surfaces, and revolutions of any other profile, are refused with
 //! [`MeasureError::FaceBoundingBoxNotImplemented`] rather than bounded loosely.
 //!
 //! # Oriented box
@@ -46,7 +55,8 @@ use nalgebra::{Matrix3, Vector3};
 
 use crate::geometry::parameter::NativeParam;
 use crate::geometry::{
-    ANGULAR_TOLERANCE, BBox, Curve, Frame, Interval, LINEAR_TOLERANCE, Point2, Point3, Surface,
+    ANGULAR_TOLERANCE, BBox, Curve, Frame, HPoint, Interval, LINEAR_TOLERANCE, NurbsCurve, Point2,
+    Point3, Surface,
 };
 use crate::topology::edge::{Edge, EdgeCore};
 use crate::topology::face::Face;
@@ -170,11 +180,18 @@ fn components_in(frame: &Frame, direction: Vector3<f64>) -> Vector3<f64> {
     )
 }
 
-/// An edge's curve, span and, unless it is straight, its sinusoid.
+/// How far short of a NURBS edge's true extreme along an axis its box may
+/// fall: a small fraction of [`LINEAR_TOLERANCE`], so the box stands for the
+/// edge as closely as the kernel can tell two points apart.
+pub(crate) const NURBS_EXTREME_TOLERANCE: f64 = LINEAR_TOLERANCE * 1.0e-3;
+
+/// An edge's curve, span and, unless it is straight, its sinusoid or, on a
+/// NURBS curve, the Bezier spans of the edge's piece of it.
 struct EdgeExtremes<'a> {
     curve: &'a Curve,
     interval: Interval,
     sinusoid: Option<Sinusoid>,
+    spans: Vec<Vec<HPoint>>,
 }
 
 impl<'a> EdgeExtremes<'a> {
@@ -184,6 +201,20 @@ impl<'a> EdgeExtremes<'a> {
             return Err(MeasureError::UnboundedEdge { edge: edge.key() });
         }
         let curve = edge.curve();
+        if let Curve::Nurbs(nurbs) = curve {
+            let spans = bezier_spans(nurbs, interval).ok_or(
+                MeasureError::EdgeBoundingBoxNotImplemented {
+                    edge: edge.key(),
+                    curve: "NURBS curve with a weight that is not positive",
+                },
+            )?;
+            return Ok(Self {
+                curve,
+                interval,
+                sinusoid: None,
+                spans,
+            });
+        }
         let sinusoid =
             Sinusoid::of(curve).map_err(|curve| MeasureError::EdgeBoundingBoxNotImplemented {
                 edge: edge.key(),
@@ -193,6 +224,7 @@ impl<'a> EdgeExtremes<'a> {
             curve,
             interval,
             sinusoid,
+            spans: Vec::new(),
         })
     }
 
@@ -201,6 +233,11 @@ impl<'a> EdgeExtremes<'a> {
             critical_parameters(self.sinusoid.as_ref(), self.interval, direction)
                 .map(|t| self.curve.point_at(NativeParam::new(t))),
         );
+        for span in &self.spans {
+            for sense in [direction, -direction] {
+                out.push(highest_point(span, sense));
+            }
+        }
     }
 
     fn feature_directions(&self, directions: &mut Directions) {
@@ -215,6 +252,99 @@ impl<'a> EdgeExtremes<'a> {
             Curve::Nurbs(_) => {}
         }
     }
+}
+
+/// The Bezier spans of `curve` over `interval`, as homogeneous control points;
+/// `None` when a weight is not positive, which leaves a span outside the hull
+/// of its control points.
+///
+/// A piece too short for the curve to split is a single point to rounding, and
+/// the interval's ends, which every edge contributes anyway, already hold it.
+fn bezier_spans(curve: &NurbsCurve, interval: Interval) -> Option<Vec<Vec<HPoint>>> {
+    if curve
+        .control_points()
+        .iter()
+        .any(|point| point.weight() <= 0.0)
+    {
+        return None;
+    }
+    let (start, end) = (interval.start.value(), interval.end.value());
+    let Ok(piece) = curve.trimmed(start, end) else {
+        return Some(Vec::new());
+    };
+    let spans = piece.bezier_spans().ok()?;
+    Some(
+        spans
+            .into_iter()
+            .map(|span| span.control_points().as_slice().to_vec())
+            .collect(),
+    )
+}
+
+/// The point of the Bezier span `control` highest along `direction`, to within
+/// [`NURBS_EXTREME_TOLERANCE`].
+///
+/// Each span lies in the hull of its control points, and its ends are its
+/// first and last control points. So a span whose control points reach no
+/// higher than its higher end, give or take the tolerance, peaks there, and a
+/// span whose control points reach no higher than the best point found so far
+/// cannot improve on it; any other is halved and each half searched. The
+/// halves of a smooth peak close on it quadratically, so the search is short.
+fn highest_point(control: &[HPoint], direction: Vector3<f64>) -> Point3 {
+    let height = |point: &Point3| point.coords.dot(&direction);
+    let first = control[0].to_cartesian();
+    let last = control[control.len() - 1].to_cartesian();
+    let mut best = if height(&first) >= height(&last) {
+        first
+    } else {
+        last
+    };
+    let mut pending = vec![(control.to_vec(), 0_u32)];
+    while let Some((span, depth)) = pending.pop() {
+        let ends = [span[0].to_cartesian(), span[span.len() - 1].to_cartesian()];
+        for end in ends {
+            if height(&end) > height(&best) {
+                best = end;
+            }
+        }
+        let reach = span
+            .iter()
+            .map(|point| height(&point.to_cartesian()))
+            .fold(f64::NEG_INFINITY, f64::max);
+        let higher_end = height(&ends[0]).max(height(&ends[1]));
+        if reach <= higher_end + NURBS_EXTREME_TOLERANCE
+            || reach <= height(&best) + NURBS_EXTREME_TOLERANCE
+            || depth >= MAX_HALVINGS
+        {
+            continue;
+        }
+        let (left, right) = halved(&span);
+        pending.push((left, depth + 1));
+        pending.push((right, depth + 1));
+    }
+    best
+}
+
+/// How many times a span may be halved: far more than a smooth extreme needs,
+/// and a bound on the work should the hull close on one slowly.
+const MAX_HALVINGS: u32 = 60;
+
+/// The two halves of a Bezier span, by de Casteljau's construction on its
+/// homogeneous control points.
+fn halved(control: &[HPoint]) -> (Vec<HPoint>, Vec<HPoint>) {
+    let mut row: Vec<_> = control.iter().map(|point| point.0.coords).collect();
+    let mut left = Vec::with_capacity(row.len());
+    let mut right = Vec::with_capacity(row.len());
+    while !row.is_empty() {
+        left.push(HPoint::from(nalgebra::Point4::from(row[0])));
+        right.push(HPoint::from(nalgebra::Point4::from(row[row.len() - 1])));
+        row = row
+            .windows(2)
+            .map(|pair| (pair[0] + pair[1]) / 2.0)
+            .collect();
+    }
+    right.reverse();
+    (left, right)
 }
 
 /// The parameters in `interval` where `direction · curve(t)` can be extreme:

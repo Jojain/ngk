@@ -143,6 +143,15 @@ pub enum SweepError {
     #[error("a face with no outer loop names no section")]
     FaceHasNoOuterLoop,
 
+    /// A closed section edge with no vertex could not take the corner its
+    /// wall's seam starts from.
+    #[error("closed section edge {edge:?} could not take the corner its wall's seam starts from")]
+    SeamCornerFailed {
+        edge: EdgeKey,
+        #[source]
+        source: Box<crate::builders::edges::EdgeSplitError>,
+    },
+
     /// Two walls of the same sweep could not be joined.
     #[error("darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
     SewFailed { dim: Dim, first: Dart, second: Dart },

@@ -3,11 +3,14 @@
 use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_4, TAU};
 
 use nalgebra::Vector3;
+use ngk::builders::edges::add_edge;
 use ngk::builders::loft::LoftOptions;
-use ngk::geometry::{Axis3, BBox, Frame, Plane, Point3};
+use ngk::geometry::{Axis3, BBox, ControlPolygon, Curve, Degree, Frame, NurbsCurve, Plane, Point3};
 use ngk::measure::MeasureError;
+use ngk::model::Model;
 use ngk::modeling::solids::{block, block_at, cylinder_at, sphere_at, torus, torus_at};
-use ngk::modeling::{edges, faces, loft, revolve};
+use ngk::modeling::{edges, faces, loft, revolve, solids};
+use ngk::topology::StandardPayload;
 use radians::Rad64;
 
 const TOLERANCE: f64 = 1e-12;
@@ -235,7 +238,7 @@ fn a_box_contains_every_vertex_of_its_solid() {
 }
 
 #[test]
-fn a_nurbs_loft_is_refused_rather_than_bounded_loosely() {
+fn a_loft_on_nurbs_surfaces_is_refused_rather_than_bounded_loosely() {
     let square = faces::rectangle(
         Plane::new(Point3::new(-1.0, -1.0, 0.0), Vector3::x(), Vector3::z()),
         2.0,
@@ -252,15 +255,70 @@ fn a_nurbs_loft_is_refused_rather_than_bounded_loosely() {
     let error = shape
         .solid()
         .bounding_box()
-        .expect_err("a NURBS loft has no bounding box yet");
+        .expect_err("a loft's NURBS walls have no bounding box yet");
 
     assert!(
-        matches!(
-            error,
-            MeasureError::EdgeBoundingBoxNotImplemented { .. }
-                | MeasureError::FaceBoundingBoxNotImplemented { .. }
-        ),
+        matches!(error, MeasureError::FaceBoundingBoxNotImplemented { .. }),
         "{error}"
+    );
+}
+
+#[test]
+fn a_boolean_with_nurbs_section_edges_is_boxed_like_its_blocks() {
+    // The notch's section edges come out of the Boolean on NURBS curves.
+    let notch = block_at(
+        Frame::from_xz(Point3::new(10.0, 0.0, 4.0), Vector3::x(), Vector3::z()),
+        10.0,
+        10.0,
+        7.0,
+    )
+    .expect("notch");
+    let notched = solids::cut(block(30.0, 10.0, 10.0).expect("block"), [&notch]).expect("cut");
+    assert!(
+        notched
+            .solid()
+            .edges()
+            .iter()
+            .any(|edge| matches!(edge.curve(), Curve::Nurbs(_))),
+        "the cut should leave an edge on a NURBS curve"
+    );
+
+    let bbox = notched.solid().bounding_box().expect("box");
+
+    assert_ranges(&bbox, Vector3::zeros(), Vector3::new(30.0, 10.0, 10.0));
+}
+
+#[test]
+fn an_edge_on_a_nurbs_arc_is_boxed_with_the_bulge_past_its_ends() {
+    // A rational quadratic arc of the unit circle from -60 to 60 degrees: its
+    // ends are at x = 1/2, and it reaches x = 1 in the middle of its one span.
+    let half_angle = 60.0_f64.to_radians();
+    let (start, end) = (
+        Point3::new(half_angle.cos(), -half_angle.sin(), 0.0),
+        Point3::new(half_angle.cos(), half_angle.sin(), 0.0),
+    );
+    let control = ControlPolygon::from_cartesian(
+        vec![start, Point3::new(1.0 / half_angle.cos(), 0.0, 0.0), end],
+        &[1.0, half_angle.cos(), 1.0],
+    )
+    .expect("control polygon");
+    let curve =
+        NurbsCurve::with_uniform_knots(Degree::new(2).expect("degree"), control).expect("arc");
+    let mut model = Model::<StandardPayload>::new();
+    let key = add_edge(&mut model, start, end, Curve::Nurbs(curve)).expect("edge");
+
+    let bbox = model.edge_unchecked(key).bounding_box().expect("box");
+
+    let reach = 1e-11;
+    let local_min = bbox.min();
+    let local_max = bbox.max();
+    assert!(
+        (local_min - Point3::new(0.5, -half_angle.sin(), 0.0)).amax() <= reach,
+        "{bbox:?}"
+    );
+    assert!(
+        (local_max - Point3::new(1.0, half_angle.sin(), 0.0)).amax() <= reach,
+        "{bbox:?}"
     );
 }
 

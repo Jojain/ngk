@@ -6,6 +6,7 @@ use std::f64::consts::PI;
 use nalgebra::{Rotation3, UnitVector3, Vector3};
 use radians::Rad64;
 
+use crate::builders::edges::split_face_boundary_edge;
 use crate::builders::faces::reverse_face_winding_edit;
 use crate::builders::transform::rigid;
 use crate::geometry::parameter::Fraction;
@@ -188,7 +189,38 @@ pub(crate) fn add_swept_face_edit<P: Payload>(
     spine: &[TrimmedCurve],
     options: SweepOptions,
 ) -> Result<FaceSweep, SweepError> {
+    mark_seam_corners(edit, face)?;
     SweepPlan::read(edit, face, spine, options)?.build(edit)
+}
+
+/// Gives each closed section edge with no vertex the corner its wall's seam
+/// starts from.
+///
+/// Every wall is a NURBS skin with four corners, so even a circle's wall is a
+/// quad closing on itself along a seam, and the seam runs from a vertex on
+/// both caps. A closed edge with none takes one where its curve starts, the
+/// point its NURBS form, and so every transported section, starts from too.
+fn mark_seam_corners<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    face: FaceKey,
+) -> Result<(), SweepError> {
+    let unmarked = edit
+        .face(face)
+        .ok_or(SweepError::MissingFace { key: face })?
+        .edges()
+        .into_iter()
+        .filter(|edge| matches!(edge, Edge::Unmarked(_)))
+        .map(|edge| edge.key())
+        .collect::<Vec<_>>();
+    for edge in unmarked {
+        split_face_boundary_edge(edit, edge, Fraction::START, false).map_err(|source| {
+            SweepError::SeamCornerFailed {
+                edge,
+                source: Box::new(source),
+            }
+        })?;
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -1012,41 +1044,48 @@ fn sew_cap<P: Payload>(
             } else {
                 wall.first_section
             };
-            let start = edit
-                .point_at_dart(side)
-                .ok_or(SweepError::MissingEdge { dart: side })?;
-            let finish = edit
-                .point_at_dart(edit.alpha(Dim::Zero, side))
-                .ok_or(SweepError::MissingEdge { dart: side })?;
-            let cap_dart = cap_dart_between(edit, cap, start, finish)
-                .ok_or(SweepError::MissingEdge { dart: side })?;
+            let cap_dart =
+                cap_dart_along(edit, cap, side).ok_or(SweepError::MissingEdge { dart: side })?;
             sew_edges(edit, cap_dart, side)?;
         }
     }
     Ok(())
 }
 
-/// Returns the cap dart running between the two endpoints in that order.
-fn cap_dart_between<P: Payload>(
-    model: &Model<P>,
-    cap: FaceKey,
-    start: Point3,
-    end: Point3,
-) -> Option<Dart> {
+/// Returns the cap dart running the same way as the wall dart `side`.
+///
+/// Ends tell the direction apart on an open edge. A closed edge starts and
+/// ends on one point, so there the two darts are told apart by which way the
+/// curve leaves that point.
+fn cap_dart_along<P: Payload>(model: &Model<P>, cap: FaceKey, side: Dart) -> Option<Dart> {
+    let start = model.point_at_dart(side)?;
+    let end = model.point_at_dart(model.alpha(Dim::Zero, side))?;
+    let leaving = |dart: Dart| {
+        let curve = Edge::from_dart(model, dart)?.trimmed_curve();
+        Some(curve.derivative_at(Fraction::START, 1))
+    };
+    let closed = start.coincides(end, LINEAR_TOLERANCE);
+    let side_leaving = if closed { leaving(side) } else { None };
+    let runs_with_side = |dart: Dart| {
+        let here = model.point_at_dart(dart)?;
+        let there = model.point_at_dart(model.alpha(Dim::Zero, dart))?;
+        let ends_agree =
+            here.coincides(start, LINEAR_TOLERANCE) && there.coincides(end, LINEAR_TOLERANCE);
+        Some(match side_leaving {
+            Some(side_leaving) if ends_agree => leaving(dart)?.dot(&side_leaving) > 0.0,
+            _ => ends_agree,
+        })
+    };
     Face::new(model, cap)
         .loops()
         .into_iter()
         .find_map(|boundary| {
             boundary.darts().find_map(|dart| {
-                let here = model.point_at_dart(dart)?;
-                let partner = model.alpha(Dim::Zero, dart);
-                let there = model.point_at_dart(partner)?;
-                if here.coincides(start, LINEAR_TOLERANCE) && there.coincides(end, LINEAR_TOLERANCE)
-                {
+                if runs_with_side(dart)? {
                     return Some(dart);
                 }
-                (here.coincides(end, LINEAR_TOLERANCE) && there.coincides(start, LINEAR_TOLERANCE))
-                    .then_some(partner)
+                let partner = model.alpha(Dim::Zero, dart);
+                runs_with_side(partner)?.then_some(partner)
             })
         })
 }

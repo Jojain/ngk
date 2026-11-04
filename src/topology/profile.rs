@@ -70,11 +70,23 @@ impl<'a, P: Payload> Profile<'a, P> {
     }
 
     /// Returns the same profile with the opposite traversal orientation.
+    ///
+    /// A closed profile turns round where it stands: the far end of its first
+    /// edge walks the loop the other way. An open one starts again from the
+    /// last dart of its walk, the far end of its last edge, so the reversed
+    /// view runs the whole chain back to this one's start.
     pub fn reversed(&self) -> Self {
+        let dart = if self.is_closed() {
+            self.model.alpha(Dim::Zero, self.dart)
+        } else {
+            self.darts()
+                .last()
+                .expect("a profile walk yields at least its own dart")
+        };
         Self {
             model: self.model,
             key: self.key,
-            dart: self.model.alpha(Dim::Zero, self.dart),
+            dart,
         }
     }
 
@@ -108,10 +120,11 @@ impl<'a, P: Payload> Profile<'a, P> {
     ///
     /// Panics if the profile contains no darts.
     pub fn end(&self) -> Vertex<'a, P> {
+        let vertices = self.vertices();
         if self.is_closed() {
-            self.vertices()[0].clone()
+            vertices[0].clone()
         } else {
-            self.vertices()[self.vertices().len() - 1].clone()
+            vertices[vertices.len() - 1].clone()
         }
     }
 
@@ -154,11 +167,23 @@ impl<'a, P: Payload> Profile<'a, P> {
     }
 
     /// Returns this profile's vertices in traversal order.
+    ///
+    /// Each edge contributes the vertex it leaves from. An open profile also
+    /// ends on a vertex no edge leaves from, read from the last dart of its
+    /// walk; a closed one returns to its first vertex, which is not repeated.
     pub fn vertices(&self) -> Vec<Vertex<'a, P>> {
-        self.darts()
+        let darts: Vec<Dart> = self.darts().collect();
+        let mut vertices: Vec<Vertex<'a, P>> = darts
+            .iter()
             .step_by(2)
-            .filter_map(|d| Vertex::from_dart(self.model, d))
-            .collect()
+            .filter_map(|&d| Vertex::from_dart(self.model, d))
+            .collect();
+        if !self.is_closed()
+            && let Some(end) = darts.last().and_then(|&d| Vertex::from_dart(self.model, d))
+        {
+            vertices.push(end);
+        }
+        vertices
     }
 }
 
