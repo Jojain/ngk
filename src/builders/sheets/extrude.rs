@@ -15,7 +15,8 @@ use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, VertexAttr};
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
-use crate::topology::edit::EditKey;
+use crate::topology::edit::{EditKey, ModelEditError};
+use crate::topology::edit_operators::OperatorError;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, VertexKey};
@@ -328,64 +329,40 @@ fn add_extruded_edge_face<P: Payload>(
     })
 }
 
+/// Sews two adjacent swept faces along the edges at `survivor` and `removed`,
+/// keeping `survivor`'s edge and vertices.
+///
+/// Both darts must lie on edges with a vertex at each end -- a dart-level
+/// lookup, not an endpoint one: sewing two closed circles gives the same vertex
+/// at both ends of each, and that is what has to reconcile. The edit operator
+/// fuses the edges and the vertices, so the model is valid when this returns
+/// and again when it fails.
 fn sew_adjacent_sweep_edges<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     survivor: Dart,
     removed: Dart,
 ) -> Result<(), ExtrudeError> {
-    let merge = alpha2_sweep_merge(edit, survivor, removed)?;
-    edit.sew(Dim::Two, survivor, removed)
-        .map_err(|_| ExtrudeError::SewFailed {
-            dim: Dim::Two,
-            first: survivor,
-            second: removed,
-        })?;
-    if merge.survivor_edge != merge.removed_edge {
-        edit.merge_edges_into(merge.survivor_edge, merge.removed_edge);
+    for dart in [survivor, removed] {
+        Edge::from_dart(edit, dart).ok_or(ExtrudeError::MissingEdgeCurve { dart })?;
     }
-    if merge.survivor_start != merge.removed_start {
-        edit.merge_vertices_into(merge.survivor_start, merge.removed_start);
+    for dart in [
+        survivor,
+        removed,
+        edit.alpha(Dim::Zero, survivor),
+        edit.alpha(Dim::Zero, removed),
+    ] {
+        Vertex::from_dart(edit, dart).ok_or(ExtrudeError::MissingVertexPoint { dart })?;
     }
-    if merge.survivor_end != merge.removed_end {
-        edit.merge_vertices_into(merge.survivor_end, merge.removed_end);
-    }
-    Ok(())
-}
-
-struct Alpha2SweepMerge {
-    survivor_edge: EdgeKey,
-    removed_edge: EdgeKey,
-    survivor_start: VertexKey,
-    removed_start: VertexKey,
-    survivor_end: VertexKey,
-    removed_end: VertexKey,
-}
-
-fn alpha2_sweep_merge<P: Payload>(
-    g: &Model<P>,
-    survivor: Dart,
-    removed: Dart,
-) -> Result<Alpha2SweepMerge, ExtrudeError> {
-    let survivor_edge =
-        Edge::from_dart(g, survivor).ok_or(ExtrudeError::MissingEdgeCurve { dart: survivor })?;
-    let removed_edge =
-        Edge::from_dart(g, removed).ok_or(ExtrudeError::MissingEdgeCurve { dart: removed })?;
-
-    // A dart-level lookup, not an endpoint one: sewing two closed circles gives
-    // the same vertex at both ends of each, and that is what has to reconcile.
-    let vertex_at = |dart: Dart| {
-        Vertex::from_dart(g, dart)
-            .map(|vertex| vertex.key())
-            .ok_or(ExtrudeError::MissingVertexPoint { dart })
-    };
-    Ok(Alpha2SweepMerge {
-        survivor_edge: survivor_edge.key(),
-        removed_edge: removed_edge.key(),
-        survivor_start: vertex_at(survivor)?,
-        removed_start: vertex_at(removed)?,
-        survivor_end: vertex_at(g.alpha(Dim::Zero, survivor))?,
-        removed_end: vertex_at(g.alpha(Dim::Zero, removed))?,
-    })
+    edit.sew_edges(survivor, removed)
+        .map(|_| ())
+        .map_err(|error| match error {
+            ModelEditError::Operator(OperatorError::NotSewable { .. }) => ExtrudeError::SewFailed {
+                dim: Dim::Two,
+                first: survivor,
+                second: removed,
+            },
+            other => other.into(),
+        })
 }
 
 fn sew<P: Payload>(
