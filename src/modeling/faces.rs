@@ -93,7 +93,7 @@ pub fn polygon_with<P: Payload>(points: &[Point3]) -> Result<Shape<FaceTag, P>, 
     }
     Shape::build(|model| {
         model.transaction(|edit| {
-            let profile = add_polygon_edit(edit, points);
+            let profile = add_polygon_edit(edit, points)?;
             add_face_edit(edit, profile)
         })
     })

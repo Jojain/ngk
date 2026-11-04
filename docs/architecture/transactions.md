@@ -23,8 +23,11 @@ at commit and can do neither. Policy event application happens only after the
 complete staged operation passes topology validation and identity
 reconciliation.
 
-Transactions intentionally do not catch panics. Operation code uses `Result`
-for recoverable failure.
+Operation code uses `Result` for recoverable failure. A transaction does not
+turn a panic into an error, with one exception: a panic that follows a recorded
+read fault (see "Reads on an open edit") is that fault's consequence and is
+reported as it. Whatever panic crosses a transaction, the model is rolled back
+to its snapshot first, so a caller that catches it holds a valid model.
 
 ## Builder composition
 
@@ -50,9 +53,10 @@ immutable access exposed by `ModelEdit` but cannot bypass the transaction when
 adding darts, changing alpha links, labelling cells, or mutating attributes.
 
 `ModelEdit` owns no snapshot and has no independent commit. It provides the
-checked alpha operations `add_dart`, `remove_dart`, `link`, `unlink`, and `sew`,
+checked alpha primitives `add_dart`, `remove_dart`, `link`, `unlink`, and `sew`,
 the embedding label `own_cell`, plus attribute creation, removal, mutation,
-split, and merge declarations.
+split, and merge declarations; and, above them, the edit operators and the
+deferred block described below.
 
 Profile and sheet registration follows the same explicit model as edge and
 vertex registration. Adding a face does not synthesize profiles for its
@@ -61,6 +65,78 @@ Builders register fresh components with `add_profile` / `add_sheet`, and use
 the corresponding `*_split_from` or `merge_*_into` operation when identity is
 derived from existing topology. Commit rejects faces or solids whose referenced
 components have not been registered.
+
+## Reads on an open edit
+
+A view (`Face::loops`, `Sheet::faces`) reads the model through the embedding
+index, the dart-to-owner lookup derived from the labelling. The labelling is
+only checked at commit, so on an open edit it can describe nothing the index
+can be built for. Three layers keep that from becoming a panic:
+
+1. **Operators and deferred blocks** keep it from happening in the first
+   place (next two sections).
+2. **`Model::try_embedding_index`** returns the build's `Result`. A failure is
+   never cached.
+3. **A read that cannot return a `Result`** (`Model::embedding_index`, the
+   boundary walk behind `Face::loops`) records the first such fault in the
+   model, answers with what an empty labelling would (no owner, no loops) and
+   goes on. The transaction looks for a recorded fault when the operation
+   returns, whatever the operation returned, and when the commit checks have
+   run: it rolls back and returns the fault as `InvalidEmbedding` or
+   `UnreadableBoundary`. A panic that the empty answer provoked in the
+   operation is reported as the fault too.
+
+The fault names the first read that failed, which is later than the step that
+caused it. Calling `ModelEdit::check_consistent` between two steps narrows that.
+
+## Edit operators
+
+An operator (`src/topology/edit_operators.rs`) is a change to the map that
+leaves the model valid: the map, the labelling and the entity attributes agree
+when it returns, so a view read between two operators answers. It reads what it
+needs before it writes, refuses a precondition that does not hold with the
+model untouched (`OperatorError`), does the rewiring and the relabelling in the
+one call, and checks the cells it touched.
+
+| Operator | What it does |
+|---|---|
+| `mark_edge` | gives an unmarked edge a vertex on the 0-cell where it closes, and drops the edge's scaffold label there |
+| `cut_edge` | cuts an edge that has a corner in two: doubles every dart of its 1-cell, gives the new 0-cell a vertex and the second half a new key |
+| `sew_edges` | sews two edges where 2-cells meet, fuses the edges and the vertices at their ends, and settles who labels a fused closure: a vertex on it means no scaffold, so an unmarked edge sewn to a marked one is marked |
+| `unsew_edge` | the inverse for an edge shared by two sides: cuts the `alpha2` links, splits the vertex of each end that no longer holds together, and gives the other side a new edge key |
+
+Geometry stays with the caller: `cut_edge` takes the two curves and the point,
+`mark_edge` the point. The operators are one-step units, not the transaction's
+unit; a builder composes them, and they compose with the raw primitives, which
+is what lets a builder move to them one step at a time.
+
+`ModelEdit::sew` and `own_cell` and the other raw primitives are still public.
+A builder that uses them is responsible for the labelling, and the fallible
+reads above are what stands between its mistake and a panic.
+
+## Deferred surgery
+
+`edit.deferred(|raw| ..)` runs a rewiring that passes through invalid states.
+`RawEdit` has the primitives and the stored attributes but no view, which the
+type enforces: it does not dereference to `Model`, so nothing in the block can
+walk the map through a labelling that is allowed to be wrong. When the block
+returns, the map's involution axioms and the labelling are checked, as a
+database checks its deferred constraints at the end of the statement; a block
+that leaves either broken returns an error and its transaction rolls back.
+
+## Post-conditions at commit
+
+After reconciliation and the structural checks, commit validates every solid
+the transaction created or touched: a solid is touched when it is new, when its
+shells moved, or when a face it bounds was created or merged. The check is
+`validate_solid_orientation`: the shell is closed, the windings agree across
+every edge, and the signed volume has the right sign (positive for an outer
+shell, negative for a cavity). A solid that fails it makes the transaction fail
+with `InvalidSolid`.
+
+The check costs a pass over the touched solid's faces. `CommitChecks`, a
+property of the model that travels with its snapshots, turns it on or off; the
+default is on in debug builds and tests and off in release builds.
 
 ## Lineage and policy
 
@@ -134,8 +210,11 @@ lookups resolve the operation's logical survivor.
    anchored off it, no owner of lower dimension than the cell it claims, and
    no cell two entities disagree about;
 6. one same-dimensional raw cell per logical vertex, edge, face and solid;
-7. payload policy on net externally-visible changes;
-8. `revision += 1` and cache invalidation.
+7. closed, outward shells for every solid created or touched, when
+   `CommitChecks::solid_orientation` is on;
+8. payload policy on net externally-visible changes;
+9. a read fault recorded while committing counts as a failed commit;
+10. `revision += 1` and cache invalidation.
 
 A failure at any step restores the transaction-start snapshot whole.
 
@@ -144,7 +223,8 @@ A failure at any step restores the transaction-start snapshot whole.
 The six dart-to-key maps are one lazy `DerivedCellIndexes` cache and the
 dart-to-owner lookup is a second one. Any mutation invalidates both; the first
 typed lookup or traversal rebuilds what it needs, subsequent reads reuse it, and
-commit materializes the cell indexes after reconciliation. Neither is
+commit materializes the cell indexes after reconciliation. The owner lookup is
+the only one that can fail to build (see "Reads on an open edit"). Neither is
 serialized: a deserialized model rebuilds them from its authoritative stores.
 Builders use typed APIs such as `cell_key`, `attribute`, `ownership` and
 topology views rather than accessing indexes directly.

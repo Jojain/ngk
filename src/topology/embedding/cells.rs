@@ -253,6 +253,14 @@ pub struct EmbeddingIndex {
 }
 
 impl EmbeddingIndex {
+    /// Returns the index that owns no cell, shared by every caller.
+    pub fn empty() -> &'static Self {
+        static EMPTY: std::sync::OnceLock<EmbeddingIndex> = std::sync::OnceLock::new();
+        EMPTY.get_or_init(|| Self {
+            owners: std::array::from_fn(|_| HashMap::new()),
+        })
+    }
+
     /// Expands the stored records across their orbits.
     ///
     /// Rejects a record whose representative is not a dart of `map`, a record

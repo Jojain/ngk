@@ -1,6 +1,6 @@
 //! Edge operations and their edit-scoped implementations.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::builders::errors::{EdgeCreationError, ModelEditFailure};
 use crate::geometry::parameter::NativeParam;
@@ -12,7 +12,8 @@ use crate::model::{Cell0, Cell2, Model};
 use crate::topology::ModelEdit;
 use crate::topology::attributes::{EdgeAttr, VertexAttr};
 use crate::topology::edge::Edge;
-use crate::topology::edit::{EditKey, ModelEditError};
+use crate::topology::edit::ModelEditError;
+use crate::topology::edit_operators::EdgeCutPlan;
 use crate::topology::embedding::EntityOwner;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
@@ -158,7 +159,6 @@ impl EdgeCut {
 /// A cut on a free profile edge, read off the model before it is touched.
 struct PreparedFreeEdgeSplit {
     first_dart: Dart,
-    second_dart: Dart,
     curve: Curve,
     cut: EdgeCut,
 }
@@ -166,7 +166,6 @@ struct PreparedFreeEdgeSplit {
 /// A cut on an edge a face hangs off, read off the model before it is touched.
 struct PreparedAttachedEdgeSplit {
     first_dart: Dart,
-    second_dart: Dart,
     curve: Curve,
     cut: EdgeCut,
     edge_darts: Vec<Dart>,
@@ -240,7 +239,7 @@ pub(crate) fn split_edge_edit<P: Payload>(
 ) -> Result<EdgeSplit, EdgeSplitError> {
     let split = prepare_profile_edge_split(edit.model(), edge, parameter)?;
     if edit.attribute::<Cell0>(split.first_dart).is_none() {
-        return Ok(mark_closed_edge(edit, edge, split.first_dart, split.cut));
+        return mark_closed_edge(edit, edge, split.cut);
     }
     split_edge_with_profile_links(edit, edge, split)
 }
@@ -253,7 +252,7 @@ pub(crate) fn split_face_boundary_edge<P: Payload>(
 ) -> Result<EdgeSplit, EdgeSplitError> {
     let split = prepare_attached_edge_split(edit.model(), edge, parameter)?;
     if edit.attribute::<Cell0>(split.first_dart).is_none() {
-        return Ok(mark_closed_edge(edit, edge, split.first_dart, split.cut));
+        return mark_closed_edge(edit, edge, split.cut);
     }
     split_attached_edge_with_profile_links(edit, edge, split, reversed)
 }
@@ -272,89 +271,48 @@ pub(crate) fn split_face_boundary_edge<P: Payload>(
 fn mark_closed_edge<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
-    dart: Dart,
     cut: EdgeCut,
-) -> EdgeSplit {
-    edit.disown_cell(Dim::Zero, dart);
-    let vertex =
-        edit.add_vertex_derived_from(vec![EditKey::Edge(edge)], VertexAttr::new(dart, cut.point));
-    EdgeSplit::Marked { edge, vertex }
+) -> Result<EdgeSplit, EdgeSplitError> {
+    let vertex = edit.mark_edge(edge, cut.point)?;
+    Ok(EdgeSplit::Marked { edge, vertex })
 }
 
+/// Cuts a free edge in two at the corner `split` describes.
 fn split_edge_with_profile_links<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     split: PreparedFreeEdgeSplit,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    let (first_curve, second_curve) = split_curve_at_parameter(edge, &split.curve, split.cut)?;
-    let first_mid = edit.add_dart();
-    let second_mid = edit.add_dart();
-
-    edit.unlink(Dim::Zero, split.first_dart)?;
-    edit.link(Dim::Zero, split.first_dart, first_mid)?;
-    edit.link(Dim::Zero, second_mid, split.second_dart)?;
-    edit.link(Dim::One, first_mid, second_mid)?;
-
-    let vertex = edit.add_vertex_derived_from(
-        vec![EditKey::Edge(edge)],
-        VertexAttr::new(first_mid, split.cut.point),
-    );
-    edit.edge_attr_mut_unchecked(edge).curve = first_curve;
-    let second = edit.add_edge_split_from(edge, EdgeAttr::new(second_mid, second_curve));
-
-    Ok(EdgeSplit::Separated {
-        first: edge,
-        second,
-        vertex,
-    })
+    let (first, second) = split_curve_at_parameter(edge, &split.curve, split.cut)?;
+    cut_prepared_edge(edit, edge, split.cut.point, first, second)
 }
 
+/// Cuts an edge faces run along in two at the corner `split` describes.
 fn split_attached_edge_with_profile_links<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edge: EdgeKey,
     split: PreparedAttachedEdgeSplit,
     reversed: bool,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    let (mut first_curve, mut second_curve) =
-        split_curve_at_parameter(edge, &split.curve, split.cut)?;
+    let (mut first, mut second) = split_curve_at_parameter(edge, &split.curve, split.cut)?;
     if reversed {
-        (first_curve, second_curve) = (second_curve.reversed(), first_curve.reversed());
+        (first, second) = (second.reversed(), first.reversed());
     }
-    let alpha0_pairs = alpha_pairs(edit, &split.edge_darts, Dim::Zero);
-    let alpha2_pairs = alpha_pairs(edit, &split.edge_darts, Dim::Two);
-    let mid_darts = split
-        .edge_darts
-        .iter()
-        .map(|dart| (*dart, edit.add_dart()))
-        .collect::<HashMap<_, _>>();
+    cut_prepared_edge(edit, edge, split.cut.point, first, second)
+}
 
-    for (first, second) in alpha0_pairs {
-        let first_mid = mid_darts[&first];
-        let second_mid = mid_darts[&second];
-        edit.unlink(Dim::Zero, first)?;
-        edit.link(Dim::Zero, first, first_mid)?;
-        edit.link(Dim::Zero, second, second_mid)?;
-        edit.link(Dim::One, first_mid, second_mid)?;
-    }
-
-    for (first, second) in alpha2_pairs {
-        edit.link(Dim::Two, mid_darts[&first], mid_darts[&second])?;
-    }
-
-    let vertex = edit.add_vertex_derived_from(
-        vec![EditKey::Edge(edge)],
-        VertexAttr::new(mid_darts[&split.first_dart], split.cut.point),
-    );
-    edit.edge_attr_mut_unchecked(edge).curve = first_curve;
-    let second = edit.add_edge_split_from(
-        edge,
-        EdgeAttr::new(mid_darts[&split.second_dart], second_curve),
-    );
-
+fn cut_prepared_edge<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    edge: EdgeKey,
+    point: Point3,
+    first: Curve,
+    second: Curve,
+) -> Result<EdgeSplit, EdgeSplitError> {
+    let cut = edit.cut_edge(edge, EdgeCutPlan { point, first, second })?;
     Ok(EdgeSplit::Separated {
-        first: edge,
-        second,
-        vertex,
+        first: cut.first,
+        second: cut.second,
+        vertex: cut.vertex,
     })
 }
 
@@ -374,7 +332,6 @@ fn prepare_profile_edge_split<P: Payload>(
     let cut = EdgeCut::new(view, parameter);
     let split = PreparedFreeEdgeSplit {
         first_dart,
-        second_dart,
         curve: attr.curve.clone(),
         cut,
     };
@@ -403,7 +360,6 @@ fn prepare_attached_edge_split<P: Payload>(
         .collect::<Vec<_>>();
     let split = PreparedAttachedEdgeSplit {
         first_dart,
-        second_dart,
         curve: attr.curve.clone(),
         cut,
         edge_darts,
@@ -498,18 +454,6 @@ fn split_curve_at_parameter(
         trim(Interval::new(cut.interval.start, cut.native))?,
         trim(Interval::new(cut.native, cut.interval.end))?,
     ))
-}
-
-fn alpha_pairs<P: Payload>(g: &Model<P>, darts: &[Dart], dim: Dim) -> Vec<(Dart, Dart)> {
-    let dart_set = darts.iter().copied().collect::<HashSet<_>>();
-    darts
-        .iter()
-        .filter_map(|dart| {
-            let linked = g.alpha(dim, *dart);
-            (linked != *dart && dart.id() < linked.id() && dart_set.contains(&linked))
-                .then_some((*dart, linked))
-        })
-        .collect()
 }
 
 fn check_split_parameter<P: Payload>(

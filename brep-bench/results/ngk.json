@@ -3,9 +3,8 @@
  "measured": "exact",
  "tally": {
   "pass": 11,
-  "wrong": 48,
-  "refused": 162,
-  "crashed": 10
+  "wrong": 51,
+  "refused": 169
  },
  "cases": [
   {
@@ -1567,8 +1566,8 @@
   },
   {
    "case": "parts/v-belt-pulley",
-   "outcome": "crashed",
-   "why": "panicked at src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(112), held: Vertex(VertexKey(_)), claimed: Edge(EdgeKey(_)) }",
+   "outcome": "refused",
+   "why": "Boolean topology transaction failed: this edit produced a embedding that does not describe its map: the Zero-cell at Dart(112) is owned by both Vertex(VertexKey(_)) and Edge(EdgeKey(_))",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -2133,8 +2132,8 @@
   },
   {
    "case": "spline/pipe-on-planar-cubic",
-   "outcome": "crashed",
-   "why": "panicked at src/geometry/dim3/frame.rs:82:72: frame directions are not perpendicular",
+   "outcome": "refused",
+   "why": "the spine has no frame at this point: frame directions are not perpendicular: frame directions are not perpendicular",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -2143,8 +2142,8 @@
   },
   {
    "case": "spline/pipe-on-twisted-cubic",
-   "outcome": "crashed",
-   "why": "panicked at src/geometry/dim3/frame.rs:82:72: frame directions are not perpendicular",
+   "outcome": "refused",
+   "why": "the spine has no frame at this point: frame directions are not perpendicular: frame directions are not perpendicular",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -2183,8 +2182,8 @@
   },
   {
    "case": "spline/square-on-planar-cubic",
-   "outcome": "crashed",
-   "why": "panicked at src/geometry/dim3/frame.rs:82:72: frame directions are not perpendicular",
+   "outcome": "refused",
+   "why": "the spine has no frame at this point: frame directions are not perpendicular: frame directions are not perpendicular",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -2193,13 +2192,23 @@
   },
   {
    "case": "sweep/circle-along-arc",
-   "outcome": "crashed",
-   "why": "panicked at src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(_)), claimed: Edge(EdgeKey(_)) }",
+   "outcome": "wrong",
+   "why": "volume 197.39344046670547 against 197.392088022; area 222.52584718926562 against 222.524829251; triangles not closed (650 edges unmatched); triangles' volume -197.307",
    "measured": "exact",
-   "volume": null,
-   "area": null,
-   "faces": null,
-   "mesh": null
+   "volume": 197.39344046670547,
+   "area": 222.52584718926562,
+   "faces": {
+    "bspline": 1,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 19852,
+    "degenerate": 0,
+    "unmatched_edges": 650,
+    "closed": false,
+    "volume": -197.30704281251965,
+    "area": 222.4963353911143
+   }
   },
   {
    "case": "sweep/duct-elbow",
@@ -2223,18 +2232,28 @@
   },
   {
    "case": "sweep/helical-pipe",
-   "outcome": "crashed",
-   "why": "panicked at src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(_)), claimed: Edge(EdgeKey(_)) }",
+   "outcome": "wrong",
+   "why": "volume 439.5163088579582 against 594.048305033; area 1009.0427214170745 against 1194.37979537; triangles not closed (454 edges unmatched); triangles' volume -430.552",
    "measured": "exact",
-   "volume": null,
-   "area": null,
-   "faces": null,
-   "mesh": null
+   "volume": 439.5163088579582,
+   "area": 1009.0427214170745,
+   "faces": {
+    "bspline": 1,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 7526,
+    "degenerate": 0,
+    "unmatched_edges": 454,
+    "closed": false,
+    "volume": -430.55230881222764,
+    "area": 1022.3367159349506
+   }
   },
   {
    "case": "sweep/helical-pipe-round-ends",
-   "outcome": "crashed",
-   "why": "panicked at src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(_)), claimed: Edge(EdgeKey(_)) }",
+   "outcome": "refused",
+   "why": "the target (solid SolidKey(_)) is not a closed, consistently oriented operand: solid SolidKey(_) shell at Dart(1) face FaceKey(_) normal does not point outward",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -2283,13 +2302,23 @@
   },
   {
    "case": "sweep/mitred-pipe-on-cube-edges",
-   "outcome": "crashed",
-   "why": "panicked at src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(_)), claimed: Edge(EdgeKey(_)) }",
+   "outcome": "wrong",
+   "why": "triangles not closed (486 edges unmatched); triangles' volume -1130.87",
    "measured": "exact",
-   "volume": null,
-   "area": null,
-   "faces": null,
-   "mesh": null
+   "volume": 1130.9733552923262,
+   "area": 1156.1060965210438,
+   "faces": {
+    "bspline": 3,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 17614,
+    "degenerate": 0,
+    "unmatched_edges": 486,
+    "closed": false,
+    "volume": -1130.8734970555972,
+    "area": 1156.0707585026726
+   }
   },
   {
    "case": "sweep/narrowing-bend",
@@ -2333,8 +2362,8 @@
   },
   {
    "case": "swept/ball-along-spline-groove",
-   "outcome": "crashed",
-   "why": "panicked at src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(_)), claimed: Edge(EdgeKey(_)) }",
+   "outcome": "refused",
+   "why": "tools[0] (solid SolidKey(_)) is not a closed, consistently oriented operand: solid SolidKey(_) shell at Dart(48) face FaceKey(_) normal does not point outward",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -2353,8 +2382,8 @@
   },
   {
    "case": "swept/ball-thread-groove",
-   "outcome": "crashed",
-   "why": "panicked at src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(_)), claimed: Edge(EdgeKey(_)) }",
+   "outcome": "refused",
+   "why": "tools[0] (solid SolidKey(_)) is not a closed, consistently oriented operand: solid SolidKey(_) shell at Dart(12) face FaceKey(_) normal does not point outward",
    "measured": "exact",
    "volume": null,
    "area": null,

@@ -11,6 +11,7 @@ use crate::measure::{
 };
 use crate::model::{Cell2, MergeTopology, Model, RealizationPurpose, TopologyMerge};
 use crate::topology::attributes::{FaceAttr, LoopKind};
+use crate::topology::ModelEditError;
 use crate::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
 use crate::topology::profile::LoopCorner;
 use crate::topology::shape_keys::{FaceKey, ProfileKey};
@@ -363,21 +364,28 @@ impl<'g, P: Payload> Face<'g, P> {
         let ownership = self.model.embedding_index();
         // A face that cannot be walked is a face whose scaffold does not hold
         // together, and answering "no boundary" would hand the caller a shape
-        // it never built. Say which face and why instead.
-        let region = recover_region(
-            self.model.topology(),
-            ownership,
-            EntityOwner::Face(self.key),
-            anchor,
-        )
-        .unwrap_or_else(|error| {
-            panic!("face {:?} covers no recoverable region: {error}", self.key)
-        });
-        boundary_cycles(self.model.topology(), ownership, &region)
-            .unwrap_or_else(|error| panic!("face {:?} has no walkable boundary: {error}", self.key))
-            .into_iter()
-            .map(|cycle| cycle.darts().to_vec())
-            .collect()
+        // it never built. The read records which face and why; the transaction
+        // that made it reports that as its error and rolls back.
+        let owner = EntityOwner::Face(self.key);
+        let unreadable = |error: &dyn std::fmt::Display| {
+            self.model
+                .record_read_fault(ModelEditError::UnreadableBoundary {
+                    entity: owner,
+                    reason: error.to_string(),
+                });
+            Vec::new()
+        };
+        let region = match recover_region(self.model.topology(), ownership, owner, anchor) {
+            Ok(region) => region,
+            Err(error) => return unreadable(&error),
+        };
+        match boundary_cycles(self.model.topology(), ownership, &region) {
+            Ok(cycles) => cycles
+                .into_iter()
+                .map(|cycle| cycle.darts().to_vec())
+                .collect(),
+            Err(error) => unreadable(&error),
+        }
     }
 
     /// Returns the outer boundary loop of the face, if it has one.

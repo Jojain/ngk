@@ -984,7 +984,9 @@ fn lateral_plane(
         return Err(ExtrudeError::DegenerateSweep { dart });
     }
     let in_plane = perpendicular_component(direction, edge);
-    Ok(Plane::from_xy(start, edge, in_plane))
+    Frame::try_from_xy(start, edge, in_plane)
+        .map(Plane::from_frame)
+        .map_err(|_| ExtrudeError::DegenerateSweep { dart })
 }
 
 fn plane_uv(surface: &Plane, point: Point3) -> Point2 {

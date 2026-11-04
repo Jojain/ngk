@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use crate::geometry::NurbsError;
+use crate::geometry::{FrameError, NurbsError};
 use crate::topology::edit::ModelEditError;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey};
@@ -155,6 +155,12 @@ pub enum SweepError {
     /// Two walls of the same sweep could not be joined.
     #[error("darts {first:?} and {second:?} are not sewable in dimension {dim:?}")]
     SewFailed { dim: Dim, first: Dart, second: Dart },
+
+    /// The directions a frame along the spine is built from do not span one:
+    /// the spine's tangent is not square to the direction the section's own
+    /// axes were carried along, or one of them vanishes.
+    #[error("the spine has no frame at this point: {source}")]
+    DegenerateFrame { source: FrameError },
 
     /// The edit rejected the topology the sweep built.
     #[error("building the swept topology failed")]

@@ -504,11 +504,16 @@ pub(crate) fn revolved_support(curve: &Curve, axis: Axis3) -> RevolvedSupport {
     // between those two and `v` is profile parameter times generatrix speed.
     let half_angle = radius_rate.atan2(height_rate);
     let generatrix_rate = radius_rate.hypot(height_rate);
-    let frame = Frame::from_xz(
+    // `x_dir` is a radial direction of the axis, square to it up to rounding;
+    // a frame the rounding makes refuse is better served by the generic support
+    // than by a cone placed on directions that do not agree.
+    let Ok(frame) = Frame::try_from_xz(
         axis.origin + *axis.direction * start_height,
         x_dir,
         axis.direction,
-    );
+    ) else {
+        return RevolvedSupport::generic(curve, axis);
+    };
     RevolvedSupport {
         surface: Surface::Cone(Cone::new(frame, start_radius, half_angle)),
         map_pcurve_point: Box::new(move |point| Point2::new(point.y, point.x * generatrix_rate)),
@@ -555,9 +560,10 @@ fn planar_revolved_support(
     let y_dir = axis.direction.cross(&x_dir);
     let start_offset = (profile_origin - center).dot(&x_dir);
     let radius_rate = profile_direction.dot(&x_dir);
+    let plane = Frame::try_from_xy(center, x_dir, y_dir).ok()?;
 
     Some(RevolvedSupport {
-        surface: Surface::Plane(Plane::from_xy(center, x_dir, y_dir)),
+        surface: Surface::Plane(Plane::from_frame(plane)),
         map_pcurve_point: Box::new(move |point| {
             let radius = start_offset + point.x * radius_rate;
             Point2::new(radius * point.y.cos(), radius * point.y.sin())

@@ -76,8 +76,10 @@ one for one, so an edge a loop runs twice (a seam) appears twice in
 | unmarked edge | one marked edge: the 0-cell is materialized where the cut was asked for, and no edge is created |
 | marked edge | two bounded edges |
 
-Marking is a pure relabel: an unmarked edge already has its two darts and its
-one 0-cell orbit, so materializing costs no darts and no links. Only the
+Marking is a pure relabel (`ModelEdit::mark_edge`, which also drops the edge's
+scaffold label on that 0-cell; `cut_edge` does the separating cut): an unmarked
+edge already has its two darts and its one 0-cell orbit, so materializing costs
+no darts and no links. Only the
 vertex's stored point says where it now sits, which is why a marked edge spans
 `[t, t + period]` from its corner rather than from the curve's own domain start.
 
@@ -151,6 +153,16 @@ classified. `recover_region` walks an entity out of the map from that anchor.
 `boundary_cycles` gives a face its oriented loops by turning across the cells it
 owns. `boundary_shells` does the same one dimension up, though `Solid::shells`
 still reads the shell roots stored on `SolidAttr` rather than calling it.
+
+### Scaffold and vertices on one 0-cell
+
+An unmarked edge's closing 0-cell is scaffold the edge owns; a vertex on a
+0-cell means the edges through it are marked or bounded there, never both. So
+two labels on one 0-cell, a vertex's anchor and an edge's stored record, is a
+contradiction the index refuses (`ConflictingOwnership`), and any operation that
+brings the two together must settle it: `sew_edges` does, dropping the scaffold
+when a vertex is on the fused 0-cell. Reading through an index that cannot be
+built is the subject of [transactions.md](transactions.md#reads-on-an-open-edit).
 
 ### One entity, one cell of its own dimension
 

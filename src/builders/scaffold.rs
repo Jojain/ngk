@@ -81,12 +81,18 @@ impl CutAttachment {
         let old_next = edit.alpha(Dim::One, self.outgoing);
         let new_end = edit.alpha(Dim::Zero, boundary);
         let new_next = edit.alpha(Dim::One, new_end);
-        for dart in [self.incoming, self.outgoing, new_end] {
-            edit.unlink(Dim::One, dart)?;
-        }
-        edit.link(Dim::One, old_end, old_next)?;
-        edit.link(Dim::One, new_end, self.incoming)?;
-        edit.link(Dim::One, self.outgoing, new_next)?;
+        // Detaching the cut from one loop and attaching it to the other merges
+        // and splits 0-cells on the way, so nothing may read the model until
+        // the last link is made. The block reads nothing, and the labelling is
+        // checked where it closes.
+        edit.deferred(|raw| {
+            for dart in [self.incoming, self.outgoing, new_end] {
+                raw.unlink(Dim::One, dart)?;
+            }
+            raw.link(Dim::One, old_end, old_next)?;
+            raw.link(Dim::One, new_end, self.incoming)?;
+            raw.link(Dim::One, self.outgoing, new_next)
+        })?;
         Ok(())
     }
 }

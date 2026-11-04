@@ -9,7 +9,7 @@
 //! either the whole edit commits or the model is restored exactly as it was.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
@@ -243,9 +243,15 @@ pub trait MergeTopology<P: Payload> {
         Self: Sized,
     {
         let mut isolated = Model::new();
+        // A copy carries the source's solids verbatim and does not judge them:
+        // the source may be a model half way through an edit.
+        isolated.set_commit_checks(CommitChecks {
+            solid_orientation: false,
+        });
         let handle = isolated
             .transaction(|edit| Ok::<_, ModelEditError>(edit.merge(self)))
             .expect("isolating valid topology should produce a valid model");
+        isolated.set_commit_checks(CommitChecks::default());
         (isolated, handle)
     }
 }
@@ -288,6 +294,34 @@ pub struct Model<P: Payload = StandardPayload> {
     realizations: RealizationCache,
     #[serde(skip)]
     transaction: Option<Box<TransactionState<P>>>,
+    /// The first read this model could not answer since the active transaction
+    /// began. See [`Model::embedding_index`].
+    #[serde(skip)]
+    read_fault: Mutex<Option<ModelEditError>>,
+    #[serde(skip)]
+    commit_checks: CommitChecks,
+}
+
+/// Which post-conditions commit enforces on top of the structural ones.
+///
+/// The structural checks -- the map's axioms, the labelling, one raw cell per
+/// entity -- always run. These cost a pass over every solid the transaction
+/// touched, so they can be turned off for a model whose builders are trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommitChecks {
+    /// Every solid the transaction created or touched has closed, consistently
+    /// oriented shells whose normals point outward and whose signed volume has
+    /// the right sign. A transaction that breaks it fails to commit.
+    pub solid_orientation: bool,
+}
+
+impl Default for CommitChecks {
+    /// On in debug builds and in tests, off in release builds.
+    fn default() -> Self {
+        Self {
+            solid_orientation: cfg!(debug_assertions),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -360,6 +394,8 @@ impl<P: Payload> Clone for Model<P> {
             ownership: OnceLock::new(),
             realizations: RealizationCache::default(),
             transaction: None,
+            read_fault: Mutex::new(None),
+            commit_checks: self.commit_checks,
         }
     }
 }
@@ -387,7 +423,22 @@ impl<P: Payload> Model<P> {
             ownership: OnceLock::new(),
             realizations: RealizationCache::default(),
             transaction: None,
+            read_fault: Mutex::new(None),
+            commit_checks: CommitChecks::default(),
         }
+    }
+
+    /// Returns which post-conditions commit enforces.
+    pub fn commit_checks(&self) -> CommitChecks {
+        self.commit_checks
+    }
+
+    /// Chooses which post-conditions commit enforces on later transactions.
+    ///
+    /// The choice travels with the model, so a transaction's snapshot and the
+    /// copies taken of it enforce the same checks.
+    pub fn set_commit_checks(&mut self, checks: CommitChecks) {
+        self.commit_checks = checks;
     }
 
     /// Returns the pure map this model is laid over.
@@ -412,17 +463,57 @@ impl<P: Payload> Model<P> {
         &self.embedding
     }
 
+    /// Returns the dart-to-owner lookup derived from the embedding, or says
+    /// why the labelling does not describe this model's map.
+    ///
+    /// A committed model always has a consistent labelling, since commit
+    /// rejects one that is not. A model on an open edit can be anywhere
+    /// between two writes, and a labelling written by raw primitives need not
+    /// describe the map yet. The failure is never cached: the next read
+    /// rebuilds from whatever the labelling has become.
+    pub fn try_embedding_index(&self) -> Result<&EmbeddingIndex, EmbeddingError> {
+        if let Some(index) = self.ownership.get() {
+            return Ok(index);
+        }
+        let index = self.build_ownership()?;
+        Ok(self.ownership.get_or_init(|| index))
+    }
+
     /// Returns the dart-to-owner lookup derived from the embedding.
     ///
-    /// # Panics
-    ///
-    /// Panics if the labelling does not describe this model's map. Commit
-    /// rejects such a labelling, so a committed model always has one.
+    /// Views read through this. When the labelling does not describe the map,
+    /// which only an open edit can leave behind, the read cannot be answered:
+    /// it records that fault, which the transaction reports as its error
+    /// (rolling back) when the operation returns, and hands back an index that
+    /// owns nothing so the caller can run to its return without a panic. Code
+    /// that has to react to the failure where it happens calls
+    /// [`Self::try_embedding_index`].
     pub fn embedding_index(&self) -> &EmbeddingIndex {
-        self.ownership.get_or_init(|| {
-            self.build_ownership()
-                .expect("a committed model's labelling should describe its own map")
-        })
+        match self.try_embedding_index() {
+            Ok(index) => index,
+            Err(error) => {
+                self.record_read_fault(ModelEditError::InvalidEmbedding(error));
+                EmbeddingIndex::empty()
+            }
+        }
+    }
+
+    /// Keeps the first read the model could not answer, for the transaction
+    /// running on it to report.
+    pub(crate) fn record_read_fault(&self, fault: ModelEditError) {
+        let mut slot = self
+            .read_fault
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        slot.get_or_insert(fault);
+    }
+
+    /// Takes the recorded read fault, if any.
+    fn take_read_fault(&self) -> Option<ModelEditError> {
+        self.read_fault
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
     }
 
     /// Returns where each entity is anchored, as the classification reads it.
@@ -525,8 +616,31 @@ impl<P: Payload> Model<P> {
             snapshot: self.clone(),
             events: Vec::new(),
         }));
+        self.take_read_fault();
 
-        let result = operation(&mut ModelEdit::new(self));
+        // A panic that follows a recorded read fault is that fault's
+        // consequence: the builder carried on with an answer it could not
+        // use. It is reported as the fault. Any other panic rolls the model
+        // back, so a caller that catches it holds a valid model, and then
+        // continues to unwind.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            operation(&mut ModelEdit::new(self))
+        }));
+        let result = match outcome {
+            Ok(result) => result,
+            Err(payload) => {
+                let fault = self.take_read_fault();
+                self.rollback_transaction();
+                return match fault {
+                    Some(fault) => Err(E::from(fault)),
+                    None => std::panic::resume_unwind(payload),
+                };
+            }
+        };
+        if let Some(fault) = self.take_read_fault() {
+            self.rollback_transaction();
+            return Err(E::from(fault));
+        }
         match result {
             Ok(value) => match self.commit_active_transaction(policy) {
                 Ok(()) => {
@@ -561,7 +675,15 @@ impl<P: Payload> Model<P> {
             .transaction
             .take()
             .expect("an active transaction must exist while committing");
-        match commit_model_transaction(self, &transaction.snapshot, &transaction.events, policy) {
+        let committed =
+            commit_model_transaction(self, &transaction.snapshot, &transaction.events, policy);
+        // A read the commit could not answer is a failed commit, however the
+        // checks went: they validated a state they could not read.
+        let committed = committed.and_then(|()| match self.take_read_fault() {
+            Some(fault) => Err(fault),
+            None => Ok(()),
+        });
+        match committed {
             Ok(()) => {
                 self.revision = transaction.snapshot.revision + 1;
                 self.realizations = RealizationCache::default();

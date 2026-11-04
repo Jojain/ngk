@@ -212,7 +212,8 @@ fn validate_shell<P: Payload>(
     if shell.id() >= g.dart_count() {
         return Err(ModelValidationError::SolidShellOutOfBounds { solid, shell });
     }
-    let sheet = Sheet::from_dart(g, shell).expect("solid shell must have a registered sheet");
+    let sheet = Sheet::from_dart(g, shell)
+        .ok_or(ModelValidationError::SolidShellHasNoFace { solid, shell })?;
     Closed::new(sheet).ok_or(ModelValidationError::SolidShellOpen { solid, shell })?;
 
     Ok(())
@@ -234,7 +235,10 @@ fn validate_oriented_shell_volume<P: Payload>(
     shell: Dart,
     side: ShellSide,
 ) -> Result<(), ModelValidationError> {
-    let sheet = Sheet::from_dart(g, shell).expect("validated shell");
+    // `validate_shell` has just found this dart's sheet; it is read again
+    // because the closed view it returned does not hand its faces over.
+    let sheet = Sheet::from_dart(g, shell)
+        .ok_or(ModelValidationError::SolidShellHasNoFace { solid, shell })?;
     let faces = sheet
         .faces()
         .into_iter()

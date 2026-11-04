@@ -12,8 +12,10 @@ use super::embedding::{EmbeddingError, EntityOwner};
 use super::gmap::Dim;
 use super::payload::Payload;
 use super::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
+use super::sheet::Sheet;
 use super::validation::{
-    CellOccupancyError, GMapValidationError, validate_cell_occupancy, validate_gmap,
+    CellOccupancyError, GMapValidationError, ModelValidationError, validate_cell_occupancy,
+    validate_gmap, validate_solid_orientation,
 };
 use crate::model::{MergeTopology, Model};
 
@@ -396,6 +398,23 @@ pub enum ModelEditError {
     /// The embedding labels no longer describe the edited map.
     #[error("this edit produced a embedding that does not describe its map")]
     InvalidEmbedding(#[source] EmbeddingError),
+    /// An edit operator refused.
+    #[error(transparent)]
+    Operator(#[from] super::edit_operators::OperatorError),
+    /// A solid the transaction created or touched does not have a closed,
+    /// outward shell.
+    #[error("this edit left {solid:?} without a closed, outward shell")]
+    InvalidSolid {
+        solid: SolidKey,
+        #[source]
+        reason: ModelValidationError,
+    },
+    /// A view was read from a state whose scaffold does not hold together.
+    #[error("{entity:?} has no walkable boundary: {reason}")]
+    UnreadableBoundary {
+        entity: EntityOwner,
+        reason: String,
+    },
     /// A logical entity does not occupy exactly one raw cell of its own dimension.
     #[error("this edit broke logical cell occupancy")]
     InvalidCellOccupancy(#[source] CellOccupancyError),
@@ -416,7 +435,7 @@ pub enum ModelEditError {
 /// Validation, policy application, and rollback are owned by
 /// [`Model::transaction`](Model::transaction).
 pub struct ModelEdit<'g, P: Payload> {
-    model: &'g mut Model<P>,
+    pub(super) model: &'g mut Model<P>,
 }
 
 /// Identifies a topology-associated attribute in edit-lineage diagnostics.
@@ -1293,10 +1312,63 @@ where
     g.validate_embedding()
         .map_err(ModelEditError::InvalidEmbedding)?;
     validate_cell_occupancy(g).map_err(ModelEditError::InvalidCellOccupancy)?;
+    // The lookups cached while reconciling still name the identities it
+    // discarded, so the shells are read through fresh ones.
     g.invalidate_derived_indexes();
+    if g.commit_checks().solid_orientation {
+        validate_touched_solids(g, snapshot, events)?;
+    }
     let policy_events = resolve_policy_events(g, snapshot, events, &lineage);
     apply_policy_events(g, snapshot, policy_events, policy)?;
     g.materialize_derived_indexes();
+    Ok(())
+}
+
+/// Checks that every solid the transaction created or touched has closed,
+/// consistently oriented shells whose normals point outward.
+///
+/// A solid is touched when it is new, when its shells moved, or when a face it
+/// bounds was created or merged by the transaction's lineage. Solids the
+/// transaction left alone are not read: they passed the same check when the
+/// transaction that made them committed.
+fn validate_touched_solids<P: Payload>(
+    g: &Model<P>,
+    snapshot: &Model<P>,
+    events: &[EditEvent],
+) -> Result<(), ModelEditError> {
+    let changed_faces: HashSet<FaceKey> = events
+        .iter()
+        .filter_map(|event| match event {
+            EditEvent::Created {
+                key: EditKey::Face(face),
+                ..
+            }
+            | EditEvent::Merged {
+                survivor: EditKey::Face(face),
+                ..
+            } => Some(*face),
+            _ => None,
+        })
+        .collect();
+    for (solid, attr) in g.iter_solids() {
+        let moved = snapshot
+            .solid_attr(solid)
+            .is_none_or(|before| before.shells().ne(attr.shells()));
+        let touched = moved
+            || (!changed_faces.is_empty()
+                && attr.shells().any(|shell| {
+                    Sheet::from_dart(g, shell).is_some_and(|sheet| {
+                        sheet
+                            .faces()
+                            .iter()
+                            .any(|face| changed_faces.contains(&face.key()))
+                    })
+                }));
+        if touched {
+            validate_solid_orientation(g, solid)
+                .map_err(|reason| ModelEditError::InvalidSolid { solid, reason })?;
+        }
+    }
     Ok(())
 }
 

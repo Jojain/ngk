@@ -18,6 +18,10 @@ mod edge;
 mod edge_split;
 #[path = "topology/edit.rs"]
 mod edit;
+#[path = "topology/edit_operators.rs"]
+mod edit_operators;
+#[path = "topology/edit_safety.rs"]
+mod edit_safety;
 #[path = "topology/embedding.rs"]
 mod embedding;
 #[path = "topology/face.rs"]

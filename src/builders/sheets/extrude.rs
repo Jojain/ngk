@@ -1,3 +1,4 @@
+use crate::geometry::Frame;
 use crate::geometry::TrimmedCurve2;
 use crate::geometry::parameter::Fraction;
 use std::collections::HashMap;
@@ -411,7 +412,9 @@ fn lateral_plane(
         return Err(ExtrudeError::DegenerateSweep { dart });
     }
     let in_plane = perpendicular_component(direction, edge);
-    Ok(Plane::from_xy(start, edge, in_plane))
+    Frame::try_from_xy(start, edge, in_plane)
+        .map(Plane::from_frame)
+        .map_err(|_| ExtrudeError::DegenerateSweep { dart })
 }
 
 fn quad_pcurves(uv: &[Point2; 4], darts: &[Dart]) -> HashMap<Dart, TrimmedCurve2> {

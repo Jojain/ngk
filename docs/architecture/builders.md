@@ -57,6 +57,18 @@ is limited to pure creation operations and does not apply to edits,
 transformations, splits, merges, or operations that consume or modify an
 existing logical entity.
 
+## Rewiring inside a builder
+
+A builder reads its own writes: it cuts an edge and then reads the face that
+edge bounds. So the steps it takes between two reads must leave the labelling
+describing the map. Take the step as an edit operator (`mark_edge`, `cut_edge`,
+`sew_edges`, `unsew_edge`), which relabels with the rewiring, and a read after it
+is valid. A rewiring no operator spells goes in `edit.deferred(|raw| ..)`, which
+offers no view and is checked when it closes. Only a builder that does neither
+leaves a read to meet an inconsistent labelling, and then the read records a
+fault and the transaction fails with it instead of panicking; see
+[transactions.md](transactions.md#reads-on-an-open-edit).
+
 ## Builder return contract
 
 Every public mutating builder returns a structured operation result:

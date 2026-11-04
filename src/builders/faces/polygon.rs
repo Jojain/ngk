@@ -9,7 +9,7 @@ use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::FaceKey;
-use crate::topology::{EditKey, ModelEdit, ModelEditError};
+use crate::topology::{EditKey, ModelEdit};
 
 pub fn add_polygon_with_holes<P: Payload>(
     g: &mut Model<P>,
@@ -32,7 +32,7 @@ pub(crate) fn add_polygon_with_holes_edit<P: Payload>(
         validate_polygon(hole)?;
     }
 
-    let outer_profile = add_polygon_edit(edit, outer);
+    let outer_profile = add_polygon_edit(edit, outer)?;
     let outer_loop = edit.profile_attr_unchecked(outer_profile).dart;
     let mut inner_loops = Vec::with_capacity(holes.len());
     let outer_profile =
@@ -58,7 +58,7 @@ pub(crate) fn add_polygon_with_holes_edit<P: Payload>(
             }
             false => hole,
         };
-        let inner_profile = add_polygon_edit(edit, hole);
+        let inner_profile = add_polygon_edit(edit, hole)?;
         let inner_loop = edit.profile_attr_unchecked(inner_profile).dart;
         let inner_profile = Profile::from_dart(edit, inner_loop)
             .expect("inner loop must have a registered profile");
@@ -107,36 +107,35 @@ pub(crate) fn validate_polygon(points: &[Point3]) -> Result<(), FaceCreationErro
 /// returned with free boundary, ready to be stitched to neighbors.
 ///
 /// Returns the profile key whose stored dart defines the polygon's orientation.
+///
+/// # Panics
+///
+/// When fewer than three corners are given; [`crate::modeling::faces::polygon`]
+/// reports that as an error instead.
 pub fn add_polygon<P: Payload>(
     g: &mut Model<P>,
     corners: &[Point3],
 ) -> crate::topology::shape_keys::ProfileKey {
-    g.transaction(|edit| Ok::<_, ModelEditError>(add_polygon_edit(edit, corners)))
-        .expect("fresh polygon operation must commit")
+    g.transaction(|edit| add_polygon_edit(edit, corners))
+        .expect("a polygon of at least three corners always commits")
 }
 
 /// Creates and links polygon segments without opening another transaction scope.
 pub(crate) fn add_polygon_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     corners: &[Point3],
-) -> crate::topology::shape_keys::ProfileKey {
-    assert!(
-        corners.len() >= 3,
-        "add_polygon requires at least 3 corners, got {}",
-        corners.len()
-    );
+) -> Result<crate::topology::shape_keys::ProfileKey, FaceCreationError> {
+    validate_polygon(corners)?;
     let n = corners.len();
     let darts: Vec<Dart> = (0..2 * n).map(|_| edit.add_dart()).collect();
 
     for i in 0..n {
-        edit.sew(Dim::Zero, darts[2 * i], darts[2 * i + 1])
-            .expect("fresh polygon edge darts must be alpha0-free");
+        edit.sew(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
     }
     for i in 0..n {
         let a = darts[2 * i + 1];
         let b = darts[(2 * i + 2) % (2 * n)];
-        edit.sew(Dim::One, a, b)
-            .expect("fresh polygon boundary darts must be alpha1-free");
+        edit.sew(Dim::One, a, b)?;
     }
 
     for i in 0..n {
@@ -149,7 +148,7 @@ pub(crate) fn add_polygon_edit<P: Payload>(
         let curve = Curve::line(corners[i], corners[(i + 1) % n]);
         edit.add_edge(EdgeAttr::new(edge_dart, curve));
     }
-    edit.add_profile(crate::topology::attributes::ProfileAttr::new(darts[0]))
+    Ok(edit.add_profile(crate::topology::attributes::ProfileAttr::new(darts[0])))
 }
 
 /// Flips a face's orientation in place.

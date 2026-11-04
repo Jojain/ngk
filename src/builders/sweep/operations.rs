@@ -1,6 +1,6 @@
 //! Sweep operations and their edit-scoped implementation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::f64::consts::PI;
 
 use nalgebra::{Rotation3, UnitVector3, Vector3};
@@ -9,6 +9,7 @@ use radians::Rad64;
 use crate::builders::edges::split_face_boundary_edge;
 use crate::builders::faces::reverse_face_winding_edit;
 use crate::builders::transform::rigid;
+use crate::geometry::IntoUnit;
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{
     ANGULAR_TOLERANCE, Axis3, Curve, Degree, Frame, LINEAR_TOLERANCE, NurbsCurve, NurbsSurface,
@@ -20,15 +21,14 @@ use crate::topology::attributes::{
     EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
 };
 use crate::topology::edge::Edge;
-use crate::topology::edit::{EditKey, ModelEdit};
-use crate::topology::embedding::EntityOwner;
+use crate::topology::edit::{EditKey, ModelEdit, ModelEditError};
+use crate::topology::edit_operators::OperatorError;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
-use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey, VertexKey};
+use crate::topology::shape_keys::{EdgeKey, FaceKey, SolidKey};
 use crate::topology::solid::Solid;
-use crate::topology::vertex::Vertex;
 
 use super::SweepError;
 
@@ -411,12 +411,10 @@ impl SweepPlan {
             }
         }
 
-        let first = built_wall_groups
-            .first()
-            .expect("a nonempty spine builds a wall group");
-        let last = built_wall_groups
-            .last()
-            .expect("a nonempty spine builds a wall group");
+        let (Some(first), Some(last)) = (built_wall_groups.first(), built_wall_groups.last())
+        else {
+            return Err(SweepError::EmptySpine);
+        };
         sew_cap(edit, self.face, first, false)?;
         sew_cap(edit, end_cap, last, true)?;
 
@@ -453,7 +451,7 @@ fn plan_wall_groups(spine: &[TrimmedCurve], options: SweepOptions) -> Result<Pat
     let first_tangent = tangent(&spine[0], Fraction::START)?;
     let first_point = spine[0].start();
     let mut current = match options.frame {
-        SweepFrame::Parallel => initial_frame(first_point, first_tangent),
+        SweepFrame::Parallel => initial_frame(first_point, first_tangent)?,
         SweepFrame::Frenet => frenet_frame(&spine[0], Fraction::START, first_tangent)?,
         SweepFrame::Axial(axis) => axial_frame(axis, first_point, Fraction::START)?,
     };
@@ -463,6 +461,8 @@ fn plan_wall_groups(spine: &[TrimmedCurve], options: SweepOptions) -> Result<Pat
 
     for (index, segment) in spine.iter().enumerate() {
         let frames = segment_frames(segment, current.clone(), options)?;
+        // `segment_frames` takes at least one interval, so it returns at least
+        // two frames, the last of them at the segment's end.
         let incoming = frames
             .last()
             .expect("a segment has endpoint frames")
@@ -519,6 +519,7 @@ fn plan_wall_groups(spine: &[TrimmedCurve], options: SweepOptions) -> Result<Pat
                         normal: bisector,
                         along: incoming.z_dir,
                     };
+                    // One placement per frame, and there are at least two.
                     *placements.last_mut().expect("endpoint placement") = miter.clone();
                     pending_start = miter;
                 }
@@ -542,16 +543,29 @@ fn plan_wall_groups(spine: &[TrimmedCurve], options: SweepOptions) -> Result<Pat
         }
         current = outgoing;
     }
+    // The loop returns from its last segment, and a spine has one: an empty
+    // one is refused where the plan starts.
     unreachable!("the final segment returns the plan")
 }
 
-fn initial_frame(origin: Point3, tangent: UnitVector3<f64>) -> Frame {
+/// The frame at `origin` with `z` along `tangent` and `x` along `x_dir`, or
+/// the reason those two span none.
+fn frame_at(
+    origin: Point3,
+    x_dir: impl IntoUnit<3>,
+    tangent: impl IntoUnit<3>,
+) -> Result<Frame, SweepError> {
+    Frame::try_from_xz(origin, x_dir, tangent)
+        .map_err(|source| SweepError::DegenerateFrame { source })
+}
+
+fn initial_frame(origin: Point3, tangent: UnitVector3<f64>) -> Result<Frame, SweepError> {
     let seed = if tangent.dot(&Vector3::x()).abs() < 0.9 {
         Vector3::x()
     } else {
         Vector3::y()
     };
-    Frame::from_xz(origin, seed, tangent)
+    frame_at(origin, seed, tangent)
 }
 
 fn tangent(segment: &TrimmedCurve, fraction: Fraction) -> Result<UnitVector3<f64>, SweepError> {
@@ -582,7 +596,7 @@ fn segment_frames(
         let frame = match options.frame {
             SweepFrame::Parallel => {
                 if sample == 0 {
-                    Frame::from_xz(point, previous.x_dir, direction)
+                    frame_at(point, previous.x_dir, direction)?
                 } else {
                     transported_frame(&previous, point, direction, fraction.value())?
                 }
@@ -607,7 +621,7 @@ fn frenet_frame(
         UnitVector3::try_new(normal, LINEAR_TOLERANCE).ok_or(SweepError::SpineDoesNotCurve {
             fraction: fraction.value(),
         })?;
-    Ok(Frame::from_xz(segment.point_at(fraction), normal, tangent))
+    frame_at(segment.point_at(fraction), normal, tangent)
 }
 
 /// The frame at `point` whose `x` runs out from `axis` and whose `z` along it.
@@ -617,7 +631,7 @@ fn axial_frame(axis: Axis3, point: Point3, fraction: Fraction) -> Result<Frame, 
             fraction: fraction.value(),
         },
     )?;
-    Ok(Frame::from_xz(point, radial, axis.direction))
+    frame_at(point, radial, axis.direction)
 }
 
 fn transported_frame(
@@ -632,7 +646,7 @@ fn transported_frame(
             to: fraction,
         },
     )?;
-    Ok(Frame::from_xz(point, rotation * *previous.x_dir, tangent))
+    frame_at(point, rotation * *previous.x_dir, tangent)
 }
 
 fn turn_frame(
@@ -659,7 +673,7 @@ fn turn_frame(
     let axis = Axis3::new(incoming.origin, axis_direction);
     let rotation = Rotation3::from_axis_angle(&axis.direction, angle);
     Ok((
-        Frame::from_xz(incoming.origin, rotation * *incoming.x_dir, tangent),
+        frame_at(incoming.origin, rotation * *incoming.x_dir, tangent)?,
         angle,
         axis,
     ))
@@ -1090,69 +1104,27 @@ fn cap_dart_along<P: Payload>(model: &Model<P>, cap: FaceKey, side: Dart) -> Opt
         })
 }
 
+/// Sews the walls' edges at `survivor` and `removed` into one, keeping what
+/// each carries. The edit operator does the fusing and relabelling, so the
+/// model is valid when this returns and again when it fails.
 fn sew_edges<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     survivor: Dart,
     removed: Dart,
 ) -> Result<(), SweepError> {
-    let edge_at = |model: &Model<P>, dart: Dart| {
-        Edge::from_dart(model, dart)
-            .map(|edge| edge.key())
-            .ok_or(SweepError::MissingEdge { dart })
-    };
-    let survivor_edge = edge_at(edit, survivor)?;
-    let removed_edge = edge_at(edit, removed)?;
-    let pairs = [
-        (survivor, removed),
-        (
-            edit.alpha(Dim::Zero, survivor),
-            edit.alpha(Dim::Zero, removed),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(keep, drop)| {
-        Some((
-            Vertex::from_dart(edit, keep)?.key(),
-            Vertex::from_dart(edit, drop)?.key(),
-        ))
-    })
-    .collect::<Vec<_>>();
-    let closes = [survivor, removed]
-        .into_iter()
-        .any(|dart| edge_owned_closure(edit, dart).is_some());
-    edit.sew(Dim::Two, survivor, removed)
-        .map_err(|_| SweepError::SewFailed {
-            dim: Dim::Two,
-            first: survivor,
-            second: removed,
-        })?;
-    if survivor_edge != removed_edge {
-        edit.merge_edges_into(survivor_edge, removed_edge);
-        if closes {
-            edit.disown_cell(Dim::Zero, survivor);
-            edit.own_cell(Dim::Zero, survivor, EntityOwner::Edge(survivor_edge));
-        }
-    }
-    let mut merged = HashSet::<VertexKey>::new();
-    for (keep, drop) in pairs {
-        if keep != drop && merged.insert(drop) {
-            edit.merge_vertices_into(keep, drop);
-        }
-    }
-    Ok(())
-}
-
-fn edge_owned_closure<P: Payload>(edit: &ModelEdit<'_, P>, dart: Dart) -> Option<EdgeKey> {
-    if Vertex::from_dart(edit, dart).is_some() {
-        return None;
-    }
-    edit.orbit(dart, edit.orbit_indices(Dim::Zero))
-        .find_map(
-            |anchor| match edit.embedding().owner_at(Dim::Zero, anchor) {
-                Some(EntityOwner::Edge(key)) => Some(key),
-                _ => None,
+    edit.sew_edges(survivor, removed)
+        .map(|_| ())
+        .map_err(|error| match error {
+            ModelEditError::Operator(OperatorError::NotAnEdgeDart { dart }) => {
+                SweepError::MissingEdge { dart }
+            }
+            ModelEditError::Operator(OperatorError::NotSewable { .. }) => SweepError::SewFailed {
+                dim: Dim::Two,
+                first: survivor,
+                second: removed,
             },
-        )
+            other => SweepError::ModelEditFailed(other),
+        })
 }
 
 fn moved_face<P: Payload>(

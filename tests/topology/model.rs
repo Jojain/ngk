@@ -13,7 +13,7 @@ use ngk::builders::faces::add_polygon;
 use ngk::builders::profiles::add_rectangle;
 use ngk::builders::sheets::add_extruded_profile;
 use ngk::geometry::{Curve, Plane, Point2, Point3, Surface, TrimmedCurve2};
-use ngk::model::{Cell0, Cell1, Cell2, MergeTopology, Model};
+use ngk::model::{Cell0, Cell1, Cell2, CommitChecks, MergeTopology, Model};
 use ngk::modeling::solids;
 use ngk::topology::ModelEditError;
 use ngk::topology::attributes::{FaceAttr, SheetAttr, SolidAttr};
@@ -234,12 +234,19 @@ fn merge_profile_sheet_and_solid_return_remapped_darts() {
     assert_eq!(merged_sheet, Dart::new(0));
     assert_eq!(sheet_target.dart_count(), 6);
 
+    // The solid named here is a triangle's boundary, there only to give the
+    // copy a shell dart to renumber; it is not a closed shell.
+    let unchecked = CommitChecks {
+        solid_orientation: false,
+    };
+    source.set_commit_checks(unchecked);
     let solid_key = source
         .transaction(|edit| {
             Ok::<_, ModelEditError>(edit.add_solid(SolidAttr::new(profile_dart, None)))
         })
         .unwrap();
     let mut second_target = Model::<StandardPayload>::new();
+    second_target.set_commit_checks(unchecked);
     let solid = source.solid_unchecked(solid_key);
     let merged_solid = second_target
         .transaction(|edit| Ok::<_, ModelEditError>(edit.merge(solid)))
