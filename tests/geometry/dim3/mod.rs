@@ -6,6 +6,7 @@ mod curves;
 mod frame;
 mod intersections;
 mod nurbs;
+mod offset;
 mod sphere;
 mod surfaces;
 mod torus;

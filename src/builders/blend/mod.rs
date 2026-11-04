@@ -15,7 +15,7 @@ mod execute;
 mod law;
 mod network;
 mod operations;
-mod pcurve;
+pub(crate) mod pcurve;
 mod section;
 mod solid;
 mod surgery;

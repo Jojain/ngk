@@ -104,3 +104,29 @@ cone}.
 A section's 3D curve is exact; its pcurve is exact only where a closed form
 exists for it on that surface (a plane, an isoline), and a measured fit
 otherwise.
+
+## Offsets (`geometry/dim3/offset.rs`)
+
+`Surface::offset(d)` moves a surface `d` along `normal_at`;
+`Curve::offset(D, d)` moves a curve `d` along the unit vector `T × D`, for a
+reference direction `D` the caller names. Both are defined for every variant:
+they fail only for geometric reasons, never because of a support's type. For
+a curve in a plane normal to `D` this is the in-plane offset, outward for a
+loop counter-clockwise about `D`. The `_over` forms take the window a fit
+spans when the domain is unbounded.
+
+- **The parameterization is kept**: the offset at `(u, v)` is the source's
+  point there moved along the source's normal there. A face's pcurves stay
+  valid on its offset surface.
+- **Exact** for planes, cylinders, spheres, cones (on the nappe they are built
+  on), tori and lines, for circles and helices offset along their axis, for
+  extrusions (the profile offsets along the extrusion direction), and for
+  revolutions whose profile lies in a plane through the axis; the last two
+  are exact when the profile's own offset is.
+- **Fitted** otherwise: cubic interpolation of samples at native parameters,
+  refined until within `OFFSET_FIT_TOLERANCE` between them.
+- **Refused, never trimmed**: `Collapsed` when a radius is consumed, `Folded`
+  where the distance exceeds a radius of curvature on the side moved toward,
+  `TangentAlongDirection` where `T × D` vanishes, `Unbounded` when a fit has
+  no finite window. Which part of a self-crossing offset survives is
+  for the topological operation to decide.

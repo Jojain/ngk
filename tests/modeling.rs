@@ -13,6 +13,8 @@ mod faces;
 mod heal;
 #[path = "modeling/loft.rs"]
 mod loft;
+#[path = "modeling/offset.rs"]
+mod offset;
 #[path = "modeling/payload.rs"]
 mod payload;
 #[path = "modeling/profiles.rs"]

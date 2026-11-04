@@ -31,6 +31,8 @@ mod faces;
 mod fillet;
 #[path = "builders/loft.rs"]
 mod loft;
+#[path = "builders/offset.rs"]
+mod offset;
 #[path = "builders/profiles.rs"]
 mod profiles;
 #[path = "builders/removal.rs"]
