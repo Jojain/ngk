@@ -7,14 +7,18 @@
 //! runs such a sequence against a [`RawEdit`], the edit with its views taken
 //! away. A view needs the embedding index, and the index needs the labelling to
 //! describe the map, which is exactly what the surgery is allowed to break; so
-//! a `RawEdit` offers the primitives and the stored attributes and nothing that
-//! walks the map through the labelling. When the block returns, the map's
+//! a `RawEdit` offers the primitives -- the map's, the labelling's, and the
+//! registration and removal of entities -- and the stored attributes, and
+//! nothing that walks the map through the labelling. When the block returns, the map's
 //! axioms and the labelling are checked, like a database checks its deferred
 //! constraints at the end of the statement, and a block that left either broken
 //! is an error that names the block rather than a later read.
 
+use std::collections::HashMap;
+
+use super::IsolatedDart;
 use super::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, SolidAttr, VertexAttr};
-use super::edit::{ModelEdit, ModelEditError};
+use super::edit::{EditKey, ModelEdit, ModelEditError};
 use super::embedding::{Embedding, EntityOwner};
 use super::gmap::{Dart, Dim, GMap};
 use super::payload::Payload;
@@ -93,6 +97,100 @@ impl<P: Payload> RawEdit<'_, '_, P> {
     /// Unlabels the raw `dimension`-cell containing `dart`.
     pub fn disown_cell(&mut self, dimension: Dim, dart: Dart) {
         self.edit.disown_cell(dimension, dart);
+    }
+
+    /// Removes isolated darts and remaps every retained reference, returning
+    /// where each moved dart went.
+    pub fn remove_isolated_darts(&mut self, darts: Vec<IsolatedDart>) -> HashMap<Dart, Dart> {
+        self.edit.remove_isolated_darts(darts)
+    }
+
+    /// The canonical representative of the cell containing `dart`, read off
+    /// the map alone.
+    pub fn cell_representative(&self, dart: Dart, dim: Dim) -> Dart {
+        self.edit.cell_representative(dart, dim)
+    }
+
+    /// Registers a vertex; see [`ModelEdit::add_vertex`].
+    pub fn add_vertex(&mut self, vertex: VertexAttr<P::V>) -> VertexKey {
+        self.edit.add_vertex(vertex)
+    }
+
+    /// Registers a vertex produced by entities of another kind.
+    pub fn add_vertex_derived_from(
+        &mut self,
+        sources: Vec<EditKey>,
+        vertex: VertexAttr<P::V>,
+    ) -> VertexKey {
+        self.edit.add_vertex_derived_from(sources, vertex)
+    }
+
+    /// Registers an edge; see [`ModelEdit::add_edge`].
+    pub fn add_edge(&mut self, edge: EdgeAttr<P::E>) -> EdgeKey {
+        self.edit.add_edge(edge)
+    }
+
+    /// Registers an edge produced by entities of another kind.
+    pub fn add_edge_derived_from(
+        &mut self,
+        sources: Vec<EditKey>,
+        edge: EdgeAttr<P::E>,
+    ) -> EdgeKey {
+        self.edit.add_edge_derived_from(sources, edge)
+    }
+
+    /// Registers a profile; see [`ModelEdit::add_profile`].
+    pub fn add_profile(&mut self, profile: ProfileAttr<P::Profile>) -> ProfileKey {
+        self.edit.add_profile(profile)
+    }
+
+    /// Registers a profile produced by entities of another kind.
+    pub fn add_profile_derived_from(
+        &mut self,
+        sources: Vec<EditKey>,
+        profile: ProfileAttr<P::Profile>,
+    ) -> ProfileKey {
+        self.edit.add_profile_derived_from(sources, profile)
+    }
+
+    /// Registers a face; see [`ModelEdit::add_face`].
+    pub fn add_face(&mut self, face: FaceAttr<P::F>) -> FaceKey {
+        self.edit.add_face(face)
+    }
+
+    /// Registers a face produced by entities of another kind.
+    pub fn add_face_derived_from(
+        &mut self,
+        sources: Vec<EditKey>,
+        face: FaceAttr<P::F>,
+    ) -> FaceKey {
+        self.edit.add_face_derived_from(sources, face)
+    }
+
+    /// Declares that `removed` merged into `survivor`; see
+    /// [`ModelEdit::merge_vertices_into`].
+    pub fn merge_vertices_into(&mut self, survivor: VertexKey, removed: VertexKey) {
+        self.edit.merge_vertices_into(survivor, removed);
+    }
+
+    /// Removes a vertex and whatever it claimed.
+    pub fn remove_vertex(&mut self, key: VertexKey) -> Option<VertexAttr<P::V>> {
+        self.edit.remove_vertex(key)
+    }
+
+    /// Removes an edge and whatever it claimed.
+    pub fn remove_edge(&mut self, key: EdgeKey) -> Option<EdgeAttr<P::E>> {
+        self.edit.remove_edge(key)
+    }
+
+    /// Removes a profile.
+    pub fn remove_profile(&mut self, key: ProfileKey) -> Option<ProfileAttr<P::Profile>> {
+        self.edit.remove_profile(key)
+    }
+
+    /// Removes a face and whatever it claimed.
+    pub fn remove_face(&mut self, key: FaceKey) -> Option<FaceAttr<P::F>> {
+        self.edit.remove_face(key)
     }
 
     /// The map as it stands, mid-surgery.

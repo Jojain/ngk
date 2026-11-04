@@ -19,7 +19,7 @@ use crate::topology::face::Loop;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{FaceKey, SolidKey};
-use crate::topology::{ModelEdit, ModelEditError};
+use crate::topology::{ModelEdit, ModelEditError, RawEdit};
 
 /// One end of a cut, directed from an arriving boundary dart into the cut.
 /// Moving it changes only scaffold connectivity; the boundary keeps its keys.
@@ -120,6 +120,12 @@ impl CutAttachment {
 /// is what hides it from [`boundary_cycles`] and lets [`recover_region`] cross
 /// it.
 ///
+/// The splice runs in a deferred block: between unlinking the two closures
+/// and linking the cut's last use, the face's darts form no loop a view could
+/// walk, and the block's close checks the map and the labelling once the cut
+/// is whole. A caller already inside a deferred block uses
+/// [`splice_cut_between_loops`].
+///
 /// [`boundary_cycles`]: crate::topology::embedding::boundary_cycles
 /// [`recover_region`]: crate::topology::embedding::recover_region
 pub(crate) fn cut_between_loops<P: Payload>(
@@ -128,35 +134,45 @@ pub(crate) fn cut_between_loops<P: Payload>(
     first: Dart,
     second: Dart,
 ) -> Result<(), ModelEditError> {
-    let first_end = edit.alpha(Dim::Zero, first);
-    let second_end = edit.alpha(Dim::Zero, second);
+    edit.deferred(|raw| splice_cut_between_loops(raw, face, first, second))
+}
+
+/// [`cut_between_loops`] inside a deferred block the caller already holds.
+pub(crate) fn splice_cut_between_loops<P: Payload>(
+    raw: &mut RawEdit<'_, '_, P>,
+    face: FaceKey,
+    first: Dart,
+    second: Dart,
+) -> Result<(), ModelEditError> {
+    let first_end = raw.topology().alpha(Dim::Zero, first);
+    let second_end = raw.topology().alpha(Dim::Zero, second);
     // Where each walk went next, read before the splice takes those links over.
     // On a one-edge loop this is the loop's own dart again, which is why the
     // single-edge case needs no special handling.
-    let after_first = edit.alpha(Dim::One, first_end);
-    let after_second = edit.alpha(Dim::One, second_end);
+    let after_first = raw.topology().alpha(Dim::One, first_end);
+    let after_second = raw.topology().alpha(Dim::One, second_end);
 
     for dart in [first_end, second_end] {
-        edit.unlink(Dim::One, dart)?;
+        raw.unlink(Dim::One, dart)?;
     }
 
-    let cut_out = [edit.add_dart(), edit.add_dart()];
-    let cut_back = [edit.add_dart(), edit.add_dart()];
+    let cut_out = [raw.add_dart(), raw.add_dart()];
+    let cut_back = [raw.add_dart(), raw.add_dart()];
     for use_ in [cut_out, cut_back] {
-        edit.link(Dim::Zero, use_[0], use_[1])?;
+        raw.link(Dim::Zero, use_[0], use_[1])?;
     }
 
-    edit.link(Dim::One, first_end, cut_out[0])?;
-    edit.link(Dim::One, cut_out[1], after_second)?;
-    edit.link(Dim::One, second_end, cut_back[0])?;
-    edit.link(Dim::One, cut_back[1], after_first)?;
+    raw.link(Dim::One, first_end, cut_out[0])?;
+    raw.link(Dim::One, cut_out[1], after_second)?;
+    raw.link(Dim::One, second_end, cut_back[0])?;
+    raw.link(Dim::One, cut_back[1], after_first)?;
 
     // The two uses are the same raw edge seen from its two sides, which is what
     // `turn` follows when the walk crosses the cut.
-    edit.link(Dim::Two, cut_out[0], cut_back[1])?;
-    edit.link(Dim::Two, cut_out[1], cut_back[0])?;
+    raw.link(Dim::Two, cut_out[0], cut_back[1])?;
+    raw.link(Dim::Two, cut_out[1], cut_back[0])?;
 
-    edit.own_cell(Dim::One, cut_out[0], EntityOwner::Face(face));
+    raw.own_cell(Dim::One, cut_out[0], EntityOwner::Face(face));
     Ok(())
 }
 
@@ -172,6 +188,10 @@ pub(crate) fn cut_between_loops<P: Payload>(
 /// the second polygon before the `alpha3` sew aligns each attachment with the
 /// other use of the same shell edge. This is the two-shell pillow construction
 /// generalized to any non-empty set of shells.
+///
+/// Each shell edge is opened before the pillow closes it again, so the whole
+/// construction is one deferred block, checked once the pillow is sewn and
+/// owned.
 pub(crate) fn cut_between_shells<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     solid: SolidKey,
@@ -180,38 +200,40 @@ pub(crate) fn cut_between_shells<P: Payload>(
     if shells.len() < 2 {
         return Ok(());
     }
+    edit.deferred(|raw| {
+        let slots = 2 * shells.len();
+        let front = polygon(raw, slots)?;
+        let back = polygon(raw, slots)?;
 
-    let slots = 2 * shells.len();
-    let front = polygon(edit, slots)?;
-    let back = polygon(edit, slots)?;
+        for (index, &shell) in shells.iter().enumerate() {
+            let map = raw.topology();
+            let first = [shell, map.alpha(Dim::Zero, shell)];
+            let second = [
+                map.alpha(Dim::Zero, map.alpha(Dim::Two, shell)),
+                map.alpha(Dim::Two, shell),
+            ];
+            raw.unlink(Dim::Two, first[0])?;
+            raw.unlink(Dim::Two, first[1])?;
 
-    for (index, &shell) in shells.iter().enumerate() {
-        let first = [shell, edit.alpha(Dim::Zero, shell)];
-        let second = [
-            edit.alpha(Dim::Zero, edit.alpha(Dim::Two, shell)),
-            edit.alpha(Dim::Two, shell),
-        ];
-        edit.unlink(Dim::Two, first[0])?;
-        edit.unlink(Dim::Two, first[1])?;
+            let front_slot = 2 * index;
+            let back_slot = reflected_slot(front_slot, slots);
+            link_edge_uses(raw, first, front[front_slot])?;
+            link_edge_uses(raw, second, back[back_slot])?;
+        }
 
-        let front_slot = 2 * index;
-        let back_slot = reflected_slot(front_slot, slots);
-        link_edge_uses(edit, first, front[front_slot])?;
-        link_edge_uses(edit, second, back[back_slot])?;
-    }
+        for slot in (1..slots).step_by(2) {
+            link_edge_uses(raw, front[slot], back[reflected_slot(slot, slots)])?;
+        }
 
-    for slot in (1..slots).step_by(2) {
-        link_edge_uses(edit, front[slot], back[reflected_slot(slot, slots)])?;
-    }
+        raw.sew(Dim::Three, front[0][0], back[0][1])?;
 
-    edit.sew(Dim::Three, front[0][0], back[0][1])?;
-
-    let owner = EntityOwner::Solid(solid);
-    edit.own_cell(Dim::Two, front[0][0], owner);
-    for slot in (1..slots).step_by(2) {
-        edit.own_cell(Dim::One, front[slot][0], owner);
-    }
-    Ok(())
+        let owner = EntityOwner::Solid(solid);
+        raw.own_cell(Dim::Two, front[0][0], owner);
+        for slot in (1..slots).step_by(2) {
+            raw.own_cell(Dim::One, front[slot][0], owner);
+        }
+        Ok(())
+    })
 }
 
 fn reflected_slot(slot: usize, slots: usize) -> usize {
@@ -219,27 +241,27 @@ fn reflected_slot(slot: usize, slots: usize) -> usize {
 }
 
 fn link_edge_uses<P: Payload>(
-    edit: &mut ModelEdit<'_, P>,
+    raw: &mut RawEdit<'_, '_, P>,
     first: [Dart; 2],
     second: [Dart; 2],
 ) -> Result<(), ModelEditError> {
-    edit.link(Dim::Two, first[0], second[1])?;
-    edit.link(Dim::Two, first[1], second[0])?;
+    raw.link(Dim::Two, first[0], second[1])?;
+    raw.link(Dim::Two, first[1], second[0])?;
     Ok(())
 }
 
 fn polygon<P: Payload>(
-    edit: &mut ModelEdit<'_, P>,
+    raw: &mut RawEdit<'_, '_, P>,
     slots: usize,
 ) -> Result<Vec<[Dart; 2]>, ModelEditError> {
     let uses = (0..slots)
-        .map(|_| [edit.add_dart(), edit.add_dart()])
+        .map(|_| [raw.add_dart(), raw.add_dart()])
         .collect::<Vec<_>>();
     for use_ in &uses {
-        edit.link(Dim::Zero, use_[0], use_[1])?;
+        raw.link(Dim::Zero, use_[0], use_[1])?;
     }
     for slot in 0..slots {
-        edit.link(Dim::One, uses[slot][1], uses[(slot + 1) % slots][0])?;
+        raw.link(Dim::One, uses[slot][1], uses[(slot + 1) % slots][0])?;
     }
     Ok(uses)
 }

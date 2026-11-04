@@ -117,12 +117,21 @@ reads above are what stands between its mistake and a panic.
 ## Deferred surgery
 
 `edit.deferred(|raw| ..)` runs a rewiring that passes through invalid states.
-`RawEdit` has the primitives and the stored attributes but no view, which the
-type enforces: it does not dereference to `Model`, so nothing in the block can
+`RawEdit` has the primitives -- linking and sewing darts, labelling cells,
+registering, merging and removing entities, compacting isolated darts -- and the
+stored attributes, but no view, which the type enforces: it does not dereference to `Model`, so nothing in the block can
 walk the map through a labelling that is allowed to be wrong. When the block
 returns, the map's involution axioms and the labelling are checked, as a
 database checks its deferred constraints at the end of the statement; a block
 that leaves either broken returns an error and its transaction rolls back.
+
+The block reads the map (`raw.topology()`) and nothing derived from the
+labelling, so a builder reads what it needs first and then opens the block. A
+helper that runs inside other builders' blocks takes the `RawEdit`
+(`splice_cut_between_loops`), and its `ModelEdit` form opens a block of its own
+(`cut_between_loops`). The close costs one pass over the map and one rebuild of
+the embedding index, so a builder opens one block per rewiring, not one per
+primitive.
 
 ## Post-conditions at commit
 
