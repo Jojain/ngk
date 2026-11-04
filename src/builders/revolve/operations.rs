@@ -25,6 +25,7 @@ use crate::topology::attributes::{
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::edit::{EditKey, ModelEdit, ModelEditError};
+use crate::topology::edit_operators::OperatorError;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
@@ -52,6 +53,9 @@ pub enum RevolveError {
 
     #[error("Missing face for key {key:?}")]
     MissingFace { key: FaceKey },
+
+    #[error("No profile is registered on the loop at dart {dart:?}")]
+    MissingProfile { dart: Dart },
 
     #[error("Edge {key:?} must be isolated before it can be consumed by a full revolution")]
     SourceEdgeNotIsolated { key: EdgeKey },
@@ -1043,33 +1047,42 @@ fn validate_consumable_closed_source_edge<P: Payload>(
 ///
 /// Its two darts are the whole loop, so unlinking the two involutions that hold
 /// them together isolates both, and the result of the revolution has no
-/// boundary for either to become.
+/// boundary for either to become. What the loop carries is read first; the
+/// removal runs in a deferred block, since the loop's identities go before the
+/// darts they name.
 fn consume_closed_source_edge<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
 ) -> Result<(), RevolveError> {
     let start = source.dart;
     let end = edit.alpha(Dim::Zero, start);
+    let profile = Profile::from_dart(edit, start).map(|profile| profile.key());
 
-    if let Some(profile) = Profile::from_dart(edit, start).map(|profile| profile.key()) {
-        edit.remove_profile(profile);
-    }
-    edit.remove_edge(source.key)
-        .expect("validated source edge should remain registered");
-    // Both ends of a closed edge are its one vertex, so it is removed once --
-    // and a circle with nothing marked on it has none to remove at all.
-    if let Some(vertex) = source.start.key {
-        edit.remove_vertex(vertex)
-            .expect("validated source vertex should remain registered");
-    }
+    edit.deferred(|raw| {
+        if let Some(profile) = profile {
+            raw.remove_profile(profile);
+        }
+        raw.remove_edge(source.key)
+            .ok_or(RevolveError::MissingEdge { key: source.key })?;
+        // Both ends of a closed edge are its one vertex, so it is removed once --
+        // and a circle with nothing marked on it has none to remove at all.
+        if let Some(vertex) = source.start.key {
+            raw.remove_vertex(vertex)
+                .ok_or(RevolveError::MissingVertexPoint { dart: start })?;
+        }
 
-    for dim in [Dim::Zero, Dim::One] {
-        edit.unlink(dim, start)?;
-    }
-    edit.remove_isolated_darts(vec![IsolatedDart::new(start), IsolatedDart::new(end)]);
-    Ok(())
+        for dim in [Dim::Zero, Dim::One] {
+            raw.unlink(dim, start)?;
+        }
+        raw.remove_isolated_darts(vec![IsolatedDart::new(start), IsolatedDart::new(end)]);
+        Ok(())
+    })
 }
 
+/// Replaces an open source edge by a closed loop of one edge at `point`.
+///
+/// The source's identities go and the loop's come in one deferred block: in
+/// between, its darts carry neither.
 fn consume_source_edge_as_closed_loop<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     source: &RevolvedSourceEdge,
@@ -1078,26 +1091,28 @@ fn consume_source_edge_as_closed_loop<P: Payload>(
 ) -> Result<Dart, RevolveError> {
     let start = source.dart;
     let end = edit.alpha(Dim::Zero, start);
-
     let profile = Profile::from_dart(edit, start).map(|profile| profile.key());
-    if let Some(profile) = profile {
-        edit.remove_profile(profile);
-    }
-    edit.remove_edge(source.key)
-        .expect("validated source edge should remain registered");
-    for end in [source.start.key, source.end.key].into_iter().flatten() {
-        edit.remove_vertex(end)
-            .expect("validated source vertex should remain registered");
-    }
 
-    edit.link(Dim::One, start, end)?;
-    edit.add_vertex_derived_from(
-        vec![EditKey::Edge(source.key)],
-        VertexAttr::new(start, point),
-    );
-    edit.add_edge_derived_from(vec![EditKey::Edge(source.key)], EdgeAttr::new(start, curve));
-    edit.add_profile_derived_from(vec![EditKey::Edge(source.key)], ProfileAttr::new(start));
-    Ok(start)
+    edit.deferred(|raw| {
+        if let Some(profile) = profile {
+            raw.remove_profile(profile);
+        }
+        raw.remove_edge(source.key)
+            .ok_or(RevolveError::MissingEdge { key: source.key })?;
+        for (vertex, dart) in [(source.start.key, start), (source.end.key, end)] {
+            if let Some(vertex) = vertex {
+                raw.remove_vertex(vertex)
+                    .ok_or(RevolveError::MissingVertexPoint { dart })?;
+            }
+        }
+
+        raw.link(Dim::One, start, end)?;
+        let sources = vec![EditKey::Edge(source.key)];
+        raw.add_vertex_derived_from(sources.clone(), VertexAttr::new(start, point));
+        raw.add_edge_derived_from(sources.clone(), EdgeAttr::new(start, curve));
+        raw.add_profile_derived_from(sources, ProfileAttr::new(start));
+        Ok(start)
+    })
 }
 
 fn add_closed_revolve_boundary_loop<P: Payload>(
@@ -1655,15 +1670,6 @@ fn sew_revolved_faces<P: Payload>(
     Ok(())
 }
 
-struct Alpha2RevolveMerge {
-    survivor_edge: EdgeKey,
-    removed_edge: EdgeKey,
-    survivor_start: VertexKey,
-    removed_start: VertexKey,
-    survivor_end: VertexKey,
-    removed_end: VertexKey,
-}
-
 fn sew_revolved_side_edges<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     survivor: Dart,
@@ -1672,6 +1678,13 @@ fn sew_revolved_side_edges<P: Payload>(
     sew_revolved_alpha2_edges(edit, survivor, removed, survivor, removed)
 }
 
+/// Sews `first` to `second` along their edges, keeping `survivor`'s edge and
+/// vertices, which must be one of the two darts with `removed` the other.
+///
+/// Both darts must lie on edges with a vertex at each end, which is what every
+/// revolved wall and cap edge has; the edit operator then fuses the edges and
+/// the vertices they meet at, so the model is valid when this returns and
+/// again when it fails.
 pub(crate) fn sew_revolved_alpha2_edges<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     first: Dart,
@@ -1679,65 +1692,24 @@ pub(crate) fn sew_revolved_alpha2_edges<P: Payload>(
     survivor: Dart,
     removed: Dart,
 ) -> Result<(), RevolveError> {
-    let merge = alpha2_revolve_merge(edit, first, second, survivor, removed)?;
-    edit.sew(Dim::Two, first, second)
-        .map_err(|_| RevolveError::SewFailed {
-            dim: Dim::Two,
-            first,
-            second,
-        })?;
-    if merge.survivor_edge != merge.removed_edge {
-        edit.merge_edges_into(merge.survivor_edge, merge.removed_edge);
+    let pair = (survivor == first && removed == second) || (survivor == second && removed == first);
+    if !pair {
+        return Err(RevolveError::MissingEdgeCurve { dart: survivor });
     }
-    let mut removed_vertices = Vec::new();
-    if merge.survivor_start != merge.removed_start {
-        edit.merge_vertices_into(merge.survivor_start, merge.removed_start);
-        removed_vertices.push(merge.removed_start);
+    for dart in [first, second] {
+        let edge = Edge::from_dart(edit, dart).ok_or(RevolveError::MissingEdgeCurve { dart })?;
+        edge_end_vertices(edit, edge.dart())?;
     }
-    if merge.survivor_end != merge.removed_end && !removed_vertices.contains(&merge.removed_end) {
-        edit.merge_vertices_into(merge.survivor_end, merge.removed_end);
-    }
-    Ok(())
-}
-
-fn alpha2_revolve_merge<P: Payload>(
-    g: &Model<P>,
-    first: Dart,
-    second: Dart,
-    survivor: Dart,
-    removed: Dart,
-) -> Result<Alpha2RevolveMerge, RevolveError> {
-    let first_edge =
-        Edge::from_dart(g, first).ok_or(RevolveError::MissingEdgeCurve { dart: first })?;
-    let second_edge =
-        Edge::from_dart(g, second).ok_or(RevolveError::MissingEdgeCurve { dart: second })?;
-
-    let (first_start, first_end) = edge_end_vertices(g, first_edge.dart())?;
-    let (second_start, second_end) = edge_end_vertices(g, second_edge.dart())?;
-
-    if survivor == first && removed == second {
-        return Ok(Alpha2RevolveMerge {
-            survivor_edge: first_edge.key(),
-            removed_edge: second_edge.key(),
-            survivor_start: first_start,
-            removed_start: second_start,
-            survivor_end: first_end,
-            removed_end: second_end,
-        });
-    }
-
-    if survivor == second && removed == first {
-        return Ok(Alpha2RevolveMerge {
-            survivor_edge: second_edge.key(),
-            removed_edge: first_edge.key(),
-            survivor_start: second_start,
-            removed_start: first_start,
-            survivor_end: second_end,
-            removed_end: first_end,
-        });
-    }
-
-    Err(RevolveError::MissingEdgeCurve { dart: survivor })
+    edit.sew_edges(survivor, removed)
+        .map(|_| ())
+        .map_err(|error| match error {
+            ModelEditError::Operator(OperatorError::NotSewable { .. }) => RevolveError::SewFailed {
+                dim: Dim::Two,
+                first,
+                second,
+            },
+            other => other.into(),
+        })
 }
 
 /// Returns the trajectory swept by `point` turning `angle` around `axis`.
@@ -2055,47 +2027,59 @@ fn add_full_revolved_face<P: Payload>(
 /// A full turn leaves the source geometry strictly inside the solid, where a
 /// leftover face and dangling wire would be counted by every cell traversal.
 /// Removing darts compacts the map, so `shell` is returned remapped.
+///
+/// Every loop is read before anything goes: its profile, its darts, and the
+/// edge and the vertex at each of its edges' starts. The removal then runs in
+/// one deferred block, since identities go before the darts they name.
 fn consume_revolved_source_face<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     face_key: FaceKey,
     loops: &[Dart],
     shell: Dart,
 ) -> Result<Dart, RevolveError> {
-    edit.remove_face(face_key);
-
+    let mut profiles = Vec::with_capacity(loops.len());
+    let mut cells = Vec::new();
     let mut darts = Vec::new();
     for &loop_dart in loops {
         let profile = Profile::from_dart(edit, loop_dart)
-            .expect("source loop must have a registered profile");
-        let profile_key = profile.key();
+            .ok_or(RevolveError::MissingProfile { dart: loop_dart })?;
         let loop_darts = profile.darts().collect::<Vec<_>>();
         for dart in loop_darts.iter().copied().step_by(2) {
             if let Some(edge) = Edge::from_dart(edit, dart) {
-                // Only the vertex this dart sits on: the loop removes vertices as
-                // it walks, so by now the far end of the edge may already be gone.
+                // Only the vertex this dart sits on: each edge's start is a
+                // different corner of the loop, so every vertex is named once.
                 let vertex_key = Vertex::from_dart(edit, dart)
                     .map(|vertex| vertex.key())
                     .ok_or(RevolveError::MissingVertexPoint { dart })?;
-                let edge_key = edge.key();
-                edit.remove_edge(edge_key);
-                edit.remove_vertex(vertex_key);
+                cells.push((edge.key(), vertex_key));
             }
         }
-        edit.remove_profile(profile_key);
+        profiles.push(profile.key());
         darts.extend(loop_darts);
     }
 
-    for &dart in &darts {
-        for dim in [Dim::Zero, Dim::One, Dim::Two, Dim::Three] {
-            if !edit.is_free(dart, dim) {
-                edit.unlink(dim, dart)?;
+    edit.deferred(|raw| {
+        raw.remove_face(face_key);
+        for &(edge, vertex) in &cells {
+            raw.remove_edge(edge);
+            raw.remove_vertex(vertex);
+        }
+        for &profile in &profiles {
+            raw.remove_profile(profile);
+        }
+
+        for &dart in &darts {
+            for dim in [Dim::Zero, Dim::One, Dim::Two, Dim::Three] {
+                if !raw.topology().is_free(dart, dim) {
+                    raw.unlink(dim, dart)?;
+                }
             }
         }
-    }
 
-    let isolated = darts.into_iter().map(IsolatedDart::new).collect();
-    let remapped = edit.remove_isolated_darts(isolated);
-    Ok(remapped.get(&shell).copied().unwrap_or(shell))
+        let isolated = darts.iter().copied().map(IsolatedDart::new).collect();
+        let remapped = raw.remove_isolated_darts(isolated);
+        Ok(remapped.get(&shell).copied().unwrap_or(shell))
+    })
 }
 
 fn sew_revolved_loop_to_caps<P: Payload>(
