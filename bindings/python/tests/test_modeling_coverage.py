@@ -156,3 +156,32 @@ def test_healing_returns_solid_and_report():
 
     assert isinstance(result.solid, Solid)
     assert result.report.iterations >= 1
+
+
+def test_a_reversed_profile_is_the_whole_chain_run_backwards():
+    path = profiles.polyline([(0, 0, 0), (0, 0, 4), (4, 0, 4)])
+    reversed_path = path.reversed()
+
+    assert [vertex.point.as_tuple() for vertex in path.vertices()] == [
+        (0, 0, 0), (0, 0, 4), (4, 0, 4)
+    ]
+    assert len(reversed_path.edges()) == 2
+    assert [vertex.point.as_tuple() for vertex in reversed_path.vertices()] == [
+        (4, 0, 4), (0, 0, 4), (0, 0, 0)
+    ]
+    assert [vertex.point.as_tuple() for vertex in reversed_path.reversed().vertices()] == [
+        (0, 0, 0), (0, 0, 4), (4, 0, 4)
+    ]
+
+
+def test_a_face_sweeps_along_a_reversed_profile():
+    path = profiles.polyline([(0, 0, 0), (0, 0, 4), (4, 0, 4)])
+    # A 2 x 1 rectangle whose corner sits on the spine: its centroid runs 0.5
+    # inside the bend, along 3.5 + 3.5 of path.
+    face = faces.rectangle(2, 1, Plane(Point(4, 0, 4), Vector(0, 1, 0), Vector(-1, 0, 0)))
+
+    solid = sweep.face_along_profile(
+        face, path.reversed(), sweep.SweepOptions(transition="straight")
+    )
+
+    assert solid.volume == pytest.approx(14.0)

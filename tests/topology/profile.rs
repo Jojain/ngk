@@ -1,6 +1,7 @@
 use ngk::builders::profiles::add_rectangle;
 use ngk::geometry::{LINEAR_TOLERANCE, Plane, Point3, PointCoincidence};
 use ngk::model::Model;
+use ngk::modeling::profiles::polyline;
 use ngk::topology::closed::Closed;
 use ngk::topology::gmap::Dim;
 use ngk::topology::payload::StandardPayload;
@@ -75,6 +76,77 @@ fn alpha0_of_rectangle_profile_seed_traverses_the_same_corners_in_reverse() {
     ];
 
     assert_profile_points(&reversed, &expected);
+}
+
+#[test]
+fn an_open_profile_lists_every_vertex_once_in_traversal_order() {
+    let path = polyline(&[
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(0.0, 0.0, 4.0),
+        Point3::new(4.0, 0.0, 4.0),
+    ])
+    .expect("polyline should build");
+    let profile = path.profile();
+
+    assert_eq!(profile.edges().len(), 2);
+    assert_profile_points(
+        &profile,
+        &[
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(0.0, 0.0, 4.0),
+            Point3::new(4.0, 0.0, 4.0),
+        ],
+    );
+    assert!(
+        profile
+            .end()
+            .point()
+            .coincides(&Point3::new(4.0, 0.0, 4.0), LINEAR_TOLERANCE)
+    );
+}
+
+#[test]
+fn a_reversed_open_profile_runs_the_whole_chain_back_to_its_start() {
+    let path = polyline(&[
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(0.0, 0.0, 4.0),
+        Point3::new(4.0, 0.0, 4.0),
+    ])
+    .expect("polyline should build");
+    let profile = path.profile();
+    let reversed = profile.reversed();
+
+    assert_eq!(reversed.edges().len(), 2);
+    assert_profile_points(
+        &reversed,
+        &[
+            Point3::new(4.0, 0.0, 4.0),
+            Point3::new(0.0, 0.0, 4.0),
+            Point3::new(0.0, 0.0, 0.0),
+        ],
+    );
+    for edge in reversed.edges() {
+        let bounded = edge.bounded_unchecked();
+        assert!(
+            bounded.start().point().z >= bounded.end().point().z
+                && bounded.start().point().x >= bounded.end().point().x,
+            "each edge of the reversed view should run back towards the start"
+        );
+    }
+    assert_eq!(reversed.reversed().dart, profile.dart);
+}
+
+#[test]
+fn a_reversed_closed_profile_keeps_every_edge_and_vertex() {
+    let mut g = Model::<StandardPayload>::new();
+    let key = add_rectangle(&mut g, Plane::xy(), 2.0, 3.0).expect("rectangle should build");
+    let profile = g.profile_unchecked(key);
+    let reversed = profile.reversed();
+
+    assert_eq!(profile.vertices().len(), 4);
+    assert_eq!(reversed.edges().len(), 4);
+    assert_eq!(reversed.vertices().len(), 4);
+    assert_eq!(reversed.reversed().dart, profile.dart);
 }
 
 fn assert_profile_points(profile: &Profile<'_>, expected: &[Point3]) {

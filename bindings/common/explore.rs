@@ -674,11 +674,16 @@ impl<P: Payload> SharedProfile<P> {
 
 impl<P: Payload> SharedProfile<P> {
     /// Copies this profile into an owned shape for a modeling constructor.
+    ///
+    /// A shape names its profile by key alone and walks it from the stored
+    /// root dart, so the copy's root is moved onto this view's own dart: a
+    /// reversed view stays reversed in the shape.
     pub(crate) fn isolated_shape(&self) -> Result<Shape<ProfileTag, P>, ExploreError> {
-        let (model, dart) = self.view()?.isolate();
+        let (mut model, dart) = self.view()?.isolate();
         let key = Profile::from_dart(&model, dart)
             .ok_or_else(|| missing("profile", dart.id()))?
             .key();
+        model.profile_attr_mut_unchecked(key).dart = dart;
         Ok(Shape::new(model, key))
     }
 }
