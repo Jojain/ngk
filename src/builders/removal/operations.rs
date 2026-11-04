@@ -277,7 +277,7 @@ pub(crate) fn remove_cell_edit<P: Payload>(
 
     let mut removed = match (demoted, merged) {
         (true, MergedCell::Unbounded { face, .. }) => {
-            embed_in_face(edit, face, &cell);
+            embed_in_face(edit, face, &cell)?;
             Vec::new()
         }
         _ => cell,
@@ -304,21 +304,31 @@ pub(crate) fn remove_cell_edit<P: Payload>(
 /// so the logical vertices are dropped and their 0-cells are recorded as
 /// interior to the face, which is what `point_at_dart` still reads a position
 /// from.
-fn embed_in_face<P: Payload>(edit: &mut ModelEdit<'_, P>, face: FaceKey, cell: &[Dart]) {
+///
+/// The corners are read first; relabelling them runs in a deferred block, since
+/// each 0-cell is unlabelled between its vertex going and the face claiming it.
+fn embed_in_face<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    face: FaceKey,
+    cell: &[Dart],
+) -> Result<(), ModelEditError> {
     let Some(&anchor) = cell.first() else {
-        return;
+        return Ok(());
     };
     let owner = EntityOwner::Face(face);
-    edit.own_cell(Dim::One, anchor, owner);
-
     let corners = cell
         .iter()
         .filter_map(|&dart| Some((edit.model().cell_key::<Cell0>(dart)?, dart)))
         .collect::<Vec<_>>();
-    for (key, dart) in corners {
-        edit.remove_vertex(key);
-        edit.own_cell(Dim::Zero, dart, owner);
-    }
+
+    edit.deferred(|raw| {
+        raw.own_cell(Dim::One, anchor, owner);
+        for (key, dart) in corners {
+            raw.remove_vertex(key);
+            raw.own_cell(Dim::Zero, dart, owner);
+        }
+        Ok(())
+    })
 }
 
 /// What a removal would do to the identities around a cell.
