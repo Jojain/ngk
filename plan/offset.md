@@ -15,6 +15,14 @@ intersection. What follows needs new topology, which re-embedding refuses.
 3. **Every offset is total over its type's variants**: only geometry refuses.
 4. **Offsets are copies beside their source**, so thicken and shell have both
    skins in one model.
+5. **Refusing topology changes is a v1 limitation, not the design.** The
+   re-embedding engine keeps the source's topology and refuses everything
+   else by name, which is acceptable for a first version. The target is an
+   offset that changes topology when the geometry asks for it: removing
+   vanishing edges and faces, splitting a self-crossing result, inserting
+   arc joins and rolling-ball faces, merging what the offset makes touch.
+   New work on offsets should keep the plan/apply split so that a topology
+   surgery can replace the re-embedding step without rewriting the planning.
 
 ## Next: shell
 
