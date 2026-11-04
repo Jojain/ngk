@@ -231,13 +231,16 @@ fn demote_closure_vertices(gmap: &mut Model<StandardPayload>) -> Result<(), Mode
     }
 
     gmap.transaction(|edit| {
-        for (vertex, dart, edge) in &closures {
-            // Both in one breath: the label says the cell is interior to the
-            // edge, which contradicts a logical vertex sitting on it.
-            edit.remove_vertex(*vertex);
-            edit.own_cell(Dim::Zero, *dart, EntityOwner::Edge(*edge));
-        }
-        Ok(())
+        // Both in one breath, in a deferred block checked when it closes: the
+        // label says the cell is interior to the edge, which contradicts a
+        // logical vertex sitting on it.
+        edit.deferred(|raw| {
+            for (vertex, dart, edge) in &closures {
+                raw.remove_vertex(*vertex);
+                raw.own_cell(Dim::Zero, *dart, EntityOwner::Edge(*edge));
+            }
+            Ok(())
+        })
     })
 }
 
