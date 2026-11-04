@@ -5,6 +5,8 @@ bindings. Call `show(shape)` to send a model, solid, face, or edge to the shared
 viewer. The complete threaded bolt is the default example.
 Use the **Bearing housing** button for an example that builds a plate, fuses a
 boss, cuts a shaft bore and four mounting holes, then adds a chamfer and fillet.
+Use the **Shelled tray** button for an example that rounds a block's vertical
+edges, shells it open at the top and offsets it.
 
 Use `Share` to copy the current script as a compressed `zc` URL. Opening that
 URL restores the script before any locally saved draft.

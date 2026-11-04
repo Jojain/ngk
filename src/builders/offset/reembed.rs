@@ -336,34 +336,44 @@ enum EdgeMove {
     Sharp(FaceKey, FaceKey),
 }
 
-/// Plans the offset of a set of faces: every face moves `distance` along its
-/// own normal, signed per face by `signs`, and the edges and corners between
-/// them follow.
+/// Plans the offset of a set of faces: each face moves its own distance
+/// along its own normal, and the edges and corners between them follow.
+///
+/// Each entry is a face, its sign (`1` where the face faces its surface's
+/// way, `-1` otherwise) and the distance it moves; the shift along the
+/// surface normal is their product.
 ///
 /// The set must be closed under incidence: every edge and corner of a face
 /// in it bounds only faces in it, as a copied face, sheet or solid does.
 pub(crate) fn plan_faces<P: Payload>(
     model: &Model<P>,
-    faces: &[(FaceKey, f64)],
-    distance: f64,
+    faces: &[(FaceKey, f64, f64)],
 ) -> Result<Moves, OffsetBuildError> {
-    let sign: HashMap<FaceKey, f64> = faces.iter().copied().collect();
+    let sign: HashMap<FaceKey, f64> = faces.iter().map(|&(face, sign, _)| (face, sign)).collect();
+    let travel: HashMap<FaceKey, f64> = faces
+        .iter()
+        .map(|&(face, _, distance)| (face, distance))
+        .collect();
+    let shift: HashMap<FaceKey, f64> = faces
+        .iter()
+        .map(|&(face, sign, distance)| (face, sign * distance))
+        .collect();
     let mut moves = Moves::default();
 
     let mut surfaces: HashMap<FaceKey, Surface> = HashMap::new();
-    for &(face, face_sign) in faces {
+    for &(face, _, _) in faces {
         let attr = model.face_attr_unchecked(face);
         let (u, v) = fit_window(&attr.surface, attr.pcurves.values());
         let moved = attr
             .surface
-            .offset_over(face_sign * distance, u, v)
+            .offset_over(shift[&face], u, v)
             .map_err(|source| OffsetBuildError::FaceSupport { face, source })?;
         surfaces.insert(face, moved);
     }
 
     // Each edge's uses, face by face.
     let mut uses: BTreeMap<EdgeKey, Vec<(FaceKey, Dart)>> = BTreeMap::new();
-    for &(face, _) in faces {
+    for &(face, _, _) in faces {
         for &dart in model.face_attr_unchecked(face).pcurves.keys() {
             if let Some(edge) = model.cell_key::<Cell1>(dart) {
                 uses.entry(edge).or_default().push((face, dart));
@@ -377,7 +387,12 @@ pub(crate) fn plan_faces<P: Payload>(
         let distinct: BTreeSet<FaceKey> = edge_uses.iter().map(|&(face, _)| face).collect();
         let kind = match distinct.into_iter().collect::<Vec<_>>().as_slice() {
             [face] => EdgeMove::Preserved(*face),
-            [f, g] if continues(model, edge, (*f, sign[f]), (*g, sign[g]))? => {
+            // Faces moving by different amounts step apart even where they
+            // continue each other, so only an equal move keeps them joined.
+            [f, g]
+                if travel[f] == travel[g]
+                    && continues(model, edge, (*f, sign[f]), (*g, sign[g]))? =>
+            {
                 EdgeMove::Preserved(*f)
             }
             [f, g] => EdgeMove::Sharp(*f, *g),
@@ -402,16 +417,15 @@ pub(crate) fn plan_faces<P: Payload>(
                 &attr.curve,
                 widened(&attr.curve, span),
                 &model.face_attr_unchecked(face).surface,
-                sign[&face] * distance,
+                shift[&face],
             )
             .map_err(|source| OffsetBuildError::EdgeSupport { edge, source })?,
             EdgeMove::Sharp(f, g) => sharp_edge_curve(
                 model,
                 edge,
                 span,
-                [(f, sign[&f]), (g, sign[&g])],
+                [(f, shift[&f]), (g, shift[&g])],
                 [&surfaces[&f], &surfaces[&g]],
-                distance,
             )?,
         };
         moves.curves.insert(edge, curve);
@@ -433,7 +447,7 @@ pub(crate) fn plan_faces<P: Payload>(
             let EdgeMove::Preserved(face) = kinds[&incident[0].edge] else {
                 unreachable!("no incident edge is sharp");
             };
-            moved_along_normal(model, face, sign[&face] * distance, old)
+            moved_along_normal(model, face, shift[&face], old)
                 .map_err(|source| OffsetBuildError::FaceSupport { face, source })?
         } else {
             let mut around_faces: BTreeSet<FaceKey> = BTreeSet::new();
@@ -453,7 +467,7 @@ pub(crate) fn plan_faces<P: Payload>(
                 .map(|face| {
                     (
                         &model.face_attr_unchecked(*face).surface,
-                        sign[face],
+                        shift[face],
                         &surfaces[face],
                     )
                 })
@@ -497,7 +511,7 @@ pub(crate) fn plan_faces<P: Payload>(
                 let curve = &moves.curves[&edge];
                 curve.project(old)
             } else {
-                meet_surfaces(vertex, old, &moved_faces, distance)?
+                meet_surfaces(vertex, old, &moved_faces)?
             }
         };
         moves.points.insert(vertex, point);
@@ -622,23 +636,23 @@ fn moved_along_normal<P: Payload>(
 /// The point where every listed face's offset passes, refined from where
 /// their tangent planes at the old corner, moved, meet.
 ///
-/// Each entry is a face's old surface, its sign and its moved surface. Three
+/// Each entry is a face's old surface, its shift along that surface's normal
+/// and its moved surface. Three
 /// or more faces fix a point; where they do not all pass through one, the
 /// corner is refused.
 fn meet_surfaces(
     vertex: VertexKey,
     old: Point3,
     faces: &[(&Surface, f64, &Surface)],
-    distance: f64,
 ) -> Result<Point3, OffsetBuildError> {
     let undecided = |reason| OffsetBuildError::UndecidedVertex { vertex, reason };
     let mut planes = Vec::with_capacity(faces.len());
-    for &(surface, sign, _) in faces {
+    for &(surface, shift, _) in faces {
         let uv = surface
             .param_at(old)
             .map_err(|_| undecided("a face's surface cannot be inverted there"))?;
         let normal = surface.normal_at(uv.x, uv.y).into_inner();
-        planes.push((old + normal * (sign * distance), normal));
+        planes.push((old + normal * shift, normal));
     }
     let mut point = least_squares_point(&planes).ok_or(undecided(
         "the faces around it do not fix a point: their normals are coplanar",
@@ -745,9 +759,8 @@ fn sharp_edge_curve<P: Payload>(
     model: &Model<P>,
     edge: EdgeKey,
     span: Interval,
-    signed: [(FaceKey, f64); 2],
+    shifted: [(FaceKey, f64); 2],
     moved: [&Surface; 2],
-    distance: f64,
 ) -> Result<Curve, OffsetBuildError> {
     let old_curve = &model.edge_attr_unchecked(edge).curve;
     let middle = NativeParam::new(0.5 * (span.start.value() + span.end.value()));
@@ -757,7 +770,7 @@ fn sharp_edge_curve<P: Payload>(
     // Where the middle goes: on both moved tangent planes, in the plane
     // normal to the edge through its old middle.
     let mut planes = vec![(point, tangent)];
-    for (face, sign) in signed {
+    for (face, shift) in shifted {
         let surface = &model.face_attr_unchecked(face).surface;
         let uv = surface
             .param_at(point)
@@ -767,7 +780,7 @@ fn sharp_edge_curve<P: Payload>(
                 reason: error.to_string(),
             })?;
         let normal = surface.normal_at(uv.x, uv.y).into_inner();
-        planes.push((point + normal * (sign * distance), normal));
+        planes.push((point + normal * shift, normal));
     }
     let target = least_squares_point(&planes).ok_or(OffsetBuildError::SharpEdge {
         edge,
@@ -809,7 +822,8 @@ fn sharp_edge_curve<P: Payload>(
             reason: "their offsets do not intersect",
         })?;
     let (gap, mut curve) = branch;
-    let scale = 1.0 + distance.abs() + (point - Point3::origin()).norm();
+    let largest = shifted[0].1.abs().max(shifted[1].1.abs());
+    let scale = 1.0 + largest + (point - Point3::origin()).norm();
     if gap > MEET_TOLERANCE * scale.max(1.0) * 1.0e3 {
         return Err(OffsetBuildError::SharpEdge {
             edge,

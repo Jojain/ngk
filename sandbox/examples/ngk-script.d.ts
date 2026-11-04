@@ -19,6 +19,14 @@ declare global {
         filleted_solid: typeof Wasm.filletedSolid;
       };
       edges: { helix: typeof Wasm.helix };
+      offset: {
+        offset_edge: typeof Wasm.offsetEdge;
+        offset_profile: typeof Wasm.offsetProfile;
+        offset_face: typeof Wasm.offsetFace;
+        offset_sheet: typeof Wasm.offsetSheet;
+        offset_solid: typeof Wasm.offsetSolid;
+        shelled_solid: typeof Wasm.shelledSolid;
+      };
       faces: { polygon: typeof Wasm.polygonFace };
       solids: {
         block: typeof Wasm.block;

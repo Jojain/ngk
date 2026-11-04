@@ -28,6 +28,14 @@ export const ngk = {
       filleted_solid: wasm.filletedSolid,
     },
     edges: { helix: wasm.helix },
+    offset: {
+      offset_edge: wasm.offsetEdge,
+      offset_profile: wasm.offsetProfile,
+      offset_face: wasm.offsetFace,
+      offset_sheet: wasm.offsetSheet,
+      offset_solid: wasm.offsetSolid,
+      shelled_solid: wasm.shelledSolid,
+    },
     faces: { polygon: wasm.polygonFace },
     solids: {
       block: wasm.block,

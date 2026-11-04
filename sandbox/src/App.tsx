@@ -3,6 +3,7 @@ import Editor, { type BeforeMount } from "@monaco-editor/react";
 import { SceneShell, VizSceneView, type VizScene } from "@ngk/viewer";
 import boltExample from "../examples/bolt.ts?raw";
 import bearingHousingExample from "../examples/bearing-housing.ts?raw";
+import shellTrayExample from "../examples/shell-tray.ts?raw";
 import { ngkModuleTypes, scriptTypes } from "./editorTypes";
 import type { WorkerRequest, WorkerResponse } from "./protocol";
 import { codeFromUrl, shareCode } from "./urlCodec";
@@ -146,6 +147,7 @@ export default function App() {
           <span className="status">{status}</span>
           <button onClick={() => setCode(boltExample)} title="Load the bolt example">Bolt example</button>
           <button onClick={() => setCode(bearingHousingExample)} title="Load the bearing housing example">Bearing housing</button>
+          <button onClick={() => setCode(shellTrayExample)} title="Load the offset and shell example">Shelled tray</button>
           <button onClick={() => void share()} title="Copy a compressed URL for this script">Share</button>
           {running ? <button className="cancel" onClick={stop}>Cancel</button> : <button className="run" onClick={run}>Run</button>}
         </div>

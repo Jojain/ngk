@@ -7,7 +7,8 @@ Offsets live in two layers:
   [geometry.md](geometry.md#offsets-geometrydim3offsetrs).
 - `builders/offset/` moves an entity: an edge, profile, face, sheet or solid.
   `modeling::offset` wraps it for owned shapes (`offset` for faces, sheets and
-  solids, `offset_along` for edges and profiles).
+  solids, `offset_along` for edges and profiles, `shelled` for a shell). The
+  WASM bindings and the sandbox expose the same (`ngk.modeling.offset`).
 
 ```rust
 offset_edge(&mut model, edge, direction, d)       -> EdgeOffset
@@ -15,6 +16,7 @@ offset_profile(&mut model, profile, direction, d) -> ProfileOffset
 offset_face(&mut model, face, d)                  -> FaceOffset
 offset_sheet(&mut model, sheet, d)                -> SheetOffset
 offset_solid(&mut model, solid, d)                -> SolidOffset
+shell_solid(&mut model, solid, open_faces, t)     -> SolidShelling
 ```
 
 ## Copy, then re-embed
@@ -73,3 +75,20 @@ refused by name instead.
 | `UndecidedVertex` | the moved faces and edges around a corner do not meet at one point |
 | `SharpEdge`, `SharpEdgeIntersection` | the two moved faces along a sharp edge do not meet near it |
 | `Pcurve` | a moved edge has no pcurve on a moved face |
+
+## Shell (`shell.rs`)
+
+A shell is what is left of the solid once an inner offset is cut away. The
+inner solid is a copy offset with **a distance per face** (`plan_faces` takes
+one per face): every face moves inward by the thickness, every open face
+outward by it, so the inner solid pokes through the opening instead of
+grazing the outer face. A Boolean difference leaves the wall; with no open face
+the inner solid stays inside as a cavity.
+
+The offset and the Boolean are two transactions, so both run on a clone of the
+model, which replaces the caller's only once both succeed. Open faces are found
+on the copy by support and pcurve middles, since merging renames every face.
+
+Two faces continuing each other along an edge stay joined only when they move
+by the same distance; an open face tangent to a wall steps apart from it and is
+refused as a sharp edge whose faces' offsets do not meet.

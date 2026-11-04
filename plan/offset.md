@@ -1,8 +1,8 @@
 # Offsets: what remains on the way to shelling a solid
 
-**Status:** support offsets (`geometry/dim3/offset.rs`) and entity offsets for
-edges, profiles, faces, sheets and solids (`builders/offset/`,
-`modeling::offset`) have landed; both are described in
+**Status:** support offsets (`geometry/dim3/offset.rs`), entity offsets for
+edges, profiles, faces, sheets and solids, and a first shell
+(`builders/offset/`, `modeling::offset`, sandbox) have landed; both are described in
 `docs/architecture/geometry.md#offsets` and `docs/architecture/offset.md`.
 Entity offsets copy the source and re-embed the copy, joining sharp edges by
 intersection. What follows needs new topology, which re-embedding refuses.
@@ -24,23 +24,18 @@ intersection. What follows needs new topology, which re-embedding refuses.
    New work on offsets should keep the plan/apply split so that a topology
    surgery can replace the re-embedding step without rewriting the planning.
 
-## Next: shell
+## Shell v1, and what replaces it
 
-`shell_solid(model, solid, open_faces, thickness) -> SolidShelling`, inward
-for a positive thickness. Direct construction, no Boolean:
+Shell has landed as an inner offset with per-face distances cut away by the
+Boolean (`builders/offset/shell.rs`). It inherits the Boolean's reach and cost.
+The direct construction is the target:
 
-1. **Inner skin**: `offset_solid` by `-thickness` on a copy — already what
-   `offset_solid_edit` builds. Open faces are not moved: their copies stay on
-   the source's support, so the inner skin's neighbours meet them there.
+1. **Inner skin**: the per-face offset copy, as now.
 2. **Rims**: each open face's support carries one rim face, bounded outside by
    the open face's loop on the outer skin and inside by the matching loop on
    the inner skin.
 3. **Sew** the outer skin minus the open faces, the rims, and the inner skin
-   reversed minus its open faces. With no open face, the inner skin reversed
-   is a cavity of the same solid (`BREP_WITH_VOIDS` already models one).
-
-`plan_faces` takes a per-face distance (open faces at zero) rather than one
-distance, which is also what variable-thickness shelling needs.
+   reversed minus its open faces.
 
 ## Then
 

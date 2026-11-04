@@ -233,15 +233,7 @@ pub(crate) fn offset_solid_edit<P: Payload>(
     distance: f64,
 ) -> Result<SolidOffset, OffsetBuildError> {
     check_distance(distance)?;
-    let source = edit.model().clone();
-    let view = source
-        .solid(solid)
-        .ok_or(OffsetBuildError::MissingSolid { solid })?;
-    let dart = edit.merge(view);
-    let copy = edit
-        .model()
-        .solid_key(dart)
-        .expect("a merged solid keeps its registration");
+    let copy = copy_solid(edit, solid)?;
     let faces = unique(
         edit.model()
             .solid_unchecked(copy)
@@ -253,6 +245,22 @@ pub(crate) fn offset_solid_edit<P: Payload>(
     Ok(SolidOffset::new(copy))
 }
 
+/// Merges a copy of `solid` into the model and returns the copy's key.
+pub(super) fn copy_solid<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    solid: SolidKey,
+) -> Result<SolidKey, OffsetBuildError> {
+    let source = edit.model().clone();
+    let view = source
+        .solid(solid)
+        .ok_or(OffsetBuildError::MissingSolid { solid })?;
+    let dart = edit.merge(view);
+    Ok(edit
+        .model()
+        .solid_key(dart)
+        .expect("a merged solid keeps its registration"))
+}
+
 /// Moves a closed set of faces, each along its own normal.
 fn offset_faces<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
@@ -261,9 +269,9 @@ fn offset_faces<P: Payload>(
 ) -> Result<(), OffsetBuildError> {
     let signed = faces
         .iter()
-        .map(|&face| (face, face_sign(edit.model(), face)))
+        .map(|&face| (face, face_sign(edit.model(), face), distance))
         .collect::<Vec<_>>();
-    plan_faces(edit.model(), &signed, distance)?.apply(edit);
+    plan_faces(edit.model(), &signed)?.apply(edit);
     Ok(())
 }
 

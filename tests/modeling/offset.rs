@@ -92,3 +92,47 @@ fn a_chamfered_block_moves_its_bevel_too() {
     );
     validate_solid_orientation(grown.model(), grown.key()).unwrap();
 }
+
+#[test]
+fn a_rounded_block_shells_into_a_rounded_tray() {
+    use ngk::geometry::Fraction;
+    use ngk::modeling::blend::filleted;
+    use ngk::modeling::offset::shelled;
+    use std::f64::consts::PI;
+
+    let source = block(4.0, 4.0, 4.0).unwrap();
+    // A vertical edge, so the round runs from the floor to the open top.
+    let edge = source
+        .solid()
+        .edges()
+        .into_iter()
+        .find(|edge| {
+            let curve = edge.trimmed_curve();
+            (curve.point_at(Fraction::new(0.0)).z - curve.point_at(Fraction::new(1.0)).z).abs()
+                > 1.0
+        })
+        .unwrap()
+        .key();
+    let rounded = filleted(source, vec![edge], 1.0).unwrap();
+    let top = rounded
+        .solid()
+        .faces()
+        .into_iter()
+        .find(|face| {
+            face.edges().iter().all(|edge| {
+                (edge.trimmed_curve().point_at(Fraction::new(0.5)).z - 4.0).abs() <= 1e-9
+            })
+        })
+        .unwrap()
+        .key();
+    let tray = shelled(rounded, &[top], 0.5).unwrap();
+    let corner = |radius: f64| radius * radius * (1.0 - PI / 4.0);
+    let outer = 64.0 - corner(1.0) * 4.0;
+    let inner = 3.0 * 3.0 * 3.5 - corner(0.5) * 3.5;
+    let volume = tray.solid().volume().unwrap();
+    assert!(
+        (volume - (outer - inner)).abs() <= 1e-6,
+        "volume {volume}, expected {}",
+        outer - inner
+    );
+}

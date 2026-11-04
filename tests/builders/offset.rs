@@ -235,3 +235,92 @@ fn a_smooth_sheet_moves_along_its_normal() {
     assert!(ys.iter().all(|y| (y.abs() - 0.25).abs() <= 1e-9), "{ys:?}");
     validate_gmap(model.topology()).unwrap();
 }
+
+/// The face of `solid` all of whose edges lie at height `z`.
+fn face_at_height(
+    model: &Model<StandardPayload>,
+    solid: ngk::topology::shape_keys::SolidKey,
+    z: f64,
+) -> ngk::topology::shape_keys::FaceKey {
+    use ngk::geometry::Fraction;
+    model
+        .solid(solid)
+        .unwrap()
+        .faces()
+        .into_iter()
+        .find(|face| {
+            face.edges()
+                .iter()
+                .all(|edge| (edge.trimmed_curve().point_at(Fraction::new(0.5)).z - z).abs() <= 1e-9)
+        })
+        .expect("a face at that height")
+        .key()
+}
+
+#[test]
+fn a_block_shelled_open_at_the_top_keeps_a_wall_of_the_thickness() {
+    use ngk::builders::offset::shell_solid;
+
+    let mut model = Model::<StandardPayload>::new();
+    let block = add_block(&mut model, Frame::xyz(), 4.0, 4.0, 4.0)
+        .unwrap()
+        .solid;
+    let top = face_at_height(&model, block, 4.0);
+    let shelled = shell_solid(&mut model, block, &[top], 0.5).unwrap();
+    let volume = shelled.view(&model).unwrap().volume().unwrap();
+    assert!(
+        (volume - (64.0 - 3.0 * 3.0 * 3.5)).abs() <= 1e-9,
+        "volume {volume}"
+    );
+    validate_gmap(model.topology()).unwrap();
+}
+
+#[test]
+fn a_block_shelled_with_no_open_face_holds_a_cavity() {
+    use ngk::builders::offset::shell_solid;
+
+    let mut model = Model::<StandardPayload>::new();
+    let block = add_block(&mut model, Frame::xyz(), 4.0, 4.0, 4.0)
+        .unwrap()
+        .solid;
+    let shelled = shell_solid(&mut model, block, &[], 0.5).unwrap();
+    let volume = shelled.view(&model).unwrap().volume().unwrap();
+    assert!((volume - (64.0 - 27.0)).abs() <= 1e-9, "volume {volume}");
+}
+
+#[test]
+fn a_cylinder_shelled_open_at_the_top_is_a_cup() {
+    use ngk::builders::offset::shell_solid;
+
+    let mut model = Model::<StandardPayload>::new();
+    let cylinder = add_cylinder(&mut model, Frame::xyz(), 1.0, 2.0)
+        .unwrap()
+        .solid;
+    let top = face_at_height(&model, cylinder, 2.0);
+    let shelled = shell_solid(&mut model, cylinder, &[top], 0.2).unwrap();
+    let volume = shelled.view(&model).unwrap().volume().unwrap();
+    let expected = PI * (2.0 - 0.8 * 0.8 * 1.8);
+    assert!(
+        (volume - expected).abs() <= 1e-6 * expected,
+        "volume {volume}"
+    );
+}
+
+#[test]
+fn a_failed_shell_leaves_the_model_as_it_was() {
+    use ngk::builders::offset::{ShellError, shell_solid};
+
+    let mut model = Model::<StandardPayload>::new();
+    let block = add_block(&mut model, Frame::xyz(), 4.0, 4.0, 4.0)
+        .unwrap()
+        .solid;
+    let revision = model.revision();
+    assert!(matches!(
+        shell_solid(&mut model, block, &[], 2.5),
+        Err(ShellError::InnerOffset(
+            OffsetBuildError::EdgeVanishes { .. }
+        ))
+    ));
+    assert_eq!(model.revision(), revision);
+    assert_eq!(model.iter_faces().count(), 6);
+}

@@ -4,6 +4,7 @@ pub mod edges;
 pub mod faces;
 pub mod heal;
 pub mod loft;
+pub mod offset;
 pub mod profiles;
 pub mod revolve;
 pub mod solids;

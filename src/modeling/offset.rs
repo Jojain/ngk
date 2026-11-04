@@ -1,4 +1,4 @@
-//! Owned-shape offsets.
+//! Owned-shape offsets and shelling.
 //!
 //! The offset is a new entity in the input shape's model, which keeps the
 //! source beside it: the returned shape's primary entity is the moved copy.
@@ -6,11 +6,13 @@
 use nalgebra::UnitVector3;
 
 use crate::builders::offset::{
-    OffsetBuildError, offset_edge, offset_face, offset_profile, offset_sheet, offset_solid,
+    OffsetBuildError, ShellError, offset_edge, offset_face, offset_profile, offset_sheet,
+    offset_solid, shell_solid,
 };
 use crate::model::Model;
 use crate::topology::payload::Payload;
 use crate::topology::shape::{EdgeTag, FaceTag, ProfileTag, Shape, ShapeKind, SheetTag, SolidTag};
+use crate::topology::shape_keys::FaceKey;
 
 mod sealed {
     pub trait Sealed {}
@@ -111,4 +113,14 @@ pub fn offset_along<K: WireOffsetInput, P: Payload>(
     distance: f64,
 ) -> Result<Shape<K, P>, OffsetBuildError> {
     shape.then(|model, handle| K::offset_in(model, handle, direction, distance))
+}
+
+/// Returns `shape`'s solid emptied to a wall `thickness` thick, open where
+/// `open_faces` were; with no open face, the solid with a cavity.
+pub fn shelled<P: Payload>(
+    shape: Shape<SolidTag, P>,
+    open_faces: &[FaceKey],
+    thickness: f64,
+) -> Result<Shape<SolidTag, P>, ShellError> {
+    shape.then(|model, solid| Ok(shell_solid(model, solid, open_faces, thickness)?.solid))
 }
