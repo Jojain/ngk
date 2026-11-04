@@ -4,7 +4,7 @@
 **Decision:** D5 ([ADR 0003](../../docs/adr/0003-invariant-preserving-edit-operators.md)).
 **Size:** small to medium. Enables B and F.
 **Status:** the infrastructure is in; builder migration and the panics audit are
-partly done. "Done" and "Remains" below say exactly what.
+partly done (what is left of the migration waits for new operators). "Done" and "Remains" below say exactly what.
 
 ## Done
 
@@ -29,7 +29,11 @@ partly done. "Done" and "Remains" below say exactly what.
   sews); `edges::split_edge`/`split_face_boundary_edge` are `mark_edge` and
   `cut_edge`; sweep, revolve and extrude use the fallible frame constructors
   (`SweepError::DegenerateFrame`); `add_polygon_edit` returns an error instead
-  of asserting.
+  of asserting. Since then the loft, revolve and extruded-sheet sews
+  are `sew_edges`, and the scaffold cuts, the blend's surgery, the revolve's
+  consumption of its source, the profile append, the removal's embedding in a
+  face and the STEP import's closure demotion run in deferred blocks; see the
+  inventory below.
 - **The reproductions** are tests in `tests/topology/edit_safety.rs`, with a
   property test: random sequences of block, cylinder, sphere, torus, prism,
   revolve and swept-disc builders and Booleans never panic, and every `Ok` solid
@@ -46,22 +50,83 @@ What the reproductions answer now, until the builders they exercise are fixed:
 
 ## Remains
 
-- **Move builders off the raw primitives.** About two hundred calls to `link`,
-  `unlink`, `sew`, `own_cell`, `disown_cell` are left, in `builders/scaffold.rs`
-  (cuts and bridges), `builders/faces/{imprints,support,annulus}.rs`,
-  `builders/revolve`, `builders/loft`, `builders/blend/execute.rs`,
-  `builders/removal`, `exchange/step/topology/import.rs`. Candidates for new
-  operators, from what they do: insert an edge across a face (the section
-  chords of `imprints`), split and merge faces, make a face on a loop and bridge
-  its holes (`cut_between_loops`), move a cut attachment
-  (`CutAttachment::move_after`, now a deferred block, is where the pulley's
-  labelling breaks: the error names it). The raw primitives leave `ModelEdit` when the last builder is off them.
+- **Move builders off the raw primitives.** 144 calls to the raw primitives
+  on `ModelEdit` are left, every one of them waiting for an operator that does
+  not exist yet; the inventory below lists them. The raw primitives leave
+  `ModelEdit` when the last builder is off them.
 - **Index maintained on write.** The index is a derived cache rebuilt on the
   next read after an invalidation; operators leave the labelling valid, so the
   rebuild succeeds. Updating it in place is possible per operator and is not
   needed for correctness.
 - **Release builds do not check solids by default.** `CommitChecks` can turn it
   on; the bench runner could.
+
+## Builder migration inventory
+
+Every call to a raw edit primitive on a `ModelEdit` outside `src/topology/`
+(and outside `src/tessellate/`, owned by WS A), at b109143 and after the
+migration on `robustness/builders-on-operators`. A primitive is one of
+`add_dart`, `link`, `unlink`, `sew`, `own_cell`, `disown_cell`,
+`remove_isolated_darts`, `merge_{vertices,edges,faces,profiles}_into` and
+`remove_{vertex,edge,profile,face}`; registering a new entity (`add_vertex`,
+`add_face`, ...) is counted with the surgery around it, not on its own.
+
+Classes: **(a)** exactly what an existing operator does, ported to it;
+**(b)** surgery no operator covers, with no view read in the middle, wrapped in
+`edit.deferred(..)`; **(c)** needs an operator that does not exist yet, left as
+it is.
+
+| | Before | After |
+|---|---|---|
+| raw primitives on `ModelEdit` | 223 | 144, all (c) |
+| (a) ported to an operator | -- | 13 sites (and the sweep's 12, ported by WS C) |
+| (b) inside a deferred block | 4 (`move_after`) | 70 |
+
+`RawEdit` gained the registration primitives a block needs (`add_vertex`,
+`add_edge`, `add_profile`, `add_face` and their `_derived_from` forms,
+`merge_vertices_into`, `remove_{vertex,edge,profile,face}`,
+`remove_isolated_darts`, `cell_representative`): they are the primitives
+`ModelEdit` already had, forwarded so that a block can create and drop the
+identities its rewiring needs. No operator was added.
+
+### Ported
+
+| File | Function | Primitives | Class | Done |
+|---|---|---|---|---|
+| `builders/loft/operations.rs` | `sew_edges`, `reown_closure`, `edge_owned_closure` | `sew`, `merge_edges_into`, `merge_vertices_into`, `disown_cell`, `own_cell` (5) | a | `ModelEdit::sew_edges`; its `settle_closure` replaces `reown_closure` |
+| `builders/revolve/operations.rs` | `sew_revolved_alpha2_edges` | `sew`, `merge_edges_into`, `merge_vertices_into` (4) | a | `sew_edges(survivor, removed)`, after checking both edges have a vertex at each end (the errors it reported before) |
+| `builders/sheets/extrude.rs` | `sew_adjacent_sweep_edges` | `sew`, `merge_edges_into`, `merge_vertices_into` (4) | a | `sew_edges`, same checks first |
+| `builders/scaffold.rs` | `cut_between_loops` | `unlink`, `add_dart`, `link`, `own_cell` (13) | b | deferred block; `splice_cut_between_loops` is the body for callers already in a block |
+| `builders/scaffold.rs` | `cut_between_shells`, `polygon`, `link_edge_uses` | `unlink`, `sew`, `own_cell`, `add_dart`, `link` (11) | b | one deferred block |
+| `builders/blend/execute.rs` | `execute` (cut, insert, fill, sew, register), `register_corners`, `orient_faces` | `remove_edge`, `remove_vertex`, `unlink`, `add_dart`, `link`, `sew`, `own_cell` (18) | b | one deferred block from the first cut to the last corner; `orient_faces` reads the `GMap` only |
+| `builders/revolve/operations.rs` | `consume_closed_source_edge`, `consume_source_edge_as_closed_loop`, `consume_revolved_source_face` | `remove_*`, `unlink`, `link`, `remove_isolated_darts` (15) | b | reads first, then one deferred block each; four `expect`s became `RevolveError::{MissingEdge, MissingVertexPoint, MissingProfile}` |
+| `builders/profiles/operations.rs` | `append_edge_edit` | `sew` (dim 1), `merge_vertices_into` (4) | b | deferred block; the end-dart `expect` became `PolylineError::MissingProfile` |
+| `builders/removal/operations.rs` | `embed_in_face` | `own_cell`, `remove_vertex` (3) | b | corners read first, relabelled in a deferred block |
+| `exchange/step/topology/import.rs` | `demote_closure_vertices` | `remove_vertex`, `own_cell` (2) | b | deferred block (it unmarks an edge: the inverse of `mark_edge`) |
+
+### Left (c), by the operator each needs
+
+| Missing operator | Sites | Where |
+|---|---|---|
+| **Make a face on a new boundary**: lay a loop of new darts, register its vertices, edges, profile and face, optionally sew it along existing edges (Euler's MEF on fresh darts) | 103 | `builders/sweep` `add_triangle_wall`, `add_quad_wall` (6); `builders/revolve` `add_partial_revolved_edge_face`, `add_full_revolved_apex_to_apex_face`, `add_full_revolved_band_face`, `add_revolved_quad_face`, `add_axis_revolved_face`, `add_closed_revolve_boundary_loop` (31); `builders/loft` `add_loft_quad_face`, `add_loft_band_face` (8); `builders/solids` `add_lateral_face_topology`, `sew`, `sew_wrapping_lateral_face` (9); `builders/sheets/extrude.rs` `add_extruded_edge_face`, `sew` (2); `builders/faces` `add_polygon_edit` (3), `add_annulus_edit` (9), `imprints::add_section_loop`, `sew_section_loops` (5); `builders/edges` `add_edge_edit`, `add_circle_edit` (8, a face-less edge: the same constructor without the face); `builders/profiles` `add_segments` (5, likewise); `builders/scaffold.rs` `add_closed_bigon`, `add_closed_square`, `ClosedFaceCell::own` (12, the 2-cell of a closed face); `exchange/step/topology/import.rs` `sew_shell` (5) |
+| **Insert an edge across a face / split a face** | 19 | `builders/faces/support.rs` `apply_face_chord_split`: reads `profile_key` and the split pcurves between relinking and registering, so it cannot be one deferred block as written |
+| **Remove a cell (merge two faces across an edge, two edges across a vertex)** | 18 | `builders/removal/operations.rs` `remove_cell_edit`, `MergePlan::apply`, `reseed_attributes`, `drop_removed_cell_attribute`, `merge_rejoined_profiles`: reads profile walks (`surviving_profile_dart`, `Profile::representative`) after dropping attributes and relinking; `remove_cell_edit` is the operator in all but name |
+| **`sew_edges` that follows merges made earlier in the transaction** | 3 | `builders/faces/sew.rs` `sew_faces_along`: chains `SewMerges` to the surviving vertex key, which `sew_edges` (reading `Vertex::from_dart`) does not; the operator would need a `merged_vertex_survivor` like `merged_profile_survivor` |
+| profile registration under a composite removal | 1 | `builders/boolean/split.rs` `curve_part` (`remove_profile` next to `remove_faces`/`remove_edges`, which are composites already) |
+
+Fresh construction touches only new darts, so it never leaves an existing
+cell mislabelled and a read between its steps answers; it stays on the raw
+primitives for want of the constructor, not because it is unsafe. The face
+constructor alone would take 103 of the 144 remaining sites, in twelve builders.
+
+Not counted, because they change no map and no labelling: geometry rewritten on
+an unchanged topology (`*_attr_mut` in `builders/transform.rs`,
+`offset/reembed.rs`, `revolve::rotate_face`, `solids::translate_face`,
+`healing/passes/*`, pcurve writes in `faces/imprints.rs`, `faces/annulus.rs`,
+`blend::write_pcurve`), sheet and solid registrations (`remove_sheet`,
+`remove_solid` in `boolean/{assemble,split}.rs`, `sheets/from_faces.rs`,
+`solids/from_sheets.rs`), and the composites `remove_faces`, `remove_edges`
+and `swap_face_identities` (`boolean/{assemble,face_boolean,split}.rs`).
 
 ## Panics audit
 
@@ -75,7 +140,7 @@ counted per area (about 260 in all). Disposition:
 | `geometry/dim3/frame.rs` | 2 | `from_xz`, `from_xy`, `from_yz` panic by contract; `try_` twins exist. Builders use them in sweep, revolve and extrude. Remaining: `builders/blend/{section/revolved,vertex/conic,vertex/trihedral}.rs`, `measure/bounding_box.rs`, `exchange/step/convert`, `topology/planar.rs`. |
 | `builders/faces` | 40 | 12 are `Profile::from_dart(..).expect("..registered profile")` on a loop the same builder just registered; the `fresh ...` links in `support.rs:1100-1151` and `imprints.rs:1245` act on darts added a few lines above; `source face must remain staged` follow `edit.face_attr(face)` checks. To convert to errors. |
 | `builders/boolean` | 20 | `pair.rs` panics on a mis-addressed contact slot (internal addressing); `broad_phase.rs:259-270` are in test helpers; `operand.rs`, `split.rs` expect a registration they copied. To convert to `BooleanError`. |
-| `builders/revolve`, `builders/solids`, `builders/profiles`, `builders/sheets` | 27 | `registered` and `non-empty` expects after validation in the same function. To convert. |
+| `builders/revolve`, `builders/solids`, `builders/profiles`, `builders/sheets` | 27 | `registered` and `non-empty` expects after validation in the same function. Five converted with the builder migration (the revolve's source consumption, `append_edge_edit`); the rest to convert. |
 | `builders/sweep` | 5 | one converted (`EmptySpine`); the other four carry a comment proving them unreachable. |
 | `builders/blend`, `builders/loft`, `builders/removal`, `builders/transform.rs`, `modeling/*` | ~15 | as above; `transform.rs:49` rewrites geometry over an unchanged topology. |
 | `geometry`, `exchange`, `tessellate`, `solver`, `measure` | ~60 | outside this workstream's paths; not audited. |
