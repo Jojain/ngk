@@ -41,9 +41,14 @@ extreme along an axis lies at a vertex, at an edge point whose tangent is square
 to the axis, or at a face point whose normal is parallel to it, and those
 points have closed forms on lines, conics, helices and the analytic surfaces
 (`bounding_box.rs` lists each case). Interior face points are kept only where
-the face's trim holds them. NURBS curves and surfaces, and revolutions of a
-profile other than a line, circle or ellipse in a meridian plane, are refused
-with `EdgeBoundingBoxNotImplemented` or `FaceBoundingBoxNotImplemented`.
+the face's trim holds them. A NURBS curve has no closed form: the edge's piece
+is cut into Bezier spans and each is halved until the hull of its control
+points reaches no further along the axis than its best end, so its extreme is
+placed to within a thousandth of `LINEAR_TOLERANCE`; a curve with a weight that
+is not positive has no such hull and is refused with
+`EdgeBoundingBoxNotImplemented`. NURBS surfaces, and revolutions of a profile
+other than a line, circle or ellipse in a meridian plane, are refused with
+`FaceBoundingBoxNotImplemented`.
 
 ## Method
 
