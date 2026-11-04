@@ -52,7 +52,7 @@
 //! [`ClosedSection`] is made only from a [`Closed`] profile and a
 //! [`CappedSection`] only from a face a loft can actually cap.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use nalgebra::Vector3;
 use thiserror::Error;
@@ -70,8 +70,8 @@ use crate::topology::attributes::{
     EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, SheetAttr, SolidAttr, VertexAttr,
 };
 use crate::topology::closed::{Closeable, Closed};
-use crate::topology::edge::Edge;
 use crate::topology::edit::{EditKey, ModelEdit, ModelEditError};
+use crate::topology::edit_operators::OperatorError;
 use crate::topology::embedding::EntityOwner;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim};
@@ -80,8 +80,7 @@ use crate::topology::profile::Profile;
 use crate::topology::profile_curve::{
     ProfileCurve, ProfileCurveError, agree_directions, align_seams,
 };
-use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
-use crate::topology::vertex::Vertex;
+use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey};
 
 mod sealed {
     pub trait Sealed {}
@@ -978,90 +977,28 @@ fn add_loft_band_face<P: Payload>(
 ///
 /// Total over all three shapes of edge, which is what a loft needs and the
 /// other sweeps do not: a band's boundary can be an unmarked closed edge, and
-/// there is no vertex at either end of one to reconcile. Each pairing that
-/// *does* name two vertices is merged, and a closed edge naming the same
-/// vertex twice is merged once.
+/// there is no vertex at either end of one to reconcile. The edit operator
+/// fuses the edges, merges each pairing that names two vertices once, and
+/// settles who labels a closure two unmarked edges bring together, so the
+/// model is valid when this returns and again when it fails.
 fn sew_edges<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     survivor: Dart,
     removed: Dart,
 ) -> Result<(), LoftError> {
-    let edge_at = |edit: &ModelEdit<'_, P>, dart: Dart| {
-        Edge::from_dart(edit, dart)
-            .map(|edge| edge.key())
-            .ok_or(LoftError::MissingEdge { dart })
-    };
-    let survivor_edge = edge_at(edit, survivor)?;
-    let removed_edge = edge_at(edit, removed)?;
-    let pairs: Vec<(VertexKey, VertexKey)> = [
-        (survivor, removed),
-        (
-            edit.alpha(Dim::Zero, survivor),
-            edit.alpha(Dim::Zero, removed),
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(keep, drop)| {
-        Some((
-            Vertex::from_dart(edit, keep)?.key(),
-            Vertex::from_dart(edit, drop)?.key(),
-        ))
-    })
-    .collect();
-
-    // Read before the sew, while the two 0-cells are still apart.
-    let closes_on_an_edge = [survivor, removed]
-        .into_iter()
-        .any(|dart| edge_owned_closure(edit, dart).is_some());
-
-    edit.sew(Dim::Two, survivor, removed)
-        .map_err(|_| LoftError::SewFailed {
-            dim: Dim::Two,
-            first: survivor,
-            second: removed,
-        })?;
-
-    if survivor_edge != removed_edge {
-        edit.merge_edges_into(survivor_edge, removed_edge);
-        if closes_on_an_edge {
-            reown_closure(edit, survivor, survivor_edge);
-        }
-    }
-    let mut merged: HashSet<VertexKey> = HashSet::new();
-    for (keep, drop) in pairs {
-        if keep != drop && merged.insert(drop) {
-            edit.merge_vertices_into(keep, drop);
-        }
-    }
-    Ok(())
-}
-
-/// The edge owning the 0-cell at `dart`, where an edge owns it.
-///
-/// A closed edge with no corner records where it closes by owning that
-/// 0-cell, which is what makes it interior to the edge rather than a vertex.
-fn edge_owned_closure<P: Payload>(edit: &ModelEdit<'_, P>, dart: Dart) -> Option<EdgeKey> {
-    if Vertex::from_dart(edit, dart).is_some() {
-        return None;
-    }
-    edit.orbit(dart, edit.orbit_indices(Dim::Zero))
-        .find_map(
-            |anchor| match edit.embedding().owner_at(Dim::Zero, anchor) {
-                Some(EntityOwner::Edge(key)) => Some(key),
-                _ => None,
+    edit.sew_edges(survivor, removed)
+        .map(|_| ())
+        .map_err(|error| match error {
+            ModelEditError::Operator(OperatorError::NotAnEdgeDart { dart }) => {
+                LoftError::MissingEdge { dart }
+            }
+            ModelEditError::Operator(OperatorError::NotSewable { .. }) => LoftError::SewFailed {
+                dim: Dim::Two,
+                first: survivor,
+                second: removed,
             },
-        )
-}
-
-/// Hands the closure point of two merged closed edges to the one that lived.
-///
-/// Sewing two corner-free closed edges brings their two closure 0-cells onto
-/// one orbit, and merging the edges leaves that orbit claimed by the key that
-/// went away as well as by the one that stayed. Two claims on one cell is
-/// what commit refuses, so the orbit is unlabelled and relabelled once.
-fn reown_closure<P: Payload>(edit: &mut ModelEdit<'_, P>, dart: Dart, edge: EdgeKey) {
-    edit.disown_cell(Dim::Zero, dart);
-    edit.own_cell(Dim::Zero, dart, EntityOwner::Edge(edge));
+            other => other.into(),
+        })
 }
 
 /// Cuts a cap's boundary at `point`, unless a corner is already there.
