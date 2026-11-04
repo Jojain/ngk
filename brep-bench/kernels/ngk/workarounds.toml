@@ -1,0 +1,18 @@
+# The cases NGK builds by working around a feature it lacks, and what that is
+# (SPEC.md, "A workaround is flagged").
+
+"feature/hole-through-the-upper-arm" = "no hole through to the next face"
+"feature/pad-down-to-cylinder" = "no extrusion up to a face"
+"feature/post-up-to-dome" = "no extrusion up to a face"
+"feature/rib-revolved-to-a-stop" = "no revolution up to a face"
+"geometry/nurbs-cone" = "no face on a given NURBS surface"
+"geometry/nurbs-sphere" = "no face on a given NURBS surface"
+"nurbs/groin-vault" = "no face on a given NURBS surface"
+"nurbs/vault-tangent-plane" = "no face on a given NURBS surface"
+"primitives/cone-frustum" = "no cone primitive"
+"swept/ball-along-spline-groove" = "no sweep of a solid"
+"swept/ball-swung-groove" = "no sweep of a solid"
+"swept/ball-thread-groove" = "no sweep of a solid"
+"swept/box-slid-aslant" = "no sweep of a solid"
+"swept/torus-slid-through-rod" = "no sweep of a solid"
+"swept/two-beads-slid-through-rod" = "no sweep of a solid"

@@ -1,0 +1,19 @@
+[package]
+name = "brep-bench-ngk"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "The brep-bench runner for NGK, and its implementation of every case."
+publish = false
+
+[dependencies]
+# Inside the NGK repository's brep-bench directory this is the NGK tree itself. In a brep-bench
+# clone, point it at your NGK tree, or for a pull request pin a commit:
+# ngk = { git = "https://github.com/Jojain/ngk", rev = "..." }
+ngk = { path = "../../.." }
+nalgebra = "0.34.2"
+radians = "0.3.1"
+
+[profile.release]
+opt-level = 3
+debug = 0

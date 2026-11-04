@@ -1,0 +1,22 @@
+{
+  "name": "ngk",
+  "kernel": "https://github.com/Jojain/ngk",
+  "license": "MIT",
+  "backend": "Rust",
+  "frontend": "Rust",
+  "build": [
+    "cargo",
+    "build",
+    "--release",
+    "--manifest-path",
+    "kernels/ngk/Cargo.toml"
+  ],
+  "command": [
+    "kernels/ngk/target/release/brep-bench-ngk"
+  ],
+  "version": [
+    "kernels/ngk/target/release/brep-bench-ngk",
+    "--version"
+  ],
+  "source": "kernels/ngk/src/cases/{category}/{name_snake}.rs"
+}

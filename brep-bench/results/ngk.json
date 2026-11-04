@@ -1,0 +1,3133 @@
+{
+ "kernel": "ngk",
+ "version": "NGK 0.0.12 (brep-bench runner 0.1.0)",
+ "measured": "exact",
+ "run": "2026-11-04T10:08:08Z",
+ "tally": {
+  "wrong": 48,
+  "pass": 11,
+  "refused": 162,
+  "crashed": 10
+ },
+ "cases": [
+  {
+   "case": "boolean/box-minus-through-cylinder",
+   "outcome": "wrong",
+   "why": "triangles not closed (768 edges unmatched)",
+   "seconds": 0.033,
+   "measured": "exact",
+   "volume": 717.2566611769188,
+   "area": 731.9468914507712,
+   "faces": {
+    "cylinder": 1,
+    "plane": 6
+   },
+   "mesh": {
+    "triangles": 786,
+    "degenerate": 0,
+    "unmatched_edges": 768,
+    "closed": false,
+    "volume": 717.3413708599574,
+    "area": 731.9648686060164
+   }
+  },
+  {
+   "case": "boolean/boxes-common",
+   "outcome": "wrong",
+   "why": "triangles not closed (4 edges unmatched)",
+   "seconds": 0.037,
+   "measured": "exact",
+   "volume": 250.00000000000003,
+   "area": 250.0,
+   "faces": {
+    "plane": 6
+   },
+   "mesh": {
+    "triangles": 12,
+    "degenerate": 0,
+    "unmatched_edges": 4,
+    "closed": false,
+    "volume": 249.99999999999997,
+    "area": 250.0
+   }
+  },
+  {
+   "case": "boolean/boxes-cut",
+   "outcome": "wrong",
+   "why": "triangles not closed (4 edges unmatched)",
+   "seconds": 0.04,
+   "measured": "exact",
+   "volume": 750.0,
+   "area": 550.0,
+   "faces": {
+    "plane": 8
+   },
+   "mesh": {
+    "triangles": 20,
+    "degenerate": 0,
+    "unmatched_edges": 4,
+    "closed": false,
+    "volume": 750.0,
+    "area": 550.0
+   }
+  },
+  {
+   "case": "boolean/boxes-sharing-a-face",
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.023,
+   "measured": "exact",
+   "volume": 2000.0000000000002,
+   "area": 1000.0,
+   "faces": {
+    "plane": 6
+   },
+   "mesh": {
+    "triangles": 12,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 1999.9999999999998,
+    "area": 1000.0
+   }
+  },
+  {
+   "case": "boolean/boxes-sharing-part-of-a-face",
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.029,
+   "measured": "exact",
+   "volume": 2000.0,
+   "area": 1100.0,
+   "faces": {
+    "plane": 10
+   },
+   "mesh": {
+    "triangles": 28,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 2000.0,
+    "area": 1100.0
+   }
+  },
+  {
+   "case": "boolean/boxes-union",
+   "outcome": "wrong",
+   "why": "triangles not closed (4 edges unmatched)",
+   "seconds": 0.049,
+   "measured": "exact",
+   "volume": 1749.9999999999998,
+   "area": 950.0,
+   "faces": {
+    "plane": 10
+   },
+   "mesh": {
+    "triangles": 28,
+    "degenerate": 0,
+    "unmatched_edges": 4,
+    "closed": false,
+    "volume": 1749.9999999999998,
+    "area": 950.0
+   }
+  },
+  {
+   "case": "boolean/drilled-plate",
+   "outcome": "wrong",
+   "why": "triangles not closed (6912 edges unmatched)",
+   "seconds": 0.3,
+   "measured": "exact",
+   "volume": 18869.02664470768,
+   "area": 7304.778684233857,
+   "faces": {
+    "cylinder": 9,
+    "plane": 6
+   },
+   "mesh": {
+    "triangles": 7002,
+    "degenerate": 0,
+    "unmatched_edges": 6912,
+    "closed": false,
+    "volume": 18869.364399585407,
+    "area": 7304.841103426016
+   }
+  },
+  {
+   "case": "boolean/golf-ball",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean face imprint failed: imprint 0 of face FaceKey(1v1) was not realized by any section",
+   "seconds": 3.157,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "boolean/half-cylinder-boss-tangent",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean face imprint failed: imprint 0 of face FaceKey(9v1) was not realized by any section",
+   "seconds": 0.049,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "boolean/half-torus",
+   "outcome": "wrong",
+   "why": "triangles not closed (512 edges unmatched)",
+   "seconds": 0.148,
+   "measured": "exact",
+   "volume": 394.7841760435742,
+   "area": 419.91691727294824,
+   "faces": {
+    "plane": 2,
+    "torus": 1
+   },
+   "mesh": {
+    "triangles": 17144,
+    "degenerate": 0,
+    "unmatched_edges": 512,
+    "closed": false,
+    "volume": 394.39143882544465,
+    "area": 419.83790554332165
+   }
+  },
+  {
+   "case": "boolean/hemisphere",
+   "outcome": "wrong",
+   "why": "triangles not closed (384 edges unmatched)",
+   "seconds": 0.22,
+   "measured": "exact",
+   "volume": 261.79938779914943,
+   "area": 235.61944901923448,
+   "faces": {
+    "plane": 1,
+    "sphere": 1
+   },
+   "mesh": {
+    "triangles": 97472,
+    "degenerate": 0,
+    "unmatched_edges": 384,
+    "closed": false,
+    "volume": 261.6285910888595,
+    "area": 255.59968213818982
+   }
+  },
+  {
+   "case": "boolean/indexed-pattern",
+   "outcome": "wrong",
+   "why": "triangles not closed (5376 edges unmatched)",
+   "seconds": 0.127,
+   "measured": "exact",
+   "volume": 5906.194188748809,
+   "area": 3367.7873246482577,
+   "faces": {
+    "cylinder": 7,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 5418,
+    "degenerate": 0,
+    "unmatched_edges": 5376,
+    "closed": false,
+    "volume": 5904.419504791111,
+    "area": 3366.814312384641
+   }
+  },
+  {
+   "case": "boolean/napkin-ring",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean face imprint failed: imprint 0 of face FaceKey(1v1) was not realized by any section",
+   "seconds": 0.034,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "boolean/offset-hole-sphere",
+   "outcome": "wrong",
+   "why": "triangles not closed (613 edges unmatched)",
+   "seconds": 0.487,
+   "measured": "exact",
+   "volume": 29240.844418812892,
+   "area": 6171.8619772467555,
+   "faces": {
+    "cylinder": 1,
+    "sphere": 1
+   },
+   "mesh": {
+    "triangles": 16241,
+    "degenerate": 0,
+    "unmatched_edges": 613,
+    "closed": false,
+    "volume": 29203.891914220134,
+    "area": 6168.438825805605
+   }
+  },
+  {
+   "case": "boolean/sphere-lens",
+   "outcome": "wrong",
+   "why": "area 125.66339335430862 against 125.663706144; triangles not closed (408 edges unmatched)",
+   "seconds": 0.304,
+   "measured": "exact",
+   "volume": 108.90854527891074,
+   "area": 125.66339335430862,
+   "faces": {
+    "sphere": 2
+   },
+   "mesh": {
+    "triangles": 185192,
+    "degenerate": 0,
+    "unmatched_edges": 408,
+    "closed": false,
+    "volume": 108.85198300300118,
+    "area": 125.65056559778628
+   }
+  },
+  {
+   "case": "boolean/sphere-pocket",
+   "outcome": "wrong",
+   "why": "triangles not closed (384 edges unmatched)",
+   "seconds": 0.204,
+   "measured": "exact",
+   "volume": 3738.20061220085,
+   "area": 1678.5398163397447,
+   "faces": {
+    "plane": 6,
+    "sphere": 1
+   },
+   "mesh": {
+    "triangles": 97488,
+    "degenerate": 0,
+    "unmatched_edges": 384,
+    "closed": false,
+    "volume": 3738.3714089105188,
+    "area": 1698.5831267990757
+   }
+  },
+  {
+   "case": "boolean/spheres-union",
+   "outcome": "wrong",
+   "why": "triangles not closed (312 edges unmatched)",
+   "seconds": 0.151,
+   "measured": "exact",
+   "volume": 938.2890059176871,
+   "area": 502.6551373636501,
+   "faces": {
+    "sphere": 2
+   },
+   "mesh": {
+    "triangles": 27560,
+    "degenerate": 0,
+    "unmatched_edges": 312,
+    "closed": false,
+    "volume": 936.93808437145,
+    "area": 501.9625403303334
+   }
+  },
+  {
+   "case": "boolean/steinmetz-common",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, LoopFreedomNotCertified, TangentOrSingularContact, TraceBudgetExhausted]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 11.656,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "boolean/steinmetz-union",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, LoopFreedomNotCertified, TangentOrSingularContact, TraceBudgetExhausted]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 11.793,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "boolean/stepped-shaft",
+   "outcome": "wrong",
+   "why": "triangles not closed (1536 edges unmatched)",
+   "seconds": 0.018,
+   "measured": "exact",
+   "volume": 1068.1415022205297,
+   "area": 659.7344572538566,
+   "faces": {
+    "cylinder": 2,
+    "plane": 3
+   },
+   "mesh": {
+    "triangles": 1532,
+    "degenerate": 0,
+    "unmatched_edges": 1536,
+    "closed": false,
+    "volume": 1067.8206516698506,
+    "area": 659.6587717779325
+   }
+  },
+  {
+   "case": "boolean/tube",
+   "outcome": "wrong",
+   "why": "triangles not closed (1536 edges unmatched)",
+   "seconds": 0.022,
+   "measured": "exact",
+   "volume": 502.65482457436667,
+   "area": 603.1857894892403,
+   "faces": {
+    "cylinder": 2,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 1536,
+    "degenerate": 0,
+    "unmatched_edges": 1536,
+    "closed": false,
+    "volume": 502.5038292658704,
+    "area": 603.1328101827614
+   }
+  },
+  {
+   "case": "boolean/tube-flush-ends",
+   "outcome": "wrong",
+   "why": "triangles not closed (1536 edges unmatched)",
+   "seconds": 0.034,
+   "measured": "exact",
+   "volume": 502.65482457436667,
+   "area": 603.1857894892403,
+   "faces": {
+    "cylinder": 2,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 1536,
+    "degenerate": 0,
+    "unmatched_edges": 1536,
+    "closed": false,
+    "volume": 502.5038292658704,
+    "area": 603.1328101827614
+   }
+  },
+  {
+   "case": "chamfer/block-ridge",
+   "outcome": "refused",
+   "why": "the blend does not fit along edge EdgeKey(8v1): the blends at its two ends overlap",
+   "seconds": 0.004,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "chamfer/box-top-asymmetric",
+   "outcome": "refused",
+   "why": "NGK's chamfer sets both rails back one distance; it has no chamfer with two distances",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "chamfer/cube-all-edges",
+   "outcome": "refused",
+   "why": "vertex VertexKey(1v1) is a corner-cut target and also ends a selected edge",
+   "seconds": 0.005,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "chamfer/cube-all-edges-mitred",
+   "outcome": "wrong",
+   "why": "triangles not closed (20 edges unmatched)",
+   "seconds": 0.013,
+   "measured": "exact",
+   "volume": 808.0000000000001,
+   "area": 453.5878784786799,
+   "faces": {
+    "plane": 18
+   },
+   "mesh": {
+    "triangles": 60,
+    "degenerate": 0,
+    "unmatched_edges": 20,
+    "closed": false,
+    "volume": 808.0,
+    "area": 453.58787847868
+   }
+  },
+  {
+   "case": "chamfer/cylinder-rim-to-point",
+   "outcome": "refused",
+   "why": "the blend leaves face FaceKey(2v1) with crossing or inverted boundaries",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "chamfer/l-block-inside-consumed",
+   "outcome": "refused",
+   "why": "the blend does not fit at vertex VertexKey(4v1): a rail runs off the edge beside it",
+   "seconds": 0.007,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "chamfer/octahedron-all-edges",
+   "outcome": "refused",
+   "why": "NGK cuts a solid corner only where three edges meet, by the triangle through the points along them; it has no flat cut of a corner where four chamfers meet",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "chamfer/octahedron-all-edges-mitred",
+   "outcome": "refused",
+   "why": "vertex VertexKey(1v1) is not supported: only vertices where three faces meet are blended",
+   "seconds": 0.01,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/boss-on-plate",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/box-about-its-middle",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/box-cross-drilled",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/box-four-sides",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/box-one-side",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/box-outward",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/box-top-drafted-away",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/cylinder-parted-both-ways",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/hole-tapered",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/l-block-sides",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/pocket-walls",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/rounded-box-sides",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "draft/rounded-pocket-walls",
+   "outcome": "refused",
+   "why": "NGK has no draft: it cannot turn faces about a neutral plane and trim their neighbours",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "edit/block-top-moved-up",
+   "outcome": "refused",
+   "why": "NGK has no face move: it cannot move faces of a finished solid and extend or trim the faces beside them",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "edit/hole-widened",
+   "outcome": "refused",
+   "why": "NGK has no face move: it cannot move faces of a finished solid and extend or trim the faces beside them",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "edit/l-block-riser-moved",
+   "outcome": "refused",
+   "why": "NGK has no face move: it cannot move faces of a finished solid and extend or trim the faces beside them",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "edit/rounded-block-top-moved-up",
+   "outcome": "refused",
+   "why": "NGK has no face move: it cannot move faces of a finished solid and extend or trim the faces beside them",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "feature/hole-through-the-upper-arm",
+   "outcome": "wrong",
+   "why": "triangles not closed (768 edges unmatched)",
+   "seconds": 0.051,
+   "measured": "exact",
+   "volume": 11458.407105255375,
+   "area": 5386.265482457437,
+   "faces": {
+    "cylinder": 1,
+    "plane": 10
+   },
+   "mesh": {
+    "triangles": 808,
+    "degenerate": 0,
+    "unmatched_edges": 768,
+    "closed": false,
+    "volume": 11458.496759641574,
+    "area": 5386.302073811883
+   }
+  },
+  {
+   "case": "feature/pad-down-to-cylinder",
+   "outcome": "wrong",
+   "why": "triangles not closed (840 edges unmatched)",
+   "seconds": 0.024,
+   "measured": "exact",
+   "volume": 12751.845965694883,
+   "area": 3268.3819480498155,
+   "faces": {
+    "cylinder": 1,
+    "plane": 7
+   },
+   "mesh": {
+    "triangles": 852,
+    "degenerate": 0,
+    "unmatched_edges": 840,
+    "closed": false,
+    "volume": 12748.07302391021,
+    "area": 3268.0899557979064
+   }
+  },
+  {
+   "case": "feature/post-up-to-dome",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean intersection computation failed: NURBS conversion failed: parameter interval is degenerate: [0, 0]",
+   "seconds": 0.016,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "feature/rib-revolved-to-a-stop",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean face imprint failed: imprint 0 of face FaceKey(3v1) was not realized by any section",
+   "seconds": 0.015,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "fillet/ball-and-post",
+   "outcome": "wrong",
+   "why": "triangles not closed (424 edges unmatched)",
+   "seconds": 0.47,
+   "measured": "exact",
+   "volume": 4467.1367089668975,
+   "area": 1395.719075263886,
+   "faces": {
+    "cylinder": 1,
+    "plane": 1,
+    "sphere": 1,
+    "torus": 1
+   },
+   "mesh": {
+    "triangles": 289808,
+    "degenerate": 0,
+    "unmatched_edges": 424,
+    "closed": false,
+    "volume": 4464.751318507114,
+    "area": 1713.1771083194192
+   }
+  },
+  {
+   "case": "fillet/boss-s-curve",
+   "outcome": "refused",
+   "why": "edge EdgeKey(15v1) is not supported: it closes on a corner, where its blend would meet itself",
+   "seconds": 0.015,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "fillet/box-all-edges",
+   "outcome": "wrong",
+   "why": "triangles not closed (2892 edges unmatched)",
+   "seconds": 0.868,
+   "measured": "exact",
+   "volume": 975.5870134898032,
+   "area": 547.3628179516868,
+   "faces": {
+    "cylinder": 12,
+    "plane": 6,
+    "sphere": 8
+   },
+   "mesh": {
+    "triangles": 524180,
+    "degenerate": 0,
+    "unmatched_edges": 2892,
+    "closed": false,
+    "volume": 975.5771170813961,
+    "area": 547.3616628312363
+   }
+  },
+  {
+   "case": "fillet/box-one-edge",
+   "outcome": "wrong",
+   "why": "triangles not closed (192 edges unmatched)",
+   "seconds": 0.011,
+   "measured": "exact",
+   "volume": 991.4159265358979,
+   "area": 589.6991118430775,
+   "faces": {
+    "cylinder": 1,
+    "plane": 6
+   },
+   "mesh": {
+    "triangles": 1342,
+    "degenerate": 0,
+    "unmatched_edges": 192,
+    "closed": false,
+    "volume": 991.4118284970859,
+    "area": 589.6963267140259
+   }
+  },
+  {
+   "case": "fillet/cylinder-rim",
+   "outcome": "wrong",
+   "why": "triangles not closed (780 edges unmatched)",
+   "seconds": 0.03,
+   "measured": "exact",
+   "volume": 778.9574334197118,
+   "area": 457.31024053179993,
+   "faces": {
+    "cylinder": 1,
+    "plane": 2,
+    "torus": 1
+   },
+   "mesh": {
+    "triangles": 9468,
+    "degenerate": 0,
+    "unmatched_edges": 780,
+    "closed": false,
+    "volume": 778.7335413927598,
+    "area": 457.23000611067636
+   }
+  },
+  {
+   "case": "fillet/cylinder-rim-to-dome",
+   "outcome": "refused",
+   "why": "the blend does not fit along edge EdgeKey(2v1): the round is wider than the circle it runs round",
+   "seconds": 0.004,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "fillet/hole-waist",
+   "outcome": "refused",
+   "why": "the blend leaves face FaceKey(13v1) with crossing or inverted boundaries",
+   "seconds": 0.036,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "fillet/l-block-inside-consumed",
+   "outcome": "refused",
+   "why": "the blend does not fit at vertex VertexKey(4v1): a rail runs off the edge beside it",
+   "seconds": 0.007,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "fillet/rounded-block-top-rim",
+   "outcome": "wrong",
+   "why": "triangles not closed (1536 edges unmatched)",
+   "seconds": 0.172,
+   "measured": "exact",
+   "volume": 1149.043632182972,
+   "area": 733.0931753639765,
+   "faces": {
+    "cylinder": 8,
+    "plane": 6,
+    "torus": 4
+   },
+   "mesh": {
+    "triangles": 80080,
+    "degenerate": 0,
+    "unmatched_edges": 1536,
+    "closed": false,
+    "volume": 1149.0279697994783,
+    "area": 733.0752953765848
+   }
+  },
+  {
+   "case": "fillet/slab-half-round",
+   "outcome": "refused",
+   "why": "the blend does not fit along edge EdgeKey(6v1): the blends at its two ends overlap",
+   "seconds": 0.004,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "fillet/sliver-strip",
+   "outcome": "wrong",
+   "why": "triangles not closed (384 edges unmatched)",
+   "seconds": 0.018,
+   "measured": "exact",
+   "volume": 391.4176432647499,
+   "area": 501.97533421296373,
+   "faces": {
+    "cylinder": 2,
+    "plane": 6
+   },
+   "mesh": {
+    "triangles": 2650,
+    "degenerate": 0,
+    "unmatched_edges": 384,
+    "closed": false,
+    "volume": 391.4135428635408,
+    "area": 501.9735494921439
+   }
+  },
+  {
+   "case": "fillet/variable-radius-edge",
+   "outcome": "refused",
+   "why": "NGK's fillet takes one constant radius; it has no variable-radius law",
+   "seconds": 0.004,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/ellipsoid",
+   "outcome": "refused",
+   "why": "NGK has no ellipsoid surface, and its motions are rigid: no ball can be stretched into one",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/ellipsoid-half",
+   "outcome": "refused",
+   "why": "NGK has no ellipsoid surface, and its motions are rigid: no ball can be stretched into one",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/elliptic-cylinder",
+   "outcome": "wrong",
+   "why": "triangles not closed (770 edges unmatched)",
+   "seconds": 0.012,
+   "measured": "exact",
+   "volume": 471.23889803846896,
+   "area": 349.51776824167507,
+   "faces": {
+    "other": 2,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 1016,
+    "degenerate": 0,
+    "unmatched_edges": 770,
+    "closed": false,
+    "volume": 471.14428297355585,
+    "area": 349.4735157585915
+   }
+  },
+  {
+   "case": "geometry/elliptic-hole",
+   "outcome": "wrong",
+   "why": "triangles not closed (744 edges unmatched)",
+   "seconds": 3.407,
+   "measured": "exact",
+   "volume": 2619.6106578838962,
+   "area": 1527.425421774287,
+   "faces": {
+    "other": 2,
+    "plane": 6
+   },
+   "mesh": {
+    "triangles": 1228,
+    "degenerate": 0,
+    "unmatched_edges": 744,
+    "closed": false,
+    "volume": 2619.7068507416607,
+    "area": 1527.470331530217
+   }
+  },
+  {
+   "case": "geometry/high-degree-bezier-dome",
+   "outcome": "refused",
+   "why": "NGK makes no face on a given NURBS surface: its NURBS faces come only from lofts, sweeps and revolutions",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/horn-torus",
+   "outcome": "refused",
+   "why": "Missing vertex point for dart Dart(0)",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/hyperboloid",
+   "outcome": "wrong",
+   "why": "triangles not closed (28 edges unmatched)",
+   "seconds": 0.175,
+   "measured": "exact",
+   "volume": 804.247719318987,
+   "area": 564.4508882371364,
+   "faces": {
+    "other": 1,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 45474,
+    "degenerate": 0,
+    "unmatched_edges": 28,
+    "closed": false,
+    "volume": 804.8181998601309,
+    "area": 596.7682686100316
+   }
+  },
+  {
+   "case": "geometry/hyperboloid-of-two-sheets",
+   "outcome": "refused",
+   "why": "volume not measured: shell 0 has the wrong orientation for its solid side",
+   "seconds": 0.004,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/hyperboloid-ruled",
+   "outcome": "refused",
+   "why": "column 0 has no matching edge on the cap at end 1",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/lemon",
+   "outcome": "refused",
+   "why": "Edge EdgeKey(2v1) touches the revolution axis in an unsupported configuration",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/nurbs-cone",
+   "outcome": "refused",
+   "why": "volume not measured: shell 0 has the wrong orientation for its solid side",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/nurbs-sphere",
+   "outcome": "refused",
+   "why": "Edge EdgeKey(2v1) touches the revolution axis in an unsupported configuration",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/oblate-spheroid",
+   "outcome": "refused",
+   "why": "Edge EdgeKey(1v1) touches the revolution axis in an unsupported configuration",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/paraboloid",
+   "outcome": "wrong",
+   "why": "triangles not closed (16 edges unmatched)",
+   "seconds": 0.079,
+   "measured": "exact",
+   "volume": 804.2477193189872,
+   "area": 542.208393846961,
+   "faces": {
+    "other": 1,
+    "plane": 1
+   },
+   "mesh": {
+    "triangles": 16706,
+    "degenerate": 0,
+    "unmatched_edges": 16,
+    "closed": false,
+    "volume": 803.1256180890358,
+    "area": 567.4543999610461
+   }
+  },
+  {
+   "case": "geometry/periodic-bspline-prism",
+   "outcome": "wrong",
+   "why": "triangles not closed (4 edges unmatched)",
+   "seconds": 0.316,
+   "measured": "exact",
+   "volume": 3333.3333333333326,
+   "area": 1315.956762722759,
+   "faces": {
+    "other": 2,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 147180,
+    "degenerate": 0,
+    "unmatched_edges": 4,
+    "closed": false,
+    "volume": 3332.9516884565624,
+    "area": 1315.8930883935468
+   }
+  },
+  {
+   "case": "geometry/periodic-bspline-ring",
+   "outcome": "wrong",
+   "why": "triangles not closed (22 edges unmatched); triangles' volume -1881.54",
+   "seconds": 0.372,
+   "measured": "exact",
+   "volume": 1884.955592153876,
+   "area": 1223.8829974910582,
+   "faces": {
+    "other": 2
+   },
+   "mesh": {
+    "triangles": 125604,
+    "degenerate": 0,
+    "unmatched_edges": 22,
+    "closed": false,
+    "volume": -1881.5422465882007,
+    "area": 1312.3383173461973
+   }
+  },
+  {
+   "case": "geometry/saddle-drum",
+   "outcome": "wrong",
+   "why": "triangles not closed (799 edges unmatched)",
+   "seconds": 3.458,
+   "measured": "exact",
+   "volume": 2010.6192982803127,
+   "area": 948.8014649693328,
+   "faces": {
+    "bspline": 1,
+    "cylinder": 1,
+    "plane": 1
+   },
+   "mesh": {
+    "triangles": 81951,
+    "degenerate": 0,
+    "unmatched_edges": 799,
+    "closed": false,
+    "volume": 2010.0532070293625,
+    "area": 948.7011551226872
+   }
+  },
+  {
+   "case": "geometry/saddle-drum-bored",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 1.987,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/spindle-torus",
+   "outcome": "refused",
+   "why": "Edge EdgeKey(2v1) touches the revolution axis in an unsupported configuration",
+   "seconds": 0.004,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "geometry/torus-nearly-horn",
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.018,
+   "measured": "exact",
+   "volume": 2457.5413654756508,
+   "area": 984.9865192287177,
+   "faces": {
+    "torus": 1
+   },
+   "mesh": {
+    "triangles": 16384,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 2452.610313076381,
+    "area": 984.3439090646057
+   }
+  },
+  {
+   "case": "loft/slab-pinched-on-four-guides",
+   "outcome": "refused",
+   "why": "NGK lofts through sections alone; it has no loft along guide curves",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "loft/square-spire-on-four-guides",
+   "outcome": "refused",
+   "why": "NGK lofts through sections alone; it has no loft along guide curves",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "loft/square-to-octagon",
+   "outcome": "wrong",
+   "why": "volume 32982.83553372465 against 33760; area 6093.7126178061335 against 6188.25469805; triangles not closed (28 edges unmatched); triangles' volume 32982.8",
+   "seconds": 0.042,
+   "measured": "exact",
+   "volume": 32982.83553372465,
+   "area": 6093.7126178061335,
+   "faces": {
+    "bspline": 12,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 11672,
+    "degenerate": 0,
+    "unmatched_edges": 28,
+    "closed": false,
+    "volume": 32982.835533425045,
+    "area": 6102.795440942647
+   }
+  },
+  {
+   "case": "loft/square-to-round",
+   "outcome": "wrong",
+   "why": "volume 33833.87146289993 against 35068.5834706; area 6170.938154374142 against 6241.37284007; triangles not closed (344 edges unmatched); triangles' volume 33832.6",
+   "seconds": 0.481,
+   "measured": "exact",
+   "volume": 33833.87146289993,
+   "area": 6170.938154374142,
+   "faces": {
+    "bspline": 4,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 107978,
+    "degenerate": 0,
+    "unmatched_edges": 344,
+    "closed": false,
+    "volume": 33832.5959809751,
+    "area": 6170.87466219839
+   }
+  },
+  {
+   "case": "loft/twisted-tapering-square",
+   "outcome": "refused",
+   "why": "NGK lofts through sections alone; it has no loft along guide curves",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "loft/twisted-thin-blade",
+   "outcome": "refused",
+   "why": "NGK lofts through sections alone; it has no loft along guide curves",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "nurbs/bezier-dome",
+   "outcome": "refused",
+   "why": "NGK makes no face on a given NURBS surface: its NURBS faces come only from lofts, sweeps and revolutions",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "nurbs/bspline-dome",
+   "outcome": "refused",
+   "why": "NGK makes no face on a given NURBS surface: its NURBS faces come only from lofts, sweeps and revolutions",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "nurbs/drilled-dome",
+   "outcome": "refused",
+   "why": "NGK makes no face on a given NURBS surface: its NURBS faces come only from lofts, sweeps and revolutions",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "nurbs/groin-vault",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, LoopFreedomNotCertified, TangentOrSingularContact]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 19.406,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "nurbs/sliced-dome",
+   "outcome": "refused",
+   "why": "NGK makes no face on a given NURBS surface: its NURBS faces come only from lofts, sweeps and revolutions",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "nurbs/vault-tangent-plane",
+   "outcome": "wrong",
+   "why": "triangles not closed (8 edges unmatched)",
+   "seconds": 0.13,
+   "measured": "exact",
+   "volume": 8175.3941772087055,
+   "area": 2404.9354050618863,
+   "faces": {
+    "other": 1,
+    "plane": 5
+   },
+   "mesh": {
+    "triangles": 52750,
+    "degenerate": 0,
+    "unmatched_edges": 8,
+    "closed": false,
+    "volume": 8175.158749471539,
+    "area": 2404.776526979775
+   }
+  },
+  {
+   "case": "offset/box-grown",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/box-shrunk",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/cone-grown",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.004,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/cylinder-grown",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/drilled-plate-grown",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/flanged-drum-shrunk",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/grooved-drum-grown",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/l-block-grown",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/l-block-grown-sharp",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/l-block-shrunk",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/napkin-ring-grown",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/tetrahedron-grown",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/torus-grown-past-its-hole",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "offset/torus-shrunk",
+   "outcome": "refused",
+   "why": "NGK has no offset of a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "parts/flange",
+   "outcome": "wrong",
+   "why": "triangles not closed (6912 edges unmatched)",
+   "seconds": 0.252,
+   "measured": "exact",
+   "volume": 22135.661837193686,
+   "area": 9324.246995854506,
+   "faces": {
+    "cylinder": 9,
+    "plane": 3
+   },
+   "mesh": {
+    "triangles": 6938,
+    "degenerate": 0,
+    "unmatched_edges": 6912,
+    "closed": false,
+    "volume": 22129.0182535536,
+    "area": 9321.873281294489
+   }
+  },
+  {
+   "case": "parts/pin-lug",
+   "outcome": "wrong",
+   "why": "triangles not closed (768 edges unmatched)",
+   "seconds": 0.044,
+   "measured": "exact",
+   "volume": 29989.380701702532,
+   "area": 8900.530964914873,
+   "faces": {
+    "cylinder": 1,
+    "plane": 6
+   },
+   "mesh": {
+    "triangles": 784,
+    "degenerate": 0,
+    "unmatched_edges": 768,
+    "closed": false,
+    "volume": 29989.984672930525,
+    "area": 8900.679838061336
+   }
+  },
+  {
+   "case": "parts/pocketed-tray",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean intersection network is inconsistent: coincident region 0 is not bounded by one closed oriented cycle",
+   "seconds": 0.026,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "parts/shelf-bracket",
+   "outcome": "wrong",
+   "why": "triangles not closed (192 edges unmatched)",
+   "seconds": 0.012,
+   "measured": "exact",
+   "volume": 40137.34517542562,
+   "area": 12393.132741228717,
+   "faces": {
+    "cylinder": 1,
+    "plane": 8
+   },
+   "mesh": {
+    "triangles": 1460,
+    "degenerate": 0,
+    "unmatched_edges": 192,
+    "closed": false,
+    "volume": 40137.40815991021,
+    "area": 12393.17221293419
+   }
+  },
+  {
+   "case": "parts/star-handle",
+   "outcome": "refused",
+   "why": "NGK extrudes straight; it has no draft, nor an extrusion that tapers",
+   "seconds": 0.005,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "parts/turned-shaft",
+   "outcome": "wrong",
+   "why": "triangles not closed (1560 edges unmatched)",
+   "seconds": 0.044,
+   "measured": "exact",
+   "volume": 120915.32332987,
+   "area": 17470.59130491101,
+   "faces": {
+    "cylinder": 2,
+    "other": 1,
+    "plane": 3
+   },
+   "mesh": {
+    "triangles": 6200,
+    "degenerate": 0,
+    "unmatched_edges": 1560,
+    "closed": false,
+    "volume": 120876.7486265357,
+    "area": 17469.798987265105
+   }
+  },
+  {
+   "case": "parts/v-belt-pulley",
+   "outcome": "crashed",
+   "why": "panicked at /home/claude/ngk/src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(112), held: Vertex(VertexKey(2v1)), claimed: Edge(EdgeKey(15v1)) }",
+   "seconds": 0.065,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "primitives/box",
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.006,
+   "measured": "exact",
+   "volume": 6000.0,
+   "area": 2200.0,
+   "faces": {
+    "plane": 6
+   },
+   "mesh": {
+    "triangles": 12,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 6000.0,
+    "area": 2200.0
+   }
+  },
+  {
+   "case": "primitives/cone-frustum",
+   "outcome": "wrong",
+   "why": "triangles not closed (768 edges unmatched)",
+   "seconds": 0.026,
+   "measured": "exact",
+   "volume": 245.04422698000408,
+   "area": 238.62729630595933,
+   "faces": {
+    "cone": 1,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 7150,
+    "degenerate": 0,
+    "unmatched_edges": 768,
+    "closed": false,
+    "volume": 245.03215633909127,
+    "area": 238.58710807705492
+   }
+  },
+  {
+   "case": "primitives/cylinder",
+   "outcome": "wrong",
+   "why": "triangles not closed (768 edges unmatched)",
+   "seconds": 0.007,
+   "measured": "exact",
+   "volume": 785.398163397448,
+   "area": 471.23889803846896,
+   "faces": {
+    "cylinder": 1,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 764,
+    "degenerate": 0,
+    "unmatched_edges": 768,
+    "closed": false,
+    "volume": 785.1622404678611,
+    "area": 471.1679413488124
+   }
+  },
+  {
+   "case": "primitives/extruded-l",
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.006,
+   "measured": "exact",
+   "volume": 1200.0000000000002,
+   "area": 860.0,
+   "faces": {
+    "plane": 8
+   },
+   "mesh": {
+    "triangles": 20,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 1200.0000000000002,
+    "area": 860.0
+   }
+  },
+  {
+   "case": "primitives/revolved-sector",
+   "outcome": "wrong",
+   "why": "triangles not closed (392 edges unmatched)",
+   "seconds": 0.013,
+   "measured": "exact",
+   "volume": 201.06192982974673,
+   "area": 233.06192982974676,
+   "faces": {
+    "cylinder": 2,
+    "plane": 4
+   },
+   "mesh": {
+    "triangles": 2774,
+    "degenerate": 0,
+    "unmatched_edges": 392,
+    "closed": false,
+    "volume": 201.03503030040756,
+    "area": 233.02080859189377
+   }
+  },
+  {
+   "case": "primitives/revolved-washer",
+   "outcome": "wrong",
+   "why": "triangles not closed (1536 edges unmatched)",
+   "seconds": 0.012,
+   "measured": "exact",
+   "volume": 804.2477193189872,
+   "area": 804.247719318987,
+   "faces": {
+    "cylinder": 2,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 1536,
+    "degenerate": 0,
+    "unmatched_edges": 1536,
+    "closed": false,
+    "volume": 804.0061268253922,
+    "area": 804.0763131262765
+   }
+  },
+  {
+   "case": "primitives/sphere",
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.023,
+   "measured": "exact",
+   "volume": 523.5987755982989,
+   "area": 314.15926535897927,
+   "faces": {
+    "sphere": 1
+   },
+   "mesh": {
+    "triangles": 16128,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 523.0733000952972,
+    "area": 314.00158274623396
+   }
+  },
+  {
+   "case": "primitives/torus",
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.017,
+   "measured": "exact",
+   "volume": 789.5683520871485,
+   "area": 789.5683520871485,
+   "faces": {
+    "torus": 1
+   },
+   "mesh": {
+    "triangles": 16384,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 787.9840723443194,
+    "area": 789.0532257089885
+   }
+  },
+  {
+   "case": "shell/box-five-faces-open",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/box-hairline-cavity",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/box-hollowed",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/box-open-top",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/box-open-top-and-bottom",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/box-open-top-and-front",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/box-open-top-outward",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/box-open-top-outward-sharp",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/box-paper-thin",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/box-walls-meeting",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/capsule-open-at-its-dome",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/capsule-open-base",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/cone-open-base",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/cylinder-open-top",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/cylinder-side-open",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/drilled-block-open-at-its-bore",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/drilled-block-open-top",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/dumbbell-neck-filled",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/half-torus-open-ends",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/hemisphere-open",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/hole-skin-merging-wall",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/l-block-open-top",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/l-block-open-top-sharp",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/round-consumed",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/round-shrunk-to-an-edge",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/rounded-tray",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.006,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/sphere-hollowed",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/sphere-open-at-a-cap",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/sphere-opening-sealed",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/sphere-pinhole-opening",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "shell/torus-hollowed",
+   "outcome": "refused",
+   "why": "NGK has no shell: it cannot hollow a solid to a wall of constant thickness",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "singular/ball-cut-aslant-through-a-pole",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SynchronizedFitToleranceExceeded]; 0 unresolved overlaps, 2 uncertified branches)",
+   "seconds": 0.044,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "singular/ball-halved-through-its-poles",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean face imprint failed: imprint 0 of face FaceKey(1v1) was not realized by any section",
+   "seconds": 0.009,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "singular/balls-meeting-through-a-pole",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SynchronizedFitToleranceExceeded]; 0 unresolved overlaps, 3 uncertified branches)",
+   "seconds": 0.087,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "singular/cone-cut-aslant-through-its-apex",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([CoincidentRegionResolutionNotImplemented, SubdivisionBudgetExhausted]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 0.144,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "singular/cone-halved-through-its-apex",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([TangentOrSingularContact]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 0.006,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "singular/napkin-ring-poles-on-its-rims",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([LoopFreedomNotCertified, SubdivisionBudgetExhausted, SynchronizedFitToleranceExceeded]; 0 unresolved overlaps, 1 uncertified branches)",
+   "seconds": 0.098,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "singular/sectors-sharing-an-apex",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, TangentOrSingularContact, LoopFreedomNotCertified]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 10.107,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "spline/peanut-prism",
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.435,
+   "measured": "exact",
+   "volume": 2472.1527777777774,
+   "area": 1319.2165440120168,
+   "faces": {
+    "other": 2,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 197560,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 2470.0897864220033,
+    "area": 1329.0254185057115
+   }
+  },
+  {
+   "case": "spline/pipe-on-planar-cubic",
+   "outcome": "crashed",
+   "why": "panicked at /home/claude/ngk/src/geometry/dim3/frame.rs:82:72: frame directions are not perpendicular",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "spline/pipe-on-twisted-cubic",
+   "outcome": "crashed",
+   "why": "panicked at /home/claude/ngk/src/geometry/dim3/frame.rs:82:72: frame directions are not perpendicular",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "spline/rational-cap",
+   "outcome": "refused",
+   "why": "volume not measured: shell 0 has the wrong orientation for its solid side",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "spline/rational-spheroid",
+   "outcome": "refused",
+   "why": "Edge EdgeKey(2v1) touches the revolution axis in an unsupported configuration",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "spline/revolved-cubic-dome",
+   "outcome": "refused",
+   "why": "volume not measured: shell 0 has the wrong orientation for its solid side",
+   "seconds": 0.005,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "spline/square-on-planar-cubic",
+   "outcome": "crashed",
+   "why": "panicked at /home/claude/ngk/src/geometry/dim3/frame.rs:82:72: frame directions are not perpendicular",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "sweep/circle-along-arc",
+   "outcome": "crashed",
+   "why": "panicked at /home/claude/ngk/src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(1v1)), claimed: Edge(EdgeKey(1v1)) }",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "sweep/duct-elbow",
+   "outcome": "wrong",
+   "why": "triangles not closed (784 edges unmatched)",
+   "seconds": 0.026,
+   "measured": "exact",
+   "volume": 6031.857894892403,
+   "area": 6287.857894892402,
+   "faces": {
+    "cylinder": 4,
+    "plane": 6
+   },
+   "mesh": {
+    "triangles": 5502,
+    "degenerate": 0,
+    "unmatched_edges": 784,
+    "closed": false,
+    "volume": 6030.9926915478445,
+    "area": 6286.624245383169
+   }
+  },
+  {
+   "case": "sweep/helical-pipe",
+   "outcome": "crashed",
+   "why": "panicked at /home/claude/ngk/src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(1v1)), claimed: Edge(EdgeKey(1v1)) }",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "sweep/helical-pipe-round-ends",
+   "outcome": "crashed",
+   "why": "panicked at /home/claude/ngk/src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(1v1)), claimed: Edge(EdgeKey(1v1)) }",
+   "seconds": 0.006,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "sweep/hollow-reducer",
+   "outcome": "refused",
+   "why": "a face with 1 inner loops has holes a loft cannot correspond",
+   "seconds": 0.004,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "sweep/mitred-elbow",
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.022,
+   "measured": "exact",
+   "volume": 8000.000000000001,
+   "area": 3400.0,
+   "faces": {
+    "bspline": 8,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 3900,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 8000.000541342076,
+    "area": 3400.0001664524398
+   }
+  },
+  {
+   "case": "sweep/mitred-picture-frame",
+   "outcome": "refused",
+   "why": "the spine closes, and a sweep round a closed spine has no ends to cap",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "sweep/mitred-pipe-on-cube-edges",
+   "outcome": "crashed",
+   "why": "panicked at /home/claude/ngk/src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(1v1)), claimed: Edge(EdgeKey(1v1)) }",
+   "seconds": 0.004,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "sweep/narrowing-bend",
+   "outcome": "refused",
+   "why": "NGK sweeps a section rigidly; it has no sweep whose section scales along the path",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "sweep/round-cornered-pipe",
+   "outcome": "refused",
+   "why": "edge EdgeKey(1v1) lies inside the turn, so the rounded transition would self-intersect",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "sweep/twisted-duct",
+   "outcome": "wrong",
+   "why": "volume 13973.333333333332 against 12373.3333333; area 3503.3084113962987 against 3515.67071004; triangles not closed (24 edges unmatched); triangles' volume 13973.3",
+   "seconds": 0.028,
+   "measured": "exact",
+   "volume": 13973.333333333332,
+   "area": 3503.3084113962987,
+   "faces": {
+    "bspline": 8,
+    "plane": 2
+   },
+   "mesh": {
+    "triangles": 7780,
+    "degenerate": 0,
+    "unmatched_edges": 24,
+    "closed": false,
+    "volume": 13973.333333333323,
+    "area": 3519.500121081254
+   }
+  },
+  {
+   "case": "swept/ball-along-spline-groove",
+   "outcome": "crashed",
+   "why": "panicked at /home/claude/ngk/src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(1v1)), claimed: Edge(EdgeKey(1v1)) }",
+   "seconds": 0.005,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "swept/ball-swung-groove",
+   "outcome": "refused",
+   "why": "Missing vertex point for dart Dart(0)",
+   "seconds": 0.004,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "swept/ball-thread-groove",
+   "outcome": "crashed",
+   "why": "panicked at /home/claude/ngk/src/model.rs:424:18: a committed model's labelling should describe its own map: ConflictingOwnership { dimension: Zero, dart: Dart(1), held: Vertex(VertexKey(1v1)), claimed: Edge(EdgeKey(1v1)) }",
+   "seconds": 0.004,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "swept/box-slid-aslant",
+   "outcome": "wrong",
+   "why": "triangles not closed (8 edges unmatched)",
+   "seconds": 0.27,
+   "measured": "exact",
+   "volume": 812.0,
+   "area": 542.6189318971692,
+   "faces": {
+    "plane": 12
+   },
+   "mesh": {
+    "triangles": 24,
+    "degenerate": 0,
+    "unmatched_edges": 8,
+    "closed": false,
+    "volume": 812.0000000000001,
+    "area": 542.6189318971692
+   }
+  },
+  {
+   "case": "swept/plus-cut-wheel",
+   "outcome": "refused",
+   "why": "NGK has no sweep of a solid, and this sweep's walls are envelopes it cannot build from its other operations",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "swept/rack-cut-tooth-space",
+   "outcome": "refused",
+   "why": "NGK has no sweep of a solid, and this sweep's walls are envelopes it cannot build from its other operations",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "swept/torus-screwed-through-rod",
+   "outcome": "refused",
+   "why": "NGK has no sweep of a solid, and this sweep's walls are envelopes it cannot build from its other operations",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "swept/torus-slid-through-rod",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean face imprint failed: imprint 0 of face FaceKey(3v1) was not realized by any section",
+   "seconds": 0.02,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "swept/torus-turned-across-block",
+   "outcome": "refused",
+   "why": "NGK has no sweep of a solid, and this sweep's walls are envelopes it cannot build from its other operations",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "swept/tumbling-torus",
+   "outcome": "refused",
+   "why": "NGK has no sweep of a solid, and this sweep's walls are envelopes it cannot build from its other operations",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "swept/two-beads-slid-through-rod",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean face imprint failed: imprint 0 of face FaceKey(3v1) was not realized by any section",
+   "seconds": 0.026,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "swept/v-wheel-screwed-through-rod",
+   "outcome": "refused",
+   "why": "NGK has no sweep of a solid, and this sweep's walls are envelopes it cannot build from its other operations",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/ball-in-band",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, LoopFreedomNotCertified, TangentOrSingularContact]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 28.111,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/coaxial-overlap",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([LoopFreedomNotCertified, SubdivisionBudgetExhausted]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 0.028,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/cone-tip-on-face",
+   "outcome": "refused",
+   "why": "regularized Boolean result has 2 disconnected solids",
+   "seconds": 0.008,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/cube-turned-a-hair",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean face imprint failed: imprint 0 of face FaceKey(1v1) was not realized by any section",
+   "seconds": 0.024,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/grazing-cylinders",
+   "outcome": "wrong",
+   "why": "triangles not closed (148 edges unmatched)",
+   "seconds": 0.209,
+   "measured": "exact",
+   "volume": 0.001570021552494601,
+   "area": 0.6281596065829311,
+   "faces": {
+    "cylinder": 2
+   },
+   "mesh": {
+    "triangles": 91600,
+    "degenerate": 0,
+    "unmatched_edges": 148,
+    "closed": false,
+    "volume": 0.001569821876221741,
+    "area": 0.6279112457978633
+   }
+  },
+  {
+   "case": "tangent/hairline-slot",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean face imprint failed: imprint 1 of face FaceKey(2v1) was not realized by any section",
+   "seconds": 0.011,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/ice-cream-cone",
+   "outcome": "wrong",
+   "why": "triangles not closed (12 edges unmatched)",
+   "seconds": 0.442,
+   "measured": "exact",
+   "volume": 15079.644737231003,
+   "area": 3015.928947446201,
+   "faces": {
+    "cone": 1,
+    "sphere": 1
+   },
+   "mesh": {
+    "triangles": 293218,
+    "degenerate": 0,
+    "unmatched_edges": 12,
+    "closed": false,
+    "volume": 15074.73076199603,
+    "area": 3479.162872875876
+   }
+  },
+  {
+   "case": "tangent/inscribed-ball-common",
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.018,
+   "measured": "exact",
+   "volume": 523.5987755982989,
+   "area": 314.15926535897927,
+   "faces": {
+    "sphere": 1
+   },
+   "mesh": {
+    "triangles": 16128,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 523.073302817112,
+    "area": 314.00158383589826
+   }
+  },
+  {
+   "case": "tangent/inscribed-ball-union",
+   "outcome": "pass",
+   "why": "",
+   "seconds": 0.009,
+   "measured": "exact",
+   "volume": 1000.0000000000001,
+   "area": 600.0,
+   "faces": {
+    "plane": 6
+   },
+   "mesh": {
+    "triangles": 12,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 999.9999999999999,
+    "area": 600.0
+   }
+  },
+  {
+   "case": "tangent/knife-edge-dish",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, LoopFreedomNotCertified, TangentOrSingularContact]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 24.77,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/midsphere-common",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean face imprint failed: imprint 0 of face FaceKey(7v1) was not realized by any section",
+   "seconds": 0.098,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/tangent-tee-common",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, LoopFreedomNotCertified, TangentOrSingularContact]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 6.088,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/tangent-tee-union",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, LoopFreedomNotCertified, TangentOrSingularContact]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 6.684,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/thin-lens",
+   "outcome": "wrong",
+   "why": "area 3.141476129214202e-05 against 3.14159265359e-05; triangles not closed (84 edges unmatched)",
+   "seconds": 0.081,
+   "measured": "exact",
+   "volume": 7.853981345595825e-12,
+   "area": 3.141476129214202e-05,
+   "faces": {
+    "sphere": 2
+   },
+   "mesh": {
+    "triangles": 37508,
+    "degenerate": 0,
+    "unmatched_edges": 84,
+    "closed": false,
+    "volume": 7.826447492378262e-12,
+    "area": 3.140229132561581e-05
+   }
+  },
+  {
+   "case": "tangent/torus-in-drum",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([LoopFreedomNotCertified, SubdivisionBudgetExhausted]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 8.149,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/villarceau-half-torus",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([CoincidentRegionResolutionNotImplemented, SubdivisionBudgetExhausted]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 0.049,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/viviani-common",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, LoopFreedomNotCertified, TangentOrSingularContact]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 18.72,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/viviani-cut",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, LoopFreedomNotCertified, TangentOrSingularContact]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 18.341,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "tangent/viviani-union",
+   "outcome": "refused",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, LoopFreedomNotCertified, TangentOrSingularContact]; 0 unresolved overlaps, 0 uncertified branches)",
+   "seconds": 17.8,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/angle-bracket-inward",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/angle-bracket-rounded",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/angle-bracket-sharp",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/bent-flange",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/bent-flange-past-its-bend",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/cone-frustum",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/half-pipe-inward",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/half-pipe-outward",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/hemisphere-both-sides",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/hemisphere-to-its-centre",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/open-box-inward",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/open-box-outward-rounded",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/open-box-outward-sharp",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/parabolic-trough",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/plate-with-holes",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/rectangle",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.002,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/sphere-skin",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/spherical-cap",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/torus-inner-half",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  },
+  {
+   "case": "thicken/tube",
+   "outcome": "refused",
+   "why": "NGK has no thickening of a sheet into a solid",
+   "seconds": 0.003,
+   "measured": "exact",
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
+  }
+ ]
+}
