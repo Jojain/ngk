@@ -1,4 +1,4 @@
-//! STEP text exchange for browser callers.
+//! STEP text and binary STL exchange for browser callers.
 
 use js_sys::Array;
 use wasm_bindgen::prelude::*;
@@ -8,6 +8,31 @@ use crate::exchange::step::part21::exchange_to_string;
 use crate::exchange::step::{StepReadOptions, StepWriteOptions, map_to_exchange, read_step};
 
 use super::topology::WasmSolid;
+
+/// Exports a closed solid as binary STL in model coordinates.
+#[wasm_bindgen(js_name = stlToBytes)]
+pub fn stl_to_bytes(solid: &WasmSolid, segments: Option<u32>) -> Result<Vec<u8>, JsValue> {
+    use crate::exchange::stl::{StlWriteOptions, stl_to_bytes as export_bytes};
+    use crate::tessellate::{CurveOpts, SurfaceOpts, TessellateOpts};
+
+    let segments = segments.unwrap_or(64) as usize;
+    let options = StlWriteOptions {
+        tessellation: TessellateOpts {
+            curve: CurveOpts { segments },
+            surface: SurfaceOpts {
+                nu: segments,
+                nv: segments / 2,
+            },
+        },
+        ..Default::default()
+    };
+    let model = solid.inner.model();
+    let view = model
+        .model()
+        .solid(solid.inner.key())
+        .ok_or_else(|| js_err("missing solid"))?;
+    export_bytes(&view, &options).map_err(js_err)
+}
 
 fn js_err(error: impl ToString) -> JsValue {
     JsValue::from_str(&error.to_string())

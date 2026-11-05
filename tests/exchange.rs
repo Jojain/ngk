@@ -23,3 +23,5 @@ mod step_fs;
 mod step_import;
 #[path = "exchange/step_round_trip.rs"]
 mod step_round_trip;
+#[path = "exchange/stl.rs"]
+mod stl;

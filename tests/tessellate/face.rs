@@ -73,12 +73,17 @@ fn torus_patch(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey) {
                 // constant `u` is the tube circle itself, in the plane the radial
                 // direction at `u` and the main axis span.
                 for (pair, (from, to)) in sides().enumerate() {
+                    let sign = if (to.x - from.x) + (to.y - from.y) < 0.0 {
+                        -1.0
+                    } else {
+                        1.0
+                    };
                     let curve = if from.y == to.y {
                         Curve::Circle(Circle::new(
                             Plane::from_xy(
                                 Point3::new(0.0, 0.0, minor * from.y.sin()),
                                 Vector3::x(),
-                                Vector3::y(),
+                                Vector3::y() * sign,
                             ),
                             major + minor * from.y.cos(),
                         ))
@@ -88,7 +93,7 @@ fn torus_patch(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey) {
                             Plane::from_xy(
                                 Point3::new(major * cos, major * sin, 0.0),
                                 Vector3::new(cos, sin, 0.0),
-                                Vector3::z(),
+                                Vector3::z() * sign,
                             ),
                             minor,
                         ))

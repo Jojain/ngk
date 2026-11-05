@@ -2,15 +2,16 @@
  "kernel": "ngk",
  "measured": "exact",
  "tally": {
-  "pass": 11,
-  "wrong": 51,
-  "refused": 169
+  "pass": 52,
+  "built": 1,
+  "wrong": 6,
+  "refused": 172
  },
  "cases": [
   {
    "case": "boolean/box-minus-through-cylinder",
-   "outcome": "wrong",
-   "why": "triangles not closed (768 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 717.2566611769188,
    "area": 731.9468914507712,
@@ -19,18 +20,18 @@
     "plane": 6
    },
    "mesh": {
-    "triangles": 786,
+    "triangles": 16894,
     "degenerate": 0,
-    "unmatched_edges": 768,
-    "closed": false,
-    "volume": 717.3413708599574,
-    "area": 731.9648686060164
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 717.3721730789448,
+    "area": 731.9506165529881
    }
   },
   {
    "case": "boolean/boxes-common",
-   "outcome": "wrong",
-   "why": "triangles not closed (4 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 250.00000000000003,
    "area": 250.0,
@@ -40,16 +41,16 @@
    "mesh": {
     "triangles": 12,
     "degenerate": 0,
-    "unmatched_edges": 4,
-    "closed": false,
+    "unmatched_edges": 0,
+    "closed": true,
     "volume": 249.99999999999997,
     "area": 250.0
    }
   },
   {
    "case": "boolean/boxes-cut",
-   "outcome": "wrong",
-   "why": "triangles not closed (4 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 750.0,
    "area": 550.0,
@@ -59,9 +60,9 @@
    "mesh": {
     "triangles": 20,
     "degenerate": 0,
-    "unmatched_edges": 4,
-    "closed": false,
-    "volume": 750.0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 750.0000000000001,
     "area": 550.0
    }
   },
@@ -105,8 +106,8 @@
   },
   {
    "case": "boolean/boxes-union",
-   "outcome": "wrong",
-   "why": "triangles not closed (4 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 1749.9999999999998,
    "area": 950.0,
@@ -116,16 +117,16 @@
    "mesh": {
     "triangles": 28,
     "degenerate": 0,
-    "unmatched_edges": 4,
-    "closed": false,
+    "unmatched_edges": 0,
+    "closed": true,
     "volume": 1749.9999999999998,
     "area": 950.0
    }
   },
   {
    "case": "boolean/drilled-plate",
-   "outcome": "wrong",
-   "why": "triangles not closed (6912 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 18869.02664470768,
    "area": 7304.778684233857,
@@ -134,12 +135,12 @@
     "plane": 6
    },
    "mesh": {
-    "triangles": 7002,
+    "triangles": 218188,
     "degenerate": 0,
-    "unmatched_edges": 6912,
-    "closed": false,
-    "volume": 18869.364399585407,
-    "area": 7304.841103426016
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 18869.495390427895,
+    "area": 7304.7543893758175
    }
   },
   {
@@ -164,28 +165,28 @@
   },
   {
    "case": "boolean/half-torus",
-   "outcome": "wrong",
-   "why": "triangles not closed (512 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
-   "volume": 394.7841760435742,
-   "area": 419.91691727294824,
+   "volume": 394.7841760435743,
+   "area": 419.9169172729482,
    "faces": {
     "plane": 2,
     "torus": 1
    },
    "mesh": {
-    "triangles": 17144,
+    "triangles": 80506,
     "degenerate": 0,
-    "unmatched_edges": 512,
-    "closed": false,
-    "volume": 394.39143882544465,
-    "area": 419.83790554332165
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 394.60921374043306,
+    "area": 419.8586749930761
    }
   },
   {
    "case": "boolean/hemisphere",
-   "outcome": "wrong",
-   "why": "triangles not closed (384 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 261.79938779914943,
    "area": 235.61944901923448,
@@ -194,18 +195,18 @@
     "sphere": 1
    },
    "mesh": {
-    "triangles": 97472,
+    "triangles": 32306,
     "degenerate": 0,
-    "unmatched_edges": 384,
-    "closed": false,
-    "volume": 261.6285910888595,
-    "area": 255.59968213818982
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 261.6046025930487,
+    "area": 235.5588570720529
    }
   },
   {
    "case": "boolean/indexed-pattern",
-   "outcome": "wrong",
-   "why": "triangles not closed (5376 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 5906.194188748809,
    "area": 3367.7873246482577,
@@ -214,12 +215,12 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 5418,
+    "triangles": 82514,
     "degenerate": 0,
-    "unmatched_edges": 5376,
-    "closed": false,
-    "volume": 5904.419504791111,
-    "area": 3366.814312384641
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 5903.975459447537,
+    "area": 3366.7406100324934
    }
   },
   {
@@ -234,28 +235,18 @@
   },
   {
    "case": "boolean/offset-hole-sphere",
-   "outcome": "wrong",
-   "why": "triangles not closed (613 edges unmatched)",
+   "outcome": "refused",
+   "why": "STL export: triangle 98178 collapses at STL's 32-bit precision",
    "measured": "exact",
-   "volume": 29240.844418812892,
-   "area": 6171.8619772467555,
-   "faces": {
-    "cylinder": 1,
-    "sphere": 1
-   },
-   "mesh": {
-    "triangles": 16241,
-    "degenerate": 0,
-    "unmatched_edges": 613,
-    "closed": false,
-    "volume": 29203.891914220134,
-    "area": 6168.438825805605
-   }
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
   },
   {
    "case": "boolean/sphere-lens",
    "outcome": "wrong",
-   "why": "area 125.66339335430862 against 125.663706144; triangles not closed (408 edges unmatched)",
+   "why": "area 125.66339335430862 against 125.663706144",
    "measured": "exact",
    "volume": 108.90854527891074,
    "area": 125.66339335430862,
@@ -263,18 +254,18 @@
     "sphere": 2
    },
    "mesh": {
-    "triangles": 185192,
+    "triangles": 6876,
     "degenerate": 0,
-    "unmatched_edges": 408,
-    "closed": false,
-    "volume": 108.85198300300118,
-    "area": 125.65056559778628
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 108.72387459901886,
+    "area": 125.58459539545166
    }
   },
   {
    "case": "boolean/sphere-pocket",
-   "outcome": "wrong",
-   "why": "triangles not closed (384 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 3738.20061220085,
    "area": 1678.5398163397447,
@@ -283,31 +274,31 @@
     "sphere": 1
    },
    "mesh": {
-    "triangles": 97488,
+    "triangles": 32562,
     "degenerate": 0,
-    "unmatched_edges": 384,
-    "closed": false,
-    "volume": 3738.3714089105188,
-    "area": 1698.5831267990757
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 3738.391949387069,
+    "area": 1678.5377237162454
    }
   },
   {
    "case": "boolean/spheres-union",
-   "outcome": "wrong",
-   "why": "triangles not closed (312 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
-   "volume": 938.2890059176871,
-   "area": 502.6551373636501,
+   "volume": 938.2890059176873,
+   "area": 502.65513736365006,
    "faces": {
     "sphere": 2
    },
    "mesh": {
-    "triangles": 27560,
+    "triangles": 112092,
     "degenerate": 0,
-    "unmatched_edges": 312,
-    "closed": false,
-    "volume": 936.93808437145,
-    "area": 501.9625403303334
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 937.6705289879894,
+    "area": 502.627534667391
    }
   },
   {
@@ -332,8 +323,8 @@
   },
   {
    "case": "boolean/stepped-shaft",
-   "outcome": "wrong",
-   "why": "triangles not closed (1536 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 1068.1415022205297,
    "area": 659.7344572538566,
@@ -342,18 +333,18 @@
     "plane": 3
    },
    "mesh": {
-    "triangles": 1532,
+    "triangles": 27818,
     "degenerate": 0,
-    "unmatched_edges": 1536,
-    "closed": false,
-    "volume": 1067.8206516698506,
-    "area": 659.6587717779325
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 1067.7129690215502,
+    "area": 659.6215040037398
    }
   },
   {
    "case": "boolean/tube",
-   "outcome": "wrong",
-   "why": "triangles not closed (1536 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 502.65482457436667,
    "area": 603.1857894892403,
@@ -362,18 +353,18 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 1536,
+    "triangles": 27756,
     "degenerate": 0,
-    "unmatched_edges": 1536,
-    "closed": false,
-    "volume": 502.5038292658704,
-    "area": 603.1328101827614
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 502.4567622227812,
+    "area": 603.0954494421646
    }
   },
   {
    "case": "boolean/tube-flush-ends",
-   "outcome": "wrong",
-   "why": "triangles not closed (1536 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 502.65482457436667,
    "area": 603.1857894892403,
@@ -382,12 +373,12 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 1536,
+    "triangles": 27760,
     "degenerate": 0,
-    "unmatched_edges": 1536,
-    "closed": false,
-    "volume": 502.5038292658704,
-    "area": 603.1328101827614
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 502.4561926586648,
+    "area": 603.0955708593428
    }
   },
   {
@@ -422,8 +413,8 @@
   },
   {
    "case": "chamfer/cube-all-edges-mitred",
-   "outcome": "wrong",
-   "why": "triangles not closed (20 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 808.0000000000001,
    "area": 453.5878784786799,
@@ -433,10 +424,10 @@
    "mesh": {
     "triangles": 60,
     "degenerate": 0,
-    "unmatched_edges": 20,
-    "closed": false,
+    "unmatched_edges": 0,
+    "closed": true,
     "volume": 808.0,
-    "area": 453.58787847868
+    "area": 453.5878784786803
    }
   },
   {
@@ -651,8 +642,8 @@
   },
   {
    "case": "feature/hole-through-the-upper-arm",
-   "outcome": "wrong",
-   "why": "triangles not closed (768 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 11458.407105255375,
    "area": 5386.265482457437,
@@ -661,18 +652,18 @@
     "plane": 10
    },
    "mesh": {
-    "triangles": 808,
+    "triangles": 8668,
     "degenerate": 0,
-    "unmatched_edges": 768,
-    "closed": false,
-    "volume": 11458.496759641574,
-    "area": 5386.302073811883
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 11458.526448559232,
+    "area": 5386.291075670835
    }
   },
   {
    "case": "feature/pad-down-to-cylinder",
-   "outcome": "wrong",
-   "why": "triangles not closed (840 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 12751.845965694883,
    "area": 3268.3819480498155,
@@ -681,12 +672,12 @@
     "plane": 7
    },
    "mesh": {
-    "triangles": 852,
+    "triangles": 19742,
     "degenerate": 0,
-    "unmatched_edges": 840,
-    "closed": false,
-    "volume": 12748.07302391021,
-    "area": 3268.0899557979064
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 12746.803894909272,
+    "area": 3267.9040999539166
    }
   },
   {
@@ -711,8 +702,8 @@
   },
   {
    "case": "fillet/ball-and-post",
-   "outcome": "wrong",
-   "why": "triangles not closed (424 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 4467.1367089668975,
    "area": 1395.719075263886,
@@ -723,12 +714,12 @@
     "torus": 1
    },
    "mesh": {
-    "triangles": 289808,
+    "triangles": 71440,
     "degenerate": 0,
-    "unmatched_edges": 424,
-    "closed": false,
-    "volume": 4464.751318507114,
-    "area": 1713.1771083194192
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 4464.000465095897,
+    "area": 1395.3400118304894
    }
   },
   {
@@ -743,8 +734,8 @@
   },
   {
    "case": "fillet/box-all-edges",
-   "outcome": "wrong",
-   "why": "triangles not closed (2892 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 975.5870134898032,
    "area": 547.3628179516868,
@@ -754,18 +745,18 @@
     "sphere": 8
    },
    "mesh": {
-    "triangles": 524180,
+    "triangles": 100536,
     "degenerate": 0,
-    "unmatched_edges": 2892,
-    "closed": false,
-    "volume": 975.5771170813961,
-    "area": 547.3616628312363
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 975.5500517112035,
+    "area": 547.3408176721741
    }
   },
   {
    "case": "fillet/box-one-edge",
-   "outcome": "wrong",
-   "why": "triangles not closed (192 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 991.4159265358979,
    "area": 589.6991118430775,
@@ -774,18 +765,18 @@
     "plane": 6
    },
    "mesh": {
-    "triangles": 1342,
+    "triangles": 4854,
     "degenerate": 0,
-    "unmatched_edges": 192,
-    "closed": false,
-    "volume": 991.4118284970859,
-    "area": 589.6963267140259
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 991.4024934521527,
+    "area": 589.6933401038984
    }
   },
   {
    "case": "fillet/cylinder-rim",
-   "outcome": "wrong",
-   "why": "triangles not closed (780 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 778.9574334197118,
    "area": 457.31024053179993,
@@ -795,12 +786,12 @@
     "torus": 1
    },
    "mesh": {
-    "triangles": 9468,
+    "triangles": 48466,
     "degenerate": 0,
-    "unmatched_edges": 780,
-    "closed": false,
-    "volume": 778.7335413927598,
-    "area": 457.23000611067636
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 778.6675155740871,
+    "area": 457.2428480454289
    }
   },
   {
@@ -835,8 +826,8 @@
   },
   {
    "case": "fillet/rounded-block-top-rim",
-   "outcome": "wrong",
-   "why": "triangles not closed (1536 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 1149.043632182972,
    "area": 733.0931753639765,
@@ -846,12 +837,12 @@
     "torus": 4
    },
    "mesh": {
-    "triangles": 80080,
+    "triangles": 67764,
     "degenerate": 0,
-    "unmatched_edges": 1536,
-    "closed": false,
-    "volume": 1149.0279697994783,
-    "area": 733.0752953765848
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 1148.9785348623086,
+    "area": 733.0628063581707
    }
   },
   {
@@ -866,8 +857,8 @@
   },
   {
    "case": "fillet/sliver-strip",
-   "outcome": "wrong",
-   "why": "triangles not closed (384 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 391.4176432647499,
    "area": 501.97533421296373,
@@ -876,12 +867,12 @@
     "plane": 6
    },
    "mesh": {
-    "triangles": 2650,
+    "triangles": 35058,
     "degenerate": 0,
-    "unmatched_edges": 384,
-    "closed": false,
-    "volume": 391.4135428635408,
-    "area": 501.9735494921439
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 391.4040614135529,
+    "area": 501.967547392613
    }
   },
   {
@@ -916,8 +907,8 @@
   },
   {
    "case": "geometry/elliptic-cylinder",
-   "outcome": "wrong",
-   "why": "triangles not closed (770 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 471.23889803846896,
    "area": 349.51776824167507,
@@ -926,33 +917,23 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 1016,
+    "triangles": 25226,
     "degenerate": 0,
-    "unmatched_edges": 770,
-    "closed": false,
-    "volume": 471.14428297355585,
-    "area": 349.4735157585915
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 471.15755942966734,
+    "area": 349.48015966355547
    }
   },
   {
    "case": "geometry/elliptic-hole",
-   "outcome": "wrong",
-   "why": "triangles not closed (744 edges unmatched)",
+   "outcome": "refused",
+   "why": "STL export: face FaceKey(_) could not be tessellated: the face's boundary segments cross or do not close, so it bounds no region",
    "measured": "exact",
-   "volume": 2619.6106578838962,
-   "area": 1527.425421774287,
-   "faces": {
-    "other": 2,
-    "plane": 6
-   },
-   "mesh": {
-    "triangles": 1228,
-    "degenerate": 0,
-    "unmatched_edges": 744,
-    "closed": false,
-    "volume": 2619.7068507416607,
-    "area": 1527.470331530217
-   }
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
   },
   {
    "case": "geometry/high-degree-bezier-dome",
@@ -976,28 +957,18 @@
   },
   {
    "case": "geometry/hyperboloid",
-   "outcome": "wrong",
-   "why": "triangles not closed (28 edges unmatched)",
+   "outcome": "refused",
+   "why": "STL export: triangle 16982 collapses at STL's 32-bit precision",
    "measured": "exact",
-   "volume": 804.247719318987,
-   "area": 564.4508882371364,
-   "faces": {
-    "other": 1,
-    "plane": 2
-   },
-   "mesh": {
-    "triangles": 45474,
-    "degenerate": 0,
-    "unmatched_edges": 28,
-    "closed": false,
-    "volume": 804.8181998601309,
-    "area": 596.7682686100316
-   }
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
   },
   {
    "case": "geometry/hyperboloid-of-two-sheets",
    "outcome": "refused",
-   "why": "volume not measured: shell 0 has the wrong orientation for its solid side",
+   "why": "STL export: triangle 18866 collapses at STL's 32-bit precision",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -1026,13 +997,23 @@
   },
   {
    "case": "geometry/nurbs-cone",
-   "outcome": "refused",
-   "why": "volume not measured: shell 0 has the wrong orientation for its solid side",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
-   "volume": null,
-   "area": null,
-   "faces": null,
-   "mesh": null
+   "volume": 261.7993877991494,
+   "area": 254.16018461576292,
+   "faces": {
+    "other": 1,
+    "plane": 1
+   },
+   "mesh": {
+    "triangles": 27852,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 261.66799689233505,
+    "area": 254.09799047801647
+   }
   },
   {
    "case": "geometry/nurbs-sphere",
@@ -1056,8 +1037,8 @@
   },
   {
    "case": "geometry/paraboloid",
-   "outcome": "wrong",
-   "why": "triangles not closed (16 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 804.2477193189872,
    "area": 542.208393846961,
@@ -1066,18 +1047,18 @@
     "plane": 1
    },
    "mesh": {
-    "triangles": 16706,
+    "triangles": 34758,
     "degenerate": 0,
-    "unmatched_edges": 16,
-    "closed": false,
-    "volume": 803.1256180890358,
-    "area": 567.4543999610461
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 803.7305550752668,
+    "area": 542.0305749901521
    }
   },
   {
    "case": "geometry/periodic-bspline-prism",
-   "outcome": "wrong",
-   "why": "triangles not closed (4 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 3333.3333333333326,
    "area": 1315.956762722759,
@@ -1086,18 +1067,18 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 147180,
+    "triangles": 7322,
     "degenerate": 0,
-    "unmatched_edges": 4,
-    "closed": false,
-    "volume": 3332.9516884565624,
-    "area": 1315.8930883935468
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 3332.250819933898,
+    "area": 1315.7470461269843
    }
   },
   {
    "case": "geometry/periodic-bspline-ring",
-   "outcome": "wrong",
-   "why": "triangles not closed (22 edges unmatched); triangles' volume -1881.54",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 1884.955592153876,
    "area": 1223.8829974910582,
@@ -1105,33 +1086,33 @@
     "other": 2
    },
    "mesh": {
-    "triangles": 125604,
+    "triangles": 140210,
     "degenerate": 0,
-    "unmatched_edges": 22,
-    "closed": false,
-    "volume": -1881.5422465882007,
-    "area": 1312.3383173461973
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 1884.4423252408028,
+    "area": 1223.7890672603517
    }
   },
   {
    "case": "geometry/saddle-drum",
-   "outcome": "wrong",
-   "why": "triangles not closed (799 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
-   "volume": 2010.6192982803127,
-   "area": 948.8014649693328,
+   "volume": 2010.6192982803097,
+   "area": 948.8014649693324,
    "faces": {
     "bspline": 1,
     "cylinder": 1,
     "plane": 1
    },
    "mesh": {
-    "triangles": 81951,
+    "triangles": 9852,
     "degenerate": 0,
-    "unmatched_edges": 799,
-    "closed": false,
-    "volume": 2010.0532070293625,
-    "area": 948.7011551226872
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 2009.8265714420543,
+    "area": 948.6430824747769
    }
   },
   {
@@ -1165,12 +1146,12 @@
     "torus": 1
    },
    "mesh": {
-    "triangles": 16384,
+    "triangles": 193786,
     "degenerate": 0,
     "unmatched_edges": 0,
     "closed": true,
-    "volume": 2452.610313076381,
-    "area": 984.3439090646057
+    "volume": 2456.3104040098856,
+    "area": 984.8259919680678
    }
   },
   {
@@ -1196,7 +1177,7 @@
   {
    "case": "loft/square-to-octagon",
    "outcome": "wrong",
-   "why": "volume 32982.83553372465 against 33760; area 6093.7126178061335 against 6188.25469805; triangles not closed (28 edges unmatched); triangles' volume 32982.8",
+   "why": "volume 32982.83553372465 against 33760; area 6093.7126178061335 against 6188.25469805; triangles' volume 32982.9",
    "measured": "exact",
    "volume": 32982.83553372465,
    "area": 6093.7126178061335,
@@ -1205,33 +1186,23 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 11672,
+    "triangles": 3544,
     "degenerate": 0,
-    "unmatched_edges": 28,
-    "closed": false,
-    "volume": 32982.835533425045,
-    "area": 6102.795440942647
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 32982.87306535241,
+    "area": 6093.939204916017
    }
   },
   {
    "case": "loft/square-to-round",
-   "outcome": "wrong",
-   "why": "volume 33833.87146289993 against 35068.5834706; area 6170.938154374142 against 6241.37284007; triangles not closed (344 edges unmatched); triangles' volume 33832.6",
+   "outcome": "refused",
+   "why": "STL export: triangle 1811 collapses at STL's 32-bit precision",
    "measured": "exact",
-   "volume": 33833.87146289993,
-   "area": 6170.938154374142,
-   "faces": {
-    "bspline": 4,
-    "plane": 2
-   },
-   "mesh": {
-    "triangles": 107978,
-    "degenerate": 0,
-    "unmatched_edges": 344,
-    "closed": false,
-    "volume": 33832.5959809751,
-    "area": 6170.87466219839
-   }
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
   },
   {
    "case": "loft/twisted-tapering-square",
@@ -1305,8 +1276,8 @@
   },
   {
    "case": "nurbs/vault-tangent-plane",
-   "outcome": "wrong",
-   "why": "triangles not closed (8 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 8175.3941772087055,
    "area": 2404.9354050618863,
@@ -1315,12 +1286,12 @@
     "plane": 5
    },
    "mesh": {
-    "triangles": 52750,
+    "triangles": 2388,
     "degenerate": 0,
-    "unmatched_edges": 8,
-    "closed": false,
-    "volume": 8175.158749471539,
-    "area": 2404.776526979775
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 8173.489379550332,
+    "area": 2404.781679357781
    }
   },
   {
@@ -1465,8 +1436,8 @@
   },
   {
    "case": "parts/flange",
-   "outcome": "wrong",
-   "why": "triangles not closed (6912 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 22135.661837193686,
    "area": 9324.246995854506,
@@ -1475,18 +1446,18 @@
     "plane": 3
    },
    "mesh": {
-    "triangles": 6938,
+    "triangles": 82312,
     "degenerate": 0,
-    "unmatched_edges": 6912,
-    "closed": false,
-    "volume": 22129.0182535536,
-    "area": 9321.873281294489
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 22127.311362690358,
+    "area": 9321.608618124224
    }
   },
   {
    "case": "parts/pin-lug",
-   "outcome": "wrong",
-   "why": "triangles not closed (768 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 29989.380701702532,
    "area": 8900.530964914873,
@@ -1495,12 +1466,12 @@
     "plane": 6
    },
    "mesh": {
-    "triangles": 784,
+    "triangles": 7304,
     "degenerate": 0,
-    "unmatched_edges": 768,
-    "closed": false,
-    "volume": 29989.984672930525,
-    "area": 8900.679838061336
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 29990.176649418183,
+    "area": 8900.642913867257
    }
   },
   {
@@ -1515,8 +1486,8 @@
   },
   {
    "case": "parts/shelf-bracket",
-   "outcome": "wrong",
-   "why": "triangles not closed (192 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 40137.34517542562,
    "area": 12393.132741228717,
@@ -1525,12 +1496,12 @@
     "plane": 8
    },
    "mesh": {
-    "triangles": 1460,
+    "triangles": 1632,
     "degenerate": 0,
-    "unmatched_edges": 192,
-    "closed": false,
-    "volume": 40137.40815991021,
-    "area": 12393.17221293419
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 40137.544406541696,
+    "area": 12393.160874783309
    }
   },
   {
@@ -1545,8 +1516,8 @@
   },
   {
    "case": "parts/turned-shaft",
-   "outcome": "wrong",
-   "why": "triangles not closed (1560 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 120915.32332987,
    "area": 17470.59130491101,
@@ -1556,18 +1527,18 @@
     "plane": 3
    },
    "mesh": {
-    "triangles": 6200,
+    "triangles": 82428,
     "degenerate": 0,
-    "unmatched_edges": 1560,
-    "closed": false,
-    "volume": 120876.7486265357,
-    "area": 17469.798987265105
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 120867.06426980707,
+    "area": 17467.893166609134
    }
   },
   {
    "case": "parts/v-belt-pulley",
    "outcome": "refused",
-   "why": "Boolean topology transaction failed: this edit produced a embedding that does not describe its map: the Zero-cell at Dart(112) is owned by both Vertex(VertexKey(_)) and Edge(EdgeKey(_))",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean face imprint failed: face imprint model edit failed: this edit produced a embedding that does not describe its map: the Zero-cell at Dart(112) is owned by both Vertex(VertexKey(_)) and Edge(EdgeKey(_))",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -1595,8 +1566,8 @@
   },
   {
    "case": "primitives/cone-frustum",
-   "outcome": "wrong",
-   "why": "triangles not closed (768 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 245.04422698000408,
    "area": 238.62729630595933,
@@ -1605,18 +1576,18 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 7150,
+    "triangles": 6772,
     "degenerate": 0,
-    "unmatched_edges": 768,
-    "closed": false,
-    "volume": 245.03215633909127,
-    "area": 238.58710807705492
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 244.92394454589015,
+    "area": 238.56448601105558
    }
   },
   {
    "case": "primitives/cylinder",
-   "outcome": "wrong",
-   "why": "triangles not closed (768 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 785.398163397448,
    "area": 471.23889803846896,
@@ -1625,12 +1596,12 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 764,
+    "triangles": 10836,
     "degenerate": 0,
-    "unmatched_edges": 768,
-    "closed": false,
-    "volume": 785.1622404678611,
-    "area": 471.1679413488124
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 785.0845889183696,
+    "area": 471.14483398679545
    }
   },
   {
@@ -1654,28 +1625,28 @@
   },
   {
    "case": "primitives/revolved-sector",
-   "outcome": "wrong",
-   "why": "triangles not closed (392 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
-   "volume": 201.06192982974673,
+   "volume": 201.0619298297468,
    "area": 233.06192982974676,
    "faces": {
     "cylinder": 2,
     "plane": 4
    },
    "mesh": {
-    "triangles": 2774,
+    "triangles": 1722,
     "degenerate": 0,
-    "unmatched_edges": 392,
-    "closed": false,
-    "volume": 201.03503030040756,
-    "area": 233.02080859189377
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 200.9901207875832,
+    "area": 233.01224809793337
    }
   },
   {
    "case": "primitives/revolved-washer",
-   "outcome": "wrong",
-   "why": "triangles not closed (1536 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 804.2477193189872,
    "area": 804.247719318987,
@@ -1684,12 +1655,12 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 1536,
+    "triangles": 7238,
     "degenerate": 0,
-    "unmatched_edges": 1536,
-    "closed": false,
-    "volume": 804.0061268253922,
-    "area": 804.0763131262765
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 803.9461596465077,
+    "area": 804.0473652908734
    }
   },
   {
@@ -1703,12 +1674,12 @@
     "sphere": 1
    },
    "mesh": {
-    "triangles": 16128,
+    "triangles": 63978,
     "degenerate": 0,
     "unmatched_edges": 0,
     "closed": true,
-    "volume": 523.0733000952972,
-    "area": 314.00158274623396
+    "volume": 523.1944029858618,
+    "area": 314.10563545887123
    }
   },
   {
@@ -1717,17 +1688,17 @@
    "why": "",
    "measured": "exact",
    "volume": 789.5683520871485,
-   "area": 789.5683520871485,
+   "area": 789.5683520871486,
    "faces": {
     "torus": 1
    },
    "mesh": {
-    "triangles": 16384,
+    "triangles": 81030,
     "degenerate": 0,
     "unmatched_edges": 0,
     "closed": true,
-    "volume": 787.9840723443194,
-    "area": 789.0532257089885
+    "volume": 789.1960138140104,
+    "area": 789.4584175278584
    }
   },
   {
@@ -2103,7 +2074,7 @@
   {
    "case": "singular/sectors-sharing-an-apex",
    "outcome": "refused",
-   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, TangentOrSingularContact, LoopFreedomNotCertified]; 0 unresolved overlaps, 0 uncertified branches)",
+   "why": "imprinting the target and tools[0] on each other failed: Boolean intersection computation failed: NURBS conversion failed: interpolation system is singular",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -2122,12 +2093,12 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 197560,
+    "triangles": 36114,
     "degenerate": 0,
     "unmatched_edges": 0,
     "closed": true,
-    "volume": 2470.0897864220033,
-    "area": 1329.0254185057115
+    "volume": 2471.7201782021993,
+    "area": 1319.0847975942263
    }
   },
   {
@@ -2152,13 +2123,23 @@
   },
   {
    "case": "spline/rational-cap",
-   "outcome": "refused",
-   "why": "volume not measured: shell 0 has the wrong orientation for its solid side",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
-   "volume": null,
-   "area": null,
-   "faces": null,
-   "mesh": null
+   "volume": 3534.2917352885156,
+   "area": 1178.0972450961722,
+   "faces": {
+    "other": 1,
+    "plane": 1
+   },
+   "mesh": {
+    "triangles": 44346,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 3531.729477505263,
+    "area": 1177.7272965347324
+   }
   },
   {
    "case": "spline/rational-spheroid",
@@ -2172,13 +2153,23 @@
   },
   {
    "case": "spline/revolved-cubic-dome",
-   "outcome": "refused",
-   "why": "volume not measured: shell 0 has the wrong orientation for its solid side",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
-   "volume": null,
-   "area": null,
-   "faces": null,
-   "mesh": null
+   "volume": 2464.7140764263463,
+   "area": 983.9468191043233,
+   "faces": {
+    "other": 1,
+    "plane": 1
+   },
+   "mesh": {
+    "triangles": 53264,
+    "degenerate": 0,
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 2463.289194898031,
+    "area": 983.65899372631
+   }
   },
   {
    "case": "spline/square-on-planar-cubic",
@@ -2193,67 +2184,57 @@
   {
    "case": "sweep/circle-along-arc",
    "outcome": "wrong",
-   "why": "volume 197.39344046670547 against 197.392088022; area 222.52584718926562 against 222.524829251; triangles not closed (650 edges unmatched); triangles' volume -197.307",
+   "why": "volume 197.3934404667055 against 197.392088022; area 222.52584718926568 against 222.524829251",
    "measured": "exact",
-   "volume": 197.39344046670547,
-   "area": 222.52584718926562,
+   "volume": 197.3934404667055,
+   "area": 222.52584718926568,
    "faces": {
     "bspline": 1,
     "plane": 2
    },
    "mesh": {
-    "triangles": 19852,
+    "triangles": 51442,
     "degenerate": 0,
-    "unmatched_edges": 650,
-    "closed": false,
-    "volume": -197.30704281251965,
-    "area": 222.4963353911143
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 197.31370632436216,
+    "area": 222.4940734581917
    }
   },
   {
    "case": "sweep/duct-elbow",
-   "outcome": "wrong",
-   "why": "triangles not closed (784 edges unmatched)",
+   "outcome": "refused",
+   "why": "STL export: face FaceKey(_) could not be tessellated: the face's boundary segments cross or do not close, so it bounds no region",
    "measured": "exact",
-   "volume": 6031.857894892403,
-   "area": 6287.857894892402,
-   "faces": {
-    "cylinder": 4,
-    "plane": 6
-   },
-   "mesh": {
-    "triangles": 5502,
-    "degenerate": 0,
-    "unmatched_edges": 784,
-    "closed": false,
-    "volume": 6030.9926915478445,
-    "area": 6286.624245383169
-   }
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
   },
   {
    "case": "sweep/helical-pipe",
    "outcome": "wrong",
-   "why": "volume 439.5163088579582 against 594.048305033; area 1009.0427214170745 against 1194.37979537; triangles not closed (454 edges unmatched); triangles' volume -430.552",
+   "why": "volume 439.5163088579583 against 594.048305033; area 1009.0427214170744 against 1194.37979537; triangles' volume 439.241",
    "measured": "exact",
-   "volume": 439.5163088579582,
-   "area": 1009.0427214170745,
+   "volume": 439.5163088579583,
+   "area": 1009.0427214170744,
    "faces": {
     "bspline": 1,
     "plane": 2
    },
    "mesh": {
-    "triangles": 7526,
+    "triangles": 341096,
     "degenerate": 0,
-    "unmatched_edges": 454,
-    "closed": false,
-    "volume": -430.55230881222764,
-    "area": 1022.3367159349506
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 439.2409171679642,
+    "area": 1009.72358293306
    }
   },
   {
    "case": "sweep/helical-pipe-round-ends",
    "outcome": "refused",
-   "why": "the target (solid SolidKey(_)) is not a closed, consistently oriented operand: solid SolidKey(_) shell at Dart(1) face FaceKey(_) normal does not point outward",
+   "why": "regularized Boolean result has 2 disconnected solids",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -2282,12 +2263,12 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 3900,
+    "triangles": 1676,
     "degenerate": 0,
     "unmatched_edges": 0,
     "closed": true,
-    "volume": 8000.000541342076,
-    "area": 3400.0001664524398
+    "volume": 8000.000541342066,
+    "area": 3400.000166452437
    }
   },
   {
@@ -2302,8 +2283,8 @@
   },
   {
    "case": "sweep/mitred-pipe-on-cube-edges",
-   "outcome": "wrong",
-   "why": "triangles not closed (486 edges unmatched); triangles' volume -1130.87",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 1130.9733552923262,
    "area": 1156.1060965210438,
@@ -2312,12 +2293,12 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 17614,
+    "triangles": 189356,
     "degenerate": 0,
-    "unmatched_edges": 486,
-    "closed": false,
-    "volume": -1130.8734970555972,
-    "area": 1156.0707585026726
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 1130.5492094299752,
+    "area": 1155.9924371346867
    }
   },
   {
@@ -2343,7 +2324,7 @@
   {
    "case": "sweep/twisted-duct",
    "outcome": "wrong",
-   "why": "volume 13973.333333333332 against 12373.3333333; area 3503.3084113962987 against 3515.67071004; triangles not closed (24 edges unmatched); triangles' volume 13973.3",
+   "why": "volume 13973.333333333332 against 12373.3333333; area 3503.3084113962987 against 3515.67071004; triangles' volume 13973.5",
    "measured": "exact",
    "volume": 13973.333333333332,
    "area": 3503.3084113962987,
@@ -2352,18 +2333,18 @@
     "plane": 2
    },
    "mesh": {
-    "triangles": 7780,
+    "triangles": 1818,
     "degenerate": 0,
-    "unmatched_edges": 24,
-    "closed": false,
-    "volume": 13973.333333333323,
-    "area": 3519.500121081254
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 13973.506136662338,
+    "area": 3503.961440425825
    }
   },
   {
    "case": "swept/ball-along-spline-groove",
    "outcome": "refused",
-   "why": "tools[0] (solid SolidKey(_)) is not a closed, consistently oriented operand: solid SolidKey(_) shell at Dart(48) face FaceKey(_) normal does not point outward",
+   "why": "imprinting the target and tools[0] on each other failed: surface intersection coverage is incomplete ([SubdivisionBudgetExhausted, TangentOrSingularContact, SynchronizedFitToleranceExceeded]; 0 unresolved overlaps, 2 uncertified branches)",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -2392,8 +2373,8 @@
   },
   {
    "case": "swept/box-slid-aslant",
-   "outcome": "wrong",
-   "why": "triangles not closed (8 edges unmatched)",
+   "outcome": "pass",
+   "why": "",
    "measured": "exact",
    "volume": 812.0,
    "area": 542.6189318971692,
@@ -2403,8 +2384,8 @@
    "mesh": {
     "triangles": 24,
     "degenerate": 0,
-    "unmatched_edges": 8,
-    "closed": false,
+    "unmatched_edges": 0,
+    "closed": true,
     "volume": 812.0000000000001,
     "area": 542.6189318971692
    }
@@ -2512,7 +2493,7 @@
   {
    "case": "tangent/cone-tip-on-face",
    "outcome": "refused",
-   "why": "regularized Boolean result has 2 disconnected solids",
+   "why": "result shell containing face FaceKey(_) is open",
    "measured": "exact",
    "volume": null,
    "area": null,
@@ -2531,21 +2512,21 @@
   },
   {
    "case": "tangent/grazing-cylinders",
-   "outcome": "wrong",
-   "why": "triangles not closed (148 edges unmatched)",
+   "outcome": "built",
+   "why": "",
    "measured": "exact",
-   "volume": 0.001570021552494601,
-   "area": 0.6281596065829311,
+   "volume": 0.0015700215524946223,
+   "area": 0.6281596065829205,
    "faces": {
     "cylinder": 2
    },
    "mesh": {
-    "triangles": 91600,
+    "triangles": 648,
     "degenerate": 0,
-    "unmatched_edges": 148,
-    "closed": false,
-    "volume": 0.001569821876221741,
-    "area": 0.6279112457978633
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 0.001451086072538862,
+    "area": 0.6279026560716797
    }
   },
   {
@@ -2560,23 +2541,13 @@
   },
   {
    "case": "tangent/ice-cream-cone",
-   "outcome": "wrong",
-   "why": "triangles not closed (12 edges unmatched)",
+   "outcome": "refused",
+   "why": "STL export: STL triangles do not form a closed, consistently oriented surface",
    "measured": "exact",
-   "volume": 15079.644737231003,
-   "area": 3015.928947446201,
-   "faces": {
-    "cone": 1,
-    "sphere": 1
-   },
-   "mesh": {
-    "triangles": 293218,
-    "degenerate": 0,
-    "unmatched_edges": 12,
-    "closed": false,
-    "volume": 15074.73076199603,
-    "area": 3479.162872875876
-   }
+   "volume": null,
+   "area": null,
+   "faces": null,
+   "mesh": null
   },
   {
    "case": "tangent/inscribed-ball-common",
@@ -2589,12 +2560,12 @@
     "sphere": 1
    },
    "mesh": {
-    "triangles": 16128,
+    "triangles": 63978,
     "degenerate": 0,
     "unmatched_edges": 0,
     "closed": true,
-    "volume": 523.073302817112,
-    "area": 314.00158383589826
+    "volume": 523.1944058562585,
+    "area": 314.1056374709288
    }
   },
   {
@@ -2659,7 +2630,7 @@
   {
    "case": "tangent/thin-lens",
    "outcome": "wrong",
-   "why": "area 3.141476129214202e-05 against 3.14159265359e-05; triangles not closed (84 edges unmatched)",
+   "why": "area 3.141476129214202e-05 against 3.14159265359e-05; triangles' volume 7.07839e-12",
    "measured": "exact",
    "volume": 7.853981345595825e-12,
    "area": 3.141476129214202e-05,
@@ -2667,12 +2638,12 @@
     "sphere": 2
    },
    "mesh": {
-    "triangles": 37508,
+    "triangles": 672,
     "degenerate": 0,
-    "unmatched_edges": 84,
-    "closed": false,
-    "volume": 7.826447492378262e-12,
-    "area": 3.140229132561581e-05
+    "unmatched_edges": 0,
+    "closed": true,
+    "volume": 7.07839301580291e-12,
+    "area": 3.1403315463428875e-05
    }
   },
   {

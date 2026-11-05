@@ -1,6 +1,7 @@
 //! `ShapeKey` → tessellated representation. Single dispatch entry point.
 
-use super::{IndexedMesh, Polyline3, TessellateOpts, curve::tessellate_span, tessellate_face_key};
+use super::edges::Discretisation;
+use super::{IndexedMesh, Polyline3, TessellateOpts, tessellate_face_key};
 use crate::geometry::Point3;
 use crate::model::Model;
 use crate::topology::payload::Payload;
@@ -17,7 +18,8 @@ pub enum ShapeMesh {
 /// Walk the shape pointed to by `key` in `g` and tessellate it.
 ///
 /// - `Vertex` → its stored 3D position.
-/// - `Edge` → polyline from start vertex's curve param to end vertex's.
+/// - `Edge` → the points the edge is cut at, which every face along it
+///   meshes against.
 /// - `Face` → indexed mesh via [`tessellate_face_key`].
 pub fn tessellate_shape<P: Payload>(
     g: &Model<P>,
@@ -40,7 +42,10 @@ pub fn tessellate_edge<P: Payload>(
     key: EdgeKey,
     opts: TessellateOpts,
 ) -> Option<Polyline3> {
-    let attr = g.edge_attr(key)?;
-    let edge = attr.edge(g, key);
-    Some(tessellate_span(&edge.trimmed_curve(), opts.curve))
+    g.edge_attr(key)?;
+    let samples = Discretisation::default()
+        .edge(g, key, opts.curve)
+        .points
+        .clone();
+    Some(Polyline3::new(samples))
 }

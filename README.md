@@ -45,12 +45,16 @@ all result handles. Entities measure themselves: `edge.linear_properties`,
 `profile.length`, `face.area`, `solid.volume`, `solid.volume_properties`, and
 so on, each bundle with its centroid and inertia, and `bounding_box(frame=None)`
 and `oriented_bounding_box()` give exact boxes along the world axes, a chosen
-frame, or the frame that fits the entity best. STEP text exchange is available
-under `ngk.exchange.step`.
+frame, or the frame that fits the entity best. STEP exchange lives under
+`ngk.exchange.step`; binary STL export lives under `ngk.exchange.stl`.
+Use `stl.write_stl(solid, "part.stl")` for a file or `stl.stl_to_bytes(solid)`
+for a download or upload. STL uses model coordinates and checks that the
+triangles close at the precision stored in the file.
 
 The WASM binding exposes the same modeling, measurement, rigid-motion, and
-STEP text capabilities. Its browser API uses camel-case exports and omits
-filesystem-only STEP functions.
+STEP text and binary STL capabilities. Its browser API uses camel-case exports
+such as `stlToBytes` and omits filesystem functions. See the
+[exchange architecture](docs/architecture/exchange.md) for Rust and sampling options.
 
 ```python
 from ngk.geometry import Frame, Point, Vector

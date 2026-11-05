@@ -10,8 +10,8 @@ use crate::measure::{
     Extremes, MeasureError, SurfaceProperties, face_surface_properties, faces_bounding_box,
 };
 use crate::model::{Cell2, MergeTopology, Model, RealizationPurpose, TopologyMerge};
-use crate::topology::attributes::{FaceAttr, LoopKind};
 use crate::topology::ModelEditError;
+use crate::topology::attributes::{FaceAttr, LoopKind};
 use crate::topology::embedding::{EntityOwner, boundary_cycles, recover_region};
 use crate::topology::profile::LoopCorner;
 use crate::topology::shape_keys::{FaceKey, ProfileKey};
@@ -268,6 +268,11 @@ impl<'g, P: Payload> Face<'g, P> {
     /// Returns this view's orientation relative to the face's stored default.
     pub fn sense(&self) -> Orientation {
         self.sense
+    }
+
+    /// Returns the model this view reads.
+    pub(crate) fn model(&self) -> &'g Model<P> {
+        self.model
     }
 
     /// Returns a boundary dart carrying this face view's contextual orientation.

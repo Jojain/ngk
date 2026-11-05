@@ -11,8 +11,9 @@
 //! OUT.stl and prints one line of JSON. A kernel error is a refusal: the kernel declined, saying
 //! why. A case may also refuse in its own words, where NGK has no operation for what it
 //! describes. The runner never reads the case's description.
-use ngk::geometry::{Point3, Surface};
-use ngk::tessellate::{CurveOpts, SurfaceOpts, Tessellate, TessellateOpts};
+use ngk::geometry::Surface;
+use ngk::exchange::stl::{StlWriteOptions, write_stl_file};
+use ngk::tessellate::{CurveOpts, SurfaceOpts, TessellateOpts};
 use ngk::topology::shape::{Shape, SolidTag};
 use ngk::topology::validation::{validate_solid_manifold, validate_solid_orientation};
 use std::collections::BTreeMap;
@@ -96,25 +97,6 @@ fn refused(why: &str) -> String {
     format!("{{\"status\":\"refused\",\"reason\":{}}}", quoted(why))
 }
 
-/// The triangles written as binary STL.
-fn write_stl(path: &str, nodes: &[Point3], indices: &[u32]) -> std::io::Result<()> {
-    let triangles = indices.len() / 3;
-    let mut out = Vec::with_capacity(84 + 50 * triangles);
-    out.extend_from_slice(&[0u8; 80]);
-    out.extend_from_slice(&(triangles as u32).to_le_bytes());
-    for t in indices.chunks_exact(3) {
-        let [a, b, c] = [t[0], t[1], t[2]].map(|i| nodes[i as usize]);
-        let n = (b - a).cross(&(c - a));
-        let l = n.norm();
-        let n = if l > 0.0 { n / l } else { n };
-        for x in [n.x, n.y, n.z, a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z] {
-            out.extend_from_slice(&(x as f32).to_le_bytes());
-        }
-        out.extend_from_slice(&[0u8; 2]);
-    }
-    std::fs::write(path, out)
-}
-
 /// The reply for a solid built: its measures, once its triangles are written.
 fn measured(shape: &Solid, out: &str) -> String {
     let solid = shape.solid();
@@ -140,14 +122,12 @@ fn measured(shape: &Solid, out: &str) -> String {
         curve: CurveOpts { segments: n },
         surface: SurfaceOpts { nu: n, nv: n / 2 },
     };
-    match solid.tessellate_with(opts) {
-        Ok(t) => match write_stl(out, &t.mesh.positions, &t.mesh.indices) {
-            Ok(()) => format!(
-                "{{\"status\":\"ok\",\"volume\":{volume:e},\"area\":{area:e},\"faces\":{{{faces}}},\"valid\":{valid}}}"
-            ),
-            Err(e) => refused(&format!("{out} not written: {e}")),
-        },
-        Err(e) => refused(&format!("not meshed: {e}")),
+    let options = StlWriteOptions { tessellation: opts, ..Default::default() };
+    match write_stl_file(out, &solid, &options) {
+        Ok(()) => format!(
+            "{{\"status\":\"ok\",\"volume\":{volume:e},\"area\":{area:e},\"faces\":{{{faces}}},\"valid\":{valid}}}"
+        ),
+        Err(e) => refused(&format!("STL export: {e}")),
     }
 }
 

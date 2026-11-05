@@ -9,10 +9,9 @@
 use std::collections::HashSet;
 use std::hash::Hash;
 
-use super::curve::tessellate_span;
-use super::{
-    CurveOpts, IndexedMesh, SurfaceOpts, TessellateError, TessellateOpts, tessellate_face,
-};
+use super::edges::Discretisation;
+use super::face::mesh_face;
+use super::{CurveOpts, IndexedMesh, SurfaceOpts, TessellateError, TessellateOpts};
 use crate::geometry::Point3;
 use crate::model::Model;
 use crate::topology::edge::Edge;
@@ -34,8 +33,11 @@ pub const VIEWER: TessellateOpts = TessellateOpts {
 /// A shape's mesh, with the key of the cell behind every range and point.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Tessellation {
-    /// Every face's triangles. Positions are shared within a face, never
-    /// across two.
+    /// Every face's triangles. Each face owns its vertices, so every corner
+    /// carries the normal of its own face; the position of a vertex on an edge
+    /// is the same, bit for bit, in each face along the edge, and so is a
+    /// point of that edge's polyline. Joined on exact coordinates, the
+    /// triangles of a solid form one closed, consistently oriented surface.
     pub mesh: IndexedMesh,
     /// One range of `mesh.indices` per face, contiguous and covering it.
     pub faces: Vec<KeyedRange<FaceKey>>,
@@ -138,11 +140,14 @@ fn assemble<'g, P: Payload + 'g>(
     opts: TessellateOpts,
 ) -> Result<Tessellation, TessellationError> {
     let mut out = Tessellation::default();
+    let mut discretisation = Discretisation::default();
     for face in first_of_each(faces, |face| face.key()) {
-        let mesh = tessellate_face(&face, opts).map_err(|reason| TessellationError {
-            face: face.key(),
-            reason,
-        })?;
+        let mesh = mesh_face(&face, &mut discretisation, opts)
+            .map_err(|reason| TessellationError {
+                face: face.key(),
+                reason,
+            })?
+            .mesh;
         out.faces.push(KeyedRange {
             key: face.key(),
             start: out.mesh.indices.len(),
@@ -151,13 +156,16 @@ fn assemble<'g, P: Payload + 'g>(
         append(&mut out.mesh, mesh);
     }
     for edge in first_of_each(edges, |edge| edge.key()) {
-        let polyline = tessellate_span(&edge.trimmed_curve(), opts.curve);
+        let points = discretisation
+            .edge(edge.model(), edge.key(), opts.curve)
+            .points
+            .clone();
         out.edges.push(KeyedRange {
             key: edge.key(),
             start: out.edge_points.len(),
-            count: polyline.points.len(),
+            count: points.len(),
         });
-        out.edge_points.extend(polyline.points);
+        out.edge_points.extend(points);
     }
     out.vertices = first_of_each(vertices, |vertex| vertex.key())
         .map(|vertex| KeyedPoint {

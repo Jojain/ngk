@@ -1,227 +1,85 @@
-//! Trimmed face tessellation.
+//! Face tessellation: a constrained Delaunay triangulation of the face's
+//! parameter domain, against boundary points every neighbour shares,
+//! refined until it follows the surface.
 //!
-//! Real plan: sample the face's pcurves into a UV polygon-with-holes, run a
-//! constrained Delaunay triangulation, lift back to 3D via
-//! `surface.point_at(u, v)`. That CDT is not in the tree yet. What is here:
+//! - **The boundary is the edges' samples.** Each loop of the face's
+//!   [`UnwrappedFaceDomain`](crate::topology::unwrapped_face_domain::UnwrappedFaceDomain) is walked edge by edge, and each edge contributes
+//!   exactly the samples [`Discretisation`] cut it into, at their own 3D
+//!   points and identities; the face only finds where on its pcurve each
+//!   sample lies. Stretches of the domain's boundary that lie on no edge -- a
+//!   seam the domain synthesised to cut a periodic support open, a row that
+//!   collapses to a pole -- are sampled here, once for both sides of a seam,
+//!   and a pole is one point however many times the domain visits it.
+//! - **Inside, a constrained Delaunay triangulation** with exact predicates
+//!   ([`super::cdt`]), in parameters scaled by the surface's average first
+//!   fundamental form so that triangles are close to their 3D shape.
+//! - **Refined in 3D.** A triangle whose corners' normals turn more than the
+//!   angular step, or whose edges stand off the surface by more than the
+//!   matching chord sag, is refined by bisecting interior edges; triangles with an angle
+//!   under 20° in 3D are split at their circumcentres where that is possible.
+//!   The boundary is never split: a face that needs a finer boundary gets it
+//!   from the edge, so its neighbour gets it too.
+//! - **Oriented by the loops**: the material lies to the left of every
+//!   boundary segment as the loop runs it exactly when the face's normal is the
+//!   surface's own.
 //!
-//! - **A face nothing bounds** — a whole sphere or torus — is its support's
-//!   parameter rectangle, meshed as a uniform UV grid, which is what lets a
-//!   direction covering a whole period index its closing column back onto its
-//!   opening one and come out watertight.
-//! - **Every bounded face** has each boundary pcurve sampled exactly where its
-//!   edge is, so the edge line, this face and the face beyond meet at the same
-//!   points. The polygon is cut into cells along every direction the support
-//!   bends in, each cell ear-clipped, and each triangle split where it strays
-//!   from the surface — never across the face's own boundary, which stays as
-//!   sampled.
-//! - **Neither** — a boundary that will not reduce to simple polygons — is
-//!   refused with a [`TessellateError`] naming the gap. A mesh that is not the
-//!   face is worse than no mesh, because it is read as the face.
+//! A face that cannot be meshed is refused with a [`TessellateError`] naming
+//! why; a mesh that is not the face would be read as the face.
 
-use super::{
-    IndexedMesh, TessellateError, TessellateOpts, TessellateResult,
-    curve::segments_for,
-    strips::{CutLines, cut_into_slabs, fold_into_period},
-    surface::tessellate_surface_patch,
-};
-use nalgebra::Vector2;
+use std::collections::HashMap;
+use std::f64::consts::TAU;
 
-use crate::geometry::{
-    Axis2, LINEAR_TOLERANCE, Point2, Point3, PointCoincidence, Surface, SurfacePeriodicity,
-};
+use nalgebra::Vector3;
+
+use super::cdt::{Cdt, Refused};
+use super::edges::{Discretisation, SharedPoint};
+use super::{IndexedMesh, TessellateError, TessellateOpts, TessellateResult};
+use crate::geometry::{LINEAR_TOLERANCE, Point2, Point3, Surface, SurfacePeriodicity};
 use crate::model::Model;
 use crate::topology::LoopKind;
+use crate::topology::edge::Edge;
 use crate::topology::face::Face;
 use crate::topology::orientation::Orientation;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::FaceKey;
-use crate::topology::unwrapped_face_domain::UnwrappedFaceDomain;
+use crate::topology::unwrapped_face_domain::UnwrappedFaceDomainCurve;
 
-const EPS: f64 = LINEAR_TOLERANCE;
+/// How far past the angular step a triangle may stray before it is split: the
+/// boundary is sampled at exactly the step, so the triangles it makes with
+/// their neighbours sit on the step itself.
+const ANGLE_SLACK: f64 = 1.5;
+/// The most cells, in angular steps, a face's scaled plane is cut into before
+/// the direction that bends less is stretched.
+const MAX_CELLS: f64 = 40_000.0;
+/// The most pieces a seam of the parameter domain is cut into.
+const MAX_SEAM_SEGMENTS: usize = 4096;
+/// The most points refinement may add to one face.
+const MAX_REFINEMENT: usize = 400_000;
+/// The smallest angle, in 3D, refinement tries to keep.
+const MIN_ANGLE: f64 = 20.0 * std::f64::consts::PI / 180.0;
+
+/// A face's mesh, with the identity of each boundary vertex.
+#[derive(Debug, Clone, Default)]
+pub(super) struct FaceMesh {
+    pub(super) mesh: IndexedMesh,
+    /// For each position, the shape point it is, where it is on the boundary.
+    pub(super) shared: Vec<Option<SharedPoint>>,
+}
 
 /// Tessellates a trimmed face into an indexed triangle mesh.
 ///
-/// The boundary is read on a synthesized [`UnwrappedFaceDomain`], so a loop written across a
-/// periodic support's cut arrives as one continuous parameter-space polyline
-/// rather than as pieces a whole period apart. Each loop must have one pcurve
-/// per boundary edge.
-///
-/// Errors rather than meshing where the boundary cannot be read, where it will
-/// not reduce to a triangulable polygon, or where the support has no shortcut
-/// here — see [`TessellateError`]. A mesh that is not the face would be read as
-/// the face, so a gap is named rather than papered over.
+/// The boundary is cut where [`Discretisation`] cuts the face's edges, which
+/// depends only on the model, so this mesh meets the mesh of every face beside
+/// it at the same points.
 pub fn tessellate_face<P: Payload>(
     face: &Face<'_, P>,
     opts: TessellateOpts,
 ) -> TessellateResult<IndexedMesh> {
-    mesh_face(face, opts).map(welded)
-}
-
-/// Meshes `face` piece by piece, each piece with vertices of its own.
-fn mesh_face<P: Payload>(
-    face: &Face<'_, P>,
-    opts: TessellateOpts,
-) -> TessellateResult<IndexedMesh> {
-    // What a face runs out to is its enclosing loop, or — where it has none —
-    // the support's own domain. A bite taken out of a torus leaves a face of
-    // the second kind: still enclosed by nothing, now carrying a hole.
-    if !face
-        .loops()
-        .iter()
-        .any(|boundary| !matches!(boundary.kind(), LoopKind::Inner))
-    {
-        return tessellate_boundaryless_face(face, opts);
-    }
-    let (domain, outer_uv, inner_uv) = boundary_polygons(face, opts)?;
-
-    let signed_outer_area = signed_area(&outer_uv);
-    let ccw = signed_outer_area > 0.0;
-
-    // A loop running past one period cannot be meshed as a polygon in any one
-    // period, so it is folded back into the period first.
-    if let Some((axis, period)) = overrun_axis(&domain) {
-        // Folded onto the outer loop's own period: where wrapping loops enclose
-        // the face, the outer loop spans exactly one period and was closed
-        // across its two ends, and those closing runs have to land on the fold
-        // lines to be recognised as the cut they are rather than as boundary.
-        let cut = outer_uv
-            .iter()
-            .map(|point| point[axis.index()])
-            .fold(f64::INFINITY, f64::min);
-        let tolerance = grid_sag(face.surface(), &outer_uv, opts);
-        let (strips, fold) = fold_into_period(&outer_uv, &inner_uv, axis.index(), cut, period, EPS)
-            .ok_or(TessellateError::UntriangulableBoundary)?;
-        let mut mesh = IndexedMesh::default();
-        for strip in strips {
-            let piece = trimmed_polygon_mesh(
-                face.surface(),
-                &strip.outer,
-                &strip.holes,
-                ccw,
-                opts,
-                &[fold],
-                tolerance,
-            )?;
-            append_mesh(&mut mesh, piece);
-        }
-        return Ok(mesh);
-    }
-
-    // Every bounded face takes the polygon path, a whole cylinder wall included:
-    // a grid laid over the parameter rectangle puts its columns wherever the
-    // grid count falls, and its rim then misses the points the rim edge and
-    // the face beyond it are drawn through. The polygon path samples each rim
-    // as its edge is sampled, and cuts the face into cells along every
-    // direction it bends in, which is the grid's own resolution.
-    let tolerance = grid_sag(face.surface(), &outer_uv, opts);
-    trimmed_polygon_mesh(
-        face.surface(),
-        &outer_uv,
-        &inner_uv,
-        ccw,
-        opts,
-        &[],
-        tolerance,
-    )
-}
-
-/// The face's loops as the mesher reads them, the enclosing one first.
-///
-/// Each pcurve is cut as its edge is, so the edge line and every face along it
-/// meet at the same points.
-fn boundary_polygons<P: Payload>(
-    face: &Face<'_, P>,
-    opts: TessellateOpts,
-) -> TessellateResult<(UnwrappedFaceDomain, Vec<Point2>, Vec<Vec<Point2>>)> {
-    let domain =
-        UnwrappedFaceDomain::of_face(face).map_err(|_| TessellateError::UnreadableBoundary)?;
-    let mut boundary = domain.loops().iter().map(|boundary| {
-        boundary.polyline_on(face.surface(), |span| segments_for(span, opts.curve))
-    });
-    let outer_uv = boundary.next().ok_or(TessellateError::UnreadableBoundary)?;
-    if outer_uv.len() < 3 {
-        return Err(TessellateError::UnreadableBoundary);
-    }
-    let inner_uv = boundary.filter(|loop_| !loop_.is_empty()).collect();
-    Ok((domain, outer_uv, inner_uv))
-}
-
-/// The periodic axis some loop of `domain` runs more than one period along.
-///
-/// A face written within one period spans at most that period; a wrapping
-/// loop spans it exactly. Only a loop that winds on past it — a band round a
-/// cylinder — overruns.
-fn overrun_axis(domain: &UnwrappedFaceDomain) -> Option<(Axis2, f64)> {
-    let (min, max) = domain.bounds();
-    [Axis2::U, Axis2::V].into_iter().find_map(|axis| {
-        let period = domain.period(axis)?;
-        let span = max[axis.index()] - min[axis.index()];
-        (span > period * (1.0 + 1.0e-9) + EPS).then_some((axis, period))
-    })
-}
-
-/// `mesh` with every set of coincident vertices merged into one.
-///
-/// A face meshed in pieces -- cells, strips, the two sides of a period it was
-/// folded across -- repeats every vertex the pieces share, each lifted from
-/// its own parameters. Merged, the face is one connected surface again: a
-/// cylinder wall closes into a tube rather than a sheet cut down its seam, and
-/// each shared point shades once. A triangle two of whose corners merge had no
-/// area to begin with and is dropped.
-fn welded(mesh: IndexedMesh) -> IndexedMesh {
-    const CELL: f64 = 4.0 * EPS;
-    let cell_of = |point: &Point3| {
-        [point.x, point.y, point.z].map(|coordinate| (coordinate / CELL).floor() as i64)
-    };
-    let mut cells = std::collections::HashMap::<[i64; 3], Vec<u32>>::new();
-    let mut remap = Vec::with_capacity(mesh.positions.len());
-    let mut result = IndexedMesh::default();
-    for (position, normal) in mesh.positions.iter().zip(&mesh.normals) {
-        let cell = cell_of(position);
-        let existing = (0..27).find_map(|offset: i64| {
-            let neighbour = [
-                cell[0] + offset % 3 - 1,
-                cell[1] + (offset / 3) % 3 - 1,
-                cell[2] + offset / 9 - 1,
-            ];
-            cells
-                .get(&neighbour)?
-                .iter()
-                .copied()
-                .find(|index| result.positions[*index as usize].coincides(*position, EPS))
-        });
-        let index = existing.unwrap_or_else(|| {
-            let index = result.positions.len() as u32;
-            result.positions.push(*position);
-            result.normals.push(*normal);
-            cells.entry(cell).or_default().push(index);
-            index
-        });
-        remap.push(index);
-    }
-    for triangle in mesh.indices.chunks_exact(3) {
-        let [a, b, c] = [0, 1, 2].map(|corner| remap[triangle[corner] as usize]);
-        if a != b && b != c && c != a {
-            result.indices.extend_from_slice(&[a, b, c]);
-        }
-    }
-    result
-}
-
-/// Appends `piece` to `mesh`, re-indexing its triangles.
-fn append_mesh(mesh: &mut IndexedMesh, piece: IndexedMesh) {
-    let offset = mesh.positions.len() as u32;
-    mesh.positions.extend(piece.positions);
-    mesh.normals.extend(piece.normals);
-    mesh.indices
-        .extend(piece.indices.into_iter().map(|index| index + offset));
+    let mut discretisation = Discretisation::default();
+    mesh_face(face, &mut discretisation, opts).map(|mesh| mesh.mesh)
 }
 
 /// Tessellates the face stored at `key` in `g`.
-///
-/// This is the raw map/key bridge for traversal code that has not yet lifted a
-/// [`Face`] view. Prefer [`tessellate_face`] when a typed face view is already
-/// available.
 pub fn tessellate_face_key<P: Payload>(
     g: &Model<P>,
     key: FaceKey,
@@ -231,923 +89,1075 @@ pub fn tessellate_face_key<P: Payload>(
     tessellate_face(&face, opts)
 }
 
-/// Meshes a face nothing bounds from outside, minus any holes it carries.
-///
-/// There is no enclosing loop to read bounds or winding from: the surface's own
-/// domain is the region, and the face's sense is the winding. A row of that
-/// domain that collapses to a point — a sphere's pole — is already meshed as a
-/// fan by [`tessellate_surface_patch`], and a direction spanning a whole period
-/// is already closed there, so the two ends of the sphere and the seam that is
-/// no longer stored all come out watertight.
-///
-/// Holes are then dropped out of that grid by the triangle, so a bite taken out
-/// of a torus reads as a bite. The rim it leaves is stepped at the grid's
-/// resolution rather than cut along the hole's own pcurve: the alternative is
-/// the polygon path, and that would give up the seam-welding that is the whole
-/// reason a boundaryless face is meshed as a grid. Meshing the hole over as
-/// though it were not there is the one answer that would be read as the truth.
-fn tessellate_boundaryless_face<P: Payload>(
-    face: &Face<'_, P>,
-    opts: TessellateOpts,
-) -> TessellateResult<IndexedMesh> {
-    let (u, v) = face.surface().domain();
-    if !u.is_finite() || !v.is_finite() {
-        return Err(TessellateError::UnboundedDomain);
-    }
-    let bounds = (
-        u.start.value(),
-        u.end.value(),
-        v.start.value(),
-        v.end.value(),
-    );
-    if face.loops().is_empty() {
-        let ccw = face.sense() == Orientation::Same;
-        return Ok(surface_grid_over_bounds(face.surface(), bounds, ccw, opts));
-    }
-    // With holes, the side the material is on is written in how they wind;
-    // the view's sense alone misses a face the Boolean flipped by rewinding
-    // its loops.
-    let ccw = face
-        .boundary_signed_area()
-        .map_or(face.sense() == Orientation::Same, |area| area > 0.0);
-    let mut mesh = surface_grid_over_bounds(face.surface(), bounds, ccw, opts);
-    let domain =
-        UnwrappedFaceDomain::of_face(face).map_err(|_| TessellateError::UnreadableBoundary)?;
-    let holes = domain
-        .loops()
-        .iter()
-        .map(|boundary| boundary.polyline_on(face.surface(), |span| segments_for(span, opts.curve)))
-        .collect::<Vec<_>>();
-    mesh.indices = cull_triangles_in_holes(face, &mesh, &holes);
-    Ok(mesh)
+/// One point of a face's boundary as the mesher reads it.
+#[derive(Debug, Clone, Copy)]
+struct BoundaryPoint {
+    uv: Point2,
+    position: Point3,
+    id: SharedPoint,
 }
 
-/// Keeps the triangles whose centre is not in a hole.
-///
-/// A triangle is placed by projecting its own centroid back to the surface,
-/// which is exact for the supports that carry a hole like this, and folding the
-/// answer onto the image the hole is written in — the hole may straddle the
-/// domain's seam, and a centroid the other side of it is the same point.
-fn cull_triangles_in_holes<P: Payload>(
+/// Meshes `face`, its boundary cut as `discretisation` cuts its edges.
+pub(super) fn mesh_face<P: Payload>(
     face: &Face<'_, P>,
-    mesh: &IndexedMesh,
-    holes: &[Vec<Point2>],
-) -> Vec<u32> {
-    let periods = match face.surface().periodicity() {
+    discretisation: &mut Discretisation,
+    opts: TessellateOpts,
+) -> TessellateResult<FaceMesh> {
+    let model = face.model();
+    let surface = face.surface().clone();
+    let boundaryless = !face
+        .loops()
+        .iter()
+        .any(|boundary| !matches!(boundary.kind(), LoopKind::Inner));
+    // A face with a boundary states which way it points in how that boundary
+    // winds as stored; the sense a shell reads it with says the same thing a
+    // second time. A face with no loop at all has only that sense to go by.
+    let stored;
+    let view = if face.loops().is_empty() {
+        face
+    } else {
+        stored = Face::new(model, face.key());
+        &stored
+    };
+    let domain = discretisation
+        .domain(view)
+        .cloned()
+        .ok_or(TessellateError::UnreadableBoundary)?;
+
+    let mut builder = RingBuilder {
+        surface: &surface,
+        face: face.key(),
+        opts,
+        seams: HashMap::new(),
+        interior: 0,
+    };
+    let mut rings = Vec::new();
+    let loops = domain.loops();
+    if boundaryless {
+        let holes = loops
+            .iter()
+            .filter(|boundary| !boundary.is_empty())
+            .map(|boundary| builder.ring(model, discretisation, boundary.curves()))
+            .collect::<TessellateResult<Vec<_>>>()?;
+        let (outer, holes) = builder.rectangle(holes)?;
+        rings.push(outer);
+        rings.extend(holes);
+    } else {
+        for boundary in loops.iter().filter(|boundary| !boundary.is_empty()) {
+            rings.push(builder.ring(model, discretisation, boundary.curves())?);
+        }
+    }
+    if rings.is_empty() || rings[0].len() < 3 {
+        return Err(TessellateError::UnreadableBoundary);
+    }
+
+    // A face nothing encloses is wound by its sense, or against its holes where
+    // it has them, since a Boolean flips such a face by rewinding its holes.
+    let ccw_hint = boundaryless.then(|| match rings.get(1) {
+        Some(hole) => ring_area(hole) < 0.0,
+        None => view.sense() == Orientation::Same,
+    });
+    triangulate(&surface, &rings, ccw_hint, opts)
+}
+
+/// Builds a face's boundary rings.
+struct RingBuilder<'s> {
+    surface: &'s Surface,
+    face: FaceKey,
+    opts: TessellateOpts,
+    /// Seams already sampled, by the shape points at their ends and the
+    /// parameter axis they run along.
+    seams: HashMap<(SharedPoint, SharedPoint, usize), Vec<(Point3, SharedPoint)>>,
+    interior: u32,
+}
+
+impl RingBuilder<'_> {
+    fn next_interior(&mut self) -> SharedPoint {
+        self.interior += 1;
+        SharedPoint::Interior(self.face, self.interior)
+    }
+
+    /// One loop: each pcurve's samples, joined across the gaps between them.
+    fn ring<P: Payload>(
+        &mut self,
+        model: &Model<P>,
+        discretisation: &mut Discretisation,
+        curves: &[UnwrappedFaceDomainCurve],
+    ) -> TessellateResult<Vec<BoundaryPoint>> {
+        let mut pieces = Vec::with_capacity(curves.len());
+        for curve in curves {
+            pieces.push(self.curve_points(model, discretisation, curve)?);
+        }
+        let mut ring = Vec::new();
+        for (index, curve) in curves.iter().enumerate() {
+            let previous = pieces[(index + pieces.len() - 1) % pieces.len()]
+                .last()
+                .copied()
+                .ok_or(TessellateError::UnreadableBoundary)?;
+            let first = pieces[index][0];
+            self.gap(previous, curve.corners(), first, &mut ring);
+            let piece = &pieces[index];
+            ring.extend_from_slice(&piece[..piece.len() - 1]);
+        }
+        dedup_ring(&mut ring);
+        Ok(ring)
+    }
+
+    /// The samples of the edge under `curve`, placed on its pcurve, in the
+    /// order the loop runs them, both ends included.
+    fn curve_points<P: Payload>(
+        &mut self,
+        model: &Model<P>,
+        discretisation: &mut Discretisation,
+        curve: &UnwrappedFaceDomainCurve,
+    ) -> TessellateResult<Vec<BoundaryPoint>> {
+        let edge =
+            Edge::from_dart(model, curve.dart()).ok_or(TessellateError::UnreadableBoundary)?;
+        let samples = discretisation
+            .edge(model, edge.key(), self.opts.curve)
+            .clone();
+        let span = curve.span();
+        let interval = span.interval();
+        let delta = interval.delta();
+        if delta == 0.0 {
+            return Err(TessellateError::DegenerateBoundary);
+        }
+        let periodic = match span.curve().periodicity() {
+            crate::geometry::Periodicity::Periodic(period) => {
+                (delta.abs() - period).abs() <= 1e-9 * period.max(1.0)
+            }
+            crate::geometry::Periodicity::None => false,
+        };
+        let mut placed = samples
+            .fractions
+            .iter()
+            .enumerate()
+            .map(|(index, _fraction)| {
+                let stored = samples.span.interval();
+                let native = stored.start.value() + _fraction * stored.delta();
+                let mut along = (native - interval.start.value()) / delta;
+                if periodic {
+                    along = along.rem_euclid(1.0);
+                    if along > 1.0 - 1e-12 {
+                        along = 0.0;
+                    }
+                }
+                (along, index)
+            })
+            .filter(|(along, _)| *along >= -1e-9 && *along <= 1.0 + 1e-9)
+            .collect::<Vec<_>>();
+        placed.sort_by(|a, b| a.0.total_cmp(&b.0));
+        if samples.closed {
+            // A closed edge's two ends are one sample; it is visited at the
+            // start and again at the end.
+            placed.dedup_by(|b, a| samples.ids[a.1] == samples.ids[b.1]);
+            if let Some(&(_, first)) = placed.first() {
+                placed.push((1.0, first));
+            }
+        }
+        if placed.len() < 2 {
+            return Err(TessellateError::UnreadableBoundary);
+        }
+        placed[0].0 = 0.0;
+        let last = placed.len() - 1;
+        placed[last].0 = 1.0;
+
+        // Where on the pcurve each sample lies: near the same fraction of it,
+        // at the point the surface puts closest to the sample.
+        // The pcurve has to lie on the edge it belongs to: a sample the surface
+        // cannot reach from it by more than a thousandth of the edge says the
+        // two describe different curves, and no mesh of the face follows them
+        // both.
+        let reach = {
+            let length: f64 = samples
+                .points
+                .windows(2)
+                .map(|pair| (pair[1] - pair[0]).norm())
+                .sum();
+            (1e-3 * length).max(LINEAR_TOLERANCE)
+        };
+        let mut points = Vec::with_capacity(placed.len());
+        let mut floor = 0.0_f64;
+        for (k, &(along, index)) in placed.iter().enumerate() {
+            let target = samples.points[index];
+            let fraction = if k == 0 {
+                0.0
+            } else if k == last {
+                1.0
+            } else {
+                let low = floor.max(placed[k - 1].0);
+                let high = placed[k + 1].0.min(1.0);
+                let distance = |f: f64| {
+                    let uv = curve.point_at(f);
+                    (self.surface.point_at(uv.x, uv.y) - target).norm()
+                };
+                let guess = along.clamp(low, high);
+                if distance(guess) <= LINEAR_TOLERANCE {
+                    guess
+                } else {
+                    nearest_on(distance, low, high)
+                }
+            };
+            floor = fraction;
+            let uv = curve.point_at(fraction);
+            if (self.surface.point_at(uv.x, uv.y) - target).norm() > reach {
+                return Err(TessellateError::UntriangulableBoundary);
+            }
+            points.push(BoundaryPoint {
+                uv,
+                position: target,
+                id: samples.ids[index],
+            });
+        }
+        Ok(points)
+    }
+
+    /// The stretch of boundary from `from` to `to` through `corners` that lies
+    /// on no edge: a seam, or a row collapsing to a pole.
+    fn gap(
+        &mut self,
+        from: BoundaryPoint,
+        corners: &[Point2],
+        to: BoundaryPoint,
+        ring: &mut Vec<BoundaryPoint>,
+    ) {
+        if corners.is_empty() && (from.uv - to.uv).norm() <= 1e-12 {
+            return;
+        }
+        let mut path = Vec::with_capacity(corners.len() + 2);
+        path.push((from.uv, Some((from.position, from.id))));
+        path.extend(corners.iter().map(|uv| (*uv, None)));
+        path.push((to.uv, Some((to.position, to.id))));
+        let degenerate = path
+            .windows(2)
+            .map(|pair| self.is_degenerate(pair[0].0, pair[1].0))
+            .collect::<Vec<_>>();
+        // Points joined by a collapsed row are one point of the surface: they
+        // take the name of whichever of them has one, or a fresh one between
+        // them.
+        let mut k = 0;
+        while k < path.len() {
+            let mut end = k;
+            while end + 1 < path.len() && degenerate[end] {
+                end += 1;
+            }
+            let named = path[k..=end].iter().find_map(|entry| entry.1);
+            let shared = named.unwrap_or_else(|| {
+                let uv = path[k].0;
+                (self.surface.point_at(uv.x, uv.y), self.next_interior())
+            });
+            for entry in &mut path[k..=end] {
+                entry.1.get_or_insert(shared);
+            }
+            k = end + 1;
+        }
+        for k in 0..path.len() - 1 {
+            let (a_uv, a) = (path[k].0, path[k].1.expect("every point is named"));
+            let (b_uv, b) = (path[k + 1].0, path[k + 1].1.expect("every point is named"));
+            if k > 0 {
+                ring.push(BoundaryPoint {
+                    uv: a_uv,
+                    position: a.0,
+                    id: a.1,
+                });
+            }
+            if degenerate[k] {
+                // A pole: many parameter points, one surface point.
+                let count = self.row_count(a_uv, b_uv);
+                for step in 1..count {
+                    let t = step as f64 / count as f64;
+                    ring.push(BoundaryPoint {
+                        uv: a_uv + (b_uv - a_uv) * t,
+                        position: a.0,
+                        id: a.1,
+                    });
+                }
+            } else {
+                self.seam(a_uv, a, b_uv, b, ring);
+            }
+        }
+    }
+
+    /// Samples the straight seam from `a` to `b`, sharing its points with the
+    /// seam's other side.
+    fn seam(
+        &mut self,
+        a_uv: Point2,
+        a: (Point3, SharedPoint),
+        b_uv: Point2,
+        b: (Point3, SharedPoint),
+        ring: &mut Vec<BoundaryPoint>,
+    ) {
+        let delta = b_uv - a_uv;
+        let axis = if delta.x.abs() >= delta.y.abs() { 0 } else { 1 };
+        // Both sides of a seam are keyed and sampled from the end that is
+        // lower along its axis, whichever way the loop runs them; the shared
+        // points are read back in the loop's own direction.
+        let forward = delta[axis] > 0.0;
+        let (lo, hi) = if forward { (a, b) } else { (b, a) };
+        let (lo_uv, hi_uv) = if forward { (a_uv, b_uv) } else { (b_uv, a_uv) };
+        let key = (lo.1, hi.1, axis);
+        if !self.seams.contains_key(&key) {
+            let count = self.seam_count(lo_uv, hi_uv);
+            let mut points = Vec::with_capacity(count.saturating_sub(1));
+            for step in 1..count {
+                let uv = lo_uv + (hi_uv - lo_uv) * (step as f64 / count as f64);
+                points.push((self.surface.point_at(uv.x, uv.y), self.next_interior()));
+            }
+            self.seams.insert(key, points);
+        }
+        let points = &self.seams[&key];
+        let count = points.len() + 1;
+        for step in 1..count {
+            let k = if forward { step - 1 } else { count - 1 - step };
+            let t = step as f64 / count as f64;
+            let (position, id) = points[k];
+            ring.push(BoundaryPoint {
+                uv: a_uv + (b_uv - a_uv) * t,
+                position,
+                id,
+            });
+        }
+    }
+
+    fn is_degenerate(&self, a: Point2, b: Point2) -> bool {
+        let pa = self.surface.point_at(a.x, a.y);
+        let pb = self.surface.point_at(b.x, b.y);
+        let m = nalgebra::center(&a, &b);
+        let pm = self.surface.point_at(m.x, m.y);
+        let scale = (pa.coords.norm() + 1.0) * 1e-12 + LINEAR_TOLERANCE;
+        (pa - pb).norm() <= scale && (pa - pm).norm() <= scale
+    }
+
+    /// How many pieces a collapsed row is cut into in parameters: as many as a
+    /// whole turn of the curve sampling for the part of a period it spans.
+    fn row_count(&self, a: Point2, b: Point2) -> usize {
+        let per_turn = self.opts.curve.segments.max(4) as f64;
+        let periods = periods_of(self.surface);
+        let mut count = 1.0_f64;
+        for axis in 0..2 {
+            let run = (b[axis] - a[axis]).abs();
+            if let Some(period) = periods[axis] {
+                count = count.max((run / period * per_turn).ceil());
+            }
+        }
+        (count as usize).clamp(1, MAX_SEAM_SEGMENTS)
+    }
+
+    /// How many pieces a seam is cut into: by how far its tangent turns in 3D.
+    fn seam_count(&self, a: Point2, b: Point2) -> usize {
+        const PROBES: usize = 64;
+        let step = TAU / self.opts.curve.segments.max(1) as f64;
+        let at = |t: f64| {
+            let uv = a + (b - a) * t;
+            self.surface.point_at(uv.x, uv.y)
+        };
+        let mut turning = 0.0;
+        let mut previous: Option<Vector3<f64>> = None;
+        for k in 0..PROBES {
+            let (p, q) = (
+                at(k as f64 / PROBES as f64),
+                at((k + 1) as f64 / PROBES as f64),
+            );
+            let direction = q - p;
+            let norm = direction.norm();
+            if norm <= 0.0 {
+                continue;
+            }
+            let direction = direction / norm;
+            if let Some(previous) = previous {
+                turning += previous.dot(&direction).clamp(-1.0, 1.0).acos();
+            }
+            previous = Some(direction);
+        }
+        ((turning / step).ceil() as usize).clamp(1, MAX_SEAM_SEGMENTS)
+    }
+
+    /// The domain of a face no loop encloses -- a whole sphere, a whole torus,
+    /// either with holes -- as a rectangle of its support's parameters, cut
+    /// open where no hole lies, with its holes moved inside it.
+    fn rectangle(
+        &mut self,
+        mut holes: Vec<Vec<BoundaryPoint>>,
+    ) -> TessellateResult<(Vec<BoundaryPoint>, Vec<Vec<BoundaryPoint>>)> {
+        let (u, v) = self.surface.domain();
+        if !u.is_finite() || !v.is_finite() {
+            return Err(TessellateError::UnboundedDomain);
+        }
+        let periods = periods_of(self.surface);
+        let mut low = [u.start.value(), v.start.value()];
+        let mut high = [u.end.value(), v.end.value()];
+        for axis in 0..2 {
+            let Some(period) = periods[axis] else {
+                continue;
+            };
+            let cut = clear_cut(&holes, axis, period, low[axis]);
+            low[axis] = cut;
+            high[axis] = cut + period;
+            for hole in &mut holes {
+                let min = hole
+                    .iter()
+                    .map(|p| p.uv[axis])
+                    .fold(f64::INFINITY, f64::min);
+                let turns = ((cut - min) / period).ceil();
+                for point in hole.iter_mut() {
+                    point.uv[axis] += turns * period;
+                }
+            }
+        }
+        let corner = |x: usize, y: usize| Point2::new([low, high][x][0], [low, high][y][1]);
+        let corners = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
+        let mut named: Vec<(Point3, SharedPoint)> = Vec::with_capacity(4);
+        for (k, uv) in corners.iter().enumerate() {
+            let position = self.surface.point_at(uv.x, uv.y);
+            let existing = named
+                .iter()
+                .take(k)
+                .find(|(p, _)| (*p - position).norm() <= LINEAR_TOLERANCE)
+                .copied();
+            named.push(existing.unwrap_or_else(|| (position, self.next_interior())));
+        }
+        let mut ring = Vec::new();
+        for k in 0..4 {
+            let (a_uv, b_uv) = (corners[k], corners[(k + 1) % 4]);
+            let (a, b) = (named[k], named[(k + 1) % 4]);
+            ring.push(BoundaryPoint {
+                uv: a_uv,
+                position: a.0,
+                id: a.1,
+            });
+            if self.is_degenerate(a_uv, b_uv) {
+                let count = self.row_count(a_uv, b_uv);
+                for step in 1..count {
+                    ring.push(BoundaryPoint {
+                        uv: a_uv + (b_uv - a_uv) * (step as f64 / count as f64),
+                        position: a.0,
+                        id: a.1,
+                    });
+                }
+            } else {
+                // Opposite sides of the rectangle are one seam when the support
+                // closes across them; the corners alone do not tell the two
+                // seams of a torus apart, so the axis does.
+                self.seam(a_uv, a, b_uv, b, &mut ring);
+            }
+        }
+        dedup_ring(&mut ring);
+        Ok((ring, holes))
+    }
+}
+
+/// Where to cut a periodic axis open so that no hole straddles the cut: the
+/// middle of the widest gap the holes leave round it.
+fn clear_cut(holes: &[Vec<BoundaryPoint>], axis: usize, period: f64, default: f64) -> f64 {
+    let mut spans = holes
+        .iter()
+        .filter(|hole| !hole.is_empty())
+        .map(|hole| {
+            let min = hole
+                .iter()
+                .map(|p| p.uv[axis])
+                .fold(f64::INFINITY, f64::min);
+            let max = hole
+                .iter()
+                .map(|p| p.uv[axis])
+                .fold(f64::NEG_INFINITY, f64::max);
+            let start = (min - default).rem_euclid(period) + default;
+            (start, start + (max - min))
+        })
+        .collect::<Vec<_>>();
+    if spans.is_empty() {
+        return default;
+    }
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut best = (0.0, default);
+    let mut reach = spans[0].1;
+    for k in 1..=spans.len() {
+        let next = if k < spans.len() {
+            spans[k].0
+        } else {
+            spans[0].0 + period
+        };
+        if next - reach > best.0 {
+            best = (next - reach, 0.5 * (next + reach));
+        }
+        if k < spans.len() {
+            reach = reach.max(spans[k].1);
+        }
+    }
+    best.1
+}
+
+fn ring_area(ring: &[BoundaryPoint]) -> f64 {
+    0.5 * (0..ring.len())
+        .map(|k| {
+            let (a, b) = (ring[k].uv, ring[(k + 1) % ring.len()].uv);
+            a.x * b.y - b.x * a.y
+        })
+        .sum::<f64>()
+}
+
+/// Drops a point that repeats its neighbour: the same shape point at the
+/// same place in parameters, to rounding. Two pcurves meeting at a corner
+/// each evaluate it, and the two evaluations need not agree to the last bit.
+/// Points of a collapsed row share a shape point but not a place, and stay.
+fn dedup_ring(ring: &mut Vec<BoundaryPoint>) {
+    let close = |a: &BoundaryPoint, b: &BoundaryPoint| {
+        let scale = a.uv.x.abs().max(a.uv.y.abs()).max(1.0);
+        a.id == b.id && (a.uv - b.uv).norm() <= 1e-12 * scale
+    };
+    ring.dedup_by(|b, a| close(a, b));
+    while ring.len() > 1 && close(&ring[0], &ring[ring.len() - 1]) {
+        ring.pop();
+    }
+}
+
+/// Reads a support's periods as a parameter-indexed pair.
+fn periods_of(surface: &Surface) -> [Option<f64>; 2] {
+    match surface.periodicity() {
         SurfacePeriodicity::None => [None, None],
         SurfacePeriodicity::UPeriodic(u) => [Some(u), None],
         SurfacePeriodicity::VPeriodic(v) => [None, Some(v)],
         SurfacePeriodicity::UVPeriodic(u, v) => [Some(u), Some(v)],
-    };
-    let mut kept = Vec::with_capacity(mesh.indices.len());
-    for triangle in mesh.indices.chunks_exact(3) {
-        let centroid = Point3::from(
-            triangle
-                .iter()
-                .map(|index| mesh.positions[*index as usize].coords)
-                .sum::<nalgebra::Vector3<f64>>()
-                / 3.0,
-        );
-        let Ok(uv) = face.surface().param_at(centroid) else {
-            kept.extend_from_slice(triangle);
-            continue;
-        };
-        let in_hole = holes.iter().any(|hole| {
-            let mut folded = uv;
-            for (axis, period) in periods.into_iter().enumerate() {
-                let Some(period) = period.filter(|period| *period > 0.0) else {
-                    continue;
-                };
-                let centre = hole.iter().map(|point| point[axis]).sum::<f64>() / hole.len() as f64;
-                folded[axis] += ((centre - folded[axis]) / period).round() * period;
-            }
-            point_in_polygon(hole, folded)
-        });
-        if !in_hole {
-            kept.extend_from_slice(triangle);
+    }
+}
+
+/// Where `distance` is least on `[low, high]`, by golden-section search.
+fn nearest_on(distance: impl Fn(f64) -> f64, low: f64, high: f64) -> f64 {
+    const RATIO: f64 = 0.618_033_988_749_894_9;
+    const STEPS: usize = 48;
+    let (mut low, mut high) = (low.min(high), low.max(high));
+    let mut left = high - RATIO * (high - low);
+    let mut right = low + RATIO * (high - low);
+    let (mut at_left, mut at_right) = (distance(left), distance(right));
+    for _ in 0..STEPS {
+        if at_left <= at_right {
+            high = right;
+            right = left;
+            at_right = at_left;
+            left = high - RATIO * (high - low);
+            at_left = distance(left);
+        } else {
+            low = left;
+            left = right;
+            at_left = at_right;
+            right = low + RATIO * (high - low);
+            at_right = distance(right);
         }
     }
-    kept
+    0.5 * (low + high)
 }
 
-/// Crossing-count membership for a closed parameter-space polygon.
-pub(super) fn point_in_polygon(polygon: &[Point2], point: Point2) -> bool {
-    let mut inside = false;
-    for (a, b) in polygon
-        .iter()
-        .zip(polygon.iter().cycle().skip(1))
-        .take(polygon.len())
-    {
-        if (a.y > point.y) != (b.y > point.y)
-            && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x
-        {
-            inside = !inside;
-        }
-    }
-    inside
+/// A vertex of the triangulation, as the surface sees it.
+#[derive(Debug, Clone, Copy)]
+struct Lifted {
+    uv: Point2,
+    position: Point3,
+    /// The surface's unit normal, where it has one.
+    normal: Option<Vector3<f64>>,
+    shared: Option<SharedPoint>,
 }
 
-/// Shoelace signed area in UV. Positive ⇒ CCW.
-pub(super) fn signed_area(poly: &[Point2]) -> f64 {
-    let n = poly.len();
-    if n < 3 {
-        return 0.0;
-    }
-    let mut s = 0.0;
-    for i in 0..n {
-        let p = poly[i];
-        let q = poly[(i + 1) % n];
-        s += p.x * q.y - q.x * p.y;
-    }
-    0.5 * s
+/// The parameter scaling the triangulation is built in, and its inverse.
+///
+/// Where the surface bends, a unit of the scaled plane is one angular step of
+/// the normal along the parameter's line, and the same in 3D length in both
+/// directions: triangles that are well shaped there are cut as finely as the
+/// surface bends and no finer, and a direction in which the surface does not
+/// bend is cut no finer than its length asks, whatever that length. Where the
+/// surface is flat, a unit is a unit of length along the parameter's line
+/// (the average first fundamental form).
+#[derive(Debug, Clone, Copy)]
+struct Scaling {
+    origin: Point2,
+    scale: Vector3<f64>,
+    /// The scaled plane's width and height, in angular steps; `None` where
+    /// the surface is flat.
+    cells: Option<[f64; 2]>,
+    /// Whether the cell count was capped, which stretches triangles in 3D.
+    capped: bool,
 }
 
-// ---------- shortcuts ----------
-
-fn surface_grid_over_bounds(
-    surface: &Surface,
-    bounds: (f64, f64, f64, f64),
-    ccw: bool,
-    opts: TessellateOpts,
-) -> IndexedMesh {
-    let (u_min, u_max, v_min, v_max) = bounds;
-    let mut mesh = tessellate_surface_patch(surface, (u_min, u_max), (v_min, v_max), opts.surface);
-    if !ccw {
-        flip_winding(&mut mesh.indices);
-        for n in &mut mesh.normals {
-            *n = -*n;
-        }
-    }
-    mesh
-}
-
-/// Meshes a polygon with holes, first cutting it into cells along every
-/// direction its support bends in.
-///
-/// Ear-clipping a long boundary gives slivers spanning the whole of it, and
-/// refining a sliver only makes more of them: a wall eight turns of a helix
-/// long would come out as millions of needles. Cut first into slabs one
-/// [`cell_steps`] cell wide -- the size a grid over the support would give
-/// its cells -- each piece is already small wherever the surface bends and
-/// clips into a handful of triangles, while a direction the support is
-/// straight in is left whole. An axis is cut at most once, so the recursion
-/// ends after both.
-///
-/// `cuts` names lines the polygon was already cut along, whose stretches of
-/// boundary refinement may split -- unlike the face's own boundary, which
-/// every neighbour meets at exactly the points it was sampled at.
-fn trimmed_polygon_mesh(
-    surface: &Surface,
-    outer_uv: &[Point2],
-    inner_uv: &[Vec<Point2>],
-    ccw: bool,
-    opts: TessellateOpts,
-    cuts: &[CutLines],
-    tolerance: f64,
-) -> TessellateResult<IndexedMesh> {
-    slabbed_polygon_mesh(
-        surface, outer_uv, inner_uv, ccw, opts, [false; 2], cuts, tolerance,
-    )
-}
-
-/// How many cells a polygon may run along an axis before it is cut.
-const SLAB_STEPS: f64 = 1.0;
-
-fn slabbed_polygon_mesh(
-    surface: &Surface,
-    outer_uv: &[Point2],
-    inner_uv: &[Vec<Point2>],
-    ccw: bool,
-    opts: TessellateOpts,
-    cut: [bool; 2],
-    cuts: &[CutLines],
-    tolerance: f64,
-) -> TessellateResult<IndexedMesh> {
-    let steps = cell_steps(surface, opts);
-    let (u_min, u_max, v_min, v_max) = uv_bbox(outer_uv);
-    let reach = [(u_max - u_min) / steps.x, (v_max - v_min) / steps.y];
-    let axis = (0..2)
-        .filter(|axis| !cut[*axis] && reach[*axis] > SLAB_STEPS)
-        .max_by(|a, b| reach[*a].total_cmp(&reach[*b]));
-    let Some(axis) = axis else {
-        return clipped_polygon_mesh(surface, outer_uv, inner_uv, ccw, cuts, tolerance);
-    };
-    let (strips, slabs) = cut_into_slabs(outer_uv, inner_uv, axis, steps[axis], EPS)
-        .ok_or(TessellateError::UntriangulableBoundary)?;
-    let cuts = cuts.iter().copied().chain([slabs]).collect::<Vec<_>>();
-    let mut cut = cut;
-    cut[axis] = true;
-    let mut mesh = IndexedMesh::default();
-    for strip in strips {
-        let piece = slabbed_polygon_mesh(
-            surface,
-            &strip.outer,
-            &strip.holes,
-            ccw,
-            opts,
-            cut,
-            &cuts,
-            tolerance,
-        )?;
-        append_mesh(&mut mesh, piece);
-    }
-    Ok(mesh)
-}
-
-/// Meshes the boundary exactly, then splits until the result follows the
-/// support.
-///
-/// Ear-clipping the sampled boundary — each hole bridged into it first — gives
-/// triangles that stop precisely where the face stops, which is the whole point
-/// of coming here rather than laying a grid over the bounding rectangle. What it
-/// does not give is curvature: those triangles are flat, and on a curved support
-/// a triangle spanning the patch cuts straight through it. So each one is then
-/// split about its edge midpoints until it hugs the surface, by
-/// [`refine_to_surface`].
-///
-/// Errors where the boundary will not reduce to a simple polygon, or will not
-/// clip: a self-intersecting loop, a hole no bridge reaches. Those are the cases
-/// a real CDT would carry and this shortcut cannot.
-fn clipped_polygon_mesh(
-    surface: &Surface,
-    outer_uv: &[Point2],
-    inner_uv: &[Vec<Point2>],
-    ccw: bool,
-    cuts: &[CutLines],
-    tolerance: f64,
-) -> TessellateResult<IndexedMesh> {
-    // A boundary that encloses nothing is not a hard triangulation case, it is
-    // an absent boundary — every sample on one point, or all of them on one
-    // line, which is what a face whose pcurves did not survive its import looks
-    // like. Saying so separately keeps a broken import from reading as a gap in
-    // the mesher.
-    if signed_area(outer_uv).abs() <= EPS {
-        return Err(TessellateError::DegenerateBoundary);
-    }
-    // One tolerance serves both halves of this path: it decides which boundary
-    // samples carry curvature worth keeping, and then how far the interior may
-    // be split before it follows the surface closely enough. It is read once
-    // for the whole face, so a piece a cut left small is not held to a
-    // tighter budget than the face it came from.
-    let mut polygon = build_simple_polygon(surface, outer_uv, inner_uv)
-        .ok_or(TessellateError::UntriangulableBoundary)?;
-
-    if signed_area(&polygon) < 0.0 {
-        polygon.reverse();
-    }
-
-    let clipped = ear_clip(&polygon).ok_or(TessellateError::UntriangulableBoundary)?;
-    if clipped.is_empty() {
-        return Err(TessellateError::UntriangulableBoundary);
-    }
-
-    let triangles = clipped
-        .chunks_exact(3)
-        .map(|triangle| {
-            [
-                polygon[triangle[0] as usize],
-                polygon[triangle[1] as usize],
-                polygon[triangle[2] as usize],
-            ]
-        })
-        .collect::<Vec<_>>();
-
-    // The face's own boundary stays as sampled. A bridge to a hole is walked
-    // both ways and a cut line was drawn by the cutter; neither is shared with
-    // a neighbour, and both may split like the interior.
-    let sides = polygon
-        .iter()
-        .zip(polygon.iter().cycle().skip(1))
-        .map(|(a, b)| (vertex_bits(a), vertex_bits(b)))
-        .collect::<std::collections::HashSet<_>>();
-    let locked = polygon
-        .iter()
-        .zip(polygon.iter().cycle().skip(1))
-        .filter(|(a, b)| {
-            !sides.contains(&(vertex_bits(b), vertex_bits(a)))
-                && !cuts.iter().any(|lines| lines.hold(**a, **b))
-        })
-        .map(|(a, b)| edge_bits(a, b))
-        .collect::<std::collections::HashSet<_>>();
-    let mut mesh = refine_to_surface(
-        surface,
-        &triangles,
-        tolerance,
-        support_steps(surface),
-        &locked,
-    );
-    if !ccw {
-        flip_winding(&mut mesh.indices);
-        for normal in &mut mesh.normals {
-            *normal = -*normal;
-        }
-    }
-    Ok(mesh)
-}
-
-/// How far off the surface one cell of the equivalent grid would have sat.
-///
-/// This is the tolerance the refinement below aims at, and taking it from the
-/// surface itself rather than from a constant is what makes it scale-free: the
-/// same number, whether the parameters are radians or millimetres, and whether
-/// the face is a fingernail or a bridge. A face meshed here then carries about
-/// the fidelity it would have carried had its boundary been a rectangle and a
-/// grid been laid over it — no visible change in quality with which path a face
-/// took.
-///
-/// Measured at several places, because one cell can lie along a direction the
-/// support happens not to bend in — a cylinder's ruling — and report flat for a
-/// surface that is not.
-///
-/// The cell is also never longer than [`cell_steps`] allows: a period over
-/// the grid count on a periodic support -- the very cell a whole cylinder
-/// wall is gridded at. Without that cap a face running eight turns of a helix would
-/// take its cells a quarter-turn long and be let off with a tolerance the
-/// size of its own radius.
-fn grid_sag(surface: &Surface, polygon: &[Point2], opts: TessellateOpts) -> f64 {
-    let (u_min, u_max, v_min, v_max) = uv_bbox(polygon);
-    let cells = cell_steps(surface, opts);
-    let (nu, nv) = (opts.surface.nu.max(1) as f64, opts.surface.nv.max(1) as f64);
-    let du = ((u_max - u_min) / nu).min(cells.x);
-    let dv = ((v_max - v_min) / nv).min(cells.y);
-
-    let sag_at = |corner: Point2| {
-        let far = Point2::new(corner.x + du, corner.y + dv);
-        (nalgebra::center(
-            &surface.point_at(corner.x, corner.y),
-            &surface.point_at(far.x, far.y),
-        ) - surface.point_at(0.5 * (corner.x + far.x), 0.5 * (corner.y + far.y)))
-        .norm()
-    };
-
-    let centroid = Point2::from(
-        polygon
-            .iter()
-            .map(|p| p.coords)
-            .sum::<nalgebra::Vector2<f64>>()
-            / polygon.len() as f64,
-    );
-    let worst = std::iter::once(centroid)
-        .chain(polygon.iter().copied())
-        .map(sag_at)
-        .fold(0.0f64, f64::max);
-
-    // A plane never bends, so its sag is zero and nothing below ever splits —
-    // which is exactly right, and why a planar face comes back from here with
-    // the triangles ear-clip produced and no more.
-    worst.max(EPS)
-}
-
-/// Splits parameter-space triangles until they all lie on the surface.
-///
-/// The decision is made per *edge*, not per triangle: an edge is marked when the
-/// surface at its parameter midpoint is further than `tolerance` from the chord
-/// between its ends. Two triangles sharing an edge therefore always agree about
-/// it, which is what keeps the result conforming — a triangle split where its
-/// neighbour was not would leave a vertex partway along their shared edge that
-/// the neighbour's straight edge misses, and on a curved support that T-junction
-/// opens as a visible crack.
-///
-/// Each triangle then splits along exactly its marked edges: one marked edge
-/// bisects it, two cut it in three through both midpoints, three quarter it.
-/// No edge is split that was not marked, so no node hangs, and none is split
-/// just to keep a neighbour company: a strip running along a helix splits
-/// along the helix and never across it, where it is straight.
-///
-/// Midpoints are taken in parameter space, so two triangles meeting on an edge
-/// compute the same midpoint to the bit, and the dedupe below hands them one
-/// shared vertex.
-///
-/// A sag test alone can be fooled, though. An edge running a whole turn of a
-/// helical face has its midpoint straight above its chord, and one running
-/// two turns has it exactly on it, so a face meshed from a handful of long
-/// triangles would keep them and skip every turn in between. So an edge is
-/// also marked while it is longer than `steps` — the scale on which the
-/// support can turn at all, below which its midpoint does speak for it.
-fn refine_to_surface(
-    surface: &Surface,
-    triangles: &[[Point2; 3]],
-    tolerance: f64,
-    steps: Vector2<f64>,
-    locked: &std::collections::HashSet<EdgeBits>,
-) -> IndexedMesh {
-    // A bound on the passes as well as the tolerance: a degenerate
-    // parameterization can report a deviation forever, and must not spin here.
-    // The passes spent bringing edges down to `steps` come on top, since
-    // those halve an edge whether or not it strays.
-    const SAG_PASSES: u32 = 6;
-    let too_long =
-        |a: Point2, b: Point2| (b.x - a.x).abs() > steps.x || (b.y - a.y).abs() > steps.y;
-    let longest = triangles
-        .iter()
-        .flat_map(|t| (0..3).map(|e| (t[e], t[(e + 1) % 3])))
-        .map(|(a, b)| ((b.x - a.x).abs() / steps.x).max((b.y - a.y).abs() / steps.y))
-        .fold(1.0_f64, f64::max);
-    let passes = SAG_PASSES + longest.log2().ceil().min(16.0) as u32;
-
-    type VertexKey = (u64, u64);
-    let vertex_key = |p: &Point2| (p.x.to_bits(), p.y.to_bits());
-    let edge_key = |a: &Point2, b: &Point2| -> (VertexKey, VertexKey) {
-        let (a, b) = (vertex_key(a), vertex_key(b));
-        if a <= b { (a, b) } else { (b, a) }
-    };
-    let off_surface = |a: Point2, b: Point2| {
-        (nalgebra::center(&surface.point_at(a.x, a.y), &surface.point_at(b.x, b.y))
-            - surface.point_at(0.5 * (a.x + b.x), 0.5 * (a.y + b.y)))
-        .norm()
-            > tolerance
-    };
-
-    let mut triangles = triangles.to_vec();
-    for _ in 0..passes {
-        let marked = triangles
-            .iter()
-            .flat_map(|t| (0..3).map(|e| (t[e], t[(e + 1) % 3])))
-            .filter(|(a, b)| {
-                !locked.contains(&edge_bits(a, b)) && (too_long(*a, *b) || off_surface(*a, *b))
-            })
-            .map(|(a, b)| edge_key(&a, &b))
-            .collect::<std::collections::HashSet<_>>();
-        if marked.is_empty() {
-            break;
-        }
-
-        triangles = triangles
-            .iter()
-            .flat_map(|t| {
-                let split: [bool; 3] =
-                    std::array::from_fn(|e| marked.contains(&edge_key(&t[e], &t[(e + 1) % 3])));
-                match split.iter().filter(|s| **s).count() {
-                    0 => vec![*t],
-                    3 => {
-                        let ab = nalgebra::center(&t[0], &t[1]);
-                        let bc = nalgebra::center(&t[1], &t[2]);
-                        let ca = nalgebra::center(&t[2], &t[0]);
-                        vec![[t[0], ab, ca], [ab, t[1], bc], [ca, bc, t[2]], [ab, bc, ca]]
+impl Scaling {
+    fn of(surface: &Surface, min: Point2, max: Point2, step: f64) -> Self {
+        const GRID: usize = 9;
+        let span = max - min;
+        // The widest the normal turns, and the longest the tangent is, along
+        // each parameter's line.
+        let (mut turn, mut speed) = ([0.0_f64; 2], [0.0_f64; 2]);
+        for i in 0..GRID {
+            for j in 0..GRID {
+                let uv = Point2::new(
+                    min.x + span.x * (i as f64 + 0.5) / GRID as f64,
+                    min.y + span.y * (j as f64 + 0.5) / GRID as f64,
+                );
+                let (_, du, dv) = surface.point_and_derivative_at(uv.x, uv.y);
+                for (axis, tangent) in [(0usize, du), (1usize, dv)] {
+                    let length = tangent.norm();
+                    if length.is_finite() {
+                        speed[axis] = speed[axis].max(length);
                     }
-                    // Two, meeting at the corner opposite the one left whole:
-                    // that corner keeps a triangle of its own, and what is left
-                    // of the triangle is cut in two along a diagonal.
-                    2 => {
-                        let k = split.iter().position(|s| !*s).expect("one edge is whole");
-                        let (a, b, corner) = (t[k], t[(k + 1) % 3], t[(k + 2) % 3]);
-                        let near_b = nalgebra::center(&b, &corner);
-                        let near_a = nalgebra::center(&corner, &a);
-                        vec![
-                            [near_b, corner, near_a],
-                            [a, b, near_b],
-                            [a, near_b, near_a],
-                        ]
-                    }
-                    // Exactly one: cut from its midpoint to the opposite corner.
-                    _ => {
-                        let e = split.iter().position(|s| *s).expect("one edge is marked");
-                        let (from, to, opposite) = (t[e], t[(e + 1) % 3], t[(e + 2) % 3]);
-                        let mid = nalgebra::center(&from, &to);
-                        vec![[from, mid, opposite], [mid, to, opposite]]
+                    if let Some(rate) = normal_turn_per_parameter(surface, uv, axis, span[axis]) {
+                        turn[axis] = turn[axis].max(rate);
                     }
                 }
-            })
-            .collect();
-    }
-
-    let mut mesh = IndexedMesh::default();
-    let mut index_of = std::collections::HashMap::<(u64, u64), u32>::new();
-    for triangle in &triangles {
-        for uv in triangle {
-            let index = *index_of
-                .entry((uv.x.to_bits(), uv.y.to_bits()))
-                .or_insert_with(|| {
-                    mesh.positions.push(surface.point_at(uv.x, uv.y));
-                    mesh.normals.push(surface.normal_at(uv.x, uv.y));
-                    (mesh.positions.len() - 1) as u32
-                });
-            mesh.indices.push(index);
+            }
         }
-    }
-    mesh
-}
-
-/// A parameter-space point, to the bit.
-type VertexBits = (u64, u64);
-/// A parameter-space segment, to the bit and either way round.
-type EdgeBits = (VertexBits, VertexBits);
-
-fn vertex_bits(point: &Point2) -> VertexBits {
-    (point.x.to_bits(), point.y.to_bits())
-}
-
-fn edge_bits(a: &Point2, b: &Point2) -> EdgeBits {
-    let (a, b) = (vertex_bits(a), vertex_bits(b));
-    if a <= b { (a, b) } else { (b, a) }
-}
-
-/// The longest parameter steps over which `surface` cannot turn unseen.
-///
-/// A NURBS surface is one polynomial patch per knot span, and within one patch
-/// its control net bounds how far it bends, so a span is the scale. A periodic
-/// support closes on itself once a period, and an eighth of one is short
-/// enough that no edge can reach round to where it started. A plane, or a
-/// direction along which a support is straight, has no such scale.
-fn support_steps(surface: &Surface) -> Vector2<f64> {
-    let unbounded = Vector2::new(f64::INFINITY, f64::INFINITY);
-    match surface {
-        Surface::Nurbs(nurbs) => Vector2::new(
-            knot_span_width(nurbs.knots_u().as_slice()),
-            knot_span_width(nurbs.knots_v().as_slice()),
-        ),
-        _ => {
-            let (u, v) = match surface.periodicity() {
-                SurfacePeriodicity::None => return unbounded,
-                SurfacePeriodicity::UPeriodic(u) => (Some(u), None),
-                SurfacePeriodicity::VPeriodic(v) => (None, Some(v)),
-                SurfacePeriodicity::UVPeriodic(u, v) => (Some(u), Some(v)),
+        let speed = speed.map(|s| if s > 0.0 { s } else { 1.0 });
+        let bend = (turn[0] / speed[0]).max(turn[1] / speed[1]);
+        if !bend.is_finite() || bend <= 1e-9 {
+            return Self {
+                origin: min,
+                scale: Vector3::new(speed[0], speed[1], 1.0),
+                cells: None,
+                capped: false,
             };
-            let step = |period: Option<f64>| period.map_or(f64::INFINITY, |period| period / 8.0);
-            Vector2::new(step(u), step(v))
         }
-    }
-}
-
-/// The size of one tessellation cell along each parameter direction.
-///
-/// A grid over the support would give a periodic direction `n` cells a period
-/// -- `nu` along `u`, `nv` along `v` -- and a NURBS direction `n / 8` cells a
-/// knot span, a span being about an eighth of the turns a curved NURBS makes.
-/// A direction the support is straight in needs no cells at all: a plane, a
-/// cylinder along its axis, a NURBS direction of degree one, which bends only
-/// at its knots and is given one cell a span.
-fn cell_steps(surface: &Surface, opts: TessellateOpts) -> Vector2<f64> {
-    let counts = [opts.surface.nu.max(1) as f64, opts.surface.nv.max(1) as f64];
-    let steps = support_steps(surface);
-    match surface {
-        Surface::Nurbs(nurbs) => {
-            let degrees = [nurbs.degree_u().get(), nurbs.degree_v().get()];
-            Vector2::from_fn(|axis, _| match degrees[axis] {
-                1 => steps[axis],
-                _ => 8.0 * steps[axis] / counts[axis],
-            })
-        }
-        _ => Vector2::from_fn(|axis, _| 8.0 * steps[axis] / counts[axis]),
-    }
-}
-
-/// The mean width of a knot vector's non-empty spans.
-fn knot_span_width(knots: &[f64]) -> f64 {
-    let spans = knots
-        .windows(2)
-        .filter(|pair| pair[1] - pair[0] > EPS)
-        .count();
-    match (knots.first(), knots.last()) {
-        (Some(first), Some(last)) if spans > 0 => (last - first) / spans as f64,
-        _ => f64::INFINITY,
-    }
-}
-
-fn build_simple_polygon(
-    surface: &Surface,
-    outer_uv: &[Point2],
-    inner_uv: &[Vec<Point2>],
-) -> Option<Vec<Point2>> {
-    let mut polygon = clean_loop(surface, outer_uv);
-    if polygon.len() < 3 {
-        return None;
-    }
-    if signed_area(&polygon) < 0.0 {
-        polygon.reverse();
-    }
-
-    let mut holes = inner_uv
-        .iter()
-        .map(|hole| clean_loop(surface, hole))
-        .filter(|hole| hole.len() >= 3)
-        .map(|mut hole| {
-            if signed_area(&hole) > 0.0 {
-                hole.reverse();
-            }
-            hole
-        })
-        .collect::<Vec<_>>();
-    // Rightmost hole first: each bridge then runs right, towards boundary
-    // already joined, and only the holes still waiting can stand in its way —
-    // which is why they are checked too.
-    holes.sort_by(|a, b| {
-        let right = |hole: &[Point2]| hole[rightmost_vertex(hole)].x;
-        right(b).total_cmp(&right(a))
-    });
-    for (index, hole) in holes.iter().enumerate() {
-        polygon = bridge_hole(&polygon, hole, &holes[index + 1..])?;
-    }
-
-    Some(polygon)
-}
-
-/// Drops the boundary samples that carry nothing, and only those.
-///
-/// A point repeating its predecessor carries nothing anywhere. A point straight
-/// between its neighbours in *parameter* space is the harder case: on a plane it
-/// carries nothing either, but on a curved support a straight run of parameters
-/// is a curved run of surface, and dropping those points throws the curvature
-/// away — leaving a boundary that cuts the corner and triangles so large that
-/// refinement has to rebuild from scratch what the sampling already knew. So the
-/// second test is not whether the point is straight in parameter space, but
-/// whether the surface itself runs straight past it.
-///
-/// Straight, not merely close: every boundary sample is also a point of the
-/// edge line drawn over the face and of the neighbour's mesh along that edge,
-/// so a sample the surface bends through is kept however little it bends. A
-/// looser test drops points in runs, each judged against neighbours that the
-/// same pass is dropping too, and the boundary comes away from its edge.
-fn clean_loop(surface: &Surface, points: &[Point2]) -> Vec<Point2> {
-    let mut cleaned = Vec::new();
-    for point in points {
-        if cleaned
-            .last()
-            .is_none_or(|previous: &Point2| !previous.coincides(point, EPS))
-        {
-            cleaned.push(*point);
-        }
-    }
-    if cleaned.len() > 1 && cleaned[0].coincides(cleaned.last().expect("non-empty"), EPS) {
-        cleaned.pop();
-    }
-
-    let mut changed = true;
-    while changed && cleaned.len() >= 3 {
-        changed = false;
-        let n = cleaned.len();
-        let mut next = Vec::with_capacity(n);
-        for i in 0..n {
-            let prev = cleaned[(i + n - 1) % n];
-            let curr = cleaned[i];
-            let after = cleaned[(i + 1) % n];
-            let collinear = orient(prev, curr, after).abs() <= EPS;
-            let between = (curr - prev).dot(&(after - curr)) >= -EPS;
-            if collinear && between && chord_follows_surface(surface, prev, curr, after, EPS) {
-                changed = true;
+        let mut scale = [turn[0].max(bend * speed[0]), turn[1].max(bend * speed[1])];
+        let mut cells = [span.x * scale[0] / step, span.y * scale[1] / step];
+        let mut capped = false;
+        if cells[0] * cells[1] > MAX_CELLS {
+            // Keep the direction that bends more, and stretch the other.
+            let low = if turn[0] / speed[0] >= turn[1] / speed[1] {
+                1
             } else {
-                next.push(curr);
-            }
+                0
+            };
+            let high = 1 - low;
+            let allowed = (MAX_CELLS / cells[high].max(1.0)).max(1.0);
+            scale[low] *= allowed / cells[low];
+            cells[low] = allowed;
+            capped = true;
         }
-        cleaned = next;
-    }
-
-    cleaned
-}
-
-/// Whether dropping `curr` would leave the boundary where the surface is.
-///
-/// The chord from `prev` to `after` is compared with the surface at `curr`'s own
-/// parameters, sampled along the chord at the fraction `curr` sits at. On a
-/// plane the two coincide exactly and the point goes; on anything that bends
-/// they separate and it stays.
-fn chord_follows_surface(
-    surface: &Surface,
-    prev: Point2,
-    curr: Point2,
-    after: Point2,
-    tolerance: f64,
-) -> bool {
-    let span = (after - prev).norm();
-    if span <= EPS {
-        return true;
-    }
-    let along = (curr - prev).norm() / span;
-    let chord = surface
-        .point_at(prev.x, prev.y)
-        .coords
-        .lerp(&surface.point_at(after.x, after.y).coords, along);
-    (surface.point_at(curr.x, curr.y).coords - chord).norm() <= tolerance
-}
-
-/// Joins `hole` into `polygon` by a bridge from its rightmost point that
-/// crosses neither of them nor any of the `waiting` holes not joined yet.
-fn bridge_hole(
-    polygon: &[Point2],
-    hole: &[Point2],
-    waiting: &[Vec<Point2>],
-) -> Option<Vec<Point2>> {
-    let hole_idx = rightmost_vertex(hole);
-    let hole_point = hole[hole_idx];
-    // The nearest visible vertex, found by trying the nearest first: a
-    // visibility test walks every segment, and the nearest vertex is nearly
-    // always visible, so testing them all before choosing made each bridge
-    // quadratic in the boundary and a face with many holes cubic. The sort is
-    // stable, so equally near vertices are still tried in boundary order.
-    let mut candidates = (0..polygon.len()).collect::<Vec<_>>();
-    candidates.sort_by(|a, b| {
-        let da = (polygon[*a] - hole_point).norm_squared();
-        let db = (polygon[*b] - hole_point).norm_squared();
-        da.total_cmp(&db)
-    });
-    let polygon_idx = candidates.into_iter().find(|idx| {
-        bridge_is_visible(hole_point, hole_idx, polygon[*idx], *idx, polygon, hole)
-            && waiting.iter().all(|other| {
-                (0..other.len()).all(|i| {
-                    let j = (i + 1) % other.len();
-                    !segments_intersect_strict(hole_point, polygon[*idx], other[i], other[j])
-                })
-            })
-    })?;
-
-    let mut bridged = Vec::with_capacity(polygon.len() + hole.len() + 2);
-    bridged.extend_from_slice(&polygon[..=polygon_idx]);
-    for offset in 0..hole.len() {
-        bridged.push(hole[(hole_idx + offset) % hole.len()]);
-    }
-    bridged.push(hole_point);
-    bridged.push(polygon[polygon_idx]);
-    bridged.extend_from_slice(&polygon[polygon_idx + 1..]);
-    Some(bridged)
-}
-
-fn rightmost_vertex(points: &[Point2]) -> usize {
-    (0..points.len())
-        .max_by(|a, b| {
-            points[*a]
-                .x
-                .partial_cmp(&points[*b].x)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| {
-                    points[*b]
-                        .y
-                        .partial_cmp(&points[*a].y)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
-        })
-        .unwrap_or(0)
-}
-
-fn bridge_is_visible(
-    a: Point2,
-    hole_idx: usize,
-    b: Point2,
-    polygon_idx: usize,
-    polygon: &[Point2],
-    hole: &[Point2],
-) -> bool {
-    if a.coincides(b, EPS) {
-        return false;
-    }
-
-    for i in 0..polygon.len() {
-        let j = (i + 1) % polygon.len();
-        if i == polygon_idx || j == polygon_idx {
-            continue;
-        }
-        if segments_intersect_strict(a, b, polygon[i], polygon[j]) {
-            return false;
+        Self {
+            origin: min,
+            scale: Vector3::new(scale[0], scale[1], 1.0),
+            cells: Some(cells),
+            capped,
         }
     }
 
-    for i in 0..hole.len() {
-        let j = (i + 1) % hole.len();
-        if i == hole_idx || j == hole_idx {
-            continue;
-        }
-        if segments_intersect_strict(a, b, hole[i], hole[j]) {
-            return false;
-        }
+    fn forward(&self, uv: Point2) -> Point2 {
+        Point2::new(
+            (uv.x - self.origin.x) * self.scale.x,
+            (uv.y - self.origin.y) * self.scale.y,
+        )
     }
 
-    true
+    fn back(&self, xy: Point2) -> Point2 {
+        Point2::new(
+            xy.x / self.scale.x + self.origin.x,
+            xy.y / self.scale.y + self.origin.y,
+        )
+    }
 }
 
-fn ear_clip(polygon: &[Point2]) -> Option<Vec<u32>> {
-    if polygon.len() < 3 {
+/// The rate, per unit of the parameter on `axis`, at which `surface`'s normal
+/// turns at `uv`, or `None` where it has no normal.
+fn normal_turn_per_parameter(surface: &Surface, uv: Point2, axis: usize, span: f64) -> Option<f64> {
+    let here = surface_normal(surface, uv)?;
+    let eps = 1e-5
+        * if span.is_finite() && span > 0.0 {
+            span
+        } else {
+            1.0
+        };
+    let at = |sign: f64| {
+        let mut p = uv;
+        p[axis] += sign * eps;
+        surface_normal(surface, p)
+    };
+    let turn = match (at(1.0), at(-1.0)) {
+        (Some(a), Some(b)) => a.dot(&b).clamp(-1.0, 1.0).acos() / (2.0 * eps),
+        (Some(a), None) | (None, Some(a)) => a.dot(&here).clamp(-1.0, 1.0).acos() / eps,
+        (None, None) => return None,
+    };
+    turn.is_finite().then_some(turn)
+}
+
+fn surface_normal(surface: &Surface, uv: Point2) -> Option<Vector3<f64>> {
+    if surface.is_degenerate_at(uv.x, uv.y) {
         return None;
     }
+    let (_, du, dv) = surface.point_and_derivative_at(uv.x, uv.y);
+    let normal = du.cross(&dv);
+    let norm = normal.norm();
+    (norm.is_finite() && norm > 1e-300).then(|| normal / norm)
+}
 
-    let mut vertices = (0..polygon.len()).collect::<Vec<_>>();
-    let mut indices = Vec::with_capacity((polygon.len() - 2) * 3);
-    let mut guard = 0;
+/// Triangulates the rings and refines the triangulation until it follows the
+/// surface.
+fn triangulate(
+    surface: &Surface,
+    rings: &[Vec<BoundaryPoint>],
+    ccw_hint: Option<bool>,
+    opts: TessellateOpts,
+) -> TessellateResult<FaceMesh> {
+    let (mut min, mut max) = (
+        Point2::new(f64::INFINITY, f64::INFINITY),
+        Point2::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
+    );
+    let mut size3 = (
+        Point3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY),
+        Point3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+    );
+    for point in rings.iter().flatten() {
+        min = min.inf(&point.uv);
+        max = max.sup(&point.uv);
+        size3.0 = size3.0.inf(&point.position);
+        size3.1 = size3.1.sup(&point.position);
+    }
+    if !(min.x.is_finite() && max.x.is_finite() && min.y.is_finite() && max.y.is_finite()) {
+        return Err(TessellateError::UnreadableBoundary);
+    }
+    let extent = (size3.1 - size3.0).norm();
+    if (max - min).norm() <= 0.0 || !extent.is_finite() || extent <= 0.0 {
+        return Err(TessellateError::DegenerateBoundary);
+    }
 
-    while vertices.len() > 3 {
-        let mut clipped = false;
-        let len = vertices.len();
-        for i in 0..len {
-            let prev = vertices[(i + len - 1) % len];
-            let curr = vertices[i];
-            let next = vertices[(i + 1) % len];
-            let a = polygon[prev];
-            let b = polygon[curr];
-            let c = polygon[next];
+    let step0 = (TAU / opts.curve.segments.max(1) as f64).max(1e-3);
+    let scaling = Scaling::of(surface, min, max, step0);
 
-            // Any ear with area at all: a slab a sliver wide near a sharp
-            // corner has no ear as large as a fixed threshold, however many
-            // it has.
-            if orient(a, b, c) <= 0.0 {
+    let mut cdt = Cdt::new(scaling.forward(min), scaling.forward(max));
+    let mut lifted: Vec<Lifted> = (0..Cdt::FIRST)
+        .map(|_| Lifted {
+            uv: Point2::origin(),
+            position: Point3::origin(),
+            normal: None,
+            shared: None,
+        })
+        .collect();
+    let mut ring_vertices = Vec::with_capacity(rings.len());
+    for ring in rings {
+        let mut vertices = Vec::with_capacity(ring.len());
+        for point in ring {
+            let vertex = match cdt.insert(scaling.forward(point.uv), false) {
+                Ok(vertex) => {
+                    lifted.push(Lifted {
+                        uv: point.uv,
+                        position: point.position,
+                        normal: surface_normal(surface, point.uv),
+                        shared: Some(point.id),
+                    });
+                    vertex
+                }
+                Err(Refused::Duplicate(vertex)) => vertex,
+                Err(_) => return Err(TessellateError::UntriangulableBoundary),
+            };
+            vertices.push(vertex);
+        }
+        ring_vertices.push(vertices);
+    }
+    for vertices in &ring_vertices {
+        for k in 0..vertices.len() {
+            let (a, b) = (vertices[k], vertices[(k + 1) % vertices.len()]);
+            cdt.insert_segment(a, b)
+                .map_err(|_| TessellateError::UntriangulableBoundary)?;
+        }
+    }
+    cdt.classify();
+
+    // Which way the face looks: the material is on the left of each boundary
+    // segment as its loop runs it, when the face's normal is the surface's.
+    let ccw = match ccw_hint {
+        Some(ccw) => ccw,
+        None => orientation(&cdt, &ring_vertices).ok_or(TessellateError::UntriangulableBoundary)?,
+    };
+    if cdt.inside().next().is_none() {
+        return Err(TessellateError::DegenerateBoundary);
+    }
+
+    if let Some(cells) = scaling.cells {
+        seed_lattice(surface, &mut cdt, &mut lifted, scaling, cells, (min, max));
+    }
+    refine(surface, &mut cdt, &mut lifted, scaling, extent, opts);
+
+    // Assemble, dropping only triangles that collapse onto one shape point: a
+    // sliver with three distinct corners still pairs its edges with its
+    // neighbours', and dropping it would open the surface.
+    let mut index_of = vec![u32::MAX; cdt.vertex_count()];
+    let mut shared_indices = HashMap::new();
+    let mut mesh = FaceMesh::default();
+    let mut triangles = Vec::new();
+    for (_, [a, b, c]) in cdt.inside() {
+        let corners = [a, b, c].map(|v| lifted[v as usize]);
+        let same = |x: &Lifted, y: &Lifted| match (x.shared, y.shared) {
+            (Some(p), Some(q)) => p == q,
+            _ => x.position == y.position,
+        };
+        if same(&corners[0], &corners[1])
+            || same(&corners[1], &corners[2])
+            || same(&corners[2], &corners[0])
+        {
+            continue;
+        }
+        triangles.push([a, b, c]);
+    }
+    for triangle in &triangles {
+        for &v in triangle {
+            if index_of[v as usize] == u32::MAX {
+                let point = lifted[v as usize];
+                let index = mesh.mesh.positions.len() as u32;
+                if let Some(shared) = point.shared {
+                    let existing = *shared_indices.entry(shared).or_insert(index);
+                    index_of[v as usize] = existing;
+                    if existing != index {
+                        continue;
+                    }
+                }
+                index_of[v as usize] = index;
+                mesh.mesh.positions.push(point.position);
+                let normal = point.normal.unwrap_or_else(Vector3::zeros);
+                let normal = if ccw { normal } else { -normal };
+                mesh.mesh
+                    .normals
+                    .push(nalgebra::Unit::new_unchecked(normal));
+                mesh.shared.push(point.shared);
+            }
+        }
+    }
+    // A pole has no normal of its own; give it the mean of its triangles'.
+    let mut accumulated = vec![Vector3::zeros(); mesh.mesh.positions.len()];
+    for triangle in &triangles {
+        let [a, b, c] = triangle.map(|v| index_of[v as usize] as usize);
+        let (pa, pb, pc) = (
+            mesh.mesh.positions[a],
+            mesh.mesh.positions[b],
+            mesh.mesh.positions[c],
+        );
+        let n = (pb - pa).cross(&(pc - pa));
+        let n = if ccw { n } else { -n };
+        for k in [a, b, c] {
+            accumulated[k] += n;
+        }
+        if ccw {
+            mesh.mesh
+                .indices
+                .extend_from_slice(&[a as u32, b as u32, c as u32]);
+        } else {
+            mesh.mesh
+                .indices
+                .extend_from_slice(&[a as u32, c as u32, b as u32]);
+        }
+    }
+    for (k, normal) in mesh.mesh.normals.iter_mut().enumerate() {
+        if normal.norm() == 0.0 {
+            let n = accumulated[k];
+            let norm = n.norm();
+            *normal =
+                nalgebra::Unit::new_unchecked(if norm > 0.0 { n / norm } else { Vector3::z() });
+        }
+    }
+    if mesh.mesh.indices.is_empty() {
+        return Err(TessellateError::DegenerateBoundary);
+    }
+    Ok(mesh)
+}
+
+/// Whether the material lies to the left of the boundary as its loops run.
+fn orientation(cdt: &Cdt, rings: &[Vec<u32>]) -> Option<bool> {
+    let mut left = 0usize;
+    let mut right = 0usize;
+    let inside = cdt.inside().collect::<Vec<_>>();
+    let mut edges: HashMap<(u32, u32), ()> = HashMap::new();
+    for (_, [a, b, c]) in &inside {
+        edges.insert((*a, *b), ());
+        edges.insert((*b, *c), ());
+        edges.insert((*c, *a), ());
+    }
+    for vertices in rings {
+        for k in 0..vertices.len() {
+            let (a, b) = (vertices[k], vertices[(k + 1) % vertices.len()]);
+            if a == b {
                 continue;
             }
-            if vertices.iter().any(|idx| {
-                *idx != prev
-                    && *idx != curr
-                    && *idx != next
-                    && !polygon[*idx].coincides(a, EPS)
-                    && !polygon[*idx].coincides(b, EPS)
-                    && !polygon[*idx].coincides(c, EPS)
-                    && point_in_triangle(polygon[*idx], a, b, c)
-            }) {
+            // An inside triangle holding a→b counter-clockwise lies to its left.
+            if edges.contains_key(&(a, b)) {
+                left += 1;
+            } else if edges.contains_key(&(b, a)) {
+                right += 1;
+            }
+        }
+    }
+    match (left, right) {
+        (0, 0) => None,
+        _ => Some(left >= right),
+    }
+}
+
+/// Fills the face with a lattice of points one angular step apart in the
+/// scaled plane, so that the triangulation starts out following the surface
+/// and refinement has little left to do. A point that falls outside the face,
+/// or that would crowd a boundary segment, is left out.
+fn seed_lattice(
+    surface: &Surface,
+    cdt: &mut Cdt,
+    lifted: &mut Vec<Lifted>,
+    scaling: Scaling,
+    cells: [f64; 2],
+    (min, max): (Point2, Point2),
+) {
+    let count = cells.map(|c| (c - 1e-9).ceil().max(1.0) as usize);
+    let span = max - min;
+    for j in 0..count[1] {
+        for i in 0..count[0] {
+            let (a, b) = if j % 2 == 0 {
+                (i, j)
+            } else {
+                (count[0] - 1 - i, j)
+            };
+            let uv = Point2::new(
+                min.x + span.x * (a as f64 + 0.5) / count[0] as f64,
+                min.y + span.y * (b as f64 + 0.5) / count[1] as f64,
+            );
+            let at = scaling.forward(uv);
+            if cdt.encroaches(at) {
                 continue;
             }
+            if cdt.insert(at, true).is_ok() {
+                lifted.push(Lifted {
+                    uv,
+                    position: surface.point_at(uv.x, uv.y),
+                    normal: surface_normal(surface, uv),
+                    shared: None,
+                });
+            }
+        }
+    }
+}
 
-            indices.extend_from_slice(&[prev as u32, curr as u32, next as u32]);
-            vertices.remove(i);
-            clipped = true;
+/// Splits the edges that stray from the surface until every one follows it to
+/// the angular step, and improves the worst-shaped triangles on the way.
+///
+/// An edge strays when the normals at its ends turn more than the step, or
+/// when the surface at its midpoint stands off its chord by more than the
+/// matching sag. Only such an edge is split, at its midpoint: a cylinder's
+/// triangles are cut across its bend and never along its ruling, however long
+/// the ruling, which a split of whole triangles at their centres cannot do.
+fn refine(
+    surface: &Surface,
+    cdt: &mut Cdt,
+    lifted: &mut Vec<Lifted>,
+    scaling: Scaling,
+    extent: f64,
+    opts: TessellateOpts,
+) {
+    let step = (TAU / opts.curve.segments.max(1) as f64).max(1e-3) * ANGLE_SLACK;
+    let sag_ratio = step / 8.0;
+    let tiny = extent * 1e-6;
+    let lift = |uv: Point2| Lifted {
+        uv,
+        position: surface.point_at(uv.x, uv.y),
+        normal: surface_normal(surface, uv),
+        shared: None,
+    };
+
+    // Whether the edge between two vertices strays from the surface.
+    let strays = |lifted: &[Lifted], a: u32, b: u32| -> bool {
+        let (a, b) = (lifted[a as usize], lifted[b as usize]);
+        let length = (b.position - a.position).norm();
+        if length <= tiny {
+            return false;
+        }
+        if let (Some(na), Some(nb)) = (a.normal, b.normal)
+            && na.dot(&nb).clamp(-1.0, 1.0).acos() > step
+        {
+            return true;
+        }
+        let mid_uv = nalgebra::center(&a.uv, &b.uv);
+        let mid = surface.point_at(mid_uv.x, mid_uv.y);
+        let chord = nalgebra::center(&a.position, &b.position);
+        (mid - chord).norm() > length * sag_ratio
+    };
+
+    // One worklist for both goals, so that a point added to improve a shape
+    // is itself checked against the surface. Following the surface comes
+    // first and has no budget but the face's; improving shapes is bounded by a
+    // multiple of the boundary.
+    let mut queue: Vec<u32> = cdt.inside().map(|(t, _)| t).collect();
+    let mut added = 0usize;
+    let mut polished = 0usize;
+    let polish_budget = 2 * lifted.len();
+    while let Some(t) = queue.pop() {
+        if added >= MAX_REFINEMENT {
             break;
         }
-
-        if !clipped {
-            // Nothing convex is left to clip, only vertices lying straight
-            // between their neighbours. Such a vertex encloses nothing; it is
-            // cut off as the flat triangle it is, which keeps it a vertex of
-            // the mesh for the edge drawn through it.
-            let flat = (0..len).find(|&i| {
-                let (a, b, c) = (
-                    polygon[vertices[(i + len - 1) % len]],
-                    polygon[vertices[i]],
-                    polygon[vertices[(i + 1) % len]],
-                );
-                orient(a, b, c).abs() <= EPS
-            })?;
-            indices.extend_from_slice(&[
-                vertices[(flat + len - 1) % len] as u32,
-                vertices[flat] as u32,
-                vertices[(flat + 1) % len] as u32,
-            ]);
-            vertices.remove(flat);
+        let Some(v) = cdt.vertices_of(t) else {
+            continue;
+        };
+        let mut split = false;
+        for i in 0..3 {
+            if cdt.is_boundary(t, i) {
+                continue;
+            }
+            let (a, b) = (v[(i + 1) % 3], v[(i + 2) % 3]);
+            if !strays(lifted, a, b) {
+                continue;
+            }
+            let middle = nalgebra::center(&cdt.point(a), &cdt.point(b));
+            if let Ok(vertex) = cdt.insert(middle, true) {
+                debug_assert_eq!(vertex as usize, lifted.len());
+                lifted.push(lift(scaling.back(middle)));
+                added += 1;
+                queue.extend(cdt.around(vertex));
+                split = true;
+                break;
+            }
         }
-        guard += 1;
-        if guard > polygon.len() * polygon.len() {
+        if split || scaling.capped || polished >= polish_budget {
+            continue;
+        }
+        // Shape: a triangle with a small angle in 3D is split at its
+        // circumcentre, where that falls inside and clear of the boundary.
+        let corners = v.map(|v| lifted[v as usize].position);
+        if (0..3).any(|i| (corners[i] - corners[(i + 1) % 3]).norm() <= tiny) {
+            continue;
+        }
+        if min_angle(corners).is_none_or(|angle| angle >= MIN_ANGLE) {
+            continue;
+        }
+        let Some(candidate) = circumcentre(v.map(|v| cdt.point(v))) else {
+            continue;
+        };
+        if cdt.encroaches(candidate) {
+            continue;
+        }
+        if let Ok(vertex) = cdt.insert(candidate, true) {
+            lifted.push(lift(scaling.back(candidate)));
+            added += 1;
+            polished += 1;
+            queue.extend(cdt.around(vertex));
+        }
+    }
+}
+
+fn circumcentre(points: [Point2; 3]) -> Option<Point2> {
+    let [a, b, c] = points;
+    let (bx, by) = (b.x - a.x, b.y - a.y);
+    let (cx, cy) = (c.x - a.x, c.y - a.y);
+    let d = 2.0 * (bx * cy - by * cx);
+    if d == 0.0 || !d.is_finite() {
+        return None;
+    }
+    let b2 = bx * bx + by * by;
+    let c2 = cx * cx + cy * cy;
+    let x = (cy * b2 - by * c2) / d;
+    let y = (bx * c2 - cx * b2) / d;
+    let p = Point2::new(a.x + x, a.y + y);
+    (p.x.is_finite() && p.y.is_finite()).then_some(p)
+}
+
+/// The smallest angle of a triangle in 3D, or `None` where it has no area.
+fn min_angle(corners: [Point3; 3]) -> Option<f64> {
+    let mut smallest = f64::INFINITY;
+    for i in 0..3 {
+        let (p, q, r) = (corners[i], corners[(i + 1) % 3], corners[(i + 2) % 3]);
+        let (u, v) = (q - p, r - p);
+        let (nu, nv) = (u.norm(), v.norm());
+        if nu == 0.0 || nv == 0.0 {
             return None;
         }
+        smallest = smallest.min((u.dot(&v) / (nu * nv)).clamp(-1.0, 1.0).acos());
     }
-
-    indices.extend_from_slice(&[vertices[0] as u32, vertices[1] as u32, vertices[2] as u32]);
-    Some(indices)
-}
-
-fn point_in_triangle(p: Point2, a: Point2, b: Point2, c: Point2) -> bool {
-    orient(a, b, p) >= -EPS && orient(b, c, p) >= -EPS && orient(c, a, p) >= -EPS
-}
-
-fn segments_intersect_strict(a: Point2, b: Point2, c: Point2, d: Point2) -> bool {
-    if a.coincides(c, EPS) || a.coincides(d, EPS) || b.coincides(c, EPS) || b.coincides(d, EPS) {
-        return false;
-    }
-
-    let o1 = orient(a, b, c);
-    let o2 = orient(a, b, d);
-    let o3 = orient(c, d, a);
-    let o4 = orient(c, d, b);
-
-    if o1.abs() <= EPS && on_segment(a, c, b) {
-        return true;
-    }
-    if o2.abs() <= EPS && on_segment(a, d, b) {
-        return true;
-    }
-    if o3.abs() <= EPS && on_segment(c, a, d) {
-        return true;
-    }
-    if o4.abs() <= EPS && on_segment(c, b, d) {
-        return true;
-    }
-
-    (o1 > EPS) != (o2 > EPS) && (o3 > EPS) != (o4 > EPS)
-}
-
-fn on_segment(a: Point2, p: Point2, b: Point2) -> bool {
-    p.x >= a.x.min(b.x) - EPS
-        && p.x <= a.x.max(b.x) + EPS
-        && p.y >= a.y.min(b.y) - EPS
-        && p.y <= a.y.max(b.y) + EPS
-}
-
-fn orient(a: Point2, b: Point2, c: Point2) -> f64 {
-    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
-}
-
-// ---------- helpers ----------
-
-fn uv_bbox(points: &[Point2]) -> (f64, f64, f64, f64) {
-    let mut u_min = f64::INFINITY;
-    let mut u_max = f64::NEG_INFINITY;
-    let mut v_min = f64::INFINITY;
-    let mut v_max = f64::NEG_INFINITY;
-    for p in points {
-        u_min = u_min.min(p.x);
-        u_max = u_max.max(p.x);
-        v_min = v_min.min(p.y);
-        v_max = v_max.max(p.y);
-    }
-    (u_min, u_max, v_min, v_max)
-}
-
-fn flip_winding(indices: &mut [u32]) {
-    for tri in indices.chunks_mut(3) {
-        if tri.len() == 3 {
-            tri.swap(1, 2);
-        }
-    }
+    Some(smallest)
 }

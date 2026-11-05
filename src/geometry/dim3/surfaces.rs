@@ -1787,12 +1787,31 @@ impl SurfaceGeometry for SurfaceOfRevolution {
         let Ok(hits) = intersect_curves(&self.curve, &line) else {
             return Vec::new();
         };
-        hits.iter()
+        if hits
+            .iter()
+            .any(|hit| matches!(hit, CurveCurveIntersection::Overlap { .. }))
+        {
+            return Vec::new();
+        }
+        let mut rows: Vec<f64> = hits
+            .iter()
             .filter_map(|hit| match hit {
                 CurveCurveIntersection::Point { u_a, .. } => Some(*u_a),
                 CurveCurveIntersection::Overlap { .. } => None,
             })
-            .collect()
+            .collect();
+        // A profile that starts or ends on the axis touches it at the end of
+        // its domain, where a transversal intersection is not guaranteed to
+        // report the contact.
+        let profile = self.curve.domain();
+        for end in [profile.start.value(), profile.end.value()] {
+            let touches = SurfaceGeometry::is_degenerate_at(self, end, 0.0);
+            let reported = rows.iter().any(|row| (row - end).abs() <= 1e-9);
+            if touches && !reported {
+                rows.push(end);
+            }
+        }
+        rows
     }
 
     fn closest_parameter(&self, point: Point3) -> Result<Point2, NurbsError> {

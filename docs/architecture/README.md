@@ -30,6 +30,8 @@ landed and its lasting content has moved here or into an ADR.
 - [blend.md](blend.md): the chamfer and fillet engine.
 - [offset.md](offset.md): offsets of edges, profiles, faces, sheets and solids.
 - [measure.md](measure.md): mass properties by Green boundary integral.
+- [tessellation.md](tessellation.md): shared boundary sampling and constrained triangulation.
+- [exchange.md](exchange.md): STEP B-rep interchange and binary STL export.
 
 ## Reviews
 

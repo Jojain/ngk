@@ -1,8 +1,10 @@
 mod step;
+mod stl;
 
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    step::register(m)
+    step::register(m)?;
+    stl::register(m)
 }

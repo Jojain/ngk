@@ -1,4 +1,4 @@
-//! The crate's only filesystem access.
+//! Filesystem wrappers for STEP exchange.
 //!
 //! Everything else in the STEP stack works on `&str` and `impl Write`, so the
 //! whole feature builds for wasm where there is no filesystem. These wrappers

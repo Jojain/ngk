@@ -167,3 +167,10 @@ of rules about models:
 Every entity of the model the operation does not touch keeps its key, so a
 caller holding the key of a face an earlier operation produced can still find
 it after a later one.
+
+## Extrusion cap correspondence
+
+Extrusion pairs each bottom boundary edge with the translated top span,
+including its direction. Cap winding can reverse the walk around a hole, so
+the two boundary lists are not zipped by traversal order. The walls are sewn
+to the corresponding edges; their vertical curves then meet the stored corners.

@@ -618,6 +618,33 @@ fn sew_extruded_loop<P: Payload>(
         ));
     }
 
+    // Cap winding can reverse a hole's walk. Pair by the translated span,
+    // rather than by each cap's traversal order.
+    let top_edges = bottom_edges
+        .iter()
+        .map(|&dart| {
+            let bottom = Edge::from_dart(edit, dart).expect("a cap boundary names an edge");
+            let span = bottom.trimmed_curve();
+            top_edges
+                .iter()
+                .find_map(|&candidate| {
+                    let edge = Edge::from_dart(edit, candidate)?;
+                    [edge, edge.reversed()].into_iter().find_map(|view| {
+                        let top = view.trimmed_curve();
+                        ((top.start() - span.start() - direction).norm() <= LINEAR_TOLERANCE
+                            && (top.end() - span.end() - direction).norm() <= LINEAR_TOLERANCE
+                            && (top.point_at(Fraction::new(0.5))
+                                - span.point_at(Fraction::new(0.5))
+                                - direction)
+                                .norm()
+                                <= LINEAR_TOLERANCE)
+                            .then_some(view.dart())
+                    })
+                })
+                .ok_or(ExtrudeError::MissingEdgeCurve { dart })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
     let laterals = bottom_edges
         .iter()
         .copied()

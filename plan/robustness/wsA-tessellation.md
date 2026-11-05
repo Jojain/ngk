@@ -4,6 +4,12 @@
 `src/topology/unwrapped_face_domain.rs`. **Decision:** D1, decided.
 **Bench:** 43 cases whose exact measures already pass.
 
+**Status:** Edge sampling, constrained triangulation and binary STL export are
+in the kernel. See [the tessellation architecture](../../docs/architecture/tessellation.md)
+and [the exchange API](../../docs/architecture/exchange.md). Remaining cases
+include the fused bolt thread's crossing boundary constraints, the elliptic
+Boolean hole's mismatched pcurves, and surfaces that lose facets at STL precision.
+
 ## Symptoms
 
 - A solid's triangles do not close: brep-bench joins only bit-identical

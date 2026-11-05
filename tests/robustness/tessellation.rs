@@ -13,13 +13,11 @@ fn a_block_meshes_closed() -> Result<(), Refusal> {
 }
 
 #[test]
-#[ignore = "mesh not closed, neighbouring faces do not share their edge vertices (plan/robustness/wsA-tessellation.md)"]
 fn a_cylinder_meshes_closed() -> Result<(), Refusal> {
     guarded(|| assert_closed_mesh(&solids::cylinder(3.0, 10.0)?, chord_sag(3.0, SAG)))
 }
 
 #[test]
-#[ignore = "mesh not closed, neighbouring faces do not share their edge vertices (plan/robustness/wsA-tessellation.md)"]
 fn a_tube_meshes_closed() -> Result<(), Refusal> {
     guarded(|| {
         let ring = faces::annulus(plane(p(0.0, 0.0, 0.0), v(0.0, 0.0, 1.0)), 5.0, 2.0)?;
@@ -28,7 +26,6 @@ fn a_tube_meshes_closed() -> Result<(), Refusal> {
 }
 
 #[test]
-#[ignore = "mesh not closed, neighbouring faces do not share their edge vertices (plan/robustness/wsA-tessellation.md)"]
 fn a_drilled_plate_meshes_closed() -> Result<(), Refusal> {
     guarded(|| {
         let plate = block(p(-10.0, -10.0, 0.0), p(10.0, 10.0, 10.0))?;
@@ -82,13 +79,11 @@ fn washer_meshes_closed_at(angle: f64) -> Result<(), Refusal> {
 }
 
 #[test]
-#[ignore = "mesh not closed, neighbouring faces do not share their edge vertices (plan/robustness/wsA-tessellation.md)"]
 fn a_revolved_washer_meshes_closed_at_360_degrees() -> Result<(), Refusal> {
     guarded(|| washer_meshes_closed_at(360.0))
 }
 
 #[test]
-#[ignore = "mesh not closed, neighbouring faces do not share their edge vertices (plan/robustness/wsA-tessellation.md)"]
 fn a_revolved_washer_meshes_closed_at_90_degrees() -> Result<(), Refusal> {
     guarded(|| washer_meshes_closed_at(90.0))
 }
@@ -100,7 +95,6 @@ fn a_revolved_washer_meshes_closed_at_minus_90_degrees() -> Result<(), Refusal> 
 }
 
 #[test]
-#[ignore = "mesh not closed, neighbouring faces do not share their edge vertices (plan/robustness/wsA-tessellation.md)"]
 fn a_long_thin_cylinder_meshes_closed() -> Result<(), Refusal> {
     guarded(|| assert_closed_mesh(&solids::cylinder(0.01, 1000.0)?, chord_sag(0.01, SAG)))
 }
