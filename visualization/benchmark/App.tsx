@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { colors, loadMesh, preview } from "./scene";
 import { Viewport, type CameraLink } from "./Viewport";
+import { SourcePanel } from "./SourcePanel";
 import { labels, type Case, type Kernel, type Manifest, type Outcome, type Result } from "./types";
 
 const kernels: Kernel[] = ["occt", "ngk"];
@@ -109,6 +110,7 @@ function Comparison({ item, data, onClose, onStep, canPrevious, canNext }: {
           {result.meshUrl && <a className="download" href={result.meshUrl} download>Download STL ↗</a>}
         </div>
         <Metrics result={result} item={item} />
+        <SourcePanel files={result.sourceFiles ?? []} revision={data.generatedAt} />
         {result.why && <details className="diagnostic" open={result.outcome !== "pass" && result.outcome !== "built"}><summary>Benchmark diagnostic</summary><p>{result.why}</p></details>}
       </section>;
     })}</div>

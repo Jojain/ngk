@@ -5,6 +5,7 @@ python brep-bench/viewer.py --refresh  # run NGK and the OCP reference, then exp
 python brep-bench/viewer.py            # export the latest local runs only
 """
 import argparse
+import ast
 from datetime import datetime, timezone
 import json
 import os
@@ -23,6 +24,40 @@ OUTPUT = HERE / "viewer-data"
 def read_json(path):
     """Read an optional result without substituting another run or kernel."""
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def export_sources(kernel, case_id, copied):
+    """Copy the case implementation and its local construction helpers as static text."""
+    category, name = case_id.split("/")
+    filename = name.replace("-", "_")
+    source_root = HERE / "kernels" / "ngk" / "src" if kernel == "ngk" else UPSTREAM / "kernels" / "occt"
+    suffix = ".rs" if kernel == "ngk" else ".py"
+    case_path = source_root / "cases" / category / (filename + suffix)
+    pending = [case_path]
+    if kernel == "ngk":
+        pending.append(source_root / "bench.rs")
+    files, visited = [], set()
+    while pending:
+        path = pending.pop(0)
+        if path in visited or not path.is_file():
+            continue
+        visited.add(path)
+        relative = path.relative_to(source_root)
+        target_relative = Path("source") / kernel / relative
+        target = OUTPUT / target_relative
+        if target not in copied:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, target)
+            copied.add(target)
+        files.append({"path": relative.as_posix(), "url": quote(target_relative.as_posix(), safe="/"),
+                      "language": "rust" if kernel == "ngk" else "python"})
+        if kernel == "occt":
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    pending.append(source_root / (node.module.split(".")[0] + ".py"))
+                elif isinstance(node, ast.Import):
+                    pending.extend(source_root / (item.name.split(".")[0] + ".py") for item in node.names)
+    return files
 
 
 def run_reference(python, timeout, env):
@@ -54,6 +89,7 @@ def export():
     baseline = read_json(HERE / "results" / "ngk.json")
     baseline_rows = {row["case"]: row for row in (baseline or {}).get("cases", [])}
     entries = []
+    copied_sources = set()
     for case in cases():
         cid = case["id"]
         results = {}
@@ -62,6 +98,7 @@ def export():
             result = dict(row) if row else {"outcome": "missing", "why": "This case has not been run."}
             result.pop("case", None)
             result["meshUrl"] = None
+            result["sourceFiles"] = export_sources(name, cid, copied_sources)
             source = UPSTREAM / "results" / "meshes" / name / (cid + ".stl")
             # A refused run can leave an older STL on disk. Never show that stale geometry.
             if row and row.get("mesh") and source.is_file():

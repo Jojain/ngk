@@ -1,9 +1,11 @@
 export type Outcome = "pass" | "built" | "wrong" | "refused" | "crashed" | "timeout" | "missing";
 export type Kernel = "occt" | "ngk";
+export interface SourceFile { path: string; url: string; language: "rust" | "python" }
 export interface Result {
   outcome: Outcome;
   why: string;
   meshUrl: string | null;
+  sourceFiles: SourceFile[];
   volume?: number | null;
   area?: number | null;
   seconds?: number;

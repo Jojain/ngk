@@ -7,6 +7,11 @@
 The gallery shows all 231 cases, with an OCCT/OCP preview beside the NGK
 preview. Clicking a card opens two 3D viewers with orbit, pan, zoom, linked
 cameras, a triangle view, measurements, diagnostics and STL downloads.
+Each pane also has a source-code section with the actual Rust or Python
+case implementation, its construction helpers, line numbers, copy and
+download controls. Source files are exported as static assets and loaded
+only when opened, including for refused cases. They are the source files
+present at export time; the run timestamp describes the benchmark results.
 Search, category and NGK outcome filters apply to the gallery. A case can
 be bookmarked through its `?case=category/name` URL.
 
