@@ -3,3 +3,4 @@ dist
 src/wasm
 .vite
 debug-server.log
+benchmark-dist/

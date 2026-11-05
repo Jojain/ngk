@@ -1,0 +1,2 @@
+# Matches the OCP runtime used for the local reference models; no VTK dependency.
+cadquery-ocp-novtk==7.9.3.1.1

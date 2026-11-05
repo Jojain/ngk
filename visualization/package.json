@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "benchmark:dev": "vite --config vite.benchmark.config.ts",
+    "benchmark:preview": "vite preview --config vite.benchmark.config.ts --host 127.0.0.1 --port 3944 --strictPort",
+    "benchmark:build": "tsc -p benchmark/tsconfig.json && vite build --config vite.benchmark.config.ts",
     "wasm": "wasm-pack build --target web --out-dir visualization/src/wasm --features wasm ..",
     "wasm:build": "cd .. && wasm-pack build --target web --out-dir visualization/src/wasm --features wasm",
     "dev": "npm run wasm:build && vite",

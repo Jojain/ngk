@@ -2,6 +2,61 @@
 
 ## How to run
 
+### Dedicated comparison gallery
+
+The gallery shows all 231 cases, with an OCCT/OCP preview beside the NGK
+preview. Clicking a card opens two 3D viewers with orbit, pan, zoom, linked
+cameras, a triangle view, measurements, diagnostics and STL downloads.
+Search, category and NGK outcome filters apply to the gallery. A case can
+be bookmarked through its `?case=category/name` URL.
+
+From the repository root:
+
+```powershell
+python brep-bench/viewer.py --refresh
+npm.cmd --prefix visualization run benchmark:dev
+```
+
+Open `http://127.0.0.1:3942/`. To export existing local runs without running
+the benchmark again, use `python brep-bench/viewer.py`. `--run-reference`
+runs only OCCT first. The reference interpreter defaults to the repository's
+`.venv` interpreter when present, otherwise the Python running the script.
+It must have OCP installed; override it with `--reference-python PATH`.
+
+The OCCT implementations come from the exact upstream commit in `UPSTREAM`.
+`occt_reference.py` supplies the collection type aliases that those cases
+use when run with OCP 7.9 instead of OCP 8, and records the actual installed
+OCP version. It does not alter their constructions. A reference can itself
+fail or be incorrect; its own status appears beside its model.
+
+`viewer.py` exports metadata and the actual STL artifacts into the ignored
+`viewer-data/` directory. A refused case gets no mesh, even if an older STL
+remains on disk. No kernel substitutes for a missing result. Previews load
+as cards approach the viewport using one shared WebGL renderer; the full
+viewers open only for the selected case. Both full viewers use the same
+spatial frame, so geometric size and placement differences remain visible.
+
+`npm.cmd --prefix visualization run benchmark:build` typechecks and builds
+a standalone static site in `visualization/benchmark-dist/`, including the
+exported data. These commands do not build WASM.
+
+The existing Pages workflow also publishes the gallery at `/ngk/benchmark/`
+on pushes to `master`. Its benchmark job installs the pinned OCP dependency
+from `reference-requirements.txt`, builds NGK, runs both kernels and exports
+their real results and models. The site build downloads these generated
+artifacts and includes the standalone gallery beside `/ngk/sandbox/`.
+No locally generated STL files need to be committed. The benchmark's
+regression gate must pass before a new Pages artifact can be deployed.
+
+`VITE_BASE_PATH` configures the gallery's asset prefix, using the same
+convention as the visualization and sandbox. For a local Pages build:
+
+```powershell
+$env:VITE_BASE_PATH = '/ngk/benchmark/'
+npm.cmd --prefix visualization run benchmark:build
+Remove-Item Env:VITE_BASE_PATH
+```
+
 Two things guard the robustness work in `plan/robustness/`: the brep-bench gate, which runs the
 231 cases of the neutral suite on this tree, and the reproduction suite, plain `cargo test` tests
 of the failures the bench exposed, on plainer parts.
@@ -82,7 +137,22 @@ suite on this tree.
 
 The work the gate tracks is planned in `plan/robustness/`.
 
-## NGK on brep-bench — status as of 4 November 2026
+## Current local run — 5 November 2026
+
+The full 231-case gate on NGK 0.0.13 after the edit/operator corrections
+reports **11 pass, 51 wrong, 169 refused and 0 crashed**. No case changed
+outcome against `results/ngk.json`, and no passing case regressed. These
+corrections secure editing; they do not raise the benchmark score yet.
+Of the 51 wrong results, 43 fail only the mesh-closure check. The other
+eight also fail area, volume or mesh-volume checks.
+
+The local OCP 7.9.3.1 reference produces 215 meshes: 200 pass, 14 wrong
+and one built for an unsettled case. Fifteen cases are refused and one
+raises an OCCT construction error. The gallery lists all 231 cases and
+shows those unavailable results explicitly. NGK produces 62 meshes,
+including its 51 wrong results, which remain inspectable.
+
+## Historical analysis — 4 November 2026
 
 brep-bench (https://bmander.github.io/brep-bench/): 231 cases described in words, with closed-form volume and area, each kernel implementing them in its own idiom. A case **passes** if volume and area are within 1e-6 **and** the STL mesh it writes is closed (each edge used twice, once in each direction, vertices welded only when bit-identical) with a volume within 2%. A refusal ranks above a wrong answer.
 
