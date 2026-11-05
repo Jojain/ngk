@@ -125,30 +125,32 @@ pub(crate) fn add_polygon_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     corners: &[Point3],
 ) -> Result<crate::topology::shape_keys::ProfileKey, FaceCreationError> {
-    validate_polygon(corners)?;
-    let n = corners.len();
-    let darts: Vec<Dart> = (0..2 * n).map(|_| edit.add_dart()).collect();
+    edit.deferred(|raw| {
+        validate_polygon(corners)?;
+        let n = corners.len();
+        let darts: Vec<Dart> = (0..2 * n).map(|_| raw.add_dart()).collect();
 
-    for i in 0..n {
-        edit.sew(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
-    }
-    for i in 0..n {
-        let a = darts[2 * i + 1];
-        let b = darts[(2 * i + 2) % (2 * n)];
-        edit.sew(Dim::One, a, b)?;
-    }
+        for i in 0..n {
+            raw.sew(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
+        }
+        for i in 0..n {
+            let a = darts[2 * i + 1];
+            let b = darts[(2 * i + 2) % (2 * n)];
+            raw.sew(Dim::One, a, b)?;
+        }
 
-    for i in 0..n {
-        let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
-        edit.add_vertex(VertexAttr::new(dart, corners[i]));
-    }
+        for i in 0..n {
+            let dart = raw.cell_representative(darts[2 * i], Dim::Zero);
+            raw.add_vertex(VertexAttr::new(dart, corners[i]));
+        }
 
-    for i in 0..n {
-        let edge_dart = darts[2 * i];
-        let curve = Curve::line(corners[i], corners[(i + 1) % n]);
-        edit.add_edge(EdgeAttr::new(edge_dart, curve));
-    }
-    Ok(edit.add_profile(crate::topology::attributes::ProfileAttr::new(darts[0])))
+        for i in 0..n {
+            let edge_dart = darts[2 * i];
+            let curve = Curve::line(corners[i], corners[(i + 1) % n]);
+            raw.add_edge(EdgeAttr::new(edge_dart, curve));
+        }
+        Ok(raw.add_profile(crate::topology::attributes::ProfileAttr::new(darts[0])))
+    })
 }
 
 /// Flips a face's orientation in place.

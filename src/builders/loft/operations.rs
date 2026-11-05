@@ -52,6 +52,7 @@
 //! [`ClosedSection`] is made only from a [`Closed`] profile and a
 //! [`CappedSection`] only from a face a loft can actually cap.
 
+use crate::builders::scaffold::splice_cut_between_loops;
 use std::collections::HashMap;
 
 use nalgebra::Vector3;
@@ -59,7 +60,6 @@ use thiserror::Error;
 
 use crate::builders::errors::ModelEditFailure;
 use crate::builders::faces::{reverse_face_winding_edit, split_face_edge_edit};
-use crate::builders::scaffold::cut_between_loops;
 use crate::geometry::parameter::Fraction;
 use crate::geometry::{
     Axis2, Curve, Degree, LINEAR_TOLERANCE, NurbsCurve, NurbsError, NurbsSurface, Point2, Point3,
@@ -827,62 +827,64 @@ fn add_loft_quad_face<P: Payload>(
     skin: NurbsSurface,
     sources: &[EditKey],
 ) -> Result<LoftColumnFace, LoftError> {
-    let named = |source| LoftError::Column {
-        column,
-        sections: skin.control_points().nv(),
-        source,
-    };
-    let boundary = [
-        Curve::Nurbs(skin.isocurve_v(0.0).map_err(named)?),
-        Curve::Nurbs(skin.isocurve_u(1.0).map_err(named)?),
-        Curve::Nurbs(skin.isocurve_v(1.0).map_err(named)?.reversed()),
-        Curve::Nurbs(skin.isocurve_u(0.0).map_err(named)?.reversed()),
-    ];
-    let corners = BOX_CORNERS.map(|corner| skin.point_at(corner.x, corner.y));
+    edit.deferred(|raw| {
+        let named = |source| LoftError::Column {
+            column,
+            sections: skin.control_points().nv(),
+            source,
+        };
+        let boundary = [
+            Curve::Nurbs(skin.isocurve_v(0.0).map_err(named)?),
+            Curve::Nurbs(skin.isocurve_u(1.0).map_err(named)?),
+            Curve::Nurbs(skin.isocurve_v(1.0).map_err(named)?.reversed()),
+            Curve::Nurbs(skin.isocurve_u(0.0).map_err(named)?.reversed()),
+        ];
+        let corners = BOX_CORNERS.map(|corner| skin.point_at(corner.x, corner.y));
 
-    let darts: Vec<Dart> = (0..8).map(|_| edit.add_dart()).collect();
-    for i in 0..4 {
-        edit.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
-    }
-    for i in 0..4 {
-        edit.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % darts.len()])?;
-    }
-    for i in 0..4 {
-        let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
-        edit.add_vertex_derived_from(sources.to_vec(), VertexAttr::new(dart, corners[i]));
-    }
-    for i in 0..4 {
-        edit.add_edge_derived_from(
+        let darts: Vec<Dart> = (0..8).map(|_| raw.add_dart()).collect();
+        for i in 0..4 {
+            raw.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
+        }
+        for i in 0..4 {
+            raw.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % darts.len()])?;
+        }
+        for i in 0..4 {
+            let dart = raw.cell_representative(darts[2 * i], Dim::Zero);
+            raw.add_vertex_derived_from(sources.to_vec(), VertexAttr::new(dart, corners[i]));
+        }
+        for i in 0..4 {
+            raw.add_edge_derived_from(
+                sources.to_vec(),
+                EdgeAttr::new(darts[2 * i], boundary[i].clone()),
+            );
+        }
+
+        let pcurves = (0..4)
+            .map(|i| {
+                (
+                    darts[2 * i],
+                    TrimmedCurve2::segment(BOX_CORNERS[i], BOX_CORNERS[(i + 1) % 4]),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        raw.add_profile_derived_from(sources.to_vec(), ProfileAttr::new(darts[0]));
+        let key = raw.add_face_derived_from(
             sources.to_vec(),
-            EdgeAttr::new(darts[2 * i], boundary[i].clone()),
+            FaceAttr::with_pcurves(Surface::Nurbs(skin), darts[0], Vec::new(), pcurves),
         );
-    }
 
-    let pcurves = (0..4)
-        .map(|i| {
-            (
-                darts[2 * i],
-                TrimmedCurve2::segment(BOX_CORNERS[i], BOX_CORNERS[(i + 1) % 4]),
-            )
+        Ok(LoftColumnFace {
+            key,
+            first_section: darts[0],
+            // The loop runs the last section's edge from `(1, 1)` to `(0, 1)`, so
+            // its *second* dart is the one sitting where the cap's edge dart sits.
+            last_section: darts[5],
+            rails: Some(ColumnRails {
+                start: darts[7],
+                end: darts[2],
+            }),
+            anchor: darts[0],
         })
-        .collect::<HashMap<_, _>>();
-    edit.add_profile_derived_from(sources.to_vec(), ProfileAttr::new(darts[0]));
-    let key = edit.add_face_derived_from(
-        sources.to_vec(),
-        FaceAttr::with_pcurves(Surface::Nurbs(skin), darts[0], Vec::new(), pcurves),
-    );
-
-    Ok(LoftColumnFace {
-        key,
-        first_section: darts[0],
-        // The loop runs the last section's edge from `(1, 1)` to `(0, 1)`, so
-        // its *second* dart is the one sitting where the cap's edge dart sits.
-        last_section: darts[5],
-        rails: Some(ColumnRails {
-            start: darts[7],
-            end: darts[2],
-        }),
-        anchor: darts[0],
     })
 }
 
@@ -906,70 +908,72 @@ fn add_loft_band_face<P: Payload>(
     corners: [Option<Point3>; 2],
     sources: &[EditKey],
 ) -> Result<LoftColumnFace, LoftError> {
-    let named = |source| LoftError::Column {
-        column,
-        sections: skin.control_points().nv(),
-        source,
-    };
-    // Each loop runs the way the face's boundary does, so the band lies to the
-    // left of both: the first section forward in `u`, the last one back.
-    let boundary = [
-        Curve::Nurbs(skin.isocurve_v(0.0).map_err(named)?),
-        Curve::Nurbs(skin.isocurve_v(1.0).map_err(named)?.reversed()),
-    ];
-    let pcurves = [
-        TrimmedCurve2::segment(BOX_CORNERS[0], BOX_CORNERS[1]),
-        TrimmedCurve2::segment(BOX_CORNERS[2], BOX_CORNERS[3]),
-    ];
+    edit.deferred(|raw| {
+        let named = |source| LoftError::Column {
+            column,
+            sections: skin.control_points().nv(),
+            source,
+        };
+        // Each loop runs the way the face's boundary does, so the band lies to the
+        // left of both: the first section forward in `u`, the last one back.
+        let boundary = [
+            Curve::Nurbs(skin.isocurve_v(0.0).map_err(named)?),
+            Curve::Nurbs(skin.isocurve_v(1.0).map_err(named)?.reversed()),
+        ];
+        let pcurves = [
+            TrimmedCurve2::segment(BOX_CORNERS[0], BOX_CORNERS[1]),
+            TrimmedCurve2::segment(BOX_CORNERS[2], BOX_CORNERS[3]),
+        ];
 
-    let mut loops = [[Dart::new(0); 2]; 2];
-    for (slot, darts) in loops.iter_mut().enumerate() {
-        let first = edit.add_dart();
-        let second = edit.add_dart();
-        edit.link(Dim::Zero, first, second)?;
-        edit.link(Dim::One, first, second)?;
-        let edge = edit.add_edge_derived_from(
-            sources.to_vec(),
-            EdgeAttr::new(first, boundary[slot].clone()),
-        );
-        match corners[slot] {
-            Some(point) => {
-                edit.add_vertex_derived_from(sources.to_vec(), VertexAttr::new(first, point));
+        let mut loops = [[Dart::new(0); 2]; 2];
+        for (slot, darts) in loops.iter_mut().enumerate() {
+            let first = raw.add_dart();
+            let second = raw.add_dart();
+            raw.link(Dim::Zero, first, second)?;
+            raw.link(Dim::One, first, second)?;
+            let edge = raw.add_edge_derived_from(
+                sources.to_vec(),
+                EdgeAttr::new(first, boundary[slot].clone()),
+            );
+            match corners[slot] {
+                Some(point) => {
+                    raw.add_vertex_derived_from(sources.to_vec(), VertexAttr::new(first, point));
+                }
+                // Nothing meets where this loop closes, so the 0-cell there is
+                // interior to the edge rather than a corner of the shape.
+                None => raw.own_cell(Dim::Zero, first, EntityOwner::Edge(edge)),
             }
-            // Nothing meets where this loop closes, so the 0-cell there is
-            // interior to the edge rather than a corner of the shape.
-            None => edit.own_cell(Dim::Zero, first, EntityOwner::Edge(edge)),
+            raw.add_profile_derived_from(sources.to_vec(), ProfileAttr::new(first));
+            *darts = [first, second];
         }
-        edit.add_profile_derived_from(sources.to_vec(), ProfileAttr::new(first));
-        *darts = [first, second];
-    }
-    let seeds = [loops[0][0], loops[1][0]];
+        let seeds = [loops[0][0], loops[1][0]];
 
-    let key = edit.add_face_derived_from(
-        sources.to_vec(),
-        FaceAttr::with_loops(
-            Surface::Nurbs(skin),
-            vec![
-                LoopDefinition::from_kind(seeds[0], LoopKind::Wrapping { axis: Axis2::U }),
-                LoopDefinition::from_kind(seeds[1], LoopKind::Wrapping { axis: Axis2::U }),
-            ],
-            HashMap::from([
-                (seeds[0], pcurves[0].clone()),
-                (seeds[1], pcurves[1].clone()),
-            ]),
-        ),
-    );
-    cut_between_loops(edit, key, seeds[0], seeds[1])?;
+        let key = raw.add_face_derived_from(
+            sources.to_vec(),
+            FaceAttr::with_loops(
+                Surface::Nurbs(skin),
+                vec![
+                    LoopDefinition::from_kind(seeds[0], LoopKind::Wrapping { axis: Axis2::U }),
+                    LoopDefinition::from_kind(seeds[1], LoopKind::Wrapping { axis: Axis2::U }),
+                ],
+                HashMap::from([
+                    (seeds[0], pcurves[0].clone()),
+                    (seeds[1], pcurves[1].clone()),
+                ]),
+            ),
+        );
+        splice_cut_between_loops(raw, key, seeds[0], seeds[1])?;
 
-    Ok(LoftColumnFace {
-        key,
-        first_section: seeds[0],
-        // A shell is consistently wound when neighbours run their shared edge
-        // opposite ways, so the cap's own dart has to meet the *other* dart of
-        // this loop — as it meets the quad's second dart rather than its seed.
-        last_section: loops[1][1],
-        rails: None,
-        anchor: seeds[0],
+        Ok(LoftColumnFace {
+            key,
+            first_section: seeds[0],
+            // A shell is consistently wound when neighbours run their shared edge
+            // opposite ways, so the cap's own dart has to meet the *other* dart of
+            // this loop — as it meets the quad's second dart rather than its seed.
+            last_section: loops[1][1],
+            rails: None,
+            anchor: seeds[0],
+        })
     })
 }
 

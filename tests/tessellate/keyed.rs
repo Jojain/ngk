@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use nalgebra::Vector3;
 use ngk::geometry::{Frame, Plane, Point3, Surface};
+use ngk::model::CommitChecks;
 use ngk::modeling::blend::filleted;
 use ngk::modeling::{edges, faces, profiles, solids};
 use ngk::tessellate::{Tessellation, tessellate};
@@ -207,6 +208,11 @@ fn a_face_that_cannot_be_meshed_is_named_in_the_error() {
     // A sphere is one boundaryless face; moved onto a plane, its domain is
     // the whole unbounded plane.
     let mut sphere = solids::sphere(1.0).expect("sphere builds");
+    // The tessellator receives an intentionally invalid solid independently
+    // of the commit-time orientation check.
+    sphere.model_mut().set_commit_checks(CommitChecks {
+        solid_orientation: false,
+    });
     let face = sphere.solid().faces()[0].key();
     sphere
         .model_mut()
@@ -215,7 +221,7 @@ fn a_face_that_cannot_be_meshed_is_named_in_the_error() {
                 Surface::Plane(Plane::xy());
             Ok::<_, ModelEditError>(())
         })
-        .expect("the support swap commits");
+        .expect("the deliberately invalid support commits with its orientation check disabled");
     let error = tessellate(&sphere.solid()).expect_err("an unbounded face cannot be meshed");
     assert_eq!(error.face, face);
     assert!(error.to_string().contains(&format!("{face:?}")), "{error}");

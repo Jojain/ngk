@@ -39,7 +39,6 @@ fn revolving_a_disc_a_quarter_turn_makes_a_quarter_torus() -> Result<(), Refusal
 }
 
 #[test]
-#[ignore = "closed edge with no corner in a builder: sweeping a disc panics (plan/robustness/wsB-sweep-family.md, B1)"]
 fn sweeping_a_disc_along_a_line_makes_a_cylinder() -> Result<(), Refusal> {
     guarded(|| {
         let path = line(p(0.0, 0.0, 0.0), p(0.0, 0.0, 10.0))?;
@@ -69,13 +68,13 @@ pub fn quarter_arc_pipe() -> Result<Solid, Refusal> {
 }
 
 #[test]
-#[ignore = "closed edge with no corner in a builder: sweeping a disc panics (plan/robustness/wsB-sweep-family.md, B1)"]
+#[ignore = "the quarter-torus volume differs from the analytic value by about 7e-6 relative"]
 fn sweeping_a_disc_along_a_quarter_arc_makes_a_quarter_torus() -> Result<(), Refusal> {
     guarded(|| has_volume(&quarter_arc_pipe()?, PI * 4.0 * 10.0 * PI / 2.0, 1e-6))
 }
 
 #[test]
-#[ignore = "closed edge with no corner in a builder: sweeping a disc panics (plan/robustness/wsB-sweep-family.md, B1)"]
+#[ignore = "the helical pipe volume differs from area times spine length by about 9e-3 relative"]
 fn sweeping_a_disc_along_a_helix_makes_a_pipe_of_the_helixs_length() -> Result<(), Refusal> {
     guarded(|| {
         let path = edges::helix(z_axis(), 5.0, 4.0, deg(0.0), deg(720.0))?;
@@ -111,7 +110,6 @@ pub fn mitred_pipe() -> Result<Solid, Refusal> {
 }
 
 #[test]
-#[ignore = "closed edge with no corner in a builder: sweeping a disc panics (plan/robustness/wsB-sweep-family.md, B1)"]
 fn sweeping_a_disc_along_a_mitred_polyline_makes_a_pipe_of_its_length() -> Result<(), Refusal> {
     guarded(|| has_volume(&mitred_pipe()?, PI * 4.0 * 90.0, 1e-6))
 }

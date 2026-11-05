@@ -29,19 +29,23 @@ fn failed_transaction_closure_rolls_back_the_complete_map() {
     let mut g = Model::<TestPayload>::new();
     let (first, second) = g
         .transaction(|edit| {
-            let first = edit.add_dart();
-            let second = edit.add_dart();
-            edit.add_vertex(VertexAttr::new(first, Point3::origin()));
-            Ok::<_, ModelEditError>((first, second))
+            edit.deferred(|raw| {
+                let first = raw.add_dart();
+                let second = raw.add_dart();
+                raw.add_vertex(VertexAttr::new(first, Point3::origin()));
+                Ok::<_, ModelEditError>((first, second))
+            })
         })
         .unwrap();
     let original_dart_count = g.dart_count();
 
     let result = g.transaction(|edit| {
-        let added = edit.add_dart();
-        edit.link(Dim::Zero, first, added)?;
-        assert_eq!(edit.dart_count(), original_dart_count + 1);
-        Err::<(), _>(ModelEditError::SameDart { dart: added })
+        edit.deferred(|raw| {
+            let added = raw.add_dart();
+            raw.link(Dim::Zero, first, added)?;
+            assert_eq!(raw.topology().dart_count(), original_dart_count + 1);
+            Err::<(), _>(ModelEditError::SameDart { dart: added })
+        })
     });
 
     assert!(matches!(result, Err(ModelEditError::SameDart { .. })));
@@ -54,13 +58,15 @@ fn failed_transaction_closure_rolls_back_the_complete_map() {
 fn face_registration_requires_registered_boundary_profiles() {
     let mut g = Model::<TestPayload>::new();
     let result = g.transaction(|edit| {
-        let boundary = edit.add_dart();
-        edit.add_face(FaceAttr::new(
-            Surface::Plane(Plane::xy()),
-            boundary,
-            Vec::new(),
-        ));
-        Ok::<_, ModelEditError>(())
+        edit.deferred(|raw| {
+            let boundary = raw.add_dart();
+            raw.add_face(FaceAttr::new(
+                Surface::Plane(Plane::xy()),
+                boundary,
+                Vec::new(),
+            ));
+            Ok::<_, ModelEditError>(())
+        })
     });
 
     assert!(matches!(
@@ -75,9 +81,11 @@ fn face_registration_requires_registered_boundary_profiles() {
 fn solid_registration_requires_registered_shell_sheets() {
     let mut g = Model::<TestPayload>::new();
     let result = g.transaction(|edit| {
-        let shell = edit.add_dart();
-        edit.add_solid(SolidAttr::new(shell, None));
-        Ok::<_, ModelEditError>(())
+        edit.deferred(|raw| {
+            let shell = raw.add_dart();
+            raw.add_solid(SolidAttr::new(shell, None));
+            Ok::<_, ModelEditError>(())
+        })
     });
 
     assert!(matches!(
@@ -98,12 +106,17 @@ fn commit_rejects_and_rolls_back_a_face_spanning_two_raw_cells() {
     let before_darts = g.dart_count();
 
     let result = g.transaction(|edit| {
-        let foreign = edit.add_dart();
-        edit.face_attr_mut_unchecked(face).pcurves.insert(
-            foreign,
-            TrimmedCurve2::segment(Point2::origin(), Point2::new(1.0, 0.0)),
-        );
-        Ok::<_, ModelEditError>(())
+        edit.deferred(|raw| {
+            let foreign = raw.add_dart();
+            raw.face_attr_mut(face)
+                .expect("registered face")
+                .pcurves
+                .insert(
+                    foreign,
+                    TrimmedCurve2::segment(Point2::origin(), Point2::new(1.0, 0.0)),
+                );
+            Ok::<_, ModelEditError>(())
+        })
     });
 
     assert!(matches!(
@@ -121,24 +134,26 @@ fn committing_topology_edit_reindexes_cells_after_explicit_merge() {
     let mut g = Model::<TestPayload>::new();
     let (first, second) = g
         .transaction(|edit| {
-            let first = edit.add_dart();
-            let first_end = edit.add_dart();
-            let second = edit.add_dart();
-            let second_end = edit.add_dart();
-            edit.link(Dim::Zero, first, first_end).unwrap();
-            edit.link(Dim::Zero, second, second_end).unwrap();
-            let first_edge = edit.add_edge(EdgeAttr::new(
-                first,
-                Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-            ));
-            let second_edge = edit.add_edge(EdgeAttr::new(
-                second,
-                Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
-            ));
-            edit.sew(Dim::Two, first, second_end)
-                .expect("matching edges should sew");
-            edit.merge_edges_into(first_edge, second_edge);
-            Ok::<_, ModelEditError>((first, second))
+            edit.deferred(|raw| {
+                let first = raw.add_dart();
+                let first_end = raw.add_dart();
+                let second = raw.add_dart();
+                let second_end = raw.add_dart();
+                raw.link(Dim::Zero, first, first_end).unwrap();
+                raw.link(Dim::Zero, second, second_end).unwrap();
+                let first_edge = raw.add_edge(EdgeAttr::new(
+                    first,
+                    Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+                ));
+                let second_edge = raw.add_edge(EdgeAttr::new(
+                    second,
+                    Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
+                ));
+                raw.sew(Dim::Two, first, second_end)
+                    .expect("matching edges should sew");
+                raw.merge_edges_into(first_edge, second_edge);
+                Ok::<_, ModelEditError>((first, second))
+            })
         })
         .expect("transaction should commit");
 
@@ -182,21 +197,23 @@ fn topology_transaction_rejects_merge_cycles() {
 /// Creates two independent attributed edges for lineage-validation tests.
 fn add_two_test_edges(g: &mut Model<TestPayload>) -> (EdgeKey, EdgeKey) {
     g.transaction(|edit| {
-        let first_start = edit.add_dart();
-        let first_end = edit.add_dart();
-        let second_start = edit.add_dart();
-        let second_end = edit.add_dart();
-        edit.link(Dim::Zero, first_start, first_end)?;
-        edit.link(Dim::Zero, second_start, second_end)?;
-        let first = edit.add_edge(EdgeAttr::new(
-            first_start,
-            Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-        ));
-        let second = edit.add_edge(EdgeAttr::new(
-            second_start,
-            Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
-        ));
-        Ok::<_, ModelEditError>((first, second))
+        edit.deferred(|raw| {
+            let first_start = raw.add_dart();
+            let first_end = raw.add_dart();
+            let second_start = raw.add_dart();
+            let second_end = raw.add_dart();
+            raw.link(Dim::Zero, first_start, first_end)?;
+            raw.link(Dim::Zero, second_start, second_end)?;
+            let first = raw.add_edge(EdgeAttr::new(
+                first_start,
+                Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+            ));
+            let second = raw.add_edge(EdgeAttr::new(
+                second_start,
+                Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
+            ));
+            Ok::<_, ModelEditError>((first, second))
+        })
     })
     .expect("independent edges should commit")
 }
@@ -206,12 +223,14 @@ fn invalid_topology_commit_rolls_back_the_complete_map() {
     let mut g = Model::<TestPayload>::new();
     let mut staged_darts = None;
     let result = g.transaction_with_policy(&mut PreservePayload, |edit| {
-        let darts: [Dart; 4] = std::array::from_fn(|_| edit.add_dart());
-        staged_darts = Some(darts);
-        edit.link(Dim::Zero, darts[0], darts[1]).unwrap();
-        edit.link(Dim::Zero, darts[2], darts[3]).unwrap();
-        edit.link(Dim::Two, darts[0], darts[2]).unwrap();
-        Ok(())
+        edit.deferred(|raw| {
+            let darts: [Dart; 4] = std::array::from_fn(|_| raw.add_dart());
+            staged_darts = Some(darts);
+            raw.link(Dim::Zero, darts[0], darts[1]).unwrap();
+            raw.link(Dim::Zero, darts[2], darts[3]).unwrap();
+            raw.link(Dim::Two, darts[0], darts[2]).unwrap();
+            Ok(())
+        })
     });
 
     assert!(matches!(result, Err(ModelEditError::InvalidTopology(_))));
@@ -224,21 +243,23 @@ fn explicit_edge_merge_uses_the_policy_and_removes_the_consumed_key() {
     let mut g = Model::<TestPayload>::new();
     let (first, second_end, first_edge, second_edge) = g
         .transaction(|edit| {
-            let first = edit.add_dart();
-            let first_end = edit.add_dart();
-            let second = edit.add_dart();
-            let second_end = edit.add_dart();
-            edit.link(Dim::Zero, first, first_end).unwrap();
-            edit.link(Dim::Zero, second, second_end).unwrap();
-            let first_edge = edit.add_edge(EdgeAttr::new(
-                first,
-                Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-            ));
-            let second_edge = edit.add_edge(EdgeAttr::new(
-                second,
-                Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
-            ));
-            Ok::<_, ModelEditError>((first, second_end, first_edge, second_edge))
+            edit.deferred(|raw| {
+                let first = raw.add_dart();
+                let first_end = raw.add_dart();
+                let second = raw.add_dart();
+                let second_end = raw.add_dart();
+                raw.link(Dim::Zero, first, first_end).unwrap();
+                raw.link(Dim::Zero, second, second_end).unwrap();
+                let first_edge = raw.add_edge(EdgeAttr::new(
+                    first,
+                    Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+                ));
+                let second_edge = raw.add_edge(EdgeAttr::new(
+                    second,
+                    Curve::line(Point3::new(1.0, 0.0, 0.0), Point3::new(0.0, 0.0, 0.0)),
+                ));
+                Ok::<_, ModelEditError>((first, second_end, first_edge, second_edge))
+            })
         })
         .unwrap();
     g.transaction(|edit| {
@@ -250,9 +271,11 @@ fn explicit_edge_merge_uses_the_policy_and_removes_the_consumed_key() {
 
     let mut policy = JoinEdgeNames;
     let result: Result<(), ModelEditError> = g.transaction_with_policy(&mut policy, |edit| {
-        edit.sew(Dim::Two, first, second_end).unwrap();
-        edit.merge_edges_into(first_edge, second_edge);
-        Ok(())
+        edit.deferred(|raw| {
+            raw.sew(Dim::Two, first, second_end).unwrap();
+            raw.merge_edges_into(first_edge, second_edge);
+            Ok(())
+        })
     });
 
     result.expect("transaction should commit");
@@ -341,14 +364,16 @@ fn explicit_edge_split_uses_the_policy() {
     let mut g = Model::<TestPayload>::new();
     let (start, end, source) = g
         .transaction(|edit| {
-            let start = edit.add_dart();
-            let end = edit.add_dart();
-            edit.link(Dim::Zero, start, end).unwrap();
-            let source = edit.add_edge(EdgeAttr::new(
-                start,
-                Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-            ));
-            Ok::<_, ModelEditError>((start, end, source))
+            edit.deferred(|raw| {
+                let start = raw.add_dart();
+                let end = raw.add_dart();
+                raw.link(Dim::Zero, start, end).unwrap();
+                let source = raw.add_edge(EdgeAttr::new(
+                    start,
+                    Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+                ));
+                Ok::<_, ModelEditError>((start, end, source))
+            })
         })
         .unwrap();
     g.transaction(|edit| {
@@ -360,20 +385,22 @@ fn explicit_edge_split_uses_the_policy() {
     let mut policy = MarkSplit;
     let created = g
         .transaction_with_policy(&mut policy, |edit| {
-            let first_mid = edit.add_dart();
-            let second_mid = edit.add_dart();
-            edit.unlink(Dim::Zero, start).unwrap();
-            edit.link(Dim::Zero, start, first_mid).unwrap();
-            edit.link(Dim::Zero, second_mid, end).unwrap();
-            edit.link(Dim::One, first_mid, second_mid).unwrap();
-            let created = edit.add_edge_split_from(
-                source,
-                EdgeAttr::new(
-                    second_mid,
-                    Curve::line(Point3::new(0.5, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)),
-                ),
-            );
-            Ok::<_, ModelEditError>(created)
+            edit.deferred(|raw| {
+                let first_mid = raw.add_dart();
+                let second_mid = raw.add_dart();
+                raw.unlink(Dim::Zero, start).unwrap();
+                raw.link(Dim::Zero, start, first_mid).unwrap();
+                raw.link(Dim::Zero, second_mid, end).unwrap();
+                raw.link(Dim::One, first_mid, second_mid).unwrap();
+                let created = raw.add_edge_split_from(
+                    source,
+                    EdgeAttr::new(
+                        second_mid,
+                        Curve::line(Point3::new(0.5, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)),
+                    ),
+                );
+                Ok::<_, ModelEditError>(created)
+            })
         })
         .unwrap();
 
@@ -538,19 +565,21 @@ fn fresh_creation_followed_by_merge_does_not_call_policy() {
     let mut policy = RecordEdgePolicy::default();
 
     g.transaction_with_policy(&mut policy, |edit| {
-        let start = edit.add_dart();
-        let end = edit.add_dart();
-        edit.link(Dim::Zero, start, end)?;
-        let survivor = edit.add_edge(EdgeAttr::new(
-            start,
-            Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-        ));
-        let removed = edit.add_edge(EdgeAttr::new(
-            start,
-            Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-        ));
-        edit.merge_edges_into(survivor, removed);
-        Ok::<_, ModelEditError>(())
+        edit.deferred(|raw| {
+            let start = raw.add_dart();
+            let end = raw.add_dart();
+            raw.link(Dim::Zero, start, end)?;
+            let survivor = raw.add_edge(EdgeAttr::new(
+                start,
+                Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+            ));
+            let removed = raw.add_edge(EdgeAttr::new(
+                start,
+                Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+            ));
+            raw.merge_edges_into(survivor, removed);
+            Ok::<_, ModelEditError>(())
+        })
     })
     .expect("the local merge should commit");
 
@@ -567,16 +596,18 @@ fn surviving_split_calls_policy_once() {
 
     let created = g
         .transaction_with_policy(&mut policy, |edit| {
-            let start = edit.add_dart();
-            let end = edit.add_dart();
-            edit.link(Dim::Zero, start, end)?;
-            Ok::<_, ModelEditError>(edit.add_edge_split_from(
-                source,
-                EdgeAttr::new(
-                    start,
-                    Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
-                ),
-            ))
+            edit.deferred(|raw| {
+                let start = raw.add_dart();
+                let end = raw.add_dart();
+                raw.link(Dim::Zero, start, end)?;
+                Ok::<_, ModelEditError>(raw.add_edge_split_from(
+                    source,
+                    EdgeAttr::new(
+                        start,
+                        Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
+                    ),
+                ))
+            })
         })
         .expect("the split should commit");
 
@@ -643,20 +674,22 @@ fn policy_receives_transaction_start_source_and_removed_payloads() {
 
     let created = g
         .transaction_with_policy(&mut policy, |edit| {
-            *edit.edge_attr_mut(source).unwrap().data_mut() = "source-staged".to_owned();
-            *edit.edge_attr_mut(removed).unwrap().data_mut() = "removed-staged".to_owned();
-            let start = edit.add_dart();
-            let end = edit.add_dart();
-            edit.link(Dim::Zero, start, end)?;
-            let created = edit.add_edge_split_from(
-                source,
-                EdgeAttr::new(
-                    start,
-                    Curve::line(Point3::new(6.0, 0.0, 0.0), Point3::new(7.0, 0.0, 0.0)),
-                ),
-            );
-            edit.merge_edges_into(survivor, removed);
-            Ok::<_, ModelEditError>(created)
+            edit.deferred(|raw| {
+                *raw.edge_attr_mut(source).unwrap().data_mut() = "source-staged".to_owned();
+                *raw.edge_attr_mut(removed).unwrap().data_mut() = "removed-staged".to_owned();
+                let start = raw.add_dart();
+                let end = raw.add_dart();
+                raw.link(Dim::Zero, start, end)?;
+                let created = raw.add_edge_split_from(
+                    source,
+                    EdgeAttr::new(
+                        start,
+                        Curve::line(Point3::new(6.0, 0.0, 0.0), Point3::new(7.0, 0.0, 0.0)),
+                    ),
+                );
+                raw.merge_edges_into(survivor, removed);
+                Ok::<_, ModelEditError>(created)
+            })
         })
         .expect("the transaction should commit");
 
@@ -739,18 +772,20 @@ fn policy_failure_restores_topology_and_payloads() {
     let mut policy = RejectEdgeSplit;
 
     let result = g.transaction_with_policy(&mut policy, |edit| {
-        *edit.edge_attr_mut(source).unwrap().data_mut() = "source-staged".to_owned();
-        let start = edit.add_dart();
-        let end = edit.add_dart();
-        edit.link(Dim::Zero, start, end)?;
-        edit.add_edge_split_from(
-            source,
-            EdgeAttr::new(
-                start,
-                Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
-            ),
-        );
-        Ok(())
+        edit.deferred(|raw| {
+            *raw.edge_attr_mut(source).unwrap().data_mut() = "source-staged".to_owned();
+            let start = raw.add_dart();
+            let end = raw.add_dart();
+            raw.link(Dim::Zero, start, end)?;
+            raw.add_edge_split_from(
+                source,
+                EdgeAttr::new(
+                    start,
+                    Curve::line(Point3::new(2.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)),
+                ),
+            );
+            Ok(())
+        })
     });
 
     assert!(matches!(result, Err(ModelEditError::Policy(_))));
@@ -768,17 +803,19 @@ fn policy_failure_restores_topology_and_payloads() {
 fn add_named_test_edge(g: &mut Model<TestPayload>, start_x: f64, data: &str) -> (Dart, EdgeKey) {
     let (start, key) = g
         .transaction(|edit| {
-            let start = edit.add_dart();
-            let end = edit.add_dart();
-            edit.link(Dim::Zero, start, end)?;
-            let key = edit.add_edge(EdgeAttr::new(
-                start,
-                Curve::line(
-                    Point3::new(start_x, 0.0, 0.0),
-                    Point3::new(start_x + 1.0, 0.0, 0.0),
-                ),
-            ));
-            Ok::<_, ModelEditError>((start, key))
+            edit.deferred(|raw| {
+                let start = raw.add_dart();
+                let end = raw.add_dart();
+                raw.link(Dim::Zero, start, end)?;
+                let key = raw.add_edge(EdgeAttr::new(
+                    start,
+                    Curve::line(
+                        Point3::new(start_x, 0.0, 0.0),
+                        Point3::new(start_x + 1.0, 0.0, 0.0),
+                    ),
+                ));
+                Ok::<_, ModelEditError>((start, key))
+            })
         })
         .expect("the edge should commit");
     g.transaction(|edit| {
@@ -795,18 +832,20 @@ fn local_local_collision_keeps_the_earliest_created_key() {
 
     let (earliest, later) = g
         .transaction(|edit| {
-            let start = edit.add_dart();
-            let end = edit.add_dart();
-            edit.link(Dim::Zero, start, end)?;
-            let earliest = edit.add_edge(EdgeAttr::new(
-                start,
-                Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-            ));
-            let later = edit.add_edge(EdgeAttr::new(
-                start,
-                Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-            ));
-            Ok::<_, ModelEditError>((earliest, later))
+            edit.deferred(|raw| {
+                let start = raw.add_dart();
+                let end = raw.add_dart();
+                raw.link(Dim::Zero, start, end)?;
+                let earliest = raw.add_edge(EdgeAttr::new(
+                    start,
+                    Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+                ));
+                let later = raw.add_edge(EdgeAttr::new(
+                    start,
+                    Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+                ));
+                Ok::<_, ModelEditError>((earliest, later))
+            })
         })
         .expect("local identities should reconcile");
 
@@ -841,7 +880,8 @@ fn multiple_existing_identities_require_explicit_lineage() {
     let (second_dart, second) = add_named_test_edge(&mut g, 1.0, "second");
     let second_end = g.alpha(Dim::Zero, second_dart);
 
-    let result = g.transaction(|edit| edit.sew(Dim::Two, first_dart, second_end));
+    let result =
+        g.transaction(|edit| edit.deferred(|raw| raw.sew(Dim::Two, first_dart, second_end)));
 
     assert!(matches!(
         result,
@@ -861,8 +901,11 @@ fn explicit_existing_collision_keeps_declared_survivor_and_calls_policy_once() {
     let mut policy = RecordEdgePolicy::default();
 
     g.transaction_with_policy(&mut policy, |edit| {
-        edit.sew(Dim::Two, survivor_dart, removed_end)?;
-        edit.merge_edges_into(survivor, removed);
+        edit.deferred(|raw| {
+            raw.sew(Dim::Two, survivor_dart, removed_end)?;
+            raw.merge_edges_into(survivor, removed);
+            Ok::<_, ModelEditError>(())
+        })?;
         assert_eq!(
             edit.cell_key::<Cell1>(removed_dart),
             Some(survivor),
@@ -1100,16 +1143,18 @@ fn derived_creation_names_every_source_resolved_to_its_transaction_start_identit
 
     let created = g
         .transaction_with_policy(&mut policy, |edit| {
-            let start = edit.add_dart();
-            let end = edit.add_dart();
-            edit.link(Dim::Zero, start, end)?;
-            Ok::<_, ModelEditError>(edit.add_edge_derived_from(
-                vec![EditKey::Edge(left), EditKey::Edge(right)],
-                EdgeAttr::new(
-                    start,
-                    Curve::line(Point3::new(4.0, 0.0, 0.0), Point3::new(5.0, 0.0, 0.0)),
-                ),
-            ))
+            edit.deferred(|raw| {
+                let start = raw.add_dart();
+                let end = raw.add_dart();
+                raw.link(Dim::Zero, start, end)?;
+                Ok::<_, ModelEditError>(raw.add_edge_derived_from(
+                    vec![EditKey::Edge(left), EditKey::Edge(right)],
+                    EdgeAttr::new(
+                        start,
+                        Curve::line(Point3::new(4.0, 0.0, 0.0), Point3::new(5.0, 0.0, 0.0)),
+                    ),
+                ))
+            })
         })
         .expect("the derived creation should commit");
 
@@ -1127,25 +1172,27 @@ fn a_derived_creation_with_only_local_sources_resolves_to_new() {
 
     let created = g
         .transaction_with_policy(&mut policy, |edit| {
-            let source_start = edit.add_dart();
-            let source_end = edit.add_dart();
-            edit.link(Dim::Zero, source_start, source_end)?;
-            let local_source = edit.add_edge(EdgeAttr::new(
-                source_start,
-                Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-            ));
-            let start = edit.add_dart();
-            let end = edit.add_dart();
-            edit.link(Dim::Zero, start, end)?;
-            let created = edit.add_edge_derived_from(
-                vec![EditKey::Edge(local_source)],
-                EdgeAttr::new(
-                    start,
-                    Curve::line(Point3::new(4.0, 0.0, 0.0), Point3::new(5.0, 0.0, 0.0)),
-                ),
-            );
-            edit.remove_edge(local_source);
-            Ok::<_, ModelEditError>(created)
+            edit.deferred(|raw| {
+                let source_start = raw.add_dart();
+                let source_end = raw.add_dart();
+                raw.link(Dim::Zero, source_start, source_end)?;
+                let local_source = raw.add_edge(EdgeAttr::new(
+                    source_start,
+                    Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+                ));
+                let start = raw.add_dart();
+                let end = raw.add_dart();
+                raw.link(Dim::Zero, start, end)?;
+                let created = raw.add_edge_derived_from(
+                    vec![EditKey::Edge(local_source)],
+                    EdgeAttr::new(
+                        start,
+                        Curve::line(Point3::new(4.0, 0.0, 0.0), Point3::new(5.0, 0.0, 0.0)),
+                    ),
+                );
+                raw.remove_edge(local_source);
+                Ok::<_, ModelEditError>(created)
+            })
         })
         .expect("the derived creation should commit");
 

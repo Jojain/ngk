@@ -3,6 +3,9 @@ status: accepted
 date: 2026-11-04
 ---
 
+The panic-handling part of this decision is superseded by
+[ADR 0004](0004-panics-are-not-recoverable-errors.md).
+
 # Invariant-preserving edit operators, and fallible reads on an open edit
 
 A view read in the middle of a transaction (`Face::loops`, `Sheet::faces`)
@@ -21,8 +24,8 @@ turns what still goes wrong into an error:
 - **Operators.** `ModelEdit` has a small set of operators (`mark_edge`,
   `cut_edge`, `sew_edges`, `unsew_edge`) that rewire the map *and* relabel in
   one call. Each reads what it needs first, refuses a precondition that does
-  not hold before it changes anything, and checks the cells it touched before
-  it returns. Between two operators the labelling describes the map, so every
+  not hold before it changes anything, and preserves its internal invariants
+  by construction. Tests check those invariants between operators. Between two operators the labelling describes the map, so every
   view answers.
 - **Deferred surgery.** A rewiring that must pass through invalid states runs
   in `edit.deferred(|raw| ..)`. `RawEdit` has the primitives and the stored
@@ -32,9 +35,9 @@ turns what still goes wrong into an error:
   naming that block.
 - **Fallible reads.** `Model::try_embedding_index` returns a `Result`. The
   views that cannot return one (`Face::loops`) record the fault and answer
-  with nothing; the transaction reports the first fault as its error, rolls
-  back, and also converts a panic that follows one.
-- **Commit post-condition.** Every solid a transaction created or touched must
+  with nothing; if the operation returns, the transaction reports the first
+  fault as its error and rolls back. Panics propagate without recovery.
+- **Commit post-condition.** Every solid registered in the model must
   have closed, consistently oriented shells with outward normals and positive
   volume, or the transaction does not commit. On in debug builds and tests, off
   in release, switchable per model (`CommitChecks`).
@@ -68,21 +71,14 @@ is the failure this decision removes. It stays a derived cache.
 
 ## Consequences
 
-- The raw primitives (`add_dart`, `link`, `unlink`, `sew`, `own_cell`,
-  `disown_cell`) remain on `ModelEdit`, because about two hundred call sites
-  use them. A builder that uses them is covered by the fallible reads, not by
-  the operators. A builder moves onto operators or into a deferred block one at
-  a time (`sew_edges` in the sweep, `mark_edge` and `cut_edge` in the edge
-  splits, `CutAttachment::move_after` as a deferred block); the primitives leave
-  `ModelEdit`, and `RawEdit` keeps them, when the last builder is off them.
+- Raw topology primitives are internal to the topology implementation. Builders
+  use operators or `RawEdit` in a deferred block; the restricted capability has
+  no model access or typed views. Stored attributes remain available to raw surgery.
 - A builder's mistake in the labelling now surfaces as an error from the
   transaction (`InvalidEmbedding`, `UnreadableBoundary`, `InvalidSolid`), and
   its model is restored. The bench cases that crashed move to refused, and
   those a builder bug had left unfinished stay refused until the bug is fixed.
-- Commit costs one orientation check per touched solid in debug builds. A
+- Commit costs one orientation check per registered solid in debug builds. A
   release build that wants the same guarantee turns it on.
-- `Transactions intentionally do not catch panics` is no longer the whole
-  story: a transaction rolls the model back when a panic crosses it, so a
-  caller that catches the panic holds a valid model, and reports a panic that
-  follows a recorded read fault as that fault. A panic with no such fault
-  continues to unwind.
+- Transactions do not catch panics. Rollback is guaranteed for explicit
+  errors, not for panics; no recovery or model reuse is promised after one.

@@ -16,6 +16,8 @@
 //! It deliberately does **not** decide whether a cell should disappear, and it
 //! does not build the merged geometry. Both belong to the caller;
 //! [`crate::healing`] is the caller that supplies them.
+//! When a seam disappears, a finite meridian support retains the geometry
+//! interval that its pcurves expressed before the face became boundaryless.
 
 use crate::builders::scaffold::cut_between_loops;
 use std::collections::{HashMap, HashSet};
@@ -23,7 +25,10 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::geometry::parameter::Fraction;
-use crate::geometry::{Axis2, DomainSide, LINEAR_TOLERANCE, Surface, SurfacePeriodicity};
+use crate::geometry::{
+    Axis2, DomainSide, Interval, LINEAR_TOLERANCE, NurbsError, Surface, SurfaceOfRevolution,
+    SurfacePeriodicity,
+};
 use crate::model::{Cell0, Cell1, Cell2, Model};
 use crate::topology::attributes::{FaceAttr, LoopDefinition, LoopKind, ProfileAttr};
 use crate::topology::embedding::{EntityOwner, is_embedded_cell};
@@ -37,6 +42,9 @@ use crate::topology::{Dart, IsolatedDart, ModelEdit, ModelEditError};
 /// Failure raised while removing a cell from a staged map.
 #[derive(Debug, Error)]
 pub enum CellRemovalError {
+    /// A meridian span could not be represented as an exact finite support.
+    #[error("the closed face's meridian could not be represented")]
+    Meridian(#[from] NurbsError),
     /// Only 0-cells and 1-cells can be removed by this operation.
     #[error("cell removal is implemented for dimensions 0 and 1, not {dim:?}")]
     UnsupportedDimension { dim: Dim },
@@ -258,18 +266,22 @@ pub(crate) fn remove_cell_edit<P: Payload>(
     // asked to delete -- so the map is left exactly as it stands and only the
     // logical reading of it changes.
     let demoted = matches!(plan, MergePlan::Unbounded { .. });
-    if !demoted {
-        for &d in &cell {
-            for dimension in [Dim::Zero, Dim::One, Dim::Two, Dim::Three] {
-                if !edit.is_free(d, dimension) {
-                    edit.unlink(dimension, d)?;
+    edit.deferred(|raw| {
+        if !demoted {
+            for &d in &cell {
+                for dimension in [Dim::Zero, Dim::One, Dim::Two, Dim::Three] {
+                    if !raw.topology().is_free(d, dimension) {
+                        raw.unlink(dimension, d)?;
+                    }
                 }
             }
+            for (first, second) in pairs {
+                raw.link(dim, first, second)?;
+            }
         }
-        for (first, second) in pairs {
-            edit.link(dim, first, second)?;
-        }
-    }
+
+        Ok::<_, CellRemovalError>(())
+    })?;
 
     // Identity bookkeeping runs on the rewired map but before dart ids are
     // compacted, so every dart the plan captured is still addressable.
@@ -283,8 +295,11 @@ pub(crate) fn remove_cell_edit<P: Payload>(
         _ => cell,
     };
     removed.sort_by_key(|d| d.id());
-    let remap =
-        edit.remove_isolated_darts(removed.iter().copied().map(IsolatedDart::new).collect());
+    let remap = edit.deferred(|raw| {
+        Ok::<_, CellRemovalError>(
+            raw.remove_isolated_darts(removed.iter().copied().map(IsolatedDart::new).collect()),
+        )
+    })?;
     Ok(CellRemoval {
         removed,
         merged,
@@ -536,6 +551,8 @@ enum MergePlan {
         /// Where the face must anchor once its boundary is gone, read while the
         /// winding that states its direction is still there.
         anchor: Dart,
+        /// A finite meridian support when the removed seam bounded a profile span.
+        surface: Option<Box<Surface>>,
     },
     /// Removing a seam left the face bounded by one period-spanning loop, with
     /// a degeneracy closing its far side.
@@ -719,6 +736,7 @@ impl MergePlan {
                     profiles,
                     face_aliases,
                     anchor: unbounded_anchor(g, face, attr),
+                    surface: unbounded_surface(attr)?.map(Box::new),
                 });
             }
             // An inner boundary going is the ordinary case; the outer one going
@@ -1155,6 +1173,7 @@ impl MergePlan {
                 profiles,
                 face_aliases,
                 anchor,
+                surface,
             } => {
                 let profile = profiles[0];
                 for key in profiles {
@@ -1166,6 +1185,9 @@ impl MergePlan {
                     // the winding named, so they all still read the face the
                     // same way round when identity reconciliation picks one.
                     let attr = edit.face_attr_mut_unchecked(key);
+                    if let Some(surface) = &surface {
+                        attr.surface = surface.as_ref().clone();
+                    }
                     attr.set_boundary(Vec::new(), anchor);
                     attr.pcurves.clear();
                 }
@@ -1835,6 +1857,40 @@ fn unbounded_anchor<P: Payload>(g: &Model<P>, face: FaceKey, attr: &FaceAttr<P::
         true => g.alpha(Dim::Zero, seed),
         false => seed,
     }
+}
+
+/// Retains a revolution's meridian span when its last seam disappears.
+///
+/// A circular support can run past both poles and sweep the same sphere twice.
+/// The seam's pcurves restrict it to one meridian; without a boundary that span
+/// is represented by an exact finite NURBS profile instead.
+fn unbounded_surface<T>(attr: &FaceAttr<T>) -> Result<Option<Surface>, CellRemovalError> {
+    let Surface::Revolution(revolution) = &attr.surface else {
+        return Ok(None);
+    };
+    let mut low = f64::INFINITY;
+    let mut high = f64::NEG_INFINITY;
+    for pcurve in attr.pcurves.values() {
+        for at in [Fraction::START, Fraction::END] {
+            let u = pcurve.point_at(at).x;
+            low = low.min(u);
+            high = high.max(u);
+        }
+    }
+    let domain = revolution.curve().domain();
+    if !low.is_finite()
+        || !high.is_finite()
+        || (high - low - domain.length().abs()).abs() <= LINEAR_TOLERANCE
+    {
+        return Ok(None);
+    }
+    let profile = revolution
+        .curve()
+        .trimmed_native(Interval::new(low, high))?;
+    Ok(Some(Surface::Revolution(SurfaceOfRevolution::new(
+        profile,
+        revolution.axis,
+    ))))
 }
 
 /// Returns a surviving dart of the shell rooted at `dart`.

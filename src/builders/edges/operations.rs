@@ -194,13 +194,15 @@ pub(crate) fn add_edge_edit<P: Payload>(
     end: Point3,
     curve: Curve,
 ) -> Result<EdgeKey, EdgeCreationError> {
-    check_non_coincident_points(start, end)?;
-    let d1 = edit.add_dart();
-    let d2 = edit.add_dart();
-    edit.link(Dim::Zero, d1, d2)?;
-    edit.add_vertex(VertexAttr::new(d1, start));
-    edit.add_vertex(VertexAttr::new(d2, end));
-    Ok(edit.add_edge(EdgeAttr::new(d1, curve)))
+    edit.deferred(|raw| {
+        check_non_coincident_points(start, end)?;
+        let d1 = raw.add_dart();
+        let d2 = raw.add_dart();
+        raw.link(Dim::Zero, d1, d2)?;
+        raw.add_vertex(VertexAttr::new(d1, start));
+        raw.add_vertex(VertexAttr::new(d2, end));
+        Ok(raw.add_edge(EdgeAttr::new(d1, curve)))
+    })
 }
 
 /// Adds an isolated straight edge between `start` and `end`.
@@ -308,7 +310,14 @@ fn cut_prepared_edge<P: Payload>(
     first: Curve,
     second: Curve,
 ) -> Result<EdgeSplit, EdgeSplitError> {
-    let cut = edit.cut_edge(edge, EdgeCutPlan { point, first, second })?;
+    let cut = edit.cut_edge(
+        edge,
+        EdgeCutPlan {
+            point,
+            first,
+            second,
+        },
+    )?;
     Ok(EdgeSplit::Separated {
         first: cut.first,
         second: cut.second,
@@ -587,19 +596,21 @@ pub(crate) fn add_circle_edit<P: Payload>(
     plane: Plane,
     radius: f64,
 ) -> Result<EdgeKey, EdgeCreationError> {
-    check_valid_radius(radius)?;
-    let d1 = edit.add_dart();
-    let d2 = edit.add_dart();
-    let curve = Curve::circle(plane, radius);
-    edit.link(Dim::Zero, d1, d2)?;
-    edit.link(Dim::One, d1, d2)?;
-    let key = edit.add_edge(EdgeAttr::new(d1, curve));
-    // The point where the circle closes is a fact about how the map is drawn,
-    // not a feature of the shape: nothing meets there. It is classified inside
-    // the edge, which is what makes an unmarked circle a vertex-free logical
-    // edge. Marking it deliberately is a separate operation that promotes it.
-    edit.own_cell(Dim::Zero, d1, EntityOwner::Edge(key));
-    Ok(key)
+    edit.deferred(|raw| {
+        check_valid_radius(radius)?;
+        let d1 = raw.add_dart();
+        let d2 = raw.add_dart();
+        let curve = Curve::circle(plane, radius);
+        raw.link(Dim::Zero, d1, d2)?;
+        raw.link(Dim::One, d1, d2)?;
+        let key = raw.add_edge(EdgeAttr::new(d1, curve));
+        // The point where the circle closes is a fact about how the map is drawn,
+        // not a feature of the shape: nothing meets there. It is classified inside
+        // the edge, which is what makes an unmarked circle a vertex-free logical
+        // edge. Marking it deliberately is a separate operation that promotes it.
+        raw.own_cell(Dim::Zero, d1, EntityOwner::Edge(key));
+        Ok(key)
+    })
 }
 
 fn check_non_coincident_points(start: Point3, end: Point3) -> Result<(), EdgeCreationError> {

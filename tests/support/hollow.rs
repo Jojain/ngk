@@ -13,7 +13,7 @@ use ngk::topology::embedding::EntityOwner;
 use ngk::topology::gmap::{Dart, Dim};
 use ngk::topology::shape::{Shape, SolidTag};
 use ngk::topology::shape_keys::SolidKey;
-use ngk::topology::{ModelEdit, ModelEditError, StandardPayload};
+use ngk::topology::{ModelEditError, RawEdit, StandardPayload};
 
 /// A sphere of radius `outer` with a concentric spherical cavity of radius
 /// `inner` in it.
@@ -21,14 +21,16 @@ pub fn hollow_sphere(outer: f64, inner: f64) -> Shape<SolidTag, StandardPayload>
     let mut model = Model::<StandardPayload>::new();
     let solid = model
         .transaction(|edit| {
-            let outer = sphere_face(edit, outer)?;
-            let inner_face = sphere_face(edit, inner)?;
-            let inner = edit.alpha(Dim::Zero, inner_face);
-            edit.add_sheet(SheetAttr::new(outer));
-            edit.add_sheet(SheetAttr::new(inner));
-            let solid = edit.add_solid(SolidAttr::new(outer, Some(vec![inner])));
-            add_cavity_cut(edit, solid, outer, inner)?;
-            Ok::<_, ModelEditError>(solid)
+            edit.deferred(|raw| {
+                let outer = sphere_face(raw, outer)?;
+                let inner_face = sphere_face(raw, inner)?;
+                let inner = raw.topology().alpha(Dim::Zero, inner_face);
+                raw.add_sheet(SheetAttr::new(outer));
+                raw.add_sheet(SheetAttr::new(inner));
+                let solid = raw.add_solid(SolidAttr::new(outer, Some(vec![inner])));
+                add_cavity_cut(raw, solid, outer, inner)?;
+                Ok::<_, ModelEditError>(solid)
+            })
         })
         .expect("a hand-built hollow sphere should commit");
     Shape::new(model, solid)
@@ -36,7 +38,7 @@ pub fn hollow_sphere(outer: f64, inner: f64) -> Shape<SolidTag, StandardPayload>
 
 /// Adds one spherical boundary face on its four-dart bigon.
 fn sphere_face(
-    edit: &mut ModelEdit<'_, StandardPayload>,
+    edit: &mut RawEdit<'_, '_, StandardPayload>,
     radius: f64,
 ) -> Result<Dart, ModelEditError> {
     let d = [
@@ -66,7 +68,7 @@ fn sphere_face(
 
 /// Opens one edge on each sphere and inserts the solid-owned pillow face.
 fn add_cavity_cut(
-    edit: &mut ModelEdit<'_, StandardPayload>,
+    edit: &mut RawEdit<'_, '_, StandardPayload>,
     solid: SolidKey,
     outer: Dart,
     inner: Dart,
@@ -75,10 +77,11 @@ fn add_cavity_cut(
     let back = polygon(edit, 4)?;
 
     for (index, shell) in [outer, inner].into_iter().enumerate() {
-        let first = [shell, edit.alpha(Dim::Zero, shell)];
+        let first = [shell, edit.topology().alpha(Dim::Zero, shell)];
         let second = [
-            edit.alpha(Dim::Zero, edit.alpha(Dim::Two, shell)),
-            edit.alpha(Dim::Two, shell),
+            edit.topology()
+                .alpha(Dim::Zero, edit.topology().alpha(Dim::Two, shell)),
+            edit.topology().alpha(Dim::Two, shell),
         ];
         edit.unlink(Dim::Two, first[0])?;
         edit.unlink(Dim::Two, first[1])?;
@@ -98,7 +101,7 @@ fn add_cavity_cut(
 }
 
 fn polygon(
-    edit: &mut ModelEdit<'_, StandardPayload>,
+    edit: &mut RawEdit<'_, '_, StandardPayload>,
     slots: usize,
 ) -> Result<Vec<[Dart; 2]>, ModelEditError> {
     let uses = (0..slots)
@@ -114,7 +117,7 @@ fn polygon(
 }
 
 fn link_edge_uses(
-    edit: &mut ModelEdit<'_, StandardPayload>,
+    edit: &mut RawEdit<'_, '_, StandardPayload>,
     first: [Dart; 2],
     second: [Dart; 2],
 ) -> Result<(), ModelEditError> {

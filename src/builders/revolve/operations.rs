@@ -1,5 +1,6 @@
 //! Revolution operations and edit-scoped implementations.
 
+use crate::builders::scaffold::splice_cut_between_loops;
 use crate::geometry::TrimmedCurve2;
 use std::collections::HashMap;
 
@@ -597,94 +598,96 @@ fn add_partial_revolved_edge_face<P: Payload>(
     axis: Axis3,
     angle: Rad64,
 ) -> Result<FaceKey, RevolveError> {
-    validate_revolvable_radii(axis, source)?;
+    edit.deferred(|raw| {
+        validate_revolvable_radii(axis, source)?;
 
-    let start = source.start.point;
-    let end = source.end.point;
-    let rotated_start = rotate_point(axis, start, angle);
-    let rotated_end = rotate_point(axis, end, angle);
-    let rotated_curve = source.curve.moved(&Rigid::rotation(axis, angle));
-    let interval = source.curve.interval_between(start, end);
-    let surface = Surface::Revolution(SurfaceOfRevolution::new(source.curve.clone(), axis));
+        let start = source.start.point;
+        let end = source.end.point;
+        let rotated_start = rotate_point(axis, start, angle);
+        let rotated_end = rotate_point(axis, end, angle);
+        let rotated_curve = source.curve.moved(&Rigid::rotation(axis, angle));
+        let interval = source.curve.interval_between(start, end);
+        let surface = Surface::Revolution(SurfaceOfRevolution::new(source.curve.clone(), axis));
 
-    let bottom_start = source.dart;
-    let bottom_end = edit.alpha(Dim::Zero, bottom_start);
-    let end_arc_start = edit.add_dart();
-    let end_arc_end = edit.add_dart();
-    let rotated_start_dart = edit.add_dart();
-    let rotated_end_dart = edit.add_dart();
-    let start_arc_start = edit.add_dart();
-    let start_arc_end = edit.add_dart();
+        let bottom_start = source.dart;
+        let bottom_end = raw.topology().alpha(Dim::Zero, bottom_start);
+        let end_arc_start = raw.add_dart();
+        let end_arc_end = raw.add_dart();
+        let rotated_start_dart = raw.add_dart();
+        let rotated_end_dart = raw.add_dart();
+        let start_arc_start = raw.add_dart();
+        let start_arc_end = raw.add_dart();
 
-    edit.link(Dim::Zero, end_arc_start, end_arc_end)?;
-    edit.link(Dim::Zero, rotated_start_dart, rotated_end_dart)?;
-    edit.link(Dim::Zero, start_arc_start, start_arc_end)?;
+        raw.link(Dim::Zero, end_arc_start, end_arc_end)?;
+        raw.link(Dim::Zero, rotated_start_dart, rotated_end_dart)?;
+        raw.link(Dim::Zero, start_arc_start, start_arc_end)?;
 
-    edit.link(Dim::One, bottom_end, end_arc_start)?;
-    edit.link(Dim::One, end_arc_end, rotated_start_dart)?;
-    edit.link(Dim::One, rotated_end_dart, start_arc_start)?;
-    edit.link(Dim::One, start_arc_end, bottom_start)?;
+        raw.link(Dim::One, bottom_end, end_arc_start)?;
+        raw.link(Dim::One, end_arc_end, rotated_start_dart)?;
+        raw.link(Dim::One, rotated_end_dart, start_arc_start)?;
+        raw.link(Dim::One, start_arc_end, bottom_start)?;
 
-    edit.add_vertex_derived_from(
-        vec![endpoint_origin(source, &source.end)],
-        VertexAttr::new(end_arc_end, rotated_end),
-    );
-    edit.add_vertex_derived_from(
-        vec![endpoint_origin(source, &source.start)],
-        VertexAttr::new(rotated_end_dart, rotated_start),
-    );
+        raw.add_vertex_derived_from(
+            vec![endpoint_origin(source, &source.end)],
+            VertexAttr::new(end_arc_end, rotated_end),
+        );
+        raw.add_vertex_derived_from(
+            vec![endpoint_origin(source, &source.start)],
+            VertexAttr::new(rotated_end_dart, rotated_start),
+        );
 
-    edit.add_edge_derived_from(
-        vec![endpoint_origin(source, &source.end)],
-        EdgeAttr::new(end_arc_start, revolve_circle_curve(axis, end, angle)),
-    );
-    edit.add_edge_derived_from(
-        vec![EditKey::Edge(source.key)],
-        EdgeAttr::new(rotated_end_dart, rotated_curve),
-    );
-    edit.add_edge_derived_from(
-        vec![endpoint_origin(source, &source.start)],
-        EdgeAttr::new(start_arc_end, revolve_circle_curve(axis, start, angle)),
-    );
+        raw.add_edge_derived_from(
+            vec![endpoint_origin(source, &source.end)],
+            EdgeAttr::new(end_arc_start, revolve_circle_curve(axis, end, angle)),
+        );
+        raw.add_edge_derived_from(
+            vec![EditKey::Edge(source.key)],
+            EdgeAttr::new(rotated_end_dart, rotated_curve),
+        );
+        raw.add_edge_derived_from(
+            vec![endpoint_origin(source, &source.start)],
+            EdgeAttr::new(start_arc_end, revolve_circle_curve(axis, start, angle)),
+        );
 
-    let mut pcurves = HashMap::with_capacity(4);
-    pcurves.insert(
-        bottom_start,
-        TrimmedCurve2::segment(
-            Point2::new(interval.start.value(), 0.0),
-            Point2::new(interval.end.value(), 0.0),
-        ),
-    );
-    pcurves.insert(
-        end_arc_start,
-        TrimmedCurve2::segment(
-            Point2::new(interval.end.value(), 0.0),
-            Point2::new(interval.end.value(), angle.val()),
-        ),
-    );
-    pcurves.insert(
-        rotated_start_dart,
-        TrimmedCurve2::segment(
-            Point2::new(interval.end.value(), angle.val()),
-            Point2::new(interval.start.value(), angle.val()),
-        ),
-    );
-    pcurves.insert(
-        start_arc_start,
-        TrimmedCurve2::segment(
-            Point2::new(interval.start.value(), angle.val()),
-            Point2::new(interval.start.value(), 0.0),
-        ),
-    );
+        let mut pcurves = HashMap::with_capacity(4);
+        pcurves.insert(
+            bottom_start,
+            TrimmedCurve2::segment(
+                Point2::new(interval.start.value(), 0.0),
+                Point2::new(interval.end.value(), 0.0),
+            ),
+        );
+        pcurves.insert(
+            end_arc_start,
+            TrimmedCurve2::segment(
+                Point2::new(interval.end.value(), 0.0),
+                Point2::new(interval.end.value(), angle.val()),
+            ),
+        );
+        pcurves.insert(
+            rotated_start_dart,
+            TrimmedCurve2::segment(
+                Point2::new(interval.end.value(), angle.val()),
+                Point2::new(interval.start.value(), angle.val()),
+            ),
+        );
+        pcurves.insert(
+            start_arc_start,
+            TrimmedCurve2::segment(
+                Point2::new(interval.start.value(), angle.val()),
+                Point2::new(interval.start.value(), 0.0),
+            ),
+        );
 
-    edit.add_profile_derived_from(
-        vec![EditKey::Edge(source.key)],
-        ProfileAttr::new(bottom_start),
-    );
-    Ok(edit.add_face_derived_from(
-        vec![EditKey::Edge(source.key)],
-        FaceAttr::with_pcurves(surface, bottom_start, Vec::new(), pcurves),
-    ))
+        raw.add_profile_derived_from(
+            vec![EditKey::Edge(source.key)],
+            ProfileAttr::new(bottom_start),
+        );
+        Ok(raw.add_face_derived_from(
+            vec![EditKey::Edge(source.key)],
+            FaceAttr::with_pcurves(surface, bottom_start, Vec::new(), pcurves),
+        ))
+    })
 }
 
 fn add_full_revolved_edge_face<P: Payload>(
@@ -742,13 +745,15 @@ fn add_full_revolved_closed_edge_face<P: Payload>(
 
     validate_consumable_closed_source_edge(edit, source)?;
     consume_closed_source_edge(edit, source)?;
-    let cell = add_closed_face_cell(edit, &surface)?;
-    let face = edit.add_face_derived_from(
-        vec![EditKey::Edge(source.key)],
-        FaceAttr::closed(surface, cell.anchor(), HashMap::new()),
-    );
-    cell.own(edit, face);
-    Ok(face)
+    edit.deferred(|raw| {
+        let cell = add_closed_face_cell(raw, &surface)?;
+        let face = raw.add_face_derived_from(
+            vec![EditKey::Edge(source.key)],
+            FaceAttr::closed(surface, cell.anchor(), HashMap::new()),
+        );
+        cell.own(raw, face);
+        Ok(face)
+    })
 }
 
 /// Closes an apex-to-apex revolution by identifying its two meridian seams.
@@ -777,16 +782,19 @@ fn add_full_revolved_apex_to_apex_face<P: Payload>(
 
     let seam_start = source.dart;
     let seam_end = edit.alpha(Dim::Zero, seam_start);
-    let opposite_end = edit.add_dart();
-    let opposite_start = edit.add_dart();
-    edit.link(Dim::Zero, opposite_start, opposite_end)?;
-    edit.link(Dim::One, seam_end, opposite_end)?;
-    edit.link(Dim::One, opposite_start, seam_start)?;
+    let (opposite_start, opposite_end) = edit.deferred(|raw| {
+        let opposite_end = raw.add_dart();
+        let opposite_start = raw.add_dart();
+        raw.link(Dim::Zero, opposite_start, opposite_end)?;
+        raw.link(Dim::One, seam_end, opposite_end)?;
+        raw.link(Dim::One, opposite_start, seam_start)?;
 
-    edit.add_edge_derived_from(
-        vec![EditKey::Edge(source.key)],
-        EdgeAttr::new(opposite_start, source.curve.clone()),
-    );
+        raw.add_edge_derived_from(
+            vec![EditKey::Edge(source.key)],
+            EdgeAttr::new(opposite_start, source.curve.clone()),
+        );
+        Ok::<_, RevolveError>((opposite_start, opposite_end))
+    })?;
     if Profile::from_dart(edit, seam_start).is_none() {
         edit.add_profile_derived_from(
             vec![EditKey::Edge(source.key)],
@@ -1121,14 +1129,16 @@ fn add_closed_revolve_boundary_loop<P: Payload>(
     point: Point3,
     curve: Curve,
 ) -> Result<Dart, ModelEditError> {
-    let first = edit.add_dart();
-    let second = edit.add_dart();
-    edit.link(Dim::Zero, first, second)?;
-    edit.link(Dim::One, first, second)?;
-    edit.add_vertex_derived_from(vec![source], VertexAttr::new(first, point));
-    edit.add_edge_derived_from(vec![source], EdgeAttr::new(first, curve));
-    edit.add_profile_derived_from(vec![source], ProfileAttr::new(first));
-    Ok(first)
+    edit.deferred(|raw| {
+        let first = raw.add_dart();
+        let second = raw.add_dart();
+        raw.link(Dim::Zero, first, second)?;
+        raw.link(Dim::One, first, second)?;
+        raw.add_vertex_derived_from(vec![source], VertexAttr::new(first, point));
+        raw.add_edge_derived_from(vec![source], EdgeAttr::new(first, curve));
+        raw.add_profile_derived_from(vec![source], ProfileAttr::new(first));
+        Ok(first)
+    })
 }
 
 fn rotate_point(axis: Axis3, point: Point3, angle: Rad64) -> Point3 {
@@ -1457,38 +1467,40 @@ fn add_axis_revolved_face<P: Payload>(
             ],
         )
     };
-    let darts: [Dart; 6] = std::array::from_fn(|_| edit.add_dart());
-    for i in 0..3 {
-        edit.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
-        edit.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % 6])?;
-        let origin = if i == 0 || (i == 2 && !start_on_axis) {
-            endpoint_origin(source, &source.start)
-        } else {
-            endpoint_origin(source, &source.end)
-        };
-        edit.add_vertex_derived_from(vec![origin], VertexAttr::new(darts[2 * i], corners[i]));
-        edit.add_edge_derived_from(
+    edit.deferred(|raw| {
+        let darts: [Dart; 6] = std::array::from_fn(|_| raw.add_dart());
+        for i in 0..3 {
+            raw.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
+            raw.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % 6])?;
+            let origin = if i == 0 || (i == 2 && !start_on_axis) {
+                endpoint_origin(source, &source.start)
+            } else {
+                endpoint_origin(source, &source.end)
+            };
+            raw.add_vertex_derived_from(vec![origin], VertexAttr::new(darts[2 * i], corners[i]));
+            raw.add_edge_derived_from(
+                vec![EditKey::Edge(source.key)],
+                EdgeAttr::new(darts[2 * i], curves[i].clone()),
+            );
+        }
+        raw.add_profile_derived_from(vec![EditKey::Edge(source.key)], ProfileAttr::new(darts[0]));
+        let key = raw.add_face_derived_from(
             vec![EditKey::Edge(source.key)],
-            EdgeAttr::new(darts[2 * i], curves[i].clone()),
+            FaceAttr::with_pcurves(
+                support.surface,
+                darts[0],
+                Vec::new(),
+                (0..3).map(|i| (darts[2 * i], pcurves[i].clone())).collect(),
+            ),
         );
-    }
-    edit.add_profile_derived_from(vec![EditKey::Edge(source.key)], ProfileAttr::new(darts[0]));
-    let key = edit.add_face_derived_from(
-        vec![EditKey::Edge(source.key)],
-        FaceAttr::with_pcurves(
-            support.surface,
-            darts[0],
-            Vec::new(),
-            (0..3).map(|i| (darts[2 * i], pcurves[i].clone())).collect(),
-        ),
-    );
-    Ok(RevolvedFaceBuild {
-        bottom_edge: Some(darts[0]),
-        top_edge: Some(if start_on_axis { darts[5] } else { darts[3] }),
-        start_side: (!start_on_axis).then_some(darts[5]),
-        end_side: start_on_axis.then_some(darts[2]),
-        outer_loop: darts[0],
-        key,
+        Ok(RevolvedFaceBuild {
+            bottom_edge: Some(darts[0]),
+            top_edge: Some(if start_on_axis { darts[5] } else { darts[3] }),
+            start_side: (!start_on_axis).then_some(darts[5]),
+            end_side: start_on_axis.then_some(darts[2]),
+            outer_loop: darts[0],
+            key,
+        })
     })
 }
 
@@ -1501,48 +1513,50 @@ fn add_revolved_quad_face<P: Payload>(
     source: EdgeKey,
     corner_origins: [EditKey; 4],
 ) -> Result<RevolvedFaceBuild, RevolveError> {
-    let darts: Vec<Dart> = (0..8).map(|_| edit.add_dart()).collect();
+    edit.deferred(|raw| {
+        let darts: Vec<Dart> = (0..8).map(|_| raw.add_dart()).collect();
 
-    for i in 0..4 {
-        edit.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
-    }
-    for i in 0..4 {
-        edit.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % darts.len()])?;
-    }
+        for i in 0..4 {
+            raw.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
+        }
+        for i in 0..4 {
+            raw.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % darts.len()])?;
+        }
 
-    for i in 0..4 {
-        let dart = edit.cell_representative(darts[2 * i], Dim::Zero);
-        edit.add_vertex_derived_from(vec![corner_origins[i]], VertexAttr::new(dart, corners[i]));
-    }
+        for i in 0..4 {
+            let dart = raw.cell_representative(darts[2 * i], Dim::Zero);
+            raw.add_vertex_derived_from(vec![corner_origins[i]], VertexAttr::new(dart, corners[i]));
+        }
 
-    for i in 0..4 {
-        let edge_dart = darts[2 * i];
-        edit.add_edge_derived_from(
-            vec![corner_origins[i]],
-            EdgeAttr::new(edge_dart, boundary_curves[i].clone()),
+        for i in 0..4 {
+            let edge_dart = darts[2 * i];
+            raw.add_edge_derived_from(
+                vec![corner_origins[i]],
+                EdgeAttr::new(edge_dart, boundary_curves[i].clone()),
+            );
+        }
+
+        raw.add_profile_derived_from(vec![EditKey::Edge(source)], ProfileAttr::new(darts[0]));
+        let key = raw.add_face_derived_from(
+            vec![EditKey::Edge(source)],
+            FaceAttr::with_pcurves(
+                surface,
+                darts[0],
+                Vec::new(),
+                quad_pcurves(&pcurves, &darts),
+            ),
         );
-    }
 
-    edit.add_profile_derived_from(vec![EditKey::Edge(source)], ProfileAttr::new(darts[0]));
-    let key = edit.add_face_derived_from(
-        vec![EditKey::Edge(source)],
-        FaceAttr::with_pcurves(
-            surface,
-            darts[0],
-            Vec::new(),
-            quad_pcurves(&pcurves, &darts),
-        ),
-    );
-
-    Ok(RevolvedFaceBuild {
-        bottom_edge: Some(darts[0]),
-        // darts[4] is at `rotated_end`; darts[5] is its alpha0 partner at
-        // `rotated_start`, which is the vertex the cap edge dart carries.
-        top_edge: Some(darts[5]),
-        start_side: Some(darts[7]),
-        end_side: Some(darts[2]),
-        outer_loop: darts[0],
-        key,
+        Ok(RevolvedFaceBuild {
+            bottom_edge: Some(darts[0]),
+            // darts[4] is at `rotated_end`; darts[5] is its alpha0 partner at
+            // `rotated_start`, which is the vertex the cap edge dart carries.
+            top_edge: Some(darts[5]),
+            start_side: Some(darts[7]),
+            end_side: Some(darts[2]),
+            outer_loop: darts[0],
+            key,
+        })
     })
 }
 
@@ -1593,59 +1607,61 @@ fn add_full_revolved_band_face<P: Payload>(
     pcurves: [TrimmedCurve2; 2],
     kinds: [LoopKind; 2],
 ) -> Result<RevolvedFaceBuild, RevolveError> {
-    let [start_first, start_second, end_first, end_second]: [Dart; 4] =
-        std::array::from_fn(|_| edit.add_dart());
-    for (first, second) in [(start_first, start_second), (end_first, end_second)] {
-        edit.link(Dim::Zero, first, second)?;
-        edit.link(Dim::One, first, second)?;
-    }
+    edit.deferred(|raw| {
+        let [start_first, start_second, end_first, end_second]: [Dart; 4] =
+            std::array::from_fn(|_| raw.add_dart());
+        for (first, second) in [(start_first, start_second), (end_first, end_second)] {
+            raw.link(Dim::Zero, first, second)?;
+            raw.link(Dim::One, first, second)?;
+        }
 
-    for (seed, point, curve, origin) in [
-        (
-            start_first,
-            ends[0],
-            &circles[0],
-            endpoint_origin(source, &source.start),
-        ),
-        (
-            end_first,
-            ends[1],
-            &circles[1],
-            endpoint_origin(source, &source.end),
-        ),
-    ] {
-        edit.add_vertex_derived_from(vec![origin], VertexAttr::new(seed, point));
-        edit.add_edge_derived_from(vec![origin], EdgeAttr::new(seed, curve.clone()));
-        edit.add_profile_derived_from(vec![origin], ProfileAttr::new(seed));
-    }
+        for (seed, point, curve, origin) in [
+            (
+                start_first,
+                ends[0],
+                &circles[0],
+                endpoint_origin(source, &source.start),
+            ),
+            (
+                end_first,
+                ends[1],
+                &circles[1],
+                endpoint_origin(source, &source.end),
+            ),
+        ] {
+            raw.add_vertex_derived_from(vec![origin], VertexAttr::new(seed, point));
+            raw.add_edge_derived_from(vec![origin], EdgeAttr::new(seed, curve.clone()));
+            raw.add_profile_derived_from(vec![origin], ProfileAttr::new(seed));
+        }
 
-    let [start_pcurve, end_pcurve] = pcurves;
-    let key = edit.add_face_derived_from(
-        vec![EditKey::Edge(source.key)],
-        FaceAttr::with_loops(
-            surface,
-            vec![
-                LoopDefinition::from_kind(start_first, kinds[0]),
-                LoopDefinition::from_kind(end_first, kinds[1]),
-            ],
-            HashMap::from([(start_first, start_pcurve), (end_first, end_pcurve)]),
-        ),
-    );
-    cut_between_loops(edit, key, start_first, end_first)?;
+        let [start_pcurve, end_pcurve] = pcurves;
+        let key = raw.add_face_derived_from(
+            vec![EditKey::Edge(source.key)],
+            FaceAttr::with_loops(
+                surface,
+                vec![
+                    LoopDefinition::from_kind(start_first, kinds[0]),
+                    LoopDefinition::from_kind(end_first, kinds[1]),
+                ],
+                HashMap::from([(start_first, start_pcurve), (end_first, end_pcurve)]),
+            ),
+        );
+        splice_cut_between_loops(raw, key, start_first, end_first)?;
 
-    Ok(RevolvedFaceBuild {
-        bottom_edge: None,
-        top_edge: None,
-        // A neighbouring band must traverse the shared circle the other way
-        // round, so the sew has to land on the far dart of this loop rather than
-        // on its seed: `alpha2` of one seed then reaches the other seed through
-        // `alpha0`, which is what a consistently oriented shell means. The two
-        // ends are therefore offered asymmetrically, as a swept wrapping face
-        // offers its bottom and top.
-        start_side: Some(start_second),
-        end_side: Some(end_first),
-        outer_loop: start_first,
-        key,
+        Ok(RevolvedFaceBuild {
+            bottom_edge: None,
+            top_edge: None,
+            // A neighbouring band must traverse the shared circle the other way
+            // round, so the sew has to land on the far dart of this loop rather than
+            // on its seed: `alpha2` of one seed then reaches the other seed through
+            // `alpha0`, which is what a consistently oriented shell means. The two
+            // ends are therefore offered asymmetrically, as a swept wrapping face
+            // offers its bottom and top.
+            start_side: Some(start_second),
+            end_side: Some(end_first),
+            outer_loop: start_first,
+            key,
+        })
     })
 }
 

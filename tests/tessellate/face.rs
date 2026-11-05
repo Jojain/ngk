@@ -52,61 +52,63 @@ fn torus_patch(major: f64, minor: f64) -> (Model<StandardPayload>, FaceKey) {
 
     let face = g
         .transaction(|edit| {
-            let d: [Dart; 8] = std::array::from_fn(|_| edit.add_dart());
-            for pair in 0..4 {
-                edit.link(Dim::Zero, d[2 * pair], d[2 * pair + 1])?;
-            }
-            for pair in 0..4 {
-                edit.link(Dim::One, d[2 * pair + 1], d[(2 * pair + 2) % 8])?;
-            }
+            edit.deferred(|raw| {
+                let d: [Dart; 8] = std::array::from_fn(|_| raw.add_dart());
+                for pair in 0..4 {
+                    raw.link(Dim::Zero, d[2 * pair], d[2 * pair + 1])?;
+                }
+                for pair in 0..4 {
+                    raw.link(Dim::One, d[2 * pair + 1], d[(2 * pair + 2) % 8])?;
+                }
 
-            for (pair, corner) in corners.iter().enumerate() {
-                edit.add_vertex(VertexAttr::new(
-                    d[2 * pair],
-                    torus.point_at(corner.x, corner.y),
+                for (pair, corner) in corners.iter().enumerate() {
+                    raw.add_vertex(VertexAttr::new(
+                        d[2 * pair],
+                        torus.point_at(corner.x, corner.y),
+                    ));
+                }
+
+                // A side at constant `v` runs along a circle about the main axis,
+                // widened by the tube and lifted off the equatorial plane; a side at
+                // constant `u` is the tube circle itself, in the plane the radial
+                // direction at `u` and the main axis span.
+                for (pair, (from, to)) in sides().enumerate() {
+                    let curve = if from.y == to.y {
+                        Curve::Circle(Circle::new(
+                            Plane::from_xy(
+                                Point3::new(0.0, 0.0, minor * from.y.sin()),
+                                Vector3::x(),
+                                Vector3::y(),
+                            ),
+                            major + minor * from.y.cos(),
+                        ))
+                    } else {
+                        let (sin, cos) = from.x.sin_cos();
+                        Curve::Circle(Circle::new(
+                            Plane::from_xy(
+                                Point3::new(major * cos, major * sin, 0.0),
+                                Vector3::new(cos, sin, 0.0),
+                                Vector3::z(),
+                            ),
+                            minor,
+                        ))
+                    };
+                    raw.add_edge(EdgeAttr::new(d[2 * pair], curve));
+                }
+                raw.add_profile(ProfileAttr::new(d[0]));
+
+                let pcurves = sides()
+                    .enumerate()
+                    .map(|(pair, (from, to))| (d[2 * pair], TrimmedCurve2::segment(*from, *to)))
+                    .collect::<HashMap<_, _>>();
+                let face = raw.add_face(FaceAttr::with_pcurves(
+                    surface.clone(),
+                    d[0],
+                    Vec::new(),
+                    pcurves,
                 ));
-            }
-
-            // A side at constant `v` runs along a circle about the main axis,
-            // widened by the tube and lifted off the equatorial plane; a side at
-            // constant `u` is the tube circle itself, in the plane the radial
-            // direction at `u` and the main axis span.
-            for (pair, (from, to)) in sides().enumerate() {
-                let curve = if from.y == to.y {
-                    Curve::Circle(Circle::new(
-                        Plane::from_xy(
-                            Point3::new(0.0, 0.0, minor * from.y.sin()),
-                            Vector3::x(),
-                            Vector3::y(),
-                        ),
-                        major + minor * from.y.cos(),
-                    ))
-                } else {
-                    let (sin, cos) = from.x.sin_cos();
-                    Curve::Circle(Circle::new(
-                        Plane::from_xy(
-                            Point3::new(major * cos, major * sin, 0.0),
-                            Vector3::new(cos, sin, 0.0),
-                            Vector3::z(),
-                        ),
-                        minor,
-                    ))
-                };
-                edit.add_edge(EdgeAttr::new(d[2 * pair], curve));
-            }
-            edit.add_profile(ProfileAttr::new(d[0]));
-
-            let pcurves = sides()
-                .enumerate()
-                .map(|(pair, (from, to))| (d[2 * pair], TrimmedCurve2::segment(*from, *to)))
-                .collect::<HashMap<_, _>>();
-            let face = edit.add_face(FaceAttr::with_pcurves(
-                surface.clone(),
-                d[0],
-                Vec::new(),
-                pcurves,
-            ));
-            Ok::<_, ModelEditError>(face)
+                Ok::<_, ModelEditError>(face)
+            })
         })
         .expect("an open torus patch should commit");
     (g, face)

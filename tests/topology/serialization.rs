@@ -87,16 +87,18 @@ fn a_model_round_trips_serializable_custom_payloads() {
     let mut model = Model::<SerializablePayload>::new();
     let (start, end, edge) = model
         .transaction(|edit| {
-            let start_dart = edit.add_dart();
-            let end_dart = edit.add_dart();
-            edit.link(Dim::Zero, start_dart, end_dart)?;
-            let start = edit.add_vertex(VertexAttr::new(start_dart, Point3::origin()));
-            let end = edit.add_vertex(VertexAttr::new(end_dart, Point3::new(1.0, 0.0, 0.0)));
-            let edge = edit.add_edge(EdgeAttr::new(
-                start_dart,
-                Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-            ));
-            Ok::<_, ModelEditError>((start, end, edge))
+            edit.deferred(|raw| {
+                let start_dart = raw.add_dart();
+                let end_dart = raw.add_dart();
+                raw.link(Dim::Zero, start_dart, end_dart)?;
+                let start = raw.add_vertex(VertexAttr::new(start_dart, Point3::origin()));
+                let end = raw.add_vertex(VertexAttr::new(end_dart, Point3::new(1.0, 0.0, 0.0)));
+                let edge = raw.add_edge(EdgeAttr::new(
+                    start_dart,
+                    Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+                ));
+                Ok::<_, ModelEditError>((start, end, edge))
+            })
         })
         .expect("custom-payload edge should build");
     // A fresh creation's payload is the default policy's to decide, so it

@@ -4,8 +4,8 @@
 //! `own_cell`, ...) rewire one thing each, so a sequence of them passes through
 //! states where the map and the labelling disagree. An operator is the whole
 //! sequence: it reads what it needs before it touches anything, refuses a
-//! precondition that does not hold, performs the rewiring *and* the relabelling,
-//! and checks the cells it touched before returning. A view read between two
+//! precondition that does not hold, and performs the rewiring *and* the
+//! relabelling. A view read between two
 //! operators therefore sees a model whose labelling describes its map, which is
 //! what the lazily derived embedding index requires.
 //!
@@ -161,7 +161,8 @@ impl<P: Payload> ModelEdit<'_, P> {
     /// faces that run along it: each side of the cell gets a middle dart
     /// `alpha0`-linked in between, the two middle darts of a pair are joined by
     /// `alpha1` to make the new 0-cell, and `alpha2` partners are mirrored on
-    /// the middle darts. The 0-cells at the edge's old ends keep their darts, so
+    /// the middle darts, together with their `alpha3` partners. The 0-cells at
+    /// the edge's old ends keep their darts, so
     /// the labelling is untouched; the new 0-cell is born with its vertex.
     pub fn cut_edge(
         &mut self,
@@ -183,16 +184,27 @@ impl<P: Payload> ModelEdit<'_, P> {
             .collect();
         let alpha0_pairs = self.pairs_within(&cell, Dim::Zero);
         let alpha2_pairs = self.pairs_within(&cell, Dim::Two);
-        let middle: HashMap<Dart, Dart> = cell.iter().map(|&dart| (dart, self.add_dart())).collect();
+        let alpha3_pairs = self.pairs_within(&cell, Dim::Three);
+        let middle: HashMap<Dart, Dart> =
+            cell.iter().map(|&dart| (dart, self.add_dart())).collect();
 
         for (first, second) in alpha0_pairs {
-            self.unlink(Dim::Zero, first)?;
-            self.link(Dim::Zero, first, middle[&first])?;
-            self.link(Dim::Zero, second, middle[&second])?;
-            self.link(Dim::One, middle[&first], middle[&second])?;
+            self.unlink(Dim::Zero, first)
+                .expect("a collected alpha0 pair remains linked until it is cut");
+            self.link(Dim::Zero, first, middle[&first])
+                .expect("the unlinked endpoint and its fresh middle dart are alpha0-free");
+            self.link(Dim::Zero, second, middle[&second])
+                .expect("the other endpoint and its fresh middle dart are alpha0-free");
+            self.link(Dim::One, middle[&first], middle[&second])
+                .expect("each fresh middle dart belongs to exactly one alpha0 pair");
         }
         for (first, second) in alpha2_pairs {
-            self.link(Dim::Two, middle[&first], middle[&second])?;
+            self.link(Dim::Two, middle[&first], middle[&second])
+                .expect("each fresh middle dart has at most one alpha2 partner");
+        }
+        for (first, second) in alpha3_pairs {
+            self.link(Dim::Three, middle[&first], middle[&second])
+                .expect("each fresh middle dart has at most one alpha3 partner");
         }
 
         let vertex = self.add_vertex_derived_from(
@@ -200,7 +212,8 @@ impl<P: Payload> ModelEdit<'_, P> {
             VertexAttr::new(middle[&first_dart], plan.point),
         );
         self.edge_attr_mut_unchecked(edge).curve = plan.first;
-        let second = self.add_edge_split_from(edge, EdgeAttr::new(middle[&second_dart], plan.second));
+        let second =
+            self.add_edge_split_from(edge, EdgeAttr::new(middle[&second_dart], plan.second));
         Ok(EdgeCutResult {
             first: edge,
             second,
@@ -222,7 +235,11 @@ impl<P: Payload> ModelEdit<'_, P> {
     /// Refuses, with the model untouched, darts that are not on edges, edges
     /// that do not match cell for cell, and 0-cells claimed by anything but the
     /// two edges.
-    pub fn sew_edges(&mut self, survivor: Dart, removed: Dart) -> Result<EdgeSewing, ModelEditError> {
+    pub fn sew_edges(
+        &mut self,
+        survivor: Dart,
+        removed: Dart,
+    ) -> Result<EdgeSewing, ModelEditError> {
         let edge_at = |dart: Dart| {
             Edge::from_dart(self.model, dart)
                 .map(|edge| edge.key())
@@ -336,7 +353,10 @@ impl<P: Payload> ModelEdit<'_, P> {
         }
         for end in [dart, far] {
             let claims = self.claims_on_cell(Dim::Zero, end);
-            if !claims.iter().all(|owner| matches!(owner, EntityOwner::Vertex(_))) {
+            if !claims
+                .iter()
+                .all(|owner| matches!(owner, EntityOwner::Vertex(_)))
+            {
                 return Err(OperatorError::ContestedCell {
                     dimension: Dim::Zero,
                     dart: end,

@@ -4,6 +4,7 @@
 //! family and keeps the public and crate-private operation names together.
 
 mod annulus;
+mod boundaryless;
 mod circle;
 mod face;
 mod imprints;

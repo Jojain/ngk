@@ -447,50 +447,52 @@ fn add_segments<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     segments: &[(Point3, Point3, Curve)],
 ) -> Result<ProfileKey, PolylineError> {
-    let first_segment = segments.first().ok_or(PolylineError::EmptyPolyline)?;
-    let last_segment = segments.last().ok_or(PolylineError::EmptyPolyline)?;
-    let closed = first_segment.0.coincides(&last_segment.1, LINEAR_TOLERANCE);
+    edit.deferred(|raw| {
+        let first_segment = segments.first().ok_or(PolylineError::EmptyPolyline)?;
+        let last_segment = segments.last().ok_or(PolylineError::EmptyPolyline)?;
+        let closed = first_segment.0.coincides(&last_segment.1, LINEAR_TOLERANCE);
 
-    let mut segment_topology = Vec::with_capacity(segments.len());
-    for (start_point, _, curve) in segments {
-        let start_dart = edit.add_dart();
-        let end_dart = edit.add_dart();
-        edit.link(Dim::Zero, start_dart, end_dart)
-            .map_err(polyline_edit_error)?;
-        edit.add_vertex(VertexAttr::new(start_dart, *start_point));
-        edit.add_edge(EdgeAttr::new(start_dart, curve.clone()));
-        segment_topology.push(SegmentTopology {
-            start: start_dart,
-            end: end_dart,
-        });
-    }
+        let mut segment_topology = Vec::with_capacity(segments.len());
+        for (start_point, _, curve) in segments {
+            let start_dart = raw.add_dart();
+            let end_dart = raw.add_dart();
+            raw.link(Dim::Zero, start_dart, end_dart)
+                .map_err(polyline_edit_error)?;
+            raw.add_vertex(VertexAttr::new(start_dart, *start_point));
+            raw.add_edge(EdgeAttr::new(start_dart, curve.clone()));
+            segment_topology.push(SegmentTopology {
+                start: start_dart,
+                end: end_dart,
+            });
+        }
 
-    for pair in segment_topology.windows(2) {
-        edit.sew(Dim::One, pair[0].end, pair[1].start)
-            .map_err(polyline_edit_error)?;
-    }
+        for pair in segment_topology.windows(2) {
+            raw.sew(Dim::One, pair[0].end, pair[1].start)
+                .map_err(polyline_edit_error)?;
+        }
 
-    if closed {
-        let first = segment_topology
-            .first()
-            .expect("non-empty segment list should have a first segment");
-        let last = segment_topology
-            .last()
-            .expect("non-empty segment list should have a last segment");
-        edit.sew(Dim::One, last.end, first.start)
-            .map_err(polyline_edit_error)?;
-    } else {
-        let last_segment = segments
-            .last()
-            .expect("non-empty segment list should have a last segment");
-        let last_topology = segment_topology
-            .last()
-            .expect("non-empty segment list should have a last segment");
-        edit.add_vertex(VertexAttr::new(last_topology.end, last_segment.1));
-    }
+        if closed {
+            let first = segment_topology
+                .first()
+                .expect("non-empty segment list should have a first segment");
+            let last = segment_topology
+                .last()
+                .expect("non-empty segment list should have a last segment");
+            raw.sew(Dim::One, last.end, first.start)
+                .map_err(polyline_edit_error)?;
+        } else {
+            let last_segment = segments
+                .last()
+                .expect("non-empty segment list should have a last segment");
+            let last_topology = segment_topology
+                .last()
+                .expect("non-empty segment list should have a last segment");
+            raw.add_vertex(VertexAttr::new(last_topology.end, last_segment.1));
+        }
 
-    let first_start = segment_topology[0].start;
-    Ok(edit.add_profile(ProfileAttr::new(first_start)))
+        let first_start = segment_topology[0].start;
+        Ok(raw.add_profile(ProfileAttr::new(first_start)))
+    })
 }
 
 #[derive(Clone, Copy)]

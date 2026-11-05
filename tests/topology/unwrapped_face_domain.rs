@@ -281,73 +281,85 @@ fn a_cap_on_the_far_half_of_a_sphere_unwraps_onto_one_branch() {
     let mut g = Model::<StandardPayload>::new();
     let face_key = g
         .transaction(|edit| {
-            let d: [Dart; 6] = std::array::from_fn(|_| edit.add_dart());
-            for pair in 0..3 {
-                edit.link(Dim::Zero, d[2 * pair], d[2 * pair + 1])?;
-            }
-            for pair in 0..3 {
-                edit.link(Dim::One, d[2 * pair + 1], d[(2 * pair + 2) % 6])?;
-            }
+            edit.deferred(|raw| {
+                let d: [Dart; 6] = std::array::from_fn(|_| raw.add_dart());
+                for pair in 0..3 {
+                    raw.link(Dim::Zero, d[2 * pair], d[2 * pair + 1])?;
+                }
+                for pair in 0..3 {
+                    raw.link(Dim::One, d[2 * pair + 1], d[(2 * pair + 2) % 6])?;
+                }
 
-            // Where the rim starts, where it ends a half-turn later, and the
-            // pole the two meridians meet at.
-            edit.add_vertex(VertexAttr::new(d[0], sphere.point_at(PI, LATITUDE)));
-            edit.add_vertex(VertexAttr::new(d[2], sphere.point_at(0.0, LATITUDE)));
-            edit.add_vertex(VertexAttr::new(d[4], sphere.point_at(0.0, FRAC_PI_2)));
+                // Where the rim starts, where it ends a half-turn later, and the
+                // pole the two meridians meet at.
+                raw.add_vertex(VertexAttr::new(d[0], sphere.point_at(PI, LATITUDE)));
+                raw.add_vertex(VertexAttr::new(d[2], sphere.point_at(0.0, LATITUDE)));
+                raw.add_vertex(VertexAttr::new(d[4], sphere.point_at(0.0, FRAC_PI_2)));
 
-            // The rim is a latitude circle; each meridian is a great circle in
-            // the plane its own longitude and the polar axis span.
-            edit.add_edge(EdgeAttr::new(
-                d[0],
-                Curve::Circle(Circle::new(
-                    Plane::from_xy(
-                        Point3::new(0.0, 0.0, radius * LATITUDE.sin()),
-                        Vector3::x(),
-                        Vector3::y(),
-                    ),
-                    radius * LATITUDE.cos(),
-                )),
-            ));
-            for (dart, longitude) in [(d[2], 0.0), (d[4], PI)] {
-                let (sin, cos) = f64::sin_cos(longitude);
-                edit.add_edge(EdgeAttr::new(
-                    dart,
+                // The rim is a latitude circle; each meridian is a great circle in
+                // the plane its own longitude and the polar axis span.
+                raw.add_edge(EdgeAttr::new(
+                    d[0],
                     Curve::Circle(Circle::new(
-                        Plane::from_xy(Point3::origin(), Vector3::new(cos, sin, 0.0), Vector3::z()),
-                        radius,
+                        Plane::from_xy(
+                            Point3::new(0.0, 0.0, radius * LATITUDE.sin()),
+                            Vector3::x(),
+                            Vector3::y(),
+                        ),
+                        radius * LATITUDE.cos(),
                     )),
                 ));
-            }
-            edit.add_profile(ProfileAttr::new(d[0]));
+                for (dart, longitude) in [(d[2], 0.0), (d[4], PI)] {
+                    let (sin, cos) = f64::sin_cos(longitude);
+                    raw.add_edge(EdgeAttr::new(
+                        dart,
+                        Curve::Circle(Circle::new(
+                            Plane::from_xy(
+                                Point3::origin(),
+                                Vector3::new(cos, sin, 0.0),
+                                Vector3::z(),
+                            ),
+                            radius,
+                        )),
+                    ));
+                }
+                raw.add_profile(ProfileAttr::new(d[0]));
 
-            // The rim crosses the domain's far half, so the climb to the pole —
-            // written at u = 0, as a writer naming the same meridian either way
-            // may — has to be carried a turn along to meet it. The descent is
-            // written at u = pi and must not be.
-            let pcurves = HashMap::from([
-                (
-                    d[0],
-                    TrimmedCurve2::segment(
-                        Point2::new(PI, LATITUDE),
-                        Point2::new(2.0 * PI, LATITUDE),
+                // The rim crosses the domain's far half, so the climb to the pole —
+                // written at u = 0, as a writer naming the same meridian either way
+                // may — has to be carried a turn along to meet it. The descent is
+                // written at u = pi and must not be.
+                let pcurves = HashMap::from([
+                    (
+                        d[0],
+                        TrimmedCurve2::segment(
+                            Point2::new(PI, LATITUDE),
+                            Point2::new(2.0 * PI, LATITUDE),
+                        ),
                     ),
-                ),
-                (
-                    d[2],
-                    TrimmedCurve2::segment(Point2::new(0.0, LATITUDE), Point2::new(0.0, FRAC_PI_2)),
-                ),
-                (
-                    d[4],
-                    TrimmedCurve2::segment(Point2::new(PI, FRAC_PI_2), Point2::new(PI, LATITUDE)),
-                ),
-            ]);
-            let face = edit.add_face(FaceAttr::with_pcurves(
-                surface.clone(),
-                d[0],
-                Vec::new(),
-                pcurves,
-            ));
-            Ok::<_, ngk::topology::ModelEditError>(face)
+                    (
+                        d[2],
+                        TrimmedCurve2::segment(
+                            Point2::new(0.0, LATITUDE),
+                            Point2::new(0.0, FRAC_PI_2),
+                        ),
+                    ),
+                    (
+                        d[4],
+                        TrimmedCurve2::segment(
+                            Point2::new(PI, FRAC_PI_2),
+                            Point2::new(PI, LATITUDE),
+                        ),
+                    ),
+                ]);
+                let face = raw.add_face(FaceAttr::with_pcurves(
+                    surface.clone(),
+                    d[0],
+                    Vec::new(),
+                    pcurves,
+                ));
+                Ok::<_, ngk::topology::ModelEditError>(face)
+            })
         })
         .expect("a half cap should commit");
 

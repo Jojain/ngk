@@ -22,11 +22,7 @@ fn assert_outward_or_error<E: std::fmt::Debug>(result: Result<Shape<SolidTag>, E
 fn sweeping_a_disc_along_a_line_does_not_panic() {
     let section = faces::circle(Plane::xy(), 2.0).expect("disc should build");
     let path = edges::line(Point3::origin(), Point3::new(0.0, 0.0, 6.0)).expect("line");
-    assert_outward_or_error(sweep::sweep_face(
-        section,
-        &path.edge(),
-        Default::default(),
-    ));
+    assert_outward_or_error(sweep::sweep_face(section, &path.edge(), Default::default()));
 }
 
 #[test]
@@ -43,9 +39,8 @@ fn cutting_a_pulley_body_by_a_revolved_groove_does_not_panic() {
         Point3::new(29.0, 0.0, -5.0),
     ])
     .expect("triangle");
-    let groove =
-        revolve::revolve_face(triangle, Axis3::z(), Rad64::new(std::f64::consts::TAU))
-            .expect("groove");
+    let groove = revolve::revolve_face(triangle, Axis3::z(), Rad64::new(std::f64::consts::TAU))
+        .expect("groove");
     assert_outward_or_error(solids::cut(body, [&groove]));
 }
 
@@ -80,7 +75,10 @@ fn sweeping_a_disc_along_a_cubic_does_not_panic() {
         KnotVector::new(vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]).expect("knots"),
     )
     .expect("cubic");
-    let (a, b) = (curve.point_at(curve.domain().start.value()), curve.point_at(curve.domain().end.value()));
+    let (a, b) = (
+        curve.point_at(curve.domain().start.value()),
+        curve.point_at(curve.domain().end.value()),
+    );
     let path = Shape::<ngk::topology::shape::EdgeTag>::build(|model| {
         add_edge(model, a, b, ngk::geometry::Curve::Nurbs(curve))
     })
@@ -88,7 +86,11 @@ fn sweeping_a_disc_along_a_cubic_does_not_panic() {
     let trimmed = path.edge().trimmed_curve();
     let tangent: Vector3<f64> = trimmed.derivative_at(Fraction::START, 1);
     let z = tangent.normalize();
-    let helper = if z.x.abs() < 0.9 { Vector3::x() } else { Vector3::y() };
+    let helper = if z.x.abs() < 0.9 {
+        Vector3::x()
+    } else {
+        Vector3::y()
+    };
     let x = (helper - z * helper.dot(&z)).normalize();
     let frame = Frame::from_xz(trimmed.start(), x, z);
     let section = faces::circle(Plane::from_frame(frame), 20.0).expect("disc");
@@ -110,13 +112,38 @@ mod random_builders {
 
     #[derive(Debug, Clone)]
     enum Primitive {
-        Block { x: f64, y: f64, z: f64 },
-        Cylinder { radius: f64, height: f64 },
-        Sphere { radius: f64 },
-        Torus { major: f64, minor: f64 },
-        Prism { sides: usize, radius: f64, distance: f64 },
-        Revolved { offset: f64, width: f64, height: f64, angle: f64 },
-        SweptDisc { radius: f64, length: f64, tilt: f64 },
+        Block {
+            x: f64,
+            y: f64,
+            z: f64,
+        },
+        Cylinder {
+            radius: f64,
+            height: f64,
+        },
+        Sphere {
+            radius: f64,
+        },
+        Torus {
+            major: f64,
+            minor: f64,
+        },
+        Prism {
+            sides: usize,
+            radius: f64,
+            distance: f64,
+        },
+        Revolved {
+            offset: f64,
+            width: f64,
+            height: f64,
+            angle: f64,
+        },
+        SweptDisc {
+            radius: f64,
+            length: f64,
+            tilt: f64,
+        },
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -147,15 +174,29 @@ mod random_builders {
             (size(), size(), size()).prop_map(|(x, y, z)| Primitive::Block { x, y, z }),
             (size(), size()).prop_map(|(radius, height)| Primitive::Cylinder { radius, height }),
             size().prop_map(|radius| Primitive::Sphere { radius }),
-            (1.5f64..4.0, 0.3f64..1.2)
-                .prop_map(|(major, minor)| Primitive::Torus { major, minor }),
-            (3usize..7, size(), -3.0f64..3.0)
-                .prop_map(|(sides, radius, distance)| Primitive::Prism { sides, radius, distance }),
+            (1.5f64..4.0, 0.3f64..1.2).prop_map(|(major, minor)| Primitive::Torus { major, minor }),
+            (3usize..7, size(), -3.0f64..3.0).prop_map(|(sides, radius, distance)| {
+                Primitive::Prism {
+                    sides,
+                    radius,
+                    distance,
+                }
+            }),
             (0.5f64..3.0, 0.2f64..2.0, 0.2f64..2.0, -7.0f64..7.0).prop_map(
-                |(offset, width, height, angle)| Primitive::Revolved { offset, width, height, angle }
+                |(offset, width, height, angle)| Primitive::Revolved {
+                    offset,
+                    width,
+                    height,
+                    angle
+                }
             ),
-            (size(), -4.0f64..4.0, 0.0f64..1.0)
-                .prop_map(|(radius, length, tilt)| Primitive::SweptDisc { radius, length, tilt }),
+            (size(), -4.0f64..4.0, 0.0f64..1.0).prop_map(|(radius, length, tilt)| {
+                Primitive::SweptDisc {
+                    radius,
+                    length,
+                    tilt,
+                }
+            }),
         ]
     }
 
@@ -164,7 +205,11 @@ mod random_builders {
             primitive(),
             [snapped(), snapped(), snapped()],
             (0u8..8).prop_map(|eighth| f64::from(eighth) * std::f64::consts::FRAC_PI_4),
-            prop_oneof![Just(Combine::Fuse), Just(Combine::Cut), Just(Combine::Intersect)],
+            prop_oneof![
+                Just(Combine::Fuse),
+                Just(Combine::Cut),
+                Just(Combine::Intersect)
+            ],
         )
             .prop_map(|(primitive, offset, turn, combine)| Step {
                 primitive,
@@ -181,7 +226,11 @@ mod random_builders {
             Primitive::Cylinder { radius, height } => solids::cylinder(*radius, *height).ok()?,
             Primitive::Sphere { radius } => solids::sphere(*radius).ok()?,
             Primitive::Torus { major, minor } => solids::torus(*major, *minor).ok()?,
-            Primitive::Prism { sides, radius, distance } => {
+            Primitive::Prism {
+                sides,
+                radius,
+                distance,
+            } => {
                 let corners: Vec<Point3> = (0..*sides)
                     .map(|index| {
                         let angle = std::f64::consts::TAU * index as f64 / *sides as f64;
@@ -191,7 +240,12 @@ mod random_builders {
                 let face = faces::polygon(&corners).ok()?;
                 solids::extruded(face, Vector3::z_axis(), *distance).ok()?
             }
-            Primitive::Revolved { offset, width, height, angle } => {
+            Primitive::Revolved {
+                offset,
+                width,
+                height,
+                angle,
+            } => {
                 let face = faces::polygon(&[
                     Point3::new(*offset, 0.0, 0.0),
                     Point3::new(offset + width, 0.0, 0.0),
@@ -200,7 +254,11 @@ mod random_builders {
                 .ok()?;
                 revolve::revolve_face(face, Axis3::z(), Rad64::new(*angle)).ok()?
             }
-            Primitive::SweptDisc { radius, length, tilt } => {
+            Primitive::SweptDisc {
+                radius,
+                length,
+                tilt,
+            } => {
                 let face = faces::circle(Plane::xy(), *radius).ok()?;
                 let end = Point3::new(length * tilt, 0.0, *length);
                 let path = edges::line(Point3::origin(), end).ok()?;
@@ -268,8 +326,7 @@ mod open_edit_reads {
     use ngk::geometry::{Plane, Point3};
     use ngk::model::Model;
     use ngk::topology::ModelEditError;
-    use ngk::topology::embedding::{EmbeddingError, EntityOwner};
-    use ngk::topology::gmap::Dim;
+    use ngk::topology::embedding::EmbeddingError;
     use ngk::topology::payload::StandardPayload;
 
     type G = Model<StandardPayload>;
@@ -290,22 +347,25 @@ mod open_edit_reads {
         (g, face)
     }
 
-    /// A corner's dart and an edge, for a label that gives the corner's 0-cell
-    /// to the edge as scaffold while a vertex holds it.
-    fn corner_and_edge(g: &G) -> (ngk::topology::Dart, ngk::topology::shape_keys::EdgeKey) {
-        let (_, vertex) = g.iter_vertices().next().expect("a vertex");
-        let (edge, _) = g.iter_edges().next().expect("an edge");
-        (vertex.dart, edge)
+    /// A registered vertex and an unmarked closure whose existing scaffold
+    /// conflicts with a vertex attribute incorrectly reanchored onto it.
+    fn vertex_and_closure(
+        g: &mut G,
+    ) -> (ngk::topology::shape_keys::VertexKey, ngk::topology::Dart) {
+        let vertex = g.iter_vertices().next().expect("triangle vertex").0;
+        let disc = ngk::builders::faces::add_circle(g, Plane::xy(), 2.0).expect("disc");
+        let closure = g.face_unchecked(disc).edges()[0].dart();
+        (vertex, closure)
     }
 
     #[test]
     fn a_view_read_on_a_conflicting_labelling_rolls_the_transaction_back() {
         let (mut g, face) = triangle();
-        let (corner, edge) = corner_and_edge(&g);
+        let (vertex, closure) = vertex_and_closure(&mut g);
         let darts = g.dart_count();
 
         let result = g.transaction(|edit| {
-            edit.own_cell(Dim::Zero, corner, EntityOwner::Edge(edge));
+            edit.vertex_attr_mut_unchecked(vertex).dart = closure;
             assert!(matches!(
                 edit.model().try_embedding_index(),
                 Err(EmbeddingError::ConflictingOwnership { .. })
@@ -326,44 +386,36 @@ mod open_edit_reads {
             "{result:?}"
         );
         assert_eq!(g.dart_count(), darts);
-        assert_eq!(g.face_unchecked(face).loops().len(), 1, "the model is as it was");
+        assert_eq!(
+            g.face_unchecked(face).loops().len(),
+            1,
+            "the model is as it was"
+        );
     }
 
     #[test]
-    fn a_panic_that_follows_an_unanswerable_read_is_reported_as_the_fault() {
+    #[should_panic(expected = "a triangle has an outer loop")]
+    fn a_panic_after_a_read_fault_propagates() {
         let (mut g, face) = triangle();
-        let (corner, edge) = corner_and_edge(&g);
+        let (vertex, closure) = vertex_and_closure(&mut g);
 
-        let result = g.transaction(|edit| -> Result<(), ModelEditError> {
-            edit.own_cell(Dim::Zero, corner, EntityOwner::Edge(edge));
+        let _ = g.transaction(|edit| -> Result<(), ModelEditError> {
+            edit.vertex_attr_mut_unchecked(vertex).dart = closure;
             let loops = edit.face_unchecked(face).loops();
             // What a builder does with the loops it never got.
             let _outer = loops.first().expect("a triangle has an outer loop");
             Ok(())
         });
-
-        assert!(
-            matches!(result, Err(ModelEditError::InvalidEmbedding(_))),
-            "{result:?}"
-        );
-        assert_eq!(g.face_unchecked(face).loops().len(), 1);
     }
 
     #[test]
-    fn a_panic_with_no_read_fault_rolls_the_model_back_and_keeps_unwinding() {
+    #[should_panic(expected = "a builder's own mistake")]
+    fn a_panic_without_a_read_fault_propagates() {
         let (mut g, _) = triangle();
-        let darts = g.dart_count();
-
-        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = g.transaction(|edit| -> Result<(), ModelEditError> {
-                edit.add_dart();
-                panic!("a builder's own mistake");
-            });
-        }));
-
-        assert!(unwound.is_err(), "the panic continues to unwind");
-        assert_eq!(g.dart_count(), darts, "the model was rolled back first");
-        assert!(g.transaction(|edit| Ok::<_, ModelEditError>(edit.add_dart())).is_ok());
+        let _ = g.transaction(|edit| -> Result<(), ModelEditError> {
+            edit.deferred(|raw| Ok::<_, ModelEditError>(raw.add_dart()))?;
+            panic!("a builder's own mistake");
+        });
     }
 }
 
@@ -376,6 +428,34 @@ mod commit_checks {
     use ngk::modeling::{faces, revolve};
     use ngk::topology::validation::validate_solid_orientation;
     use radians::Rad64;
+
+    #[test]
+    fn opening_an_existing_solid_shell_is_refused_and_restores_the_model() {
+        let mut solid = ngk::modeling::solids::block(1.0, 1.0, 1.0).expect("block");
+        let model = solid.model_mut();
+        model.set_commit_checks(CommitChecks {
+            solid_orientation: true,
+        });
+        let before = serde_json::to_value(&*model).expect("model serializes");
+        let dart = model.iter_edges().next().expect("block edge").1.dart;
+
+        let result = model.transaction(|edit| edit.unsew_edge(dart));
+
+        assert!(
+            matches!(
+                result,
+                Err(ngk::topology::ModelEditError::InvalidSolid {
+                    reason: ngk::topology::validation::ModelValidationError::SolidShellOpen { .. },
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
+        assert_eq!(
+            serde_json::to_value(&*model).expect("model serializes"),
+            before
+        );
+    }
 
     fn triangle() -> ngk::topology::shape::Shape<ngk::topology::shape::FaceTag> {
         faces::polygon(&[

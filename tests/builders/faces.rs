@@ -12,8 +12,8 @@ use ngk::builders::faces::{
 use ngk::builders::profiles::{add_polyline, add_profile_from_edges};
 use ngk::builders::sheets::add_extruded_profile;
 use ngk::geometry::{
-    Circle, Circle2, Curve, Curve2, Fraction, Interval, LINEAR_TOLERANCE, NativeParam,
-    NurbsCurve2, Plane, Point2, Point3, PointCoincidence, Surface, TrimmedCurve2, Vector2,
+    Circle, Circle2, Curve, Curve2, Fraction, Interval, LINEAR_TOLERANCE, NativeParam, NurbsCurve2,
+    Plane, Point2, Point3, PointCoincidence, Surface, TrimmedCurve2, Vector2,
 };
 
 use ngk::modeling::solids;
@@ -1045,6 +1045,8 @@ fn a_period_spanning_imprint_cuts_a_boundaryless_face_into_two_caps() {
     use std::f64::consts::TAU;
 
     let (mut g, solid) = solids::sphere(1.0).expect("sphere").into_model();
+    let sheet = g.iter_sheets().next().expect("sphere sheet").0;
+    let before_volume = g.solid_unchecked(solid).volume().expect("sphere volume");
     let face = g.solid_unchecked(solid).faces()[0].key();
     assert!(g.face_unchecked(face).loops().is_empty());
 
@@ -1055,6 +1057,17 @@ fn a_period_spanning_imprint_cuts_a_boundaryless_face_into_two_caps() {
     );
 
     let splits = split_face_by_imprints(&mut g, face, &[imprint]).expect("the equator should cut");
+    ngk::topology::validation::validate_solid_orientation(&g, solid)
+        .expect("the split shell stays outward");
+    assert!(
+        g.sheet_attr(sheet).is_some(),
+        "the sheet keeps its identity"
+    );
+    let after_volume = g
+        .solid_unchecked(solid)
+        .volume()
+        .expect("split sphere volume");
+    assert!((after_volume - before_volume).abs() <= 1e-6 * before_volume);
     assert_eq!(splits.len(), 1);
     let split = &splits[0];
 
@@ -1129,63 +1142,71 @@ fn cylinder_patch_with_a_shifted_side() -> (Model<StandardPayload>, FaceKey) {
     let mut g = Model::<StandardPayload>::new();
     let face = g
         .transaction(|edit| {
-            // Bottom arc, right side up, top arc, left side down.
-            let d: [Dart; 8] = std::array::from_fn(|_| edit.add_dart());
-            for pair in 0..4 {
-                edit.link(Dim::Zero, d[2 * pair], d[2 * pair + 1])?;
-                edit.link(Dim::One, d[2 * pair + 1], d[(2 * pair + 2) % 8])?;
-            }
-            for (dart, point) in [
-                (d[0], at(-half, 0.0)),
-                (d[2], at(half, 0.0)),
-                (d[4], at(half, height)),
-                (d[6], at(-half, height)),
-            ] {
-                edit.add_vertex(VertexAttr::new(dart, point));
-            }
-            // The bottom arc runs the circle's own way; the top one against it.
-            let rim = |z: f64, y: Vector3<f64>| {
-                Curve::Circle(Circle::new(
-                    Plane::from_xy(Point3::new(0.0, 0.0, z), Vector3::x(), y),
-                    1.0,
-                ))
-            };
-            edit.add_edge(EdgeAttr::new(d[0], rim(0.0, Vector3::y())));
-            edit.add_edge(EdgeAttr::new(
-                d[2],
-                Curve::line(at(half, 0.0), at(half, height)),
-            ));
-            edit.add_edge(EdgeAttr::new(d[4], rim(height, -Vector3::y())));
-            edit.add_edge(EdgeAttr::new(
-                d[6],
-                Curve::line(at(-half, height), at(-half, 0.0)),
-            ));
-            edit.add_profile(ProfileAttr::new(d[0]));
-            let shifted = TAU - half;
-            let pcurves = HashMap::from([
-                (
-                    d[0],
-                    TrimmedCurve2::segment(Point2::new(-half, 0.0), Point2::new(half, 0.0)),
-                ),
-                (
+            edit.deferred(|raw| {
+                // Bottom arc, right side up, top arc, left side down.
+                let d: [Dart; 8] = std::array::from_fn(|_| raw.add_dart());
+                for pair in 0..4 {
+                    raw.link(Dim::Zero, d[2 * pair], d[2 * pair + 1])?;
+                    raw.link(Dim::One, d[2 * pair + 1], d[(2 * pair + 2) % 8])?;
+                }
+                for (dart, point) in [
+                    (d[0], at(-half, 0.0)),
+                    (d[2], at(half, 0.0)),
+                    (d[4], at(half, height)),
+                    (d[6], at(-half, height)),
+                ] {
+                    raw.add_vertex(VertexAttr::new(dart, point));
+                }
+                // The bottom arc runs the circle's own way; the top one against it.
+                let rim = |z: f64, y: Vector3<f64>| {
+                    Curve::Circle(Circle::new(
+                        Plane::from_xy(Point3::new(0.0, 0.0, z), Vector3::x(), y),
+                        1.0,
+                    ))
+                };
+                raw.add_edge(EdgeAttr::new(d[0], rim(0.0, Vector3::y())));
+                raw.add_edge(EdgeAttr::new(
                     d[2],
-                    TrimmedCurve2::segment(Point2::new(half, 0.0), Point2::new(half, height)),
-                ),
-                (
-                    d[4],
-                    TrimmedCurve2::segment(Point2::new(half, height), Point2::new(-half, height)),
-                ),
-                (
+                    Curve::line(at(half, 0.0), at(half, height)),
+                ));
+                raw.add_edge(EdgeAttr::new(d[4], rim(height, -Vector3::y())));
+                raw.add_edge(EdgeAttr::new(
                     d[6],
-                    TrimmedCurve2::segment(Point2::new(shifted, height), Point2::new(shifted, 0.0)),
-                ),
-            ]);
-            Ok::<_, ModelEditError>(edit.add_face(FaceAttr::with_pcurves(
-                surface.clone(),
-                d[0],
-                Vec::new(),
-                pcurves,
-            )))
+                    Curve::line(at(-half, height), at(-half, 0.0)),
+                ));
+                raw.add_profile(ProfileAttr::new(d[0]));
+                let shifted = TAU - half;
+                let pcurves = HashMap::from([
+                    (
+                        d[0],
+                        TrimmedCurve2::segment(Point2::new(-half, 0.0), Point2::new(half, 0.0)),
+                    ),
+                    (
+                        d[2],
+                        TrimmedCurve2::segment(Point2::new(half, 0.0), Point2::new(half, height)),
+                    ),
+                    (
+                        d[4],
+                        TrimmedCurve2::segment(
+                            Point2::new(half, height),
+                            Point2::new(-half, height),
+                        ),
+                    ),
+                    (
+                        d[6],
+                        TrimmedCurve2::segment(
+                            Point2::new(shifted, height),
+                            Point2::new(shifted, 0.0),
+                        ),
+                    ),
+                ]);
+                Ok::<_, ModelEditError>(raw.add_face(FaceAttr::with_pcurves(
+                    surface.clone(),
+                    d[0],
+                    Vec::new(),
+                    pcurves,
+                )))
+            })
         })
         .expect("the patch should commit");
     (g, face)
@@ -1391,7 +1412,10 @@ fn two_imprints_round_a_tori_tube_cut_its_face_into_two_rings() {
     assert_eq!(g.iter_faces().count(), 2);
     let total = 4.0 * PI * PI * major * minor;
     let between = total * (high - low) / TAU;
-    let rings = [(splits[0].first, 0.5 * (low + high)), (splits[0].second, high + 1.0)];
+    let rings = [
+        (splits[0].first, 0.5 * (low + high)),
+        (splits[0].second, high + 1.0),
+    ];
     let mut areas = Vec::new();
     for ((key, u), normal) in rings.into_iter().zip(normals) {
         let face = g.face_unchecked(key);
@@ -1424,8 +1448,8 @@ fn two_imprints_round_a_tori_tube_cut_its_face_into_two_rings() {
 fn concentric_circles_imprinted_together_nest_their_islands() {
     let (outer, inner) = (2.0, 1.0);
     let mut g = Model::<StandardPayload>::new();
-    let corners = [(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0)]
-        .map(|(x, y)| Point3::new(x, y, 0.0));
+    let corners =
+        [(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0)].map(|(x, y)| Point3::new(x, y, 0.0));
     let plate = add_polygon_with_holes(&mut g, Plane::xy(), &corners, &[]).expect("plate");
     let circle = |radius: f64| {
         FaceImprint::new(
@@ -1442,7 +1466,11 @@ fn concentric_circles_imprinted_together_nest_their_islands() {
 
     let mut areas = g
         .iter_faces()
-        .map(|(key, _)| g.face_unchecked(key).area().expect("each piece should measure"))
+        .map(|(key, _)| {
+            g.face_unchecked(key)
+                .area()
+                .expect("each piece should measure")
+        })
         .collect::<Vec<_>>();
     areas.sort_by(f64::total_cmp);
     let expected = [

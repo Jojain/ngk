@@ -26,12 +26,13 @@
 //! compare with and the flag is the only statement of the sense there is. See
 //! [`unfold_cut_walk`], which is where it is read rather than checked.
 
+use crate::builders::scaffold::splice_cut_between_loops;
 use std::collections::HashMap;
 
 use thiserror::Error;
 
 use crate::builders::errors::ClosedFaceCellError;
-use crate::builders::scaffold::{add_closed_face_cell, cut_between_loops, cut_between_shells};
+use crate::builders::scaffold::{add_closed_face_cell, cut_between_shells};
 use crate::geometry::{
     Curve, LINEAR_TOLERANCE, NurbsError, Periodicity, Point2, Point3, PointCoincidence, Surface,
     SurfacePeriodicity, TrimmedCurve2, Vector2,
@@ -986,147 +987,149 @@ fn sew_shell(
     edit: &mut ModelEdit<'_, StandardPayload>,
     planned: &[PlannedFace],
 ) -> Result<Dart, ClosedFaceCellError> {
-    if let [PlannedFace::Boundaryless { surface, sense }] = planned {
-        let cell = add_closed_face_cell(edit, surface)?;
-        let face = edit.add_face(FaceAttr::closed(
-            surface.clone(),
-            cell.anchor(),
-            HashMap::new(),
-        ));
-        cell.own(edit, face);
-        return Ok(match sense {
-            Orientation::Same => cell.anchor(),
-            Orientation::Reversed => edit.alpha(Dim::Zero, cell.anchor()),
-        });
-    }
-
-    // One entry per loop of every face, in the same order, so a face can find
-    // the darts its own boundaries were built from.
-    let mut loop_darts: Vec<Vec<Vec<Dart>>> = Vec::with_capacity(planned.len());
-    let mut uses_by_edge: HashMap<EntityId, Vec<DartUse>> = HashMap::new();
-
-    for face in planned {
-        let mut face_darts = Vec::with_capacity(face.loops().len());
-        for loop_ in face.loops() {
-            let count = loop_.uses.len();
-            let darts: Vec<Dart> = (0..2 * count).map(|_| edit.add_dart()).collect();
-            for pair in 0..count {
-                edit.link(Dim::Zero, darts[2 * pair], darts[2 * pair + 1])?;
-            }
-            for pair in 0..count {
-                edit.link(
-                    Dim::One,
-                    darts[2 * pair + 1],
-                    darts[(2 * pair + 2) % (2 * count)],
-                )?;
-            }
-            for (index, use_) in loop_.uses.iter().enumerate() {
-                uses_by_edge.entry(use_.edge).or_default().push(DartUse {
-                    start: darts[2 * index],
-                    end: darts[2 * index + 1],
-                    forward: use_.forward,
-                });
-            }
-            face_darts.push(darts);
+    edit.deferred(|raw| {
+        if let [PlannedFace::Boundaryless { surface, sense }] = planned {
+            let cell = add_closed_face_cell(raw, surface)?;
+            let face = raw.add_face(FaceAttr::closed(
+                surface.clone(),
+                cell.anchor(),
+                HashMap::new(),
+            ));
+            cell.own(raw, face);
+            return Ok(match sense {
+                Orientation::Same => cell.anchor(),
+                Orientation::Reversed => raw.topology().alpha(Dim::Zero, cell.anchor()),
+            });
         }
-        loop_darts.push(face_darts);
-    }
 
-    // α2 pairs the two uses of an edge so that both darts sit at the same
-    // corner — which for two loops walking the edge in opposite directions,
-    // as an orientable shell always does, means one's start against the
-    // other's end. That pairing is exactly what makes `α0 ∘ α2` land back in
-    // the boundary walk, which is the consistent-winding invariant
-    // `validate_all_solid_orientations` checks.
-    for uses in uses_by_edge.values() {
-        let [first, second] = uses.as_slice() else {
-            continue;
-        };
-        if first.forward == second.forward {
-            edit.sew(Dim::Two, first.start, second.start)?;
-        } else {
-            edit.sew(Dim::Two, first.start, second.end)?;
-        }
-    }
+        // One entry per loop of every face, in the same order, so a face can find
+        // the darts its own boundaries were built from.
+        let mut loop_darts: Vec<Vec<Vec<Dart>>> = Vec::with_capacity(planned.len());
+        let mut uses_by_edge: HashMap<EntityId, Vec<DartUse>> = HashMap::new();
 
-    let mut vertices: HashMap<EntityId, ()> = HashMap::new();
-    let mut edges: HashMap<EntityId, ()> = HashMap::new();
-    let mut shell_root = None;
-
-    for (face, face_darts) in planned.iter().zip(&loop_darts) {
-        let PlannedFace::Bounded {
-            surface,
-            loops,
-            outer,
-        } = face
-        else {
-            continue;
-        };
-        for (loop_, darts) in loops.iter().zip(face_darts) {
-            for (index, use_) in loop_.uses.iter().enumerate() {
-                let (start, end) = (darts[2 * index], darts[2 * index + 1]);
-
-                if vertices.insert(use_.start, ()).is_none() {
-                    edit.add_vertex(VertexAttr::new(start, use_.start_point));
+        for face in planned {
+            let mut face_darts = Vec::with_capacity(face.loops().len());
+            for loop_ in face.loops() {
+                let count = loop_.uses.len();
+                let darts: Vec<Dart> = (0..2 * count).map(|_| raw.add_dart()).collect();
+                for pair in 0..count {
+                    raw.link(Dim::Zero, darts[2 * pair], darts[2 * pair + 1])?;
                 }
-                if vertices.insert(use_.end, ()).is_none() {
-                    edit.add_vertex(VertexAttr::new(end, use_.end_point));
+                for pair in 0..count {
+                    raw.link(
+                        Dim::One,
+                        darts[2 * pair + 1],
+                        darts[(2 * pair + 2) % (2 * count)],
+                    )?;
                 }
-
-                if edges.insert(use_.edge, ()).is_none() {
-                    // The reference dart must run the way the *support* does.
-                    // An `EdgeAttr` stores no interval, so NGK re-derives the
-                    // span as the one running forward along the curve from the
-                    // reference dart's corner — which is the arc the file named
-                    // only if the dart leaves from where the curve starts. On a
-                    // circle the other choice is the complementary arc, which
-                    // is a different edge of a different shape.
-                    let reference = if use_.forward { start } else { end };
-                    edit.add_edge(EdgeAttr::new(reference, use_.curve.clone()));
+                for (index, use_) in loop_.uses.iter().enumerate() {
+                    uses_by_edge.entry(use_.edge).or_default().push(DartUse {
+                        start: darts[2 * index],
+                        end: darts[2 * index + 1],
+                        forward: use_.forward,
+                    });
                 }
+                face_darts.push(darts);
             }
-            edit.add_profile(ProfileAttr::new(darts[0]));
+            loop_darts.push(face_darts);
         }
 
-        let outer_seed = face_darts[*outer][0];
-        let inner_seeds: Vec<Dart> = face_darts
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| index != outer)
-            .map(|(_, darts)| darts[0])
-            .collect();
-        let pcurves: HashMap<Dart, TrimmedCurve2> = loops
-            .iter()
-            .zip(face_darts)
-            .flat_map(|(loop_, darts)| {
-                loop_
-                    .uses
-                    .iter()
-                    .enumerate()
-                    .map(move |(index, use_)| (darts[2 * index], use_.pcurve.clone()))
-            })
-            .collect();
-
-        let face = edit.add_face(FaceAttr::with_pcurves(
-            surface.clone(),
-            outer_seed,
-            inner_seeds.clone(),
-            pcurves,
-        ));
-        // STEP hands a face its bounds as a list and says nothing about how they
-        // connect; a face is one 2-cell only once something joins them. Each
-        // further bound is reached from the outer one along a cut the face owns,
-        // so the map carries what the list only asserted.
-        for inner_seed in inner_seeds {
-            cut_between_loops(edit, face, outer_seed, inner_seed)?;
+        // α2 pairs the two uses of an edge so that both darts sit at the same
+        // corner — which for two loops walking the edge in opposite directions,
+        // as an orientable shell always does, means one's start against the
+        // other's end. That pairing is exactly what makes `α0 ∘ α2` land back in
+        // the boundary walk, which is the consistent-winding invariant
+        // `validate_all_solid_orientations` checks.
+        for uses in uses_by_edge.values() {
+            let [first, second] = uses.as_slice() else {
+                continue;
+            };
+            if first.forward == second.forward {
+                raw.sew(Dim::Two, first.start, second.start)?;
+            } else {
+                raw.sew(Dim::Two, first.start, second.end)?;
+            }
         }
-        shell_root.get_or_insert(outer_seed);
-    }
 
-    // Any boundary dart names the whole shell, and every face was built in the
-    // direction STEP composed, so the first face's outer seed already carries
-    // the side facing away from the material.
-    Ok(shell_root.expect("a planned shell has at least one bounded face"))
+        let mut vertices: HashMap<EntityId, ()> = HashMap::new();
+        let mut edges: HashMap<EntityId, ()> = HashMap::new();
+        let mut shell_root = None;
+
+        for (face, face_darts) in planned.iter().zip(&loop_darts) {
+            let PlannedFace::Bounded {
+                surface,
+                loops,
+                outer,
+            } = face
+            else {
+                continue;
+            };
+            for (loop_, darts) in loops.iter().zip(face_darts) {
+                for (index, use_) in loop_.uses.iter().enumerate() {
+                    let (start, end) = (darts[2 * index], darts[2 * index + 1]);
+
+                    if vertices.insert(use_.start, ()).is_none() {
+                        raw.add_vertex(VertexAttr::new(start, use_.start_point));
+                    }
+                    if vertices.insert(use_.end, ()).is_none() {
+                        raw.add_vertex(VertexAttr::new(end, use_.end_point));
+                    }
+
+                    if edges.insert(use_.edge, ()).is_none() {
+                        // The reference dart must run the way the *support* does.
+                        // An `EdgeAttr` stores no interval, so NGK re-derives the
+                        // span as the one running forward along the curve from the
+                        // reference dart's corner — which is the arc the file named
+                        // only if the dart leaves from where the curve starts. On a
+                        // circle the other choice is the complementary arc, which
+                        // is a different edge of a different shape.
+                        let reference = if use_.forward { start } else { end };
+                        raw.add_edge(EdgeAttr::new(reference, use_.curve.clone()));
+                    }
+                }
+                raw.add_profile(ProfileAttr::new(darts[0]));
+            }
+
+            let outer_seed = face_darts[*outer][0];
+            let inner_seeds: Vec<Dart> = face_darts
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| index != outer)
+                .map(|(_, darts)| darts[0])
+                .collect();
+            let pcurves: HashMap<Dart, TrimmedCurve2> = loops
+                .iter()
+                .zip(face_darts)
+                .flat_map(|(loop_, darts)| {
+                    loop_
+                        .uses
+                        .iter()
+                        .enumerate()
+                        .map(move |(index, use_)| (darts[2 * index], use_.pcurve.clone()))
+                })
+                .collect();
+
+            let face = raw.add_face(FaceAttr::with_pcurves(
+                surface.clone(),
+                outer_seed,
+                inner_seeds.clone(),
+                pcurves,
+            ));
+            // STEP hands a face its bounds as a list and says nothing about how they
+            // connect; a face is one 2-cell only once something joins them. Each
+            // further bound is reached from the outer one along a cut the face owns,
+            // so the map carries what the list only asserted.
+            for inner_seed in inner_seeds {
+                splice_cut_between_loops(raw, face, outer_seed, inner_seed)?;
+            }
+            shell_root.get_or_insert(outer_seed);
+        }
+
+        // Any boundary dart names the whole shell, and every face was built in the
+        // direction STEP composed, so the first face's outer seed already carries
+        // the side facing away from the material.
+        Ok(shell_root.expect("a planned shell has at least one bounded face"))
+    })
 }
 
 /// Reports a curve that would not project into the face's plane.

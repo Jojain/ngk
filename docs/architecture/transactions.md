@@ -23,11 +23,11 @@ at commit and can do neither. Policy event application happens only after the
 complete staged operation passes topology validation and identity
 reconciliation.
 
-Operation code uses `Result` for recoverable failure. A transaction does not
-turn a panic into an error, with one exception: a panic that follows a recorded
-read fault (see "Reads on an open edit") is that fault's consequence and is
-reported as it. Whatever panic crosses a transaction, the model is rolled back
-to its snapshot first, so a caller that catches it holds a valid model.
+Operation code uses `Result` for recoverable failure. Transactions do not catch
+panics, including a panic after a recorded read fault or inside a payload
+policy. Panics propagate without recovery; rollback and model reuse are not
+guaranteed after a panic. A recoverable condition must have an explicit error
+path, and an internal invariant failure requires a correction to the design.
 
 ## Builder composition
 
@@ -52,11 +52,11 @@ nothing hands out `&mut GMap`, so builders can inspect the map through the
 immutable access exposed by `ModelEdit` but cannot bypass the transaction when
 adding darts, changing alpha links, labelling cells, or mutating attributes.
 
-`ModelEdit` owns no snapshot and has no independent commit. It provides the
-checked alpha primitives `add_dart`, `remove_dart`, `link`, `unlink`, and `sew`,
-the embedding label `own_cell`, plus attribute creation, removal, mutation,
-split, and merge declarations; and, above them, the edit operators and the
-deferred block described below.
+`ModelEdit` owns no snapshot and has no independent commit. It provides edit
+operators, attribute creation, removal and mutation, lineage declarations, and
+the deferred block described below. Raw topology primitives are restricted to
+the topology implementation. Builders and external callers access them only
+through `RawEdit` inside a deferred block, which exposes no model or typed view.
 
 Profile and sheet registration follows the same explicit model as edge and
 vertex registration. Adding a face does not synthesize profiles for its
@@ -83,8 +83,8 @@ can be built for. Three layers keep that from becoming a panic:
    goes on. The transaction looks for a recorded fault when the operation
    returns, whatever the operation returned, and when the commit checks have
    run: it rolls back and returns the fault as `InvalidEmbedding` or
-   `UnreadableBoundary`. A panic that the empty answer provoked in the
-   operation is reported as the fault too.
+   `UnreadableBoundary`. If the operation panics before returning, the panic
+   propagates; the recorded fault does not turn it into an error.
 
 The fault names the first read that failed, which is later than the step that
 caused it. Calling `ModelEdit::check_consistent` between two steps narrows that.
@@ -96,7 +96,10 @@ leaves the model valid: the map, the labelling and the entity attributes agree
 when it returns, so a view read between two operators answers. It reads what it
 needs before it writes, refuses a precondition that does not hold with the
 model untouched (`OperatorError`), does the rewiring and the relabelling in the
-one call, and checks the cells it touched.
+one call. Operators preserve their invariants by construction; their tests
+validate the map and embedding between calls. They do not run a complete model
+validation on every return. Refusable inputs use explicit errors; fresh darts
+and already-established internal invariants are not recoverable failure modes.
 
 | Operator | What it does |
 |---|---|
@@ -107,12 +110,13 @@ one call, and checks the cells it touched.
 
 Geometry stays with the caller: `cut_edge` takes the two curves and the point,
 `mark_edge` the point. The operators are one-step units, not the transaction's
-unit; a builder composes them, and they compose with the raw primitives, which
-is what lets a builder move to them one step at a time.
+unit; a builder composes them with deferred raw surgery where a specialized
+rewiring cannot be expressed by the existing operators.
 
-`ModelEdit::sew` and `own_cell` and the other raw primitives are still public.
-A builder that uses them is responsible for the labelling, and the fallible
-reads above are what stands between its mistake and a panic.
+`RawEdit::sew`, `own_cell`, `link`, `unlink` and dart allocation are raw
+primitives: the caller settles the labelling before closing its block.
+`check_consistent` is an optional embedding diagnostic, not a complete topology,
+geometry or solid validation.
 
 ## Deferred surgery
 
@@ -136,16 +140,25 @@ primitive.
 ## Post-conditions at commit
 
 After reconciliation and the structural checks, commit validates every solid
-the transaction created or touched: a solid is touched when it is new, when its
-shells moved, or when a face it bounds was created or merged. The check is
-`validate_solid_orientation`: the shell is closed, the windings agree across
+in the model when `CommitChecks::solid_orientation` is enabled. The check is
+`validate_solid_orientation`: each shell is closed, the windings agree across
 every edge, and the signed volume has the right sign (positive for an outer
-shell, negative for a cavity). A solid that fails it makes the transaction fail
-with `InvalidSolid`.
+shell, negative for a cavity). Failure returns `InvalidSolid`.
 
-The check costs a pass over the touched solid's faces. `CommitChecks`, a
-property of the model that travels with its snapshots, turns it on or off; the
-default is on in debug builds and tests and off in release builds.
+Validation does not select solids from creation or merge events: changing a
+link, a winding or geometry in place need not declare such an event. Checking
+all registered solids also covers an existing solid opened by `unsew_edge`.
+Profiles and open sheets remain valid entities outside solids.
+
+The check costs a pass over all solids' faces. `CommitChecks` travels with model
+snapshots; the default enables this check with `debug_assertions` and disables
+it in release builds, including release tests.
+
+Splitting a boundaryless face replaces its polygon scaffold. Its sheet and solid
+anchors follow the replacement with their orientation preserved, and detached
+old scaffold is removed. Demoting the last seam of a revolved face retains the
+meridian span in an exact finite support so that the boundaryless face covers
+the same geometry rather than the untrimmed profile swept twice.
 
 ## Lineage and policy
 
@@ -219,7 +232,7 @@ lookups resolve the operation's logical survivor.
    anchored off it, no owner of lower dimension than the cell it claims, and
    no cell two entities disagree about;
 6. one same-dimensional raw cell per logical vertex, edge, face and solid;
-7. closed, outward shells for every solid created or touched, when
+7. closed, outward shells for every registered solid, when
    `CommitChecks::solid_orientation` is on;
 8. payload policy on net externally-visible changes;
 9. a read fault recorded while committing counts as a failed commit;

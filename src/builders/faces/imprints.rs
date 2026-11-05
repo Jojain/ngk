@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use super::*;
+use super::boundaryless::BoundarylessReplacement;
 use super::support::sampled_loop_contains;
+use super::*;
 use crate::builders::edges::EdgeSplitError;
 use crate::builders::scaffold::{CutAttachment, cut_between_loops};
 use crate::geometry::parameter::{Fraction, NativeParam, Normalized};
@@ -37,6 +38,7 @@ pub(crate) fn split_face_by_imprints_edit<P: Payload>(
     face: FaceKey,
     imprints: &[FaceImprint],
 ) -> Result<Vec<FaceImprintSplit>, FaceImprintSplitError> {
+    let replacement = BoundarylessReplacement::capture(edit, face);
     let (closed_indices, open_indices): (Vec<_>, Vec<_>) =
         (0..imprints.len()).partition(|&index| imprints[index].pcurve.is_closed());
     let (closed_imprints, open_imprints) = imprints.iter().fold(
@@ -61,6 +63,9 @@ pub(crate) fn split_face_by_imprints_edit<P: Payload>(
         let mut splits = split_ring_face_by_wrapping_chains(edit, face, &open_imprints)?;
         if !splits.is_empty() {
             remap_section_indices(&mut splits, &open_indices);
+            if let Some(replacement) = replacement {
+                replacement.apply(edit)?;
+            }
             return Ok(splits);
         }
     }
@@ -90,6 +95,9 @@ pub(crate) fn split_face_by_imprints_edit<P: Payload>(
     remap_section_indices(&mut open_splits, &open_indices);
     splits.extend(open_splits);
     check_imprints_realized(face, &splits, &graph, &closed_indices, &open_indices)?;
+    if let Some(replacement) = replacement {
+        replacement.apply(edit)?;
+    }
     Ok(splits)
 }
 
@@ -520,7 +528,8 @@ pub(crate) fn split_ring_face_by_wrapping_chains<P: Payload>(
                 let Some(second) = chains.next() else {
                     return Ok(Vec::new());
                 };
-                let split = split_boundaryless_face_into_rings(edit, face, &first, &second, period)?;
+                let split =
+                    split_boundaryless_face_into_rings(edit, face, &first, &second, period)?;
                 rings.push(split.second);
                 splits.push(split);
             }
@@ -604,16 +613,13 @@ pub(crate) fn split_boundaryless_face_into_rings<P: Payload>(
                 ProfileAttr::new(loop_.loop_dart),
             );
         }
-        sections.extend(
-            edges
-                .into_iter()
-                .zip(&chain.links)
-                .map(|(edge, link)| FaceImprintSection {
-                    edge,
-                    imprint: link.source,
-                    interval: link.interval,
-                }),
-        );
+        sections.extend(edges.into_iter().zip(&chain.links).map(|(edge, link)| {
+            FaceImprintSection {
+                edge,
+                imprint: link.source,
+                interval: link.interval,
+            }
+        }));
         // (the copy bounding the band above the chain, the one below it)
         copies.push(if chain.travel() * turn > 0.0 {
             (forward_loop, backward_loop)
@@ -652,7 +658,12 @@ pub(crate) fn split_boundaryless_face_into_rings<P: Payload>(
         FaceAttr::with_loops(
             surface,
             ring(second_above, first_below),
-            second_above.pcurves.clone().into_iter().chain(lifted).collect(),
+            second_above
+                .pcurves
+                .clone()
+                .into_iter()
+                .chain(lifted)
+                .collect(),
         ),
     );
     cut_between_loops(edit, split, second_above.loop_dart, first_below.loop_dart)?;
@@ -1237,59 +1248,62 @@ pub(crate) fn add_section_loop<P: Payload>(
     surface: &Surface,
     imprints: &[FaceImprint],
 ) -> SectionLoop {
-    let n = imprints.len();
-    let darts = (0..2 * n).map(|_| edit.add_dart()).collect::<Vec<_>>();
+    edit.deferred(|raw| {
+        let n = imprints.len();
+        let darts = (0..2 * n).map(|_| raw.add_dart()).collect::<Vec<_>>();
 
-    for edge in 0..n {
-        edit.link(Dim::Zero, darts[2 * edge], darts[2 * edge + 1])
-            .expect("fresh section edge darts must be alpha0-free");
-    }
-    for edge in 0..n {
-        let end = darts[2 * edge + 1];
-        let next_start = darts[2 * ((edge + 1) % n)];
-        edit.link(Dim::One, end, next_start)
-            .expect("fresh section loop darts must be alpha1-free");
-    }
-
-    // A loop of one section closes on itself, so its single 0-cell is where
-    // that section comes back round rather than a place two of them meet.
-    // Nothing is bounded there, so no vertex is registered; `sew_section_loops`
-    // classifies the 0-cell inside the edge instead, which is what leaves a
-    // closed section an unmarked edge rather than a circle with an invented
-    // corner.
-    if n > 1 {
-        for vertex in 0..n {
-            let dart = edit.cell_representative(darts[2 * vertex], Dim::Zero);
-            let uv = imprints[vertex].pcurve.point_at(Fraction::new(0.0));
-            edit.add_vertex_derived_from(
-                vec![EditKey::Face(source_face)],
-                VertexAttr::new(dart, surface.point_at(uv.x, uv.y)),
-            );
+        for edge in 0..n {
+            raw.link(Dim::Zero, darts[2 * edge], darts[2 * edge + 1])
+                .expect("fresh section edge darts must be alpha0-free");
         }
-    }
+        for edge in 0..n {
+            let end = darts[2 * edge + 1];
+            let next_start = darts[2 * ((edge + 1) % n)];
+            raw.link(Dim::One, end, next_start)
+                .expect("fresh section loop darts must be alpha1-free");
+        }
 
-    let edges = (0..n)
-        .map(|edge| {
-            let imprint = &imprints[edge];
-            SectionLoopEdge {
-                dart: darts[2 * edge],
-                start_uv: imprint.pcurve.point_at(Fraction::new(0.0)),
-                end_uv: imprint.pcurve.point_at(Fraction::new(1.0)),
-                curve: imprint.curve.clone(),
-                pcurve: imprint.pcurve.clone(),
+        // A loop of one section closes on itself, so its single 0-cell is where
+        // that section comes back round rather than a place two of them meet.
+        // Nothing is bounded there, so no vertex is registered; `sew_section_loops`
+        // classifies the 0-cell inside the edge instead, which is what leaves a
+        // closed section an unmarked edge rather than a circle with an invented
+        // corner.
+        if n > 1 {
+            for vertex in 0..n {
+                let dart = raw.cell_representative(darts[2 * vertex], Dim::Zero);
+                let uv = imprints[vertex].pcurve.point_at(Fraction::new(0.0));
+                raw.add_vertex_derived_from(
+                    vec![EditKey::Face(source_face)],
+                    VertexAttr::new(dart, surface.point_at(uv.x, uv.y)),
+                );
             }
-        })
-        .collect::<Vec<_>>();
-    let pcurves = edges
-        .iter()
-        .map(|edge| (edge.dart, edge.pcurve.clone()))
-        .collect();
+        }
 
-    SectionLoop {
-        loop_dart: darts[0],
-        edges,
-        pcurves,
-    }
+        let edges = (0..n)
+            .map(|edge| {
+                let imprint = &imprints[edge];
+                SectionLoopEdge {
+                    dart: darts[2 * edge],
+                    start_uv: imprint.pcurve.point_at(Fraction::new(0.0)),
+                    end_uv: imprint.pcurve.point_at(Fraction::new(1.0)),
+                    curve: imprint.curve.clone(),
+                    pcurve: imprint.pcurve.clone(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let pcurves = edges
+            .iter()
+            .map(|edge| (edge.dart, edge.pcurve.clone()))
+            .collect();
+
+        Ok::<_, crate::topology::ModelEditError>(SectionLoop {
+            loop_dart: darts[0],
+            edges,
+            pcurves,
+        })
+    })
+    .expect("fresh section loop construction preserves topology and embedding")
 }
 
 pub(crate) fn add_imprint_section_loop<P: Payload>(
@@ -1307,39 +1321,44 @@ pub(crate) fn sew_section_loops<P: Payload>(
     outside: &SectionLoop,
     island: &SectionLoop,
 ) -> Result<Vec<EdgeKey>, FaceImprintSplitError> {
-    let pairs = outside
-        .edges
-        .iter()
-        .map(|outside_edge| {
-            let island_edge = matching_reversed_loop_edge(outside_edge, &island.edges).ok_or(
-                FaceImprintSplitError::MissingPcurve {
-                    face,
-                    dart: outside_edge.dart,
-                },
-            )?;
-            Ok((outside_edge, edit.alpha(Dim::Zero, island_edge.dart)))
-        })
-        .collect::<Result<Vec<_>, FaceImprintSplitError>>()?;
-    // One pair is one section closing on itself, which `add_section_loop` left
-    // without a vertex.
-    let closes_on_itself = pairs.len() == 1;
-    let mut edges = Vec::with_capacity(pairs.len());
-    for (outside_edge, island_end) in pairs {
-        edit.sew(Dim::Two, outside_edge.dart, island_end)
-            .map_err(|source| FaceImprintSplitError::SectionLoopSewFailed { face, source })?;
-        // The edge's default traversal follows the section, including its
-        // directed source interval. Orient the support to that traversal before
-        // discarding the span: a marked circle's corner cannot encode direction.
-        let key = edit.add_edge_derived_from(
-            vec![EditKey::Face(face)],
-            EdgeAttr::new(outside_edge.dart, support_along(&outside_edge.curve)),
-        );
-        if closes_on_itself {
-            edit.own_cell(Dim::Zero, outside_edge.dart, EntityOwner::Edge(key));
+    edit.deferred(|raw| {
+        let pairs = outside
+            .edges
+            .iter()
+            .map(|outside_edge| {
+                let island_edge = matching_reversed_loop_edge(outside_edge, &island.edges).ok_or(
+                    FaceImprintSplitError::MissingPcurve {
+                        face,
+                        dart: outside_edge.dart,
+                    },
+                )?;
+                Ok((
+                    outside_edge,
+                    raw.topology().alpha(Dim::Zero, island_edge.dart),
+                ))
+            })
+            .collect::<Result<Vec<_>, FaceImprintSplitError>>()?;
+        // One pair is one section closing on itself, which `add_section_loop` left
+        // without a vertex.
+        let closes_on_itself = pairs.len() == 1;
+        let mut edges = Vec::with_capacity(pairs.len());
+        for (outside_edge, island_end) in pairs {
+            raw.sew(Dim::Two, outside_edge.dart, island_end)
+                .map_err(|source| FaceImprintSplitError::SectionLoopSewFailed { face, source })?;
+            // The edge's default traversal follows the section, including its
+            // directed source interval. Orient the support to that traversal before
+            // discarding the span: a marked circle's corner cannot encode direction.
+            let key = raw.add_edge_derived_from(
+                vec![EditKey::Face(face)],
+                EdgeAttr::new(outside_edge.dart, support_along(&outside_edge.curve)),
+            );
+            if closes_on_itself {
+                raw.own_cell(Dim::Zero, outside_edge.dart, EntityOwner::Edge(key));
+            }
+            edges.push(key);
         }
-        edges.push(key);
-    }
-    Ok(edges)
+        Ok(edges)
+    })
 }
 
 pub(crate) fn matching_reversed_loop_edge(

@@ -5,6 +5,7 @@ use crate::geometry::parameter::Fraction;
 use crate::model::{Cell0, Cell1, Cell2, MergeTopology, Model};
 use crate::model::{OpResult, StaleResult};
 use crate::topology::ModelEditError;
+use crate::topology::RawEdit;
 use crate::topology::embedding::EntityOwner;
 use std::collections::HashMap;
 
@@ -239,20 +240,23 @@ pub(crate) fn add_sphere_edit<P: Payload>(
     frame: Frame,
     radius: f64,
 ) -> Result<ClosedSolid, SphereBuildError> {
-    if !radius.is_finite() || radius <= 0.0 {
-        return Err(SphereBuildError::InvalidRadius { radius });
-    }
-    let surface = Surface::Sphere(Sphere::new(frame, radius));
-    let cell = add_closed_face_cell(edit, &surface)?;
-    let face = edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
-    cell.own(edit, face);
-    let shell = cell.anchor();
-    edit.add_sheet(SheetAttr::new(shell));
-    Ok(ClosedSolid {
-        solid: edit.add_solid_derived_from(vec![EditKey::Face(face)], SolidAttr::new(shell, None)),
-        faces: vec![face],
-        seams: Vec::new(),
-        revision: None,
+    edit.deferred(|raw| {
+        if !radius.is_finite() || radius <= 0.0 {
+            return Err(SphereBuildError::InvalidRadius { radius });
+        }
+        let surface = Surface::Sphere(Sphere::new(frame, radius));
+        let cell = add_closed_face_cell(raw, &surface)?;
+        let face = raw.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
+        cell.own(raw, face);
+        let shell = cell.anchor();
+        raw.add_sheet(SheetAttr::new(shell));
+        Ok(ClosedSolid {
+            solid: raw
+                .add_solid_derived_from(vec![EditKey::Face(face)], SolidAttr::new(shell, None)),
+            faces: vec![face],
+            seams: Vec::new(),
+            revision: None,
+        })
     })
 }
 
@@ -336,20 +340,23 @@ pub(crate) fn add_torus_edit<P: Payload>(
     major: f64,
     minor: f64,
 ) -> Result<ClosedSolid, TorusBuildError> {
-    if !major.is_finite() || !minor.is_finite() || minor <= 0.0 || minor >= major {
-        return Err(TorusBuildError::InvalidRadii { major, minor });
-    }
-    let surface = Surface::Torus(Torus::new(frame, major, minor));
-    let cell = add_closed_face_cell(edit, &surface)?;
-    let face = edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
-    cell.own(edit, face);
-    let shell = cell.anchor();
-    edit.add_sheet(SheetAttr::new(shell));
-    Ok(ClosedSolid {
-        solid: edit.add_solid_derived_from(vec![EditKey::Face(face)], SolidAttr::new(shell, None)),
-        faces: vec![face],
-        seams: Vec::new(),
-        revision: None,
+    edit.deferred(|raw| {
+        if !major.is_finite() || !minor.is_finite() || minor <= 0.0 || minor >= major {
+            return Err(TorusBuildError::InvalidRadii { major, minor });
+        }
+        let surface = Surface::Torus(Torus::new(frame, major, minor));
+        let cell = add_closed_face_cell(raw, &surface)?;
+        let face = raw.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
+        cell.own(raw, face);
+        let shell = cell.anchor();
+        raw.add_sheet(SheetAttr::new(shell));
+        Ok(ClosedSolid {
+            solid: raw
+                .add_solid_derived_from(vec![EditKey::Face(face)], SolidAttr::new(shell, None)),
+            faces: vec![face],
+            seams: Vec::new(),
+            revision: None,
+        })
     })
 }
 
@@ -631,44 +638,55 @@ fn sew_extruded_loop<P: Payload>(
         })
         .collect::<Result<Vec<_>, ExtrudeError>>()?;
 
-    for pair in laterals.windows(2) {
-        sew(
-            edit,
-            Dim::Two,
-            pair[0].topology.end_vertical,
-            pair[1].topology.start_vertical,
-        )?;
-    }
-    if let (Some(first), Some(last)) = (laterals.first(), laterals.last()) {
-        sew(
-            edit,
-            Dim::Two,
-            last.topology.end_vertical,
-            first.topology.start_vertical,
-        )?;
-    }
-
-    for ((bottom_edge, top_edge), lateral) in bottom_edges.iter().zip(top_edges).zip(&laterals) {
-        sew(edit, Dim::Two, lateral.topology.bottom_edge, *bottom_edge)?;
-        sew(edit, Dim::Two, lateral.topology.top_edge, top_edge)?;
-    }
-
-    let vertical_edges = laterals
+    let vertical_sources = bottom_edges
         .iter()
-        .map(|lateral| {
-            let dart = lateral.topology.end_vertical;
-            let vertex = edit
-                .cell_key::<Cell0>(dart)
-                .ok_or(ExtrudeError::MissingSweptVertex { dart })?;
-            Ok(edit.add_edge_derived_from(
-                vec![EditKey::Vertex(vertex)],
-                EdgeAttr::new(
-                    dart,
-                    Curve::line(lateral.vertical_start, lateral.vertical_end),
-                ),
-            ))
+        .map(|&edge| {
+            let dart = edit.alpha(Dim::Zero, edge);
+            edit.cell_key::<Cell0>(dart)
+                .ok_or(ExtrudeError::MissingSweptVertex { dart })
         })
         .collect::<Result<Vec<_>, ExtrudeError>>()?;
+    let vertical_edges = edit.deferred(|raw| {
+        for pair in laterals.windows(2) {
+            sew(
+                raw,
+                Dim::Two,
+                pair[0].topology.end_vertical,
+                pair[1].topology.start_vertical,
+            )?;
+        }
+        if let (Some(first), Some(last)) = (laterals.first(), laterals.last()) {
+            sew(
+                raw,
+                Dim::Two,
+                last.topology.end_vertical,
+                first.topology.start_vertical,
+            )?;
+        }
+
+        for ((bottom_edge, top_edge), lateral) in bottom_edges.iter().zip(top_edges).zip(&laterals)
+        {
+            sew(raw, Dim::Two, lateral.topology.bottom_edge, *bottom_edge)?;
+            sew(raw, Dim::Two, lateral.topology.top_edge, top_edge)?;
+        }
+
+        let vertical_edges = laterals
+            .iter()
+            .zip(&vertical_sources)
+            .map(|(lateral, &vertex)| {
+                let dart = lateral.topology.end_vertical;
+
+                Ok(raw.add_edge_derived_from(
+                    vec![EditKey::Vertex(vertex)],
+                    EdgeAttr::new(
+                        dart,
+                        Curve::line(lateral.vertical_start, lateral.vertical_end),
+                    ),
+                ))
+            })
+            .collect::<Result<Vec<_>, ExtrudeError>>()?;
+        Ok::<_, ExtrudeError>(vertical_edges)
+    })?;
     let representative = laterals
         .first()
         .map(|lateral| lateral.topology.bottom_edge)
@@ -718,53 +736,55 @@ fn sew_wrapping_lateral_face<P: Payload>(
     // The seam is scaffold, not shape — a swept wall closes on itself, and the
     // two copies of the source edge it would otherwise carry are the same curve
     // in the same place.
-    let slots: [[Dart; 2]; 4] = std::array::from_fn(|_| [edit.add_dart(), edit.add_dart()]);
-    for slot in slots {
-        edit.link(Dim::Zero, slot[0], slot[1])?;
-    }
-    for i in 0..slots.len() {
-        edit.link(Dim::One, slots[i][1], slots[(i + 1) % slots.len()][0])?;
-    }
-    let [seam_out, top_slot, seam_back, bottom_slot] = slots;
-    edit.link(Dim::Two, seam_out[0], seam_back[1])?;
-    edit.link(Dim::Two, seam_out[1], seam_back[0])?;
-    let [bottom_start, _bottom_end] = bottom_slot;
-    let [top_start, top_end] = top_slot;
-
-    let uv = prepared.uv;
     let source_edge = edit
         .cell_key::<Cell1>(*bottom_edge)
         .expect("wrapping lateral must have a source edge");
-    edit.add_profile_derived_from(
-        vec![EditKey::Edge(source_edge)],
-        ProfileAttr::new(bottom_start),
-    );
-    edit.add_profile_derived_from(
-        vec![EditKey::Edge(source_edge)],
-        ProfileAttr::new(top_start),
-    );
-    let face = edit.add_face_derived_from(
-        vec![EditKey::Edge(source_edge)],
-        FaceAttr::with_loops(
-            prepared.surface.clone(),
-            vec![
-                LoopDefinition::wrapping(bottom_start, axis),
-                LoopDefinition::wrapping(top_start, axis),
-            ],
-            HashMap::from([
-                (bottom_start, TrimmedCurve2::segment(uv[0], uv[1])),
-                (top_start, TrimmedCurve2::segment(uv[2], uv[3])),
-            ]),
-        ),
-    );
-    edit.own_cell(Dim::One, seam_out[0], EntityOwner::Face(face));
+    edit.deferred(|raw| {
+        let slots: [[Dart; 2]; 4] = std::array::from_fn(|_| [raw.add_dart(), raw.add_dart()]);
+        for slot in slots {
+            raw.link(Dim::Zero, slot[0], slot[1])?;
+        }
+        for i in 0..slots.len() {
+            raw.link(Dim::One, slots[i][1], slots[(i + 1) % slots.len()][0])?;
+        }
+        let [seam_out, top_slot, seam_back, bottom_slot] = slots;
+        raw.link(Dim::Two, seam_out[0], seam_back[1])?;
+        raw.link(Dim::Two, seam_out[1], seam_back[0])?;
+        let [bottom_start, _bottom_end] = bottom_slot;
+        let [top_start, top_end] = top_slot;
 
-    // The swept loop runs with the sweep at the bottom and against it at the
-    // top, so the top loop meets its cap through `alpha0`, as the quad path's
-    // top edge does.
-    sew(edit, Dim::Two, bottom_start, *bottom_edge)?;
-    sew(edit, Dim::Two, top_end, *top_edge)?;
-    Ok(Some((bottom_start, face)))
+        let uv = prepared.uv;
+        raw.add_profile_derived_from(
+            vec![EditKey::Edge(source_edge)],
+            ProfileAttr::new(bottom_start),
+        );
+        raw.add_profile_derived_from(
+            vec![EditKey::Edge(source_edge)],
+            ProfileAttr::new(top_start),
+        );
+        let face = raw.add_face_derived_from(
+            vec![EditKey::Edge(source_edge)],
+            FaceAttr::with_loops(
+                prepared.surface.clone(),
+                vec![
+                    LoopDefinition::wrapping(bottom_start, axis),
+                    LoopDefinition::wrapping(top_start, axis),
+                ],
+                HashMap::from([
+                    (bottom_start, TrimmedCurve2::segment(uv[0], uv[1])),
+                    (top_start, TrimmedCurve2::segment(uv[2], uv[3])),
+                ]),
+            ),
+        );
+        raw.own_cell(Dim::One, seam_out[0], EntityOwner::Face(face));
+
+        // The swept loop runs with the sweep at the bottom and against it at the
+        // top, so the top loop meets its cap through `alpha0`, as the quad path's
+        // top edge does.
+        sew(raw, Dim::Two, bottom_start, *bottom_edge)?;
+        sew(raw, Dim::Two, top_end, *top_edge)?;
+        Ok(Some((bottom_start, face)))
+    })
 }
 
 /// The axis a prepared lateral face spans a whole period of, if it spans one.
@@ -787,7 +807,7 @@ fn swept_period_axis(prepared: &PreparedLateralFace) -> Option<Axis2> {
 }
 
 fn sew<P: Payload>(
-    edit: &mut ModelEdit<'_, P>,
+    edit: &mut RawEdit<'_, '_, P>,
     dim: Dim,
     first: Dart,
     second: Dart,
@@ -844,27 +864,29 @@ fn prepare_lateral_face<P: Payload>(
 fn add_lateral_face_topology<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
 ) -> Result<LateralFaceTopology, ExtrudeError> {
-    let darts = std::array::from_fn(|_| edit.add_dart());
+    edit.deferred(|raw| {
+        let darts = std::array::from_fn(|_| raw.add_dart());
 
-    for i in 0..4 {
-        sew(edit, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
-    }
-    for i in 0..4 {
-        sew(
-            edit,
-            Dim::One,
-            darts[2 * i + 1],
-            darts[(2 * i + 2) % darts.len()],
-        )?;
-    }
+        for i in 0..4 {
+            sew(raw, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
+        }
+        for i in 0..4 {
+            sew(
+                raw,
+                Dim::One,
+                darts[2 * i + 1],
+                darts[(2 * i + 2) % darts.len()],
+            )?;
+        }
 
-    Ok(LateralFaceTopology {
-        loop_dart: darts[0],
-        bottom_edge: darts[0],
-        top_edge: darts[5],
-        start_vertical: darts[7],
-        end_vertical: darts[2],
-        darts,
+        Ok(LateralFaceTopology {
+            loop_dart: darts[0],
+            bottom_edge: darts[0],
+            top_edge: darts[5],
+            start_vertical: darts[7],
+            end_vertical: darts[2],
+            darts,
+        })
     })
 }
 

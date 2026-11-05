@@ -1083,78 +1083,91 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
     let end_entry = end_cut.as_ref().map_or(end_previous_end, |attachment| {
         edit.alpha(Dim::Two, attachment.incoming())
     });
-    let darts = cut
-        .sections
-        .iter()
-        .map(|_| {
-            [
-                edit.add_dart(),
-                edit.add_dart(),
-                edit.add_dart(),
-                edit.add_dart(),
-            ]
-        })
-        .collect::<Vec<_>>();
-    for (index, (_, _, imprint)) in cut.sections.iter().enumerate() {
-        let [a, b, c, d] = darts[index];
-        edit.link(Dim::Zero, a, b).expect("fresh section edge");
-        edit.link(Dim::Zero, c, d).expect("fresh section edge");
-        edit.link(Dim::Two, a, d).expect("fresh section sides");
-        edit.link(Dim::Two, b, c).expect("fresh section sides");
-        old_face.pcurves.insert(a, imprint.pcurve.clone());
-        old_face.pcurves.insert(c, imprint.pcurve.reversed());
-        if index > 0 {
-            edit.link(Dim::One, darts[index - 1][1], a)
-                .expect("chain vertex");
-            edit.link(Dim::One, d, darts[index - 1][2])
-                .expect("reverse chain vertex");
-            let uv = imprint.pcurve.point_at(Fraction::new(0.0));
-            edit.add_vertex_derived_from(
-                vec![EditKey::Face(original_face)],
-                VertexAttr::new(a, old_face.surface.point_at(uv.x, uv.y)),
-            );
-        }
-    }
-    let ab_start = darts[0][0];
-    let ab_end = darts.last().unwrap()[1];
-    let ba_start = darts.last().unwrap()[2];
-    let ba_end = darts[0][3];
-    let pcurve_ab = old_face.pcurves[&ab_start].clone();
-    let pcurve_ba = old_face.pcurves[&ba_start].clone();
+    let (darts, start_dart, start_side, start_pcurve, end_dart, end_side, end_pcurve) = edit
+        .deferred(|raw| {
+            let darts = cut
+                .sections
+                .iter()
+                .map(|_| {
+                    [
+                        raw.add_dart(),
+                        raw.add_dart(),
+                        raw.add_dart(),
+                        raw.add_dart(),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            for (index, (_, _, imprint)) in cut.sections.iter().enumerate() {
+                let [a, b, c, d] = darts[index];
+                raw.link(Dim::Zero, a, b).expect("fresh section edge");
+                raw.link(Dim::Zero, c, d).expect("fresh section edge");
+                raw.link(Dim::Two, a, d).expect("fresh section sides");
+                raw.link(Dim::Two, b, c).expect("fresh section sides");
+                old_face.pcurves.insert(a, imprint.pcurve.clone());
+                old_face.pcurves.insert(c, imprint.pcurve.reversed());
+                if index > 0 {
+                    raw.link(Dim::One, darts[index - 1][1], a)
+                        .expect("chain vertex");
+                    raw.link(Dim::One, d, darts[index - 1][2])
+                        .expect("reverse chain vertex");
+                    let uv = imprint.pcurve.point_at(Fraction::new(0.0));
+                    raw.add_vertex_derived_from(
+                        vec![EditKey::Face(original_face)],
+                        VertexAttr::new(a, old_face.surface.point_at(uv.x, uv.y)),
+                    );
+                }
+            }
+            let ab_start = darts[0][0];
+            let ab_end = darts.last().unwrap()[1];
+            let ba_start = darts.last().unwrap()[2];
+            let ba_end = darts[0][3];
+            let pcurve_ab = old_face.pcurves[&ab_start].clone();
+            let pcurve_ba = old_face.pcurves[&ba_start].clone();
 
-    edit.unlink(Dim::One, start_entry)
-        .expect("split start corner must be alpha1-linked");
-    if !pinched {
-        edit.unlink(Dim::One, end_entry)
-            .expect("split end corner must be alpha1-linked");
-    }
-    edit.link(Dim::One, start_entry, ab_start)
-        .expect("split start must be alpha1-free after unlink");
-    edit.link(Dim::One, ab_end, end_dart)
-        .expect("section endpoint must be alpha1-free");
-    // Each half is named by one dart of its loop, with the chord side it runs
-    // along. Two corners give each half one side of the chord and a stretch of
-    // the old loop. One corner gives the old loop both of the chord's ends, so
-    // the loop runs out along one side and back, and the other side closes on
-    // itself round the island.
-    let (start_half, end_half) = if pinched {
-        edit.link(Dim::One, ba_end, ba_start)
-            .expect("section endpoint must be alpha1-free");
-        (
-            (start_dart, ab_start, &pcurve_ab),
-            (ba_start, ba_start, &pcurve_ba),
-        )
-    } else {
-        edit.link(Dim::One, end_entry, ba_start)
-            .expect("split end must be alpha1-free after unlink");
-        edit.link(Dim::One, ba_end, start_dart)
-            .expect("section endpoint must be alpha1-free");
-        (
-            (start_dart, ba_start, &pcurve_ba),
-            (end_dart, ab_start, &pcurve_ab),
-        )
-    };
-    let (start_dart, end_dart) = (start_half.0, end_half.0);
+            raw.unlink(Dim::One, start_entry)
+                .expect("split start corner must be alpha1-linked");
+            if !pinched {
+                raw.unlink(Dim::One, end_entry)
+                    .expect("split end corner must be alpha1-linked");
+            }
+            raw.link(Dim::One, start_entry, ab_start)
+                .expect("split start must be alpha1-free after unlink");
+            raw.link(Dim::One, ab_end, end_dart)
+                .expect("section endpoint must be alpha1-free");
+            // Each half is named by one dart of its loop, with the chord side it runs
+            // along. Two corners give each half one side of the chord and a stretch of
+            // the old loop. One corner gives the old loop both of the chord's ends, so
+            // the loop runs out along one side and back, and the other side closes on
+            // itself round the island.
+            let (start_half, end_half) = if pinched {
+                raw.link(Dim::One, ba_end, ba_start)
+                    .expect("section endpoint must be alpha1-free");
+                (
+                    (start_dart, ab_start, &pcurve_ab),
+                    (ba_start, ba_start, &pcurve_ba),
+                )
+            } else {
+                raw.link(Dim::One, end_entry, ba_start)
+                    .expect("split end must be alpha1-free after unlink");
+                raw.link(Dim::One, ba_end, start_dart)
+                    .expect("section endpoint must be alpha1-free");
+                (
+                    (start_dart, ba_start, &pcurve_ba),
+                    (end_dart, ab_start, &pcurve_ab),
+                )
+            };
+            Ok::<_, FaceImprintSplitError>((
+                darts,
+                start_half.0,
+                start_half.1,
+                start_half.2.clone(),
+                end_half.0,
+                end_half.1,
+                end_half.2.clone(),
+            ))
+        })?;
+    let start_half = (start_dart, start_side, &start_pcurve);
+    let end_half = (end_dart, end_side, &end_pcurve);
 
     let start_profile = edit.profile_key(start_dart);
     let end_profile = edit.profile_key(end_dart);
@@ -1342,7 +1355,10 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
         if half != splice_half {
             attachment.move_after(edit, half)?;
         }
-        edit.own_cell(Dim::One, cut, EntityOwner::Face(owner));
+        edit.deferred(|raw| {
+            raw.own_cell(Dim::One, cut, EntityOwner::Face(owner));
+            Ok::<_, FaceImprintSplitError>(())
+        })?;
     }
 
     // Every other cell the face owned is scaffold of whichever half its word
@@ -1356,18 +1372,21 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
         .embedding()
         .records_of(EntityOwner::Face(original_face))
         .collect::<Vec<_>>();
-    for record in owned {
-        let half = if edit.cell_representative(record.representative, Dim::Two) == source_cell {
-            original_face
-        } else {
-            second
-        };
-        edit.own_cell(
-            record.dimension,
-            record.representative,
-            EntityOwner::Face(half),
-        );
-    }
+    edit.deferred(|raw| {
+        for record in owned {
+            let half = if raw.cell_representative(record.representative, Dim::Two) == source_cell {
+                original_face
+            } else {
+                second
+            };
+            raw.own_cell(
+                record.dimension,
+                record.representative,
+                EntityOwner::Face(half),
+            );
+        }
+        Ok::<_, FaceImprintSplitError>(())
+    })?;
 
     Ok(FaceImprintSplit {
         first: original_face,

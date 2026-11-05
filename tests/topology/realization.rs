@@ -205,7 +205,10 @@ fn commit_validation_failure_discards_staged_realizations() {
             Point3::new(4.0, 0.0, 0.0)
         );
         let missing = Dart::new(edit.model().dart_count());
-        edit.own_cell(Dim::One, missing, EntityOwner::Edge(key));
+        edit.deferred(|raw| {
+            raw.own_cell(Dim::One, missing, EntityOwner::Edge(key));
+            Ok::<_, ModelEditError>(())
+        })?;
         Ok::<_, ModelEditError>(())
     });
     assert!(matches!(result, Err(ModelEditError::InvalidEmbedding(_))));

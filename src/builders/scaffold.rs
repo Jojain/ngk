@@ -285,7 +285,7 @@ impl ClosedFaceCell {
     }
 
     /// Classifies every cell below the polygon as embedded in `face`.
-    pub(crate) fn own<P: Payload>(&self, edit: &mut ModelEdit<'_, P>, face: FaceKey) {
+    pub(crate) fn own<P: Payload>(&self, edit: &mut RawEdit<'_, '_, P>, face: FaceKey) {
         let owner = EntityOwner::Face(face);
         for &(dim, dart) in &self.interior {
             edit.own_cell(dim, dart, owner);
@@ -308,7 +308,7 @@ impl ClosedFaceCell {
 /// gains is the one 2-cell it is required to occupy, which is also the dart its
 /// shell is rooted at.
 pub(crate) fn add_closed_face_cell<P: Payload>(
-    edit: &mut ModelEdit<'_, P>,
+    edit: &mut RawEdit<'_, '_, P>,
     surface: &Surface,
 ) -> Result<ClosedFaceCell, ClosedFaceCellError> {
     if !surface.is_closed() {
@@ -328,7 +328,7 @@ pub(crate) fn add_closed_face_cell<P: Payload>(
 /// Two edges between the same two corners — the polygon with the edge word
 /// `a a⁻¹` — which is the sphere written as a bigon. `V - E + F = 2`.
 fn add_closed_bigon<P: Payload>(
-    edit: &mut ModelEdit<'_, P>,
+    edit: &mut RawEdit<'_, '_, P>,
 ) -> Result<ClosedFaceCell, ClosedFaceCellError> {
     let d: Vec<Dart> = (0..4).map(|_| edit.add_dart()).collect();
     // The bigon: two edges, each between the same two corners.
@@ -354,7 +354,7 @@ fn add_closed_bigon<P: Payload>(
 /// written as a polygon with the edge word `a b a⁻¹ b⁻¹`. The four corners
 /// become one, the four edges become two, and `V - E + F = 0`.
 fn add_closed_square<P: Payload>(
-    edit: &mut ModelEdit<'_, P>,
+    edit: &mut RawEdit<'_, '_, P>,
 ) -> Result<ClosedFaceCell, ClosedFaceCellError> {
     let d: Vec<Dart> = (0..8).map(|_| edit.add_dart()).collect();
     for pair in [(0, 1), (2, 3), (4, 5), (6, 7)] {
@@ -397,15 +397,18 @@ mod tests {
                 let mut roots = Vec::new();
                 for (index, radius) in [3.0, 2.0, 1.0].into_iter().enumerate() {
                     let surface = Surface::Sphere(Sphere::new(Frame::xyz(), radius));
-                    let cell = add_closed_face_cell(edit, &surface)?;
-                    let face =
-                        edit.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
-                    cell.own(edit, face);
-                    let root = if index == 0 {
-                        cell.anchor()
-                    } else {
-                        edit.alpha(Dim::Zero, cell.anchor())
-                    };
+                    let root = edit.deferred(|raw| {
+                        let cell = add_closed_face_cell(raw, &surface)?;
+                        let face =
+                            raw.add_face(FaceAttr::closed(surface, cell.anchor(), HashMap::new()));
+                        cell.own(raw, face);
+                        let root = if index == 0 {
+                            cell.anchor()
+                        } else {
+                            raw.topology().alpha(Dim::Zero, cell.anchor())
+                        };
+                        Ok::<_, ClosedFaceCellError>(root)
+                    })?;
                     edit.add_sheet(SheetAttr::new(root));
                     roots.push(root);
                 }

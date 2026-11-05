@@ -20,7 +20,12 @@ fn square(g: &mut G, origin: Point3) -> FaceKey {
     add_polygon_with_holes(
         g,
         Plane::xy(),
-        &[corner(0.0, 0.0), corner(1.0, 0.0), corner(1.0, 1.0), corner(0.0, 1.0)],
+        &[
+            corner(0.0, 0.0),
+            corner(1.0, 0.0),
+            corner(1.0, 1.0),
+            corner(0.0, 1.0),
+        ],
         &[],
     )
     .expect("a square should build")
@@ -72,7 +77,10 @@ fn marking_an_unmarked_edge_puts_a_vertex_on_its_closure() {
         .expect("an unmarked edge can be marked");
 
     assert!(matches!(g.edge_unchecked(rim), Edge::Marked(_)));
-    assert_eq!(g.vertex_attr_unchecked(vertex).point, Point3::new(2.0, 0.0, 0.0));
+    assert_eq!(
+        g.vertex_attr_unchecked(vertex).point,
+        Point3::new(2.0, 0.0, 0.0)
+    );
     g.embedding_index();
     assert!(g.try_embedding_index().is_ok());
 }
@@ -94,7 +102,10 @@ fn marking_a_marked_edge_is_refused_and_changes_nothing() {
         error,
         ModelEditError::Operator(OperatorError::EdgeNotUnmarked { .. })
     ));
-    assert_eq!((g.dart_count(), g.iter_vertices().count()), (darts, vertices));
+    assert_eq!(
+        (g.dart_count(), g.iter_vertices().count()),
+        (darts, vertices)
+    );
 }
 
 fn halves(from: Point3, to: Point3, at: Fraction) -> EdgeCutPlan {
@@ -123,7 +134,50 @@ fn cutting_a_free_edge_makes_two_edges_meeting_at_a_vertex() {
     assert_eq!(edge_count(&g), 2);
     assert_eq!(g.iter_vertices().count(), 3);
     assert_eq!(cut.first, edge);
-    assert_eq!(g.vertex_attr_unchecked(cut.vertex).point, Point3::new(1.0, 0.0, 0.0));
+    assert_eq!(
+        g.vertex_attr_unchecked(cut.vertex).point,
+        Point3::new(1.0, 0.0, 0.0)
+    );
+}
+
+#[test]
+fn cutting_an_edge_preserves_alpha3_connections() {
+    use ngk::topology::attributes::{EdgeAttr, VertexAttr};
+    use ngk::topology::gmap::Dim;
+    use ngk::topology::validation::validate_gmap;
+
+    let mut model = G::new();
+    let from = Point3::origin();
+    let to = Point3::new(4.0, 0.0, 0.0);
+    let edge = model
+        .transaction(|edit| {
+            edit.deferred(|raw| {
+                let [a, b, c, d] = [(); 4].map(|_| raw.add_dart());
+                raw.link(Dim::Zero, a, b)?;
+                raw.link(Dim::Zero, c, d)?;
+                raw.link(Dim::Three, a, c)?;
+                raw.link(Dim::Three, b, d)?;
+                raw.add_vertex(VertexAttr::new(a, from));
+                raw.add_vertex(VertexAttr::new(b, to));
+                Ok::<_, ModelEditError>(raw.add_edge(EdgeAttr::new(a, Curve::line(from, to))))
+            })
+        })
+        .expect("an edge shared across alpha3 builds");
+
+    let cut = model
+        .transaction(|edit| {
+            let cut = edit.cut_edge(edge, halves(from, to, Fraction::new(0.5)))?;
+            validate_gmap(edit.topology()).expect("a cut preserves the map axioms");
+            edit.check_consistent()?;
+            Ok::<_, ModelEditError>(cut)
+        })
+        .expect("the shared edge can be cut");
+
+    assert_eq!(cut.first, edge);
+    assert_eq!(model.iter_edges().count(), 2);
+    assert_eq!(model.iter_vertices().count(), 3);
+    let new_cell = model.vertex_attr_unchecked(cut.vertex).dart;
+    assert_ne!(model.alpha(Dim::Three, new_cell), new_cell);
 }
 
 #[test]
@@ -157,7 +211,11 @@ fn cutting_an_unmarked_edge_is_refused() {
     let mut g = G::new();
     let face = add_circle(&mut g, Plane::xy(), 2.0).expect("disc");
     let rim = g.face_unchecked(face).edges()[0].key();
-    let plan = halves(Point3::origin(), Point3::new(1.0, 0.0, 0.0), Fraction::new(0.5));
+    let plan = halves(
+        Point3::origin(),
+        Point3::new(1.0, 0.0, 0.0),
+        Fraction::new(0.5),
+    );
 
     let error = g
         .transaction(|edit| edit.cut_edge(rim, plan))
@@ -299,13 +357,13 @@ fn a_refused_operator_inside_a_failing_transaction_restores_the_model() {
 mod deferred_blocks {
     //! Raw surgery runs in a block that is checked when it closes.
 
+    use ngk::geometry::{Curve, Point3};
     use ngk::model::Model;
     use ngk::topology::ModelEditError;
+    use ngk::topology::attributes::{EdgeAttr, VertexAttr};
     use ngk::topology::embedding::EntityOwner;
     use ngk::topology::gmap::Dim;
     use ngk::topology::payload::StandardPayload;
-    use ngk::topology::attributes::{EdgeAttr, VertexAttr};
-    use ngk::geometry::{Curve, Point3};
 
     type G = Model<StandardPayload>;
 
@@ -331,15 +389,17 @@ mod deferred_blocks {
         let mut g = G::new();
         let (vertex_dart, edge) = g
             .transaction(|edit| {
-                let first = edit.add_dart();
-                let second = edit.add_dart();
-                edit.link(Dim::Zero, first, second)?;
-                edit.add_vertex(VertexAttr::new(first, Point3::origin()));
-                let edge = edit.add_edge(EdgeAttr::new(
-                    first,
-                    Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
-                ));
-                Ok::<_, ModelEditError>((first, edge))
+                edit.deferred(|raw| {
+                    let first = raw.add_dart();
+                    let second = raw.add_dart();
+                    raw.link(Dim::Zero, first, second)?;
+                    raw.add_vertex(VertexAttr::new(first, Point3::origin()));
+                    let edge = raw.add_edge(EdgeAttr::new(
+                        first,
+                        Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 0.0)),
+                    ));
+                    Ok::<_, ModelEditError>((first, edge))
+                })
             })
             .expect("a vertex and an edge");
         let darts = g.dart_count();
@@ -394,7 +454,10 @@ mod deferred_blocks {
             })
         });
 
-        assert!(matches!(result, Err(ModelEditError::DartAlreadyFree { .. })));
+        assert!(matches!(
+            result,
+            Err(ModelEditError::DartAlreadyFree { .. })
+        ));
         assert_eq!(g.dart_count(), 0);
     }
 }

@@ -14,7 +14,7 @@
 use std::collections::{HashMap, HashSet};
 
 use ngk::model::Model;
-use ngk::topology::ModelEdit;
+use ngk::topology::RawEdit;
 use ngk::topology::embedding::{
     Embedding, EmbeddingError, EmbeddingIndex, EntityOwner, LogicalRegion, recover_region,
 };
@@ -145,10 +145,12 @@ impl Scaffold {
         let staged = std::mem::take(&mut self.staged);
         self.model
             .transaction(|edit| {
-                for record in staged.records() {
-                    edit.own_cell(record.dimension, record.representative, record.owner);
-                }
-                Ok::<_, ModelEditError>(())
+                edit.deferred(|raw| {
+                    for record in staged.records() {
+                        raw.own_cell(record.dimension, record.representative, record.owner);
+                    }
+                    Ok::<_, ModelEditError>(())
+                })
             })
             .expect("a fixture's labelling should commit");
         self
@@ -249,11 +251,11 @@ impl Scaffold {
 
 /// Builds a map from a closure that only adds and links darts.
 fn raw_map(
-    build: impl FnOnce(&mut ModelEdit<'_, StandardPayload>) -> Result<Vec<Dart>, ModelEditError>,
+    build: impl FnOnce(&mut RawEdit<'_, '_, StandardPayload>) -> Result<Vec<Dart>, ModelEditError>,
 ) -> (Model<StandardPayload>, Vec<Dart>) {
     let mut map = Model::<StandardPayload>::new();
     let darts = map
-        .transaction(build)
+        .transaction(|edit| edit.deferred(build))
         .expect("a hand-built scaffold should commit");
     (map, darts)
 }
@@ -519,7 +521,7 @@ fn buried(map: &GMap, cell: Dart, dimension: Dim) -> bool {
 ///
 /// Returns the darts by edge then by end, so `quad[i][0]` starts edge `i` and
 /// `quad[i][1]` ends it.
-fn quad(edit: &mut ModelEdit<'_, StandardPayload>) -> Result<[[Dart; 2]; 4], ModelEditError> {
+fn quad(edit: &mut RawEdit<'_, '_, StandardPayload>) -> Result<[[Dart; 2]; 4], ModelEditError> {
     let uses = boundary_word(edit, 4)?;
     Ok([uses[0], uses[1], uses[2], uses[3]])
 }
@@ -530,7 +532,7 @@ fn quad(edit: &mut ModelEdit<'_, StandardPayload>) -> Result<[[Dart; 2]; 4], Mod
 /// reading the other edge the same way round: that is the sphere written as a
 /// bigon. Pairing them the other way round identifies the corners too and gives
 /// a projective plane.
-fn bigon(edit: &mut ModelEdit<'_, StandardPayload>) -> Result<[[Dart; 2]; 2], ModelEditError> {
+fn bigon(edit: &mut RawEdit<'_, '_, StandardPayload>) -> Result<[[Dart; 2]; 2], ModelEditError> {
     let uses = boundary_word(edit, 2)?;
     edit.link(Dim::Two, uses[0][0], uses[1][1])?;
     edit.link(Dim::Two, uses[0][1], uses[1][0])?;
@@ -538,7 +540,7 @@ fn bigon(edit: &mut ModelEdit<'_, StandardPayload>) -> Result<[[Dart; 2]; 2], Mo
 }
 
 /// Adds one face bounded by a single closed edge through a single vertex.
-fn monogon(edit: &mut ModelEdit<'_, StandardPayload>) -> Result<[Dart; 2], ModelEditError> {
+fn monogon(edit: &mut RawEdit<'_, '_, StandardPayload>) -> Result<[Dart; 2], ModelEditError> {
     let a = edit.add_dart();
     let b = edit.add_dart();
     edit.link(Dim::Zero, a, b)?;
@@ -548,7 +550,7 @@ fn monogon(edit: &mut ModelEdit<'_, StandardPayload>) -> Result<[Dart; 2], Model
 
 /// Adds one face whose boundary walks `slots` edge uses in a single cycle.
 fn boundary_word(
-    edit: &mut ModelEdit<'_, StandardPayload>,
+    edit: &mut RawEdit<'_, '_, StandardPayload>,
     slots: usize,
 ) -> Result<Vec<[Dart; 2]>, ModelEditError> {
     let uses: Vec<[Dart; 2]> = (0..slots)
@@ -579,7 +581,7 @@ const CUBE_FACES: [[[i32; 3]; 4]; 6] = [
 
 /// Adds the six quads of one cube and sews them into a closed surface.
 fn cube_surface(
-    edit: &mut ModelEdit<'_, StandardPayload>,
+    edit: &mut RawEdit<'_, '_, StandardPayload>,
 ) -> Result<[[[Dart; 2]; 4]; 6], ModelEditError> {
     let mut faces = [[[Dart::new(0); 2]; 4]; 6];
     for face in &mut faces {

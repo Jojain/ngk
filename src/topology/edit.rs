@@ -12,7 +12,6 @@ use super::embedding::{EmbeddingError, EntityOwner};
 use super::gmap::Dim;
 use super::payload::Payload;
 use super::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
-use super::sheet::Sheet;
 use super::validation::{
     CellOccupancyError, GMapValidationError, ModelValidationError, validate_cell_occupancy,
     validate_gmap, validate_solid_orientation,
@@ -411,10 +410,7 @@ pub enum ModelEditError {
     },
     /// A view was read from a state whose scaffold does not hold together.
     #[error("{entity:?} has no walkable boundary: {reason}")]
-    UnreadableBoundary {
-        entity: EntityOwner,
-        reason: String,
-    },
+    UnreadableBoundary { entity: EntityOwner, reason: String },
     /// A logical entity does not occupy exactly one raw cell of its own dimension.
     #[error("this edit broke logical cell occupancy")]
     InvalidCellOccupancy(#[source] CellOccupancyError),
@@ -434,6 +430,14 @@ pub enum ModelEditError {
 /// All staged mutations and semantic lineage pass through this capability.
 /// Validation, policy application, and rollback are owned by
 /// [`Model::transaction`](Model::transaction).
+/// Raw topology primitives are available only within [`Self::deferred`].
+///
+/// ```compile_fail
+/// use ngk::topology::{ModelEdit, StandardPayload};
+/// fn bypass(edit: &mut ModelEdit<'_, StandardPayload>) {
+///     edit.add_dart();
+/// }
+/// ```
 pub struct ModelEdit<'g, P: Payload> {
     pub(super) model: &'g mut Model<P>,
 }
@@ -495,18 +499,18 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     }
 
     /// Adds an isolated dart inside the transaction.
-    pub fn add_dart(&mut self) -> Dart {
+    pub(super) fn add_dart(&mut self) -> Dart {
         self.model.add_dart()
     }
 
     /// Removes a dart whose isolation has been proven by the caller.
-    pub fn remove_dart(&mut self, dart: super::IsolatedDart) {
+    pub(super) fn remove_dart(&mut self, dart: super::IsolatedDart) {
         self.model.remove_dart(dart);
     }
 
     /// Removes several isolated darts and remaps all retained topology and
     /// attribute references in one atomic compaction.
-    pub fn remove_isolated_darts(
+    pub(super) fn remove_isolated_darts(
         &mut self,
         darts: Vec<super::IsolatedDart>,
     ) -> std::collections::HashMap<super::Dart, super::Dart> {
@@ -525,7 +529,12 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     }
 
     /// Links two free darts through exactly one alpha involution.
-    pub fn link(&mut self, dim: Dim, first: Dart, second: Dart) -> Result<(), ModelEditError> {
+    pub(super) fn link(
+        &mut self,
+        dim: Dim,
+        first: Dart,
+        second: Dart,
+    ) -> Result<(), ModelEditError> {
         self.validate_dart(first)?;
         self.validate_dart(second)?;
         if first == second {
@@ -541,7 +550,7 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     }
 
     /// Unlinks the alpha pair containing `dart`.
-    pub fn unlink(&mut self, dim: Dim, dart: Dart) -> Result<Dart, ModelEditError> {
+    pub(super) fn unlink(&mut self, dim: Dim, dart: Dart) -> Result<Dart, ModelEditError> {
         self.validate_dart(dart)?;
         if self.model.is_free(dart, dim) {
             return Err(ModelEditError::DartAlreadyFree { dart, dim });
@@ -553,7 +562,7 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     ///
     /// Commit rejects a labelling that does not describe the committed map, so
     /// an ownership record cannot outlive the cell it names.
-    pub fn own_cell(&mut self, dimension: Dim, dart: Dart, owner: EntityOwner) {
+    pub(super) fn own_cell(&mut self, dimension: Dim, dart: Dart, owner: EntityOwner) {
         self.model.own_cell(dimension, dart, owner);
     }
 
@@ -562,13 +571,18 @@ impl<'g, P: Payload> ModelEdit<'g, P> {
     /// The counterpart of [`Self::own_cell`], for a cell that stops being
     /// interior to anything -- a closure point an operation promotes into a
     /// corner of its own.
-    pub fn disown_cell(&mut self, dimension: Dim, dart: Dart) {
+    pub(super) fn disown_cell(&mut self, dimension: Dim, dart: Dart) {
         self.model.disown_cell(dimension, dart);
     }
 
     /// Performs a complete sewing operation without exposing intermediate
     /// inconsistent indexes.
-    pub fn sew(&mut self, dim: Dim, first: Dart, second: Dart) -> Result<(), ModelEditError> {
+    pub(super) fn sew(
+        &mut self,
+        dim: Dim,
+        first: Dart,
+        second: Dart,
+    ) -> Result<(), ModelEditError> {
         self.validate_dart(first)?;
         self.validate_dart(second)?;
         let Some(darts) = self.model.is_sewable(first, second, dim) else {
@@ -1316,7 +1330,7 @@ where
     // discarded, so the shells are read through fresh ones.
     g.invalidate_derived_indexes();
     if g.commit_checks().solid_orientation {
-        validate_touched_solids(g, snapshot, events)?;
+        validate_committed_solids(g)?;
     }
     let policy_events = resolve_policy_events(g, snapshot, events, &lineage);
     apply_policy_events(g, snapshot, policy_events, policy)?;
@@ -1324,50 +1338,15 @@ where
     Ok(())
 }
 
-/// Checks that every solid the transaction created or touched has closed,
+/// Checks that every solid in the model has closed,
 /// consistently oriented shells whose normals point outward.
 ///
-/// A solid is touched when it is new, when its shells moved, or when a face it
-/// bounds was created or merged by the transaction's lineage. Solids the
-/// transaction left alone are not read: they passed the same check when the
-/// transaction that made them committed.
-fn validate_touched_solids<P: Payload>(
-    g: &Model<P>,
-    snapshot: &Model<P>,
-    events: &[EditEvent],
-) -> Result<(), ModelEditError> {
-    let changed_faces: HashSet<FaceKey> = events
-        .iter()
-        .filter_map(|event| match event {
-            EditEvent::Created {
-                key: EditKey::Face(face),
-                ..
-            }
-            | EditEvent::Merged {
-                survivor: EditKey::Face(face),
-                ..
-            } => Some(*face),
-            _ => None,
-        })
-        .collect();
-    for (solid, attr) in g.iter_solids() {
-        let moved = snapshot
-            .solid_attr(solid)
-            .is_none_or(|before| before.shells().ne(attr.shells()));
-        let touched = moved
-            || (!changed_faces.is_empty()
-                && attr.shells().any(|shell| {
-                    Sheet::from_dart(g, shell).is_some_and(|sheet| {
-                        sheet
-                            .faces()
-                            .iter()
-                            .any(|face| changed_faces.contains(&face.key()))
-                    })
-                }));
-        if touched {
-            validate_solid_orientation(g, solid)
-                .map_err(|reason| ModelEditError::InvalidSolid { solid, reason })?;
-        }
+/// Lineage does not describe every connectivity or in-place geometry change,
+/// so validation does not infer which solids changed from the edit events.
+fn validate_committed_solids<P: Payload>(g: &Model<P>) -> Result<(), ModelEditError> {
+    for (solid, _) in g.iter_solids() {
+        validate_solid_orientation(g, solid)
+            .map_err(|reason| ModelEditError::InvalidSolid { solid, reason })?;
     }
     Ok(())
 }

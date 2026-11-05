@@ -936,48 +936,50 @@ fn add_triangle_wall<P: Payload>(
     uv: [(Point2, Point2); 3],
     start_on_axis: bool,
 ) -> Result<WallFace, SweepError> {
-    let darts: [Dart; 6] = std::array::from_fn(|_| edit.add_dart());
-    for index in 0..3 {
-        edit.link(Dim::Zero, darts[2 * index], darts[2 * index + 1])?;
-        edit.link(
-            Dim::One,
-            darts[2 * index + 1],
-            darts[(2 * index + 2) % darts.len()],
-        )?;
-    }
-    let sources = vec![EditKey::Edge(source)];
-    for index in 0..3 {
-        let dart = edit.cell_representative(darts[2 * index], Dim::Zero);
-        edit.add_vertex_derived_from(sources.clone(), VertexAttr::new(dart, corners[index]));
-        edit.add_edge_derived_from(
-            sources.clone(),
-            EdgeAttr::new(darts[2 * index], boundary[index].clone()),
+    edit.deferred(|raw| {
+        let darts: [Dart; 6] = std::array::from_fn(|_| raw.add_dart());
+        for index in 0..3 {
+            raw.link(Dim::Zero, darts[2 * index], darts[2 * index + 1])?;
+            raw.link(
+                Dim::One,
+                darts[2 * index + 1],
+                darts[(2 * index + 2) % darts.len()],
+            )?;
+        }
+        let sources = vec![EditKey::Edge(source)];
+        for index in 0..3 {
+            let dart = raw.cell_representative(darts[2 * index], Dim::Zero);
+            raw.add_vertex_derived_from(sources.clone(), VertexAttr::new(dart, corners[index]));
+            raw.add_edge_derived_from(
+                sources.clone(),
+                EdgeAttr::new(darts[2 * index], boundary[index].clone()),
+            );
+        }
+        let pcurves = (0..3)
+            .map(|index| {
+                (
+                    darts[2 * index],
+                    TrimmedCurve2::segment(uv[index].0, uv[index].1),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        raw.add_profile_derived_from(sources.clone(), ProfileAttr::new(darts[0]));
+        let key = raw.add_face_derived_from(
+            sources,
+            FaceAttr::with_pcurves(surface, darts[0], Vec::new(), pcurves),
         );
-    }
-    let pcurves = (0..3)
-        .map(|index| {
-            (
-                darts[2 * index],
-                TrimmedCurve2::segment(uv[index].0, uv[index].1),
-            )
+        let (last_section, start_rail, end_rail) = if start_on_axis {
+            (darts[5], None, Some(darts[2]))
+        } else {
+            (darts[3], Some(darts[5]), None)
+        };
+        Ok(WallFace {
+            key,
+            first_section: darts[0],
+            last_section,
+            start_rail,
+            end_rail,
         })
-        .collect::<HashMap<_, _>>();
-    edit.add_profile_derived_from(sources.clone(), ProfileAttr::new(darts[0]));
-    let key = edit.add_face_derived_from(
-        sources,
-        FaceAttr::with_pcurves(surface, darts[0], Vec::new(), pcurves),
-    );
-    let (last_section, start_rail, end_rail) = if start_on_axis {
-        (darts[5], None, Some(darts[2]))
-    } else {
-        (darts[3], Some(darts[5]), None)
-    };
-    Ok(WallFace {
-        key,
-        first_section: darts[0],
-        last_section,
-        start_rail,
-        end_rail,
     })
 }
 
@@ -989,43 +991,45 @@ fn add_quad_wall<P: Payload>(
     corners: [Point3; 4],
     uv: [Point2; 4],
 ) -> Result<WallFace, SweepError> {
-    let darts: [Dart; 8] = std::array::from_fn(|_| edit.add_dart());
-    for index in 0..4 {
-        edit.link(Dim::Zero, darts[2 * index], darts[2 * index + 1])?;
-        edit.link(
-            Dim::One,
-            darts[2 * index + 1],
-            darts[(2 * index + 2) % darts.len()],
-        )?;
-    }
-    let sources = vec![EditKey::Edge(source)];
-    for index in 0..4 {
-        let dart = edit.cell_representative(darts[2 * index], Dim::Zero);
-        edit.add_vertex_derived_from(sources.clone(), VertexAttr::new(dart, corners[index]));
-        edit.add_edge_derived_from(
-            sources.clone(),
-            EdgeAttr::new(darts[2 * index], boundary[index].clone()),
+    edit.deferred(|raw| {
+        let darts: [Dart; 8] = std::array::from_fn(|_| raw.add_dart());
+        for index in 0..4 {
+            raw.link(Dim::Zero, darts[2 * index], darts[2 * index + 1])?;
+            raw.link(
+                Dim::One,
+                darts[2 * index + 1],
+                darts[(2 * index + 2) % darts.len()],
+            )?;
+        }
+        let sources = vec![EditKey::Edge(source)];
+        for index in 0..4 {
+            let dart = raw.cell_representative(darts[2 * index], Dim::Zero);
+            raw.add_vertex_derived_from(sources.clone(), VertexAttr::new(dart, corners[index]));
+            raw.add_edge_derived_from(
+                sources.clone(),
+                EdgeAttr::new(darts[2 * index], boundary[index].clone()),
+            );
+        }
+        let pcurves = (0..4)
+            .map(|index| {
+                (
+                    darts[2 * index],
+                    TrimmedCurve2::segment(uv[index], uv[(index + 1) % 4]),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        raw.add_profile_derived_from(sources.clone(), ProfileAttr::new(darts[0]));
+        let key = raw.add_face_derived_from(
+            sources,
+            FaceAttr::with_pcurves(surface, darts[0], Vec::new(), pcurves),
         );
-    }
-    let pcurves = (0..4)
-        .map(|index| {
-            (
-                darts[2 * index],
-                TrimmedCurve2::segment(uv[index], uv[(index + 1) % 4]),
-            )
+        Ok(WallFace {
+            key,
+            first_section: darts[0],
+            last_section: darts[5],
+            start_rail: Some(darts[7]),
+            end_rail: Some(darts[2]),
         })
-        .collect::<HashMap<_, _>>();
-    edit.add_profile_derived_from(sources.clone(), ProfileAttr::new(darts[0]));
-    let key = edit.add_face_derived_from(
-        sources,
-        FaceAttr::with_pcurves(surface, darts[0], Vec::new(), pcurves),
-    );
-    Ok(WallFace {
-        key,
-        first_section: darts[0],
-        last_section: darts[5],
-        start_rail: Some(darts[7]),
-        end_rail: Some(darts[2]),
     })
 }
 

@@ -305,18 +305,18 @@ pub struct Model<P: Payload = StandardPayload> {
 /// Which post-conditions commit enforces on top of the structural ones.
 ///
 /// The structural checks -- the map's axioms, the labelling, one raw cell per
-/// entity -- always run. These cost a pass over every solid the transaction
-/// touched, so they can be turned off for a model whose builders are trusted.
+/// entity -- always run. These cost a pass over every solid in the model,
+/// so they can be turned off for a model whose builders are trusted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommitChecks {
-    /// Every solid the transaction created or touched has closed, consistently
+    /// Every solid in the model has closed, consistently
     /// oriented shells whose normals point outward and whose signed volume has
     /// the right sign. A transaction that breaks it fails to commit.
     pub solid_orientation: bool,
 }
 
 impl Default for CommitChecks {
-    /// On in debug builds and in tests, off in release builds.
+    /// On with debug assertions, off in release builds including release tests.
     fn default() -> Self {
         Self {
             solid_orientation: cfg!(debug_assertions),
@@ -357,13 +357,21 @@ where
     /// for what commit would have assigned, so a copy taken to be looked at
     /// can be handled like a committed model.
     pub(crate) fn fill_missing_data(&mut self) {
-        for (_, attr) in self.vertices.iter_mut().filter(|(_, attr)| !attr.has_data()) {
+        for (_, attr) in self
+            .vertices
+            .iter_mut()
+            .filter(|(_, attr)| !attr.has_data())
+        {
             attr.set_data(P::V::default());
         }
         for (_, attr) in self.edges.iter_mut().filter(|(_, attr)| !attr.has_data()) {
             attr.set_data(P::E::default());
         }
-        for (_, attr) in self.profiles.iter_mut().filter(|(_, attr)| !attr.has_data()) {
+        for (_, attr) in self
+            .profiles
+            .iter_mut()
+            .filter(|(_, attr)| !attr.has_data())
+        {
             attr.set_data(P::Profile::default());
         }
         for (_, attr) in self.faces.iter_mut().filter(|(_, attr)| !attr.has_data()) {
@@ -552,7 +560,8 @@ impl<P: Payload> Model<P> {
     ///
     /// The operation receives the only capability that can mutate staged state.
     /// A returned error or failed commit restores the complete starting
-    /// snapshot. Panics are not handled by this API.
+    /// snapshot. Panics propagate without recovery; rollback and model reuse
+    /// are not guaranteed after a panic.
     ///
     /// Payloads are supplied by `P::Policy`, the maintenance policy the payload
     /// named for itself, so no call site has to say which one runs. Use
@@ -618,25 +627,7 @@ impl<P: Payload> Model<P> {
         }));
         self.take_read_fault();
 
-        // A panic that follows a recorded read fault is that fault's
-        // consequence: the builder carried on with an answer it could not
-        // use. It is reported as the fault. Any other panic rolls the model
-        // back, so a caller that catches it holds a valid model, and then
-        // continues to unwind.
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            operation(&mut ModelEdit::new(self))
-        }));
-        let result = match outcome {
-            Ok(result) => result,
-            Err(payload) => {
-                let fault = self.take_read_fault();
-                self.rollback_transaction();
-                return match fault {
-                    Some(fault) => Err(E::from(fault)),
-                    None => std::panic::resume_unwind(payload),
-                };
-            }
-        };
+        let result = operation(&mut ModelEdit::new(self));
         if let Some(fault) = self.take_read_fault() {
             self.rollback_transaction();
             return Err(E::from(fault));

@@ -26,8 +26,12 @@ fn absorb_start_vertex(
     anchor: Dart,
 ) {
     let vertex = edit.cell_key_unchecked::<Cell0>(anchor);
-    edit.remove_vertex(vertex);
-    edit.own_cell(Dim::Zero, anchor, EntityOwner::Edge(edge));
+    edit.deferred(|raw| {
+        raw.remove_vertex(vertex);
+        raw.own_cell(Dim::Zero, anchor, EntityOwner::Edge(edge));
+        Ok::<_, ModelEditError>(())
+    })
+    .expect("absorbing the source vertex preserves embedding");
 }
 
 /// A model holding one edge between two points, and that edge's key.
@@ -45,12 +49,12 @@ fn a_new_model_is_at_revision_zero_and_every_commit_advances_it() {
     assert_eq!(model.revision(), 0);
 
     model
-        .transaction(|edit| Ok::<_, ModelEditError>(edit.add_dart()))
+        .transaction(|edit| edit.deferred(|raw| Ok::<_, ModelEditError>(raw.add_dart())))
         .expect("adding a dart commits");
     assert_eq!(model.revision(), 1);
 
     model
-        .transaction(|edit| Ok::<_, ModelEditError>(edit.add_dart()))
+        .transaction(|edit| edit.deferred(|raw| Ok::<_, ModelEditError>(raw.add_dart())))
         .expect("adding another dart commits");
     assert_eq!(model.revision(), 2);
 }
@@ -59,13 +63,15 @@ fn a_new_model_is_at_revision_zero_and_every_commit_advances_it() {
 fn a_failed_transaction_leaves_the_revision_where_it_was() {
     let mut model = Model::<StandardPayload>::new();
     model
-        .transaction(|edit| Ok::<_, ModelEditError>(edit.add_dart()))
+        .transaction(|edit| edit.deferred(|raw| Ok::<_, ModelEditError>(raw.add_dart())))
         .expect("adding a dart commits");
     let before = model.revision();
 
     let result = model.transaction(|edit| {
-        let dart = edit.add_dart();
-        Err::<(), _>(ModelEditError::SameDart { dart })
+        edit.deferred(|raw| {
+            let dart = raw.add_dart();
+            Err::<(), _>(ModelEditError::SameDart { dart })
+        })
     });
 
     assert!(result.is_err());
@@ -105,9 +111,11 @@ fn a_rollback_restores_the_embedding_as_well_as_the_map() {
         .expect("the first label commits");
 
     let result = model.transaction(|edit| {
-        let dart = edit.add_dart();
-        edit.own_cell(Dim::One, dart, EntityOwner::Face(FaceKey::default()));
-        Err::<(), _>(ModelEditError::SameDart { dart })
+        edit.deferred(|raw| {
+            let dart = raw.add_dart();
+            raw.own_cell(Dim::One, dart, EntityOwner::Face(FaceKey::default()));
+            Err::<(), _>(ModelEditError::SameDart { dart })
+        })
     });
 
     assert!(result.is_err());
@@ -134,9 +142,11 @@ fn a_label_two_entities_disagree_about_is_rejected_at_commit() {
     let _ = edge;
 
     let result = model.transaction(|edit| {
-        edit.own_cell(Dim::One, anchor, holder);
-        edit.own_cell(Dim::One, far_side, intruder);
-        Ok::<_, ModelEditError>(())
+        edit.deferred(|raw| {
+            raw.own_cell(Dim::One, anchor, holder);
+            raw.own_cell(Dim::One, far_side, intruder);
+            Ok::<_, ModelEditError>(())
+        })
     });
 
     assert!(
@@ -152,9 +162,11 @@ fn a_label_anchored_off_the_map_is_rejected_at_commit() {
     let beyond = Dart::new(model.dart_count());
 
     let result = model.transaction(|edit| {
-        edit.own_cell(Dim::One, beyond, EntityOwner::Face(FaceKey::default()));
-        let _ = edge;
-        Ok::<_, ModelEditError>(())
+        edit.deferred(|raw| {
+            raw.own_cell(Dim::One, beyond, EntityOwner::Face(FaceKey::default()));
+            let _ = edge;
+            Ok::<_, ModelEditError>(())
+        })
     });
 
     assert!(matches!(result, Err(ModelEditError::InvalidEmbedding(_))));
@@ -170,19 +182,23 @@ fn a_label_survives_the_renumbering_that_removing_darts_causes() {
     // move with it.
     let second = model
         .transaction(|edit| {
-            let first = edit.add_dart();
-            let second = edit.add_dart();
-            edit.own_cell(Dim::Two, second, owner);
-            let _ = first;
-            Ok::<_, ModelEditError>(second)
+            edit.deferred(|raw| {
+                let first = raw.add_dart();
+                let second = raw.add_dart();
+                raw.own_cell(Dim::Two, second, owner);
+                let _ = first;
+                Ok::<_, ModelEditError>(second)
+            })
         })
         .expect("two darts commit");
     assert_eq!(second, Dart::new(1));
 
     model
         .transaction(|edit| {
-            edit.remove_isolated_darts(vec![ngk::topology::IsolatedDart::new(Dart::new(0))]);
-            Ok::<_, ModelEditError>(())
+            edit.deferred(|raw| {
+                raw.remove_isolated_darts(vec![ngk::topology::IsolatedDart::new(Dart::new(0))]);
+                Ok::<_, ModelEditError>(())
+            })
         })
         .expect("removing the unlabelled dart commits");
 
@@ -234,8 +250,10 @@ fn a_rolled_back_model_still_serializes_to_the_state_it_kept() {
     let committed = serde_json::to_string(&model).expect("a model serializes");
 
     let result = model.transaction(|edit| {
-        let dart = edit.add_dart();
-        Err::<(), _>(ModelEditError::SameDart { dart })
+        edit.deferred(|raw| {
+            let dart = raw.add_dart();
+            Err::<(), _>(ModelEditError::SameDart { dart })
+        })
     });
     assert!(result.is_err());
 

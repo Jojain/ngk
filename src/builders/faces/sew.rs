@@ -99,26 +99,29 @@ pub(crate) fn sew_faces_along<P: Payload>(
     if !edit.is_free(da, Dim::Two) || !edit.is_free(db, Dim::Two) {
         return Err(FaceSewError::Mismatch);
     }
-    edit.sew(Dim::Two, da, db)?;
-    edit.merge_edges_into(first, second);
-    merges.edges.insert(second, first);
-    for (a, b) in av.into_iter().zip(bv) {
-        // Nothing to reconcile where an end carries no logical vertex: the two
-        // sides meet along the edge, not at a corner either of them has.
-        let (Some(mut a), Some(mut b)) = (a, b) else {
-            continue;
-        };
-        while let Some(&next) = merges.vertices.get(&a) {
-            a = next;
+    edit.deferred(|raw| {
+        raw.sew(Dim::Two, da, db)?;
+        raw.merge_edges_into(first, second);
+        merges.edges.insert(second, first);
+        for (a, b) in av.into_iter().zip(bv) {
+            // Nothing to reconcile where an end carries no logical vertex: the two
+            // sides meet along the edge, not at a corner either of them has.
+            let (Some(mut a), Some(mut b)) = (a, b) else {
+                continue;
+            };
+            while let Some(&next) = merges.vertices.get(&a) {
+                a = next;
+            }
+            while let Some(&next) = merges.vertices.get(&b) {
+                b = next;
+            }
+            if a != b {
+                raw.merge_vertices_into(a, b);
+                merges.vertices.insert(b, a);
+            }
         }
-        while let Some(&next) = merges.vertices.get(&b) {
-            b = next;
-        }
-        if a != b {
-            edit.merge_vertices_into(a, b);
-            merges.vertices.insert(b, a);
-        }
-    }
+        Ok::<_, FaceSewError>(())
+    })?;
     Ok(traversal)
 }
 

@@ -68,6 +68,63 @@ impl<P: Payload> ModelEdit<'_, P> {
 }
 
 impl<P: Payload> RawEdit<'_, '_, P> {
+    /// Registers a solid under a fresh identity.
+    pub fn add_solid(&mut self, solid: SolidAttr<P::S>) -> SolidKey {
+        self.edit.add_solid(solid)
+    }
+
+    /// Registers a sheet component.
+    pub fn add_sheet(&mut self, sheet: SheetAttr<P::Sheet>) -> SheetKey {
+        self.edit.add_sheet(sheet)
+    }
+
+    /// Registers a solid derived from the named source entities.
+    pub fn add_solid_derived_from(
+        &mut self,
+        sources: Vec<EditKey>,
+        solid: SolidAttr<P::S>,
+    ) -> SolidKey {
+        self.edit.add_solid_derived_from(sources, solid)
+    }
+
+    /// Removes a dart whose isolation has been proven by the caller.
+    pub fn remove_dart(&mut self, dart: IsolatedDart) {
+        self.edit.remove_dart(dart);
+    }
+
+    /// Registers a vertex split from an existing vertex.
+    pub fn add_vertex_split_from(
+        &mut self,
+        source: VertexKey,
+        vertex: VertexAttr<P::V>,
+    ) -> VertexKey {
+        self.edit.add_vertex_split_from(source, vertex)
+    }
+
+    /// Registers an edge split from an existing edge.
+    pub fn add_edge_split_from(&mut self, source: EdgeKey, edge: EdgeAttr<P::E>) -> EdgeKey {
+        self.edit.add_edge_split_from(source, edge)
+    }
+
+    /// Registers a profile split from an existing profile.
+    pub fn add_profile_split_from(
+        &mut self,
+        source: ProfileKey,
+        profile: ProfileAttr<P::Profile>,
+    ) -> ProfileKey {
+        self.edit.add_profile_split_from(source, profile)
+    }
+
+    /// Registers a face split from an existing face.
+    pub fn add_face_split_from(&mut self, source: FaceKey, face: FaceAttr<P::F>) -> FaceKey {
+        self.edit.add_face_split_from(source, face)
+    }
+
+    /// Declares the surviving identity of two fused edges.
+    pub fn merge_edges_into(&mut self, survivor: EdgeKey, removed: EdgeKey) {
+        self.edit.merge_edges_into(survivor, removed);
+    }
+
     /// Adds an isolated dart.
     pub fn add_dart(&mut self) -> Dart {
         self.edit.add_dart()

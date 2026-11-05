@@ -59,36 +59,40 @@ pub(crate) fn add_annulus_edit<P: Payload>(
     // hole, back along the bridge, once round the outer rim. Reading the bridge
     // before and after the hole is what makes the walk turn out of the hole and
     // back onto the outer rim rather than round the hole for ever.
-    let slots: Vec<[Dart; 2]> = (0..4).map(|_| [edit.add_dart(), edit.add_dart()]).collect();
-    for slot in &slots {
-        edit.link(Dim::Zero, slot[0], slot[1])?;
-    }
-    for i in 0..slots.len() {
-        edit.link(Dim::One, slots[i][1], slots[(i + 1) % slots.len()][0])?;
-    }
-    let [bridge_out, inner_loop_slot, bridge_back, outer_loop_slot] =
-        [0, 1, 2, 3].map(|i| slots[i]);
-    edit.link(Dim::Two, bridge_out[0], bridge_back[1])?;
-    edit.link(Dim::Two, bridge_out[1], bridge_back[0])?;
+    let (outer_loop, inner_loop, outer_edge, inner_edge, bridge_out) = edit.deferred(|raw| {
+        let slots: Vec<[Dart; 2]> = (0..4).map(|_| [raw.add_dart(), raw.add_dart()]).collect();
+        for slot in &slots {
+            raw.link(Dim::Zero, slot[0], slot[1])?;
+        }
+        for i in 0..slots.len() {
+            raw.link(Dim::One, slots[i][1], slots[(i + 1) % slots.len()][0])?;
+        }
+        let [bridge_out, inner_loop_slot, bridge_back, outer_loop_slot] =
+            [0, 1, 2, 3].map(|i| slots[i]);
+        raw.link(Dim::Two, bridge_out[0], bridge_back[1])?;
+        raw.link(Dim::Two, bridge_out[1], bridge_back[0])?;
 
-    let inner_plane = Plane::new(plane.origin(), plane.x_dir(), -plane.normal());
-    let outer_edge = edit.add_edge(EdgeAttr::new(
-        outer_loop_slot[0],
-        Curve::circle(plane.clone(), outer_radius),
-    ));
-    let inner_edge = edit.add_edge(EdgeAttr::new(
-        inner_loop_slot[0],
-        Curve::circle(inner_plane, inner_radius),
-    ));
-    // Each rim closes where the bridge meets it. That 0-cell is interior to the
-    // rim, not a corner: nothing else meets there, and the rim stays unmarked.
-    edit.own_cell(Dim::Zero, outer_loop_slot[0], EntityOwner::Edge(outer_edge));
-    edit.own_cell(Dim::Zero, inner_loop_slot[0], EntityOwner::Edge(inner_edge));
+        let inner_plane = Plane::new(plane.origin(), plane.x_dir(), -plane.normal());
+        let outer_edge = raw.add_edge(EdgeAttr::new(
+            outer_loop_slot[0],
+            Curve::circle(plane.clone(), outer_radius),
+        ));
+        let inner_edge = raw.add_edge(EdgeAttr::new(
+            inner_loop_slot[0],
+            Curve::circle(inner_plane, inner_radius),
+        ));
+        // Each rim closes where the bridge meets it. That 0-cell is interior to the
+        // rim, not a corner: nothing else meets there, and the rim stays unmarked.
+        raw.own_cell(Dim::Zero, outer_loop_slot[0], EntityOwner::Edge(outer_edge));
+        raw.own_cell(Dim::Zero, inner_loop_slot[0], EntityOwner::Edge(inner_edge));
 
-    let outer_loop = outer_loop_slot[0];
-    let inner_loop = inner_loop_slot[0];
-    edit.add_profile(ProfileAttr::new(outer_loop));
-    edit.add_profile(ProfileAttr::new(inner_loop));
+        let outer_loop = outer_loop_slot[0];
+        let inner_loop = inner_loop_slot[0];
+        raw.add_profile(ProfileAttr::new(outer_loop));
+        raw.add_profile(ProfileAttr::new(inner_loop));
+
+        Ok::<_, FaceCreationError>((outer_loop, inner_loop, outer_edge, inner_edge, bridge_out))
+    })?;
 
     let outer_profile =
         Profile::from_dart(edit, outer_loop).expect("outer loop must have a registered profile");
@@ -103,7 +107,10 @@ pub(crate) fn add_annulus_edit<P: Payload>(
     );
     // The bridge belongs to the face's interior, which is what stops the
     // boundary walk emitting it and lets the walk cross it into the hole.
-    edit.own_cell(Dim::One, bridge_out[0], EntityOwner::Face(face_key));
+    edit.deferred(|raw| {
+        raw.own_cell(Dim::One, bridge_out[0], EntityOwner::Face(face_key));
+        Ok::<_, FaceCreationError>(())
+    })?;
     Ok(face_key)
 }
 

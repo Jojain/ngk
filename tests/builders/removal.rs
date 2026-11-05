@@ -592,6 +592,10 @@ fn healing_removes_the_seam_of_an_imported_wall() {
 #[test]
 fn removing_a_seam_can_leave_the_face_boundaryless() {
     let (mut g, sphere, solid) = seamed_revolved_sphere(1.0);
+    let before_volume = g
+        .solid_unchecked(solid)
+        .volume()
+        .expect("the sphere is measurable");
     let (seam, dart) = seam_of(&g, sphere).expect("a revolved meridian carries a seam");
     assert_eq!(g.iter_edges().count(), 1, "the meridian is the only edge");
 
@@ -626,6 +630,11 @@ fn removing_a_seam_can_leave_the_face_boundaryless() {
         "the shell stays rooted in the 2-cell the face still occupies"
     );
     validate_solid_manifold(&g, solid).expect("the healed sphere should still be well formed");
+    let after_volume = g
+        .solid_unchecked(solid)
+        .volume()
+        .expect("the healed sphere is measurable");
+    assert!((after_volume - before_volume).abs() <= 1e-6 * before_volume);
 }
 
 /// The same seam, taken apart by healing rather than by hand.

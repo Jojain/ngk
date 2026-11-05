@@ -493,6 +493,7 @@ pub(crate) fn solid_volume_properties<P: Payload>(
 mod tests {
     use super::*;
     use crate::builders::faces::reverse_face_winding_edit;
+    use crate::model::CommitChecks;
     use crate::modeling::solids::block;
     use crate::topology::ModelEditError;
     use crate::topology::validation::validate_solid_orientation;
@@ -507,6 +508,11 @@ mod tests {
             .iter()
             .map(Face::key)
             .collect::<Vec<_>>();
+        // This fixture deliberately supplies an inward solid to the measurement
+        // API, independently of the commit-time orientation check.
+        shape.model_mut().set_commit_checks(CommitChecks {
+            solid_orientation: false,
+        });
         shape
             .model_mut()
             .transaction(|edit| {
@@ -515,7 +521,7 @@ mod tests {
                 }
                 Ok::<_, ModelEditError>(())
             })
-            .expect("turning every face over commits");
+            .expect("the deliberately inward fixture commits with its orientation check disabled");
 
         let model = shape.model();
         let shell = model.solid_unchecked(solid).shells()[0].dart();
