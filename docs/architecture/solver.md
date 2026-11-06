@@ -29,6 +29,16 @@ the source curve or a model entity. Constructors validate finite data,
 nonzero segments, positive radii and circular arcs strictly shorter than one
 turn. Ellipses, splines, spatial constraints and bindings are outside this API.
 
+## Python
+
+`ngk.solver` exposes the system, the ids, `Segment2`, `Arc2`, `Circle2`, targets and the
+report. `ngk.solver.constraints` has one class per relation, each deriving from
+`Constraint`: a relation is a value with fields that `match` can read, and
+`System2d.constraint` gives it back as its class. Angles and fractions are floats, as in
+the other bindings. `ConflictError` and `NonConvergenceError` derive from `ValueError`
+and carry the ids of the constraints at fault. `ngk.modeling.profiles.from_system` draws
+a solved system, with `edges` by curve id and a named exception per refusal.
+
 ## Visualization playground
 
 The visualization app registers `solver-2d` (sidebar: **Contraintes / Solveur 2D**,

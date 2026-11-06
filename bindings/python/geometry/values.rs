@@ -25,6 +25,18 @@ pub(crate) struct PyPoint2 {
     point: Point2<f64>,
 }
 
+impl PyPoint2 {
+    pub(crate) fn point(&self) -> Point2<f64> {
+        self.point
+    }
+}
+
+impl From<Point2<f64>> for PyPoint2 {
+    fn from(point: Point2<f64>) -> Self {
+        Self { point }
+    }
+}
+
 #[pymethods]
 impl PyPoint2 {
     #[new]
@@ -53,6 +65,12 @@ impl PyPoint2 {
 #[derive(Clone)]
 pub(crate) struct PyVector2 {
     vector: Vector2<f64>,
+}
+
+impl PyVector2 {
+    pub(crate) fn vector(&self) -> Vector2<f64> {
+        self.vector
+    }
 }
 
 #[pymethods]

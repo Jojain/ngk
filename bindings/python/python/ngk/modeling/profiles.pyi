@@ -1,4 +1,5 @@
-from ..geometry import Plane
+from ..geometry import Plane, Point2
+from ..solver import CurveId, System2d
 from ..topology import Edge, Profile
 
 def rectangle(x_size: float, y_size: float, plane: Plane | None = None) -> Profile: ...
@@ -9,3 +10,40 @@ def arc(plane: Plane, radius: float, start_angle: float, end_angle: float) -> Pr
 def from_edges(edges: list[Edge]) -> Profile: ...
 def from_edge(edge: Edge) -> Profile: ...
 def appended(profile: Profile, edge: Edge) -> Profile: ...
+
+class SystemProfile:
+    @property
+    def profile(self) -> Profile: ...
+    @property
+    def curves(self) -> list[CurveId]: ...
+
+class SystemProfiles:
+    @property
+    def edges(self) -> dict[CurveId, Edge]: ...
+    @property
+    def profiles(self) -> list[SystemProfile]: ...
+
+def from_system(system: System2d, plane: Plane, curves: list[CurveId]) -> SystemProfiles: ...
+
+class NotSolvedError(ValueError): ...
+
+class BranchingError(ValueError):
+    curves: list[CurveId]
+
+class JointGapError(ValueError):
+    first: CurveId
+    second: CurveId
+    gap: float
+
+class CrossingError(ValueError):
+    first: CurveId
+    second: CurveId
+    point: Point2
+
+class OverlappingError(ValueError):
+    first: CurveId
+    second: CurveId
+
+class UncertainCrossingError(ValueError):
+    first: CurveId
+    second: CurveId

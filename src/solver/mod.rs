@@ -12,6 +12,7 @@ mod system;
 
 pub use constraints::{Constraint2d, TangencyMode, Target2d};
 pub use error::{EditError, SolveError};
+pub(crate) use ids::AnyId;
 pub use ids::{
     ArcId, CircleId, CircularId, ConstraintId, CurveId, GeometryId, PointId, PointRef, SegmentId,
 };

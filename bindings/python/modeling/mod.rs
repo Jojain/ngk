@@ -6,6 +6,7 @@ mod faces;
 mod heal;
 mod loft;
 mod profiles;
+mod profiles_from_system;
 mod revolve;
 mod sheets;
 mod solids;
@@ -21,7 +22,7 @@ use pyo3::types::PyModule;
 /// [`PyModule::new`] only carries its own leaf name, so this is what lets
 /// each one register under its real dotted path in `sys.modules` and be
 /// found by `from ngk.core.modeling.faces import ...`.
-const EXTENSION_QUALNAME: &str = "ngk.core";
+pub(super) const EXTENSION_QUALNAME: &str = "ngk.core";
 
 pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = parent.py();
@@ -42,6 +43,7 @@ pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 
     let profiles_module = new_submodule(py, "profiles", &modeling_qualname)?;
     profiles::register(&profiles_module)?;
+    profiles_from_system::register(&profiles_module)?;
     modeling.add_submodule(&profiles_module)?;
 
     let revolve_module = new_submodule(py, "revolve", &modeling_qualname)?;
@@ -83,7 +85,7 @@ pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 /// Creates a submodule and registers it in `sys.modules` under its full
 /// dotted path, so `import`/`from ... import ...` can find it directly
 /// rather than only through attribute access on its parent.
-fn new_submodule<'py>(
+pub(super) fn new_submodule<'py>(
     py: Python<'py>,
     name: &str,
     parent_qualname: &str,

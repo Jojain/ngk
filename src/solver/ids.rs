@@ -211,3 +211,21 @@ impl From<ArcId> for CurveId {
         Self::Arc(id)
     }
 }
+
+/// A geometry id told apart by kind.
+pub(crate) enum AnyId {
+    Point(PointId),
+    Segment(SegmentId),
+    Circle(CircleId),
+    Arc(ArcId),
+}
+impl From<GeometryId> for AnyId {
+    fn from(id: GeometryId) -> Self {
+        match id.kind {
+            Kind::Point => Self::Point(PointId(id)),
+            Kind::Segment => Self::Segment(SegmentId(id)),
+            Kind::Circle => Self::Circle(CircleId(id)),
+            Kind::Arc => Self::Arc(ArcId(id)),
+        }
+    }
+}

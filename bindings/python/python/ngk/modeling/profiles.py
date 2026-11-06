@@ -1,5 +1,41 @@
 """Profile constructors."""
 
-from ..core.modeling.profiles import appended, arc, from_edge, from_edges, polygon, polyline, rectangle, square
+from ..core.modeling.profiles import (
+    BranchingError,
+    CrossingError,
+    JointGapError,
+    NotSolvedError,
+    OverlappingError,
+    SystemProfile,
+    SystemProfiles,
+    UncertainCrossingError,
+    appended,
+    arc,
+    from_edge,
+    from_edges,
+    from_system,
+    polygon,
+    polyline,
+    rectangle,
+    square,
+)
 
-__all__ = ["appended", "arc", "from_edge", "from_edges", "polygon", "polyline", "rectangle", "square"]
+__all__ = [
+    "BranchingError",
+    "CrossingError",
+    "JointGapError",
+    "NotSolvedError",
+    "OverlappingError",
+    "SystemProfile",
+    "SystemProfiles",
+    "UncertainCrossingError",
+    "appended",
+    "arc",
+    "from_edge",
+    "from_edges",
+    "from_system",
+    "polygon",
+    "polyline",
+    "rectangle",
+    "square",
+]
