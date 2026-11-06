@@ -79,6 +79,17 @@ fn appended_returns_a_profile_with_the_new_edge() {
 }
 
 #[test]
+fn a_circle_edge_becomes_a_closed_profile() {
+    let circle = edges::circle(Plane::xy(), 2.0).expect("circle edge should build");
+    let from_edge = profiles::from_edges(&[&circle]).expect("one edge should make a profile");
+    assert!(from_edge.profile().is_closed());
+    assert_eq!(from_edge.profile().edges().len(), 1);
+
+    let profile = circle.into_profile();
+    assert!(profile.profile().is_closed());
+}
+
+#[test]
 fn add_copies_an_edge_shape_into_the_profile() {
     let arc = edges::arc(Plane::xy(), 2.0, Rad64::ZERO, Rad64::QUARTER_TURN)
         .expect("arc edge should build");

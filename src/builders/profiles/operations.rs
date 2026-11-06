@@ -75,19 +75,22 @@ pub(crate) fn add_profile_from_edges_edit<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
     edges: &[EdgeKey],
 ) -> Result<ProfileKey, PolylineError> {
+    // One edge joins nothing, so it needs no corners: a circle as built has none.
+    if let [key] = edges {
+        let start = edit
+            .edge_attr(*key)
+            .ok_or(PolylineError::MissingEdge { edge: *key })?
+            .dart;
+        return Ok(
+            edit.add_profile_derived_from(vec![EditKey::Edge(*key)], ProfileAttr::new(start))
+        );
+    }
     let mut edges = edges
         .iter()
         .copied()
         .map(|key| profile_edge_endpoints(edit, key))
         .collect::<Result<Vec<_>, _>>()?;
     let first = edges.first().ok_or(PolylineError::EmptyPolyline)?;
-
-    if edges.len() == 1 {
-        return Ok(edit.add_profile_derived_from(
-            vec![EditKey::Edge(first.key)],
-            ProfileAttr::new(first.start),
-        ));
-    }
 
     let endpoint_degrees = edges
         .iter()
