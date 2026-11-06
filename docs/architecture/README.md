@@ -38,7 +38,6 @@ landed and its lasting content has moved here or into an ADR.
 
 | Date | Review | Status |
 |---|---|---|
-| 2026-11-05 | [Édition : opérateurs et RawEdit, note de reprise](reviews/2026-11-05-edition-operateurs-et-raw-differe.md) | assessment: current state, examples and recommendations in French |
 | 2026-10-22 | [Constraint solvers: representations and CAD integration](reviews/2026-10-22-constraint-solvers-survey.md) | reference: exploratory architecture survey |
 | 2026-10-22 | [Boolean kernels: NGK, OCCT and SMLib](reviews/2026-10-22-boolean-kernels-comparison.md) | reference: source comparison and NGK verification |
 | 2026-10-15 | [Mass properties algorithms](reviews/2026-10-15-mass-properties-algorithms.md) | accepted: [ADR 0001](../adr/0001-mass-properties-by-green-boundary-integral.md) |
