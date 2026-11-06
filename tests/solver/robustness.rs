@@ -1,5 +1,6 @@
 use ngk::geometry::dim2::{trimmed::TrimmedCurve2, utils::Point2};
 use ngk::solver::{Constraint2d as C, SolveError, SolveOptions, System2d, Target2d};
+use radians::Rad64;
 use std::f64::consts::PI;
 
 #[test]
@@ -35,7 +36,8 @@ fn explicitly_reseeding_an_unsigned_angle_can_select_the_other_side() {
         ))
         .unwrap();
     s.add_constraint(C::fixed(a)).unwrap();
-    s.add_constraint(C::angle(a, b, PI / 6.)).unwrap();
+    s.add_constraint(C::angle(a, b, Rad64::new(PI / 6.)))
+        .unwrap();
     s.add_constraint(C::length(b, 2.)).unwrap();
     s.solve().unwrap();
     let negative = TrimmedCurve2::segment(Point2::origin(), Point2::new(3_f64.sqrt(), -1.));

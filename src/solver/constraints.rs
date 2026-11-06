@@ -1,7 +1,9 @@
 use super::{ArcKey, CircleKey, CircularKey, GeometryKey, PointRef, SegmentKey};
 use crate::geometry::dim2::utils::Point2;
+use crate::geometry::parameter::{Fraction, NativeParam};
 use Constraint2d::*;
 use nalgebra::Vector2;
+use radians::Rad64;
 use std::f64::consts::PI;
 
 /// The contact branch of two supporting circles.
@@ -15,7 +17,7 @@ pub enum TangencyMode {
     SecondContainsFirst,
 }
 
-/// Permanent geometric relations. Lengths use the caller's unit, angles radians.
+/// Permanent geometric relations. Lengths use the caller's unit.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Constraint2d {
     Coincident(PointRef, PointRef),
@@ -37,7 +39,7 @@ pub enum Constraint2d {
     Angle {
         first: SegmentKey,
         second: SegmentKey,
-        radians: f64,
+        angle: Rad64,
         oriented: bool,
     },
     Concentric(CircularKey, CircularKey),
@@ -117,19 +119,19 @@ impl Constraint2d {
     pub fn perpendicular(a: SegmentKey, b: SegmentKey) -> Self {
         Self::Perpendicular(a, b)
     }
-    pub fn angle(first: SegmentKey, second: SegmentKey, radians: f64) -> Self {
+    pub fn angle(first: SegmentKey, second: SegmentKey, angle: Rad64) -> Self {
         Self::Angle {
             first,
             second,
-            radians,
+            angle,
             oriented: false,
         }
     }
-    pub fn oriented_angle(first: SegmentKey, second: SegmentKey, radians: f64) -> Self {
+    pub fn oriented_angle(first: SegmentKey, second: SegmentKey, angle: Rad64) -> Self {
         Self::Angle {
             first,
             second,
-            radians,
+            angle,
             oriented: true,
         }
     }
@@ -244,8 +246,8 @@ impl Constraint2d {
             Distance(_, _, v) | DistanceToLine(_, _, v) => v.is_finite() && *v >= 0.,
             OffsetX(_, _, v) | OffsetY(_, _, v) => v.is_finite(),
             Angle {
-                radians, oriented, ..
-            } => radians.is_finite() && (*oriented || (0. ..=PI).contains(radians)),
+                angle, oriented, ..
+            } => angle.val().is_finite() && (*oriented || (0. ..=PI).contains(&angle.val())),
             _ => true,
         }
     }
@@ -272,7 +274,10 @@ pub struct Target2d {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum TargetLocation {
     Point(PointRef),
-    Sample(GeometryKey, f64),
+    /// A fraction of a segment's or arc's span.
+    Fraction(GeometryKey, Fraction),
+    /// A native parameter of a circle, which has no span to be a fraction of.
+    Native(GeometryKey, NativeParam),
 }
 impl Target2d {
     pub fn point(point: impl Into<PointRef>, position: Point2) -> Self {
@@ -283,25 +288,25 @@ impl Target2d {
         }
     }
     /// Targets a fixed fraction in [0, 1] of the directed segment; validated on solve.
-    pub fn on_segment(line: SegmentKey, fraction: f64, position: Point2) -> Self {
+    pub fn on_segment(line: SegmentKey, fraction: Fraction, position: Point2) -> Self {
         Self {
-            location: TargetLocation::Sample(line.0, fraction),
+            location: TargetLocation::Fraction(line.0, fraction),
             position,
             weight: 1.,
         }
     }
     /// Targets a fixed fraction in [0, 1] of the directed arc; validated on solve.
-    pub fn on_arc(arc: ArcKey, fraction: f64, position: Point2) -> Self {
+    pub fn on_arc(arc: ArcKey, fraction: Fraction, position: Point2) -> Self {
         Self {
-            location: TargetLocation::Sample(arc.0, fraction),
+            location: TargetLocation::Fraction(arc.0, fraction),
             position,
             weight: 1.,
         }
     }
-    /// Targets the circle's point at a native angle relative to its imported frame.
-    pub fn on_circle(circle: CircleKey, radians: f64, position: Point2) -> Self {
+    /// Targets the circle's point at a native parameter, its angle from the imported frame.
+    pub fn on_circle(circle: CircleKey, parameter: NativeParam, position: Point2) -> Self {
         Self {
-            location: TargetLocation::Sample(circle.0, radians),
+            location: TargetLocation::Native(circle.0, parameter),
             position,
             weight: 1.,
         }
@@ -314,7 +319,7 @@ impl Target2d {
     pub(crate) fn geometry(&self) -> GeometryKey {
         match self.location {
             TargetLocation::Point(p) => p.geometry,
-            TargetLocation::Sample(g, _) => g,
+            TargetLocation::Fraction(g, _) | TargetLocation::Native(g, _) => g,
         }
     }
 }

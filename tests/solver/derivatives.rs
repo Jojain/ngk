@@ -4,8 +4,10 @@ use super::{
     evaluate, prepare,
 };
 use crate::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
+use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::solver::{Constraint2d as C, System2d, TangencyMode, Target2d};
 use nalgebra::Vector2;
+use radians::Rad64;
 
 #[test]
 fn geometric_jacobians_match_independent_centered_differences() {
@@ -49,8 +51,8 @@ fn geometric_jacobians_match_independent_centered_differences() {
         C::equal_radius(c, arc),
         C::parallel(a, b),
         C::perpendicular(a, b),
-        C::angle(a, b, 0.4),
-        C::oriented_angle(a, b, -0.3),
+        C::angle(a, b, Rad64::new(0.4)),
+        C::oriented_angle(a, b, Rad64::new(-0.3)),
         C::concentric(c, arc),
         C::midpoint(arc.center(), a),
         C::symmetric_about_line(c.center(), arc.end(), b),
@@ -65,9 +67,9 @@ fn geometric_jacobians_match_independent_centered_differences() {
     }
     let targets = vec![
         Target2d::point(arc.end(), Point2::new(2., 3.)),
-        Target2d::on_arc(arc, 0.4, Point2::new(1., 4.)).with_weight(3.),
-        Target2d::on_circle(c, 0.8, Point2::new(-5., 4.)),
-        Target2d::on_segment(b, 0.3, Point2::origin()),
+        Target2d::on_arc(arc, Fraction::new(0.4), Point2::new(1., 4.)).with_weight(3.),
+        Target2d::on_circle(c, NativeParam::new(0.8), Point2::new(-5., 4.)),
+        Target2d::on_segment(b, Fraction::new(0.3), Point2::origin()),
     ];
     let components = prepare::prepare(s.owner, &s.geometry, &s.constraints, &targets, false);
     for component in components {

@@ -1,6 +1,8 @@
 use nalgebra::Vector2;
 use ngk::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
+use ngk::geometry::parameter::{Fraction, NativeParam};
 use ngk::solver::{Constraint2d as C, System2d, TangencyMode, Target2d};
+use radians::Rad64;
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, PI};
 
 fn line(a: (f64, f64), b: (f64, f64)) -> TrimmedCurve2 {
@@ -26,7 +28,7 @@ fn segment_directions_solve_from_orthogonal_initial_guesses() {
             1 => C::vertical(b),
             2 => C::parallel(a, b),
             3 => C::perpendicular(a, b),
-            _ => C::angle(a, b, FRAC_PI_3),
+            _ => C::angle(a, b, Rad64::new(FRAC_PI_3)),
         };
         s.add_constraint(c).unwrap();
         let solved = s.solve().unwrap();
@@ -51,9 +53,9 @@ fn unsigned_angles_keep_the_initial_side_and_oriented_angles_choose_a_side() {
             s.add_constraint(C::fixed(a)).unwrap();
             s.add_constraint(C::length(b, 8.)).unwrap();
             s.add_constraint(if oriented {
-                C::oriented_angle(a, b, FRAC_PI_3)
+                C::oriented_angle(a, b, Rad64::new(FRAC_PI_3))
             } else {
-                C::angle(a, b, FRAC_PI_3)
+                C::angle(a, b, Rad64::new(FRAC_PI_3))
             })
             .unwrap();
             let solved = s.solve().unwrap();
@@ -79,7 +81,8 @@ fn zero_and_half_turn_angles_have_usable_derivatives() {
         let b = s.add_segment(line((1., 1.), (5., 8.))).unwrap();
         s.add_constraint(C::fixed(a)).unwrap();
         s.add_constraint(C::length(b, 5.)).unwrap();
-        s.add_constraint(C::oriented_angle(a, b, angle)).unwrap();
+        s.add_constraint(C::oriented_angle(a, b, Rad64::new(angle)))
+            .unwrap();
         let solved = s.solve().unwrap();
         let b = solved.segment(b).unwrap();
         let v = b.end() - b.start();
@@ -254,12 +257,20 @@ fn fixed_curve_sample_targets_resize_circles_and_drag_segment_interiors() {
     let c = s.add_circle(circle(0., 0., 3.)).unwrap();
     s.add_constraint(C::fixed_point(c.center())).unwrap();
     let solved = s
-        .solve_toward(&[Target2d::on_circle(c, FRAC_PI_2, Point2::new(0., 8.))])
+        .solve_toward(&[Target2d::on_circle(
+            c,
+            NativeParam::new(FRAC_PI_2),
+            Point2::new(0., 8.),
+        )])
         .unwrap();
     near(solved.circle(c).unwrap().radius(), 8.);
     let a = s.add_segment(line((0., 0.), (10., 0.))).unwrap();
     let solved = s
-        .solve_toward(&[Target2d::on_segment(a, 0.5, Point2::new(8., 4.))])
+        .solve_toward(&[Target2d::on_segment(
+            a,
+            Fraction::new(0.5),
+            Point2::new(8., 4.),
+        )])
         .unwrap();
     let line = solved.segment(a).unwrap();
     near((line.start().x + line.end().x) / 2., 8.);

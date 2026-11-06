@@ -6,7 +6,7 @@ use super::{
     constraints::{StoredConstraint, TargetLocation},
     keys::{ConstraintSlot, GeometrySlot},
     numerical,
-    primitives::{Kind, Param, Primitive},
+    primitives::{Param, Primitive},
     solution::SolutionData,
 };
 use crate::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
@@ -320,7 +320,7 @@ impl System2d {
         Ok(solution)
     }
     fn validate_target(&self, target: &Target2d) -> Result<(), EditError> {
-        let primitive = self.get(target.geometry())?;
+        self.get(target.geometry())?;
         if !target.position.coords.iter().all(|v| v.is_finite())
             || !target.weight.is_finite()
             || target.weight <= 0.
@@ -329,9 +329,12 @@ impl System2d {
                 "target coordinates and positive weight must be finite",
             ));
         }
-        if let TargetLocation::Sample(_, t) = target.location
-            && (!t.is_finite() || (primitive.kind != Kind::Circle && !(0. ..=1.).contains(&t)))
-        {
+        let valid = match target.location {
+            TargetLocation::Point(_) => true,
+            TargetLocation::Fraction(_, fraction) => (0. ..=1.).contains(&fraction.value()),
+            TargetLocation::Native(_, parameter) => parameter.is_finite(),
+        };
+        if !valid {
             return Err(EditError::InvalidConstraint(
                 "invalid target curve parameter",
             ));

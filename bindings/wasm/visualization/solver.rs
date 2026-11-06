@@ -5,6 +5,7 @@ use crate::solver::{
 };
 use RelationKind::*;
 use nalgebra::Vector2;
+use radians::Rad64;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -247,10 +248,16 @@ impl SolverPlayground {
             EqualRadius => C::equal_radius(self.circle(r.a)?, self.circle(b()?)?),
             Parallel => C::parallel(self.line(r.a)?, self.line(b()?)?),
             Perpendicular => C::perpendicular(self.line(r.a)?, self.line(b()?)?),
-            Angle => C::angle(self.line(r.a)?, self.line(b()?)?, value()?.to_radians()),
-            OrientedAngle => {
-                C::oriented_angle(self.line(r.a)?, self.line(b()?)?, value()?.to_radians())
-            }
+            Angle => C::angle(
+                self.line(r.a)?,
+                self.line(b()?)?,
+                Rad64::new(value()?.to_radians()),
+            ),
+            OrientedAngle => C::oriented_angle(
+                self.line(r.a)?,
+                self.line(b()?)?,
+                Rad64::new(value()?.to_radians()),
+            ),
             Concentric => C::concentric(self.circle(r.a)?, self.circle(b()?)?),
             Midpoint => C::midpoint(self.point(r.a)?, self.line(b()?)?),
             SymmetricAboutLine => {

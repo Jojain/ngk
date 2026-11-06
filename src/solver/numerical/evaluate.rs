@@ -225,7 +225,12 @@ impl Context<'_> {
     fn target(&self, target: &Target2d) -> JetVector2 {
         match target.location {
             TargetLocation::Point(p) => self.point(p),
-            TargetLocation::Sample(key, t) => self.curve(key).point_at(Jet::constant(t)),
+            TargetLocation::Fraction(key, fraction) => {
+                self.curve(key).point_at(Jet::constant(fraction.value()))
+            }
+            TargetLocation::Native(key, parameter) => {
+                self.curve(key).point_at(Jet::constant(parameter.value()))
+            }
         }
     }
     /// Emits geometric residuals and exact local derivatives with permanent-row provenance.
@@ -284,21 +289,14 @@ impl Context<'_> {
             Angle {
                 first,
                 second,
-                radians,
+                angle: target,
                 oriented,
             } => {
                 let a = self.direction(*first).unit();
                 let b = self.direction(*second).unit();
                 let angle = a.clone().cross(b.clone()).atan2(a.dot(b));
-                vec![angular(
-                    (angle
-                        - if *oriented {
-                            *radians
-                        } else {
-                            c.side * *radians
-                        })
-                    .wrapped(),
-                )]
+                let side = if *oriented { 1. } else { c.side };
+                vec![angular((angle - side * target.val()).wrapped())]
             }
             Concentric(a, b) => pair(self.center(a.0) - self.center(b.0)),
             Midpoint { point, start, end } => pair(

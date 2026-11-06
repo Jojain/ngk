@@ -1,4 +1,7 @@
-/// Physical tolerances and bounded work for local 2D solving.
+use crate::geometry::tolerance::{ANGULAR_TOLERANCE, LINEAR_TOLERANCE};
+
+/// Physical tolerances and bounded work for local 2D solving. By default a solved
+/// relation holds within the tolerances the rest of the kernel checks geometry with.
 #[derive(Clone, Debug)]
 pub struct SolveOptions {
     /// Eliminates exact coordinate equalities and captured constants before factorization.
@@ -16,10 +19,10 @@ impl Default for SolveOptions {
     fn default() -> Self {
         Self {
             linear_reduction: true,
-            linear_tolerance: 1e-8,
-            angular_tolerance: 1e-8,
+            linear_tolerance: LINEAR_TOLERANCE,
+            angular_tolerance: ANGULAR_TOLERANCE,
             rank_tolerance: 1e-10,
-            target_tolerance: 1e-6,
+            target_tolerance: LINEAR_TOLERANCE,
             max_iterations: 120,
             max_target_iterations: 80,
         }

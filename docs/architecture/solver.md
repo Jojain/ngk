@@ -201,6 +201,9 @@ Other row dependencies produce local or partial-local warnings, not
 advice to delete a nonlinear relation. Every original constraint is retained
 and rechecked. Compatible redundancy and underconstraint are successful cases.
 
+`SolveOptions` defaults to the kernel's `LINEAR_TOLERANCE` and `ANGULAR_TOLERANCE`,
+so a solved relation holds within what the rest of NGK checks geometry with.
+
 `Conflict` establishes directly contradictory dimensions, fixed positions or
 fixed curve orientations.
 Other unsolved components return `NonConvergence`, identifying their constraints
