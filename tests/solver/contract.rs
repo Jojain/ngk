@@ -1,6 +1,6 @@
 use nalgebra::Vector2;
 use ngk::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
-use ngk::solver::{Constraint2d, SolveError, System2d, Target2d};
+use ngk::solver::{Constraint2d, GeometryKey, SolveError, System2d, Target2d};
 
 fn segment(a: (f64, f64), b: (f64, f64)) -> TrimmedCurve2 {
     TrimmedCurve2::segment(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
@@ -79,6 +79,62 @@ fn dragging_a_point_preserves_its_permanent_circle_constraint() {
     assert!((point - Point2::new(0., 10.)).norm() < 1e-4);
     assert_eq!(solution.report().degrees_of_freedom, 1);
     assert!(!solution.report().targets[0].reached);
+}
+
+#[test]
+fn freedom_is_reported_per_primitive() {
+    let mut system = System2d::default();
+    let free = system.add_point(Point2::new(1., 1.)).unwrap();
+    let swing = system.add_segment(segment((0., 0.), (10., 0.))).unwrap();
+    let locked = system.add_segment(segment((20., 0.), (30., 0.))).unwrap();
+    let circle = system
+        .add_circle(Circle2::new(Point2::new(50., 0.), Vector2::x(), 5.))
+        .unwrap();
+    system
+        .add_constraint(Constraint2d::fixed_point(swing.start()))
+        .unwrap();
+    system
+        .add_constraint(Constraint2d::length(swing, 10.))
+        .unwrap();
+    system.add_constraint(Constraint2d::fixed(locked)).unwrap();
+    system
+        .add_constraint(Constraint2d::radius(circle, 5.))
+        .unwrap();
+    let solution = system.solve().unwrap();
+    let report = solution.report();
+    let freedom = |geometry: GeometryKey| {
+        report
+            .freedoms
+            .iter()
+            .find(|freedom| freedom.geometry == geometry)
+            .unwrap()
+            .degrees
+    };
+    assert_eq!(freedom(free.into()), 2);
+    assert_eq!(freedom(swing.into()), 1);
+    assert_eq!(freedom(locked.into()), 0);
+    assert_eq!(freedom(circle.into()), 2);
+    assert_eq!(report.degrees_of_freedom, 5);
+}
+
+#[test]
+fn a_motion_shared_by_primitives_counts_in_each() {
+    let mut system = System2d::default();
+    let a = system.add_segment(segment((0., 0.), (10., 0.))).unwrap();
+    let b = system.add_segment(segment((10., 0.), (10., 10.))).unwrap();
+    system
+        .add_constraint(Constraint2d::coincident(a.end(), b.start()))
+        .unwrap();
+    system
+        .add_constraint(Constraint2d::fixed_point(a.start()))
+        .unwrap();
+    system
+        .add_constraint(Constraint2d::fixed_point(b.end()))
+        .unwrap();
+    let solution = system.solve().unwrap();
+    let report = solution.report();
+    assert_eq!(report.degrees_of_freedom, 2);
+    assert!(report.freedoms.iter().all(|freedom| freedom.degrees == 2));
 }
 
 #[test]

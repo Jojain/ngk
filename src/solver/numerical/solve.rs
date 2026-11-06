@@ -1,6 +1,6 @@
 use super::super::{
-    Constraint2d, ConstraintResidual, Redundancy, RedundancyKind, SolveError, SolveOptions,
-    SolveReport, TangencyMode, Target2d, TargetReport,
+    Constraint2d, ConstraintResidual, PrimitiveFreedom, Redundancy, RedundancyKind, SolveError,
+    SolveOptions, SolveReport, TangencyMode, Target2d, TargetReport,
 };
 use super::super::{
     constraints::StoredConstraint,
@@ -81,6 +81,7 @@ pub(crate) fn solve(
         }
         let factor = Factor::new(&final_evaluation.jacobian, options.rank_tolerance);
         report.degrees_of_freedom += attempt.x.len() - factor.rank();
+        report.freedoms.extend(freedoms(component, &factor));
         report.residuals.extend(residuals(1., &physical, options));
         report.redundancies.extend(redundancies(
             component,
@@ -224,6 +225,55 @@ fn improve_targets(
     }
 }
 
+/// The smallest eigenvalue counted as a free direction of a primitive. Eigenvalues are
+/// squared singular values of the null-space projection, whose rounding noise is near
+/// 1e-16, while a real freedom shared across a whole component stays near 1/columns.
+const FREE_DIRECTION: f64 = 1e-12;
+
+/// The rank of the null-space projection restricted to each primitive's parameters.
+fn freedoms(component: &Component, factor: &Factor) -> Vec<PrimitiveFreedom> {
+    component
+        .entries
+        .iter()
+        .map(|entry| {
+            let count = entry.primitive.kind.layout().len();
+            let coefficient = |slot: usize, column: usize| {
+                if component.columns[entry.offset + slot] == Some(column) {
+                    component.multipliers[entry.offset + slot]
+                } else {
+                    0.
+                }
+            };
+            // M Mᵀ - (M Vᵣ)(M Vᵣ)ᵀ, where M maps the unknowns to this primitive's parameters.
+            let mut gram = DMatrix::zeros(count, count);
+            for a in 0..count {
+                let Some(column) = component.columns[entry.offset + a] else {
+                    continue;
+                };
+                for b in 0..count {
+                    gram[(a, b)] = component.multipliers[entry.offset + a] * coefficient(b, column);
+                }
+            }
+            for row in factor.significant_rows() {
+                let projected = DVector::from_fn(count, |a, _| {
+                    component.columns[entry.offset + a].map_or(0., |column| {
+                        component.multipliers[entry.offset + a] * factor.vt[(row, column)]
+                    })
+                });
+                gram -= &projected * projected.transpose();
+            }
+            PrimitiveFreedom {
+                geometry: entry.key,
+                degrees: gram
+                    .symmetric_eigenvalues()
+                    .iter()
+                    .filter(|value| **value > FREE_DIRECTION)
+                    .count(),
+            }
+        })
+        .collect()
+}
+
 /// Thin SVD supplies minimum-norm corrections and projections even at deficient rank.
 struct Factor {
     u: DMatrix<f64>,
@@ -254,10 +304,11 @@ impl Factor {
         }
     }
     fn rank(&self) -> usize {
-        self.singular
-            .iter()
-            .filter(|s| **s > self.threshold)
-            .count()
+        self.significant_rows().count()
+    }
+    /// The rows of `vt` spanning the Jacobian's row space.
+    fn significant_rows(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.singular.len()).filter(|i| self.singular[*i] > self.threshold)
     }
     fn correction(&self, rhs: &DVector<f64>, damping: f64) -> DVector<f64> {
         let mut output = DVector::zeros(self.columns);

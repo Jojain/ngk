@@ -36,11 +36,20 @@ pub struct TargetReport {
     pub distance: f64,
     pub reached: bool,
 }
+/// How freely one primitive's own parameters can still move.
+#[derive(Clone, Debug)]
+pub struct PrimitiveFreedom {
+    pub geometry: GeometryKey,
+    pub degrees: usize,
+}
 /// Diagnostics of the permanent problem; temporary objectives do not consume DOFs.
 #[derive(Clone, Debug, Default)]
 pub struct SolveReport {
     /// Linearized freedom, which can differ from finite mobility at singularities.
     pub degrees_of_freedom: usize,
+    /// Linearized freedom per primitive. A motion shared by several primitives counts in
+    /// each, so these do not add up to `degrees_of_freedom`.
+    pub freedoms: Vec<PrimitiveFreedom>,
     pub redundancies: Vec<Redundancy>,
     pub residuals: Vec<ConstraintResidual>,
     pub targets: Vec<TargetReport>,

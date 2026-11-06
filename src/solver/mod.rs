@@ -16,6 +16,7 @@ pub use keys::{
 };
 pub use options::SolveOptions;
 pub use solution::{
-    ConstraintResidual, Redundancy, RedundancyKind, Solution2d, SolveReport, TargetReport,
+    ConstraintResidual, PrimitiveFreedom, Redundancy, RedundancyKind, Solution2d, SolveReport,
+    TargetReport,
 };
 pub use system::{Removal, System2d};

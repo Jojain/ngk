@@ -193,7 +193,9 @@ offsets rather than publishing a false success.
 target outcomes, chosen circle tangencies and iteration counts separate.
 Temporary targets do not consume permanent DOFs. Rank comes from the scaled
 Jacobian; it is a local linearized estimate, not a proof of finite mobility at
-singular configurations.
+singular configurations. `freedoms` gives the same estimate for each primitive's
+own parameters: a motion shared by several primitives counts in each, so these do
+not add up to the total.
 
 Identical constraints with identical captured values produce a `Duplicate`
 warning. Rows consumed by affine reduction are counted as independent relations.
