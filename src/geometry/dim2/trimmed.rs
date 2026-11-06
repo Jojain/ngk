@@ -21,7 +21,7 @@
 use nalgebra::Vector2;
 use serde::{Deserialize, Serialize};
 
-use super::curves::{Circle2, Curve2, Ellipse2};
+use super::curves::{Circle2, Curve2, Ellipse2, Line2};
 use super::intersections::{
     CurveCurveIntersections2, CurveIntersectionError, CurveIntersectionOptions, intersect_curves,
     intersect_curves_with_options,
@@ -31,6 +31,7 @@ use super::utils::Point2;
 use crate::geometry::dim3::curves::Periodicity;
 use crate::geometry::nurbs::error::NurbsError;
 use crate::geometry::parameter::{Fraction, NativeParam, Normalized};
+use crate::geometry::traits::Curve2Geometry;
 use crate::geometry::{Interval, LINEAR_TOLERANCE};
 
 /// A 2D support together with the native parameter span that is meant.
@@ -39,18 +40,58 @@ use crate::geometry::{Interval, LINEAR_TOLERANCE};
 /// `1` is [`end`](Self::end), whichever way the span runs. A reversed span
 /// (`interval.start > interval.end`) traverses the same geometry backward, and
 /// is a distinct value from its forward twin rather than a normalization bug.
+///
+/// Generic over the support, so a type can say which curve it is a span of: a
+/// [`TrimmedLine2`] cannot be an arc. [`TrimmedCurve2`] is the span of any support.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TrimmedCurve2 {
-    curve: Curve2,
+pub struct Trimmed<C = Curve2> {
+    curve: C,
     interval: Interval,
 }
 
-impl TrimmedCurve2 {
-    /// Pairs a support with an explicit span of its native parameters.
-    pub fn new(curve: Curve2, interval: Interval) -> Self {
-        Self { curve, interval }
-    }
+/// A span of any 2D support.
+pub type TrimmedCurve2 = Trimmed<Curve2>;
+/// A span of a line: a segment.
+pub type TrimmedLine2 = Trimmed<Line2>;
+/// A span of a circle: an arc.
+pub type TrimmedCircle2 = Trimmed<Circle2>;
 
+impl TrimmedLine2 {
+    /// Returns the straight segment from `start` to `end`.
+    ///
+    /// The support is the infinite line through both points, and the span is
+    /// its `[0, 1]` window.
+    pub fn segment(start: Point2, end: Point2) -> Self {
+        Self::new(Line2::new(start, end - start), Interval::new(0.0, 1.0))
+    }
+}
+
+impl TrimmedCircle2 {
+    /// Returns the arc that starts along `x_dir` and sweeps `sweep` radians.
+    ///
+    /// The support is the whole circle; `sweep` is the span over it, so its
+    /// sign chooses the direction and its magnitude may exceed a full turn.
+    pub fn arc(center: Point2, x_dir: Vector2<f64>, radius: f64, sweep: f64) -> Self {
+        Self::new(
+            Circle2::new(center, x_dir, radius),
+            Interval::new(0.0, sweep),
+        )
+    }
+}
+
+impl From<TrimmedLine2> for TrimmedCurve2 {
+    fn from(span: TrimmedLine2) -> Self {
+        Self::new(Curve2::Line(span.curve), span.interval)
+    }
+}
+
+impl From<TrimmedCircle2> for TrimmedCurve2 {
+    fn from(span: TrimmedCircle2) -> Self {
+        Self::new(Curve2::Circle(span.curve), span.interval)
+    }
+}
+
+impl TrimmedCurve2 {
     /// Pairs a support with the span running forward from `start` to `end`.
     ///
     /// Only the shorter way round is expressible on a periodic support: the
@@ -114,8 +155,92 @@ impl TrimmedCurve2 {
         Self::new(curve, domain)
     }
 
+    /// Returns how many chords keep the sag under `tolerance`.
+    ///
+    /// A straight span needs one; a curved one needs enough that each chord
+    /// subtends a small enough turn. The depth limit caps the count the way a
+    /// recursive embedding would.
+    fn sample_count(&self, tolerance: f64, max_depth: usize) -> usize {
+        let depth_limit = 1usize.checked_shl(max_depth.min(20) as u32).unwrap_or(1);
+        let radius = match &self.curve {
+            Curve2::Line(_) => return 1,
+            Curve2::Circle(circle) => circle.radius().abs(),
+            Curve2::Ellipse(ellipse) => ellipse
+                .major_radius()
+                .abs()
+                .max(ellipse.minor_radius().abs()),
+            Curve2::Nurbs(_) => {
+                return self
+                    .to_nurbs()
+                    .map(|nurbs| nurbs.adaptive_samples(tolerance, max_depth).len().max(2) - 1)
+                    .unwrap_or(1)
+                    .min(depth_limit);
+            }
+        };
+        let ratio = (1.0 - tolerance / radius.max(tolerance)).clamp(-1.0, 1.0);
+        let angle_step = (2.0 * ratio.acos()).max(1.0e-6);
+        ((self.interval.delta().abs() / angle_step).ceil() as usize)
+            .max(1)
+            .min(depth_limit)
+    }
+
+    /// Samples the span densely enough to stay within `tolerance` of it.
+    ///
+    /// Returned parameters are normalized traversal fractions of the span.
+    pub fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(Fraction, Point2)> {
+        let segments = self.sample_count(tolerance, max_depth);
+        (0..=segments)
+            .map(|index| {
+                let fraction = Fraction::new(index as f64 / segments as f64);
+                (fraction, self.point_at(fraction))
+            })
+            .collect()
+    }
+
+    /// Returns the span as a standalone support parameterized over `[0, 1]`.
+    ///
+    /// This is the cut-down copy: exact, but no longer the analytic support —
+    /// an arc comes back as the NURBS that represents it. Use it only where a
+    /// curve that *is* the section is required; anywhere the support's identity
+    /// matters, keep the [`TrimmedCurve2`].
+    pub fn to_curve(&self) -> Result<Curve2, NurbsError> {
+        self.curve.trimmed_native(self.interval)
+    }
+
+    /// Returns the span as an exact NURBS curve over `[0, 1]`.
+    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
+        self.to_curve()?.to_nurbs()
+    }
+
+    /// Intersects this span with another using default tolerances.
+    ///
+    /// Returned parameters and intervals are normalized traversal fractions of
+    /// each span.
+    pub fn intersect_curve(
+        &self,
+        other: &TrimmedCurve2,
+    ) -> Result<CurveCurveIntersections2, CurveIntersectionError> {
+        intersect_curves(self, other)
+    }
+
+    /// Intersects this span with another using explicit tolerances.
+    pub fn intersect_curve_with_options(
+        &self,
+        other: &TrimmedCurve2,
+        options: CurveIntersectionOptions,
+    ) -> Result<CurveCurveIntersections2, CurveIntersectionError> {
+        intersect_curves_with_options(self, other, options)
+    }
+}
+
+impl<C> Trimmed<C> {
+    /// Pairs a support with an explicit span of its native parameters.
+    pub fn new(curve: C, interval: Interval) -> Self {
+        Self { curve, interval }
+    }
+
     /// Returns the untrimmed support.
-    pub fn curve(&self) -> &Curve2 {
+    pub fn curve(&self) -> &C {
         &self.curve
     }
 
@@ -125,10 +250,12 @@ impl TrimmedCurve2 {
     }
 
     /// Returns the support, discarding the span.
-    pub fn into_curve(self) -> Curve2 {
+    pub fn into_curve(self) -> C {
         self.curve
     }
+}
 
+impl<C: Curve2Geometry + Clone> Trimmed<C> {
     /// Evaluates at a normalized traversal fraction of the span.
     pub fn point_at(&self, fraction: Fraction) -> Point2 {
         self.curve.point_at(self.interval.at(fraction))
@@ -260,82 +387,5 @@ impl TrimmedCurve2 {
         (0..=segments)
             .map(|index| self.point_at(Fraction::new(index as f64 / segments as f64)))
             .collect()
-    }
-
-    /// Samples the span densely enough to stay within `tolerance` of it.
-    ///
-    /// Returned parameters are normalized traversal fractions of the span.
-    pub fn adaptive_samples(&self, tolerance: f64, max_depth: usize) -> Vec<(Fraction, Point2)> {
-        let segments = self.sample_count(tolerance, max_depth);
-        (0..=segments)
-            .map(|index| {
-                let fraction = Fraction::new(index as f64 / segments as f64);
-                (fraction, self.point_at(fraction))
-            })
-            .collect()
-    }
-
-    /// Returns how many chords keep the sag under `tolerance`.
-    ///
-    /// A straight span needs one; a curved one needs enough that each chord
-    /// subtends a small enough turn. The depth limit caps the count the way a
-    /// recursive embedding would.
-    fn sample_count(&self, tolerance: f64, max_depth: usize) -> usize {
-        let depth_limit = 1usize.checked_shl(max_depth.min(20) as u32).unwrap_or(1);
-        let radius = match &self.curve {
-            Curve2::Line(_) => return 1,
-            Curve2::Circle(circle) => circle.radius().abs(),
-            Curve2::Ellipse(ellipse) => ellipse
-                .major_radius()
-                .abs()
-                .max(ellipse.minor_radius().abs()),
-            Curve2::Nurbs(_) => {
-                return self
-                    .to_nurbs()
-                    .map(|nurbs| nurbs.adaptive_samples(tolerance, max_depth).len().max(2) - 1)
-                    .unwrap_or(1)
-                    .min(depth_limit);
-            }
-        };
-        let ratio = (1.0 - tolerance / radius.max(tolerance)).clamp(-1.0, 1.0);
-        let angle_step = (2.0 * ratio.acos()).max(1.0e-6);
-        ((self.interval.delta().abs() / angle_step).ceil() as usize)
-            .max(1)
-            .min(depth_limit)
-    }
-
-    /// Returns the span as a standalone support parameterized over `[0, 1]`.
-    ///
-    /// This is the cut-down copy: exact, but no longer the analytic support —
-    /// an arc comes back as the NURBS that represents it. Use it only where a
-    /// curve that *is* the section is required; anywhere the support's identity
-    /// matters, keep the [`TrimmedCurve2`].
-    pub fn to_curve(&self) -> Result<Curve2, NurbsError> {
-        self.curve.trimmed_native(self.interval)
-    }
-
-    /// Returns the span as an exact NURBS curve over `[0, 1]`.
-    pub fn to_nurbs(&self) -> Result<NurbsCurve2, NurbsError> {
-        self.to_curve()?.to_nurbs()
-    }
-
-    /// Intersects this span with another using default tolerances.
-    ///
-    /// Returned parameters and intervals are normalized traversal fractions of
-    /// each span.
-    pub fn intersect_curve(
-        &self,
-        other: &TrimmedCurve2,
-    ) -> Result<CurveCurveIntersections2, CurveIntersectionError> {
-        intersect_curves(self, other)
-    }
-
-    /// Intersects this span with another using explicit tolerances.
-    pub fn intersect_curve_with_options(
-        &self,
-        other: &TrimmedCurve2,
-        options: CurveIntersectionOptions,
-    ) -> Result<CurveCurveIntersections2, CurveIntersectionError> {
-        intersect_curves_with_options(self, other, options)
     }
 }
