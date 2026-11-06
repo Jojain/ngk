@@ -1,11 +1,11 @@
 use super::primitives::Kind;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Identity of a geometric primitive, chosen by the caller: its typed id, of any kind.
+/// Identity of a geometric primitive: its typed id, of any kind.
 ///
-/// An id means the same thing in every system built from the same source, so it can be
-/// stored and rebuilt. Keeping ids unique over time is the caller's: a number reused
-/// after a removal names the new primitive.
+/// A system issues it when the primitive is added. Its value can be stored, and `new`
+/// gives the id back to rebuild a system from it, where it means the same thing.
+/// A system refuses an id already in use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct GeometryId {
     pub(crate) kind: Kind,
@@ -20,6 +20,9 @@ macro_rules! geometry_id {
         impl $name {
             pub const fn new(value: u64) -> Self {
                 Self(GeometryId { kind: $kind, value })
+            }
+            pub const fn value(self) -> u64 {
+                self.0.value
             }
         }
         impl From<$name> for GeometryId {
@@ -44,7 +47,7 @@ geometry_id!(SegmentId, Kind::Segment, "Identity of a directed segment.");
 geometry_id!(CircleId, Kind::Circle, "Identity of a full circle.");
 geometry_id!(ArcId, Kind::Arc, "Identity of a directed circular arc.");
 
-/// Identity of a permanent constraint, chosen by the caller.
+/// Identity of a permanent constraint, issued by its system.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ConstraintId(u64);
@@ -52,6 +55,9 @@ pub struct ConstraintId(u64);
 impl ConstraintId {
     pub const fn new(value: u64) -> Self {
         Self(value)
+    }
+    pub const fn value(self) -> u64 {
+        self.0
     }
 }
 

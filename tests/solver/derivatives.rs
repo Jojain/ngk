@@ -10,7 +10,7 @@ use crate::geometry::dim2::{
 };
 use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::solver::{
-    ArcId, CircleId, Constraint2d as C, ConstraintId, SegmentId, System2d, TangencyMode, Target2d,
+    Constraint2d as C, System2d, TangencyMode, Target2d,
 };
 use nalgebra::Vector2;
 use radians::Rad64;
@@ -19,28 +19,21 @@ use radians::Rad64;
 fn geometric_jacobians_match_independent_centered_differences() {
     let mut s = System2d::default();
     let a = s
-        .add_segment(
-            SegmentId::new(1),
-            Segment2::new(Point2::new(1., 2.), Point2::new(7., 5.)),
-        )
+        .add_segment(Segment2::new(Point2::new(1., 2.), Point2::new(7., 5.)))
         .unwrap();
     let b = s
-        .add_segment(
-            SegmentId::new(2),
-            Segment2::new(Point2::new(3., -2.), Point2::new(8., 6.)),
-        )
+        .add_segment(Segment2::new(Point2::new(3., -2.), Point2::new(8., 6.)))
         .unwrap();
     let c = s
-        .add_circle(
-            CircleId::new(3),
-            Circle2::new(Point2::new(-2., 4.), Vector2::x(), 3.),
-        )
+        .add_circle(Circle2::new(Point2::new(-2., 4.), Vector2::x(), 3.))
         .unwrap();
     let arc = s
-        .add_arc(
-            ArcId::new(4),
-            Arc2::new(Point2::new(5., -4.), Vector2::new(1., 2.), 2., -2.4),
-        )
+        .add_arc(Arc2::new(
+            Point2::new(5., -4.),
+            Vector2::new(1., 2.),
+            2.,
+            -2.4,
+        ))
         .unwrap();
     let constraints = vec![
         C::coincident(a.end(), arc.start()),
@@ -69,9 +62,8 @@ fn geometric_jacobians_match_independent_centered_differences() {
         C::tangent_line_circle(a, c),
         C::tangent_circles(c, arc, TangencyMode::External),
     ];
-    for (index, c) in constraints.into_iter().enumerate() {
-        s.add_constraint(ConstraintId::new(index as u64), c)
-            .unwrap();
+    for c in constraints {
+        s.add_constraint(c).unwrap();
     }
     let targets = vec![
         Target2d::point(arc.end(), Point2::new(2., 3.)),

@@ -19,12 +19,14 @@ use std::sync::Arc;
 
 /// Mutable 2D constraint system, independent of NGK topology and GUI interaction.
 ///
-/// Primitives and constraints are named by ids the caller chooses, so a system can be
-/// stored or rebuilt and still mean the same thing.
+/// `add_*` issues the id of what it adds, and never issues one twice. `insert_*` takes an
+/// id issued earlier back, so a system can be rebuilt from stored ids and still mean the
+/// same thing.
 #[derive(Debug)]
 pub struct System2d {
     pub(crate) geometry: BTreeMap<GeometryId, Primitive>,
     pub(crate) constraints: BTreeMap<ConstraintId, StoredConstraint>,
+    pub(crate) next_id: u64,
     options: SolveOptions,
     revision: u64,
     sequence: u64,
@@ -46,17 +48,19 @@ impl Default for System2d {
 impl System2d {
     /// Creates an empty system; invalid numerical options are reported when solving.
     pub fn new(options: SolveOptions) -> Self {
-        Self::restored(options, BTreeMap::new(), BTreeMap::new())
+        Self::restored(options, BTreeMap::new(), BTreeMap::new(), 1)
     }
     /// A system holding this problem, at the start of its own session.
     pub(super) fn restored(
         options: SolveOptions,
         geometry: BTreeMap<GeometryId, Primitive>,
         constraints: BTreeMap<ConstraintId, StoredConstraint>,
+        next_id: u64,
     ) -> Self {
         Self {
             geometry,
             constraints,
+            next_id,
             options,
             revision: 0,
             sequence: 0,
@@ -92,23 +96,62 @@ impl System2d {
     pub fn constraint_count(&self) -> usize {
         self.constraints.len()
     }
-    pub fn add_point(&mut self, id: PointId, point: Point2) -> Result<PointId, EditError> {
-        self.insert(id.0, Primitive::point(point)?)?;
+    pub fn add_point(&mut self, point: Point2) -> Result<PointId, EditError> {
+        let primitive = Primitive::point(point)?;
+        let id = PointId::new(self.issue_id());
+        self.store(id.0, primitive)?;
         Ok(id)
     }
-    pub fn add_segment(&mut self, id: SegmentId, line: Segment2) -> Result<SegmentId, EditError> {
-        self.insert(id.0, Primitive::segment(line)?)?;
+    pub fn add_segment(&mut self, line: Segment2) -> Result<SegmentId, EditError> {
+        let primitive = Primitive::segment(line)?;
+        let id = SegmentId::new(self.issue_id());
+        self.store(id.0, primitive)?;
         Ok(id)
     }
-    pub fn add_circle(&mut self, id: CircleId, circle: Circle2) -> Result<CircleId, EditError> {
-        self.insert(id.0, Primitive::circle(circle)?)?;
+    pub fn add_circle(&mut self, circle: Circle2) -> Result<CircleId, EditError> {
+        let primitive = Primitive::circle(circle)?;
+        let id = CircleId::new(self.issue_id());
+        self.store(id.0, primitive)?;
         Ok(id)
     }
-    pub fn add_arc(&mut self, id: ArcId, arc: Arc2) -> Result<ArcId, EditError> {
-        self.insert(id.0, Primitive::arc(arc)?)?;
+    pub fn add_arc(&mut self, arc: Arc2) -> Result<ArcId, EditError> {
+        let primitive = Primitive::arc(arc)?;
+        let id = ArcId::new(self.issue_id());
+        self.store(id.0, primitive)?;
         Ok(id)
     }
-    fn insert(&mut self, id: GeometryId, primitive: Primitive) -> Result<(), EditError> {
+    /// Adds a point under an id issued earlier, to rebuild a system from its stored ids.
+    pub fn insert_point(&mut self, id: PointId, point: Point2) -> Result<(), EditError> {
+        self.reinstate(id.0, Primitive::point(point)?)
+    }
+    /// Adds a segment under an id issued earlier, to rebuild a system from its stored ids.
+    pub fn insert_segment(&mut self, id: SegmentId, line: Segment2) -> Result<(), EditError> {
+        self.reinstate(id.0, Primitive::segment(line)?)
+    }
+    /// Adds a circle under an id issued earlier, to rebuild a system from its stored ids.
+    pub fn insert_circle(&mut self, id: CircleId, circle: Circle2) -> Result<(), EditError> {
+        self.reinstate(id.0, Primitive::circle(circle)?)
+    }
+    /// Adds an arc under an id issued earlier, to rebuild a system from its stored ids.
+    pub fn insert_arc(&mut self, id: ArcId, arc: Arc2) -> Result<(), EditError> {
+        self.reinstate(id.0, Primitive::arc(arc)?)
+    }
+    /// A number this system never issued, whatever was removed since.
+    fn issue_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+    /// What is inserted under a stored id must not collide with what is issued later.
+    fn reserve_id(&mut self, value: u64) {
+        self.next_id = self.next_id.max(value.saturating_add(1));
+    }
+    fn reinstate(&mut self, id: GeometryId, primitive: Primitive) -> Result<(), EditError> {
+        self.store(id, primitive)?;
+        self.reserve_id(id.value);
+        Ok(())
+    }
+    fn store(&mut self, id: GeometryId, primitive: Primitive) -> Result<(), EditError> {
         if self.geometry.contains_key(&id) {
             return Err(EditError::DuplicateGeometry(id));
         }
@@ -169,18 +212,27 @@ impl System2d {
     }
     /// Validates references and captures fixed values or automatic contact choices.
     /// Compatibility with other constraints is evaluated during solving.
-    pub fn add_constraint(
+    pub fn add_constraint(&mut self, definition: Constraint2d) -> Result<ConstraintId, EditError> {
+        let constraint = self.prepare_constraint(definition)?;
+        let id = ConstraintId::new(self.issue_id());
+        self.constraints.insert(id, constraint);
+        self.revision += 1;
+        Ok(id)
+    }
+    /// Adds a relation under an id issued earlier, to rebuild a system from its stored ids.
+    pub fn insert_constraint(
         &mut self,
         id: ConstraintId,
         definition: Constraint2d,
-    ) -> Result<ConstraintId, EditError> {
+    ) -> Result<(), EditError> {
         if self.constraints.contains_key(&id) {
             return Err(EditError::DuplicateConstraint(id));
         }
         let constraint = self.prepare_constraint(definition)?;
         self.constraints.insert(id, constraint);
+        self.reserve_id(id.value());
         self.revision += 1;
-        Ok(id)
+        Ok(())
     }
     /// Replaces a relation without changing its id; captured values and automatic choices refresh.
     pub fn update_constraint(
@@ -247,13 +299,17 @@ impl System2d {
     ) -> Result<T, EditError> {
         let mut draft = Self {
             geometry: self.geometry.clone(),
+            next_id: self.next_id,
             constraints: self.constraints.clone(),
             options: self.options.clone(),
             revision: self.revision,
             sequence: self.sequence,
             last: self.last.clone(),
         };
-        let output = edit(&mut draft)?;
+        let output = edit(&mut draft);
+        // An id issued in an aborted batch is not issued again.
+        self.next_id = draft.next_id;
+        let output = output?;
         if draft.revision != self.revision {
             draft.revision = self.revision + 1;
             draft.last = self.last.clone();

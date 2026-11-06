@@ -9,7 +9,7 @@ use ngk::geometry::dim2::{
 use ngk::geometry::{Plane, Point3};
 use ngk::model::Model;
 use ngk::sketch::{SketchBuildError, SketchCurve, SketchProfiles, build_profiles};
-use ngk::solver::{ArcId, CircleId, Constraint2d as C, ConstraintId, PointId, SegmentId, System2d};
+use ngk::solver::{ArcId, CircleId, Constraint2d as C, PointId, SegmentId, System2d};
 use ngk::topology::closed::Closeable;
 use ngk::topology::edge::Edge;
 use std::f64::consts::PI;
@@ -24,12 +24,9 @@ fn segment(a: (f64, f64), b: (f64, f64)) -> Segment2 {
     Segment2::new(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
 }
 
-/// A system whose constraints get the ids of their position.
 fn constrain(system: &mut System2d, constraints: Vec<C>) {
-    for (index, constraint) in constraints.into_iter().enumerate() {
-        system
-            .add_constraint(ConstraintId::new(index as u64), constraint)
-            .unwrap();
+    for constraint in constraints {
+        system.add_constraint(constraint).unwrap();
     }
 }
 
@@ -37,16 +34,16 @@ fn constrain(system: &mut System2d, constraints: Vec<C>) {
 fn square() -> System2d {
     let mut system = System2d::default();
     system
-        .add_segment(BOTTOM, segment((0., 0.), (9., 0.)))
+        .insert_segment(BOTTOM, segment((0., 0.), (9., 0.)))
         .unwrap();
     system
-        .add_segment(RIGHT, segment((9.2, 0.1), (9.4, 9.)))
+        .insert_segment(RIGHT, segment((9.2, 0.1), (9.4, 9.)))
         .unwrap();
     system
-        .add_segment(TOP, segment((9.1, 9.2), (0.2, 9.)))
+        .insert_segment(TOP, segment((9.1, 9.2), (0.2, 9.)))
         .unwrap();
     system
-        .add_segment(LEFT, segment((-0.2, 9.1), (0.1, 0.1)))
+        .insert_segment(LEFT, segment((-0.2, 9.1), (0.1, 0.1)))
         .unwrap();
     constrain(
         &mut system,
@@ -133,19 +130,19 @@ fn the_profile_makes_a_face_and_a_solid() {
 fn chamfered_square() -> System2d {
     let mut system = System2d::default();
     system
-        .add_segment(BOTTOM, segment((0., 0.), (8., 0.)))
+        .insert_segment(BOTTOM, segment((0., 0.), (8., 0.)))
         .unwrap();
     system
-        .add_segment(CHAMFER, segment((8., 0.), (10., 2.)))
+        .insert_segment(CHAMFER, segment((8., 0.), (10., 2.)))
         .unwrap();
     system
-        .add_segment(RIGHT, segment((10., 2.), (10., 10.)))
+        .insert_segment(RIGHT, segment((10., 2.), (10., 10.)))
         .unwrap();
     system
-        .add_segment(TOP, segment((10., 10.), (0., 10.)))
+        .insert_segment(TOP, segment((10., 10.), (0., 10.)))
         .unwrap();
     system
-        .add_segment(LEFT, segment((0., 10.), (0., 0.)))
+        .insert_segment(LEFT, segment((0., 10.), (0., 0.)))
         .unwrap();
     constrain(
         &mut system,
@@ -207,11 +204,11 @@ fn an_arc_keeps_its_direction_and_sweep() {
         let (arc, line) = (ArcId::new(1), SegmentId::new(1));
         let mut system = System2d::default();
         system
-            .add_arc(arc, Arc2::new(Point2::origin(), Vector2::x(), 5., sweep))
+            .insert_arc(arc, Arc2::new(Point2::origin(), Vector2::x(), 5., sweep))
             .unwrap();
         let end = system.point(arc.end()).unwrap();
         system
-            .add_segment(line, Segment2::new(end, Point2::new(5., 0.)))
+            .insert_segment(line, Segment2::new(end, Point2::new(5., 0.)))
             .unwrap();
         constrain(
             &mut system,
@@ -238,10 +235,10 @@ fn an_arc_leaving_a_segment_tangentially_is_a_joint_not_a_crossing() {
     let (line, arc) = (SegmentId::new(1), ArcId::new(1));
     let mut system = System2d::default();
     system
-        .add_segment(line, segment((0., 0.), (10., 0.)))
+        .insert_segment(line, segment((0., 0.), (10., 0.)))
         .unwrap();
     system
-        .add_arc(
+        .insert_arc(
             arc,
             Arc2::new(Point2::new(10., 3.), -Vector2::y(), 3., PI / 2.),
         )
@@ -268,7 +265,7 @@ fn a_circle_is_a_profile_of_its_own() {
     let circle = CircleId::new(1);
     let mut system = System2d::default();
     system
-        .add_circle(circle, Circle2::new(Point2::new(3., 4.), Vector2::x(), 2.))
+        .insert_circle(circle, Circle2::new(Point2::new(3., 4.), Vector2::x(), 2.))
         .unwrap();
     system.solve().unwrap();
     let (model, built) = build(&system, &[circle.into()]);
@@ -281,9 +278,15 @@ fn a_circle_is_a_profile_of_its_own() {
 fn separate_runs_are_separate_profiles_open_or_closed() {
     let (a, b, c) = (SegmentId::new(1), SegmentId::new(2), SegmentId::new(3));
     let mut system = System2d::default();
-    system.add_segment(a, segment((0., 0.), (1., 0.))).unwrap();
-    system.add_segment(b, segment((1., 0.), (1., 1.))).unwrap();
-    system.add_segment(c, segment((5., 5.), (6., 6.))).unwrap();
+    system
+        .insert_segment(a, segment((0., 0.), (1., 0.)))
+        .unwrap();
+    system
+        .insert_segment(b, segment((1., 0.), (1., 1.)))
+        .unwrap();
+    system
+        .insert_segment(c, segment((5., 5.), (6., 6.)))
+        .unwrap();
     constrain(&mut system, vec![C::coincident(a.end(), b.start())]);
     system.solve().unwrap();
     let (model, built) = build(&system, &[a.into(), b.into(), c.into()]);
@@ -309,11 +312,15 @@ fn a_chain_of_coincidences_through_what_is_not_drawn_still_joins() {
     let (a, b, joint) = (SegmentId::new(1), SegmentId::new(2), PointId::new(1));
     let construction = SegmentId::new(3);
     let mut system = System2d::default();
-    system.add_segment(a, segment((0., 0.), (1., 0.))).unwrap();
-    system.add_segment(b, segment((1., 0.), (1., 1.))).unwrap();
-    system.add_point(joint, Point2::new(1., 0.)).unwrap();
     system
-        .add_segment(construction, segment((1., 0.), (3., 3.)))
+        .insert_segment(a, segment((0., 0.), (1., 0.)))
+        .unwrap();
+    system
+        .insert_segment(b, segment((1., 0.), (1., 1.)))
+        .unwrap();
+    system.insert_point(joint, Point2::new(1., 0.)).unwrap();
+    system
+        .insert_segment(construction, segment((1., 0.), (3., 3.)))
         .unwrap();
     constrain(
         &mut system,
@@ -345,7 +352,7 @@ fn a_build_goes_into_the_model_it_is_given() {
 fn an_unsolved_or_edited_system_is_refused() {
     let mut system = System2d::default();
     system
-        .add_segment(BOTTOM, segment((0., 0.), (1., 0.)))
+        .insert_segment(BOTTOM, segment((0., 0.), (1., 0.)))
         .unwrap();
     assert!(matches!(
         refused(&system, &[BOTTOM.into()]),
@@ -378,9 +385,15 @@ fn an_unknown_or_repeated_curve_is_refused() {
 fn three_joined_ends_are_refused_by_name() {
     let (a, b, c) = (SegmentId::new(1), SegmentId::new(2), SegmentId::new(3));
     let mut system = System2d::default();
-    system.add_segment(a, segment((0., 0.), (1., 0.))).unwrap();
-    system.add_segment(b, segment((1., 0.), (2., 1.))).unwrap();
-    system.add_segment(c, segment((1., 0.), (2., -1.))).unwrap();
+    system
+        .insert_segment(a, segment((0., 0.), (1., 0.)))
+        .unwrap();
+    system
+        .insert_segment(b, segment((1., 0.), (2., 1.)))
+        .unwrap();
+    system
+        .insert_segment(c, segment((1., 0.), (2., -1.)))
+        .unwrap();
     constrain(
         &mut system,
         vec![
@@ -399,8 +412,12 @@ fn three_joined_ends_are_refused_by_name() {
 fn curves_crossing_are_refused_by_name() {
     let (a, b) = (SegmentId::new(1), SegmentId::new(2));
     let mut system = System2d::default();
-    system.add_segment(a, segment((0., 0.), (2., 2.))).unwrap();
-    system.add_segment(b, segment((0., 2.), (2., 0.))).unwrap();
+    system
+        .insert_segment(a, segment((0., 0.), (2., 2.)))
+        .unwrap();
+    system
+        .insert_segment(b, segment((0., 2.), (2., 0.)))
+        .unwrap();
     system.solve().unwrap();
     assert!(matches!(
         refused(&system, &[a.into(), b.into()]),
@@ -413,8 +430,12 @@ fn curves_crossing_are_refused_by_name() {
 fn an_end_on_another_curve_is_refused() {
     let (a, b) = (SegmentId::new(1), SegmentId::new(2));
     let mut system = System2d::default();
-    system.add_segment(a, segment((0., 0.), (2., 0.))).unwrap();
-    system.add_segment(b, segment((1., 0.), (1., 2.))).unwrap();
+    system
+        .insert_segment(a, segment((0., 0.), (2., 0.)))
+        .unwrap();
+    system
+        .insert_segment(b, segment((1., 0.), (1., 2.)))
+        .unwrap();
     system.solve().unwrap();
     assert!(matches!(
         refused(&system, &[a.into(), b.into()]),
@@ -426,8 +447,12 @@ fn an_end_on_another_curve_is_refused() {
 fn ends_touching_without_a_coincidence_are_refused() {
     let (a, b) = (SegmentId::new(1), SegmentId::new(2));
     let mut system = System2d::default();
-    system.add_segment(a, segment((0., 0.), (1., 0.))).unwrap();
-    system.add_segment(b, segment((1., 0.), (1., 1.))).unwrap();
+    system
+        .insert_segment(a, segment((0., 0.), (1., 0.)))
+        .unwrap();
+    system
+        .insert_segment(b, segment((1., 0.), (1., 1.)))
+        .unwrap();
     system.solve().unwrap();
     assert!(matches!(
         refused(&system, &[a.into(), b.into()]),
@@ -439,8 +464,12 @@ fn ends_touching_without_a_coincidence_are_refused() {
 fn overlapping_curves_are_refused() {
     let (a, b) = (SegmentId::new(1), SegmentId::new(2));
     let mut system = System2d::default();
-    system.add_segment(a, segment((0., 0.), (2., 0.))).unwrap();
-    system.add_segment(b, segment((1., 0.), (3., 0.))).unwrap();
+    system
+        .insert_segment(a, segment((0., 0.), (2., 0.)))
+        .unwrap();
+    system
+        .insert_segment(b, segment((1., 0.), (3., 0.)))
+        .unwrap();
     system.solve().unwrap();
     assert!(matches!(
         refused(&system, &[a.into(), b.into()]),

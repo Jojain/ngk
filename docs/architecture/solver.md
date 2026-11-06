@@ -9,13 +9,13 @@ builders, Nales, or a GUI. The caller materializes topology separately.
 
 ```rust
 use ngk::geometry::dim2::{trimmed::Segment2, utils::Point2};
-use ngk::solver::{Constraint2d, ConstraintId, SegmentId, System2d, Target2d};
+use ngk::solver::{Constraint2d, System2d, Target2d};
 
 let mut system = System2d::default();
-let segment = system.add_segment(SegmentId::new(1), Segment2::new(
+let segment = system.add_segment(Segment2::new(
     Point2::new(0.0, 0.0), Point2::new(6.0, 2.0),
 ))?;
-system.add_constraint(ConstraintId::new(1), Constraint2d::length(segment, 10.0))?;
+system.add_constraint(Constraint2d::length(segment, 10.0))?;
 let solution = system.solve()?;
 let moved = system.solve_toward(&[
     Target2d::point(segment.end(), Point2::new(15.0, 8.0)),
@@ -62,15 +62,17 @@ build commands regenerate WASM. With an already generated package, run
 
 ## Identity and state
 
-The caller names every primitive and constraint with a typed id (`PointId`,
-`SegmentId`, `CircleId`, `ArcId`, `ConstraintId`). An id means the same thing in
-every system built from the same source, so a system can be stored or rebuilt,
-and the same problem solves the same whatever order it was added in. Each kind
-has its own type, so a relation cannot name a primitive of the wrong kind, and
-ids of different kinds do not collide. An id already in use is refused; one reused
-after a removal names the new primitive, so keeping ids unique over time is the
-caller's. A point reference is an independent point or a primitive's stable start,
-end or center role.
+Primitives and constraints have typed ids (`PointId`, `SegmentId`, `CircleId`,
+`ArcId`, `ConstraintId`). Each kind has its own type, so a relation cannot name a
+primitive of the wrong kind, and ids of different kinds do not collide.
+
+`add_*` issues the id and returns it. A system never issues one twice, whatever was
+removed since or aborted in a batch, so a stale id cannot come to mean something else.
+`insert_*` takes back an id issued earlier: a caller keeps ids in its own source and
+rebuilds the system from them, where they mean the same thing, and the same problem
+solves the same whatever order it was added in. `insert_*` refuses an id in use, and
+what it takes is not issued later. A point reference is an independent point or a
+primitive's stable start, end or center role.
 
 `System2d` serializes its options, primitives and constraints, including the values
 and branches they captured. Revisions and solutions describe one session and are

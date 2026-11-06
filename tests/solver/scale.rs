@@ -1,5 +1,5 @@
 use ngk::geometry::dim2::{trimmed::Segment2, utils::Point2};
-use ngk::solver::{Constraint2d as C, ConstraintId, SegmentId, System2d, Target2d};
+use ngk::solver::{Constraint2d as C, SegmentId, System2d, Target2d};
 use std::time::Instant;
 
 #[test]
@@ -18,23 +18,13 @@ fn connected_chain(count: usize) {
     for i in 0..count {
         let x = i as f64 * 10.;
         let line = system
-            .add_segment(
-                SegmentId::new(i as u64),
-                Segment2::new(Point2::new(x, 0.), Point2::new(x + 10., 0.)),
-            )
+            .add_segment(Segment2::new(Point2::new(x, 0.), Point2::new(x + 10., 0.)))
             .unwrap();
-        system
-            .add_constraint(ConstraintId::new(3 * i as u64), C::length(line, 10.))
-            .unwrap();
-        system
-            .add_constraint(ConstraintId::new(3 * i as u64 + 1), C::horizontal(line))
-            .unwrap();
+        system.add_constraint(C::length(line, 10.)).unwrap();
+        system.add_constraint(C::horizontal(line)).unwrap();
         if let Some(previous) = lines.last().copied() {
             system
-                .add_constraint(
-                    ConstraintId::new(3 * i as u64 + 2),
-                    C::coincident(previous.end(), line.start()),
-                )
+                .add_constraint(C::coincident(previous.end(), line.start()))
                 .unwrap();
         }
         lines.push(line);

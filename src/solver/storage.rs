@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 #[derive(Serialize, Deserialize)]
 struct StoredSystem {
     options: SolveOptions,
+    next_id: u64,
     primitives: Vec<(GeometryId, Primitive)>,
     constraints: Vec<(ConstraintId, StoredConstraint)>,
 }
@@ -17,6 +18,7 @@ impl Serialize for System2d {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         StoredSystem {
             options: self.options().clone(),
+            next_id: self.next_id,
             primitives: self.geometry.clone().into_iter().collect(),
             constraints: self.constraints.clone().into_iter().collect(),
         }
@@ -56,7 +58,20 @@ impl StoredSystem {
                 return Err("a constraint id is stored twice");
             }
         }
-        Ok(System2d::restored(self.options, geometry, constraints))
+        let highest = geometry
+            .keys()
+            .map(|id: &GeometryId| id.value)
+            .chain(constraints.keys().map(|id: &ConstraintId| id.value()))
+            .max();
+        if highest.is_some_and(|highest| highest >= self.next_id) {
+            return Err("the next id to issue is already in use");
+        }
+        Ok(System2d::restored(
+            self.options,
+            geometry,
+            constraints,
+            self.next_id,
+        ))
     }
 }
 

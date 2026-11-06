@@ -288,27 +288,18 @@ impl SolverPlayground {
         match command {
             Command::Snapshot => return Ok(()),
             Command::AddGeometry { geometry } => {
-                let id = u64::from(self.next_id);
                 let shape = match geometry {
-                    Geometry::Point { position } => Shape::Point(
-                        self.system
-                            .add_point(PointId::new(id), position.into())
-                            .map_err(message)?,
-                    ),
+                    Geometry::Point { position } => {
+                        Shape::Point(self.system.add_point(position.into()).map_err(message)?)
+                    }
                     Geometry::Segment { start, end } => Shape::Segment(
                         self.system
-                            .add_segment(
-                                SegmentId::new(id),
-                                Segment2::new(start.into(), end.into()),
-                            )
+                            .add_segment(Segment2::new(start.into(), end.into()))
                             .map_err(message)?,
                     ),
                     Geometry::Circle { center, radius } => Shape::Circle(
                         self.system
-                            .add_circle(
-                                CircleId::new(id),
-                                Circle2::new(center.into(), Vector2::x(), radius),
-                            )
+                            .add_circle(Circle2::new(center.into(), Vector2::x(), radius))
                             .map_err(message)?,
                     ),
                     Geometry::Arc {
@@ -318,15 +309,12 @@ impl SolverPlayground {
                         sweep,
                     } => Shape::Arc(
                         self.system
-                            .add_arc(
-                                ArcId::new(id),
-                                Arc2::new(
-                                    center.into(),
-                                    Vector2::new(start_angle.cos(), start_angle.sin()),
-                                    radius,
-                                    sweep,
-                                ),
-                            )
+                            .add_arc(Arc2::new(
+                                center.into(),
+                                Vector2::new(start_angle.cos(), start_angle.sin()),
+                                radius,
+                                sweep,
+                            ))
                             .map_err(message)?,
                     ),
                 };
@@ -345,10 +333,7 @@ impl SolverPlayground {
             }
             Command::AddConstraint { relation } => {
                 let definition = self.relation(&relation)?;
-                let key = self
-                    .system
-                    .add_constraint(ConstraintId::new(u64::from(self.next_id)), definition)
-                    .map_err(message)?;
+                let key = self.system.add_constraint(definition).map_err(message)?;
                 self.constraints.push((self.next_id, key, relation));
                 self.next_id += 1;
             }
