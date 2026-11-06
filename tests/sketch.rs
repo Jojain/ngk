@@ -3,7 +3,7 @@ use ngk::builders::faces::add_face;
 use ngk::builders::solids::add_extruded_face;
 use ngk::geometry::dim2::{
     curves::Circle2,
-    trimmed::{TrimmedCircle2, TrimmedLine2},
+    trimmed::{Arc2, Segment2},
     utils::Point2,
 };
 use ngk::geometry::{Plane, Point3};
@@ -20,8 +20,8 @@ const TOP: SegmentId = SegmentId::new(3);
 const LEFT: SegmentId = SegmentId::new(4);
 const CHAMFER: SegmentId = SegmentId::new(5);
 
-fn segment(a: (f64, f64), b: (f64, f64)) -> TrimmedLine2 {
-    TrimmedLine2::segment(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
+fn segment(a: (f64, f64), b: (f64, f64)) -> Segment2 {
+    Segment2::new(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
 }
 
 /// A system whose constraints get the ids of their position.
@@ -207,14 +207,11 @@ fn an_arc_keeps_its_direction_and_sweep() {
         let (arc, line) = (ArcId::new(1), SegmentId::new(1));
         let mut system = System2d::default();
         system
-            .add_arc(
-                arc,
-                TrimmedCircle2::arc(Point2::origin(), Vector2::x(), 5., sweep),
-            )
+            .add_arc(arc, Arc2::new(Point2::origin(), Vector2::x(), 5., sweep))
             .unwrap();
         let end = system.point(arc.end()).unwrap();
         system
-            .add_segment(line, TrimmedLine2::segment(end, Point2::new(5., 0.)))
+            .add_segment(line, Segment2::new(end, Point2::new(5., 0.)))
             .unwrap();
         constrain(
             &mut system,
@@ -246,7 +243,7 @@ fn an_arc_leaving_a_segment_tangentially_is_a_joint_not_a_crossing() {
     system
         .add_arc(
             arc,
-            TrimmedCircle2::arc(Point2::new(10., 3.), -Vector2::y(), 3., PI / 2.),
+            Arc2::new(Point2::new(10., 3.), -Vector2::y(), 3., PI / 2.),
         )
         .unwrap();
     constrain(

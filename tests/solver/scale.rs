@@ -1,4 +1,4 @@
-use ngk::geometry::dim2::{trimmed::TrimmedLine2, utils::Point2};
+use ngk::geometry::dim2::{trimmed::Segment2, utils::Point2};
 use ngk::solver::{Constraint2d as C, ConstraintId, SegmentId, System2d, Target2d};
 use std::time::Instant;
 
@@ -20,7 +20,7 @@ fn connected_chain(count: usize) {
         let line = system
             .add_segment(
                 SegmentId::new(i as u64),
-                TrimmedLine2::segment(Point2::new(x, 0.), Point2::new(x + 10., 0.)),
+                Segment2::new(Point2::new(x, 0.), Point2::new(x + 10., 0.)),
             )
             .unwrap();
         system

@@ -8,11 +8,11 @@ builders, Nales, or a GUI. The caller materializes topology separately.
 ## Public workflow
 
 ```rust
-use ngk::geometry::dim2::{trimmed::TrimmedLine2, utils::Point2};
+use ngk::geometry::dim2::{trimmed::Segment2, utils::Point2};
 use ngk::solver::{Constraint2d, ConstraintId, SegmentId, System2d, Target2d};
 
 let mut system = System2d::default();
-let segment = system.add_segment(SegmentId::new(1), TrimmedLine2::segment(
+let segment = system.add_segment(SegmentId::new(1), Segment2::new(
     Point2::new(0.0, 0.0), Point2::new(6.0, 2.0),
 ))?;
 system.add_constraint(ConstraintId::new(1), Constraint2d::length(segment, 10.0))?;

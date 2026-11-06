@@ -1,7 +1,7 @@
 use ngk::geometry::{
-    Circle2, ControlPolygon2, Curve2, CurveCurveIntersection2, Degree, Ellipse2, Fraction, HPoint2,
-    Interval, KnotVector, LINEAR_TOLERANCE, Line2, NativeParam, NurbsCurve2, Point2,
-    TrimmedCircle2, TrimmedCurve2, TrimmedLine2, Vector2,
+    Arc2, Circle2, ControlPolygon2, Curve2, CurveCurveIntersection2, Degree, Ellipse2, Fraction,
+    HPoint2, Interval, KnotVector, LINEAR_TOLERANCE, Line2, NativeParam, NurbsCurve2, Point2,
+    Segment2, TrimmedCurve2, Vector2,
 };
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
@@ -603,7 +603,7 @@ fn trimming_a_polyline_an_ulp_off_a_knot_lands_on_the_knot() {
 #[test]
 fn a_typed_span_behaves_like_the_same_span_of_any_support() {
     let (start, end) = (Point2::new(1., 2.), Point2::new(4., 6.));
-    let line = TrimmedLine2::segment(start, end);
+    let line = Segment2::new(start, end);
     let any = TrimmedCurve2::segment(start, end);
     assert_point2_close(line.start(), start);
     assert_point2_close(line.end(), end);
@@ -614,7 +614,7 @@ fn a_typed_span_behaves_like_the_same_span_of_any_support() {
     );
 
     let center = Point2::new(3., -1.);
-    let arc = TrimmedCircle2::arc(center, Vector2::new(0., 1.), 2., -FRAC_PI_2);
+    let arc = Arc2::new(center, Vector2::new(0., 1.), 2., -FRAC_PI_2);
     let any = TrimmedCurve2::arc(center, Vector2::new(0., 1.), 2., -FRAC_PI_2);
     assert_point2_close(arc.end(), any.end());
     assert!((arc.length() - any.length()).abs() <= LINEAR_TOLERANCE);
@@ -624,10 +624,10 @@ fn a_typed_span_behaves_like_the_same_span_of_any_support() {
 #[test]
 fn a_typed_span_widens_to_the_same_span_of_any_support() {
     let (start, end) = (Point2::new(1., 2.), Point2::new(4., 6.));
-    let widened = TrimmedCurve2::from(TrimmedLine2::segment(start, end));
+    let widened = TrimmedCurve2::from(Segment2::new(start, end));
     assert_eq!(widened, TrimmedCurve2::segment(start, end));
 
     let center = Point2::new(3., -1.);
-    let widened = TrimmedCurve2::from(TrimmedCircle2::arc(center, Vector2::x(), 2., 1.));
+    let widened = TrimmedCurve2::from(Arc2::new(center, Vector2::x(), 2., 1.));
     assert_eq!(widened, TrimmedCurve2::arc(center, Vector2::x(), 2., 1.));
 }

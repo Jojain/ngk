@@ -4,7 +4,7 @@ use crate::builders::edges::{add_circle_edit, add_edge_edit};
 use crate::builders::profiles::add_profile_from_edges_edit;
 use crate::geometry::dim2::curves::{Circle2, Curve2};
 use crate::geometry::dim2::intersections::CurveCurveIntersection2;
-use crate::geometry::dim2::trimmed::{TrimmedCircle2, TrimmedCurve2, TrimmedLine2};
+use crate::geometry::dim2::trimmed::{Arc2, Segment2, TrimmedCurve2};
 use crate::geometry::dim2::utils::Point2;
 use crate::geometry::{Curve, IntersectionCoverage, Interval, Plane, Point3};
 use crate::model::{Model, OpResult, StaleResult};
@@ -109,9 +109,9 @@ pub(super) struct Drawn {
 }
 
 enum Geometry {
-    Segment(TrimmedLine2),
+    Segment(Segment2),
     Circle(Circle2),
-    Arc(TrimmedCircle2),
+    Arc(Arc2),
 }
 
 impl Drawn {

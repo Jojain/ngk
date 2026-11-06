@@ -1,6 +1,6 @@
 use crate::geometry::dim2::{
     curves::Circle2,
-    trimmed::{TrimmedCircle2, TrimmedLine2},
+    trimmed::{Arc2, Segment2},
     utils::Point2,
 };
 use crate::solver::{
@@ -299,7 +299,7 @@ impl SolverPlayground {
                         self.system
                             .add_segment(
                                 SegmentId::new(id),
-                                TrimmedLine2::segment(start.into(), end.into()),
+                                Segment2::new(start.into(), end.into()),
                             )
                             .map_err(message)?,
                     ),
@@ -320,7 +320,7 @@ impl SolverPlayground {
                         self.system
                             .add_arc(
                                 ArcId::new(id),
-                                TrimmedCircle2::arc(
+                                Arc2::new(
                                     center.into(),
                                     Vector2::new(start_angle.cos(), start_angle.sin()),
                                     radius,

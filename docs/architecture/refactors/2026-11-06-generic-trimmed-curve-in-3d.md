@@ -3,7 +3,7 @@
 ## Seen
 
 `geometry/dim2/trimmed.rs` has `Trimmed<C = Curve2>`, generic over the support, with
-`TrimmedCurve2`, `TrimmedLine2` and `TrimmedCircle2` as aliases. Its 3D twin,
+`TrimmedCurve2`, `Segment2` and `Arc2` as aliases. Its 3D twin,
 `TrimmedCurve` in `geometry/dim3/trimmed.rs`, still holds a `Curve` only. This breaks
 the "2D mirrors 3D exactly" rule of [geometry.md](../geometry.md).
 

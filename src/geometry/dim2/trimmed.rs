@@ -42,7 +42,7 @@ use crate::geometry::{Interval, LINEAR_TOLERANCE};
 /// is a distinct value from its forward twin rather than a normalization bug.
 ///
 /// Generic over the support, so a type can say which curve it is a span of: a
-/// [`TrimmedLine2`] cannot be an arc. [`TrimmedCurve2`] is the span of any support.
+/// [`Segment2`] cannot be an arc. [`TrimmedCurve2`] is the span of any support.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Trimmed<C = Curve2> {
     curve: C,
@@ -52,46 +52,51 @@ pub struct Trimmed<C = Curve2> {
 /// A span of any 2D support.
 pub type TrimmedCurve2 = Trimmed<Curve2>;
 /// A span of a line: a segment.
-pub type TrimmedLine2 = Trimmed<Line2>;
+pub type Segment2 = Trimmed<Line2>;
 /// A span of a circle: an arc.
-pub type TrimmedCircle2 = Trimmed<Circle2>;
+pub type Arc2 = Trimmed<Circle2>;
 
-impl TrimmedLine2 {
+impl Segment2 {
     /// Returns the straight segment from `start` to `end`.
     ///
     /// The support is the infinite line through both points, and the span is
     /// its `[0, 1]` window.
-    pub fn segment(start: Point2, end: Point2) -> Self {
-        Self::new(Line2::new(start, end - start), Interval::new(0.0, 1.0))
+    pub fn new(start: Point2, end: Point2) -> Self {
+        Self::spanning(Line2::new(start, end - start), Interval::new(0.0, 1.0))
     }
 }
 
-impl TrimmedCircle2 {
+impl Arc2 {
     /// Returns the arc that starts along `x_dir` and sweeps `sweep` radians.
     ///
     /// The support is the whole circle; `sweep` is the span over it, so its
     /// sign chooses the direction and its magnitude may exceed a full turn.
-    pub fn arc(center: Point2, x_dir: Vector2<f64>, radius: f64, sweep: f64) -> Self {
-        Self::new(
+    pub fn new(center: Point2, x_dir: Vector2<f64>, radius: f64, sweep: f64) -> Self {
+        Self::spanning(
             Circle2::new(center, x_dir, radius),
             Interval::new(0.0, sweep),
         )
     }
 }
 
-impl From<TrimmedLine2> for TrimmedCurve2 {
-    fn from(span: TrimmedLine2) -> Self {
+impl From<Segment2> for TrimmedCurve2 {
+    fn from(span: Segment2) -> Self {
         Self::new(Curve2::Line(span.curve), span.interval)
     }
 }
 
-impl From<TrimmedCircle2> for TrimmedCurve2 {
-    fn from(span: TrimmedCircle2) -> Self {
+impl From<Arc2> for TrimmedCurve2 {
+    fn from(span: Arc2) -> Self {
         Self::new(Curve2::Circle(span.curve), span.interval)
     }
 }
 
 impl TrimmedCurve2 {
+    /// Pairs a support with an explicit span of its native parameters.
+    pub fn new(curve: Curve2, interval: Interval) -> Self {
+        Self::spanning(curve, interval)
+    }
+
     /// Pairs a support with the span running forward from `start` to `end`.
     ///
     /// Only the shorter way round is expressible on a periodic support: the
@@ -234,8 +239,8 @@ impl TrimmedCurve2 {
 }
 
 impl<C> Trimmed<C> {
-    /// Pairs a support with an explicit span of its native parameters.
-    pub fn new(curve: C, interval: Interval) -> Self {
+    /// Pairs a support with a span of its native parameters.
+    fn spanning(curve: C, interval: Interval) -> Self {
         Self { curve, interval }
     }
 
@@ -343,7 +348,7 @@ impl<C: Curve2Geometry + Clone> Trimmed<C> {
 
     /// Returns the same geometry traversed in the opposite direction.
     pub fn reversed(&self) -> Self {
-        Self::new(self.curve.clone(), self.interval.reversed())
+        Self::spanning(self.curve.clone(), self.interval.reversed())
     }
 
     /// Narrows to a sub-span, given as normalized fractions of this one.
@@ -351,7 +356,7 @@ impl<C: Curve2Geometry + Clone> Trimmed<C> {
     /// The support is carried over untouched, so repeated narrowing never
     /// accumulates conversion error.
     pub fn sub(&self, fractions: Interval<Normalized>) -> Self {
-        Self::new(
+        Self::spanning(
             self.curve.clone(),
             Interval::new(
                 self.interval.at(fractions.start),
@@ -378,7 +383,10 @@ impl<C: Curve2Geometry + Clone> Trimmed<C> {
     /// Every support preserves its parameterization under translation, so the
     /// span is carried over unchanged.
     pub fn translated(&self, offset: Vector2<f64>) -> Result<Self, NurbsError> {
-        Ok(Self::new(self.curve.translated(offset)?, self.interval))
+        Ok(Self::spanning(
+            self.curve.translated(offset)?,
+            self.interval,
+        ))
     }
 
     /// Returns `segments + 1` points sampled uniformly in traversal fraction.

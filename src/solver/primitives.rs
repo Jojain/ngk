@@ -1,7 +1,7 @@
 use super::{EditError, GeometryId, ids::PointRole};
 use crate::geometry::dim2::{
     curves::Circle2,
-    trimmed::{TrimmedCircle2, TrimmedLine2},
+    trimmed::{Arc2, Segment2},
     utils::Point2,
 };
 use nalgebra::Vector2;
@@ -107,7 +107,7 @@ impl Primitive {
     pub fn point(point: Point2) -> Result<Self, EditError> {
         Self::checked(Kind::Point, vec![point.x, point.y], 1., Vector2::x())
     }
-    pub fn segment(curve: TrimmedLine2) -> Result<Self, EditError> {
+    pub fn segment(curve: Segment2) -> Result<Self, EditError> {
         let (a, b) = (curve.start(), curve.end());
         Self::checked(Kind::Segment, vec![a.x, a.y, b.x, b.y], 1., Vector2::x())
     }
@@ -121,7 +121,7 @@ impl Primitive {
             x,
         )
     }
-    pub fn arc(curve: TrimmedCircle2) -> Result<Self, EditError> {
+    pub fn arc(curve: Arc2) -> Result<Self, EditError> {
         let circle = curve.curve();
         let radial = curve.start() - circle.center();
         let sweep = curve.interval().delta();
@@ -203,8 +203,8 @@ impl Primitive {
             self.get(Param::Y) + radius * angle.sin(),
         )
     }
-    pub fn as_segment(&self) -> TrimmedLine2 {
-        TrimmedLine2::segment(
+    pub fn as_segment(&self) -> Segment2 {
+        Segment2::new(
             self.point_at(PointRole::Start),
             self.point_at(PointRole::End),
         )
@@ -221,9 +221,9 @@ impl Primitive {
             circle
         }
     }
-    pub fn as_arc(&self) -> TrimmedCircle2 {
+    pub fn as_arc(&self) -> Arc2 {
         let start = self.get(Param::StartAngle);
-        TrimmedCircle2::arc(
+        Arc2::new(
             self.point_at(PointRole::Center),
             Vector2::new(start.cos(), start.sin()),
             self.get(Param::Radius),

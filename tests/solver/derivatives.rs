@@ -5,7 +5,7 @@ use super::{
 };
 use crate::geometry::dim2::{
     curves::Circle2,
-    trimmed::{TrimmedCircle2, TrimmedLine2},
+    trimmed::{Arc2, Segment2},
     utils::Point2,
 };
 use crate::geometry::parameter::{Fraction, NativeParam};
@@ -21,13 +21,13 @@ fn geometric_jacobians_match_independent_centered_differences() {
     let a = s
         .add_segment(
             SegmentId::new(1),
-            TrimmedLine2::segment(Point2::new(1., 2.), Point2::new(7., 5.)),
+            Segment2::new(Point2::new(1., 2.), Point2::new(7., 5.)),
         )
         .unwrap();
     let b = s
         .add_segment(
             SegmentId::new(2),
-            TrimmedLine2::segment(Point2::new(3., -2.), Point2::new(8., 6.)),
+            Segment2::new(Point2::new(3., -2.), Point2::new(8., 6.)),
         )
         .unwrap();
     let c = s
@@ -39,7 +39,7 @@ fn geometric_jacobians_match_independent_centered_differences() {
     let arc = s
         .add_arc(
             ArcId::new(4),
-            TrimmedCircle2::arc(Point2::new(5., -4.), Vector2::new(1., 2.), 2., -2.4),
+            Arc2::new(Point2::new(5., -4.), Vector2::new(1., 2.), 2., -2.4),
         )
         .unwrap();
     let constraints = vec![

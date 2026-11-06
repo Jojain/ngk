@@ -35,8 +35,8 @@ the sweep, and `whole` for a support that already is the section), so a common
 span is never spelled out as a support and an interval side by side.
 
 `TrimmedCurve2` is `Trimmed<Curve2>`. `Trimmed<C>` is generic over the support, so
-a type can say which curve it is a span of: `TrimmedLine2` is a segment and
-`TrimmedCircle2` an arc, and each widens to `TrimmedCurve2`.
+a type can say which curve it is a span of: `Segment2` is a span of a line and
+`Arc2` of a circle, and each widens to `TrimmedCurve2`.
 
 - **Every pcurve is a `TrimmedCurve2`.** Unlike an edge it has no bounding
   vertices to derive a span from, since a face stores no 2D vertex positions.

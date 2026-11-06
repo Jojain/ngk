@@ -16,7 +16,7 @@ pub use dim2::intersections::{
     CurveIntersectionOptions,
 };
 pub use dim2::nurbs::{ControlPolygon2, HPoint2, NurbsCurve2};
-pub use dim2::trimmed::{Trimmed, TrimmedCircle2, TrimmedCurve2, TrimmedLine2};
+pub use dim2::trimmed::{Arc2, Segment2, Trimmed, TrimmedCurve2};
 pub use dim2::utils::{Axis2, DomainSide, Point2, Vector2};
 pub use dim3::bbox::{BBox, Bound};
 pub use dim3::curves::{Circle, Curve, Ellipse, Helix, Line, Periodicity};

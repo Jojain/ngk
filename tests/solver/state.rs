@@ -1,7 +1,7 @@
 use nalgebra::Vector2;
 use ngk::geometry::dim2::{
     curves::Circle2,
-    trimmed::{TrimmedCircle2, TrimmedLine2},
+    trimmed::{Arc2, Segment2},
     utils::Point2,
 };
 use ngk::solver::{
@@ -17,17 +17,14 @@ fn fixing_an_arc_preserves_its_directed_shape_after_reseeding() {
     let arc = s
         .add_arc(
             ArcId::new(1),
-            TrimmedCircle2::arc(Point2::origin(), Vector2::x(), 3., 1.),
+            Arc2::new(Point2::origin(), Vector2::x(), 3., 1.),
         )
         .unwrap();
     let end = s.point(arc.end()).unwrap();
     s.add_constraint(ConstraintId::new(2), C::fixed(arc))
         .unwrap();
-    s.update_arc(
-        arc,
-        TrimmedCircle2::arc(Point2::origin(), Vector2::x(), 3., -1.),
-    )
-    .unwrap();
+    s.update_arc(arc, Arc2::new(Point2::origin(), Vector2::x(), 3., -1.))
+        .unwrap();
     let solved = s.solve().unwrap();
     assert!((solved.point(arc.end()).unwrap() - end).norm() < 1e-8);
     assert_eq!(solved.report().degrees_of_freedom, 0);
@@ -109,21 +106,15 @@ fn a_stored_system_solves_where_it_was_and_keeps_what_it_captured() {
     let (bottom, right) = (SegmentId::new(1), SegmentId::new(2));
     let arc = ArcId::new(1);
     let mut s = System2d::default();
-    s.add_segment(
-        bottom,
-        TrimmedLine2::segment(Point2::origin(), Point2::new(9., 1.)),
-    )
-    .unwrap();
+    s.add_segment(bottom, Segment2::new(Point2::origin(), Point2::new(9., 1.)))
+        .unwrap();
     s.add_segment(
         right,
-        TrimmedLine2::segment(Point2::new(9., 0.), Point2::new(9., 5.)),
+        Segment2::new(Point2::new(9., 0.), Point2::new(9., 5.)),
     )
     .unwrap();
-    s.add_arc(
-        arc,
-        TrimmedCircle2::arc(Point2::new(20., 0.), Vector2::x(), 3., -2.),
-    )
-    .unwrap();
+    s.add_arc(arc, Arc2::new(Point2::new(20., 0.), Vector2::x(), 3., -2.))
+        .unwrap();
     s.add_constraint(
         ConstraintId::new(1),
         C::coincident(bottom.end(), right.start()),
@@ -186,7 +177,7 @@ fn a_stored_system_is_refused_when_an_edit_could_not_have_produced_it() {
     let line = s
         .add_segment(
             SegmentId::new(1),
-            TrimmedLine2::segment(Point2::origin(), Point2::new(1., 0.)),
+            Segment2::new(Point2::origin(), Point2::new(1., 0.)),
         )
         .unwrap();
     s.add_constraint(ConstraintId::new(1), C::length(line, 1.))
@@ -314,7 +305,7 @@ fn invalid_edits_and_targets_do_not_change_state() {
     assert!(
         s.add_arc(
             ArcId::new(21),
-            TrimmedCircle2::arc(Point2::origin(), Vector2::x(), 1., std::f64::consts::TAU)
+            Arc2::new(Point2::origin(), Vector2::x(), 1., std::f64::consts::TAU)
         )
         .is_err()
     );

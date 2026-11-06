@@ -4,7 +4,7 @@ use super::{
 };
 use crate::geometry::dim2::{
     curves::Circle2,
-    trimmed::{TrimmedCircle2, TrimmedLine2},
+    trimmed::{Arc2, Segment2},
     utils::Point2,
 };
 use std::collections::BTreeMap;
@@ -84,13 +84,13 @@ impl Solution2d {
         let p = point.into();
         Ok(self.get(p.geometry)?.point_at(p.role))
     }
-    pub fn segment(&self, id: SegmentId) -> Result<TrimmedLine2, EditError> {
+    pub fn segment(&self, id: SegmentId) -> Result<Segment2, EditError> {
         Ok(self.get(id.0)?.as_segment())
     }
     pub fn circle(&self, id: CircleId) -> Result<Circle2, EditError> {
         Ok(self.get(id.0)?.as_circle())
     }
-    pub fn arc(&self, id: ArcId) -> Result<TrimmedCircle2, EditError> {
+    pub fn arc(&self, id: ArcId) -> Result<Arc2, EditError> {
         Ok(self.get(id.0)?.as_arc())
     }
     fn get(&self, id: GeometryId) -> Result<&Primitive, EditError> {
