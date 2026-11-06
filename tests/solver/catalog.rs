@@ -1,5 +1,9 @@
 use nalgebra::Vector2;
-use ngk::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
+use ngk::geometry::dim2::{
+    curves::Circle2,
+    trimmed::{TrimmedCircle2, TrimmedLine2},
+    utils::Point2,
+};
 use ngk::geometry::parameter::{Fraction, NativeParam};
 use ngk::solver::{
     ArcId, CircleId, Constraint2d as C, ConstraintId, PointId, SegmentId, System2d, TangencyMode,
@@ -8,8 +12,8 @@ use ngk::solver::{
 use radians::Rad64;
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, PI};
 
-fn line(a: (f64, f64), b: (f64, f64)) -> TrimmedCurve2 {
-    TrimmedCurve2::segment(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
+fn line(a: (f64, f64), b: (f64, f64)) -> TrimmedLine2 {
+    TrimmedLine2::segment(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
 }
 fn circle(x: f64, y: f64, r: f64) -> Circle2 {
     Circle2::new(Point2::new(x, y), Vector2::x(), r)
@@ -205,7 +209,7 @@ fn equal_lengths_radii_and_concentricity_apply_to_supported_geometry() {
     let arc = s
         .add_arc(
             ArcId::new(36),
-            TrimmedCurve2::arc(Point2::new(9., 8.), Vector2::y(), 2., 1.5 * PI),
+            TrimmedCircle2::arc(Point2::new(9., 8.), Vector2::y(), 2., 1.5 * PI),
         )
         .unwrap();
     s.add_constraint(ConstraintId::new(37), C::fixed(circle))
@@ -283,7 +287,7 @@ fn major_clockwise_arc_endpoints_move_without_losing_sweep_or_direction() {
     let arc = s
         .add_arc(
             ArcId::new(50),
-            TrimmedCurve2::arc(Point2::origin(), Vector2::x(), 10., -1.5 * PI),
+            TrimmedCircle2::arc(Point2::origin(), Vector2::x(), 10., -1.5 * PI),
         )
         .unwrap();
     s.add_constraint(ConstraintId::new(51), C::fixed_point(arc.center()))
@@ -339,7 +343,7 @@ fn point_on_arc_uses_the_support_outside_its_span() {
     let arc = s
         .add_arc(
             ArcId::new(56),
-            TrimmedCurve2::arc(Point2::origin(), Vector2::x(), 10., FRAC_PI_2),
+            TrimmedCircle2::arc(Point2::origin(), Vector2::x(), 10., FRAC_PI_2),
         )
         .unwrap();
     let p = s

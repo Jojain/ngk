@@ -1,7 +1,7 @@
 use super::{EditError, GeometryId, ids::PointRole};
 use crate::geometry::dim2::{
-    curves::{Circle2, Curve2},
-    trimmed::TrimmedCurve2,
+    curves::Circle2,
+    trimmed::{TrimmedCircle2, TrimmedLine2},
     utils::Point2,
 };
 use nalgebra::Vector2;
@@ -107,10 +107,7 @@ impl Primitive {
     pub fn point(point: Point2) -> Result<Self, EditError> {
         Self::checked(Kind::Point, vec![point.x, point.y], 1., Vector2::x())
     }
-    pub fn segment(curve: TrimmedCurve2) -> Result<Self, EditError> {
-        if !matches!(curve.curve(), Curve2::Line(_)) {
-            return Err(EditError::InvalidGeometry("expected a segment"));
-        }
+    pub fn segment(curve: TrimmedLine2) -> Result<Self, EditError> {
         let (a, b) = (curve.start(), curve.end());
         Self::checked(Kind::Segment, vec![a.x, a.y, b.x, b.y], 1., Vector2::x())
     }
@@ -124,10 +121,8 @@ impl Primitive {
             x,
         )
     }
-    pub fn arc(curve: TrimmedCurve2) -> Result<Self, EditError> {
-        let Curve2::Circle(circle) = curve.curve() else {
-            return Err(EditError::InvalidGeometry("expected a circular arc"));
-        };
+    pub fn arc(curve: TrimmedCircle2) -> Result<Self, EditError> {
+        let circle = curve.curve();
         let radial = curve.start() - circle.center();
         let sweep = curve.interval().delta();
         let sense = circle.x_dir().perp(&circle.y_dir()).signum() * sweep.signum();
@@ -208,8 +203,8 @@ impl Primitive {
             self.get(Param::Y) + radius * angle.sin(),
         )
     }
-    pub fn as_segment(&self) -> TrimmedCurve2 {
-        TrimmedCurve2::segment(
+    pub fn as_segment(&self) -> TrimmedLine2 {
+        TrimmedLine2::segment(
             self.point_at(PointRole::Start),
             self.point_at(PointRole::End),
         )
@@ -226,9 +221,9 @@ impl Primitive {
             circle
         }
     }
-    pub fn as_arc(&self) -> TrimmedCurve2 {
+    pub fn as_arc(&self) -> TrimmedCircle2 {
         let start = self.get(Param::StartAngle);
-        TrimmedCurve2::arc(
+        TrimmedCircle2::arc(
             self.point_at(PointRole::Center),
             Vector2::new(start.cos(), start.sin()),
             self.get(Param::Radius),

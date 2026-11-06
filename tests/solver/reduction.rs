@@ -1,4 +1,4 @@
-use ngk::geometry::dim2::{trimmed::TrimmedCurve2, utils::Point2};
+use ngk::geometry::dim2::{trimmed::TrimmedLine2, utils::Point2};
 use ngk::solver::{Constraint2d as C, ConstraintId, PointId, SegmentId, SolveOptions, System2d};
 
 #[test]
@@ -7,7 +7,7 @@ fn horizontal_alignment_can_rotate_a_vertical_segment_without_a_length_dimension
     let line = s
         .add_segment(
             SegmentId::new(1),
-            TrimmedCurve2::segment(Point2::origin(), Point2::new(0., 10.)),
+            TrimmedLine2::segment(Point2::origin(), Point2::new(0., 10.)),
         )
         .unwrap();
     s.add_constraint(ConstraintId::new(2), C::horizontal(line))
@@ -54,7 +54,7 @@ fn removing_an_alignment_restores_rotation_and_original_endpoint_identity() {
     let line = s
         .add_segment(
             SegmentId::new(6),
-            TrimmedCurve2::segment(Point2::origin(), Point2::new(10., 0.)),
+            TrimmedLine2::segment(Point2::origin(), Point2::new(10., 0.)),
         )
         .unwrap();
     s.add_constraint(ConstraintId::new(7), C::length(line, 10.))

@@ -1,12 +1,12 @@
 use nalgebra::Vector2;
-use ngk::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
+use ngk::geometry::dim2::{curves::Circle2, trimmed::TrimmedLine2, utils::Point2};
 use ngk::solver::{
     CircleId, Constraint2d, ConstraintId, GeometryId, PointId, SegmentId, SolveError, System2d,
     Target2d,
 };
 
-fn segment(a: (f64, f64), b: (f64, f64)) -> TrimmedCurve2 {
-    TrimmedCurve2::segment(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
+fn segment(a: (f64, f64), b: (f64, f64)) -> TrimmedLine2 {
+    TrimmedLine2::segment(Point2::new(a.0, a.1), Point2::new(b.0, b.1))
 }
 
 #[test]

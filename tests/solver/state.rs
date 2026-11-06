@@ -1,5 +1,9 @@
 use nalgebra::Vector2;
-use ngk::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
+use ngk::geometry::dim2::{
+    curves::Circle2,
+    trimmed::{TrimmedCircle2, TrimmedLine2},
+    utils::Point2,
+};
 use ngk::solver::{
     ArcId, CircleId, Constraint2d as C, ConstraintId, EditError, PointId, SegmentId, SolveError,
     System2d, Target2d,
@@ -13,7 +17,7 @@ fn fixing_an_arc_preserves_its_directed_shape_after_reseeding() {
     let arc = s
         .add_arc(
             ArcId::new(1),
-            TrimmedCurve2::arc(Point2::origin(), Vector2::x(), 3., 1.),
+            TrimmedCircle2::arc(Point2::origin(), Vector2::x(), 3., 1.),
         )
         .unwrap();
     let end = s.point(arc.end()).unwrap();
@@ -21,7 +25,7 @@ fn fixing_an_arc_preserves_its_directed_shape_after_reseeding() {
         .unwrap();
     s.update_arc(
         arc,
-        TrimmedCurve2::arc(Point2::origin(), Vector2::x(), 3., -1.),
+        TrimmedCircle2::arc(Point2::origin(), Vector2::x(), 3., -1.),
     )
     .unwrap();
     let solved = s.solve().unwrap();
@@ -107,17 +111,17 @@ fn a_stored_system_solves_where_it_was_and_keeps_what_it_captured() {
     let mut s = System2d::default();
     s.add_segment(
         bottom,
-        TrimmedCurve2::segment(Point2::origin(), Point2::new(9., 1.)),
+        TrimmedLine2::segment(Point2::origin(), Point2::new(9., 1.)),
     )
     .unwrap();
     s.add_segment(
         right,
-        TrimmedCurve2::segment(Point2::new(9., 0.), Point2::new(9., 5.)),
+        TrimmedLine2::segment(Point2::new(9., 0.), Point2::new(9., 5.)),
     )
     .unwrap();
     s.add_arc(
         arc,
-        TrimmedCurve2::arc(Point2::new(20., 0.), Vector2::x(), 3., -2.),
+        TrimmedCircle2::arc(Point2::new(20., 0.), Vector2::x(), 3., -2.),
     )
     .unwrap();
     s.add_constraint(
@@ -182,7 +186,7 @@ fn a_stored_system_is_refused_when_an_edit_could_not_have_produced_it() {
     let line = s
         .add_segment(
             SegmentId::new(1),
-            TrimmedCurve2::segment(Point2::origin(), Point2::new(1., 0.)),
+            TrimmedLine2::segment(Point2::origin(), Point2::new(1., 0.)),
         )
         .unwrap();
     s.add_constraint(ConstraintId::new(1), C::length(line, 1.))
@@ -310,7 +314,7 @@ fn invalid_edits_and_targets_do_not_change_state() {
     assert!(
         s.add_arc(
             ArcId::new(21),
-            TrimmedCurve2::arc(Point2::origin(), Vector2::x(), 1., std::f64::consts::TAU)
+            TrimmedCircle2::arc(Point2::origin(), Vector2::x(), 1., std::f64::consts::TAU)
         )
         .is_err()
     );

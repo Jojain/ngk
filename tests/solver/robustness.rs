@@ -1,4 +1,4 @@
-use ngk::geometry::dim2::{trimmed::TrimmedCurve2, utils::Point2};
+use ngk::geometry::dim2::{trimmed::TrimmedLine2, utils::Point2};
 use ngk::solver::{
     Constraint2d as C, ConstraintId, PointId, SegmentId, SolveError, SolveOptions, System2d,
     Target2d,
@@ -34,13 +34,13 @@ fn explicitly_reseeding_an_unsigned_angle_can_select_the_other_side() {
     let a = s
         .add_segment(
             SegmentId::new(5),
-            TrimmedCurve2::segment(Point2::origin(), Point2::new(10., 0.)),
+            TrimmedLine2::segment(Point2::origin(), Point2::new(10., 0.)),
         )
         .unwrap();
     let b = s
         .add_segment(
             SegmentId::new(6),
-            TrimmedCurve2::segment(Point2::origin(), Point2::new(3_f64.sqrt(), 1.)),
+            TrimmedLine2::segment(Point2::origin(), Point2::new(3_f64.sqrt(), 1.)),
         )
         .unwrap();
     s.add_constraint(ConstraintId::new(7), C::fixed(a)).unwrap();
@@ -49,7 +49,7 @@ fn explicitly_reseeding_an_unsigned_angle_can_select_the_other_side() {
     s.add_constraint(ConstraintId::new(9), C::length(b, 2.))
         .unwrap();
     s.solve().unwrap();
-    let negative = TrimmedCurve2::segment(Point2::origin(), Point2::new(3_f64.sqrt(), -1.));
+    let negative = TrimmedLine2::segment(Point2::origin(), Point2::new(3_f64.sqrt(), -1.));
     s.update_segment(b, negative.clone()).unwrap();
     let solved = s.solve().unwrap().segment(b).unwrap();
     assert!((solved.start() - negative.start()).norm() < 1e-7);
@@ -86,7 +86,7 @@ fn target_rounding_cannot_publish_a_degenerate_segment() {
     let line = s
         .add_segment(
             SegmentId::new(14),
-            TrimmedCurve2::segment(Point2::new(1e16, 0.), Point2::new(1e16 + 4., 0.)),
+            TrimmedLine2::segment(Point2::new(1e16, 0.), Point2::new(1e16 + 4., 0.)),
         )
         .unwrap();
     let old = s.solve().unwrap();

@@ -3,7 +3,11 @@ use super::{
     differentiate::{Jet, JetVector2},
     evaluate, prepare,
 };
-use crate::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
+use crate::geometry::dim2::{
+    curves::Circle2,
+    trimmed::{TrimmedCircle2, TrimmedLine2},
+    utils::Point2,
+};
 use crate::geometry::parameter::{Fraction, NativeParam};
 use crate::solver::{
     ArcId, CircleId, Constraint2d as C, ConstraintId, SegmentId, System2d, TangencyMode, Target2d,
@@ -17,13 +21,13 @@ fn geometric_jacobians_match_independent_centered_differences() {
     let a = s
         .add_segment(
             SegmentId::new(1),
-            TrimmedCurve2::segment(Point2::new(1., 2.), Point2::new(7., 5.)),
+            TrimmedLine2::segment(Point2::new(1., 2.), Point2::new(7., 5.)),
         )
         .unwrap();
     let b = s
         .add_segment(
             SegmentId::new(2),
-            TrimmedCurve2::segment(Point2::new(3., -2.), Point2::new(8., 6.)),
+            TrimmedLine2::segment(Point2::new(3., -2.), Point2::new(8., 6.)),
         )
         .unwrap();
     let c = s
@@ -35,7 +39,7 @@ fn geometric_jacobians_match_independent_centered_differences() {
     let arc = s
         .add_arc(
             ArcId::new(4),
-            TrimmedCurve2::arc(Point2::new(5., -4.), Vector2::new(1., 2.), 2., -2.4),
+            TrimmedCircle2::arc(Point2::new(5., -4.), Vector2::new(1., 2.), 2., -2.4),
         )
         .unwrap();
     let constraints = vec![

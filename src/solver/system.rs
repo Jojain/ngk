@@ -8,7 +8,11 @@ use super::{
     primitives::{Param, Primitive},
     solution::SolutionData,
 };
-use crate::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
+use crate::geometry::dim2::{
+    curves::Circle2,
+    trimmed::{TrimmedCircle2, TrimmedLine2},
+    utils::Point2,
+};
 use Constraint2d::*;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -95,7 +99,7 @@ impl System2d {
     pub fn add_segment(
         &mut self,
         id: SegmentId,
-        line: TrimmedCurve2,
+        line: TrimmedLine2,
     ) -> Result<SegmentId, EditError> {
         self.insert(id.0, Primitive::segment(line)?)?;
         Ok(id)
@@ -104,7 +108,7 @@ impl System2d {
         self.insert(id.0, Primitive::circle(circle)?)?;
         Ok(id)
     }
-    pub fn add_arc(&mut self, id: ArcId, arc: TrimmedCurve2) -> Result<ArcId, EditError> {
+    pub fn add_arc(&mut self, id: ArcId, arc: TrimmedCircle2) -> Result<ArcId, EditError> {
         self.insert(id.0, Primitive::arc(arc)?)?;
         Ok(id)
     }
@@ -121,29 +125,25 @@ impl System2d {
         let point = point.into();
         Ok(self.get(point.geometry)?.point_at(point.role))
     }
-    pub fn segment(&self, key: SegmentId) -> Result<TrimmedCurve2, EditError> {
+    pub fn segment(&self, key: SegmentId) -> Result<TrimmedLine2, EditError> {
         Ok(self.get(key.0)?.as_segment())
     }
     pub fn circle(&self, key: CircleId) -> Result<Circle2, EditError> {
         Ok(self.get(key.0)?.as_circle())
     }
-    pub fn arc(&self, key: ArcId) -> Result<TrimmedCurve2, EditError> {
+    pub fn arc(&self, key: ArcId) -> Result<TrimmedCircle2, EditError> {
         Ok(self.get(key.0)?.as_arc())
     }
     pub fn update_point(&mut self, key: PointId, point: Point2) -> Result<(), EditError> {
         self.replace(key.0, Primitive::point(point)?)
     }
-    pub fn update_segment(
-        &mut self,
-        key: SegmentId,
-        curve: TrimmedCurve2,
-    ) -> Result<(), EditError> {
+    pub fn update_segment(&mut self, key: SegmentId, curve: TrimmedLine2) -> Result<(), EditError> {
         self.replace(key.0, Primitive::segment(curve)?)
     }
     pub fn update_circle(&mut self, key: CircleId, curve: Circle2) -> Result<(), EditError> {
         self.replace(key.0, Primitive::circle(curve)?)
     }
-    pub fn update_arc(&mut self, key: ArcId, curve: TrimmedCurve2) -> Result<(), EditError> {
+    pub fn update_arc(&mut self, key: ArcId, curve: TrimmedCircle2) -> Result<(), EditError> {
         self.replace(key.0, Primitive::arc(curve)?)
     }
     fn replace(&mut self, key: GeometryId, primitive: Primitive) -> Result<(), EditError> {

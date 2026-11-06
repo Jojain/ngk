@@ -1,7 +1,11 @@
-use crate::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
+use crate::geometry::dim2::{
+    curves::Circle2,
+    trimmed::{TrimmedCircle2, TrimmedLine2},
+    utils::Point2,
+};
 use crate::solver::{
-    ArcId, CircleId, CircularId, Constraint2d as C, ConstraintId, GeometryId, PointId,
-    PointRef, SegmentId, SolveError, SolveReport, System2d, TangencyMode, Target2d,
+    ArcId, CircleId, CircularId, Constraint2d as C, ConstraintId, GeometryId, PointId, PointRef,
+    SegmentId, SolveError, SolveReport, System2d, TangencyMode, Target2d,
 };
 use RelationKind::*;
 use nalgebra::Vector2;
@@ -295,7 +299,7 @@ impl SolverPlayground {
                         self.system
                             .add_segment(
                                 SegmentId::new(id),
-                                TrimmedCurve2::segment(start.into(), end.into()),
+                                TrimmedLine2::segment(start.into(), end.into()),
                             )
                             .map_err(message)?,
                     ),
@@ -316,7 +320,7 @@ impl SolverPlayground {
                         self.system
                             .add_arc(
                                 ArcId::new(id),
-                                TrimmedCurve2::arc(
+                                TrimmedCircle2::arc(
                                     center.into(),
                                     Vector2::new(start_angle.cos(), start_angle.sin()),
                                     radius,
