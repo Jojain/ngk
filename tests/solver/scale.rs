@@ -1,5 +1,5 @@
 use ngk::geometry::dim2::{trimmed::TrimmedCurve2, utils::Point2};
-use ngk::solver::{Constraint2d as C, SegmentKey, System2d, Target2d};
+use ngk::solver::{Constraint2d as C, ConstraintId, SegmentId, System2d, Target2d};
 use std::time::Instant;
 
 #[test]
@@ -14,20 +14,27 @@ fn a_connected_chain_of_three_hundred_segments_preserves_dimensions_when_dragged
 
 fn connected_chain(count: usize) {
     let mut system = System2d::default();
-    let mut lines: Vec<SegmentKey> = vec![];
+    let mut lines: Vec<SegmentId> = vec![];
     for i in 0..count {
         let x = i as f64 * 10.;
         let line = system
-            .add_segment(TrimmedCurve2::segment(
-                Point2::new(x, 0.),
-                Point2::new(x + 10., 0.),
-            ))
+            .add_segment(
+                SegmentId::new(i as u64),
+                TrimmedCurve2::segment(Point2::new(x, 0.), Point2::new(x + 10., 0.)),
+            )
             .unwrap();
-        system.add_constraint(C::length(line, 10.)).unwrap();
-        system.add_constraint(C::horizontal(line)).unwrap();
+        system
+            .add_constraint(ConstraintId::new(3 * i as u64), C::length(line, 10.))
+            .unwrap();
+        system
+            .add_constraint(ConstraintId::new(3 * i as u64 + 1), C::horizontal(line))
+            .unwrap();
         if let Some(previous) = lines.last().copied() {
             system
-                .add_constraint(C::coincident(previous.end(), line.start()))
+                .add_constraint(
+                    ConstraintId::new(3 * i as u64 + 2),
+                    C::coincident(previous.end(), line.start()),
+                )
                 .unwrap();
         }
         lines.push(line);

@@ -1,8 +1,9 @@
 use crate::geometry::tolerance::{ANGULAR_TOLERANCE, LINEAR_TOLERANCE};
+use serde::{Deserialize, Serialize};
 
 /// Physical tolerances and bounded work for local 2D solving. By default a solved
 /// relation holds within the tolerances the rest of the kernel checks geometry with.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SolveOptions {
     /// Eliminates exact coordinate equalities and captured constants before factorization.
     pub linear_reduction: bool,

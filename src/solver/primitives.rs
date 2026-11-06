@@ -1,13 +1,14 @@
-use super::{EditError, keys::PointRole};
+use super::{EditError, GeometryId, ids::PointRole};
 use crate::geometry::dim2::{
     curves::{Circle2, Curve2},
     trimmed::TrimmedCurve2,
     utils::Point2,
 };
 use nalgebra::Vector2;
+use serde::{Deserialize, Serialize};
 use std::f64::consts::TAU;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) enum Kind {
     Point,
     Segment,
@@ -93,9 +94,8 @@ impl Param {
 }
 
 /// Canonical editable parameters; evaluated NGK curves are produced on demand.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Primitive {
-    pub serial: u64,
     pub kind: Kind,
     /// One value per parameter of `kind.layout()`, in that order.
     pub values: Vec<f64>,
@@ -151,7 +151,6 @@ impl Primitive {
         circle_axis: Vector2<f64>,
     ) -> Result<Self, EditError> {
         let value = Self {
-            serial: 0,
             kind,
             values,
             sense,
@@ -164,6 +163,10 @@ impl Primitive {
                 "non-finite or degenerate primitive",
             ))
         }
+    }
+    /// Whether a primitive read from storage is what `id` says, and well formed.
+    pub fn consistent_with(&self, id: GeometryId) -> bool {
+        self.kind == id.kind && self.values.len() == self.kind.layout().len() && self.valid()
     }
     pub fn get(&self, param: Param) -> f64 {
         debug_assert!(

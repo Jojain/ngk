@@ -1,21 +1,25 @@
-use super::{ConstraintKey, ConstraintResidual, GeometryKey};
+use super::{ConstraintId, ConstraintResidual, GeometryId};
 use thiserror::Error;
 
 /// A rejected edit leaves the constraint system unchanged.
 #[derive(Clone, Debug, Error)]
 pub enum EditError {
-    #[error("geometry reference is stale or belongs to another system")]
-    InvalidGeometryReference(GeometryKey),
-    #[error("constraint reference is stale or belongs to another system")]
-    InvalidConstraintReference(ConstraintKey),
+    #[error("{0:?} is not in this system")]
+    InvalidGeometryReference(GeometryId),
+    #[error("{0:?} is not in this system")]
+    InvalidConstraintReference(ConstraintId),
+    #[error("{0:?} is already in this system")]
+    DuplicateGeometry(GeometryId),
+    #[error("{0:?} is already in this system")]
+    DuplicateConstraint(ConstraintId),
     #[error("invalid geometry: {0}")]
     InvalidGeometry(&'static str),
     #[error("invalid constraint: {0}")]
     InvalidConstraint(&'static str),
     #[error("geometry is referenced by constraints {constraints:?}")]
     ReferencedGeometry {
-        geometry: GeometryKey,
-        constraints: Vec<ConstraintKey>,
+        geometry: GeometryId,
+        constraints: Vec<ConstraintId>,
     },
 }
 
@@ -27,10 +31,10 @@ pub enum SolveError {
     #[error(transparent)]
     InvalidInput(#[from] EditError),
     #[error("contradictory dimensions or fixed geometry: {constraints:?}")]
-    Conflict { constraints: Vec<ConstraintKey> },
+    Conflict { constraints: Vec<ConstraintId> },
     #[error("local resolution did not converge")]
     NonConvergence {
-        constraints: Vec<ConstraintKey>,
+        constraints: Vec<ConstraintId>,
         residuals: Vec<ConstraintResidual>,
     },
 }

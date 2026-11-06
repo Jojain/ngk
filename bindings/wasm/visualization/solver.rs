@@ -1,7 +1,7 @@
 use crate::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
 use crate::solver::{
-    ArcKey, CircleKey, CircularKey, Constraint2d as C, ConstraintKey, GeometryKey, PointKey,
-    PointRef, SegmentKey, SolveError, SolveReport, System2d, TangencyMode, Target2d,
+    ArcId, CircleId, CircularId, Constraint2d as C, ConstraintId, GeometryId, PointId,
+    PointRef, SegmentId, SolveError, SolveReport, System2d, TangencyMode, Target2d,
 };
 use RelationKind::*;
 use nalgebra::Vector2;
@@ -14,7 +14,7 @@ use wasm_bindgen::prelude::*;
 pub struct SolverPlayground {
     system: System2d,
     geometry: Vec<(u32, Shape)>,
-    constraints: Vec<(u32, ConstraintKey, Relation)>,
+    constraints: Vec<(u32, ConstraintId, Relation)>,
     next_id: u32,
     report: Option<SolveReport>,
     status: String,
@@ -24,13 +24,13 @@ pub struct SolverPlayground {
 
 #[derive(Clone, Copy)]
 enum Shape {
-    Point(PointKey),
-    Segment(SegmentKey),
-    Circle(CircleKey),
-    Arc(ArcKey),
+    Point(PointId),
+    Segment(SegmentId),
+    Circle(CircleId),
+    Arc(ArcId),
 }
 impl Shape {
-    fn key(self) -> GeometryKey {
+    fn key(self) -> GeometryId {
         match self {
             Self::Point(k) => k.into(),
             Self::Segment(k) => k.into(),
@@ -215,13 +215,13 @@ impl SolverPlayground {
             _ => Err("Select a point or a characteristic point".into()),
         }
     }
-    fn line(&self, r: Reference) -> Result<SegmentKey, String> {
+    fn line(&self, r: Reference) -> Result<SegmentId, String> {
         match self.shape(r)? {
             Shape::Segment(k) => Ok(k),
             _ => Err("Select a segment".into()),
         }
     }
-    fn circle(&self, r: Reference) -> Result<CircularKey, String> {
+    fn circle(&self, r: Reference) -> Result<CircularId, String> {
         match self.shape(r)? {
             Shape::Circle(k) => Ok(k.into()),
             Shape::Arc(k) => Ok(k.into()),
@@ -284,18 +284,27 @@ impl SolverPlayground {
         match command {
             Command::Snapshot => return Ok(()),
             Command::AddGeometry { geometry } => {
+                let id = u64::from(self.next_id);
                 let shape = match geometry {
-                    Geometry::Point { position } => {
-                        Shape::Point(self.system.add_point(position.into()).map_err(message)?)
-                    }
+                    Geometry::Point { position } => Shape::Point(
+                        self.system
+                            .add_point(PointId::new(id), position.into())
+                            .map_err(message)?,
+                    ),
                     Geometry::Segment { start, end } => Shape::Segment(
                         self.system
-                            .add_segment(TrimmedCurve2::segment(start.into(), end.into()))
+                            .add_segment(
+                                SegmentId::new(id),
+                                TrimmedCurve2::segment(start.into(), end.into()),
+                            )
                             .map_err(message)?,
                     ),
                     Geometry::Circle { center, radius } => Shape::Circle(
                         self.system
-                            .add_circle(Circle2::new(center.into(), Vector2::x(), radius))
+                            .add_circle(
+                                CircleId::new(id),
+                                Circle2::new(center.into(), Vector2::x(), radius),
+                            )
                             .map_err(message)?,
                     ),
                     Geometry::Arc {
@@ -305,12 +314,15 @@ impl SolverPlayground {
                         sweep,
                     } => Shape::Arc(
                         self.system
-                            .add_arc(TrimmedCurve2::arc(
-                                center.into(),
-                                Vector2::new(start_angle.cos(), start_angle.sin()),
-                                radius,
-                                sweep,
-                            ))
+                            .add_arc(
+                                ArcId::new(id),
+                                TrimmedCurve2::arc(
+                                    center.into(),
+                                    Vector2::new(start_angle.cos(), start_angle.sin()),
+                                    radius,
+                                    sweep,
+                                ),
+                            )
                             .map_err(message)?,
                     ),
                 };
@@ -329,7 +341,10 @@ impl SolverPlayground {
             }
             Command::AddConstraint { relation } => {
                 let definition = self.relation(&relation)?;
-                let key = self.system.add_constraint(definition).map_err(message)?;
+                let key = self
+                    .system
+                    .add_constraint(ConstraintId::new(u64::from(self.next_id)), definition)
+                    .map_err(message)?;
                 self.constraints.push((self.next_id, key, relation));
                 self.next_id += 1;
             }

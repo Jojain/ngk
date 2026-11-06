@@ -1,37 +1,26 @@
 use super::{
-    ArcKey, CircleKey, Constraint2d, ConstraintKey, EditError, GeometryKey, PointKey, PointRef,
-    SegmentKey, Solution2d, SolveError, SolveOptions, TangencyMode, Target2d,
+    ArcId, CircleId, Constraint2d, ConstraintId, EditError, GeometryId, PointId, PointRef,
+    SegmentId, Solution2d, SolveError, SolveOptions, TangencyMode, Target2d,
 };
 use super::{
     constraints::{StoredConstraint, TargetLocation},
-    keys::{ConstraintSlot, GeometrySlot},
     numerical,
     primitives::{Param, Primitive},
     solution::SolutionData,
 };
 use crate::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
 use Constraint2d::*;
-use slotmap::SlotMap;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
-
-static NEXT_IDENTITY: AtomicU64 = AtomicU64::new(1);
-
-/// Issues identities independently of editable state, including aborted batches.
-fn identity() -> u64 {
-    NEXT_IDENTITY
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
-        .expect("solver identity space exhausted")
-}
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Mutable 2D constraint system, independent of NGK topology and GUI interaction.
+///
+/// Primitives and constraints are named by ids the caller chooses, so a system can be
+/// stored or rebuilt and still mean the same thing.
 #[derive(Debug)]
 pub struct System2d {
-    pub(crate) owner: u64,
-    pub(crate) geometry: SlotMap<GeometrySlot, Primitive>,
-    pub(crate) constraints: SlotMap<ConstraintSlot, StoredConstraint>,
+    pub(crate) geometry: BTreeMap<GeometryId, Primitive>,
+    pub(crate) constraints: BTreeMap<ConstraintId, StoredConstraint>,
     options: SolveOptions,
     revision: u64,
     sequence: u64,
@@ -41,8 +30,8 @@ pub struct System2d {
 /// The explicit effects of a cascading primitive removal.
 #[derive(Clone, Debug)]
 pub struct Removal {
-    pub geometry: GeometryKey,
-    pub constraints: Vec<ConstraintKey>,
+    pub geometry: GeometryId,
+    pub constraints: Vec<ConstraintId>,
 }
 
 impl Default for System2d {
@@ -53,10 +42,17 @@ impl Default for System2d {
 impl System2d {
     /// Creates an empty system; invalid numerical options are reported when solving.
     pub fn new(options: SolveOptions) -> Self {
+        Self::restored(options, BTreeMap::new(), BTreeMap::new())
+    }
+    /// A system holding this problem, at the start of its own session.
+    pub(super) fn restored(
+        options: SolveOptions,
+        geometry: BTreeMap<GeometryId, Primitive>,
+        constraints: BTreeMap<ConstraintId, StoredConstraint>,
+    ) -> Self {
         Self {
-            owner: identity(),
-            geometry: SlotMap::with_key(),
-            constraints: SlotMap::with_key(),
+            geometry,
+            constraints,
             options,
             revision: 0,
             sequence: 0,
@@ -92,131 +88,124 @@ impl System2d {
     pub fn constraint_count(&self) -> usize {
         self.constraints.len()
     }
-    pub fn add_point(&mut self, point: Point2) -> Result<PointKey, EditError> {
-        Ok(PointKey(self.insert(Primitive::point(point)?)))
+    pub fn add_point(&mut self, id: PointId, point: Point2) -> Result<PointId, EditError> {
+        self.insert(id.0, Primitive::point(point)?)?;
+        Ok(id)
     }
-    pub fn add_segment(&mut self, line: TrimmedCurve2) -> Result<SegmentKey, EditError> {
-        Ok(SegmentKey(self.insert(Primitive::segment(line)?)))
+    pub fn add_segment(
+        &mut self,
+        id: SegmentId,
+        line: TrimmedCurve2,
+    ) -> Result<SegmentId, EditError> {
+        self.insert(id.0, Primitive::segment(line)?)?;
+        Ok(id)
     }
-    pub fn add_circle(&mut self, circle: Circle2) -> Result<CircleKey, EditError> {
-        Ok(CircleKey(self.insert(Primitive::circle(circle)?)))
+    pub fn add_circle(&mut self, id: CircleId, circle: Circle2) -> Result<CircleId, EditError> {
+        self.insert(id.0, Primitive::circle(circle)?)?;
+        Ok(id)
     }
-    pub fn add_arc(&mut self, arc: TrimmedCurve2) -> Result<ArcKey, EditError> {
-        Ok(ArcKey(self.insert(Primitive::arc(arc)?)))
+    pub fn add_arc(&mut self, id: ArcId, arc: TrimmedCurve2) -> Result<ArcId, EditError> {
+        self.insert(id.0, Primitive::arc(arc)?)?;
+        Ok(id)
     }
-    fn insert(&mut self, mut primitive: Primitive) -> GeometryKey {
-        primitive.serial = identity();
-        let serial = primitive.serial;
-        let slot = self.geometry.insert(primitive);
-        self.revision += 1;
-        GeometryKey {
-            owner: self.owner,
-            slot,
-            serial,
+    fn insert(&mut self, id: GeometryId, primitive: Primitive) -> Result<(), EditError> {
+        if self.geometry.contains_key(&id) {
+            return Err(EditError::DuplicateGeometry(id));
         }
+        self.geometry.insert(id, primitive);
+        self.revision += 1;
+        Ok(())
     }
     /// Reads the editable seed, which is not necessarily a solved configuration.
     pub fn point(&self, point: impl Into<PointRef>) -> Result<Point2, EditError> {
         let point = point.into();
         Ok(self.get(point.geometry)?.point_at(point.role))
     }
-    pub fn segment(&self, key: SegmentKey) -> Result<TrimmedCurve2, EditError> {
+    pub fn segment(&self, key: SegmentId) -> Result<TrimmedCurve2, EditError> {
         Ok(self.get(key.0)?.as_segment())
     }
-    pub fn circle(&self, key: CircleKey) -> Result<Circle2, EditError> {
+    pub fn circle(&self, key: CircleId) -> Result<Circle2, EditError> {
         Ok(self.get(key.0)?.as_circle())
     }
-    pub fn arc(&self, key: ArcKey) -> Result<TrimmedCurve2, EditError> {
+    pub fn arc(&self, key: ArcId) -> Result<TrimmedCurve2, EditError> {
         Ok(self.get(key.0)?.as_arc())
     }
-    pub fn update_point(&mut self, key: PointKey, point: Point2) -> Result<(), EditError> {
+    pub fn update_point(&mut self, key: PointId, point: Point2) -> Result<(), EditError> {
         self.replace(key.0, Primitive::point(point)?)
     }
     pub fn update_segment(
         &mut self,
-        key: SegmentKey,
+        key: SegmentId,
         curve: TrimmedCurve2,
     ) -> Result<(), EditError> {
         self.replace(key.0, Primitive::segment(curve)?)
     }
-    pub fn update_circle(&mut self, key: CircleKey, curve: Circle2) -> Result<(), EditError> {
+    pub fn update_circle(&mut self, key: CircleId, curve: Circle2) -> Result<(), EditError> {
         self.replace(key.0, Primitive::circle(curve)?)
     }
-    pub fn update_arc(&mut self, key: ArcKey, curve: TrimmedCurve2) -> Result<(), EditError> {
+    pub fn update_arc(&mut self, key: ArcId, curve: TrimmedCurve2) -> Result<(), EditError> {
         self.replace(key.0, Primitive::arc(curve)?)
     }
-    fn replace(&mut self, key: GeometryKey, mut primitive: Primitive) -> Result<(), EditError> {
+    fn replace(&mut self, key: GeometryId, primitive: Primitive) -> Result<(), EditError> {
         let old = self.get(key)?;
-        if old.kind != primitive.kind {
-            return Err(EditError::InvalidGeometryReference(key));
-        }
         if old.values == primitive.values
             && old.sense == primitive.sense
             && old.circle_axis == primitive.circle_axis
         {
             return Ok(());
         }
-        primitive.serial = key.serial;
-        self.geometry[key.slot] = primitive;
+        self.geometry.insert(key, primitive);
         self.revision += 1;
         Ok(())
     }
-    pub(crate) fn get(&self, key: GeometryKey) -> Result<&Primitive, EditError> {
-        if key.owner != self.owner {
-            return Err(EditError::InvalidGeometryReference(key));
-        }
+    pub(crate) fn get(&self, key: GeometryId) -> Result<&Primitive, EditError> {
         self.geometry
-            .get(key.slot)
-            .filter(|p| p.serial == key.serial)
+            .get(&key)
             .ok_or(EditError::InvalidGeometryReference(key))
     }
-    fn constraint_record(&self, key: ConstraintKey) -> Result<&StoredConstraint, EditError> {
-        if key.owner != self.owner {
-            return Err(EditError::InvalidConstraintReference(key));
-        }
+    fn constraint_record(&self, key: ConstraintId) -> Result<&StoredConstraint, EditError> {
         self.constraints
-            .get(key.slot)
-            .filter(|c| c.serial == key.serial)
+            .get(&key)
             .ok_or(EditError::InvalidConstraintReference(key))
     }
-    pub fn constraint(&self, key: ConstraintKey) -> Result<&Constraint2d, EditError> {
+    pub fn constraint(&self, key: ConstraintId) -> Result<&Constraint2d, EditError> {
         Ok(&self.constraint_record(key)?.definition)
     }
     /// Validates references and captures fixed values or automatic contact choices.
     /// Compatibility with other constraints is evaluated during solving.
-    pub fn add_constraint(&mut self, definition: Constraint2d) -> Result<ConstraintKey, EditError> {
-        let mut constraint = self.prepare_constraint(definition)?;
-        constraint.serial = identity();
-        let serial = constraint.serial;
-        let slot = self.constraints.insert(constraint);
+    pub fn add_constraint(
+        &mut self,
+        id: ConstraintId,
+        definition: Constraint2d,
+    ) -> Result<ConstraintId, EditError> {
+        if self.constraints.contains_key(&id) {
+            return Err(EditError::DuplicateConstraint(id));
+        }
+        let constraint = self.prepare_constraint(definition)?;
+        self.constraints.insert(id, constraint);
         self.revision += 1;
-        Ok(ConstraintKey {
-            owner: self.owner,
-            slot,
-            serial,
-        })
+        Ok(id)
     }
-    /// Replaces a relation without changing its key; captured values and automatic choices refresh.
+    /// Replaces a relation without changing its id; captured values and automatic choices refresh.
     pub fn update_constraint(
         &mut self,
-        key: ConstraintKey,
+        key: ConstraintId,
         definition: Constraint2d,
     ) -> Result<(), EditError> {
         self.constraint_record(key)?;
-        let mut constraint = self.prepare_constraint(definition)?;
-        constraint.serial = key.serial;
-        self.constraints[key.slot] = constraint;
+        let constraint = self.prepare_constraint(definition)?;
+        self.constraints.insert(key, constraint);
         self.revision += 1;
         Ok(())
     }
-    pub fn remove_constraint(&mut self, key: ConstraintKey) -> Result<(), EditError> {
+    pub fn remove_constraint(&mut self, key: ConstraintId) -> Result<(), EditError> {
         self.constraint_record(key)?;
-        self.constraints.remove(key.slot);
+        self.constraints.remove(&key);
         self.revision += 1;
         Ok(())
     }
     /// Removes an unreferenced primitive, otherwise identifies its dependants.
-    pub fn remove_geometry(&mut self, key: impl Into<GeometryKey>) -> Result<(), EditError> {
+    pub fn remove_geometry(&mut self, key: impl Into<GeometryId>) -> Result<(), EditError> {
         let key = key.into();
         self.get(key)?;
         let constraints = self.dependants(key);
@@ -226,37 +215,33 @@ impl System2d {
                 constraints,
             });
         }
-        self.geometry.remove(key.slot);
+        self.geometry.remove(&key);
         self.revision += 1;
         Ok(())
     }
     /// Removes a primitive and all its dependent constraints in one edit.
-    pub fn remove_cascade(&mut self, key: impl Into<GeometryKey>) -> Result<Removal, EditError> {
+    pub fn remove_cascade(&mut self, key: impl Into<GeometryId>) -> Result<Removal, EditError> {
         let key = key.into();
         self.get(key)?;
         let constraints = self.dependants(key);
         for constraint in &constraints {
-            self.constraints.remove(constraint.slot);
+            self.constraints.remove(constraint);
         }
-        self.geometry.remove(key.slot);
+        self.geometry.remove(&key);
         self.revision += 1;
         Ok(Removal {
             geometry: key,
             constraints,
         })
     }
-    fn dependants(&self, key: GeometryKey) -> Vec<ConstraintKey> {
+    fn dependants(&self, key: GeometryId) -> Vec<ConstraintId> {
         self.constraints
             .iter()
             .filter(|(_, c)| c.definition.geometries().contains(&key))
-            .map(|(slot, c)| ConstraintKey {
-                owner: self.owner,
-                slot,
-                serial: c.serial,
-            })
+            .map(|(id, _)| *id)
             .collect()
     }
-    /// Applies a batch atomically. Keys issued by an aborted batch remain invalid.
+    /// Applies a batch atomically. What an aborted batch added is not in the system.
     ///
     /// A successful batch counts as one revision. Resolve after the batch; a
     /// result computed inside it is not designated as the committed solution.
@@ -265,7 +250,6 @@ impl System2d {
         edit: impl FnOnce(&mut Self) -> Result<T, EditError>,
     ) -> Result<T, EditError> {
         let mut draft = Self {
-            owner: self.owner,
             geometry: self.geometry.clone(),
             constraints: self.constraints.clone(),
             options: self.options.clone(),
@@ -296,19 +280,13 @@ impl System2d {
             self.validate_target(target)?;
         }
         let mut constraints = self.constraints.clone();
-        for (_, constraint) in &mut constraints {
+        for constraint in constraints.values_mut() {
             constraint.side = self.prepare_constraint(constraint.definition.clone())?.side;
         }
-        let (geometry, report) = numerical::solve(
-            self.owner,
-            &self.geometry,
-            &constraints,
-            targets,
-            &self.options,
-        )?;
+        let (geometry, report) =
+            numerical::solve(&self.geometry, &constraints, targets, &self.options)?;
         self.sequence += 1;
         let solution = Solution2d(Arc::new(SolutionData {
-            owner: self.owner,
             revision: self.revision,
             sequence: self.sequence,
             geometry: geometry.clone(),
@@ -350,7 +328,6 @@ impl System2d {
             return Err(EditError::InvalidConstraint("invalid dimension or angle"));
         }
         let mut result = StoredConstraint {
-            serial: 0,
             definition,
             captured: vec![],
             captured_frame: None,
@@ -380,7 +357,7 @@ impl System2d {
             DistanceToLine(p, l, _) => result.side = self.line_side(*l, self.point(*p)?)?,
             TangentLineCircle(l, c) => {
                 result.side =
-                    self.line_side(*l, self.get(c.0)?.point_at(super::keys::PointRole::Center))?
+                    self.line_side(*l, self.get(c.0)?.point_at(super::ids::PointRole::Center))?
             }
             Angle { first, second, .. } => {
                 let a = self.segment(*first)?;
@@ -413,8 +390,8 @@ impl System2d {
             } => {
                 let a = self.get(first.0)?;
                 let b = self.get(second.0)?;
-                let d = (a.point_at(super::keys::PointRole::Center)
-                    - b.point_at(super::keys::PointRole::Center))
+                let d = (a.point_at(super::ids::PointRole::Center)
+                    - b.point_at(super::ids::PointRole::Center))
                 .norm();
                 let (r1, r2) = (a.get(Param::Radius), b.get(Param::Radius));
                 let mode = if *mode == TangencyMode::Automatic {
@@ -440,7 +417,7 @@ impl System2d {
         }
         Ok(result)
     }
-    fn line_side(&self, line: SegmentKey, point: Point2) -> Result<f64, EditError> {
+    fn line_side(&self, line: SegmentId, point: Point2) -> Result<f64, EditError> {
         let line = self.segment(line)?;
         Ok(
             if (line.end() - line.start()).perp(&(point - line.start())) < 0. {

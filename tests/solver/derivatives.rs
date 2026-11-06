@@ -5,7 +5,9 @@ use super::{
 };
 use crate::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
 use crate::geometry::parameter::{Fraction, NativeParam};
-use crate::solver::{Constraint2d as C, System2d, TangencyMode, Target2d};
+use crate::solver::{
+    ArcId, CircleId, Constraint2d as C, ConstraintId, SegmentId, System2d, TangencyMode, Target2d,
+};
 use nalgebra::Vector2;
 use radians::Rad64;
 
@@ -13,27 +15,28 @@ use radians::Rad64;
 fn geometric_jacobians_match_independent_centered_differences() {
     let mut s = System2d::default();
     let a = s
-        .add_segment(TrimmedCurve2::segment(
-            Point2::new(1., 2.),
-            Point2::new(7., 5.),
-        ))
+        .add_segment(
+            SegmentId::new(1),
+            TrimmedCurve2::segment(Point2::new(1., 2.), Point2::new(7., 5.)),
+        )
         .unwrap();
     let b = s
-        .add_segment(TrimmedCurve2::segment(
-            Point2::new(3., -2.),
-            Point2::new(8., 6.),
-        ))
+        .add_segment(
+            SegmentId::new(2),
+            TrimmedCurve2::segment(Point2::new(3., -2.), Point2::new(8., 6.)),
+        )
         .unwrap();
     let c = s
-        .add_circle(Circle2::new(Point2::new(-2., 4.), Vector2::x(), 3.))
+        .add_circle(
+            CircleId::new(3),
+            Circle2::new(Point2::new(-2., 4.), Vector2::x(), 3.),
+        )
         .unwrap();
     let arc = s
-        .add_arc(TrimmedCurve2::arc(
-            Point2::new(5., -4.),
-            Vector2::new(1., 2.),
-            2.,
-            -2.4,
-        ))
+        .add_arc(
+            ArcId::new(4),
+            TrimmedCurve2::arc(Point2::new(5., -4.), Vector2::new(1., 2.), 2., -2.4),
+        )
         .unwrap();
     let constraints = vec![
         C::coincident(a.end(), arc.start()),
@@ -62,8 +65,9 @@ fn geometric_jacobians_match_independent_centered_differences() {
         C::tangent_line_circle(a, c),
         C::tangent_circles(c, arc, TangencyMode::External),
     ];
-    for c in constraints {
-        s.add_constraint(c).unwrap();
+    for (index, c) in constraints.into_iter().enumerate() {
+        s.add_constraint(ConstraintId::new(index as u64), c)
+            .unwrap();
     }
     let targets = vec![
         Target2d::point(arc.end(), Point2::new(2., 3.)),
@@ -71,7 +75,7 @@ fn geometric_jacobians_match_independent_centered_differences() {
         Target2d::on_circle(c, NativeParam::new(0.8), Point2::new(-5., 4.)),
         Target2d::on_segment(b, Fraction::new(0.3), Point2::origin()),
     ];
-    let components = prepare::prepare(s.owner, &s.geometry, &s.constraints, &targets, false);
+    let components = prepare::prepare(&s.geometry, &s.constraints, &targets, false);
     for component in components {
         for soft in [false, true] {
             let evaluate = |x: &nalgebra::DVector<f64>| {

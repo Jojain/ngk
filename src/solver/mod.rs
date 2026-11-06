@@ -2,17 +2,18 @@
 
 mod constraints;
 mod error;
-mod keys;
+mod ids;
 mod numerical;
 mod options;
 mod primitives;
 mod solution;
+mod storage;
 mod system;
 
 pub use constraints::{Constraint2d, TangencyMode, Target2d};
 pub use error::{EditError, SolveError};
-pub use keys::{
-    ArcKey, CircleKey, CircularKey, ConstraintKey, GeometryKey, PointKey, PointRef, SegmentKey,
+pub use ids::{
+    ArcId, CircleId, CircularId, ConstraintId, GeometryId, PointId, PointRef, SegmentId,
 };
 pub use options::SolveOptions;
 pub use solution::{

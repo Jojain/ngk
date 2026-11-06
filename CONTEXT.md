@@ -30,6 +30,11 @@ The durable identity of an entity within one model. It does not say which model
 it came from.
 _Avoid_: id, handle
 
+**Id** (solver id):
+The identity of a primitive or constraint of a constraint system, chosen by the
+caller and meaningful across systems built from the same source. A map's entities
+have keys, assigned by the kernel; a system's primitives have ids.
+
 **Model**:
 One map plus everything a shape is: entities, geometry, payload. Every mutation
 happens inside one of its transactions.

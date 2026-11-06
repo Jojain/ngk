@@ -1,10 +1,10 @@
 use super::super::{
-    Constraint2d, ConstraintKey, GeometryKey, PointRef, SegmentKey, SolveOptions, TangencyMode,
+    Constraint2d, ConstraintId, GeometryId, PointRef, SegmentId, SolveOptions, TangencyMode,
     Target2d,
 };
 use super::super::{
     constraints::{StoredConstraint, TargetLocation},
-    keys::PointRole,
+    ids::PointRole,
     primitives::{Kind, Param, Quantity},
 };
 use super::{
@@ -25,10 +25,10 @@ pub(super) struct Evaluation {
     pub values: DVector<f64>,
     pub jacobian: DMatrix<f64>,
     pub angular: Vec<bool>,
-    pub groups: Vec<(ConstraintKey, Range<usize>)>,
+    pub groups: Vec<(ConstraintId, Range<usize>)>,
 }
 impl Evaluation {
-    fn new(rows: Vec<Row>, groups: Vec<(ConstraintKey, Range<usize>)>, columns: usize) -> Self {
+    fn new(rows: Vec<Row>, groups: Vec<(ConstraintId, Range<usize>)>, columns: usize) -> Self {
         let mut jacobian = DMatrix::zeros(rows.len(), columns);
         for (i, row) in rows.iter().enumerate() {
             for &(j, v) in &row.expression.gradient {
@@ -138,7 +138,7 @@ struct Context<'a> {
 impl Context<'_> {
     /// A parameter as a differentiable expression of the unknowns. In world
     /// mode `x` holds every parameter slot directly, without reduction.
-    fn parameter(&self, key: GeometryKey, param: Param) -> Jet {
+    fn parameter(&self, key: GeometryId, param: Param) -> Jet {
         let slot = self.component.slot(key, param);
         if self.world {
             Jet::variable(self.x[slot], slot)
@@ -149,20 +149,20 @@ impl Context<'_> {
             Jet::constant(self.component.offsets[slot])
         }
     }
-    fn coordinates(&self, key: GeometryKey, x: Param, y: Param) -> JetVector2 {
+    fn coordinates(&self, key: GeometryId, x: Param, y: Param) -> JetVector2 {
         JetVector2 {
             x: self.parameter(key, x),
             y: self.parameter(key, y),
         }
     }
-    fn center(&self, key: GeometryKey) -> JetVector2 {
+    fn center(&self, key: GeometryId) -> JetVector2 {
         self.coordinates(key, Param::X, Param::Y)
     }
-    fn radius(&self, key: GeometryKey) -> Jet {
+    fn radius(&self, key: GeometryId) -> Jet {
         self.parameter(key, Param::Radius)
     }
     /// A curve primitive with its shape read from the unknowns.
-    fn curve(&self, key: GeometryKey) -> Curve {
+    fn curve(&self, key: GeometryId) -> Curve {
         let primitive = &self.component.entry(key).primitive;
         match primitive.kind {
             Kind::Segment => Curve::Segment {
@@ -202,7 +202,7 @@ impl Context<'_> {
         }
     }
     /// A segment's derivative is the same everywhere: its end minus its start.
-    fn direction(&self, line: SegmentKey) -> JetVector2 {
+    fn direction(&self, line: SegmentId) -> JetVector2 {
         self.curve(line.0).derivative_at(Jet::constant(0.))
     }
     fn constant_point(&self, p: Point2) -> JetVector2 {
@@ -217,7 +217,7 @@ impl Context<'_> {
             y: Jet::constant((p.y - self.component.origin.y) / self.component.scale),
         }
     }
-    fn line_distance(&self, point: JetVector2, line: SegmentKey) -> Jet {
+    fn line_distance(&self, point: JetVector2, line: SegmentId) -> Jet {
         self.direction(line)
             .unit()
             .cross(point - self.point(line.start()))

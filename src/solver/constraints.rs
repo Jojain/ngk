@@ -1,13 +1,14 @@
-use super::{ArcKey, CircleKey, CircularKey, GeometryKey, PointRef, SegmentKey};
+use super::{ArcId, CircleId, CircularId, GeometryId, PointRef, SegmentId};
 use crate::geometry::dim2::utils::Point2;
 use crate::geometry::parameter::{Fraction, NativeParam};
 use Constraint2d::*;
 use nalgebra::Vector2;
 use radians::Rad64;
+use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
 /// The contact branch of two supporting circles.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TangencyMode {
     Automatic,
     External,
@@ -17,32 +18,46 @@ pub enum TangencyMode {
     SecondContainsFirst,
 }
 
+/// `Rad64` has no serial form of its own: an angle is stored as its radians.
+mod stored_angle {
+    use radians::Rad64;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(angle: &Rad64, serializer: S) -> Result<S::Ok, S::Error> {
+        angle.val().serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Rad64, D::Error> {
+        f64::deserialize(deserializer).map(Rad64::new)
+    }
+}
+
 /// Permanent geometric relations. Lengths use the caller's unit.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Constraint2d {
     Coincident(PointRef, PointRef),
-    PointOnLine(PointRef, SegmentKey),
-    PointOnCircle(PointRef, CircularKey),
-    Horizontal(SegmentKey),
-    Vertical(SegmentKey),
+    PointOnLine(PointRef, SegmentId),
+    PointOnCircle(PointRef, CircularId),
+    Horizontal(SegmentId),
+    Vertical(SegmentId),
     Distance(PointRef, PointRef, f64),
-    DistanceToLine(PointRef, SegmentKey, f64),
+    DistanceToLine(PointRef, SegmentId, f64),
     OffsetX(PointRef, PointRef, f64),
     OffsetY(PointRef, PointRef, f64),
-    Length(SegmentKey, f64),
-    Radius(CircularKey, f64),
-    EqualLength(SegmentKey, SegmentKey),
-    EqualRadius(CircularKey, CircularKey),
-    Parallel(SegmentKey, SegmentKey),
-    Perpendicular(SegmentKey, SegmentKey),
+    Length(SegmentId, f64),
+    Radius(CircularId, f64),
+    EqualLength(SegmentId, SegmentId),
+    EqualRadius(CircularId, CircularId),
+    Parallel(SegmentId, SegmentId),
+    Perpendicular(SegmentId, SegmentId),
     /// Unsigned values lie in [0, pi]; oriented values are interpreted modulo a turn.
     Angle {
-        first: SegmentKey,
-        second: SegmentKey,
+        first: SegmentId,
+        second: SegmentId,
+        #[serde(with = "stored_angle")]
         angle: Rad64,
         oriented: bool,
     },
-    Concentric(CircularKey, CircularKey),
+    Concentric(CircularId, CircularId),
     Midpoint {
         point: PointRef,
         start: PointRef,
@@ -51,7 +66,7 @@ pub enum Constraint2d {
     SymmetricAboutLine {
         first: PointRef,
         second: PointRef,
-        line: SegmentKey,
+        line: SegmentId,
     },
     SymmetricAboutPoint {
         first: PointRef,
@@ -61,11 +76,11 @@ pub enum Constraint2d {
     /// Captures this point's position when the constraint is added or replaced.
     FixedPoint(PointRef),
     /// Captures all of the primitive's parameters when added or replaced.
-    Fixed(GeometryKey),
-    TangentLineCircle(SegmentKey, CircularKey),
+    Fixed(GeometryId),
+    TangentLineCircle(SegmentId, CircularId),
     TangentCircles {
-        first: CircularKey,
-        second: CircularKey,
+        first: CircularId,
+        second: CircularId,
         mode: TangencyMode,
     },
 }
@@ -74,22 +89,22 @@ impl Constraint2d {
     pub fn coincident(a: impl Into<PointRef>, b: impl Into<PointRef>) -> Self {
         Self::Coincident(a.into(), b.into())
     }
-    pub fn point_on_line(p: impl Into<PointRef>, line: SegmentKey) -> Self {
+    pub fn point_on_line(p: impl Into<PointRef>, line: SegmentId) -> Self {
         Self::PointOnLine(p.into(), line)
     }
-    pub fn point_on_circle(p: impl Into<PointRef>, circle: impl Into<CircularKey>) -> Self {
+    pub fn point_on_circle(p: impl Into<PointRef>, circle: impl Into<CircularId>) -> Self {
         Self::PointOnCircle(p.into(), circle.into())
     }
-    pub fn horizontal(line: SegmentKey) -> Self {
+    pub fn horizontal(line: SegmentId) -> Self {
         Self::Horizontal(line)
     }
-    pub fn vertical(line: SegmentKey) -> Self {
+    pub fn vertical(line: SegmentId) -> Self {
         Self::Vertical(line)
     }
     pub fn distance(a: impl Into<PointRef>, b: impl Into<PointRef>, value: f64) -> Self {
         Self::Distance(a.into(), b.into(), value)
     }
-    pub fn distance_to_line(p: impl Into<PointRef>, line: SegmentKey, value: f64) -> Self {
+    pub fn distance_to_line(p: impl Into<PointRef>, line: SegmentId, value: f64) -> Self {
         Self::DistanceToLine(p.into(), line, value)
     }
     pub fn offset_x(a: impl Into<PointRef>, b: impl Into<PointRef>, value: f64) -> Self {
@@ -98,28 +113,28 @@ impl Constraint2d {
     pub fn offset_y(a: impl Into<PointRef>, b: impl Into<PointRef>, value: f64) -> Self {
         Self::OffsetY(a.into(), b.into(), value)
     }
-    pub fn length(line: SegmentKey, value: f64) -> Self {
+    pub fn length(line: SegmentId, value: f64) -> Self {
         Self::Length(line, value)
     }
-    pub fn radius(circle: impl Into<CircularKey>, value: f64) -> Self {
+    pub fn radius(circle: impl Into<CircularId>, value: f64) -> Self {
         Self::Radius(circle.into(), value)
     }
-    pub fn diameter(circle: impl Into<CircularKey>, value: f64) -> Self {
+    pub fn diameter(circle: impl Into<CircularId>, value: f64) -> Self {
         Self::Radius(circle.into(), value / 2.)
     }
-    pub fn equal_length(a: SegmentKey, b: SegmentKey) -> Self {
+    pub fn equal_length(a: SegmentId, b: SegmentId) -> Self {
         Self::EqualLength(a, b)
     }
-    pub fn equal_radius(a: impl Into<CircularKey>, b: impl Into<CircularKey>) -> Self {
+    pub fn equal_radius(a: impl Into<CircularId>, b: impl Into<CircularId>) -> Self {
         Self::EqualRadius(a.into(), b.into())
     }
-    pub fn parallel(a: SegmentKey, b: SegmentKey) -> Self {
+    pub fn parallel(a: SegmentId, b: SegmentId) -> Self {
         Self::Parallel(a, b)
     }
-    pub fn perpendicular(a: SegmentKey, b: SegmentKey) -> Self {
+    pub fn perpendicular(a: SegmentId, b: SegmentId) -> Self {
         Self::Perpendicular(a, b)
     }
-    pub fn angle(first: SegmentKey, second: SegmentKey, angle: Rad64) -> Self {
+    pub fn angle(first: SegmentId, second: SegmentId, angle: Rad64) -> Self {
         Self::Angle {
             first,
             second,
@@ -127,7 +142,7 @@ impl Constraint2d {
             oriented: false,
         }
     }
-    pub fn oriented_angle(first: SegmentKey, second: SegmentKey, angle: Rad64) -> Self {
+    pub fn oriented_angle(first: SegmentId, second: SegmentId, angle: Rad64) -> Self {
         Self::Angle {
             first,
             second,
@@ -135,10 +150,10 @@ impl Constraint2d {
             oriented: true,
         }
     }
-    pub fn concentric(a: impl Into<CircularKey>, b: impl Into<CircularKey>) -> Self {
+    pub fn concentric(a: impl Into<CircularId>, b: impl Into<CircularId>) -> Self {
         Self::Concentric(a.into(), b.into())
     }
-    pub fn midpoint(point: impl Into<PointRef>, line: SegmentKey) -> Self {
+    pub fn midpoint(point: impl Into<PointRef>, line: SegmentId) -> Self {
         Self::Midpoint {
             point: point.into(),
             start: line.start(),
@@ -159,7 +174,7 @@ impl Constraint2d {
     pub fn symmetric_about_line(
         first: impl Into<PointRef>,
         second: impl Into<PointRef>,
-        line: SegmentKey,
+        line: SegmentId,
     ) -> Self {
         Self::SymmetricAboutLine {
             first: first.into(),
@@ -181,15 +196,15 @@ impl Constraint2d {
     pub fn fixed_point(point: impl Into<PointRef>) -> Self {
         Self::FixedPoint(point.into())
     }
-    pub fn fixed(geometry: impl Into<GeometryKey>) -> Self {
+    pub fn fixed(geometry: impl Into<GeometryId>) -> Self {
         Self::Fixed(geometry.into())
     }
-    pub fn tangent_line_circle(line: SegmentKey, circle: impl Into<CircularKey>) -> Self {
+    pub fn tangent_line_circle(line: SegmentId, circle: impl Into<CircularId>) -> Self {
         Self::TangentLineCircle(line, circle.into())
     }
     pub fn tangent_circles(
-        first: impl Into<CircularKey>,
-        second: impl Into<CircularKey>,
+        first: impl Into<CircularId>,
+        second: impl Into<CircularId>,
         mode: TangencyMode,
     ) -> Self {
         Self::TangentCircles {
@@ -200,7 +215,7 @@ impl Constraint2d {
     }
 
     /// Lists owning primitives; computed points do not introduce extra ownership.
-    pub(crate) fn geometries(&self) -> Vec<GeometryKey> {
+    pub(crate) fn geometries(&self) -> Vec<GeometryId> {
         match self {
             Coincident(a, b) | Distance(a, b, _) | OffsetX(a, b, _) | OffsetY(a, b, _) => {
                 vec![a.geometry, b.geometry]
@@ -253,9 +268,8 @@ impl Constraint2d {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct StoredConstraint {
-    pub serial: u64,
     pub definition: Constraint2d,
     pub captured: Vec<f64>,
     /// Fixed primitives capture their discrete direction and circle parameter frame too.
@@ -275,9 +289,9 @@ pub struct Target2d {
 pub(crate) enum TargetLocation {
     Point(PointRef),
     /// A fraction of a segment's or arc's span.
-    Fraction(GeometryKey, Fraction),
+    Fraction(GeometryId, Fraction),
     /// A native parameter of a circle, which has no span to be a fraction of.
-    Native(GeometryKey, NativeParam),
+    Native(GeometryId, NativeParam),
 }
 impl Target2d {
     pub fn point(point: impl Into<PointRef>, position: Point2) -> Self {
@@ -288,7 +302,7 @@ impl Target2d {
         }
     }
     /// Targets a fixed fraction in [0, 1] of the directed segment; validated on solve.
-    pub fn on_segment(line: SegmentKey, fraction: Fraction, position: Point2) -> Self {
+    pub fn on_segment(line: SegmentId, fraction: Fraction, position: Point2) -> Self {
         Self {
             location: TargetLocation::Fraction(line.0, fraction),
             position,
@@ -296,7 +310,7 @@ impl Target2d {
         }
     }
     /// Targets a fixed fraction in [0, 1] of the directed arc; validated on solve.
-    pub fn on_arc(arc: ArcKey, fraction: Fraction, position: Point2) -> Self {
+    pub fn on_arc(arc: ArcId, fraction: Fraction, position: Point2) -> Self {
         Self {
             location: TargetLocation::Fraction(arc.0, fraction),
             position,
@@ -304,7 +318,7 @@ impl Target2d {
         }
     }
     /// Targets the circle's point at a native parameter, its angle from the imported frame.
-    pub fn on_circle(circle: CircleKey, parameter: NativeParam, position: Point2) -> Self {
+    pub fn on_circle(circle: CircleId, parameter: NativeParam, position: Point2) -> Self {
         Self {
             location: TargetLocation::Native(circle.0, parameter),
             position,
@@ -316,7 +330,7 @@ impl Target2d {
         self.weight = weight;
         self
     }
-    pub(crate) fn geometry(&self) -> GeometryKey {
+    pub(crate) fn geometry(&self) -> GeometryId {
         match self.location {
             TargetLocation::Point(p) => p.geometry,
             TargetLocation::Fraction(g, _) | TargetLocation::Native(g, _) => g,

@@ -9,13 +9,13 @@ builders, Nales, or a GUI. The caller materializes topology separately.
 
 ```rust
 use ngk::geometry::dim2::{trimmed::TrimmedCurve2, utils::Point2};
-use ngk::solver::{Constraint2d, System2d, Target2d};
+use ngk::solver::{Constraint2d, ConstraintId, SegmentId, System2d, Target2d};
 
 let mut system = System2d::default();
-let segment = system.add_segment(TrimmedCurve2::segment(
+let segment = system.add_segment(SegmentId::new(1), TrimmedCurve2::segment(
     Point2::new(0.0, 0.0), Point2::new(6.0, 2.0),
 ))?;
-system.add_constraint(Constraint2d::length(segment, 10.0))?;
+system.add_constraint(ConstraintId::new(1), Constraint2d::length(segment, 10.0))?;
 let solution = system.solve()?;
 let moved = system.solve_toward(&[
     Target2d::point(segment.end(), Point2::new(15.0, 8.0)),
@@ -37,8 +37,8 @@ URL fragment `#/solver-2d`). It uses a DOM/SVG panel surface instead of the shar
 
 `bindings/wasm/visualization/solver.rs` exposes `SolverPlayground`, a visualization
 adapter with a persistent `System2d`. Its JSON commands import primitive values,
-add/update/remove relations, solve, and return geometry and diagnostics. Its
-session-local numeric IDs map to typed solver keys. The adapter is separate from
+add/update/remove relations, solve, and return geometry and diagnostics. It
+allocates the typed ids it gives the solver. The adapter is separate from
 the modeling bindings; it is not a second constraint implementation or a Python
 API. The browser releases each session when replacing an example or unmounting.
 
@@ -62,11 +62,20 @@ build commands regenerate WASM. With an already generated package, run
 
 ## Identity and state
 
-Geometry and constraints have separate slotmap stores. Typed public keys carry
-their solver owner, slot generation and an issuance serial. The serial is
-allocated independently of editable state, so a key leaked from an aborted
-batch cannot accidentally identify a later insertion. A point reference is
-an independent point or a primitive's stable start, end or center role.
+The caller names every primitive and constraint with a typed id (`PointId`,
+`SegmentId`, `CircleId`, `ArcId`, `ConstraintId`). An id means the same thing in
+every system built from the same source, so a system can be stored or rebuilt,
+and the same problem solves the same whatever order it was added in. Each kind
+has its own type, so a relation cannot name a primitive of the wrong kind, and
+ids of different kinds do not collide. An id already in use is refused; one reused
+after a removal names the new primitive, so keeping ids unique over time is the
+caller's. A point reference is an independent point or a primitive's stable start,
+end or center role.
+
+`System2d` serializes its options, primitives and constraints, including the values
+and branches they captured. Revisions and solutions describe one session and are
+not stored. Reading refuses what an edit could not have produced: an inconsistent
+primitive, a dangling reference, a role the primitive does not have.
 
 Each primitive owns its minimal parameter vector. A solve compacts these
 vectors into component-local numerical arrays; the public API never exposes
@@ -97,7 +106,7 @@ Fixing a primitive also captures its discrete direction and circle parameter fra
 `edit` applies a batch on staged state and commits it atomically as one revision.
 An invalid edit or failed batch leaves the original state intact. Ordinary
 primitive removal refuses referenced geometry and identifies its dependent
-constraints; `remove_cascade` removes them explicitly and reports their keys.
+constraints; `remove_cascade` removes them explicitly and reports their ids.
 
 Successful solving publishes the entire candidate configuration and an owned,
 immutable `Solution2d` together. If any component fails, none is published.
@@ -150,7 +159,7 @@ With `SolveOptions::linear_reduction` enabled (the default), weighted coordinate
 aliases eliminate affine equalities and captured constants before numerical
 factorization. These include direct-point coincidences, alignments, signed
 offsets, fixed parameters, radii, and lengths of aligned segments. Multiplicity
-weights preserve the original minimum-motion metric. Public keys and original
+weights preserve the original minimum-motion metric. Public ids and original
 equations remain separate; removing a constraint rebuilds the reduction and
 restores its freedom. If projecting the seed would create invalid geometry,
 that component uses its full parameter space instead.
@@ -223,7 +232,7 @@ the API provides iteration budgets and separate linear/angular/rank tolerances.
 
 The integration scenarios in `tests/solver/` cover the constraint catalog,
 underconstraint and compatible redundancy, target priority, independent endpoint
-identity, atomic edits/publication, stale keys, captured fixed frames, repair after
+identity, atomic edits/publication, ids and storage, captured fixed frames, repair after
 failure, scale changes, and output rounding. The private derivative test compares
 the geometric Jacobians to centered differences independently of the evaluator.
 
@@ -242,7 +251,8 @@ workloads. Measurements are observations, not timing assertions in the tests.
 ## Code boundaries
 
 - `system.rs`: edits, captured choices, revisions and atomic publication.
-- `keys.rs`, `primitives.rs`, `constraints.rs`: identity and problem representation.
+- `ids.rs`, `primitives.rs`, `constraints.rs`: identity and problem representation.
+- `storage.rs`: the serial form of a system and what reading it refuses.
 - `solution.rs`, `error.rs`, `options.rs`: outputs and numerical contract.
 - `numerical/prepare.rs`: components and scaled parameter layouts.
 - `numerical/reduce.rs`: weighted affine aliases and constant elimination.

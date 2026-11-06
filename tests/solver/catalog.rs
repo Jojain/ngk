@@ -1,7 +1,10 @@
 use nalgebra::Vector2;
 use ngk::geometry::dim2::{curves::Circle2, trimmed::TrimmedCurve2, utils::Point2};
 use ngk::geometry::parameter::{Fraction, NativeParam};
-use ngk::solver::{Constraint2d as C, System2d, TangencyMode, Target2d};
+use ngk::solver::{
+    ArcId, CircleId, Constraint2d as C, ConstraintId, PointId, SegmentId, System2d, TangencyMode,
+    Target2d,
+};
 use radians::Rad64;
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, PI};
 
@@ -19,10 +22,15 @@ fn near(a: f64, b: f64) {
 fn segment_directions_solve_from_orthogonal_initial_guesses() {
     for constraint in 0..5 {
         let mut s = System2d::default();
-        let a = s.add_segment(line((0., 0.), (10., 0.))).unwrap();
-        let b = s.add_segment(line((3., 4.), (3., 12.))).unwrap();
-        s.add_constraint(C::fixed(a)).unwrap();
-        s.add_constraint(C::length(b, 8.)).unwrap();
+        let a = s
+            .add_segment(SegmentId::new(1), line((0., 0.), (10., 0.)))
+            .unwrap();
+        let b = s
+            .add_segment(SegmentId::new(2), line((3., 4.), (3., 12.)))
+            .unwrap();
+        s.add_constraint(ConstraintId::new(3), C::fixed(a)).unwrap();
+        s.add_constraint(ConstraintId::new(4), C::length(b, 8.))
+            .unwrap();
         let c = match constraint {
             0 => C::horizontal(b),
             1 => C::vertical(b),
@@ -30,7 +38,7 @@ fn segment_directions_solve_from_orthogonal_initial_guesses() {
             3 => C::perpendicular(a, b),
             _ => C::angle(a, b, Rad64::new(FRAC_PI_3)),
         };
-        s.add_constraint(c).unwrap();
+        s.add_constraint(ConstraintId::new(5), c).unwrap();
         let solved = s.solve().unwrap();
         let b = solved.segment(b).unwrap();
         let v = b.end() - b.start();
@@ -48,15 +56,23 @@ fn unsigned_angles_keep_the_initial_side_and_oriented_angles_choose_a_side() {
     for side in [-1., 1.] {
         for oriented in [false, true] {
             let mut s = System2d::default();
-            let a = s.add_segment(line((0., 0.), (10., 0.))).unwrap();
-            let b = s.add_segment(line((0., 0.), (8., side * 2.))).unwrap();
-            s.add_constraint(C::fixed(a)).unwrap();
-            s.add_constraint(C::length(b, 8.)).unwrap();
-            s.add_constraint(if oriented {
-                C::oriented_angle(a, b, Rad64::new(FRAC_PI_3))
-            } else {
-                C::angle(a, b, Rad64::new(FRAC_PI_3))
-            })
+            let a = s
+                .add_segment(SegmentId::new(6), line((0., 0.), (10., 0.)))
+                .unwrap();
+            let b = s
+                .add_segment(SegmentId::new(7), line((0., 0.), (8., side * 2.)))
+                .unwrap();
+            s.add_constraint(ConstraintId::new(8), C::fixed(a)).unwrap();
+            s.add_constraint(ConstraintId::new(9), C::length(b, 8.))
+                .unwrap();
+            s.add_constraint(
+                ConstraintId::new(10),
+                if oriented {
+                    C::oriented_angle(a, b, Rad64::new(FRAC_PI_3))
+                } else {
+                    C::angle(a, b, Rad64::new(FRAC_PI_3))
+                },
+            )
             .unwrap();
             let solved = s.solve().unwrap();
             let b = solved.segment(b).unwrap();
@@ -77,12 +93,21 @@ fn unsigned_angles_keep_the_initial_side_and_oriented_angles_choose_a_side() {
 fn zero_and_half_turn_angles_have_usable_derivatives() {
     for angle in [0., PI, -PI] {
         let mut s = System2d::default();
-        let a = s.add_segment(line((0., 0.), (10., 0.))).unwrap();
-        let b = s.add_segment(line((1., 1.), (5., 8.))).unwrap();
-        s.add_constraint(C::fixed(a)).unwrap();
-        s.add_constraint(C::length(b, 5.)).unwrap();
-        s.add_constraint(C::oriented_angle(a, b, Rad64::new(angle)))
+        let a = s
+            .add_segment(SegmentId::new(11), line((0., 0.), (10., 0.)))
             .unwrap();
+        let b = s
+            .add_segment(SegmentId::new(12), line((1., 1.), (5., 8.)))
+            .unwrap();
+        s.add_constraint(ConstraintId::new(13), C::fixed(a))
+            .unwrap();
+        s.add_constraint(ConstraintId::new(14), C::length(b, 5.))
+            .unwrap();
+        s.add_constraint(
+            ConstraintId::new(15),
+            C::oriented_angle(a, b, Rad64::new(angle)),
+        )
+        .unwrap();
         let solved = s.solve().unwrap();
         let b = solved.segment(b).unwrap();
         let v = b.end() - b.start();
@@ -95,11 +120,15 @@ fn zero_and_half_turn_angles_have_usable_derivatives() {
 fn positional_relations_and_symmetries_recover_expected_coordinates() {
     for mode in 0..6 {
         let mut s = System2d::default();
-        let axis = s.add_segment(line((-10., 0.), (10., 0.))).unwrap();
-        let a = s.add_point(Point2::new(2., 4.)).unwrap();
-        let p = s.add_point(Point2::new(8., 7.)).unwrap();
-        s.add_constraint(C::fixed(axis)).unwrap();
-        s.add_constraint(C::fixed(a)).unwrap();
+        let axis = s
+            .add_segment(SegmentId::new(16), line((-10., 0.), (10., 0.)))
+            .unwrap();
+        let a = s.add_point(PointId::new(17), Point2::new(2., 4.)).unwrap();
+        let p = s.add_point(PointId::new(18), Point2::new(8., 7.)).unwrap();
+        s.add_constraint(ConstraintId::new(19), C::fixed(axis))
+            .unwrap();
+        s.add_constraint(ConstraintId::new(20), C::fixed(a))
+            .unwrap();
         let constraint = match mode {
             0 => C::point_on_line(p, axis),
             1 => C::distance_to_line(p, axis, 3.),
@@ -108,7 +137,7 @@ fn positional_relations_and_symmetries_recover_expected_coordinates() {
             4 => C::symmetric_about_point(a, p, axis.start()),
             _ => C::midpoint_between(p, a, axis.end()),
         };
-        s.add_constraint(constraint).unwrap();
+        s.add_constraint(ConstraintId::new(21), constraint).unwrap();
         let solved = s.solve().unwrap();
         let p = solved.point(p).unwrap();
         match mode {
@@ -137,18 +166,23 @@ fn positional_relations_and_symmetries_recover_expected_coordinates() {
 #[test]
 fn signed_offsets_and_distance_from_coincident_points_are_solvable() {
     let mut s = System2d::default();
-    let a = s.add_point(Point2::origin()).unwrap();
-    let b = s.add_point(Point2::origin()).unwrap();
-    s.add_constraint(C::fixed(a)).unwrap();
-    s.add_constraint(C::distance(a, b, 5.)).unwrap();
+    let a = s.add_point(PointId::new(22), Point2::origin()).unwrap();
+    let b = s.add_point(PointId::new(23), Point2::origin()).unwrap();
+    s.add_constraint(ConstraintId::new(24), C::fixed(a))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(25), C::distance(a, b, 5.))
+        .unwrap();
     let solved = s.solve().unwrap();
     near(solved.point(b).unwrap().coords.norm(), 5.);
     let mut s = System2d::default();
-    let a = s.add_point(Point2::new(5., 4.)).unwrap();
-    let b = s.add_point(Point2::new(10., 8.)).unwrap();
-    s.add_constraint(C::fixed(a)).unwrap();
-    s.add_constraint(C::offset_x(a, b, -3.)).unwrap();
-    s.add_constraint(C::offset_y(a, b, 2.)).unwrap();
+    let a = s.add_point(PointId::new(26), Point2::new(5., 4.)).unwrap();
+    let b = s.add_point(PointId::new(27), Point2::new(10., 8.)).unwrap();
+    s.add_constraint(ConstraintId::new(28), C::fixed(a))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(29), C::offset_x(a, b, -3.))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(30), C::offset_y(a, b, 2.))
+        .unwrap();
     let solved = s.solve().unwrap();
     near(solved.point(b).unwrap().x, 2.);
     near(solved.point(b).unwrap().y, 6.);
@@ -157,22 +191,29 @@ fn signed_offsets_and_distance_from_coincident_points_are_solvable() {
 #[test]
 fn equal_lengths_radii_and_concentricity_apply_to_supported_geometry() {
     let mut s = System2d::default();
-    let a = s.add_segment(line((0., 0.), (6., 8.))).unwrap();
-    let b = s.add_segment(line((2., 1.), (4., 1.))).unwrap();
-    s.add_constraint(C::fixed(a)).unwrap();
-    s.add_constraint(C::equal_length(a, b)).unwrap();
-    let circle = s.add_circle(circle(3., 5., 7.)).unwrap();
-    let arc = s
-        .add_arc(TrimmedCurve2::arc(
-            Point2::new(9., 8.),
-            Vector2::y(),
-            2.,
-            1.5 * PI,
-        ))
+    let a = s
+        .add_segment(SegmentId::new(31), line((0., 0.), (6., 8.)))
         .unwrap();
-    s.add_constraint(C::fixed(circle)).unwrap();
-    s.add_constraint(C::equal_radius(circle, arc)).unwrap();
-    s.add_constraint(C::concentric(circle, arc)).unwrap();
+    let b = s
+        .add_segment(SegmentId::new(32), line((2., 1.), (4., 1.)))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(33), C::fixed(a))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(34), C::equal_length(a, b))
+        .unwrap();
+    let circle = s.add_circle(CircleId::new(35), circle(3., 5., 7.)).unwrap();
+    let arc = s
+        .add_arc(
+            ArcId::new(36),
+            TrimmedCurve2::arc(Point2::new(9., 8.), Vector2::y(), 2., 1.5 * PI),
+        )
+        .unwrap();
+    s.add_constraint(ConstraintId::new(37), C::fixed(circle))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(38), C::equal_radius(circle, arc))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(39), C::concentric(circle, arc))
+        .unwrap();
     let solved = s.solve().unwrap();
     let b = solved.segment(b).unwrap();
     near((b.end() - b.start()).norm(), 10.);
@@ -185,11 +226,18 @@ fn equal_lengths_radii_and_concentricity_apply_to_supported_geometry() {
 fn circle_dimensions_and_line_tangency_preserve_the_initial_side() {
     for side in [-1., 1.] {
         let mut s = System2d::default();
-        let axis = s.add_segment(line((-10., 0.), (10., 0.))).unwrap();
-        let c = s.add_circle(circle(0., side * 7., 2.)).unwrap();
-        s.add_constraint(C::fixed(axis)).unwrap();
-        s.add_constraint(C::diameter(c, 6.)).unwrap();
-        s.add_constraint(C::tangent_line_circle(axis, c)).unwrap();
+        let axis = s
+            .add_segment(SegmentId::new(40), line((-10., 0.), (10., 0.)))
+            .unwrap();
+        let c = s
+            .add_circle(CircleId::new(41), circle(0., side * 7., 2.))
+            .unwrap();
+        s.add_constraint(ConstraintId::new(42), C::fixed(axis))
+            .unwrap();
+        s.add_constraint(ConstraintId::new(43), C::diameter(c, 6.))
+            .unwrap();
+        s.add_constraint(ConstraintId::new(44), C::tangent_line_circle(axis, c))
+            .unwrap();
         let solved = s.solve().unwrap();
         let c = solved.circle(c).unwrap();
         near(c.radius(), 3.);
@@ -206,11 +254,16 @@ fn circle_tangency_supports_external_internal_and_automatic_modes() {
         TangencyMode::FirstContainsSecond,
     ] {
         let mut s = System2d::default();
-        let a = s.add_circle(circle(0., 0., 10.)).unwrap();
-        let b = s.add_circle(circle(4., 1., 3.)).unwrap();
-        s.add_constraint(C::fixed(a)).unwrap();
-        s.add_constraint(C::radius(b, 3.)).unwrap();
-        s.add_constraint(C::tangent_circles(a, b, mode)).unwrap();
+        let a = s
+            .add_circle(CircleId::new(45), circle(0., 0., 10.))
+            .unwrap();
+        let b = s.add_circle(CircleId::new(46), circle(4., 1., 3.)).unwrap();
+        s.add_constraint(ConstraintId::new(47), C::fixed(a))
+            .unwrap();
+        s.add_constraint(ConstraintId::new(48), C::radius(b, 3.))
+            .unwrap();
+        s.add_constraint(ConstraintId::new(49), C::tangent_circles(a, b, mode))
+            .unwrap();
         let solved = s.solve().unwrap();
         let b = solved.circle(b).unwrap();
         near(
@@ -228,15 +281,15 @@ fn circle_tangency_supports_external_internal_and_automatic_modes() {
 fn major_clockwise_arc_endpoints_move_without_losing_sweep_or_direction() {
     let mut s = System2d::default();
     let arc = s
-        .add_arc(TrimmedCurve2::arc(
-            Point2::origin(),
-            Vector2::x(),
-            10.,
-            -1.5 * PI,
-        ))
+        .add_arc(
+            ArcId::new(50),
+            TrimmedCurve2::arc(Point2::origin(), Vector2::x(), 10., -1.5 * PI),
+        )
         .unwrap();
-    s.add_constraint(C::fixed_point(arc.center())).unwrap();
-    s.add_constraint(C::radius(arc, 10.)).unwrap();
+    s.add_constraint(ConstraintId::new(51), C::fixed_point(arc.center()))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(52), C::radius(arc, 10.))
+        .unwrap();
     let first = s.solve().unwrap();
     near(first.arc(arc).unwrap().interval().delta(), -1.5 * PI);
     let moved = s
@@ -254,8 +307,9 @@ fn major_clockwise_arc_endpoints_move_without_losing_sweep_or_direction() {
 #[test]
 fn fixed_curve_sample_targets_resize_circles_and_drag_segment_interiors() {
     let mut s = System2d::default();
-    let c = s.add_circle(circle(0., 0., 3.)).unwrap();
-    s.add_constraint(C::fixed_point(c.center())).unwrap();
+    let c = s.add_circle(CircleId::new(53), circle(0., 0., 3.)).unwrap();
+    s.add_constraint(ConstraintId::new(54), C::fixed_point(c.center()))
+        .unwrap();
     let solved = s
         .solve_toward(&[Target2d::on_circle(
             c,
@@ -264,7 +318,9 @@ fn fixed_curve_sample_targets_resize_circles_and_drag_segment_interiors() {
         )])
         .unwrap();
     near(solved.circle(c).unwrap().radius(), 8.);
-    let a = s.add_segment(line((0., 0.), (10., 0.))).unwrap();
+    let a = s
+        .add_segment(SegmentId::new(55), line((0., 0.), (10., 0.)))
+        .unwrap();
     let solved = s
         .solve_toward(&[Target2d::on_segment(
             a,
@@ -281,16 +337,19 @@ fn fixed_curve_sample_targets_resize_circles_and_drag_segment_interiors() {
 fn point_on_arc_uses_the_support_outside_its_span() {
     let mut s = System2d::default();
     let arc = s
-        .add_arc(TrimmedCurve2::arc(
-            Point2::origin(),
-            Vector2::x(),
-            10.,
-            FRAC_PI_2,
-        ))
+        .add_arc(
+            ArcId::new(56),
+            TrimmedCurve2::arc(Point2::origin(), Vector2::x(), 10., FRAC_PI_2),
+        )
         .unwrap();
-    let p = s.add_point(Point2::new(-10., 0.)).unwrap();
-    s.add_constraint(C::fixed(arc)).unwrap();
-    s.add_constraint(C::fixed(p)).unwrap();
-    s.add_constraint(C::point_on_circle(p, arc)).unwrap();
+    let p = s
+        .add_point(PointId::new(57), Point2::new(-10., 0.))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(58), C::fixed(arc))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(59), C::fixed(p))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(60), C::point_on_circle(p, arc))
+        .unwrap();
     assert!(s.solve().is_ok());
 }

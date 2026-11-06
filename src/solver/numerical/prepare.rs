@@ -1,23 +1,21 @@
-use super::super::{ConstraintKey, GeometryKey, Target2d};
+use super::super::{ConstraintId, GeometryId, Target2d};
 use super::super::{
     constraints::StoredConstraint,
-    keys::{ConstraintSlot, GeometrySlot},
     primitives::{Kind, Param, Primitive, Quantity},
 };
 use crate::geometry::dim2::utils::Point2;
 use nalgebra::DVector;
-use slotmap::SlotMap;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 pub(super) struct Entry {
-    pub key: GeometryKey,
+    pub key: GeometryId,
     pub primitive: Primitive,
     pub offset: usize,
 }
 pub(super) struct Component {
     pub entries: Vec<Entry>,
-    pub lookup: HashMap<GeometryKey, usize>,
-    pub constraints: Vec<(ConstraintKey, StoredConstraint)>,
+    pub lookup: HashMap<GeometryId, usize>,
+    pub constraints: Vec<(ConstraintId, StoredConstraint)>,
     pub targets: Vec<(usize, Target2d)>,
     pub origin: Point2,
     pub scale: f64,
@@ -29,37 +27,24 @@ pub(super) struct Component {
     pub columns: Vec<Option<usize>>,
     pub offsets: Vec<f64>,
     pub multipliers: Vec<f64>,
-    pub eliminated_rows: HashMap<ConstraintKey, usize>,
+    pub eliminated_rows: HashMap<ConstraintId, usize>,
 }
 
 /// Separates independent constraint components without relying on spatial proximity.
 pub(super) fn prepare(
-    owner: u64,
-    geometry: &SlotMap<GeometrySlot, Primitive>,
-    constraints: &SlotMap<ConstraintSlot, StoredConstraint>,
+    geometry: &BTreeMap<GeometryId, Primitive>,
+    constraints: &BTreeMap<ConstraintId, StoredConstraint>,
     targets: &[Target2d],
     reduce: bool,
 ) -> Vec<Component> {
-    let primitives: Vec<_> = geometry
-        .iter()
-        .map(|(slot, p)| {
-            (
-                GeometryKey {
-                    owner,
-                    slot,
-                    serial: p.serial,
-                },
-                p.clone(),
-            )
-        })
-        .collect();
+    let primitives: Vec<_> = geometry.iter().map(|(id, p)| (*id, p.clone())).collect();
     let indices: HashMap<_, _> = primitives
         .iter()
         .enumerate()
         .map(|(i, (key, _))| (*key, i))
         .collect();
     let mut parents: Vec<_> = (0..primitives.len()).collect();
-    for (_, constraint) in constraints {
+    for constraint in constraints.values() {
         let keys = constraint.definition.geometries();
         let first = indices[&keys[0]];
         for key in &keys[1..] {
@@ -68,7 +53,7 @@ pub(super) fn prepare(
             parents[b] = a;
         }
     }
-    let mut groups: Vec<Vec<(GeometryKey, Primitive)>> = vec![];
+    let mut groups: Vec<Vec<(GeometryId, Primitive)>> = vec![];
     let mut group_for_root = HashMap::new();
     let mut group_for_key = HashMap::new();
     for (i, (key, p)) in primitives.into_iter().enumerate() {
@@ -81,16 +66,9 @@ pub(super) fn prepare(
         group_for_key.insert(key, group);
     }
     let mut output: Vec<_> = groups.into_iter().map(Component::new).collect();
-    for (slot, c) in constraints {
+    for (id, c) in constraints {
         let group = group_for_key[&c.definition.geometries()[0]];
-        output[group].constraints.push((
-            ConstraintKey {
-                owner,
-                slot,
-                serial: c.serial,
-            },
-            c.clone(),
-        ));
+        output[group].constraints.push((*id, c.clone()));
     }
     for (i, t) in targets.iter().enumerate() {
         output[group_for_key[&t.geometry()]]
@@ -112,7 +90,7 @@ fn root(parents: &mut [usize], mut i: usize) -> usize {
     i
 }
 impl Component {
-    fn new(primitives: Vec<(GeometryKey, Primitive)>) -> Self {
+    fn new(primitives: Vec<(GeometryId, Primitive)>) -> Self {
         let first = &primitives[0].1;
         let origin = Point2::new(first.get(Param::X), first.get(Param::Y));
         let mut scale = 0_f64;
@@ -162,12 +140,12 @@ impl Component {
             eliminated_rows: HashMap::new(),
         }
     }
-    pub fn entry(&self, key: GeometryKey) -> &Entry {
+    pub fn entry(&self, key: GeometryId) -> &Entry {
         &self.entries[self.lookup[&key]]
     }
     /// A parameter's position among the component's parameter slots, which
     /// lay every primitive's values end to end.
-    pub fn slot(&self, key: GeometryKey, param: Param) -> usize {
+    pub fn slot(&self, key: GeometryId, param: Param) -> usize {
         self.entry(key).offset + param.index()
     }
     pub fn normalized(&self, value: f64, param: Param) -> f64 {
@@ -178,7 +156,7 @@ impl Component {
         self.offsets[slot]
             + self.columns[slot].map_or(0., |column| x[column] * self.multipliers[slot])
     }
-    pub fn parameter(&self, key: GeometryKey, param: Param, x: &DVector<f64>) -> f64 {
+    pub fn parameter(&self, key: GeometryId, param: Param, x: &DVector<f64>) -> f64 {
         self.value(self.slot(key, param), x)
     }
     pub fn physical_values(&self, entry: &Entry, x: &DVector<f64>) -> Vec<f64> {

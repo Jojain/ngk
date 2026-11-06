@@ -1,10 +1,9 @@
 use super::super::{
-    Constraint2d, ConstraintResidual, PrimitiveFreedom, Redundancy, RedundancyKind, SolveError,
-    SolveOptions, SolveReport, TangencyMode, Target2d, TargetReport,
+    Constraint2d, ConstraintId, ConstraintResidual, GeometryId, PrimitiveFreedom, Redundancy,
+    RedundancyKind, SolveError, SolveOptions, SolveReport, TangencyMode, Target2d, TargetReport,
 };
 use super::super::{
     constraints::StoredConstraint,
-    keys::{ConstraintSlot, GeometrySlot},
     primitives::{Param, Primitive},
 };
 use super::{
@@ -13,33 +12,27 @@ use super::{
 };
 use Constraint2d::*;
 use nalgebra::{DMatrix, DVector};
-use slotmap::SlotMap;
+use std::collections::BTreeMap;
 
 /// Solves components into owned candidate geometry; the caller commits only a complete success.
 pub(crate) fn solve(
-    owner: u64,
-    geometry: &SlotMap<GeometrySlot, Primitive>,
-    constraints: &SlotMap<ConstraintSlot, StoredConstraint>,
+    geometry: &BTreeMap<GeometryId, Primitive>,
+    constraints: &BTreeMap<ConstraintId, StoredConstraint>,
     targets: &[Target2d],
     options: &SolveOptions,
-) -> Result<(SlotMap<GeometrySlot, Primitive>, SolveReport), SolveError> {
+) -> Result<(BTreeMap<GeometryId, Primitive>, SolveReport), SolveError> {
     let mut candidate = geometry.clone();
     // A fixed curve retains discrete orientation as well as continuous parameters.
-    for (_, constraint) in constraints {
-        if let Constraint2d::Fixed(key) = constraint.definition
+    for constraint in constraints.values() {
+        if let Constraint2d::Fixed(id) = constraint.definition
             && let Some((sense, axis)) = constraint.captured_frame
+            && let Some(primitive) = candidate.get_mut(&id)
         {
-            candidate[key.slot].sense = sense;
-            candidate[key.slot].circle_axis = axis;
+            primitive.sense = sense;
+            primitive.circle_axis = axis;
         }
     }
-    let components = prepare::prepare(
-        owner,
-        &candidate,
-        constraints,
-        targets,
-        options.linear_reduction,
-    );
+    let components = prepare::prepare(&candidate, constraints, targets, options.linear_reduction);
     let mut report = SolveReport::default();
     for component in &components {
         check_conflicts(component, options)?;
@@ -60,7 +53,9 @@ pub(crate) fn solve(
             for (i, value) in values.iter().enumerate() {
                 world[entry.offset + i] = *value;
             }
-            candidate[entry.key.slot].values = values;
+            if let Some(primitive) = candidate.get_mut(&entry.key) {
+                primitive.values = values;
+            }
         }
         let physical = evaluate::hard_world(component, &world);
         // Check all original relations independently of rank reduction and secondary objectives.
@@ -69,7 +64,7 @@ pub(crate) fn solve(
             || component
                 .entries
                 .iter()
-                .any(|entry| !candidate[entry.key.slot].valid())
+                .any(|entry| !candidate[&entry.key].valid())
             || !final_evaluation.feasible(component.scale, options)
             || !contacts_valid(component, &attempt.x)
             || !component.valid(&attempt.x)
