@@ -1,5 +1,67 @@
-from ..core import Bound, BoundingBox, LinearProperties, SurfaceProperties, VolumeProperties
+from typing import ClassVar
+
+from ..core import Frame, Point, Vector
+
+# Measures are at density one; inertia is the centroidal tensor, row by row.
+class LinearProperties:
+    @property
+    def length(self) -> float: ...
+    @property
+    def centroid(self) -> Point: ...
+    @property
+    def inertia(self) -> list[float]: ...
+
+class SurfaceProperties:
+    @property
+    def area(self) -> float: ...
+    @property
+    def centroid(self) -> Point: ...
+    @property
+    def inertia(self) -> list[float]: ...
+
+class VolumeProperties:
+    @property
+    def volume(self) -> float: ...
+    @property
+    def centroid(self) -> Point: ...
+    @property
+    def inertia(self) -> list[float]: ...
+
+class Bound:
+    Min: ClassVar[Bound]
+    Max: ClassVar[Bound]
+    def __int__(self) -> int: ...
+
+# A box given by a frame and a range along each of its axes. `min` and `max`
+# are the corners at the low and high end of every range: in the world frame,
+# the component-wise minimum and maximum.
+class BoundingBox:
+    @property
+    def frame(self) -> Frame: ...
+    @property
+    def min(self) -> Point: ...
+    @property
+    def max(self) -> Point: ...
+    @property
+    def center(self) -> Point: ...
+    @property
+    def size(self) -> Vector: ...
+    @property
+    def x_size(self) -> float: ...
+    @property
+    def y_size(self) -> float: ...
+    @property
+    def z_size(self) -> float: ...
+    @property
+    def diagonal_length(self) -> float: ...
+    def corner(self, x: Bound, y: Bound, z: Bound) -> Point: ...
+    # x slowest and z fastest, each from its minimum to its maximum.
+    def corners(self) -> list[Point]: ...
 
 __all__ = [
-    "Bound", "BoundingBox", "LinearProperties", "SurfaceProperties", "VolumeProperties",
+    "Bound",
+    "BoundingBox",
+    "LinearProperties",
+    "SurfaceProperties",
+    "VolumeProperties",
 ]

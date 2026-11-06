@@ -3,3 +3,8 @@ from ..topology import Face, Profile, Sheet, Solid
 
 def profiles(sections: list[Profile], v_degree: int | None = None) -> Sheet: ...
 def faces(sections: list[Face], v_degree: int | None = None) -> Solid: ...
+
+__all__ = [
+    "faces",
+    "profiles",
+]

@@ -1,8 +1,10 @@
+from typing import Self
+
 from ..topology import Solid
 
 class HealingOptions:
-    def __init__(
-        self,
+    def __new__(
+        cls,
         remove_redundant_vertices: bool = True,
         remove_redundant_edges: bool = True,
         remove_seams: bool = True,
@@ -10,7 +12,7 @@ class HealingOptions:
         linear_tolerance: float | None = None,
         angular_tolerance: float | None = None,
         max_iterations: int = 16,
-    ) -> None: ...
+    ) -> Self: ...
     @staticmethod
     def seams_only() -> HealingOptions: ...
 
@@ -29,3 +31,10 @@ class HealingResult:
     def report(self) -> HealingReport: ...
 
 def solid(shape: Solid, options: HealingOptions | None = None) -> HealingResult: ...
+
+__all__ = [
+    "HealingOptions",
+    "HealingReport",
+    "HealingResult",
+    "solid",
+]

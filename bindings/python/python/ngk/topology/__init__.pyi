@@ -11,4 +11,14 @@ from ..core import (
 
 type Shape = Vertex | Edge | Profile | Face | Sheet | Solid
 
-__all__: list[str]
+__all__ = [
+    "Edge",
+    "Face",
+    "Loop",
+    "Profile",
+    "Shape",
+    "Shell",
+    "Sheet",
+    "Solid",
+    "Vertex",
+]

@@ -45,3 +45,9 @@ class Tessellation:
 
 def tessellate(shape: Solid | Sheet | Face | Profile | Edge) -> Tessellation:
     """Meshes `shape` at the viewer's sampling; raises naming a face that cannot be meshed."""
+
+__all__ = [
+    "Range",
+    "Tessellation",
+    "tessellate",
+]

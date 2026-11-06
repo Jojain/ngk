@@ -14,3 +14,14 @@ def circle(radius: float, plane: Plane | None = None) -> Face: ...
 def annulus(outer_radius: float, inner_radius: float, plane: Plane | None = None) -> Face: ...
 def from_profile(profile: Profile) -> Face: ...
 def split_boundary_edge(face: Face, edge: Edge, fraction: float) -> EdgeSplitResult: ...
+
+__all__ = [
+    "annulus",
+    "circle",
+    "from_profile",
+    "polygon",
+    "polygon_with_holes",
+    "rectangle",
+    "split_boundary_edge",
+    "square",
+]

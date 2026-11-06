@@ -27,6 +27,12 @@ from ..core.solver import (
 )
 from . import constraints
 
+# The id kinds a parameter or a result may hold, for annotations.
+type GeometryId = PointId | SegmentId | CircleId | ArcId
+type CircularId = CircleId | ArcId
+type CurveId = SegmentId | CircleId | ArcId
+type PointLike = PointRef | PointId
+
 __all__ = [
     "Arc2",
     "ArcId",
@@ -34,11 +40,15 @@ __all__ = [
     "Circle2",
     "CircleId",
     "CircleTarget",
+    "CircularId",
     "ConflictError",
     "ConstraintId",
     "ConstraintResidual",
+    "CurveId",
+    "GeometryId",
     "NonConvergenceError",
     "PointId",
+    "PointLike",
     "PointRef",
     "PointTarget",
     "Redundancy",

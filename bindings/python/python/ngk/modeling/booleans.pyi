@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
-from ..topology import Edge, Face, Model, Profile, Sheet, Solid
+from ..model import Model
+from ..topology import Edge, Face, Profile, Sheet, Solid
 
 class FaceBooleanResult:
     @property
@@ -44,3 +45,15 @@ class SplitResult[T: (Solid, Sheet, Face, Profile, Edge)]:
 # something larger that cutting it in place would tear. The inputs are
 # unchanged.
 def split[T: (Solid, Sheet, Face, Profile, Edge)](target: T, tool: Sheet) -> SplitResult[T]: ...
+
+__all__ = [
+    "FaceBooleanResult",
+    "cut",
+    "cut_faces",
+    "fuse",
+    "fuse_faces",
+    "intersect",
+    "intersect_faces",
+    "SplitResult",
+    "split",
+]

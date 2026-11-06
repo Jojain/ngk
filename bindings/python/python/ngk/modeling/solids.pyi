@@ -9,4 +9,13 @@ def extruded(face: Face, direction: Vector, distance: float) -> Solid: ...
 # Bounds a solid with closed sheets: each void inside `outer`, none touching
 # another or inside another. Each sheet is wound by its role, whichever way it
 # was wound. The sources are unchanged.
-def from_sheets(outer: Sheet, voids: list[Sheet] = []) -> Solid: ...
+def from_sheets(outer: Sheet, voids: list[Sheet] = ...) -> Solid: ...
+
+__all__ = [
+    "block",
+    "cylinder",
+    "sphere",
+    "torus",
+    "extruded",
+    "from_sheets",
+]

@@ -1,3 +1,6 @@
 from . import debug, ocp
 
-__all__: list[str]
+__all__ = [
+    "debug",
+    "ocp",
+]

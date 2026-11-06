@@ -5,3 +5,9 @@ from ..topology import Edge, Face, Profile, Sheet, Solid
 def profile(profile: Profile, axis: Axis, angle: float) -> Sheet: ...
 def face(face: Face, axis: Axis, angle: float) -> Solid: ...
 def edge(edge: Edge, axis: Axis, angle: float) -> Face: ...
+
+__all__ = [
+    "edge",
+    "face",
+    "profile",
+]

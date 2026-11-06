@@ -1,5 +1,6 @@
 from ..geometry import Axis, Plane
-from ..topology import Edge, Face, Model, Vertex
+from ..model import Model
+from ..topology import Edge, Face, Vertex
 
 class EdgeSplitResult:
     @property
@@ -15,3 +16,12 @@ def arc(plane: Plane, radius: float, start_angle: float, end_angle: float) -> Ed
 def helix(axis: Axis, radius: float, pitch: float, start_angle: float, end_angle: float) -> Edge: ...
 def circle(plane: Plane, radius: float) -> Edge: ...
 def split(edge: Edge, fraction: float) -> EdgeSplitResult: ...
+
+__all__ = [
+    "EdgeSplitResult",
+    "arc",
+    "circle",
+    "helix",
+    "line",
+    "split",
+]

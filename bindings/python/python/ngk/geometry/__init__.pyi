@@ -21,4 +21,25 @@ from ..core import (
     Vector2 as Vector2,
 )
 
-__all__: list[str]
+__all__ = [
+    "Axis",
+    "Circle",
+    "Cone",
+    "Cylinder",
+    "Ellipse",
+    "Frame",
+    "Helix",
+    "Line",
+    "NurbsCurve",
+    "NurbsSurface",
+    "Plane",
+    "Point",
+    "Point2",
+    "RuledSurface",
+    "Rigid",
+    "Sphere",
+    "SurfaceOfRevolution",
+    "Torus",
+    "Vector",
+    "Vector2",
+]

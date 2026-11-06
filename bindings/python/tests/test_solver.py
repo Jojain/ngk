@@ -4,8 +4,10 @@ from ngk.geometry import Plane, Point2, Vector, Vector2
 from ngk.modeling import faces, profiles, sweep
 from ngk.solver import (
     Arc2,
+    ArcId,
     Circle2,
     CircleId,
+    CurveId,
     ConflictError,
     NonConvergenceError,
     PointId,
@@ -73,6 +75,10 @@ def test_ids_are_typed_values():
     assert len({SegmentId(1), SegmentId(1), CircleId(1)}) == 2
     assert SegmentId(7).value == 7
     assert repr(SegmentId(7)) == "SegmentId(7)"
+
+
+def test_the_id_kinds_can_be_named_at_runtime():
+    assert CurveId.__value__ == SegmentId | CircleId | ArcId
 
 
 def test_add_issues_ids_and_insert_takes_them_back():

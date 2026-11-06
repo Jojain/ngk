@@ -1,3 +1,5 @@
-from .core import Model
+from .core import Model as Model
 
-__all__: list[str]
+__all__ = [
+    "Model",
+]
