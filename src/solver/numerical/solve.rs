@@ -161,6 +161,14 @@ fn restore(component: &Component, mut x: DVector<f64>, options: &SolveOptions) -
     }
 }
 
+/// The share of its predicted decrease a target step must deliver to be taken.
+///
+/// With an unreachable target the residual does not vanish, so the linear model
+/// overshoots along a curved constraint: dragged at twice a segment's length, a full
+/// step lands on the mirror angle. Taking any decrease would then accept each jump
+/// across the optimum for a negligible gain; a shorter step lands near it instead.
+const SUFFICIENT_DECREASE: f64 = 0.25;
+
 /// Projects positional objectives onto the permanent Jacobian's null space, then restores feasibility.
 fn improve_targets(
     component: &Component,
@@ -191,6 +199,7 @@ fn improve_targets(
             step *= radius / norm;
         }
         let old_error = soft.values.norm();
+        let change = &soft.jacobian * &step;
         let mut accepted = false;
         let mut fraction = 1_f64;
         for _ in 0..16 {
@@ -200,7 +209,11 @@ fn improve_targets(
                 report.iterations += restored.iterations;
                 if restored.feasible {
                     let error = evaluate::soft(component, &restored.x).values.norm();
-                    if error < old_error - 1e-13 * old_error.max(1e-6) {
+                    let predicted =
+                        old_error.powi(2) - (&soft.values + &change * fraction).norm_squared();
+                    if error < old_error - 1e-13 * old_error.max(1e-6)
+                        && old_error.powi(2) - error.powi(2) >= SUFFICIENT_DECREASE * predicted
+                    {
                         *best = restored;
                         accepted = true;
                         break;

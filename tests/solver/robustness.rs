@@ -106,3 +106,50 @@ fn target_rounding_cannot_publish_a_degenerate_segment() {
         Err(error) => panic!("unexpected failure: {error:?}"),
     }
 }
+
+/// A segment swinging about its fixed start, dragged toward `target`.
+fn swing_toward(target: Point2) -> ngk::solver::Solution2d {
+    let mut s = System2d::default();
+    let line = SegmentId::new(1);
+    s.add_segment(
+        line,
+        TrimmedLine2::segment(Point2::origin(), Point2::new(10., 0.)),
+    )
+    .unwrap();
+    s.add_constraint(ConstraintId::new(1), C::fixed_point(line.start()))
+        .unwrap();
+    s.add_constraint(ConstraintId::new(2), C::length(line, 10.))
+        .unwrap();
+    s.solve_toward(&[Target2d::point(line.end(), target)])
+        .unwrap()
+}
+
+#[test]
+fn an_unreachable_target_settles_on_the_nearest_admissible_point() {
+    for reach in [1.2, 2., 3., 10.] {
+        let solved = swing_toward(Point2::new(0., 10. * reach));
+        let end = solved.segment(SegmentId::new(1)).unwrap().end();
+        // The distance to the target is flat at its minimum: a position error e changes it
+        // by about e^2, so rounding bounds what the position can settle to.
+        assert!(
+            (end - Point2::new(0., 10.)).norm() < 1e-4,
+            "at {reach} times the length, stopped at {end:?}"
+        );
+        assert!(!solved.report().targets[0].reached);
+        assert!(!solved.report().target_budget_exhausted);
+        assert!(
+            solved.report().target_iterations < 40,
+            "at {reach} times the length, took {} iterations",
+            solved.report().target_iterations
+        );
+    }
+}
+
+#[test]
+fn a_reachable_target_is_reached_in_a_few_iterations() {
+    let solved = swing_toward(Point2::new(6., 8.));
+    let end = solved.segment(SegmentId::new(1)).unwrap().end();
+    assert!((end - Point2::new(6., 8.)).norm() < 1e-8);
+    assert!(solved.report().targets[0].reached);
+    assert!(solved.report().target_iterations < 20);
+}

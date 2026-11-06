@@ -184,7 +184,9 @@ objects. Linearizations and factorizations are rebuilt for each call.
 
 Temporary objectives project onto the permanent Jacobian's null space. Each
 trial then restores feasibility and is accepted only if the target error
-improves. Permanent constraints and targets are not combined into one weighted
+improves by a fair share of what the linearization predicts, so that a step
+overshooting an unreachable target along a curved constraint is shortened
+rather than taken for a negligible gain. Permanent constraints and targets are not combined into one weighted
 compromise. Positive target weights express priorities among positional targets.
 Targets can reference characteristic points, fixed fractions of segments/arcs,
 or native angles of circles. Their parameters are fixed for that call.
