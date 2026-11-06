@@ -9,9 +9,7 @@ use crate::geometry::dim2::{
     utils::Point2,
 };
 use crate::geometry::parameter::{Fraction, NativeParam};
-use crate::solver::{
-    Constraint2d as C, System2d, TangencyMode, Target2d,
-};
+use crate::solver::{Constraint2d as C, System2d, TangencyMode, Target2d};
 use nalgebra::Vector2;
 use radians::Rad64;
 

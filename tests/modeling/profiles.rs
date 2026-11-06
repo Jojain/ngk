@@ -2,9 +2,11 @@ use ngk::builders::boolean::{BooleanError, SplitSide};
 use ngk::builders::profiles::PolylineError;
 use ngk::geometry::Plane;
 use ngk::geometry::Point3;
+use ngk::geometry::dim2::{trimmed::Segment2, utils::Point2};
 use ngk::modeling::edges;
 use ngk::modeling::profiles;
 use ngk::modeling::split;
+use ngk::solver::{Constraint2d, System2d};
 use ngk::topology::closed::Closeable;
 use radians::Rad64;
 
@@ -87,6 +89,30 @@ fn a_circle_edge_becomes_a_closed_profile() {
 
     let profile = circle.into_profile();
     assert!(profile.profile().is_closed());
+}
+
+#[test]
+fn from_system_draws_a_solved_system_in_a_fresh_model() {
+    let mut system = System2d::default();
+    let a = system
+        .add_segment(Segment2::new(Point2::new(0., 0.), Point2::new(4., 0.)))
+        .unwrap();
+    let b = system
+        .add_segment(Segment2::new(Point2::new(4., 0.), Point2::new(4., 3.)))
+        .unwrap();
+    system
+        .add_constraint(Constraint2d::coincident(a.end(), b.start()))
+        .unwrap();
+    system.solve().unwrap();
+    let (model, built) =
+        profiles::from_system(&system, Plane::xy(), &[a.into(), b.into()]).unwrap();
+    assert_eq!(built.profiles.len(), 1);
+    assert_eq!(model.iter_edges().count(), 2);
+    assert!(
+        !model
+            .profile_unchecked(built.profiles[0].profile)
+            .is_closed()
+    );
 }
 
 #[test]

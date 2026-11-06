@@ -35,6 +35,8 @@ mod loft;
 mod offset;
 #[path = "builders/profiles.rs"]
 mod profiles;
+#[path = "builders/profiles_from_system.rs"]
+mod profiles_from_system;
 #[path = "builders/removal.rs"]
 mod removal;
 #[path = "builders/revolve.rs"]

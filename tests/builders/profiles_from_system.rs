@@ -1,5 +1,8 @@
 use nalgebra::{Vector2, Vector3};
 use ngk::builders::faces::add_face;
+use ngk::builders::profiles::{
+    ProfilesFromSystem, ProfilesFromSystemError, add_profiles_from_system,
+};
 use ngk::builders::solids::add_extruded_face;
 use ngk::geometry::dim2::{
     curves::Circle2,
@@ -8,8 +11,7 @@ use ngk::geometry::dim2::{
 };
 use ngk::geometry::{Plane, Point3};
 use ngk::model::Model;
-use ngk::sketch::{SketchBuildError, SketchCurve, SketchProfiles, build_profiles};
-use ngk::solver::{ArcId, CircleId, Constraint2d as C, PointId, SegmentId, System2d};
+use ngk::solver::{ArcId, CircleId, Constraint2d as C, CurveId, PointId, SegmentId, System2d};
 use ngk::topology::closed::Closeable;
 use ngk::topology::edge::Edge;
 use std::f64::consts::PI;
@@ -65,27 +67,27 @@ fn square() -> System2d {
     system
 }
 
-const SQUARE: [SketchCurve; 4] = [
-    SketchCurve::Segment(BOTTOM),
-    SketchCurve::Segment(RIGHT),
-    SketchCurve::Segment(TOP),
-    SketchCurve::Segment(LEFT),
+const SQUARE: [CurveId; 4] = [
+    CurveId::Segment(BOTTOM),
+    CurveId::Segment(RIGHT),
+    CurveId::Segment(TOP),
+    CurveId::Segment(LEFT),
 ];
 
-fn build(system: &System2d, curves: &[SketchCurve]) -> (Model, SketchProfiles) {
+fn build(system: &System2d, curves: &[CurveId]) -> (Model, ProfilesFromSystem) {
     let mut model = Model::new();
-    let built = build_profiles(&mut model, system, Plane::xy(), curves).unwrap();
+    let built = add_profiles_from_system(&mut model, system, Plane::xy(), curves).unwrap();
     (model, built)
 }
 
-fn refused(system: &System2d, curves: &[SketchCurve]) -> SketchBuildError {
+fn refused(system: &System2d, curves: &[CurveId]) -> ProfilesFromSystemError {
     let mut model = Model::<ngk::topology::payload::StandardPayload>::new();
-    let error = build_profiles(&mut model, system, Plane::xy(), curves).unwrap_err();
+    let error = add_profiles_from_system(&mut model, system, Plane::xy(), curves).unwrap_err();
     assert_eq!(model.iter_edges().count(), 0, "a refusal adds nothing");
     error
 }
 
-fn ends(model: &Model, built: &SketchProfiles, curve: impl Into<SketchCurve>) -> [Point3; 2] {
+fn ends(model: &Model, built: &ProfilesFromSystem, curve: impl Into<CurveId>) -> [Point3; 2] {
     let Some(Edge::Bounded(edge)) = built.edge(model, curve).unwrap() else {
         panic!("the curve has no bounded edge");
     };
@@ -339,9 +341,9 @@ fn a_chain_of_coincidences_through_what_is_not_drawn_still_joins() {
 #[test]
 fn a_build_goes_into_the_model_it_is_given() {
     let mut model = Model::new();
-    let first = build_profiles(&mut model, &square(), Plane::xy(), &SQUARE).unwrap();
+    let first = add_profiles_from_system(&mut model, &square(), Plane::xy(), &SQUARE).unwrap();
     let raised = Plane::new(Point3::new(0., 0., 7.), Vector3::x(), Vector3::z());
-    let second = build_profiles(&mut model, &square(), raised, &SQUARE).unwrap();
+    let second = add_profiles_from_system(&mut model, &square(), raised, &SQUARE).unwrap();
     assert_eq!(model.iter_edges().count(), 8);
     let [start, _] = ends(&model, &second, RIGHT);
     assert!(near(start, (10., 0., 7.)));
@@ -356,7 +358,7 @@ fn an_unsolved_or_edited_system_is_refused() {
         .unwrap();
     assert!(matches!(
         refused(&system, &[BOTTOM.into()]),
-        SketchBuildError::NotSolved
+        ProfilesFromSystemError::NotSolved
     ));
     system.solve().unwrap();
     system
@@ -364,7 +366,7 @@ fn an_unsolved_or_edited_system_is_refused() {
         .unwrap();
     assert!(matches!(
         refused(&system, &[BOTTOM.into()]),
-        SketchBuildError::NotSolved
+        ProfilesFromSystemError::NotSolved
     ));
 }
 
@@ -373,11 +375,11 @@ fn an_unknown_or_repeated_curve_is_refused() {
     let system = square();
     assert!(matches!(
         refused(&system, &[CHAMFER.into()]),
-        SketchBuildError::UnknownCurve(curve) if curve == CHAMFER.into()
+        ProfilesFromSystemError::UnknownCurve(curve) if curve == CHAMFER.into()
     ));
     assert!(matches!(
         refused(&system, &[BOTTOM.into(), BOTTOM.into()]),
-        SketchBuildError::DuplicateCurve(curve) if curve == BOTTOM.into()
+        ProfilesFromSystemError::DuplicateCurve(curve) if curve == BOTTOM.into()
     ));
 }
 
@@ -403,7 +405,7 @@ fn three_joined_ends_are_refused_by_name() {
     );
     system.solve().unwrap();
     match refused(&system, &[a.into(), b.into(), c.into()]) {
-        SketchBuildError::Branching { curves } => assert_eq!(curves.len(), 3),
+        ProfilesFromSystemError::Branching { curves } => assert_eq!(curves.len(), 3),
         other => panic!("expected a branching refusal, got {other:?}"),
     }
 }
@@ -421,7 +423,7 @@ fn curves_crossing_are_refused_by_name() {
     system.solve().unwrap();
     assert!(matches!(
         refused(&system, &[a.into(), b.into()]),
-        SketchBuildError::Crossing { first, second, .. }
+        ProfilesFromSystemError::Crossing { first, second, .. }
             if first == a.into() && second == b.into()
     ));
 }
@@ -439,7 +441,7 @@ fn an_end_on_another_curve_is_refused() {
     system.solve().unwrap();
     assert!(matches!(
         refused(&system, &[a.into(), b.into()]),
-        SketchBuildError::Crossing { .. }
+        ProfilesFromSystemError::Crossing { .. }
     ));
 }
 
@@ -456,7 +458,7 @@ fn ends_touching_without_a_coincidence_are_refused() {
     system.solve().unwrap();
     assert!(matches!(
         refused(&system, &[a.into(), b.into()]),
-        SketchBuildError::Crossing { .. }
+        ProfilesFromSystemError::Crossing { .. }
     ));
 }
 
@@ -473,6 +475,6 @@ fn overlapping_curves_are_refused() {
     system.solve().unwrap();
     assert!(matches!(
         refused(&system, &[a.into(), b.into()]),
-        SketchBuildError::Overlapping { .. }
+        ProfilesFromSystemError::Overlapping { .. }
     ));
 }

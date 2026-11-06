@@ -188,3 +188,26 @@ impl TryFrom<GeometryId> for CircularId {
         }
     }
 }
+
+/// A primitive that is a curve, not a point: what can become an edge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CurveId {
+    Segment(SegmentId),
+    Circle(CircleId),
+    Arc(ArcId),
+}
+impl From<SegmentId> for CurveId {
+    fn from(id: SegmentId) -> Self {
+        Self::Segment(id)
+    }
+}
+impl From<CircleId> for CurveId {
+    fn from(id: CircleId) -> Self {
+        Self::Circle(id)
+    }
+}
+impl From<ArcId> for CurveId {
+    fn from(id: ArcId) -> Self {
+        Self::Arc(id)
+    }
+}

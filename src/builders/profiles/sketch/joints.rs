@@ -1,4 +1,4 @@
-use super::SketchBuildError;
+use super::ProfilesFromSystemError;
 use super::build::Drawn;
 use crate::geometry::LINEAR_TOLERANCE;
 use crate::geometry::dim2::utils::Point2;
@@ -19,7 +19,7 @@ pub(super) struct Joints {
 impl Joints {
     /// Groups the curves' ends through the system's coincidences. A coincidence chain may
     /// run through what is not drawn, such as an independent point or construction line.
-    pub fn of(system: &System2d, curves: &[Drawn]) -> Result<Self, SketchBuildError> {
+    pub fn of(system: &System2d, curves: &[Drawn]) -> Result<Self, ProfilesFromSystemError> {
         let mut parents = HashMap::new();
         for constraint in system.constraints.values() {
             if let Constraint2d::Coincident(a, b) | Constraint2d::Distance(a, b, 0.) =
@@ -46,7 +46,7 @@ impl Joints {
         }
         for (_, curve_indices) in &members {
             if curve_indices.len() > 2 {
-                return Err(SketchBuildError::Branching {
+                return Err(ProfilesFromSystemError::Branching {
                     curves: curve_indices.iter().map(|i| curves[*i].curve).collect(),
                 });
             }
@@ -64,7 +64,7 @@ impl Joints {
                 let (shared, first) = *first_at[joint].get_or_insert((position, index));
                 let gap = (position - shared).norm();
                 if gap > LINEAR_TOLERANCE {
-                    return Err(SketchBuildError::JointGap {
+                    return Err(ProfilesFromSystemError::JointGap {
                         first: curves[first].curve,
                         second: curve.curve,
                         gap,

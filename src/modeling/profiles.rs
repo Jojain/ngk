@@ -2,12 +2,14 @@ use radians::Rad64;
 
 use crate::builders::errors::EdgeCreationError;
 use crate::builders::profiles::{
-    PolylineError, add_polyline, add_profile_from_edges_edit, add_rectangle, add_square,
+    PolylineError, ProfilesFromSystem, ProfilesFromSystemError, add_polyline,
+    add_profile_from_edges_edit, add_profiles_from_system, add_rectangle, add_square,
     append_edge_edit,
 };
 use crate::geometry::{Plane, Point3};
 use crate::model::{Cell1, Model};
 use crate::modeling::edges;
+use crate::solver::{CurveId, System2d};
 use crate::topology::closed::Closeable;
 use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::shape::{EdgeTag, ProfileTag, Shape};
@@ -72,6 +74,20 @@ pub fn from_edges<P: Payload>(
         add_profile_from_edges_edit(edit, &keys)
     })?;
     Ok(Shape::new(g, profile))
+}
+
+/// Builds the profiles a solved system draws on `plane`, in a fresh model.
+///
+/// A system can draw several profiles, so the result is the model and what was added
+/// to it rather than one shape.
+pub fn from_system(
+    system: &System2d,
+    plane: Plane,
+    curves: &[CurveId],
+) -> Result<(Model, ProfilesFromSystem), ProfilesFromSystemError> {
+    let mut model = Model::new();
+    let built = add_profiles_from_system(&mut model, system, plane, curves)?;
+    Ok((model, built))
 }
 
 /// Returns a profile extended by a connected edge, preserving the input edge.

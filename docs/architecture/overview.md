@@ -30,7 +30,6 @@ Vocabulary is defined in [CONTEXT.md](../../CONTEXT.md).
 | `solver` | `src/solver/` | Stateful 2D geometric constraint systems, independent of topology |
 | `builders` | `src/builders/` | Topology construction over `&mut Model<P>`, one transaction each |
 | `modeling` | `src/modeling/` | Owned-`Shape` facade over `builders`: each constructor allocates a model and delegates one operation |
-| `sketch` | `src/sketch/` | From a solved `solver` system to profiles, with the edge each curve drew |
 | `healing` | `src/healing/` | Removes topology that carries no shape (removal passes over `builders::removal`) |
 | `measure` | `src/measure/` | Length, area, volume, centroid and inertia of entities |
 | `tessellate` | `src/tessellate/` | Geometry and B-rep to polylines and indexed meshes |

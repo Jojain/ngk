@@ -1,4 +1,4 @@
-use super::SketchBuildError;
+use super::ProfilesFromSystemError;
 use super::joints::Joints;
 use crate::builders::edges::{add_circle_edit, add_edge_edit};
 use crate::builders::profiles::add_profile_from_edges_edit;
@@ -8,7 +8,7 @@ use crate::geometry::dim2::trimmed::{Arc2, Segment2, TrimmedCurve2};
 use crate::geometry::dim2::utils::Point2;
 use crate::geometry::{Curve, IntersectionCoverage, Interval, Plane, Point3};
 use crate::model::{Model, OpResult, StaleResult};
-use crate::solver::{ArcId, CircleId, PointRef, SegmentId, Solution2d, System2d};
+use crate::solver::{CurveId, PointRef, Solution2d, System2d};
 use crate::topology::ModelEdit;
 use crate::topology::edge::Edge;
 use crate::topology::payload::Payload;
@@ -20,61 +20,36 @@ use std::f64::consts::TAU;
 /// a joint tangentially meet at a poorly located point, well outside the kernel's tolerance.
 const JOINT_CONTACT: f64 = 1e-6;
 
-/// A curve of a sketch that becomes an edge. Points and construction curves stay in the
-/// system without being listed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum SketchCurve {
-    Segment(SegmentId),
-    Circle(CircleId),
-    Arc(ArcId),
-}
-
-impl From<SegmentId> for SketchCurve {
-    fn from(id: SegmentId) -> Self {
-        Self::Segment(id)
-    }
-}
-impl From<CircleId> for SketchCurve {
-    fn from(id: CircleId) -> Self {
-        Self::Circle(id)
-    }
-}
-impl From<ArcId> for SketchCurve {
-    fn from(id: ArcId) -> Self {
-        Self::Arc(id)
-    }
-}
-
-/// One connected run of a sketch's curves.
+/// One connected run of a system's curves.
 #[derive(Clone, Debug)]
-pub struct SketchProfile {
+pub struct SystemProfile {
     pub profile: ProfileKey,
-    pub curves: Vec<SketchCurve>,
+    pub curves: Vec<CurveId>,
 }
 
-/// What [`build_profiles`] added: the edge of each curve, and the profiles they form.
+/// What [`add_profiles_from_system`] added: the edge of each curve, and the profiles they form.
 ///
 /// The keys hold within this model. What identifies a curve from one build to the next
 /// is its id, which this result ties to the keys.
 #[derive(Clone, Debug)]
-pub struct SketchProfiles {
-    pub edges: BTreeMap<SketchCurve, EdgeKey>,
-    pub profiles: Vec<SketchProfile>,
+pub struct ProfilesFromSystem {
+    pub edges: BTreeMap<CurveId, EdgeKey>,
+    pub profiles: Vec<SystemProfile>,
     revision: Option<u64>,
 }
 
-impl OpResult for SketchProfiles {
+impl OpResult for ProfilesFromSystem {
     fn stamp(&mut self, revision: u64) {
         self.revision = Some(revision);
     }
 }
 
-impl SketchProfiles {
+impl ProfilesFromSystem {
     /// Resolves a curve's edge at the revision that produced this result.
     pub fn edge<'m, P: Payload>(
         &self,
         model: &'m Model<P>,
-        curve: impl Into<SketchCurve>,
+        curve: impl Into<CurveId>,
     ) -> Result<Option<Edge<'m, P>>, StaleResult> {
         StaleResult::check(self.revision, model)?;
         Ok(self
@@ -84,27 +59,37 @@ impl SketchProfiles {
     }
 }
 
-/// Adds the edges and profiles a solved system draws on `plane`, sketch coordinates
+/// Adds the edges and profiles a solved system draws on `plane`, its coordinates
 /// mapping through the plane's axes.
 ///
 /// Curve ends are one vertex where the system's coincidences say so, never because they
 /// happen to touch. Each connected run becomes a profile, open or closed. Curves that
 /// branch, cross, overlap or touch without being joined are refused.
-pub fn build_profiles<P: Payload>(
+pub fn add_profiles_from_system<P: Payload>(
     model: &mut Model<P>,
     system: &System2d,
     plane: Plane,
-    curves: &[SketchCurve],
-) -> Result<SketchProfiles, SketchBuildError> {
+    curves: &[CurveId],
+) -> Result<ProfilesFromSystem, ProfilesFromSystemError> {
+    model.transaction_result(|edit| add_profiles_from_system_edit(edit, system, &plane, curves))
+}
+
+/// Refuses what cannot be drawn, then draws it inside the caller's transaction.
+pub(crate) fn add_profiles_from_system_edit<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    system: &System2d,
+    plane: &Plane,
+    curves: &[CurveId],
+) -> Result<ProfilesFromSystem, ProfilesFromSystemError> {
     let drawn = drawn_curves(system, curves)?;
     let joints = Joints::of(system, &drawn)?;
     refuse_crossings(&drawn, &joints)?;
-    model.transaction_result(|edit| add_profiles_edit(edit, &drawn, &joints, &plane))
+    add_profiles_edit(edit, &drawn, &joints, plane)
 }
 
 /// A listed curve with its solved geometry.
 pub(super) struct Drawn {
-    pub curve: SketchCurve,
+    pub curve: CurveId,
     geometry: Geometry,
 }
 
@@ -118,10 +103,10 @@ impl Drawn {
     /// Its ends with their solved positions; a circle has none.
     pub fn ends(&self) -> Vec<(PointRef, Point2)> {
         match (&self.geometry, self.curve) {
-            (Geometry::Segment(line), SketchCurve::Segment(id)) => {
+            (Geometry::Segment(line), CurveId::Segment(id)) => {
                 vec![(id.start(), line.start()), (id.end(), line.end())]
             }
-            (Geometry::Arc(arc), SketchCurve::Arc(id)) => {
+            (Geometry::Arc(arc), CurveId::Arc(id)) => {
                 vec![(id.start(), arc.start()), (id.end(), arc.end())]
             }
             _ => vec![],
@@ -139,17 +124,22 @@ impl Drawn {
     }
 }
 
-fn drawn_curves(system: &System2d, curves: &[SketchCurve]) -> Result<Vec<Drawn>, SketchBuildError> {
-    let solution = system.solution().ok_or(SketchBuildError::NotSolved)?;
+fn drawn_curves(
+    system: &System2d,
+    curves: &[CurveId],
+) -> Result<Vec<Drawn>, ProfilesFromSystemError> {
+    let solution = system
+        .solution()
+        .ok_or(ProfilesFromSystemError::NotSolved)?;
     let mut seen = HashSet::new();
     curves
         .iter()
         .map(|curve| {
             if !seen.insert(*curve) {
-                return Err(SketchBuildError::DuplicateCurve(*curve));
+                return Err(ProfilesFromSystemError::DuplicateCurve(*curve));
             }
-            let geometry =
-                solved_geometry(solution, *curve).ok_or(SketchBuildError::UnknownCurve(*curve))?;
+            let geometry = solved_geometry(solution, *curve)
+                .ok_or(ProfilesFromSystemError::UnknownCurve(*curve))?;
             Ok(Drawn {
                 curve: *curve,
                 geometry,
@@ -158,22 +148,22 @@ fn drawn_curves(system: &System2d, curves: &[SketchCurve]) -> Result<Vec<Drawn>,
         .collect()
 }
 
-fn solved_geometry(solution: &Solution2d, curve: SketchCurve) -> Option<Geometry> {
+fn solved_geometry(solution: &Solution2d, curve: CurveId) -> Option<Geometry> {
     match curve {
-        SketchCurve::Segment(id) => solution.segment(id).ok().map(Geometry::Segment),
-        SketchCurve::Circle(id) => solution.circle(id).ok().map(Geometry::Circle),
-        SketchCurve::Arc(id) => solution.arc(id).ok().map(Geometry::Arc),
+        CurveId::Segment(id) => solution.segment(id).ok().map(Geometry::Segment),
+        CurveId::Circle(id) => solution.circle(id).ok().map(Geometry::Circle),
+        CurveId::Arc(id) => solution.arc(id).ok().map(Geometry::Arc),
     }
 }
 
 /// Two listed curves may only meet where they are joined.
-fn refuse_crossings(curves: &[Drawn], joints: &Joints) -> Result<(), SketchBuildError> {
+fn refuse_crossings(curves: &[Drawn], joints: &Joints) -> Result<(), ProfilesFromSystemError> {
     let spans: Vec<_> = curves.iter().map(Drawn::span).collect();
     for (a, first) in curves.iter().enumerate() {
         for (b, second) in curves.iter().enumerate().skip(a + 1) {
             let (first, second) = (first.curve, second.curve);
             let found = spans[a].intersect_curve(&spans[b]).map_err(|source| {
-                SketchBuildError::Intersection {
+                ProfilesFromSystemError::Intersection {
                     first,
                     second,
                     source,
@@ -187,7 +177,7 @@ fn refuse_crossings(curves: &[Drawn], joints: &Joints) -> Result<(), SketchBuild
                             .iter()
                             .any(|joint| (joint - point).norm() <= JOINT_CONTACT)
                         {
-                            return Err(SketchBuildError::Crossing {
+                            return Err(ProfilesFromSystemError::Crossing {
                                 first,
                                 second,
                                 point: *point,
@@ -195,12 +185,12 @@ fn refuse_crossings(curves: &[Drawn], joints: &Joints) -> Result<(), SketchBuild
                         }
                     }
                     CurveCurveIntersection2::Overlap { .. } => {
-                        return Err(SketchBuildError::Overlapping { first, second });
+                        return Err(ProfilesFromSystemError::Overlapping { first, second });
                     }
                 }
             }
             if *found.coverage() != IntersectionCoverage::Complete {
-                return Err(SketchBuildError::UncertainCrossing { first, second });
+                return Err(ProfilesFromSystemError::UncertainCrossing { first, second });
             }
         }
     }
@@ -226,7 +216,7 @@ fn add_profiles_edit<P: Payload>(
     curves: &[Drawn],
     joints: &Joints,
     plane: &Plane,
-) -> Result<SketchProfiles, SketchBuildError> {
+) -> Result<ProfilesFromSystem, ProfilesFromSystemError> {
     let mut edges = BTreeMap::new();
     let mut keys = Vec::with_capacity(curves.len());
     for curve in curves {
@@ -237,12 +227,12 @@ fn add_profiles_edit<P: Payload>(
     let mut profiles = vec![];
     for run in connected_runs(curves, joints) {
         let run_keys: Vec<_> = run.iter().map(|index| keys[*index]).collect();
-        profiles.push(SketchProfile {
+        profiles.push(SystemProfile {
             profile: add_profile_from_edges_edit(edit, &run_keys)?,
             curves: run.iter().map(|index| curves[*index].curve).collect(),
         });
     }
-    Ok(SketchProfiles {
+    Ok(ProfilesFromSystem {
         edges,
         profiles,
         revision: None,
@@ -254,7 +244,7 @@ fn add_curve_edit<P: Payload>(
     drawn: &Drawn,
     joints: &Joints,
     plane: &Plane,
-) -> Result<EdgeKey, SketchBuildError> {
+) -> Result<EdgeKey, ProfilesFromSystemError> {
     let lift = |point: Point2| -> Point3 { plane.point_at(point.x, point.y) };
     let at = |center: Point2| Plane::new(lift(center), plane.x_dir(), plane.normal());
     let key = match &drawn.geometry {

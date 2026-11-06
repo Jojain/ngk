@@ -148,6 +148,35 @@ it arrived. The sheets must be disjoint, which the Boolean contact search
 certifies, and each void must lie inside the outer sheet and outside every
 other void.
 
+## Profiles from a constraint system
+
+`add_profiles_from_system` draws a solved [constraint system](solver.md) on a plane:
+`curves` lists the segments, arcs and circles to draw, while independent points and
+construction curves stay in the system unlisted. A system without a solution for its
+current revision is refused, since its seed need not satisfy its constraints. The
+facade `modeling::profiles::from_system` does the same in a fresh model. The code lives
+in the private `builders::profiles::sketch`.
+
+The result ties each curve's id to the `EdgeKey` it drew, and each profile's key to its
+curves. A key holds within its model, and it moves when a build adds or removes a curve
+before it, because keys follow creation order. The id is what identifies a curve from
+one build to the next: a curve keeps its id when it is edited, so its edge can be found
+again even with another shape and another key.
+
+Unlike `add_profile_from_edges`, joining does not go by geometry. Two curve ends are one
+vertex where the system's coincidences say so, including through a chain running over
+what is not drawn, because two ends can touch by accident and a coincidence is meant to
+be removable. Joined ends share one position: stored ones already coincide exactly, and
+an arc's evaluated end is within `LINEAR_TOLERANCE`, which is what the solver holds by
+default. A larger gap is refused.
+
+Each connected run of curves becomes one profile, open or closed, and a circle is a
+profile of its own. Curves meeting anywhere but at a joint are refused by name: more than
+two ends at one joint, a crossing, an end lying on another curve, ends touching without a
+coincidence, an overlap. So is a pair whose intersection search cannot claim complete
+coverage, because a missed crossing would give a wrong profile. Every pair of curves is
+intersected, so the cost grows with the square of the number of curves listed.
+
 ## Which model an operation's result lives in
 
 The owned-`Shape` facade (`modeling`) and the language bindings follow one set
