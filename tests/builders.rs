@@ -41,6 +41,8 @@ mod profiles_from_system;
 mod removal;
 #[path = "builders/revolve.rs"]
 mod revolve;
+#[path = "builders/sketch_from_system.rs"]
+mod sketch_from_system;
 #[path = "builders/solids.rs"]
 mod solids;
 #[path = "builders/sweep.rs"]

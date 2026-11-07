@@ -12,6 +12,7 @@ pub mod removal;
 pub mod revolve;
 pub(crate) mod scaffold;
 pub mod sheets;
+mod sketch;
 pub mod solids;
 pub mod sweep;
 pub mod transform;

@@ -9,6 +9,7 @@ mod profiles;
 mod profiles_from_system;
 mod revolve;
 mod sheets;
+mod sketch_from_system;
 mod solids;
 mod sweep;
 mod transform;
@@ -60,6 +61,7 @@ pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 
     let faces_module = new_submodule(py, "faces", &modeling_qualname)?;
     faces::register(&faces_module)?;
+    sketch_from_system::register(&faces_module)?;
     modeling.add_submodule(&faces_module)?;
 
     let heal_module = new_submodule(py, "heal", &modeling_qualname)?;

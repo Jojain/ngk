@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from ngk.geometry import Plane, Point2, Vector, Vector2
@@ -255,3 +257,68 @@ def test_refusals_name_the_curves():
     line = unsolved.add_segment(segment((0.0, 0.0), (1.0, 0.0)))
     with pytest.raises(profiles.NotSolvedError):
         profiles.from_system(unsolved, Plane.xy(), [line])
+
+
+def add_closed_rectangle(system, low, high):
+    corners = [low, (high[0], low[1]), high, (low[0], high[1])]
+    sides = [system.add_segment(segment(corners[i], corners[(i + 1) % 4])) for i in range(4)]
+    for i in range(4):
+        system.add_constraint(Coincident(sides[i].end(), sides[(i + 1) % 4].start()))
+    return sides
+
+
+def test_a_circle_inside_a_rectangle_draws_a_ring_and_a_disc():
+    system = System2d()
+    sides = add_closed_rectangle(system, (0.0, 0.0), (10.0, 10.0))
+    circle = system.add_circle(Circle2(Point2(5.0, 5.0), 2.0))
+    system.solve()
+
+    built = faces.from_system(system, Plane.xy(), [*sides, circle])
+    areas = sorted(region.face.area for region in built.regions)
+    assert areas == pytest.approx([4.0 * math.pi, 100.0 - 4.0 * math.pi])
+
+
+def test_a_swiss_cross_draws_five_loose_regions_that_extrude():
+    system = System2d()
+    curves = [
+        *add_closed_rectangle(system, (4.0, 0.0), (6.0, 10.0)),
+        *add_closed_rectangle(system, (0.0, 4.0), (10.0, 6.0)),
+    ]
+    system.solve()
+
+    built = faces.from_system(system, Plane.xy(), curves)
+    areas = sorted(region.face.area for region in built.regions)
+    assert areas == pytest.approx([4.0, 8.0, 8.0, 8.0, 8.0])
+    solids = [sweep.extrude_face(region.face, Vector(0.0, 0.0, 1.0)) for region in built.regions]
+    assert sum(abs(solid.volume) for solid in solids) == pytest.approx(36.0)
+
+
+def test_a_line_overshooting_a_rectangle_leaves_two_regions_tied_to_their_curves():
+    system = System2d()
+    sides = add_closed_rectangle(system, (0.0, 0.0), (10.0, 10.0))
+    cut = system.add_segment(segment((3.0, -4.0), (3.0, 14.0)))
+    system.solve()
+
+    built = faces.from_system(system, Plane.xy(), [*sides, cut])
+    assert sorted(region.face.area for region in built.regions) == pytest.approx([30.0, 70.0])
+    for region in built.regions:
+        assert [curve for curve, _ in region.boundary].count(cut) == 1
+
+
+def test_sketch_refusals_are_named():
+    system = System2d()
+    a = system.add_segment(segment((0.0, 0.0), (2.0, 0.0)))
+    b = system.add_segment(segment((1.0, 0.0), (3.0, 0.0)))
+    system.solve()
+    with pytest.raises(faces.OverlappingError) as raised:
+        faces.from_system(system, Plane.xy(), [a, b])
+    assert raised.value.first == a
+
+    pinched = System2d()
+    outer = add_closed_rectangle(pinched, (0.0, 0.0), (10.0, 10.0))
+    corners = [(5.0, 0.0), (7.0, 2.0), (5.0, 4.0), (3.0, 2.0)]
+    hole = [pinched.add_segment(segment(corners[i], corners[(i + 1) % 4])) for i in range(4)]
+    pinched.solve()
+    with pytest.raises(faces.PinchedRegionError) as raised:
+        faces.from_system(pinched, Plane.xy(), [*outer, *hole])
+    assert raised.value.point.as_tuple() == pytest.approx((5.0, 0.0))

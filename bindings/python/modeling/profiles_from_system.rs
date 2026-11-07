@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
 use crate::binding_common::explore::SharedModel;
-use crate::builders::profiles::ProfilesFromSystemError;
+use crate::builders::profiles::SketchError;
 use crate::modeling;
 use crate::solver::CurveId;
 
@@ -49,6 +49,19 @@ create_exception!(
     "Whether `first` and `second` cross could not be established."
 );
 
+create_exception!(
+    ngk.modeling.faces,
+    CutOffCurveError,
+    PyValueError,
+    "`curve` is cut at `point`, `gap` away from it."
+);
+create_exception!(
+    ngk.modeling.faces,
+    PinchedRegionError,
+    PyValueError,
+    "A region's boundary runs through `point` twice."
+);
+
 /// An exception carrying the attributes that name what is at fault.
 fn with_attributes(py: Python<'_>, error: PyErr, attributes: &[(&str, PyObject)]) -> PyErr {
     for (name, value) in attributes {
@@ -59,12 +72,13 @@ fn with_attributes(py: Python<'_>, error: PyErr, attributes: &[(&str, PyObject)]
     error
 }
 
-fn from_system_error(py: Python<'_>, error: ProfilesFromSystemError) -> PyErr {
+/// The named exception for a refusal to draw a system.
+pub(super) fn from_system_error(py: Python<'_>, error: SketchError) -> PyErr {
     let message = error.to_string();
     let curve = |id: CurveId| CurveArg::from(id).into_py(py);
     match error {
-        ProfilesFromSystemError::NotSolved => NotSolvedError::new_err(message),
-        ProfilesFromSystemError::Branching { curves } => {
+        SketchError::NotSolved => NotSolvedError::new_err(message),
+        SketchError::Branching { curves } => {
             let curves: Vec<PyObject> = curves.into_iter().map(curve).collect();
             with_attributes(
                 py,
@@ -72,7 +86,7 @@ fn from_system_error(py: Python<'_>, error: ProfilesFromSystemError) -> PyErr {
                 &[("curves", curves.into_py(py))],
             )
         }
-        ProfilesFromSystemError::JointGap { first, second, gap } => with_attributes(
+        SketchError::JointGap { first, second, gap } => with_attributes(
             py,
             JointGapError::new_err(message),
             &[
@@ -81,7 +95,7 @@ fn from_system_error(py: Python<'_>, error: ProfilesFromSystemError) -> PyErr {
                 ("gap", gap.into_py(py)),
             ],
         ),
-        ProfilesFromSystemError::Crossing {
+        SketchError::Crossing {
             first,
             second,
             point,
@@ -94,15 +108,33 @@ fn from_system_error(py: Python<'_>, error: ProfilesFromSystemError) -> PyErr {
                 ("point", PyPoint2::from(point).into_py(py)),
             ],
         ),
-        ProfilesFromSystemError::Overlapping { first, second } => with_attributes(
+        SketchError::Overlapping { first, second } => with_attributes(
             py,
             OverlappingError::new_err(message),
             &[("first", curve(first)), ("second", curve(second))],
         ),
-        ProfilesFromSystemError::UncertainCrossing { first, second } => with_attributes(
+        SketchError::UncertainCrossing { first, second } => with_attributes(
             py,
             UncertainCrossingError::new_err(message),
             &[("first", curve(first)), ("second", curve(second))],
+        ),
+        SketchError::CutOffCurve {
+            curve: cut,
+            point,
+            gap,
+        } => with_attributes(
+            py,
+            CutOffCurveError::new_err(message),
+            &[
+                ("curve", curve(cut)),
+                ("point", PyPoint2::from(point).into_py(py)),
+                ("gap", gap.into_py(py)),
+            ],
+        ),
+        SketchError::PinchedRegion { point } => with_attributes(
+            py,
+            PinchedRegionError::new_err(message),
+            &[("point", PyPoint2::from(point).into_py(py))],
         ),
         _ => PyValueError::new_err(message),
     }

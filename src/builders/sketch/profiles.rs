@@ -1,24 +1,18 @@
-use super::ProfilesFromSystemError;
-use super::joints::Joints;
+use super::SketchError;
+use super::drawn::{Drawn, Geometry, drawn_curves};
+use super::joints::{JOINT_CONTACT, Joints};
 use crate::builders::edges::{add_circle_edit, add_edge_edit};
 use crate::builders::profiles::add_profile_from_edges_edit;
-use crate::geometry::dim2::curves::{Circle2, Curve2};
 use crate::geometry::dim2::intersections::CurveCurveIntersection2;
-use crate::geometry::dim2::trimmed::{Arc2, Segment2, TrimmedCurve2};
 use crate::geometry::dim2::utils::Point2;
-use crate::geometry::{Curve, IntersectionCoverage, Interval, Plane, Point3};
+use crate::geometry::{Curve, IntersectionCoverage, Plane, Point3};
 use crate::model::{Model, OpResult, StaleResult};
-use crate::solver::{CurveId, PointRef, Solution2d, System2d};
+use crate::solver::{CurveId, System2d};
 use crate::topology::ModelEdit;
 use crate::topology::edge::Edge;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, ProfileKey};
-use std::collections::{BTreeMap, HashSet};
-use std::f64::consts::TAU;
-
-/// How far a reported crossing may sit from a joint and still be that joint. Curves leaving
-/// a joint tangentially meet at a poorly located point, well outside the kernel's tolerance.
-const JOINT_CONTACT: f64 = 1e-6;
+use std::collections::BTreeMap;
 
 /// One connected run of a system's curves.
 #[derive(Clone, Debug)]
@@ -64,13 +58,15 @@ impl ProfilesFromSystem {
 ///
 /// Curve ends are one vertex where the system's coincidences say so, never because they
 /// happen to touch. Each connected run becomes a profile, open or closed. Curves that
-/// branch, cross, overlap or touch without being joined are refused.
+/// branch, cross, overlap or touch without being joined are refused: a profile is a chain
+/// or a cycle. [`add_sketch_from_system`](super::add_sketch_from_system) draws such curves
+/// as the regions they enclose.
 pub fn add_profiles_from_system<P: Payload>(
     model: &mut Model<P>,
     system: &System2d,
     plane: Plane,
     curves: &[CurveId],
-) -> Result<ProfilesFromSystem, ProfilesFromSystemError> {
+) -> Result<ProfilesFromSystem, SketchError> {
     model.transaction_result(|edit| add_profiles_from_system_edit(edit, system, &plane, curves))
 }
 
@@ -80,90 +76,26 @@ pub(crate) fn add_profiles_from_system_edit<P: Payload>(
     system: &System2d,
     plane: &Plane,
     curves: &[CurveId],
-) -> Result<ProfilesFromSystem, ProfilesFromSystemError> {
+) -> Result<ProfilesFromSystem, SketchError> {
     let drawn = drawn_curves(system, curves)?;
     let joints = Joints::of(system, &drawn)?;
+    if let Some(curves) = joints.branching() {
+        return Err(SketchError::Branching {
+            curves: curves.to_vec(),
+        });
+    }
     refuse_crossings(&drawn, &joints)?;
     add_profiles_edit(edit, &drawn, &joints, plane)
 }
 
-/// A listed curve with its solved geometry.
-pub(super) struct Drawn {
-    pub curve: CurveId,
-    geometry: Geometry,
-}
-
-enum Geometry {
-    Segment(Segment2),
-    Circle(Circle2),
-    Arc(Arc2),
-}
-
-impl Drawn {
-    /// Its ends with their solved positions; a circle has none.
-    pub fn ends(&self) -> Vec<(PointRef, Point2)> {
-        match (&self.geometry, self.curve) {
-            (Geometry::Segment(line), CurveId::Segment(id)) => {
-                vec![(id.start(), line.start()), (id.end(), line.end())]
-            }
-            (Geometry::Arc(arc), CurveId::Arc(id)) => {
-                vec![(id.start(), arc.start()), (id.end(), arc.end())]
-            }
-            _ => vec![],
-        }
-    }
-
-    fn span(&self) -> TrimmedCurve2 {
-        match &self.geometry {
-            Geometry::Segment(line) => line.clone().into(),
-            Geometry::Arc(arc) => arc.clone().into(),
-            Geometry::Circle(circle) => {
-                TrimmedCurve2::new(Curve2::Circle(circle.clone()), Interval::new(0.0, TAU))
-            }
-        }
-    }
-}
-
-fn drawn_curves(
-    system: &System2d,
-    curves: &[CurveId],
-) -> Result<Vec<Drawn>, ProfilesFromSystemError> {
-    let solution = system
-        .solution()
-        .ok_or(ProfilesFromSystemError::NotSolved)?;
-    let mut seen = HashSet::new();
-    curves
-        .iter()
-        .map(|curve| {
-            if !seen.insert(*curve) {
-                return Err(ProfilesFromSystemError::DuplicateCurve(*curve));
-            }
-            let geometry = solved_geometry(solution, *curve)
-                .ok_or(ProfilesFromSystemError::UnknownCurve(*curve))?;
-            Ok(Drawn {
-                curve: *curve,
-                geometry,
-            })
-        })
-        .collect()
-}
-
-fn solved_geometry(solution: &Solution2d, curve: CurveId) -> Option<Geometry> {
-    match curve {
-        CurveId::Segment(id) => solution.segment(id).ok().map(Geometry::Segment),
-        CurveId::Circle(id) => solution.circle(id).ok().map(Geometry::Circle),
-        CurveId::Arc(id) => solution.arc(id).ok().map(Geometry::Arc),
-    }
-}
-
 /// Two listed curves may only meet where they are joined.
-fn refuse_crossings(curves: &[Drawn], joints: &Joints) -> Result<(), ProfilesFromSystemError> {
+fn refuse_crossings(curves: &[Drawn], joints: &Joints) -> Result<(), SketchError> {
     let spans: Vec<_> = curves.iter().map(Drawn::span).collect();
     for (a, first) in curves.iter().enumerate() {
         for (b, second) in curves.iter().enumerate().skip(a + 1) {
             let (first, second) = (first.curve, second.curve);
             let found = spans[a].intersect_curve(&spans[b]).map_err(|source| {
-                ProfilesFromSystemError::Intersection {
+                SketchError::Intersection {
                     first,
                     second,
                     source,
@@ -177,7 +109,7 @@ fn refuse_crossings(curves: &[Drawn], joints: &Joints) -> Result<(), ProfilesFro
                             .iter()
                             .any(|joint| (joint - point).norm() <= JOINT_CONTACT)
                         {
-                            return Err(ProfilesFromSystemError::Crossing {
+                            return Err(SketchError::Crossing {
                                 first,
                                 second,
                                 point: *point,
@@ -185,12 +117,12 @@ fn refuse_crossings(curves: &[Drawn], joints: &Joints) -> Result<(), ProfilesFro
                         }
                     }
                     CurveCurveIntersection2::Overlap { .. } => {
-                        return Err(ProfilesFromSystemError::Overlapping { first, second });
+                        return Err(SketchError::Overlapping { first, second });
                     }
                 }
             }
             if *found.coverage() != IntersectionCoverage::Complete {
-                return Err(ProfilesFromSystemError::UncertainCrossing { first, second });
+                return Err(SketchError::UncertainCrossing { first, second });
             }
         }
     }
@@ -216,7 +148,7 @@ fn add_profiles_edit<P: Payload>(
     curves: &[Drawn],
     joints: &Joints,
     plane: &Plane,
-) -> Result<ProfilesFromSystem, ProfilesFromSystemError> {
+) -> Result<ProfilesFromSystem, SketchError> {
     let mut edges = BTreeMap::new();
     let mut keys = Vec::with_capacity(curves.len());
     for curve in curves {
@@ -244,7 +176,7 @@ fn add_curve_edit<P: Payload>(
     drawn: &Drawn,
     joints: &Joints,
     plane: &Plane,
-) -> Result<EdgeKey, ProfilesFromSystemError> {
+) -> Result<EdgeKey, SketchError> {
     let lift = |point: Point2| -> Point3 { plane.point_at(point.x, point.y) };
     let at = |center: Point2| Plane::new(lift(center), plane.x_dir(), plane.normal());
     let key = match &drawn.geometry {

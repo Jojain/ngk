@@ -13,6 +13,7 @@ mod sew;
 mod split;
 mod support;
 
+pub use super::sketch::{SketchError, SketchFromSystem, SystemRegion, add_sketch_from_system};
 pub use annulus::add_annulus;
 pub use circle::add_circle;
 pub use face::{add_face, add_rectangle, add_square};
@@ -33,7 +34,7 @@ pub(crate) use face::add_face_edit;
 pub(crate) use face::add_rectangle_edit;
 pub(crate) use imprints::{chord_loop_kinds, signed_area, split_face_by_imprints_edit};
 pub(crate) use polygon::add_polygon_edit;
-pub(crate) use polygon::reverse_face_winding_edit;
+pub(crate) use polygon::{add_face_with_holes_edit, reverse_face_winding_edit};
 pub(crate) use sew::{FaceSewError, SewMerges, Traversal, sew_faces_along};
 pub(crate) use split::split_face_edge_edit;
 pub(crate) use support::{

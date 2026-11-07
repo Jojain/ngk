@@ -1,5 +1,41 @@
 """Face constructors."""
 
-from ..core.modeling.faces import annulus, circle, from_profile, polygon, polygon_with_holes, rectangle, split_boundary_edge, square
+from ..core.modeling.faces import (
+    CutOffCurveError,
+    JointGapError,
+    NotSolvedError,
+    OverlappingError,
+    PinchedRegionError,
+    SystemRegion,
+    SystemRegions,
+    UncertainCrossingError,
+    annulus,
+    circle,
+    from_profile,
+    from_system,
+    polygon,
+    polygon_with_holes,
+    rectangle,
+    split_boundary_edge,
+    square,
+)
 
-__all__ = ["annulus", "circle", "from_profile", "polygon", "polygon_with_holes", "rectangle", "split_boundary_edge", "square"]
+__all__ = [
+    "CutOffCurveError",
+    "JointGapError",
+    "NotSolvedError",
+    "OverlappingError",
+    "PinchedRegionError",
+    "SystemRegion",
+    "SystemRegions",
+    "UncertainCrossingError",
+    "annulus",
+    "circle",
+    "from_profile",
+    "from_system",
+    "polygon",
+    "polygon_with_holes",
+    "rectangle",
+    "split_boundary_edge",
+    "square",
+]

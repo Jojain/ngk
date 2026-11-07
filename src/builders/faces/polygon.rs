@@ -7,9 +7,9 @@ use crate::model::Model;
 use crate::topology::attributes::{EdgeAttr, FaceAttr, VertexAttr};
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
-use crate::topology::profile::Profile;
-use crate::topology::shape_keys::FaceKey;
+use crate::topology::shape_keys::{FaceKey, ProfileKey};
 use crate::topology::{EditKey, ModelEdit};
+use std::collections::HashMap;
 
 pub fn add_polygon_with_holes<P: Payload>(
     g: &mut Model<P>,
@@ -33,11 +33,6 @@ pub(crate) fn add_polygon_with_holes_edit<P: Payload>(
     }
 
     let outer_profile = add_polygon_edit(edit, outer)?;
-    let outer_loop = edit.profile_attr_unchecked(outer_profile).dart;
-    let mut inner_loops = Vec::with_capacity(holes.len());
-    let outer_profile =
-        Profile::from_dart(edit, outer_loop).expect("outer loop must have a registered profile");
-    let mut pcurves = profile_pcurves(&outer_profile, &plane)?;
 
     // A face's material lies left of its boundary, so a hole runs the other
     // way round from the outer polygon, whichever way the caller listed it.
@@ -49,6 +44,7 @@ pub(crate) fn add_polygon_with_holes_edit<P: Payload>(
         signed_area(&uvs)
     };
     let outer_winding = winding(outer);
+    let mut hole_profiles = Vec::with_capacity(holes.len());
     for hole in holes {
         let reversed;
         let hole = match winding(hole).signum() == outer_winding.signum() {
@@ -58,17 +54,33 @@ pub(crate) fn add_polygon_with_holes_edit<P: Payload>(
             }
             false => hole,
         };
-        let inner_profile = add_polygon_edit(edit, hole)?;
-        let inner_loop = edit.profile_attr_unchecked(inner_profile).dart;
-        let inner_profile = Profile::from_dart(edit, inner_loop)
-            .expect("inner loop must have a registered profile");
-        pcurves.extend(profile_pcurves(&inner_profile, &plane)?);
-        inner_loops.push(inner_loop);
+        hole_profiles.push(add_polygon_edit(edit, hole)?);
     }
+    add_face_with_holes_edit(edit, plane, outer_profile, &hole_profiles)
+}
 
-    let sources = std::iter::once(outer_loop)
-        .chain(inner_loops.iter().copied())
-        .filter_map(|dart| edit.profile_key(dart).map(EditKey::Profile))
+/// Fills closed profiles lying on `plane`: one outer boundary and its holes.
+///
+/// The surface is `plane`, not one inferred from the boundary, and the profiles keep the
+/// direction they run in. The caller makes the holes run against the outer boundary.
+pub(crate) fn add_face_with_holes_edit<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    plane: Plane,
+    outer: ProfileKey,
+    holes: &[ProfileKey],
+) -> Result<FaceKey, FaceCreationError> {
+    let outer_loop = edit.profile_attr_unchecked(outer).dart;
+    let inner_loops: Vec<Dart> = holes
+        .iter()
+        .map(|hole| edit.profile_attr_unchecked(*hole).dart)
+        .collect();
+    let mut pcurves = HashMap::new();
+    for profile in std::iter::once(&outer).chain(holes) {
+        pcurves.extend(profile_pcurves(&edit.profile_unchecked(*profile), &plane)?);
+    }
+    let sources = std::iter::once(&outer)
+        .chain(holes)
+        .map(|profile| EditKey::Profile(*profile))
         .collect();
     let face_key = edit.add_face_derived_from(
         sources,

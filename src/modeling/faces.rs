@@ -1,14 +1,16 @@
 use crate::builders::boolean::{BooleanError, BooleanOperation, BooleanOptions, face_boolean};
 use crate::builders::errors::FaceCreationError;
 use crate::builders::faces::{
-    FaceEdgeSplitError, add_annulus, add_circle, add_face_edit, add_polygon_edit,
-    add_polygon_with_holes, add_rectangle, add_square, reverse_face_winding_edit, split_face_edge,
+    FaceEdgeSplitError, SketchError, SketchFromSystem, add_annulus, add_circle, add_face_edit,
+    add_polygon_edit, add_polygon_with_holes, add_rectangle, add_sketch_from_system, add_square,
+    reverse_face_winding_edit, split_face_edge,
 };
 use crate::geometry::{Fraction, Plane, Point3};
 use crate::model::Cell2;
 use crate::model::Model;
 use crate::modeling::edges::EdgeSplitResult;
 use crate::modeling::import::import_tools;
+use crate::solver::{CurveId, System2d};
 use crate::topology::ModelEdit;
 use crate::topology::face::Face;
 use crate::topology::orientation::Orientation;
@@ -16,6 +18,21 @@ use crate::topology::payload::{Payload, StandardPayload};
 use crate::topology::profile::Profile;
 use crate::topology::shape::{FaceTag, ProfileTag, Shape};
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
+
+/// Builds a loose face for each closed area a solved system's curves enclose on `plane`,
+/// in a fresh model.
+///
+/// A system can enclose several areas, so the result is the model and what was added to
+/// it rather than one shape.
+pub fn from_system(
+    system: &System2d,
+    plane: Plane,
+    curves: &[CurveId],
+) -> Result<(Model, SketchFromSystem), SketchError> {
+    let mut model = Model::new();
+    let sketch = add_sketch_from_system(&mut model, system, plane, curves)?;
+    Ok((model, sketch))
+}
 
 /// Creates a planar rectangular face whose first corner is `plane.origin()`.
 pub fn rectangle(

@@ -37,7 +37,9 @@ report. `ngk.solver.constraints` has one class per relation, each deriving from
 `System2d.constraint` gives it back as its class. Angles and fractions are floats, as in
 the other bindings. `ConflictError` and `NonConvergenceError` derive from `ValueError`
 and carry the ids of the constraints at fault. `ngk.modeling.profiles.from_system` draws
-a solved system, with `edges` by curve id and a named exception per refusal.
+a solved system as profiles, with `edges` by curve id and a named exception per refusal.
+`ngk.modeling.faces.from_system` draws it as [regions](builders.md#regions-from-a-constraint-system):
+one loose face per closed area its curves enclose.
 
 ## Visualization playground
 

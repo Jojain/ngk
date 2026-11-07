@@ -109,6 +109,13 @@ A maximal connected set of faces.
 **Shell**:
 A closed sheet, bounding a solid.
 
+**Region**:
+A closed area of a plane that a constraint system's curves enclose: one outer
+boundary and its holes. It is drawn as one loose face, and sewn regions form a
+sheet per connected group.
+_Avoid_: profile (a profile is a connected set of edges and can enclose several
+regions or none)
+
 ### Embedding
 
 **Embedded cell**:

@@ -155,7 +155,12 @@ other void.
 construction curves stay in the system unlisted. A system without a solution for its
 current revision is refused, since its seed need not satisfy its constraints. The
 facade `modeling::profiles::from_system` does the same in a fresh model. The code lives
-in the private `builders::profiles::sketch`.
+in the private `builders::sketch`.
+
+A system is drawn in one of two ways. `add_profiles_from_system` gives contours and open
+chains, and refuses curves that meet anywhere but at a joint.
+[`add_sketch_from_system`](#regions-from-a-constraint-system) gives the areas the curves
+enclose, and cuts them wherever they meet.
 
 The result ties each curve's id to the `EdgeKey` it drew, and each profile's key to its
 curves. A key holds within its model, and it moves when a build adds or removes a curve
@@ -176,6 +181,54 @@ two ends at one joint, a crossing, an end lying on another curve, ends touching 
 coincidence, an overlap. So is a pair whose intersection search cannot claim complete
 coverage, because a missed crossing would give a wrong profile. Every pair of curves is
 intersected, so the cost grows with the square of the number of curves listed.
+
+## Regions from a constraint system
+
+`add_sketch_from_system` adds one loose planar face per region: a closed area the curves
+enclose, with one outer boundary and its holes. A rectangle with a circle inside it gives
+a ring and a disc, and two crossing rectangles shaped like a cross give a centre and four
+arms. The facade is `modeling::faces::from_system`. See
+[ADR 0005](../adr/0005-a-system-draws-loose-regions.md) for why the result is faces and
+why they are not sewn.
+
+Topology comes from where the curves meet, not from what joins them. Curves meeting at a
+crossing, a T or a touch form a node, with or without a coincidence. Coincidences only
+give joined ends one shared position, as for profiles. The steps are pure 2D and read no
+model:
+
+1. **Cutting.** Every pair of listed curves is intersected, so the cost grows with the
+   square of their number. Points within `JOINT_CONTACT` are one node, so three curves
+   through one point make one node. A round curve refuses a node farther than
+   `LINEAR_TOLERANCE` from its circle (`CutOffCurve`), because an edge ending there would
+   not lie on its support. An overlap or an incomplete search is refused.
+2. **Walking.** Each piece is walked both ways, turning at each node to the next piece
+   clockwise from the one it arrived on, which keeps one area on the walk's left. Pieces
+   leaving along one tangent are ordered by signed curvature, which is exact on lines and
+   circles and is what separates an arc from the segment it leaves tangentially.
+3. **Dropping.** A piece one walk runs both ways has the same area on both sides and
+   bounds nothing: an overshoot, a dangling end, a segment joining a rectangle to a
+   circle inside it. It is removed, and the stretches of one curve are re-joined at any
+   node only they still touch, so nothing of it remains in the model, not even a vertex.
+   A curve that bounds nothing simply appears in no region's boundary.
+4. **Classifying.** A walk with positive area is a region's outer boundary. The others
+   are the outside of a connected group of pieces: a hole of the smallest region
+   enclosing that group, found by winding number, or the outside of the drawing. A
+   boundary running through a node twice, as where a hole touches the outer boundary at
+   one point, is refused (`PinchedRegion`).
+
+Each region then gets its own edges and profiles, running the way they were walked, so
+that outer boundaries turn counter-clockwise on the plane and holes clockwise.
+`add_face_with_holes_edit` fills them on the sketch plane itself rather than one inferred
+from the boundary, which gives every region the plane's normal.
+
+Neighbouring regions therefore each hold a copy of the stretch they share, with the same
+end positions. `add_sheet_from_faces` sews them by that geometry, and
+`remove_redundant_cells` then fuses a sewn sheet into one face. A face must be extruded
+loose or after that fusion: `add_extruded_face` fails on a face already sewn to another.
+
+`SystemRegion::boundary` ties each edge to the curve it lies on. Regions have no id of
+their own: their number changes with the system's dimensions, and their order is only
+stable for a given input.
 
 ## Which model an operation's result lives in
 

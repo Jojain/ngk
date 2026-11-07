@@ -2,9 +2,8 @@ use radians::Rad64;
 
 use crate::builders::errors::EdgeCreationError;
 use crate::builders::profiles::{
-    PolylineError, ProfilesFromSystem, ProfilesFromSystemError, add_polyline,
-    add_profile_from_edges_edit, add_profiles_from_system, add_rectangle, add_square,
-    append_edge_edit,
+    PolylineError, ProfilesFromSystem, SketchError, add_polyline, add_profile_from_edges_edit,
+    add_profiles_from_system, add_rectangle, add_square, append_edge_edit,
 };
 use crate::geometry::{Plane, Point3};
 use crate::model::{Cell1, Model};
@@ -84,7 +83,7 @@ pub fn from_system(
     system: &System2d,
     plane: Plane,
     curves: &[CurveId],
-) -> Result<(Model, ProfilesFromSystem), ProfilesFromSystemError> {
+) -> Result<(Model, ProfilesFromSystem), SketchError> {
     let mut model = Model::new();
     let built = add_profiles_from_system(&mut model, system, plane, curves)?;
     Ok((model, built))
