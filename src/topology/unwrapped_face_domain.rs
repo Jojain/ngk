@@ -262,7 +262,15 @@ impl UnwrappedFaceDomain {
             match loop_.kind() {
                 LoopKind::Wrapping { axis } => {
                     let first = outer.len();
-                    place_loop(face, loop_, periods, cut, across, &mut outer, &mut outer_offset)?;
+                    place_loop(
+                        face,
+                        loop_,
+                        periods,
+                        cut,
+                        across,
+                        &mut outer,
+                        &mut outer_offset,
+                    )?;
                     let transverse = axis.transverse().index();
                     if across.is_none() && periods[transverse].is_some() {
                         across = outer
@@ -271,10 +279,26 @@ impl UnwrappedFaceDomain {
                     }
                 }
                 LoopKind::Outer => {
-                    place_loop(face, loop_, periods, None, None, &mut outer, &mut outer_offset)?;
+                    place_loop(
+                        face,
+                        loop_,
+                        periods,
+                        None,
+                        None,
+                        &mut outer,
+                        &mut outer_offset,
+                    )?;
                 }
                 LoopKind::Capping { axis, side } => {
-                    place_loop(face, loop_, periods, None, None, &mut outer, &mut outer_offset)?;
+                    place_loop(
+                        face,
+                        loop_,
+                        periods,
+                        None,
+                        None,
+                        &mut outer,
+                        &mut outer_offset,
+                    )?;
                     capped = Some((axis, side));
                 }
                 LoopKind::Inner => {}
@@ -474,9 +498,11 @@ fn place_loop<P: Payload>(
             .and_then(|previous| {
                 place_after(previous, curve.start(), face.surface(), periods, offset)
             });
-        if let (0, Some((axis, held)), Some(previous)) =
-            (index, across, curves.last().map(UnwrappedFaceDomainCurve::end))
-        {
+        if let (0, Some((axis, held)), Some(previous)) = (
+            index,
+            across,
+            curves.last().map(UnwrappedFaceDomainCurve::end),
+        ) {
             offset[axis] = held;
             corner = (curve.start() + *offset != previous).then_some(previous);
         }
