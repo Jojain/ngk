@@ -1,11 +1,10 @@
 use super::curve_result::CurveProjection;
-use super::curve_walk::{Walk, WalkEdge, project_walk};
+use super::curve_walk::{Walk, project_walk};
 use super::error::ProjectionError;
 use super::mode::Projection;
 use super::options::ProjectOptions;
 use super::project::Project;
-use crate::geometry::{Curve, LINEAR_TOLERANCE, Plane, PointCoincidence, TrimmedCurve};
-use crate::topology::closed::Closeable;
+use crate::geometry::{Curve, Plane, TrimmedCurve};
 use crate::topology::edge::Edge;
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
@@ -35,12 +34,7 @@ impl Project<Plane> for TrimmedCurve {
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<CurveProjection<()>, ProjectionError> {
-        let cyclic = self.start().coincides(self.end(), LINEAR_TOLERANCE);
-        let walk = Walk {
-            edges: vec![WalkEdge::of_curve(self.clone())],
-            cyclic,
-        };
-        project_walk(&walk, plane, mode, options)
+        project_walk(&Walk::of_span(self.clone()), plane, mode, options)
     }
 }
 
@@ -57,10 +51,7 @@ impl Project<Plane> for Curve {
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<CurveProjection<()>, ProjectionError> {
-        if !self.domain().is_finite() {
-            return Err(ProjectionError::UnboundedSource);
-        }
-        TrimmedCurve::whole(self.clone()).project(plane, mode, options)
+        project_walk(&Walk::of_curve(self)?, plane, mode, options)
     }
 }
 
@@ -77,11 +68,7 @@ impl<P: Payload> Project<Plane> for Edge<'_, P> {
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<CurveProjection<()>, ProjectionError> {
-        let walk = Walk {
-            edges: vec![WalkEdge::of_edge(self)],
-            cyclic: !matches!(self, Edge::Bounded(_)),
-        };
-        project_walk(&walk, plane, mode, options)
+        project_walk(&Walk::of_edge(self), plane, mode, options)
     }
 }
 
@@ -103,11 +90,7 @@ impl<P: Payload> Project<Plane> for Profile<'_, P> {
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<CurveProjection<()>, ProjectionError> {
-        let walk = Walk {
-            edges: self.edges().iter().map(WalkEdge::of_edge).collect(),
-            cyclic: self.is_closed(),
-        };
-        project_walk(&walk, plane, mode, options)
+        project_walk(&Walk::of_profile(self), plane, mode, options)
     }
 }
 

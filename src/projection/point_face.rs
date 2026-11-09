@@ -42,7 +42,7 @@ impl<P: Payload> Project<Face<'_, P>> for Point3 {
 }
 
 /// Whether `uv` is on the face, boundary included.
-fn on_face(trim: &FaceTrimDomain, uv: Point2) -> bool {
+pub(super) fn on_face(trim: &FaceTrimDomain, uv: Point2) -> bool {
     !matches!(trim.classify(uv), TrimLocation::Outside { .. })
 }
 

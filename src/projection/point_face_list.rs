@@ -21,6 +21,16 @@ impl<'a, P: Payload> FaceList<'a, P> {
     pub fn new(model: &'a Model<P>, faces: &'a [FaceKey]) -> Self {
         Self { model, faces }
     }
+
+    /// The model the faces belong to.
+    pub(super) fn model(&self) -> &'a Model<P> {
+        self.model
+    }
+
+    /// The keys of the faces, in list order.
+    pub(super) fn faces(&self) -> &'a [FaceKey] {
+        self.faces
+    }
 }
 
 impl<P: Payload> Project<FaceList<'_, P>> for Point3 {
@@ -72,7 +82,7 @@ impl<P: Payload> Project<FaceList<'_, P>> for Point3 {
 /// The candidate nearest the source. Candidates closer than the tolerance keep
 /// the earlier one; when `refuse_ties`, near ones at different points are a
 /// tie.
-fn nearest(
+pub(super) fn nearest(
     candidates: Vec<PointProjection<FaceKey>>,
     refuse_ties: bool,
     options: &ProjectOptions,

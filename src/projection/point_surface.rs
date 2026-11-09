@@ -157,7 +157,7 @@ pub(super) fn reject_grazing(
     Ok(())
 }
 
-fn surface_kind(surface: &Surface) -> &'static str {
+pub(super) fn surface_kind(surface: &Surface) -> &'static str {
     match surface {
         Surface::Plane(_) => "plane",
         Surface::Cylinder(_) => "cylinder",

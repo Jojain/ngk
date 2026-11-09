@@ -4,7 +4,9 @@
 //! is either closed on itself or open. Each span is cut into the parts that
 //! have a shadow and the parts that do not, and the parts with a shadow are
 //! joined into chains wherever the walk passes from one to the next without a
-//! reason to stop.
+//! reason to stop. What a part with a shadow is carried onto is the caller's:
+//! the chaining is the same for any target, given a test of whether two
+//! neighbouring segments continue each other.
 
 use std::collections::HashMap;
 
@@ -16,9 +18,11 @@ use super::error::ProjectionError;
 use super::mode::Projection;
 use super::options::ProjectOptions;
 use super::plane_carrier::{Piece, PlaneCarrier};
-use crate::geometry::{Plane, TrimmedCurve};
+use crate::geometry::{Curve, LINEAR_TOLERANCE, Plane, PointCoincidence, TrimmedCurve};
+use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::payload::Payload;
+use crate::topology::profile::Profile;
 use crate::topology::shape_keys::VertexKey;
 
 /// One span of the walk, with the vertices it runs between.
@@ -71,13 +75,61 @@ pub(super) struct Walk {
     pub(super) cyclic: bool,
 }
 
+impl Walk {
+    /// A single span, closed when its ends coincide.
+    pub(super) fn of_span(span: TrimmedCurve) -> Self {
+        let cyclic = span.start().coincides(span.end(), LINEAR_TOLERANCE);
+        Self {
+            edges: vec![WalkEdge::of_curve(span)],
+            cyclic,
+        }
+    }
+
+    /// The whole of a curve's domain; an unbounded curve has no finite span
+    /// and is refused.
+    pub(super) fn of_curve(curve: &Curve) -> Result<Self, ProjectionError> {
+        if !curve.domain().is_finite() {
+            return Err(ProjectionError::UnboundedSource);
+        }
+        Ok(Self::of_span(TrimmedCurve::whole(curve.clone())))
+    }
+
+    /// An edge as it is oriented in its view.
+    pub(super) fn of_edge<P: Payload>(edge: &Edge<'_, P>) -> Self {
+        Self {
+            edges: vec![WalkEdge::of_edge(edge)],
+            cyclic: !matches!(edge, Edge::Bounded(_)),
+        }
+    }
+
+    /// A profile's edges in the order of its walk.
+    pub(super) fn of_profile<P: Payload>(profile: &Profile<'_, P>) -> Self {
+        Self {
+            edges: profile.edges().iter().map(WalkEdge::of_edge).collect(),
+            cyclic: profile.is_closed(),
+        }
+    }
+
+    /// Refuses a walk with a span that has no finite extent.
+    pub(super) fn ensure_bounded(&self) -> Result<(), ProjectionError> {
+        if self
+            .edges
+            .iter()
+            .any(|edge| !edge.span.interval().is_finite())
+        {
+            return Err(ProjectionError::UnboundedSource);
+        }
+        Ok(())
+    }
+}
+
 /// One part of one span, and the segment it projects to when it has a shadow.
-struct Item {
-    edge: usize,
+pub(super) struct Item<Hit> {
+    pub(super) edge: usize,
     /// Whether the part runs to the end of its span rather than to a cut
     /// inside it.
-    last_in_edge: bool,
-    segment: Option<ProjectedSegment<()>>,
+    pub(super) last_in_edge: bool,
+    pub(super) segment: Option<ProjectedSegment<Hit>>,
 }
 
 /// What lies between a part and the one after it.
@@ -91,41 +143,19 @@ enum Link {
 
 /// Projects `walk` onto `plane`, cut into chains.
 ///
-/// Two consecutive parts are continuous when both have a shadow and meet at a
-/// vertex where exactly two ends of the walk meet. Where a part with a shadow
-/// meets one without, or a span is cut by the plane, the chain stops at a
-/// [`Miss`](ChainEnd::Miss). Where more or fewer than two ends meet at a
-/// vertex, it stops on that [`SourceVertex`](ChainEnd::SourceVertex). The ends
-/// of an open walk are [`SourceEnd`](ChainEnd::SourceEnd), and a closed walk
-/// all of whose parts are continuous is one chain with
-/// [`Closed`](ChainEnd::Closed) ends.
+/// The parts of each span with a shadow are chained as described for
+/// [`chain_items`]; every two of them continue each other on a plane.
 pub(super) fn project_walk(
     walk: &Walk,
     plane: &Plane,
     mode: Projection,
     options: &ProjectOptions,
 ) -> Result<CurveProjection<()>, ProjectionError> {
-    if walk
-        .edges
-        .iter()
-        .any(|edge| !edge.span.interval().is_finite())
-    {
-        return Err(ProjectionError::UnboundedSource);
-    }
+    walk.ensure_bounded()?;
     let Some(first) = walk.edges.first() else {
         return Err(ProjectionError::Miss);
     };
     let carrier = PlaneCarrier::new(plane, mode, options, first.span.start())?;
-
-    let mut degrees: HashMap<VertexKey, usize> = HashMap::new();
-    for key in walk
-        .edges
-        .iter()
-        .flat_map(|edge| [edge.start, edge.end])
-        .flatten()
-    {
-        *degrees.entry(key).or_default() += 1;
-    }
 
     let mut items = Vec::new();
     for (index, edge) in walk.edges.iter().enumerate() {
@@ -141,6 +171,39 @@ pub(super) fn project_walk(
     }
     if items.iter().all(|item| item.segment.is_none()) {
         return Err(ProjectionError::Miss);
+    }
+    Ok(CurveProjection {
+        chains: chain_items(items, walk, |_, _| true),
+    })
+}
+
+/// Cuts the parts of a walk into chains.
+///
+/// Two consecutive parts are continuous when both have a shadow, meet at a
+/// vertex where exactly two ends of the walk meet (or inside a span), and
+/// `continues` says the first's segment runs on into the second's. Where a part
+/// with a shadow meets one without, or a span is cut inside, the chain stops at
+/// a [`Miss`](ChainEnd::Miss); where both have a shadow and `continues` denies
+/// it, at a [`Jump`](ChainEnd::Jump). Where more or fewer than two ends meet at
+/// a vertex, it stops on that [`SourceVertex`](ChainEnd::SourceVertex). The
+/// ends of an open walk are [`SourceEnd`](ChainEnd::SourceEnd), and a closed
+/// walk all of whose parts are continuous is one chain with
+/// [`Closed`](ChainEnd::Closed) ends.
+///
+/// The parts must be in walk order, and at least one must have a segment.
+pub(super) fn chain_items<Hit>(
+    mut items: Vec<Item<Hit>>,
+    walk: &Walk,
+    continues: impl Fn(&ProjectedSegment<Hit>, &ProjectedSegment<Hit>) -> bool,
+) -> Vec<ProjectedChain<Hit>> {
+    let mut degrees: HashMap<VertexKey, usize> = HashMap::new();
+    for key in walk
+        .edges
+        .iter()
+        .flat_map(|edge| [edge.start, edge.end])
+        .flatten()
+    {
+        *degrees.entry(key).or_default() += 1;
     }
 
     let count = items.len();
@@ -164,7 +227,7 @@ pub(super) fn project_walk(
     };
     let links: Vec<Link> = (0..count)
         .map(|index| match next(index) {
-            Some(following) => link(&items, index, following, &walk.edges, &degrees),
+            Some(following) => link(&items, index, following, &walk.edges, &degrees, &continues),
             None => Link::Break(ChainEnd::SourceEnd),
         })
         .collect();
@@ -215,7 +278,7 @@ pub(super) fn project_walk(
             end: ChainEnd::Closed,
         });
     }
-    Ok(CurveProjection { chains })
+    chains
 }
 
 fn segment_of(
@@ -240,28 +303,27 @@ fn segment_of(
 }
 
 /// What lies between the part at `index` and the one at `following`.
-fn link(
-    items: &[Item],
+fn link<Hit>(
+    items: &[Item<Hit>],
     index: usize,
     following: usize,
     edges: &[WalkEdge],
     degrees: &HashMap<VertexKey, usize>,
+    continues: &impl Fn(&ProjectedSegment<Hit>, &ProjectedSegment<Hit>) -> bool,
 ) -> Link {
     let part = &items[index];
-    // A cut inside a span separates a part with a shadow from one without.
-    if !part.last_in_edge {
-        return Link::Break(ChainEnd::Miss);
-    }
-    let vertex = edges[part.edge].end;
-    if let Some(vertex) = vertex
+    // A cut inside a span is no vertex: only the end of a span can stop a
+    // chain on one.
+    if part.last_in_edge
+        && let Some(vertex) = edges[part.edge].end
         && degrees.get(&vertex).is_some_and(|degree| *degree != 2)
     {
         return Link::Break(ChainEnd::SourceVertex(vertex));
     }
-    if part.segment.is_some() && items[following].segment.is_some() {
-        Link::Join
-    } else {
-        Link::Break(ChainEnd::Miss)
+    match (&part.segment, &items[following].segment) {
+        (Some(before), Some(after)) if continues(before, after) => Link::Join,
+        (Some(_), Some(_)) => Link::Break(ChainEnd::Jump),
+        _ => Link::Break(ChainEnd::Miss),
     }
 }
 

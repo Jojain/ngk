@@ -13,10 +13,12 @@
 //!   a directional projection onto it cannot be written.
 //! - A face, or a [`FaceList`], is a surface that exists only where it is
 //!   trimmed: a projection landing outside the trim misses.
-//!
 //! - A curve, an edge or a profile projects onto a plane as a
 //!   [`CurveProjection`]: chains of segments, each the exact image of a span of
 //!   the source in 3D and in the plane's parameters.
+//! - A curve, an edge or a profile projects onto planar faces, a [`FaceList`]
+//!   or one face, as a [`CurveProjection`] whose segments each name the face
+//!   they lie on.
 //!
 //! A result carries what the algorithm computed on the way and nothing more;
 //! what a caller can recompute from it is left out. Where the answer is not
@@ -24,6 +26,9 @@
 //! [`ProjectionError`] rather than picking.
 
 mod ambiguity;
+mod curve_face_clip;
+mod curve_face_list;
+mod curve_face_rank;
 mod curve_plane;
 mod curve_result;
 mod curve_walk;

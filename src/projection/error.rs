@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::geometry::{IntersectionError, NurbsError};
+use crate::geometry::{CurveIntersectionError, IntersectionError, NurbsError};
 use crate::topology::UnwrappedFaceDomainError;
 
 /// Why a projection has no single answer.
@@ -21,8 +21,9 @@ pub enum ProjectionError {
     /// The ray lies in the surface, so every point of it is a hit.
     #[error("the ray lies in the surface")]
     RayInSurface,
-    /// A directional projection onto a surface the kernel has no closed-form
-    /// line intersection for.
+    /// A projection onto a surface the kernel has no closed-form carrier for:
+    /// a directional projection of a point, or a curve onto a face whose
+    /// support is not a plane.
     #[error("no directional projection onto a {surface}")]
     UnsupportedSurface {
         /// The kind of surface refused.
@@ -40,6 +41,9 @@ pub enum ProjectionError {
     /// The face's trim could not be read in its support's parameters.
     #[error("the face's trim could not be read")]
     Trim(#[from] UnwrappedFaceDomainError),
+    /// The image of a curve could not be intersected with a face's trim.
+    #[error("the image could not be intersected with the face's trim")]
+    TrimCrossing(#[from] CurveIntersectionError),
     /// The curve to project has no finite span, so it has no end to carry.
     #[error("the curve is unbounded")]
     UnboundedSource,

@@ -20,7 +20,7 @@ use crate::geometry::{
 
 /// How close two parameters are before they are one: the width below which a
 /// piece of a span is not a piece.
-const PARAMETER_EPSILON: f64 = 1.0e-9;
+pub(super) const PARAMETER_EPSILON: f64 = 1.0e-9;
 
 /// A part of a span, and whether the plane casts a shadow of it.
 #[derive(Debug, Clone, Copy)]
@@ -157,44 +157,7 @@ impl<'a> PlaneCarrier<'a> {
     /// The parameters strictly inside `span` where its support meets the
     /// plane, in the order the span runs.
     fn crossings(&self, span: &TrimmedCurve) -> Result<Vec<f64>, ProjectionError> {
-        let found = span
-            .curve()
-            .intersect_surface(&Surface::Plane(self.plane.clone()))?;
-        if !matches!(found.coverage(), IntersectionCoverage::Complete) {
-            return Err(ProjectionError::IncompleteCrossings);
-        }
-        let mut candidates = Vec::new();
-        for hit in found.intersections() {
-            match hit {
-                CurveSurfaceIntersection::Point { curve_u, .. } => candidates.push(*curve_u),
-                CurveSurfaceIntersection::Overlap { curve_interval } => {
-                    candidates.push(curve_interval.start.value());
-                    candidates.push(curve_interval.end.value());
-                }
-            }
-        }
-        let ordered = span.interval().ordered();
-        let (low, high) = (ordered.start.value(), ordered.end.value());
-        let mut roots = Vec::new();
-        for candidate in candidates.into_iter().filter(|c| c.is_finite()) {
-            match span.curve().periodicity() {
-                Periodicity::Periodic(period) => {
-                    let mut root = candidate + ((low - candidate) / period).ceil() * period;
-                    while root <= high {
-                        roots.push(root);
-                        root += period;
-                    }
-                }
-                Periodicity::None => roots.push(candidate),
-            }
-        }
-        roots.retain(|root| *root > low + PARAMETER_EPSILON && *root < high - PARAMETER_EPSILON);
-        roots.sort_by(f64::total_cmp);
-        roots.dedup_by(|a, b| (*a - *b).abs() <= PARAMETER_EPSILON);
-        if span.interval().delta() < 0.0 {
-            roots.reverse();
-        }
-        Ok(roots)
+        crossings_with_plane(span, self.plane)
     }
 
     /// The image of the part of `curve` over `interval`: the piece on the
@@ -363,4 +326,50 @@ impl<'a> PlaneCarrier<'a> {
             TrimmedCurve2::new(Curve2::Nurbs(in_2d), domain),
         ))
     }
+}
+
+/// The parameters strictly inside `span` where its support meets the
+/// plane, in the order the span runs.
+pub(super) fn crossings_with_plane(
+    span: &TrimmedCurve,
+    plane: &Plane,
+) -> Result<Vec<f64>, ProjectionError> {
+    let found = span
+        .curve()
+        .intersect_surface(&Surface::Plane(plane.clone()))?;
+    if !matches!(found.coverage(), IntersectionCoverage::Complete) {
+        return Err(ProjectionError::IncompleteCrossings);
+    }
+    let mut candidates = Vec::new();
+    for hit in found.intersections() {
+        match hit {
+            CurveSurfaceIntersection::Point { curve_u, .. } => candidates.push(*curve_u),
+            CurveSurfaceIntersection::Overlap { curve_interval } => {
+                candidates.push(curve_interval.start.value());
+                candidates.push(curve_interval.end.value());
+            }
+        }
+    }
+    let ordered = span.interval().ordered();
+    let (low, high) = (ordered.start.value(), ordered.end.value());
+    let mut roots = Vec::new();
+    for candidate in candidates.into_iter().filter(|c| c.is_finite()) {
+        match span.curve().periodicity() {
+            Periodicity::Periodic(period) => {
+                let mut root = candidate + ((low - candidate) / period).ceil() * period;
+                while root <= high {
+                    roots.push(root);
+                    root += period;
+                }
+            }
+            Periodicity::None => roots.push(candidate),
+        }
+    }
+    roots.retain(|root| *root > low + PARAMETER_EPSILON && *root < high - PARAMETER_EPSILON);
+    roots.sort_by(f64::total_cmp);
+    roots.dedup_by(|a, b| (*a - *b).abs() <= PARAMETER_EPSILON);
+    if span.interval().delta() < 0.0 {
+        roots.reverse();
+    }
+    Ok(roots)
 }
