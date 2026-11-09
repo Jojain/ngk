@@ -14,15 +14,23 @@
 //! - A face, or a [`FaceList`], is a surface that exists only where it is
 //!   trimmed: a projection landing outside the trim misses.
 //!
+//! - A curve, an edge or a profile projects onto a plane as a
+//!   [`CurveProjection`]: chains of segments, each the exact image of a span of
+//!   the source in 3D and in the plane's parameters.
+//!
 //! A result carries what the algorithm computed on the way and nothing more;
 //! what a caller can recompute from it is left out. Where the answer is not
 //! unique or not defined, projection refuses with a named
 //! [`ProjectionError`] rather than picking.
 
 mod ambiguity;
+mod curve_plane;
+mod curve_result;
+mod curve_walk;
 mod error;
 mod mode;
 mod options;
+mod plane_carrier;
 mod point_curve;
 mod point_edge;
 mod point_face;
@@ -32,6 +40,10 @@ mod point_surface;
 mod project;
 mod result;
 
+pub use curve_result::{
+    ChainEnd, CurveProjection, Exactness, ProjectedChain, ProjectedSegment, SegmentSource,
+    SourceSpan,
+};
 pub use error::ProjectionError;
 pub use mode::Projection;
 pub use options::ProjectOptions;

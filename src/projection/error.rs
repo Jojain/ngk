@@ -28,13 +28,34 @@ pub enum ProjectionError {
         /// The kind of surface refused.
         surface: &'static str,
     },
-    /// The surface could not report the parameters of its nearest point.
-    #[error("the surface could not locate its nearest point")]
+    /// A NURBS operation the projection relies on refused its input: the
+    /// surface could not report the parameters of its nearest point, or a
+    /// source curve could not be cut to a span.
+    #[error("a NURBS operation failed")]
     Nurbs(#[from] NurbsError),
-    /// The ray/surface intersection refused its options.
-    #[error("the ray/surface intersection failed")]
+    /// An intersection the projection relies on, of a ray or of a curve with
+    /// a surface, refused its options.
+    #[error("the intersection failed")]
     Intersection(#[from] IntersectionError),
     /// The face's trim could not be read in its support's parameters.
     #[error("the face's trim could not be read")]
     Trim(#[from] UnwrappedFaceDomainError),
+    /// The curve to project has no finite span, so it has no end to carry.
+    #[error("the curve is unbounded")]
+    UnboundedSource,
+    /// The curve has no exact image the kernel can build.
+    #[error("no exact projection of a {curve}")]
+    UnsupportedCurve {
+        /// The kind of curve refused.
+        curve: &'static str,
+    },
+    /// The curve collapses under the projection: to a point, or, for a conic
+    /// whose plane holds the direction of projection, to a segment that
+    /// retraces itself.
+    #[error("the curve projects to a degenerate image")]
+    DegenerateImage,
+    /// The places where the curve crosses the plane could not all be found, so
+    /// the part of it in front of the plane is not certain.
+    #[error("the crossings of the curve with the plane are not all known")]
+    IncompleteCrossings,
 }
