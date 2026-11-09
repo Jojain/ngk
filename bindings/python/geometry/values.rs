@@ -210,7 +210,7 @@ impl PyAxis3 {
         unit_vector(self.axis.direction)
     }
 
-    /// The foot of the perpendicular from a point to the axis, as a
+    /// The nearest point on the axis to a point, as a
     /// `PointProjection`.
     #[pyo3(signature = (source, tolerance=None))]
     fn project(

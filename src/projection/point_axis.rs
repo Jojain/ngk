@@ -9,11 +9,11 @@ impl Project<Point3> for Axis3 {
     type Hit = ();
     type Output = PointProjection<()>;
 
-    /// The foot of the perpendicular from the point to the axis's line.
+    /// The nearest point on the axis's line.
     ///
     /// An axis is a line, so a point has one nearest point on it and the
     /// projection never refuses. The reported parameter is the signed distance
-    /// of the foot from the origin along the direction.
+    /// of the nearest point from the origin along the direction.
     fn project_with(
         &self,
         source: &Point3,

@@ -190,14 +190,14 @@ def test_a_face_receives_a_point_and_a_curve():
 
 def test_an_axis_receives_a_point_as_a_point_projection():
     axis = Axis(Point(1.0, 0.0, 0.0), Vector(0.0, 1.0, 0.0))
-    foot = axis.project(Point(4.0, 3.0, 2.0))
-    assert isinstance(foot, PointProjection)
-    assert foot.point.as_tuple() == pytest.approx((1.0, 3.0, 0.0))
-    assert foot.distance == pytest.approx(math.sqrt(13.0))
-    assert foot.parameters == pytest.approx(3.0)
-    assert foot.hit is None
+    nearest = axis.project(Point(4.0, 3.0, 2.0))
+    assert isinstance(nearest, PointProjection)
+    assert nearest.point.as_tuple() == pytest.approx((1.0, 3.0, 0.0))
+    assert nearest.distance == pytest.approx(math.sqrt(13.0))
+    assert nearest.parameters == pytest.approx(3.0)
+    assert nearest.hit is None
 
     free = project(Point(4.0, 3.0, 2.0), axis)
-    assert free.point.as_tuple() == pytest.approx(foot.point.as_tuple())
+    assert free.point.as_tuple() == pytest.approx(nearest.point.as_tuple())
     with pytest.raises(ValueError, match="only the perpendicular"):
         project(Point(4.0, 3.0, 2.0), axis, along=DOWN)
