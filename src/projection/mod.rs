@@ -7,7 +7,7 @@
 //! and the result ([`Project::Output`]).
 //!
 //! - A two-dimensional target (plane, surface) takes a [`Projection`]: the
-//!   foot of the perpendicular, or the first hit of a half-line along a fixed
+//!   nearest point, or the first hit of a half-line along a fixed
 //!   direction.
 //! - A curve or edge target has only the perpendicular, so its mode is `()` and
 //!   a directional projection onto it cannot be written.

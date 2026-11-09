@@ -1,7 +1,7 @@
 use super::error::ProjectionError;
 use super::mode::Projection;
 use super::options::ProjectOptions;
-use super::point_face::{foot_in_face, wall_of_face};
+use super::point_face::{nearest_point_in_face, wall_of_face};
 use super::project::Project;
 use super::result::PointProjection;
 use crate::geometry::Point3;
@@ -41,10 +41,10 @@ impl<P: Payload> Project<FaceList<'_, P>> for Point3 {
     /// Projects onto the faces of the list, each existing only where it is
     /// trimmed.
     ///
-    /// [`Normal`](Projection::Normal) keeps the nearest of the faces' feet that
-    /// are inside their trims. Feet that are equally near within tolerance but
+    /// [`Normal`](Projection::Normal) keeps the nearest of the faces' nearest
+    /// points that are inside their trims. Points that are equally near within tolerance but
     /// are different points are [`Ambiguous`](ProjectionError::Ambiguous); the
-    /// same foot on two faces, as on an edge they share, is one answer.
+    /// same point on two faces, as on an edge they share, is one answer.
     ///
     /// [`Along`](Projection::Along) keeps the first wall the half-line meets.
     /// A wall on an edge two faces share is one point; the face earlier in the
@@ -64,7 +64,7 @@ impl<P: Payload> Project<FaceList<'_, P>> for Point3 {
             let face = list.model.face_unchecked(key);
             let trim = FaceTrimDomain::new(&face, options.tolerance)?;
             let candidate = match mode {
-                Projection::Normal => foot_in_face(self, &face, &trim, options),
+                Projection::Normal => nearest_point_in_face(self, &face, &trim, options),
                 Projection::Along(direction) => {
                     wall_of_face(self, &face, &trim, direction, options)
                 }
@@ -80,11 +80,11 @@ impl<P: Payload> Project<FaceList<'_, P>> for Point3 {
 }
 
 /// The candidate nearest the source. Candidates closer than the tolerance keep
-/// the earlier one; when `refuse_equidistant_feet`, near ones at different
-/// points are several equally near feet and are refused.
+/// the earlier one; when `refuse_equidistant_nearest_points`, near ones at different
+/// places are several equally near points and are refused.
 pub(super) fn nearest(
     candidates: Vec<PointProjection<FaceKey>>,
-    refuse_equidistant_feet: bool,
+    refuse_equidistant_nearest_points: bool,
     options: &ProjectOptions,
 ) -> Result<PointProjection<FaceKey>, ProjectionError> {
     let mut candidates = candidates.into_iter();
@@ -100,7 +100,7 @@ pub(super) fn nearest(
             equidistant_elsewhere = true;
         }
     }
-    if refuse_equidistant_feet && equidistant_elsewhere {
+    if refuse_equidistant_nearest_points && equidistant_elsewhere {
         return Err(ProjectionError::Ambiguous);
     }
     Ok(best)
@@ -193,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn equally_near_feet_at_different_points_are_ambiguous() {
+    fn equally_near_points_at_different_places_are_ambiguous() {
         let mut model = Model::<StandardPayload>::new();
         let floor = add_rectangle(&mut model, Plane::xy(), 4.0, 4.0).unwrap();
         let upper = Plane::from_frame(Frame::at(Point3::new(0.0, 0.0, 2.0)));

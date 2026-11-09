@@ -10,9 +10,9 @@ impl Project<Curve> for Point3 {
     type Hit = ();
     type Output = PointProjection<()>;
 
-    /// The foot of the perpendicular on the whole support curve.
+    /// The nearest point on the whole support curve.
     ///
-    /// A point with several equally near feet on the curve is
+    /// A point with several equally near points on the curve is
     /// [`Ambiguous`](ProjectionError::Ambiguous). Analytic curves are checked
     /// in closed form; a NURBS curve is checked on the local nearest points
     /// its numerical search finds.
@@ -57,7 +57,7 @@ mod tests {
         assert!((result.point - Point3::new(5.0, 0.0, 0.0)).norm() < 1e-12);
         assert!((result.distance - 3.0).abs() < 1e-12);
         let Some(TargetParameters::Curve(t)) = result.parameters else {
-            panic!("a curve foot reports its parameter");
+            panic!("a curve's nearest point reports its parameter");
         };
         assert!((t.value() - 2.5).abs() < 1e-12);
     }
@@ -105,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn a_point_off_a_nurbs_circles_axis_has_one_foot() {
+    fn a_point_off_a_nurbs_circles_axis_has_one_nearest_point() {
         let circle = Circle::new(Plane::xy(), 2.0);
         let nurbs = Curve::Nurbs(circle.to_nurbs().unwrap());
         let result = project(

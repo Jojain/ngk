@@ -348,9 +348,9 @@ impl NurbsSurface {
     /// nothing of where `point` lies. A caller walking a curve on the surface
     /// does: the previous point's parameters are a start inside the right
     /// basin. A refinement from a start on another fold still converges, to a
-    /// foot on that fold a fold's spacing away, so the answer is only kept
-    /// when the foot is the point itself. A point lies on one fold only, so a
-    /// foot within `tolerance` is its own.
+    /// nearest point on that fold a fold's spacing away, so the answer is only
+    /// kept when it is the point itself. A point lies on one fold only, so a
+    /// nearest point within `tolerance` is its own.
     pub fn closest_parameter_near(
         &self,
         point: Point3,

@@ -23,11 +23,11 @@ There is one entry point, `project(source, target, mode, &options)`, which calls
 | `Hit` | What the target reports as touched: `()` for pure geometry (`Plane`, `Surface`, `Curve`), `FaceKey` for a face or a `FaceList`, `EdgeKey` for an edge. |
 | `Output` | `PointProjection<Hit>` for a point, `CurveProjection<Hit>` for a curve, an edge or a profile. |
 
-`Projection` is `Normal` (the foot of the perpendicular on the target) or
+`Projection` is `Normal` (the nearest point on the target) or
 `Along(UnitVector3)` (the first hit of the half-line from the source in that
 direction; `Projection::along` normalizes and panics on the zero vector).
 `ProjectOptions` holds one `tolerance`, the distance within which two points
-coincide, `LINEAR_TOLERANCE` by default: feet that close in distance to the source
+coincide, `LINEAR_TOLERANCE` by default: nearest points that close in distance to the source
 are equally near, and a hit that far behind the source's origin is still on the
 half-line. `FaceList::new(&model, &[FaceKey])` is a list of faces of one model,
 projected onto as a whole.
@@ -62,13 +62,13 @@ or past the boundary, is a `Miss` in both modes; the boundary itself is inside.
 - **Along.** The ray is the half-line `P + t d`, `t >= 0`, and stops at the first wall
   it hits. A hit on the support outside the trim is not a wall and the ray goes on. A
   point already behind the wall casts no shadow. Only the target's faces cast shadows.
-- **Normal.** The foot of the perpendicular on the support, kept when it is inside the
-  trim; otherwise `Miss`. Onto a `FaceList`, each face's foot is kept if inside its
-  trim, then the nearest of them wins. Feet equally near at different points are
-  `Ambiguous`; the same foot on two faces, as on an edge they share, is one answer.
+- **Normal.** The nearest point on the support, kept when it is inside the
+  trim; otherwise `Miss`. Onto a `FaceList`, each face's nearest point is kept if inside
+  its trim, then the nearest of them wins. Nearest points equally near at different
+  places are `Ambiguous`; the same point on two faces, as on an edge they share, is one answer.
   For `Along`, a wall on an edge two faces share is one point and the face earlier in
   the list is reported.
-- **Edge.** The foot on the support curve must fall within the edge's bounds, else
+- **Edge.** The nearest point on the support curve must fall within the edge's bounds, else
   `Miss`; the reported parameter is on the edge's span.
 
 The decision is [ADR 0006](../adr/0006-projection-is-a-query-and-a-face-exists-only-where-trimmed.md).
@@ -90,11 +90,11 @@ caller can recompute them, the `distance` from the source to the point, and the
   cone that is not degenerate) and is refused with `UnsupportedSurface` for the
   others. A hit that touches without crossing is `GrazingRay`; a ray in the surface
   is `RayInSurface`.
-- **Curve** and **Edge**: the foot on the support curve, with the curve parameter.
+- **Curve** and **Edge**: the nearest point on the support curve, with the curve parameter.
 - **Face**, **FaceList**: as above, over the support the face has.
 
 `Ambiguous` is the same rule on every target, whatever its representation: a point
-with two feet farther apart than the tolerance and equally near within it. The
+with two nearest points farther apart than the tolerance and equally near within it. The
 analytic surfaces and curves are checked in closed form: the centre of a sphere, the
 axis of a cylinder, cone, torus or revolution, the centre of a circle, the major axis
 of an ellipse inside its evolute. A ruled or NURBS surface and a NURBS curve are
@@ -102,7 +102,7 @@ searched numerically, so the rule is applied to the local nearest points the sea
 finds. The search samples the domain, starts a Newton refinement from every sampled
 local minimum of the distance, and keeps each one it converges to; a ruled surface
 searches its profile curve across the ruling direction. A NURBS cylinder is therefore
-refused on its axis exactly as the analytic one is. The foot that is returned is
+refused on its axis exactly as the analytic one is. The nearest point that is returned is
 still the one the surface's own nearest-point search reports; the local nearest
 points only decide whether it is unique. At most 32 local minima of a surface's
 sample grid are refined, so a point equally near more places than that is judged on
@@ -175,7 +175,7 @@ the plane is a `Miss`.
 On each face whose support is a plane the image of a span is exact and is cut where it
 crosses the face's trim; a part is kept where its midpoint is on the face. Where
 several faces cover a parameter one wins as it does for a point: the first wall of a
-directional projection, the nearest foot of a perpendicular one, the earlier face of
+directional projection, the nearest point of a perpendicular one, the earlier face of
 the list on equal reach. Winners are read off parts of the span cut where two faces
 are equally far, which is where the span crosses a plane.
 
@@ -185,9 +185,9 @@ chain stops on a `Jump`; where no face takes the source, on a `Miss`. A face who
 support is not a plane refuses the whole target with `UnsupportedSurface`, and a list
 that takes no part of the source is a `Miss`.
 
-In `Normal` mode the nearest-foot map is discontinuous across a fold, so a chain can
+In `Normal` mode the nearest-point map is discontinuous across a fold, so a chain can
 stop on a `Jump` where the nearer face changes, and beside a falling fold a part has
-no foot. That is the answer, not a gap.
+no nearest point. That is the answer, not a gap.
 
 ## Refusals
 
@@ -196,8 +196,8 @@ Where the answer is not unique or not defined, projection refuses with a named
 
 | Error | When |
 |---|---|
-| `Miss` | Nothing lies where the projection looks: the half-line meets no part of the target, or only behind its origin; a foot outside a trim or an edge's bounds. |
-| `Ambiguous` | Several feet are equally near within tolerance. |
+| `Miss` | Nothing lies where the projection looks: the half-line meets no part of the target, or only behind its origin; a nearest point outside a trim or an edge's bounds. |
+| `Ambiguous` | Several nearest points are equally near within tolerance. |
 | `GrazingRay` | The ray touches a surface without crossing it. |
 | `RayInSurface` | The ray lies in the surface. |
 | `UnsupportedSurface { surface }` | A directional point projection onto a torus, ruled surface, surface of revolution or NURBS surface; a curve onto a face whose support is not a plane. |

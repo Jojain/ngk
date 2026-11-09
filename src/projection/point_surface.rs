@@ -25,7 +25,7 @@ impl Project<Surface> for Point3 {
     /// Projects onto the whole support surface.
     ///
     /// [`Normal`](Projection::Normal) takes the surface's nearest point; a
-    /// point with several equally near feet is
+    /// point with several equally near points is
     /// [`Ambiguous`](ProjectionError::Ambiguous). Analytic surfaces are
     /// checked in closed form; a ruled or NURBS surface is checked on the
     /// local nearest points its numerical search finds.
@@ -197,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_projection_onto_a_sphere_lands_on_the_radial_foot() {
+    fn normal_projection_onto_a_sphere_lands_on_the_radial_point() {
         let result = project(
             &Point3::new(5.0, 0.0, 0.0),
             &sphere(),
@@ -214,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_projection_from_inside_a_sphere_lands_on_the_same_radial_foot() {
+    fn normal_projection_from_inside_a_sphere_lands_on_the_same_radial_point() {
         let result = project(
             &Point3::new(0.0, 0.5, 0.0),
             &sphere(),
@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_projection_onto_a_cylinder_lands_on_the_radial_foot() {
+    fn normal_projection_onto_a_cylinder_lands_on_the_radial_point() {
         let result = project(
             &Point3::new(0.0, 5.0, 3.0),
             &cylinder(),
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_projection_off_the_axis_of_a_nurbs_cylinder_keeps_its_one_foot() {
+    fn normal_projection_off_the_axis_of_a_nurbs_cylinder_keeps_its_one_nearest_point() {
         let Surface::Cylinder(cylinder) = cylinder() else {
             unreachable!()
         };
@@ -291,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn normal_projection_off_the_centre_of_a_nurbs_sphere_keeps_its_one_foot() {
+    fn normal_projection_off_the_centre_of_a_nurbs_sphere_keeps_its_one_nearest_point() {
         let Surface::Sphere(sphere) = sphere() else {
             unreachable!()
         };

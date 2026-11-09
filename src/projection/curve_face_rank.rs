@@ -2,7 +2,7 @@
 //!
 //! Each face covers some parts of the span (see [`PlanarFace::cover`]). Where
 //! several cover the same parameter, one wins as it does for a point: the first
-//! wall of a directional projection, the nearest foot of a perpendicular one.
+//! wall of a directional projection, the nearest point of a perpendicular one.
 //! Between two planes the order of the candidates can change only where the
 //! two are equally far, and that locus is itself a plane, so the span is cut
 //! where it crosses those planes and one winner is read off each part.
@@ -33,7 +33,7 @@ pub(super) struct Part {
 /// `carriers[i]` carries onto `faces[i]`, and is `None` for a face no point of
 /// the span can reach.
 ///
-/// Where the nearest feet are equally far at different points over a part,
+/// Where the nearest points are equally far at different places over a part,
 /// the answer is [`Ambiguous`](ProjectionError::Ambiguous). Equal reach of a
 /// directional projection is one point, and the earlier face in the list wins.
 pub(super) fn winners(

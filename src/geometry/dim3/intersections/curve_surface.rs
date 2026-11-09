@@ -538,7 +538,7 @@ impl Search<'_> {
 /// The samples are a short walk along the span, so each one's projection
 /// starts from the last one's parameters and searches the whole surface only
 /// when that start does not land on it. A landing within `tolerance` answers
-/// the sample exactly as the whole search would: the nearest foot can only be
+/// the sample exactly as the whole search would: the nearest point can only be
 /// nearer.
 fn span_rests_on(span: &Bezier, surface: &NurbsSurface, tolerance: f64) -> bool {
     let domain = span.domain();

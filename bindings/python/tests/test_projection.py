@@ -35,11 +35,11 @@ def test_a_point_projects_onto_a_plane_along_the_perpendicular_and_along_a_direc
     plane = inclined_plane()
     point = Point(1.0, 1.0, 5.0)
 
-    foot = project(point, plane)
-    assert isinstance(foot, PointProjection)
-    assert foot.point.as_tuple() == pytest.approx((1.0, 2.5, 3.5))
-    assert foot.distance == pytest.approx(3.0 / math.sqrt(2.0))
-    assert foot.hit is None
+    nearest = project(point, plane)
+    assert isinstance(nearest, PointProjection)
+    assert nearest.point.as_tuple() == pytest.approx((1.0, 2.5, 3.5))
+    assert nearest.distance == pytest.approx(3.0 / math.sqrt(2.0))
+    assert nearest.hit is None
 
     shadow = project(point, plane, along=DOWN)
     assert shadow.point.as_tuple() == pytest.approx((1.0, 1.0, 2.0))
@@ -65,9 +65,9 @@ def test_a_direction_for_a_curve_target_and_an_unsupported_pair_are_refused_clea
 
 def test_a_point_onto_an_edge_names_the_edge_it_landed_on():
     edge = edges.line((0.0, 0.0, 0.0), (2.0, 0.0, 0.0))
-    foot = project(Point(1.0, 3.0, 0.0), edge)
-    assert foot.point.as_tuple() == pytest.approx((1.0, 0.0, 0.0))
-    assert foot.hit == edge
+    nearest = project(Point(1.0, 3.0, 0.0), edge)
+    assert nearest.point.as_tuple() == pytest.approx((1.0, 0.0, 0.0))
+    assert nearest.hit == edge
 
 
 def test_a_circle_profile_on_an_inclined_plane_is_one_closed_profile():

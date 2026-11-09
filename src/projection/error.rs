@@ -10,9 +10,9 @@ pub enum ProjectionError {
     /// the target, or only behind its origin.
     #[error("the projection meets nothing")]
     Miss,
-    /// Several feet are equally near within tolerance, as from a sphere's
+    /// Several nearest points are equally near within tolerance, as from a sphere's
     /// centre or a point on a cylinder's axis, so no one of them answers.
-    #[error("several feet are equally near the point")]
+    #[error("several nearest points are equally near the point")]
     Ambiguous,
     /// The ray touches the surface without crossing it, so the hit is not a
     /// stable answer to a small change of the ray.

@@ -5,7 +5,7 @@ use crate::geometry::IntoUnit;
 /// How a point is carried onto a two-dimensional target.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Projection {
-    /// Along the perpendicular to the target: the foot of the perpendicular.
+    /// Along the perpendicular to the target: the nearest point.
     Normal,
     /// Along the half-line from the point in the given direction, to its first
     /// hit.

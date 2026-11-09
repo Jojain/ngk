@@ -58,9 +58,9 @@ impl<P: Payload> CurveSource for Profile<'_, P> {
 /// that has a plane for support, and is kept where it is inside a face's trim.
 ///
 /// Where several faces take the same part of the source, the first wall of a
-/// directional projection or the nearest foot of a perpendicular one wins; a
-/// perpendicular projection over a stretch where feet at different points are
-/// equally near is [`Ambiguous`](ProjectionError::Ambiguous). The result is
+/// directional projection or the nearest point of a perpendicular one wins; a
+/// perpendicular projection over a stretch where nearest points at different
+/// places are equally near is [`Ambiguous`](ProjectionError::Ambiguous). The result is
 /// chains of segments, each on one face and naming it. A chain runs on from a
 /// face to another where they meet on an edge the two share in the model; where
 /// the faces are not neighbours, or meet elsewhere than on that edge, it stops
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn a_perpendicular_projection_over_a_rising_fold_jumps_where_the_nearer_face_changes() {
-        // Above a valley the nearest foot changes on the bisector plane of the
+        // Above a valley the nearest point changes on the bisector plane of the
         // two faces, which is not where they meet.
         let mut model = TestModel::new();
         let flat = flat_square(&mut model);
@@ -396,10 +396,10 @@ mod tests {
     }
 
     #[test]
-    fn a_perpendicular_projection_over_a_falling_fold_has_no_foot_beside_the_edge() {
+    fn a_perpendicular_projection_over_a_falling_fold_has_no_nearest_point_beside_the_edge() {
         // Above a ridge the perpendicular to the lower face lands back on the
-        // other side of the edge, so the wedge over the edge has no foot on
-        // either face.
+        // other side of the edge, so the wedge over the edge has no nearest
+        // point on either face.
         let mut model = TestModel::new();
         let flat = flat_square(&mut model);
         let hinged = hinged_face(&mut model, false);

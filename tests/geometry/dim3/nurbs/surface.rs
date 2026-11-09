@@ -409,7 +409,7 @@ fn closest_parameter_near_follows_a_walk_along_a_helical_ribbon() {
 #[test]
 fn closest_parameter_near_refuses_a_hint_on_another_turn() {
     // Started a full turn away, Newton settles on the hinted turn, a pitch
-    // from the point. That is a foot, but not the point's own.
+    // from the point. That is a nearest point, but not the point's own.
     let surface = helical_ribbon();
     let (domain_u, domain_v) = (surface.domain_u(), surface.domain_v());
     let u = domain_u.at(Fraction::new(0.5)).value();
@@ -450,14 +450,14 @@ fn surface_param_near_falls_back_to_the_global_search_on_a_bad_hint() {
 
 /// The point of a round surface of `radius` about `axis_z` nearest `point`,
 /// found by scaling the point's radial offset.
-fn radial_foot(point: Point3, radius: f64, keep_z: bool) -> Point3 {
+fn radial_point(point: Point3, radius: f64, keep_z: bool) -> Point3 {
     let radial = Vector3::new(point.x, point.y, if keep_z { 0.0 } else { point.z });
     let scaled = radial * (radius / radial.norm());
     Point3::new(scaled.x, scaled.y, if keep_z { point.z } else { scaled.z })
 }
 
 #[test]
-fn closest_parameter_on_a_nurbs_cylinder_returns_the_radial_foot_from_outside() {
+fn closest_parameter_on_a_nurbs_cylinder_returns_the_radial_point_from_outside() {
     let surface = Cylinder::new(Point3::origin(), Vector3::x(), Vector3::z(), 2.0)
         .to_nurbs()
         .unwrap();
@@ -469,34 +469,34 @@ fn closest_parameter_on_a_nurbs_cylinder_returns_the_radial_foot_from_outside() 
         Point3::new(2.5, 2.5, 0.75),
     ] {
         let uv = surface.closest_parameter(query);
-        let foot = surface.point_at(uv.x, uv.y);
-        let expected = radial_foot(query, 2.0, true);
+        let nearest = surface.point_at(uv.x, uv.y);
+        let expected = radial_point(query, 2.0, true);
         assert!(
-            (foot - expected).norm() <= LINEAR_TOLERANCE,
-            "{query:?} -> {foot:?}, expected {expected:?}"
+            (nearest - expected).norm() <= LINEAR_TOLERANCE,
+            "{query:?} -> {nearest:?}, expected {expected:?}"
         );
     }
 }
 
 #[test]
-fn closest_parameter_on_a_nurbs_cylinder_returns_the_radial_foot_from_inside() {
+fn closest_parameter_on_a_nurbs_cylinder_returns_the_radial_point_from_inside() {
     let surface = Cylinder::new(Point3::origin(), Vector3::x(), Vector3::z(), 2.0)
         .to_nurbs()
         .unwrap();
 
     for query in [Point3::new(0.5, 0.5, 0.4), Point3::new(-1.0, 0.25, 0.9)] {
         let uv = surface.closest_parameter(query);
-        let foot = surface.point_at(uv.x, uv.y);
-        let expected = radial_foot(query, 2.0, true);
+        let nearest = surface.point_at(uv.x, uv.y);
+        let expected = radial_point(query, 2.0, true);
         assert!(
-            (foot - expected).norm() <= LINEAR_TOLERANCE,
-            "{query:?} -> {foot:?}, expected {expected:?}"
+            (nearest - expected).norm() <= LINEAR_TOLERANCE,
+            "{query:?} -> {nearest:?}, expected {expected:?}"
         );
     }
 }
 
 #[test]
-fn closest_parameter_on_a_nurbs_sphere_returns_the_radial_foot() {
+fn closest_parameter_on_a_nurbs_sphere_returns_the_radial_point() {
     let frame = Frame::from_xy(Point3::origin(), Vector3::x(), Vector3::y());
     let surface = Sphere::new(frame, 2.0).to_nurbs().unwrap();
 
@@ -507,11 +507,11 @@ fn closest_parameter_on_a_nurbs_sphere_returns_the_radial_foot() {
         Point3::new(-4.0, 1.0, -2.0),
     ] {
         let uv = surface.closest_parameter(query);
-        let foot = surface.point_at(uv.x, uv.y);
-        let expected = radial_foot(query, 2.0, false);
+        let nearest = surface.point_at(uv.x, uv.y);
+        let expected = radial_point(query, 2.0, false);
         assert!(
-            (foot - expected).norm() <= LINEAR_TOLERANCE,
-            "{query:?} -> {foot:?}, expected {expected:?}"
+            (nearest - expected).norm() <= LINEAR_TOLERANCE,
+            "{query:?} -> {nearest:?}, expected {expected:?}"
         );
     }
 }

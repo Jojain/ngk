@@ -1,7 +1,7 @@
 //! Where the nearest point of a target is not unique.
 //!
 //! A surface of revolution or a circle is equally near a point on its axis
-//! from a whole ring of feet; an ellipse is equally near the points of the
+//! from a whole ring of points; an ellipse is equally near the points of the
 //! major axis inside its evolute from two. These predicates name those cases.
 //!
 //! An analytic target is checked in closed form. A target whose nearest point
@@ -15,11 +15,11 @@ use crate::geometry::{Curve, Frame, Point3, Surface};
 /// Whether `point` has several nearest points on `surface`, farther apart than
 /// `tol` and equally near within `tol`.
 ///
-/// `foot` is the nearest point the surface reported for `point`.
+/// `reported` is the nearest point the surface reported for `point`.
 pub(super) fn has_several_nearest_points_on_surface(
     surface: &Surface,
     point: Point3,
-    foot: Point3,
+    reported: Point3,
     tol: f64,
 ) -> bool {
     match surface {
@@ -30,7 +30,7 @@ pub(super) fn has_several_nearest_points_on_surface(
                 .unwrap_or_default()
                 .into_iter()
                 .map(|uv| surface.point_at(uv.x, uv.y));
-            has_several_equally_near_points(point, foot, local_nearest, tol)
+            has_several_equally_near_points(point, reported, local_nearest, tol)
         }
         Surface::Sphere(sphere) => (point - sphere.frame().origin).norm() <= tol,
         Surface::Cylinder(cylinder) => radial_distance(&cylinder.frame, point) <= tol,
@@ -49,11 +49,11 @@ pub(super) fn has_several_nearest_points_on_surface(
                 (radial - torus.major_radius()).abs() <= tol && height.abs() <= tol;
             radial <= tol || on_core_circle
         }
-        // The ring of feet from a point on the axis collapses to one only when
+        // The ring of nearest points from a point on the axis collapses to one only when
         // the nearest point is itself on the axis.
         Surface::Revolution(revolution) => {
             let from_axis = |p: Point3| (p - revolution.axis.closest_point(p)).norm();
-            from_axis(point) <= tol && from_axis(foot) > tol
+            from_axis(point) <= tol && from_axis(reported) > tol
         }
     }
 }
@@ -61,11 +61,11 @@ pub(super) fn has_several_nearest_points_on_surface(
 /// Whether `point` has several nearest points on `curve`, farther apart than
 /// `tol` and equally near within `tol`.
 ///
-/// `foot` is the nearest point the curve reported for `point`.
+/// `reported` is the nearest point the curve reported for `point`.
 pub(super) fn has_several_nearest_points_on_curve(
     curve: &Curve,
     point: Point3,
-    foot: Point3,
+    reported: Point3,
     tol: f64,
 ) -> bool {
     match curve {
@@ -75,7 +75,7 @@ pub(super) fn has_several_nearest_points_on_curve(
                 .local_nearest_parameters(point, None)
                 .into_iter()
                 .map(|t| curve.point_at(t));
-            has_several_equally_near_points(point, foot, local_nearest, tol)
+            has_several_equally_near_points(point, reported, local_nearest, tol)
         }
         Curve::Circle(circle) => radial_distance(&circle.plane().frame, point) <= tol,
         Curve::Helix(helix) => radial_distance(helix.frame(), point) <= tol,
@@ -101,17 +101,17 @@ pub(super) fn has_several_nearest_points_on_curve(
     }
 }
 
-/// Whether, among `foot` and `local_nearest`, the points nearest `point`
+/// Whether, among `reported` and `local_nearest`, the points nearest `point`
 /// within `tol` of the nearest distance are not all within `tol` of one
 /// another.
 fn has_several_equally_near_points(
     point: Point3,
-    foot: Point3,
+    reported: Point3,
     local_nearest: impl IntoIterator<Item = Point3>,
     tol: f64,
 ) -> bool {
     let reach = |p: &Point3| (p - point).norm();
-    let all: Vec<Point3> = std::iter::once(foot).chain(local_nearest).collect();
+    let all: Vec<Point3> = std::iter::once(reported).chain(local_nearest).collect();
     let nearest = all.iter().map(reach).fold(f64::INFINITY, f64::min);
     let mut equally_near = all.iter().filter(|p| reach(p) <= nearest + tol);
     let Some(first) = equally_near.next() else {

@@ -20,8 +20,8 @@ impl<P: Payload> Project<Face<'_, P>> for Point3 {
     /// Projects onto the face: onto its support, where the support is inside
     /// the face's trim.
     ///
-    /// [`Normal`](Projection::Normal) takes the foot on the support and misses
-    /// when the foot is outside the trim. [`Along`](Projection::Along) takes
+    /// [`Normal`](Projection::Normal) takes the nearest point on the support and
+    /// misses when it is outside the trim. [`Along`](Projection::Along) takes
     /// the first hit of the half-line on the support that lies inside the trim,
     /// so a hit in a hole or past the boundary lets the ray go on to the next
     /// one. A point on the trim's boundary is inside it. The refusals of the
@@ -35,7 +35,7 @@ impl<P: Payload> Project<Face<'_, P>> for Point3 {
     ) -> Result<PointProjection<FaceKey>, ProjectionError> {
         let trim = FaceTrimDomain::new(face, options.tolerance)?;
         match mode {
-            Projection::Normal => foot_in_face(self, face, &trim, options),
+            Projection::Normal => nearest_point_in_face(self, face, &trim, options),
             Projection::Along(direction) => wall_of_face(self, face, &trim, direction, options),
         }
     }
@@ -46,24 +46,24 @@ pub(super) fn on_face(trim: &FaceTrimDomain, uv: Point2) -> bool {
     !matches!(trim.classify(uv), TrimLocation::Outside { .. })
 }
 
-/// The foot of the perpendicular on the face's support, if inside the trim.
-pub(super) fn foot_in_face<P: Payload>(
+/// The nearest point on the face's support, if inside the trim.
+pub(super) fn nearest_point_in_face<P: Payload>(
     source: &Point3,
     face: &Face<'_, P>,
     trim: &FaceTrimDomain,
     options: &ProjectOptions,
 ) -> Result<PointProjection<FaceKey>, ProjectionError> {
-    let foot = project_normal(source, face.surface(), options)?;
-    let Some(TargetParameters::Surface(uv)) = foot.parameters else {
-        unreachable!("a surface foot reports its parameters");
+    let nearest = project_normal(source, face.surface(), options)?;
+    let Some(TargetParameters::Surface(uv)) = nearest.parameters else {
+        unreachable!("a surface's nearest point reports its parameters");
     };
     if !on_face(trim, uv) {
         return Err(ProjectionError::Miss);
     }
     Ok(PointProjection {
-        point: foot.point,
-        parameters: foot.parameters,
-        distance: foot.distance,
+        point: nearest.point,
+        parameters: nearest.parameters,
+        distance: nearest.distance,
         hit: face.key(),
     })
 }
@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn a_foot_past_a_cylinders_height_misses() {
+    fn a_nearest_point_past_a_cylinders_height_misses() {
         let mut model = Model::<StandardPayload>::new();
         let cylinder = add_cylinder(&mut model, Frame::xyz(), 1.0, 2.0).unwrap();
         let face = model.face_unchecked(cylinder.laterals[0].face);

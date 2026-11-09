@@ -23,7 +23,7 @@ create_exception!(
     ngk.projection,
     AmbiguousError,
     ProjectionError,
-    "Several feet are equally near the point."
+    "Several nearest points are equally near the point."
 );
 create_exception!(
     ngk.projection,

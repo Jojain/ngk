@@ -53,5 +53,5 @@ the tolerance. `Approx` exists in the result type and no code path produces it y
 
 ## Not gaps
 
-- A `Jump` in `Normal` mode across a fold is expected: the nearest-foot map is
+- A `Jump` in `Normal` mode across a fold is expected: the nearest-point map is
   discontinuous where the nearer face changes.

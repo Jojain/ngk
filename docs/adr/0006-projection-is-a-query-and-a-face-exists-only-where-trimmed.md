@@ -16,8 +16,8 @@ Two questions shape the whole API. First, whether projecting writes to the
 model: the natural output for a projected profile is a `Profile`, and a
 `Profile` is topological, so returning one means creating edges. Second, what a
 projection onto a bounded face means where the projection falls outside the
-face. A ray can hit the support surface inside a hole; the foot of a
-perpendicular can land past the face's boundary. One answer is to return the
+face. A ray can hit the support surface inside a hole; the nearest point on the
+support can land past the face's boundary. One answer is to return the
 closest point on the face, which then lies on its boundary. Projecting a curve
 that passes over a hole under that rule drags the projected curve along the
 hole's edge, which is neither a shadow nor anything a caller can use.
@@ -35,8 +35,8 @@ outside a face's trim is a `Miss`:
 
 - directional projection follows the half-line `P + t·d`, `t ≥ 0`, and stops at
   the first wall; a hit outside the trim is not a wall and the ray continues;
-- normal projection takes the foot of the perpendicular on the support and keeps
-  it only if it lies inside the trim.
+- normal projection takes the nearest point on the support and keeps it
+  only if it lies inside the trim.
 
 The closest point on a trimmed face is a distance query and does not belong to
 projection.
@@ -50,7 +50,7 @@ projection.
   builder recomputing it.
 - A curve projected across a hole comes back as two chains ending on `Miss`,
   the same in both modes, rather than one curve following the hole's edge.
-- A point whose nearest foot falls in a hole is a `Miss` even though the face
+- A point whose nearest point falls in a hole is a `Miss` even though the face
   has points nearby; callers wanting those use the distance query instead.
-- Equidistant feet (a point on a cylinder's axis, above the centre of a circular
+- Equidistant nearest points (a point on a cylinder's axis, above the centre of a circular
   hole) are refused as `Ambiguous` rather than resolved by an arbitrary choice.
