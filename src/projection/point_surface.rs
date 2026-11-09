@@ -1,6 +1,6 @@
 use nalgebra::UnitVector3;
 
-use super::ambiguity::surface_feet_tie;
+use super::ambiguity::has_several_nearest_points_on_surface;
 use super::error::ProjectionError;
 use super::mode::Projection;
 use super::options::ProjectOptions;
@@ -24,10 +24,11 @@ impl Project<Surface> for Point3 {
 
     /// Projects onto the whole support surface.
     ///
-    /// [`Normal`](Projection::Normal) takes the surface's nearest point; the
-    /// analytic surfaces report a tie as
-    /// [`Ambiguous`](ProjectionError::Ambiguous), while a ruled or NURBS
-    /// surface is searched numerically and is not checked for ties.
+    /// [`Normal`](Projection::Normal) takes the surface's nearest point; a
+    /// point with several equally near feet is
+    /// [`Ambiguous`](ProjectionError::Ambiguous). Analytic surfaces are
+    /// checked in closed form; a ruled or NURBS surface is checked on the
+    /// local nearest points its numerical search finds.
     ///
     /// [`Along`](Projection::Along) takes the first hit of the half-line from
     /// the point, for the surfaces the kernel intersects with a line in closed
@@ -53,7 +54,7 @@ pub(super) fn project_normal(
 ) -> Result<PointProjection<()>, ProjectionError> {
     let uv = surface.param_at(*source)?;
     let point = surface.point_at(uv.x, uv.y);
-    if surface_feet_tie(surface, *source, point, options.tolerance) {
+    if has_several_nearest_points_on_surface(surface, *source, point, options.tolerance) {
         return Err(ProjectionError::Ambiguous);
     }
     Ok(PointProjection {
@@ -175,7 +176,7 @@ mod tests {
     use nalgebra::Vector3;
 
     use super::*;
-    use crate::geometry::{Cone, Cylinder, Frame, Sphere};
+    use crate::geometry::{Cone, Cylinder, Frame, Plane, RuledSurface, Sphere};
     use crate::projection::project;
 
     fn sphere() -> Surface {
@@ -253,6 +254,76 @@ mod tests {
             &options(),
         );
         assert!(matches!(result, Err(ProjectionError::Ambiguous)));
+    }
+
+    #[test]
+    fn normal_projection_from_the_axis_of_a_nurbs_cylinder_is_ambiguous() {
+        let Surface::Cylinder(cylinder) = cylinder() else {
+            unreachable!()
+        };
+        let nurbs = Surface::Nurbs(cylinder.to_nurbs().unwrap());
+        let on_axis = Point3::new(0.0, 0.0, 1.0);
+        let result = project(&on_axis, &nurbs, Projection::Normal, &options());
+        assert!(matches!(result, Err(ProjectionError::Ambiguous)));
+    }
+
+    #[test]
+    fn normal_projection_from_the_centre_of_a_nurbs_sphere_is_ambiguous() {
+        let Surface::Sphere(sphere) = sphere() else {
+            unreachable!()
+        };
+        let nurbs = Surface::Nurbs(sphere.to_nurbs().unwrap());
+        let result = project(&Point3::origin(), &nurbs, Projection::Normal, &options());
+        assert!(matches!(result, Err(ProjectionError::Ambiguous)));
+    }
+
+    #[test]
+    fn normal_projection_off_the_axis_of_a_nurbs_cylinder_keeps_its_one_foot() {
+        let Surface::Cylinder(cylinder) = cylinder() else {
+            unreachable!()
+        };
+        let nurbs = Surface::Nurbs(cylinder.to_nurbs().unwrap());
+        for source in [Point3::new(0.0, 5.0, 1.0), Point3::new(0.001, 0.0, 1.0)] {
+            let result = project(&source, &nurbs, Projection::Normal, &options()).unwrap();
+            let uv = nurbs.param_at(source).unwrap();
+            assert!((result.point - nurbs.point_at(uv.x, uv.y)).norm() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn normal_projection_off_the_centre_of_a_nurbs_sphere_keeps_its_one_foot() {
+        let Surface::Sphere(sphere) = sphere() else {
+            unreachable!()
+        };
+        let nurbs = Surface::Nurbs(sphere.to_nurbs().unwrap());
+        for source in [Point3::new(0.0, 0.5, 0.0), Point3::new(0.0, 0.0, 0.01)] {
+            let result = project(&source, &nurbs, Projection::Normal, &options()).unwrap();
+            let uv = nurbs.param_at(source).unwrap();
+            assert!((result.point - nurbs.point_at(uv.x, uv.y)).norm() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn normal_projection_from_the_axis_of_a_ruled_cylinder_is_ambiguous() {
+        let ruled = Surface::Ruled(RuledSurface::new(
+            Curve::circle(Plane::xy(), 2.0),
+            Vector3::z() * 4.0,
+        ));
+        let on_axis = project(
+            &Point3::new(0.0, 0.0, 1.0),
+            &ruled,
+            Projection::Normal,
+            &options(),
+        );
+        assert!(matches!(on_axis, Err(ProjectionError::Ambiguous)));
+        let off_axis = project(
+            &Point3::new(0.0, 5.0, 1.0),
+            &ruled,
+            Projection::Normal,
+            &options(),
+        )
+        .unwrap();
+        assert!((off_axis.point - Point3::new(0.0, 2.0, 1.0)).norm() < 1e-9);
     }
 
     #[test]
@@ -368,7 +439,7 @@ mod tests {
 
     #[test]
     fn along_onto_a_plane_variant_of_the_surface_enum_hits_it() {
-        let surface = Surface::Plane(crate::geometry::Plane::xy());
+        let surface = Surface::Plane(Plane::xy());
         let result = project(
             &Point3::new(1.0, 2.0, 4.0),
             &surface,

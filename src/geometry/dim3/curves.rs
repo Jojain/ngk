@@ -124,6 +124,39 @@ impl Curve {
         }
     }
 
+    /// Returns the parameter of every local minimum of the distance from
+    /// `point` to the curve, found by sampling the domain and refining each
+    /// local minimum by Newton.
+    ///
+    /// With `across`, the distance is measured in the plane perpendicular to
+    /// that direction. An unbounded curve is searched one turn of parameter
+    /// either side of [`Self::parameter_at`].
+    pub(crate) fn local_nearest_parameters(
+        &self,
+        point: Point3,
+        across: Option<UnitVector3<f64>>,
+    ) -> Vec<NativeParam> {
+        let domain = self.domain();
+        let (start, end) = if domain.is_finite() {
+            (domain.start.value(), domain.end.value())
+        } else {
+            let centre = self.parameter_at(point).value();
+            (centre - TAU, centre + TAU)
+        };
+        NearestSearch {
+            at: &|u| self.point_at(NativeParam::new(u)),
+            derivative: &|u, order| self.derivative_at(NativeParam::new(u), order),
+            point,
+            across,
+            start,
+            end,
+        }
+        .local_minima()
+        .into_iter()
+        .map(NativeParam::new)
+        .collect()
+    }
+
     pub fn interval_between(&self, start: Point3, end: Point3) -> Interval {
         let t0 = self.parameter_at(start);
         let raw_t1 = self.parameter_at(end);
@@ -373,47 +406,59 @@ pub(crate) fn circle_nurbs_knots() -> Result<KnotVector, NurbsError> {
     ])
 }
 
-/// Samples the curve for the nearest point, then refines it by Newton.
-///
-/// On a closed curve the two domain ends are one point and sample it equally
-/// well, so a nearest sample at one end is refined from the other end too: a
-/// point just behind the seam is only reached from the far side, and a step
-/// from the near one is stopped at the seam itself.
-fn closest_sample_parameter(curve: &NurbsCurve, point: Point3) -> f64 {
-    let domain = curve.domain();
-    let (domain_start, domain_end) = (domain.start.value(), domain.end.value());
-    let segments = 128usize;
-    let mut best_u = domain_start;
-    let mut best_distance = f64::INFINITY;
+/// How many equal spans the domain is sampled in for a nearest-point search.
+const NEAREST_SEGMENTS: usize = 128;
 
-    for i in 0..=segments {
-        let u = domain_start + domain.delta() * (i as f64 / segments as f64);
-        let distance = (curve.point_at(u) - point).norm_squared();
-        if distance < best_distance {
-            best_distance = distance;
-            best_u = u;
+/// A curve seen from a point, for a nearest-point search by Newton.
+///
+/// With `across`, the distance is measured in the plane perpendicular to that
+/// direction: the nearest point of a surface swept along the direction is found
+/// by searching its profile curve this way.
+struct NearestSearch<'a> {
+    at: &'a dyn Fn(f64) -> Point3,
+    derivative: &'a dyn Fn(f64, usize) -> Vector3<f64>,
+    point: Point3,
+    across: Option<UnitVector3<f64>>,
+    start: f64,
+    end: f64,
+}
+
+impl NearestSearch<'_> {
+    fn flatten(&self, vector: Vector3<f64>) -> Vector3<f64> {
+        match self.across {
+            Some(direction) => vector - *direction * direction.dot(&vector),
+            None => vector,
         }
     }
 
-    let closed = curve
-        .point_at(domain_start)
-        .coincides(curve.point_at(domain_end), LINEAR_TOLERANCE);
-    let twin = match best_u {
-        u if closed && u == domain_start => Some(domain_end),
-        u if closed && u == domain_end => Some(domain_start),
-        _ => None,
-    };
-    let refine = |mut u: f64| {
+    fn residual(&self, u: f64) -> Vector3<f64> {
+        self.flatten((self.at)(u) - self.point)
+    }
+
+    fn distance(&self, u: f64) -> f64 {
+        self.residual(u).norm()
+    }
+
+    /// The domain ends name one point when the curve is closed.
+    fn is_closed(&self) -> bool {
+        (self.at)(self.start).coincides((self.at)(self.end), LINEAR_TOLERANCE)
+    }
+
+    fn sample(&self, index: usize) -> f64 {
+        self.start + (self.end - self.start) * (index as f64 / NEAREST_SEGMENTS as f64)
+    }
+
+    fn refine(&self, mut u: f64) -> f64 {
         for _ in 0..16 {
-            let residual = curve.point_at(u) - point;
-            let first = curve.derivative_at(u, 1);
-            let second = curve.derivative_at(u, 2);
+            let residual = self.residual(u);
+            let first = self.flatten((self.derivative)(u, 1));
+            let second = self.flatten((self.derivative)(u, 2));
             let gradient = residual.dot(&first);
             let curvature = first.dot(&first) + residual.dot(&second);
             if curvature.abs() <= 1.0e-14 {
                 break;
             }
-            let next = (u - gradient / curvature).clamp(domain_start, domain_end);
+            let next = (u - gradient / curvature).clamp(self.start, self.end);
             if (next - u).abs() <= 1.0e-12 {
                 u = next;
                 break;
@@ -421,15 +466,94 @@ fn closest_sample_parameter(curve: &NurbsCurve, point: Point3) -> f64 {
             u = next;
         }
         u
-    };
-    let distance = |u: f64| (curve.point_at(u) - point).norm();
-    let near = refine(best_u);
-    // A point on the seam is as near from either end; it keeps the end its
-    // nearest sample named, which is where callers splitting there expect it.
-    match twin.map(refine) {
-        Some(far) if distance(far) + LINEAR_TOLERANCE < distance(near) => far,
-        _ => near,
     }
+
+    /// The parameter of the nearest sample, refined.
+    ///
+    /// On a closed curve the two domain ends are one point and sample it
+    /// equally well, so a nearest sample at one end is refined from the other
+    /// end too: a point just behind the seam is only reached from the far
+    /// side, and a step from the near one is stopped at the seam itself.
+    fn nearest(&self) -> f64 {
+        let mut best_u = self.start;
+        let mut best_distance = f64::INFINITY;
+        for i in 0..=NEAREST_SEGMENTS {
+            let u = self.sample(i);
+            let distance = self.residual(u).norm_squared();
+            if distance < best_distance {
+                best_distance = distance;
+                best_u = u;
+            }
+        }
+
+        let closed = self.is_closed();
+        let twin = match best_u {
+            u if closed && u == self.start => Some(self.end),
+            u if closed && u == self.end => Some(self.start),
+            _ => None,
+        };
+        let near = self.refine(best_u);
+        // A point on the seam is as near from either end; it keeps the end its
+        // nearest sample named, which is where callers splitting there expect
+        // it.
+        match twin.map(|u| self.refine(u)) {
+            Some(far) if self.distance(far) + LINEAR_TOLERANCE < self.distance(near) => far,
+            _ => near,
+        }
+    }
+
+    /// The parameter of every local minimum of the distance, refined.
+    ///
+    /// Each sample at least as near as its neighbours starts a Newton
+    /// refinement, kept only when it does not end farther than it began. The
+    /// samples of a curve equally near the point along a whole stretch all
+    /// start one, so the result holds as many parameters as that stretch has
+    /// samples.
+    fn local_minima(&self) -> Vec<f64> {
+        let distances: Vec<f64> = (0..=NEAREST_SEGMENTS)
+            .map(|i| self.residual(self.sample(i)).norm_squared())
+            .collect();
+        let mut starts: Vec<f64> = (0..=NEAREST_SEGMENTS)
+            .filter(|&i| {
+                let before = i.checked_sub(1).map(|j| distances[j]);
+                let after = distances.get(i + 1).copied();
+                before.is_none_or(|d| distances[i] <= d) && after.is_none_or(|d| distances[i] <= d)
+            })
+            .map(|i| self.sample(i))
+            .collect();
+        if self.is_closed() {
+            if starts.contains(&self.start) {
+                starts.push(self.end);
+            } else if starts.contains(&self.end) {
+                starts.push(self.start);
+            }
+        }
+        starts
+            .into_iter()
+            .map(|start| {
+                let refined = self.refine(start);
+                if self.distance(refined) <= self.distance(start) {
+                    refined
+                } else {
+                    start
+                }
+            })
+            .collect()
+    }
+}
+
+/// Samples the curve for the nearest point, then refines it by Newton.
+fn closest_sample_parameter(curve: &NurbsCurve, point: Point3) -> f64 {
+    let domain = curve.domain();
+    NearestSearch {
+        at: &|u| curve.point_at(u),
+        derivative: &|u, order| curve.derivative_at(u, order),
+        point,
+        across: None,
+        start: domain.start.value(),
+        end: domain.end.value(),
+    }
+    .nearest()
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use nalgebra::{Point2, Point4, UnitVector3, Vector3, Vector4};
+use nalgebra::{Point2, Point4, UnitVector3, Vector2, Vector3, Vector4};
 use serde::{Deserialize, Serialize};
 
 use super::curve::{InterpolationSystem, KNOT_TOLERANCE, NurbsCurve};
@@ -15,6 +15,28 @@ const MIN_CLOSEST_SAMPLES: usize = 12;
 const MAX_CLOSEST_SAMPLES: usize = 512;
 /// How many of the nearest grid samples a closest-point search refines.
 const CLOSEST_POINT_STARTS: usize = 4;
+/// How many local minima of the grid a search for every local nearest point
+/// refines.
+const MAX_CLOSEST_CANDIDATES: usize = 32;
+
+/// Most damped Gauss-Newton steps taken from one start.
+const MAX_SETTLE_STEPS: usize = 100;
+/// Most times a damped Gauss-Newton step is halved before the start is
+/// accepted as settled.
+const MAX_SETTLE_HALVINGS: usize = 30;
+
+/// A grid sample of a closest-point search: its squared distance to the point
+/// and its parameters.
+struct SampleCell {
+    distance: f64,
+    uv: (f64, f64),
+}
+
+/// The grid samples of a closest-point search, `samples_v + 1` to a row.
+struct SampleGrid {
+    samples_v: usize,
+    cells: Vec<SampleCell>,
+}
 
 /// One exact rational Bézier patch extracted from a parent NURBS surface.
 #[derive(Debug, Clone)]
@@ -376,32 +398,148 @@ impl NurbsSurface {
     }
 
     /// The grid samples nearest `point`, closest first.
+    fn closest_sample_parameters(&self, point: Point3) -> Vec<(f64, f64)> {
+        let mut cells = self.closest_sample_grid(point).cells;
+        cells.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+        cells
+            .into_iter()
+            .take(CLOSEST_POINT_STARTS)
+            .map(|cell| cell.uv)
+            .collect()
+    }
+
+    /// Returns the parameters of every local minimum of the distance from
+    /// `point` to the surface, nearest first.
+    ///
+    /// Each grid sample at least as near as its eight neighbours starts a
+    /// damped Gauss-Newton refinement that runs until the gradient of the
+    /// distance vanishes, so two starts in one basin end at one point. Samples
+    /// equally near the point along a whole ring or patch all start one, so
+    /// the nearest [`MAX_CLOSEST_CANDIDATES`] of them are refined.
+    pub(crate) fn closest_parameter_candidates(&self, point: Point3) -> Vec<Point2<f64>> {
+        let grid = self.closest_sample_grid(point);
+        let columns = grid.samples_v + 1;
+        let rows = grid.cells.len() / columns;
+        let mut minima: Vec<&SampleCell> = (0..rows)
+            .flat_map(|i| (0..columns).map(move |j| (i, j)))
+            .filter(|&(i, j)| {
+                let own = grid.cells[i * columns + j].distance;
+                (i.saturating_sub(1)..=(i + 1).min(rows - 1)).all(|a| {
+                    (j.saturating_sub(1)..=(j + 1).min(columns - 1))
+                        .all(|b| own <= grid.cells[a * columns + b].distance)
+                })
+            })
+            .map(|(i, j)| &grid.cells[i * columns + j])
+            .collect();
+        minima.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+        let distance = |uv: &Point2<f64>| (self.point_at(uv.x, uv.y) - point).norm();
+        minima
+            .into_iter()
+            .take(MAX_CLOSEST_CANDIDATES)
+            .map(|cell| {
+                let start = Point2::new(cell.uv.0, cell.uv.1);
+                let refined = self.settle_closest_parameter(point, cell.uv);
+                if distance(&refined) <= distance(&start) {
+                    refined
+                } else {
+                    start
+                }
+            })
+            .collect()
+    }
+
+    /// Damped Gauss-Newton from `start`, clamped to the domain, until the
+    /// gradient of the distance vanishes.
+    ///
+    /// A plain Gauss-Newton step leaves out the curvature of the surface, so
+    /// from a point on the convex side it overshoots by the factor the
+    /// distance times the curvature adds to one and can diverge. Each step is
+    /// halved until it lowers the gradient, which converges in every case the
+    /// plain step does not, to the precision of the gradient rather than to
+    /// the square root of the working precision that comparing distances
+    /// reaches.
+    fn settle_closest_parameter(&self, point: Point3, start: (f64, f64)) -> Point2<f64> {
+        let domain_u = self.domain_u();
+        let domain_v = self.domain_v();
+        let (u_range, v_range) = (
+            (domain_u.start.value(), domain_u.end.value()),
+            (domain_v.start.value(), domain_v.end.value()),
+        );
+        // The gradient of the squared distance, without the component that
+        // pushes out of the domain, which the boundary balances.
+        let evaluate = |u: f64, v: f64| {
+            let (surface_point, du, dv) = self.point_and_derivative_at(u, v);
+            let residual = surface_point - point;
+            let mut gradient = Vector2::new(du.dot(&residual), dv.dot(&residual));
+            if (u <= u_range.0 && gradient.x > 0.0) || (u >= u_range.1 && gradient.x < 0.0) {
+                gradient.x = 0.0;
+            }
+            if (v <= v_range.0 && gradient.y > 0.0) || (v >= v_range.1 && gradient.y < 0.0) {
+                gradient.y = 0.0;
+            }
+            (gradient, du, dv)
+        };
+
+        let (mut u, mut v) = start;
+        let (mut gradient, mut du, mut dv) = evaluate(u, v);
+        for _ in 0..MAX_SETTLE_STEPS {
+            let (uu, uv, vv) = (du.dot(&du), du.dot(&dv), dv.dot(&dv));
+            let determinant = uu * vv - uv * uv;
+            if determinant.abs() <= 1.0e-14 {
+                break;
+            }
+            let delta_u = (vv * gradient.x - uv * gradient.y) / determinant;
+            let delta_v = (uu * gradient.y - uv * gradient.x) / determinant;
+            let mut scale = 1.0;
+            let mut accepted = None;
+            for _ in 0..MAX_SETTLE_HALVINGS {
+                let next_u = (u - scale * delta_u).clamp(u_range.0, u_range.1);
+                let next_v = (v - scale * delta_v).clamp(v_range.0, v_range.1);
+                let next = evaluate(next_u, next_v);
+                if next.0.norm() < gradient.norm() {
+                    accepted = Some((next_u, next_v, next));
+                    break;
+                }
+                scale *= 0.5;
+            }
+            let Some((next_u, next_v, next)) = accepted else {
+                break;
+            };
+            let moved = (next_u - u).hypot(next_v - v);
+            (u, v) = (next_u, next_v);
+            (gradient, du, dv) = next;
+            if moved <= 1.0e-12 {
+                break;
+            }
+        }
+        Point2::new(u, v)
+    }
+
+    /// The samples of a regular grid over the domain, row by row in `u`.
     ///
     /// Each direction takes two samples per control point, and never fewer
     /// than [`MIN_CLOSEST_SAMPLES`], so a small patch is searched exactly as
     /// finely as before while a long one is not searched more coarsely.
-    fn closest_sample_parameters(&self, point: Point3) -> Vec<(f64, f64)> {
+    fn closest_sample_grid(&self, point: Point3) -> SampleGrid {
         let samples = |count: usize| (2 * count).clamp(MIN_CLOSEST_SAMPLES, MAX_CLOSEST_SAMPLES);
         let samples_u = samples(self.control_points.nu());
         let samples_v = samples(self.control_points.nv());
         let domain_u = self.domain_u();
         let domain_v = self.domain_v();
-        let mut candidates = Vec::with_capacity((samples_u + 1) * (samples_v + 1));
+        let mut cells = Vec::with_capacity((samples_u + 1) * (samples_v + 1));
 
         for i in 0..=samples_u {
             let u = domain_u.start.value() + domain_u.length() * (i as f64 / samples_u as f64);
             for j in 0..=samples_v {
                 let v = domain_v.start.value() + domain_v.length() * (j as f64 / samples_v as f64);
-                candidates.push(((self.point_at(u, v) - point).norm_squared(), (u, v)));
+                cells.push(SampleCell {
+                    distance: (self.point_at(u, v) - point).norm_squared(),
+                    uv: (u, v),
+                });
             }
         }
 
-        candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-        candidates
-            .into_iter()
-            .take(CLOSEST_POINT_STARTS)
-            .map(|(_, uv)| uv)
-            .collect()
+        SampleGrid { samples_v, cells }
     }
 
     /// Returns `(dS/du, dS/dv)` in cartesian space.

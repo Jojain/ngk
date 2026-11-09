@@ -275,6 +275,17 @@ impl Surface {
         }
     }
 
+    /// Returns the parameters of every local nearest point of `point` on the
+    /// surface, for the surfaces whose nearest point is searched numerically
+    /// (ruled and NURBS), and `None` for those that have a closed form.
+    pub(crate) fn local_nearest_parameters(&self, point: Point3) -> Option<Vec<Point2>> {
+        match self {
+            Surface::Ruled(surface) => Some(surface.local_nearest_parameters(point)),
+            Surface::Nurbs(surface) => Some(surface.closest_parameter_candidates(point)),
+            _ => None,
+        }
+    }
+
     /// Returns the outward normal at `(u, v)`.
     pub fn normal_at(&self, u: f64, v: f64) -> UnitVector3<f64> {
         match self {
@@ -915,6 +926,29 @@ impl RuledSurface {
             }
         }
         Point2::new(u, v)
+    }
+
+    /// Returns the parameters of every local nearest point of `point` on the
+    /// surface.
+    ///
+    /// The distance from a point to a surface swept along a direction is the
+    /// distance, across that direction, to the profile curve, so each local
+    /// minimum of the latter is one.
+    pub(crate) fn local_nearest_parameters(&self, point: Point3) -> Vec<Point2> {
+        let across = UnitVector3::try_new(self.direction, LINEAR_TOLERANCE);
+        self.curve
+            .local_nearest_parameters(point, across)
+            .into_iter()
+            .map(|t| {
+                let v = if across.is_some() {
+                    (point - self.curve.point_at(t)).dot(&self.direction)
+                        / self.direction.norm_squared()
+                } else {
+                    0.0
+                };
+                Point2::new(t.value(), v)
+            })
+            .collect()
     }
 
     pub fn normal_at(&self, u: f64, _v: f64) -> UnitVector3<f64> {

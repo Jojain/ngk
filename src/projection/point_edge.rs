@@ -16,7 +16,7 @@ impl<P: Payload> Project<Edge<'_, P>> for Point3 {
     /// falls within the edge's bounds; a foot past either end is a
     /// [`Miss`](ProjectionError::Miss), as the edge does not extend there.
     ///
-    /// Ties on the support are refused as for a curve.
+    /// A point with several equally near feet on the support is refused as for a curve.
     fn project(
         &self,
         edge: &Edge<'_, P>,

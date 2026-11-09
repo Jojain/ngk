@@ -63,7 +63,7 @@ pub(super) fn winners(
             if !overlap(&covers[first], &covers[second]) {
                 continue;
             }
-            for plane in ties(&faces[first].plane, &faces[second].plane, mode) {
+            for plane in equal_reach_planes(&faces[first].plane, &faces[second].plane, mode) {
                 cuts.extend(crossings_with_plane(span, &plane)?);
             }
         }
@@ -132,7 +132,7 @@ fn reach(
 /// A directional projection reaches both planes at the same travel on one
 /// plane; a perpendicular one is equally near them on the two bisectors. Planes
 /// that are parallel have none, or are the same everywhere, and cut nothing.
-fn ties(first: &Plane, second: &Plane, mode: Projection) -> Vec<Plane> {
+fn equal_reach_planes(first: &Plane, second: &Plane, mode: Projection) -> Vec<Plane> {
     let (a, b) = (*first.normal(), *second.normal());
     let (oa, ob) = (first.origin().coords, second.origin().coords);
     match mode {

@@ -80,27 +80,27 @@ impl<P: Payload> Project<FaceList<'_, P>> for Point3 {
 }
 
 /// The candidate nearest the source. Candidates closer than the tolerance keep
-/// the earlier one; when `refuse_ties`, near ones at different points are a
-/// tie.
+/// the earlier one; when `refuse_equidistant_feet`, near ones at different
+/// points are several equally near feet and are refused.
 pub(super) fn nearest(
     candidates: Vec<PointProjection<FaceKey>>,
-    refuse_ties: bool,
+    refuse_equidistant_feet: bool,
     options: &ProjectOptions,
 ) -> Result<PointProjection<FaceKey>, ProjectionError> {
     let mut candidates = candidates.into_iter();
     let mut best = candidates.next().ok_or(ProjectionError::Miss)?;
-    let mut tied_elsewhere = false;
+    let mut equidistant_elsewhere = false;
     for candidate in candidates {
         if candidate.distance < best.distance - options.tolerance {
             best = candidate;
-            tied_elsewhere = false;
+            equidistant_elsewhere = false;
         } else if candidate.distance <= best.distance + options.tolerance
             && (candidate.point - best.point).norm() > options.tolerance
         {
-            tied_elsewhere = true;
+            equidistant_elsewhere = true;
         }
     }
-    if refuse_ties && tied_elsewhere {
+    if refuse_equidistant_feet && equidistant_elsewhere {
         return Err(ProjectionError::Ambiguous);
     }
     Ok(best)

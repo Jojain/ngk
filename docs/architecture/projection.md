@@ -93,10 +93,20 @@ caller can recompute them, the `distance` from the source to the point, and the
 - **Curve** and **Edge**: the foot on the support curve, with the curve parameter.
 - **Face**, **FaceList**: as above, over the support the face has.
 
-`Ambiguous` is detected for the analytic surfaces and curves: the centre of a sphere,
-the axis of a cylinder, cone, torus or revolution, the centre of a circle, the
-major axis of an ellipse inside its evolute. A ruled or NURBS surface and a NURBS
-curve are searched numerically and are not checked for ties.
+`Ambiguous` is the same rule on every target, whatever its representation: a point
+with two feet farther apart than the tolerance and equally near within it. The
+analytic surfaces and curves are checked in closed form: the centre of a sphere, the
+axis of a cylinder, cone, torus or revolution, the centre of a circle, the major axis
+of an ellipse inside its evolute. A ruled or NURBS surface and a NURBS curve are
+searched numerically, so the rule is applied to the local nearest points the search
+finds. The search samples the domain, starts a Newton refinement from every sampled
+local minimum of the distance, and keeps each one it converges to; a ruled surface
+searches its profile curve across the ruling direction. A NURBS cylinder is therefore
+refused on its axis exactly as the analytic one is. The foot that is returned is
+still the one the surface's own nearest-point search reports; the local nearest
+points only decide whether it is unique. At most 32 local minima of a surface's
+sample grid are refined, so a point equally near more places than that is judged on
+the nearest 32.
 
 ## Curve projection
 

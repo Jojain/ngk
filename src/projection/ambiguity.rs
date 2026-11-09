@@ -1,18 +1,37 @@
-//! Where the nearest point of an analytic target is not unique.
+//! Where the nearest point of a target is not unique.
 //!
 //! A surface of revolution or a circle is equally near a point on its axis
 //! from a whole ring of feet; an ellipse is equally near the points of the
 //! major axis inside its evolute from two. These predicates name those cases.
-//! NURBS and ruled targets are not searched for ties.
+//!
+//! An analytic target is checked in closed form. A target whose nearest point
+//! is searched numerically (a NURBS curve or surface, a ruled surface) is
+//! checked on the local nearest points that search finds: the nearest point
+//! is not unique when two of them, farther apart than the tolerance, are
+//! equally near within the tolerance.
 
 use crate::geometry::{Curve, Frame, Point3, Surface};
 
-/// Whether the nearest point of `surface` to `point` is not unique.
+/// Whether `point` has several nearest points on `surface`, farther apart than
+/// `tol` and equally near within `tol`.
 ///
 /// `foot` is the nearest point the surface reported for `point`.
-pub(super) fn surface_feet_tie(surface: &Surface, point: Point3, foot: Point3, tol: f64) -> bool {
+pub(super) fn has_several_nearest_points_on_surface(
+    surface: &Surface,
+    point: Point3,
+    foot: Point3,
+    tol: f64,
+) -> bool {
     match surface {
-        Surface::Plane(_) | Surface::Ruled(_) | Surface::Nurbs(_) => false,
+        Surface::Plane(_) => false,
+        Surface::Ruled(_) | Surface::Nurbs(_) => {
+            let local_nearest = surface
+                .local_nearest_parameters(point)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|uv| surface.point_at(uv.x, uv.y));
+            has_several_equally_near_points(point, foot, local_nearest, tol)
+        }
         Surface::Sphere(sphere) => (point - sphere.frame().origin).norm() <= tol,
         Surface::Cylinder(cylinder) => radial_distance(&cylinder.frame, point) <= tol,
         Surface::Cone(cone) => {
@@ -39,10 +58,25 @@ pub(super) fn surface_feet_tie(surface: &Surface, point: Point3, foot: Point3, t
     }
 }
 
-/// Whether the nearest point of `curve` to `point` is not unique.
-pub(super) fn curve_feet_tie(curve: &Curve, point: Point3, tol: f64) -> bool {
+/// Whether `point` has several nearest points on `curve`, farther apart than
+/// `tol` and equally near within `tol`.
+///
+/// `foot` is the nearest point the curve reported for `point`.
+pub(super) fn has_several_nearest_points_on_curve(
+    curve: &Curve,
+    point: Point3,
+    foot: Point3,
+    tol: f64,
+) -> bool {
     match curve {
-        Curve::Line(_) | Curve::Nurbs(_) => false,
+        Curve::Line(_) => false,
+        Curve::Nurbs(_) => {
+            let local_nearest = curve
+                .local_nearest_parameters(point, None)
+                .into_iter()
+                .map(|t| curve.point_at(t));
+            has_several_equally_near_points(point, foot, local_nearest, tol)
+        }
         Curve::Circle(circle) => radial_distance(&circle.plane().frame, point) <= tol,
         Curve::Helix(helix) => radial_distance(helix.frame(), point) <= tol,
         Curve::Ellipse(ellipse) => {
@@ -65,6 +99,25 @@ pub(super) fn curve_feet_tie(curve: &Curve, point: Point3, tol: f64) -> bool {
             across_long.abs() <= tol && along_long.abs() < reach
         }
     }
+}
+
+/// Whether, among `foot` and `local_nearest`, the points nearest `point`
+/// within `tol` of the nearest distance are not all within `tol` of one
+/// another.
+fn has_several_equally_near_points(
+    point: Point3,
+    foot: Point3,
+    local_nearest: impl IntoIterator<Item = Point3>,
+    tol: f64,
+) -> bool {
+    let reach = |p: &Point3| (p - point).norm();
+    let all: Vec<Point3> = std::iter::once(foot).chain(local_nearest).collect();
+    let nearest = all.iter().map(reach).fold(f64::INFINITY, f64::min);
+    let mut equally_near = all.iter().filter(|p| reach(p) <= nearest + tol);
+    let Some(first) = equally_near.next() else {
+        return false;
+    };
+    equally_near.any(|p| (p - first).norm() > tol)
 }
 
 /// The distance from `point` to the `z` axis of `frame`.

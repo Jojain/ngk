@@ -28,8 +28,6 @@ the tolerance. `Approx` exists in the result type and no code path produces it y
   NURBS surface** is refused with `UnsupportedSurface`: only the surfaces the kernel
   intersects with a line in closed form (plane, sphere, cylinder, cone) have one. The
   perpendicular works on every surface.
-- **`Ambiguous` is not detected on a ruled or NURBS surface, nor on a NURBS curve.**
-  They are searched numerically, and equally near feet there are returned as one.
 - **Closest point on a trimmed face** would land on the face's boundary. It is a
   distance query, not a projection, and belongs to `measure` once a caller needs it.
 
