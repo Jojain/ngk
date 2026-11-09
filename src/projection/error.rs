@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use crate::geometry::{IntersectionError, NurbsError};
+use crate::topology::UnwrappedFaceDomainError;
 
 /// Why a projection has no single answer.
 #[derive(Debug, Error)]
@@ -33,4 +34,7 @@ pub enum ProjectionError {
     /// The ray/surface intersection refused its options.
     #[error("the ray/surface intersection failed")]
     Intersection(#[from] IntersectionError),
+    /// The face's trim could not be read in its support's parameters.
+    #[error("the face's trim could not be read")]
+    Trim(#[from] UnwrappedFaceDomainError),
 }

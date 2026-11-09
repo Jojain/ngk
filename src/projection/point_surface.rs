@@ -46,7 +46,7 @@ impl Project<Surface> for Point3 {
     }
 }
 
-fn project_normal(
+pub(super) fn project_normal(
     source: &Point3,
     surface: &Surface,
     options: &ProjectOptions,
@@ -70,6 +70,43 @@ fn project_along(
     direction: UnitVector3<f64>,
     options: &ProjectOptions,
 ) -> Result<PointProjection<()>, ProjectionError> {
+    let hits = ray_hits(source, surface, direction, options)?;
+    let first = hits.first().ok_or(ProjectionError::Miss)?;
+    reject_grazing(surface, first, direction)?;
+    Ok(first.into_projection(()))
+}
+
+/// A hit of a half-line on a surface.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct RayHit {
+    /// The distance from the source along the ray, never negative.
+    pub(super) distance: f64,
+    pub(super) point: Point3,
+    pub(super) uv: Point2,
+}
+
+impl RayHit {
+    pub(super) fn into_projection<Hit>(self, hit: Hit) -> PointProjection<Hit> {
+        PointProjection {
+            point: self.point,
+            parameters: Some(TargetParameters::Surface(self.uv)),
+            distance: self.distance,
+            hit,
+        }
+    }
+}
+
+/// Every hit of the half-line from `source` along `direction` on `surface`,
+/// nearest first.
+///
+/// Only the surfaces the kernel intersects with a line in closed form are
+/// searched; the others are refused. A ray lying in the surface is refused too.
+pub(super) fn ray_hits(
+    source: &Point3,
+    surface: &Surface,
+    direction: UnitVector3<f64>,
+    options: &ProjectOptions,
+) -> Result<Vec<RayHit>, ProjectionError> {
     if !line_surface_is_analytic(surface) {
         return Err(ProjectionError::UnsupportedSurface {
             surface: surface_kind(surface),
@@ -84,36 +121,40 @@ fn project_along(
     };
     // The closed-form table declines a line only when it lies in the surface
     // over its whole length.
-    let hits = intersect_analytic_curve_surface(&ray, surface, intersection_options)
+    let intersections = intersect_analytic_curve_surface(&ray, surface, intersection_options)
         .ok_or(ProjectionError::RayInSurface)??;
-    let mut first: Option<(f64, Point3, Point2)> = None;
-    for hit in hits {
-        match hit {
+    let mut hits = Vec::new();
+    for intersection in intersections {
+        match intersection {
             CurveSurfaceIntersection::Overlap { .. } => return Err(ProjectionError::RayInSurface),
             CurveSurfaceIntersection::Point {
                 point,
                 curve_u,
                 surface_u,
                 surface_v,
-            } if curve_u >= -options.tolerance
-                && first.is_none_or(|(nearest, ..)| curve_u < nearest) =>
-            {
-                first = Some((curve_u, point, Point2::new(surface_u, surface_v)));
-            }
+            } if curve_u >= -options.tolerance => hits.push(RayHit {
+                distance: curve_u.max(0.0),
+                point,
+                uv: Point2::new(surface_u, surface_v),
+            }),
             CurveSurfaceIntersection::Point { .. } => {}
         }
     }
-    let (distance, point, uv) = first.ok_or(ProjectionError::Miss)?;
-    let normal = surface.normal_at(uv.x, uv.y);
+    hits.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    Ok(hits)
+}
+
+/// Refuses a hit where the ray touches the surface without crossing it.
+pub(super) fn reject_grazing(
+    surface: &Surface,
+    hit: &RayHit,
+    direction: UnitVector3<f64>,
+) -> Result<(), ProjectionError> {
+    let normal = surface.normal_at(hit.uv.x, hit.uv.y);
     if normal.dot(&direction).abs() <= GRAZING_SINE {
         return Err(ProjectionError::GrazingRay);
     }
-    Ok(PointProjection {
-        point,
-        parameters: Some(TargetParameters::Surface(uv)),
-        distance: distance.max(0.0),
-        hit: (),
-    })
+    Ok(())
 }
 
 fn surface_kind(surface: &Surface) -> &'static str {
