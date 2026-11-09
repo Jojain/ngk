@@ -5,6 +5,7 @@ pub mod healing;
 pub mod measure;
 pub mod model;
 pub mod modeling;
+pub mod projection;
 pub mod scripts;
 pub mod solver;
 pub mod tcv;
