@@ -1,7 +1,8 @@
 use pyo3::prelude::*;
 
-use crate::geometry::{NurbsCurve, NurbsSurface};
+use crate::geometry::{Curve, NurbsCurve, NurbsSurface, Surface};
 
+use super::super::projection::{Target, project_onto};
 use super::{PyPoint3, PyVector3, point, unit_vector};
 
 #[pyclass(name = "NurbsCurve", module = "ngk")]
@@ -12,6 +13,24 @@ pub(crate) struct PyNurbsCurve {
 
 #[pymethods]
 impl PyNurbsCurve {
+    /// Receives a point projected onto it, as
+    /// `ngk.projection.project(source, self, tolerance=tolerance)`.
+    #[pyo3(signature = (source, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Curve(Curve::Nurbs(self.curve.clone())),
+            &None,
+            tolerance,
+        )
+    }
+
     #[getter]
     fn degree(&self) -> usize {
         self.curve.degree().get()
@@ -54,6 +73,25 @@ pub(crate) struct PyNurbsSurface {
 
 #[pymethods]
 impl PyNurbsSurface {
+    /// Receives `source` projected onto it, as
+    /// `ngk.projection.project(source, self, along, tolerance)`.
+    #[pyo3(signature = (source, along=None, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        along: Option<PyVector3>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Surface(Surface::Nurbs(self.surface.clone())),
+            &along,
+            tolerance,
+        )
+    }
+
     #[getter]
     fn degree_u(&self) -> usize {
         self.surface.degree_u().get()

@@ -9,6 +9,7 @@ from . import projection as projection
 from . import solver as solver
 from . import tessellation as tessellation
 from .measurement import BoundingBox, LinearProperties, SurfaceProperties, VolumeProperties
+from .projection import CurveProjection, PointProjection
 
 class Model:
     @staticmethod
@@ -60,6 +61,11 @@ class Vertex(_Topology):
     def sheets(self) -> list[Sheet]: ...
 
 class Edge(_Topology):
+    def project(
+        self,
+        source: Point | tuple[float, float, float],
+        tolerance: float | None = None,
+    ) -> PointProjection: ...
     def isolated(self) -> Self: ...
     def reversed(self) -> Self: ...
     @property
@@ -111,6 +117,12 @@ class Loop(_Topology):
     def vertices(self) -> list[Vertex]: ...
 
 class Face(_Topology):
+    def project(
+        self,
+        source: Point | tuple[float, float, float] | _Curve | Edge | Profile,
+        along: Vector | None = None,
+        tolerance: float | None = None,
+    ) -> PointProjection | CurveProjection: ...
     def isolated(self) -> Self: ...
     def reversed(self) -> Self: ...
     @property
@@ -226,6 +238,11 @@ class Vector2:
     def as_tuple(self) -> tuple[float, float]: ...
 
 class Axis:
+    def project(
+        self,
+        source: Point | tuple[float, float, float],
+        tolerance: float | None = None,
+    ) -> PointProjection: ...
     def __new__(cls, origin: Point, direction: Vector) -> Self: ...
     @staticmethod
     def from_points(start: Point, end: Point) -> Axis: ...
@@ -233,7 +250,6 @@ class Axis:
     def origin(self) -> Point: ...
     @property
     def direction(self) -> Vector: ...
-    def project(self, point_to_project: Point) -> Point: ...
 
 class Frame:
     def __new__(cls, origin: Point, x_dir: Vector, y_dir: Vector) -> Self: ...
@@ -275,6 +291,11 @@ class Frame:
     def coordinates_of(self, point_to_locate: Point) -> Vector: ...
 
 class Line:
+    def project(
+        self,
+        source: Point | tuple[float, float, float],
+        tolerance: float | None = None,
+    ) -> PointProjection: ...
     @property
     def start(self) -> Point: ...
     @property
@@ -282,6 +303,11 @@ class Line:
     def point_at(self, t: float) -> Point: ...
 
 class Circle:
+    def project(
+        self,
+        source: Point | tuple[float, float, float],
+        tolerance: float | None = None,
+    ) -> PointProjection: ...
     @property
     def plane(self) -> Plane: ...
     @property
@@ -289,6 +315,11 @@ class Circle:
     def point_at(self, t: float) -> Point: ...
 
 class Ellipse:
+    def project(
+        self,
+        source: Point | tuple[float, float, float],
+        tolerance: float | None = None,
+    ) -> PointProjection: ...
     @property
     def major_radius(self) -> float: ...
     @property
@@ -296,6 +327,11 @@ class Ellipse:
     def point_at(self, t: float) -> Point: ...
 
 class Helix:
+    def project(
+        self,
+        source: Point | tuple[float, float, float],
+        tolerance: float | None = None,
+    ) -> PointProjection: ...
     def __new__(cls, axis: Axis, radius: float, pitch: float) -> Self: ...
     @property
     def axis(self) -> Axis: ...
@@ -306,6 +342,11 @@ class Helix:
     def point_at(self, t: float) -> Point: ...
 
 class NurbsCurve:
+    def project(
+        self,
+        source: Point | tuple[float, float, float],
+        tolerance: float | None = None,
+    ) -> PointProjection: ...
     @property
     def degree(self) -> int: ...
     @property
@@ -318,6 +359,12 @@ class NurbsCurve:
     def point_at(self, u: float) -> Point: ...
 
 class Plane:
+    def project(
+        self,
+        source: Point | tuple[float, float, float] | _Curve | Edge | Profile,
+        along: Vector | None = None,
+        tolerance: float | None = None,
+    ) -> PointProjection | CurveProjection: ...
     def __new__(cls, origin: Point, x_dir: Vector, normal: Vector) -> Self:
         """Builds a plane from its x direction and normal, used as given (only normalized).
 
@@ -355,6 +402,12 @@ class Rigid:
     def apply_vector(self, value: Vector) -> Vector: ...
 
 class Cylinder:
+    def project(
+        self,
+        source: Point | tuple[float, float, float] | _Curve | Edge | Profile,
+        along: Vector | None = None,
+        tolerance: float | None = None,
+    ) -> PointProjection | CurveProjection: ...
     @property
     def origin(self) -> Point: ...
     @property
@@ -367,6 +420,12 @@ class Cylinder:
     def normal_at(self, u: float, v: float) -> Vector: ...
 
 class Sphere:
+    def project(
+        self,
+        source: Point | tuple[float, float, float] | _Curve | Edge | Profile,
+        along: Vector | None = None,
+        tolerance: float | None = None,
+    ) -> PointProjection | CurveProjection: ...
     @property
     def origin(self) -> Point: ...
     @property
@@ -379,6 +438,12 @@ class Sphere:
     def normal_at(self, u: float, v: float) -> Vector: ...
 
 class Cone:
+    def project(
+        self,
+        source: Point | tuple[float, float, float] | _Curve | Edge | Profile,
+        along: Vector | None = None,
+        tolerance: float | None = None,
+    ) -> PointProjection | CurveProjection: ...
     @property
     def origin(self) -> Point: ...
     @property
@@ -395,6 +460,12 @@ class Cone:
     def normal_at(self, u: float, v: float) -> Vector: ...
 
 class Torus:
+    def project(
+        self,
+        source: Point | tuple[float, float, float] | _Curve | Edge | Profile,
+        along: Vector | None = None,
+        tolerance: float | None = None,
+    ) -> PointProjection | CurveProjection: ...
     @property
     def origin(self) -> Point: ...
     @property
@@ -409,6 +480,12 @@ class Torus:
     def normal_at(self, u: float, v: float) -> Vector: ...
 
 class RuledSurface:
+    def project(
+        self,
+        source: Point | tuple[float, float, float] | _Curve | Edge | Profile,
+        along: Vector | None = None,
+        tolerance: float | None = None,
+    ) -> PointProjection | CurveProjection: ...
     @property
     def curve(self) -> _Curve: ...
     @property
@@ -417,6 +494,12 @@ class RuledSurface:
     def normal_at(self, u: float, v: float) -> Vector: ...
 
 class SurfaceOfRevolution:
+    def project(
+        self,
+        source: Point | tuple[float, float, float] | _Curve | Edge | Profile,
+        along: Vector | None = None,
+        tolerance: float | None = None,
+    ) -> PointProjection | CurveProjection: ...
     @property
     def curve(self) -> _Curve: ...
     @property
@@ -427,6 +510,12 @@ class SurfaceOfRevolution:
     def normal_at(self, u: float, v: float) -> Vector: ...
 
 class NurbsSurface:
+    def project(
+        self,
+        source: Point | tuple[float, float, float] | _Curve | Edge | Profile,
+        along: Vector | None = None,
+        tolerance: float | None = None,
+    ) -> PointProjection | CurveProjection: ...
     @property
     def degree_u(self) -> int: ...
     @property

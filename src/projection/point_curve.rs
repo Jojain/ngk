@@ -5,7 +5,7 @@ use super::project::Project;
 use super::result::{PointProjection, TargetParameters};
 use crate::geometry::{Curve, Point3};
 
-impl Project<Curve> for Point3 {
+impl Project<Point3> for Curve {
     type Mode = ();
     type Hit = ();
     type Output = PointProjection<()>;
@@ -16,21 +16,21 @@ impl Project<Curve> for Point3 {
     /// [`Ambiguous`](ProjectionError::Ambiguous). Analytic curves are checked
     /// in closed form; a NURBS curve is checked on the local nearest points
     /// its numerical search finds.
-    fn project(
+    fn project_with(
         &self,
-        curve: &Curve,
+        source: &Point3,
         _mode: (),
         options: &ProjectOptions,
     ) -> Result<PointProjection<()>, ProjectionError> {
-        let t = curve.parameter_at(*self);
-        let point = curve.point_at(t);
-        if has_several_nearest_points_on_curve(curve, *self, point, options.tolerance) {
+        let t = self.parameter_at(*source);
+        let point = self.point_at(t);
+        if has_several_nearest_points_on_curve(self, *source, point, options.tolerance) {
             return Err(ProjectionError::Ambiguous);
         }
         Ok(PointProjection {
             point,
             parameters: Some(TargetParameters::Curve(t)),
-            distance: (point - self).norm(),
+            distance: (point - source).norm(),
             hit: (),
         })
     }
@@ -47,13 +47,7 @@ mod tests {
     #[test]
     fn a_point_projects_onto_a_line_perpendicularly() {
         let line = Curve::line(Point3::origin(), Point3::new(2.0, 0.0, 0.0));
-        let result = project(
-            &Point3::new(5.0, 3.0, 0.0),
-            &line,
-            (),
-            &ProjectOptions::default(),
-        )
-        .unwrap();
+        let result = project(&Point3::new(5.0, 3.0, 0.0), &line, ()).unwrap();
         assert!((result.point - Point3::new(5.0, 0.0, 0.0)).norm() < 1e-12);
         assert!((result.distance - 3.0).abs() < 1e-12);
         let Some(TargetParameters::Curve(t)) = result.parameters else {
@@ -65,13 +59,7 @@ mod tests {
     #[test]
     fn a_point_projects_onto_a_circle_radially() {
         let circle = Curve::circle(Plane::xy(), 2.0);
-        let result = project(
-            &Point3::new(0.0, 5.0, 1.0),
-            &circle,
-            (),
-            &ProjectOptions::default(),
-        )
-        .unwrap();
+        let result = project(&Point3::new(0.0, 5.0, 1.0), &circle, ()).unwrap();
         assert!((result.point - Point3::new(0.0, 2.0, 0.0)).norm() < 1e-12);
         assert!((result.distance - (9.0_f64 + 1.0).sqrt()).abs() < 1e-12);
     }
@@ -79,12 +67,7 @@ mod tests {
     #[test]
     fn a_point_on_a_circles_axis_is_ambiguous() {
         let circle = Curve::circle(Plane::xy(), 2.0);
-        let result = project(
-            &Point3::new(0.0, 0.0, 3.0),
-            &circle,
-            (),
-            &ProjectOptions::default(),
-        );
+        let result = project(&Point3::new(0.0, 0.0, 3.0), &circle, ());
         assert!(matches!(result, Err(ProjectionError::Ambiguous)));
     }
 
@@ -93,14 +76,9 @@ mod tests {
         let circle = Circle::new(Plane::xy(), 2.0);
         let nurbs = Curve::Nurbs(circle.to_nurbs().unwrap());
         let on_axis = Point3::new(0.0, 0.0, 3.0);
-        let result = project(&on_axis, &nurbs, (), &ProjectOptions::default());
+        let result = project(&on_axis, &nurbs, ());
         assert!(matches!(result, Err(ProjectionError::Ambiguous)));
-        let analytic = project(
-            &on_axis,
-            &Curve::Circle(circle),
-            (),
-            &ProjectOptions::default(),
-        );
+        let analytic = project(&on_axis, &Curve::Circle(circle), ());
         assert!(matches!(analytic, Err(ProjectionError::Ambiguous)));
     }
 
@@ -108,13 +86,7 @@ mod tests {
     fn a_point_off_a_nurbs_circles_axis_has_one_nearest_point() {
         let circle = Circle::new(Plane::xy(), 2.0);
         let nurbs = Curve::Nurbs(circle.to_nurbs().unwrap());
-        let result = project(
-            &Point3::new(0.0, 5.0, 1.0),
-            &nurbs,
-            (),
-            &ProjectOptions::default(),
-        )
-        .unwrap();
+        let result = project(&Point3::new(0.0, 5.0, 1.0), &nurbs, ()).unwrap();
         assert!((result.point - Point3::new(0.0, 2.0, 0.0)).norm() < 1e-9);
     }
 
@@ -134,33 +106,25 @@ mod tests {
         )
         .unwrap();
         let curve = Curve::Nurbs(bends);
-        let options = ProjectOptions::default();
-        let between = project(&Point3::new(0.0, 10.0, 0.0), &curve, (), &options);
+        let between = project(&Point3::new(0.0, 10.0, 0.0), &curve, ());
         assert!(matches!(between, Err(ProjectionError::Ambiguous)));
-        let beside = project(&Point3::new(1.0, 10.0, 0.0), &curve, (), &options).unwrap();
+        let beside = project(&Point3::new(1.0, 10.0, 0.0), &curve, ()).unwrap();
         assert!(beside.point.x > 0.0);
     }
 
     #[test]
     fn a_point_on_an_ellipses_long_axis_inside_its_evolute_is_ambiguous() {
         let ellipse = Curve::Ellipse(Ellipse::new(Frame::xyz(), 4.0, 2.0));
-        let options = ProjectOptions::default();
-        let inside = project(&Point3::new(1.0, 0.0, 0.0), &ellipse, (), &options);
+        let inside = project(&Point3::new(1.0, 0.0, 0.0), &ellipse, ());
         assert!(matches!(inside, Err(ProjectionError::Ambiguous)));
-        let outside = project(&Point3::new(3.5, 0.0, 0.0), &ellipse, (), &options).unwrap();
+        let outside = project(&Point3::new(3.5, 0.0, 0.0), &ellipse, ()).unwrap();
         assert!((outside.point - Point3::new(4.0, 0.0, 0.0)).norm() < 1e-9);
     }
 
     #[test]
     fn the_project_helper_returns_only_the_point() {
         let line = Curve::line(Point3::origin(), Point3::new(0.0, 0.0, 1.0));
-        let point = project_point(
-            &Point3::new(1.0, 0.0, 7.0),
-            &line,
-            (),
-            &ProjectOptions::default(),
-        )
-        .unwrap();
+        let point = project_point(&Point3::new(1.0, 0.0, 7.0), &line, ()).unwrap();
         assert!((point - Point3::new(0.0, 0.0, 7.0)).norm() < 1e-12);
     }
 }

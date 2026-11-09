@@ -12,7 +12,7 @@ use crate::topology::payload::Payload;
 use crate::topology::shape_keys::FaceKey;
 use crate::topology::trim_domain::{FaceTrimDomain, TrimLocation};
 
-impl<P: Payload> Project<Face<'_, P>> for Point3 {
+impl<P: Payload> Project<Point3> for Face<'_, P> {
     type Mode = Projection;
     type Hit = FaceKey;
     type Output = PointProjection<FaceKey>;
@@ -27,16 +27,16 @@ impl<P: Payload> Project<Face<'_, P>> for Point3 {
     /// one. A point on the trim's boundary is inside it. The refusals of the
     /// support (see the projection onto a surface) apply to the hits that are
     /// kept.
-    fn project(
+    fn project_with(
         &self,
-        face: &Face<'_, P>,
+        source: &Point3,
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<PointProjection<FaceKey>, ProjectionError> {
-        let trim = FaceTrimDomain::new(face, options.tolerance)?;
+        let trim = FaceTrimDomain::new(self, options.tolerance)?;
         match mode {
-            Projection::Normal => nearest_point_in_face(self, face, &trim, options),
-            Projection::Along(direction) => wall_of_face(self, face, &trim, direction, options),
+            Projection::Normal => nearest_point_in_face(source, self, &trim, options),
+            Projection::Along(direction) => wall_of_face(source, self, &trim, direction, options),
         }
     }
 }
@@ -119,17 +119,13 @@ mod tests {
         (model, face)
     }
 
-    fn options() -> ProjectOptions {
-        ProjectOptions::default()
-    }
-
     #[test]
     fn a_point_above_a_faces_material_projects_onto_it_in_both_modes() {
         let (model, key) = square_with_hole();
         let face = model.face_unchecked(key);
         let source = Point3::new(0.5, 0.5, 2.0);
         for mode in [Projection::Normal, Projection::along(-Vector3::z())] {
-            let result = project(&source, &face, mode, &options()).unwrap();
+            let result = project(&source, &face, mode).unwrap();
             assert!((result.point - Point3::new(0.5, 0.5, 0.0)).norm() < 1e-9);
             assert!((result.distance - 2.0).abs() < 1e-9);
             assert_eq!(result.hit, key);
@@ -142,7 +138,7 @@ mod tests {
         let face = model.face_unchecked(key);
         let source = Point3::new(2.0, 2.0, 2.0);
         for mode in [Projection::Normal, Projection::along(-Vector3::z())] {
-            let result = project(&source, &face, mode, &options());
+            let result = project(&source, &face, mode);
             assert!(matches!(result, Err(ProjectionError::Miss)));
         }
     }
@@ -153,7 +149,7 @@ mod tests {
         let face = model.face_unchecked(key);
         let source = Point3::new(6.0, 0.5, 2.0);
         for mode in [Projection::Normal, Projection::along(-Vector3::z())] {
-            let result = project(&source, &face, mode, &options());
+            let result = project(&source, &face, mode);
             assert!(matches!(result, Err(ProjectionError::Miss)));
         }
     }
@@ -170,7 +166,6 @@ mod tests {
             &source,
             &face,
             Projection::along(Vector3::new(1.0, 0.0, 0.2)),
-            &options(),
         )
         .unwrap();
         assert!((result.point - Point3::new(1.0, 0.0, 0.2)).norm() < 1e-9);
@@ -183,7 +178,7 @@ mod tests {
         let cylinder = add_cylinder(&mut model, Frame::xyz(), 1.0, 2.0).unwrap();
         let face = model.face_unchecked(cylinder.laterals[0].face);
         let source = Point3::new(-5.0, 0.0, 5.0);
-        let result = project(&source, &face, Projection::along(Vector3::x()), &options());
+        let result = project(&source, &face, Projection::along(Vector3::x()));
         assert!(matches!(result, Err(ProjectionError::Miss)));
     }
 
@@ -193,10 +188,10 @@ mod tests {
         let cylinder = add_cylinder(&mut model, Frame::xyz(), 1.0, 2.0).unwrap();
         let face = model.face_unchecked(cylinder.laterals[0].face);
         let beside = Point3::new(4.0, 0.0, 1.0);
-        let result = project(&beside, &face, Projection::Normal, &options()).unwrap();
+        let result = project(&beside, &face, Projection::Normal).unwrap();
         assert!((result.point - Point3::new(1.0, 0.0, 1.0)).norm() < 1e-9);
         let above = Point3::new(4.0, 0.0, 3.0);
-        let result = project(&above, &face, Projection::Normal, &options());
+        let result = project(&above, &face, Projection::Normal);
         assert!(matches!(result, Err(ProjectionError::Miss)));
     }
 }

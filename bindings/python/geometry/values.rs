@@ -5,6 +5,8 @@ use pyo3::prelude::*;
 use crate::geometry::axis::Axis3;
 use crate::geometry::{Frame, Point3};
 
+use super::super::projection::{Target, project_onto};
+
 pub(crate) fn point(point: Point3) -> PyPoint3 {
     PyPoint3 { point }
 }
@@ -208,8 +210,16 @@ impl PyAxis3 {
         unit_vector(self.axis.direction)
     }
 
-    fn project(&self, point_to_project: PyPoint3) -> PyPoint3 {
-        point(self.axis.closest_point(point_to_project.point))
+    /// The foot of the perpendicular from a point to the axis, as a
+    /// `PointProjection`.
+    #[pyo3(signature = (source, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(py, source, &Target::Axis(self.axis), &None, tolerance)
     }
 }
 

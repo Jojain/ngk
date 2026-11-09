@@ -23,52 +23,52 @@ use crate::topology::profile::Profile;
 /// the plane is cut there and the chain of the part in front stops at a
 /// [`Miss`](super::ChainEnd::Miss). A source wholly behind it
 /// [misses](ProjectionError::Miss).
-impl Project<Plane> for TrimmedCurve {
+impl Project<TrimmedCurve> for Plane {
     type Mode = Projection;
     type Hit = ();
     type Output = CurveProjection<()>;
 
-    fn project(
+    fn project_with(
         &self,
-        plane: &Plane,
+        source: &TrimmedCurve,
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<CurveProjection<()>, ProjectionError> {
-        project_walk(&Walk::of_span(self.clone()), plane, mode, options)
+        project_walk(&Walk::of_span(source.clone()), self, mode, options)
     }
 }
 
 /// The whole of the curve's domain, as for a [`TrimmedCurve`]; an unbounded
 /// curve has no finite span and is refused.
-impl Project<Plane> for Curve {
+impl Project<Curve> for Plane {
     type Mode = Projection;
     type Hit = ();
     type Output = CurveProjection<()>;
 
-    fn project(
+    fn project_with(
         &self,
-        plane: &Plane,
+        source: &Curve,
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<CurveProjection<()>, ProjectionError> {
-        project_walk(&Walk::of_curve(self)?, plane, mode, options)
+        project_walk(&Walk::of_curve(source)?, self, mode, options)
     }
 }
 
 /// The edge's span as it is oriented in the view, as for a [`TrimmedCurve`];
 /// a segment names the edge as its source.
-impl<P: Payload> Project<Plane> for Edge<'_, P> {
+impl<P: Payload> Project<Edge<'_, P>> for Plane {
     type Mode = Projection;
     type Hit = ();
     type Output = CurveProjection<()>;
 
-    fn project(
+    fn project_with(
         &self,
-        plane: &Plane,
+        source: &Edge<'_, P>,
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<CurveProjection<()>, ProjectionError> {
-        project_walk(&Walk::of_edge(self), plane, mode, options)
+        project_walk(&Walk::of_edge(source), self, mode, options)
     }
 }
 
@@ -79,18 +79,18 @@ impl<P: Payload> Project<Plane> for Edge<'_, P> {
 /// where more or fewer do, on a [`SourceEnd`](super::ChainEnd::SourceEnd) at
 /// a free end, and a closed profile whose edges all have a shadow is one chain
 /// with [`Closed`](super::ChainEnd::Closed) ends.
-impl<P: Payload> Project<Plane> for Profile<'_, P> {
+impl<P: Payload> Project<Profile<'_, P>> for Plane {
     type Mode = Projection;
     type Hit = ();
     type Output = CurveProjection<()>;
 
-    fn project(
+    fn project_with(
         &self,
-        plane: &Plane,
+        source: &Profile<'_, P>,
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<CurveProjection<()>, ProjectionError> {
-        project_walk(&Walk::of_profile(self), plane, mode, options)
+        project_walk(&Walk::of_profile(source), self, mode, options)
     }
 }
 
@@ -110,10 +110,6 @@ mod tests {
     use crate::topology::StandardPayload;
 
     const SAMPLES: usize = 8;
-
-    fn options() -> ProjectOptions {
-        ProjectOptions::default()
-    }
 
     fn tilted_plane() -> Plane {
         Plane::new(
@@ -141,7 +137,7 @@ mod tests {
             for step in 0..=SAMPLES {
                 let fraction = Fraction::new(step as f64 / SAMPLES as f64);
                 let origin = source.point_at(segment.source.interval.at(fraction));
-                let expected = project_point(&origin, plane, mode, &options()).unwrap();
+                let expected = project_point(&origin, plane, mode).unwrap();
                 let found = segment.curve.point_at(fraction);
                 assert!(
                     (found - expected).norm() < 1e-9,
@@ -163,7 +159,7 @@ mod tests {
     fn a_line_onto_a_parallel_plane_stays_a_line() {
         let span = TrimmedCurve::segment(Point3::new(0.0, 0.0, 2.0), Point3::new(4.0, 1.0, 2.0));
         for mode in [Projection::Normal, slanted()] {
-            let result = project(&span, &Plane::xy(), mode, &options()).unwrap();
+            let result = project(&span, &Plane::xy(), mode).unwrap();
             let segment = only_segment(&result);
             assert!(matches!(segment.curve.curve(), Curve::Line(_)));
             assert_eq!(result.chains[0].start, ChainEnd::SourceEnd);
@@ -182,7 +178,7 @@ mod tests {
             Projection::Normal,
             Projection::along(Vector3::new(0.2, 0.0, -1.0)),
         ] {
-            let result = project(&span, &plane, mode, &options()).unwrap();
+            let result = project(&span, &plane, mode).unwrap();
             assert!(matches!(
                 only_segment(&result).curve.curve(),
                 Curve::Line(_)
@@ -194,7 +190,7 @@ mod tests {
     #[test]
     fn a_line_along_the_direction_collapses_to_a_point() {
         let span = TrimmedCurve::segment(Point3::new(1.0, 1.0, 2.0), Point3::new(1.0, 1.0, 5.0));
-        let result = project(&span, &Plane::xy(), Projection::Normal, &options());
+        let result = project(&span, &Plane::xy(), Projection::Normal);
         assert!(matches!(result, Err(ProjectionError::DegenerateImage)));
     }
 
@@ -203,7 +199,7 @@ mod tests {
         let source = Plane::new(Point3::new(1.0, 0.0, 3.0), Vector3::x(), Vector3::z());
         let span = TrimmedCurve::arc(source, 2.0, TAU);
         for mode in [Projection::Normal, slanted()] {
-            let result = project(&span, &Plane::xy(), mode, &options()).unwrap();
+            let result = project(&span, &Plane::xy(), mode).unwrap();
             let segment = only_segment(&result);
             let Curve::Circle(circle) = segment.curve.curve() else {
                 panic!("a circle onto a parallel plane is a circle");
@@ -223,7 +219,7 @@ mod tests {
             Projection::Normal,
             Projection::along(Vector3::new(0.1, 0.0, -1.0)),
         ] {
-            let result = project(&span, &plane, mode, &options()).unwrap();
+            let result = project(&span, &plane, mode).unwrap();
             let segment = only_segment(&result);
             assert!(matches!(segment.curve.curve(), Curve::Ellipse(_)));
             assert!(result.chains[0].closed());
@@ -237,7 +233,7 @@ mod tests {
         let source = Plane::new(Point3::new(0.0, 0.0, 5.0), Vector3::x(), Vector3::z());
         let span = TrimmedCurve::new(Curve::circle(source, 2.0), Interval::new(2.0, 0.5));
         let flipped = Plane::new(Point3::origin(), Vector3::x(), -Vector3::z());
-        let result = project(&span, &flipped, Projection::Normal, &options()).unwrap();
+        let result = project(&span, &flipped, Projection::Normal).unwrap();
         assert_matches_point_projection(&result, span.curve(), &flipped, Projection::Normal);
     }
 
@@ -258,7 +254,7 @@ mod tests {
             Projection::Normal,
             Projection::along(Vector3::new(0.0, 0.0, -1.0)),
         ] {
-            let result = project(&curve, &plane, mode, &options()).unwrap();
+            let result = project(&curve, &plane, mode).unwrap();
             let segment = only_segment(&result);
             let (Curve::Nurbs(in_3d), crate::geometry::Curve2::Nurbs(in_2d)) =
                 (segment.curve.curve(), segment.pcurve.curve())
@@ -277,13 +273,12 @@ mod tests {
     fn a_circle_seen_edge_on_is_refused() {
         let source = Plane::new(Point3::new(0.0, 0.0, 1.0), Vector3::x(), Vector3::y());
         let span = TrimmedCurve::arc(source, 1.0, TAU);
-        let edge_on = project(&span, &Plane::xy(), Projection::Normal, &options());
+        let edge_on = project(&span, &Plane::xy(), Projection::Normal);
         assert!(matches!(edge_on, Err(ProjectionError::DegenerateImage)));
         let along = project(
             &span,
             &Plane::xy(),
             Projection::along(Vector3::new(0.5, 0.0, -1.0)),
-            &options(),
         );
         assert!(matches!(along, Err(ProjectionError::DegenerateImage)));
     }
@@ -291,7 +286,7 @@ mod tests {
     #[test]
     fn an_unbounded_curve_is_refused() {
         let line = Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 1.0));
-        let result = project(&line, &Plane::xy(), Projection::Normal, &options());
+        let result = project(&line, &Plane::xy(), Projection::Normal);
         assert!(matches!(result, Err(ProjectionError::UnboundedSource)));
     }
 
@@ -301,7 +296,7 @@ mod tests {
             Curve::helix(crate::geometry::Frame::xyz(), 1.0, 0.5),
             Interval::new(0.0, 5.0),
         );
-        let result = project(&helix, &tilted_plane(), Projection::Normal, &options());
+        let result = project(&helix, &tilted_plane(), Projection::Normal);
         assert!(matches!(
             result,
             Err(ProjectionError::UnsupportedCurve { curve: "helix" })
@@ -322,7 +317,7 @@ mod tests {
     fn an_arc_dipping_behind_the_plane_makes_two_chains_ending_on_a_miss() {
         let span = TrimmedCurve::arc(dipping_circle(), 2.0, 6.1);
         let mode = Projection::along(Vector3::new(0.0, 0.0, -1.0));
-        let result = project(&span, &Plane::xy(), mode, &options()).unwrap();
+        let result = project(&span, &Plane::xy(), mode).unwrap();
         assert_eq!(result.chains.len(), 2);
         assert_eq!(result.chains[0].start, ChainEnd::SourceEnd);
         assert_eq!(result.chains[0].end, ChainEnd::Miss);
@@ -340,7 +335,7 @@ mod tests {
     fn a_whole_circle_dipping_behind_the_plane_is_one_chain_across_its_seam() {
         let span = TrimmedCurve::arc(dipping_circle(), 2.0, TAU);
         let mode = Projection::along(Vector3::new(0.0, 0.0, -1.0));
-        let result = project(&span, &Plane::xy(), mode, &options()).unwrap();
+        let result = project(&span, &Plane::xy(), mode).unwrap();
         assert_eq!(result.chains.len(), 1);
         let chain = &result.chains[0];
         assert_eq!(chain.segments.len(), 2);
@@ -358,7 +353,6 @@ mod tests {
             &span,
             &Plane::xy(),
             Projection::along(Vector3::new(0.0, 0.0, -1.0)),
-            &options(),
         );
         assert!(matches!(result, Err(ProjectionError::Miss)));
     }
@@ -367,7 +361,7 @@ mod tests {
     fn a_line_crossing_the_plane_keeps_the_part_in_front() {
         let span = TrimmedCurve::segment(Point3::new(0.0, 0.0, 2.0), Point3::new(4.0, 0.0, -2.0));
         let mode = Projection::along(Vector3::new(0.0, 0.0, -1.0));
-        let result = project(&span, &Plane::xy(), mode, &options()).unwrap();
+        let result = project(&span, &Plane::xy(), mode).unwrap();
         let chain = &result.chains[0];
         assert_eq!(result.chains.len(), 1);
         assert_eq!(
@@ -382,21 +376,11 @@ mod tests {
     #[test]
     fn a_direction_parallel_to_the_plane_is_refused() {
         let span = TrimmedCurve::segment(Point3::new(0.0, 0.0, 2.0), Point3::new(4.0, 1.0, 3.0));
-        let result = project(
-            &span,
-            &Plane::xy(),
-            Projection::along(Vector3::x()),
-            &options(),
-        );
+        let result = project(&span, &Plane::xy(), Projection::along(Vector3::x()));
         assert!(matches!(result, Err(ProjectionError::Miss)));
         let in_plane =
             TrimmedCurve::segment(Point3::new(0.0, 0.0, 0.0), Point3::new(4.0, 1.0, 0.0));
-        let result = project(
-            &in_plane,
-            &Plane::xy(),
-            Projection::along(Vector3::x()),
-            &options(),
-        );
+        let result = project(&in_plane, &Plane::xy(), Projection::along(Vector3::x()));
         assert!(matches!(result, Err(ProjectionError::RayInSurface)));
     }
 
@@ -410,7 +394,7 @@ mod tests {
         )
         .unwrap();
         let edge = model.edge(key).unwrap();
-        let result = project(&edge, &Plane::xy(), Projection::Normal, &options()).unwrap();
+        let result = project(&edge, &Plane::xy(), Projection::Normal).unwrap();
         let segment = only_segment(&result);
         assert_eq!(segment.source.source, SegmentSource::Edge(key));
         assert_matches_point_projection(&result, edge.curve(), &Plane::xy(), Projection::Normal);
@@ -426,7 +410,7 @@ mod tests {
         )
         .unwrap();
         let edge = model.edge(key).unwrap().reversed();
-        let result = project(&edge, &Plane::xy(), Projection::Normal, &options()).unwrap();
+        let result = project(&edge, &Plane::xy(), Projection::Normal).unwrap();
         let segment = only_segment(&result);
         assert!((segment.curve.start() - Point3::new(3.0, 1.0, 0.0)).norm() < 1e-9);
         assert!((segment.curve.end() - Point3::new(0.0, 0.0, 0.0)).norm() < 1e-9);
@@ -444,7 +428,7 @@ mod tests {
         .unwrap();
         let edge = model.edge(key).unwrap();
         for mode in [Projection::Normal, slanted()] {
-            let result = project(&edge, &tilted_plane(), mode, &options()).unwrap();
+            let result = project(&edge, &tilted_plane(), mode).unwrap();
             assert_eq!(result.chains.len(), 1);
             assert!(result.chains[0].closed());
             assert_matches_point_projection(&result, edge.curve(), &tilted_plane(), mode);
@@ -474,7 +458,7 @@ mod tests {
         let key = rectangle(&mut model, 1.0);
         let profile = model.profile(key).unwrap();
         for mode in [Projection::Normal, slanted()] {
-            let result = project(&profile, &Plane::xy(), mode, &options()).unwrap();
+            let result = project(&profile, &Plane::xy(), mode).unwrap();
             assert_eq!(result.chains.len(), 1);
             let chain = &result.chains[0];
             assert!(chain.closed());
@@ -504,7 +488,7 @@ mod tests {
         )
         .unwrap();
         let profile = model.profile(key).unwrap();
-        let result = project(&profile, &Plane::xy(), Projection::Normal, &options()).unwrap();
+        let result = project(&profile, &Plane::xy(), Projection::Normal).unwrap();
         assert_eq!(result.chains.len(), 1);
         let chain = &result.chains[0];
         assert_eq!(
@@ -533,7 +517,7 @@ mod tests {
         .unwrap();
         let profile = model.profile(key).unwrap();
         let mode = Projection::along(Vector3::new(0.0, 0.3, -1.0));
-        let result = project(&profile, &Plane::xy(), mode, &options()).unwrap();
+        let result = project(&profile, &Plane::xy(), mode).unwrap();
         assert_eq!(result.chains.len(), 1);
         let chain = &result.chains[0];
         assert_eq!(chain.segments.len(), 3);

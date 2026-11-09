@@ -1,16 +1,21 @@
-//! Projecting points onto geometry.
+//! Projecting points and curves onto geometry.
 //!
-//! Projection is a pure query: it reads geometry and writes nothing. A single
-//! entry point, [`project`], is dispatched by the [`Project`] trait on the
-//! (source, target) pair. The trait names the mode the pair understands
-//! ([`Project::Mode`]), what the target reports as touched ([`Project::Hit`])
-//! and the result ([`Project::Output`]).
+//! Projection is a pure query: it reads geometry and writes nothing. The
+//! target receives what is projected onto it: `plane.project(&curve, mode)`,
+//! `curve.project(&point, ())`. The [`Project`] trait is implemented on the
+//! target once per kind of source; [`project`] and [`project_with`] are the
+//! same call with the source first. The trait names the mode the pair
+//! understands ([`Project::Mode`]), what the target reports as touched
+//! ([`Project::Hit`]) and the result ([`Project::Output`]). `project_with`
+//! takes [`ProjectOptions`]; `project` uses the default ones.
 //!
 //! - A two-dimensional target (plane, surface) takes a [`Projection`]: the
 //!   nearest point, or the first hit of a half-line along a fixed
 //!   direction.
 //! - A curve or edge target has only the perpendicular, so its mode is `()` and
 //!   a directional projection onto it cannot be written.
+//! - An axis target is a line: a point has one nearest point on it and
+//!   nothing to refuse.
 //! - A face, or a [`FaceList`], is a surface that exists only where it is
 //!   trimmed: a projection landing outside the trim misses.
 //! - A curve, an edge or a profile projects onto a plane as a
@@ -36,6 +41,7 @@ mod error;
 mod mode;
 mod options;
 mod plane_carrier;
+mod point_axis;
 mod point_curve;
 mod point_edge;
 mod point_face;
@@ -53,5 +59,5 @@ pub use error::ProjectionError;
 pub use mode::Projection;
 pub use options::ProjectOptions;
 pub use point_face_list::FaceList;
-pub use project::{Project, project, project_point};
+pub use project::{Project, project, project_point, project_point_with, project_with};
 pub use result::{PointProjection, TargetParameters};

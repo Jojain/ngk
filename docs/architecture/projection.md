@@ -1,7 +1,7 @@
 # Projection
 
-Projecting points, curves, edges and profiles onto planes, surfaces, curves, edges
-and faces, under `src/projection/`. It sits next to [`measure`](measure.md): both
+Projecting points, curves, edges and profiles onto planes, surfaces, curves, axes,
+edges and faces, under `src/projection/`. It sits next to [`measure`](measure.md): both
 read geometry and the model and write neither, so projection opens no
 transaction. The decisions behind it are
 [ADR 0006](../adr/0006-projection-is-a-query-and-a-face-exists-only-where-trimmed.md);
@@ -13,15 +13,23 @@ turns a curve projection into profiles is a separate call,
 
 ## The `Project` trait
 
-There is one entry point, `project(source, target, mode, &options)`, which calls
-`Project<Target>::project` on the source. The trait is implemented once per
-(source, target) pair and has three associated types:
+The target receives what is projected onto it: `plane.project(&curve, mode)`,
+`curve.project(&point, ())`, `face_list.project(&profile, mode)`. `Project<Source>`
+is implemented on the target once per kind of source, and has three associated
+types:
 
 | Type | Meaning |
 |---|---|
 | `Mode` | How the source is carried. `Projection` for a two-dimensional target; `()` for a curve or an edge, which has only the perpendicular, so a directional projection onto one cannot be written. |
-| `Hit` | What the target reports as touched: `()` for pure geometry (`Plane`, `Surface`, `Curve`), `FaceKey` for a face or a `FaceList`, `EdgeKey` for an edge. |
+| `Hit` | What the target reports as touched: `()` for pure geometry (`Plane`, `Surface`, `Curve`, `Axis3`), `FaceKey` for a face or a `FaceList`, `EdgeKey` for an edge. |
 | `Output` | `PointProjection<Hit>` for a point, `CurveProjection<Hit>` for a curve, an edge or a profile. |
+
+Every implementation writes `project_with(&self, source, mode, &options)`. The
+trait provides `project(&self, source, mode)`, which is `project_with` with
+`ProjectOptions::default()`. The free functions take the source first and
+come in the same pair: `project(source, target, mode)` and
+`project_with(source, target, mode, &options)`. A mode is always passed, so a
+curve, edge or axis target takes `()`: `curve.project(&point, ())`.
 
 `Projection` is `Normal` (the nearest point on the target) or
 `Along(UnitVector3)` (the first hit of the half-line from the source in that
@@ -32,19 +40,20 @@ are equally near, and a hit that far behind the source's origin is still on the
 half-line. `FaceList::new(&model, &[FaceKey])` is a list of faces of one model,
 projected onto as a whole.
 
-`project_point` calls `project` for a point and keeps only the projected point. A
-result carries what the algorithm computed on the way and nothing more: the `(u, v)`
+`project_point(&point, &target, mode)` and `project_point_with(..., &options)` call
+`project` for a point and keep only the projected point. A result carries what the algorithm computed on the way and nothing more: the `(u, v)`
 of a projection onto a plane are not returned, as they follow from the point.
 
 ### Supported pairs
 
-N is `Projection::Normal`, D is `Projection::Along`, and the entries for a curve
-or an edge target are `()`.
+N is `Projection::Normal`, D is `Projection::Along`, and the entries for a curve,
+an axis or an edge target are `()`. Columns are the targets, which implement
+`Project<Source>`.
 
-| Source | `Plane` | `Surface` | `Face` | `FaceList` | `Curve` | `Edge` |
-|---|---|---|---|---|---|---|
-| `Point3` | N, D | N, D | N, D | N, D | perpendicular | perpendicular |
-| `Curve`, `TrimmedCurve`, `Edge`, `Profile` | N, D | not offered | N, D, planar support only | N, D, planar supports only | not offered | not offered |
+| Source | `Plane` | `Surface` | `Face` | `FaceList` | `Curve` | `Axis3` | `Edge` |
+|---|---|---|---|---|---|---|---|
+| `Point3` | N, D | N, D | N, D | N, D | perpendicular | perpendicular | perpendicular |
+| `Curve`, `TrimmedCurve`, `Edge`, `Profile` | N, D | not offered | N, D, planar support only | N, D, planar supports only | not offered | not offered | not offered |
 
 A curve onto a curve is not offered in any mode: in 3D a ray and a curve meet only
 by coincidence, and where one curve crosses another seen along a direction composes
@@ -91,6 +100,9 @@ caller can recompute them, the `distance` from the source to the point, and the
   others. A hit that touches without crossing is `GrazingRay`; a ray in the surface
   is `RayInSurface`.
 - **Curve** and **Edge**: the nearest point on the support curve, with the curve parameter.
+- **Axis**: the foot of the perpendicular on the axis's line. An axis is a line, so a
+  point has one nearest point on it and the projection never refuses. The parameter is
+  the signed distance of the foot from the origin along the direction.
 - **Face**, **FaceList**: as above, over the support the face has.
 
 `Ambiguous` is the same rule on every target, whatever its representation: a point
@@ -218,11 +230,18 @@ computed by the projection and are not stored by it. The facade
 ## Python
 
 `ngk.projection` exposes `project(source, target, along=None, tolerance=None)` and
-`project_point` (the same arguments for a point source, returning the `Point`). The
+`project_point` (the same arguments for a point source, returning the `Point`). Each
+target class has the same call as a method with itself as the target:
+`plane.project(source, along=None, tolerance=None)` on `Plane`, the other surface
+classes and `Face`; `project(source, tolerance=None)` on the curve classes, `Axis` and
+`Edge`, which take no direction. Both forms go through one Rust path. `Axis.project(point)`
+returns a `PointProjection` like any other curve target, its `parameters` the signed
+distance along the axis. The
 source is a `Point` (or a 3-tuple), a curve (`Line`, `Circle`, `Ellipse`, `Helix`,
 `NurbsCurve`, taken over its whole domain), an `Edge` or a `Profile`; the target is a
-`Plane`, another surface, a curve, an `Edge`, a `Face` or a list of faces of one model.
-`along` is a `Vector`; it is a `ValueError` for a curve or an edge target, and a pair
+`Plane`, another surface, a curve, an `Axis`, an `Edge`, a `Face` or a list of faces
+of one model (a list has no class, so only the free function takes it). `along` is a
+`Vector`; it is a `ValueError` for a curve, an axis or an edge target, and a pair
 outside the table is a `TypeError`.
 
 The result is a `PointProjection` or a `CurveProjection` with the same fields as in
@@ -240,9 +259,9 @@ returns one `ProjectionProfile` (the profile and the edge of each segment) per c
 
 | File | Holds |
 |---|---|
-| `project.rs`, `mode.rs`, `options.rs`, `error.rs` | The trait, `project`, `project_point`, `Projection`, `ProjectOptions`, `ProjectionError` |
+| `project.rs`, `mode.rs`, `options.rs`, `error.rs` | The trait, the free `project`/`project_with`/`project_point`/`project_point_with`, `Projection`, `ProjectOptions`, `ProjectionError` |
 | `result.rs`, `curve_result.rs` | `PointProjection`, `TargetParameters`; `CurveProjection`, chains, segments, `ChainEnd`, `Exactness` |
-| `point_plane.rs`, `point_surface.rs`, `point_curve.rs`, `point_edge.rs`, `point_face.rs`, `point_face_list.rs` | Point projections, one file per target |
+| `point_plane.rs`, `point_surface.rs`, `point_curve.rs`, `point_axis.rs`, `point_edge.rs`, `point_face.rs`, `point_face_list.rs` | Point projections, one file per target |
 | `ambiguity.rs` | Where the nearest point of an analytic target is not unique |
 | `plane_carrier.rs`, `curve_plane.rs` | The affine map onto a plane and the curve, edge and profile projections onto it |
 | `curve_walk.rs` | A source walked span by span, and the cutting of parts into chains |

@@ -234,16 +234,12 @@ mod tests {
     use crate::builders::sheets::add_sheet_from_faces;
     use crate::geometry::Plane;
     use crate::geometry::parameter::Fraction;
-    use crate::projection::{FaceList, ProjectOptions, Projection, project};
+    use crate::projection::{FaceList, Projection, project};
     use crate::topology::StandardPayload;
     use crate::topology::closed::Closeable;
     use crate::topology::shape_keys::FaceKey;
 
     type TestModel = Model<StandardPayload>;
-
-    fn options() -> ProjectOptions {
-        ProjectOptions::default()
-    }
 
     fn down() -> Projection {
         Projection::along(-Vector3::z())
@@ -275,7 +271,7 @@ mod tests {
         for mode in [Projection::Normal, down()] {
             let mut model = TestModel::new();
             let plane = inclined_plane();
-            let projection = project(&circle_over(1.0, 5.0), &plane, mode, &options()).unwrap();
+            let projection = project(&circle_over(1.0, 5.0), &plane, mode).unwrap();
             let added = add_profiles_from_projection(&mut model, &projection).unwrap();
             assert_eq!(added.profiles.len(), 1);
             let profile = model.profile(added.profiles[0].profile).unwrap();
@@ -311,7 +307,7 @@ mod tests {
         for mode in [Projection::Normal, down()] {
             let projection = {
                 let source = model.profile(rectangle).unwrap();
-                project(&source, &plane, mode, &options()).unwrap()
+                project(&source, &plane, mode).unwrap()
             };
             let added = add_profiles_from_projection(&mut model, &projection).unwrap();
             assert_eq!(added.profiles.len(), 1);
@@ -361,7 +357,7 @@ mod tests {
         let faces = [flat, hinged];
         let projection = {
             let list = FaceList::new(&model, &faces);
-            project(&circle_over(2.0, 5.0), &list, down(), &options()).unwrap()
+            project(&circle_over(2.0, 5.0), &list, down()).unwrap()
         };
         let added = add_profiles_from_projection(&mut model, &projection).unwrap();
         assert_eq!(added.profiles.len(), 1);
@@ -387,7 +383,7 @@ mod tests {
         let span = TrimmedCurve::segment(Point3::new(-1.0, 2.0, 3.0), Point3::new(5.0, 2.0, 3.0));
         let projection = {
             let face = model.face_unchecked(key);
-            project(&span, &face, down(), &options()).unwrap()
+            project(&span, &face, down()).unwrap()
         };
         assert_eq!(projection.chains.len(), 2);
         let added = add_profiles_from_projection(&mut model, &projection).unwrap();

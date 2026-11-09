@@ -7,7 +7,7 @@ use crate::topology::edge::Edge;
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::EdgeKey;
 
-impl<P: Payload> Project<Edge<'_, P>> for Point3 {
+impl<P: Payload> Project<Point3> for Edge<'_, P> {
     type Mode = ();
     type Hit = EdgeKey;
     type Output = PointProjection<EdgeKey>;
@@ -17,14 +17,14 @@ impl<P: Payload> Project<Edge<'_, P>> for Point3 {
     /// [`Miss`](ProjectionError::Miss), as the edge does not extend there.
     ///
     /// A point with several equally near points on the support is refused as for a curve.
-    fn project(
+    fn project_with(
         &self,
-        edge: &Edge<'_, P>,
+        source: &Point3,
         _mode: (),
         options: &ProjectOptions,
     ) -> Result<PointProjection<EdgeKey>, ProjectionError> {
-        let span = edge.trimmed_curve();
-        let nearest = self.project(span.curve(), (), options)?;
+        let span = self.trimmed_curve();
+        let nearest = span.curve().project_with(source, (), options)?;
         if !span.contains(nearest.point, options.tolerance) {
             return Err(ProjectionError::Miss);
         }
@@ -36,7 +36,7 @@ impl<P: Payload> Project<Edge<'_, P>> for Point3 {
                 span.native_parameter_at(nearest.point),
             )),
             distance: nearest.distance,
-            hit: edge.key(),
+            hit: self.key(),
         })
     }
 }
@@ -49,16 +49,12 @@ mod tests {
     use crate::projection::project;
     use crate::topology::StandardPayload;
 
-    fn options() -> ProjectOptions {
-        ProjectOptions::default()
-    }
-
     #[test]
     fn a_nearest_point_within_an_edge_lands_on_it() {
         let mut model = Model::<StandardPayload>::new();
         let key = add_line(&mut model, Point3::origin(), Point3::new(2.0, 0.0, 0.0)).unwrap();
         let edge = model.edge(key).unwrap();
-        let result = project(&Point3::new(1.0, 3.0, 0.0), &edge, (), &options()).unwrap();
+        let result = project(&Point3::new(1.0, 3.0, 0.0), &edge, ()).unwrap();
         assert!((result.point - Point3::new(1.0, 0.0, 0.0)).norm() < 1e-9);
         assert!((result.distance - 3.0).abs() < 1e-9);
         assert_eq!(result.hit, key);
@@ -75,7 +71,7 @@ mod tests {
         let key = add_line(&mut model, Point3::origin(), Point3::new(2.0, 0.0, 0.0)).unwrap();
         let edge = model.edge(key).unwrap();
         for x in [3.0, -1.0] {
-            let result = project(&Point3::new(x, 1.0, 0.0), &edge, (), &options());
+            let result = project(&Point3::new(x, 1.0, 0.0), &edge, ());
             assert!(matches!(result, Err(ProjectionError::Miss)));
         }
     }

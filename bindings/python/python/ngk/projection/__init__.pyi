@@ -1,6 +1,7 @@
 from typing import Literal
 
 from ..geometry import (
+    Axis,
     Circle,
     Cone,
     Cylinder,
@@ -139,17 +140,20 @@ class CurveProjection:
     def curves(self) -> list[TrimmedCurve]: ...
     def pcurves(self) -> list[TrimmedCurve2]: ...
 
-# Projects a point onto a plane, a surface, a curve, an edge, a face or a list of
-# faces of one model; a curve, an edge or a profile onto a plane, a face or a list
-# of faces. Without `along` the projection is the perpendicular; with it, the
-# first hit of the half-line from the source in that direction. A curve or an edge
-# has only the perpendicular: `along` for it raises ValueError. `tolerance` is the
+# Projects a point onto a plane, a surface, a curve, an axis, an edge, a face or a
+# list of faces of one model; a curve, an edge or a profile onto a plane, a face or
+# a list of faces. Without `along` the projection is the perpendicular; with it,
+# the first hit of the half-line from the source in that direction. A curve, an
+# axis or an edge has only the perpendicular: `along` for it raises ValueError.
+# Each target class (Plane, a surface, a curve, Axis, Edge, Face) also has a
+# `project(source, along=None, tolerance=None)` method doing the same with itself
+# as the target; a curve, an axis or an edge takes no `along`. `tolerance` is the
 # distance within which two points coincide. Raises ProjectionError or one of its
 # subclasses when the projection has no single answer, and TypeError for a pair
 # that is not projected.
 def project(
     source: Point | tuple[float, float, float] | Curve | Edge | Profile,
-    target: Plane | Surface | Curve | Edge | Face | list[Face],
+    target: Plane | Surface | Curve | Axis | Edge | Face | list[Face],
     along: Vector | None = None,
     tolerance: float | None = None,
 ) -> PointProjection | CurveProjection: ...
@@ -157,7 +161,7 @@ def project(
 # As `project` for a point source, keeping only the projected point.
 def project_point(
     source: Point | tuple[float, float, float],
-    target: Plane | Surface | Curve | Edge | Face | list[Face],
+    target: Plane | Surface | Curve | Axis | Edge | Face | list[Face],
     along: Vector | None = None,
     tolerance: float | None = None,
 ) -> Point: ...

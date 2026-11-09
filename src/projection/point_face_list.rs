@@ -33,7 +33,7 @@ impl<'a, P: Payload> FaceList<'a, P> {
     }
 }
 
-impl<P: Payload> Project<FaceList<'_, P>> for Point3 {
+impl<P: Payload> Project<Point3> for FaceList<'_, P> {
     type Mode = Projection;
     type Hit = FaceKey;
     type Output = PointProjection<FaceKey>;
@@ -53,20 +53,20 @@ impl<P: Payload> Project<FaceList<'_, P>> for Point3 {
     /// A face the point misses is skipped, and the list is a
     /// [`Miss`](ProjectionError::Miss) when it misses them all. Any other
     /// refusal of a face's support refuses the whole list.
-    fn project(
+    fn project_with(
         &self,
-        list: &FaceList<'_, P>,
+        source: &Point3,
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<PointProjection<FaceKey>, ProjectionError> {
         let mut candidates = Vec::new();
-        for &key in list.faces {
-            let face = list.model.face_unchecked(key);
+        for &key in self.faces {
+            let face = self.model.face_unchecked(key);
             let trim = FaceTrimDomain::new(&face, options.tolerance)?;
             let candidate = match mode {
-                Projection::Normal => nearest_point_in_face(self, &face, &trim, options),
+                Projection::Normal => nearest_point_in_face(source, &face, &trim, options),
                 Projection::Along(direction) => {
-                    wall_of_face(self, &face, &trim, direction, options)
+                    wall_of_face(source, &face, &trim, direction, options)
                 }
             };
             match candidate {
@@ -116,10 +116,6 @@ mod tests {
     use crate::projection::project;
     use crate::topology::StandardPayload;
 
-    fn options() -> ProjectOptions {
-        ProjectOptions::default()
-    }
-
     /// A 4 x 4 square in the plane `z = height`, with a hole when `hole`.
     fn plate(model: &mut Model<StandardPayload>, height: f64, hole: bool) -> FaceKey {
         let at = |x: f64, y: f64| Point3::new(x, y, height);
@@ -139,7 +135,7 @@ mod tests {
         for faces in [[low, high], [high, low]] {
             let list = FaceList::new(&model, &faces);
             for mode in [Projection::Normal, Projection::along(-Vector3::z())] {
-                let result = project(&source, &list, mode, &options()).unwrap();
+                let result = project(&source, &list, mode).unwrap();
                 assert_eq!(result.hit, high);
                 assert!((result.distance - 2.0).abs() < 1e-9);
             }
@@ -154,7 +150,7 @@ mod tests {
         let faces = [high, low];
         let list = FaceList::new(&model, &faces);
         let source = Point3::new(2.0, 2.0, 3.0);
-        let result = project(&source, &list, Projection::along(-Vector3::z()), &options()).unwrap();
+        let result = project(&source, &list, Projection::along(-Vector3::z())).unwrap();
         assert_eq!(result.hit, low);
         assert!((result.distance - 3.0).abs() < 1e-9);
     }
@@ -167,7 +163,7 @@ mod tests {
         let faces = [high, low];
         let list = FaceList::new(&model, &faces);
         let source = Point3::new(2.0, 2.0, 3.0);
-        let result = project(&source, &list, Projection::Normal, &options()).unwrap();
+        let result = project(&source, &list, Projection::Normal).unwrap();
         assert_eq!(result.hit, low);
     }
 
@@ -179,7 +175,7 @@ mod tests {
         let list = FaceList::new(&model, &faces);
         let source = Point3::new(9.0, 9.0, 1.0);
         for mode in [Projection::Normal, Projection::along(-Vector3::z())] {
-            let result = project(&source, &list, mode, &options());
+            let result = project(&source, &list, mode);
             assert!(matches!(result, Err(ProjectionError::Miss)));
         }
     }
@@ -188,7 +184,7 @@ mod tests {
     fn an_empty_list_misses() {
         let model = Model::<StandardPayload>::new();
         let list = FaceList::new(&model, &[]);
-        let result = project(&Point3::origin(), &list, Projection::Normal, &options());
+        let result = project(&Point3::origin(), &list, Projection::Normal);
         assert!(matches!(result, Err(ProjectionError::Miss)));
     }
 
@@ -201,7 +197,7 @@ mod tests {
         let faces = [floor, ceiling];
         let list = FaceList::new(&model, &faces);
         let source = Point3::new(2.0, 2.0, 1.0);
-        let result = project(&source, &list, Projection::Normal, &options());
+        let result = project(&source, &list, Projection::Normal);
         assert!(matches!(result, Err(ProjectionError::Ambiguous)));
     }
 }

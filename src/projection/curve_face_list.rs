@@ -70,35 +70,35 @@ impl<P: Payload> CurveSource for Profile<'_, P> {
 /// A list with a face that is not planar is refused with
 /// [`UnsupportedSurface`](ProjectionError::UnsupportedSurface), and one that
 /// takes no part of the source is a [`Miss`](ProjectionError::Miss).
-impl<S: CurveSource, P: Payload> Project<FaceList<'_, P>> for S {
+impl<S: CurveSource, P: Payload> Project<S> for FaceList<'_, P> {
     type Mode = Projection;
     type Hit = FaceKey;
     type Output = CurveProjection<FaceKey>;
 
-    fn project(
+    fn project_with(
         &self,
-        list: &FaceList<'_, P>,
+        source: &S,
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<CurveProjection<FaceKey>, ProjectionError> {
-        onto_faces(list.model(), list.faces(), &self.walk()?, mode, options)
+        onto_faces(self.model(), self.faces(), &source.walk()?, mode, options)
     }
 }
 
 /// A one-face list.
-impl<S: CurveSource, P: Payload> Project<Face<'_, P>> for S {
+impl<S: CurveSource, P: Payload> Project<S> for Face<'_, P> {
     type Mode = Projection;
     type Hit = FaceKey;
     type Output = CurveProjection<FaceKey>;
 
-    fn project(
+    fn project_with(
         &self,
-        face: &Face<'_, P>,
+        source: &S,
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<CurveProjection<FaceKey>, ProjectionError> {
-        let keys = [face.key()];
-        onto_faces(face.model(), &keys, &self.walk()?, mode, options)
+        let keys = [self.key()];
+        onto_faces(self.model(), &keys, &source.walk()?, mode, options)
     }
 }
 
@@ -250,10 +250,6 @@ mod tests {
 
     type TestModel = Model<StandardPayload>;
 
-    fn options() -> ProjectOptions {
-        ProjectOptions::default()
-    }
-
     fn down() -> Projection {
         Projection::along(-Vector3::z())
     }
@@ -354,7 +350,7 @@ mod tests {
             add_sheet_from_faces(&mut model, &[flat, hinged]).unwrap();
             let faces = [flat, hinged];
             let list = FaceList::new(&model, &faces);
-            let result = project(&circle_over(2.0, 5.0), &list, down(), &options()).unwrap();
+            let result = project(&circle_over(2.0, 5.0), &list, down()).unwrap();
             assert_eq!(result.chains.len(), 1);
             let chain = &result.chains[0];
             assert!(chain.closed());
@@ -386,7 +382,7 @@ mod tests {
         let faces = [flat, hinged];
         let list = FaceList::new(&model, &faces);
         let source = circle_over(1.1, 5.0);
-        let result = project(&source, &list, Projection::Normal, &options()).unwrap();
+        let result = project(&source, &list, Projection::Normal).unwrap();
         assert_eq!(result.chains.len(), 2);
         for chain in &result.chains {
             assert_eq!((chain.start, chain.end), (ChainEnd::Jump, ChainEnd::Jump));
@@ -406,13 +402,7 @@ mod tests {
         add_sheet_from_faces(&mut model, &[flat, hinged]).unwrap();
         let faces = [flat, hinged];
         let list = FaceList::new(&model, &faces);
-        let result = project(
-            &circle_over(2.0, 5.0),
-            &list,
-            Projection::Normal,
-            &options(),
-        )
-        .unwrap();
+        let result = project(&circle_over(2.0, 5.0), &list, Projection::Normal).unwrap();
         assert_eq!(result.chains.len(), 1);
         let chain = &result.chains[0];
         assert_eq!((chain.start, chain.end), (ChainEnd::Miss, ChainEnd::Miss));
@@ -433,7 +423,7 @@ mod tests {
             let hinged = hinged_face(&mut model, rising);
             let faces = [flat, hinged];
             let list = FaceList::new(&model, &faces);
-            let result = project(&circle_over(x, 5.0), &list, mode, &options()).unwrap();
+            let result = project(&circle_over(x, 5.0), &list, mode).unwrap();
             assert_eq!(result.chains.len(), 2);
             for chain in &result.chains {
                 assert_eq!((chain.start, chain.end), (ChainEnd::Jump, ChainEnd::Jump));
@@ -449,7 +439,7 @@ mod tests {
         let flat = flat_square(&mut model);
         let face = model.face_unchecked(flat);
         for mode in both_modes() {
-            let result = project(&circle_over(0.0, 5.0), &face, mode, &options()).unwrap();
+            let result = project(&circle_over(0.0, 5.0), &face, mode).unwrap();
             assert_eq!(result.chains.len(), 1);
             let chain = &result.chains[0];
             assert_eq!((chain.start, chain.end), (ChainEnd::Miss, ChainEnd::Miss));
@@ -464,7 +454,7 @@ mod tests {
         let flat = flat_square(&mut model);
         let face = model.face_unchecked(flat);
         for mode in both_modes() {
-            let result = project(&circle_over(1.0, 5.0), &face, mode, &options()).unwrap();
+            let result = project(&circle_over(1.0, 5.0), &face, mode).unwrap();
             assert_eq!(result.chains.len(), 1);
             assert!(result.chains[0].closed());
             assert_eq!(result.chains[0].segments.len(), 1);
@@ -479,7 +469,7 @@ mod tests {
         let faces = [flat];
         let list = FaceList::new(&model, &faces);
         for mode in both_modes() {
-            let result = project(&circle_over(9.0, 5.0), &list, mode, &options());
+            let result = project(&circle_over(9.0, 5.0), &list, mode);
             assert!(matches!(result, Err(ProjectionError::Miss)));
         }
     }
@@ -494,7 +484,7 @@ mod tests {
         let face = model.face_unchecked(key);
         let span = TrimmedCurve::segment(Point3::new(-1.0, 2.0, 3.0), Point3::new(5.0, 2.0, 3.0));
         for mode in both_modes() {
-            let result = project(&span, &face, mode, &options()).unwrap();
+            let result = project(&span, &face, mode).unwrap();
             assert_eq!(result.chains.len(), 2);
             for chain in &result.chains {
                 assert_eq!((chain.start, chain.end), (ChainEnd::Miss, ChainEnd::Miss));
@@ -516,7 +506,7 @@ mod tests {
         let upper = plate(&mut model, 1.0, 2.0);
         let faces = [lower, upper];
         let list = FaceList::new(&model, &faces);
-        let result = project(&circle_over(2.0, 3.0), &list, down(), &options()).unwrap();
+        let result = project(&circle_over(2.0, 3.0), &list, down()).unwrap();
         assert_eq!(result.chains.len(), 2);
         for chain in &result.chains {
             assert_eq!((chain.start, chain.end), (ChainEnd::Jump, ChainEnd::Jump));
@@ -553,7 +543,7 @@ mod tests {
         let faces = [flat, slope];
         let list = FaceList::new(&model, &faces);
         let span = TrimmedCurve::segment(Point3::new(0.5, 1.0, 5.0), Point3::new(3.5, 1.0, 5.0));
-        let result = project(&span, &list, down(), &options()).unwrap();
+        let result = project(&span, &list, down()).unwrap();
         // The planes cross on the line x = 2, z = 0; the flat one is above to
         // its left, the sloping one to its right.
         assert_eq!(result.chains.len(), 2);
@@ -572,12 +562,7 @@ mod tests {
         let upper = plate(&mut model, 2.0, 4.0);
         let faces = [lower, upper];
         let list = FaceList::new(&model, &faces);
-        let result = project(
-            &circle_over(2.0, 1.0),
-            &list,
-            Projection::Normal,
-            &options(),
-        );
+        let result = project(&circle_over(2.0, 1.0), &list, Projection::Normal);
         assert!(matches!(result, Err(ProjectionError::Ambiguous)));
     }
 
@@ -591,11 +576,11 @@ mod tests {
         // A segment running along the direction of projection has a point for
         // image.
         let upright = TrimmedCurve::segment(Point3::new(1.0, 1.0, 0.5), Point3::new(1.0, 1.0, 1.5));
-        let result = project(&upright, &list, Projection::Normal, &options());
+        let result = project(&upright, &list, Projection::Normal);
         assert!(matches!(result, Err(ProjectionError::DegenerateImage)));
         // A slanted one climbs through the mid-plane z = 1 half way along.
         let slant = TrimmedCurve::segment(Point3::new(1.0, 1.0, 0.5), Point3::new(3.0, 1.0, 1.5));
-        let result = project(&slant, &list, Projection::Normal, &options()).unwrap();
+        let result = project(&slant, &list, Projection::Normal).unwrap();
         assert_eq!(result.chains.len(), 2);
         assert_eq!(result.chains[0].segments[0].hit, lower);
         assert_eq!(result.chains[1].segments[0].hit, upper);
@@ -610,9 +595,9 @@ mod tests {
         let flat = flat_square(&mut model);
         let face = model.face_unchecked(flat);
         let below = TrimmedCurve::segment(Point3::new(0.5, 1.0, -2.0), Point3::new(1.5, 1.0, -2.0));
-        let result = project(&below, &face, down(), &options());
+        let result = project(&below, &face, down());
         assert!(matches!(result, Err(ProjectionError::Miss)));
-        let result = project(&below, &face, Projection::Normal, &options()).unwrap();
+        let result = project(&below, &face, Projection::Normal).unwrap();
         assert_eq!(result.chains[0].segments[0].hit, flat);
     }
 
@@ -623,7 +608,7 @@ mod tests {
         let faces = [cylinder.end_cap, cylinder.laterals[0].face];
         let list = FaceList::new(&model, &faces);
         for mode in both_modes() {
-            let result = project(&circle_over(1.0, 5.0), &list, mode, &options());
+            let result = project(&circle_over(1.0, 5.0), &list, mode);
             assert!(matches!(
                 result,
                 Err(ProjectionError::UnsupportedSurface {
@@ -653,14 +638,14 @@ mod tests {
         let face = model.face_unchecked(flat);
         for mode in both_modes() {
             let profile = model.profile(closed).unwrap();
-            let result = project(&profile, &face, mode, &options()).unwrap();
+            let result = project(&profile, &face, mode).unwrap();
             assert_eq!(result.chains.len(), 1);
             assert!(result.chains[0].closed());
             assert_eq!(result.chains[0].segments.len(), 4);
             assert_continuous(&result.chains[0]);
 
             let profile = model.profile(open).unwrap();
-            let result = project(&profile, &face, mode, &options()).unwrap();
+            let result = project(&profile, &face, mode).unwrap();
             assert_eq!(result.chains.len(), 1);
             let chain = &result.chains[0];
             assert_eq!(
@@ -679,7 +664,7 @@ mod tests {
         let key = add_circle(&mut model, plane, 0.5).unwrap();
         let edge = model.edge(key).unwrap();
         let face = model.face_unchecked(flat);
-        let result = project(&edge, &face, down(), &options()).unwrap();
+        let result = project(&edge, &face, down()).unwrap();
         assert_eq!(result.chains.len(), 1);
         assert!(result.chains[0].closed());
         assert_eq!(
@@ -695,10 +680,10 @@ mod tests {
         let faces = [flat];
         let list = FaceList::new(&model, &faces);
         let curve = circle_over(1.0, 5.0).curve().clone();
-        let result = project(&curve, &list, down(), &options()).unwrap();
+        let result = project(&curve, &list, down()).unwrap();
         assert!(result.chains[0].closed());
         let line = Curve::line(Point3::origin(), Point3::new(1.0, 0.0, 1.0));
-        let result = project(&line, &list, down(), &options());
+        let result = project(&line, &list, down());
         assert!(matches!(result, Err(ProjectionError::UnboundedSource)));
     }
 }

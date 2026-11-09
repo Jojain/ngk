@@ -1,8 +1,9 @@
 use pyo3::prelude::*;
 
 use crate::geometry::parameter::NativeParam;
-use crate::geometry::{Circle, Ellipse, Helix, Line};
+use crate::geometry::{Circle, Curve, Ellipse, Helix, Line};
 
+use super::super::projection::{Target, project_onto};
 use super::{PyAxis3, PyPlane, PyPoint3, point};
 
 #[pyclass(name = "Line", module = "ngk")]
@@ -13,6 +14,24 @@ pub(crate) struct PyLine {
 
 #[pymethods]
 impl PyLine {
+    /// Receives a point projected onto it, as
+    /// `ngk.projection.project(source, self, tolerance=tolerance)`.
+    #[pyo3(signature = (source, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Curve(Curve::Line(self.line.clone())),
+            &None,
+            tolerance,
+        )
+    }
+
     #[getter]
     fn start(&self) -> PyPoint3 {
         point(self.line.origin())
@@ -40,6 +59,24 @@ pub(crate) struct PyCircle {
 
 #[pymethods]
 impl PyCircle {
+    /// Receives a point projected onto it, as
+    /// `ngk.projection.project(source, self, tolerance=tolerance)`.
+    #[pyo3(signature = (source, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Curve(Curve::Circle(self.circle.clone())),
+            &None,
+            tolerance,
+        )
+    }
+
     #[getter]
     fn plane(&self) -> PyPlane {
         PyPlane {
@@ -69,6 +106,24 @@ pub(crate) struct PyEllipse {
 
 #[pymethods]
 impl PyEllipse {
+    /// Receives a point projected onto it, as
+    /// `ngk.projection.project(source, self, tolerance=tolerance)`.
+    #[pyo3(signature = (source, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Curve(Curve::Ellipse(self.ellipse.clone())),
+            &None,
+            tolerance,
+        )
+    }
+
     #[getter]
     fn major_radius(&self) -> f64 {
         self.ellipse.major_radius()
@@ -100,6 +155,24 @@ pub(crate) struct PyHelix {
 
 #[pymethods]
 impl PyHelix {
+    /// Receives a point projected onto it, as
+    /// `ngk.projection.project(source, self, tolerance=tolerance)`.
+    #[pyo3(signature = (source, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Curve(Curve::Helix(self.helix.clone())),
+            &None,
+            tolerance,
+        )
+    }
+
     #[new]
     fn new(axis: PyAxis3, radius: f64, pitch: f64) -> Self {
         Self {

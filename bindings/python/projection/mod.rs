@@ -11,9 +11,10 @@ use pyo3::types::PyModule;
 
 use super::geometry::{PyPoint3, PyVector3};
 use super::modeling::{EXTENSION_QUALNAME, new_submodule};
-use dispatch::{Outcome, Source, Target, options, run};
+use dispatch::{Outcome, Source, options, run};
 
 pub(crate) use curve::PyCurveProjection;
+pub(crate) use dispatch::Target;
 pub(crate) use errors::chain_message;
 
 pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -39,12 +40,12 @@ pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// Projects `source` onto `target`.
 ///
-/// A point projects onto a plane, a surface, a curve, an edge, a face or a list of
-/// faces and gives a `PointProjection`. A curve, an edge or a profile projects onto
+/// A point projects onto a plane, a surface, a curve, an axis, an edge, a face or a
+/// list of faces and gives a `PointProjection`. A curve, an edge or a profile projects onto
 /// a plane, a face or a list of faces and gives a `CurveProjection`.
 ///
 /// Without `along` the projection is the perpendicular; with it, the first hit of
-/// the half-line from the source in that direction. A curve or an edge has only
+/// the half-line from the source in that direction. A curve, an axis or an edge has only
 /// the perpendicular, so `along` is refused for them. `tolerance` is the distance
 /// within which two points coincide.
 #[pyfunction]
@@ -56,10 +57,21 @@ fn project(
     along: Option<PyVector3>,
     tolerance: Option<f64>,
 ) -> PyResult<PyObject> {
+    project_onto(py, source, &Target::extract(target)?, &along, tolerance)
+}
+
+/// Projects `source` onto an extracted `target`: the path `ngk.projection.project`
+/// and the `project` method of every target class share.
+pub(crate) fn project_onto(
+    py: Python<'_>,
+    source: &Bound<'_, PyAny>,
+    target: &Target,
+    along: &Option<PyVector3>,
+    tolerance: Option<f64>,
+) -> PyResult<PyObject> {
     let source = Source::extract(source)?;
-    let target = Target::extract(target)?;
     let options = options(tolerance)?;
-    match run(py, &source, &target, &along, &options)? {
+    match run(py, &source, target, along, &options)? {
         Outcome::Point(projection) => Ok(Py::new(py, projection)?.into_py(py)),
         Outcome::Curve(projection) => Ok(Py::new(py, projection)?.into_py(py)),
     }

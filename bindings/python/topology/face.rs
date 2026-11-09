@@ -10,6 +10,7 @@ use crate::topology::StandardPayload;
 use super::super::geometry::PyFrame;
 use super::super::geometry::{PyVector3, surface_to_py, unit_vector};
 use super::super::measurement::{self, PyBoundingBox, PySurfaceProperties};
+use super::super::projection::{Target, project_onto};
 use super::edge::PyEdge;
 use super::profile::PyLoop;
 use super::vertex::PyVertex;
@@ -23,6 +24,19 @@ pub struct PyFace {
 }
 
 entity_methods!(PyFace, SharedFace<StandardPayload>, "face", {
+    /// Receives `source` projected onto it, as
+    /// `ngk.projection.project(source, self, along, tolerance)`.
+    #[pyo3(signature = (source, along=None, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        along: Option<PyVector3>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(py, source, &Target::Face(self.clone()), &along, tolerance)
+    }
+
     /// This entity, copied into a model holding nothing else.
     fn isolated(&self) -> PyResult<Self> {
         Ok(Self::from_inner(self.inner.isolated().map_err(py_err)?))

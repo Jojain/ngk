@@ -10,6 +10,7 @@ use crate::topology::StandardPayload;
 use super::super::geometry::PyFrame;
 use super::super::geometry::curve_to_py;
 use super::super::measurement::{self, PyBoundingBox, PyLinearProperties};
+use super::super::projection::{Target, project_onto};
 use super::face::PyFace;
 use super::sheet::PySheet;
 use super::vertex::PyVertex;
@@ -23,6 +24,18 @@ pub struct PyEdge {
 }
 
 entity_methods!(PyEdge, SharedEdge<StandardPayload>, "edge", {
+    /// Receives a point projected onto it, as
+    /// `ngk.projection.project(source, self, tolerance=tolerance)`.
+    #[pyo3(signature = (source, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(py, source, &Target::Edge(self.clone()), &None, tolerance)
+    }
+
     /// This entity, copied into a model holding nothing else.
     fn isolated(&self) -> PyResult<Self> {
         Ok(Self::from_inner(self.inner.isolated().map_err(py_err)?))

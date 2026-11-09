@@ -5,7 +5,7 @@ use super::project::Project;
 use super::result::PointProjection;
 use crate::geometry::{ANGULAR_TOLERANCE, Plane, Point3};
 
-impl Project<Plane> for Point3 {
+impl Project<Point3> for Plane {
     type Mode = Projection;
     type Hit = ();
     type Output = PointProjection<()>;
@@ -17,16 +17,16 @@ impl Project<Plane> for Point3 {
     /// [`Miss`](ProjectionError::Miss), or a
     /// [`RayInSurface`](ProjectionError::RayInSurface) when the point lies in
     /// the plane.
-    fn project(
+    fn project_with(
         &self,
-        plane: &Plane,
+        source: &Point3,
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<PointProjection<()>, ProjectionError> {
-        let normal = plane.normal();
-        let offset = (self - plane.origin()).dot(&normal);
+        let normal = self.normal();
+        let offset = (source - self.origin()).dot(&normal);
         let (point, distance) = match mode {
-            Projection::Normal => (self - *normal * offset, offset.abs()),
+            Projection::Normal => (source - *normal * offset, offset.abs()),
             Projection::Along(direction) => {
                 let slope = direction.dot(&normal);
                 if slope.abs() <= ANGULAR_TOLERANCE {
@@ -41,7 +41,7 @@ impl Project<Plane> for Point3 {
                     return Err(ProjectionError::Miss);
                 }
                 let t = t.max(0.0);
-                (self + *direction * t, t)
+                (source + *direction * t, t)
             }
         };
         Ok(PointProjection {
@@ -70,12 +70,10 @@ mod tests {
 
     #[test]
     fn normal_projection_drops_the_perpendicular() {
-        let options = ProjectOptions::default();
         let result = project(
             &Point3::new(3.0, 4.0, 5.0),
             &Plane::xy(),
             Projection::Normal,
-            &options,
         )
         .unwrap();
         assert!((result.point - Point3::new(3.0, 4.0, 0.0)).norm() < 1e-12);
@@ -86,13 +84,7 @@ mod tests {
     #[test]
     fn normal_projection_onto_a_tilted_plane_lands_on_the_plane() {
         let plane = tilted_plane();
-        let result = project(
-            &Point3::new(1.0, 2.0, 3.0),
-            &plane,
-            Projection::Normal,
-            &ProjectOptions::default(),
-        )
-        .unwrap();
+        let result = project(&Point3::new(1.0, 2.0, 3.0), &plane, Projection::Normal).unwrap();
         assert!(((result.point - plane.origin()).dot(&plane.normal())).abs() < 1e-12);
         assert!(
             ((result.point - Point3::new(1.0, 2.0, 3.0)).norm() - result.distance).abs() < 1e-12
@@ -105,7 +97,6 @@ mod tests {
             &Point3::new(1.0, 2.0, 4.0),
             &Plane::xy(),
             Projection::along(Vector3::new(1.0, 0.0, -1.0)),
-            &ProjectOptions::default(),
         )
         .unwrap();
         assert!((result.point - Point3::new(5.0, 2.0, 0.0)).norm() < 1e-12);
@@ -118,7 +109,6 @@ mod tests {
             &Point3::new(0.0, 0.0, 4.0),
             &Plane::xy(),
             Projection::along(Vector3::z()),
-            &ProjectOptions::default(),
         );
         assert!(matches!(result, Err(ProjectionError::Miss)));
     }
@@ -129,7 +119,6 @@ mod tests {
             &Point3::new(0.0, 0.0, 4.0),
             &Plane::xy(),
             Projection::along(Vector3::x()),
-            &ProjectOptions::default(),
         );
         assert!(matches!(result, Err(ProjectionError::Miss)));
     }
@@ -140,7 +129,6 @@ mod tests {
             &Point3::new(1.0, 1.0, 0.0),
             &Plane::xy(),
             Projection::along(Vector3::x()),
-            &ProjectOptions::default(),
         );
         assert!(matches!(result, Err(ProjectionError::RayInSurface)));
     }
@@ -148,12 +136,7 @@ mod tests {
     #[test]
     fn a_point_in_the_plane_projects_to_itself() {
         let point = Point3::new(1.0, 1.0, 0.0);
-        let found = project_point(
-            &point,
-            &Plane::xy(),
-            Projection::along(Vector3::z()),
-            &ProjectOptions::default(),
-        );
+        let found = project_point(&point, &Plane::xy(), Projection::along(Vector3::z()));
         assert!((found.unwrap() - point).norm() < 1e-12);
     }
 }

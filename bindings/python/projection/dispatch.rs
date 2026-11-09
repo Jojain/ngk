@@ -2,16 +2,16 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 
 use crate::binding_common::explore::SharedModel;
-use crate::geometry::{Curve, Plane, Point3, Surface};
+use crate::geometry::{Axis3, Curve, Plane, Point3, Surface};
 use crate::projection::{
-    CurveProjection, FaceList, PointProjection, Project, ProjectOptions, Projection, project,
+    CurveProjection, FaceList, PointProjection, Project, ProjectOptions, Projection, project_with,
 };
 use crate::topology::StandardPayload;
 use crate::topology::edge::Edge;
 use crate::topology::profile::Profile;
 use crate::topology::shape_keys::{EdgeKey, FaceKey};
 
-use super::super::geometry::{PyPoint3, PyVector3, curve_from_py, surface_from_py};
+use super::super::geometry::{PyAxis3, PyPoint3, PyVector3, curve_from_py, surface_from_py};
 use super::super::topology::{PyEdge, PyFace, PyProfile};
 use super::curve::PyCurveProjection;
 use super::errors::from_core;
@@ -58,7 +58,8 @@ impl Source {
 }
 
 /// What is projected onto.
-pub(super) enum Target {
+pub(crate) enum Target {
+    Axis(Axis3),
     Plane(Plane),
     Surface(Surface),
     Curve(Curve),
@@ -73,6 +74,8 @@ impl Target {
             Ok(Self::Face(face))
         } else if let Ok(edge) = object.extract::<PyEdge>() {
             Ok(Self::Edge(edge))
+        } else if let Ok(axis) = object.extract::<PyAxis3>() {
+            Ok(Self::Axis(axis.axis))
         } else if let Some(surface) = surface_from_py(object) {
             Ok(match surface {
                 Surface::Plane(plane) => Self::Plane(plane),
@@ -84,7 +87,7 @@ impl Target {
             Ok(Self::Faces(faces))
         } else {
             Err(PyTypeError::new_err(format!(
-                "cannot project onto a {}: expected a plane, a surface, a curve, an edge, a face or a list of faces",
+                "cannot project onto a {}: expected a plane, a surface, a curve, an axis, an edge, a face or a list of faces",
                 type_name(object)
             )))
         }
@@ -92,6 +95,7 @@ impl Target {
 
     fn kind(&self) -> &'static str {
         match self {
+            Self::Axis(_) => "axis",
             Self::Plane(_) => "plane",
             Self::Surface(_) => "surface",
             Self::Curve(_) => "curve",
@@ -215,25 +219,27 @@ fn carry<T, Hit>(
     hit: impl Fn(Python<'_>, &Hit) -> PyResult<PyObject>,
 ) -> PyResult<Outcome>
 where
-    T: ?Sized,
-    Curve: Project<T, Mode = Projection, Output = CurveProjection<Hit>>,
-    for<'a> Edge<'a, StandardPayload>: Project<T, Mode = Projection, Output = CurveProjection<Hit>>,
-    for<'a> Profile<'a, StandardPayload>:
-        Project<T, Mode = Projection, Output = CurveProjection<Hit>>,
+    T: Project<Curve, Mode = Projection, Output = CurveProjection<Hit>>
+        + for<'a> Project<Edge<'a, StandardPayload>, Mode = Projection, Output = CurveProjection<Hit>>
+        + for<'a> Project<
+            Profile<'a, StandardPayload>,
+            Mode = Projection,
+            Output = CurveProjection<Hit>,
+        > + ?Sized,
 {
     let (result, source_model) = match source {
-        Source::Curve(curve) => (project(curve, target, mode, options), None),
+        Source::Curve(curve) => (project_with(curve, target, mode, options), None),
         Source::Edge(edge) => {
             let view = edge.inner.view().map_err(explore_error)?;
             (
-                project(&view, target, mode, options),
+                project_with(&view, target, mode, options),
                 Some(edge.inner.model()),
             )
         }
         Source::Profile(profile) => {
             let view = profile.inner.view().map_err(explore_error)?;
             (
-                project(&view, target, mode, options),
+                project_with(&view, target, mode, options),
                 Some(profile.inner.model()),
             )
         }
@@ -253,27 +259,37 @@ pub(super) fn run(
 ) -> PyResult<Outcome> {
     let no_hit = |py: Python<'_>, _: &()| -> PyResult<PyObject> { Ok(py.None()) };
     match (source, target) {
-        (Source::Point(point), Target::Plane(plane)) => {
-            let mode = surface_mode(along)?;
-            point_outcome(py, project(point, plane, mode, options), |_| Ok(py.None()))
-        }
-        (Source::Point(point), Target::Surface(surface)) => {
-            let mode = surface_mode(along)?;
+        (Source::Point(point), Target::Axis(axis)) => {
+            perpendicular_only(along, "axis")?;
             point_outcome(
                 py,
-                project(point, surface, mode, options),
+                project_with(point, axis, (), options),
                 |_| Ok(py.None()),
             )
         }
+        (Source::Point(point), Target::Plane(plane)) => {
+            let mode = surface_mode(along)?;
+            point_outcome(py, project_with(point, plane, mode, options), |_| {
+                Ok(py.None())
+            })
+        }
+        (Source::Point(point), Target::Surface(surface)) => {
+            let mode = surface_mode(along)?;
+            point_outcome(py, project_with(point, surface, mode, options), |_| {
+                Ok(py.None())
+            })
+        }
         (Source::Point(point), Target::Curve(curve)) => {
             perpendicular_only(along, "curve")?;
-            point_outcome(py, project(point, curve, (), options), |_| Ok(py.None()))
+            point_outcome(py, project_with(point, curve, (), options), |_| {
+                Ok(py.None())
+            })
         }
         (Source::Point(point), Target::Edge(edge)) => {
             perpendicular_only(along, "edge")?;
             let view = edge.inner.view().map_err(explore_error)?;
             let model = edge.inner.model();
-            point_outcome(py, project(point, &view, (), options), |key| {
+            point_outcome(py, project_with(point, &view, (), options), |key| {
                 edge_hit(py, &model, *key)
             })
         }
@@ -281,7 +297,7 @@ pub(super) fn run(
             let mode = surface_mode(along)?;
             let view = face.inner.view().map_err(explore_error)?;
             let model = face.inner.model();
-            point_outcome(py, project(point, &view, mode, options), |key| {
+            point_outcome(py, project_with(point, &view, mode, options), |key| {
                 face_hit(py, &model, *key)
             })
         }
@@ -289,7 +305,7 @@ pub(super) fn run(
             let mode = surface_mode(along)?;
             let (model, keys) = face_list(faces)?;
             let list = FaceList::new(model.model(), &keys);
-            point_outcome(py, project(point, &list, mode, options), |key| {
+            point_outcome(py, project_with(point, &list, mode, options), |key| {
                 face_hit(py, &model, *key)
             })
         }

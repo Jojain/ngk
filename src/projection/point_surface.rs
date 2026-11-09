@@ -17,7 +17,7 @@ use crate::geometry::{
 /// better than that.
 const GRAZING_SINE: f64 = 1.0e-6;
 
-impl Project<Surface> for Point3 {
+impl Project<Point3> for Surface {
     type Mode = Projection;
     type Hit = ();
     type Output = PointProjection<()>;
@@ -34,15 +34,15 @@ impl Project<Surface> for Point3 {
     /// the point, for the surfaces the kernel intersects with a line in closed
     /// form (plane, sphere, cylinder, cone) and refuses the others. A surface
     /// only behind the point is a [`Miss`](ProjectionError::Miss).
-    fn project(
+    fn project_with(
         &self,
-        surface: &Surface,
+        source: &Point3,
         mode: Projection,
         options: &ProjectOptions,
     ) -> Result<PointProjection<()>, ProjectionError> {
         match mode {
-            Projection::Normal => project_normal(self, surface, options),
-            Projection::Along(direction) => project_along(self, surface, direction, options),
+            Projection::Normal => project_normal(source, self, options),
+            Projection::Along(direction) => project_along(source, self, direction, options),
         }
     }
 }
@@ -192,19 +192,9 @@ mod tests {
         ))
     }
 
-    fn options() -> ProjectOptions {
-        ProjectOptions::default()
-    }
-
     #[test]
     fn normal_projection_onto_a_sphere_lands_on_the_radial_point() {
-        let result = project(
-            &Point3::new(5.0, 0.0, 0.0),
-            &sphere(),
-            Projection::Normal,
-            &options(),
-        )
-        .unwrap();
+        let result = project(&Point3::new(5.0, 0.0, 0.0), &sphere(), Projection::Normal).unwrap();
         assert!((result.point - Point3::new(2.0, 0.0, 0.0)).norm() < 1e-9);
         assert!((result.distance - 3.0).abs() < 1e-9);
         assert!(matches!(
@@ -215,44 +205,27 @@ mod tests {
 
     #[test]
     fn normal_projection_from_inside_a_sphere_lands_on_the_same_radial_point() {
-        let result = project(
-            &Point3::new(0.0, 0.5, 0.0),
-            &sphere(),
-            Projection::Normal,
-            &options(),
-        )
-        .unwrap();
+        let result = project(&Point3::new(0.0, 0.5, 0.0), &sphere(), Projection::Normal).unwrap();
         assert!((result.point - Point3::new(0.0, 2.0, 0.0)).norm() < 1e-9);
         assert!((result.distance - 1.5).abs() < 1e-9);
     }
 
     #[test]
     fn normal_projection_from_the_centre_of_a_sphere_is_ambiguous() {
-        let result = project(&Point3::origin(), &sphere(), Projection::Normal, &options());
+        let result = project(&Point3::origin(), &sphere(), Projection::Normal);
         assert!(matches!(result, Err(ProjectionError::Ambiguous)));
     }
 
     #[test]
     fn normal_projection_onto_a_cylinder_lands_on_the_radial_point() {
-        let result = project(
-            &Point3::new(0.0, 5.0, 3.0),
-            &cylinder(),
-            Projection::Normal,
-            &options(),
-        )
-        .unwrap();
+        let result = project(&Point3::new(0.0, 5.0, 3.0), &cylinder(), Projection::Normal).unwrap();
         assert!((result.point - Point3::new(0.0, 2.0, 3.0)).norm() < 1e-9);
         assert!((result.distance - 3.0).abs() < 1e-9);
     }
 
     #[test]
     fn normal_projection_from_a_cylinders_axis_is_ambiguous() {
-        let result = project(
-            &Point3::new(0.0, 0.0, 1.0),
-            &cylinder(),
-            Projection::Normal,
-            &options(),
-        );
+        let result = project(&Point3::new(0.0, 0.0, 1.0), &cylinder(), Projection::Normal);
         assert!(matches!(result, Err(ProjectionError::Ambiguous)));
     }
 
@@ -263,7 +236,7 @@ mod tests {
         };
         let nurbs = Surface::Nurbs(cylinder.to_nurbs().unwrap());
         let on_axis = Point3::new(0.0, 0.0, 1.0);
-        let result = project(&on_axis, &nurbs, Projection::Normal, &options());
+        let result = project(&on_axis, &nurbs, Projection::Normal);
         assert!(matches!(result, Err(ProjectionError::Ambiguous)));
     }
 
@@ -273,7 +246,7 @@ mod tests {
             unreachable!()
         };
         let nurbs = Surface::Nurbs(sphere.to_nurbs().unwrap());
-        let result = project(&Point3::origin(), &nurbs, Projection::Normal, &options());
+        let result = project(&Point3::origin(), &nurbs, Projection::Normal);
         assert!(matches!(result, Err(ProjectionError::Ambiguous)));
     }
 
@@ -284,7 +257,7 @@ mod tests {
         };
         let nurbs = Surface::Nurbs(cylinder.to_nurbs().unwrap());
         for source in [Point3::new(0.0, 5.0, 1.0), Point3::new(0.001, 0.0, 1.0)] {
-            let result = project(&source, &nurbs, Projection::Normal, &options()).unwrap();
+            let result = project(&source, &nurbs, Projection::Normal).unwrap();
             let uv = nurbs.param_at(source).unwrap();
             assert!((result.point - nurbs.point_at(uv.x, uv.y)).norm() < 1e-12);
         }
@@ -297,7 +270,7 @@ mod tests {
         };
         let nurbs = Surface::Nurbs(sphere.to_nurbs().unwrap());
         for source in [Point3::new(0.0, 0.5, 0.0), Point3::new(0.0, 0.0, 0.01)] {
-            let result = project(&source, &nurbs, Projection::Normal, &options()).unwrap();
+            let result = project(&source, &nurbs, Projection::Normal).unwrap();
             let uv = nurbs.param_at(source).unwrap();
             assert!((result.point - nurbs.point_at(uv.x, uv.y)).norm() < 1e-12);
         }
@@ -309,34 +282,18 @@ mod tests {
             Curve::circle(Plane::xy(), 2.0),
             Vector3::z() * 4.0,
         ));
-        let on_axis = project(
-            &Point3::new(0.0, 0.0, 1.0),
-            &ruled,
-            Projection::Normal,
-            &options(),
-        );
+        let on_axis = project(&Point3::new(0.0, 0.0, 1.0), &ruled, Projection::Normal);
         assert!(matches!(on_axis, Err(ProjectionError::Ambiguous)));
-        let off_axis = project(
-            &Point3::new(0.0, 5.0, 1.0),
-            &ruled,
-            Projection::Normal,
-            &options(),
-        )
-        .unwrap();
+        let off_axis = project(&Point3::new(0.0, 5.0, 1.0), &ruled, Projection::Normal).unwrap();
         assert!((off_axis.point - Point3::new(0.0, 2.0, 1.0)).norm() < 1e-9);
     }
 
     #[test]
     fn normal_projection_from_a_cones_axis_is_ambiguous_except_at_its_apex() {
         let cone = Surface::Cone(Cone::new(Frame::xyz(), 0.0, 0.4));
-        let on_axis = project(
-            &Point3::new(0.0, 0.0, 2.0),
-            &cone,
-            Projection::Normal,
-            &options(),
-        );
+        let on_axis = project(&Point3::new(0.0, 0.0, 2.0), &cone, Projection::Normal);
         assert!(matches!(on_axis, Err(ProjectionError::Ambiguous)));
-        let apex = project(&Point3::origin(), &cone, Projection::Normal, &options()).unwrap();
+        let apex = project(&Point3::origin(), &cone, Projection::Normal).unwrap();
         assert!(apex.distance < 1e-9);
     }
 
@@ -346,7 +303,6 @@ mod tests {
             &Point3::new(-5.0, 0.0, 0.0),
             &sphere(),
             Projection::along(Vector3::x()),
-            &options(),
         )
         .unwrap();
         assert!((result.point - Point3::new(-2.0, 0.0, 0.0)).norm() < 1e-9);
@@ -359,7 +315,6 @@ mod tests {
             &Point3::new(1.0, 0.0, 0.0),
             &sphere(),
             Projection::along(Vector3::x()),
-            &options(),
         )
         .unwrap();
         assert!((result.point - Point3::new(2.0, 0.0, 0.0)).norm() < 1e-9);
@@ -372,7 +327,6 @@ mod tests {
             &Point3::new(-5.0, 3.0, 0.0),
             &sphere(),
             Projection::along(Vector3::x()),
-            &options(),
         );
         assert!(matches!(result, Err(ProjectionError::Miss)));
     }
@@ -383,7 +337,6 @@ mod tests {
             &Point3::new(5.0, 0.0, 0.0),
             &sphere(),
             Projection::along(Vector3::x()),
-            &options(),
         );
         assert!(matches!(result, Err(ProjectionError::Miss)));
     }
@@ -394,7 +347,6 @@ mod tests {
             &Point3::new(-5.0, 2.0, 0.0),
             &sphere(),
             Projection::along(Vector3::x()),
-            &options(),
         );
         assert!(matches!(result, Err(ProjectionError::GrazingRay)));
     }
@@ -405,7 +357,6 @@ mod tests {
             &Point3::new(-5.0, 2.0, 1.0),
             &cylinder(),
             Projection::along(Vector3::x()),
-            &options(),
         );
         assert!(matches!(result, Err(ProjectionError::GrazingRay)));
     }
@@ -416,7 +367,6 @@ mod tests {
             &Point3::new(2.0, 0.0, -1.0),
             &cylinder(),
             Projection::along(Vector3::z()),
-            &options(),
         );
         assert!(matches!(result, Err(ProjectionError::RayInSurface)));
     }
@@ -427,7 +377,6 @@ mod tests {
             &Point3::new(-5.0, 0.0, 1.5),
             &cylinder(),
             Projection::along(Vector3::x()),
-            &options(),
         )
         .unwrap();
         assert!((result.point - Point3::new(-2.0, 0.0, 1.5)).norm() < 1e-9);
@@ -444,7 +393,6 @@ mod tests {
             &Point3::new(1.0, 2.0, 4.0),
             &surface,
             Projection::along(-Vector3::z()),
-            &options(),
         )
         .unwrap();
         assert!((result.point - Point3::new(1.0, 2.0, 0.0)).norm() < 1e-9);
@@ -458,7 +406,6 @@ mod tests {
             &Point3::new(-9.0, 0.0, 0.0),
             &torus,
             Projection::along(Vector3::x()),
-            &options(),
         );
         assert!(matches!(
             result,

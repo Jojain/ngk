@@ -1,8 +1,11 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::geometry::{Cone, Cylinder, Plane, RuledSurface, Sphere, SurfaceOfRevolution, Torus};
+use crate::geometry::{
+    Cone, Cylinder, Plane, RuledSurface, Sphere, Surface, SurfaceOfRevolution, Torus,
+};
 
+use super::super::projection::{Target, project_onto};
 use super::{PyPoint3, PyVector3, curve_to_py, point, unit_vector, vector};
 
 #[pyclass(name = "Plane", module = "ngk")]
@@ -13,6 +16,25 @@ pub(crate) struct PyPlane {
 
 #[pymethods]
 impl PyPlane {
+    /// Receives `source` projected onto it, as
+    /// `ngk.projection.project(source, self, along, tolerance)`.
+    #[pyo3(signature = (source, along=None, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        along: Option<PyVector3>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Plane(self.plane.clone()),
+            &along,
+            tolerance,
+        )
+    }
+
     #[new]
     #[pyo3(signature = (origin, x_dir, normal))]
     fn new(origin: PyPoint3, x_dir: PyVector3, normal: PyVector3) -> PyResult<Self> {
@@ -77,6 +99,25 @@ pub(crate) struct PyCylinder {
 
 #[pymethods]
 impl PyCylinder {
+    /// Receives `source` projected onto it, as
+    /// `ngk.projection.project(source, self, along, tolerance)`.
+    #[pyo3(signature = (source, along=None, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        along: Option<PyVector3>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Surface(Surface::Cylinder(self.cylinder.clone())),
+            &along,
+            tolerance,
+        )
+    }
+
     #[getter]
     fn origin(&self) -> PyPoint3 {
         point(self.cylinder.origin())
@@ -118,6 +159,25 @@ pub(crate) struct PySphere {
 
 #[pymethods]
 impl PySphere {
+    /// Receives `source` projected onto it, as
+    /// `ngk.projection.project(source, self, along, tolerance)`.
+    #[pyo3(signature = (source, along=None, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        along: Option<PyVector3>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Surface(Surface::Sphere(self.sphere.clone())),
+            &along,
+            tolerance,
+        )
+    }
+
     #[getter]
     fn origin(&self) -> PyPoint3 {
         point(self.sphere.frame().origin)
@@ -159,6 +219,25 @@ pub(crate) struct PyCone {
 
 #[pymethods]
 impl PyCone {
+    /// Receives `source` projected onto it, as
+    /// `ngk.projection.project(source, self, along, tolerance)`.
+    #[pyo3(signature = (source, along=None, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        along: Option<PyVector3>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Surface(Surface::Cone(self.cone.clone())),
+            &along,
+            tolerance,
+        )
+    }
+
     #[getter]
     fn origin(&self) -> PyPoint3 {
         point(self.cone.frame().origin)
@@ -214,6 +293,25 @@ pub(crate) struct PyTorus {
 
 #[pymethods]
 impl PyTorus {
+    /// Receives `source` projected onto it, as
+    /// `ngk.projection.project(source, self, along, tolerance)`.
+    #[pyo3(signature = (source, along=None, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        along: Option<PyVector3>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Surface(Surface::Torus(self.torus.clone())),
+            &along,
+            tolerance,
+        )
+    }
+
     #[getter]
     fn origin(&self) -> PyPoint3 {
         point(self.torus.frame().origin)
@@ -264,6 +362,25 @@ pub(crate) struct PyRuledSurface {
 
 #[pymethods]
 impl PyRuledSurface {
+    /// Receives `source` projected onto it, as
+    /// `ngk.projection.project(source, self, along, tolerance)`.
+    #[pyo3(signature = (source, along=None, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        along: Option<PyVector3>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Surface(Surface::Ruled(self.surface.clone())),
+            &along,
+            tolerance,
+        )
+    }
+
     #[getter]
     fn curve(&self, py: Python<'_>) -> PyResult<PyObject> {
         curve_to_py(py, self.surface.curve().clone())
@@ -295,6 +412,25 @@ pub(crate) struct PySurfaceOfRevolution {
 
 #[pymethods]
 impl PySurfaceOfRevolution {
+    /// Receives `source` projected onto it, as
+    /// `ngk.projection.project(source, self, along, tolerance)`.
+    #[pyo3(signature = (source, along=None, tolerance=None))]
+    fn project(
+        &self,
+        py: Python<'_>,
+        source: &Bound<'_, PyAny>,
+        along: Option<PyVector3>,
+        tolerance: Option<f64>,
+    ) -> PyResult<PyObject> {
+        project_onto(
+            py,
+            source,
+            &Target::Surface(Surface::Revolution(self.surface.clone())),
+            &along,
+            tolerance,
+        )
+    }
+
     #[getter]
     fn curve(&self, py: Python<'_>) -> PyResult<PyObject> {
         curve_to_py(py, self.surface.curve().clone())

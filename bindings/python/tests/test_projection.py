@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from ngk.geometry import Plane, Point, Vector
+from ngk.geometry import Axis, Plane, Point, Vector
 from ngk.modeling import edges, faces, profiles, sheets
 from ngk.projection import (
     CurveProjection,
@@ -128,3 +128,76 @@ def test_a_circle_over_a_sheet_fold_is_one_closed_chain_of_two_segments():
         point = vertex.point
         assert point.x == pytest.approx(2.0, abs=1e-7)
         assert point.z == pytest.approx(0.0, abs=1e-7)
+
+
+def test_a_plane_receives_a_point_like_the_free_function():
+    plane = inclined_plane()
+    point = Point(1.0, 1.0, 5.0)
+
+    method = plane.project(point)
+    free = project(point, plane)
+    assert isinstance(method, PointProjection)
+    assert method.point.as_tuple() == pytest.approx(free.point.as_tuple())
+    assert method.distance == pytest.approx(free.distance)
+
+    shadow = plane.project(point, along=DOWN)
+    assert shadow.point.as_tuple() == pytest.approx((1.0, 1.0, 2.0))
+    with pytest.raises(MissError):
+        Plane.xy().project(Point(0.0, 0.0, 1.0), along=Vector(0.0, 0.0, 1.0))
+
+
+def test_a_plane_receives_a_curve_as_a_curve_projection():
+    plane = inclined_plane()
+    projection = plane.project(circle_over(1.0, 5.0), along=DOWN)
+    assert isinstance(projection, CurveProjection)
+    assert len(projection.chains) == 1
+    assert projection.chains[0].closed
+
+
+def test_a_tolerance_reaches_the_target_method():
+    with pytest.raises(ValueError, match="tolerance"):
+        Plane.xy().project(Point(0.0, 0.0, 1.0), tolerance=-1.0)
+
+
+def test_an_edge_and_a_curve_receive_a_point_perpendicularly():
+    edge = edges.line((0.0, 0.0, 0.0), (2.0, 0.0, 0.0))
+    nearest = edge.project(Point(1.0, 3.0, 0.0))
+    assert nearest.point.as_tuple() == pytest.approx((1.0, 0.0, 0.0))
+    assert nearest.hit == edge
+
+    curve_nearest = edge.curve.project((1.0, 3.0, 0.0))
+    assert curve_nearest.point.as_tuple() == pytest.approx((1.0, 0.0, 0.0))
+    assert curve_nearest.hit is None
+
+    with pytest.raises(TypeError):
+        edge.project(Point(1.0, 3.0, 0.0), DOWN)
+    with pytest.raises(TypeError, match="not supported"):
+        edge.project(circle_over(1.0, 1.0))
+
+
+def test_a_face_receives_a_point_and_a_curve():
+    face = faces.polygon([(0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (4.0, 4.0, 0.0), (0.0, 4.0, 0.0)])
+    landed = face.project(Point(1.0, 1.0, 2.0))
+    assert landed.point.as_tuple() == pytest.approx((1.0, 1.0, 0.0))
+    assert landed.hit == face
+    with pytest.raises(MissError):
+        face.project(Point(9.0, 1.0, 2.0), along=DOWN)
+
+    projection = face.project(circle_over(2.0, 3.0), along=DOWN)
+    assert isinstance(projection, CurveProjection)
+    assert projection.chains[0].segments[0].hit == face
+
+
+def test_an_axis_receives_a_point_as_a_point_projection():
+    axis = Axis(Point(1.0, 0.0, 0.0), Vector(0.0, 1.0, 0.0))
+    foot = axis.project(Point(4.0, 3.0, 2.0))
+    assert isinstance(foot, PointProjection)
+    assert foot.point.as_tuple() == pytest.approx((1.0, 3.0, 0.0))
+    assert foot.distance == pytest.approx(math.sqrt(13.0))
+    assert foot.parameters == pytest.approx(3.0)
+    assert foot.hit is None
+
+    free = project(Point(4.0, 3.0, 2.0), axis)
+    assert free.point.as_tuple() == pytest.approx(foot.point.as_tuple())
+    with pytest.raises(ValueError, match="only the perpendicular"):
+        project(Point(4.0, 3.0, 2.0), axis, along=DOWN)
