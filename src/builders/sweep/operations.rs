@@ -626,7 +626,7 @@ fn frenet_frame(
 
 /// The frame at `point` whose `x` runs out from `axis` and whose `z` along it.
 fn axial_frame(axis: Axis3, point: Point3, fraction: Fraction) -> Result<Frame, SweepError> {
-    let radial = UnitVector3::try_new(point - axis.project(point), LINEAR_TOLERANCE).ok_or(
+    let radial = UnitVector3::try_new(point - axis.closest_point(point), LINEAR_TOLERANCE).ok_or(
         SweepError::SpineMeetsTheAxis {
             fraction: fraction.value(),
         },
@@ -866,7 +866,7 @@ fn add_rounded_triangle_wall<P: Payload>(
 }
 
 fn corner_arc(axis: Axis3, point: Point3, angle: f64) -> Curve {
-    let projected = axis.project(point);
+    let projected = axis.closest_point(point);
     let direction = if angle < 0.0 {
         -axis.direction
     } else {
@@ -894,7 +894,7 @@ fn rounded_wall_shape(
         .collect::<Vec<_>>();
     let radial_vectors = control_points
         .iter()
-        .map(|point| *point - axis.project(*point))
+        .map(|point| *point - axis.closest_point(*point))
         .collect::<Vec<_>>();
     let Some(reference) = radial_vectors
         .iter()
@@ -913,8 +913,8 @@ fn rounded_wall_shape(
     }
     let start = curve.point_at(0.0);
     let end = curve.point_at(1.0);
-    let start_on_axis = (start - axis.project(start)).norm() <= LINEAR_TOLERANCE;
-    let end_on_axis = (end - axis.project(end)).norm() <= LINEAR_TOLERANCE;
+    let start_on_axis = (start - axis.closest_point(start)).norm() <= LINEAR_TOLERANCE;
+    let end_on_axis = (end - axis.closest_point(end)).norm() <= LINEAR_TOLERANCE;
     match (start_on_axis, end_on_axis) {
         (true, true) => Err(SweepError::SectionMeetsTheTurningAxis { key }),
         (true, false) => Ok(RoundedWallShape::Triangle {

@@ -255,7 +255,7 @@ impl<P: Payload> VertexContext<'_, P> {
     /// between its ends.
     pub(crate) fn on_edge(&self, edge: EdgeKey, point: Point3) -> Result<(), BlendError> {
         let span = self.model.edge_unchecked(edge).trimmed_curve();
-        if (span.curve().project(point) - point).norm() > LINEAR_TOLERANCE.sqrt() {
+        if (span.curve().closest_point(point) - point).norm() > LINEAR_TOLERANCE.sqrt() {
             return Err(self.unsupported("a rail does not meet the edge beside it"));
         }
         let along = span.parameter_at(point).value();

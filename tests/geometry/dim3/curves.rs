@@ -219,13 +219,13 @@ fn circle_curve_projects_onto_the_nearest_circle_point() {
     ));
 
     assert_point_near(
-        curve.project(Point3::new(5.0, 0.0, 3.0)),
+        curve.closest_point(Point3::new(5.0, 0.0, 3.0)),
         Point3::new(2.5, 0.0, 0.0),
     );
     // A point on the axis is equidistant from every point of the circle, so
     // the plane's x direction is returned to keep the result deterministic.
     assert_point_near(
-        curve.project(Point3::new(0.0, 0.0, 4.0)),
+        curve.closest_point(Point3::new(0.0, 0.0, 4.0)),
         Point3::new(2.5, 0.0, 0.0),
     );
 }
@@ -241,7 +241,7 @@ fn nurbs_curve_projects_onto_the_nearest_curve_point() {
     // The NURBS projection is a sampled seed refined by Newton, so it converges
     // to the analytic answer rather than reproducing it exactly.
     assert_vector_near(
-        curve.project(Point3::new(5.0, 0.0, 3.0)).coords,
+        curve.closest_point(Point3::new(5.0, 0.0, 3.0)).coords,
         Point3::new(2.5, 0.0, 0.0).coords,
         1.0e-7,
     );
@@ -313,7 +313,7 @@ fn helix_parameter_and_projection_are_consistent() {
     let point = helix.point_at(parameter);
 
     assert!((helix.parameter_at(point).value() - parameter.value()).abs() <= 1.0e-10);
-    assert_point_near(helix.project(point), point);
+    assert_point_near(helix.closest_point(point), point);
 }
 
 #[test]

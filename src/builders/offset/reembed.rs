@@ -491,7 +491,7 @@ pub(crate) fn plan_faces<P: Payload>(
                 let on_every_smooth_edge = incident.iter().all(|incidence| {
                     matches!(kinds[&incidence.edge], EdgeMove::Sharp(..)) || {
                         let curve = &moves.curves[&incidence.edge];
-                        (curve.project(point) - point).norm() <= MEET_TOLERANCE
+                        (curve.closest_point(point) - point).norm() <= MEET_TOLERANCE
                     }
                 });
                 if !on_every_smooth_edge || !on_every_surface(point, &moved_faces) {
@@ -509,7 +509,7 @@ pub(crate) fn plan_faces<P: Payload>(
                 // support, nearest where it was.
                 let (_, _, edge) = sharp[0];
                 let curve = &moves.curves[&edge];
-                curve.project(old)
+                curve.closest_point(old)
             } else {
                 meet_surfaces(vertex, old, &moved_faces)?
             }
@@ -813,7 +813,7 @@ fn sharp_edge_curve<P: Payload>(
     let branch = supports
         .into_iter()
         .map(|curve| {
-            let near = curve.project(target);
+            let near = curve.closest_point(target);
             ((near - target).norm(), curve)
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))

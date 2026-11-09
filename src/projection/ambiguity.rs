@@ -52,7 +52,7 @@ pub(super) fn has_several_nearest_points_on_surface(
         // The ring of feet from a point on the axis collapses to one only when
         // the nearest point is itself on the axis.
         Surface::Revolution(revolution) => {
-            let from_axis = |p: Point3| (p - revolution.axis.project(p)).norm();
+            let from_axis = |p: Point3| (p - revolution.axis.closest_point(p)).norm();
             from_axis(point) <= tol && from_axis(foot) > tol
         }
     }

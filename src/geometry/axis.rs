@@ -20,7 +20,7 @@ impl<const D: usize> Axis<D> {
     pub fn from_points(start: Point<f64, D>, end: Point<f64, D>) -> Self {
         Self::new(start, end - start)
     }
-    pub fn project(&self, point: Point<f64, D>) -> Point<f64, D> {
+    pub fn closest_point(&self, point: Point<f64, D>) -> Point<f64, D> {
         let dir = self.direction;
         let len_sq = dir.norm_squared();
         if len_sq < LINEAR_TOLERANCE_SQUARED {

@@ -585,7 +585,7 @@ impl Meridian {
     fn of(profile: &Curve, axis: &crate::geometry::Axis3, start: f64, end: f64) -> Option<Self> {
         let samples = [0.0, 0.5, 1.0].map(|fraction| {
             let point = profile.point_at(NativeParam::new(start + fraction * (end - start)));
-            point - axis.project(point)
+            point - axis.closest_point(point)
         });
         let radial = samples
             .into_iter()

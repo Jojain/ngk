@@ -466,7 +466,7 @@ pub(crate) fn revolved_support(curve: &Curve, axis: Axis3) -> RevolvedSupport {
     let Some((profile_origin, profile_direction)) = linear_profile(curve) else {
         return RevolvedSupport::generic(curve, axis);
     };
-    let radial = profile_origin - axis.project(profile_origin);
+    let radial = profile_origin - axis.closest_point(profile_origin);
     let start_radius = radial.norm();
     // The profile is straight, so both its distance from the axis and its
     // height along it are affine in the profile parameter; these are the two
@@ -1733,7 +1733,7 @@ pub(crate) fn sew_revolved_alpha2_edges<P: Payload>(
 /// The circle parameterization follows the requested turn direction. Its edge
 /// endpoints select the swept section of that support.
 fn revolve_circle_curve(axis: Axis3, point: Point3, angle: Rad64) -> Curve {
-    let projected = axis.project(point);
+    let projected = axis.closest_point(point);
     let radius = distance(&projected, &point);
     let direction = if angle.val() < 0.0 {
         -axis.direction
@@ -1764,7 +1764,7 @@ fn validate_revolvable_radii(axis: Axis3, source: &RevolvedSourceEdge) -> Result
 }
 
 fn revolve_radius(axis: Axis3, point: Point3) -> f64 {
-    distance(&axis.project(point), &point)
+    distance(&axis.closest_point(point), &point)
 }
 
 /// Bounds the actual edge span, including the interior of curved edges.
@@ -1792,7 +1792,7 @@ fn validate_meridian_side(source: &RevolvedSourceEdge, axis: Axis3) -> Result<()
     let points = section_control_points(source)?;
     let radial = points
         .iter()
-        .map(|point| *point - axis.project(*point))
+        .map(|point| *point - axis.closest_point(*point))
         .collect::<Vec<_>>();
     let Some(reference) = radial
         .iter()
@@ -1975,7 +1975,7 @@ fn revolve_sweep_direction<P: Payload>(axis: Axis3, face: &Face<'_, P>) -> Vecto
         })
         .find(|point| revolve_radius(axis, *point) > LINEAR_TOLERANCE)
         .unwrap_or(axis.origin);
-    axis.direction.cross(&(point - axis.project(point)))
+    axis.direction.cross(&(point - axis.closest_point(point)))
 }
 
 /// Makes every face of a revolved shell point away from the material.

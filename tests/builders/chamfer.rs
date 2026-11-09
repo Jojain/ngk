@@ -535,7 +535,7 @@ fn chamfer_bevels_the_ellipse_where_an_oblique_boss_meets_a_block() {
             "{on_wall:?}"
         );
         for rail in [on_block, on_wall] {
-            let setback = (rail - edge.curve().project(rail)).norm();
+            let setback = (rail - edge.curve().closest_point(rail)).norm();
             assert!(
                 (setback - distance).abs() < SKIN_TOLERANCE,
                 "a rail point at {u} lies {setback} from the edge"

@@ -209,7 +209,7 @@ impl PyAxis3 {
     }
 
     fn project(&self, point_to_project: PyPoint3) -> PyPoint3 {
-        point(self.axis.project(point_to_project.point))
+        point(self.axis.closest_point(point_to_project.point))
     }
 }
 

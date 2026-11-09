@@ -58,7 +58,7 @@ pub trait CurveGeometry: Sized {
     fn param_at(&self, point: Point3) -> NativeParam;
 
     /// The point on the curve nearest `point`.
-    fn project(&self, point: Point3) -> Point3;
+    fn closest_point(&self, point: Point3) -> Point3;
 
     /// Arc length between two parameters, in distance units.
     fn length(&self, t0: NativeParam, t1: NativeParam) -> f64;
@@ -116,7 +116,7 @@ pub trait Curve2Geometry: Sized {
     fn param_at(&self, point: Point2) -> NativeParam;
 
     /// The point on the support nearest `point`.
-    fn project(&self, point: Point2) -> Point2;
+    fn closest_point(&self, point: Point2) -> Point2;
 
     /// Arc length between two native parameters, in parameter-space units.
     fn length(&self, t0: NativeParam, t1: NativeParam) -> f64;

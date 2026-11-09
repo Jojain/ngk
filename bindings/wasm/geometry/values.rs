@@ -133,7 +133,7 @@ impl WasmAxis3 {
 
     /// Orthogonally projects a point onto the axis.
     pub fn project(&self, point_to_project: &WasmPoint3) -> WasmPoint3 {
-        point(self.axis.project(point_to_project.inner))
+        point(self.axis.closest_point(point_to_project.inner))
     }
 }
 

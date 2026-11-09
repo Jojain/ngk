@@ -52,7 +52,7 @@ fn ellipse_curve_forwards_domain_periodicity_and_projection() {
     assert_eq!(curve.domain(), Interval::new(0.0, TAU));
     assert_eq!(curve.periodicity(), Periodicity::Periodic(TAU));
     assert_point_near(
-        curve.project(Point3::new(1.0, 8.0, 9.0)),
+        curve.closest_point(Point3::new(1.0, 8.0, 9.0)),
         ellipse.point_at(NativeParam::new(0.0)),
     );
 }

@@ -1005,7 +1005,7 @@ impl SurfaceOfRevolution {
         let p = self.curve.point_at(NativeParam::new(u));
 
         // Project p onto the axis, then get the radial component
-        let proj = self.axis.project(p);
+        let proj = self.axis.closest_point(p);
         let radial = p - proj;
 
         // Rotate the radial part by angle v around the axis
@@ -1039,7 +1039,7 @@ impl SurfaceOfRevolution {
     /// A point on the axis has no radial direction to measure, and needs none:
     /// every sweep names it, so zero is as good an answer as any.
     fn sweep_angle(&self, point: Point3) -> f64 {
-        let radial = point - self.axis.project(point);
+        let radial = point - self.axis.closest_point(point);
         let Some(reference) = self.meridian_direction() else {
             return 0.0;
         };
@@ -1064,7 +1064,7 @@ impl SurfaceOfRevolution {
                 let profile = self
                     .curve
                     .point_at(domain.at(Fraction::new(index as f64 / MERIDIAN_SAMPLES as f64)));
-                profile - self.axis.project(profile)
+                profile - self.axis.closest_point(profile)
             })
             .max_by(|a, b| a.norm().total_cmp(&b.norm()))
             .filter(|radial| radial.norm() > LINEAR_TOLERANCE)
@@ -1108,7 +1108,7 @@ impl SurfaceOfRevolution {
 
             for point in curve.control_points().iter() {
                 let p = point.to_cartesian();
-                let proj = self.axis.project(p);
+                let proj = self.axis.closest_point(p);
                 let radial = p - proj;
                 let revolved = proj + rotation * (radial * radial_scale);
                 points.push(HPoint::from_cartesian(
@@ -1799,13 +1799,13 @@ impl SurfaceGeometry for SurfaceOfRevolution {
         let around_axis = self
             .axis
             .direction
-            .cross(&(point - self.axis.project(point)));
+            .cross(&(point - self.axis.closest_point(point)));
         (point, along_profile, around_axis)
     }
 
     fn is_degenerate_at(&self, u: f64, v: f64) -> bool {
         let point = self.point_at(u, v);
-        (point - self.axis.project(point)).norm() <= LINEAR_TOLERANCE
+        (point - self.axis.closest_point(point)).norm() <= LINEAR_TOLERANCE
     }
 
     /// The profile parameters at which the profile meets the axis.

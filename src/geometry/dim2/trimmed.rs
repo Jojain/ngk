@@ -324,7 +324,7 @@ impl<C: Curve2Geometry + Clone> Trimmed<C> {
     /// parameters at the span's own speed so it means the same thing on a long
     /// span as on a short one.
     pub fn contains(&self, point: Point2, tolerance: f64) -> bool {
-        (self.curve.project(point) - point).norm() <= tolerance
+        (self.curve.closest_point(point) - point).norm() <= tolerance
             && self.interval.contains(
                 self.native_parameter_at(point),
                 self.parameter_slack(tolerance),

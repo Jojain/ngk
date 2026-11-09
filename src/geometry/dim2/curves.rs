@@ -115,11 +115,11 @@ impl Curve2 {
     }
 
     /// Returns the point on the support nearest `point`.
-    pub fn project(&self, point: Point2) -> Point2 {
+    pub fn closest_point(&self, point: Point2) -> Point2 {
         match self {
-            Curve2::Line(line) => line.project(point),
-            Curve2::Circle(circle) => circle.project(point),
-            Curve2::Ellipse(ellipse) => ellipse.project(point),
+            Curve2::Line(line) => line.closest_point(point),
+            Curve2::Circle(circle) => circle.closest_point(point),
+            Curve2::Ellipse(ellipse) => ellipse.closest_point(point),
             Curve2::Nurbs(curve) => curve.point_at(closest_sample_parameter(curve, point).value()),
         }
     }
@@ -359,7 +359,7 @@ impl Line2 {
         NativeParam::new((point - self.origin).dot(&self.direction) / self.scale)
     }
 
-    pub fn project(&self, point: Point2) -> Point2 {
+    pub fn closest_point(&self, point: Point2) -> Point2 {
         self.point_at(self.param_at(point))
     }
 
@@ -473,7 +473,7 @@ impl Circle2 {
         NativeParam::new(radial.dot(&self.y_dir).atan2(radial.dot(&self.x_dir)))
     }
 
-    pub fn project(&self, point: Point2) -> Point2 {
+    pub fn closest_point(&self, point: Point2) -> Point2 {
         let radial = point - self.center;
         if radial.norm() <= LINEAR_TOLERANCE {
             return self.center + *self.x_dir * self.radius;
@@ -601,7 +601,7 @@ impl Ellipse2 {
         NativeParam::new(y.atan2(x))
     }
 
-    pub fn project(&self, point: Point2) -> Point2 {
+    pub fn closest_point(&self, point: Point2) -> Point2 {
         self.point_at(self.param_at(point))
     }
 
@@ -664,8 +664,8 @@ impl Curve2Geometry for Line2 {
         Line2::param_at(self, point)
     }
 
-    fn project(&self, point: Point2) -> Point2 {
-        Line2::project(self, point)
+    fn closest_point(&self, point: Point2) -> Point2 {
+        Line2::closest_point(self, point)
     }
 
     fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
@@ -706,8 +706,8 @@ impl Curve2Geometry for Circle2 {
         Circle2::param_at(self, point)
     }
 
-    fn project(&self, point: Point2) -> Point2 {
-        Circle2::project(self, point)
+    fn closest_point(&self, point: Point2) -> Point2 {
+        Circle2::closest_point(self, point)
     }
 
     fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
@@ -748,8 +748,8 @@ impl Curve2Geometry for Ellipse2 {
         Ellipse2::param_at(self, point)
     }
 
-    fn project(&self, point: Point2) -> Point2 {
-        Ellipse2::project(self, point)
+    fn closest_point(&self, point: Point2) -> Point2 {
+        Ellipse2::closest_point(self, point)
     }
 
     fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
@@ -795,8 +795,8 @@ impl Curve2Geometry for Curve2 {
         Curve2::param_at(self, point)
     }
 
-    fn project(&self, point: Point2) -> Point2 {
-        Curve2::project(self, point)
+    fn closest_point(&self, point: Point2) -> Point2 {
+        Curve2::closest_point(self, point)
     }
 
     fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {

@@ -118,7 +118,7 @@ fn section_points<P: Payload>(
 /// The point of `rail` in the plane through `origin` square to `normal`,
 /// searched from the rail's point nearest `origin`.
 fn rail_in_plane(rail: &Curve, origin: Point3, normal: Vector3<f64>) -> Option<Point3> {
-    let mut t = rail.parameter_at(rail.project(origin)).value();
+    let mut t = rail.parameter_at(rail.closest_point(origin)).value();
     for _ in 0..MAX_STEPS {
         let point = rail.point_at(NativeParam::new(t));
         let offset = (point - origin).dot(&normal);

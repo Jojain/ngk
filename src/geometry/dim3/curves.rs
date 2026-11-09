@@ -259,13 +259,13 @@ impl Curve {
     }
 
     /// Returns the point on the curve nearest `point`.
-    pub fn project(&self, point: Point3) -> Point3 {
+    pub fn closest_point(&self, point: Point3) -> Point3 {
         match self {
-            Curve::Line(curve) => curve.project(point),
-            Curve::Circle(curve) => curve.project(point),
-            Curve::Ellipse(curve) => curve.project(point),
-            Curve::Helix(curve) => curve.project(point),
-            Curve::Nurbs(curve) => curve.project(point),
+            Curve::Line(curve) => curve.closest_point(point),
+            Curve::Circle(curve) => curve.closest_point(point),
+            Curve::Ellipse(curve) => curve.closest_point(point),
+            Curve::Helix(curve) => curve.closest_point(point),
+            Curve::Nurbs(curve) => curve.closest_point(point),
         }
     }
 
@@ -663,8 +663,8 @@ impl Line {
         (t1 - t0).abs() * self.scale.abs()
     }
 
-    pub fn project(&self, point: Point3) -> Point3 {
-        self.axis.project(point)
+    pub fn closest_point(&self, point: Point3) -> Point3 {
+        self.axis.closest_point(point)
     }
 
     pub fn to_nurbs(&self) -> Result<NurbsCurve, NurbsError> {
@@ -800,7 +800,7 @@ impl Helix {
     }
 
     /// Returns the nearest point on the helix to `point`.
-    pub fn project(&self, point: Point3) -> Point3 {
+    pub fn closest_point(&self, point: Point3) -> Point3 {
         self.point_at(self.parameter_at(point))
     }
 
@@ -989,7 +989,7 @@ impl Ellipse {
         NativeParam::new(best.rem_euclid(TAU))
     }
 
-    pub fn project(&self, point: Point3) -> Point3 {
+    pub fn closest_point(&self, point: Point3) -> Point3 {
         self.point_at(self.parameter_at(point))
     }
 
@@ -1051,8 +1051,8 @@ impl CurveGeometry for Line {
         Line::parameter_at(self, point)
     }
 
-    fn project(&self, point: Point3) -> Point3 {
-        Line::project(self, point)
+    fn closest_point(&self, point: Point3) -> Point3 {
+        Line::closest_point(self, point)
     }
 
     fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
@@ -1106,7 +1106,7 @@ impl CurveGeometry for Circle {
     ///
     /// A point on the axis is equidistant from every point of the circle; the
     /// plane's `x_dir` is returned so the result stays deterministic.
-    fn project(&self, point: Point3) -> Point3 {
+    fn closest_point(&self, point: Point3) -> Point3 {
         let origin = self.plane.origin();
         let normal = self.plane.normal();
         let offset = point - origin;
@@ -1164,8 +1164,8 @@ impl CurveGeometry for Ellipse {
         Ellipse::parameter_at(self, point)
     }
 
-    fn project(&self, point: Point3) -> Point3 {
-        Ellipse::project(self, point)
+    fn closest_point(&self, point: Point3) -> Point3 {
+        Ellipse::closest_point(self, point)
     }
 
     fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
@@ -1214,8 +1214,8 @@ impl CurveGeometry for Helix {
         Helix::parameter_at(self, point)
     }
 
-    fn project(&self, point: Point3) -> Point3 {
-        Helix::project(self, point)
+    fn closest_point(&self, point: Point3) -> Point3 {
+        Helix::closest_point(self, point)
     }
 
     fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {
@@ -1264,7 +1264,7 @@ impl CurveGeometry for NurbsCurve {
         NativeParam::new(closest_sample_parameter(self, point))
     }
 
-    fn project(&self, point: Point3) -> Point3 {
+    fn closest_point(&self, point: Point3) -> Point3 {
         NurbsCurve::point_at(self, closest_sample_parameter(self, point))
     }
 
@@ -1323,8 +1323,8 @@ impl CurveGeometry for Curve {
         Curve::parameter_at(self, point)
     }
 
-    fn project(&self, point: Point3) -> Point3 {
-        Curve::project(self, point)
+    fn closest_point(&self, point: Point3) -> Point3 {
+        Curve::closest_point(self, point)
     }
 
     fn length(&self, t0: NativeParam, t1: NativeParam) -> f64 {

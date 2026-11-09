@@ -314,7 +314,7 @@ fn offset_revolution(
     let middle = NativeParam::new(0.5 * (probe.start.value() + probe.end.value()));
     let point = profile.point_at(middle);
     let tangent = profile.derivative_at(middle, 1);
-    let radial = point - revolution.axis.project(point);
+    let radial = point - revolution.axis.closest_point(point);
     let Some(meridian) =
         UnitVector3::try_new(revolution.axis.direction.cross(&radial), LINEAR_TOLERANCE)
     else {
