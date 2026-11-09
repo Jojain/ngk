@@ -182,6 +182,21 @@ coincidence, an overlap. So is a pair whose intersection search cannot claim com
 coverage, because a missed crossing would give a wrong profile. Every pair of curves is
 intersected, so the cost grows with the square of the number of curves listed.
 
+## Profiles from a projection
+
+`add_profiles_from_projection` draws a [`CurveProjection`](../../src/projection/curve_result.rs)
+as profiles, for a plane target (`CurveProjection<()>`) and for face targets
+(`CurveProjection<FaceKey>`) alike. Each chain becomes one profile, closed when the chain
+is, and each segment becomes one edge on the segment's 3D curve; a chain that is one
+closed segment is one vertex-free closed edge. Consecutive segments share a vertex. A
+profile cannot branch, so chains that meet at a source vertex stay separate profiles
+and do not share vertices.
+
+The edges keep no pcurve: a pcurve is stored on the face whose boundary an edge is, and
+these edges bound none. The result lists each profile with the edge of each of its
+segments, in chain order. An empty projection, or a chain whose segments do not continue
+one another within `LINEAR_TOLERANCE`, is refused by name.
+
 ## Regions from a constraint system
 
 `add_sketch_from_system` adds one loose planar face per region: a closed area the curves

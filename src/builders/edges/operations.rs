@@ -596,18 +596,27 @@ pub(crate) fn add_circle_edit<P: Payload>(
     plane: Plane,
     radius: f64,
 ) -> Result<EdgeKey, EdgeCreationError> {
+    check_valid_radius(radius)?;
+    add_closed_curve_edit(edit, Curve::circle(plane, radius))
+}
+
+/// Builds an edge that is the whole of a closed `curve`, with no vertex.
+///
+/// The point where the curve closes is a fact about how the map is drawn, not a
+/// feature of the shape: nothing meets there. It is classified inside the edge,
+/// which is what makes an unmarked closed edge a vertex-free logical edge.
+/// Marking it deliberately is a separate operation that promotes it. The caller
+/// guarantees `curve` closes on itself.
+pub(crate) fn add_closed_curve_edit<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    curve: Curve,
+) -> Result<EdgeKey, EdgeCreationError> {
     edit.deferred(|raw| {
-        check_valid_radius(radius)?;
         let d1 = raw.add_dart();
         let d2 = raw.add_dart();
-        let curve = Curve::circle(plane, radius);
         raw.link(Dim::Zero, d1, d2)?;
         raw.link(Dim::One, d1, d2)?;
         let key = raw.add_edge(EdgeAttr::new(d1, curve));
-        // The point where the circle closes is a fact about how the map is drawn,
-        // not a feature of the shape: nothing meets there. It is classified inside
-        // the edge, which is what makes an unmarked circle a vertex-free logical
-        // edge. Marking it deliberately is a separate operation that promotes it.
         raw.own_cell(Dim::Zero, d1, EntityOwner::Edge(key));
         Ok(key)
     })
