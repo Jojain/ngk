@@ -1,4 +1,4 @@
-from . import core, exchange, geometry, measurement, model, modeling, solver, tessellation, topology, viz
+from . import core, exchange, geometry, measurement, model, modeling, projection, solver, tessellation, topology, viz
 
 __all__ = [
     "core",
@@ -7,6 +7,7 @@ __all__ = [
     "measurement",
     "model",
     "modeling",
+    "projection",
     "solver",
     "tessellation",
     "topology",

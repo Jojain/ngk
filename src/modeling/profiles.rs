@@ -2,12 +2,14 @@ use radians::Rad64;
 
 use crate::builders::errors::EdgeCreationError;
 use crate::builders::profiles::{
-    PolylineError, ProfilesFromSystem, SketchError, add_polyline, add_profile_from_edges_edit,
+    PolylineError, ProfilesFromProjection, ProfilesFromSystem, ProjectionProfilesError,
+    SketchError, add_polyline, add_profile_from_edges_edit, add_profiles_from_projection,
     add_profiles_from_system, add_rectangle, add_square, append_edge_edit,
 };
 use crate::geometry::{Plane, Point3};
 use crate::model::{Cell1, Model};
 use crate::modeling::edges;
+use crate::projection::CurveProjection;
 use crate::solver::{CurveId, System2d};
 use crate::topology::closed::Closeable;
 use crate::topology::payload::{Payload, StandardPayload};
@@ -86,6 +88,18 @@ pub fn from_system(
 ) -> Result<(Model, ProfilesFromSystem), SketchError> {
     let mut model = Model::new();
     let built = add_profiles_from_system(&mut model, system, plane, curves)?;
+    Ok((model, built))
+}
+
+/// Builds the profiles a curve projection draws, in a fresh model.
+///
+/// A projection can have several chains, so the result is the model and what was added
+/// to it rather than one shape.
+pub fn from_projection<Hit>(
+    projection: &CurveProjection<Hit>,
+) -> Result<(Model, ProfilesFromProjection), ProjectionProfilesError> {
+    let mut model = Model::new();
+    let built = add_profiles_from_projection(&mut model, projection)?;
     Ok((model, built))
 }
 

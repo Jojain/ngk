@@ -1,4 +1,5 @@
 from ..geometry import Plane, Point2
+from ..projection import CurveProjection
 from ..solver import CurveId, System2d
 from ..topology import Edge, Profile
 
@@ -24,6 +25,21 @@ class SystemProfiles:
     def profiles(self) -> list[SystemProfile]: ...
 
 def from_system(system: System2d, plane: Plane, curves: list[CurveId]) -> SystemProfiles: ...
+
+class ProjectionProfile:
+    @property
+    def profile(self) -> Profile: ...
+    @property
+    def edges(self) -> list[Edge]: ...
+
+class ProjectionProfiles:
+    @property
+    def profiles(self) -> list[ProjectionProfile]: ...
+
+# Draws a curve projection in a fresh model: one profile per chain, in the chain
+# order, closed when the chain is, with one edge per segment. Raises ValueError for
+# a projection without chains or a chain whose segments do not continue one another.
+def from_projection(projection: CurveProjection) -> ProjectionProfiles: ...
 
 class NotSolvedError(ValueError): ...
 
@@ -54,6 +70,8 @@ __all__ = [
     "JointGapError",
     "NotSolvedError",
     "OverlappingError",
+    "ProjectionProfile",
+    "ProjectionProfiles",
     "SystemProfile",
     "SystemProfiles",
     "UncertainCrossingError",
@@ -61,6 +79,7 @@ __all__ = [
     "arc",
     "from_edge",
     "from_edges",
+    "from_projection",
     "from_system",
     "polygon",
     "polyline",

@@ -8,7 +8,7 @@ mod values;
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
-pub(crate) use convert::{curve_to_py, surface_to_py};
+pub(crate) use convert::{curve_from_py, curve_to_py, surface_from_py, surface_to_py};
 pub(crate) use curves::{PyCircle, PyEllipse, PyHelix, PyLine};
 pub(crate) use nurbs::{PyNurbsCurve, PyNurbsSurface};
 pub(crate) use surfaces::{

@@ -497,7 +497,7 @@ impl<P: Payload> SharedEdge<P> {
         }
     }
 
-    fn view(&self) -> Result<Edge<'_, P>, ExploreError> {
+    pub(crate) fn view(&self) -> Result<Edge<'_, P>, ExploreError> {
         Edge::from_dart(self.model.model(), self.dart)
             .filter(|view| view.key() == self.key)
             .ok_or_else(|| missing("edge", self.dart.id()))
@@ -614,7 +614,7 @@ impl<P: Payload> SharedProfile<P> {
         }
     }
 
-    fn view(&self) -> Result<Profile<'_, P>, ExploreError> {
+    pub(crate) fn view(&self) -> Result<Profile<'_, P>, ExploreError> {
         Profile::from_dart(self.model.model(), self.dart)
             .filter(|view| view.key() == self.key)
             .ok_or_else(|| missing("profile", self.dart.id()))

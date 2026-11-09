@@ -5,6 +5,7 @@ from typing import Self, TypeAlias
 
 from . import measurement as measurement
 from . import modeling as modeling
+from . import projection as projection
 from . import solver as solver
 from . import tessellation as tessellation
 from .measurement import BoundingBox, LinearProperties, SurfaceProperties, VolumeProperties

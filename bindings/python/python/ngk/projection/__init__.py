@@ -1,0 +1,43 @@
+"""Projecting points, curves, edges and profiles onto geometry."""
+
+from ..core.projection import (
+    AmbiguousError,
+    ChainEnd,
+    CurveProjection,
+    Exactness,
+    GrazingRayError,
+    MissError,
+    PointProjection,
+    ProjectedChain,
+    ProjectedSegment,
+    ProjectionError,
+    RayInSurfaceError,
+    SourceSpan,
+    TrimmedCurve,
+    TrimmedCurve2,
+    UnsupportedCurveError,
+    UnsupportedSurfaceError,
+    project,
+    project_point,
+)
+
+__all__ = [
+    "AmbiguousError",
+    "ChainEnd",
+    "CurveProjection",
+    "Exactness",
+    "GrazingRayError",
+    "MissError",
+    "PointProjection",
+    "ProjectedChain",
+    "ProjectedSegment",
+    "ProjectionError",
+    "RayInSurfaceError",
+    "SourceSpan",
+    "TrimmedCurve",
+    "TrimmedCurve2",
+    "UnsupportedCurveError",
+    "UnsupportedSurfaceError",
+    "project",
+    "project_point",
+]

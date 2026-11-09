@@ -6,6 +6,7 @@ mod faces;
 mod heal;
 mod loft;
 mod profiles;
+mod profiles_from_projection;
 mod profiles_from_system;
 mod revolve;
 mod sheets;
@@ -44,6 +45,7 @@ pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 
     let profiles_module = new_submodule(py, "profiles", &modeling_qualname)?;
     profiles::register(&profiles_module)?;
+    profiles_from_projection::register(&profiles_module)?;
     profiles_from_system::register(&profiles_module)?;
     modeling.add_submodule(&profiles_module)?;
 
