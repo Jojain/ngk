@@ -13,15 +13,13 @@ use crate::geometry::{BBox, Interval, LINEAR_TOLERANCE, Point3};
 const MIN_CLOSEST_SAMPLES: usize = 12;
 /// Most grid samples per direction a closest-point search starts from.
 const MAX_CLOSEST_SAMPLES: usize = 512;
-/// How many of the nearest grid samples a closest-point search refines.
-const CLOSEST_POINT_STARTS: usize = 4;
 /// How many local minima of the grid a search for every local nearest point
 /// refines.
 const MAX_CLOSEST_CANDIDATES: usize = 32;
 
-/// Most damped Gauss-Newton steps taken from one start.
+/// Most damped Newton steps taken from one start.
 const MAX_SETTLE_STEPS: usize = 100;
-/// Most times a damped Gauss-Newton step is halved before the start is
+/// Most times a damped Newton step is halved before the start is
 /// accepted as settled.
 const MAX_SETTLE_HALVINGS: usize = 30;
 
@@ -327,16 +325,15 @@ impl NurbsSurface {
 
     /// Returns the parameters of the point on the surface nearest `point`.
     ///
-    /// Newton converges only from a start already in the right basin, and a
-    /// surface that folds back near itself -- a thread flank winding round
-    /// many turns -- has one basin per fold. The starts therefore come from a
-    /// grid as fine as the control net, which is what bounds how often the
-    /// surface can turn between two samples, and the few closest are all
-    /// refined, keeping whichever lands nearest.
+    /// The nearest of the local minima [`Self::closest_parameter_candidates`]
+    /// finds. A surface that folds back near itself -- a thread flank winding
+    /// round many turns -- has one basin per fold, and a convex surface seen
+    /// from outside has a basin the plain Gauss-Newton step overshoots out
+    /// of; the candidates start one damped refinement per basin, so the
+    /// answer is the best of them rather than the first to converge.
     pub fn closest_parameter(&self, point: Point3) -> Point2<f64> {
-        self.closest_sample_parameters(point)
+        self.closest_parameter_candidates(point)
             .into_iter()
-            .map(|(u, v)| self.refine_closest_parameter(point, u, v))
             .min_by(|a, b| {
                 let distance = |uv: &Point2<f64>| (self.point_at(uv.x, uv.y) - point).norm();
                 distance(a).total_cmp(&distance(b))
@@ -350,9 +347,9 @@ impl NurbsSurface {
     /// [`Self::closest_parameter`] searches the whole grid because it knows
     /// nothing of where `point` lies. A caller walking a curve on the surface
     /// does: the previous point's parameters are a start inside the right
-    /// basin. Newton from a start on another fold still converges, to a foot
-    /// on that fold a fold's spacing away, so the answer is only kept when
-    /// the foot is the point itself. A point lies on one fold only, so a
+    /// basin. A refinement from a start on another fold still converges, to a
+    /// foot on that fold a fold's spacing away, so the answer is only kept
+    /// when the foot is the point itself. A point lies on one fold only, so a
     /// foot within `tolerance` is its own.
     pub fn closest_parameter_near(
         &self,
@@ -360,52 +357,8 @@ impl NurbsSurface {
         hint: Point2<f64>,
         tolerance: f64,
     ) -> Option<Point2<f64>> {
-        let uv = self.refine_closest_parameter(point, hint.x, hint.y);
+        let uv = self.settle_closest_parameter(point, (hint.x, hint.y));
         ((self.point_at(uv.x, uv.y) - point).norm() <= tolerance).then_some(uv)
-    }
-
-    /// Gauss-Newton from `(u, v)`, clamped to the domain.
-    fn refine_closest_parameter(&self, point: Point3, mut u: f64, mut v: f64) -> Point2<f64> {
-        let domain_u = self.domain_u();
-        let domain_v = self.domain_v();
-
-        for _ in 0..10 {
-            let surface_point = self.point_at(u, v);
-            let residual = surface_point - point;
-            let (du, dv) = self.derivative_at(u, v);
-            let uu = du.dot(&du);
-            let uv = du.dot(&dv);
-            let vv = dv.dot(&dv);
-            let ru = du.dot(&residual);
-            let rv = dv.dot(&residual);
-            let determinant = uu * vv - uv * uv;
-
-            if determinant.abs() <= 1.0e-14 {
-                break;
-            }
-
-            let delta_u = (vv * ru - uv * rv) / determinant;
-            let delta_v = (uu * rv - uv * ru) / determinant;
-            u = (u - delta_u).clamp(domain_u.start.value(), domain_u.end.value());
-            v = (v - delta_v).clamp(domain_v.start.value(), domain_v.end.value());
-
-            if delta_u.hypot(delta_v) <= 1.0e-10 {
-                break;
-            }
-        }
-
-        Point2::new(u, v)
-    }
-
-    /// The grid samples nearest `point`, closest first.
-    fn closest_sample_parameters(&self, point: Point3) -> Vec<(f64, f64)> {
-        let mut cells = self.closest_sample_grid(point).cells;
-        cells.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-        cells
-            .into_iter()
-            .take(CLOSEST_POINT_STARTS)
-            .map(|cell| cell.uv)
-            .collect()
     }
 
     /// Returns the parameters of every local minimum of the distance from
@@ -448,16 +401,16 @@ impl NurbsSurface {
             .collect()
     }
 
-    /// Damped Gauss-Newton from `start`, clamped to the domain, until the
-    /// gradient of the distance vanishes.
+    /// Damped Newton from `start`, clamped to the domain, until the gradient
+    /// of the distance vanishes.
     ///
     /// A plain Gauss-Newton step leaves out the curvature of the surface, so
     /// from a point on the convex side it overshoots by the factor the
-    /// distance times the curvature adds to one and can diverge. Each step is
-    /// halved until it lowers the gradient, which converges in every case the
-    /// plain step does not, to the precision of the gradient rather than to
-    /// the square root of the working precision that comparing distances
-    /// reaches.
+    /// distance times the curvature adds to one and can diverge. The step
+    /// therefore carries the curvature, and is halved until it lowers the
+    /// gradient, which converges in every case the plain step does not, to the
+    /// precision of the gradient rather than to the square root of the working
+    /// precision that comparing distances reaches.
     fn settle_closest_parameter(&self, point: Point3, start: (f64, f64)) -> Point2<f64> {
         let domain_u = self.domain_u();
         let domain_v = self.domain_v();
@@ -465,31 +418,102 @@ impl NurbsSurface {
             (domain_u.start.value(), domain_u.end.value()),
             (domain_v.start.value(), domain_v.end.value()),
         );
+        // Whether the descent direction, opposite `gradient`, leaves the
+        // domain at `parameter`.
+        let pushed_out = |parameter: f64, gradient: f64, range: (f64, f64)| {
+            (parameter <= range.0 && gradient > 0.0) || (parameter >= range.1 && gradient < 0.0)
+        };
+        // Whether `parameter` sits on the boundary with nothing left of its
+        // gradient, so only the other parameter can still move.
+        let pinned = |parameter: f64, gradient: f64, range: (f64, f64)| {
+            gradient == 0.0 && (parameter <= range.0 || parameter >= range.1)
+        };
         // The gradient of the squared distance, without the component that
         // pushes out of the domain, which the boundary balances.
         let evaluate = |u: f64, v: f64| {
             let (surface_point, du, dv) = self.point_and_derivative_at(u, v);
             let residual = surface_point - point;
-            let mut gradient = Vector2::new(du.dot(&residual), dv.dot(&residual));
-            if (u <= u_range.0 && gradient.x > 0.0) || (u >= u_range.1 && gradient.x < 0.0) {
-                gradient.x = 0.0;
-            }
-            if (v <= v_range.0 && gradient.y > 0.0) || (v >= v_range.1 && gradient.y < 0.0) {
-                gradient.y = 0.0;
-            }
+            let gradient = Vector2::new(du.dot(&residual), dv.dot(&residual));
+            let gradient = Vector2::new(
+                if pushed_out(u, gradient.x, u_range) {
+                    0.0
+                } else {
+                    gradient.x
+                },
+                if pushed_out(v, gradient.y, v_range) {
+                    0.0
+                } else {
+                    gradient.y
+                },
+            );
             (gradient, du, dv)
+        };
+
+        // The second derivatives, as central differences of the first ones,
+        // one-sided where the domain ends.
+        let second_derivatives = |u: f64, v: f64| {
+            let step = |range: (f64, f64)| 1.0e-6 * (range.1 - range.0);
+            let (u0, u1) = (
+                (u - step(u_range)).max(u_range.0),
+                (u + step(u_range)).min(u_range.1),
+            );
+            let (v0, v1) = (
+                (v - step(v_range)).max(v_range.0),
+                (v + step(v_range)).min(v_range.1),
+            );
+            let (_, du0, dv0) = self.point_and_derivative_at(u0, v);
+            let (_, du1, dv1) = self.point_and_derivative_at(u1, v);
+            let (_, du2, dv2) = self.point_and_derivative_at(u, v0);
+            let (_, du3, dv3) = self.point_and_derivative_at(u, v1);
+            (
+                (du1 - du0) / (u1 - u0),
+                ((dv1 - dv0) / (u1 - u0) + (du3 - du2) / (v1 - v0)) * 0.5,
+                (dv3 - dv2) / (v1 - v0),
+            )
         };
 
         let (mut u, mut v) = start;
         let (mut gradient, mut du, mut dv) = evaluate(u, v);
         for _ in 0..MAX_SETTLE_STEPS {
             let (uu, uv, vv) = (du.dot(&du), du.dot(&dv), dv.dot(&dv));
-            let determinant = uu * vv - uv * uv;
-            if determinant.abs() <= 1.0e-14 {
+            if (uu * vv - uv * uv).abs() <= 1.0e-14 {
                 break;
             }
-            let delta_u = (vv * gradient.x - uv * gradient.y) / determinant;
-            let delta_v = (uu * gradient.y - uv * gradient.x) / determinant;
+            // The Hessian of the half squared distance is the Gauss-Newton
+            // matrix plus the residual against the second derivatives, which
+            // the curvature of the surface makes first order: without it a
+            // step converges only linearly, at a rate that approaches one as
+            // the distance grows against the radius of curvature. It is used
+            // where positive definite, the Gauss-Newton matrix elsewhere.
+            let residual = self.point_at(u, v) - point;
+            let (suu, suv, svv) = second_derivatives(u, v);
+            let (huu, huv, hvv) = (
+                uu + residual.dot(&suu),
+                uv + residual.dot(&suv),
+                vv + residual.dot(&svv),
+            );
+            let (huu, huv, hvv) = if huu > 0.0 && huu * hvv - huv * huv > 1.0e-14 {
+                (huu, huv, hvv)
+            } else {
+                (uu, uv, vv)
+            };
+            // A parameter held by the domain boundary is not stepped, and the
+            // other moves alone along its own second derivative.
+            let (delta_u, delta_v) = match (
+                pinned(u, gradient.x, u_range),
+                pinned(v, gradient.y, v_range),
+            ) {
+                (true, true) => break,
+                (true, false) => (0.0, gradient.y / hvv),
+                (false, true) => (gradient.x / huu, 0.0),
+                (false, false) => {
+                    let determinant = huu * hvv - huv * huv;
+                    (
+                        (hvv * gradient.x - huv * gradient.y) / determinant,
+                        (huu * gradient.y - huv * gradient.x) / determinant,
+                    )
+                }
+            };
             let mut scale = 1.0;
             let mut accepted = None;
             for _ in 0..MAX_SETTLE_HALVINGS {
