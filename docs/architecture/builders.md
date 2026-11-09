@@ -195,7 +195,10 @@ and do not share vertices.
 The edges keep no pcurve: a pcurve is stored on the face whose boundary an edge is, and
 these edges bound none. The result lists each profile with the edge of each of its
 segments, in chain order. An empty projection, or a chain whose segments do not continue
-one another within `LINEAR_TOLERANCE`, is refused by name.
+one another within `LINEAR_TOLERANCE`, is refused by name. The facade
+`modeling::profiles::from_projection` does the same in a fresh model, and Python exposes it
+as `ngk.modeling.profiles.from_projection`. The projection itself is described in
+[projection.md](projection.md).
 
 ## Regions from a constraint system
 

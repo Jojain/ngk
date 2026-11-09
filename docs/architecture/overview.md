@@ -32,6 +32,7 @@ Vocabulary is defined in [CONTEXT.md](../../CONTEXT.md).
 | `modeling` | `src/modeling/` | Owned-`Shape` facade over `builders`: each constructor allocates a model and delegates one operation |
 | `healing` | `src/healing/` | Removes topology that carries no shape (removal passes over `builders::removal`) |
 | `measure` | `src/measure/` | Length, area, volume, centroid and inertia of entities |
+| `projection` | `src/projection/` | Points, curves, edges and profiles projected onto planes, surfaces, curves, edges and faces, as a query |
 | `tessellate` | `src/tessellate/` | Geometry and B-rep to polylines and indexed meshes |
 | `exchange` | `src/exchange/` | STEP import and export |
 | `viz` | `src/viz/` | Scene assembly, dart/α overlays, debug viewer, ocp_vscode bridge |
@@ -62,4 +63,6 @@ see [transactions.md](transactions.md).
 - [builders.md](builders.md): builder naming and result contract.
 - [measure.md](measure.md): length, area, volume and inertia by boundary
   integral.
+- [projection.md](projection.md): projection of points and curves onto geometry and
+  faces.
 - [blend.md](blend.md): the chamfer and fillet engine.

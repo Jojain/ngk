@@ -30,6 +30,8 @@ landed and its lasting content has moved here or into an ADR.
 - [blend.md](blend.md): the chamfer and fillet engine.
 - [offset.md](offset.md): offsets of edges, profiles, faces, sheets and solids.
 - [measure.md](measure.md): mass properties by Green boundary integral.
+- [projection.md](projection.md): projecting points, curves, edges and profiles onto
+  planes, surfaces, curves, edges and faces, as a query.
 - [tessellation.md](tessellation.md): shared boundary sampling and constrained triangulation.
 - [exchange.md](exchange.md): STEP B-rep interchange and binary STL export.
 
@@ -50,3 +52,4 @@ landed and its lasting content has moved here or into an ADR.
 - [0001 Mass properties by Green boundary integral](../adr/0001-mass-properties-by-green-boundary-integral.md)
 - [0003 Invariant-preserving edit operators](../adr/0003-invariant-preserving-edit-operators.md)
 - [0004 Panics are not recoverable modeling errors](../adr/0004-panics-are-not-recoverable-errors.md)
+- [0006 Projection is a query, and a face exists only where it is trimmed](../adr/0006-projection-is-a-query-and-a-face-exists-only-where-trimmed.md)
