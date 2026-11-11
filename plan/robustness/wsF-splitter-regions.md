@@ -52,6 +52,17 @@ the meridian's two halves do not connect through it.
   was considered and set aside: it only moves the problem to the next
   section.)
 
+**Landed:** a cap cut by a further wrapping chain gives a ring and a cap
+(`split_cap_face_by_wrapping_chain`), so a sphere takes any number of loops
+round its pole axis: a slab through a ball, a ball bored along its axis.
+Wrapping chains are also taken first when islands or chords come with them,
+each piece then being split by what lies on it, and a section's closure is
+read at the solver's residual. With these the fuzz over block, cylinder,
+sphere and torus leaves no `ImprintNotRealized` on a run of 300 cases.
+**Left:** a section through a pole, a loop of class (1, 1) on a torus, and
+one wrapping chain alone on a torus (which leaves the face whole, bounded by
+the chain on both sides).
+
 **Family.** Sphere with 1, 2, 3 latitude cuts; with two off-axis circles each
 around a pole; with a meridian through both poles; with a circle through one
 pole. Cylinder wall with 1, 2, 3 bands removed, with a tilted ellipse, with a
@@ -72,6 +83,11 @@ matches none.
 different loops is a bridge: the first bridge merges the two loops into one
 (the face count is unchanged), and every further chord then splits that loop
 as usual. The audit lists the family in full.
+
+**Landed:** `apply_face_bridge` joins two loops a cut joins directly (the two
+rims of a ring, an outer loop and a hole). **Left:** two loops joined only
+through a third (two holes of one face); the family's tests on planar faces
+with holes.
 
 ## F3. Coincident regions with holes (class A)
 

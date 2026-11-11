@@ -49,7 +49,6 @@ fn a_groove_turned_into_a_pulley_is_a_solid_or_an_error() -> Result<(), Refusal>
 }
 
 #[test]
-#[ignore = "the groove cut is refused because a closure 0-cell is claimed by a vertex and edge scaffold"]
 fn a_groove_turned_into_a_pulley_has_the_volume_of_the_parts() -> Result<(), Refusal> {
     guarded(|| {
         // Hub and rim joined, less the bore, less the part of the groove inside the rim.

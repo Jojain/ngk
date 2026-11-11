@@ -320,28 +320,62 @@ impl FaceTrimDomain {
     }
 
     /// Adds every exact trim crossing in the branch's normalized parameter space.
+    ///
+    /// On a periodic support the crossings are taken in the quotient, as
+    /// [`Self::classify`] answers in it: the span is met with the loops on
+    /// every whole-period translate of it that reaches them. A section going
+    /// once round a cylinder runs over a period from wherever it starts, so
+    /// part of it lies a period away from the branch the loops are written on
+    /// and crosses them only once brought back.
     pub(crate) fn crossings(
         &self,
         span: &TrimmedCurve2,
         options: CurveIntersectionOptions,
         parameters: &mut Vec<Fraction>,
     ) -> Result<(), CurveIntersectionError> {
-        for boundary in self.trim_curves() {
-            for contact in span.intersect_curve_with_options(boundary, options)? {
-                match contact {
-                    CurveCurveIntersection2::Point { u_a, .. } => {
-                        parameters.push(u_a.clamped_to_unit())
-                    }
-                    CurveCurveIntersection2::Overlap { interval_a, .. } => {
-                        parameters.extend([
-                            interval_a.start.clamped_to_unit(),
-                            interval_a.end.clamped_to_unit(),
-                        ]);
+        for translation in self.translations_onto_loops(span) {
+            let moved;
+            let image = if translation == nalgebra::Vector2::zeros() {
+                span
+            } else {
+                moved = span.translated(translation)?;
+                &moved
+            };
+            for boundary in self.trim_curves() {
+                for contact in image.intersect_curve_with_options(boundary, options)? {
+                    match contact {
+                        CurveCurveIntersection2::Point { u_a, .. } => {
+                            parameters.push(u_a.clamped_to_unit())
+                        }
+                        CurveCurveIntersection2::Overlap { interval_a, .. } => {
+                            parameters.extend([
+                                interval_a.start.clamped_to_unit(),
+                                interval_a.end.clamped_to_unit(),
+                            ]);
+                        }
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    /// The whole-period translations of `span` that reach the loops.
+    ///
+    /// The span's extent is read off samples and widened by a tenth of itself,
+    /// so a translate is tried a little more readily than it could cross.
+    fn translations_onto_loops(&self, span: &TrimmedCurve2) -> Vec<nalgebra::Vector2<f64>> {
+        const SAMPLES: usize = 32;
+        let mut low = Point2::new(f64::INFINITY, f64::INFINITY);
+        let mut high = Point2::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for index in 0..=SAMPLES {
+            let point = span.point_at(Fraction::new(index as f64 / SAMPLES as f64));
+            low = low.inf(&point);
+            high = high.sup(&point);
+        }
+        let margin = (high - low) * 0.1;
+        self.domain
+            .translations_onto_loops(low - margin, high + margin)
     }
 }
 

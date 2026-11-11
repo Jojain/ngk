@@ -14,7 +14,7 @@ use crate::topology::attributes::{
     EdgeAttr, FaceAttr, LoopDefinition, LoopKind, ProfileAttr, VertexAttr,
 };
 use crate::topology::edge::Edge;
-use crate::topology::embedding::EntityOwner;
+use crate::topology::embedding::{EntityOwner, is_embedded_cell};
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::profile::Profile;
@@ -1353,12 +1353,18 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
         };
         let cut = attachment.incoming();
         if half != splice_half {
-            attachment.move_after(edit, half)?;
+            attachment.move_after(edit, half, owner)?;
+        } else {
+            // A label sits on the dart it was recorded at, and the cut's was
+            // recorded at whichever of its darts the face was built with: it
+            // is taken off the whole cell before the new one goes on, or the
+            // cut would name both halves.
+            edit.deferred(|raw| {
+                raw.disown_cell(Dim::One, cut);
+                raw.own_cell(Dim::One, cut, EntityOwner::Face(owner));
+                Ok::<_, FaceImprintSplitError>(())
+            })?;
         }
-        edit.deferred(|raw| {
-            raw.own_cell(Dim::One, cut, EntityOwner::Face(owner));
-            Ok::<_, FaceImprintSplitError>(())
-        })?;
     }
 
     // Every other cell the face owned is scaffold of whichever half its word
@@ -1393,6 +1399,228 @@ pub(crate) fn apply_face_chord_split<P: Payload>(
         second,
         sections,
     })
+}
+
+/// Joins two loops of a face along a chain of imprints running from a corner
+/// of one to a corner of the other.
+///
+/// Such a chain divides nothing: a ring crossed once from rim to rim is still
+/// one face, bounded by one loop that runs round the first rim, along the
+/// chain, round the second rim and back along the chain's other side. The two
+/// loops become that one loop, and the chain becomes edges the face lies on
+/// both sides of. A second chain between the same rims then has both its ends
+/// on one loop, and chords it like any other.
+///
+/// The face holds its loops together with a cut, and the chain takes the
+/// place of the cut joining these two: the cut is lifted off both loops, its
+/// two uses become the chain's first edge, and the chain is spliced in at the
+/// corners it ends on. `None` when no cut joins the two loops directly, when
+/// the second corner carries no vertex to find it by, or when the pair of loop
+/// kinds has no single kind to merge into; nothing is changed then.
+pub(crate) fn apply_face_bridge<P: Payload>(
+    edit: &mut ModelEdit<'_, P>,
+    face: FaceKey,
+    mut old_face: FaceAttr<P::F>,
+    (first, first_corner): (LoopDefinition, usize),
+    (second, second_vertex): (LoopDefinition, Option<VertexKey>),
+    cut: &FaceImprintCut,
+) -> Result<Option<FaceImprintSplit>, FaceImprintSplitError> {
+    let merged_kind = match (first.kind(), second.kind()) {
+        (LoopKind::Wrapping { axis }, LoopKind::Wrapping { axis: other }) if axis == other => {
+            LoopKind::Outer
+        }
+        (LoopKind::Outer, LoopKind::Inner) | (LoopKind::Inner, LoopKind::Outer) => LoopKind::Outer,
+        (LoopKind::Inner, LoopKind::Inner) => LoopKind::Inner,
+        (wrapping @ LoopKind::Wrapping { .. }, LoopKind::Inner)
+        | (LoopKind::Inner, wrapping @ LoopKind::Wrapping { .. }) => wrapping,
+        _ => return Ok(None),
+    };
+    let Some(second_vertex) = second_vertex else {
+        return Ok(None);
+    };
+    let Some(second_profile) = edit.profile_key(second.seed()) else {
+        return Ok(None);
+    };
+    let face_view = edit
+        .face(face)
+        .ok_or(FaceImprintSplitError::MissingFace { face })?;
+    let first_loop = face_view
+        .loop_from_seed(first.seed())
+        .starting_at(first.seed())
+        .ok_or(FaceImprintSplitError::SeedNotOnBoundary {
+            face,
+            dart: first.seed(),
+        })?;
+    // The cut the first loop's walk leaves on for the second loop. Read off
+    // the walk, so the dart it reaches the second loop on runs the way the
+    // first loop does, whichever way the second loop's own seed points.
+    let Some(joining) = first_loop
+        .darts()
+        .map(|dart| edit.alpha(Dim::One, edit.alpha(Dim::Zero, dart)))
+        .filter(|&incoming| is_embedded_cell(edit.topology(), edit.embedding(), Dim::One, incoming))
+        .map(|incoming| CutAttachment::at(edit, incoming))
+        .find(|attachment| edit.profile_key(attachment.across(edit)) == Some(second_profile))
+    else {
+        return Ok(None);
+    };
+    let across = joining.across(edit);
+    let Some(second_loop) = face_view.loop_from_seed(across).starting_at(across) else {
+        return Ok(None);
+    };
+    let first_corners = first_loop.corners();
+    let start = &first_corners[first_corner];
+    let second_corners = second_loop.corners();
+    let Some(end) = second_corners.iter().find(|corner| {
+        Vertex::from_dart(edit, corner.outgoing().dart()).map(|vertex| vertex.key())
+            == Some(second_vertex)
+    }) else {
+        return Ok(None);
+    };
+    let start_dart = start.outgoing().dart();
+    let end_dart = end.outgoing().dart();
+    let start_previous_end = edit.alpha(Dim::Zero, start.incoming().dart());
+    let end_previous_end = edit.alpha(Dim::Zero, end.incoming().dart());
+    // The cut's two uses, as the boundary walk reads them: out along one,
+    // round the second loop, and back along the other.
+    let cut_out = [
+        joining.incoming(),
+        edit.alpha(Dim::Zero, joining.incoming()),
+    ];
+    let cut_back_end = edit.alpha(Dim::Two, joining.incoming());
+    let cut_back = [edit.alpha(Dim::Zero, cut_back_end), cut_back_end];
+
+    // A vertex at a foot of the cut may be anchored on one of the cut's own
+    // darts, which are about to leave that corner.
+    let anchored_on_cut = edit
+        .model()
+        .iter_vertices()
+        .filter_map(|(key, attr)| {
+            if attr.dart == cut_out[0] || attr.dart == cut_back[1] {
+                Some((key, true))
+            } else if attr.dart == cut_out[1] || attr.dart == cut_back[0] {
+                Some((key, false))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let darts = edit.deferred(|raw| {
+        // Lift the cut off both loops, which closes each on itself again.
+        let first_end = raw.unlink(Dim::One, cut_out[0])?;
+        let after_second = raw.unlink(Dim::One, cut_out[1])?;
+        let second_end = raw.unlink(Dim::One, cut_back[0])?;
+        let after_first = raw.unlink(Dim::One, cut_back[1])?;
+        raw.link(Dim::One, first_end, after_first)?;
+        raw.link(Dim::One, second_end, after_second)?;
+        for &(vertex, on_first) in &anchored_on_cut {
+            if let Some(attr) = raw.vertex_attr_mut(vertex) {
+                attr.dart = if on_first { first_end } else { second_end };
+            }
+        }
+        // The cut's darts carry the chain's first edge, so they stop being
+        // scaffold of the face.
+        raw.disown_cell(Dim::One, cut_out[0]);
+
+        let mut darts = vec![[cut_out[0], cut_out[1], cut_back[0], cut_back[1]]];
+        for _ in 1..cut.sections.len() {
+            let [a, b, c, d] = [
+                raw.add_dart(),
+                raw.add_dart(),
+                raw.add_dart(),
+                raw.add_dart(),
+            ];
+            raw.link(Dim::Zero, a, b)?;
+            raw.link(Dim::Zero, c, d)?;
+            raw.link(Dim::Two, a, d)?;
+            raw.link(Dim::Two, b, c)?;
+            darts.push([a, b, c, d]);
+        }
+        for (index, (_, _, imprint)) in cut.sections.iter().enumerate() {
+            let [a, _, c, d] = darts[index];
+            old_face.pcurves.insert(a, imprint.pcurve.clone());
+            old_face.pcurves.insert(c, imprint.pcurve.reversed());
+            if index > 0 {
+                raw.link(Dim::One, darts[index - 1][1], a)?;
+                raw.link(Dim::One, d, darts[index - 1][2])?;
+                let uv = imprint.pcurve.point_at(Fraction::new(0.0));
+                raw.add_vertex_derived_from(
+                    vec![EditKey::Face(face)],
+                    VertexAttr::new(a, old_face.surface.point_at(uv.x, uv.y)),
+                );
+            }
+        }
+        // A corner another cut leaves from hands the walk over on that cut,
+        // and the chain is spliced in past it.
+        let mut entries = [start_previous_end, end_previous_end];
+        for (entry, outgoing) in entries.iter_mut().zip([start_dart, end_dart]) {
+            let next = raw.topology().alpha(Dim::One, *entry);
+            if next != outgoing {
+                *entry = raw.topology().alpha(Dim::Two, next);
+            }
+        }
+        let [start_entry, end_entry] = entries;
+        let ab_start = darts[0][0];
+        let ab_end = darts[darts.len() - 1][1];
+        let ba_start = darts[darts.len() - 1][2];
+        let ba_end = darts[0][3];
+        raw.unlink(Dim::One, start_entry)?;
+        raw.unlink(Dim::One, end_entry)?;
+        raw.link(Dim::One, start_entry, ab_start)?;
+        raw.link(Dim::One, ab_end, end_dart)?;
+        raw.link(Dim::One, end_entry, ba_start)?;
+        raw.link(Dim::One, ba_end, start_dart)?;
+        // One loop is left where there were two, and it keeps the first
+        // loop's profile.
+        raw.remove_profile(second_profile);
+        Ok::<_, FaceImprintSplitError>(darts)
+    })?;
+
+    let sections = cut
+        .sections
+        .iter()
+        .zip(&darts)
+        .map(|((index, reversed, imprint), darts)| {
+            let edge = edit.add_edge_derived_from(
+                vec![EditKey::Face(face)],
+                EdgeAttr::new(darts[0], support_along(&imprint.curve)),
+            );
+            FaceImprintSection {
+                edge,
+                imprint: *index,
+                interval: if *reversed {
+                    Interval::new(1.0, 0.0)
+                } else {
+                    Interval::new(0.0, 1.0)
+                },
+            }
+        })
+        .collect();
+
+    let loops = old_face
+        .loops()
+        .iter()
+        .filter(|definition| definition.seed() != second.seed())
+        .map(|definition| {
+            if definition.seed() == first.seed() {
+                LoopDefinition::from_kind(first.seed(), merged_kind)
+            } else {
+                *definition
+            }
+        })
+        .collect::<Vec<_>>();
+    let attr = edit
+        .face_attr_mut(face)
+        .expect("the face stays staged while two of its loops are joined");
+    let anchor = attr.seed();
+    attr.set_boundary(loops, anchor);
+    attr.pcurves = old_face.pcurves;
+
+    Ok(Some(FaceImprintSplit {
+        first: face,
+        second: face,
+        sections,
+    }))
 }
 
 /// Assigns each existing hole to the one child region that contains it.

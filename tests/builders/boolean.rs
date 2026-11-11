@@ -2612,3 +2612,306 @@ fn a_traced_boolean_keeps_the_model_it_gave_up_on() {
         "both blocks are still in it"
     );
 }
+
+/// Asserts that `shape` is a valid, outward-oriented solid and measures it.
+fn measure_outward_solid(shape: &SolidShape) -> f64 {
+    validate_solid_manifold(shape.model(), shape.key()).unwrap();
+    ngk::topology::validation::validate_solid_orientation(shape.model(), shape.key()).unwrap();
+    shape
+        .solid()
+        .volume()
+        .expect("the result should be measurable")
+}
+
+/// Asserts `volume` is within [`FITTED`] of `expected`, relative to it.
+fn assert_volume_close(label: &str, volume: f64, expected: f64) {
+    assert!(
+        (volume - expected).abs() <= FITTED * expected,
+        "{label} volume {volume}, expected {expected}"
+    );
+}
+
+#[test]
+fn a_cylinder_on_a_block_edge_cuts_and_fuses_through_its_rims() {
+    // The cylinder's axis is the block's edge x = y = 0 and both its ends are
+    // coplanar with the block's top and bottom, so a quarter of it lies in the
+    // block. The chain of imprints on the block's top face runs from the
+    // face's outer loop to its outer loop again, and the same on the bottom.
+    let quarter = std::f64::consts::PI * 16.0 * 10.0 / 4.0;
+    let block = || solids::block(30.0, 20.0, 10.0).expect("block");
+    let cylinder = || solids::cylinder(4.0, 10.0).expect("cylinder");
+
+    let cut = solids::cut(block(), [&cylinder()]).expect("the block should be cut");
+    let fused = solids::fuse(block(), [&cylinder()]).expect("the block should fuse");
+    let common = solids::intersect(block(), [&cylinder()]).expect("the block should intersect");
+    let rest = solids::cut(cylinder(), [&block()]).expect("the cylinder should be cut");
+
+    assert_volume_close(
+        "block less cylinder",
+        measure_outward_solid(&cut),
+        6000.0 - quarter,
+    );
+    assert_volume_close(
+        "block fused with cylinder",
+        measure_outward_solid(&fused),
+        6000.0 + 3.0 * quarter,
+    );
+    assert_volume_close(
+        "block meeting cylinder",
+        measure_outward_solid(&common),
+        quarter,
+    );
+    assert_volume_close(
+        "cylinder less block",
+        measure_outward_solid(&rest),
+        3.0 * quarter,
+    );
+}
+
+#[test]
+fn a_cylinder_on_a_block_edge_rising_above_it_cuts_and_fuses_through_its_rims() {
+    // The cylinder spans z 5..15 on the block's edge x = y = 0: its base is
+    // inside the block and its top above it, so only the wall meets the block's
+    // top face, along a chain of imprints from one loop of that face to itself.
+    let quarter_of_half = std::f64::consts::PI * 16.0 * 5.0 / 4.0;
+    let block = || solids::block(30.0, 20.0, 10.0).expect("block");
+    let cylinder =
+        || solids::cylinder_at(Frame::at(Point3::new(0.0, 0.0, 5.0)), 4.0, 10.0).expect("cylinder");
+
+    let cut = solids::cut(block(), [&cylinder()]).expect("the block should be cut");
+    let fused = solids::fuse(block(), [&cylinder()]).expect("the block should fuse");
+
+    assert_volume_close(
+        "block less cylinder",
+        measure_outward_solid(&cut),
+        6000.0 - quarter_of_half,
+    );
+    assert_volume_close(
+        "block fused with cylinder",
+        measure_outward_solid(&fused),
+        6000.0 + std::f64::consts::PI * 16.0 * 10.0 - quarter_of_half,
+    );
+}
+
+/// A block of `size` centred on the origin with world axes.
+fn centred_block(size: [f64; 3]) -> SolidShape {
+    let origin = Point3::new(-size[0] / 2.0, -size[1] / 2.0, -size[2] / 2.0);
+    solids::block_at(Frame::at(origin), size[0], size[1], size[2]).expect("block")
+}
+
+/// A cylinder centred on `centre`, its frame turned by `angle` about `axis`.
+fn turned_cylinder(
+    radius: f64,
+    height: f64,
+    centre: Point3,
+    axis: Vector3<f64>,
+    angle: f64,
+) -> SolidShape {
+    let rotation =
+        nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Unit::new_normalize(axis), angle);
+    let origin = centre - rotation * Vector3::new(0.0, 0.0, height / 2.0);
+    let frame = Frame::from_xz(origin, rotation * Vector3::x(), rotation * Vector3::z());
+    solids::cylinder_at(frame, radius, height).expect("cylinder")
+}
+
+#[test]
+fn a_tilted_cylinder_crossing_a_block_corner_obeys_inclusion_exclusion() {
+    // The cylinder's wall is cut across its seam by the block's faces: a
+    // section going once round the wall has to be kept whole.
+    const FUZZ: f64 = 5e-3;
+    let block = || centred_block([0.5231697268303682, 0.5, 2.0]);
+    let cylinder = || {
+        turned_cylinder(
+            1.2402289709875955,
+            0.5,
+            Point3::new(-1.25, 0.5, 1.0),
+            Vector3::new(
+                -0.27189675112149697,
+                -0.2359488086545804,
+                0.8399457546220063,
+            ),
+            -0.875147098891417,
+        )
+    };
+
+    let union = solids::fuse(block(), [&cylinder()]).expect("the shapes should fuse");
+    let common = solids::intersect(block(), [&cylinder()]).expect("the shapes should meet");
+    let block_rest = solids::cut(block(), [&cylinder()]).expect("the block should be cut");
+    let cylinder_rest = solids::cut(cylinder(), [&block()]).expect("the cylinder should be cut");
+
+    let (union, common, block_rest, cylinder_rest) = (
+        measure_outward_solid(&union),
+        measure_outward_solid(&common),
+        measure_outward_solid(&block_rest),
+        measure_outward_solid(&cylinder_rest),
+    );
+    let block_volume = measure_outward_solid(&block());
+    let cylinder_volume = measure_outward_solid(&cylinder());
+    let slack = FUZZ * (block_volume + cylinder_volume);
+    assert!(
+        (union + common - block_volume - cylinder_volume).abs() <= slack,
+        "union {union} and common {common} should add up to block {block_volume} and cylinder {cylinder_volume}"
+    );
+    assert!(
+        (block_rest - (block_volume - common)).abs() <= slack,
+        "block less cylinder {block_rest} should be the block {block_volume} less common {common}"
+    );
+    assert!(
+        (cylinder_rest - (cylinder_volume - common)).abs() <= slack,
+        "cylinder less block {cylinder_rest} should be the cylinder {cylinder_volume} less common {common}"
+    );
+}
+
+#[test]
+fn a_block_wholly_inside_a_sphere_fuses_to_the_sphere_and_intersects_to_itself() {
+    // The block lies in the sphere without touching it, so no section exists
+    // and the result is decided by classifying the block against the sphere.
+    let sphere = || solids::sphere(1.25).expect("sphere");
+    let block = || {
+        let size = [0.75, 0.25, 0.25];
+        let centre = [0.4028527444854214, 0.0, 0.0];
+        let origin = Point3::new(
+            centre[0] - size[0] / 2.0,
+            centre[1] - size[1] / 2.0,
+            centre[2] - size[2] / 2.0,
+        );
+        solids::block_at(Frame::at(origin), size[0], size[1], size[2]).expect("block")
+    };
+
+    let fused = solids::fuse(sphere(), [&block()]).expect("the sphere should absorb the block");
+    let common = solids::intersect(sphere(), [&block()]).expect("the block should be kept");
+
+    assert_volume_close(
+        "sphere fused with block",
+        measure_outward_solid(&fused),
+        4.0 / 3.0 * std::f64::consts::PI * 1.25_f64.powi(3),
+    );
+    assert_volume_close(
+        "sphere meeting block",
+        measure_outward_solid(&common),
+        0.75 * 0.25 * 0.25,
+    );
+}
+
+#[test]
+fn a_cylinder_whose_rim_enters_a_sphere_keeps_both_ends_of_the_section_on_that_rim() {
+    // The section runs across the cylinder's wall from one point of a rim to
+    // another point of the same rim, and the cut joining the wall's rims
+    // leaves from one of them: the vertex there has to stay where it is when
+    // the cut is moved to the half that keeps the other rim.
+    const FUZZ: f64 = 5e-3;
+    let sphere = || solids::sphere(1.25).expect("sphere");
+    let cylinder = || {
+        turned_cylinder(
+            0.75,
+            0.75,
+            Point3::new(0.3532999785895343, -1.0, -0.25),
+            Vector3::x(),
+            1.5 * std::f64::consts::PI,
+        )
+    };
+    let volume_of = |shape: SolidShape| measure_outward_solid(&shape);
+    let (a, b) = (volume_of(sphere()), volume_of(cylinder()));
+
+    let fused = volume_of(solids::fuse(sphere(), [&cylinder()]).expect("fuse"));
+    let common = volume_of(solids::intersect(sphere(), [&cylinder()]).expect("intersect"));
+    let sphere_rest = volume_of(solids::cut(sphere(), [&cylinder()]).expect("sphere less cylinder"));
+    let cylinder_rest =
+        volume_of(solids::cut(cylinder(), [&sphere()]).expect("cylinder less sphere"));
+
+    assert!((fused + common - a - b).abs() <= FUZZ * (a + b));
+    assert!((sphere_rest - (a - common)).abs() <= FUZZ * a);
+    assert!((cylinder_rest - (b - common)).abs() <= FUZZ * b);
+}
+
+/// Runs the four Booleans of `a` and `b` and asserts each gives a valid
+/// outward solid whose volume agrees with the others': what the union and
+/// the intersection hold together is what the operands hold, and each
+/// difference is its operand less the intersection.
+fn assert_the_four_booleans_agree(a: impl Fn() -> SolidShape, b: impl Fn() -> SolidShape) {
+    const FUZZ: f64 = 5e-3;
+    let (va, vb) = (measure_outward_solid(&a()), measure_outward_solid(&b()));
+    let fused = measure_outward_solid(&solids::fuse(a(), [&b()]).expect("fuse"));
+    let common = measure_outward_solid(&solids::intersect(a(), [&b()]).expect("intersect"));
+    let a_rest = measure_outward_solid(&solids::cut(a(), [&b()]).expect("first less second"));
+    let b_rest = measure_outward_solid(&solids::cut(b(), [&a()]).expect("second less first"));
+
+    assert!(
+        (fused + common - va - vb).abs() <= FUZZ * (va + vb),
+        "union {fused} and intersection {common} against operands {va} and {vb}"
+    );
+    assert!(
+        (a_rest - (va - common)).abs() <= FUZZ * va,
+        "first less second {a_rest}, expected {}",
+        va - common
+    );
+    assert!(
+        (b_rest - (vb - common)).abs() <= FUZZ * vb,
+        "second less first {b_rest}, expected {}",
+        vb - common
+    );
+}
+
+#[test]
+fn a_sphere_biting_a_torus_tube_is_cut_along_a_section_that_closes_to_its_residual() {
+    // The section is one closed curve, traced round to where it started: its
+    // two ends agree to the tracer's residual, not exactly.
+    let torus = || solids::torus(1.0, 0.19863995168730314).expect("torus");
+    let sphere = || {
+        solids::sphere_at(
+            turned_frame(
+                Point3::new(1.25, -1.0, 1.25),
+                Vector3::z(),
+                1.5 * std::f64::consts::PI,
+            ),
+            1.4730283131391644,
+        )
+        .expect("sphere")
+    };
+
+    assert_the_four_booleans_agree(torus, sphere);
+}
+
+#[test]
+fn a_sphere_crossing_a_torus_tube_twice_cuts_islands_on_the_bands_its_circles_leave() {
+    // The torus's tube passes through the sphere, which it meets along two
+    // closed curves; on the torus they go round the tube, and on the sphere
+    // one of them goes round the pole axis while the other is an island on
+    // one of the two caps the first leaves.
+    let torus = || solids::torus(0.9881683945291103, 0.7410944856390257).expect("torus");
+    let sphere = || {
+        solids::sphere_at(
+            turned_frame(
+                Point3::new(0.5617003149732162, -0.9571459282011495, 0.43304804010657894),
+                Vector3::new(-0.4107652062583161, 0.403713333487998, -0.49519148832641346),
+                -2.0846885989051396,
+            ),
+            1.25,
+        )
+        .expect("sphere")
+    };
+
+    assert_the_four_booleans_agree(torus, sphere);
+}
+
+#[test]
+fn a_torus_chording_a_cylinder_wall_hands_the_walls_cut_to_the_half_that_keeps_both_rims() {
+    // The section runs across the wall from one point of a rim to another of
+    // the same rim, where the cut joining the wall's rims leaves: the cut goes
+    // to the half that still has both rims, and is that half's alone.
+    let cylinder = || turned_cylinder(0.8205365131420924, 1.5, Point3::origin(), Vector3::z(), 0.0);
+    let torus = || {
+        solids::torus_at(
+            turned_frame(
+                Point3::new(0.5, 0.9894008984101536, 0.5),
+                Vector3::x(),
+                std::f64::consts::PI,
+            ),
+            1.5,
+            0.5520781704049749,
+        )
+        .expect("torus")
+    };
+
+    assert_the_four_booleans_agree(cylinder, torus);
+}

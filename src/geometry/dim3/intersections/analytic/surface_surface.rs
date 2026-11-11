@@ -26,11 +26,24 @@ use crate::geometry::{
 /// cases where it is not.
 const INITIAL_FIT_SAMPLES: usize = 33;
 
-/// Fitting attempts before a pcurve is reported at whatever it reached.
+/// Evenly spaced fitting attempts, each doubling the samples of the last.
 ///
 /// A circle passing close to a sphere's pole turns fast in longitude there,
 /// and evenly spaced samples need several doublings to follow it.
-const MAX_FIT_REFINEMENTS: usize = 5;
+const MAX_EVEN_FITS: usize = 5;
+
+/// Fitting attempts that add samples only where the fit strays.
+///
+/// Each halves the gaps it strays over, so this is how many times finer than
+/// the first spacing the densest stretch may become. A circle passing a
+/// thousandth of a sphere's radius from its pole needs about ten.
+const MAX_LOCAL_FITS: usize = 16;
+
+/// Samples past which a fit is reported at whatever it reached.
+///
+/// The interpolation solves a dense system, so the cost of an attempt grows
+/// with the cube of this.
+const MAX_FIT_SAMPLES: usize = 600;
 
 /// Narrowest piece a split may leave, as a fraction of the section.
 ///
@@ -664,29 +677,79 @@ impl SectionTrace {
     }
 
     /// Interpolates this support's pcurve over one piece of the section.
+    ///
+    /// Evenly spaced samples are tried first, doubled while the fit strays.
+    /// Where that is not enough the samples are added only where it strays: a
+    /// section passing close to a sphere's pole turns through half the
+    /// longitudes over a stretch as short as its distance to the pole, and no
+    /// even spacing fine enough for that stretch is affordable over the rest
+    /// of the section.
     fn fitted_over(
         &self,
         piece: Interval<Normalized>,
         options: IntersectionOptions,
     ) -> Result<(TrimmedCurve2, PcurveFidelity), IntersectionError> {
-        let mut samples = INITIAL_FIT_SAMPLES;
+        let even = |samples: usize| {
+            (0..samples)
+                .map(|index| index as f64 / (samples - 1) as f64)
+                .collect::<Vec<_>>()
+        };
         let mut best: Option<(TrimmedCurve2, f64)> = None;
-        for _ in 0..MAX_FIT_REFINEMENTS {
-            let (points, parameters) = self.resample(piece, samples)?;
-            let fitted = NurbsCurve2::interpolate_with_parameters(&points, &parameters)?;
-            let span = fitted.domain();
-            let curve = TrimmedCurve2::new(Curve2::Nurbs(fitted), span);
+        let mut keep = |curve: TrimmedCurve2, deviation: f64| {
+            if best.as_ref().is_none_or(|(_, best)| deviation < *best) {
+                best = Some((curve, deviation));
+            }
+        };
+        let mut certified = false;
+
+        let mut samples = INITIAL_FIT_SAMPLES;
+        for _ in 0..MAX_EVEN_FITS {
+            let parameters = even(samples);
+            let curve = self.interpolated_over(piece, &parameters)?;
             // The measured error is against the section itself, in model units,
             // so it means the same thing as any other linear tolerance here.
             let deviation = self.fit_deviation(&curve, piece, samples);
-            let improved = best.as_ref().is_none_or(|(_, best)| deviation < *best);
-            if improved {
-                best = Some((curve, deviation));
-            }
+            keep(curve, deviation);
             if deviation <= options.fit_tolerance {
+                certified = true;
                 break;
             }
             samples = samples * 2 - 1;
+        }
+
+        let mut parameters = even(INITIAL_FIT_SAMPLES);
+        for _ in 0..MAX_LOCAL_FITS {
+            if certified {
+                break;
+            }
+            let curve = self.interpolated_over(piece, &parameters)?;
+            let deviations = self.gap_deviations(&curve, piece, &parameters);
+            let deviation = deviations.iter().copied().fold(0.0_f64, worst_distance);
+            keep(curve, deviation);
+            if deviation <= options.fit_tolerance {
+                break;
+            }
+            // A gap is halved where the fit strays over it, and so are its
+            // neighbours: an interpolant pinned more tightly in one gap swings
+            // wider in the next unless that one is pinned as well.
+            let strays = |index: usize| {
+                deviations
+                    .get(index)
+                    .is_some_and(|deviation| !(*deviation <= options.fit_tolerance))
+            };
+            let mut refined = Vec::with_capacity(2 * parameters.len());
+            for (index, window) in parameters.windows(2).enumerate() {
+                refined.push(window[0]);
+                let near = strays(index) || (index > 0 && strays(index - 1)) || strays(index + 1);
+                if near && window[1] - window[0] > 2.0 * MIN_PIECE_SPAN {
+                    refined.push(0.5 * (window[0] + window[1]));
+                }
+            }
+            refined.push(1.0);
+            if refined.len() == parameters.len() || refined.len() > MAX_FIT_SAMPLES {
+                break;
+            }
+            parameters = refined;
         }
         let (curve, deviation) = best.expect("at least one fit is attempted");
         Ok((
@@ -695,20 +758,20 @@ impl SectionTrace {
         ))
     }
 
-    /// Samples the support parameters over one piece, at normalized positions.
-    fn resample(
+    /// The pcurve through this support's parameters at `parameters`, which
+    /// are normalized positions over `piece`.
+    fn interpolated_over(
         &self,
         piece: Interval<Normalized>,
-        samples: usize,
-    ) -> Result<(Vec<Point2>, Vec<f64>), IntersectionError> {
-        let mut points = Vec::with_capacity(samples);
-        let mut parameters = Vec::with_capacity(samples);
-        for index in 0..samples {
-            let local = Fraction::new(index as f64 / (samples - 1) as f64);
-            points.push(self.uv_at(piece.at(local))?);
-            parameters.push(local.value());
-        }
-        Ok((points, parameters))
+        parameters: &[f64],
+    ) -> Result<TrimmedCurve2, IntersectionError> {
+        let points = parameters
+            .iter()
+            .map(|&local| self.uv_at(piece.at(Fraction::new(local))))
+            .collect::<Result<Vec<_>, _>>()?;
+        let fitted = NurbsCurve2::interpolate_with_parameters(&points, parameters)?;
+        let span = fitted.domain();
+        Ok(TrimmedCurve2::new(Curve2::Nurbs(fitted), span))
     }
 
     /// Reads the trace's unwrapped parameters, interpolated between samples.
@@ -761,6 +824,33 @@ impl SectionTrace {
                 (self.surface.point_at(uv.x, uv.y) - expected).norm()
             })
             .fold(0.0_f64, worst_distance)
+    }
+
+    /// [`Self::fit_deviation`] over each gap between two fitted samples, read
+    /// strictly inside the gap.
+    fn gap_deviations(
+        &self,
+        pcurve: &TrimmedCurve2,
+        piece: Interval<Normalized>,
+        fitted: &[f64],
+    ) -> Vec<f64> {
+        const CHECKS: usize = 4;
+        fitted
+            .windows(2)
+            .map(|window| {
+                (1..=CHECKS)
+                    .map(|index| {
+                        let local = Fraction::new(
+                            window[0]
+                                + (window[1] - window[0]) * index as f64 / (CHECKS + 1) as f64,
+                        );
+                        let uv = pcurve.point_at(local);
+                        let expected = self.point_at(piece.at(local));
+                        (self.surface.point_at(uv.x, uv.y) - expected).norm()
+                    })
+                    .fold(0.0_f64, worst_distance)
+            })
+            .collect()
     }
 }
 

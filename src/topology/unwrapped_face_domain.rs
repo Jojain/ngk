@@ -397,6 +397,39 @@ impl UnwrappedFaceDomain {
         images
     }
 
+    /// Every whole-period translation that carries the box `low..high` onto
+    /// the loops' extent, the identity included.
+    ///
+    /// A curve written on a periodic support may run past the branch the
+    /// loops were written on: a section going once round a cylinder starts
+    /// wherever its first point falls and ends a period later. Its crossings
+    /// with the loops are then spread over as many translates of it as it
+    /// takes to cover the loops, and these are those translates.
+    pub(crate) fn translations_onto_loops(&self, low: Point2, high: Point2) -> Vec<Vector2> {
+        let mut translations = vec![Vector2::zeros()];
+        for (axis, period) in self.periods.iter().enumerate() {
+            let Some(period) = *period else {
+                continue;
+            };
+            let (min, max) = (self.min[axis], self.max[axis]);
+            if !(min.is_finite() && max.is_finite() && low[axis].is_finite() && high[axis].is_finite())
+            {
+                continue;
+            }
+            let first = ((min - high[axis]) / period).ceil() as i64;
+            let last = ((max - low[axis]) / period).floor() as i64;
+            let existing = translations.clone();
+            for turn in (first..=last).filter(|turn| *turn != 0) {
+                translations.extend(existing.iter().map(|translation| {
+                    let mut moved = *translation;
+                    moved[axis] += turn as f64 * period;
+                    moved
+                }));
+            }
+        }
+        translations
+    }
+
     /// The whole-period shifts along `axis` that carry `value` into the loops'
     /// extent, widened by one either side and always including `-1..=1`.
     fn translates(&self, value: f64, axis: usize, period: f64) -> (i64, i64) {

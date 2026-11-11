@@ -144,7 +144,6 @@ fn a_notch_a_thousandth_of_the_part_wide_is_cut_from_a_block_of_a_thousand() -> 
 // G2: tangent contacts
 
 #[test]
-#[ignore = "tangent contact imprinted as a section that separates nothing: a half cylinder tangent to two faces (plan/robustness/wsG-contacts-tolerances.md, G2)"]
 fn a_cube_united_with_a_half_cylinder_tangent_to_two_of_its_faces_gains_the_half()
 -> Result<(), Refusal> {
     guarded(|| {
@@ -158,7 +157,6 @@ fn a_cube_united_with_a_half_cylinder_tangent_to_two_of_its_faces_gains_the_half
 }
 
 #[test]
-#[ignore = "imprint not realized for a cylinder centred on a face of the cube, its flat ends in the cube's faces: not in the plan, found while writing this suite"]
 fn a_cube_united_with_a_half_cylinder_inside_its_faces_gains_the_half() -> Result<(), Refusal> {
     guarded(|| {
         let cube = block(p(0.0, 0.0, 0.0), p(10.0, 10.0, 10.0))?;

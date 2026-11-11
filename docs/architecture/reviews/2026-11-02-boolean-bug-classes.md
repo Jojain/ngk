@@ -1,8 +1,10 @@
 # Boolean bug classes: invariant audit
 
 > **Status: in progress.** Class B ("an edge lies on the other operand's
-> surface") is audited below. Classes A, C, D and E are still listed by
-> symptom only.
+> surface") is audited below, and its mechanism B1 is fixed. Classes A, C, D
+> and E are still listed by symptom only. Further mechanisms, found by
+> running the Boolean fuzz (`tests/fuzz/boolean.rs`) and fixed, are recorded
+> under [Mechanisms found by the fuzz](#mechanisms-found-by-the-fuzz).
 
 Bugs reported against the Boolean arrive one reproduction at a time, but each
 one breaks an assumption some stage of the pipeline makes without checking it.
@@ -65,6 +67,13 @@ face whole, turning the ring into a disc, and only a second one splits it.
 The splitter never forms the bridge, and the Boolean fails with
 `ImprintNotRealized` on the wall. When the ends stick out, the same lines stop
 on circles traced across the wall, close into loops, and the split works.
+
+**Fixed.** A chain whose ends sit on two loops joined by a cut now joins the
+two loops into one (`apply_face_bridge`, `src/builders/faces/support.rs`): the
+chain takes the place of the cut, and the face lies on both sides of its
+edges. A second chain between the same loops then has both ends on one loop
+and chords it. Two loops not joined by a cut directly (two holes of one face,
+each cut to the outer loop) are still refused.
 
 **Invariant.** An open imprint runs between two corners of one boundary loop.
 The splitter says so in `split_one_face_by_imprints`
@@ -186,3 +195,84 @@ non-manifold result, success otherwise).
 | #3 | axis on an edge, ends coplanar, cut | B1 |
 | #37 | axis on an edge, ends coplanar, fused | B1 |
 | #37 | axis on an edge, top above the block, cut | B2 |
+
+## Mechanisms found by the fuzz
+
+Each of these broke an assumption no reported issue had isolated. The first
+three involve a cylinder, which is why the cylinder was in most refused cases;
+the last three are what kept a torus or a sphere from being cut.
+
+### A section clipped on one branch of a periodic face
+
+**What happened.** A plane cuts a cylinder wall along an ellipse going once
+round it. Its pcurve on the wall runs over one period from wherever the
+ellipse starts, so part of it lies a period away from the branch the wall's
+rims are written on. `FaceTrimDomain::classify` answers in the quotient, but
+`FaceTrimDomain::crossings` met the pcurve with the rims as written, on one
+branch only. The crossings on the far part were missed, that part of the
+section was dropped, and the network reported `OpenIntersectionLoop`.
+
+**Invariant.** Every question a trim domain answers about a periodic support
+is answered in the quotient. `crossings` now meets the loops with every
+whole-period translate of the span that reaches them, and `clip_branch`
+brings each fragment back onto the branch the face is written on.
+
+### A vertex anchored on a cut's dart
+
+**What happened.** A vertex is anchored on one dart of its 0-cell. Where a cut
+leaves a loop at that vertex, the anchor may be one of the cut's own darts.
+`CutAttachment::move_after` moves the cut to another corner, and the vertex
+went with it: the corner it left had no vertex, the corner it reached had two,
+and an edge ending there read as closed. The Boolean failed at assembly with
+`NonIsomorphicSpanSubdivision`, one side of a span being a whole ellipse.
+
+**Invariant.** Moving scaffold never moves a vertex. `move_after` and
+`apply_face_bridge` re-anchor any vertex anchored on the darts they move.
+
+### An analytic section's pcurve near a sphere's pole
+
+**What happened.** A circle passing close to a sphere's pole turns through
+half the longitudes over a stretch as short as its distance to the pole.
+Evenly spaced samples, doubled a few times, could not follow it, the section
+was reported uncertified and the Boolean refused, even where that stretch was
+nowhere near either face. The fit now halves only the gaps it strays over.
+
+### A closed section taken for an open one
+
+**What happened.** A section that closes, on itself or after going once round
+a period, is traced or fitted round to where it started and arrives there to
+its solver's residual, about `1e-8`. The splitter told closed from open, and
+wrapping from not, at `LINEAR_TOLERANCE`. A closed curve on a torus was then
+an open imprint ending nowhere, and a circle round a sphere's pole axis was
+no wrapping chain; neither was realized.
+
+**Invariant.** What a closed section is told apart from misses by a length of
+the face, not by a residual, so closure is read at `CLOSURE_TOLERANCE`
+(`src/builders/faces/imprints.rs`). Two sections meeting at a node are still
+matched at `LINEAR_TOLERANCE`: both are cut at that node.
+
+### Wrapping chains handed in with anything else
+
+**What happened.** Chains going round a period were split along only when
+every imprint of the face belonged to one. A sphere crossed by a torus's tube
+gets one circle round its pole axis and one island beside it, and a torus
+gets two circles round its tube and the islands another face leaves; the
+whole face was then left to the planar paths, which know neither.
+
+**Invariant.** The chains are taken first, whatever else is handed in, and
+each ring or cap they leave is then split by the imprints lying on it
+(`split_face_by_imprints_edit`).
+
+### A cut labelled twice
+
+**What happened.** A label sits on the dart it was recorded at, and
+`disown_cell` clears a whole cell where `own_cell` writes one dart. A chord
+across a ring's wall hands the wall's cut to the half that keeps both rims;
+relabelling it from another of its darts left the old label beside the new
+one, the cut named both halves, and the edit was refused
+(`ConflictingOwnership`).
+
+**Invariant.** A cell carries one label. A cut is disowned before it is given
+to another face, in the chord split and in `CutAttachment::move_after`, which
+now labels the cut in the block that moves it.
+

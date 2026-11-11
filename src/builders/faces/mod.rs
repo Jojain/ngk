@@ -38,7 +38,7 @@ pub(crate) use polygon::{add_face_with_holes_edit, reverse_face_winding_edit};
 pub(crate) use sew::{FaceSewError, SewMerges, Traversal, sew_faces_along};
 pub(crate) use split::split_face_edge_edit;
 pub(crate) use support::{
-    BoundaryCorner, FaceImprintCut, IncidentFacePcurve, RebasedFacePcurve, apply_face_chord_split,
-    boundary_edge_at_uv, bounding_loops, edge_curve, face_boundary_edges, loop_boundary_edges,
+    BoundaryCorner, FaceImprintCut, IncidentFacePcurve, RebasedFacePcurve, apply_face_bridge,
+    apply_face_chord_split, boundary_edge_at_uv, bounding_loops, edge_curve, face_boundary_edges, loop_boundary_edges,
     snap_boundary_corner_on, support_along,
 };

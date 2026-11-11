@@ -72,15 +72,33 @@ impl CutAttachment {
 
     /// Closes the old boundary gap and inserts the attachment after `boundary`.
     /// The destination runs in the same direction as the detached loop.
+    ///
+    /// `owner` is the face whose 2-cell the cut's word runs through once it is
+    /// there. The cut is labelled as that face's in the same block that moves
+    /// it: a cut moved across to another face's 2-cell while still naming the
+    /// one it left is a labelling that does not describe the map.
     pub(crate) fn move_after<P: Payload>(
         self,
         edit: &mut ModelEdit<'_, P>,
         boundary: Dart,
+        owner: FaceKey,
     ) -> Result<(), ModelEditError> {
         let old_end = edit.alpha(Dim::One, self.incoming);
         let old_next = edit.alpha(Dim::One, self.outgoing);
         let new_end = edit.alpha(Dim::Zero, boundary);
         let new_next = edit.alpha(Dim::One, new_end);
+        // The corner the cut leaves keeps its vertex. A vertex is anchored on
+        // one dart of its 0-cell, and that dart may be the cut's own: left
+        // there, the vertex would follow the cut to the corner it moves to.
+        let anchored_on_cut = edit
+            .model()
+            .iter_vertices()
+            .filter(|(_, attr)| attr.dart == self.incoming || attr.dart == self.outgoing)
+            .map(|(key, _)| key)
+            .collect::<Vec<_>>();
+        for vertex in anchored_on_cut {
+            edit.vertex_attr_mut_unchecked(vertex).dart = old_end;
+        }
         // Detaching the cut from one loop and attaching it to the other merges
         // and splits 0-cells on the way, so nothing may read the model until
         // the last link is made. The block reads nothing, and the labelling is
@@ -91,7 +109,12 @@ impl CutAttachment {
             }
             raw.link(Dim::One, old_end, old_next)?;
             raw.link(Dim::One, new_end, self.incoming)?;
-            raw.link(Dim::One, self.outgoing, new_next)
+            raw.link(Dim::One, self.outgoing, new_next)?;
+            // A label sits on the dart it was recorded at, so the old one is
+            // taken off the whole cell before the new one goes on.
+            raw.disown_cell(Dim::One, self.incoming);
+            raw.own_cell(Dim::One, self.incoming, EntityOwner::Face(owner));
+            Ok::<_, ModelEditError>(())
         })?;
         Ok(())
     }

@@ -14,7 +14,6 @@ fn napkin_ring(hole: f64) -> f64 {
 }
 
 #[test]
-#[ignore = "several wrapping loops on one periodic face: a ball bored along its pole axis (plan/robustness/wsF-splitter-regions.md, F1)"]
 fn a_ball_bored_along_its_poles_leaves_a_napkin_ring() -> Result<(), Refusal> {
     guarded(|| {
         has_volume(
@@ -70,7 +69,6 @@ fn slab_of_a_ball(axis: usize) -> Result<Solid, Refusal> {
 }
 
 #[test]
-#[ignore = "several wrapping loops on one periodic face: two latitude cuts on a ball (plan/robustness/wsF-splitter-regions.md, F1)"]
 fn a_ball_cut_by_two_parallel_planes_square_to_its_poles_keeps_a_slab() -> Result<(), Refusal> {
     guarded(|| has_volume(&slab_of_a_ball(2)?, PI * (50.0 - 2.0 / 3.0), 1e-6))
 }
@@ -107,7 +105,6 @@ fn a_ball_halved_through_its_poles_keeps_a_half() -> Result<(), Refusal> {
 }
 
 #[test]
-#[ignore = "several wrapping loops on one periodic face: a ball reaching all six faces of a box (plan/robustness/wsF-splitter-regions.md, F1)"]
 fn a_cube_intersected_with_a_ball_past_its_faces_is_the_ball_less_six_caps() -> Result<(), Refusal>
 {
     guarded(|| {
@@ -187,7 +184,6 @@ fn a_groove_turned_into_a_shaft_leaves_the_shaft_less_the_ring() -> Result<(), R
 }
 
 #[test]
-#[ignore = "several wrapping loops on one periodic face: a frustum cut by a tilted plane (plan/robustness/wsF-splitter-regions.md, F1)"]
 fn a_frustum_cut_by_a_plane_tilted_10_degrees_keeps_the_part_under_it() -> Result<(), Refusal> {
     guarded(|| {
         let tilted = block(p(-10.0, -10.0, 4.0), p(10.0, 10.0, 20.0))?
@@ -201,7 +197,6 @@ fn a_frustum_cut_by_a_plane_tilted_10_degrees_keeps_the_part_under_it() -> Resul
 }
 
 #[test]
-#[ignore = "several wrapping loops on one periodic face: a frustum cut by a tilted plane (plan/robustness/wsF-splitter-regions.md, F1)"]
 fn a_frustum_cut_by_a_plane_tilted_2_degrees_keeps_the_part_under_it() -> Result<(), Refusal> {
     guarded(|| {
         let tilted = block(p(-10.0, -10.0, 4.0), p(10.0, 10.0, 20.0))?
@@ -215,7 +210,6 @@ fn a_frustum_cut_by_a_plane_tilted_2_degrees_keeps_the_part_under_it() -> Result
 }
 
 #[test]
-#[ignore = "several wrapping loops on one periodic face: a torus cut by a tilted plane (plan/robustness/wsF-splitter-regions.md, F1)"]
 fn a_torus_cut_by_a_plane_tilted_3_degrees_keeps_the_part_under_it() -> Result<(), Refusal> {
     guarded(|| {
         let tilted = block(p(-20.0, -20.0, 0.5), p(20.0, 20.0, 5.0))?
@@ -301,7 +295,6 @@ fn a_torus_dented_by_a_ball_beside_its_seam_loses_the_dent() -> Result<(), Refus
 /// A tube of radii 5 and 3 and height 10 with a hole of radius 3/2 drilled parallel to its axis
 /// through the middle of its wall: the hole cuts both walls from one rim to the other.
 #[test]
-#[ignore = "imprint bridging two loops of a face: a hole through a tube's wall (plan/robustness/wsF-splitter-regions.md, F2)"]
 fn a_hole_drilled_through_a_tubes_wall_parallel_to_its_axis_removes_the_overlap()
 -> Result<(), Refusal> {
     guarded(|| {
@@ -319,7 +312,6 @@ fn a_hole_drilled_through_a_tubes_wall_parallel_to_its_axis_removes_the_overlap(
 }
 
 #[test]
-#[ignore = "imprint bridging two loops of a face: a wedge on a hub (plan/robustness/wsF-splitter-regions.md, F2)"]
 fn a_wedge_turned_across_a_hub_as_high_as_the_hub_unites_to_the_sum_less_the_overlap()
 -> Result<(), Refusal> {
     guarded(|| {

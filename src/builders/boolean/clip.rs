@@ -131,6 +131,12 @@ pub(crate) fn clip_branch(
             pcurve_a = snapped_pcurve(&pcurve_a, at_start, node.correction[0])?;
             pcurve_b = snapped_pcurve(&pcurve_b, at_start, node.correction[1])?;
         }
+        // A fragment cut out of a section that runs past the branch a face's
+        // trim is written on is brought back onto it, as the whole section
+        // was: the section's middle named the branch for the section, and the
+        // fragment's own middle names it for the fragment.
+        let pcurve_a = periodic_pcurve_image(&pcurve_a, first.0, first.1)?;
+        let pcurve_b = periodic_pcurve_image(&pcurve_b, second.0, second.1)?;
         fragments.push([
             FaceImprint::with_section(curve.clone(), pcurve_a),
             FaceImprint::with_section(curve, pcurve_b),
