@@ -107,9 +107,12 @@ and already-established internal invariants are not recoverable failure modes.
 | `cut_edge` | cuts an edge that has a corner in two: doubles every dart of its 1-cell, gives the new 0-cell a vertex and the second half a new key |
 | `sew_edges` | sews two edges where 2-cells meet, fuses the edges and the vertices at their ends, and settles who labels a fused closure: a vertex on it means no scaffold, so an unmarked edge sewn to a marked one is marked |
 | `unsew_edge` | the inverse for an edge shared by two sides: cuts the `alpha2` links, splits the vertex of each end that no longer holds together, and gives the other side a new edge key |
+| `add_loose_face` | builds one face sewn to nothing from an ordered boundary: a ring of `2n` darts, and per side the corner vertex and edge the boundary names, plus the profile and the face, all registered in the one call |
 
 Geometry stays with the caller: `cut_edge` takes the two curves and the point,
-`mark_edge` the point. The operators are one-step units, not the transaction's
+`mark_edge` the point, `add_loose_face` the boundary — each side's corner point,
+edge curve, pcurve and origins, and the surface and origins of the profile and
+face. The operators are one-step units, not the transaction's
 unit; a builder composes them with deferred raw surgery where a specialized
 rewiring cannot be expressed by the existing operators.
 

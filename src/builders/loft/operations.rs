@@ -71,7 +71,7 @@ use crate::topology::attributes::{
 };
 use crate::topology::closed::{Closeable, Closed};
 use crate::topology::edit::{EditKey, ModelEdit, ModelEditError};
-use crate::topology::edit_operators::OperatorError;
+use crate::topology::edit_operators::{LooseFaceBoundary, LooseFaceSide, OperatorError};
 use crate::topology::embedding::EntityOwner;
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim};
@@ -827,64 +827,47 @@ fn add_loft_quad_face<P: Payload>(
     skin: NurbsSurface,
     sources: &[EditKey],
 ) -> Result<LoftColumnFace, LoftError> {
-    edit.deferred(|raw| {
-        let named = |source| LoftError::Column {
-            column,
-            sections: skin.control_points().nv(),
-            source,
-        };
-        let boundary = [
-            Curve::Nurbs(skin.isocurve_v(0.0).map_err(named)?),
-            Curve::Nurbs(skin.isocurve_u(1.0).map_err(named)?),
-            Curve::Nurbs(skin.isocurve_v(1.0).map_err(named)?.reversed()),
-            Curve::Nurbs(skin.isocurve_u(0.0).map_err(named)?.reversed()),
-        ];
-        let corners = BOX_CORNERS.map(|corner| skin.point_at(corner.x, corner.y));
+    let named = |source| LoftError::Column {
+        column,
+        sections: skin.control_points().nv(),
+        source,
+    };
+    let boundary = [
+        Curve::Nurbs(skin.isocurve_v(0.0).map_err(named)?),
+        Curve::Nurbs(skin.isocurve_u(1.0).map_err(named)?),
+        Curve::Nurbs(skin.isocurve_v(1.0).map_err(named)?.reversed()),
+        Curve::Nurbs(skin.isocurve_u(0.0).map_err(named)?.reversed()),
+    ];
+    let corners = BOX_CORNERS.map(|corner| skin.point_at(corner.x, corner.y));
 
-        let darts: Vec<Dart> = (0..8).map(|_| raw.add_dart()).collect();
-        for i in 0..4 {
-            raw.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
-        }
-        for i in 0..4 {
-            raw.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % darts.len()])?;
-        }
-        for i in 0..4 {
-            let dart = raw.cell_representative(darts[2 * i], Dim::Zero);
-            raw.add_vertex_derived_from(sources.to_vec(), VertexAttr::new(dart, corners[i]));
-        }
-        for i in 0..4 {
-            raw.add_edge_derived_from(
-                sources.to_vec(),
-                EdgeAttr::new(darts[2 * i], boundary[i].clone()),
-            );
-        }
-
-        let pcurves = (0..4)
+    let built = edit.add_loose_face(LooseFaceBoundary {
+        surface: Surface::Nurbs(skin),
+        origins: sources.to_vec(),
+        sides: (0..4)
             .map(|i| {
-                (
-                    darts[2 * i],
+                LooseFaceSide::registered(
+                    corners[i],
+                    sources.to_vec(),
+                    boundary[i].clone(),
+                    sources.to_vec(),
                     TrimmedCurve2::segment(BOX_CORNERS[i], BOX_CORNERS[(i + 1) % 4]),
                 )
             })
-            .collect::<HashMap<_, _>>();
-        raw.add_profile_derived_from(sources.to_vec(), ProfileAttr::new(darts[0]));
-        let key = raw.add_face_derived_from(
-            sources.to_vec(),
-            FaceAttr::with_pcurves(Surface::Nurbs(skin), darts[0], Vec::new(), pcurves),
-        );
+            .collect(),
+    })?;
 
-        Ok(LoftColumnFace {
-            key,
-            first_section: darts[0],
-            // The loop runs the last section's edge from `(1, 1)` to `(0, 1)`, so
-            // its *second* dart is the one sitting where the cap's edge dart sits.
-            last_section: darts[5],
-            rails: Some(ColumnRails {
-                start: darts[7],
-                end: darts[2],
-            }),
-            anchor: darts[0],
-        })
+    Ok(LoftColumnFace {
+        key: built.face,
+        first_section: built.forward(0),
+        // The loop runs the last section's edge from `(1, 1)` to `(0, 1)`, so
+        // its *backward* dart — the forward dart's alpha0 partner — is the one
+        // sitting where the cap's edge dart sits.
+        last_section: built.back(2),
+        rails: Some(ColumnRails {
+            start: built.back(3),
+            end: built.forward(1),
+        }),
+        anchor: built.forward(0),
     })
 }
 

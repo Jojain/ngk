@@ -30,6 +30,7 @@ use crate::{
         edge::Edge,
         edge::Edge as EdgeView,
         edit::EditKey,
+        edit_operators::{LooseFace, LooseFaceBoundary, LooseFaceSide},
         face::Face,
         face::Face as FaceView,
         gmap::Dim,
@@ -651,11 +652,11 @@ fn sew_extruded_loop<P: Payload>(
         .zip(top_edges.iter().copied())
         .map(|(bottom_edge, top_edge)| {
             let prepared = prepare_lateral_face(edit, bottom_edge, top_edge, direction)?;
-            let topology = add_lateral_face_topology(edit)?;
             let swept_from = edit
                 .cell_key::<Cell1>(bottom_edge)
                 .expect("lateral must have a source edge");
-            let face = add_lateral_face_attributes(edit, &topology, &prepared, swept_from);
+            let topology = add_lateral_face(edit, &prepared, swept_from)?;
+            let face = topology.face;
             Ok(ExtrudedFaceLateral {
                 topology,
                 face,
@@ -678,30 +679,30 @@ fn sew_extruded_loop<P: Payload>(
             sew(
                 raw,
                 Dim::Two,
-                pair[0].topology.end_vertical,
-                pair[1].topology.start_vertical,
+                pair[0].topology.forward(1),
+                pair[1].topology.back(3),
             )?;
         }
         if let (Some(first), Some(last)) = (laterals.first(), laterals.last()) {
             sew(
                 raw,
                 Dim::Two,
-                last.topology.end_vertical,
-                first.topology.start_vertical,
+                last.topology.forward(1),
+                first.topology.back(3),
             )?;
         }
 
         for ((bottom_edge, top_edge), lateral) in bottom_edges.iter().zip(top_edges).zip(&laterals)
         {
-            sew(raw, Dim::Two, lateral.topology.bottom_edge, *bottom_edge)?;
-            sew(raw, Dim::Two, lateral.topology.top_edge, top_edge)?;
+            sew(raw, Dim::Two, lateral.topology.forward(0), *bottom_edge)?;
+            sew(raw, Dim::Two, lateral.topology.back(2), top_edge)?;
         }
 
         let vertical_edges = laterals
             .iter()
             .zip(&vertical_sources)
             .map(|(lateral, &vertex)| {
-                let dart = lateral.topology.end_vertical;
+                let dart = lateral.topology.forward(1);
 
                 Ok(raw.add_edge_derived_from(
                     vec![EditKey::Vertex(vertex)],
@@ -716,7 +717,7 @@ fn sew_extruded_loop<P: Payload>(
     })?;
     let representative = laterals
         .first()
-        .map(|lateral| lateral.topology.bottom_edge)
+        .map(|lateral| lateral.topology.forward(0))
         .expect("a loop should have at least one lateral face");
     let result = laterals
         .iter()
@@ -850,19 +851,10 @@ struct PreparedLateralFace {
 }
 
 struct ExtrudedFaceLateral {
-    topology: LateralFaceTopology,
+    topology: LooseFace,
     face: FaceKey,
     vertical_start: Point3,
     vertical_end: Point3,
-}
-
-struct LateralFaceTopology {
-    loop_dart: Dart,
-    bottom_edge: Dart,
-    top_edge: Dart,
-    start_vertical: Dart,
-    end_vertical: Dart,
-    darts: [Dart; 8],
 }
 
 fn prepare_lateral_face<P: Payload>(
@@ -888,54 +880,27 @@ fn prepare_lateral_face<P: Payload>(
     Ok(PreparedLateralFace { end, uv, surface })
 }
 
-fn add_lateral_face_topology<P: Payload>(
+/// Builds one lateral face of the sweep: the quad ring whose bottom and top
+/// sides are sewn onto the caps' edges and whose corners the caps' vertices
+/// already occupy, so the sides name no corner and no edge of their own.
+fn add_lateral_face<P: Payload>(
     edit: &mut ModelEdit<'_, P>,
-) -> Result<LateralFaceTopology, ExtrudeError> {
-    edit.deferred(|raw| {
-        let darts = std::array::from_fn(|_| raw.add_dart());
-
-        for i in 0..4 {
-            sew(raw, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
-        }
-        for i in 0..4 {
-            sew(
-                raw,
-                Dim::One,
-                darts[2 * i + 1],
-                darts[(2 * i + 2) % darts.len()],
-            )?;
-        }
-
-        Ok(LateralFaceTopology {
-            loop_dart: darts[0],
-            bottom_edge: darts[0],
-            top_edge: darts[5],
-            start_vertical: darts[7],
-            end_vertical: darts[2],
-            darts,
-        })
-    })
-}
-
-fn add_lateral_face_attributes<P: Payload>(
-    edit: &mut ModelEdit<'_, P>,
-    topology: &LateralFaceTopology,
     prepared: &PreparedLateralFace,
     swept_from: EdgeKey,
-) -> FaceKey {
-    edit.add_profile_derived_from(
-        vec![EditKey::Edge(swept_from)],
-        ProfileAttr::new(topology.loop_dart),
-    );
-    edit.add_face_derived_from(
-        vec![EditKey::Edge(swept_from)],
-        FaceAttr::with_pcurves(
-            prepared.surface.clone(),
-            topology.loop_dart,
-            Vec::new(),
-            quad_pcurves(&prepared.uv, &topology.darts),
-        ),
-    )
+) -> Result<LooseFace, ExtrudeError> {
+    edit.add_loose_face(LooseFaceBoundary {
+        surface: prepared.surface.clone(),
+        origins: vec![EditKey::Edge(swept_from)],
+        sides: (0..4)
+            .map(|i| {
+                LooseFaceSide::sewn(TrimmedCurve2::segment(
+                    prepared.uv[i],
+                    prepared.uv[(i + 1) % 4],
+                ))
+            })
+            .collect(),
+    })
+    .map_err(ExtrudeError::from)
 }
 
 pub(crate) fn lateral_face_surface(
@@ -1041,20 +1006,6 @@ fn lateral_plane(
 fn plane_uv(surface: &Plane, point: Point3) -> Point2 {
     let v = point - surface.origin();
     Point2::new(v.dot(&surface.x_dir()), v.dot(&surface.y_dir()))
-}
-
-fn quad_pcurves(
-    uv: &[Point2; 4],
-    darts: &[Dart; 8],
-) -> std::collections::HashMap<Dart, TrimmedCurve2> {
-    let mut pcurves = std::collections::HashMap::with_capacity(4);
-    for i in 0..4 {
-        pcurves.insert(
-            darts[2 * i],
-            TrimmedCurve2::segment(uv[i], uv[(i + 1) % uv.len()]),
-        );
-    }
-    pcurves
 }
 
 #[cfg(test)]

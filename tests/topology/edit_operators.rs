@@ -461,3 +461,395 @@ mod deferred_blocks {
         assert_eq!(g.dart_count(), 0);
     }
 }
+
+mod loose_faces {
+    //! The loose-face operator builds one ring of `2n` darts for an ordered
+    //! boundary and registers what each side names, leaving the model valid
+    //! when it returns.
+
+    use ngk::builders::edges::add_line;
+    use ngk::geometry::{Curve, Plane, Point2, Point3, Surface, TrimmedCurve2};
+    use ngk::model::Model;
+    use ngk::topology::edit_operators::{
+        LooseFaceBoundary, LooseFaceEdge, LooseFaceSide, OperatorError,
+    };
+    use ngk::topology::gmap::Dim;
+    use ngk::topology::payload::StandardPayload;
+    use ngk::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, SolidKey, VertexKey};
+    use ngk::topology::{EditKey, EditPolicy, ModelEditError, Origin};
+
+    type G = Model<StandardPayload>;
+
+    /// Records every creation the commit's policy sees.
+    #[derive(Default)]
+    struct Recorder {
+        created: Vec<(EditKey, Origin)>,
+    }
+
+    impl EditPolicy<StandardPayload> for Recorder {
+        type Error = ModelEditError;
+
+        fn vertex_created(
+            &mut self,
+            key: VertexKey,
+            origin: Origin,
+            _before: &G,
+        ) -> Result<(), ModelEditError> {
+            self.created.push((EditKey::Vertex(key), origin));
+            Ok(())
+        }
+
+        fn edge_created(
+            &mut self,
+            key: EdgeKey,
+            origin: Origin,
+            _before: &G,
+        ) -> Result<(), ModelEditError> {
+            self.created.push((EditKey::Edge(key), origin));
+            Ok(())
+        }
+
+        fn profile_created(
+            &mut self,
+            key: ProfileKey,
+            origin: Origin,
+            _before: &G,
+        ) -> Result<(), ModelEditError> {
+            self.created.push((EditKey::Profile(key), origin));
+            Ok(())
+        }
+
+        fn face_created(
+            &mut self,
+            key: FaceKey,
+            origin: Origin,
+            _before: &G,
+        ) -> Result<(), ModelEditError> {
+            self.created.push((EditKey::Face(key), origin));
+            Ok(())
+        }
+
+        fn sheet_created(
+            &mut self,
+            key: SheetKey,
+            origin: Origin,
+            _before: &G,
+        ) -> Result<(), ModelEditError> {
+            self.created.push((EditKey::Sheet(key), origin));
+            Ok(())
+        }
+
+        fn solid_created(
+            &mut self,
+            key: SolidKey,
+            origin: Origin,
+            _before: &G,
+        ) -> Result<(), ModelEditError> {
+            self.created.push((EditKey::Solid(key), origin));
+            Ok(())
+        }
+    }
+
+    fn assert_seen_exactly(recorder: &Recorder, expected: &[(EditKey, Origin)]) {
+        let mut remaining = recorder.created.clone();
+        for event in expected {
+            let index = remaining
+                .iter()
+                .position(|candidate| candidate == event)
+                .unwrap_or_else(|| panic!("missing lineage event {event:?}"));
+            remaining.swap_remove(index);
+        }
+        assert!(remaining.is_empty(), "unexpected events: {remaining:?}");
+    }
+
+    const CORNERS: [Point3; 4] = [
+        Point3::new(0.0, 0.0, 0.0),
+        Point3::new(1.0, 0.0, 0.0),
+        Point3::new(1.0, 1.0, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+    ];
+
+    const UV: [Point2; 4] = [
+        Point2::new(0.0, 0.0),
+        Point2::new(1.0, 0.0),
+        Point2::new(1.0, 1.0),
+        Point2::new(0.0, 1.0),
+    ];
+
+    /// A quad boundary whose per-side origins differ from side to side, the
+    /// way an extruded or revolved face names them.
+    fn quad_boundary(source: EdgeKey, ends: [VertexKey; 2]) -> LooseFaceBoundary {
+        let corner_origins = [
+            vec![EditKey::Edge(source)],
+            vec![EditKey::Vertex(ends[1])],
+            vec![EditKey::Edge(source), EditKey::Vertex(ends[0])],
+            vec![EditKey::Vertex(ends[0])],
+        ];
+        let edge_origins = [
+            vec![EditKey::Edge(source)],
+            vec![EditKey::Vertex(ends[1])],
+            vec![EditKey::Edge(source)],
+            vec![EditKey::Vertex(ends[0])],
+        ];
+        LooseFaceBoundary {
+            surface: Surface::Plane(Plane::xy()),
+            origins: vec![EditKey::Edge(source)],
+            sides: (0..4)
+                .map(|i| {
+                    LooseFaceSide::registered(
+                        CORNERS[i],
+                        corner_origins[i].clone(),
+                        Curve::line(CORNERS[i], CORNERS[(i + 1) % 4]),
+                        edge_origins[i].clone(),
+                        TrimmedCurve2::segment(UV[i], UV[(i + 1) % 4]),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_loose_quad_face_registers_four_edges_and_four_vertices_in_a_valid_embedding() {
+        let mut g = G::new();
+        let edge = add_line(&mut g, Point3::origin(), Point3::new(4.0, 0.0, 0.0)).expect("line");
+        let ends: Vec<VertexKey> = g.iter_vertices().map(|(key, _)| key).collect();
+
+        let built = g
+            .transaction(|edit| {
+                let built = edit.add_loose_face(quad_boundary(edge, [ends[0], ends[1]]))?;
+                edit.check_consistent()?;
+                Ok::<_, ModelEditError>(built)
+            })
+            .expect("the loose face builds");
+
+        let view = g.face_unchecked(built.face);
+        assert_eq!(view.edges().len(), 4);
+        assert_eq!(view.vertices().len(), 4);
+        assert!(!view.loops().is_empty());
+        assert!(g.try_embedding_index().is_ok());
+    }
+
+    #[test]
+    fn each_side_runs_forward_then_back_and_keys_its_pcurve_on_the_forward_dart() {
+        let mut g = G::new();
+        let edge = add_line(&mut g, Point3::origin(), Point3::new(4.0, 0.0, 0.0)).expect("line");
+        let ends: Vec<VertexKey> = g.iter_vertices().map(|(key, _)| key).collect();
+
+        let built = g
+            .transaction(|edit| {
+                let built = edit.add_loose_face(quad_boundary(edge, [ends[0], ends[1]]))?;
+                edit.check_consistent()?;
+                Ok::<_, ModelEditError>(built)
+            })
+            .expect("the loose face builds");
+
+        let pcurves = &g.face_attr_unchecked(built.face).pcurves;
+        for side in 0..4 {
+            let forward = built.forward(side);
+            let back = built.back(side);
+            // The backward dart is the forward dart's alpha0 partner, and the
+            // next side's forward dart follows it along alpha1.
+            assert_eq!(g.alpha(Dim::Zero, forward), back);
+            assert_eq!(g.alpha(Dim::Zero, back), forward);
+            assert_eq!(g.alpha(Dim::One, back), built.forward((side + 1) % 4));
+            assert_eq!(g.alpha(Dim::One, forward), built.back((side + 3) % 4));
+            // The side's pcurve is keyed on its forward dart, and the side's
+            // edge is anchored there.
+            assert_eq!(
+                pcurves.get(&forward),
+                Some(&TrimmedCurve2::segment(UV[side], UV[(side + 1) % 4]))
+            );
+            let edge_key = built.edge(side).expect("every side registered an edge");
+            assert_eq!(g.edge_unchecked(edge_key).dart(), forward);
+        }
+        // Each corner's vertex sits on the 0-cell the side's two darts share
+        // and carries the side's corner point.
+        let points: Vec<Point3> = g
+            .face_unchecked(built.face)
+            .vertices()
+            .iter()
+            .map(|vertex| *vertex.point())
+            .collect();
+        assert_eq!(points.len(), 4);
+        for corner in CORNERS {
+            assert!(points.contains(&corner), "missing corner {corner:?}");
+        }
+    }
+
+    #[test]
+    fn a_loose_face_with_three_sides_builds() {
+        let mut g = G::new();
+        let edge = add_line(&mut g, Point3::origin(), Point3::new(4.0, 0.0, 0.0)).expect("line");
+
+        let built = g
+            .transaction(|edit| {
+                let built = edit.add_loose_face(LooseFaceBoundary {
+                    surface: Surface::Plane(Plane::xy()),
+                    origins: vec![EditKey::Edge(edge)],
+                    sides: (0..3)
+                        .map(|i| {
+                            LooseFaceSide::registered(
+                                CORNERS[i],
+                                vec![EditKey::Edge(edge)],
+                                Curve::line(CORNERS[i], CORNERS[(i + 1) % 3]),
+                                vec![EditKey::Edge(edge)],
+                                TrimmedCurve2::segment(UV[i], UV[(i + 1) % 3]),
+                            )
+                        })
+                        .collect(),
+                })?;
+                edit.check_consistent()?;
+                Ok::<_, ModelEditError>(built)
+            })
+            .expect("a triangle builds");
+
+        assert_eq!(g.face_unchecked(built.face).edges().len(), 3);
+        assert_eq!(g.face_unchecked(built.face).vertices().len(), 3);
+    }
+
+    #[test]
+    fn a_loose_face_with_fewer_than_three_sides_is_refused_and_changes_nothing() {
+        let mut g = G::new();
+        let edge = add_line(&mut g, Point3::origin(), Point3::new(4.0, 0.0, 0.0)).expect("line");
+        let (darts, edges, vertices) = (
+            g.dart_count(),
+            super::edge_count(&g),
+            g.iter_vertices().count(),
+        );
+
+        let error = g
+            .transaction(|edit| {
+                edit.add_loose_face(LooseFaceBoundary {
+                    surface: Surface::Plane(Plane::xy()),
+                    origins: vec![EditKey::Edge(edge)],
+                    sides: (0..2)
+                        .map(|i| {
+                            LooseFaceSide::sewn(TrimmedCurve2::segment(UV[i], UV[(i + 1) % 2]))
+                        })
+                        .collect(),
+                })
+            })
+            .expect_err("two sides cannot close a boundary");
+
+        assert!(
+            matches!(
+                error,
+                ModelEditError::Operator(OperatorError::TooFewLooseFaceSides { sides: 2 })
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            (
+                g.dart_count(),
+                super::edge_count(&g),
+                g.iter_vertices().count()
+            ),
+            (darts, edges, vertices)
+        );
+    }
+
+    #[test]
+    fn the_origins_land_on_the_entities_the_sides_named() {
+        let mut g = G::new();
+        let edge = add_line(&mut g, Point3::origin(), Point3::new(4.0, 0.0, 0.0)).expect("line");
+        let ends: Vec<VertexKey> = g.iter_vertices().map(|(key, _)| key).collect();
+        let boundary = quad_boundary(edge, [ends[0], ends[1]]);
+
+        let mut recorder = Recorder::default();
+        let built = g
+            .transaction_with_policy(&mut recorder, |edit| {
+                let built = edit.add_loose_face(boundary)?;
+                edit.check_consistent()?;
+                Ok::<_, ModelEditError>(built)
+            })
+            .expect("the loose face builds");
+
+        let mut expected = vec![(
+            EditKey::Profile(g.profile_key(built.forward(0)).expect("a profile")),
+            Origin::Derived {
+                sources: vec![EditKey::Edge(edge)],
+            },
+        )];
+        expected.push((
+            EditKey::Face(built.face),
+            Origin::Derived {
+                sources: vec![EditKey::Edge(edge)],
+            },
+        ));
+        for (side, corner) in CORNERS.iter().enumerate() {
+            let corner_origins = match side {
+                0 => vec![EditKey::Edge(edge)],
+                1 => vec![EditKey::Vertex(ends[1])],
+                2 => vec![EditKey::Edge(edge), EditKey::Vertex(ends[0])],
+                _ => vec![EditKey::Vertex(ends[0])],
+            };
+            let edge_origins = match side {
+                0 | 2 => vec![EditKey::Edge(edge)],
+                1 => vec![EditKey::Vertex(ends[1])],
+                _ => vec![EditKey::Vertex(ends[0])],
+            };
+            let vertex = g
+                .face_unchecked(built.face)
+                .vertices()
+                .into_iter()
+                .find(|vertex| vertex.point() == corner)
+                .expect("each corner has a vertex");
+            expected.push((
+                EditKey::Vertex(vertex.key()),
+                Origin::Derived {
+                    sources: corner_origins,
+                },
+            ));
+            expected.push((
+                EditKey::Edge(built.edge(side).expect("an edge")),
+                Origin::Derived {
+                    sources: edge_origins,
+                },
+            ));
+        }
+        assert_seen_exactly(&recorder, &expected);
+    }
+
+    #[test]
+    fn a_side_naming_no_corner_and_no_edge_registers_nothing_for_it() {
+        let mut g = G::new();
+        let edge = add_line(&mut g, Point3::origin(), Point3::new(4.0, 0.0, 0.0)).expect("line");
+        let (edges, vertices) = (super::edge_count(&g), g.iter_vertices().count());
+
+        let built = g
+            .transaction(|edit| {
+                let built = edit.add_loose_face(LooseFaceBoundary {
+                    surface: Surface::Plane(Plane::xy()),
+                    origins: vec![EditKey::Edge(edge)],
+                    sides: (0..4)
+                        .map(|i| LooseFaceSide {
+                            corner: None,
+                            edge: (i == 1).then_some(LooseFaceEdge {
+                                curve: Curve::line(CORNERS[i], CORNERS[(i + 1) % 4]),
+                                origins: vec![EditKey::Edge(edge)],
+                            }),
+                            pcurve: TrimmedCurve2::segment(UV[i], UV[(i + 1) % 4]),
+                        })
+                        .collect(),
+                })?;
+                edit.check_consistent()?;
+                Ok::<_, ModelEditError>(built)
+            })
+            .expect("the ring builds");
+
+        // Only one edge came into being besides the face and its profile: the
+        // other sides' corners and edges are left to the caller to sew.
+        assert_eq!(super::edge_count(&g), edges + 1);
+        assert_eq!(g.iter_vertices().count(), vertices);
+        assert_eq!(built.edge(0), None);
+        assert!(built.edge(1).is_some());
+        assert_eq!(built.edge(2), None);
+        assert_eq!(built.edge(3), None);
+        let pcurves = &g.face_attr_unchecked(built.face).pcurves;
+        for side in 0..4 {
+            assert!(pcurves.contains_key(&built.forward(side)));
+            assert_eq!(g.alpha(Dim::Zero, built.forward(side)), built.back(side));
+        }
+        assert!(g.try_embedding_index().is_ok());
+    }
+}

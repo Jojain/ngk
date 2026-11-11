@@ -1,8 +1,6 @@
 use crate::geometry::Frame;
 use crate::geometry::TrimmedCurve2;
 use crate::geometry::parameter::Fraction;
-use crate::topology::RawEdit;
-use std::collections::HashMap;
 
 use nalgebra::Vector3;
 
@@ -13,11 +11,11 @@ use crate::geometry::{
 };
 use crate::model::{Cell1, Model, OpResult, StaleResult};
 use crate::topology::ModelEdit;
-use crate::topology::attributes::{EdgeAttr, FaceAttr, ProfileAttr, SheetAttr, VertexAttr};
+use crate::topology::attributes::SheetAttr;
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::edit::{EditKey, ModelEditError};
-use crate::topology::edit_operators::OperatorError;
+use crate::topology::edit_operators::{LooseFaceBoundary, LooseFaceSide, OperatorError};
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
 use crate::topology::shape_keys::{EdgeKey, FaceKey, ProfileKey, SheetKey, VertexKey};
@@ -274,64 +272,46 @@ fn add_extruded_edge_face<P: Payload>(
     corners: [Point3; 4],
     surface_data: ExtrudedSurface,
 ) -> Result<ExtrudedFace, ExtrudeError> {
-    edit.deferred(|raw| {
-        let from_edge = vec![EditKey::Edge(key)];
-        let (from_start, from_end) = match ends {
-            Some((first, last)) => (vec![EditKey::Vertex(first)], vec![EditKey::Vertex(last)]),
-            None => (from_edge.clone(), from_edge.clone()),
-        };
-        let corner_sources = [&from_start, &from_end, &from_end, &from_start];
-        let boundary_sources = [&from_edge, &from_end, &from_edge, &from_start];
+    let from_edge = vec![EditKey::Edge(key)];
+    let (from_start, from_end) = match ends {
+        Some((first, last)) => (vec![EditKey::Vertex(first)], vec![EditKey::Vertex(last)]),
+        None => (from_edge.clone(), from_edge.clone()),
+    };
+    let corner_sources = [&from_start, &from_end, &from_end, &from_start];
+    let boundary_sources = [&from_edge, &from_end, &from_edge, &from_start];
 
-        let darts: Vec<Dart> = (0..8).map(|_| raw.add_dart()).collect();
+    let ExtrudedSurface {
+        surface,
+        uv,
+        boundary_curves,
+    } = surface_data;
+    let built = edit.add_loose_face(LooseFaceBoundary {
+        surface,
+        origins: from_edge.clone(),
+        sides: (0..4)
+            .map(|i| {
+                LooseFaceSide::registered(
+                    corners[i],
+                    corner_sources[i].clone(),
+                    boundary_curves[i].clone(),
+                    boundary_sources[i].clone(),
+                    TrimmedCurve2::segment(uv[i], uv[(i + 1) % 4]),
+                )
+            })
+            .collect(),
+    })?;
 
-        for i in 0..4 {
-            sew(raw, Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
-        }
-        for i in 0..4 {
-            sew(
-                raw,
-                Dim::One,
-                darts[2 * i + 1],
-                darts[(2 * i + 2) % darts.len()],
-            )?;
-        }
-
-        for i in 0..4 {
-            let dart = raw.cell_representative(darts[2 * i], Dim::Zero);
-            raw.add_vertex_derived_from(
-                corner_sources[i].clone(),
-                VertexAttr::new(dart, corners[i]),
-            );
-        }
-
-        let edges = std::array::from_fn(|i| {
-            let edge_dart = darts[2 * i];
-            raw.add_edge_derived_from(
-                boundary_sources[i].clone(),
-                EdgeAttr::new(edge_dart, surface_data.boundary_curves[i].clone()),
-            )
-        });
-
-        raw.add_profile_derived_from(from_edge.clone(), ProfileAttr::new(darts[0]));
-        let face = raw.add_face_derived_from(
-            from_edge,
-            FaceAttr::with_pcurves(
-                surface_data.surface,
-                darts[0],
-                Vec::new(),
-                quad_pcurves(&surface_data.uv, &darts),
-            ),
-        );
-
-        Ok(ExtrudedFace {
-            start_side: darts[7],
-            end_side: darts[2],
-            translated_start: darts[5],
-            translated_end: darts[4],
-            face,
-            edges,
-        })
+    Ok(ExtrudedFace {
+        start_side: built.back(3),
+        end_side: built.forward(1),
+        translated_start: built.back(2),
+        translated_end: built.forward(2),
+        face: built.face,
+        edges: std::array::from_fn(|i| {
+            built
+                .edge(i)
+                .expect("every extruded side registers an edge")
+        }),
     })
 }
 
@@ -371,16 +351,6 @@ fn sew_adjacent_sweep_edges<P: Payload>(
         })
 }
 
-fn sew<P: Payload>(
-    edit: &mut RawEdit<'_, '_, P>,
-    dim: Dim,
-    first: Dart,
-    second: Dart,
-) -> Result<(), ExtrudeError> {
-    edit.sew(dim, first, second)
-        .map_err(|_| ExtrudeError::SewFailed { dim, first, second })
-}
-
 fn lateral_plane(
     dart: Dart,
     start: Point3,
@@ -398,17 +368,6 @@ fn lateral_plane(
     Frame::try_from_xy(start, edge, in_plane)
         .map(Plane::from_frame)
         .map_err(|_| ExtrudeError::DegenerateSweep { dart })
-}
-
-fn quad_pcurves(uv: &[Point2; 4], darts: &[Dart]) -> HashMap<Dart, TrimmedCurve2> {
-    let mut pcurves = HashMap::with_capacity(4);
-    for i in 0..4 {
-        pcurves.insert(
-            darts[2 * i],
-            TrimmedCurve2::segment(uv[i], uv[(i + 1) % uv.len()]),
-        );
-    }
-    pcurves
 }
 
 fn plane_uv(surface: &Plane, point: Point3) -> Point2 {

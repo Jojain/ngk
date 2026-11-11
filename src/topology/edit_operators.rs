@@ -12,8 +12,13 @@
 //! The set is small on purpose, each member the unit a builder needs and no
 //! smaller: [`ModelEdit::mark_edge`] and [`ModelEdit::cut_edge`] add a corner to
 //! an edge, [`ModelEdit::sew_edges`] and [`ModelEdit::unsew_edge`] fuse and
-//! separate two edges where faces meet. Geometry stays with the caller -- an
+//! separate two edges where faces meet, and [`ModelEdit::add_loose_face`] builds
+//! one face that is sewn to nothing. Geometry stays with the caller -- an
 //! operator is handed the curves and points the new entities carry.
+
+mod loose_face;
+
+pub use loose_face::{LooseFace, LooseFaceBoundary, LooseFaceCorner, LooseFaceEdge, LooseFaceSide};
 
 use std::collections::{HashMap, HashSet};
 
@@ -77,6 +82,13 @@ pub enum OperatorError {
         dimension: Dim,
         dart: Dart,
         claims: Vec<EntityOwner>,
+    },
+
+    /// A loose face's boundary needs at least three sides to close a ring.
+    #[error("a loose face needs at least 3 sides, got {sides}")]
+    TooFewLooseFaceSides {
+        /// How many sides the boundary had.
+        sides: usize,
     },
 }
 

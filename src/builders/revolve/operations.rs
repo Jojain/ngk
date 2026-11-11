@@ -26,7 +26,7 @@ use crate::topology::attributes::{
 use crate::topology::closed::Closeable;
 use crate::topology::edge::Edge;
 use crate::topology::edit::{EditKey, ModelEdit, ModelEditError};
-use crate::topology::edit_operators::OperatorError;
+use crate::topology::edit_operators::{LooseFaceBoundary, LooseFaceSide, OperatorError};
 use crate::topology::face::Face;
 use crate::topology::gmap::{Dart, Dim};
 use crate::topology::payload::Payload;
@@ -1467,40 +1467,41 @@ fn add_axis_revolved_face<P: Payload>(
             ],
         )
     };
-    edit.deferred(|raw| {
-        let darts: [Dart; 6] = std::array::from_fn(|_| raw.add_dart());
-        for i in 0..3 {
-            raw.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
-            raw.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % 6])?;
-            let origin = if i == 0 || (i == 2 && !start_on_axis) {
-                endpoint_origin(source, &source.start)
-            } else {
-                endpoint_origin(source, &source.end)
-            };
-            raw.add_vertex_derived_from(vec![origin], VertexAttr::new(darts[2 * i], corners[i]));
-            raw.add_edge_derived_from(
-                vec![EditKey::Edge(source.key)],
-                EdgeAttr::new(darts[2 * i], curves[i].clone()),
-            );
-        }
-        raw.add_profile_derived_from(vec![EditKey::Edge(source.key)], ProfileAttr::new(darts[0]));
-        let key = raw.add_face_derived_from(
-            vec![EditKey::Edge(source.key)],
-            FaceAttr::with_pcurves(
-                support.surface,
-                darts[0],
-                Vec::new(),
-                (0..3).map(|i| (darts[2 * i], pcurves[i].clone())).collect(),
-            ),
-        );
-        Ok(RevolvedFaceBuild {
-            bottom_edge: Some(darts[0]),
-            top_edge: Some(if start_on_axis { darts[5] } else { darts[3] }),
-            start_side: (!start_on_axis).then_some(darts[5]),
-            end_side: start_on_axis.then_some(darts[2]),
-            outer_loop: darts[0],
-            key,
-        })
+    let edge_origin = vec![EditKey::Edge(source.key)];
+    let built = edit.add_loose_face(LooseFaceBoundary {
+        surface: support.surface,
+        origins: edge_origin.clone(),
+        sides: (0..3)
+            .map(|i| {
+                // Corner 0 is the source's start and corner 1 its end; corner 2
+                // is the rotated image of one of the two, so it derives from
+                // that same endpoint.
+                let origin = if i == 0 || (i == 2 && !start_on_axis) {
+                    endpoint_origin(source, &source.start)
+                } else {
+                    endpoint_origin(source, &source.end)
+                };
+                LooseFaceSide::registered(
+                    corners[i],
+                    vec![origin],
+                    curves[i].clone(),
+                    edge_origin.clone(),
+                    pcurves[i].clone(),
+                )
+            })
+            .collect(),
+    })?;
+    Ok(RevolvedFaceBuild {
+        bottom_edge: Some(built.forward(0)),
+        top_edge: Some(if start_on_axis {
+            built.back(2)
+        } else {
+            built.back(1)
+        }),
+        start_side: (!start_on_axis).then_some(built.back(2)),
+        end_side: start_on_axis.then_some(built.forward(1)),
+        outer_loop: built.forward(0),
+        key: built.face,
     })
 }
 
@@ -1513,50 +1514,31 @@ fn add_revolved_quad_face<P: Payload>(
     source: EdgeKey,
     corner_origins: [EditKey; 4],
 ) -> Result<RevolvedFaceBuild, RevolveError> {
-    edit.deferred(|raw| {
-        let darts: Vec<Dart> = (0..8).map(|_| raw.add_dart()).collect();
+    let built = edit.add_loose_face(LooseFaceBoundary {
+        surface,
+        origins: vec![EditKey::Edge(source)],
+        sides: (0..4)
+            .map(|i| {
+                LooseFaceSide::registered(
+                    corners[i],
+                    vec![corner_origins[i]],
+                    boundary_curves[i].clone(),
+                    vec![corner_origins[i]],
+                    pcurves[i].clone(),
+                )
+            })
+            .collect(),
+    })?;
 
-        for i in 0..4 {
-            raw.link(Dim::Zero, darts[2 * i], darts[2 * i + 1])?;
-        }
-        for i in 0..4 {
-            raw.link(Dim::One, darts[2 * i + 1], darts[(2 * i + 2) % darts.len()])?;
-        }
-
-        for i in 0..4 {
-            let dart = raw.cell_representative(darts[2 * i], Dim::Zero);
-            raw.add_vertex_derived_from(vec![corner_origins[i]], VertexAttr::new(dart, corners[i]));
-        }
-
-        for i in 0..4 {
-            let edge_dart = darts[2 * i];
-            raw.add_edge_derived_from(
-                vec![corner_origins[i]],
-                EdgeAttr::new(edge_dart, boundary_curves[i].clone()),
-            );
-        }
-
-        raw.add_profile_derived_from(vec![EditKey::Edge(source)], ProfileAttr::new(darts[0]));
-        let key = raw.add_face_derived_from(
-            vec![EditKey::Edge(source)],
-            FaceAttr::with_pcurves(
-                surface,
-                darts[0],
-                Vec::new(),
-                quad_pcurves(&pcurves, &darts),
-            ),
-        );
-
-        Ok(RevolvedFaceBuild {
-            bottom_edge: Some(darts[0]),
-            // darts[4] is at `rotated_end`; darts[5] is its alpha0 partner at
-            // `rotated_start`, which is the vertex the cap edge dart carries.
-            top_edge: Some(darts[5]),
-            start_side: Some(darts[7]),
-            end_side: Some(darts[2]),
-            outer_loop: darts[0],
-            key,
-        })
+    Ok(RevolvedFaceBuild {
+        bottom_edge: Some(built.forward(0)),
+        // forward(2) is at `rotated_end`; back(2) is its alpha0 partner at
+        // `rotated_start`, which is the vertex the cap edge dart carries.
+        top_edge: Some(built.back(2)),
+        start_side: Some(built.back(3)),
+        end_side: Some(built.forward(1)),
+        outer_loop: built.forward(0),
+        key: built.face,
     })
 }
 
@@ -1860,14 +1842,6 @@ fn validate_planar_section<P: Payload>(
         }
     }
     Ok(())
-}
-
-fn quad_pcurves(uv: &[TrimmedCurve2; 4], darts: &[Dart]) -> HashMap<Dart, TrimmedCurve2> {
-    let mut pcurves = HashMap::with_capacity(4);
-    for i in 0..4 {
-        pcurves.insert(darts[2 * i], uv[i].clone());
-    }
-    pcurves
 }
 
 /// Revolves an existing face into a solid around `axis`.
