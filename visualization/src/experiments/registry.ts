@@ -18,6 +18,12 @@ export const experiments: ExperimentMeta[] = [
     component: lazy(() => import("./Solver2d")),
   },
   {
+    id: "assembly-3d",
+    title: "Assemblage 3D",
+    group: "Contraintes",
+    component: lazy(() => import("./Assembly3d")),
+  },
+  {
     id: "debug-viewer",
     title: "Debug viewer",
     group: "Debug",

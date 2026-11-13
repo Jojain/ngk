@@ -51,19 +51,19 @@ origin, X, Y and Z — and Z carries the joint's axis. The order matters: a join
 coordinates express the second frame in the first. There is no flip flag; a caller
 wanting the other sense passes the flipped frame.
 
-| Kind | French | Coordinates (second in first) | Equations |
-|---|---|---|---|
-| `Fixed` | encastrement | none | origins coincide (3), orientations coincide (3) |
-| `Revolute` | pivot | `Angle` | origins coincide (3), Z axes coincide (2) |
-| `Prismatic` | glissière | `Slide` | second origin on the first Z axis (2), orientations coincide (3) |
-| `Helical { pitch }` | hélicoïdale | `Angle`; `Slide` follows | on the axis (2), Z axes (2), slide = pitch · angle / 2π (1) |
-| `Cylindrical` | pivot glissant | `Angle`, `Slide` | on the axis (2), Z axes (2) |
-| `Universal` | rotule à doigt | `Alpha`, `Beta` | origins coincide (3), first X ⟂ second Y (1) |
-| `Spherical` | rotule | a free rotation | origins coincide (3) |
-| `Planar` | appui plan | `X`, `Y`, `Angle` | second origin on the first XY plane (1), Z axes (2) |
-| `CylinderOnPlane` | linéaire rectiligne | `X`, `Y`, `Angle`, `Roll` | on the plane (1), second X in the plane (1) |
-| `SphereInCylinder` | linéaire annulaire | `Slide`, a free rotation | on the first Z axis (2) |
-| `SphereOnPlane` | ponctuelle | `X`, `Y`, a free rotation | on the first XY plane (1) |
+| Kind | Coordinates (second in first) | Equations |
+|---|---|---|
+| `Fixed` | none | origins coincide (3), orientations coincide (3) |
+| `Revolute` | `Angle` | origins coincide (3), Z axes coincide (2) |
+| `Prismatic` | `Slide` | second origin on the first Z axis (2), orientations coincide (3) |
+| `Helical { pitch }` | `Angle`; `Slide` follows | on the axis (2), Z axes (2), slide = pitch · angle / 2π (1) |
+| `Cylindrical` | `Angle`, `Slide` | on the axis (2), Z axes (2) |
+| `Universal` | `Alpha`, `Beta` | origins coincide (3), first X ⟂ second Y (1) |
+| `Spherical` | a free rotation | origins coincide (3) |
+| `Planar` | `X`, `Y`, `Angle` | second origin on the first XY plane (1), Z axes (2) |
+| `CylinderOnPlane` | `X`, `Y`, `Angle`, `Roll` | on the plane (1), second X in the plane (1) |
+| `SphereInCylinder` | `Slide`, a free rotation | on the first Z axis (2) |
+| `SphereOnPlane` | `X`, `Y`, a free rotation | on the first XY plane (1) |
 
 `X`, `Y` and `Slide` are the second origin along the first frame's axes. `Angle` turns
 the first X onto the second about the first Z. The universal joint is a cardan joint:
@@ -189,6 +189,17 @@ helical joint only, and `values`, `limits` and `cone` as keywords), `JointKind`,
 `Coordinate`, `Limit`, `Target`, `Solution3d` and its report. Poses are
 `ngk.geometry.Rigid` and frames `ngk.geometry.Frame`. `NonConvergenceError` carries
 `joints` and `residuals`, `LimitError` its `limit`; both derive from `ValueError`.
+
+## Visualization playground
+
+The visualization app registers `assembly-3d` (sidebar: **Contraintes / Assemblage 3D**,
+URL fragment `#/assembly-3d`). `bindings/wasm/visualization/assembly.rs` exposes
+`AssemblyPlayground`, which holds an `Assembly3d` built from a preset (a slider-crank,
+a three-axis arm with limits, a pendulum on a cone-limited ball joint) and answers each
+drag with one `solve_toward` pulling the grabbed point toward the pointer, coalesced
+once per animation frame. Bodies are drawn as three.js boxes and cylinders placed by
+their solved poses. `cargo run --example assembly_demo` instead sends a driven
+slider-crank to the debug viewer, one timeline entry per crank angle.
 
 ## Code boundaries
 
