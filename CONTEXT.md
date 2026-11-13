@@ -35,13 +35,18 @@ The identity of a primitive or constraint of a constraint system, issued by it a
 never issued twice. A caller can store it and rebuild the system from it, where it
 means the same thing. A model's keys hold within that model only.
 
+**Body** (of an assembly solver):
+A pose the assembly solver moves rigidly. It holds no shape: what it stands for
+(one shape, several moved together, or none) is the caller's mapping.
+_Avoid_: calling a shape a body
+
 **Model**:
 One map plus everything a shape is: entities, geometry, payload. Every mutation
 happens inside one of its transactions.
 
 **Shape**:
 A model plus its primary entity.
-_Avoid_: body, part
+_Avoid_: body (a body is the assembly solver's), part
 
 **Transaction**:
 The atomic boundary of one modeling operation: it commits whole or restores the
