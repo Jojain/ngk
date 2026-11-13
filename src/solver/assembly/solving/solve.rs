@@ -1,23 +1,34 @@
-use super::super::system::Body;
+use super::super::system::{Body, StoredJoint};
 use super::super::{
-    BodyFreedom, BodyId, Joint3d, JointId, JointRedundancy, JointResidual, SolveError,
-    SolveOptions, SolveReport, Target3d, TargetReport,
+    Attachment, BodyFreedom, BodyId, Coordinate, JointId, JointRedundancy, JointResidual,
+    SolveError, SolveOptions, SolveReport, Target3d, TargetReport,
 };
 use super::equations::{self, Evaluation};
 use super::prepare::{self, BODY_UNKNOWNS, Component};
+use crate::geometry::dim3::frame::Frame;
 use crate::geometry::transform::Rigid;
 use crate::solver::numerical::{self, Factor, Problem};
 use nalgebra::DVector;
 use std::collections::BTreeMap;
 
+/// What a successful solve publishes.
+pub(in crate::solver::assembly) struct Solved {
+    pub poses: BTreeMap<BodyId, Rigid>,
+    pub coordinates: BTreeMap<JointId, BTreeMap<Coordinate, f64>>,
+    pub relative: BTreeMap<JointId, Rigid>,
+    pub report: SolveReport,
+}
+
 /// Solves every component into world poses; the caller commits only a complete success.
 pub(in crate::solver::assembly) fn solve(
     bodies: &BTreeMap<BodyId, Body>,
-    joints: &BTreeMap<JointId, Joint3d>,
+    joints: &BTreeMap<JointId, StoredJoint>,
     targets: &[Target3d],
     options: &SolveOptions,
-) -> Result<(BTreeMap<BodyId, Rigid>, SolveReport), SolveError> {
+) -> Result<Solved, SolveError> {
     let mut poses = BTreeMap::new();
+    let mut coordinates = BTreeMap::new();
+    let mut relative = BTreeMap::new();
     let mut report = SolveReport::default();
     for component in prepare::prepare(bodies, joints, targets) {
         let mut attempt = numerical::restore(&component, component.initial.clone(), options);
@@ -82,12 +93,30 @@ pub(in crate::solver::assembly) fn solve(
                 reached: distance <= options.target_tolerance,
             });
         }
+        for ((id, joint), references) in component.joints.iter().zip(&component.references) {
+            coordinates.insert(*id, equations::coordinates(joint, references, &solved));
+            let placed = |attachment: &Attachment| {
+                Rigid::between_frames(
+                    &Frame::xyz(),
+                    &attachment.frame.moved(&solved[&attachment.body]),
+                )
+            };
+            relative.insert(
+                *id,
+                placed(&joint.second).compose(placed(&joint.first).inverse()),
+            );
+        }
         for entry in component.entries.iter().filter(|entry| entry.owned) {
             poses.insert(entry.id, solved[&entry.id]);
         }
     }
     report.targets.sort_by_key(|r| r.index);
-    Ok((poses, report))
+    Ok(Solved {
+        poses,
+        coordinates,
+        relative,
+        report,
+    })
 }
 
 impl Problem for Component {

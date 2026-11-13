@@ -1,4 +1,4 @@
-use super::{BodyId, EditError, JointId};
+use super::{BodyId, Coordinate, EditError, JointId};
 use crate::geometry::dim3::utils::Point3;
 use crate::geometry::transform::Rigid;
 use std::collections::BTreeMap;
@@ -67,6 +67,8 @@ pub(super) struct SolutionData {
     pub revision: u64,
     pub sequence: u64,
     pub poses: BTreeMap<BodyId, Rigid>,
+    pub coordinates: BTreeMap<JointId, BTreeMap<Coordinate, f64>>,
+    pub relative: BTreeMap<JointId, Rigid>,
     pub report: SolveReport,
 }
 
@@ -87,5 +89,24 @@ impl Solution3d {
             .get(&body)
             .copied()
             .ok_or(EditError::InvalidBodyReference(body))
+    }
+    /// A joint's solved coordinate: an angle in radians, unwrapped, or a length.
+    pub fn coordinate(&self, joint: JointId, coordinate: Coordinate) -> Result<f64, EditError> {
+        self.0
+            .coordinates
+            .get(&joint)
+            .ok_or(EditError::InvalidJointReference(joint))?
+            .get(&coordinate)
+            .copied()
+            .ok_or(EditError::InvalidJoint("the joint has no such coordinate"))
+    }
+    /// A joint's solved relative motion: the pose of its second frame in its first. It
+    /// is how a free rotation reads, having no scalar coordinates.
+    pub fn relative(&self, joint: JointId) -> Result<Rigid, EditError> {
+        self.0
+            .relative
+            .get(&joint)
+            .copied()
+            .ok_or(EditError::InvalidJointReference(joint))
     }
 }

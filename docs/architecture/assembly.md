@@ -11,13 +11,13 @@ built is in [plan/assembly-solver.md](../../plan/assembly-solver.md).
 
 ```rust
 use ngk::geometry::{dim3::frame::Frame, dim3::utils::Point3, transform::Rigid};
-use ngk::solver::assembly::{Assembly3d, Attachment, Joint3d, Target3d};
+use ngk::solver::assembly::{Assembly3d, Attachment, Joint3d, JointKind, Target3d};
 
 let mut assembly = Assembly3d::default();
 let ground = assembly.add_body(Rigid::identity())?;
 assembly.fix(ground)?;
 let arm = assembly.add_body(seed)?;
-assembly.add_joint(Joint3d::revolute(
+assembly.add_joint(Joint3d::new(JointKind::Revolute, 
     Attachment::new(ground, Frame::at(Point3::new(0., 0., 0.))),
     Attachment::new(arm, Frame::at(Point3::new(0., 0., 0.))),
 ))?;
@@ -51,14 +51,49 @@ origin, X, Y and Z — and Z carries the joint's axis. The order matters: a join
 coordinates express the second frame in the first. There is no flip flag; a caller
 wanting the other sense passes the flipped frame.
 
-| Kind | Leaves | Equations |
-|---|---|---|
-| `Fixed` | nothing | origins coincide (3), orientations coincide (3) |
-| `Revolute` | rotation about Z | origins coincide (3), Z axes coincide (2) |
-| `Prismatic` | translation along Z | second origin on the first Z axis (2), orientations coincide (3) |
+| Kind | French | Coordinates (second in first) | Equations |
+|---|---|---|---|
+| `Fixed` | encastrement | none | origins coincide (3), orientations coincide (3) |
+| `Revolute` | pivot | `Angle` | origins coincide (3), Z axes coincide (2) |
+| `Prismatic` | glissière | `Slide` | second origin on the first Z axis (2), orientations coincide (3) |
+| `Helical { pitch }` | hélicoïdale | `Angle`; `Slide` follows | on the axis (2), Z axes (2), slide = pitch · angle / 2π (1) |
+| `Cylindrical` | pivot glissant | `Angle`, `Slide` | on the axis (2), Z axes (2) |
+| `Universal` | rotule à doigt | `Alpha`, `Beta` | origins coincide (3), first X ⟂ second Y (1) |
+| `Spherical` | rotule | a free rotation | origins coincide (3) |
+| `Planar` | appui plan | `X`, `Y`, `Angle` | second origin on the first XY plane (1), Z axes (2) |
+| `CylinderOnPlane` | linéaire rectiligne | `X`, `Y`, `Angle`, `Roll` | on the plane (1), second X in the plane (1) |
+| `SphereInCylinder` | linéaire annulaire | `Slide`, a free rotation | on the first Z axis (2) |
+| `SphereOnPlane` | ponctuelle | `X`, `Y`, a free rotation | on the first XY plane (1) |
+
+`X`, `Y` and `Slide` are the second origin along the first frame's axes. `Angle` turns
+the first X onto the second about the first Z. The universal joint is a cardan joint:
+`Alpha` about the first X, then `Beta` about the second Y, with no twist about Z, so the
+first X and the second Y stay square. `Roll` turns a cylinder lying on a plane about its
+own axis, the second X. The helical pitch is the slide per turn, positive for a
+right-handed screw. A free rotation has no scalar coordinates; `Solution3d::relative`
+reads any joint's motion as the pose of its second frame in its first.
 
 Refused at edit: a joint holding the same body twice, a body that is not in the
-assembly, a frame that is not finite, orthonormal and right-handed.
+assembly, a frame that is not finite, orthonormal and right-handed, a helical pitch
+that is zero or not finite, and an imposed value that is not finite or not on a free
+coordinate of the joint.
+
+### Coordinates, seeds and imposed values
+
+Angles are unwrapped: continuous from where they start and free to run past a turn.
+A pose only gives an angle modulo a turn, so each angular coordinate of a joint has a
+**seed**, its unwrapped value. A solve reads each angle at the start poses and takes
+the representative nearest the seed (the value in `(-π, π]` without one); during the
+solve the angle stays within half a turn of that reference. A success replaces the
+seeds with the solved values, so dragging a crank round counts its turns.
+`set_coordinate_seed` gives a seed back, such as one stored with the caller's
+document; only an angle of the joint has one. `update_joint` keeps the seeds of the
+angles the new kind still has.
+
+`Joint3d::with_value` imposes a coordinate, as a dimension: an angle in radians,
+unwrapped, or a length in the caller's unit. It adds one equation and removes one
+freedom. An imposed angle is its own reference, so a helical joint imposed at 720°
+advances two pitches. A helical slide follows its angle and is not imposed.
 
 ### Orientation equations
 
@@ -103,16 +138,21 @@ and is reported as not reached.
 - `redundancies`: per joint, how many of its equations depend on the joints before it;
 - `residuals` in the caller's units, targets and iteration counts.
 
+`Solution3d` also holds every joint's coordinates (`coordinate`) and relative motion
+(`relative`) at the solution.
+
 Failure to converge is `SolveError::NonConvergence`, naming the component's joints
 and their residuals. Two fixed bodies joined where they disagree fail this way.
 
 ## Code boundaries
 
-- `assembly/system.rs`: bodies, fixings, joints, edits, revisions, publication.
+- `assembly/system.rs`: bodies, fixings, joints and their seeds, edits, revisions,
+  publication.
 - `assembly/ids.rs`, `joint.rs`, `target.rs`: identity and problem representation.
 - `assembly/solution.rs`, `error.rs`: outputs and failures.
 - `assembly/solving/prepare.rs`: components, unknown layout, scale, poses from unknowns.
 - `assembly/solving/vector.rs`: space vectors of jets and the rotation of a vector.
-- `assembly/solving/equations.rs`: attachment frames as expressions and the joints' rows.
+- `assembly/solving/equations.rs`: attachment frames as expressions, the joints' rows,
+  coordinates and their unwrapping references.
 - `assembly/solving/solve.rs`: the component as a `Problem`, the publication audit and
   diagnostics.

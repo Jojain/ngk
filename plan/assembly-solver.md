@@ -1,6 +1,6 @@
 # Assembly solver
 
-Status: stages 1 and 2 built; the solver as it is is described in
+Status: stages 1 to 3 built; the solver as it is is described in
 [assembly.md](../docs/architecture/assembly.md). This plan records the decisions for
 a rigid-body positioning solver and the stages still to build. The 2D
 sketch solver it sits next to is described in
@@ -210,8 +210,9 @@ frame.
 5. **Serialization and Python bindings.** `Assembly3d` serializes like `System2d`;
    `ngk.solver` exposes it to Python for Nales.
 
-Stages 1 and 2 are built: the numerical core is shared (`src/solver/numerical/`) and
-`Assembly3d` solves fixed, revolute and prismatic joints, documented in
+Stages 1 to 3 are built: the numerical core is shared (`src/solver/numerical/`) and
+`Assembly3d` solves the eleven joints with unwrapped, seeded and imposable
+coordinates, documented in
 [assembly.md](../docs/architecture/assembly.md). Each stage that lands is documented
 there; this plan keeps the agreed decisions until the last stage is built.
 

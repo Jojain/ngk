@@ -4,7 +4,8 @@ use ngk::geometry::dim3::frame::Frame;
 use ngk::geometry::dim3::utils::Point3;
 use ngk::geometry::transform::Rigid;
 use ngk::solver::assembly::{
-    Assembly3d, Attachment, BodyId, EditError, Joint3d, JointKind, Solution3d, SolveError, Target3d,
+    Assembly3d, Attachment, BodyId, Coordinate, EditError, Joint3d, JointId, JointKind, Solution3d,
+    SolveError, Target3d,
 };
 use radians::Rad64;
 
@@ -70,7 +71,11 @@ fn ground_and_body(seed: Rigid) -> (Assembly3d, BodyId, BodyId) {
 fn a_revolute_joint_brings_origins_and_axes_together_and_leaves_one_turn() {
     let seed = turn(Vector3::new(1., 2., 0.5), 25.).compose(shift(0.3, -0.2, 0.4));
     let (mut assembly, ground, body) = ground_and_body(seed);
-    let joint = Joint3d::revolute(hold(ground, at(1., 2., 3.)), hold(body, at(0., 0., 1.)));
+    let joint = Joint3d::new(
+        JointKind::Revolute,
+        hold(ground, at(1., 2., 3.)),
+        hold(body, at(0., 0., 1.)),
+    );
     assembly.add_joint(joint.clone()).unwrap();
 
     let solution = assembly.solve().unwrap();
@@ -102,7 +107,11 @@ fn a_revolute_joint_brings_origins_and_axes_together_and_leaves_one_turn() {
 fn a_prismatic_joint_keeps_orientation_and_leaves_the_slide() {
     let seed = turn(Vector3::new(0., 1., 1.), -15.).compose(shift(1., 1., 2.));
     let (mut assembly, ground, body) = ground_and_body(seed);
-    let joint = Joint3d::prismatic(hold(ground, at(0., 0., 0.)), hold(body, at(0.5, 0., 0.)));
+    let joint = Joint3d::new(
+        JointKind::Prismatic,
+        hold(ground, at(0., 0., 0.)),
+        hold(body, at(0.5, 0., 0.)),
+    );
     assembly.add_joint(joint.clone()).unwrap();
 
     let solution = assembly.solve().unwrap();
@@ -123,7 +132,11 @@ fn a_fixed_joint_makes_the_frames_coincide_and_leaves_nothing() {
     let seed = turn(Vector3::new(1., -1., 2.), 70.).compose(shift(-2., 5., 1.));
     let (mut assembly, ground, body) = ground_and_body(seed);
     let first = Frame::from_xz(Point3::new(1., 0., 0.), Vector3::y(), Vector3::x());
-    let joint = Joint3d::fixed(hold(ground, first), hold(body, at(0., 0., 2.)));
+    let joint = Joint3d::new(
+        JointKind::Fixed,
+        hold(ground, first),
+        hold(body, at(0., 0., 2.)),
+    );
     assembly.add_joint(joint.clone()).unwrap();
 
     let solution = assembly.solve().unwrap();
@@ -142,7 +155,11 @@ fn a_fixed_joint_makes_the_frames_coincide_and_leaves_nothing() {
 fn a_satisfied_revolute_joint_keeps_its_angle() {
     let seed = turn(Vector3::z(), 30.);
     let (mut assembly, ground, body) = ground_and_body(seed);
-    let joint = Joint3d::revolute(hold(ground, at(0., 0., 0.)), hold(body, at(0., 0., 0.)));
+    let joint = Joint3d::new(
+        JointKind::Revolute,
+        hold(ground, at(0., 0., 0.)),
+        hold(body, at(0., 0., 0.)),
+    );
     assembly.add_joint(joint.clone()).unwrap();
 
     let solution = assembly.solve().unwrap();
@@ -159,7 +176,11 @@ fn a_satisfied_revolute_joint_keeps_its_angle() {
 fn an_axis_turned_nearly_over_comes_back_rather_than_settling_upside_down() {
     let seed = turn(Vector3::x(), 170.).compose(shift(0.2, 0.1, -0.3));
     let (mut assembly, ground, body) = ground_and_body(seed);
-    let joint = Joint3d::revolute(hold(ground, at(0., 0., 0.)), hold(body, at(0., 0., 0.)));
+    let joint = Joint3d::new(
+        JointKind::Revolute,
+        hold(ground, at(0., 0., 0.)),
+        hold(body, at(0., 0., 0.)),
+    );
     assembly.add_joint(joint.clone()).unwrap();
 
     let solution = assembly.solve().unwrap();
@@ -176,7 +197,8 @@ fn without_a_fixed_body_the_assembly_keeps_its_global_motion() {
         .add_body(turn(Vector3::y(), 10.).compose(shift(0.1, 0., 0.)))
         .unwrap();
     assembly
-        .add_joint(Joint3d::revolute(
+        .add_joint(Joint3d::new(
+            JointKind::Revolute,
             hold(a, at(0., 0., 0.)),
             hold(b, at(0., 0., 0.)),
         ))
@@ -228,10 +250,26 @@ fn four_bar() -> FourBar {
         .add_body(turn(Vector3::new(0.1, -0.2, 1.), 5.).compose(shift(0.03, 0.05, 0.04)))
         .unwrap();
     let joints = vec![
-        Joint3d::revolute(hold(ground, pin(a0)), hold(crank, pin(a0))),
-        Joint3d::revolute(hold(crank, pin(a)), hold(coupler, pin(a))),
-        Joint3d::revolute(hold(coupler, pin(b)), hold(rocker, pin(b))),
-        Joint3d::revolute(hold(rocker, pin(b0)), hold(ground, pin(b0))),
+        Joint3d::new(
+            JointKind::Revolute,
+            hold(ground, pin(a0)),
+            hold(crank, pin(a0)),
+        ),
+        Joint3d::new(
+            JointKind::Revolute,
+            hold(crank, pin(a)),
+            hold(coupler, pin(a)),
+        ),
+        Joint3d::new(
+            JointKind::Revolute,
+            hold(coupler, pin(b)),
+            hold(rocker, pin(b)),
+        ),
+        Joint3d::new(
+            JointKind::Revolute,
+            hold(rocker, pin(b0)),
+            hold(ground, pin(b0)),
+        ),
     ];
     for joint in &joints {
         assembly.add_joint(joint.clone()).unwrap();
@@ -308,7 +346,8 @@ fn dragging_the_coupler_turns_the_crank_and_keeps_the_loop_closed() {
 fn a_target_beyond_reach_stops_where_the_joints_allow() {
     let (mut assembly, ground, body) = ground_and_body(Rigid::identity());
     assembly
-        .add_joint(Joint3d::revolute(
+        .add_joint(Joint3d::new(
+            JointKind::Revolute,
             hold(ground, at(0., 0., 0.)),
             hold(body, at(0., 0., 0.)),
         ))
@@ -329,7 +368,8 @@ fn a_target_beyond_reach_stops_where_the_joints_allow() {
     assert!(!solution.report().targets[0].reached);
     assert_closed(
         &solution,
-        &[Joint3d::revolute(
+        &[Joint3d::new(
+            JointKind::Revolute,
             hold(ground, at(0., 0., 0.)),
             hold(body, at(0., 0., 0.)),
         )],
@@ -344,7 +384,8 @@ fn two_fixed_bodies_joined_where_they_agree_are_redundant() {
     assembly.fix(a).unwrap();
     assembly.fix(b).unwrap();
     assembly
-        .add_joint(Joint3d::fixed(
+        .add_joint(Joint3d::new(
+            JointKind::Fixed,
             hold(a, at(1., 0., 0.)),
             hold(b, at(0., 0., 0.)),
         ))
@@ -364,7 +405,8 @@ fn two_fixed_bodies_joined_where_they_disagree_fail_naming_the_joint() {
     assembly.fix(a).unwrap();
     assembly.fix(b).unwrap();
     let joint = assembly
-        .add_joint(Joint3d::fixed(
+        .add_joint(Joint3d::new(
+            JointKind::Fixed,
             hold(a, at(2., 0., 0.)),
             hold(b, at(0., 0., 0.)),
         ))
@@ -404,7 +446,11 @@ fn an_assembly_far_from_the_origin_still_closes_in_world_units() {
     let body = assembly
         .add_body(turn(Vector3::new(1., 1., 0.), 20.).compose(far.compose(shift(0.5, 0., 0.))))
         .unwrap();
-    let joint = Joint3d::revolute(hold(ground, at(1., 0., 0.)), hold(body, at(0., 0., 0.)));
+    let joint = Joint3d::new(
+        JointKind::Revolute,
+        hold(ground, at(1., 0., 0.)),
+        hold(body, at(0., 0., 0.)),
+    );
     assembly.add_joint(joint.clone()).unwrap();
 
     let solution = assembly.solve().unwrap();
@@ -422,7 +468,11 @@ fn a_joint_must_hold_two_bodies_by_proper_frames() {
     let mut assembly = Assembly3d::default();
     let a = assembly.add_body(Rigid::identity()).unwrap();
     let b = assembly.add_body(Rigid::identity()).unwrap();
-    let same = Joint3d::revolute(hold(a, at(0., 0., 0.)), hold(a, at(1., 0., 0.)));
+    let same = Joint3d::new(
+        JointKind::Revolute,
+        hold(a, at(0., 0., 0.)),
+        hold(a, at(1., 0., 0.)),
+    );
     assert!(matches!(
         assembly.add_joint(same),
         Err(EditError::InvalidJoint(_))
@@ -434,7 +484,8 @@ fn a_joint_must_hold_two_bodies_by_proper_frames() {
         assembly.add_joint(crooked),
         Err(EditError::InvalidJoint(_))
     ));
-    let missing = Joint3d::fixed(
+    let missing = Joint3d::new(
+        JointKind::Fixed,
         hold(a, at(0., 0., 0.)),
         hold(BodyId::new(99), at(0., 0., 0.)),
     );
@@ -451,7 +502,8 @@ fn a_held_body_is_removed_only_with_its_joints() {
     let a = assembly.add_body(Rigid::identity()).unwrap();
     let b = assembly.add_body(Rigid::identity()).unwrap();
     let joint = assembly
-        .add_joint(Joint3d::fixed(
+        .add_joint(Joint3d::new(
+            JointKind::Fixed,
             hold(a, at(0., 0., 0.)),
             hold(b, at(0., 0., 0.)),
         ))
@@ -477,7 +529,8 @@ fn an_aborted_batch_leaves_the_assembly_and_does_not_reissue_its_ids() {
 
     let aborted = assembly.edit(|assembly| {
         let b = assembly.add_body(Rigid::identity())?;
-        assembly.add_joint(Joint3d::fixed(
+        assembly.add_joint(Joint3d::new(
+            JointKind::Fixed,
             hold(a, at(0., 0., 0.)),
             hold(a, at(0., 0., 0.)),
         ))?;
@@ -503,4 +556,328 @@ fn a_stored_id_is_taken_back_and_never_issued_again() {
     ));
     let next = assembly.add_body(Rigid::identity()).unwrap();
     assert!(next.value() > 7);
+}
+
+fn degrees(radians: f64) -> f64 {
+    radians.to_degrees()
+}
+
+/// One joint between a fixed ground and a body seeded at `seed`, both frames at their
+/// body's origin.
+fn joint_on_ground(kind: JointKind, seed: Rigid) -> (Assembly3d, Joint3d, JointId, BodyId) {
+    let (mut assembly, ground, body) = ground_and_body(seed);
+    let joint = Joint3d::new(
+        kind,
+        hold(ground, at(0., 0., 0.)),
+        hold(body, at(0., 0., 0.)),
+    );
+    let id = assembly.add_joint(joint.clone()).unwrap();
+    (assembly, joint, id, body)
+}
+
+#[test]
+fn every_joint_holds_its_frames_as_its_kind_says_and_leaves_its_freedoms() {
+    let seed = turn(Vector3::new(0.3, -0.5, 1.), 20.).compose(shift(0.4, -0.3, 0.25));
+    let pitch = 0.8;
+    let cases: [(JointKind, usize); 8] = [
+        (JointKind::Helical { pitch }, 1),
+        (JointKind::Cylindrical, 2),
+        (JointKind::Universal, 2),
+        (JointKind::Spherical, 3),
+        (JointKind::Planar, 3),
+        (JointKind::CylinderOnPlane, 4),
+        (JointKind::SphereInCylinder, 4),
+        (JointKind::SphereOnPlane, 5),
+    ];
+    for (kind, freedoms) in cases {
+        let (mut assembly, joint, id, _) = joint_on_ground(kind, seed);
+        let solution = assembly.solve().unwrap();
+        let (a, b) = (
+            landed(&solution, &joint.first),
+            landed(&solution, &joint.second),
+        );
+        let d = b.origin - a.origin;
+        let (xa, ya, za) = (
+            a.x_dir.into_inner(),
+            a.y_dir.into_inner(),
+            a.z_dir.into_inner(),
+        );
+        let (xb, yb, zb) = (
+            b.x_dir.into_inner(),
+            b.y_dir.into_inner(),
+            b.z_dir.into_inner(),
+        );
+        let zero = |v: f64, what: &str| assert!(v.abs() < CLOSE, "{kind:?}: {what} is {v}");
+        match kind {
+            JointKind::Helical { pitch } => {
+                zero(d.dot(&xa), "x");
+                zero(d.dot(&ya), "y");
+                zero((zb - za).norm(), "axis");
+                let angle = solution.coordinate(id, Coordinate::Angle).unwrap();
+                zero(d.dot(&za) - pitch * angle / std::f64::consts::TAU, "lead");
+                zero(
+                    solution.coordinate(id, Coordinate::Slide).unwrap() - d.dot(&za),
+                    "slide",
+                );
+            }
+            JointKind::Cylindrical => {
+                zero(d.dot(&xa), "x");
+                zero(d.dot(&ya), "y");
+                zero((zb - za).norm(), "axis");
+            }
+            JointKind::Universal => {
+                zero(d.norm(), "origin");
+                zero(xa.dot(&yb), "cross");
+            }
+            JointKind::Spherical => zero(d.norm(), "origin"),
+            JointKind::Planar => {
+                zero(d.dot(&za), "height");
+                zero((zb - za).norm(), "normal");
+            }
+            JointKind::CylinderOnPlane => {
+                zero(d.dot(&za), "height");
+                zero(xb.dot(&za), "line");
+            }
+            JointKind::SphereInCylinder => {
+                zero(d.dot(&xa), "x");
+                zero(d.dot(&ya), "y");
+            }
+            JointKind::SphereOnPlane => zero(d.dot(&za), "height"),
+            _ => unreachable!(),
+        }
+        assert_eq!(solution.report().mobility, freedoms, "{kind:?}");
+        assert_eq!(solution.report().redundancy, 0, "{kind:?}");
+    }
+}
+
+#[test]
+fn coordinates_read_the_second_frame_in_the_first() {
+    let (x, y, angle, roll) = (1.5, -0.5, 40_f64, -25_f64);
+    let cylinder = turn(Vector3::x(), roll)
+        .compose(turn(Vector3::z(), angle))
+        .compose(shift(x, y, 0.));
+    let (mut assembly, _, id, _) = joint_on_ground(JointKind::CylinderOnPlane, cylinder);
+    let solution = assembly.solve().unwrap();
+    assert_eq!(solution.report().iterations, 0);
+    let read = |c| solution.coordinate(id, c).unwrap();
+    assert!((read(Coordinate::X) - x).abs() < CLOSE);
+    assert!((read(Coordinate::Y) - y).abs() < CLOSE);
+    assert!((degrees(read(Coordinate::Angle)) - angle).abs() < 1e-6);
+    assert!((degrees(read(Coordinate::Roll)) - roll).abs() < 1e-6);
+
+    let (alpha, beta) = (35_f64, -50_f64);
+    let cardan = turn(Vector3::y(), beta).compose(turn(Vector3::x(), alpha));
+    let (mut assembly, _, id, _) = joint_on_ground(JointKind::Universal, cardan);
+    let solution = assembly.solve().unwrap();
+    let read = |c| degrees(solution.coordinate(id, c).unwrap());
+    assert!((read(Coordinate::Alpha) - alpha).abs() < 1e-6);
+    assert!((read(Coordinate::Beta) - beta).abs() < 1e-6);
+    assert!(solution.coordinate(id, Coordinate::Slide).is_err());
+
+    let ball = turn(Vector3::new(1., 2., 3.), 70.);
+    let (mut assembly, _, id, _) = joint_on_ground(JointKind::Spherical, ball);
+    let solution = assembly.solve().unwrap();
+    let relative = solution.relative(id).unwrap();
+    let probe = Vector3::new(0.3, -1., 2.);
+    assert!((relative.apply_vector(probe) - ball.apply_vector(probe)).norm() < CLOSE);
+}
+
+#[test]
+fn an_angle_is_read_nearest_its_seed_and_the_solve_keeps_it_as_the_next_seed() {
+    let (mut assembly, _, id, _) = joint_on_ground(JointKind::Revolute, turn(Vector3::z(), 10.));
+    let unseeded = assembly.solve().unwrap();
+    assert!((degrees(unseeded.coordinate(id, Coordinate::Angle).unwrap()) - 10.).abs() < 1e-6);
+    assert!(
+        assembly
+            .coordinate_seed(id, Coordinate::Angle)
+            .unwrap()
+            .is_some()
+    );
+
+    assembly
+        .set_coordinate_seed(id, Coordinate::Angle, 365_f64.to_radians())
+        .unwrap();
+    let seeded = assembly.solve().unwrap();
+
+    assert!((degrees(seeded.coordinate(id, Coordinate::Angle).unwrap()) - 370.).abs() < 1e-6);
+    let kept = assembly
+        .coordinate_seed(id, Coordinate::Angle)
+        .unwrap()
+        .unwrap();
+    assert!((degrees(kept) - 370.).abs() < 1e-6);
+    assert!(matches!(
+        assembly.set_coordinate_seed(id, Coordinate::Slide, 1.),
+        Err(EditError::InvalidJoint(_))
+    ));
+}
+
+#[test]
+fn dragging_a_crank_past_half_a_turn_keeps_counting_the_angle() {
+    let (mut assembly, _, id, body) = joint_on_ground(JointKind::Revolute, Rigid::identity());
+    let tip = Point3::new(1., 0., 0.);
+    let mut angle = 0_f64;
+    for step in 1..=8 {
+        let goal = 45_f64 * step as f64;
+        let position = Point3::new(goal.to_radians().cos(), goal.to_radians().sin(), 0.);
+        let solution = assembly
+            .solve_toward(&[Target3d::point(body, tip, position)])
+            .unwrap();
+        angle = degrees(solution.coordinate(id, Coordinate::Angle).unwrap());
+    }
+    assert!((angle - 360.).abs() < 1e-4, "{angle}");
+}
+
+#[test]
+fn an_imposed_angle_drives_a_screw_its_whole_way() {
+    let pitch = 1.5;
+    let (mut assembly, ground, body) = ground_and_body(shift(0.1, 0.1, 0.));
+    let joint = Joint3d::new(
+        JointKind::Helical { pitch },
+        hold(ground, at(0., 0., 0.)),
+        hold(body, at(0., 0., 0.)),
+    )
+    .with_value(Coordinate::Angle, 720_f64.to_radians());
+    let id = assembly.add_joint(joint).unwrap();
+
+    let solution = assembly.solve().unwrap();
+
+    let angle = degrees(solution.coordinate(id, Coordinate::Angle).unwrap());
+    assert!((angle - 720.).abs() < 1e-6, "{angle}");
+    assert!((solution.coordinate(id, Coordinate::Slide).unwrap() - 2. * pitch).abs() < CLOSE);
+    assert_eq!(solution.report().mobility, 0);
+}
+
+#[test]
+fn imposed_values_act_as_dimensions() {
+    let seed = turn(Vector3::z(), 5.).compose(shift(0.2, 0.1, 0.3));
+    let (mut assembly, ground, body) = ground_and_body(seed);
+    let joint = Joint3d::new(
+        JointKind::Cylindrical,
+        hold(ground, at(0., 0., 0.)),
+        hold(body, at(0., 0., 0.)),
+    )
+    .with_value(Coordinate::Angle, 30_f64.to_radians())
+    .with_value(Coordinate::Slide, 2.5);
+    let id = assembly.add_joint(joint.clone()).unwrap();
+
+    let solution = assembly.solve().unwrap();
+
+    assert!((degrees(solution.coordinate(id, Coordinate::Angle).unwrap()) - 30.).abs() < 1e-6);
+    assert!((solution.coordinate(id, Coordinate::Slide).unwrap() - 2.5).abs() < CLOSE);
+    let b = landed(&solution, &joint.second);
+    assert_point(b.origin, Point3::new(0., 0., 2.5));
+    assert_eq!(solution.report().mobility, 0);
+}
+
+#[test]
+fn only_a_free_coordinate_of_a_sound_joint_is_imposed() {
+    let mut assembly = Assembly3d::default();
+    let a = assembly.add_body(Rigid::identity()).unwrap();
+    let b = assembly.add_body(Rigid::identity()).unwrap();
+    let joint = |kind| Joint3d::new(kind, hold(a, at(0., 0., 0.)), hold(b, at(0., 0., 0.)));
+    let refused = [
+        joint(JointKind::Revolute).with_value(Coordinate::Slide, 1.),
+        joint(JointKind::Helical { pitch: 1. }).with_value(Coordinate::Slide, 1.),
+        joint(JointKind::Spherical).with_value(Coordinate::Angle, 1.),
+        joint(JointKind::Prismatic).with_value(Coordinate::Slide, f64::NAN),
+        joint(JointKind::Helical { pitch: 0. }),
+    ];
+    for joint in refused {
+        assert!(
+            matches!(
+                assembly.add_joint(joint.clone()),
+                Err(EditError::InvalidJoint(_))
+            ),
+            "{joint:?}"
+        );
+    }
+    assert_eq!(assembly.joint_count(), 0);
+}
+
+#[test]
+fn replacing_a_joint_keeps_the_seeds_of_the_angles_it_still_has() {
+    let (mut assembly, joint, id, _) = joint_on_ground(JointKind::Revolute, Rigid::identity());
+    assembly
+        .set_coordinate_seed(id, Coordinate::Angle, 400_f64.to_radians())
+        .unwrap();
+    let mut cylindrical = joint.clone();
+    cylindrical.kind = JointKind::Cylindrical;
+    assembly.update_joint(id, cylindrical).unwrap();
+    assert!(
+        assembly
+            .coordinate_seed(id, Coordinate::Angle)
+            .unwrap()
+            .is_some()
+    );
+    let mut sliding = joint;
+    sliding.kind = JointKind::Prismatic;
+    assembly.update_joint(id, sliding).unwrap();
+    assert!(
+        assembly
+            .coordinate_seed(id, Coordinate::Angle)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn a_slider_crank_closes_and_its_slider_follows_the_crank() {
+    let a = Point3::new(30_f64.to_radians().cos(), 30_f64.to_radians().sin(), 0.);
+    let c = Point3::new(a.x + (9. - a.y * a.y).sqrt(), 0., 0.);
+    // Slide frames: Z along the world X.
+    let rail = |p: Point3| Frame::from_xz(p, Vector3::y(), Vector3::x());
+    let mut assembly = Assembly3d::default();
+    let ground = assembly.add_body(Rigid::identity()).unwrap();
+    assembly.fix(ground).unwrap();
+    let crank = assembly.add_body(turn(Vector3::z(), 3.)).unwrap();
+    let rod = assembly.add_body(shift(0.05, -0.04, 0.02)).unwrap();
+    let slider = assembly
+        .add_body(turn(Vector3::y(), 2.).compose(shift(0.1, 0.05, 0.)))
+        .unwrap();
+    let revolute = |p: Point3, first, second| {
+        Joint3d::new(
+            JointKind::Revolute,
+            hold(first, Frame::at(p)),
+            hold(second, Frame::at(p)),
+        )
+    };
+    let crank_angle = Joint3d::new(
+        JointKind::Revolute,
+        hold(ground, Frame::at(Point3::origin())),
+        hold(crank, Frame::at(Point3::origin())),
+    );
+    let joints = vec![
+        crank_angle.clone(),
+        revolute(a, crank, rod),
+        revolute(c, rod, slider),
+        Joint3d::new(
+            JointKind::Prismatic,
+            hold(ground, rail(Point3::origin())),
+            hold(slider, rail(c)),
+        ),
+    ];
+    let mut ids = vec![];
+    for joint in &joints {
+        ids.push(assembly.add_joint(joint.clone()).unwrap());
+    }
+
+    let first = assembly.solve().unwrap();
+    assert_eq!(first.report().mobility, 1);
+    assert_eq!(first.report().redundancy, 3);
+
+    assembly
+        .update_joint(
+            ids[0],
+            // The crank carries its pin at 30° in its own coordinates.
+            crank_angle.with_value(Coordinate::Angle, 60_f64.to_radians()),
+        )
+        .unwrap();
+    let driven = assembly.solve().unwrap();
+
+    assert_eq!(driven.report().mobility, 0);
+    let pin = driven.pose(crank).unwrap().apply(Point3::new(a.x, a.y, 0.));
+    assert_point(pin, Point3::new(0., 1., 0.));
+    // The rod is 3 long and the slider stays on the X axis: it sits at √8.
+    let slide = driven.coordinate(ids[3], Coordinate::Slide).unwrap();
+    assert!((slide - 8_f64.sqrt()).abs() < CLOSE, "{slide}");
 }

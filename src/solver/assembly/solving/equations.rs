@@ -1,4 +1,4 @@
-use super::super::{Attachment, BodyId, JointId, JointKind};
+use super::super::{Attachment, BodyId, Coordinate, Joint3d, JointId, JointKind};
 use super::prepare::Component;
 use super::vector::{JetVector3, rotate};
 use crate::geometry::dim3::frame::Frame;
@@ -6,8 +6,12 @@ use crate::geometry::transform::Rigid;
 use crate::solver::numerical::{self, Jet, Row};
 use nalgebra::{DVector, Vector3};
 use std::collections::BTreeMap;
+use std::f64::consts::TAU;
 
 pub(super) type Evaluation = numerical::Evaluation<JointId>;
+
+/// Per angular coordinate of a joint, the value its angle is unwrapped nearest to.
+pub(super) type References = BTreeMap<Coordinate, f64>;
 
 /// An attachment frame in the world, as expressions of the unknowns.
 pub(super) struct JetFrame {
@@ -34,6 +38,7 @@ pub(super) fn permanent(component: &Component, x: &DVector<f64>) -> Evaluation {
     rows(
         component,
         |attachment| frame(component, x, attachment),
+        component.scale,
         x.len(),
     )
 }
@@ -44,7 +49,8 @@ pub(super) fn permanent(component: &Component, x: &DVector<f64>) -> Evaluation {
 pub(super) fn world(component: &Component, poses: &BTreeMap<BodyId, Rigid>) -> Evaluation {
     rows(
         component,
-        |attachment| JetFrame::constant(&attachment.frame.moved(&poses[&attachment.body])),
+        |attachment| world_frame(attachment, poses),
+        1.,
         0,
     )
 }
@@ -71,20 +77,77 @@ pub(super) fn objectives(component: &Component, x: &DVector<f64>) -> Evaluation 
     Evaluation::new(rows, vec![], x.len())
 }
 
+/// The references a joint's angles are unwrapped nearest to, read at the poses it
+/// starts from: an imposed angle is its own reference; otherwise the representative of
+/// the angle nearest its seed, or the angle in `(-π, π]` without one.
+pub(super) fn references(
+    joint: &Joint3d,
+    seeds: &BTreeMap<Coordinate, f64>,
+    poses: &BTreeMap<BodyId, Rigid>,
+) -> References {
+    let (a, b) = (
+        world_frame(&joint.first, poses),
+        world_frame(&joint.second, poses),
+    );
+    joint
+        .kind
+        .coordinates()
+        .iter()
+        .filter(|coordinate| coordinate.angular())
+        .map(|&coordinate| {
+            let raw = raw(coordinate, &a, &b).value;
+            let reference = match (joint.values.get(&coordinate), seeds.get(&coordinate)) {
+                (Some(value), _) => *value,
+                (None, Some(seed)) => raw + TAU * ((seed - raw) / TAU).round(),
+                (None, None) => raw,
+            };
+            (coordinate, reference)
+        })
+        .collect()
+}
+
+/// A joint's coordinates at published world poses, angles unwrapped near `references`.
+pub(super) fn coordinates(
+    joint: &Joint3d,
+    references: &References,
+    poses: &BTreeMap<BodyId, Rigid>,
+) -> BTreeMap<Coordinate, f64> {
+    let (a, b) = (
+        world_frame(&joint.first, poses),
+        world_frame(&joint.second, poses),
+    );
+    joint
+        .kind
+        .coordinates()
+        .iter()
+        .map(|&coordinate| (coordinate, value(coordinate, &a, &b, references).value))
+        .collect()
+}
+
+fn world_frame(attachment: &Attachment, poses: &BTreeMap<BodyId, Rigid>) -> JetFrame {
+    JetFrame::constant(&attachment.frame.moved(&poses[&attachment.body]))
+}
+
 fn rows(
     component: &Component,
     frame: impl Fn(&Attachment) -> JetFrame,
+    scale: f64,
     columns: usize,
 ) -> Evaluation {
     let mut rows = vec![];
     let mut groups = vec![];
-    for (id, joint) in &component.joints {
+    for ((id, joint), references) in component.joints.iter().zip(&component.references) {
         let start = rows.len();
-        rows.extend(joint_rows(
-            joint.kind,
-            &frame(&joint.first),
-            &frame(&joint.second),
-        ));
+        let (a, b) = (frame(&joint.first), frame(&joint.second));
+        rows.extend(joint_rows(joint.kind, &a, &b, scale, references));
+        for (coordinate, imposed) in &joint.values {
+            let actual = value(*coordinate, &a, &b, references);
+            rows.push(if coordinate.angular() {
+                Row::angular(actual - *imposed)
+            } else {
+                Row::linear(actual - imposed / scale)
+            });
+        }
         groups.push((*id, start..rows.len()));
     }
     Evaluation::new(rows, groups, columns)
@@ -127,28 +190,98 @@ fn turned(x: &DVector<f64>, column: Option<usize>, v: JetVector3) -> JetVector3 
     }
 }
 
-/// The equations a joint imposes on its two frames.
+/// A coordinate of the second frame in the first, an angle in `(-π, π]`.
+fn raw(coordinate: Coordinate, a: &JetFrame, b: &JetFrame) -> Jet {
+    let offset = b.origin.clone() - a.origin.clone();
+    match coordinate {
+        Coordinate::Slide => offset.dot(&a.z),
+        Coordinate::X => offset.dot(&a.x),
+        Coordinate::Y => offset.dot(&a.y),
+        // The second X about the first Z.
+        Coordinate::Angle => b.x.dot(&a.y).atan2(b.x.dot(&a.x)),
+        // The second Y in the first YZ plane, from the first Y.
+        Coordinate::Alpha => b.y.dot(&a.z).atan2(b.y.dot(&a.y)),
+        // The second X about the second Y, from the first X.
+        Coordinate::Beta => {
+            let turned = b.y.cross(&a.x);
+            b.x.dot(&turned).atan2(b.x.dot(&a.x))
+        }
+        // The second Z about the second X, from the first Z.
+        Coordinate::Roll => {
+            let across = a.z.cross(&b.x);
+            (-b.z.dot(&across)).atan2(b.z.dot(&a.z))
+        }
+    }
+}
+
+/// A coordinate with its angle unwrapped within half a turn of its reference.
+fn value(coordinate: Coordinate, a: &JetFrame, b: &JetFrame, references: &References) -> Jet {
+    let raw = raw(coordinate, a, b);
+    match references.get(&coordinate) {
+        Some(&reference) => (raw - reference).wrapped() + reference,
+        None => raw,
+    }
+}
+
+/// The equations a joint imposes on its two frames, linear rows in units of `scale`.
 ///
 /// Orientation rows measure the angle through `2 tan(θ/2)`: equal to the angle near
 /// zero, vanishing only when the frames agree, and growing without bound as they turn
 /// over, so a correction never settles on the opposite orientation.
-fn joint_rows(kind: JointKind, a: &JetFrame, b: &JetFrame) -> Vec<Row> {
+fn joint_rows(
+    kind: JointKind,
+    a: &JetFrame,
+    b: &JetFrame,
+    scale: f64,
+    references: &References,
+) -> Vec<Row> {
     let offset = b.origin.clone() - a.origin.clone();
+    let coincide = || offset.clone().components().into_iter().map(Row::linear);
+    let on_axis = || [Row::linear(offset.dot(&a.x)), Row::linear(offset.dot(&a.y))];
+    let on_plane = || Row::linear(offset.dot(&a.z));
     let mut rows = vec![];
     match kind {
         JointKind::Fixed => {
-            rows.extend(offset.components().into_iter().map(Row::linear));
+            rows.extend(coincide());
             rows.extend(orientation(a, b));
         }
         JointKind::Revolute => {
-            rows.extend(offset.components().into_iter().map(Row::linear));
+            rows.extend(coincide());
             rows.extend(axis_alignment(a, b));
         }
         JointKind::Prismatic => {
-            rows.push(Row::linear(offset.dot(&a.x)));
-            rows.push(Row::linear(offset.dot(&a.y)));
+            rows.extend(on_axis());
             rows.extend(orientation(a, b));
         }
+        JointKind::Helical { pitch } => {
+            rows.extend(on_axis());
+            rows.extend(axis_alignment(a, b));
+            let angle = value(Coordinate::Angle, a, b, references);
+            rows.push(Row::linear(
+                offset.dot(&a.z) - angle * (pitch / TAU / scale),
+            ));
+        }
+        JointKind::Cylindrical => {
+            rows.extend(on_axis());
+            rows.extend(axis_alignment(a, b));
+        }
+        JointKind::Universal => {
+            rows.extend(coincide());
+            // The cross keeps its arms square: the first X and the second Y.
+            rows.push(Row::angular(a.x.dot(&b.y)));
+        }
+        JointKind::Spherical => rows.extend(coincide()),
+        JointKind::Planar => {
+            rows.push(on_plane());
+            rows.extend(axis_alignment(a, b));
+        }
+        JointKind::CylinderOnPlane => {
+            rows.push(on_plane());
+            // The cylinder's axis, the second X, lies in the plane.
+            rows.push(Row::angular(b.x.dot(&a.z)));
+        }
+        JointKind::SphereInCylinder => rows.extend(on_axis()),
+        JointKind::SphereOnPlane => rows.push(on_plane()),
     }
     rows
 }

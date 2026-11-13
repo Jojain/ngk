@@ -1,7 +1,7 @@
-use super::joint::valid_frame;
 use super::solution::SolutionData;
 use super::{
-    BodyId, EditError, Joint3d, JointId, Solution3d, SolveError, SolveOptions, Target3d, solving,
+    BodyId, Coordinate, EditError, Joint3d, JointId, Solution3d, SolveError, SolveOptions,
+    Target3d, solving,
 };
 use crate::geometry::dim3::utils::Point3;
 use crate::geometry::transform::Rigid;
@@ -17,6 +17,15 @@ pub(super) struct Body {
     pub fixed: Option<Rigid>,
 }
 
+/// A joint as the assembly holds it: its definition, and the unwrapped values its
+/// angles start from.
+#[derive(Clone, Debug)]
+pub(super) struct StoredJoint {
+    pub definition: Joint3d,
+    /// Per angular coordinate, the value the next solve unwraps nearest to.
+    pub seeds: BTreeMap<Coordinate, f64>,
+}
+
 /// Mutable assembly of rigid bodies and the joints between them, independent of NGK
 /// topology and GUI interaction.
 ///
@@ -26,7 +35,7 @@ pub(super) struct Body {
 #[derive(Debug)]
 pub struct Assembly3d {
     pub(super) bodies: BTreeMap<BodyId, Body>,
-    pub(super) joints: BTreeMap<JointId, Joint3d>,
+    pub(super) joints: BTreeMap<JointId, StoredJoint>,
     pub(super) next_id: u64,
     options: SolveOptions,
     revision: u64,
@@ -158,9 +167,7 @@ impl Assembly3d {
     }
 
     pub fn joint(&self, id: JointId) -> Result<&Joint3d, EditError> {
-        self.joints
-            .get(&id)
-            .ok_or(EditError::InvalidJointReference(id))
+        Ok(&self.stored(id)?.definition)
     }
     pub fn add_joint(&mut self, joint: Joint3d) -> Result<JointId, EditError> {
         self.validate_joint(&joint)?;
@@ -179,9 +186,48 @@ impl Assembly3d {
     pub fn update_joint(&mut self, id: JointId, joint: Joint3d) -> Result<(), EditError> {
         self.joint(id)?;
         self.validate_joint(&joint)?;
-        self.joints.insert(id, joint);
+        let stored = self.joints.get_mut(&id).expect("checked above");
+        // Seeds of the angles the new kind still has stay.
+        stored
+            .seeds
+            .retain(|coordinate, _| joint.kind.coordinates().contains(coordinate));
+        stored.definition = joint;
         self.revision += 1;
         Ok(())
+    }
+    /// Sets the unwrapped value an angle of a joint starts from, such as one read from a
+    /// stored solution: the next solve takes the representative of the angle nearest it.
+    /// A success replaces it with the solved value.
+    pub fn set_coordinate_seed(
+        &mut self,
+        id: JointId,
+        coordinate: Coordinate,
+        value: f64,
+    ) -> Result<(), EditError> {
+        let stored = self.stored(id)?;
+        if !coordinate.angular() || !stored.definition.kind.coordinates().contains(&coordinate) {
+            return Err(EditError::InvalidJoint(
+                "only an angle of the joint has a seed",
+            ));
+        }
+        if !value.is_finite() {
+            return Err(EditError::InvalidJoint("a seed must be finite"));
+        }
+        self.joints
+            .get_mut(&id)
+            .expect("checked above")
+            .seeds
+            .insert(coordinate, value);
+        self.revision += 1;
+        Ok(())
+    }
+    /// The unwrapped value an angle of a joint starts from, if it has one.
+    pub fn coordinate_seed(
+        &self,
+        id: JointId,
+        coordinate: Coordinate,
+    ) -> Result<Option<f64>, EditError> {
+        Ok(self.stored(id)?.seeds.get(&coordinate).copied())
     }
     pub fn remove_joint(&mut self, id: JointId) -> Result<(), EditError> {
         self.joint(id)?;
@@ -239,18 +285,29 @@ impl Assembly3d {
                 .into());
             }
         }
-        let (poses, report) = solving::solve(&self.bodies, &self.joints, targets, &self.options)?;
-        for (id, pose) in &poses {
+        let solved = solving::solve(&self.bodies, &self.joints, targets, &self.options)?;
+        for (id, pose) in &solved.poses {
             if let Some(body) = self.bodies.get_mut(id) {
                 body.seed = *pose;
+            }
+        }
+        for (id, coordinates) in &solved.coordinates {
+            if let Some(joint) = self.joints.get_mut(id) {
+                for (coordinate, value) in coordinates {
+                    if coordinate.angular() {
+                        joint.seeds.insert(*coordinate, *value);
+                    }
+                }
             }
         }
         self.sequence += 1;
         let solution = Solution3d(Arc::new(SolutionData {
             revision: self.revision,
             sequence: self.sequence,
-            poses,
-            report,
+            poses: solved.poses,
+            coordinates: solved.coordinates,
+            relative: solved.relative,
+            report: solved.report,
         }));
         self.last = Some(solution.clone());
         Ok(solution)
@@ -269,7 +326,7 @@ impl Assembly3d {
     fn joints_on(&self, body: BodyId) -> Vec<JointId> {
         self.joints
             .iter()
-            .filter(|(_, joint)| joint.bodies().contains(&body))
+            .filter(|(_, joint)| joint.definition.bodies().contains(&body))
             .map(|(id, _)| *id)
             .collect()
     }
@@ -277,17 +334,10 @@ impl Assembly3d {
         for body in joint.bodies() {
             self.get(body)?;
         }
-        if joint.first.body == joint.second.body {
-            return Err(EditError::InvalidJoint(
-                "a joint holds two different bodies",
-            ));
+        match joint.invalid() {
+            Some(reason) => Err(EditError::InvalidJoint(reason)),
+            None => Ok(()),
         }
-        if !valid_frame(&joint.first.frame) || !valid_frame(&joint.second.frame) {
-            return Err(EditError::InvalidJoint(
-                "attachment frames must be finite, orthonormal and right-handed",
-            ));
-        }
-        Ok(())
     }
     /// A number this assembly never issued, whatever was removed since.
     fn issue_id(&mut self) -> u64 {
@@ -311,9 +361,20 @@ impl Assembly3d {
         if self.joints.contains_key(&id) {
             return Err(EditError::DuplicateJoint(id));
         }
-        self.joints.insert(id, joint);
+        self.joints.insert(
+            id,
+            StoredJoint {
+                definition: joint,
+                seeds: BTreeMap::new(),
+            },
+        );
         self.revision += 1;
         Ok(())
+    }
+    fn stored(&self, id: JointId) -> Result<&StoredJoint, EditError> {
+        self.joints
+            .get(&id)
+            .ok_or(EditError::InvalidJointReference(id))
     }
 }
 

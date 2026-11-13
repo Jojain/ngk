@@ -1,5 +1,6 @@
-use super::super::system::Body;
+use super::super::system::{Body, StoredJoint};
 use super::super::{BodyId, Joint3d, JointId, Target3d};
+use super::equations::{self, References};
 use crate::geometry::dim3::frame::Frame;
 use crate::geometry::dim3::utils::Point3;
 use crate::geometry::transform::Rigid;
@@ -31,6 +32,8 @@ pub(super) struct Component {
     pub entries: Vec<Entry>,
     lookup: HashMap<BodyId, usize>,
     pub joints: Vec<(JointId, Joint3d)>,
+    /// Per joint, the references its angles unwrap nearest to.
+    pub references: Vec<References>,
     pub targets: Vec<(usize, Target3d)>,
     /// Translation unknowns are `(translation - origin) / scale`.
     pub origin: Vector3<f64>,
@@ -63,7 +66,7 @@ impl Component {
 /// Splits the assembly into components that solve independently.
 pub(super) fn prepare(
     bodies: &BTreeMap<BodyId, Body>,
-    joints: &BTreeMap<JointId, Joint3d>,
+    joints: &BTreeMap<JointId, StoredJoint>,
     targets: &[Target3d],
 ) -> Vec<Component> {
     let ids: Vec<BodyId> = bodies.keys().copied().collect();
@@ -71,7 +74,7 @@ pub(super) fn prepare(
     let free = |id: &BodyId| bodies[id].fixed.is_none();
     let mut parents: Vec<usize> = (0..ids.len()).collect();
     for joint in joints.values() {
-        let [a, b] = joint.bodies();
+        let [a, b] = joint.definition.bodies();
         if free(&a) && free(&b) {
             let ra = root(&mut parents, index[&a]);
             let rb = root(&mut parents, index[&b]);
@@ -90,11 +93,11 @@ pub(super) fn prepare(
         members[group].push(*id);
         group_of_body.insert(*id, group);
     }
-    let mut grouped_joints: Vec<Vec<(JointId, Joint3d)>> = vec![vec![]; members.len()];
+    let mut grouped_joints: Vec<Vec<(JointId, &StoredJoint)>> = vec![vec![]; members.len()];
     for (id, joint) in joints {
-        let [a, b] = joint.bodies();
+        let [a, b] = joint.definition.bodies();
         let anchor = if free(&a) || !free(&b) { a } else { b };
-        grouped_joints[group_of_body[&anchor]].push((*id, joint.clone()));
+        grouped_joints[group_of_body[&anchor]].push((*id, joint));
     }
     let mut grouped_targets: Vec<Vec<(usize, Target3d)>> = vec![vec![]; members.len()];
     for (i, target) in targets.iter().enumerate() {
@@ -120,12 +123,12 @@ impl Component {
     fn new(
         bodies: &BTreeMap<BodyId, Body>,
         owned: Vec<BodyId>,
-        joints: Vec<(JointId, Joint3d)>,
+        stored: Vec<(JointId, &StoredJoint)>,
         targets: Vec<(usize, Target3d)>,
     ) -> Self {
         let mut ids: Vec<(BodyId, bool)> = owned.iter().map(|id| (*id, true)).collect();
-        for (_, joint) in &joints {
-            for body in joint.bodies() {
+        for (_, joint) in &stored {
+            for body in joint.definition.bodies() {
                 if !ids.iter().any(|(id, _)| *id == body) {
                     ids.push((body, false));
                 }
@@ -157,7 +160,8 @@ impl Component {
         for entry in &entries {
             scale = scale.max((entry.translation - origin).norm());
         }
-        for (_, joint) in &joints {
+        for (_, joint) in &stored {
+            let joint = &joint.definition;
             for attachment in [&joint.first, &joint.second] {
                 let entry = &entries[lookup[&attachment.body]];
                 let world = entry.rotation * attachment.frame.origin.coords + entry.translation;
@@ -174,10 +178,23 @@ impl Component {
                 initial.rows_mut(column, 3).copy_from(&normalized);
             }
         }
+        let starts: BTreeMap<BodyId, Rigid> = entries
+            .iter()
+            .map(|entry| (entry.id, entry.start))
+            .collect();
+        let references = stored
+            .iter()
+            .map(|(_, joint)| equations::references(&joint.definition, &joint.seeds, &starts))
+            .collect();
+        let joints = stored
+            .into_iter()
+            .map(|(id, joint)| (id, joint.definition.clone()))
+            .collect();
         Self {
             entries,
             lookup,
             joints,
+            references,
             targets,
             origin,
             scale,

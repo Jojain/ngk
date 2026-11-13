@@ -16,7 +16,7 @@ use super::SolveOptions;
 
 pub use error::{EditError, SolveError};
 pub use ids::{BodyId, JointId};
-pub use joint::{Attachment, Joint3d, JointKind};
+pub use joint::{Attachment, Coordinate, Joint3d, JointKind};
 pub use solution::{
     BodyFreedom, JointRedundancy, JointResidual, Solution3d, SolveReport, TargetReport,
 };
