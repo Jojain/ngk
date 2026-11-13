@@ -9,6 +9,7 @@ mod ids;
 mod joint;
 mod solution;
 mod solving;
+mod storage;
 mod system;
 mod target;
 

@@ -6,11 +6,12 @@ use super::{
 use crate::geometry::dim3::utils::Point3;
 use crate::geometry::transform::Rigid;
 use nalgebra::Vector3;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// A body as the assembly holds it: where it starts from, and where it is held if fixed.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct Body {
     pub seed: Rigid,
     /// The pose captured when the body was fixed.
@@ -19,7 +20,7 @@ pub(super) struct Body {
 
 /// A joint as the assembly holds it: its definition, and the unwrapped values its
 /// angles start from.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct StoredJoint {
     pub definition: Joint3d,
     /// Per angular coordinate, the value the next solve unwraps nearest to.
@@ -59,10 +60,19 @@ impl Default for Assembly3d {
 impl Assembly3d {
     /// Creates an empty assembly; invalid numerical options are reported when solving.
     pub fn new(options: SolveOptions) -> Self {
+        Self::restored(options, BTreeMap::new(), BTreeMap::new(), 1)
+    }
+    /// An assembly holding this problem, at the start of its own session.
+    pub(super) fn restored(
+        options: SolveOptions,
+        bodies: BTreeMap<BodyId, Body>,
+        joints: BTreeMap<JointId, StoredJoint>,
+        next_id: u64,
+    ) -> Self {
         Self {
-            bodies: BTreeMap::new(),
-            joints: BTreeMap::new(),
-            next_id: 1,
+            bodies,
+            joints,
+            next_id,
             options,
             revision: 0,
             sequence: 0,
@@ -378,7 +388,7 @@ impl Assembly3d {
     }
 }
 
-fn valid_pose(pose: Rigid) -> Result<(), EditError> {
+pub(super) fn valid_pose(pose: Rigid) -> Result<(), EditError> {
     let finite = |v: Vector3<f64>| v.iter().all(|c| c.is_finite());
     if finite(pose.apply(Point3::origin()).coords)
         && [Vector3::x(), Vector3::y(), Vector3::z()]

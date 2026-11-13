@@ -1,6 +1,7 @@
 from typing import ClassVar, Self
 
 from ..geometry import Point2, Vector2
+from . import assembly as assembly
 from . import constraints as constraints
 from .constraints import Constraint, TangencyMode
 
@@ -216,5 +217,6 @@ __all__ = [
     "System2d",
     "Target",
     "TargetReport",
+    "assembly",
     "constraints",
 ]

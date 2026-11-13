@@ -4,8 +4,8 @@
 between them, the seeds they start from, and the last successful solution. It shares
 the numerical core of the [2D solver](solver.md) and its contract: typed ids, atomic
 batches, `solve` and `solve_toward`, nothing published on failure. It depends on NGK
-geometry values only, not on `Model`, GMap, builders or Nales. What is still to be
-built is in [plan/assembly-solver.md](../../plan/assembly-solver.md).
+geometry values only, not on `Model`, GMap, builders or Nales. What was left out is
+in [plan/assembly-solver.md](../../plan/assembly-solver.md).
 
 ## Public workflow
 
@@ -167,12 +167,36 @@ touching within tolerance. `mobility` does not count them.
 Failure to converge is `SolveError::NonConvergence`, naming the component's joints
 and their residuals. Two fixed bodies joined where they disagree fail this way.
 
+## Sub-assemblies
+
+The solver is flat: it knows no hierarchy and no component of a caller's document.
+A rigid sub-assembly is inserted as one body. A flexible one, whose internal joints
+move in its parent, is flattened by the caller: it inserts the sub-assembly's bodies
+and joints into the parent assembly under its own ids (`insert_*`), then attaches the
+parent's joints to the inner bodies. Every pose is in one world frame.
+
+## Storage and Python
+
+`Assembly3d` serializes its options, bodies with their seeds and fixings, and joints
+with the seeds of their angles; revisions and solutions start afresh. Reading refuses
+what an edit could not have produced: a pose that is not finite, an id stored twice, a
+joint on a missing body or one `add_joint` would refuse, a seed that is not a finite
+angle of its joint, a next id already in use.
+
+`ngk.solver.assembly` exposes the assembly to Python: `Assembly3d` with `to_json` and
+`from_json`, `BodyId`, `JointId`, `Attachment`, `Joint` (its kind, `pitch` for a
+helical joint only, and `values`, `limits` and `cone` as keywords), `JointKind`,
+`Coordinate`, `Limit`, `Target`, `Solution3d` and its report. Poses are
+`ngk.geometry.Rigid` and frames `ngk.geometry.Frame`. `NonConvergenceError` carries
+`joints` and `residuals`, `LimitError` its `limit`; both derive from `ValueError`.
+
 ## Code boundaries
 
 - `assembly/system.rs`: bodies, fixings, joints and their seeds, edits, revisions,
   publication.
 - `assembly/ids.rs`, `joint.rs`, `target.rs`: identity and problem representation.
 - `assembly/solution.rs`, `error.rs`: outputs and failures.
+- `assembly/storage.rs`: the serial form of an assembly and what reading it refuses.
 - `assembly/solving/prepare.rs`: components, unknown layout, scale, poses from unknowns.
 - `assembly/solving/vector.rs`: space vectors of jets and the rotation of a vector.
 - `assembly/solving/equations.rs`: attachment frames as expressions, the joints' rows,
@@ -180,3 +204,4 @@ and their residuals. Two fixed bodies joined where they disagree fail this way.
   passed.
 - `assembly/solving/solve.rs`: the component with its active limits as a `Problem`,
   the active-set rounds, the publication audit and diagnostics.
+- `bindings/python/solver/assembly.rs`: the Python module.

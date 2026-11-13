@@ -1,5 +1,7 @@
-//! The 2D constraint solver: `ngk.solver` and `ngk.solver.constraints`.
+//! The constraint solvers: `ngk.solver`, `ngk.solver.constraints` and
+//! `ngk.solver.assembly`.
 
+mod assembly;
 mod constraints;
 mod errors;
 mod ids;
@@ -31,6 +33,10 @@ pub(super) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let constraints_module = new_submodule(py, "constraints", &solver_qualname)?;
     constraints::register(&constraints_module)?;
     solver.add_submodule(&constraints_module)?;
+
+    let assembly_module = new_submodule(py, "assembly", &solver_qualname)?;
+    assembly::register(&assembly_module)?;
+    solver.add_submodule(&assembly_module)?;
 
     parent.add_submodule(&solver)?;
     Ok(())

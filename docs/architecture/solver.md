@@ -31,6 +31,7 @@ turn. Ellipses, splines, spatial constraints and bindings are outside this API.
 
 ## Python
 
+`ngk.solver.assembly` holds the [assembly solver](assembly.md#storage-and-python).
 `ngk.solver` exposes the system, the ids, `Segment2`, `Arc2`, `Circle2`, targets and the
 report. `ngk.solver.constraints` has one class per relation, each deriving from
 `Constraint`: a relation is a value with fields that `match` can read, and

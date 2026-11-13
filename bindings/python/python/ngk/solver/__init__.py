@@ -25,7 +25,7 @@ from ..core.solver import (
     Target,
     TargetReport,
 )
-from . import constraints
+from . import assembly, constraints
 
 # The id kinds a parameter or a result may hold, for annotations.
 type GeometryId = PointId | SegmentId | CircleId | ArcId
@@ -61,5 +61,6 @@ __all__ = [
     "System2d",
     "Target",
     "TargetReport",
+    "assembly",
     "constraints",
 ]

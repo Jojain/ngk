@@ -1117,3 +1117,68 @@ fn unsound_limits_are_refused() {
     }
     assert_eq!(assembly.joint_count(), 0);
 }
+
+#[test]
+fn a_stored_assembly_solves_as_the_original_and_keeps_its_ids() {
+    let (mut assembly, joint, id, body) = joint_on_ground(JointKind::Revolute, Rigid::identity());
+    assembly
+        .update_joint(
+            id,
+            joint
+                .clone()
+                .with_limit(Coordinate::Angle, bounds(-30., 400.)),
+        )
+        .unwrap();
+    assembly
+        .set_coordinate_seed(id, Coordinate::Angle, 360_f64.to_radians())
+        .unwrap();
+
+    let json = serde_json::to_string(&assembly).unwrap();
+    let mut restored: Assembly3d = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(restored.body_count(), 2);
+    assert_eq!(restored.joint(id).unwrap(), assembly.joint(id).unwrap());
+    assert_eq!(
+        restored.coordinate_seed(id, Coordinate::Angle).unwrap(),
+        Some(360_f64.to_radians())
+    );
+    assert!(restored.fixing(joint.first.body).unwrap().is_some());
+    let original = assembly.solve().unwrap();
+    let again = restored.solve().unwrap();
+    assert_eq!(
+        original.coordinate(id, Coordinate::Angle).unwrap(),
+        again.coordinate(id, Coordinate::Angle).unwrap()
+    );
+    assert_eq!(original.pose(body).unwrap(), again.pose(body).unwrap());
+    let next = restored.add_body(Rigid::identity()).unwrap();
+    assert!(next.value() > id.value() && next.value() > body.value());
+}
+
+#[test]
+fn a_stored_assembly_an_edit_could_not_produce_is_refused() {
+    let (assembly, _, _, _) = joint_on_ground(JointKind::Revolute, Rigid::identity());
+    let json = serde_json::to_value(&assembly).unwrap();
+    let refuse = |change: &dyn Fn(&mut serde_json::Value)| {
+        let mut value = json.clone();
+        change(&mut value);
+        assert!(
+            serde_json::from_value::<Assembly3d>(value.clone()).is_err(),
+            "{value}"
+        );
+    };
+    refuse(&|value| value["next_id"] = 1.into());
+    refuse(&|value| {
+        let body = value["bodies"][0].clone();
+        value["bodies"].as_array_mut().unwrap().push(body);
+    });
+    refuse(&|value| {
+        value["bodies"].as_array_mut().unwrap().remove(1);
+    });
+    refuse(&|value| value["joints"][0][1]["seeds"]["Slide"] = 1.0.into());
+    refuse(&|value| {
+        let first = value["joints"][0][1]["definition"]["first"]["body"].clone();
+        value["joints"][0][1]["definition"]["second"]["body"] = first;
+    });
+    let valid: Assembly3d = serde_json::from_value(json).unwrap();
+    assert_eq!(valid.joint_count(), 1);
+}
