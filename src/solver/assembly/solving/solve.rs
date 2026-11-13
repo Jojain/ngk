@@ -1,9 +1,9 @@
 use super::super::system::{Body, StoredJoint};
 use super::super::{
-    Attachment, BodyFreedom, BodyId, Coordinate, JointId, JointRedundancy, JointResidual,
-    SolveError, SolveOptions, SolveReport, Target3d, TargetReport,
+    ActiveLimit, Attachment, BodyFreedom, BodyId, Coordinate, JointId, JointRedundancy,
+    JointResidual, SolveError, SolveOptions, SolveReport, Target3d, TargetReport,
 };
-use super::equations::{self, Evaluation};
+use super::equations::{self, Evaluation, LimitRef};
 use super::prepare::{self, BODY_UNKNOWNS, Component};
 use crate::geometry::dim3::frame::Frame;
 use crate::geometry::transform::Rigid;
@@ -31,22 +31,39 @@ pub(in crate::solver::assembly) fn solve(
     let mut relative = BTreeMap::new();
     let mut report = SolveReport::default();
     for component in prepare::prepare(bodies, joints, targets) {
-        let mut attempt = numerical::restore(&component, component.initial.clone(), options);
-        report.iterations += attempt.iterations;
-        if !attempt.feasible {
-            return Err(failure(
-                &component,
-                &attempt.evaluation,
-                component.scale,
-                options,
-            ));
-        }
-        if !component.targets.is_empty() {
-            let work = numerical::improve_targets(&component, &mut attempt, options);
-            report.iterations += work.restore_iterations;
-            report.target_iterations += work.iterations;
-            report.target_budget_exhausted |= work.budget_exhausted;
-        }
+        // An active set that grows within one solve: each round restarts from the seeds
+        // with the most violated side of a limit held as an equality, until none is.
+        let mut problem = Limited {
+            component: &component,
+            active: vec![],
+        };
+        let attempt = loop {
+            let mut attempt = numerical::restore(&problem, component.initial.clone(), options);
+            report.iterations += attempt.iterations;
+            if !attempt.feasible {
+                return Err(match problem.active.last() {
+                    Some(&(index, bound)) => SolveError::Limit {
+                        joint: component.joints[index].0,
+                        bound,
+                    },
+                    None => failure(&component, &attempt.evaluation, component.scale, options),
+                });
+            }
+            if !component.targets.is_empty() {
+                let work = numerical::improve_targets(&problem, &mut attempt, options);
+                report.iterations += work.restore_iterations;
+                report.target_iterations += work.iterations;
+                report.target_budget_exhausted |= work.budget_exhausted;
+            }
+            let violated = equations::excesses(&component, &attempt.x, options)
+                .into_iter()
+                .filter(|(limit, excess)| *excess > 1. && !problem.active.contains(limit))
+                .max_by(|a, b| a.1.total_cmp(&b.1));
+            match violated {
+                Some((limit, _)) => problem.active.push(limit),
+                None => break attempt,
+            }
+        };
         let solved: BTreeMap<BodyId, Rigid> = component
             .entries
             .iter()
@@ -56,6 +73,21 @@ pub(in crate::solver::assembly) fn solve(
         let physical = equations::world(&component, &solved);
         if !physical.feasible(1., options) {
             return Err(failure(&component, &physical, 1., options));
+        }
+        // Report every side the solution stands against, held or merely touching.
+        for ((index, bound), excess) in equations::world_excesses(&component, &solved, options) {
+            if excess > 1. {
+                return Err(SolveError::Limit {
+                    joint: component.joints[index].0,
+                    bound,
+                });
+            }
+            if excess >= -1. || problem.active.contains(&(index, bound)) {
+                report.active_limits.push(ActiveLimit {
+                    joint: component.joints[index].0,
+                    bound,
+                });
+            }
         }
         let evaluation = equations::permanent(&component, &attempt.x);
         let factor = Factor::new(&evaluation.jacobian, options.rank_tolerance);
@@ -119,10 +151,16 @@ pub(in crate::solver::assembly) fn solve(
     })
 }
 
-impl Problem for Component {
+/// A component with some sides of its joints' limits held as equalities.
+struct Limited<'a> {
+    component: &'a Component,
+    active: Vec<LimitRef>,
+}
+
+impl Problem for Limited<'_> {
     type Key = JointId;
     fn scale(&self) -> f64 {
-        self.scale
+        self.component.scale
     }
     fn valid(&self, x: &DVector<f64>) -> bool {
         x.iter().all(|v| v.is_finite())
@@ -131,10 +169,10 @@ impl Problem for Component {
         true
     }
     fn permanent(&self, x: &DVector<f64>) -> Evaluation {
-        equations::permanent(self, x)
+        equations::constrained(self.component, x, &self.active)
     }
     fn objectives(&self, x: &DVector<f64>) -> Evaluation {
-        equations::objectives(self, x)
+        equations::objectives(self.component, x)
     }
 }
 

@@ -1,14 +1,18 @@
-use super::super::{Attachment, BodyId, Coordinate, Joint3d, JointId, JointKind};
+use super::super::{Attachment, BodyId, Bound, Coordinate, Joint3d, JointId, JointKind};
 use super::prepare::Component;
 use super::vector::{JetVector3, rotate};
 use crate::geometry::dim3::frame::Frame;
 use crate::geometry::transform::Rigid;
+use crate::solver::SolveOptions;
 use crate::solver::numerical::{self, Jet, Row};
 use nalgebra::{DVector, Vector3};
 use std::collections::BTreeMap;
 use std::f64::consts::TAU;
 
 pub(super) type Evaluation = numerical::Evaluation<JointId>;
+
+/// A side of a limit of the component's joint at this index.
+pub(super) type LimitRef = (usize, Bound);
 
 /// Per angular coordinate of a joint, the value its angle is unwrapped nearest to.
 pub(super) type References = BTreeMap<Coordinate, f64>;
@@ -35,12 +39,79 @@ impl JetFrame {
 
 /// The joints' rows at the unknowns `x`, linear rows in units of the component's scale.
 pub(super) fn permanent(component: &Component, x: &DVector<f64>) -> Evaluation {
+    constrained(component, x, &[])
+}
+
+/// The joints' rows with the `active` sides of their limits held as equalities, each
+/// grouped with its joint's rows.
+pub(super) fn constrained(
+    component: &Component,
+    x: &DVector<f64>,
+    active: &[LimitRef],
+) -> Evaluation {
     rows(
         component,
         |attachment| frame(component, x, attachment),
         component.scale,
+        active,
         x.len(),
     )
+}
+
+/// Every side of every limit, with how far the unknowns `x` stand beyond it in units of
+/// its tolerance: negative inside.
+pub(super) fn excesses(
+    component: &Component,
+    x: &DVector<f64>,
+    options: &SolveOptions,
+) -> Vec<(LimitRef, f64)> {
+    limit_excesses(
+        component,
+        |attachment| frame(component, x, attachment),
+        component.scale,
+        options,
+    )
+}
+
+/// The same at published world poses, in the caller's units.
+pub(super) fn world_excesses(
+    component: &Component,
+    poses: &BTreeMap<BodyId, Rigid>,
+    options: &SolveOptions,
+) -> Vec<(LimitRef, f64)> {
+    limit_excesses(
+        component,
+        |attachment| world_frame(attachment, poses),
+        1.,
+        options,
+    )
+}
+
+fn limit_excesses(
+    component: &Component,
+    frame: impl Fn(&Attachment) -> JetFrame,
+    scale: f64,
+    options: &SolveOptions,
+) -> Vec<(LimitRef, f64)> {
+    let mut output = vec![];
+    for (index, ((_, joint), references)) in component
+        .joints
+        .iter()
+        .zip(&component.references)
+        .enumerate()
+    {
+        let (a, b) = (frame(&joint.first), frame(&joint.second));
+        for (bound, limit) in joint.bounds() {
+            let row = beyond(bound, limit, &a, &b, references, scale);
+            let tolerance = if row.angular {
+                options.angular_tolerance
+            } else {
+                options.linear_tolerance / scale
+            };
+            output.push(((index, bound), row.expression.value / tolerance));
+        }
+    }
+    output
 }
 
 /// The joints' rows at published world poses, linear rows in the caller's units.
@@ -51,6 +122,7 @@ pub(super) fn world(component: &Component, poses: &BTreeMap<BodyId, Rigid>) -> E
         component,
         |attachment| world_frame(attachment, poses),
         1.,
+        &[],
         0,
     )
 }
@@ -132,11 +204,17 @@ fn rows(
     component: &Component,
     frame: impl Fn(&Attachment) -> JetFrame,
     scale: f64,
+    active: &[LimitRef],
     columns: usize,
 ) -> Evaluation {
     let mut rows = vec![];
     let mut groups = vec![];
-    for ((id, joint), references) in component.joints.iter().zip(&component.references) {
+    for (index, ((id, joint), references)) in component
+        .joints
+        .iter()
+        .zip(&component.references)
+        .enumerate()
+    {
         let start = rows.len();
         let (a, b) = (frame(&joint.first), frame(&joint.second));
         rows.extend(joint_rows(joint.kind, &a, &b, scale, references));
@@ -147,6 +225,11 @@ fn rows(
             } else {
                 Row::linear(actual - imposed / scale)
             });
+        }
+        for (bound, limit) in joint.bounds() {
+            if active.contains(&(index, bound)) {
+                rows.push(beyond(bound, limit, &a, &b, references, scale));
+            }
         }
         groups.push((*id, start..rows.len()));
     }
@@ -220,6 +303,47 @@ fn value(coordinate: Coordinate, a: &JetFrame, b: &JetFrame, references: &Refere
     match references.get(&coordinate) {
         Some(&reference) => (raw - reference).wrapped() + reference,
         None => raw,
+    }
+}
+
+/// How far a coordinate stands beyond one side of its limit, negative inside; linear
+/// rows in units of `scale`.
+fn beyond(
+    bound: Bound,
+    limit: f64,
+    a: &JetFrame,
+    b: &JetFrame,
+    references: &References,
+    scale: f64,
+) -> Row {
+    let row = |coordinate: Coordinate, excess: Jet| {
+        if coordinate.angular() {
+            Row::angular(excess)
+        } else {
+            Row::linear(excess)
+        }
+    };
+    let unit = |coordinate: Coordinate| {
+        if coordinate.angular() {
+            limit
+        } else {
+            limit / scale
+        }
+    };
+    match bound {
+        Bound::Min(coordinate) => row(
+            coordinate,
+            -value(coordinate, a, b, references) + unit(coordinate),
+        ),
+        Bound::Max(coordinate) => row(
+            coordinate,
+            value(coordinate, a, b, references) - unit(coordinate),
+        ),
+        Bound::Cone => {
+            let across = a.z.cross(&b.z);
+            let angle = across.dot(&across).sqrt().atan2(a.z.dot(&b.z));
+            Row::angular(angle - limit)
+        }
     }
 }
 

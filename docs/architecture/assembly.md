@@ -126,6 +126,29 @@ is published.
 position, weighted among targets. An unreachable target stops where the joints allow
 and is reported as not reached.
 
+## Limits
+
+`Joint3d::with_limit` bounds a scalar coordinate by a `Limit`, either side optional,
+in the coordinate's units; a helical slide may be bounded, and follows its angle.
+`with_cone` bounds a free rotation (spherical, sphere in cylinder, sphere on plane): the
+second Z stays within an angle in `(0, pi]` of the first. Refused at edit: a limit on a
+coordinate the joint does not have, a side that is not finite, no side at all, `min`
+above `max`, a cone on a joint without a free rotation, and an imposed value outside
+its limit, a helical slide driven by an imposed angle included.
+
+Limits are inequalities, solved by an active set that only grows within one solve.
+Each round restores feasibility from the seeds with the active sides held as
+equalities, pursues the targets, and then adds the most violated inactive side, until
+none is violated beyond tolerance. A seed beyond a limit thus comes back to it with
+minimal motion, and a drag stops against it with its target reported as not reached.
+The next solve starts with no side active, so a drag pulled back leaves the limit. An
+active side whose restoration fails, a loop forcing a coordinate past its bound, is
+`SolveError::Limit` naming the joint and the side (`Bound`). The published poses are
+audited against every limit as against every joint.
+
+`SolveReport::active_limits` lists the sides the solution stands against, held or
+touching within tolerance. `mobility` does not count them.
+
 ## Diagnostics
 
 `SolveReport` gives, linearized at the solution:
@@ -153,6 +176,7 @@ and their residuals. Two fixed bodies joined where they disagree fail this way.
 - `assembly/solving/prepare.rs`: components, unknown layout, scale, poses from unknowns.
 - `assembly/solving/vector.rs`: space vectors of jets and the rotation of a vector.
 - `assembly/solving/equations.rs`: attachment frames as expressions, the joints' rows,
-  coordinates and their unwrapping references.
-- `assembly/solving/solve.rs`: the component as a `Problem`, the publication audit and
-  diagnostics.
+  coordinates and their unwrapping references, and how far each side of a limit is
+  passed.
+- `assembly/solving/solve.rs`: the component with its active limits as a `Problem`,
+  the active-set rounds, the publication audit and diagnostics.

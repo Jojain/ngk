@@ -4,8 +4,8 @@ use ngk::geometry::dim3::frame::Frame;
 use ngk::geometry::dim3::utils::Point3;
 use ngk::geometry::transform::Rigid;
 use ngk::solver::assembly::{
-    Assembly3d, Attachment, BodyId, Coordinate, EditError, Joint3d, JointId, JointKind, Solution3d,
-    SolveError, Target3d,
+    Assembly3d, Attachment, BodyId, Bound, Coordinate, EditError, Joint3d, JointId, JointKind,
+    Limit, Solution3d, SolveError, Target3d,
 };
 use radians::Rad64;
 
@@ -880,4 +880,240 @@ fn a_slider_crank_closes_and_its_slider_follows_the_crank() {
     // The rod is 3 long and the slider stays on the X axis: it sits at √8.
     let slide = driven.coordinate(ids[3], Coordinate::Slide).unwrap();
     assert!((slide - 8_f64.sqrt()).abs() < CLOSE, "{slide}");
+}
+
+/// A revolute joint on a fixed ground whose angle is bounded, the body seeded at `start`
+/// degrees about Z.
+fn bounded_crank(start: f64, limit: Limit) -> (Assembly3d, JointId, BodyId) {
+    let (mut assembly, ground, body) = ground_and_body(turn(Vector3::z(), start));
+    let joint = Joint3d::new(
+        JointKind::Revolute,
+        hold(ground, at(0., 0., 0.)),
+        hold(body, at(0., 0., 0.)),
+    )
+    .with_limit(Coordinate::Angle, limit);
+    let id = assembly.add_joint(joint).unwrap();
+    (assembly, id, body)
+}
+
+fn bounds(limit: f64, upper: f64) -> Limit {
+    Limit::between(limit.to_radians(), upper.to_radians())
+}
+
+fn active(solution: &Solution3d) -> Vec<Bound> {
+    solution
+        .report()
+        .active_limits
+        .iter()
+        .map(|limit| limit.bound)
+        .collect()
+}
+
+fn angle_of(solution: &Solution3d, id: JointId) -> f64 {
+    degrees(solution.coordinate(id, Coordinate::Angle).unwrap())
+}
+
+/// The world position at `degrees` about Z on the unit circle.
+fn on_circle(degrees: f64) -> Point3 {
+    Point3::new(degrees.to_radians().cos(), degrees.to_radians().sin(), 0.)
+}
+
+#[test]
+fn a_seed_beyond_a_limit_comes_back_to_it() {
+    let (mut assembly, id, _) = bounded_crank(120., bounds(0., 90.));
+
+    let solution = assembly.solve().unwrap();
+
+    assert!((angle_of(&solution, id) - 90.).abs() < 1e-6);
+    assert_eq!(active(&solution), vec![Bound::Max(Coordinate::Angle)]);
+    // Limits do not count as removed freedoms.
+    assert_eq!(solution.report().mobility, 1);
+}
+
+#[test]
+fn a_seed_within_its_limits_stays_and_holds_none() {
+    let (mut assembly, id, _) = bounded_crank(45., bounds(0., 90.));
+
+    let solution = assembly.solve().unwrap();
+
+    assert!((angle_of(&solution, id) - 45.).abs() < 1e-6);
+    assert!(active(&solution).is_empty());
+}
+
+#[test]
+fn a_drag_stops_against_a_limit_and_leaves_it_when_pulled_back() {
+    let (mut assembly, id, body) = bounded_crank(45., bounds(0., 90.));
+    let tip = Point3::new(1., 0., 0.);
+
+    let stopped = assembly
+        .solve_toward(&[Target3d::point(body, tip, on_circle(150.))])
+        .unwrap();
+
+    assert!((angle_of(&stopped, id) - 90.).abs() < 1e-6);
+    assert!(!stopped.report().targets[0].reached);
+    assert_eq!(active(&stopped), vec![Bound::Max(Coordinate::Angle)]);
+
+    let back = assembly
+        .solve_toward(&[Target3d::point(body, tip, on_circle(30.))])
+        .unwrap();
+
+    assert!((angle_of(&back, id) - 30.).abs() < 1e-4);
+    assert!(active(&back).is_empty());
+}
+
+#[test]
+fn a_limit_past_a_turn_stops_a_crank_dragged_round() {
+    let (mut assembly, id, body) = bounded_crank(0., bounds(-30., 400.));
+    let tip = Point3::new(1., 0., 0.);
+    let mut angle = 0.;
+    for step in 1..=10 {
+        let solution = assembly
+            .solve_toward(&[Target3d::point(body, tip, on_circle(45. * step as f64))])
+            .unwrap();
+        angle = angle_of(&solution, id);
+    }
+    assert!((angle - 400.).abs() < 1e-6, "{angle}");
+}
+
+#[test]
+fn a_slide_limit_bounds_a_screw_through_its_angle() {
+    let (mut assembly, ground, body) = ground_and_body(Rigid::identity());
+    let joint = Joint3d::new(
+        JointKind::Helical { pitch: 1. },
+        hold(ground, at(0., 0., 0.)),
+        hold(body, at(0., 0., 0.)),
+    )
+    .with_limit(Coordinate::Slide, Limit::at_most(0.5));
+    let id = assembly.add_joint(joint).unwrap();
+    let tip = Point3::new(1., 0., 0.);
+    let mut solution = None;
+    for step in 1..=6 {
+        let goal = on_circle(45. * step as f64) + Vector3::new(0., 0., 0.125 * step as f64);
+        solution = Some(
+            assembly
+                .solve_toward(&[Target3d::point(body, tip, goal)])
+                .unwrap(),
+        );
+    }
+    let solution = solution.unwrap();
+    assert!((solution.coordinate(id, Coordinate::Slide).unwrap() - 0.5).abs() < CLOSE);
+    assert!((angle_of(&solution, id) - 180.).abs() < 1e-6);
+    assert_eq!(active(&solution), vec![Bound::Max(Coordinate::Slide)]);
+}
+
+#[test]
+fn a_prismatic_seed_past_its_stroke_comes_back_to_its_end() {
+    let (mut assembly, ground, body) = ground_and_body(shift(0., 0., 3.));
+    let joint = Joint3d::new(
+        JointKind::Prismatic,
+        hold(ground, at(0., 0., 0.)),
+        hold(body, at(0., 0., 0.)),
+    )
+    .with_limit(Coordinate::Slide, Limit::between(0., 2.));
+    let id = assembly.add_joint(joint).unwrap();
+
+    let solution = assembly.solve().unwrap();
+
+    assert!((solution.coordinate(id, Coordinate::Slide).unwrap() - 2.).abs() < CLOSE);
+    assert_point(
+        solution.pose(body).unwrap().apply(Point3::origin()),
+        Point3::new(0., 0., 2.),
+    );
+}
+
+#[test]
+fn a_cone_limit_holds_a_ball_joint_within_its_angle() {
+    let (mut assembly, ground, body) = ground_and_body(turn(Vector3::x(), 50.));
+    let joint = Joint3d::new(
+        JointKind::Spherical,
+        hold(ground, at(0., 0., 0.)),
+        hold(body, at(0., 0., 0.)),
+    )
+    .with_cone(30_f64.to_radians());
+    let first = joint.first.clone();
+    let second = joint.second.clone();
+    assembly.add_joint(joint).unwrap();
+
+    let solution = assembly.solve().unwrap();
+
+    let (a, b) = (landed(&solution, &first), landed(&solution, &second));
+    let tilt = degrees(a.z_dir.angle(&b.z_dir));
+    assert!((tilt - 30.).abs() < 1e-6, "{tilt}");
+    assert_eq!(active(&solution), vec![Bound::Cone]);
+}
+
+#[test]
+fn a_loop_forcing_a_coordinate_past_its_limit_fails_naming_it() {
+    let (mut assembly, ground, body) = ground_and_body(turn(Vector3::z(), 10.));
+    let revolute = assembly
+        .add_joint(
+            Joint3d::new(
+                JointKind::Revolute,
+                hold(ground, at(0., 0., 0.)),
+                hold(body, at(0., 0., 0.)),
+            )
+            .with_limit(Coordinate::Angle, bounds(-30., 30.)),
+        )
+        .unwrap();
+    let welded = Frame::from_xz(
+        Point3::origin(),
+        Vector3::new(60_f64.to_radians().cos(), 60_f64.to_radians().sin(), 0.),
+        Vector3::z(),
+    );
+    assembly
+        .add_joint(Joint3d::new(
+            JointKind::Fixed,
+            hold(ground, welded),
+            hold(body, at(0., 0., 0.)),
+        ))
+        .unwrap();
+
+    let error = assembly.solve().unwrap_err();
+
+    assert!(
+        matches!(
+            error,
+            SolveError::Limit { joint, bound: Bound::Max(Coordinate::Angle) } if joint == revolute
+        ),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn unsound_limits_are_refused() {
+    let mut assembly = Assembly3d::default();
+    let a = assembly.add_body(Rigid::identity()).unwrap();
+    let b = assembly.add_body(Rigid::identity()).unwrap();
+    let joint = |kind| Joint3d::new(kind, hold(a, at(0., 0., 0.)), hold(b, at(0., 0., 0.)));
+    let refused = [
+        joint(JointKind::Revolute).with_limit(Coordinate::Angle, Limit::between(1., 0.)),
+        joint(JointKind::Revolute).with_limit(Coordinate::Slide, Limit::at_most(1.)),
+        joint(JointKind::Revolute).with_limit(
+            Coordinate::Angle,
+            Limit {
+                min: None,
+                max: None,
+            },
+        ),
+        joint(JointKind::Prismatic).with_limit(Coordinate::Slide, Limit::at_least(f64::NAN)),
+        joint(JointKind::Revolute)
+            .with_value(Coordinate::Angle, 2.)
+            .with_limit(Coordinate::Angle, Limit::between(0., 1.)),
+        joint(JointKind::Helical { pitch: 1. })
+            .with_value(Coordinate::Angle, 10.)
+            .with_limit(Coordinate::Slide, Limit::at_most(1.)),
+        joint(JointKind::Revolute).with_cone(0.5),
+        joint(JointKind::Spherical).with_cone(0.),
+        joint(JointKind::Spherical).with_cone(4.),
+    ];
+    for joint in refused {
+        assert!(
+            matches!(
+                assembly.add_joint(joint.clone()),
+                Err(EditError::InvalidJoint(_))
+            ),
+            "{joint:?}"
+        );
+    }
+    assert_eq!(assembly.joint_count(), 0);
 }

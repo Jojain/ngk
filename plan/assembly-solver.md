@@ -1,6 +1,6 @@
 # Assembly solver
 
-Status: stages 1 to 3 built; the solver as it is is described in
+Status: stages 1 to 4 built; the solver as it is is described in
 [assembly.md](../docs/architecture/assembly.md). This plan records the decisions for
 a rigid-body positioning solver and the stages still to build. The 2D
 sketch solver it sits next to is described in
@@ -151,8 +151,8 @@ reads as a rotation, never as three scalars.
   without solving. A loop closure that forces a coordinate past a bound is a
   `SolveError` naming the joint and the limit.
 
-The numerical treatment of the inequalities inside the minimum-norm solver
-(active set or another method) is open and is settled in stage 4.
+The inequalities are solved by an active set that grows within one solve; see
+[assembly.md](../docs/architecture/assembly.md#limits).
 
 ## Solving
 
@@ -210,8 +210,8 @@ frame.
 5. **Serialization and Python bindings.** `Assembly3d` serializes like `System2d`;
    `ngk.solver` exposes it to Python for Nales.
 
-Stages 1 to 3 are built: the numerical core is shared (`src/solver/numerical/`) and
-`Assembly3d` solves the eleven joints with unwrapped, seeded and imposable
+Stages 1 to 4 are built: the numerical core is shared (`src/solver/numerical/`) and
+`Assembly3d` solves the eleven joints with unwrapped, seeded, imposable and limited
 coordinates, documented in
 [assembly.md](../docs/architecture/assembly.md). Each stage that lands is documented
 there; this plan keeps the agreed decisions until the last stage is built.

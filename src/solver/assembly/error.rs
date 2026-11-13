@@ -1,4 +1,4 @@
-use super::{BodyId, JointId, JointResidual};
+use super::{BodyId, Bound, JointId, JointResidual};
 use thiserror::Error;
 
 /// A rejected edit leaves the assembly unchanged.
@@ -29,6 +29,8 @@ pub enum SolveError {
     InvalidOptions,
     #[error(transparent)]
     InvalidInput(#[from] EditError),
+    #[error("joint {joint:?} cannot keep within its limit {bound:?}")]
+    Limit { joint: JointId, bound: Bound },
     #[error("local resolution did not converge")]
     NonConvergence {
         joints: Vec<JointId>,

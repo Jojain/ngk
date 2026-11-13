@@ -102,6 +102,13 @@ impl JointKind {
         self.coordinates().contains(&coordinate)
             && !(matches!(self, JointKind::Helical { .. }) && coordinate == Coordinate::Slide)
     }
+    /// Whether the joint leaves a free rotation, which accepts only a cone limit.
+    pub fn free_rotation(self) -> bool {
+        matches!(
+            self,
+            JointKind::Spherical | JointKind::SphereInCylinder | JointKind::SphereOnPlane
+        )
+    }
     fn valid(self) -> bool {
         match self {
             JointKind::Helical { pitch } => pitch.is_finite() && pitch != 0.,
@@ -110,11 +117,52 @@ impl JointKind {
     }
 }
 
+/// Bounds a coordinate keeps within, either side optional.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Limit {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+}
+
+impl Limit {
+    pub fn between(min: f64, max: f64) -> Self {
+        Self {
+            min: Some(min),
+            max: Some(max),
+        }
+    }
+    pub fn at_least(min: f64) -> Self {
+        Self {
+            min: Some(min),
+            max: None,
+        }
+    }
+    pub fn at_most(max: f64) -> Self {
+        Self {
+            min: None,
+            max: Some(max),
+        }
+    }
+    fn contains(self, value: f64) -> bool {
+        self.min.is_none_or(|min| value >= min) && self.max.is_none_or(|max| value <= max)
+    }
+}
+
+/// One side of a joint's limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Bound {
+    Min(Coordinate),
+    Max(Coordinate),
+    /// The cone the second Z keeps within about the first.
+    Cone,
+}
+
 /// A permanent joint between two bodies, each held by a frame.
 ///
 /// The order matters: the joint's coordinates express the second frame in the first.
 /// `values` imposes coordinates, as dimensions do: an angle in radians, unwrapped, or a
-/// length in the caller's unit.
+/// length in the caller's unit. `limits` bounds scalar coordinates, in the same units;
+/// `cone` bounds a free rotation by the largest angle between the two Z axes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Joint3d {
     pub kind: JointKind,
@@ -122,6 +170,10 @@ pub struct Joint3d {
     pub second: Attachment,
     #[serde(default)]
     pub values: BTreeMap<Coordinate, f64>,
+    #[serde(default)]
+    pub limits: BTreeMap<Coordinate, Limit>,
+    #[serde(default)]
+    pub cone: Option<f64>,
 }
 
 impl Joint3d {
@@ -131,7 +183,20 @@ impl Joint3d {
             first,
             second,
             values: BTreeMap::new(),
+            limits: BTreeMap::new(),
+            cone: None,
         }
+    }
+    /// Bounds a coordinate; checked when the joint is added. A helical slide may be
+    /// bounded: it follows the angle.
+    pub fn with_limit(mut self, coordinate: Coordinate, limit: Limit) -> Self {
+        self.limits.insert(coordinate, limit);
+        self
+    }
+    /// Bounds a free rotation: the second Z stays within `angle` of the first.
+    pub fn with_cone(mut self, angle: f64) -> Self {
+        self.cone = Some(angle);
+        self
     }
     /// Imposes a coordinate's value; checked when the joint is added.
     pub fn with_value(mut self, coordinate: Coordinate, value: f64) -> Self {
@@ -160,7 +225,57 @@ impl Joint3d {
                 return Some("an imposed value must be finite");
             }
         }
+        for (coordinate, limit) in &self.limits {
+            if !self.kind.coordinates().contains(coordinate) {
+                return Some("only a coordinate of the joint can be limited");
+            }
+            let finite = |side: Option<f64>| side.is_none_or(f64::is_finite);
+            if limit.min.is_none() && limit.max.is_none()
+                || !finite(limit.min)
+                || !finite(limit.max)
+            {
+                return Some("a limit has a finite min, max or both");
+            }
+            if let (Some(min), Some(max)) = (limit.min, limit.max)
+                && min > max
+            {
+                return Some("a limit's min exceeds its max");
+            }
+        }
+        if !self.values.iter().all(|(coordinate, value)| {
+            self.limits
+                .get(coordinate)
+                .is_none_or(|limit| limit.contains(*value))
+        }) {
+            return Some("an imposed value lies outside its limit");
+        }
+        if let (JointKind::Helical { pitch }, Some(angle), Some(limit)) = (
+            self.kind,
+            self.values.get(&Coordinate::Angle),
+            self.limits.get(&Coordinate::Slide),
+        ) && !limit.contains(pitch * angle / std::f64::consts::TAU)
+        {
+            return Some("an imposed angle drives the slide outside its limit");
+        }
+        if let Some(angle) = self.cone {
+            if !self.kind.free_rotation() {
+                return Some("only a free rotation has a cone limit");
+            }
+            if !(angle > 0. && angle <= std::f64::consts::PI) {
+                return Some("a cone limit lies in (0, pi]");
+            }
+        }
         None
+    }
+    /// Every side of the joint's limits, with its value.
+    pub(super) fn bounds(&self) -> Vec<(Bound, f64)> {
+        let mut bounds = vec![];
+        for (coordinate, limit) in &self.limits {
+            bounds.extend(limit.min.map(|min| (Bound::Min(*coordinate), min)));
+            bounds.extend(limit.max.map(|max| (Bound::Max(*coordinate), max)));
+        }
+        bounds.extend(self.cone.map(|angle| (Bound::Cone, angle)));
+        bounds
     }
 }
 

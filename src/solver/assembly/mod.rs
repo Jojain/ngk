@@ -16,9 +16,9 @@ use super::SolveOptions;
 
 pub use error::{EditError, SolveError};
 pub use ids::{BodyId, JointId};
-pub use joint::{Attachment, Coordinate, Joint3d, JointKind};
+pub use joint::{Attachment, Bound, Coordinate, Joint3d, JointKind, Limit};
 pub use solution::{
-    BodyFreedom, JointRedundancy, JointResidual, Solution3d, SolveReport, TargetReport,
+    ActiveLimit, BodyFreedom, JointRedundancy, JointResidual, Solution3d, SolveReport, TargetReport,
 };
 pub use system::{Assembly3d, Removal};
 pub use target::Target3d;

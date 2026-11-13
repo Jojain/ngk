@@ -1,4 +1,4 @@
-use super::{BodyId, Coordinate, EditError, JointId};
+use super::{BodyId, Bound, Coordinate, EditError, JointId};
 use crate::geometry::dim3::utils::Point3;
 use crate::geometry::transform::Rigid;
 use std::collections::BTreeMap;
@@ -20,6 +20,13 @@ pub struct JointRedundancy {
     pub joint: JointId,
     /// How many of the joint's equations are locally dependent.
     pub equations: usize,
+}
+
+/// A side of a joint's limit the solution stands against.
+#[derive(Clone, Debug)]
+pub struct ActiveLimit {
+    pub joint: JointId,
+    pub bound: Bound,
 }
 
 /// How freely one body can still move.
@@ -51,6 +58,8 @@ pub struct SolveReport {
     /// add up to `mobility`.
     pub freedoms: Vec<BodyFreedom>,
     pub redundancies: Vec<JointRedundancy>,
+    /// The limits the solution stands against. `mobility` does not count them.
+    pub active_limits: Vec<ActiveLimit>,
     pub residuals: Vec<JointResidual>,
     pub targets: Vec<TargetReport>,
     pub iterations: usize,
