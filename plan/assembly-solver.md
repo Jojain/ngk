@@ -1,7 +1,8 @@
 # Assembly solver
 
-Status: requirements agreed in discussion, nothing built. This plan records the
-decisions for a rigid-body positioning solver and the stages to build it. The 2D
+Status: stages 1 and 2 built; the solver as it is is described in
+[assembly.md](../docs/architecture/assembly.md). This plan records the decisions for
+a rigid-body positioning solver and the stages still to build. The 2D
 sketch solver it sits next to is described in
 [solver.md](../docs/architecture/solver.md); its requirements and design reasoning
 are in [solvers.md](solvers.md) and [solver-architecture.md](solver-architecture.md).
@@ -25,7 +26,7 @@ Instances is Nales' design.
 
 ## Public shape
 
-A stateful `Assembly3d` in `ngk::solver`, built on the same philosophy as
+A stateful `Assembly3d` in `ngk::solver::assembly`, built on the same philosophy as
 `System2d`:
 
 - typed ids issued by `add_*` and never issued twice; `insert_*` takes back an id
@@ -48,7 +49,7 @@ No dependency on `Model`, GMap, builders or Nales.
 | --- | --- |
 | `Assembly3d` | Editable system, last solution |
 | `BodyId` | A body: a pose the solver moves rigidly, with no shape |
-| `JointId`, `Joint3d` | A joint's identity and its definition (one variant per kind) |
+| `JointId`, `Joint3d` | A joint's identity and its definition: a `JointKind` and two attachments |
 | `Target3d` | A temporary objective of one `solve_toward` call |
 | `Solution3d` | Solved poses, joint coordinates, report |
 
@@ -209,8 +210,10 @@ frame.
 5. **Serialization and Python bindings.** `Assembly3d` serializes like `System2d`;
    `ngk.solver` exposes it to Python for Nales.
 
-When stage 2 lands, `docs/architecture/solver.md` gains the assembly solver (or
-splits into a 2D and a 3D document), and this plan keeps only what is still open.
+Stages 1 and 2 are built: the numerical core is shared (`src/solver/numerical/`) and
+`Assembly3d` solves fixed, revolute and prismatic joints, documented in
+[assembly.md](../docs/architecture/assembly.md). Each stage that lands is documented
+there; this plan keeps the agreed decisions until the last stage is built.
 
 ## Out of scope, kept possible
 

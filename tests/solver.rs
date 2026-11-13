@@ -1,3 +1,5 @@
+#[path = "solver/assembly.rs"]
+mod assembly;
 #[path = "solver/catalog.rs"]
 mod catalog;
 #[path = "solver/contract.rs"]

@@ -36,6 +36,14 @@ impl Jet {
             gradient: combine(&self.gradient, -s, &[], 0.),
         }
     }
+    /// The positive square root, differentiable where the value is positive.
+    pub fn sqrt(self) -> Self {
+        let value = self.value.sqrt();
+        Self {
+            value,
+            gradient: combine(&self.gradient, 0.5 / value, &[], 0.),
+        }
+    }
     /// Differentiates an oriented angle on its local branch.
     pub fn atan2(self, x: Self) -> Self {
         let denominator = self.value * self.value + x.value * x.value;

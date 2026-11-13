@@ -27,7 +27,7 @@ Vocabulary is defined in [CONTEXT.md](../../CONTEXT.md).
 | `topology` | `src/topology/` | The pure GMap (darts, α0..α3, orbits), the embedding classification over it, entity records and typed views |
 | `model` | `src/model.rs` | `Model<P>`: one GMap plus the entity stores, geometry, payloads and derived indexes keyed against it; the transaction boundary |
 | `geometry` | `src/geometry/` | Pure math: points, curves, surfaces, NURBS, intersections, bounding boxes, tolerances |
-| `solver` | `src/solver/` | Stateful 2D geometric constraint systems, independent of topology |
+| `solver` | `src/solver/` | Stateful 2D geometric constraint systems and rigid-body assemblies, independent of topology |
 | `builders` | `src/builders/` | Topology construction over `&mut Model<P>`, one transaction each |
 | `modeling` | `src/modeling/` | Owned-`Shape` facade over `builders`: each constructor allocates a model and delegates one operation |
 | `healing` | `src/healing/` | Removes topology that carries no shape (removal passes over `builders::removal`) |

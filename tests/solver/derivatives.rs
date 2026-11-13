@@ -1,11 +1,11 @@
 use super::{curve::Curve, evaluate, prepare, vector::JetVector2};
-use crate::solver::numerical::Jet;
 use crate::geometry::dim2::{
     curves::Circle2,
     trimmed::{Arc2, Segment2},
     utils::Point2,
 };
 use crate::geometry::parameter::{Fraction, NativeParam};
+use crate::solver::numerical::Jet;
 use crate::solver::{Constraint2d as C, System2d, TangencyMode, Target2d};
 use nalgebra::Vector2;
 use radians::Rad64;

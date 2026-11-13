@@ -153,11 +153,13 @@ fn residuals(
 ) -> Vec<ConstraintResidual> {
     numerical::residuals(scale, evaluation, options)
         .into_iter()
-        .map(|(constraint, values, max_tolerance_ratio)| ConstraintResidual {
-            constraint,
-            values,
-            max_tolerance_ratio,
-        })
+        .map(
+            |(constraint, values, max_tolerance_ratio)| ConstraintResidual {
+                constraint,
+                values,
+                max_tolerance_ratio,
+            },
+        )
         .collect()
 }
 

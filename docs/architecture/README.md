@@ -26,6 +26,7 @@ landed and its lasting content has moved here or into an ADR.
 - [geometry.md](geometry.md): supports and spans, parameter spaces,
   intersection dispatch.
 - [solver.md](solver.md): editable 2D constraint systems, local solving and diagnostics.
+- [assembly.md](assembly.md): rigid bodies positioned by joints, mobility and redundancy.
 - [builders.md](builders.md): builder result names and the return contract.
 - [blend.md](blend.md): the chamfer and fillet engine.
 - [offset.md](offset.md): offsets of edges, profiles, faces, sheets and solids.

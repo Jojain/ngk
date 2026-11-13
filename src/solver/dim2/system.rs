@@ -4,9 +4,9 @@ use super::{
 };
 use super::{
     constraints::{StoredConstraint, TargetLocation},
-    solving,
     primitives::{Param, Primitive},
     solution::SolutionData,
+    solving,
 };
 use crate::geometry::dim2::{
     curves::Circle2,
