@@ -1,4 +1,5 @@
-use super::differentiate::{Jet, JetVector2};
+use super::vector::JetVector2;
+use crate::solver::numerical::Jet;
 use nalgebra::Vector2;
 
 /// A curve primitive as a differentiable map from its own parameter `t` to

@@ -1,24 +1,14 @@
 //! Editable 2D geometric constraints, immutable solutions, and local movement objectives.
 
-mod constraints;
-mod error;
-mod ids;
+mod dim2;
 mod numerical;
 mod options;
-mod primitives;
-mod solution;
-mod storage;
-mod system;
 
-pub use constraints::{Constraint2d, TangencyMode, Target2d};
-pub use error::{EditError, SolveError};
-pub(crate) use ids::AnyId;
-pub use ids::{
-    ArcId, CircleId, CircularId, ConstraintId, CurveId, GeometryId, PointId, PointRef, SegmentId,
-};
-pub use options::SolveOptions;
-pub use solution::{
-    ConstraintResidual, PrimitiveFreedom, Redundancy, RedundancyKind, Solution2d, SolveReport,
+pub(crate) use dim2::AnyId;
+pub use dim2::{
+    ArcId, CircleId, CircularId, Constraint2d, ConstraintId, ConstraintResidual, CurveId, EditError,
+    GeometryId, PointId, PointRef, PrimitiveFreedom, Redundancy, RedundancyKind, Removal,
+    SegmentId, Solution2d, SolveError, SolveReport, System2d, TangencyMode, Target2d,
     TargetReport,
 };
-pub use system::{Removal, System2d};
+pub use options::SolveOptions;

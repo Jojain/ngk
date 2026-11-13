@@ -4,7 +4,7 @@ use super::{
 };
 use super::{
     constraints::{StoredConstraint, TargetLocation},
-    numerical,
+    solving,
     primitives::{Param, Primitive},
     solution::SolutionData,
 };
@@ -336,7 +336,7 @@ impl System2d {
             constraint.side = self.prepare_constraint(constraint.definition.clone())?.side;
         }
         let (geometry, report) =
-            numerical::solve(&self.geometry, &constraints, targets, &self.options)?;
+            solving::solve(&self.geometry, &constraints, targets, &self.options)?;
         self.sequence += 1;
         let solution = Solution2d(Arc::new(SolutionData {
             revision: self.revision,

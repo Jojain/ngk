@@ -5,7 +5,7 @@ type Gradient = SmallVec<[(usize, f64); 12]>;
 
 /// Sparse forward differentiation of a local geometric expression.
 #[derive(Clone, Debug)]
-pub(super) struct Jet {
+pub(crate) struct Jet {
     pub value: f64,
     pub gradient: Gradient,
 }
@@ -166,55 +166,5 @@ impl Div<f64> for Jet {
     type Output = Self;
     fn div(self, rhs: f64) -> Self {
         self * (1. / rhs)
-    }
-}
-
-/// A plane vector whose coordinates are [`Jet`]s, so it carries its
-/// derivatives with respect to the unknowns.
-#[derive(Clone, Debug)]
-pub(super) struct JetVector2 {
-    pub x: Jet,
-    pub y: Jet,
-}
-impl JetVector2 {
-    pub fn dot(self, b: Self) -> Jet {
-        self.x * b.x + self.y * b.y
-    }
-    pub fn cross(self, b: Self) -> Jet {
-        self.x * b.y - self.y * b.x
-    }
-    pub fn norm(self) -> Jet {
-        self.x.hypot(self.y)
-    }
-    pub fn unit(self) -> Self {
-        let norm = self.clone().norm();
-        Self {
-            x: self.x / norm.clone(),
-            y: self.y / norm,
-        }
-    }
-    pub fn scale(self, s: Jet) -> Self {
-        Self {
-            x: self.x * s.clone(),
-            y: self.y * s,
-        }
-    }
-}
-impl Add for JetVector2 {
-    type Output = Self;
-    fn add(self, b: Self) -> Self {
-        Self {
-            x: self.x + b.x,
-            y: self.y + b.y,
-        }
-    }
-}
-impl Sub for JetVector2 {
-    type Output = Self;
-    fn sub(self, b: Self) -> Self {
-        Self {
-            x: self.x - b.x,
-            y: self.y - b.y,
-        }
     }
 }

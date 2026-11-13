@@ -1,8 +1,5 @@
-use super::{
-    curve::Curve,
-    differentiate::{Jet, JetVector2},
-    evaluate, prepare,
-};
+use super::{curve::Curve, evaluate, prepare, vector::JetVector2};
+use crate::solver::numerical::Jet;
 use crate::geometry::dim2::{
     curves::Circle2,
     trimmed::{Arc2, Segment2},

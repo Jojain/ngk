@@ -266,15 +266,26 @@ workloads. Measurements are observations, not timing assertions in the tests.
 
 ## Code boundaries
 
-- `system.rs`: edits, captured choices, revisions and atomic publication.
-- `ids.rs`, `primitives.rs`, `constraints.rs`: identity and problem representation.
-- `storage.rs`: the serial form of a system and what reading it refuses.
-- `solution.rs`, `error.rs`, `options.rs`: outputs and numerical contract.
-- `numerical/prepare.rs`: components and scaled parameter layouts.
-- `numerical/reduce.rs`: weighted affine aliases and constant elimination.
-- `numerical/differentiate.rs`, `evaluate.rs`: sparse derivatives and residuals.
-- `numerical/curve.rs`: segments, circles and arcs as differentiable maps of their own parameter.
-- `numerical/solve.rs`: feasibility, targets, rank and diagnostics.
+`src/solver/numerical/` is the numerical core every solver shares; `src/solver/dim2/`
+is the sketch solver built on it.
+
+- `numerical/jet.rs`: sparse forward derivatives of scalar expressions.
+- `numerical/evaluation.rs`: residual rows grouped by relation, their Jacobian,
+  tolerance checks, physical residuals and local row dependence.
+- `numerical/factor.rs`: thin SVD for minimum-norm corrections, null-space
+  projection, rank and the freedom of a parameter group.
+- `numerical/iterate.rs`: the `Problem` a solver supplies, damped feasibility
+  restoration and target improvement.
+- `options.rs`: tolerances and iteration budgets.
+- `dim2/system.rs`: edits, captured choices, revisions and atomic publication.
+- `dim2/ids.rs`, `primitives.rs`, `constraints.rs`: identity and problem representation.
+- `dim2/storage.rs`: the serial form of a system and what reading it refuses.
+- `dim2/solution.rs`, `error.rs`: outputs and failures.
+- `dim2/solving/prepare.rs`: components and scaled parameter layouts.
+- `dim2/solving/reduce.rs`: weighted affine aliases and constant elimination.
+- `dim2/solving/vector.rs`, `evaluate.rs`: plane vectors of jets and residuals.
+- `dim2/solving/curve.rs`: segments, circles and arcs as differentiable maps of their own parameter.
+- `dim2/solving/solve.rs`: the sketch as a `Problem`, publication checks and diagnostics.
 
 The module reuses NGK geometry types and existing dependencies. Its parametric
 constraint representation keeps segment length, circle radius and arc sweep as

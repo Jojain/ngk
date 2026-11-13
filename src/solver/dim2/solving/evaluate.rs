@@ -1,65 +1,18 @@
 use super::super::{
-    Constraint2d, ConstraintId, GeometryId, PointRef, SegmentId, SolveOptions, TangencyMode,
-    Target2d,
+    Constraint2d, ConstraintId, GeometryId, PointRef, SegmentId, TangencyMode, Target2d,
 };
 use super::super::{
     constraints::{StoredConstraint, TargetLocation},
     ids::PointRole,
     primitives::{Kind, Param, Quantity},
 };
-use super::{
-    curve::Curve,
-    differentiate::{Jet, JetVector2},
-    prepare::Component,
-};
+use super::{curve::Curve, prepare::Component, vector::JetVector2};
 use crate::geometry::dim2::utils::Point2;
+use crate::solver::numerical::{self, Jet, Row};
 use Constraint2d::*;
-use nalgebra::{DMatrix, DVector};
-use std::ops::Range;
+use nalgebra::DVector;
 
-pub(super) struct Row {
-    pub expression: Jet,
-    pub angular: bool,
-}
-pub(super) struct Evaluation {
-    pub values: DVector<f64>,
-    pub jacobian: DMatrix<f64>,
-    pub angular: Vec<bool>,
-    pub groups: Vec<(ConstraintId, Range<usize>)>,
-}
-impl Evaluation {
-    fn new(rows: Vec<Row>, groups: Vec<(ConstraintId, Range<usize>)>, columns: usize) -> Self {
-        let mut jacobian = DMatrix::zeros(rows.len(), columns);
-        for (i, row) in rows.iter().enumerate() {
-            for &(j, v) in &row.expression.gradient {
-                jacobian[(i, j)] = v;
-            }
-        }
-        Self {
-            values: DVector::from_iterator(rows.len(), rows.iter().map(|r| r.expression.value)),
-            jacobian,
-            angular: rows.iter().map(|r| r.angular).collect(),
-            groups,
-        }
-    }
-    pub fn finite(&self) -> bool {
-        self.values
-            .iter()
-            .chain(self.jacobian.iter())
-            .all(|v| v.is_finite())
-    }
-    pub fn feasible(&self, scale: f64, options: &SolveOptions) -> bool {
-        self.finite()
-            && self.values.iter().zip(&self.angular).all(|(v, a)| {
-                v.abs()
-                    <= if *a {
-                        options.angular_tolerance
-                    } else {
-                        options.linear_tolerance / scale
-                    }
-            })
-    }
-}
+pub(super) type Evaluation = numerical::Evaluation<ConstraintId>;
 
 pub(super) fn hard(component: &Component, x: &DVector<f64>) -> Evaluation {
     permanent(Context {
@@ -115,16 +68,10 @@ pub(super) fn target_point_world(
     Point2::new(p.x.value, p.y.value)
 }
 fn linear(expression: Jet) -> Row {
-    Row {
-        expression,
-        angular: false,
-    }
+    Row::linear(expression)
 }
 fn angular(expression: Jet) -> Row {
-    Row {
-        expression,
-        angular: true,
-    }
+    Row::angular(expression)
 }
 fn pair(v: JetVector2) -> Vec<Row> {
     vec![linear(v.x), linear(v.y)]
