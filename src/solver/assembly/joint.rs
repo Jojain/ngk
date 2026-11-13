@@ -22,32 +22,30 @@ impl Attachment {
 /// joint's axis: the revolute axis, the slide direction, the planar normal.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum JointKind {
-    /// No relative motion (encastrement).
+    /// No relative motion.
     Fixed,
-    /// Rotation about Z (pivot).
+    /// Rotation about Z.
     Revolute,
-    /// Translation along Z (glissière).
+    /// Translation along Z.
     Prismatic,
-    /// Rotation about Z driving a translation along it (hélicoïdale): the slide is
+    /// Rotation about Z driving a translation along it: the slide is
     /// `pitch` per turn, positive for a right-handed screw, negative for a left-handed one.
     Helical { pitch: f64 },
-    /// Rotation about Z and translation along it (pivot glissant).
+    /// Rotation about Z and translation along it.
     Cylindrical,
-    /// Rotation about the first X, then about the second Y; no twist about Z
-    /// (rotule à doigt, a cardan joint).
+    /// Rotation about the first X, then about the second Y; no twist about Z: a
+    /// cardan joint.
     Universal,
-    /// Any rotation about the common origin (rotule).
+    /// Any rotation about the common origin.
     Spherical,
-    /// Translation in the first XY plane and rotation about Z (appui plan).
+    /// Translation in the first XY plane and rotation about Z.
     Planar,
     /// The second origin on the first XY plane and the second X axis in it: a cylinder
-    /// along that X axis lying on the plane (linéaire rectiligne).
+    /// along that X axis lying on the plane.
     CylinderOnPlane,
-    /// The second origin on the first Z axis, any rotation: a sphere in a cylinder
-    /// (linéaire annulaire).
+    /// The second origin on the first Z axis, any rotation: a sphere in a cylinder.
     SphereInCylinder,
-    /// The second origin on the first XY plane, any rotation: a sphere on a plane
-    /// (ponctuelle).
+    /// The second origin on the first XY plane, any rotation: a sphere on a plane.
     SphereOnPlane,
 }
 
